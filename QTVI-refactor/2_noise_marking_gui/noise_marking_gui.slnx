@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Win32" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="noise_marking_gui.vcxproj" Id="7588209c-c5fe-4483-8c82-fb43356ebccc" />
+</Solution>

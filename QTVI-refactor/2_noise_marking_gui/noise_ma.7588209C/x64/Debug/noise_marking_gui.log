@@ -1,0 +1,5 @@
+﻿   Qt/MSBuild: 3.4.1.0
+  Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
+   Qt: 6.10.2
+  noise_marking_gui.cpp
+  noise_marking_gui.vcxproj -> D:\USERS\MiraWelner\QTVI-refactor\2_noise_marking_gui\x64\Debug\noise_marking_gui.exe

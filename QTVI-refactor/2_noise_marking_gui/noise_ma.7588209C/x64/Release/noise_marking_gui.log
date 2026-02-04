@@ -1,0 +1,4 @@
+﻿   Qt/MSBuild: 3.4.1.0
+  Reading Qt configuration (C:/Qt/6.10.1/msvc2022_64/bin/qmake)
+   Qt: 6.10.1
+LINK : fatal error LNK1104: cannot open file 'C:\Users\mirae\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.exe'

@@ -1,0 +1,9 @@
+﻿  edf_to_bin.cpp
+C:\Users\mirae\QTVI-refactor\1_edf_to_bin\edf_to_bin.cpp(193,31): warning C4129: 'm': unrecognized character escape sequence
+C:\Users\mirae\QTVI-refactor\1_edf_to_bin\edf_to_bin.cpp(193,31): warning C4129: 'Q': unrecognized character escape sequence
+C:\Users\mirae\QTVI-refactor\1_edf_to_bin\edf_to_bin.cpp(193,31): warning C5332: delimited escape sequences are only valid in C++23
+C:\Users\mirae\QTVI-refactor\1_edf_to_bin\edf_to_bin.cpp(193,31): warning C4129: 'o': unrecognized character escape sequence
+LINK : warning LNK4075: ignoring '/INCREMENTAL' due to '/OPT:ICF' specification
+  1_edf_to_bin.vcxproj -> C:\Users\mirae\QTVI-refactor\1_edf_to_bin\x64\Release\1_edf_to_bin.exe
+  'pwsh.exe' is not recognized as an internal or external command,
+  operable program or batch file.

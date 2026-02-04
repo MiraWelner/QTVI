@@ -2,3 +2,5 @@
 *.mat
 *.EDF
 *.edf
+*.ipch
+*.pch
