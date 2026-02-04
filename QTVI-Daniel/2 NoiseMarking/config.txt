@@ -1,0 +1,157 @@
+# General Settings
+# Settings for all runs
+#
+#   Skip_Existing is a boolean. If 0 processes will overwrite previous data at same path otherwise they will skip over existing matches with same UID.
+Skip_Existing = 0
+
+# 0 BinToEdf
+# Takes Bin files in the Prucka GE file format and converts them to EDF 2.0 Format
+# Will likely only be run occationally when new converted data is needed.
+#
+# 	BinToEdf_input_path a input directory of .bin and .inf files in pruka ge format.
+#
+# 	BinToEdf_output_path is the output directory for converted edf files.
+#
+BinToEdf_input_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\0 BinToEdf
+BinToEdf_output_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\1 EdfToMat
+
+# 1 EdfToMat
+# Takes EDF 2.0 Format and associated xml containing sleep and extracts the PPG and ECG lead 2 signals from .edf and sleep states from .xml and combines them into one .mat file.  \*.xmls read are intended to match format of MESA "\*.edf.XML" files. If one does not have associated .xml sleep states will be marked as wake for whole recording.
+# Will likely only be run occationally when new converted data is needed. Input data is either from #0 or 2.0 edfs.
+#
+#   EdfToMat_input_path is a folder of edfs
+#
+#   EdfToMat_output_path is where to place mats after conversion
+#
+EdfToMat_input_path = D:\USERS\MiraWelner\QTVI-data-files\0_original_files\mesa_files
+EdfToMat_output_path = D:\USERS\MiraWelner\QTVI-data-files\1_bin_mat_files\matlab
+
+# 2 Noise Marking
+# Reads .mat files from #1 and displays noise marking Gui which allows a user to mark instances of noise within ECG/PPG and display Hypnogram along data.
+# Manual review gui to process raw data for noise
+#
+#	NoiseMarking_input is a folder of .mat files formatted/output from #1. See main readme.md for details on internal format.
+#
+#	NoiseMarking_output is a folder where formatted files will be saved.
+#
+NoiseMarking_input = D:\USERS\MiraWelner\QTVI-data-files\1_bin_mat_files\matlab
+NoiseMarking_output = D:\USERS\MiraWelner\QTVI-data-files\2_noise_markings\matlab
+
+
+# 3 Anneal Segments
+# Epochs data from #1 and #2 into desired epoch size for use in creating templates. Epochs can be split in a few alternate ways such as: combining similar segements of
+# noiseless data or taking data as is. Additionally, noise can be ignored to run analysis skipping #2. A automatic simple noise marker can be run which marks extreams
+# of data and flatlines.
+#
+#   Paths
+#
+#   AnnealSegments_raw_mats a directory of *_ecg_ppg_sleep.mat files output from 1 EdfToMat. Likely same output directory as 1 EdfToMat.
+#
+#   AnnealSegments_output_path is a directory to place annealed data.
+#
+#   AnnealSegments_noise_input a directory containing marked noise from step #2 or one of its variants, the r markings. Depending on AnnealSegments_use_handmarked_noise can be empty or fake #   path
+#
+#	Options
+#
+#   AnnealSegments_use_handmarked_noise If 1, uses the AnnealSegments_noise_input path and reads in noise marked by hand on the ppg from the in the "noise gui in #2".
+#                                       If 0, uses the AnnealSegments_noise_input path and reads in hand marked r peaks wavemarker gui.
+#                                             As ppg noise was not marked in this dataset it also runs some preliminatry noise removal
+#                                             (removes sections that are particularly filled with spikey noise and flat line data).
+#										Any other #, skips reading noise
+#											  As ppg noise was not marked in this dataset it also runs some preliminatry noise removal
+#                                             (removes sections that are particularly filled with spikey noise and flat line data).
+#
+#   AnnealSegments_AnnealType If 0, simple segmentation is used where bins of size of AnnealSegments_segment_size_mins are generated starting at the beginning of the data.
+#									Data is not removed if marked noisy and instead simply the periods of noise are labeled in the output as ppg_noise_segs for use later. Epochs
+#									in this type are exactly AnnealSegments_segment_size_mins except potentially the last which may not fit size ideally
+#							  If 1, a more complex algorithm runs which takes chunks of good data and combines the chunks to create epochs approximately the size of
+#									AnnealSegments_segment_size_mins. These keep track of their original descrete locations but allow templates to be generated using only the cleanest
+#									of data
+#
+#   AnnealSegments_segment_size_mins is the "idealized" size to break data into bins of. Numeral in minutes. A good default is 15
+#
+#   AnnealSegments_ampo_window_size_mins if AnnealSegments_use_handmarked_noise is a 0 or some number other then 1, the noise removal algorithm uses a variation of the "ampograms" similar
+#											to what is seen in #2 to mark the spikey noise.  This is the size of the window in minutes which is used to generate the ampogram.
+#											A smaller number will cause smaller spikes of noise to become more prominent.  A large number will converge around larger overall changes in
+#											amplitude. A good default is .2
+#
+#   AnnealSegments_noise_expansion_seconds when noise is found from AnnealSegments_ampo_window_size_mins or flatlined data, the time around the noise is wrapped into this time
+#                                          both before and after. (ex say you marked noise at exactly 30 seconds and this variable was 15. Your noise
+#                                          would encompass 30-15 and 30+15 seconds or from 15 seconds of the recording to 45 seconds). A good default is 15. Lower numbers will cut more noise #										  in a piecemeal fashion. Higher will merge sections of noise. Keep value above 1 second for best results.  If two peirods of noise
+#										   overlap after expansion they merge into one.
+#
+AnnealSegments_raw_mats = D:\USERS\MiraWelner\QTVI-data-files\1_bin_mat_files\matlab
+AnnealSegments_output_path = D:\USERS\MiraWelner\QTVI-data-files\3_annealed_files\matlab
+AnnealSegments_noise_input = D:\USERS\MiraWelner\QTVI-data-files\2_noise_markings\matlab
+
+
+
+AnnealSegments_use_handmarked_noise = 1
+AnnealSegments_AnnealType = 0
+AnnealSegments_segment_size_mins = 1
+AnnealSegments_ampo_window_size_mins = .2
+AnnealSegments_noise_expansion_seconds = 15
+
+# 4 Find Wave Bounds
+# Extracts individual ECG and PPG beats and links the two beats.
+#
+# 	FWB_input_path directory of annealed segments (ie directory of *_annealedSegments.mat).
+#
+# 	FWB_output_path directory to output data.
+#
+FWB_input_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\3 AnnealSegments
+FWB_output_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\4 FindWaveBounds
+
+# 5 Generate Templates
+# Takes data from #4 and creates ensemble templates from epochs.
+#
+#   GenerateTemplates_input directory of processed segments (ie directory of *_wave_data.mat).
+#
+#   GenerateTemplates_output directory to output data.
+#
+GenerateTemplates_input = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\4 FindWaveBounds
+GenerateTemplates_output = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\5 GenerateTemplates
+
+# 6 Template Marking
+# GUI allowing manual template review to exclude poor ECG/PPG templates and correct dichotic notch of PPG
+#
+#   TemplateMarking_input directory of template info files (ie directory of *_template_info.mat).
+#
+#   TemplateMarking_output wave bounds output path.
+#
+#   TemplateMarking_TemplatesToShow is the amount of templates to manually review per screen. 32 seems to be a decent number. If more templates
+#                                      exist then the value here, each screen shown will have the number set (except last which will have remainder).
+#                                      Set to inf or a neg number to show all. Screen may be too small to accommodate all.
+#
+TemplateMarking_input = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\5 GenerateTemplates
+TemplateMarking_output = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\6 TemplateMarking
+TemplateMarking_TemplatesToShow = 16
+
+# 7 Generate Features
+# Extracts PPG and coupled ECG/PPG features from each individual beat.
+#
+#   Gen_Features_use_manually_reviewed_templates can be either 0 or 1. If 0 all bins and templates are used if 1 uses marked templates. If 1 *_template_markings.mat files are needed.
+#
+#   GenerateFeatures_annealed_path directory of *_annealedSegments.mat files
+#
+#   GenerateFeatures_wavedata_path directory of *_wave_data.mat files
+#
+#   GenerateFeatures_template_path directory of *_template_markings.mat files. Unused if Gen_Features_use_manually_reviewed_templates == 0.
+#
+#   GenerateFeatures_output directory to output feature data
+#
+Gen_Features_use_manually_reviewed_templates = 1
+GenerateFeatures_annealed_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\3 AnnealSegments
+GenerateFeatures_wavedata_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\4 FindWaveBounds
+GenerateFeatures_template_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\6 TemplateMarking
+GenerateFeatures_output = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\7 GenerateFeatures
+
+# 8 SaveFeaturesForEsuite
+# Breaks out features generated in #7 into individual files to match loading of data in Entropy Suite.
+#
+#   Save_input directory of *_feature_output.mat
+#
+#   Save_output directory to output split *_feature_output.mat files
+#
+Save_input = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\7 GenerateFeatures
+Save_output = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\8 SaveFeaturesForEsuite

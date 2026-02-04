@@ -1,0 +1,7 @@
+Reads .mat files from software #1 and displays noise marking Gui which allows a user to mark instances of noise within ECG/PPG and display Hypnogram along data
+
+**Ensure config.txt file exists in the common directory above with proper paths filled in before running**
+
+To run open run_*.m file and click run in matlab.
+
+Please view readme.md at top of repository for more details

@@ -1,0 +1,55 @@
+function [rr] = JoinedRR(ecgSeg,ecgSamplingRate)
+    algos = {{@rpeakdetect, {ecgSeg,ecgSamplingRate}}, ...
+            {@rpeakdetect, {ecgSeg,ecgSamplingRate,0.1}}, ...
+            {@rpeakdetect, {ecgSeg,ecgSamplingRate,0.4}},...
+            {@SimpleRST,{ecgSeg,ecgSamplingRate}},...
+            {@getECGFeatures,{ecgSeg,ecgSamplingRate}},...
+            {@pan_tompkin, {ecgSeg,ecgSamplingRate}}};
+       
+        
+    output = cell(length(algos),1);
+    parfor i=1:length(algos)
+        curr_alg = algos{i};
+        if length(curr_alg{2}) == 2
+            output{i} = curr_alg{1}(curr_alg{2}{1}, curr_alg{2}{2});
+        else
+            output{i} = curr_alg{1}(curr_alg{2}{1},curr_alg{2}{2},curr_alg{2}{3});
+        end
+        
+    end
+        
+    c = linspecer(length(output));    
+
+    time = 0:length(ecgSeg)-1;
+    plot(time,ecgSeg);
+    hold on;
+    for i = 1:length(output)
+        plot(time(output{i}),ecgSeg(output{i}),'o');
+    end
+    legend('r0.2','r0.1','r0.4','simpleRST','getecgfeatures','pan_tompkin');
+    
+
+    median_diff = zeros(length(output),1);
+    for i = 1:length(output)
+        median_diff(i) = median(diff(output{i}));
+    end
+    
+    
+    median_difft = median(median_diff);
+    [~, r5]  =  findpeaks(ecgSeg, 'MinPeakDistance', median_diff/2);
+    r5 = r5';
+    
+    uniq = unique([r1,r2,r3,r5]);
+    counts = zeros(1,length(uniq));
+    
+    r = {r1;r2;r3;r4;r5};
+
+    for i = 1:length(r)
+       counts = counts + countmember(uniq,r{i}); 
+    end
+    
+    rr = uniq(counts >=4);
+    
+
+end
+

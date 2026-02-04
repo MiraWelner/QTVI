@@ -1,0 +1,7 @@
+Takes data from #4 and creates ensemble templates from epochs.
+
+**Ensure config.txt file exists in the common directory above with proper paths filled in before running**
+
+To run open run_*.m file and click run in matlab.
+
+Please view readme.md at top of repository for more details
