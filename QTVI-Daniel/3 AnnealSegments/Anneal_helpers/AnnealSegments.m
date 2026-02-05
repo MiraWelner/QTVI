@@ -1,6 +1,7 @@
 function [annealedSegments, final_bin_idx] = AnnealSegments(ppg, ppgSampleRate, ecg, ecgSampleRate, noiseSEG, scoring_epoch_size_sec, sleepStages, targetLength, rs, dbg_plot)
     %targetLength given in minutes
-    
+    disp('DEBUG: PPG Length at start of AnnealSegments: %d samples\n', length(ppg));
+
     %% changable
     min_exclusion_bin_size_seconds =  5;
     min_bin_size_mins = targetLength/2;

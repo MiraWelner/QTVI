@@ -1,9 +1,9 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI-refactor\\1_edf_to_bin\\",
+  "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\1_edf_to_bin\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{491CD0A3-FB8F-5D9C-830B-326A959DED5F}|1_edf_to_bin.vcxproj|D:\\USERS\\MiraWelner\\QTVI-refactor\\1_edf_to_bin\\edf_to_bin.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "AbsoluteMoniker": "D:0:0:{491CD0A3-FB8F-5D9C-830B-326A959DED5F}|1_edf_to_bin.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\1_edf_to_bin\\edf_to_bin.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{491CD0A3-FB8F-5D9C-830B-326A959DED5F}|1_edf_to_bin.vcxproj|solutionrelative:edf_to_bin.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
@@ -24,9 +24,9 @@
               "$type": "Document",
               "DocumentIndex": 0,
               "Title": "edf_to_bin.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI-refactor\\1_edf_to_bin\\edf_to_bin.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\1_edf_to_bin\\edf_to_bin.cpp",
               "RelativeDocumentMoniker": "edf_to_bin.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI-refactor\\1_edf_to_bin\\edf_to_bin.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\1_edf_to_bin\\edf_to_bin.cpp",
               "RelativeToolTip": "edf_to_bin.cpp",
               "ViewState": "AgIAAAABAAAAAAAAAADwvyABAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",

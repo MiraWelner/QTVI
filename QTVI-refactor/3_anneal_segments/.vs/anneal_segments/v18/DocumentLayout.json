@@ -1,9 +1,9 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI-refactor\\3_anneal_segments\\",
+  "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{DD95144A-F334-6036-4761-0E06E021574F}|anneal_segments.vcxproj|D:\\USERS\\MiraWelner\\QTVI-refactor\\3_anneal_segments\\3_anneal_segments.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "AbsoluteMoniker": "D:0:0:{DD95144A-F334-6036-4761-0E06E021574F}|anneal_segments.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\3_anneal_segments.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{DD95144A-F334-6036-4761-0E06E021574F}|anneal_segments.vcxproj|solutionrelative:3_anneal_segments.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
@@ -24,11 +24,11 @@
               "$type": "Document",
               "DocumentIndex": 0,
               "Title": "3_anneal_segments.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI-refactor\\3_anneal_segments\\3_anneal_segments.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\3_anneal_segments.cpp",
               "RelativeDocumentMoniker": "3_anneal_segments.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI-refactor\\3_anneal_segments\\3_anneal_segments.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\3_anneal_segments.cpp",
               "RelativeToolTip": "3_anneal_segments.cpp",
-              "ViewState": "AgIAAL4CAAAAAAAAAAAAwO0CAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAABoBAAAAAAAAAAAowDQBAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-02-04T16:24:21.011Z",
               "EditorCaption": ""

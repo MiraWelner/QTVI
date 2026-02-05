@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="annealing_test/annealing_test.vcxproj" Id="db324d91-1c05-4cdf-8757-a3a55fd8c11a" />
+</Solution>

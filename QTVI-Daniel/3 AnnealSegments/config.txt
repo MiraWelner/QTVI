@@ -80,10 +80,9 @@ NoiseMarking_output = D:\USERS\MiraWelner\QTVI-data-files\2_noise_markings\matla
 #                                          would encompass 30-15 and 30+15 seconds or from 15 seconds of the recording to 45 seconds). A good default is 15. Lower numbers will cut more noise #										  in a piecemeal fashion. Higher will merge sections of noise. Keep value above 1 second for best results.  If two peirods of noise
 #										   overlap after expansion they merge into one.
 #
-AnnealSegments_raw_mats = D:\USERS\MiraWelner\QTVI-data-files\1_bin_mat_files\matlab
-AnnealSegments_output_path = D:\USERS\MiraWelner\QTVI-data-files\3_annealed_files\matlab
-AnnealSegments_noise_input = D:\USERS\MiraWelner\QTVI-data-files\2_noise_markings\matlab
-
+AnnealSegments_raw_mats = D:\USERS\MiraWelner\QTVI\QTVI-data-files\1_bin_mat_files\matlab
+AnnealSegments_output_path = D:\USERS\MiraWelner\QTVI\QTVI-data-files\3_annealed_files\matlab
+AnnealSegments_noise_input = D:\USERS\MiraWelner\QTVI\QTVI-data-files\2_noise_markings\matlab
 
 
 AnnealSegments_use_handmarked_noise = 1

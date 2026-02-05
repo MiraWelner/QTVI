@@ -4,6 +4,7 @@ function [ret] = Anneal(mat_path, noise_path, output_path)
         [~, name, ~] = fileparts(mat_path);
         name = regexp(name, '(\d+_\d+)', 'match');
         load(mat_path, 'ecg', 'ecgSamplingRate', 'ppg', 'ppgSamplingRate', 'scoring_epoch_size_sec', 'sleepStages');
+        disp('DEBUG: Total PPG Length Loaded: %d samples\n', length(ppg)); 
 
         % should make noise gui save as variables not struct.
         noiseSEG = load(noise_path);
