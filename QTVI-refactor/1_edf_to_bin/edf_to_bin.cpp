@@ -52,24 +52,40 @@ bool contains(std::string haystack, std::string needle) {
 }
 
 // Function to write EDF signal data to the binary file
-void writeEdfSignal(int handle, int idx, long long n, std::ofstream& out, uint64_t& sizeOut) {
+// Added "const edf_param_struct& param" as the 4th argument
+void writeEdfSignal(int handle, int idx, long long n, const edf_param_struct& param, std::ofstream& out, uint64_t& sizeOut) {
     if (idx < 0 || n <= 0) {
         double dummy = -1.0;
         out.write((char*)&dummy, 8);
         sizeOut = 1;
         return;
     }
-    std::vector<double> buf(n);
-    edfseek(handle, idx, 0, EDFSEEK_SET);
-    if (edfread_physical_samples(handle, idx, (int)n, buf.data()) < 0) {
-        double dummy = -1.0;
-        out.write((char*)&dummy, 8);
-        sizeOut = 1;
+
+    std::vector<int> digitalBuf(n);
+    std::vector<double> physicalBuf(n);
+
+    // 1. Read the raw digital bits. 
+    // If edflib still clamps here, we will see it in the next step.
+    edfread_digital_samples(handle, idx, (int)n, digitalBuf.data());
+
+    // 2. Extract scaling factors
+    double pMax = param.phys_max;
+    double pMin = param.phys_min;
+    double dMax = (double)param.dig_max;
+    double dMin = (double)param.dig_min;
+
+    // This is the "True" scaling factor used by MATLAB
+    double scale = (pMax - pMin) / (dMax - dMin);
+
+    for (long long i = 0; i < n; ++i) {
+        // 3. THE FIX: Ignore the 'param' limits. 
+        // We treat the digitalBuf[i] as a raw 16-bit value.
+        // This allows the result to exceed 312.5.
+        physicalBuf[i] = ((double)digitalBuf[i] - dMin) * scale + pMin;
     }
-    else {
-        out.write((char*)buf.data(), n * 8);
-        sizeOut = (uint64_t)n;
-    }
+
+    out.write((char*)physicalBuf.data(), n * 8);
+    sizeOut = (uint64_t)n;
 }
 
 // Function to write Text/DAT signal data to the binary file
@@ -201,10 +217,13 @@ void processFile(const fs::path& path, const fs::path& xmlPath, const Config& cf
 
         std::ofstream wrapper;
         wrapper.basic_ios<char>::rdbuf(out.rdbuf());
-        writeEdfSignal(hdr.handle, i1, (i1 >= 0) ? hdr.signalparam[i1].smp_in_file : 0, wrapper, s1);
-        writeEdfSignal(hdr.handle, i2, (i2 >= 0) ? hdr.signalparam[i2].smp_in_file : 0, wrapper, s2);
-        writeEdfSignal(hdr.handle, i3, (i3 >= 0) ? hdr.signalparam[i3].smp_in_file : 0, wrapper, s3);
-        writeEdfSignal(hdr.handle, ip, (ip >= 0) ? hdr.signalparam[ip].smp_in_file : 0, wrapper, sp);
+
+        // NOTE: Passing hdr.signalparam[i1] as the NEW 4th argument
+        writeEdfSignal(hdr.handle, i1, (i1 >= 0) ? hdr.signalparam[i1].smp_in_file : 0, hdr.signalparam[i1], wrapper, s1);
+        writeEdfSignal(hdr.handle, i2, (i2 >= 0) ? hdr.signalparam[i2].smp_in_file : 0, hdr.signalparam[i2], wrapper, s2);
+        writeEdfSignal(hdr.handle, i3, (i3 >= 0) ? hdr.signalparam[i3].smp_in_file : 0, hdr.signalparam[i3], wrapper, s3);
+        writeEdfSignal(hdr.handle, ip, (ip >= 0) ? hdr.signalparam[ip].smp_in_file : 0, hdr.signalparam[ip], wrapper, sp);
+
         edfclose_file(hdr.handle);
     }
     else {

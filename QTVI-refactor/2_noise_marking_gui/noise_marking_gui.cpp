@@ -506,11 +506,8 @@ void noise_marking_gui::handle_data_plot() {
                 for (auto* a : chart->axes()) { chart->removeAxis(a); delete a; }
 
                 auto* xA = new QCategoryAxis();
-                // Fix Issue #1 and #2: Add margins to the axis range to prevent boundary issues with QCategoryAxis
-                // This ensures labels at 0.0 are displayed and prevents overflow from boundary clicks
-                double rangeMin = m_currentStartTime - 0.1;
-                double rangeMax = m_currentStartTime + m_windowDuration + 0.1;
-                xA->setRange(rangeMin, rangeMax);
+                xA->setRange(m_currentStartTime, m_currentStartTime + m_windowDuration);
+
 
                 double offset = m_currentChunkIndex * CHUNK_DURATION_SEC;
 
@@ -592,39 +589,38 @@ void noise_marking_gui::finalizeMarking(QChartView* cv, double endX, bool isECG)
     double sr = isECG ? m_ecgSR : m_ppgSR;
     QString label = isECG ? "ECG" : "PPG";
 
-    // Add the global offset to the marking time
+    // 1. Snap to the nearest sample interval to eliminate floating point drift
+    double snappedS = std::round(s * sr) / sr;
+    double snappedE = std::round(e * sr) / sr;
+
+    // 2. Add the global offset (current 8-hour chunk position)
     double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
-    double globalStart = s + globalOffset;
-    double globalEnd = e + globalOffset;
+    double finalGlobalStart = snappedS + globalOffset;
+    double finalGlobalEnd = snappedE + globalOffset;
 
-    // 1. Save the segment to NoiseManager (for highlights)
-    m_noiseManager->addSegment(globalStart * sr, globalEnd * sr,
-        label.toStdString(), m_currentMarkingType.toStdString());
+    // 3. Save the segment to NoiseManager (used for on-screen highlights)
+    // Formula: (Time in Seconds * Sample Rate) = Exact Sample Index
+    m_noiseManager->addSegment(
+        finalGlobalStart * sr,
+        finalGlobalEnd * sr,
+        label.toStdString(),
+        m_currentMarkingType.toStdString()
+    );
 
-    // 2. Also save to m_genExc (for persistence and undo)
-    m_genExc.noiseExc.append({ globalStart, globalEnd });
+    // 4. Save to the persistent list (used for CSV export and Undo)
+    m_genExc.noiseExc.append({ finalGlobalStart, finalGlobalEnd });
     m_genExc.data_type.append(label);
     m_genExc.marking_type.append(m_currentMarkingType);
 
-    // 3. Reset the state and the UI
+    // 5. Reset the UI state
     if (isECG) {
-        m_isWaitingForECGStart = false;
-        m_isWaitingForECGEnd = false;
+        m_isWaitingForECGStart = m_isWaitingForECGEnd = false;
         clearECGStartMarker();
-
-        // --- RESET BUTTONS ---
-        ui->startNoiseECG->setStyleSheet("");
-        ui->stopNoiseECG->setStyleSheet("");
         ui->stopNoiseECG->setEnabled(false);
     }
     else {
-        m_isWaitingForPPGStart = false;
-        m_isWaitingForPPGEnd = false;
+        m_isWaitingForPPGStart = m_isWaitingForPPGEnd = false;
         clearPPGStartMarker();
-
-        // --- RESET BUTTONS ---
-        ui->startNoisePPG->setStyleSheet("");
-        ui->stopNoisePPG->setStyleSheet("");
         ui->stopNoisePPG->setEnabled(false);
     }
 

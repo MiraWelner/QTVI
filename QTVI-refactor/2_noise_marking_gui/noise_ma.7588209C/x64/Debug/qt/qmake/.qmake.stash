@@ -1,6 +1,6 @@
 QMAKE_CXX.QT_COMPILER_STDCXX = 199711L
 QMAKE_CXX.QMAKE_MSC_VER = 1950
-QMAKE_CXX.QMAKE_MSC_FULL_VER = 195035720
+QMAKE_CXX.QMAKE_MSC_FULL_VER = 195035723
 QMAKE_CXX.COMPILER_MACROS = \
     QT_COMPILER_STDCXX \
     QMAKE_MSC_VER \
@@ -15,7 +15,8 @@ QMAKE_CXX.INCDIRS = \
     "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\shared" \
     "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\winrt" \
     "C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.26100.0\\cppwinrt" \
-    "C:\\Program Files (x86)\\Windows Kits\\NETFXSDK\\4.8\\Include\\um"
+    "C:\\Program Files (x86)\\Windows Kits\\NETFXSDK\\4.8\\Include\\um" \
+    D:\\vcpkg\\installed\\x64-windows\\include
 QMAKE_CXX.LIBDIRS = \
     "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.50.35717\\lib\\x64" \
     "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.50.35717\\atlmfc\\lib\\x64" \

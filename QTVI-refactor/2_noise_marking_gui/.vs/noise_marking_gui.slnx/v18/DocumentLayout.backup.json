@@ -15,7 +15,7 @@
       "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:main.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|C:\\QT\\6.10.2\\MSVC2022_64\\INCLUDE\\QTWIDGETS\\QSIZEPOLICY.H||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Qt\\6.10.2\\msvc2022_64\\include\\QtWidgets\\qsizepolicy.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
   "DocumentGroupContainers": [
@@ -73,7 +73,7 @@
               "RelativeDocumentMoniker": "noise_marking_gui.cpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_marking_gui.cpp",
               "RelativeToolTip": "noise_marking_gui.cpp",
-              "ViewState": "AgIAABQDAAAAAAAAAAAQwC4DAAAFAAAAAAAAAA==",
+              "ViewState": "AgIAAE4CAAAAAAAAAAAowHQCAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-02-01T19:25:13.464Z",
               "EditorCaption": ""

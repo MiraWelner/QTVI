@@ -6,7 +6,7 @@ close all;
 version = '0.1.0';
 disp(['Version: ' version]);
 % [analysisFiles, process_noise_manual, outputLoc] = PulseSetup('normal', '');
-props = readProps('config.txt');
+props = readProps('../config.txt');
 NoiseMarking_input = props('NoiseMarking_input'); 
 NoiseMarking_output = props('NoiseMarking_output'); 
 Skip_Existing = logical(str2num(props('Skip_Existing')));

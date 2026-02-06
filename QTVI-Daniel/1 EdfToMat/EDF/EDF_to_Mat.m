@@ -51,6 +51,10 @@ function convert(edf_path,xml_path, output_path)
 
     ecgSamplingRate = edf_hdr.frequency(1); % 256 FOR MESA SET
     ppgSamplingRate = edf_hdr.frequency(2); % 256 FOR MESA SET
+
+    % Look at the header info for the Pleth signal
+    disp(edf_hdr.physicalMax(2)); 
+
     try
         if strcmp(xml_path,'')
             scoring_epoch_size_sec = 30.0;

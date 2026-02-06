@@ -1,36 +1,4 @@
-﻿  edflib.c
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(677,15): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(876,21): warning C4244: '=': conversion from '__int64' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(1042,21): warning C4244: '=': conversion from '__int64' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(2647,7): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(2694,7): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(2915,23): warning C4244: '=': conversion from '__int64' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(3287,7): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(3314,7): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(3355,9): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(4538,35): warning C4244: '=': conversion from 'double' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(4568,35): warning C4244: '=': conversion from 'double' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(4687,50): warning C4244: '=': conversion from 'double' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(4717,50): warning C4244: '=': conversion from 'double' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(4852,9): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(4937,9): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(4977,9): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(5035,9): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(5073,9): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(5111,9): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(5149,9): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(5237,11): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(5281,11): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(5318,11): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(5532,11): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(6111,27): warning C4267: 'function': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(6156,11): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(6333,11): warning C4244: '=': conversion from '__int64' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(6478,11): warning C4244: '=': conversion from '__int64' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(6845,12): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(6862,12): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\edflib.c(6868,12): warning C4267: '=': conversion from 'size_t' to 'int', possible loss of data
-  edf_to_bin.cpp
-  pugixml.cpp
-  Generating Code...
+﻿  edf_to_bin.cpp
   1_edf_to_bin.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\1_edf_to_bin\x64\Debug\1_edf_to_bin.exe
+  'pwsh.exe' is not recognized as an internal or external command,
+  operable program or batch file.

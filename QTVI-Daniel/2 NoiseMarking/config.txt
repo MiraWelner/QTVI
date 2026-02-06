@@ -23,8 +23,8 @@ BinToEdf_output_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\s
 #
 #   EdfToMat_output_path is where to place mats after conversion
 #
-EdfToMat_input_path = D:\USERS\MiraWelner\QTVI-data-files\0_original_files\mesa_files
-EdfToMat_output_path = D:\USERS\MiraWelner\QTVI-data-files\1_bin_mat_files\matlab
+EdfToMat_input_path = D:\USERS\MiraWelner\QTVI\QTVI-data-files\0_original_files\mesa_files
+EdfToMat_output_path = D:\USERS\MiraWelner\QTVI\QTVI-data-files\1_bin_mat_files\matlab
 
 # 2 Noise Marking
 # Reads .mat files from #1 and displays noise marking Gui which allows a user to mark instances of noise within ECG/PPG and display Hypnogram along data.

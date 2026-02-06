@@ -31,8 +31,8 @@ bool compareDoubles(double a, double b) {
 
 int main() {
     // HARDCODED PATHS
-    std::string matPath = "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\3_annealed_files\\matlab\\3010112_20110725_annealedSegments.mat";
-    std::string binPath = "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\3_annealed_files\\cpp\\mesa_bins\\3010112_20110725_annealed.bin";
+    std::string matPath = "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\3_annealed_files\\matlab\\3010155_20110511_annealedSegments.mat";
+    std::string binPath = "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\3_annealed_files\\cpp\\mesa_bins\\3010155_20110511_annealed.bin";
 
     // 1. LOAD C++ BIN DATA
     std::cout << "Loading C++ Bin Data..." << std::endl;

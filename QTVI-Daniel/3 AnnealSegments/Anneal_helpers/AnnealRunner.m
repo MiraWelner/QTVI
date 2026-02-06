@@ -1,6 +1,6 @@
 clear;
 close all;
-props = readProps('config.txt');
+props = readProps('../config.txt');
 AnnealSegments_AnnealType = str2num(props('AnnealSegments_AnnealType'));
 
 AnnealSegments_use_handmarked_noise = str2num(props('AnnealSegments_use_handmarked_noise'));
