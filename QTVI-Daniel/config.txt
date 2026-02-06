@@ -99,8 +99,8 @@ AnnealSegments_noise_expansion_seconds = 15
 #
 # 	FWB_output_path directory to output data.
 #
-FWB_input_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\3 AnnealSegments
-FWB_output_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\4 FindWaveBounds
+FWB_input_path = D:\USERS\MiraWelner\QTVI\QTVI-data-files\3_annealed_files\matlab
+FWB_output_path = D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\matlab
 
 # 5 Generate Templates
 # Takes data from #4 and creates ensemble templates from epochs.

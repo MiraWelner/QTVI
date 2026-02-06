@@ -1,0 +1,20 @@
+﻿   Qt/MSBuild: 3.4.1.0
+  Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
+   Qt: 6.10.2
+  stdafx.cpp
+  lower_row_buttons.cpp
+  main.cpp
+  NoiseManager.cpp
+  noise_marking_gui.cpp
+  noise_marking_guiPlugin.cpp
+  moc_noise_marking_gui.cpp
+  moc_noise_marking_guiPlugin.cpp
+  moc_lower_row_buttons.cpp
+     Creating library D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.lib and object D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.exp
+  Generating code
+  Previous IPDB not found, fall back to full compilation.
+  All 1994 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Finished generating code
+  noise_marking_gui.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.exe
+  'pwsh.exe' is not recognized as an internal or external command,
+  operable program or batch file.

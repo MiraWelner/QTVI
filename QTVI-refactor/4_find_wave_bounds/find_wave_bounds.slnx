@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="find_wave_bounds/find_wave_bounds.vcxproj" Id="6604a2af-3394-4dc2-8e5b-a952bc89e17f" />
+</Solution>

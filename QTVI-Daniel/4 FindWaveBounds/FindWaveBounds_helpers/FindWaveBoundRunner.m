@@ -1,4 +1,4 @@
-clear
+ clear
 props = readProps('config.txt');
 Annealed_segments = props('FWB_input_path');
 output_path = props('FWB_output_path');

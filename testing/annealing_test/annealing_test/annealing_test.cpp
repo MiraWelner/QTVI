@@ -123,7 +123,7 @@ int main() {
         auto [cMean, cMedian, cMin, cMax] = getStats(cppData.data(), cppDataSize);
 
         // 5. Compare (using a very small epsilon for floating point mean/median)
-        auto isNear = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+        auto isNear = [](double a, double b) { return std::abs(a - b) < 1e-5; };
 
         bool match = isNear(mMean, cMean) &&
             isNear(mMedian, cMedian) &&

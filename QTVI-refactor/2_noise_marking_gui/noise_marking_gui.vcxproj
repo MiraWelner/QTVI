@@ -71,7 +71,7 @@
     <QtPlugin>true</QtPlugin>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="QtSettings">
-    <QtInstall>6.10.1_msvc2022_64</QtInstall>
+    <QtInstall>msvc</QtInstall>
     <QtModules>core;gui;widgets;charts;designer</QtModules>
     <QtBuildConfig>release</QtBuildConfig>
     <QtPlugin>true</QtPlugin>
