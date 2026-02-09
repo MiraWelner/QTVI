@@ -6,7 +6,6 @@ AnnealSegments_AnnealType = str2num(props('AnnealSegments_AnnealType'));
 AnnealSegments_use_handmarked_noise = str2num(props('AnnealSegments_use_handmarked_noise'));
 AnnealSegments_noise_input = props('AnnealSegments_noise_input');
 AnnealSegments_raw_mats = props('AnnealSegments_raw_mats');
-disp(AnnealSegments_raw_mats);
 AnnealSegments_output_path = props('AnnealSegments_output_path');
 AnnealSegments_segment_size_mins = str2num(props('AnnealSegments_segment_size_mins'));
 AnnealSegments_window_size_mins = str2num(props('AnnealSegments_ampo_window_size_mins'));

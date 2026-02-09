@@ -1,6 +1,4 @@
 function [annealedSegments, final_bin_idx] = AnnealSegments(ppg, ppgSampleRate, ecg, ecgSampleRate, noiseSEG, scoring_epoch_size_sec, sleepStages, targetLength, rs, dbg_plot)
-    %targetLength given in minutes
-    disp('DEBUG: PPG Length at start of AnnealSegments: %d samples\n', length(ppg));
 
     %% changable
     min_exclusion_bin_size_seconds =  5;
@@ -363,9 +361,9 @@ function [annealedSegments, final_bin_idx] = AnnealSegments(ppg, ppgSampleRate, 
         bin_breaks_mins = cumsum(bin_times_seconds) / 60;
 
         %% final bins
-        for i = 1:numel(final_bin_idx)
+       for z = 1:size(final_bin_idx{i}, 1)
 
-            for z = 1:size(final_bin_idx{i})
+            for z = 1:size(final_bin_idx{i}, 1)
                 bin_indexs = final_bin_idx{i};
                 half = ((bin_indexs.po(z, 1) + bin_indexs.po(z, 2)) / 2) / ppgSampleRate / 60;
                 text(half, height * 0.9, ['New Bin' newline num2str(i)], 'Color', 'g','HorizontalAlignment','Center');

@@ -87,7 +87,7 @@ AnnealSegments_noise_input = D:\USERS\MiraWelner\QTVI\QTVI-data-files\2_noise_ma
 
 
 AnnealSegments_use_handmarked_noise = 1
-AnnealSegments_AnnealType = 0
+AnnealSegments_AnnealType = 1
 AnnealSegments_segment_size_mins = 1
 AnnealSegments_ampo_window_size_mins = .2
 AnnealSegments_noise_expansion_seconds = 15
