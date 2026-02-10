@@ -1,4 +1,7 @@
 ﻿  annealing_test.cpp
+D:\USERS\MiraWelner\QTVI\testing\annealing_test\annealing_test\annealing_test.cpp(115,22): warning C4267: 'argument': conversion from 'size_t' to 'int', possible loss of data
+D:\USERS\MiraWelner\QTVI\testing\annealing_test\annealing_test\annealing_test.cpp(116,22): warning C4267: 'argument': conversion from 'size_t' to 'int', possible loss of data
+D:\USERS\MiraWelner\QTVI\testing\annealing_test\annealing_test\annealing_test.cpp(117,22): warning C4267: 'argument': conversion from 'size_t' to 'int', possible loss of data
   annealing_test.vcxproj -> D:\USERS\MiraWelner\QTVI\testing\annealing_test\x64\Debug\annealing_test.exe
   'pwsh.exe' is not recognized as an internal or external command,
   operable program or batch file.

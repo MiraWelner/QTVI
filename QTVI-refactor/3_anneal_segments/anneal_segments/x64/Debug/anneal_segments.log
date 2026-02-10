@@ -1,7 +1,4 @@
 ﻿  3_anneal_segments.cpp
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(243,33): warning C4267: 'initializing': conversion from 'size_t' to 'uint32_t', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(243,52): warning C4267: 'initializing': conversion from 'size_t' to 'uint32_t', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(243,71): warning C4267: 'initializing': conversion from 'size_t' to 'uint32_t', possible loss of data
   anneal_segments.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\x64\Debug\anneal_segments.exe
   'pwsh.exe' is not recognized as an internal or external command,
   operable program or batch file.
