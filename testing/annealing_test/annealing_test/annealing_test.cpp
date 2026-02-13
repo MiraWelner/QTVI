@@ -1,122 +1,213 @@
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <string>
 #include <cmath>
-#include <fstream>
+#include <algorithm>
 #include <matio.h>
 
-struct SegmentData {
-    std::vector<double> ppg;
-    std::vector<double> ecg;
-    std::vector<double> sleep;
+// ============================================================================
+// DATA STRUCTURES
+// ============================================================================
+
+struct AnnealedData {
+    struct Bin {
+        std::vector<double> ppg;
+        std::vector<double> ecg;
+        std::vector<double> sleep;
+    };
+    std::vector<Bin> bins;
 };
 
 // ============================================================================
-// LOAD FROM .MAT FILE (Directly from MATLAB Output)
+// HELPERS
 // ============================================================================
-std::vector<SegmentData> LoadFromMat(const std::string& path) {
-    std::vector<SegmentData> segments;
-    mat_t* matfp = Mat_Open(path.c_str(), MAT_ACC_RDONLY);
-    if (!matfp) throw std::runtime_error("Could not open MAT file: " + path);
 
-    matvar_t* annealedVar = Mat_VarRead(matfp, "annealedSegments");
-    if (!annealedVar) {
-        Mat_Close(matfp);
-        throw std::runtime_error("Variable 'annealedSegments' not found in MAT file.");
+// Helper to manually calculate element count from dims (fixes C2039 error)
+size_t getMatElementCount(const matvar_t* var) {
+    if (!var || var->rank == 0) return 0;
+    size_t count = 1;
+    for (int i = 0; i < var->rank; i++) {
+        count *= var->dims[i];
     }
-
-    size_t nBins = 1;
-    for (int i = 0; i < annealedVar->rank; i++) nBins *= annealedVar->dims[i];
-    segments.resize(nBins);
-
-    for (size_t i = 0; i < nBins; ++i) {
-        matvar_t* cell = Mat_VarGetCell(annealedVar, (int)i);
-        if (cell && cell->class_type == MAT_C_STRUCT) {
-            auto loadField = [&](const char* name, std::vector<double>& dest) {
-                matvar_t* f = Mat_VarGetStructFieldByName(cell, name, 0);
-                if (f && f->data) {
-                    double* d = (double*)f->data;
-                    size_t n = 1;
-                    for (int k = 0; k < f->rank; k++) n *= f->dims[k];
-                    dest.assign(d, d + n);
-                }
-                };
-            loadField("po", segments[i].ppg);
-            loadField("ecg", segments[i].ecg);
-            loadField("sleep_stages", segments[i].sleep);
-        }
-    }
-    Mat_VarFree(annealedVar);
-    Mat_Close(matfp);
-    return segments;
+    return count;
 }
 
 // ============================================================================
-// LOAD FROM C++ .BIN (Updated for 8-byte Headers and 8-byte Sleep)
+// C++ BINARY READER
 // ============================================================================
-std::vector<SegmentData> LoadFromCppBin(const std::string& path) {
-    std::vector<SegmentData> segments;
+
+AnnealedData readCppBin(const std::string& path) {
+    AnnealedData data;
     std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) return segments;
+    if (!file.is_open()) throw std::runtime_error("Could not open C++ bin: " + path);
 
-    uint64_t nBins;
-    file.read((char*)&nBins, 8);
-    segments.resize(nBins);
+    uint64_t numBins;
+    if (!file.read((char*)&numBins, 8)) return data;
+    data.bins.resize(numBins);
 
-    for (uint64_t i = 0; i < nBins; ++i) {
-        uint64_t pS, eS, sS; // Updated to 8-byte headers
+    for (uint64_t i = 0; i < numBins; ++i) {
+        uint64_t pS, eS, sS;
 
         // Read PPG
         file.read((char*)&pS, 8);
-        segments[i].ppg.resize(pS);
-        file.read((char*)segments[i].ppg.data(), pS * 8);
+        data.bins[i].ppg.resize(pS);
+        file.read((char*)data.bins[i].ppg.data(), pS * 8);
 
         // Read ECG
         file.read((char*)&eS, 8);
-        segments[i].ecg.resize(eS);
-        file.read((char*)segments[i].ecg.data(), eS * 8);
+        data.bins[i].ecg.resize(eS);
+        file.read((char*)data.bins[i].ecg.data(), eS * 8);
 
-        // Read Sleep (Now stored as 8-byte double)
+        // Read Sleep
         file.read((char*)&sS, 8);
-        segments[i].sleep.resize(sS);
-        file.read((char*)segments[i].sleep.data(), sS * 8);
+        data.bins[i].sleep.resize(sS);
+        file.read((char*)data.bins[i].sleep.data(), sS * 8);
     }
-    return segments;
+    return data;
 }
 
 // ============================================================================
-// COMPARISON LOGIC (STRICT)
+// MATLAB .MAT READER (USING MATIO)
 // ============================================================================
-void Verify(int bin_num, const std::string& label, const std::vector<double>& ref, const std::vector<double>& test) {
-    if (ref.size() != test.size()) {
-        std::cout << "\nBin #" << bin_num << ": [FAIL] " << label << " Size Mismatch! Mat: " << ref.size() << " C++: " << test.size() << std::endl;
-        return;
-    }
-    double max_err = 0;
-    for (size_t i = 0; i < ref.size(); ++i) {
-        double err = std::abs(ref[i] - test[i]);
-        if (err > max_err) max_err = err;
-    }
-    if (max_err >= 1e-9) {
-        std::cout << "\nBin #" << bin_num << " [FAIL] " << label << " (Max Diff: " << max_err << ")" << std::endl;
-    }
-}
 
-int main() {
-    std::string mat_file = R"(D:\USERS\MiraWelner\QTVI\QTVI-data-files\3_annealed_files\matlab\3010155_20110511_annealedSegments.mat)";
-    std::string bin_file = R"(D:\USERS\MiraWelner\QTVI\QTVI-data-files\3_annealed_files\cpp\mesa_bins\3010155_20110511_annealed.bin)";
+AnnealedData readMatlabMat(const std::string& path) {
+    AnnealedData data;
+    mat_t* matfp = Mat_Open(path.c_str(), MAT_ACC_RDONLY);
+    if (!matfp) throw std::runtime_error("Could not open MATLAB mat: " + path);
 
-    try {
-        auto matData = LoadFromMat(mat_file);
-        auto cppData = LoadFromCppBin(bin_file);
+    // Variable name in .mat is 'annealedSegments'
+    matvar_t* annSegs = Mat_VarRead(matfp, "annealedSegments");
+    if (!annSegs) {
+        Mat_Close(matfp);
+        throw std::runtime_error("Variable 'annealedSegments' not found in " + path);
+    }
 
-        size_t commonBins = std::min(matData.size(), cppData.size());
-        for (size_t b = 0; b < commonBins; ++b) {
-            Verify(b + 1, "PPG", matData[b].ppg, cppData[b].ppg);
-            Verify(b + 1, "ECG", matData[b].ecg, cppData[b].ecg);
-            Verify(b + 1, "Sleep", matData[b].sleep, cppData[b].sleep);
+    size_t numBins = getMatElementCount(annSegs);
+    data.bins.resize(numBins);
+
+    for (size_t i = 0; i < numBins; ++i) {
+        matvar_t* cell = Mat_VarGetCell(annSegs, (int)i);
+        if (!cell) continue;
+
+        // 1. Get PPG (Field: 'po')
+        matvar_t* ppgVar = Mat_VarGetStructFieldByName(cell, "po", 0);
+        if (ppgVar && ppgVar->data) {
+            size_t n = getMatElementCount(ppgVar);
+            data.bins[i].ppg.assign((double*)ppgVar->data, (double*)ppgVar->data + n);
+        }
+
+        // 2. Get ECG (Field: 'ecg')
+        matvar_t* ecgVar = Mat_VarGetStructFieldByName(cell, "ecg", 0);
+        if (ecgVar && ecgVar->data) {
+            size_t n = getMatElementCount(ecgVar);
+            data.bins[i].ecg.assign((double*)ecgVar->data, (double*)ecgVar->data + n);
+        }
+
+        // 3. Get Sleep Stages (Field: 'sleep_stages')
+        matvar_t* sleepVar = Mat_VarGetStructFieldByName(cell, "sleep_stages", 0);
+        if (sleepVar && sleepVar->data) {
+            size_t n = getMatElementCount(sleepVar);
+            data.bins[i].sleep.assign((double*)sleepVar->data, (double*)sleepVar->data + n);
         }
     }
-    catch (const std::exception& e) { std::cerr << "Error: " << e.what() << std::endl; }
+
+    Mat_VarFree(annSegs);
+    Mat_Close(matfp);
+    return data;
+}
+
+// ============================================================================
+// COMPARISON ENGINE
+// ============================================================================
+
+void runComparison(const std::string& cppPath, const std::string& matPath) {
+    std::cout << "====================================================" << std::endl;
+    std::cout << "        ANNEALING COMPARISON (MAT vs BIN)" << std::endl;
+    std::cout << "====================================================" << std::endl;
+
+    try {
+        std::cout << "Loading C++ File: " << cppPath << "..." << std::endl;
+        AnnealedData cpp = readCppBin(cppPath);
+
+        std::cout << "Loading MATLAB File: " << matPath << "..." << std::endl;
+        AnnealedData mat = readMatlabMat(matPath);
+
+        std::cout << "\n--- Header Data ---" << std::endl;
+        std::cout << "C++ Bin Count:    " << cpp.bins.size() << std::endl;
+        std::cout << "MAT Bin Count:    " << mat.bins.size() << std::endl;
+
+        if (cpp.bins.size() != mat.bins.size()) {
+            std::cout << "[WARN] Bin count mismatch!" << std::endl;
+        }
+
+        size_t totalBins = std::min(cpp.bins.size(), mat.bins.size());
+        double maxPPGDiff = 0, maxECGDiff = 0;
+        int sleepErrorCount = 0;
+
+        for (size_t i = 0; i < totalBins; ++i) {
+            // Signal Check
+            size_t pLen = std::min(cpp.bins[i].ppg.size(), mat.bins[i].ppg.size());
+            for (size_t p = 0; p < pLen; ++p)
+                maxPPGDiff = std::max(maxPPGDiff, std::abs(cpp.bins[i].ppg[p] - mat.bins[i].ppg[p]));
+
+            size_t eLen = std::min(cpp.bins[i].ecg.size(), mat.bins[i].ecg.size());
+            for (size_t e = 0; e < eLen; ++e)
+                maxECGDiff = std::max(maxECGDiff, std::abs(cpp.bins[i].ecg[e] - mat.bins[i].ecg[e]));
+
+            // Sleep Check
+            bool sleepMismatch = (cpp.bins[i].sleep.size() != mat.bins[i].sleep.size());
+            if (!sleepMismatch) {
+                for (size_t s = 0; s < cpp.bins[i].sleep.size(); ++s) {
+                    if (std::abs(cpp.bins[i].sleep[s] - mat.bins[i].sleep[s]) > 0.001) {
+                        sleepMismatch = true; break;
+                    }
+                }
+            }
+
+            if (sleepMismatch) {
+                sleepErrorCount++;
+                std::cout << "\n[FAIL] Sleep Mismatch in Bin #" << i << std::endl;
+                std::cout << "C++ (" << cpp.bins[i].sleep.size() << "): [ ";
+                for (double v : cpp.bins[i].sleep) std::cout << (int)v << " ";
+                std::cout << "]" << std::endl;
+
+                std::cout << "MAT (" << mat.bins[i].sleep.size() << "): [ ";
+                for (double v : mat.bins[i].sleep) std::cout << (int)v << " ";
+                std::cout << "]" << std::endl;
+            }
+        }
+
+        std::cout << "\n--- Final Comparison Stats ---" << std::endl;
+        std::cout << "Max PPG Abs Diff:  " << maxPPGDiff << std::endl;
+        std::cout << "Max ECG Abs Diff:  " << maxECGDiff << std::endl;
+        std::cout << "Total Sleep Error Bins: " << sleepErrorCount << " / " << totalBins << std::endl;
+
+        if (sleepErrorCount == 0 && maxPPGDiff < 1e-7 && cpp.bins.size() == mat.bins.size()) {
+            std::cout << "\nRESULT: PASS - Files are logically identical." << std::endl;
+        }
+        else {
+            std::cout << "\nRESULT: FAIL - Discrepancies found." << std::endl;
+        }
+
+    }
+    catch (const std::exception& e) {
+        std::cerr << "\nFATAL TEST ERROR: " << e.what() << std::endl;
+    }
+}
+
+// ============================================================================
+// MAIN
+// ============================================================================
+
+int main() {
+    // Paths provided by user
+    std::string cppAnnealedFile = R"(D:\USERS\MiraWelner\QTVI\QTVI-data-files\3_annealed_files\cpp\mesa_bins\3010155_20110511_annealed.bin)";
+    std::string matlabAnnealedFile = R"(D:\USERS\MiraWelner\QTVI\QTVI-data-files\3_annealed_files\matlab\3010155_20110511_annealedSegments.mat)";
+
+    runComparison(cppAnnealedFile, matlabAnnealedFile);
+
+    std::cout << "\nPress Enter to exit..." << std::endl;
+    std::cin.get();
     return 0;
 }

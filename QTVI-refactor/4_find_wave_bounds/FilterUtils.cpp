@@ -2,6 +2,8 @@
 // ============================================================================
 // File: FilterUtils.cpp
 // ============================================================================
+#define _USE_MATH_DEFINES 
+#include <set>
 #include "FilterUtils.h"
 
 // Helper function for Butterworth filter design (simplified)
@@ -164,21 +166,35 @@ vector<double> conv(const vector<double>& a, const vector<double>& b) {
 // Median filter
 vector<double> medfilt1(const vector<double>& x, int window_size) {
     size_t n = x.size();
+    if (n == 0) return {};
     vector<double> y(n);
-    int half_window = window_size / 2;
+    int half = window_size / 2;
 
-    for (size_t i = 0; i < n; ++i) {
-        vector<double> window;
+    std::multiset<double> window;
 
-        for (int j = -half_window; j <= half_window; ++j) {
-            int idx = static_cast<int>(i) + j;
-            if (idx >= 0 && idx < static_cast<int>(n)) {
-                window.push_back(x[idx]);
-            }
-        }
+    // Fill initial window with padding (or zeros) to match Matlab behavior
+    for (int i = -half; i <= half; ++i) {
+        window.insert((i < 0) ? 0.0 : x[std::min((size_t)i, n - 1)]);
+    }
 
-        std::sort(window.begin(), window.end());
-        y[i] = window[window.size() / 2];
+    auto get_median = [&]() {
+        auto it = window.begin();
+        std::advance(it, window.size() / 2);
+        return *it;
+        };
+
+    y[0] = get_median();
+
+    for (size_t i = 1; i < n; ++i) {
+        // Remove the element that fell off the left side
+        int left_idx = (int)i - half - 1;
+        window.erase(window.find(left_idx < 0 ? 0.0 : x[std::min((size_t)left_idx, n - 1)]));
+
+        // Add the new element appearing on the right side
+        int right_idx = (int)i + half;
+        window.insert(right_idx >= n ? 0.0 : x[right_idx]);
+
+        y[i] = get_median();
     }
 
     return y;

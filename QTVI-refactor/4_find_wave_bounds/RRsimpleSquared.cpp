@@ -14,7 +14,7 @@ pair<vector<size_t>, vector<double>> RRsimpleSquared(const vector<double>& ecg, 
 
     // Calculate threshold
     double meanVal = mean(ecgSigSq);
-    double stdVal = std(ecgSigSq);
+    double stdVal = std_dev(ecgSigSq);
     double threshold = meanVal + stdVal * 2;
 
     // Find peaks

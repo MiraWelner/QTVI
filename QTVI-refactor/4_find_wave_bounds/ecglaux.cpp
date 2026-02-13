@@ -15,123 +15,96 @@ tuple<vector<size_t>, double, double> ecglaux(
     double mwitholdfract,
     double mwitholdff
 ) {
-    double sl = sampling / 1000.0;
+    const double sl = sampling / 1000.0;
+    const size_t n_mwi = mwisignal.size();
+    const size_t n_ecg = ecg.size();
 
-    // now i will examine the mwisignal for threshold detection
-    int examwindow = static_cast<int>(std::round(200 * sl));  // should be <50% of a typical RRint
-    int sub1 = static_cast<int>(std::round(275 * sl));  // subtract val 1
-    int sub2 = static_cast<int>(std::round(150 * sl));  // subtract val 2
-    int lookmorepts = static_cast<int>(std::round(0 * sl));
-    int ifno = static_cast<int>(std::round(25 * sl));  // 25 msec ahead if not picked
+    // Pre-calculate all integer offsets outside the loop
+    const size_t examwindow = static_cast<size_t>(std::round(200 * sl));
+    const size_t sub1 = static_cast<size_t>(std::round(275 * sl));
+    const size_t lookmorepts = static_cast<size_t>(std::round(0 * sl));
+    const size_t ifno = static_cast<size_t>(std::round(25 * sl));
+    const size_t bufindA = static_cast<size_t>(std::round(6 * sampling / 120.0));
+    const size_t bufindC = static_cast<size_t>(std::round(4 * sampling / 120.0));
+    const size_t sl10 = static_cast<size_t>(std::round(10 * sl));
+    const size_t sl20 = static_cast<size_t>(std::round(20 * sl));
+    const size_t mwiwidth_ext = static_cast<size_t>(std::round(1.25 * mwiwidthpts));
+    const double divbufindC = static_cast<double>(bufindC + 1);
 
-    int bufindA = static_cast<int>(std::round(6 * sampling / 120.0));
-    int bufindB = static_cast<int>(std::round(2 * sampling / 120.0));
-    int bufindC = static_cast<int>(std::round(4 * sampling / 120.0));
-    int divbufindC = bufindC + 1;
+    size_t estimated_size = static_cast<size_t>(100 * n_ecg / sampling / 60.0);
+    if (estimated_size < 10) estimated_size = 100; // sensible minimum
 
-    // pre-make with zeros
-    size_t estimated_size = static_cast<size_t>(std::round(100 * ecg.size() / sampling / 60.0));
-    vector<double> Rpickval(estimated_size, 0.0);
-    vector<size_t> Rpickind(estimated_size, 0);
-    Rpickind[0] = static_cast<size_t>(-9999 * refractpts);
+    vector<double> Rpickval; Rpickval.reserve(estimated_size);
+    vector<size_t> Rpickind; Rpickind.reserve(estimated_size);
+
     double prevslopeup = 0.0;
-
-    size_t limitofwhile = mwisignal.size() - examwindow - static_cast<size_t>(1.25 * mwiwidthpts) - 1 - lookmorepts - bufindA;
-    double mwiwidthpts1pt25 = 1.25 * mwiwidthpts;
-    double sl10 = 10 * sl;
-    double sl20 = 20 * sl;
-
     size_t perpt = sub1 + 1 + bufindA;
-    size_t Rcount = 0;
+    // Safety boundary
+    const size_t stop_limit = (n_mwi > (examwindow + mwiwidth_ext + bufindA + 1)) ?
+        n_mwi - (examwindow + mwiwidth_ext + bufindA + 1) : 0;
 
-    while (perpt < limitofwhile) {
-        char taken = 'N';
-
-        // Find max in window
-        auto maxResult = max_element_index(mwisignal, perpt, perpt + examwindow);
+    while (perpt < stop_limit) {
+        // 1. Find max in current window
+        size_t windowEnd = perpt + examwindow;
+        auto maxResult = max_element_index(mwisignal, perpt, windowEnd);
         double val = maxResult.first;
-        size_t ind = maxResult.second;
-        size_t absind = ind + perpt;
+        size_t absind = maxResult.second + perpt;
 
-        // i will catch the upstroke of the MWI, at the extreme right of this window
-        size_t idx1 = static_cast<size_t>(std::round(absind + sl10));
-        size_t idx2 = static_cast<size_t>(std::round(absind + sl20));
+        // 2. Check threshold and upstroke (fast check)
+        bool possible = false;
+        if (val > mwithold) {
+            size_t idx1 = absind + sl10;
+            size_t idx2 = absind + sl20;
+            if ((idx1 < n_mwi && mwisignal[idx1] > val) || (idx2 < n_mwi && mwisignal[idx2] > val)) {
+                possible = true;
+            }
+        }
 
-        if (val > mwithold && (idx1 < mwisignal.size() && mwisignal[idx1] > val) ||
-            (idx2 < mwisignal.size() && mwisignal[idx2] > val)) {
-            // i caught the upstroke in the right window, find the max of this bump
-            size_t endIdx = static_cast<size_t>(std::round(absind + mwiwidthpts1pt25));
-            if (endIdx > mwisignal.size()) endIdx = mwisignal.size();
+        if (possible) {
+            // 3. Find MWI peak (Only call this ONCE)
+            size_t mwiEnd = std::min(absind + mwiwidth_ext, n_mwi);
+            auto mwiPeak = max_element_index(mwisignal, absind, mwiEnd);
+            double val2 = mwiPeak.first;
+            size_t Aind2 = mwiPeak.second + absind;
 
-            auto maxResult2 = max_element_index(mwisignal, absind, endIdx);
-            double val2 = maxResult2.first;
-            size_t ind2 = maxResult2.second;
-            size_t Aind2 = ind2 + absind;
-
-            // this is the max of the MWI bump
             if (val2 < 3.0 * mvimaxval) {
-                size_t pt1 = Aind2 - sub1;
-                size_t pt2 = Aind2 + lookmorepts;
+                // 4. Find ECG peak (Only call this ONCE)
+                size_t pt1 = (Aind2 > sub1) ? Aind2 - sub1 : 0;
+                size_t pt2 = std::min(Aind2 + lookmorepts, n_ecg);
 
-                if (pt2 >= ecg.size()) pt2 = ecg.size();
+                if (pt1 < pt2) {
+                    auto ecgPeak = max_element_index(ecg, pt1, pt2);
+                    size_t RpickindUP = ecgPeak.second + pt1;
 
-                auto maxECG = max_element_index(ecg, pt1, pt2);
-                double RpickvalUP = maxECG.first;
-                size_t RpickindUP = maxECG.second + pt1;
+                    // 5. Conditions check
+                    if (RpickindUP >= bufindA && RpickindUP + bufindA < n_ecg) {
+                        double nowslopeup = (RpickindUP >= bufindC) ?
+                            std::abs(ecg[RpickindUP] - ecg[RpickindUP - bufindC]) / divbufindC : 0;
 
-                double nowslopeup = 0.0;
-                if (RpickindUP >= bufindC) {
-                    nowslopeup = std::abs(ecg[RpickindUP] - ecg[RpickindUP - bufindC]) / divbufindC;
+                        bool c1 = ecg[RpickindUP - bufindA] < ecg[RpickindUP];
+                        bool c2 = ecg[RpickindUP + bufindA] < ecg[RpickindUP];
+                        bool c3 = Rpickind.empty() || (RpickindUP > Rpickind.back() + refractpts);
+                        bool c4 = nowslopeup > 0.33 * prevslopeup;
+
+                        if (c1 && c2 && c3 && c4) {
+                            // ACCEPTED - Use already calculated values
+                            Rpickval.push_back(ecgPeak.first);
+                            Rpickind.push_back(RpickindUP);
+
+                            // Update adaptive thresholds
+                            mwithold = mwitholdfract * val2 + mwitholdff * (mwithold - mwitholdfract * val2);
+                            mvimaxval = val2 + mwitholdff * (mvimaxval - val2);
+                            prevslopeup = nowslopeup + mwitholdff * (prevslopeup - nowslopeup);
+
+                            perpt = RpickindUP + refractpts;
+                            continue; // Move to next peak
+                        }
+                    }
                 }
-
-                // need to decide whether to keep slope crit or not
-                bool condition1 = RpickindUP >= bufindA && ecg[RpickindUP - bufindA] < ecg[RpickindUP];
-                bool condition2 = RpickindUP + bufindA < ecg.size() && ecg[RpickindUP + bufindA] < ecg[RpickindUP];
-                bool condition3 = RpickindUP > Rpickind[std::max(static_cast<int>(Rcount), 1) - 1] + refractpts;
-                bool condition4 = nowslopeup > 0.33 * prevslopeup;
-
-                if (condition1 && condition2 && condition3 && condition4) {
-                    taken = 'Y';
-                }
             }
         }
-
-        if (taken == 'Y') {
-            size_t pt1 = static_cast<size_t>(std::max(0, static_cast<int>(absind) - sub1));
-            size_t pt2 = absind + lookmorepts;
-            if (pt2 >= ecg.size()) pt2 = ecg.size();
-
-            auto maxECG = max_element_index(ecg, pt1, pt2);
-            double RpickvalUP = maxECG.first;
-            size_t RpickindUP = maxECG.second + pt1;
-
-            auto maxResult2 = max_element_index(mwisignal, absind,
-                static_cast<size_t>(std::round(absind + mwiwidthpts1pt25)));
-            double val2 = maxResult2.first;
-
-            double nowslopeup = 0.0;
-            if (RpickindUP >= bufindC) {
-                nowslopeup = std::abs(ecg[RpickindUP] - ecg[RpickindUP - bufindC]) / divbufindC;
-            }
-
-            if (Rcount < Rpickind.size()) {
-                Rpickval[Rcount] = RpickvalUP;
-                Rpickind[Rcount] = RpickindUP;
-                Rcount++;
-            }
-
-            perpt = RpickindUP + refractpts;
-            mwithold = mwitholdfract * val2 + mwitholdff * (mwithold - mwitholdfract * val2);
-            mvimaxval = val2 + mwitholdff * (mvimaxval - val2);
-            prevslopeup = nowslopeup + mwitholdff * (prevslopeup - nowslopeup);
-        }
-        else {
-            perpt = perpt + ifno;
-        }
+        perpt += ifno;
     }
 
-    // Resize to actual count
-    vector<size_t> rwave(Rpickind.begin(), Rpickind.begin() + Rcount);
-
-    return std::make_tuple(rwave, mwithold, mvimaxval);
+    return std::make_tuple(Rpickind, mwithold, mvimaxval);
 }

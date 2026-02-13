@@ -11,7 +11,7 @@
 double mean(const vector<double>& x);
 
 // Standard deviation
-double std(const vector<double>& x);
+double std_dev(const vector<double>& x);
 
 // Median
 double median(const vector<double>& x);

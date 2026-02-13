@@ -15,7 +15,7 @@ vector<bool> stdoutlier(const vector<double>& data,
 
     vector<double> d = diff(data);
     vector<double> x = movmean(d, mean_window);
-    double s = std(d);
+    double s = std_dev(d);
 
     vector<double> upper_bound(d.size());
     vector<double> lower_bound(d.size());
@@ -45,12 +45,13 @@ vector<bool> stdoutlier(const vector<double>& data,
 
     vector<bool> outliers(data.size(), false);
 
-    for (size_t i = 0; i < data.size() - 1; ++i) {
-        if (weridOnes[i]) {
+    for (size_t i = 0; (i + 1) < data.size(); ++i) {
+        if (i < weridOnes.size() && weridOnes[i]) { // Also safety check weridOnes
             outliers[i] = true;
             outliers[i + 1] = true;
         }
     }
+
 
     return outliers;
 }

@@ -17,7 +17,7 @@ double mean(const vector<double>& x) {
     return count > 0 ? sum / count : 0.0;
 }
 
-double std(const vector<double>& x) {
+double std_dev(const vector<double>& x) {
     if (x.size() <= 1) return 0.0;
 
     double m = mean(x);

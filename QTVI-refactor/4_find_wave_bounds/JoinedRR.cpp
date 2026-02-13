@@ -44,7 +44,7 @@ vector<size_t> RPeakfromRWave(const vector<double>& ecgSeg, const vector<size_t>
 }
 
 vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, double diff_range) {
-    if (std(ecgSeg) == 0) {
+    if (std_dev(ecgSeg) == 0) {
         return vector<size_t>();
     }
 
@@ -97,6 +97,7 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
         }
 
         output[4] = ecgLms(ecg_centered, static_cast<int>(ecgSamplingRate), b, a, 0);
+
     }
     catch (...) {
         output[4].clear();

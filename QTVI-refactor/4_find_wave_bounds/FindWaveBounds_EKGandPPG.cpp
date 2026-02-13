@@ -5,6 +5,8 @@
 #include "SegmentPPG.h"
 #include "JoinedRR.h"
 #include "pairRtoPPGBeat.h"
+#include "StatsUtils.h"
+#include <iostream>
 
 vector<WaveData> FindWaveBounds_EKGandPPG(const vector<AnnealedSegment>& annealedSegments,
     int dbg_plot,
@@ -39,9 +41,8 @@ vector<WaveData> FindWaveBounds_EKGandPPG(const vector<AnnealedSegment>& anneale
             ppgMaxAmps.clear();
             data[i].bad_segment = true;
         }
-
         if (ecgRIndex.empty() && use_R_algorithms) {
-            if (std(ecgSeg) == 0) {
+            if (std_dev(ecgSeg) == 0) {
                 rIsNoise = true;
             }
         }
@@ -92,7 +93,6 @@ vector<WaveData> FindWaveBounds_EKGandPPG(const vector<AnnealedSegment>& anneale
                 pairs.clear();
             }
         }
-
         // Populate data structure
         data[i].ecgSeg = ecgSeg;
         data[i].ppgSeg = ppgSeg;
@@ -105,6 +105,7 @@ vector<WaveData> FindWaveBounds_EKGandPPG(const vector<AnnealedSegment>& anneale
         data[i].ppgSamplingRate = ppgSamplingRate;
         data[i].ppg_bin_indexs = annealedSegments[i].ppg_bin_indexs;
         data[i].ecg_bin_indexs = annealedSegments[i].ecg_bin_indexs;
+
     }
 
     return data;
