@@ -20,12 +20,14 @@ vector<WaveData> FindWaveBounds_EKGandPPG(const vector<AnnealedSegment>& anneale
         bool rIsNoise = false;
 
         vector<size_t> ecgRIndex;
+        /*
         try {
             ecgRIndex = annealedSegments[i].r_peaks;
         }
         catch (...) {
             ecgRIndex.clear();
         }
+        */
 
         vector<double> ppgSeg = annealedSegments[i].po;
 
@@ -68,7 +70,7 @@ vector<WaveData> FindWaveBounds_EKGandPPG(const vector<AnnealedSegment>& anneale
             }
             catch (...) {
                 if (!data[i].bad_segment) {
-                    ecgRIndex.clear();
+                    //ecgRIndex.clear();
                     pairs.resize(ppgMinAmps.size(), vector<double>(2));
                     for (size_t j = 0; j < ppgMinAmps.size(); ++j) {
                         pairs[j][0] = ppgMinAmps[j];
@@ -82,7 +84,7 @@ vector<WaveData> FindWaveBounds_EKGandPPG(const vector<AnnealedSegment>& anneale
         }
         else {
             if (!data[i].bad_segment) {
-                ecgRIndex.clear();
+               // ecgRIndex.clear();
                 pairs.resize(ppgMinAmps.size(), vector<double>(2));
                 for (size_t j = 0; j < ppgMinAmps.size(); ++j) {
                     pairs[j][0] = ppgMinAmps[j];

@@ -1,4 +1,84 @@
-﻿  stdoutlier.cpp
+﻿  JoinedRR.cpp
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp(27,39): warning C4244: '=': conversion from 'const _Ty' to '_Ty', possible loss of data
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp(27,39): warning C4244:         with
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp(27,39): warning C4244:         [
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp(27,39): warning C4244:             _Ty=size_t
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp(27,39): warning C4244:         ]
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp(27,39): warning C4244:         and
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp(27,39): warning C4244:         [
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp(27,39): warning C4244:             _Ty=double
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp(27,39): warning C4244:         ]
+C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(508,64): warning C4244: 'initializing': conversion from 'const unsigned __int64' to '_Ty', possible loss of data
+C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(508,64): warning C4244:         with
+C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(508,64): warning C4244:         [
+C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(508,64): warning C4244:             _Ty=double
+C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(508,64): warning C4244:         ]
+  (compiling source file 'JoinedRR.cpp')
+      C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(508,64):
+      the template instantiation context (the oldest one first) is
+          D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp(152,55):
+          see reference to function template instantiation 'std::vector<double,std::allocator<double>>::vector<std::_Vector_const_iterator<std::_Vector_val<std::_Simple_types<_Ty>>>,0>(_Iter,_Iter,const _Alloc &)' being compiled
+          with
+          [
+              _Ty=size_t,
+              _Iter=std::_Vector_const_iterator<std::_Vector_val<std::_Simple_types<size_t>>>,
+              _Alloc=std::allocator<double>
+          ]
+              D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp(152,34):
+              see the first reference to 'std::vector<double,std::allocator<double>>::vector' in 'JoinedRR'
+          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\vector(700,13):
+          see reference to function template instantiation 'void std::vector<double,std::allocator<double>>::_Construct_n<const unsigned __int64*,const unsigned __int64*>(const unsigned __int64,const unsigned __int64 *&&,const unsigned __int64 *&&)' being compiled
+          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\vector(2120,41):
+          see reference to function template instantiation 'double *std::_Uninitialized_copy<_Ty,_Ty,std::allocator<double>>(_InIt,_Se,double *,_Alloc &)' being compiled
+          with
+          [
+              _Ty=const unsigned __int64 *,
+              _InIt=const unsigned __int64 *,
+              _Se=const unsigned __int64 *,
+              _Alloc=std::allocator<double>
+          ]
+          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xmemory(1922,18):
+          see reference to function template instantiation 'void std::_Uninitialized_backout_al<std::allocator<double>>::_Emplace_back<const unsigned __int64&>(const unsigned __int64 &)' being compiled
+          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xmemory(1864,35):
+          see reference to function template instantiation 'void std::_Default_allocator_traits<_Alloc>::construct<_Ty,const unsigned __int64&>(_Alloc &,_Objty *const ,const unsigned __int64 &)' being compiled
+          with
+          [
+              _Alloc=std::allocator<double>,
+              _Ty=double,
+              _Objty=double
+          ]
+          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xmemory(734,14):
+          see reference to function template instantiation '_Ty *std::construct_at<_Objty,const unsigned __int64&>(_Ty *const ,const unsigned __int64 &) noexcept(<expr>)' being compiled
+          with
+          [
+              _Ty=double,
+              _Objty=double
+          ]
+  
+C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(509,69): warning C4244: 'initializing': conversion from 'const unsigned __int64' to '_Objty', possible loss of data
+C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(509,69): warning C4244:         with
+C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(509,69): warning C4244:         [
+C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(509,69): warning C4244:             _Objty=double
+C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(509,69): warning C4244:         ]
+  (compiling source file 'JoinedRR.cpp')
+      C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(509,69):
+      the template instantiation context (the oldest one first) is
+          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xmemory(1864,35):
+          see reference to function template instantiation 'void std::_Default_allocator_traits<_Alloc>::construct<_Ty,const unsigned __int64&>(_Alloc &,_Objty *const ,const unsigned __int64 &)' being compiled
+          with
+          [
+              _Alloc=std::allocator<double>,
+              _Ty=double,
+              _Objty=double
+          ]
+          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xmemory(734,14):
+          see reference to function template instantiation '_Ty *std::construct_at<_Objty,const unsigned __int64&>(_Ty *const ,const unsigned __int64 &) noexcept' being compiled
+          with
+          [
+              _Ty=double,
+              _Objty=double
+          ]
+  
   4_find_wave_bounds.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\x64\Debug\4_find_wave_bounds.exe
   'pwsh.exe' is not recognized as an internal or external command,
   operable program or batch file.

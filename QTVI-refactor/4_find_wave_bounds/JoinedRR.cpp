@@ -1,8 +1,9 @@
-
-
 // ============================================================================
 // File: JoinedRR.cpp
 // ============================================================================
+#include <numeric>
+#include <cmath>
+#include <algorithm>
 #include "JoinedRR.h"
 #include "rpeakdetect.h"
 #include "pan_tompkin.h"
@@ -37,11 +38,49 @@ vector<vector<double>> sortedList(const vector<vector<size_t>>& output, const ve
     return lst;
 }
 
-// Helper to get R peak from R wave (simplified)
-vector<size_t> RPeakfromRWave(const vector<double>& ecgSeg, const vector<size_t>& rwaves) {
-    // This is a placeholder - actual implementation would refine peak locations
-    return rwaves;
+vector<size_t> RPeakfromRWave(const vector<double>& ecg, const vector<size_t>& rWaveIdx) {
+    if (rWaveIdx.size() <= 1) {
+        return rWaveIdx;
+    }
+
+    // Calculate median difference to determine window size
+    vector<double> diffs;
+    for (size_t i = 1; i < rWaveIdx.size(); ++i) {
+        diffs.push_back(static_cast<double>(rWaveIdx[i]) - rWaveIdx[i - 1]);
+    }
+    std::sort(diffs.begin(), diffs.end());
+    double avg_diff = diffs[diffs.size() / 2];
+    int half_window_size = static_cast<int>(std::round(avg_diff / 6.0));
+
+    vector<size_t> ridxs = rWaveIdx;
+
+    for (size_t i = 0; i < rWaveIdx.size(); ++i) {
+        // Define the search window boundaries
+        int start_idx = static_cast<int>(rWaveIdx[i]) - half_window_size;
+        int end_idx = static_cast<int>(rWaveIdx[i]) + half_window_size;
+
+        // Clip to vector bounds
+        size_t winstart = std::max(0, start_idx);
+        size_t winend = std::min(static_cast<int>(ecg.size()) - 1, end_idx);
+
+        if (winstart >= winend) continue;
+
+        // Find the local maximum within the window
+        double max_val = ecg[winstart];
+        size_t max_id = winstart;
+
+        for (size_t j = winstart + 1; j <= winend; ++j) {
+            if (ecg[j] > max_val) {
+                max_val = ecg[j];
+                max_id = j;
+            }
+        }
+        ridxs[i] = max_id;
+    }
+
+    return ridxs;
 }
+
 
 vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, double diff_range) {
     if (std_dev(ecgSeg) == 0) {
@@ -136,63 +175,44 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
     potentialPeaks = sortedList(output, weights);
 
     // Shift peaks within diff_range to largest value
-    vector<double> uniq;
-    for (const auto& peak : potentialPeaks) {
-        if (uniq.empty() || uniq.back() != peak[0]) {
-            uniq.push_back(peak[0]);
-        }
+        // 1. Get unique peak locations
+    std::map<size_t, double> weighted_map;
+    for (const auto& p : potentialPeaks) {
+        weighted_map[static_cast<size_t>(p[0])] += p[1];
     }
 
-    vector<bool> mask(uniq.size() - 1, false);
-    for (size_t i = 0; i < uniq.size() - 1; ++i) {
-        if (uniq[i + 1] - uniq[i] <= diff_range) {
-            mask[i] = true;
-        }
-    }
+    // 2. Iterative Merging (Matches MATLAB diff_range logic)
+    // We group peaks that are within diff_range and move them to the strongest local ECG point
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        vector<size_t> keys;
+        for (auto const& [key, val] : weighted_map) keys.push_back(key);
+        std::sort(keys.begin(), keys.end());
 
-    for (size_t i = 0; i < mask.size(); ++i) {
-        if (mask[i]) {
-            size_t idx1 = static_cast<size_t>(uniq[i]);
-            size_t idx2 = static_cast<size_t>(uniq[i + 1]);
+        for (size_t i = 0; i + 1 < keys.size(); ++i) {
+            if (keys[i + 1] - keys[i] <= diff_range) {
+                // Determine which peak is "better" (higher voltage)
+                size_t best_idx = (ecgSeg[keys[i]] > ecgSeg[keys[i + 1]]) ? keys[i] : keys[i + 1];
+                size_t worse_idx = (best_idx == keys[i]) ? keys[i + 1] : keys[i];
 
-            if (idx1 < ecgSeg.size() && idx2 < ecgSeg.size()) {
-                double target = ecgSeg[idx1] > ecgSeg[idx2] ? uniq[i] : uniq[i + 1];
+                // Merge weights to the best index
+                weighted_map[best_idx] += weighted_map[worse_idx];
+                weighted_map.erase(worse_idx);
 
-                for (auto& peak : potentialPeaks) {
-                    if (peak[0] == uniq[i] || peak[0] == uniq[i + 1]) {
-                        peak[0] = target;
-                    }
-                }
+                changed = true;
+                break; // Restart loop to ensure consistency
             }
         }
     }
 
-    // Recalculate unique
-    uniq.clear();
-    for (const auto& peak : potentialPeaks) {
-        if (uniq.empty() || uniq.back() != peak[0]) {
-            uniq.push_back(peak[0]);
-        }
-    }
-
-    // Calculate weighted peaks
-    map<double, double> weighted_peaks_map;
-    for (const auto& peak : potentialPeaks) {
-        weighted_peaks_map[peak[0]] += peak[1];
-    }
-
-    vector<vector<double>> weighted_peaks;
-    for (const auto& entry : weighted_peaks_map) {
-        weighted_peaks.push_back({ entry.first, entry.second });
-    }
-
-    // Filter by threshold
+    // 3. Apply the 2.4 Threshold
     vector<size_t> rr;
-    for (const auto& peak : weighted_peaks) {
-        if (peak[1] >= 2.4) {
-            rr.push_back(static_cast<size_t>(peak[0]));
+    for (auto const& [idx, weight] : weighted_map) {
+        if (weight >= 2.4) {
+            rr.push_back(idx);
         }
     }
-
+    std::sort(rr.begin(), rr.end());
     return rr;
 }

@@ -55,15 +55,19 @@ AnnealedData readCppBin(const std::string& path, double ecgFs, double ppgFs) {
 void saveWaveData(const std::string& path, const std::vector<WaveData>& results) {
     std::ofstream file(path, std::ios::binary);
     if (!file.is_open()) return;
+
     uint64_t numBins = results.size();
     file.write(reinterpret_cast<char*>(&numBins), 8);
+
     for (const auto& bin : results) {
-        uint64_t numPairs = bin.pairs.size();
-        file.write(reinterpret_cast<char*>(&numPairs), 8);
-        for (const auto& row : bin.pairs) {
-            double pIdx = row[0], eIdx = row[1];
-            file.write(reinterpret_cast<char*>(&pIdx), 8);
-            file.write(reinterpret_cast<char*>(&eIdx), 8);
+        // Save the raw R-peaks count
+        uint64_t numRPeaks = bin.ecgRIndex.size();
+        file.write(reinterpret_cast<char*>(&numRPeaks), 8);
+
+        // Save each R-peak index as a double (to match MATLAB's precision)
+        for (size_t rIdx : bin.ecgRIndex) {
+            double val = static_cast<double>(rIdx);
+            file.write(reinterpret_cast<char*>(&val), 8);
         }
     }
 }

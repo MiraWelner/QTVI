@@ -1,5 +1,5 @@
  clear
-props = readProps('config.txt');
+props = readProps('../config.txt');
 Annealed_segments = props('FWB_input_path');
 output_path = props('FWB_output_path');
 Skip_Existing = logical(str2num(props('Skip_Existing')));

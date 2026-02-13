@@ -34,7 +34,7 @@ RPeakDetectResult rpeakdetect(const vector<double>& data, double samp_freq, doub
         int N = 3;
         vector<double> a, b;
         butter(N, Wn, "low", b, a);
-        bpf = filtfilt(a, b, x);
+        bpf = filtfilt(b, a, x);
 
         // Normalize
         double maxAbsBpf = 0.0;
@@ -50,7 +50,7 @@ RPeakDetectResult rpeakdetect(const vector<double>& data, double samp_freq, doub
         // High pass filter
         Wn = 5.0 * 2.0 / samp_freq;
         butter(N, Wn, "high", b, a);
-        bpf = filtfilt(a, b, bpf);
+        bpf = filtfilt(b, a, bpf);
 
         // Normalize again
         maxAbsBpf = 0.0;
@@ -71,7 +71,7 @@ RPeakDetectResult rpeakdetect(const vector<double>& data, double samp_freq, doub
         int N = 3;
         vector<double> a, b;
         butter(N, Wn, b, a);
-        bpf = filtfilt(a, b, x);
+        bpf = filtfilt(b, a, x);
 
         // Normalize
         double maxAbsBpf = 0.0;
@@ -111,10 +111,8 @@ RPeakDetectResult rpeakdetect(const vector<double>& data, double samp_freq, doub
     vector<double> mdfint_delayed(mdfint.begin() + delay, mdfint.end());
 
     // Find highest bumps
-    size_t start = len / 4;
-    size_t end = 3 * len / 4;
-    double max_h = -Inf;
-    for (size_t i = start; i < end && i < mdfint_delayed.size(); ++i) {
+    double max_h = -1.0;
+    for (size_t i = 0; i < mdfint_delayed.size(); ++i) {
         if (mdfint_delayed[i] > max_h) {
             max_h = mdfint_delayed[i];
         }

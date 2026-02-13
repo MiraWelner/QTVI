@@ -1,0 +1,41 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI\\testing\\testing_wavebounds\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{223DA247-366A-43DC-A6D7-176FFCD3F5E1}|testing_wavebounds\\testing_wavebounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\testing\\testing_wavebounds\\testing_wavebounds\\testing_wavebounds.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{223DA247-366A-43DC-A6D7-176FFCD3F5E1}|testing_wavebounds\\testing_wavebounds.vcxproj|solutionrelative:testing_wavebounds\\testing_wavebounds.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 1,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{aa2115a1-9712-457b-9047-dbb71ca2cdd2}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "testing_wavebounds.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\testing\\testing_wavebounds\\testing_wavebounds\\testing_wavebounds.cpp",
+              "RelativeDocumentMoniker": "testing_wavebounds\\testing_wavebounds.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\testing\\testing_wavebounds\\testing_wavebounds\\testing_wavebounds.cpp",
+              "RelativeToolTip": "testing_wavebounds\\testing_wavebounds.cpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAACcAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-02-13T17:38:40.299Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
