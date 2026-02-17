@@ -119,7 +119,9 @@ int main(int argc, char** argv) {
         else if (bin_count > 0 && mat_count > 0) {
             int k;
             for (int k = 0; k < size(binR[i]); ++k) {
-                std::cout << k << " Peak: BIN=" << binR[i][k] << ", MAT=" << matR[i][k] << std::endl;
+                if (binR[i][k] + 1 != matR[i][k]) {
+                    std::cout << "Peak " << k << ": BIN=" << binR[i][k] << ", MAT=" << matR[i][k] << std::endl;
+                }
             }
         }
         else if (bin_count == 0 && mat_count > 0) {

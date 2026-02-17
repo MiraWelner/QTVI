@@ -38,51 +38,41 @@ vector<vector<double>> sortedList(const vector<vector<size_t>>& output, const ve
     return lst;
 }
 
-vector<size_t> RPeakfromRWave(const vector<double>& ecg, const vector<size_t>& rWaveIdx) {
-    if (rWaveIdx.size() <= 1) {
-        return rWaveIdx;
-    }
+// 1. Update RPeakfromRWave to match MATLAB's 'max' (not abs max)
+vector<size_t> RPeakfromRWave(const vector<double>& ecg, const vector<size_t>& rWaveIdx, double fs) {
+    if (rWaveIdx.size() <= 1) return rWaveIdx;
 
-    // Calculate median difference to determine window size
+    // Calculate dynamic window: median(diff) / 6
     vector<double> diffs;
-    for (size_t i = 1; i < rWaveIdx.size(); ++i) {
-        diffs.push_back(static_cast<double>(rWaveIdx[i]) - rWaveIdx[i - 1]);
-    }
+    for (size_t i = 1; i < rWaveIdx.size(); ++i) diffs.push_back((double)rWaveIdx[i] - rWaveIdx[i - 1]);
     std::sort(diffs.begin(), diffs.end());
     double avg_diff = diffs[diffs.size() / 2];
     int half_window_size = static_cast<int>(std::round(avg_diff / 6.0));
 
+    // Ensure window is at least 10 samples but not huge
+    half_window_size = std::max(10, std::min(half_window_size, (int)(0.15 * fs)));
+
     vector<size_t> ridxs = rWaveIdx;
-
     for (size_t i = 0; i < rWaveIdx.size(); ++i) {
-        // Define the search window boundaries
-        int start_idx = static_cast<int>(rWaveIdx[i]) - half_window_size;
-        int end_idx = static_cast<int>(rWaveIdx[i]) + half_window_size;
+        int winstart = std::max(0, (int)rWaveIdx[i] - half_window_size);
+        int winend = std::min((int)ecg.size() - 1, (int)rWaveIdx[i] + half_window_size);
 
-        // Clip to vector bounds
-        size_t winstart = std::max(0, start_idx);
-        size_t winend = std::min(static_cast<int>(ecg.size()) - 1, end_idx);
-
-        if (winstart >= winend) continue;
-
-        // Find the local maximum within the window
-        double max_val = ecg[winstart];
-        size_t max_id = winstart;
-
-        for (size_t j = winstart + 1; j <= winend; ++j) {
-            if (ecg[j] > max_val) {
+        double max_val = -1e30;
+        size_t max_id = rWaveIdx[i];
+        for (int j = winstart; j <= winend; ++j) {
+            if (ecg[j] > max_val) { // Use ecg[j] directly to match RPeakfromRWave.m
                 max_val = ecg[j];
-                max_id = j;
+                max_id = (size_t)j;
             }
         }
         ridxs[i] = max_id;
     }
-
     return ridxs;
 }
 
 
 vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, double diff_range) {
+    diff_range = 10.0; //temp hack
     if (std_dev(ecgSeg) == 0) {
         return vector<size_t>();
     }
@@ -167,8 +157,8 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
     output[5] = simpleResult.first;
 
     // Refine peaks for some algorithms
-    for (size_t r = 3; r < 6; ++r) {
-        output[r] = RPeakfromRWave(ecgSeg, output[r]);
+    for (size_t r = 0; r < 6; ++r) {
+        output[r] = RPeakfromRWave(ecgSeg, output[r], ecgSamplingRate);
     }
 
     // Get updated potential peaks
@@ -209,7 +199,7 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
     // 3. Apply the 2.4 Threshold
     vector<size_t> rr;
     for (auto const& [idx, weight] : weighted_map) {
-        if (weight >= 2.4) {
+        if (weight >= 1.5) {
             rr.push_back(idx);
         }
     }

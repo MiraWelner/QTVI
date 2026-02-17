@@ -6,11 +6,12 @@
 #define PEAKFINDER_H
 
 #include "SignalProcessingTypes.h"
+#include <vector>
 
 // Find peaks with minimum peak distance
-void findpeaks(const vector<double>& data,
-    vector<double>& pks,
-    vector<size_t>& locs,
+void findpeaks(const std::vector<double>& data,
+    std::vector<double>& pks,
+    std::vector<size_t>& locs,
     double minPeakDistance = 0);
 
 #endif // PEAKFINDER_H
