@@ -117,7 +117,10 @@ int main(int argc, char** argv) {
             std::cout << "  [STATUS] C++ found peaks but failed to pair them (values are -1)." << std::endl;
         }
         else if (bin_count > 0 && mat_count > 0) {
-            std::cout << "  First Peak: BIN=" << binR[i][0] << ", MAT=" << matR[i][0] << std::endl;
+            int k;
+            for (int k = 0; k < size(binR[i]); ++k) {
+                std::cout << k << " Peak: BIN=" << binR[i][k] << ", MAT=" << matR[i][k] << std::endl;
+            }
         }
         else if (bin_count == 0 && mat_count > 0) {
             std::cout << "  [STATUS] BIN has no peaks for this bin, MAT has " << mat_count << " peaks." << std::endl;

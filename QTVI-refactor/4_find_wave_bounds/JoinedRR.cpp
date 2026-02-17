@@ -191,8 +191,8 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
         std::sort(keys.begin(), keys.end());
 
         for (size_t i = 0; i + 1 < keys.size(); ++i) {
-            if (keys[i + 1] - keys[i] <= diff_range) {
-                // Determine which peak is "better" (higher voltage)
+            if (keys[i + 1] - keys[i] <= diff_range) { 
+                // Determine which index corresponds to the higher up peak
                 size_t best_idx = (ecgSeg[keys[i]] > ecgSeg[keys[i + 1]]) ? keys[i] : keys[i + 1];
                 size_t worse_idx = (best_idx == keys[i]) ? keys[i + 1] : keys[i];
 

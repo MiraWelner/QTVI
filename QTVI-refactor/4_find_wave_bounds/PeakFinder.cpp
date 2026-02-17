@@ -1,48 +1,55 @@
-// ============================================================================
-// File: PeakFinder.cpp
-// ============================================================================
 #include "PeakFinder.h"
+#include <algorithm>
 
-void findpeaks(const vector<double>& data,
-    vector<double>& pks,
-    vector<size_t>& locs,
-    double minPeakDistance) {
-    pks.clear();
-    locs.clear();
+struct Peak {
+    double val;
+    size_t pos;
+};
 
+void findpeaks(const vector<double>& data, vector<double>& pks, vector<size_t>& locs, double minPeakDistance) {
+    pks.clear(); locs.clear();
     if (data.size() < 3) return;
 
-    // Find all local maxima
+    vector<Peak> candidates;
+    // 1. Identify all local maxima (handling plateaus)
     for (size_t i = 1; i < data.size() - 1; ++i) {
-        if (data[i] > data[i - 1] && data[i] > data[i + 1]) {
-            pks.push_back(data[i]);
-            locs.push_back(i);
+        if (data[i] > data[i - 1]) {
+            size_t j = i;
+            while (j < data.size() - 1 && data[j] == data[j + 1]) j++;
+            if (j < data.size() - 1 && data[j] > data[j + 1]) {
+                candidates.push_back({ data[i], i + (j - i) / 2 });
+                i = j;
+            }
         }
     }
 
-    // Apply minimum peak distance filter
-    if (minPeakDistance > 0 && !locs.empty()) {
-        vector<double> filtered_pks;
-        vector<size_t> filtered_locs;
+    // 2. Priority Sort (Tallest peaks first) - This is what MATLAB does
+    sort(candidates.begin(), candidates.end(), [](const Peak& a, const Peak& b) {
+        return a.val > b.val;
+        });
 
-        filtered_pks.push_back(pks[0]);
-        filtered_locs.push_back(locs[0]);
+    // 3. Elimination based on MinPeakDistance
+    vector<bool> keep(candidates.size(), true);
+    vector<Peak> final_peaks;
 
-        for (size_t i = 1; i < locs.size(); ++i) {
-            if (locs[i] - filtered_locs.back() >= minPeakDistance) {
-                filtered_pks.push_back(pks[i]);
-                filtered_locs.push_back(locs[i]);
-            }
-            else {
-                // Keep the larger peak
-                if (pks[i] > filtered_pks.back()) {
-                    filtered_pks.back() = pks[i];
-                    filtered_locs.back() = locs[i];
-                }
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        if (!keep[i]) continue;
+        final_peaks.push_back(candidates[i]);
+
+        for (size_t j = i + 1; j < candidates.size(); ++j) {
+            if (keep[j] && abs((long long)candidates[i].pos - (long long)candidates[j].pos) < minPeakDistance) {
+                keep[j] = false;
             }
         }
+    }
 
-        pks = filtered_pks;
-        locs = filtered_locs;
+    // 4. Sort back to temporal order
+    sort(final_peaks.begin(), final_peaks.end(), [](const Peak& a, const Peak& b) {
+        return a.pos < b.pos;
+        });
+
+    for (auto& p : final_peaks) {
+        pks.push_back(p.val);
+        locs.push_back(p.pos);
     }
 }
