@@ -20,10 +20,13 @@ tuple<vector<size_t>, double, double> ecglaux(
     const size_t n_ecg = ecg.size();
 
     // Pre-calculate all integer offsets outside the loop
-    const size_t examwindow = static_cast<size_t>(std::round(200 * sl));
+
+    // Near the top of ecglaux.cpp
+// Increase the lookback/lookahead to find the first peak
+    const size_t examwindow = static_cast<size_t>(std::round(300 * sl)); // 200 -> 300
+    const size_t ifno = static_cast<size_t>(std::round(10 * sl));       // 25 -> 10 (Search more densely)
     const size_t sub1 = static_cast<size_t>(std::round(275 * sl));
     const size_t lookmorepts = static_cast<size_t>(std::round(0 * sl));
-    const size_t ifno = static_cast<size_t>(std::round(25 * sl));
     const size_t bufindA = static_cast<size_t>(std::round(6 * sampling / 120.0));
     const size_t bufindC = static_cast<size_t>(std::round(4 * sampling / 120.0));
     const size_t sl10 = static_cast<size_t>(std::round(10 * sl));
@@ -38,7 +41,7 @@ tuple<vector<size_t>, double, double> ecglaux(
     vector<size_t> Rpickind; Rpickind.reserve(estimated_size);
 
     double prevslopeup = 0.0;
-    size_t perpt = sub1 + 1 + bufindA;
+    size_t perpt = + 1 + bufindA;
     // Safety boundary
     const size_t stop_limit = (n_mwi > (examwindow + mwiwidth_ext + bufindA + 1)) ?
         n_mwi - (examwindow + mwiwidth_ext + bufindA + 1) : 0;

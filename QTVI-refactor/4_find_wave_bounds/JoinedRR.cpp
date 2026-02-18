@@ -1,9 +1,3 @@
-// ============================================================================
-// File: JoinedRR.cpp
-// ============================================================================
-#include <numeric>
-#include <cmath>
-#include <algorithm>
 #include "JoinedRR.h"
 #include "rpeakdetect.h"
 #include "pan_tompkin.h"
@@ -11,198 +5,131 @@
 #include "RRsimpleSquared.h"
 #include "StatsUtils.h"
 #include "FilterUtils.h"
+#include <algorithm>
+#include <vector>
+#include <map> // Required for weight merging
 
-// Helper function to create sorted list
-vector<vector<double>> sortedList(const vector<vector<size_t>>& output, const vector<double>& weight) {
-    size_t total_length = 0;
-    for (const auto& vec : output) {
-        total_length += vec.size();
-    }
-
-    vector<vector<double>> lst(total_length, vector<double>(2));
-
-    size_t prev = 0;
-    for (size_t i = 0; i < output.size(); ++i) {
-        for (size_t j = 0; j < output[i].size(); ++j) {
-            lst[prev][0] = output[i][j];
-            lst[prev][1] = weight[i];
-            prev++;
-        }
-    }
-
-    std::sort(lst.begin(), lst.end(),
-        [](const vector<double>& a, const vector<double>& b) {
-            return a[0] < b[0];
-        });
-
-    return lst;
-}
-
-// 1. Update RPeakfromRWave to match MATLAB's 'max' (not abs max)
+// Refinement helper (ensures algorithms snap to the local maximum)
 vector<size_t> RPeakfromRWave(const vector<double>& ecg, const vector<size_t>& rWaveIdx, double fs) {
-    if (rWaveIdx.size() <= 1) return rWaveIdx;
+    if (rWaveIdx.empty()) return {};
+    if (rWaveIdx.size() == 1) return rWaveIdx;
 
-    // Calculate dynamic window: median(diff) / 6
-    vector<double> diffs;
-    for (size_t i = 1; i < rWaveIdx.size(); ++i) diffs.push_back((double)rWaveIdx[i] - rWaveIdx[i - 1]);
-    std::sort(diffs.begin(), diffs.end());
-    double avg_diff = diffs[diffs.size() / 2];
-    int half_window_size = static_cast<int>(std::round(avg_diff / 6.0));
+    vector<double> d;
+    for (size_t i = 1; i < rWaveIdx.size(); ++i) d.push_back((double)rWaveIdx[i] - rWaveIdx[i - 1]);
+    double half_win = median(d) / 6.0;
 
-    // Ensure window is at least 10 samples but not huge
-    half_window_size = std::max(10, std::min(half_window_size, (int)(0.15 * fs)));
-
-    vector<size_t> ridxs = rWaveIdx;
+    vector<size_t> refined = rWaveIdx;
     for (size_t i = 0; i < rWaveIdx.size(); ++i) {
-        int winstart = std::max(0, (int)rWaveIdx[i] - half_window_size);
-        int winend = std::min((int)ecg.size() - 1, (int)rWaveIdx[i] + half_window_size);
+        int start = std::max(0, (int)std::round((double)rWaveIdx[i] - half_win));
+        int end = std::min((int)ecg.size() - 1, (int)std::round((double)rWaveIdx[i] + half_win));
 
-        double max_val = -1e30;
-        size_t max_id = rWaveIdx[i];
-        for (int j = winstart; j <= winend; ++j) {
-            if (ecg[j] > max_val) { // Use ecg[j] directly to match RPeakfromRWave.m
-                max_val = ecg[j];
-                max_id = (size_t)j;
-            }
+        double max_v = -1e30;
+        size_t max_i = rWaveIdx[i];
+        for (int j = start; j <= end; ++j) {
+            if (ecg[j] > max_v) { max_v = ecg[j]; max_i = (size_t)j; }
         }
-        ridxs[i] = max_id;
+        refined[i] = max_i;
     }
-    return ridxs;
+    return refined;
 }
-
 
 vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, double diff_range) {
-    diff_range = 10.0; //temp hack
-    if (std_dev(ecgSeg) == 0) {
-        return vector<size_t>();
-    }
+    if (std_dev(ecgSeg) == 0) return {};
 
-    // Run multiple algorithms
+    // 1. Run Ensemble
     vector<vector<size_t>> output(6);
     vector<double> weights = { 0.75, 0.25, 0.25, 1.25, 1.5, 0.75 };
 
-    try {
-        auto result1 = rpeakdetect(ecgSeg, ecgSamplingRate);
-        output[0] = result1.R_index;
-    }
-    catch (...) {
-        output[0].clear();
-    }
+    output[0] = rpeakdetect(ecgSeg, ecgSamplingRate).R_index;
+    output[1] = rpeakdetect(ecgSeg, ecgSamplingRate, 0.1).R_index;
+    output[2] = rpeakdetect(ecgSeg, ecgSamplingRate, 0.4).R_index;
+    output[3] = pan_tompkin(ecgSeg, ecgSamplingRate).qrs_i_raw;
 
-    try {
-        auto result2 = rpeakdetect(ecgSeg, ecgSamplingRate, 0.1);
-        output[1] = result2.R_index;
-    }
-    catch (...) {
-        output[1].clear();
-    }
+    vector<double> b, a;
+    butter(3, { 5.0 * 2.0 / ecgSamplingRate, 12.0 * 2.0 / ecgSamplingRate }, b, a);
+    output[4] = ecgLms(ecgSeg, (int)ecgSamplingRate, b, a, 0);
 
-    try {
-        auto result3 = rpeakdetect(ecgSeg, ecgSamplingRate, 0.4);
-        output[2] = result3.R_index;
-    }
-    catch (...) {
-        output[2].clear();
-    }
-
-    try {
-        auto result4 = pan_tompkin(ecgSeg, ecgSamplingRate);
-        output[3] = result4.qrs_i_raw;
-    }
-    catch (...) {
-        output[3].clear();
-    }
-
-    try {
-        // Create butter filter coefficients
-        vector<double> b, a;
-        vector<double> Wn = { 5.0 * 2.0 / ecgSamplingRate, 12.0 * 2.0 / ecgSamplingRate };
-        butter(3, Wn, b, a);
-
-        vector<double> ecg_centered = ecgSeg;
-        double meanVal = mean(ecgSeg);
-        for (auto& val : ecg_centered) {
-            val -= meanVal;
-        }
-
-        output[4] = ecgLms(ecg_centered, static_cast<int>(ecgSamplingRate), b, a, 0);
-
-    }
-    catch (...) {
-        output[4].clear();
-    }
-
-    // Get initial potential peaks
-    auto potentialPeaks = sortedList(output, weights);
-
-    // Calculate median distance
-    vector<double> median_dists;
-    for (const auto& vec : output) {
-        if (vec.size() > 1) {
-            vector<double> diffs = diff(vector<double>(vec.begin(), vec.end()));
-            double med = median(diffs);
-            if (!std::isnan(med)) {
-                median_dists.push_back(med);
-            }
+    vector<double> dists;
+    for (int i = 0; i < 5; ++i) {
+        if (output[i].size() > 1) {
+            vector<double> d = diff(vector<double>(output[i].begin(), output[i].end()));
+            dists.push_back(median(d));
         }
     }
+    double m_dist = (!dists.empty()) ? median(dists) : (ecgSamplingRate * 0.6);
+    output[5] = RRsimpleSquared(ecgSeg, m_dist / 2.0).first;
 
-    double median_dist = median(median_dists);
-    if (std::isnan(median_dist)) {
-        median_dist = ecgSamplingRate * 0.6;  // default ~60 BPM
-    }
-
-    // Add simple squared method
-    auto simpleResult = RRsimpleSquared(ecgSeg, median_dist / 2.0);
-    output[5] = simpleResult.first;
-
-    // Refine peaks for some algorithms
+    // 2. Refine ALL algorithms to ensure they are looking at the same peak sample
     for (size_t r = 0; r < 6; ++r) {
         output[r] = RPeakfromRWave(ecgSeg, output[r], ecgSamplingRate);
     }
 
-    // Get updated potential peaks
-    potentialPeaks = sortedList(output, weights);
+    // 3. Flatten detections with Algorithm ID
+    struct PeakDet { size_t pos; double weight; int algo_idx; };
+    vector<PeakDet> all_dets;
+    for (int i = 0; i < 6; ++i) {
+        for (size_t p : output[i]) all_dets.push_back({ p, weights[i], i });
+    }
+    std::sort(all_dets.begin(), all_dets.end(), [](const PeakDet& a, const PeakDet& b) {
+        return a.pos < b.pos;
+        });
 
-    // Shift peaks within diff_range to largest value
-        // 1. Get unique peak locations
-    std::map<size_t, double> weighted_map;
-    for (const auto& p : potentialPeaks) {
-        weighted_map[static_cast<size_t>(p[0])] += p[1];
+    // 4. Chained Cluster Merging
+    vector<size_t> candidates;
+    if (all_dets.empty()) return candidates;
+
+    vector<PeakDet> cluster;
+    for (size_t i = 0; i < all_dets.size(); ++i) {
+        if (cluster.empty() || (double)all_dets[i].pos - (double)cluster.back().pos <= diff_range) {
+            cluster.push_back(all_dets[i]);
+        }
+        else {
+            // Process the finished cluster
+            std::map<int, double> algo_weights;
+            size_t best_pos = cluster[0].pos;
+            double max_v = -1e30;
+            for (auto& pd : cluster) {
+                if (pd.weight > algo_weights[pd.algo_idx]) algo_weights[pd.algo_idx] = pd.weight;
+                if (ecgSeg[pd.pos] > max_v) { max_v = ecgSeg[pd.pos]; best_pos = pd.pos; }
+            }
+            double total_w = 0;
+            for (auto const& [id, w] : algo_weights) total_w += w;
+
+            // USE 2.0: Higher threshold to prevent T-waves/S-waves from being counted
+            if (total_w >= 2.0) candidates.push_back(best_pos);
+
+            cluster.clear();
+            cluster.push_back(all_dets[i]);
+        }
+    }
+    // Handle last cluster
+    if (!cluster.empty()) {
+        std::map<int, double> algo_weights;
+        size_t best_pos = cluster[0].pos;
+        double max_v = -1e30;
+        for (auto& pd : cluster) {
+            if (pd.weight > algo_weights[pd.algo_idx]) algo_weights[pd.algo_idx] = pd.weight;
+            if (ecgSeg[pd.pos] > max_v) { max_v = ecgSeg[pd.pos]; best_pos = pd.pos; }
+        }
+        double total_w = 0;
+        for (auto const& [id, w] : algo_weights) total_w += w;
+        if (total_w >= 2.0) candidates.push_back(best_pos);
     }
 
-    // 2. Iterative Merging (Matches MATLAB diff_range logic)
-    // We group peaks that are within diff_range and move them to the strongest local ECG point
-    bool changed = true;
-    while (changed) {
-        changed = false;
-        vector<size_t> keys;
-        for (auto const& [key, val] : weighted_map) keys.push_back(key);
-        std::sort(keys.begin(), keys.end());
-
-        for (size_t i = 0; i + 1 < keys.size(); ++i) {
-            if (keys[i + 1] - keys[i] <= diff_range) { 
-                // Determine which index corresponds to the higher up peak
-                size_t best_idx = (ecgSeg[keys[i]] > ecgSeg[keys[i + 1]]) ? keys[i] : keys[i + 1];
-                size_t worse_idx = (best_idx == keys[i]) ? keys[i + 1] : keys[i];
-
-                // Merge weights to the best index
-                weighted_map[best_idx] += weighted_map[worse_idx];
-                weighted_map.erase(worse_idx);
-
-                changed = true;
-                break; // Restart loop to ensure consistency
+    // 5. --- REFRACTORY PERIOD FILTER (250ms) ---
+    vector<size_t> final_rr;
+    double refractory_samples = 0.25 * ecgSamplingRate; // 250ms
+    for (size_t p : candidates) {
+        if (final_rr.empty() || (p - final_rr.back()) > refractory_samples) {
+            final_rr.push_back(p);
+        }
+        else {
+            // If two beats are too close, keep the one with higher ECG voltage
+            if (ecgSeg[p] > ecgSeg[final_rr.back()]) {
+                final_rr.back() = p;
             }
         }
     }
 
-    // 3. Apply the 2.4 Threshold
-    vector<size_t> rr;
-    for (auto const& [idx, weight] : weighted_map) {
-        if (weight >= 1.5) {
-            rr.push_back(idx);
-        }
-    }
-    std::sort(rr.begin(), rr.end());
-    return rr;
+    return final_rr;
 }

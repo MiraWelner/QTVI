@@ -26,9 +26,8 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg, double fs, int gr) {
 
     // 3. Derivative Filter - Zero Phase (FiltFilt)
     // Delay = 0
-    vector<double> b_d = { 1.0, 2.0, 0.0, -2.0, -1.0 };
-    for (auto& v : b_d) v *= (fs / 8.0);
-    vector<double> ecg_d = filtfilt({ 1.0 }, b_d, ecg_h);
+    vector<double> ecg_d = diff(ecg_h);
+    ecg_d.push_back(0);
 
     // 4. Squaring
     vector<double> ecg_s(ecg_d.size());
@@ -73,7 +72,7 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg, double fs, int gr) {
     vector<size_t> qrs_i_raw;
     for (size_t i = 0; i < locs.size(); ++i) {
         // Skip first 150ms to avoid edge transients
-        if (locs[i] < 0.15 * fs) continue;
+        if (locs[i] < 0.05 * fs) continue;
 
         double THR_SIG = NOISE_LEV + 0.25 * (SIG_LEV - NOISE_LEV);
 

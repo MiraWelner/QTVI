@@ -51,54 +51,64 @@ RPeakDetectResult rpeakdetect(const vector<double>& data, double samp_freq, doub
     // 7. Remove filter delay
     // MATLAB: delay = ceil(length(d) / 2); mdfint = mdfint(delay:end);
     int delay = (int)std::ceil((double)win_size / 2.0);
-    if ((size_t)delay <= mdfint.size()) {
-        // Adjust for 0-based indexing: MATLAB delay:end is (delay-1) index in C++
-        mdfint.erase(mdfint.begin(), mdfint.begin() + (delay - 1));
+    // MATLAB delay:length(mdfint) means indices [delay-1, end]
+    // We must track this offset to adjust peak locations later
+    size_t offset_adjustment = (size_t)delay - 1;
+
+    if (offset_adjustment < mdfint.size()) {
+        mdfint.erase(mdfint.begin(), mdfint.begin() + offset_adjustment);
     }
 
     // 8. Find highest bumps in the middle 50%
-    // MATLAB: max_h = max(mdfint(round(len / 4):round(3 * len / 4)));
-    size_t start_h = (size_t)std::round((double)len / 4.0);
-    size_t end_h = (size_t)std::round(3.0 * (double)len / 4.0);
-    double max_h = 0.0;
+    size_t start_h = (size_t)std::round((double)mdfint.size() / 4.0);
+    size_t end_h = (size_t)std::round(3.0 * (double)mdfint.size() / 4.0);
+
+    // Robust Max: Use 95th percentile to avoid being fooled by outliers
+    vector<double> sorted_mdf = mdfint;
+    std::sort(sorted_mdf.begin(), sorted_mdf.end());
+    double robust_max = sorted_mdf[static_cast<size_t>(sorted_mdf.size() * 0.95)];
+
+    // Standard Max (as fallback)
+    double standard_max = 0.0;
     for (size_t i = start_h; i < end_h && i < mdfint.size(); ++i) {
-        if (mdfint[i] > max_h) max_h = mdfint[i];
+        if (mdfint[i] > standard_max) standard_max = mdfint[i];
     }
 
+    // Use the robust max if it's sane, otherwise standard
+    double max_h = (robust_max > 0.1 * standard_max) ? robust_max : standard_max;
+
     // 9. Build segment array (poss_reg)
-    // MATLAB: poss_reg = mdfint > (thresh * max_h);
     vector<bool> poss_reg(mdfint.size());
     double threshold_val = thresh * max_h;
+
     for (size_t i = 0; i < mdfint.size(); ++i) {
         poss_reg[i] = (mdfint[i] > threshold_val);
     }
 
     // 10. Find boundaries (Left/Right)
-    // MATLAB: left = find(diff([0 poss_reg']) == 1);
-    // MATLAB: right = find(diff([poss_reg' 0]) == -1);
     vector<size_t> left, right;
     for (size_t i = 0; i < poss_reg.size(); ++i) {
         bool prev = (i == 0) ? false : poss_reg[i - 1];
         bool current = poss_reg[i];
-        bool next = (i == poss_reg.size() - 1) ? false : poss_reg[i + 1];
+        bool next = (i == (poss_reg.size() - 1)) ? false : poss_reg[i + 1];
 
         if (current && !prev) left.push_back(i);
         if (current && !next) right.push_back(i);
     }
 
-    // 11. Loop through segments to find peaks in BPF signal
+    // 11. Loop through segments to find peaks
     vector<double> maxval, minval;
     vector<size_t> maxloc, minloc;
 
     for (size_t i = 0; i < left.size() && i < right.size(); ++i) {
-        size_t L = left[i];
-        size_t R = right[i];
+        // IMPORTANT: We must add the offset_adjustment back to left/right 
+        // because mdfint was truncated but bpf was not!
+        size_t L = left[i] + offset_adjustment;
+        size_t R = right[i] + offset_adjustment;
 
-        // Bounds check
         if (L >= bpf.size()) continue;
         if (R >= bpf.size()) R = bpf.size() - 1;
 
-        // Find max/min in bpf(left(i):right(i))
         auto max_res = max_element_index(bpf, L, R + 1);
         auto min_res = min_element_index(bpf, L, R + 1);
 
@@ -116,21 +126,21 @@ RPeakDetectResult rpeakdetect(const vector<double>& data, double samp_freq, doub
             result.R_amp = minval;
             result.S_amp = maxval;
             // S_t will use maxloc
-            for (size_t idx : maxloc) result.S_t.push_back((double)(idx + 1) / samp_freq);
+            for (size_t idx : maxloc) result.S_t.push_back((double)(idx) / samp_freq);
         }
         else {
             result.R_index = maxloc;
             result.R_amp = maxval;
             result.S_amp = minval;
             // S_t will use minloc
-            for (size_t idx : minloc) result.S_t.push_back((double)(idx + 1) / samp_freq);
+            for (size_t idx : minloc) result.S_t.push_back((double)(idx) / samp_freq);
         }
     }
 
     // 13. Populate R_t and HRV
     // MATLAB: R_t = t(maxloc); (where t = 1/fs : 1/fs : len/fs)
     for (size_t idx : result.R_index) {
-        result.R_t.push_back((double)(idx + 1) / samp_freq);
+        result.R_t.push_back((double)(idx) / samp_freq);
     }
 
     // MATLAB: hrv = diff(R_t);
