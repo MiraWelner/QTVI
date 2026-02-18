@@ -2,136 +2,162 @@
 #include <vector>
 #include <string>
 #include <fstream>
-#include <matio.h> // Make sure matio library is linked
+#include <matio.h> 
 #include <cmath>
-#include <algorithm> // For std::min
+#include <algorithm>
 
-// Helper function to print bytes (for debugging)
-void printBytes(const char* data, size_t size, const std::string& label) {
-    std::cerr << "DEBUG: " << label << " raw bytes (hex): ";
-    for (size_t i = 0; i < size; ++i) {
-        // Cast to unsigned char before int to ensure proper hex printing of byte values 0-255
-        std::cerr << std::hex << (static_cast<unsigned int>(static_cast<unsigned char>(data[i]))) << " ";
+struct ComparisonData {
+    std::vector<double> ecgRIndex;
+    std::vector<double> ppgMaxAmps;
+    std::vector<double> ppgMinAmps;
+    std::vector<std::pair<double, double>> pairs;
+};
+
+// Helper to read a vector of doubles from binary
+void readVecFromBin(std::ifstream& file, std::vector<double>& vec) {
+    uint64_t count = 0;
+    if (!file.read(reinterpret_cast<char*>(&count), 8)) return;
+    vec.resize(count);
+    for (uint64_t i = 0; i < count; ++i) {
+        uint64_t val; // Read as uint64_t since that's how we saved it
+        file.read(reinterpret_cast<char*>(&val), 8);
+        vec[i] = static_cast<double>(val);
     }
-    std::cerr << std::dec << std::endl; // Switch back to decimal for subsequent prints
 }
 
-// 1. Reads the eIdx (R-peaks) from the existing 'pairs' in the BIN file
-std::vector<std::vector<double>> readRFromBinPairs(const std::string& path) {
-    std::vector<std::vector<double>> binR;
+// 1. Reads ALL sections from the BIN file
+std::vector<ComparisonData> readAllFromBin(const std::string& path) {
+    std::vector<ComparisonData> results;
     std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) return binR;
+    if (!file.is_open()) return results;
 
     uint64_t numBins = 0;
     file.read(reinterpret_cast<char*>(&numBins), 8);
-    binR.resize(numBins);
+    results.resize(numBins);
 
     for (uint64_t i = 0; i < numBins; ++i) {
-        uint64_t numRPeaks = 0;
-        file.read(reinterpret_cast<char*>(&numRPeaks), 8);
-        for (uint64_t j = 0; j < numRPeaks; ++j) {
-            double val;
-            file.read(reinterpret_cast<char*>(&val), 8); // Read only one double
-            binR[i].push_back(val);
+        // Section 1: ECG R-Peaks
+        readVecFromBin(file, results[i].ecgRIndex);
+
+        // Section 2: PPG Max Amps
+        readVecFromBin(file, results[i].ppgMaxAmps);
+
+        // Section 3: PPG Min Amps
+        readVecFromBin(file, results[i].ppgMinAmps);
+
+        // Section 4: Pairs
+        uint64_t numPairs = 0;
+        file.read(reinterpret_cast<char*>(&numPairs), 8);
+        for (uint64_t j = 0; j < numPairs; ++j) {
+            uint64_t ppgIdx, ecgIdx;
+            file.read(reinterpret_cast<char*>(&ppgIdx), 8);
+            file.read(reinterpret_cast<char*>(&ecgIdx), 8);
+            results[i].pairs.push_back({ static_cast<double>(ppgIdx), static_cast<double>(ecgIdx) });
         }
     }
-    return binR;
+    return results;
 }
 
-// 2. Reads the ecgRIndex from the MAT file
-std::vector<std::vector<double>> readRFromMat(const std::string& path) {
-    std::vector<std::vector<double>> matR;
-    mat_t* matfp = Mat_Open(path.c_str(), MAT_ACC_RDONLY);
-    if (!matfp) {
-        std::cerr << "Error: Could not open MAT file: " << path << std::endl;
-        return matR;
+// Helper to read a field from a MAT struct cell
+std::vector<double> getMatField(matvar_t* cell, const std::string& fieldName) {
+    std::vector<double> vec;
+    matvar_t* field = Mat_VarGetStructFieldByName(cell, fieldName.c_str(), 0);
+    if (field && field->data) {
+        size_t n = 1;
+        for (int i = 0; i < field->rank; ++i) n *= field->dims[i];
+        double* data = (double*)field->data;
+        for (size_t j = 0; j < n; ++j) vec.push_back(data[j]);
     }
+    return vec;
+}
+
+// 2. Reads ALL sections from the MAT file
+std::vector<ComparisonData> readAllFromMat(const std::string& path) {
+    std::vector<ComparisonData> results;
+    mat_t* matfp = Mat_Open(path.c_str(), MAT_ACC_RDONLY);
+    if (!matfp) return results;
+
     matvar_t* wave_data = Mat_VarRead(matfp, "wave_data");
     if (!wave_data) {
-        std::cerr << "Error: Could not read 'wave_data' from MAT file: " << path << std::endl;
         Mat_Close(matfp);
-        return matR;
+        return results;
     }
 
     size_t numBins = wave_data->dims[0] * wave_data->dims[1];
-    matR.resize(numBins);
+    results.resize(numBins);
 
     for (size_t i = 0; i < numBins; ++i) {
         matvar_t* cell = Mat_VarGetCell(wave_data, i);
-        if (!cell) {
-            std::cerr << "Warning: Could not get cell " << i << " from 'wave_data' in MAT file." << std::endl;
-            continue;
-        }
-        matvar_t* r_var = Mat_VarGetStructFieldByName(cell, "ecgRIndex", 0);
-        if (r_var && r_var->data) {
-            size_t n = 1;
-            if (r_var->rank >= 1) n = r_var->dims[0];
-            if (r_var->rank >= 2) n *= r_var->dims[1];
+        if (!cell) continue;
 
-            double* data = (double*)r_var->data;
-            for (size_t j = 0; j < n; ++j) matR[i].push_back(data[j]);
+        results[i].ecgRIndex = getMatField(cell, "ecgRIndex");
+        results[i].ppgMaxAmps = getMatField(cell, "ppgMaxAmps");
+        results[i].ppgMinAmps = getMatField(cell, "ppgMinAmps");
+
+        // Pairs in MAT is a matrix [N x 2]. In memory it is column-major: 
+        // [ppg1, ppg2... ppgN, ecg1, ecg2... ecgN]
+        matvar_t* pair_var = Mat_VarGetStructFieldByName(cell, "pairs", 0);
+        if (pair_var && pair_var->data && pair_var->rank == 2) {
+            size_t rows = pair_var->dims[0];
+            double* data = (double*)pair_var->data;
+            for (size_t r = 0; r < rows; ++r) {
+                // Column 0 is PPG, Column 1 is ECG
+                results[i].pairs.push_back({ data[r], data[r + rows] });
+            }
         }
     }
     Mat_VarFree(wave_data);
     Mat_Close(matfp);
-    return matR;
+    return results;
 }
 
-int main(int argc, char** argv) {
-
-    // Use raw string literals for paths for better readability and to avoid backslash escaping issues
-    std::string binPath = R"(D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\cpp\mesa_files\3010155_20110511_annealed_wave_data.bin)";
-    std::string matPath = R"(D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\matlab\3010155_20110511_wave_data.mat)";
-
-    auto binR = readRFromBinPairs(binPath);
-    auto matR = readRFromMat(matPath);
-
-    if (binR.empty() && matR.empty()) {
-        std::cerr << "Warning: No data loaded from either BIN or MAT files." << std::endl;
-        return 1;
+void compareVectors(const std::string& label, const std::vector<double>& bin, const std::vector<double>& mat) {
+    std::cout << "  " << label << " -> C++: " << bin.size() << " | MAT: " << mat.size();
+    if (bin.size() != mat.size()) {
+        std::cout << " [MISMATCH]";
     }
+    std::cout << std::endl;
 
-    size_t compare_limit = 0;
-    if (!binR.empty() || !matR.empty()) {
-        compare_limit = std::min(binR.size(), matR.size());
-        if (compare_limit == 0 && (!binR.empty() || !matR.empty())) {
-            // If one is empty and the other isn't, compare up to 5 bins of the non-empty one
-            compare_limit = (binR.empty() ? matR.size() : binR.size());
-            compare_limit = std::min(compare_limit, (size_t)5);
-        }
-        else {
-            compare_limit = std::min(compare_limit, (size_t)5); // Compare first 5, or fewer if less available
+    size_t limit = std::min(bin.size(), mat.size());
+    for (size_t k = 0; k < limit; ++k) {
+        if (std::abs((bin[k] + 1) - mat[k]) > 0.0001) {
+            std::cout << "    ! Offset at index " << k << ": BIN=" << bin[k] << ", MAT=" << mat[k] << std::endl;
         }
     }
+}
 
+int main() {
+    std::string binPath = R"(D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\cpp\mesa_files\3010023_20110817_annealed_wave_data.bin)";
+    std::string matPath = R"(D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\matlab\3010023_20110817_wave_data.mat)";
+
+    auto binData = readAllFromBin(binPath);
+    auto matData = readAllFromMat(matPath);
+
+    size_t compare_limit = std::min({ (size_t)5, binData.size(), matData.size() });
 
     for (size_t i = 0; i < compare_limit; ++i) {
-        std::cout << "--- Bin " << i << " ---" << std::endl;
+        std::cout << "\n--- Bin " << i << " ---" << std::endl;
 
-        size_t bin_count = (i < binR.size() ? binR[i].size() : 0);
-        size_t mat_count = (i < matR.size() ? matR[i].size() : 0);
+        compareVectors("ECG R-Peaks", binData[i].ecgRIndex, matData[i].ecgRIndex);
+        compareVectors("PPG Max (Systolic)", binData[i].ppgMaxAmps, matData[i].ppgMaxAmps);
+        compareVectors("PPG Min (Valleys) ", binData[i].ppgMinAmps, matData[i].ppgMinAmps);
 
-        std::cout << "  BIN count: " << bin_count << " | MAT count: " << mat_count << std::endl;
+        // Compare Pairs
+        std::cout << "  Pairs -> C++: " << binData[i].pairs.size() << " | MAT: " << matData[i].pairs.size();
+        if (binData[i].pairs.size() != matData[i].pairs.size()) std::cout << " [MISMATCH]";
+        std::cout << std::endl;
 
-        if (bin_count > 0 && binR[i][0] == -1) {
-            std::cout << "  [STATUS] C++ found peaks but failed to pair them (values are -1)." << std::endl;
-        }
-        else if (bin_count > 0 && mat_count > 0) {
-            int k;
-            for (int k = 0; k < size(binR[i]); ++k) {
-                if (binR[i][k] + 1 != matR[i][k]) {
-                    std::cout << "Peak " << k << ": BIN=" << binR[i][k] << ", MAT=" << matR[i][k] << std::endl;
-                }
+        size_t pLimit = std::min(binData[i].pairs.size(), matData[i].pairs.size());
+        for (size_t k = 0; k < pLimit; ++k) {
+            double binP = binData[i].pairs[k].first;
+            double binE = binData[i].pairs[k].second;
+            double matP = matData[i].pairs[k].first;
+            double matE = matData[i].pairs[k].second;
+
+            if (std::abs((binP + 1) - matP) > 0.0001 || std::abs((binE + 1) - matE) > 0.0001) {
+                std::cout << "    ! Pair " << k << " mismatch: BIN=[" << binP << "," << binE
+                    << "], MAT=[" << matP << "," << matE << "]" << std::endl;
             }
-        }
-        else if (bin_count == 0 && mat_count > 0) {
-            std::cout << "  [STATUS] BIN has no peaks for this bin, MAT has " << mat_count << " peaks." << std::endl;
-        }
-        else if (bin_count > 0 && mat_count == 0) {
-            std::cout << "  [STATUS] BIN has " << bin_count << " peaks, MAT has no peaks for this bin." << std::endl;
-        }
-        else {
-            std::cout << "  [STATUS] Both BIN and MAT have no peaks for this bin." << std::endl;
         }
     }
     return 0;

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <stdexcept>
+#include <cstdint> // For uint64_t
 
 // This include brings in the structures automatically
 #include "FindWaveBounds.h"
@@ -60,17 +61,51 @@ void saveWaveData(const std::string& path, const std::vector<WaveData>& results)
     file.write(reinterpret_cast<char*>(&numBins), 8);
 
     for (const auto& bin : results) {
-        // Save the raw R-peaks count
+        // --- SECTION 1: ECG R-PEAKS ---
         uint64_t numRPeaks = bin.ecgRIndex.size();
         file.write(reinterpret_cast<char*>(&numRPeaks), 8);
-
-        // Save each R-peak index as a double (to match MATLAB's precision)
         for (size_t rIdx : bin.ecgRIndex) {
-            double val = static_cast<double>(rIdx);
+            uint64_t val = static_cast<uint64_t>(rIdx);
             file.write(reinterpret_cast<char*>(&val), 8);
+        }
+
+        // --- SECTION 2: PPG SYSTOLIC PEAKS (ppgMaxAmps) ---
+        uint64_t numMaxAmps = bin.ppgMaxAmps.size();
+        file.write(reinterpret_cast<char*>(&numMaxAmps), 8);
+        for (size_t pIdx : bin.ppgMaxAmps) {
+            uint64_t val = static_cast<uint64_t>(pIdx);
+            file.write(reinterpret_cast<char*>(&val), 8);
+        }
+
+        // --- SECTION 3: PPG MIN AMPS (ppgMinAmps) ---
+        uint64_t numMinAmps = bin.ppgMinAmps.size();
+        file.write(reinterpret_cast<char*>(&numMinAmps), 8);
+        for (size_t mIdx : bin.ppgMinAmps) {
+            uint64_t val = static_cast<uint64_t>(mIdx);
+            file.write(reinterpret_cast<char*>(&val), 8);
+        }
+
+        // --- SECTION 4: PAIRS ---
+        uint64_t numPairs = bin.pairs.size();
+        file.write(reinterpret_cast<char*>(&numPairs), 8);
+        for (const auto& pair : bin.pairs) {
+            // Assuming each pair always has 2 elements
+            if (pair.size() == 2) {
+                uint64_t ppg_idx = static_cast<uint64_t>(pair[0]);
+                uint64_t ecg_idx = static_cast<uint64_t>(pair[1]);
+                file.write(reinterpret_cast<char*>(&ppg_idx), 8);
+                file.write(reinterpret_cast<char*>(&ecg_idx), 8);
+            }
+            else {
+                // If a pair is malformed, write two zeros as placeholders
+                uint64_t zero = 0;
+                file.write(reinterpret_cast<char*>(&zero), 8);
+                file.write(reinterpret_cast<char*>(&zero), 8);
+            }
         }
     }
 }
+
 
 // --- Config Parser ---
 ConfigSettings parseConfig(const std::string& configPath, const int type_row) {
@@ -79,7 +114,7 @@ ConfigSettings parseConfig(const std::string& configPath, const int type_row) {
     int currentIdx = 0; // Track the current data row index
     while (std::getline(file, line)) {
         // If the current index matches the requested type_row (0-indexed)
-        if (currentIdx++ == type_row-1) {
+        if (currentIdx++ == type_row - 1) {
             std::stringstream ss(line);
             std::vector<std::string> row;
             std::string val;
@@ -97,21 +132,22 @@ ConfigSettings parseConfig(const std::string& configPath, const int type_row) {
 int main() {
     try {
         int choice;
-        std::cout << "Enter Data Type:\nMESA: 1\nBittium: 2\nCHAOS: 3\n"; std::cin >> choice;
+        std::cout << "Enter Data Type:\n1) MESA\n2) Bittium\n3) CHAOS" << std::endl;
+        std::cin >> choice;
         ConfigSettings cfg = parseConfig("config.csv", choice);
 
         if (!fs::exists(cfg.wavePath)) fs::create_directories(cfg.wavePath);
 
         for (const auto& entry : fs::directory_iterator(cfg.annealedPath)) {
             if (entry.path().extension() == ".bin") {
-
                 AnnealedData annealedData = readCppBin(entry.path().string(), cfg.ecgFs, cfg.ppgFs);
 
                 // Process logic
                 auto results = FindWaveBounds_EKGandPPG(annealedData.bins, cfg.ecgFs, true);
 
+                // Save the results, now including ppgMinAmps and pairs, to the binary file
                 saveWaveData(cfg.wavePath + "/" + entry.path().stem().string() + "_wave_data.bin", results);
-                std::cout << "Processed: " << entry.path().filename() << std::endl;
+                std::cout << "Processed and saved binary for: " << entry.path().filename() << std::endl;
             }
         }
     }
