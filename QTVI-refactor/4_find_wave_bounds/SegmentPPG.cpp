@@ -109,14 +109,14 @@ pair<vector<size_t>, vector<size_t>> segBeats(const vector<double>& ppg, const v
     vector<size_t> peaks;
     for (const auto& region : high) {
         auto maxResult = max_element_index(ppg, region.first, region.second + 1);
-        peaks.push_back(region.first + maxResult.second - 1);
+        peaks.push_back(region.first + maxResult.second);
     }
 
     // Find minima in low regions
     vector<size_t> valleys;
     for (const auto& region : low) {
         auto minResult = min_element_index(ppg, region.first, region.second + 1);
-        valleys.push_back(region.first + minResult.second - 1);
+        valleys.push_back(region.first + minResult.second);
     }
 
     return { peaks, valleys };

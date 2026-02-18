@@ -135,9 +135,12 @@ vector<double> medfilt1(const vector<double>& x, int window_size) {
         vector<double> window;
         for (int j = -half; j <= half; ++j) {
             int idx = i + j;
-            // MATLAB uses zero-padding for medfilt1 boundaries
-            window.push_back((idx < 0 || idx >= (int)x.size()) ? 0.0 : x[idx]);
+            // MATLAB truncates the window at boundaries (only considers valid elements)
+            if (idx >= 0 && idx < (int)x.size()) {
+                window.push_back(x[idx]);
+            }
         }
+
         // Use nth_element for efficient median calculation O(n)
         nth_element(window.begin(), window.begin() + window.size() / 2, window.end());
         y[i] = window[window.size() / 2];
