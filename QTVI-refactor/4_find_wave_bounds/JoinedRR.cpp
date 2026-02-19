@@ -75,46 +75,53 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
         });
 
     // 4. Chained Cluster Merging
+    // --- Step 4: Clustering & Consensus ---
     vector<size_t> candidates;
     if (all_dets.empty()) return candidates;
 
+    // A. CRITICAL: Sort detections by position first
+    std::sort(all_dets.begin(), all_dets.end(), [](const PeakDet& a, const PeakDet& b) {
+        return a.pos < b.pos;
+        });
+
     vector<PeakDet> cluster;
+    auto processCluster = [&](vector<PeakDet>& c) {
+        if (c.empty()) return;
+        std::map<int, double> algo_weights;
+        size_t best_pos = c[0].pos;
+        double max_v = -1e30;
+
+        for (auto& pd : c) {
+            // Take the max weight for each unique algorithm in this cluster
+            if (pd.weight > algo_weights[pd.algo_idx]) algo_weights[pd.algo_idx] = pd.weight;
+            // The R-peak is the point with the highest amplitude in the cluster
+            if (ecgSeg[pd.pos] > max_v) { max_v = ecgSeg[pd.pos]; best_pos = pd.pos; }
+        }
+
+        double total_w = 0;
+        for (auto const& [id, w] : algo_weights) total_w += w;
+
+        if (total_w >= 2.4) {
+            // B. Refractory Check: prevent double-counting within 200ms
+            double min_dist = 0.200 * ecgSamplingRate;
+            if (candidates.empty() || (best_pos - candidates.back()) > min_dist) {
+                candidates.push_back(best_pos);
+            }
+        }
+        };
+
     for (size_t i = 0; i < all_dets.size(); ++i) {
         if (cluster.empty() || (double)all_dets[i].pos - (double)cluster.back().pos <= diff_range) {
             cluster.push_back(all_dets[i]);
         }
         else {
-            // Process the finished cluster
-            std::map<int, double> algo_weights;
-            size_t best_pos = cluster[0].pos;
-            double max_v = -1e30;
-            for (auto& pd : cluster) {
-                if (pd.weight > algo_weights[pd.algo_idx]) algo_weights[pd.algo_idx] = pd.weight;
-                if (ecgSeg[pd.pos] > max_v) { max_v = ecgSeg[pd.pos]; best_pos = pd.pos; }
-            }
-            double total_w = 0;
-            for (auto const& [id, w] : algo_weights) total_w += w;
-
-            // USE 2.0: Higher threshold to prevent T-waves/S-waves from being counted
-            if (total_w >= 2.0) candidates.push_back(best_pos);
-
+            processCluster(cluster);
             cluster.clear();
             cluster.push_back(all_dets[i]);
         }
     }
-    // Handle last cluster
-    if (!cluster.empty()) {
-        std::map<int, double> algo_weights;
-        size_t best_pos = cluster[0].pos;
-        double max_v = -1e30;
-        for (auto& pd : cluster) {
-            if (pd.weight > algo_weights[pd.algo_idx]) algo_weights[pd.algo_idx] = pd.weight;
-            if (ecgSeg[pd.pos] > max_v) { max_v = ecgSeg[pd.pos]; best_pos = pd.pos; }
-        }
-        double total_w = 0;
-        for (auto const& [id, w] : algo_weights) total_w += w;
-        if (total_w >= 2.0) candidates.push_back(best_pos);
-    }
+    processCluster(cluster); // Handle last cluster
+
 
     // 5. --- REFRACTORY PERIOD FILTER (250ms) ---
     vector<size_t> final_rr;

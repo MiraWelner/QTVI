@@ -53,58 +53,44 @@ AnnealedData readCppBin(const std::string& path, double ecgFs, double ppgFs) {
 }
 
 // --- Binary Saving Logic ---
+// main.cpp - Replace the entire saveWaveData function
 void saveWaveData(const std::string& path, const std::vector<WaveData>& results) {
     std::ofstream file(path, std::ios::binary);
     if (!file.is_open()) return;
 
     uint64_t numBins = results.size();
-    file.write(reinterpret_cast<char*>(&numBins), 8);
+    file.write(reinterpret_cast<const char*>(&numBins), 8);
 
     for (const auto& bin : results) {
-        // --- SECTION 1: ECG R-PEAKS ---
-        uint64_t numRPeaks = bin.ecgRIndex.size();
-        file.write(reinterpret_cast<char*>(&numRPeaks), 8);
-        for (size_t rIdx : bin.ecgRIndex) {
-            uint64_t val = static_cast<uint64_t>(rIdx);
-            file.write(reinterpret_cast<char*>(&val), 8);
-        }
+        auto writeIdx = [&](const std::vector<size_t>& v) {
+            uint64_t sz = v.size();
+            file.write(reinterpret_cast<const char*>(&sz), 8);
+            for (size_t val : v) {
+                uint64_t out = static_cast<uint64_t>(val);
+                file.write(reinterpret_cast<const char*>(&out), 8);
+            }
+            };
 
-        // --- SECTION 2: PPG SYSTOLIC PEAKS (ppgMaxAmps) ---
-        uint64_t numMaxAmps = bin.ppgMaxAmps.size();
-        file.write(reinterpret_cast<char*>(&numMaxAmps), 8);
-        for (size_t pIdx : bin.ppgMaxAmps) {
-            uint64_t val = static_cast<uint64_t>(pIdx);
-            file.write(reinterpret_cast<char*>(&val), 8);
-        }
+        writeIdx(bin.ecgRIndex);
+        writeIdx(bin.ppgMaxAmps);
+        writeIdx(bin.ppgMinAmps);
 
-        // --- SECTION 3: PPG MIN AMPS (ppgMinAmps) ---
-        uint64_t numMinAmps = bin.ppgMinAmps.size();
-        file.write(reinterpret_cast<char*>(&numMinAmps), 8);
-        for (size_t mIdx : bin.ppgMinAmps) {
-            uint64_t val = static_cast<uint64_t>(mIdx);
-            file.write(reinterpret_cast<char*>(&val), 8);
-        }
-
-        // --- SECTION 4: PAIRS ---
+        // --- SECTION 4: PAIRS (The specific fix for 1.84e19) ---
         uint64_t numPairs = bin.pairs.size();
-        file.write(reinterpret_cast<char*>(&numPairs), 8);
-        for (const auto& pair : bin.pairs) {
-            // Assuming each pair always has 2 elements
-            if (pair.size() == 2) {
-                uint64_t ppg_idx = static_cast<uint64_t>(pair[0]);
-                uint64_t ecg_idx = static_cast<uint64_t>(pair[1]);
-                file.write(reinterpret_cast<char*>(&ppg_idx), 8);
-                file.write(reinterpret_cast<char*>(&ecg_idx), 8);
-            }
-            else {
-                // If a pair is malformed, write two zeros as placeholders
-                uint64_t zero = 0;
-                file.write(reinterpret_cast<char*>(&zero), 8);
-                file.write(reinterpret_cast<char*>(&zero), 8);
-            }
+        file.write(reinterpret_cast<const char*>(&numPairs), 8);
+        for (const auto& p : bin.pairs) {
+            // Force the bit pattern to be a SIGNED -1 if the value is invalid
+            int64_t ppg_out = (std::isnan(p[0]) || p[0] < -0.1) ? -1 : (int64_t)std::round(p[0]);
+            int64_t ecg_out = (std::isnan(p[1]) || p[1] < -0.1) ? -1 : (int64_t)std::round(p[1]);
+
+            file.write(reinterpret_cast<const char*>(&ppg_out), 8);
+            file.write(reinterpret_cast<const char*>(&ecg_out), 8);
         }
     }
 }
+
+
+
 
 
 // --- Config Parser ---

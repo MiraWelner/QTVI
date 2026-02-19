@@ -5,6 +5,7 @@
 #include <matio.h> 
 #include <cmath>
 #include <algorithm>
+#include <cstdint> // Added for int64_t
 
 struct ComparisonData {
     std::vector<double> ecgRIndex;
@@ -19,7 +20,7 @@ void readVecFromBin(std::ifstream& file, std::vector<double>& vec) {
     if (!file.read(reinterpret_cast<char*>(&count), 8)) return;
     vec.resize(count);
     for (uint64_t i = 0; i < count; ++i) {
-        uint64_t val; // Read as uint64_t since that's how we saved it
+        int64_t val; // CHANGED: Read as signed int64_t to correctly handle -1
         file.read(reinterpret_cast<char*>(&val), 8);
         vec[i] = static_cast<double>(val);
     }
@@ -49,7 +50,7 @@ std::vector<ComparisonData> readAllFromBin(const std::string& path) {
         uint64_t numPairs = 0;
         file.read(reinterpret_cast<char*>(&numPairs), 8);
         for (uint64_t j = 0; j < numPairs; ++j) {
-            uint64_t ppgIdx, ecgIdx;
+            int64_t ppgIdx, ecgIdx; // CHANGED: Read as signed int64_t
             file.read(reinterpret_cast<char*>(&ppgIdx), 8);
             file.read(reinterpret_cast<char*>(&ecgIdx), 8);
             results[i].pairs.push_back({ static_cast<double>(ppgIdx), static_cast<double>(ecgIdx) });
@@ -94,14 +95,11 @@ std::vector<ComparisonData> readAllFromMat(const std::string& path) {
         results[i].ppgMaxAmps = getMatField(cell, "ppgMaxAmps");
         results[i].ppgMinAmps = getMatField(cell, "ppgMinAmps");
 
-        // Pairs in MAT is a matrix [N x 2]. In memory it is column-major: 
-        // [ppg1, ppg2... ppgN, ecg1, ecg2... ecgN]
         matvar_t* pair_var = Mat_VarGetStructFieldByName(cell, "pairs", 0);
         if (pair_var && pair_var->data && pair_var->rank == 2) {
             size_t rows = pair_var->dims[0];
             double* data = (double*)pair_var->data;
             for (size_t r = 0; r < rows; ++r) {
-                // Column 0 is PPG, Column 1 is ECG
                 results[i].pairs.push_back({ data[r], data[r + rows] });
             }
         }
@@ -120,7 +118,9 @@ void compareVectors(const std::string& label, const std::vector<double>& bin, co
 
     size_t limit = std::min(bin.size(), mat.size());
     for (size_t k = 0; k < limit; ++k) {
-        if (std::abs((bin[k] + 1) - mat[k]) > 0.0001) {
+        // Checking against (bin[k] + 1) because MATLAB is 1-indexed and C++ is 0-indexed
+        if ((bin[k] + 1 != mat[k]) && !(bin[k] == -1 && mat[k] == -1)) {
+            // Note: If bin[k] is -1, bin[k]+1 is 0. If MATLAB shows -1, this will correctly flag it.
             std::cout << "    ! Offset at index " << k << ": BIN=" << bin[k] << ", MAT=" << mat[k] << std::endl;
         }
     }
@@ -142,7 +142,6 @@ int main() {
         compareVectors("PPG Max (Systolic)", binData[i].ppgMaxAmps, matData[i].ppgMaxAmps);
         compareVectors("PPG Min (Valleys) ", binData[i].ppgMinAmps, matData[i].ppgMinAmps);
 
-        // Compare Pairs
         std::cout << "  Pairs -> C++: " << binData[i].pairs.size() << " | MAT: " << matData[i].pairs.size();
         if (binData[i].pairs.size() != matData[i].pairs.size()) std::cout << " [MISMATCH]";
         std::cout << std::endl;
@@ -154,7 +153,8 @@ int main() {
             double matP = matData[i].pairs[k].first;
             double matE = matData[i].pairs[k].second;
 
-            if (std::abs((binP + 1) - matP) > 0.0001 || std::abs((binE + 1) - matE) > 0.0001) {
+            // Handle the +1 offset for comparison, but if value is -1, it stays -1 in comparison logic 
+            if (binP + 1 != matP || (binE + 1 !=  matE && !(binE == -1 && matE == -1))) {
                 std::cout << "    ! Pair " << k << " mismatch: BIN=[" << binP << "," << binE
                     << "], MAT=[" << matP << "," << matE << "]" << std::endl;
             }

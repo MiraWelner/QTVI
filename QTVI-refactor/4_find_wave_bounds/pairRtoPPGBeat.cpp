@@ -1,49 +1,70 @@
-// ============================================================================
-// File: pairRtoPPGBeat.cpp
-// ============================================================================
 #include "pairRtoPPGBeat.h"
 #include "RunLength.h"
 #include "nanfastsmooth.h"
 #include "PeakFinder.h"
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+// Safety definitions
+#ifndef NaN
+#define NaN std::numeric_limits<double>::quiet_NaN()
+#endif
+#ifndef Inf
+#define Inf std::numeric_limits<double>::infinity()
+#endif
 
 vector<vector<double>> pairRtoPPGBeat(const vector<double>& ecg, const vector<double>& ppg,
     double ecgSamplingRate, double ppgSamplingRate,
     const vector<size_t>& ecgRIndex, const vector<size_t>& ppgMinAmps) {
-    // Create time vectors
+
+    // 0. Safety check for empty signals
+    if (ecg.empty() || ppg.empty()) return {};
+
+    // 1. Create time vectors
     vector<double> ecgtime(ecg.size());
     vector<double> ppgtime(ppg.size());
 
     for (size_t i = 0; i < ecg.size(); ++i) {
-        ecgtime[i] = i / ecgSamplingRate / 60.0;
+        ecgtime[i] = (double)i / ecgSamplingRate / 60.0;
     }
 
     for (size_t i = 0; i < ppg.size(); ++i) {
-        ppgtime[i] = i / ppgSamplingRate / 60.0;
+        ppgtime[i] = (double)i / ppgSamplingRate / 60.0;
     }
 
-    // Initialize pairs matrix: [ppg_valley_idx, ecg_R_idx]
-    vector<vector<double>> pairs(ecgRIndex.size(), vector<double>(2, NaN));
+    // 2. Initialize pairs matrix: [ppg_valley_idx, ecg_R_idx]
+    vector<vector<double>> pairs;
+    pairs.reserve(ecgRIndex.size());
 
     for (size_t i = 0; i < ecgRIndex.size(); ++i) {
-        pairs[i][1] = ecgRIndex[i];
+        // Validation: Only accept indices that actually exist in the current signal
+        if (ecgRIndex[i] < ecg.size()) {
+            pairs.push_back({ (double)NaN, (double)ecgRIndex[i] });
+        }
     }
 
-    // Pair every R to a PPG idx
-    for (size_t i = 0; i < ecgRIndex.size(); ++i) {
-        size_t beginidx, endidx;
+    // 3. Pair every R to a PPG idx
+    for (size_t i = 0; i < pairs.size(); ++i) {
+        size_t beginidx = 0, endidx = 0;
 
+        // CRITICAL BOUNDS CHECK: Prevent 0xc0000005 by clamping indices
         if (i == 0) {
             beginidx = 0;
-            endidx = ecgRIndex.size() > 1 ? ecgRIndex[i + 1] : ecgtime.size() - 1;
+            endidx = (pairs.size() > 1) ? static_cast<size_t>(pairs[i + 1][1]) : ecg.size() - 1;
         }
-        else if (i == ecgRIndex.size() - 1) {
-            beginidx = ecgRIndex[i - 1];
-            endidx = ecgtime.size() - 1;
+        else if (i == pairs.size() - 1) {
+            beginidx = static_cast<size_t>(pairs[i - 1][1]);
+            endidx = ecg.size() - 1;
         }
         else {
-            beginidx = ecgRIndex[i - 1];
-            endidx = ecgRIndex[i + 1];
+            beginidx = static_cast<size_t>(pairs[i - 1][1]);
+            endidx = static_cast<size_t>(pairs[i + 1][1]);
         }
+
+        // Clamp to signal range
+        beginidx = std::min(beginidx, ecg.size() - 1);
+        endidx = std::min(endidx, ecg.size() - 1);
 
         double begtime = ecgtime[beginidx];
         double enbtime = ecgtime[endidx];
@@ -51,160 +72,118 @@ vector<vector<double>> pairRtoPPGBeat(const vector<double>& ecg, const vector<do
         // Find possible PPG pairings
         vector<size_t> possible_ppg_parings;
         for (size_t j = 0; j < ppgMinAmps.size(); ++j) {
-            if (ppgMinAmps[j] < ppgtime.size()) {
-                double ppg_time = ppgtime[ppgMinAmps[j]];
-                if (begtime <= ppg_time && enbtime >= ppg_time) {
+            size_t p_idx = ppgMinAmps[j];
+            if (p_idx < ppgtime.size()) {
+                double p_time = ppgtime[p_idx];
+                if (p_time >= begtime && p_time <= enbtime) {
                     possible_ppg_parings.push_back(j);
                 }
             }
         }
 
-        // Find minimum error
-        if (possible_ppg_parings.empty()) {
-            pairs[i][0] = -1;
-        }
-        else {
-            double minError = Inf;
-            size_t minIdx = 0;
+        if (!possible_ppg_parings.empty()) {
+            double minError = 1e18;
+            size_t best_ppg_idx = 0;
+            size_t ecg_r_idx = static_cast<size_t>(pairs[i][1]);
 
-            for (size_t j = 0; j < possible_ppg_parings.size(); ++j) {
-                size_t ppg_idx = ppgMinAmps[possible_ppg_parings[j]];
-                if (ppg_idx < ppgtime.size() && ecgRIndex[i] < ecgtime.size()) {
-                    double error = std::abs(ppgtime[ppg_idx] - ecgtime[ecgRIndex[i]]);
+            for (size_t p_j : possible_ppg_parings) {
+                size_t p_idx = ppgMinAmps[p_j];
+                // Safety check before error calculation
+                if (p_idx < ppgtime.size() && ecg_r_idx < ecgtime.size()) {
+                    double error = std::abs(ppgtime[p_idx] - ecgtime[ecg_r_idx]);
                     if (error < minError) {
                         minError = error;
-                        minIdx = j;
+                        best_ppg_idx = p_idx;
                     }
                 }
             }
-
-            pairs[i][0] = ppgMinAmps[possible_ppg_parings[minIdx]];
+            pairs[i][0] = (double)best_ppg_idx;
+        }
+        else {
+            pairs[i][0] = -1.0;
         }
     }
 
-    // Add unpaired PPG valleys
+    // 4. Add unpaired PPG valleys
     for (size_t i = 0; i < ppgMinAmps.size(); ++i) {
         bool found = false;
-        for (const auto& pair : pairs) {
-            if (pair[0] == ppgMinAmps[i]) {
+        double p_val = (double)ppgMinAmps[i];
+        for (size_t k = 0; k < pairs.size(); ++k) {
+            if (pairs[k][0] == p_val) {
                 found = true;
                 break;
             }
         }
-
         if (!found) {
-            pairs.push_back({ static_cast<double>(ppgMinAmps[i]), -1 });
+            pairs.push_back({ p_val, -1.0 });
         }
     }
 
-    // Sort by PPG index
-    std::sort(pairs.begin(), pairs.end(),
-        [](const vector<double>& a, const vector<double>& b) {
-            return a[0] < b[0];
+    // 5. Sort by PPG index
+    std::sort(pairs.begin(), pairs.end(), [](const vector<double>& a, const vector<double>& b) {
+        if (std::isnan(a[0]) || std::isnan(b[0])) return false;
+        if (a[0] != b[0]) return a[0] < b[0];
+        return a[1] < b[1];
         });
 
-    // Process duplicates using RunLength
-    vector<double> first_column;
-    for (const auto& pair : pairs) {
-        first_column.push_back(pair[0]);
-    }
+    // 6. Conflict Resolution Loop (Resolve multiple Rs assigned to one PPG)
+    bool changed = true;
+    int safety_counter = 0;
+    while (changed && safety_counter++ < 100) {
+        changed = false;
 
-    vector<double> B, N, BI;
-    RunLength(first_column, B, N, BI);
+        // RE-CALCULATE summary every iteration to avoid using stale indices (BI)
+        vector<double> first_col;
+        for (const auto& row : pairs) first_col.push_back(row[0]);
 
-    // Correct R's assigned to more than 1 PPG
-    size_t i = 0;
-    while (i < N.size()) {
-        if (N[i] == 2 && B[i] != -1) {
-            size_t idx1 = static_cast<size_t>(BI[i]);
-            size_t idx2 = idx1 + static_cast<size_t>(N[i]) - 1;
+        vector<double> B, N, BI;
+        RunLength(first_col, B, N, BI);
 
-            if (idx2 >= pairs.size()) {
-                i++;
-                continue;
-            }
+        for (size_t i = 0; i < N.size(); ++i) {
+            // If N[i] > 1, the same PPG index (B[i]) is assigned to multiple ECG peaks
+            if (N[i] >= 2 && B[i] >= 0.0) {
+                size_t start_idx = static_cast<size_t>(BI[i]);
+                size_t end_idx = start_idx + static_cast<size_t>(N[i]) - 1;
 
-            // Handle duplicate pairing
-            if (idx2 + 1 < pairs.size() && pairs[idx2 + 1][1] == -1) {
-                // Next R is unpaired
-                pairs[idx2 + 1][1] = pairs[idx2][1];
-                pairs.erase(pairs.begin() + idx2);
-                RunLength(first_column, B, N, BI);
-            }
-            else {
-                // Choose the one with smaller error
-                double error1 = Inf, error2 = Inf;
+                if (end_idx >= pairs.size()) continue;
 
-                if (pairs[idx1][0] < ppgtime.size() && pairs[idx1][1] >= 0 &&
-                    pairs[idx1][1] < ecgtime.size()) {
-                    error1 = std::abs(ppgtime[static_cast<size_t>(pairs[idx1][0])] -
-                        ecgtime[static_cast<size_t>(pairs[idx1][1])]);
-                }
+                // Pick the ECG peak with the smallest time error to the PPG valley
+                double min_err = 1e18;
+                size_t winner_row = start_idx;
+                size_t ppg_idx = static_cast<size_t>(pairs[start_idx][0]);
 
-                if (pairs[idx2][0] < ppgtime.size() && pairs[idx2][1] >= 0 &&
-                    pairs[idx2][1] < ecgtime.size()) {
-                    error2 = std::abs(ppgtime[static_cast<size_t>(pairs[idx2][0])] -
-                        ecgtime[static_cast<size_t>(pairs[idx2][1])]);
-                }
-
-                if (error1 < error2) {
-                    // Keep first, need to find new PPG for second
-                    pairs[idx2][0] = pairs[idx2][1];  // Use ECG index as temporary
-                }
-                else {
-                    // Keep second, need to find new PPG for first
-                    pairs[idx1][0] = pairs[idx1][1];  // Use ECG index as temporary
-                }
-
-                RunLength(first_column, B, N, BI);
-            }
-        }
-        else if (N[i] > 2 && B[i] != -1) {
-            // Multiple Rs for one PPG
-            size_t idx1 = static_cast<size_t>(BI[i]);
-            size_t idx2 = idx1 + static_cast<size_t>(N[i]) - 1;
-
-            // Check for exact match
-            bool found = false;
-            for (size_t j = idx1; j <= idx2 && j < pairs.size(); ++j) {
-                if (pairs[j][0] == pairs[j][1]) {
-                    found = true;
-                    // Update others
-                    for (size_t k = idx1; k <= idx2 && k < pairs.size(); ++k) {
-                        if (k != j) {
-                            pairs[k][0] = pairs[k][1];
+                for (size_t j = start_idx; j <= end_idx; ++j) {
+                    double r_idx = pairs[j][1];
+                    if (r_idx >= 0 && r_idx < (double)ecg.size()) {
+                        double err = std::abs(ppgtime[ppg_idx] - ecgtime[(size_t)r_idx]);
+                        if (err < min_err) {
+                            min_err = err;
+                            winner_row = j;
                         }
                     }
-                    break;
                 }
+
+                // Keep the winner, set others to their own ECG index as a fallback
+                for (size_t j = start_idx; j <= end_idx; ++j) {
+                    if (j == winner_row) continue;
+                    pairs[j][0] = pairs[j][1]; // Use ECG index as temporary match
+                    changed = true;
+                }
+
+                if (changed) break; // Re-run RunLength on updated data
             }
-
-            if (!found) {
-                throw std::runtime_error("implement me: multiple Rs for one PPG without exact match");
-            }
-
-            RunLength(first_column, B, N, BI);
-        }
-
-        i++;
-
-        if (i > N.size()) {
-            break;
         }
     }
 
-    // Final clean: propagate R index to PPG when R is not paired
-    for (auto& pair : pairs) {
-        if (pair[0] == -1) {
-            pair[0] = pair[1];
-        }
-    }
+    // 7. Final Safety Cleanup
+    for (auto& row : pairs) {
+        // Final bounds check to ensure output values are within signal ranges
+        if (row[0] >= (double)ppg.size()) row[0] = (double)ppg.size() - 1;
+        if (row[1] >= (double)ecg.size()) row[1] = (double)ecg.size() - 1;
 
-    // Sort again
-    std::sort(pairs.begin(), pairs.end(),
-        [](const vector<double>& a, const vector<double>& b) {
-            return a[0] < b[0];
-        });
+        if (std::isnan(row[0]) || row[0] < 0) row[0] = -1.0;
+        if (std::isnan(row[1]) || row[1] < 0) row[1] = -1.0;
+    }
 
     return pairs;
 }

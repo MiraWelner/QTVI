@@ -49,25 +49,40 @@ vector<double> filter(const vector<double>& b, const vector<double>& a, const ve
 // ============================================================================
 vector<double> filtfilt(const vector<double>& b, const vector<double>& a, const vector<double>& x) {
     if (x.empty()) return x;
-    int nfact = 3 * (max((int)b.size(), (int)a.size()) - 1);
-    if (x.size() <= (size_t)nfact) return filter(b, a, x);
+    if (a.empty() || b.empty()) return x;
 
-    // Reflective padding to match MATLAB's transient suppression
+    int nfact = 3 * (max((int)b.size(), (int)a.size()) - 1);
+
+    // CRITICAL: If signal is too short for padding, just do regular filtering
+    if (x.size() <= (size_t)nfact) {
+        return filter(b, a, x);
+    }
+
     vector<double> padded;
     padded.reserve(x.size() + 2 * nfact);
-    for (int i = nfact; i > 0; --i) padded.push_back(2.0 * x[0] - x[i]);
+
+    // Forward padding (reflective)
+    for (int i = nfact; i > 0; --i) {
+        padded.push_back(2.0 * x[0] - x[i]);
+    }
+
     padded.insert(padded.end(), x.begin(), x.end());
-    for (int i = 1; i <= nfact; ++i) padded.push_back(2.0 * x.back() - x[x.size() - 1 - i]);
 
-    // Forward and backward filtering
+    // Backward padding (reflective)
+    for (int i = 1; i <= nfact; ++i) {
+        padded.push_back(2.0 * x.back() - x[x.size() - 1 - i]);
+    }
+
     vector<double> y = filter(b, a, padded);
-    reverse(y.begin(), y.end());
+    std::reverse(y.begin(), y.end());
     y = filter(b, a, y);
-    reverse(y.begin(), y.end());
+    std::reverse(y.begin(), y.end());
 
-    // Extract original signal from padding
+    // Safely extract the middle part
+    if (y.size() < (size_t)(2 * nfact)) return x;
     return vector<double>(y.begin() + nfact, y.end() - nfact);
 }
+
 
 // ============================================================================
 // 3. Butterworth Filter Design (3rd Order Bilinear Transform)

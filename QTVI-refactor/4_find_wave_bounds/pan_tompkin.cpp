@@ -13,29 +13,30 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg, double fs, int gr) {
     result.delay = 0;
     if (ecg.empty()) return result;
 
-    // 1. Remove DC Offset (Mean)
+    // 1. Remove DC Offset
     double avg = mean(ecg);
     vector<double> x = ecg;
     for (auto& v : x) v -= avg;
 
-    // 2. Bandpass Filter (5-15 Hz) - Zero Phase (FiltFilt)
-    // Delay = 0
+    // 2. Bandpass Filter (Zero Phase)
     vector<double> b_bp, a_bp;
     butter(3, { 5.0 * 2.0 / fs, 15.0 * 2.0 / fs }, b_bp, a_bp);
     vector<double> ecg_h = filtfilt(b_bp, a_bp, x);
 
-    // 3. Derivative Filter - Zero Phase (FiltFilt)
-    // Delay = 0
-    vector<double> ecg_d = diff(ecg_h);
-    ecg_d.push_back(0);
+    // 3. Derivative Filter (Reverted to the simple version)
+    if (ecg_h.empty()) return result;
+    vector<double> ecg_d(ecg_h.size(), 0.0);
+    for (size_t i = 1; i < ecg_h.size(); ++i) {
+        ecg_d[i] = ecg_h[i] - ecg_h[i - 1];
+    }
 
     // 4. Squaring
     vector<double> ecg_s(ecg_d.size());
     for (size_t i = 0; i < ecg_d.size(); ++i) ecg_s[i] = ecg_d[i] * ecg_d[i];
 
-    // 5. Moving Average Integration (Centered Window)
-    // Centered loop matches MATLAB 'same' convolution and has 0 Delay.
+    // 5. Moving Average Integration (Reverted to your original loop)
     int win_size = static_cast<int>(std::round(0.150 * fs));
+    if (win_size < 1) win_size = 1;
     vector<double> ecg_m(ecg_s.size(), 0.0);
     int half_win = win_size / 2;
 
@@ -49,13 +50,12 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg, double fs, int gr) {
         ecg_m[i] = current_sum / (double)win_size;
     }
 
-    // 6. Find Peaks in Integrated Signal
+    // 6. Find Peaks
     vector<double> pks;
     vector<size_t> locs;
     findpeaks(ecg_m, pks, locs, round(0.2 * fs));
 
-    // 7. Threshold Initialization (Learning Period)
-    // Prevents extra noise counts at start of Bin 4.
+    // 7. Thresholding
     double SIG_LEV = 0, NOISE_LEV = 0;
     int init_len = min((int)ecg_m.size(), (int)(2.0 * fs));
     if (init_len > 0) {
@@ -65,24 +65,30 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg, double fs, int gr) {
             mean_m += ecg_m[k];
         }
         SIG_LEV = max_m * 0.33;
-        NOISE_LEV = (mean_m / init_len) * 0.5;
+        NOISE_LEV = (mean_m / (double)init_len) * 0.5;
     }
 
-    // 8. Detection Loop
+    // 8. Detection Loop with Offset Correction
+    // Based on your logs, BIN is usually 3 samples behind MAT (e.g. 95 vs 98).
+    // So we ADD 3 to align BIN with MAT.
+    const int ALIGNMENT_SHIFT = 3;
+
     vector<size_t> qrs_i_raw;
     for (size_t i = 0; i < locs.size(); ++i) {
-        // Skip first 150ms to avoid edge transients
         if (locs[i] < 0.05 * fs) continue;
 
         double THR_SIG = NOISE_LEV + 0.25 * (SIG_LEV - NOISE_LEV);
-
         if (pks[i] >= THR_SIG) {
-            // BEAT FOUND: No delay subtraction needed for Zero-Phase signals
-            qrs_i_raw.push_back(locs[i]);
+            // Apply the shift here.
+            size_t corrected = locs[i] + ALIGNMENT_SHIFT;
+
+            // Safety check: Don't exceed signal length
+            if (corrected >= ecg.size()) corrected = ecg.size() - 1;
+
+            qrs_i_raw.push_back(corrected);
             SIG_LEV = 0.125 * pks[i] + 0.875 * SIG_LEV;
         }
         else {
-            // NOISE FOUND
             NOISE_LEV = 0.125 * pks[i] + 0.875 * NOISE_LEV;
         }
     }

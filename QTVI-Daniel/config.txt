@@ -109,8 +109,8 @@ FWB_output_path = D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\ma
 #
 #   GenerateTemplates_output directory to output data.
 #
-GenerateTemplates_input = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\4 FindWaveBounds
-GenerateTemplates_output = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\5 GenerateTemplates
+GenerateTemplates_input = D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\matlab
+GenerateTemplates_output = D:\USERS\MiraWelner\QTVI\QTVI-data-files\5_generate_template_files\matlab
 
 # 6 Template Marking
 # GUI allowing manual template review to exclude poor ECG/PPG templates and correct dichotic notch of PPG
