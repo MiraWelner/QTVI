@@ -33,6 +33,7 @@ struct WaveData {
     double ppgSamplingRate;
     std::vector<std::size_t> ppg_bin_indexs;
     std::vector<std::size_t> ecg_bin_indexs;
+    std::vector<double> ppgSignal; 
 };
 
 AnnealedData readCppBin(const std::string& path, double ecgFs, double ppgFs);

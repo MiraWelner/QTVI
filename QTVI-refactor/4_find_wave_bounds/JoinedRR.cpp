@@ -59,8 +59,8 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
     double m_dist = (!dists.empty()) ? median(dists) : (ecgSamplingRate * 0.6);
     output[5] = RRsimpleSquared(ecgSeg, m_dist / 2.0).first;
 
-    // 2. Refine ALL algorithms to ensure they are looking at the same peak sample
-    for (size_t r = 0; r < 6; ++r) {
+    // 2. Refine ONLY algorithms 4, 5, 6 (matching MATLAB)
+    for (size_t r = 3; r < 6; ++r) {  // CHANGED: was 0 < 6, now 3 < 6
         output[r] = RPeakfromRWave(ecgSeg, output[r], ecgSamplingRate);
     }
 

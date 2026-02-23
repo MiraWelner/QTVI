@@ -35,6 +35,7 @@ AnnealedData readCppBin(const std::string& path, double ecgFs, double ppgFs) {
 
     for (uint64_t i = 0; i < numBins; ++i) {
         uint64_t pS, eS, sS;
+        
         if (!file.read(reinterpret_cast<char*>(&pS), 8)) break;
         data.bins[i].po.resize(pS);
         file.read(reinterpret_cast<char*>(data.bins[i].po.data()), pS * 8);
@@ -47,7 +48,10 @@ AnnealedData readCppBin(const std::string& path, double ecgFs, double ppgFs) {
         data.bins[i].ppgSampleRate = ppgFs;
 
         if (!file.read(reinterpret_cast<char*>(&sS), 8)) break;
-        if (sS > 0) file.seekg(sS * 8, std::ios_base::cur); // Skip broken sleep data
+        std::vector<double> sleep_data(sS);
+        if (sS > 0) {
+            file.read(reinterpret_cast<char*>(sleep_data.data()), sS * 8);
+        }
     }
     return data;
 }
@@ -62,36 +66,38 @@ void saveWaveData(const std::string& path, const std::vector<WaveData>& results)
     file.write(reinterpret_cast<const char*>(&numBins), 8);
 
     for (const auto& bin : results) {
+        // Helper: write indices with +1 offset (0-indexed C++ to 1-indexed MATLAB)
         auto writeIdx = [&](const std::vector<size_t>& v) {
             uint64_t sz = v.size();
             file.write(reinterpret_cast<const char*>(&sz), 8);
             for (size_t val : v) {
-                uint64_t out = static_cast<uint64_t>(val);
+                uint64_t out = static_cast<uint64_t>(val) + 1;  // ADD 1 for MATLAB indexing
                 file.write(reinterpret_cast<const char*>(&out), 8);
             }
-            };
+        };
 
         writeIdx(bin.ecgRIndex);
         writeIdx(bin.ppgMaxAmps);
         writeIdx(bin.ppgMinAmps);
 
-        // --- SECTION 4: PAIRS (The specific fix for 1.84e19) ---
+        // PPG Signal (no indexing, just values)
+        uint64_t sigSz = bin.ppgSignal.size();
+        file.write(reinterpret_cast<const char*>(&sigSz), 8);
+        if (sigSz > 0) {
+            file.write(reinterpret_cast<const char*>(bin.ppgSignal.data()), sigSz * 8);
+        }
+
+        // Pairs: add 1 to indices, keep -1 as is
         uint64_t numPairs = bin.pairs.size();
         file.write(reinterpret_cast<const char*>(&numPairs), 8);
         for (const auto& p : bin.pairs) {
-            // Force the bit pattern to be a SIGNED -1 if the value is invalid
-            int64_t ppg_out = (std::isnan(p[0]) || p[0] < -0.1) ? -1 : (int64_t)std::round(p[0]);
-            int64_t ecg_out = (std::isnan(p[1]) || p[1] < -0.1) ? -1 : (int64_t)std::round(p[1]);
-
+            int64_t ppg_out = (std::isnan(p[0]) || p[0] < -0.1) ? -1 : (int64_t)std::round(p[0]) + 1;
+            int64_t ecg_out = (std::isnan(p[1]) || p[1] < -0.1) ? -1 : (int64_t)std::round(p[1]) + 1;
             file.write(reinterpret_cast<const char*>(&ppg_out), 8);
             file.write(reinterpret_cast<const char*>(&ecg_out), 8);
         }
     }
 }
-
-
-
-
 
 // --- Config Parser ---
 ConfigSettings parseConfig(const std::string& configPath, const int type_row) {
