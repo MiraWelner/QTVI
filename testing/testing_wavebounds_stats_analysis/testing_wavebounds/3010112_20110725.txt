@@ -1,0 +1,15 @@
+Data taken from MESA file 3010112_20110725
+Bins in .bin file: 0
+Bins in .mat file: 540
+
+		Total in .bin	Total in .mat	Total diff	STD in .bin	STD in .mat	STD diff	%  error	bins >25 errors	bins >50 error
+R Peaks		0		40992		40992		0.000		18.461		18.461		1.000		0		0
+
+PPG Peaks	0		40447		40447		0.000		17.192		17.192		1.000		0		0
+
+PPG Dips	0		40491		40491		0.000		17.208		17.208		1.000		0		0
+
+Pairs		0		41498		41498		0.000		18.025		18.025		1.000		0		0
+
+The n for each 60s bin
+bin #	R Peak(.bin)	R Peak(.mat)	R Peak diff	PPG Peak(.bin)	PPG Peak(.mat)	PPG Peak diff	PPG Dip(.bin)	PPG Dip(.mat)	PPG Dip diff	Pair(.bin)	Pair(.mat)	Pair diff

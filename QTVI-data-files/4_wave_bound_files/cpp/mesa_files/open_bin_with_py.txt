@@ -1,0 +1,104 @@
+import os
+import struct
+
+
+# --- Converted Code Structure ---
+class ComparisonData:
+    def __init__(self):
+        self.ecgRIndex = []
+        self.ppgMaxAmps = []
+        self.ppgMinAmps = []
+        self.ppgSignal = []
+        self.pairs = []
+
+
+def readVecFromBin(file, vec):
+    data = file.read(8)
+    if not data or len(data) < 8:
+        return
+    count = struct.unpack("<Q", data)[0]
+    for _ in range(count):
+        val_data = file.read(8)
+        if len(val_data) == 8:
+            vec.append(float(struct.unpack("<q", val_data)[0]))
+
+
+def readDoubleVecFromBin(file, vec):
+    data = file.read(8)
+    if not data or len(data) < 8:
+        return
+    count = struct.unpack("<Q", data)[0]
+    if count > 0:
+        raw_bytes = file.read(count * 8)
+        if len(raw_bytes) == count * 8:
+            vec.extend(struct.unpack(f"<{count}d", raw_bytes))
+
+
+def readAllFromBin(path):
+    results = []
+    if not os.path.exists(path):
+        print(f"Error: File not found at {path}")
+        return results
+
+    with open(path, "rb") as file:
+        data = file.read(8)
+        if not data or len(data) < 8:
+            return results
+        numBins = struct.unpack("<Q", data)[0]
+
+        for _ in range(numBins):
+            entry = ComparisonData()
+            readVecFromBin(file, entry.ecgRIndex)
+            readVecFromBin(file, entry.ppgMaxAmps)
+            readVecFromBin(file, entry.ppgMinAmps)
+            readDoubleVecFromBin(file, entry.ppgSignal)
+
+            pair_count_data = file.read(8)
+            if pair_count_data and len(pair_count_data) == 8:
+                numPairs = struct.unpack("<Q", pair_count_data)[0]
+                for _ in range(numPairs):
+                    p_data = file.read(8)
+                    e_data = file.read(8)
+                    if len(p_data) == 8 and len(e_data) == 8:
+                        entry.pairs.append(
+                            (
+                                float(struct.unpack("<q", p_data)[0]),
+                                float(struct.unpack("<q", e_data)[0]),
+                            )
+                        )
+            results.append(entry)
+    return results
+
+
+# --- Application ---
+
+ID = "3010023_20110817"
+
+# Use raw strings (r"") for Windows paths to handle backslashes
+binPath = (
+    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\cpp\mesa_files\\"
+    + ID
+    + "_annealed_wave_data.bin"
+)
+matPath = (
+    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\matlab\\"
+    + ID
+    + "_wave_data.mat"
+)
+outPath = ID + ".txt"
+
+# Load the data
+data_results = readAllFromBin(binPath)
+
+# Example: Write a summary to the output text file
+with open(outPath, "w") as f:
+    f.write(f"Processed ID: {ID}\n")
+    f.write(f"Number of bins found: {len(data_results)}\n\n")
+
+    for i, res in enumerate(data_results):
+        f.write(f"--- Bin {i} ---\n")
+        f.write(f"ECG R Indices: {len(res.ecgRIndex)}\n")
+        f.write(f"PPG Signal Length: {len(res.ppgSignal)}\n")
+        f.write(f"Pairs found: {len(res.pairs)}\n\n")
+
+print(f"Done. Processed {len(data_results)} bins into {outPath}")

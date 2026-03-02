@@ -4,6 +4,42 @@
 // ============================================================================
 #include "StatsUtils.h"
 
+void detrend(std::vector<double>&x) {
+    size_t n = x.size();
+    if (n < 2) return;
+
+    // 1. Calculate sums for Linear Regression (Least Squares)
+    double sum_x = 0;
+    double sum_y = 0;
+    double sum_xy = 0;
+    double sum_xx = 0;
+
+    for (size_t i = 0; i < n; ++i) {
+        sum_x += (double)i;
+        sum_y += x[i];
+        sum_xy += (double)i * x[i];
+        sum_xx += (double)i * (double)i;
+    }
+
+    // 2. Calculate Slope (m) and Intercept (b) for the trend line: y = mx + b
+    double denominator = (n * sum_xx - sum_x * sum_x);
+
+    // If denominator is 0, the signal is a single point or invalid
+    if (denominator == 0) {
+        return;
+    }
+
+    double slope = (n * sum_xy - sum_x * sum_y) / denominator;
+    double intercept = (sum_y - slope * sum_x) / (double)n;
+
+    // 3. Subtract the trend line from the original signal
+    for (size_t i = 0; i < n; ++i) {
+        x[i] = x[i] - (slope * (double)i + intercept);
+    }
+}
+
+
+
 double mean(const vector<double>& x) {
     if (x.empty()) return 0.0;
     double sum = 0.0;

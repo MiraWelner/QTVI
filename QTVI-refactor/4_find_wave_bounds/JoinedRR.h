@@ -8,6 +8,6 @@
 #include "SignalProcessingTypes.h"
 
 // Joined R-R detection
-vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, double diff_range);
+vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, double diff_range, const std::string fileID);
 
 #endif // JOINEDRR_H

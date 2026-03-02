@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="testing_wavebounds/testing_wavebounds.vcxproj" Id="223da247-366a-43dc-a6d7-176ffcd3f5e1" />
+</Solution>

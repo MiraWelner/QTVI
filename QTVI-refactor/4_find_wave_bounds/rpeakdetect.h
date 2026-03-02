@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <cstddef>
+#include <string>
 
 using namespace std;
 
@@ -23,6 +24,6 @@ struct RPeakDetectResult {
  * @param thresh Threshold for integrated peaks, default 0.2
  * @param testmode Plotting flag (not used in C++), default 0
  */
-RPeakDetectResult rpeakdetect(const vector<double>& data, double samp_freq = 256.0, double thresh = 0.2, int testmode = 0);
+RPeakDetectResult rpeakdetect(const vector<double>& data, double samp_freq = 256.0, double thresh = 0.2, int testmode = 0, std::string fileID = "");
 
 #endif // RPEAKDETECT_H

@@ -11,6 +11,7 @@
 // Find wave bounds in ECG and PPG
 std::vector<WaveData> FindWaveBounds_EKGandPPG(const std::vector<AnnealedSegment>& annealedSegments,
     int dbg_plot,
-    bool use_R_algorithms);
+    bool use_R_algorithm,
+    std::string fileID);
 
 #endif // FINDWAVEBOUNDS_EKGANDPPG_H

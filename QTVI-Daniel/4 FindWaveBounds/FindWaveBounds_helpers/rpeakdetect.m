@@ -1,5 +1,4 @@
-function [R_index, hrv, R_t, R_amp, S_t, S_amp] = rpeakdetect(data, samp_freq, thresh, testmode)
-
+function [R_index, hrv, R_t, R_amp, S_t, S_amp] = rpeakdetect(data, samp_freq, thresh, testmode, fileID)
     % [hrv, R_t, R_amp, R_index, S_t, S_amp]  = rpeakdetect(data, samp_freq, thresh, testmode);
     % R_t == RR points in time, R_amp == amplitude
     % of R peak in bpf data & S_amp == amplitude of
@@ -85,6 +84,11 @@ function [R_index, hrv, R_t, R_amp, S_t, S_amp] = rpeakdetect(data, samp_freq, t
     %%%%%%%%% bandpass filter data - assume 256hz data %%%%%
     % remove mean
     x = x - mean(x);
+
+    %%DEBUG
+    fname = sprintf('%s_detrended.csv', fileID); 
+    writematrix(x, fname);
+    %% DEBUG
 
     % FIR filtering stage
     bpf = x; %Initialise

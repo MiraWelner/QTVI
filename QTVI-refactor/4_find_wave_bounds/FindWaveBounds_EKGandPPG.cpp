@@ -9,7 +9,8 @@
 
 vector<WaveData> FindWaveBounds_EKGandPPG(const vector<AnnealedSegment>& annealedSegments,
     int dbg_plot,
-    bool use_R_algorithms) {
+    bool use_R_algorithms,
+    std::string fileID) {
     vector<WaveData> data(annealedSegments.size());
 
     for (size_t i = 0; i < annealedSegments.size(); ++i) {
@@ -42,7 +43,7 @@ vector<WaveData> FindWaveBounds_EKGandPPG(const vector<AnnealedSegment>& anneale
 
         if (!rIsNoise && ecgRIndex.empty() && use_R_algorithms) {
             try {
-                ecgRIndex = JoinedRR(ecgSeg, ecgSamplingRate, 2.0);
+                ecgRIndex = JoinedRR(ecgSeg, ecgSamplingRate, 2.0, fileID+"_bin_"+ std::to_string(i));
                 if (ecgRIndex.size() < ppgMinAmps.size() / 2 ||
                     ppgMinAmps.size() * 1.5 < ecgRIndex.size()) {
                     rIsNoise = true;

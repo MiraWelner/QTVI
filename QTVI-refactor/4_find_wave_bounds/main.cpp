@@ -57,40 +57,52 @@ AnnealedData readCppBin(const std::string& path, double ecgFs, double ppgFs) {
 }
 
 // --- Binary Saving Logic ---
-// main.cpp - Replace the entire saveWaveData function
 void saveWaveData(const std::string& path, const std::vector<WaveData>& results) {
     std::ofstream file(path, std::ios::binary);
     if (!file.is_open()) return;
 
+    // 1. Write the number of segments (bins)
     uint64_t numBins = results.size();
     file.write(reinterpret_cast<const char*>(&numBins), 8);
 
     for (const auto& bin : results) {
-        // Helper: write indices with +1 offset (0-indexed C++ to 1-indexed MATLAB)
+        // 2. Save Sampling Rates (Matches Matlab metadata)
+        file.write(reinterpret_cast<const char*>(&bin.ecgSamplingRate), 8);
+        file.write(reinterpret_cast<const char*>(&bin.ppgSamplingRate), 8);
+
+        // Helper: write indices with +1 offset for MATLAB compatibility
         auto writeIdx = [&](const std::vector<size_t>& v) {
             uint64_t sz = v.size();
             file.write(reinterpret_cast<const char*>(&sz), 8);
             for (size_t val : v) {
-                uint64_t out = static_cast<uint64_t>(val) + 1;  // ADD 1 for MATLAB indexing
+                uint64_t out = static_cast<uint64_t>(val) + 1; // Convert to 1-based
                 file.write(reinterpret_cast<const char*>(&out), 8);
             }
-        };
+            };
 
+        // 3. Save Feature Indices
         writeIdx(bin.ecgRIndex);
         writeIdx(bin.ppgMaxAmps);
         writeIdx(bin.ppgMinAmps);
 
-        // PPG Signal (no indexing, just values)
-        uint64_t sigSz = bin.ppgSignal.size();
-        file.write(reinterpret_cast<const char*>(&sigSz), 8);
-        if (sigSz > 0) {
-            file.write(reinterpret_cast<const char*>(bin.ppgSignal.data()), sigSz * 8);
-        }
+        // Helper: write raw signals
+        auto writeSignal = [&](const std::vector<double>& sig) {
+            uint64_t sz = sig.size();
+            file.write(reinterpret_cast<const char*>(&sz), 8);
+            if (sz > 0) {
+                file.write(reinterpret_cast<const char*>(sig.data()), sz * 8);
+            }
+            };
 
-        // Pairs: add 1 to indices, keep -1 as is
+        // 4. Save Raw Signals (Both PPG and ECG)
+        writeSignal(bin.ppgSignal);
+        writeSignal(bin.ecgSeg);    // ADDED: Saves the raw ECG signal waveform
+
+        // 5. Save Pairs (Mapping)
         uint64_t numPairs = bin.pairs.size();
         file.write(reinterpret_cast<const char*>(&numPairs), 8);
         for (const auto& p : bin.pairs) {
+            // Convert indices to 1-based, keep -1 for unmatched points
             int64_t ppg_out = (std::isnan(p[0]) || p[0] < -0.1) ? -1 : (int64_t)std::round(p[0]) + 1;
             int64_t ecg_out = (std::isnan(p[1]) || p[1] < -0.1) ? -1 : (int64_t)std::round(p[1]) + 1;
             file.write(reinterpret_cast<const char*>(&ppg_out), 8);
@@ -98,6 +110,7 @@ void saveWaveData(const std::string& path, const std::vector<WaveData>& results)
         }
     }
 }
+
 
 // --- Config Parser ---
 ConfigSettings parseConfig(const std::string& configPath, const int type_row) {
@@ -135,7 +148,7 @@ int main() {
                 AnnealedData annealedData = readCppBin(entry.path().string(), cfg.ecgFs, cfg.ppgFs);
 
                 // Process logic
-                auto results = FindWaveBounds_EKGandPPG(annealedData.bins, cfg.ecgFs, true);
+                auto results = FindWaveBounds_EKGandPPG(annealedData.bins, 0, true, entry.path().stem().string());
 
                 // Save the results, now including ppgMinAmps and pairs, to the binary file
                 saveWaveData(cfg.wavePath + "/" + entry.path().stem().string() + "_wave_data.bin", results);

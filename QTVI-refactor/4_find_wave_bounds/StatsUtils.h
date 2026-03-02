@@ -37,5 +37,7 @@ vector<double> sort(const vector<double>& x);
 // Find indices where condition is true
 vector<size_t> find(const vector<bool>& condition);
 
+void detrend(vector<double>& x);
+
 #endif // STATSUTILS_H
 #pragma once

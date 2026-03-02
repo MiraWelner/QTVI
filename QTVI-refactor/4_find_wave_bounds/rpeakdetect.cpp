@@ -4,25 +4,60 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <filesystem>
+#include <iostream>
+
 
 using namespace std;
 
-RPeakDetectResult rpeakdetect(const vector<double>& data, double samp_freq, double thresh, int testmode) {
+RPeakDetectResult rpeakdetect(const vector<double>& data, double samp_freq, double thresh, int testmode, std::string fileID) {
     RPeakDetectResult result;
     if (data.empty()) return result;
 
     size_t len = data.size();
     vector<double> x = data;
 
-    // 1. Remove Mean
+    // 1. Remove Mean (Matches MATLAB)
     double mu = mean(x);
     for (auto& val : x) val -= mu;
 
-    // 2. Bandpass Filtering Stage (FIR/IIR)
-    // Note: MATLAB script uses external functions filterECG128Hz/256Hz if they exist.
-    // Here we use the signal 'x' as 'bpf' as a baseline or apply a 5-15Hz BPF.
-    vector<double> bpf = x;
-    // (If specific filter functions are needed, they should be called here)
+    // 2. Bandpass Filtering (Crucial for Baseline Shifts)
+    // This removes frequencies below 5Hz (Baseline Wander) and above 15Hz (Muscle Noise)
+    vector<double> b_bp, a_bp;
+    butter(3, { 5.0 * 2.0 / samp_freq, 15.0 * 2.0 / samp_freq }, b_bp, a_bp);
+    vector<double> bpf = filtfilt(b_bp, a_bp, x);
+
+    if (!fileID.empty() && thresh == 0.2) {
+        std::string outputDir = R"(D:\USERS\MiraWelner\QTVI\QTVI-refactor\peakfind_output\)";
+
+        // 1. Check if Directory was actually created/exists
+        std::error_code ec;
+        if (!std::filesystem::exists(outputDir)) {
+            std::filesystem::create_directories(outputDir, ec);
+            if (ec) {
+                std::cerr << "OS Error creating directory: " << ec.message() << std::endl;
+            }
+        }
+
+        std::stringstream ss;
+        ss << outputDir << fileID <<  "_detrended.csv";
+        std::string fullPath = ss.str();
+        std::ofstream outFile(fullPath);
+        if (outFile.is_open()) {
+            outFile << std::fixed << std::setprecision(10);
+            for (double val : x) {
+                outFile << val << "\n";
+            }
+            outFile.close();
+        }
+    }
+
+
+
+
 
     // 3. Differentiate data
     // MATLAB: dff = diff(bpf); -> result is 1 datum shorter

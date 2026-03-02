@@ -10,7 +10,7 @@ function [ret] = FindWaveBounds(anneal_path, output_path)
         annealedSegments = annealedSegments.annealedSegments;
 
         disp('Finding individual beats...');
-        [wave_data] = FindWaveBounds_EKGandPPG(annealedSegments, 0, 1);
+        [wave_data] = FindWaveBounds_EKGandPPG(annealedSegments, 0, 1, name);
         disp('Saving...');
         save(fullfile(output_path, [name '_wave_data']), 'wave_data');
 

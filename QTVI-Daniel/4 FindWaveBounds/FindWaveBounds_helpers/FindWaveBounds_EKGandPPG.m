@@ -1,4 +1,4 @@
-function [data] = FindWaveBounds_EKGandPPG(annealedSegments, dbg_plot, use_R_algorithms)
+function [data] = FindWaveBounds_EKGandPPG(annealedSegments, dbg_plot, use_R_algorithms, fileID)
 
     %     if dbg_plot == 1
     %         figures = cell(length(annealedSegments),1);
@@ -42,7 +42,7 @@ function [data] = FindWaveBounds_EKGandPPG(annealedSegments, dbg_plot, use_R_alg
         
         if ~rIsNoise && isempty(ecgRIndex) && use_R_algorithms
             try
-                ecgRIndex = JoinedRR(ecgSeg, ecgSamplingRate, 2);
+                ecgRIndex = JoinedRR(ecgSeg, ecgSamplingRate, 2, fileID);
                 if length(ecgRIndex) < length(ppgMinAmps)/2 || length(ppgMinAmps) * 1.5 < length(ecgRIndex)
                     rIsNoise = true;
                 end

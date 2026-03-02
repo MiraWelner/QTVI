@@ -163,10 +163,10 @@ vector<vector<double>> pairRtoPPGBeat(const vector<double>& ecg, const vector<do
                     }
                 }
 
-                // Keep the winner, set others to their own ECG index as a fallback
+                // Keep the winner, set others to unpaired
                 for (size_t j = start_idx; j <= end_idx; ++j) {
                     if (j == winner_row) continue;
-                    pairs[j][0] = pairs[j][1]; // Use ECG index as temporary match
+                    pairs[j][0] = -1.0;
                     changed = true;
                 }
 
@@ -183,6 +183,13 @@ vector<vector<double>> pairRtoPPGBeat(const vector<double>& ecg, const vector<do
 
         if (std::isnan(row[0]) || row[0] < 0) row[0] = -1.0;
         if (std::isnan(row[1]) || row[1] < 0) row[1] = -1.0;
+    }
+
+    // 8. Final cleanup: replace orphaned PPG indices (-1) with ECG indices (MATLAB line 176)
+    for (size_t i = 0; i < pairs.size(); ++i) {
+        if (pairs[i][0] == -1.0 && pairs[i][1] >= 0.0) {
+            pairs[i][0] = pairs[i][1];  // Use ECG index as PPG fallback
+        }
     }
 
     return pairs;

@@ -7,7 +7,7 @@
 #include "FilterUtils.h"
 #include <algorithm>
 #include <vector>
-#include <map> // Required for weight merging
+#include <map>
 
 // Refinement helper (ensures algorithms snap to the local maximum)
 vector<size_t> RPeakfromRWave(const vector<double>& ecg, const vector<size_t>& rWaveIdx, double fs) {
@@ -33,21 +33,26 @@ vector<size_t> RPeakfromRWave(const vector<double>& ecg, const vector<size_t>& r
     return refined;
 }
 
-vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, double diff_range) {
-    if (std_dev(ecgSeg) == 0) return {};
+vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, double diff_range, const std::string fileID) {
+    if (ecgSeg.empty() || std_dev(ecgSeg) == 0) return {};
+
+    // 0. Proper Detrending (Removes both DC offset AND linear slope)
+    vector<double> processedEcg = ecgSeg;
+    detrend(processedEcg);
 
     // 1. Run Ensemble
     vector<vector<size_t>> output(6);
     vector<double> weights = { 0.75, 0.25, 0.25, 1.25, 1.5, 0.75 };
 
-    output[0] = rpeakdetect(ecgSeg, ecgSamplingRate).R_index;
-    output[1] = rpeakdetect(ecgSeg, ecgSamplingRate, 0.1).R_index;
-    output[2] = rpeakdetect(ecgSeg, ecgSamplingRate, 0.4).R_index;
-    output[3] = pan_tompkin(ecgSeg, ecgSamplingRate).qrs_i_raw;
+    // Pass the detrended signal to all algorithms
+    output[0] = rpeakdetect(processedEcg, ecgSamplingRate, 0.2, 0, fileID).R_index;
+    output[1] = rpeakdetect(processedEcg, ecgSamplingRate, 0.1, 0, fileID).R_index;
+    output[2] = rpeakdetect(processedEcg, ecgSamplingRate, 0.4, 0, fileID).R_index;
+    output[3] = pan_tompkin(processedEcg, ecgSamplingRate).qrs_i_raw;
 
     vector<double> b, a;
     butter(3, { 5.0 * 2.0 / ecgSamplingRate, 12.0 * 2.0 / ecgSamplingRate }, b, a);
-    output[4] = ecgLms(ecgSeg, (int)ecgSamplingRate, b, a, 0);
+    output[4] = ecgLms(processedEcg, (int)ecgSamplingRate, b, a, 0);
 
     vector<double> dists;
     for (int i = 0; i < 5; ++i) {
@@ -60,83 +65,64 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
     output[5] = RRsimpleSquared(ecgSeg, m_dist / 2.0).first;
 
     // 2. Refine ONLY algorithms 4, 5, 6 (matching MATLAB)
-    for (size_t r = 3; r < 6; ++r) {  // CHANGED: was 0 < 6, now 3 < 6
+    for (size_t r = 3; r < 6; ++r) {
         output[r] = RPeakfromRWave(ecgSeg, output[r], ecgSamplingRate);
     }
 
-    // 3. Flatten detections with Algorithm ID
-    struct PeakDet { size_t pos; double weight; int algo_idx; };
-    vector<PeakDet> all_dets;
+    // 3. Build weighted detection list (MATLAB: sortedList)
+    struct DetWithWeight { size_t pos; double weight; };
+    vector<DetWithWeight> all_weighted;
     for (int i = 0; i < 6; ++i) {
-        for (size_t p : output[i]) all_dets.push_back({ p, weights[i], i });
+        for (size_t p : output[i]) {
+            all_weighted.push_back({ p, weights[i] });
+        }
     }
-    std::sort(all_dets.begin(), all_dets.end(), [](const PeakDet& a, const PeakDet& b) {
+    std::sort(all_weighted.begin(), all_weighted.end(), [](const auto& a, const auto& b) {
         return a.pos < b.pos;
-        });
+    });
 
-    // 4. Chained Cluster Merging
-    // --- Step 4: Clustering & Consensus ---
+    if (all_weighted.empty()) return {};
+
+    // 4. Get unique positions
+    vector<size_t> uniq;
+    for (const auto& dw : all_weighted) {
+        if (uniq.empty() || uniq.back() != dw.pos) {
+            uniq.push_back(dw.pos);
+        }
+    }
+
+    // 5. Merge adjacent unique positions within diff_range (MATLAB lines 57-67)
+    std::map<size_t, size_t> position_map;
+    for (size_t i = 0; i < uniq.size(); ++i) {
+        position_map[uniq[i]] = uniq[i];
+    }
+
+    for (size_t i = 0; i + 1 < uniq.size(); ++i) {
+        if ((double)(uniq[i + 1] - uniq[i]) <= diff_range) {
+            // Merge to the peak with higher ECG amplitude
+            if (ecgSeg[uniq[i]] > ecgSeg[uniq[i + 1]]) {
+                position_map[uniq[i + 1]] = uniq[i];
+            }
+            else {
+                position_map[uniq[i]] = uniq[i + 1];
+            }
+        }
+    }
+
+    // 6. Recalculate unique and sum weights
+    std::map<size_t, double> weighted_peaks;
+    for (const auto& dw : all_weighted) {
+        size_t merged_pos = position_map[dw.pos];
+        weighted_peaks[merged_pos] += dw.weight;
+    }
+
+    // 7. Filter by weight threshold and return
     vector<size_t> candidates;
-    if (all_dets.empty()) return candidates;
-
-    // A. CRITICAL: Sort detections by position first
-    std::sort(all_dets.begin(), all_dets.end(), [](const PeakDet& a, const PeakDet& b) {
-        return a.pos < b.pos;
-        });
-
-    vector<PeakDet> cluster;
-    auto processCluster = [&](vector<PeakDet>& c) {
-        if (c.empty()) return;
-        std::map<int, double> algo_weights;
-        size_t best_pos = c[0].pos;
-        double max_v = -1e30;
-
-        for (auto& pd : c) {
-            // Take the max weight for each unique algorithm in this cluster
-            if (pd.weight > algo_weights[pd.algo_idx]) algo_weights[pd.algo_idx] = pd.weight;
-            // The R-peak is the point with the highest amplitude in the cluster
-            if (ecgSeg[pd.pos] > max_v) { max_v = ecgSeg[pd.pos]; best_pos = pd.pos; }
-        }
-
-        double total_w = 0;
-        for (auto const& [id, w] : algo_weights) total_w += w;
-
-        if (total_w >= 2.4) {
-            // B. Refractory Check: prevent double-counting within 200ms
-            double min_dist = 0.200 * ecgSamplingRate;
-            if (candidates.empty() || (best_pos - candidates.back()) > min_dist) {
-                candidates.push_back(best_pos);
-            }
-        }
-        };
-
-    for (size_t i = 0; i < all_dets.size(); ++i) {
-        if (cluster.empty() || (double)all_dets[i].pos - (double)cluster.back().pos <= diff_range) {
-            cluster.push_back(all_dets[i]);
-        }
-        else {
-            processCluster(cluster);
-            cluster.clear();
-            cluster.push_back(all_dets[i]);
-        }
-    }
-    processCluster(cluster); // Handle last cluster
-
-
-    // 5. --- REFRACTORY PERIOD FILTER (250ms) ---
-    vector<size_t> final_rr;
-    double refractory_samples = 0.25 * ecgSamplingRate; // 250ms
-    for (size_t p : candidates) {
-        if (final_rr.empty() || (p - final_rr.back()) > refractory_samples) {
-            final_rr.push_back(p);
-        }
-        else {
-            // If two beats are too close, keep the one with higher ECG voltage
-            if (ecgSeg[p] > ecgSeg[final_rr.back()]) {
-                final_rr.back() = p;
-            }
+    for (const auto& [pos, weight] : weighted_peaks) {
+        if (weight >= 2.4) {
+            candidates.push_back(pos);
         }
     }
 
-    return final_rr;
+    return candidates;
 }
