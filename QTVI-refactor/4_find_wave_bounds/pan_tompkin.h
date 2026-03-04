@@ -16,6 +16,7 @@ struct PanTompkinResult {
 /**
  * Complete 1-1 translation of Sedghamiz's Pan-Tompkins algorithm.
  */
-PanTompkinResult pan_tompkin(const vector<double>& ecg, double fs, int gr = 0);
+
+PanTompkinResult pan_tompkin(const std::vector<double>& ecg_input, double fs, int gr);
 
 #endif // PAN_TOMPKIN_H

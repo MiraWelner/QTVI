@@ -1194,14 +1194,14 @@
 <circle cx="80" cy="520" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 0, Mat: 0</title>
 </circle>
-<circle cx="258.824" cy="256.471" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 38, Mat: 56</title>
+<circle cx="80" cy="256.471" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 0, Mat: 56</title>
 </circle>
 <circle cx="80" cy="364.706" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 0, Mat: 33</title>
 </circle>
-<circle cx="80" cy="364.706" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 0, Mat: 33</title>
+<circle cx="192.941" cy="364.706" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 24, Mat: 33</title>
 </circle>
 <circle cx="80" cy="261.176" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 0, Mat: 55</title>

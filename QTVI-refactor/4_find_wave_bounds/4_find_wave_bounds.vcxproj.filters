@@ -66,6 +66,12 @@
     <ClCompile Include="stdoutlier.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="filterECG128Hz.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="filterECG256Hz.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="diff2.h">
@@ -123,6 +129,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="stdoutlier.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="filterECG128Hz.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="filterECG256Hz.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

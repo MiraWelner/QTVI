@@ -125,6 +125,8 @@
     <ClCompile Include="diff2.cpp" />
     <ClCompile Include="ecglaux.cpp" />
     <ClCompile Include="ecgLms.cpp" />
+    <ClCompile Include="filterECG128Hz.cpp" />
+    <ClCompile Include="filterECG256Hz.cpp" />
     <ClCompile Include="FilterUtils.cpp" />
     <ClCompile Include="FindWaveBounds_EKGandPPG.cpp" />
     <ClCompile Include="JoinedRR.cpp" />
@@ -144,6 +146,8 @@
     <ClInclude Include="diff2.h" />
     <ClInclude Include="ecglaux.h" />
     <ClInclude Include="ecgLms.h" />
+    <ClInclude Include="filterECG128Hz.hpp" />
+    <ClInclude Include="filterECG256Hz.hpp" />
     <ClInclude Include="FilterUtils.h" />
     <ClInclude Include="FindWaveBounds.h" />
     <ClInclude Include="FindWaveBounds_EKGandPPG.h" />

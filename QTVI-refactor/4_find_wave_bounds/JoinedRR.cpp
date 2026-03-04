@@ -48,7 +48,9 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
     output[0] = rpeakdetect(processedEcg, ecgSamplingRate, 0.2, 0, fileID).R_index;
     output[1] = rpeakdetect(processedEcg, ecgSamplingRate, 0.1, 0, fileID).R_index;
     output[2] = rpeakdetect(processedEcg, ecgSamplingRate, 0.4, 0, fileID).R_index;
-    output[3] = pan_tompkin(processedEcg, ecgSamplingRate).qrs_i_raw;
+
+    PanTompkinResult pt_res = pan_tompkin(processedEcg, ecgSamplingRate, 0);
+    output[3].assign(pt_res.qrs_i_raw.begin(), pt_res.qrs_i_raw.end());
 
     vector<double> b, a;
     butter(3, { 5.0 * 2.0 / ecgSamplingRate, 12.0 * 2.0 / ecgSamplingRate }, b, a);

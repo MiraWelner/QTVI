@@ -3,13 +3,13 @@ Bins in .bin file: 540
 Bins in .mat file: 540
 
 		Total in .bin	Total in .mat	Total diff	STD in .bin	STD in .mat	STD diff	% error		>25 errors	>50 error
-R Peaks		23598		28070		4472		27.694		17.305		-10.388		0.159		94		9
+R Peaks		23584		28070		4486		27.705		17.305		-10.400		0.160		94		10
 
 PPG Peaks	23967		24017		50		27.377		27.355		-0.022		0.002		1		0
 
 PPG Dips	24141		24044		-97		26.971		27.388		0.417		-0.004		1		0
 
-Pairs		24319		24240		-79		27.211		27.650		0.439		-0.003		1		1
+Pairs		24326		24240		-86		27.203		27.650		0.446		-0.004		1		1
 
 The n for each 60s bin
 bin #	R Peak(.bin)	R Peak(.mat)	R Peak diff	PPG Peak(.bin)	PPG Peak(.mat)	PPG Peak diff	PPG Dip(.bin)	PPG Dip(.mat)	PPG Dip diff	Pair(.bin)	Pair(.mat)	Pair diff
@@ -409,9 +409,9 @@ bin #	R Peak(.bin)	R Peak(.mat)	R Peak diff	PPG Peak(.bin)	PPG Peak(.mat)	PPG Pe
 393	0		0		0		53		53		0		54		54		0		54		54		0		
 394	0		0		0		57		57		0		57		57		0		57		57		0		
 395	0		0		0		59		59		0		59		59		0		59		59		0		
-396	38		56		18		65		65		0		65		65		0		73		78		5		
+396	0		56		56		65		65		0		65		65		0		65		78		13		
 397	0		33		33		61		59		-2		61		59		-2		61		61		0		
-398	0		33		33		44		43		-1		43		43		0		43		55		12		
+398	24		33		9		44		43		-1		43		43		0		58		55		-3		
 399	0		55		55		0		0		0		1		0		-1		1		0		-1		
 400	0		11		11		0		0		0		1		0		-1		1		0		-1		
 401	0		19		19		0		0		0		1		0		-1		1		0		-1		

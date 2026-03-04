@@ -1,6 +1,8 @@
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\diff2.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\4_find_w.55033544\x64\Release\diff2.obj
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\ecglaux.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\4_find_w.55033544\x64\Release\ecglaux.obj
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\ecgLms.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\4_find_w.55033544\x64\Release\ecgLms.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\filterECG128Hz.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\4_find_w.55033544\x64\Release\filterECG128Hz.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\filterECG256Hz.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\4_find_w.55033544\x64\Release\filterECG256Hz.obj
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\FilterUtils.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\4_find_w.55033544\x64\Release\FilterUtils.obj
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\FindWaveBounds_EKGandPPG.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\4_find_w.55033544\x64\Release\FindWaveBounds_EKGandPPG.obj
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\JoinedRR.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\4_find_w.55033544\x64\Release\JoinedRR.obj
