@@ -85,9 +85,12 @@ function [R_index, hrv, R_t, R_amp, S_t, S_amp] = rpeakdetect(data, samp_freq, t
     % remove mean
     x = x - mean(x);
 
-    %%DEBUG
-    fname = sprintf('%s_detrended.csv', fileID); 
-    writematrix(x, fname);
+    %% DEBUG - APPEND DATA FOR ALL BINS
+    fname = sprintf('%s_threshold_%0.2f_detrended.csv', fileID, thresh); 
+    
+    % Use 'WriteMode', 'append' to keep adding bins to the same file
+    % x(:) ensures it stays as a single continuous column
+    writematrix(x(:), fname, 'WriteMode', 'append'); 
     %% DEBUG
 
     % FIR filtering stage

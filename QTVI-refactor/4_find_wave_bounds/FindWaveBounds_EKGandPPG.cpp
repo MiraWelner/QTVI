@@ -1,103 +1,106 @@
-// ============================================================================
-// File: FindWaveBounds_EKGandPPG.cpp
-// ============================================================================
 #include "FindWaveBounds_EKGandPPG.h"
 #include "SegmentPPG.h"
 #include "JoinedRR.h"
 #include "pairRtoPPGBeat.h"
 #include "StatsUtils.h"
+#include <vector>
+#include <string>
+#include <cmath>
+#include <algorithm>
 
-vector<WaveData> FindWaveBounds_EKGandPPG(const vector<AnnealedSegment>& annealedSegments,
+std::vector<WaveData> FindWaveBounds_EKGandPPG(const std::vector<AnnealedSegment>& annealedSegments,
     int dbg_plot,
     bool use_R_algorithms,
     std::string fileID) {
-    vector<WaveData> data(annealedSegments.size());
 
-    for (size_t i = 0; i < annealedSegments.size(); ++i) {
-        double ppgSamplingRate = annealedSegments[i].ppgSampleRate;
-        double ecgSamplingRate = annealedSegments[i].ecgSampleRate;
-        vector<double> ecgSeg = annealedSegments[i].ecg;
+    if (annealedSegments.empty()) return {};
+
+    std::vector<WaveData> data(annealedSegments.size());
+
+    // Loop through each 30-second bin individually (Matlab-style)
+    for (std::size_t i = 0; i < annealedSegments.size(); ++i) {
+        const auto& seg = annealedSegments[i];
+
+        // --- 1. Basic Metadata & Waveform Storage ---
+        data[i].index = static_cast<int>(i);
+        data[i].ecgSamplingRate = seg.ecgSampleRate;
+        data[i].ppgSamplingRate = seg.ppgSampleRate;
+
+        // These assignments ensure saveWaveData finds the actual signal arrays
+        data[i].ppgSignal = seg.po;
+        data[i].ecgSignal = seg.ecg;
+
+        data[i].ppg_bin_indexs = seg.ppg_bin_indexs;
+        data[i].ecg_bin_indexs = seg.ecg_bin_indexs;
+
         bool rIsNoise = false;
 
-        vector<size_t> ecgRIndex;
-        vector<double> ppgSeg = annealedSegments[i].po;
-
-        vector<size_t> ppgMinAmps, ppgMaxAmps;
+        // --- 2. Segment PPG (Dips and Peaks) ---
         try {
-            auto ppgResult = SegmentPPG(ppgSeg, ppgSamplingRate);
-            ppgMinAmps = ppgResult.ppgMinAmps;
-            ppgMaxAmps = ppgResult.maxAmps;
+            // SegmentPPG is called once per 30s bin
+            SegmentPPGResult ppgResult = SegmentPPG(seg.po, seg.ppgSampleRate);
+            data[i].ppgMinAmps = ppgResult.ppgMinAmps;
+            data[i].ppgMaxAmps = ppgResult.maxAmps;
             data[i].bad_segment = false;
         }
-        catch (const std::exception& e) {
-            ppgMinAmps.clear();
-            ppgMaxAmps.clear();
+        catch (...) {
             data[i].bad_segment = true;
+            data[i].ppgMinAmps.clear();
+            data[i].ppgMaxAmps.clear();
         }
 
-        if (ecgRIndex.empty() && use_R_algorithms) {
-            if (std_dev(ecgSeg) == 0) {
-                rIsNoise = true;
-            }
+        // --- 3. Noise Check (Matches Matlab logic) ---
+        if (use_R_algorithms && std_dev(seg.ecg) == 0) {
+            rIsNoise = true;
         }
 
-        if (!rIsNoise && ecgRIndex.empty() && use_R_algorithms) {
+        // --- 4. R-Peak Detection (JoinedRR) ---
+        if (!rIsNoise && use_R_algorithms) {
             try {
-                ecgRIndex = JoinedRR(ecgSeg, ecgSamplingRate, 2.0, fileID+"_bin_"+ std::to_string(i));
-                if (ecgRIndex.size() < ppgMinAmps.size() / 2 ||
-                    ppgMinAmps.size() * 1.5 < ecgRIndex.size()) {
+                // JoinedRR runs on a single 30s bin for maximum speed
+                data[i].ecgRIndex = JoinedRR(seg.ecg, seg.ecgSampleRate, 20.0, fileID);
+
+                // Noise heuristic: R-peaks should roughly correlate with PPG heart rate
+                double r_count = static_cast<double>(data[i].ecgRIndex.size());
+                double p_count = static_cast<double>(data[i].ppgMinAmps.size());
+
+                if (r_count < p_count / 2.0 || p_count * 1.5 < r_count) {
                     rIsNoise = true;
                 }
             }
-            catch (const std::exception& e) {
+            catch (...) {
                 rIsNoise = true;
             }
         }
 
-        vector<vector<double>> pairs;
-        if (!rIsNoise && !ecgRIndex.empty()) {
+        // --- 5. Pairing R-peaks to PPG Beats ---
+        if (!rIsNoise && !data[i].ecgRIndex.empty()) {
             try {
-                pairs = pairRtoPPGBeat(ecgSeg, ppgSeg, ecgSamplingRate, ppgSamplingRate,
-                    ecgRIndex, ppgMinAmps);
+                data[i].pairs = pairRtoPPGBeat(seg.ecg, seg.po,
+                    seg.ecgSampleRate, seg.ppgSampleRate,
+                    data[i].ecgRIndex, data[i].ppgMinAmps);
             }
-            catch (const std::exception& e) {
+            catch (...) {
+                // Fallback for failed pairing: match PPG to a dummy ECG index (-1)
                 if (!data[i].bad_segment) {
-                    pairs.resize(ppgMinAmps.size(), vector<double>(2));
-                    for (size_t j = 0; j < ppgMinAmps.size(); ++j) {
-                        pairs[j][0] = ppgMinAmps[j];
-                        pairs[j][1] = -1;
+                    data[i].ecgRIndex.clear();
+                    data[i].pairs.assign(data[i].ppgMinAmps.size(), { 0.0, -1.0, 0.0, 0.0 });
+                    for (std::size_t j = 0; j < data[i].ppgMinAmps.size(); ++j) {
+                        data[i].pairs[j][0] = static_cast<double>(data[i].ppgMinAmps[j]);
                     }
-                }
-                else {
-                    pairs.clear();
                 }
             }
         }
         else {
-            if (!data[i].bad_segment) {
-                pairs.resize(ppgMinAmps.size(), vector<double>(2));
-                for (size_t j = 0; j < ppgMinAmps.size(); ++j) {
-                    pairs[j][0] = ppgMinAmps[j];
-                    pairs[j][1] = -1;
+            // Case: Noisy ECG or Empty ECG, but valid PPG exists
+            if (!data[i].bad_segment && !data[i].ppgMinAmps.empty()) {
+                data[i].ecgRIndex.clear();
+                data[i].pairs.assign(data[i].ppgMinAmps.size(), { 0.0, -1.0, 0.0, 0.0 });
+                for (std::size_t j = 0; j < data[i].ppgMinAmps.size(); ++j) {
+                    data[i].pairs[j][0] = static_cast<double>(data[i].ppgMinAmps[j]);
                 }
             }
-            else {
-                pairs.clear();
-            }
         }
-
-        data[i].ecgSeg = ecgSeg;
-        data[i].ppgSeg = ppgSeg;
-        data[i].ppgSignal = ppgSeg;
-        data[i].ecgRIndex = ecgRIndex;
-        data[i].ppgMinAmps = ppgMinAmps;
-        data[i].ppgMaxAmps = ppgMaxAmps;
-        data[i].pairs = pairs;
-        data[i].index = i;
-        data[i].ecgSamplingRate = ecgSamplingRate;
-        data[i].ppgSamplingRate = ppgSamplingRate;
-        data[i].ppg_bin_indexs = annealedSegments[i].ppg_bin_indexs;
-        data[i].ecg_bin_indexs = annealedSegments[i].ecg_bin_indexs;
     }
 
     return data;

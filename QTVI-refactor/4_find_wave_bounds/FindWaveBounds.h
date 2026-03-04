@@ -10,7 +10,7 @@ struct AnnealedSegment {
     std::vector<double> po;
     double ecgSampleRate;
     double ppgSampleRate;
-    std::vector<std::size_t> r_peaks;        // 2. Added std:: prefix
+    std::vector<std::size_t> r_peaks;
     std::vector<std::size_t> ppg_bin_indexs;
     std::vector<std::size_t> ecg_bin_indexs;
 };
@@ -23,8 +23,7 @@ struct WaveData {
     std::vector<std::vector<double>> pairs;
     std::vector<double> ecgPeaks;
     bool bad_segment;
-    std::vector<double> ecgSeg;
-    std::vector<double> ppgSeg;
+    std::vector<double> ecgSignal;
     std::vector<std::size_t> ecgRIndex;
     std::vector<std::size_t> ppgMinAmps;
     std::vector<std::size_t> ppgMaxAmps;

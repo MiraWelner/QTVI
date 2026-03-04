@@ -69,9 +69,6 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg, double fs, int gr) {
     }
 
     // 8. Detection Loop with Offset Correction
-    // Based on your logs, BIN is usually 3 samples behind MAT (e.g. 95 vs 98).
-    // So we ADD 3 to align BIN with MAT.
-    const int ALIGNMENT_SHIFT = 3;
 
     vector<size_t> qrs_i_raw;
     for (size_t i = 0; i < locs.size(); ++i) {
@@ -79,13 +76,11 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg, double fs, int gr) {
 
         double THR_SIG = NOISE_LEV + 0.25 * (SIG_LEV - NOISE_LEV);
         if (pks[i] >= THR_SIG) {
-            // Apply the shift here.
-            size_t corrected = locs[i] + ALIGNMENT_SHIFT;
 
             // Safety check: Don't exceed signal length
-            if (corrected >= ecg.size()) corrected = ecg.size() - 1;
+            if (locs[i] >= ecg.size()) locs[i] = ecg.size() - 1;
 
-            qrs_i_raw.push_back(corrected);
+            qrs_i_raw.push_back(locs[i]);
             SIG_LEV = 0.125 * pks[i] + 0.875 * SIG_LEV;
         }
         else {
