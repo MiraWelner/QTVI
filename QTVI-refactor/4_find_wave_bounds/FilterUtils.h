@@ -21,6 +21,6 @@ vector<double> filtfilt(const vector<double>& b, const vector<double>& a, const 
 vector<double> conv(const vector<double>& a, const vector<double>& b);
 
 // Median filter
-vector<double> medfilt1(const vector<double>& x, int window_size);
+std::vector<double> medfilt1(const std::vector<double>& x, int n);
 
 #endif // FILTERUTILS_H#pragma once

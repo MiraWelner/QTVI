@@ -3,8 +3,11 @@
 #include "StatsUtils.h"
 #include <cmath>
 #include <algorithm>
+#include <iostream>
 #include <vector>
 #include <numeric>
+#include <fstream>
+
 
 // Declarations to resolve C3861 (ensure these match the signatures in filterECG*.cpp)
 std::vector<double> filterECG128Hz(const std::vector<double>& x);
@@ -20,6 +23,21 @@ static std::vector<double> get_diff(const std::vector<double>& v) {
     }
     return res;
 }
+
+void debug_dump(const std::vector<double>& v,  const std::string& suffix) {
+    // Matches MATLAB: sprintf('%s_%s.csv', fileID, suffix)
+    std::string filename =  suffix + ".csv";
+
+    // std::ios::app ensures it appends to the file instead of overwriting (Matches 'WriteMode', 'append')
+    std::ofstream f(filename, std::ios::app);
+    if (f.is_open()) {
+        for (double x : v) {
+            f << x << "\n";
+        }
+        f.close();
+    }
+}
+
 
 RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq, double thresh, int testmode, std::string fileID) {
     RPeakDetectResult result;
@@ -68,44 +86,64 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
         mdfint.erase(mdfint.begin(), mdfint.begin() + (delay - 1));
     }
 
-    // 7. Thresholding: find highest bumps in the middle 50%
-    // MATLAB: max_h = max(mdfint(round(len/4):round(3*len/4)))
-    int start_search = (int)std::round((double)len / 4.0) - 1; // -1 for 0-based
+    // 7. Thresholding: NaN-Safe max_h calculation
+    int start_search = (int)std::round((double)len / 4.0) - 1;
     int end_search = (int)std::round(3.0 * (double)len / 4.0) - 1;
 
     start_search = std::max(0, std::min(start_search, (int)mdfint.size() - 1));
     end_search = std::max(start_search, std::min(end_search, (int)mdfint.size() - 1));
 
-    double max_h = 0.0;
+    double max_h = -1e30; // Start with very small value
+    bool found_valid = false;
     for (int i = start_search; i <= end_search; ++i) {
-        if (mdfint[i] > max_h) max_h = mdfint[i];
+        // CRITICAL FIX: isfinite() ignores NaNs and Infs which are common in MESA files
+        if (std::isfinite(mdfint[i])) {
+            if (mdfint[i] > max_h) {
+                max_h = mdfint[i];
+                found_valid = true;
+            }
+        }
+    }
+    // Safety: If the whole search range was invalid, default to a sensible threshold
+    if (!found_valid) max_h = 0.0;
+
+    std::string h_filename = R"(D:\USERS\MiraWelner\QTVI\output\)" + fileID + "_cpp_threshold_log.csv";
+    std::ofstream h_file(h_filename, std::ios::app); // Appends to the file
+    if (h_file.is_open()) {
+        h_file.precision(10); // Match MATLAB's precision
+        h_file << max_h << "\n";
+        h_file.close();
     }
 
-    // 8. Identify possible regions: poss_reg = mdfint > (thresh * max_h)
-    std::vector<int> poss_reg(mdfint.size());
+    // 8. Identify possible regions (Handle NaN by treating as 0)
+    std::vector<int> poss_reg(mdfint.size(), 0);
     double limit = thresh * max_h;
     for (size_t i = 0; i < mdfint.size(); ++i) {
-        poss_reg[i] = (mdfint[i] > limit) ? 1 : 0;
+        if (!std::isnan(mdfint[i])) {
+            poss_reg[i] = (mdfint[i] > limit) ? 1 : 0;
+        }
     }
 
-    // 9. Segment detection: left/right boundaries
-    // MATLAB: find(diff([0 poss_reg']) == 1)
+    // 9. Segment detection (MATLAB replication)
     std::vector<int> left, right;
     if (!poss_reg.empty()) {
-        if (poss_reg[0] == 1) left.push_back(1); // 1-based index to match logic
-        for (size_t i = 1; i < poss_reg.size(); ++i) {
-            if (poss_reg[i] == 1 && poss_reg[i - 1] == 0) left.push_back((int)i + 1);
-            if (poss_reg[i] == 0 && poss_reg[i - 1] == 1) right.push_back((int)i);
+        // MATLAB: diff([0 poss_reg']) == 1
+        if (poss_reg[0] == 1) left.push_back(1);
+        for (size_t i = 1; i < (int)poss_reg.size(); ++i) {
+            if (poss_reg[i] == 1 && poss_reg[i - 1] == 0) left.push_back(i + 1);
+            if (poss_reg[i] == 0 && poss_reg[i - 1] == 1) right.push_back(i);
         }
+        // MATLAB: diff([poss_reg' 0]) == -1
         if (poss_reg.back() == 1) right.push_back((int)poss_reg.size());
     }
 
-    // 10. Search for local Max/Min within segments
+    // 10. Search for local Max/Min
+    // Ensure we handle cases where left/right might differ in size
+    size_t num_segs = std::min(left.size(), right.size());
     std::vector<size_t> maxloc, minloc;
     std::vector<double> maxval, minval;
 
-    for (size_t i = 0; i < left.size(); ++i) {
-        // Convert 1-based MATLAB indices to 0-based C++
+    for (size_t i = 0; i < num_segs; ++i) {
         int l = left[i] - 1;
         int r = right[i] - 1;
 
@@ -114,8 +152,10 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
 
         for (int k = l; k <= r; ++k) {
             if (k >= 0 && k < (int)bpf.size()) {
-                if (bpf[k] > cur_max) { cur_max = bpf[k]; cur_max_i = k; }
-                if (bpf[k] < cur_min) { cur_min = bpf[k]; cur_min_i = k; }
+                if (!std::isnan(bpf[k])) {
+                    if (bpf[k] > cur_max) { cur_max = bpf[k]; cur_max_i = k; }
+                    if (bpf[k] < cur_min) { cur_min = bpf[k]; cur_min_i = k; }
+                }
             }
         }
         maxval.push_back(cur_max);
@@ -134,19 +174,16 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
     for (auto loc : maxloc) result.R_t.push_back(get_time(loc));
     for (auto loc : minloc) result.S_t.push_back(get_time(loc));
 
-    // 12. Lead Inversion Check (PERFECT REPLICATION OF MATLAB L171-180)
-    // Note: MATLAB does NOT update R_index here, only R_t, R_amp, S_t, S_amp
+
+    // 12. Lead Inversion Check (The "Fragile" MATLAB check)
+       // NOTE: If your R Peak count is vastly different, check if this block 
+       // is being triggered in the 'bad' bins.
     if (!maxloc.empty() && !minloc.empty()) {
+        // MATLAB checks only the LAST element
         if (minloc.back() < maxloc.back()) {
-            std::vector<double> temp_t = result.R_t;
-            result.R_t = result.S_t;
-            result.S_t = temp_t;
-
-            std::vector<double> temp_amp = result.R_amp;
-            result.R_amp = result.S_amp;
-            result.S_amp = temp_amp;
-
-            // Replicating the MATLAB "bug": result.R_index remains maxloc!
+            std::swap(result.R_t, result.S_t);
+            std::swap(result.R_amp, result.S_amp);
+            // result.R_index = maxloc; // Leave index as is to match MATLAB bug
         }
     }
 
@@ -157,5 +194,11 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
         }
     }
 
+
+    debug_dump(bpf, R"(D:\USERS\MiraWelner\QTVI\output\)" + fileID + "_debug_bpf");       // Check 1
+    debug_dump(mdfint, R"(D:\USERS\MiraWelner\QTVI\output\)" + fileID + "_debug_mdfint"); // Check 2
+    // Print max_h to console
+   // std::cout << "fileID: " << fileID << " max_h: " << max_h << std::endl; // Check 3
     return result;
+
 }

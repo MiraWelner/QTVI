@@ -6,6 +6,8 @@
 #include "StatsUtils.h"
 #include "FilterUtils.h"
 #include <algorithm>
+#include <fstream>
+#include <iomanip>
 #include <vector>
 #include <map>
 
@@ -36,9 +38,15 @@ vector<size_t> RPeakfromRWave(const vector<double>& ecg, const vector<size_t>& r
 vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, double diff_range, const std::string fileID) {
     if (ecgSeg.empty() || std_dev(ecgSeg) == 0) return {};
 
-    // 0. Proper Detrending (Removes both DC offset AND linear slope)
+    // 0. Proper Detrending
     vector<double> processedEcg = ecgSeg;
-    detrend(processedEcg);
+    double mu = 0.0;
+    if (!processedEcg.empty()) {
+        for (double v : processedEcg) mu += v;
+        mu /= processedEcg.size();
+        for (auto& val : processedEcg) val -= mu;
+    }
+
 
     // 1. Run Ensemble
     vector<vector<size_t>> output(6);
@@ -52,8 +60,8 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
     PanTompkinResult pt_res = pan_tompkin(processedEcg, ecgSamplingRate, 0);
     output[3].assign(pt_res.qrs_i_raw.begin(), pt_res.qrs_i_raw.end());
 
-    vector<double> b, a;
-    butter(3, { 5.0 * 2.0 / ecgSamplingRate, 12.0 * 2.0 / ecgSamplingRate }, b, a);
+    vector<double> b = { 5.0 };
+    vector<double> a = { 12.0 };
     output[4] = ecgLms(processedEcg, (int)ecgSamplingRate, b, a, 0);
 
     vector<double> dists;
@@ -93,20 +101,42 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
         }
     }
 
-    // 5. Merge adjacent unique positions within diff_range (MATLAB lines 57-67)
-    std::map<size_t, size_t> position_map;
-    for (size_t i = 0; i < uniq.size(); ++i) {
-        position_map[uniq[i]] = uniq[i];
-    }
 
+    // Inside JoinedRR.cpp, right before the merger (Step 5)
+    std::ofstream alg_dbg(fileID + "_alg_indices.csv", std::ios::app);
+    alg_dbg << "--- BIN_START ---\n";
+    for (int i = 0; i < 6; ++i) {
+        alg_dbg << "Algorithm_" << i << "_Weight_" << weights[i] << ":";
+        for (size_t p : output[i]) alg_dbg << p << ",";
+        alg_dbg << "\n";
+    }
+    alg_dbg.close();
+
+
+    // 5. Merge adjacent unique positions (FIXED: Replicates MATLAB's in-place logic)
+ // This ensures that clusters (e.g. indices 10, 11, 12) all merge into a single peak.
     for (size_t i = 0; i + 1 < uniq.size(); ++i) {
         if ((double)(uniq[i + 1] - uniq[i]) <= diff_range) {
-            // Merge to the peak with higher ECG amplitude
+            size_t winner, loser;
             if (ecgSeg[uniq[i]] > ecgSeg[uniq[i + 1]]) {
-                position_map[uniq[i + 1]] = uniq[i];
+                winner = uniq[i];
+                loser = uniq[i + 1];
             }
             else {
-                position_map[uniq[i]] = uniq[i + 1];
+                winner = uniq[i + 1];
+                loser = uniq[i];
+            }
+
+            // MATLAB: potentialPeaks(potentialPeaks(:,1)==loser, 1) = winner;
+            // We must update EVERY instance in our weighted list immediately.
+            for (auto& dw : all_weighted) {
+                if (dw.pos == loser) dw.pos = winner;
+            }
+
+            // We must also update the 'uniq' list so the NEXT loop iteration 
+            // compares the correct winner against the next peak.
+            for (size_t k = 0; k < uniq.size(); ++k) {
+                if (uniq[k] == loser) uniq[k] = winner;
             }
         }
     }
@@ -114,17 +144,35 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
     // 6. Recalculate unique and sum weights
     std::map<size_t, double> weighted_peaks;
     for (const auto& dw : all_weighted) {
-        size_t merged_pos = position_map[dw.pos];
-        weighted_peaks[merged_pos] += dw.weight;
+        weighted_peaks[dw.pos] += dw.weight;
     }
 
-    // 7. Filter by weight threshold and return
+    // 7. Filter by weight threshold (Floating point safe: 2.39)
     vector<size_t> candidates;
     for (const auto& [pos, weight] : weighted_peaks) {
-        if (weight >= 2.4) {
+        if (weight >= 2.399) {
             candidates.push_back(pos);
         }
     }
+    std::sort(candidates.begin(), candidates.end());
+
+    // ============================================================================
+    // DEBUG BLOCK: Final verification right before output
+    // ============================================================================
+    std::string dbg_filename = fileID + "_joined_debug.csv";
+    std::ofstream dbg(dbg_filename, std::ios::app);
+    if (dbg.is_open()) {
+        // Each call represents one bin. This logs EVERY potential peak before thresholding.
+        dbg << "--- NEW_BIN_START ---\n";
+        dbg << "Position,SumWeight,Result\n";
+        for (auto const& [pos, weight] : weighted_peaks) {
+            dbg << pos << "," << std::fixed << std::setprecision(4) << weight << ","
+                << (weight >= 2.399 ? "ACCEPTED" : "REJECTED") << "\n";
+        }
+        dbg << "TOTAL_CANDIDATES_IN_BIN," << candidates.size() << "\n";
+        dbg.close();
+    }
+    // ============================================================================
 
     return candidates;
 }

@@ -48,7 +48,19 @@ function [rr] = JoinedRR(ecgSeg,ecgSamplingRate,diff_range, fileID)
 %     output{end+1} = RRWavelet(ecgSeg,median_dist/2);
 
          
-   
+    % Inside JoinedRR.m, before the unique/merge logic
+    fid = fopen([fileID '_alg_indices.csv'], 'a');
+    fprintf(fid, '--- BIN_START ---\n');
+    weights = [0.75, 0.25, 0.25, 1.25, 1.5, 0.75];
+    % Assuming output is a cell array or similar holding the indices
+    for i = 1:6
+        fprintf(fid, 'Algorithm_%d_Weight_%.2f:', i-1, weights(i));
+        % Replace 'output{i}' with whatever variable holds each algorithm's indices
+        fprintf(fid, '%d,', output{i}); 
+        fprintf(fid, '\n');
+    end
+    fclose(fid);
+
     potentialPeaks = sortedList(output,weights);
     
     % shift peaks which are within range of specificed diff to largest value in
@@ -73,6 +85,39 @@ function [rr] = JoinedRR(ecgSeg,ecgSamplingRate,diff_range, fileID)
     end
     
     rr = weighted_peaks(weighted_peaks(:,2) >= 2.4,1);
+
+    % ============================================================================
+    % DEBUG BLOCK: Final verification right before output
+    % ============================================================================
+    dbg_filename = [fileID '_joined_debug.csv'];
+    fid = fopen(dbg_filename, 'a'); % 'a' for append mode
+    if fid ~= -1
+        % Header for the start of the bin
+        fprintf(fid, '--- NEW_BIN_START ---\n');
+        fprintf(fid, 'Position,SumWeight,Result\n');
+        
+        % Log every unique candidate post-merge
+        for k = 1:size(weighted_peaks, 1)
+            pos = weighted_peaks(k, 1);
+            weight = weighted_peaks(k, 2);
+            
+            if weight >= 2.4
+                res_str = 'ACCEPTED';
+            else
+                res_str = 'REJECTED';
+            end
+            
+            % %d for integer position, %.4f for float weight to check precision
+            fprintf(fid, '%d,%.4f,%s\n', pos, weight, res_str);
+        end
+        
+        % Summary count for this bin
+        fprintf(fid, 'TOTAL_CANDIDATES_IN_BIN,%d\n', length(rr));
+        fclose(fid);
+    end
+    % ============================================================================
+
+
     
     
 %     

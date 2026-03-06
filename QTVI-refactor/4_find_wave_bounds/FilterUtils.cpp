@@ -139,26 +139,43 @@ vector<double> conv(const vector<double>& a, const vector<double>& b) {
 // 5. Median Filter
 // Matches: y = medfilt1(x, window_size)
 // ============================================================================
-vector<double> medfilt1(const vector<double>& x, int window_size) {
+std::vector<double> medfilt1(const std::vector<double>& x, int n) {
     if (x.empty()) return {};
-    if (window_size <= 1) return x;
+    if (n <= 1) return x;
 
-    vector<double> y(x.size());
-    int half = window_size / 2;
+    size_t len = x.size();
+    std::vector<double> y(len);
 
-    for (int i = 0; i < (int)x.size(); ++i) {
-        vector<double> window;
-        for (int j = -half; j <= half; ++j) {
-            int idx = i + j;
-            // MATLAB truncates the window at boundaries (only considers valid elements)
-            if (idx >= 0 && idx < (int)x.size()) {
-                window.push_back(x[idx]);
+    // MATLAB centered window logic:
+    // If n=10, window is x(k-5 : k+4)
+    // If n=11, window is x(k-5 : k+5)
+    int n_minus = n / 2;
+    int n_plus = (n % 2 == 0) ? (n / 2 - 1) : (n / 2);
+
+    for (int i = 0; i < (int)len; ++i) {
+        std::vector<double> window;
+        window.reserve(n);
+
+        for (int j = i - n_minus; j <= i + n_plus; ++j) {
+            if (j >= 0 && j < (int)len) {
+                window.push_back(x[j]);
+            }
+            else {
+                // MATLAB Rule: Assume 0 beyond endpoints
+                window.push_back(0.0);
             }
         }
 
-        // Use nth_element for efficient median calculation O(n)
-        nth_element(window.begin(), window.begin() + window.size() / 2, window.end());
-        y[i] = window[window.size() / 2];
+        std::sort(window.begin(), window.end());
+
+        if (n % 2 != 0) {
+            // Odd: Middle element
+            y[i] = window[n / 2];
+        }
+        else {
+            // Even: Average of two middle elements (Rule for medfilt1)
+            y[i] = (window[n / 2 - 1] + window[n / 2]) / 2.0;
+        }
     }
     return y;
 }

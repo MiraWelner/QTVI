@@ -85,14 +85,6 @@ function [R_index, hrv, R_t, R_amp, S_t, S_amp] = rpeakdetect(data, samp_freq, t
     % remove mean
     x = x - mean(x);
 
-    %% DEBUG - APPEND DATA FOR ALL BINS
-    fname = sprintf('%s_threshold_%0.2f_detrended.csv', fileID, thresh); 
-    
-    % Use 'WriteMode', 'append' to keep adding bins to the same file
-    % x(:) ensures it stays as a single continuous column
-    writematrix(x(:), fname, 'WriteMode', 'append'); 
-    %% DEBUG
-
     % FIR filtering stage
     bpf = x; %Initialise
 
@@ -103,6 +95,11 @@ function [R_index, hrv, R_t, R_amp, S_t, S_amp] = rpeakdetect(data, samp_freq, t
     if ((samp_freq == 256) & (exist('filterECG256Hz') ~= 0))
         bpf = filterECG256Hz(x);
     end
+
+    %% DEBUG - BPF DUMP
+    bpf_fname = sprintf('%s_debug_bpf.csv', fileID);  
+    writematrix(bpf(:), bpf_fname, 'WriteMode', 'append'); 
+    
 
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -125,9 +122,22 @@ function [R_index, hrv, R_t, R_amp, S_t, S_amp] = rpeakdetect(data, samp_freq, t
     % remove filter delay for scanning back through ECG
     delay = ceil(length(d) / 2);
     mdfint = mdfint(delay:length(mdfint));
+    %% DEBUG - MDFINT DUMP
+    mdfint_fname = sprintf('%s_debug_mdfint.csv', fileID); 
+    writematrix(mdfint(:), mdfint_fname, 'WriteMode', 'append'); 
+
     %%%%%%%%% segment search area %%%%%%%%%%%%%%%%%%%%%%%
     %%%% first find the highest bumps in the data %%%%%%
     max_h = max(mdfint(round(len / 4):round(3 * len / 4)));
+
+    %% DEBUG: Log max_h for comparison
+   fname_h = sprintf('%s_matlab_threshold_log.csv', fileID); 
+    fid = fopen(fname_h, 'a');
+    if fid ~= -1
+        fprintf(fid, '%.10f\n', max_h); % Using 10 decimal places for precision
+        fclose(fid);
+    end
+    %% END DEBUG
 
     %%%% then build an array of segments to look in %%%%%
     %thresh = 0.2;
