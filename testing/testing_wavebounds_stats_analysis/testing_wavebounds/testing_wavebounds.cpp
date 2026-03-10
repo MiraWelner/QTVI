@@ -269,7 +269,7 @@ void compareIndividual(std::ostream& out, const std::vector<ComparisonData>& bin
 }
 
 int main() {
-    std::vector<std::string> IDs = { "3010104_20111027","3010112_20110725", "3010139_20110210","3010155_20110511", "3010201_20120320","3010228_20110426", "3010317_20110413", "3010457_20111109", "3010660_20120322", "3010724_20110811", "3010740_20110303", "3010767_20120423" };
+    std::vector<std::string> IDs = {"3010023_20110817", "3010104_20111027", "3010112_20110725", "3010139_20110210", "3010201_20120320","3010228_20110426", "3010317_20110413", "3010457_20111109", "3010660_20120322", "3010724_20110811", "3010740_20110303" };
     std::vector<long long> R_peaks_all_files_bins;
     std::vector<long long> R_peaks_all_files_mat;
     std::vector<int> bins_binfile;
@@ -307,24 +307,24 @@ int main() {
         DatasetStats binPairStats = calculateStats(binData, pairProjector);
         DatasetStats matPairStats = calculateStats(matData, pairProjector);
 
-        int bins_r_error_25 = 0, bins_r_error_50 = 0;
-        int bins_ppg_peak_error_25 = 0, bins_ppg_peak_error_50 = 0;
-        int bins_ppg_dip_error_25 = 0, bins_ppg_dip_error_50 = 0;
-        int bins_pair_error_25 = 0, bins_pair_error_50 = 0;
+        int bins_r_error_5 = 0, bins_r_error_10 = 0;
+        int bins_ppg_peak_error_5 = 0, bins_ppg_peak_error_10 = 0;
+        int bins_ppg_dip_error_5 = 0, bins_ppg_dip_error_10 = 0;
+        int bins_pair_error_5 = 0, bins_pair_error_10 = 0;
 
         for (size_t i = 0; i < max_bins; ++i) {
-            auto checkErr = [&](size_t b, size_t m, int& e25, int& e50) {
+            auto checkErr = [&](size_t b, size_t m, int& e5, int& e10) {
                 int diff = std::abs(static_cast<int>(m) - static_cast<int>(b));
-                if (diff > 25) e25++;
-                if (diff > 50) e50++;
+                if (diff > 5) e5++;
+                if (diff > 50) e10++;
                 };
-            checkErr(binData[i].ecgRIndex.size(), matData[i].ecgRIndex.size(), bins_r_error_25, bins_r_error_50);
-            checkErr(binData[i].ppgMaxAmps.size(), matData[i].ppgMaxAmps.size(), bins_ppg_peak_error_25, bins_ppg_peak_error_50);
-            checkErr(binData[i].ppgMinAmps.size(), matData[i].ppgMinAmps.size(), bins_ppg_dip_error_25, bins_ppg_dip_error_50);
-            checkErr(binData[i].pairs.size(), matData[i].pairs.size(), bins_pair_error_25, bins_pair_error_50);
+            checkErr(binData[i].ecgRIndex.size(), matData[i].ecgRIndex.size(), bins_r_error_5, bins_r_error_10);
+            checkErr(binData[i].ppgMaxAmps.size(), matData[i].ppgMaxAmps.size(), bins_ppg_peak_error_5, bins_ppg_peak_error_10);
+            checkErr(binData[i].ppgMinAmps.size(), matData[i].ppgMinAmps.size(), bins_ppg_dip_error_5, bins_ppg_dip_error_10);
+            checkErr(binData[i].pairs.size(), matData[i].pairs.size(), bins_pair_error_5, bins_pair_error_10);
         }
 
-        outFile << "\t\tTotal in .bin\tTotal in .mat\tTotal diff\tSTD in .bin\tSTD in .mat\tSTD diff\t% error\t\t>25 errors\t>50 error" << std::endl;
+        outFile << "\t\tTotal in .bin\tTotal in .mat\tTotal diff\tSTD in .bin\tSTD in .mat\tSTD diff\t% error\t\t>5 errors\t>10 error" << std::endl;
 
         auto writeRow = [&](std::string label, DatasetStats b, DatasetStats m, int e25, int e50) {
             double errPct = (m.total == 0) ? 0 : (m.total - b.total) / static_cast<double>(m.total);
@@ -333,10 +333,10 @@ int main() {
                 << errPct << "\t\t" << e25 << "\t\t" << e50 << std::endl << std::endl;
             };
 
-        writeRow("R Peaks\t", binRStats, matRStats, bins_r_error_25, bins_r_error_50);
-        writeRow("PPG Peaks", binPPGPeakStats, matPPGPeakStats, bins_ppg_peak_error_25, bins_ppg_peak_error_50);
-        writeRow("PPG Dips", binPPGDipStats, matPPGDipStats, bins_ppg_dip_error_25, bins_ppg_dip_error_50);
-        writeRow("Pairs\t", binPairStats, matPairStats, bins_pair_error_25, bins_pair_error_50);
+        writeRow("R Peaks\t", binRStats, matRStats, bins_r_error_5, bins_r_error_10);
+        writeRow("PPG Peaks", binPPGPeakStats, matPPGPeakStats, bins_ppg_peak_error_5, bins_ppg_peak_error_10);
+        writeRow("PPG Dips", binPPGDipStats, matPPGDipStats, bins_ppg_dip_error_5, bins_ppg_dip_error_10);
+        writeRow("Pairs\t", binPairStats, matPairStats, bins_pair_error_5, bins_pair_error_10);
 
         compareIndividual(outFile, binData, matData, max_bins);
         outFile.close();

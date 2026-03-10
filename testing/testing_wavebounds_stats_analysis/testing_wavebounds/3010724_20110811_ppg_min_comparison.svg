@@ -6,8 +6,8 @@
 <text x="300" y="580" text-anchor="middle" font-family="sans-serif">Bin PPG Min Amps Count (X)</text>
 <text x="25" y="300" text-anchor="middle" transform="rotate(-90 25,300)" font-family="sans-serif">Mat PPG Min Amps Count (Y)</text>
 <text x="300" y="40" text-anchor="middle" font-weight="bold" font-family="sans-serif">PPG Min Amps Count Comparison</text>
-<circle cx="392.821" cy="207.179" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
+<circle cx="387.692" cy="207.179" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 60, Mat: 61</title>
 </circle>
 <circle cx="392.821" cy="207.179" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
@@ -1725,8 +1725,8 @@
 <circle cx="362.051" cy="237.949" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 55, Mat: 55</title>
 </circle>
-<circle cx="387.692" cy="212.308" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 60, Mat: 60</title>
+<circle cx="382.564" cy="212.308" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 59, Mat: 60</title>
 </circle>
 <circle cx="367.179" cy="232.821" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 56, Mat: 56</title>
@@ -1905,8 +1905,8 @@
 <circle cx="167.179" cy="432.821" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 17, Mat: 17</title>
 </circle>
-<circle cx="408.205" cy="191.795" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 64</title>
+<circle cx="413.333" cy="191.795" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 65, Mat: 64</title>
 </circle>
 <circle cx="162.051" cy="207.179" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 16, Mat: 61</title>

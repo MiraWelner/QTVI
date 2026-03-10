@@ -142,6 +142,14 @@ int main() {
                 // 1. Read the binary file into separate 30s bins
                 AnnealedData annealedData = readCppBin(entry.path().string(), cfg.ecgFs, cfg.ppgFs);
 
+                if (annealedData.bins.size() > 501) {
+                    auto& b = annealedData.bins[501];
+                    std::cout << "Bin 501 ECG size: " << b.ecg.size()
+                        << " min: " << *std::min_element(b.ecg.begin(), b.ecg.end())
+                        << " max: " << *std::max_element(b.ecg.begin(), b.ecg.end())
+                        << std::endl;
+                }
+
                 // 2. Process the bins directly (DO NOT consolidate into one giant signal)
                 // This matches the MATLAB 'for i = 1:length(annealedSegments)' logic
                 std::string detrendedPath = R"(D:\USERS\MiraWelner\QTVI\QTVI-refactor\peakfind_output\)" + currentID + "_detrended.csv";

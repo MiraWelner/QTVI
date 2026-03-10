@@ -74,20 +74,28 @@ std::vector<WaveData> FindWaveBounds_EKGandPPG(const std::vector<AnnealedSegment
             }
             catch (...) {
                 if (!d.bad_segment) {
-                    d.ecgRIndex.clear(); // Clear if pairing fails and PPG is good
-                    // pairs would be filled with dummy values here
+                    d.ecgRIndex.clear();
+                    d.pairs.clear();
+                    for (size_t k = 0; k < d.ppgMinAmps.size(); ++k) {
+                        d.pairs.push_back({ (double)d.ppgMinAmps[k], -1.0 });
+                    }
                 }
-                d.pairs.clear();
+                else {
+                    d.pairs.clear();
+                }
             }
         }
         else {
-            // GOLD STANDARD REPLICATION:
-            // If the PPG signal was flat (bad_segment=true), MATLAB DOES NOT 
-            // clear the ecgRIndex. This is why Bins 515+ have peaks in MATLAB.
             if (!d.bad_segment) {
                 d.ecgRIndex.clear();
+                d.pairs.clear();
+                for (size_t k = 0; k < d.ppgMinAmps.size(); ++k) {
+                    d.pairs.push_back({ (double)d.ppgMinAmps[k], -1.0 });
+                }
             }
-            d.pairs.clear();
+            else {
+                d.pairs.clear();
+            }
         }
     }
 

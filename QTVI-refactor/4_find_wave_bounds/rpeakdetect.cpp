@@ -24,21 +24,6 @@ static std::vector<double> get_diff(const std::vector<double>& v) {
     return res;
 }
 
-void debug_dump(const std::vector<double>& v,  const std::string& suffix) {
-    // Matches MATLAB: sprintf('%s_%s.csv', fileID, suffix)
-    std::string filename =  suffix + ".csv";
-
-    // std::ios::app ensures it appends to the file instead of overwriting (Matches 'WriteMode', 'append')
-    std::ofstream f(filename, std::ios::app);
-    if (f.is_open()) {
-        for (double x : v) {
-            f << x << "\n";
-        }
-        f.close();
-    }
-}
-
-
 RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq, double thresh, int testmode, std::string fileID) {
     RPeakDetectResult result;
     if (data.size() < 10) return result; // Safety check for very short data
@@ -96,7 +81,6 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
     double max_h = -1e30; // Start with very small value
     bool found_valid = false;
     for (int i = start_search; i <= end_search; ++i) {
-        // CRITICAL FIX: isfinite() ignores NaNs and Infs which are common in MESA files
         if (std::isfinite(mdfint[i])) {
             if (mdfint[i] > max_h) {
                 max_h = mdfint[i];
@@ -107,14 +91,6 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
     // Safety: If the whole search range was invalid, default to a sensible threshold
     if (!found_valid) max_h = 0.0;
 
-    std::string h_filename = R"(D:\USERS\MiraWelner\QTVI\output\)" + fileID + "_cpp_threshold_log.csv";
-    std::ofstream h_file(h_filename, std::ios::app); // Appends to the file
-    if (h_file.is_open()) {
-        h_file.precision(10); // Match MATLAB's precision
-        h_file << max_h << "\n";
-        h_file.close();
-    }
-
     // 8. Identify possible regions (Handle NaN by treating as 0)
     std::vector<int> poss_reg(mdfint.size(), 0);
     double limit = thresh * max_h;
@@ -124,21 +100,18 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
         }
     }
 
-    // 9. Segment detection (MATLAB replication)
+    // 9. Segment detection
     std::vector<int> left, right;
     if (!poss_reg.empty()) {
-        // MATLAB: diff([0 poss_reg']) == 1
         if (poss_reg[0] == 1) left.push_back(1);
         for (size_t i = 1; i < (int)poss_reg.size(); ++i) {
             if (poss_reg[i] == 1 && poss_reg[i - 1] == 0) left.push_back(i + 1);
             if (poss_reg[i] == 0 && poss_reg[i - 1] == 1) right.push_back(i);
         }
-        // MATLAB: diff([poss_reg' 0]) == -1
         if (poss_reg.back() == 1) right.push_back((int)poss_reg.size());
     }
 
     // 10. Search for local Max/Min
-    // Ensure we handle cases where left/right might differ in size
     size_t num_segs = std::min(left.size(), right.size());
     std::vector<size_t> maxloc, minloc;
     std::vector<double> maxval, minval;
@@ -175,15 +148,11 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
     for (auto loc : minloc) result.S_t.push_back(get_time(loc));
 
 
-    // 12. Lead Inversion Check (The "Fragile" MATLAB check)
-       // NOTE: If your R Peak count is vastly different, check if this block 
-       // is being triggered in the 'bad' bins.
+    // 12. Lead Inversion Check
     if (!maxloc.empty() && !minloc.empty()) {
-        // MATLAB checks only the LAST element
         if (minloc.back() < maxloc.back()) {
             std::swap(result.R_t, result.S_t);
             std::swap(result.R_amp, result.S_amp);
-            // result.R_index = maxloc; // Leave index as is to match MATLAB bug
         }
     }
 
@@ -194,11 +163,6 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
         }
     }
 
-
-    debug_dump(bpf, R"(D:\USERS\MiraWelner\QTVI\output\)" + fileID + "_debug_bpf");       // Check 1
-    debug_dump(mdfint, R"(D:\USERS\MiraWelner\QTVI\output\)" + fileID + "_debug_mdfint"); // Check 2
-    // Print max_h to console
-   // std::cout << "fileID: " << fileID << " max_h: " << max_h << std::endl; // Check 3
     return result;
 
 }

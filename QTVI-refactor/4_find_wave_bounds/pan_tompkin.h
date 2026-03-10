@@ -2,6 +2,8 @@
 #define PAN_TOMPKIN_H
 
 #include <vector>
+#include <fstream>
+
 #include <cstddef>
 
 using namespace std;
@@ -17,6 +19,6 @@ struct PanTompkinResult {
  * Complete 1-1 translation of Sedghamiz's Pan-Tompkins algorithm.
  */
 
-PanTompkinResult pan_tompkin(const std::vector<double>& ecg_input, double fs, int gr);
+PanTompkinResult pan_tompkin(const std::vector<double>& ecg_input, double fs, int gr, const std::string& fileID);
 
 #endif // PAN_TOMPKIN_H

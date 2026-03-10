@@ -1,4 +1,11 @@
 ﻿  3_anneal_segments.cpp
-  anneal_segments.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\x64\Debug\anneal_segments.exe
-  'pwsh.exe' is not recognized as an internal or external command,
-  operable program or batch file.
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(204,10): error C2653: 'filesystem': is not a class or namespace name
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(204,22): error C3861: 'exists': identifier not found
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(204,48): error C2653: 'filesystem': is not a class or namespace name
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(204,60): error C3861: 'create_directories': identifier not found
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(206,30): error C2653: 'filesystem': is not a class or namespace name
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(206,22): error C2530: 'entry': references must be initialized
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(206,22): error C3531: 'entry': a symbol whose type contains 'auto' must have an initializer
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(206,28): error C2143: syntax error: missing ';' before ':'
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(206,42): error C3861: 'directory_iterator': identifier not found
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp(206,73): error C2143: syntax error: missing ';' before ')'

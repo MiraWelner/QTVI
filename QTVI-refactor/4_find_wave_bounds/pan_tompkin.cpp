@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <numeric>
 #include <vector>
+#include <iomanip>
 
 using namespace std;
 
@@ -39,7 +40,7 @@ static vector<double> conv_full(const vector<double>& a, const vector<double>& b
     return out;
 }
 
-PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr) {
+PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr, const std::string& fileID) {
     PanTompkinResult result;
     result.delay = 0;
     if (ecg_input.empty()) return result;
@@ -78,14 +79,52 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr)
     }
     else {
         // Remove mean
-        double avg = mean(ecg);
-        for (auto& v : ecg) v -= avg;
+        //double avg = mean(ecg);
+       // for (auto& v : ecg) v -= avg;
 
         // Bandpass: butter(3, [5 15]*2/fs) + filtfilt
-        double f1 = 5.0, f2 = 15.0;
-        vector<double> Wn = { f1 * 2.0 / fs, f2 * 2.0 / fs };
         vector<double> b_bp, a_bp;
-        butter(3, Wn, b_bp, a_bp);
+
+        if (std::abs(fs - 256.0) < 0.5) {
+            // Precomputed from MATLAB: [b,a] = butter(3, [5 15]*2/256)
+            b_bp = {
+                 0.0014670007580121303,
+                 0.0,
+                -0.004401002274036391,
+                 0.0,
+                 0.004401002274036391,
+                 0.0,
+                -0.0014670007580121303
+            };
+            a_bp = {
+                 1.0,
+                -5.3856706261642193,
+                12.210142717095941,
+               -14.917369382919638,
+                10.359253074547178,
+                -3.8776092362023347,
+                 0.61132583250308625
+            };
+        }
+        else if (std::abs(fs - 128.0) < 0.5) {
+            // If you ever need 128 Hz, run in MATLAB:
+            //   [b,a] = butter(3, [5 15]*2/128);
+            //   fprintf('%.17g ', b); fprintf('\n');
+            //   fprintf('%.17g ', a); fprintf('\n');
+            // and paste the results here.
+            //
+            // For now, fall back to runtime computation:
+            double f1 = 5.0, f2 = 15.0;
+            vector<double> Wn = { f1 * 2.0 / fs, f2 * 2.0 / fs };
+            butter(3, Wn, b_bp, a_bp);
+        }
+        else {
+            // Fallback for other sample rates
+            double f1 = 5.0, f2 = 15.0;
+            vector<double> Wn = { f1 * 2.0 / fs, f2 * 2.0 / fs };
+            butter(3, Wn, b_bp, a_bp);
+        }
+
         ecg_h = filtfilt(b_bp, a_bp, ecg);
         double mx = *max_element(ecg_h.begin(), ecg_h.end(),
             [](double a, double b) { return fabs(a) < fabs(b); });
@@ -94,6 +133,7 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr)
 
     if (ecg_h.empty()) return result;
     int len = (int)ecg_h.size();
+
 
     // ========================================================================
     // 2. Derivative Filter
@@ -147,26 +187,40 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr)
     // ========================================================================
     // 6. Initialize thresholds from first 2 seconds
     // ========================================================================
-    int init_end = min((int)ecg_m.size(), (int)(2.0 * fs));
+    int skip_edge = W + 2;
+    int init_start = std::min(skip_edge, (int)ecg_m.size());
+    int init_end = std::min((int)ecg_m.size(), (int)(2.0 * fs));
+    if (init_end - init_start < (int)(0.5 * fs)) {
+        init_start = 0;
+    }
+
     double max_m = 0, sum_m = 0;
-    for (int k = 0; k < init_end; ++k) {
+    int count_m = 0;
+    for (int k = init_start; k < init_end; ++k) {
         if (ecg_m[k] > max_m) max_m = ecg_m[k];
         sum_m += ecg_m[k];
+        count_m++;
     }
     double THR_SIG = max_m * (1.0 / 3.0);
-    double THR_NOISE = (init_end > 0) ? (sum_m / init_end) * 0.5 : 0;
+    double THR_NOISE = (count_m > 0) ? (sum_m / count_m) * 0.5 : 0;
     double SIG_LEV = THR_SIG;
     double NOISE_LEV = THR_NOISE;
 
-    // Bandpass thresholds (from ecg_h)
-    int init_end_h = min((int)ecg_h.size(), (int)(2.0 * fs));
+    int init_start_h = std::min(skip_edge, (int)ecg_h.size());
+    int init_end_h = std::min((int)ecg_h.size(), (int)(2.0 * fs));
+    if (init_end_h - init_start_h < (int)(0.5 * fs)) {
+        init_start_h = 0;
+    }
+
     double max_h = 0, sum_h = 0;
-    for (int k = 0; k < init_end_h; ++k) {
+    int count_h = 0;
+    for (int k = init_start_h; k < init_end_h; ++k) {
         if (ecg_h[k] > max_h) max_h = ecg_h[k];
         sum_h += ecg_h[k];
+        count_h++;
     }
     double THR_SIG1 = max_h * (1.0 / 3.0);
-    double THR_NOISE1 = (init_end_h > 0) ? (sum_h / init_end_h) * 0.5 : 0;
+    double THR_NOISE1 = (count_h > 0) ? (sum_h / count_h) * 0.5 : 0;
     double SIG_LEV1 = THR_SIG1;
     double NOISE_LEV1 = THR_NOISE1;
 
@@ -224,6 +278,16 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr)
                     if (ecg_h[k] > y_i) { y_i = ecg_h[k]; x_i = k - search_start; }
                 }
             }
+        }
+
+        // --- DEBUG: log thresholds for this iteration ---
+        if (pt_dbg.is_open()) {
+            pt_dbg << i << "," << locs[i] << "," << pks[i] << ","
+                << THR_SIG << "," << THR_NOISE << ","
+                << y_i << "," << THR_SIG1 << "," << THR_NOISE1 << ","
+                << (pks[i] >= THR_SIG ? 1 : 0) << ","
+                << (y_i >= THR_SIG1 ? 1 : 0) << ","
+                << Beat_C << "," << Beat_C1 << "\n";
         }
 
         // --- Update heart rate estimate (after 9 beats) ---
@@ -415,6 +479,7 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr)
     // ========================================================================
     // 9. Collect output
     // ========================================================================
+    if (pt_dbg.is_open()) pt_dbg.close();
     result.qrs_i_raw.resize(Beat_C1);
     result.qrs_amp_raw.resize(Beat_C1);
     for (int i = 0; i < Beat_C1; ++i) {

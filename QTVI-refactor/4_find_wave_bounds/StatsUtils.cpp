@@ -130,27 +130,28 @@ pair<double, size_t> min_element_index(const vector<double>& x, size_t start, si
     return { minVal, minIdx - start };  // Return relative index
 }
 
-vector<double> movmean(const vector<double>& data, size_t window) {
-    vector<double> result(data.size());
+ vector<double> movmean(const vector<double>& data, size_t window) {
+     vector<double> result(data.size());
+     // MATLAB convention: for even k, window is [k/2-1 before, k/2 after]
+     size_t back  = (window - 1) / 2;  // floor((k-1)/2)
+     size_t front = window / 2;         // floor(k/2)
 
-    for (size_t i = 0; i < data.size(); ++i) {
-        size_t start = i >= window / 2 ? i - window / 2 : 0;
-        size_t end = std::min(i + window / 2 + 1, data.size());
+     for (size_t i = 0; i < data.size(); ++i) {
+         size_t start = (i >= back) ? i - back : 0;
+         size_t end   = std::min(i + front + 1, data.size());
 
-        double sum = 0.0;
-        size_t count = 0;
-        for (size_t j = start; j < end; ++j) {
-            if (!std::isnan(data[j])) {
-                sum += data[j];
-                count++;
-            }
-        }
-
-        result[i] = count > 0 ? sum / count : NaN;
-    }
-
-    return result;
-}
+         double sum = 0.0;
+         size_t count = 0;
+         for (size_t j = start; j < end; ++j) {
+             if (!std::isnan(data[j])) {
+                 sum += data[j];
+                 count++;
+             }
+         }
+         result[i] = count > 0 ? sum / count : NaN;
+     }
+     return result;
+ }
 
 vector<double> diff(const vector<double>& x) {
     if (x.size() <= 1) return vector<double>();

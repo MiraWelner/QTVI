@@ -21,8 +21,8 @@ tuple<vector<size_t>, double, double> ecglaux(
     const size_t n_ecg = ecg.size();
 
     // 1. MATCH MATLAB CONSTANTS EXACTLY
-    const size_t examwindow = static_cast<size_t>(std::round(200 * sl)); // MUST BE 200
-    const size_t ifno = static_cast<size_t>(std::round(25 * sl));       // MUST BE 25
+    const size_t examwindow = static_cast<size_t>(std::round(200 * sl));
+    const size_t ifno = static_cast<size_t>(std::round(25 * sl));     
     const size_t sub1 = static_cast<size_t>(std::round(275 * sl));
     const size_t lookmorepts = 0;
 

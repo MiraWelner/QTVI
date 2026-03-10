@@ -1,4 +1,5 @@
-﻿LINK : warning LNK4075: ignoring '/INCREMENTAL' due to '/OPT:ICF' specification
+﻿  ecglaux.cpp
+LINK : warning LNK4075: ignoring '/INCREMENTAL' due to '/OPT:ICF' specification
   4_find_wave_bounds.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\4_find_wave_bounds\x64\Release\4_find_wave_bounds.exe
   'pwsh.exe' is not recognized as an internal or external command,
   operable program or batch file.
