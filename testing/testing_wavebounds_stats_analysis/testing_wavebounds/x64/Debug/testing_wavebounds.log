@@ -1,5 +1,0 @@
-﻿  testing_wavebounds.cpp
-D:\USERS\MiraWelner\QTVI\testing\testing_wavebounds_stats_analysis\testing_wavebounds\testing_wavebounds.cpp(225,52): warning C4267: 'argument': conversion from 'size_t' to 'int', possible loss of data
-  testing_wavebounds.vcxproj -> D:\USERS\MiraWelner\QTVI\testing\testing_wavebounds_stats_analysis\x64\Debug\testing_wavebounds.exe
-  'pwsh.exe' is not recognized as an internal or external command,
-  operable program or batch file.

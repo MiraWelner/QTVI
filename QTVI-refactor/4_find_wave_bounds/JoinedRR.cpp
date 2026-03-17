@@ -10,6 +10,13 @@
 #include <iomanip>
 #include <vector>
 #include <map>
+#include <iostream>
+
+// ============================================================================
+// DEBUG CONFIG — set to the bin index you want to inspect, -1 to disable
+// ============================================================================
+static const int DEBUG_BIN = 1;      // which bin to dump (0-based)
+static int g_bin_counter = -1;       // incremented each call
 
 // Refinement helper (ensures algorithms snap to the local maximum)
 vector<size_t> RPeakfromRWave(const vector<double>& ecg, const vector<size_t>& rWaveIdx, double fs) {
@@ -35,8 +42,27 @@ vector<size_t> RPeakfromRWave(const vector<double>& ecg, const vector<size_t>& r
     return refined;
 }
 
+// Helper: dump peaks near a time range for debugging
+static void dump_algo_peaks(const std::string& name, const vector<size_t>& peaks,
+    double fs, double t_start, double t_end) {
+    std::cout << "  " << name << " (" << peaks.size() << " total): peaks in ["
+        << t_start << "s, " << t_end << "s]: ";
+    int count = 0;
+    for (size_t p : peaks) {
+        double t = (double)p / fs;
+        if (t >= t_start && t <= t_end) {
+            std::cout << p << "(" << std::fixed << std::setprecision(2) << t << "s) ";
+            count++;
+        }
+    }
+    if (count == 0) std::cout << "NONE";
+    std::cout << std::endl;
+}
+
 vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, double diff_range, const std::string fileID) {
     if (ecgSeg.empty() || std_dev(ecgSeg) == 0) return {};
+
+    g_bin_counter++;
 
     // 0. Proper Detrending
     vector<double> processedEcg = ecgSeg;
@@ -47,12 +73,10 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
         for (auto& val : processedEcg) val -= mu;
     }
 
-
     // 1. Run Ensemble
     vector<vector<size_t>> output(6);
     vector<double> weights = { 0.75, 0.25, 0.25, 1.25, 1.5, 0.75 };
 
-    // Pass the detrended signal to all algorithms
     output[0] = rpeakdetect(processedEcg, ecgSamplingRate, 0.2, 0, fileID).R_index;
     output[1] = rpeakdetect(processedEcg, ecgSamplingRate, 0.1, 0, fileID).R_index;
     output[2] = rpeakdetect(processedEcg, ecgSamplingRate, 0.4, 0, fileID).R_index;
@@ -79,7 +103,7 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
         output[r] = RPeakfromRWave(ecgSeg, output[r], ecgSamplingRate);
     }
 
-    // 3. Build weighted detection list (MATLAB: sortedList)
+    // 3. Build weighted detection list
     struct DetWithWeight { size_t pos; double weight; };
     vector<DetWithWeight> all_weighted;
     for (int i = 0; i < 6; ++i) {
@@ -89,7 +113,7 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
     }
     std::sort(all_weighted.begin(), all_weighted.end(), [](const auto& a, const auto& b) {
         return a.pos < b.pos;
-    });
+        });
 
     if (all_weighted.empty()) return {};
 
@@ -113,8 +137,6 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
                 winner = uniq[i + 1];
                 loser = uniq[i];
             }
-
-            // Update all_weighted only — do NOT update uniq
             for (auto& dw : all_weighted) {
                 if (dw.pos == loser) dw.pos = winner;
             }
@@ -127,7 +149,7 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
         weighted_peaks[dw.pos] += dw.weight;
     }
 
-    // 7. Filter by weight threshold (Floating point safe: 2.39)
+    // 7. Filter by weight threshold
     vector<size_t> candidates;
     for (const auto& [pos, weight] : weighted_peaks) {
         if (weight >= 2.399) {
@@ -135,5 +157,6 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
         }
     }
     std::sort(candidates.begin(), candidates.end());
+
     return candidates;
 }

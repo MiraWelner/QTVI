@@ -140,10 +140,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="5_generate_templates.cpp" />
-    <ClCompile Include="ConfigLoader.cpp" />
+    <ClCompile Include="load_config.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="ConfigLoader.h" />
+    <ClInclude Include="load_config.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

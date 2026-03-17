@@ -52,8 +52,7 @@ bool contains(std::string haystack, std::string needle) {
 }
 
 // Function to write EDF signal data to the binary file
-// Added "const edf_param_struct& param" as the 4th argument
-void writeEdfSignal(int handle, int idx, long long n, const edf_param_struct& param, std::ofstream& out, uint64_t& sizeOut) {
+void writeEdfSignal(int handle, int idx, long long n, std::ofstream& out, uint64_t& sizeOut) {
     if (idx < 0 || n <= 0) {
         double dummy = -1.0;
         out.write((char*)&dummy, 8);
@@ -61,27 +60,11 @@ void writeEdfSignal(int handle, int idx, long long n, const edf_param_struct& pa
         return;
     }
 
-    std::vector<int> digitalBuf(n);
     std::vector<double> physicalBuf(n);
-
-    // 1. Read the raw digital bits. 
-    // If edflib still clamps here, we will see it in the next step.
-    edfread_digital_samples(handle, idx, (int)n, digitalBuf.data());
-
-    // 2. Extract scaling factors
-    double pMax = param.phys_max;
-    double pMin = param.phys_min;
-    double dMax = (double)param.dig_max;
-    double dMin = (double)param.dig_min;
-
-    // This is the "True" scaling factor used by MATLAB
-    double scale = (pMax - pMin) / (dMax - dMin);
+    edfread_physical_samples(handle, idx, (int)n, physicalBuf.data());
 
     for (long long i = 0; i < n; ++i) {
-        // 3. THE FIX: Ignore the 'param' limits. 
-        // We treat the digitalBuf[i] as a raw 16-bit value.
-        // This allows the result to exceed 312.5.
-        physicalBuf[i] = ((double)digitalBuf[i] - dMin) * scale + pMin;
+        physicalBuf[i] = physicalBuf[i];//* physicalBuf[i];
     }
 
     out.write((char*)physicalBuf.data(), n * 8);
@@ -141,7 +124,6 @@ bool loadConfig(const std::string& filename, int choice, Config& out) {
         if (line.empty()) continue;
         std::vector<std::string> row = parseCsvLine(line);
 
-        // Expecting 12 columns based on your new structure
         if (row.size() < 12) continue;
 
         std::string rType = row[0];
@@ -154,13 +136,11 @@ bool loadConfig(const std::string& filename, int choice, Config& out) {
             out.inputPath = row[3];
             out.outputPath = row[4];
 
-            // Map labels from columns 6, 7, 8, 9
-            out.ecg1Label = row[6]; // EKG (MESA) or ECG_1 (Bittium)
+            out.ecg1Label = row[6];
             out.ecg2Label = row[7];
             out.ecg3Label = row[8];
-            out.ppgLabel = row[9]; // Pleth (MESA)
+            out.ppgLabel = row[9];
 
-            // Map sampling rates from columns 10, 11
             try {
                 out.ecgRate = (!row[10].empty()) ? std::stod(row[10]) : 0.0;
                 out.ppgRate = (!row[11].empty()) ? std::stod(row[11]) : 0.0;
@@ -192,7 +172,7 @@ void processFile(const fs::path& path, const fs::path& xmlPath, const Config& cf
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
 
-    if (ext == ".EDF" || ext == ".BDF") {
+    if (ext == ".EDF") {
         edf_hdr_struct hdr;
         if (edfopen_file_readonly(path.string().c_str(), &hdr, EDFLIB_READ_ALL_ANNOTATIONS)) { out.close(); return; }
 
@@ -218,11 +198,10 @@ void processFile(const fs::path& path, const fs::path& xmlPath, const Config& cf
         std::ofstream wrapper;
         wrapper.basic_ios<char>::rdbuf(out.rdbuf());
 
-        // NOTE: Passing hdr.signalparam[i1] as the NEW 4th argument
-        writeEdfSignal(hdr.handle, i1, (i1 >= 0) ? hdr.signalparam[i1].smp_in_file : 0, hdr.signalparam[i1], wrapper, s1);
-        writeEdfSignal(hdr.handle, i2, (i2 >= 0) ? hdr.signalparam[i2].smp_in_file : 0, hdr.signalparam[i2], wrapper, s2);
-        writeEdfSignal(hdr.handle, i3, (i3 >= 0) ? hdr.signalparam[i3].smp_in_file : 0, hdr.signalparam[i3], wrapper, s3);
-        writeEdfSignal(hdr.handle, ip, (ip >= 0) ? hdr.signalparam[ip].smp_in_file : 0, hdr.signalparam[ip], wrapper, sp);
+        writeEdfSignal(hdr.handle, i1, (i1 >= 0) ? hdr.signalparam[i1].smp_in_file : 0, wrapper, s1);
+        writeEdfSignal(hdr.handle, i2, (i2 >= 0) ? hdr.signalparam[i2].smp_in_file : 0, wrapper, s2);
+        writeEdfSignal(hdr.handle, i3, (i3 >= 0) ? hdr.signalparam[i3].smp_in_file : 0, wrapper, s3);
+        writeEdfSignal(hdr.handle, ip, (ip >= 0) ? hdr.signalparam[ip].smp_in_file : 0, wrapper, sp);
 
         edfclose_file(hdr.handle);
     }
@@ -243,7 +222,7 @@ void processFile(const fs::path& path, const fs::path& xmlPath, const Config& cf
         if (doc.load_file(xmlPath.string().c_str())) {
             for (auto n : doc.select_nodes("//SleepStage")) {
                 double v = n.node().text().as_double();
-                ds.push_back(v == 5.0 ? 4.0 : v); // Map stage 5 to 4 if needed
+                ds.push_back(v == 5.0 ? 4.0 : v); //The sleepstage doesn't have 4, only 5
             }
         }
     }
@@ -254,14 +233,14 @@ void processFile(const fs::path& path, const fs::path& xmlPath, const Config& cf
     // Write the 64-byte Header
     out.seekp(0);
     double er = cfg.ecgRate, pr = cfg.ppgRate, ep = 30.0;
-    out.write((char*)&er, 8); // ECG Sample Rate
-    out.write((char*)&pr, 8); // PPG Sample Rate
-    out.write((char*)&ep, 8); // Epoch Length
-    out.write((char*)&s1, 8); // Count ECG1
-    out.write((char*)&s2, 8); // Count ECG2
-    out.write((char*)&s3, 8); // Count ECG3
-    out.write((char*)&sp, 8); // Count PPG
-    out.write((char*)&ss, 8); // Count Sleep Stages
+    out.write((char*)&er, 8);
+    out.write((char*)&pr, 8);
+    out.write((char*)&ep, 8);
+    out.write((char*)&s1, 8);
+    out.write((char*)&s2, 8);
+    out.write((char*)&s3, 8);
+    out.write((char*)&sp, 8);
+    out.write((char*)&ss, 8);
     out.close();
 }
 

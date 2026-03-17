@@ -280,16 +280,6 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
             }
         }
 
-        // --- DEBUG: log thresholds for this iteration ---
-        if (pt_dbg.is_open()) {
-            pt_dbg << i << "," << locs[i] << "," << pks[i] << ","
-                << THR_SIG << "," << THR_NOISE << ","
-                << y_i << "," << THR_SIG1 << "," << THR_NOISE1 << ","
-                << (pks[i] >= THR_SIG ? 1 : 0) << ","
-                << (y_i >= THR_SIG1 ? 1 : 0) << ","
-                << Beat_C << "," << Beat_C1 << "\n";
-        }
-
         // --- Update heart rate estimate (after 9 beats) ---
         if (Beat_C >= 9) {
             double diffRR_sum = 0;
@@ -479,7 +469,6 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
     // ========================================================================
     // 9. Collect output
     // ========================================================================
-    if (pt_dbg.is_open()) pt_dbg.close();
     result.qrs_i_raw.resize(Beat_C1);
     result.qrs_amp_raw.resize(Beat_C1);
     for (int i = 0; i < Beat_C1; ++i) {

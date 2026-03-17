@@ -149,10 +149,20 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
 
 
     // 12. Lead Inversion Check
+    // MATLAB: if minloc(end) < maxloc(end), swap R and S entirely
+    // This means R_index must also switch to minloc, because MATLAB's
+    // callers use R_t (which becomes t(minloc)), and our callers use R_index.
     if (!maxloc.empty() && !minloc.empty()) {
         if (minloc.back() < maxloc.back()) {
-            std::swap(result.R_t, result.S_t);
-            std::swap(result.R_amp, result.S_amp);
+            // Signal is inverted: the "R-peaks" are actually the minima
+            result.R_index = minloc;    // <-- THIS WAS THE BUG: was not swapped before
+            result.R_amp = minval;
+            result.R_t.clear();
+            for (auto loc : minloc) result.R_t.push_back(get_time(loc));
+
+            result.S_amp = maxval;
+            result.S_t.clear();
+            for (auto loc : maxloc) result.S_t.push_back(get_time(loc));
         }
     }
 

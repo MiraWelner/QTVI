@@ -1,1 +1,10 @@
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\3_anneal_segments.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\anneal_segments\x64\Release\3_anneal_segments.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\AnnealSegments.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\anneal_segments\x64\Release\AnnealSegments.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\common.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\anneal_segments\x64\Release\common.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\getBinBreaksAndCount.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\anneal_segments\x64\Release\getBinBreaksAndCount.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\getExclusionIntervals.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\anneal_segments\x64\Release\getExclusionIntervals.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\markForMovement.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\anneal_segments\x64\Release\markForMovement.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\mergeIntervals.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\anneal_segments\x64\Release\mergeIntervals.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\MergeSegments.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\anneal_segments\x64\Release\MergeSegments.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\RoundToClosestBin.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\anneal_segments\x64\Release\RoundToClosestBin.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\splitOverlappingBins.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\anneal_segments\x64\Release\splitOverlappingBins.obj

@@ -18,12 +18,12 @@
     <ClCompile Include="5_generate_templates.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="ConfigLoader.cpp">
+    <ClCompile Include="load_config.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="ConfigLoader.h">
+    <ClInclude Include="load_config.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

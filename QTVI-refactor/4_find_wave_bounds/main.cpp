@@ -22,38 +22,78 @@ struct ConfigSettings {
     double ppgFs;
 };
 
-// --- Binary Loading Logic ---
-AnnealedData readCppBin(const std::string& path, double ecgFs, double ppgFs) {
+AnnealedData readCppBin(const std::string& path) {
     AnnealedData data;
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) throw std::runtime_error("Could not open: " + path);
 
+    // --- Header ---
     uint64_t numBins = 0;
-    if (!file.read(reinterpret_cast<char*>(&numBins), 8)) return data;
+    file.read(reinterpret_cast<char*>(&numBins), 8);
+
+    double filePpgSR, fileEcgSR, scoringEpoch;
+    file.read(reinterpret_cast<char*>(&filePpgSR), 8);
+    file.read(reinterpret_cast<char*>(&fileEcgSR), 8);
+    file.read(reinterpret_cast<char*>(&scoringEpoch), 8);
+
     data.bins.resize(numBins);
 
     for (uint64_t i = 0; i < numBins; ++i) {
-        uint64_t pS, eS, sS;
+        // --- PPG index pairs ---
+        uint64_t nPpgPairs;
+        if (!file.read(reinterpret_cast<char*>(&nPpgPairs), 8)) break;
+        data.bins[i].ppg_bin_indexs.resize(nPpgPairs);
+        for (uint64_t j = 0; j < nPpgPairs; ++j) {
+            file.read(reinterpret_cast<char*>(&data.bins[i].ppg_bin_indexs[j].first), 8);
+            file.read(reinterpret_cast<char*>(&data.bins[i].ppg_bin_indexs[j].second), 8);
+        }
 
+        // --- ECG index pairs ---
+        uint64_t nEcgPairs;
+        if (!file.read(reinterpret_cast<char*>(&nEcgPairs), 8)) break;
+        data.bins[i].ecg_bin_indexs.resize(nEcgPairs);
+        for (uint64_t j = 0; j < nEcgPairs; ++j) {
+            file.read(reinterpret_cast<char*>(&data.bins[i].ecg_bin_indexs[j].first), 8);
+            file.read(reinterpret_cast<char*>(&data.bins[i].ecg_bin_indexs[j].second), 8);
+        }
+
+        // --- PPG samples ---
+        uint64_t pS;
         if (!file.read(reinterpret_cast<char*>(&pS), 8)) break;
         data.bins[i].po.resize(pS);
-        file.read(reinterpret_cast<char*>(data.bins[i].po.data()), pS * 8);
+        if (pS > 0) file.read(reinterpret_cast<char*>(data.bins[i].po.data()), pS * 8);
 
-        if (!file.read(reinterpret_cast<char*>(&eS), 8)) break;
-        data.bins[i].ecg.resize(eS);
-        file.read(reinterpret_cast<char*>(data.bins[i].ecg.data()), eS * 8);
+        // --- ECG channel 1 ---
+        uint64_t e1S;
+        if (!file.read(reinterpret_cast<char*>(&e1S), 8)) break;
+        data.bins[i].ecg.resize(e1S);
+        if (e1S > 0) file.read(reinterpret_cast<char*>(data.bins[i].ecg.data()), e1S * 8);
 
-        data.bins[i].ecgSampleRate = ecgFs;
-        data.bins[i].ppgSampleRate = ppgFs;
+        // --- ECG channel 2 ---
+        uint64_t e2S;
+        if (!file.read(reinterpret_cast<char*>(&e2S), 8)) break;
+        data.bins[i].ecg2.resize(e2S);
+        if (e2S > 0) file.read(reinterpret_cast<char*>(data.bins[i].ecg2.data()), e2S * 8);
 
-        // Skip sleep data as it's not used in this step
+        // --- ECG channel 3 ---
+        uint64_t e3S;
+        if (!file.read(reinterpret_cast<char*>(&e3S), 8)) break;
+        data.bins[i].ecg3.resize(e3S);
+        if (e3S > 0) file.read(reinterpret_cast<char*>(data.bins[i].ecg3.data()), e3S * 8);
+
+        // --- Sleep stages ---
+        uint64_t sS;
         if (!file.read(reinterpret_cast<char*>(&sS), 8)) break;
-        if (sS > 0) file.seekg(sS * 8, std::ios::cur);
+        data.bins[i].sleepStages.resize(sS);
+        if (sS > 0) file.read(reinterpret_cast<char*>(data.bins[i].sleepStages.data()), sS * 8);
+
+        data.bins[i].ecgSampleRate = fileEcgSR;
+        data.bins[i].ppgSampleRate = filePpgSR;
     }
     return data;
 }
 
-// --- Binary Saving Logic ---
+// --- Binary Saving Logic (updated for 3 ECG channels) ---
 void saveWaveData(const std::string& path, const std::vector<WaveData>& results) {
     std::ofstream file(path, std::ios::binary);
     if (!file.is_open()) return;
@@ -65,6 +105,7 @@ void saveWaveData(const std::string& path, const std::vector<WaveData>& results)
         file.write(reinterpret_cast<const char*>(&bin.ecgSamplingRate), 8);
         file.write(reinterpret_cast<const char*>(&bin.ppgSamplingRate), 8);
 
+        // Lambda: write a size_t index array (converted to 1-based for MATLAB)
         auto writeIdx = [&](const std::vector<std::size_t>& v) {
             uint64_t sz = v.size();
             file.write(reinterpret_cast<const char*>(&sz), 8);
@@ -74,19 +115,35 @@ void saveWaveData(const std::string& path, const std::vector<WaveData>& results)
             }
             };
 
-        writeIdx(bin.ecgRIndex);
-        writeIdx(bin.ppgMaxAmps);
-        writeIdx(bin.ppgMinAmps);
-
+        // Lambda: write a double signal array
         auto writeSignal = [&](const std::vector<double>& sig) {
             uint64_t sz = sig.size();
             file.write(reinterpret_cast<const char*>(&sz), 8);
             if (sz > 0) file.write(reinterpret_cast<const char*>(sig.data()), sz * 8);
             };
 
-        writeSignal(bin.ppgSignal);
-        writeSignal(bin.ecgSignal);
+        // --- Channel 1 R-indices ---
+        writeIdx(bin.ecgRIndex);
+        // --- Channel 2 R-indices ---
+        writeIdx(bin.ecgRIndex2);
+        // --- Channel 3 R-indices ---
+        writeIdx(bin.ecgRIndex3);
 
+        // --- PPG indices (same as before) ---
+        writeIdx(bin.ppgMaxAmps);
+        writeIdx(bin.ppgMinAmps);
+
+        // --- PPG signal ---
+        writeSignal(bin.ppgSignal);
+
+        // --- ECG channel 1 signal ---
+        writeSignal(bin.ecgSignal);
+        // --- ECG channel 2 signal ---
+        writeSignal(bin.ecgSignal2);
+        // --- ECG channel 3 signal ---
+        writeSignal(bin.ecgSignal3);
+
+        // --- Pairs (channel 1 pairing, same as before) ---
         uint64_t numPairs = bin.pairs.size();
         file.write(reinterpret_cast<const char*>(&numPairs), 8);
         for (const auto& p : bin.pairs) {
@@ -140,18 +197,9 @@ int main() {
                 std::cout << "Processing: " << currentID << "..." << std::endl;
 
                 // 1. Read the binary file into separate 30s bins
-                AnnealedData annealedData = readCppBin(entry.path().string(), cfg.ecgFs, cfg.ppgFs);
+                AnnealedData annealedData = readCppBin(entry.path().string());
 
-                if (annealedData.bins.size() > 501) {
-                    auto& b = annealedData.bins[501];
-                    std::cout << "Bin 501 ECG size: " << b.ecg.size()
-                        << " min: " << *std::min_element(b.ecg.begin(), b.ecg.end())
-                        << " max: " << *std::max_element(b.ecg.begin(), b.ecg.end())
-                        << std::endl;
-                }
-
-                // 2. Process the bins directly (DO NOT consolidate into one giant signal)
-                // This matches the MATLAB 'for i = 1:length(annealedSegments)' logic
+                // 2. Process the bins
                 std::string detrendedPath = R"(D:\USERS\MiraWelner\QTVI\QTVI-refactor\peakfind_output\)" + currentID + "_detrended.csv";
                 if (std::filesystem::exists(detrendedPath)) {
                     std::filesystem::remove(detrendedPath);

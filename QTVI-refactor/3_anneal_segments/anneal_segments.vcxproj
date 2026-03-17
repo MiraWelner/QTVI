@@ -125,6 +125,26 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="3_anneal_segments.cpp" />
+    <ClCompile Include="AnnealSegments.cpp" />
+    <ClCompile Include="common.cpp" />
+    <ClCompile Include="getBinBreaksAndCount.cpp" />
+    <ClCompile Include="getExclusionIntervals.cpp" />
+    <ClCompile Include="markForMovement.cpp" />
+    <ClCompile Include="mergeIntervals.cpp" />
+    <ClCompile Include="MergeSegments.cpp" />
+    <ClCompile Include="RoundToClosestBin.cpp" />
+    <ClCompile Include="splitOverlappingBins.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="AnnealSegments.hpp" />
+    <ClInclude Include="common.hpp" />
+    <ClInclude Include="getBinBreaksAndCount.hpp" />
+    <ClInclude Include="getExclusionIntervals.hpp" />
+    <ClInclude Include="markForMovement.hpp" />
+    <ClInclude Include="mergeIntervals.hpp" />
+    <ClInclude Include="MergeSegments.hpp" />
+    <ClInclude Include="RoundToClosestBin.hpp" />
+    <ClInclude Include="splitOverlappingBins.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
