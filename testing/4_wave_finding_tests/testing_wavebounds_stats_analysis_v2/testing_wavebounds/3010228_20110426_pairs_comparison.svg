@@ -6,1888 +6,1888 @@
 <text x="300" y="580" text-anchor="middle" font-family="sans-serif">Bin Detected Pairs</text>
 <text x="25" y="300" text-anchor="middle" transform="rotate(-90 25,300)" font-family="sans-serif">Mat Detected Pairs</text>
 <text x="300" y="40" text-anchor="middle" font-weight="bold" font-family="sans-serif">Detected Pairs Comparison</text>
-<circle cx="366.316" cy="229.474" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 69</title>
+<circle cx="342.857" cy="257.143" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 69, Mat: 69</title>
 </circle>
-<circle cx="391.579" cy="208.421" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="361.905" cy="238.095" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 74, Mat: 74</title>
 </circle>
-<circle cx="416.842" cy="183.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="384.762" cy="215.238" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 80, Mat: 80</title>
 </circle>
-<circle cx="404.211" cy="195.789" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="373.333" cy="226.667" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 77, Mat: 77</title>
 </circle>
-<circle cx="395.789" cy="204.211" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="365.714" cy="234.286" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 75, Mat: 75</title>
 </circle>
-<circle cx="408.421" cy="191.579" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="377.143" cy="222.857" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 78, Mat: 78</title>
 </circle>
-<circle cx="404.211" cy="195.789" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="373.333" cy="226.667" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 77, Mat: 77</title>
 </circle>
-<circle cx="400" cy="191.579" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+<circle cx="369.524" cy="222.857" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 76, Mat: 78</title>
 </circle>
-<circle cx="412.632" cy="187.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="380.952" cy="219.048" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 79, Mat: 79</title>
 </circle>
-<circle cx="425.263" cy="174.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="392.381" cy="207.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 82, Mat: 82</title>
 </circle>
-<circle cx="404.211" cy="195.789" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="373.333" cy="226.667" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 77, Mat: 77</title>
 </circle>
-<circle cx="391.579" cy="208.421" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="361.905" cy="238.095" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 74, Mat: 74</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="374.737" cy="225.263" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="346.667" cy="253.333" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 70, Mat: 70</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="366.316" cy="233.684" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="339.048" cy="260.952" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 68, Mat: 68</title>
 </circle>
-<circle cx="370.526" cy="229.474" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="342.857" cy="257.143" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 69, Mat: 69</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="366.316" cy="233.684" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="339.048" cy="260.952" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 68, Mat: 68</title>
 </circle>
-<circle cx="370.526" cy="229.474" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="342.857" cy="257.143" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 69, Mat: 69</title>
 </circle>
-<circle cx="366.316" cy="233.684" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="339.048" cy="260.952" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 68, Mat: 68</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="383.158" cy="216.842" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="354.286" cy="245.714" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 72, Mat: 72</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="366.316" cy="233.684" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="339.048" cy="260.952" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 68, Mat: 68</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="362.105" cy="242.105" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+<circle cx="335.238" cy="268.571" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 67, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="378.947" cy="221.053" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="350.476" cy="249.524" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 71, Mat: 71</title>
 </circle>
-<circle cx="400" cy="195.789" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+<circle cx="369.524" cy="226.667" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 76, Mat: 77</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="366.316" cy="233.684" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="339.048" cy="260.952" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 68, Mat: 68</title>
 </circle>
-<circle cx="374.737" cy="225.263" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 70, Mat: 70</title>
+<circle cx="350.476" cy="253.333" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 71, Mat: 70</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="324.211" cy="275.789" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="300.952" cy="299.048" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 58, Mat: 58</title>
 </circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="370.526" cy="221.053" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+<circle cx="342.857" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 69, Mat: 71</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="391.579" cy="208.421" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="361.905" cy="238.095" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 74, Mat: 74</title>
 </circle>
-<circle cx="391.579" cy="208.421" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="361.905" cy="238.095" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 74, Mat: 74</title>
 </circle>
-<circle cx="395.789" cy="204.211" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="365.714" cy="234.286" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 75, Mat: 75</title>
 </circle>
-<circle cx="366.316" cy="233.684" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="339.048" cy="260.952" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 68, Mat: 68</title>
 </circle>
-<circle cx="353.684" cy="250.526" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+<circle cx="327.619" cy="276.19" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 65, Mat: 64</title>
 </circle>
-<circle cx="370.526" cy="225.263" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+<circle cx="342.857" cy="253.333" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 69, Mat: 70</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="378.947" cy="216.842" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+<circle cx="350.476" cy="245.714" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 71, Mat: 72</title>
 </circle>
-<circle cx="374.737" cy="225.263" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="346.667" cy="253.333" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 70, Mat: 70</title>
 </circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 67, Mat: 67</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="263.158" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+<circle cx="316.19" cy="287.619" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 62, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="366.316" cy="229.474" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+<circle cx="339.048" cy="257.143" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 68, Mat: 69</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 63</title>
-</circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 59, Mat: 59</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 66</title>
-</circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 66</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 59, Mat: 59</title>
-</circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 60, Mat: 60</title>
-</circle>
-<circle cx="324.211" cy="275.789" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 58, Mat: 58</title>
 </circle>
 <circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 57, Mat: 57</title>
+  <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="324.211" cy="275.789" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 58, Mat: 58</title>
-</circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 59, Mat: 59</title>
-</circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 60, Mat: 60</title>
-</circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 60, Mat: 60</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 63</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 63</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 60, Mat: 60</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 63</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 60, Mat: 60</title>
-</circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 60, Mat: 60</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="332.632" cy="267.368" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 60, Mat: 60</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 65, Mat: 65</title>
-</circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 59, Mat: 59</title>
-</circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 59, Mat: 59</title>
-</circle>
-<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 57, Mat: 57</title>
-</circle>
-<circle cx="324.211" cy="275.789" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 58, Mat: 58</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="374.737" cy="221.053" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 70, Mat: 71</title>
-</circle>
-<circle cx="395.789" cy="204.211" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 75, Mat: 75</title>
-</circle>
-<circle cx="391.579" cy="204.211" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 74, Mat: 75</title>
-</circle>
-<circle cx="374.737" cy="221.053" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 70, Mat: 71</title>
-</circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 64</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 59, Mat: 59</title>
-</circle>
-<circle cx="324.211" cy="275.789" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 58, Mat: 58</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 63</title>
-</circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 64</title>
-</circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 65, Mat: 65</title>
-</circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 64</title>
-</circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 64</title>
-</circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 65, Mat: 65</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 64</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 63</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="383.158" cy="212.632" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 72, Mat: 73</title>
-</circle>
-<circle cx="400" cy="200" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 76, Mat: 76</title>
-</circle>
-<circle cx="400" cy="200" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 76, Mat: 76</title>
-</circle>
-<circle cx="391.579" cy="204.211" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 74, Mat: 75</title>
-</circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 66</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 63</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 63</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 64</title>
-</circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 65, Mat: 65</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 63</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 63</title>
-</circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 66</title>
-</circle>
-<circle cx="370.526" cy="229.474" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 69, Mat: 69</title>
-</circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 66</title>
-</circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 65, Mat: 65</title>
-</circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 65, Mat: 65</title>
-</circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 66</title>
-</circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 66</title>
-</circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 66</title>
-</circle>
-<circle cx="353.684" cy="246.316" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 65, Mat: 65</title>
-</circle>
-<circle cx="374.737" cy="225.263" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 70, Mat: 70</title>
-</circle>
-<circle cx="391.579" cy="208.421" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 74, Mat: 74</title>
-</circle>
-<circle cx="383.158" cy="216.842" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 72, Mat: 72</title>
-</circle>
-<circle cx="387.368" cy="212.632" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 73, Mat: 73</title>
-</circle>
-<circle cx="400" cy="200" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 76, Mat: 76</title>
-</circle>
-<circle cx="412.632" cy="191.579" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 79, Mat: 78</title>
-</circle>
-<circle cx="425.263" cy="170.526" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 82, Mat: 83</title>
-</circle>
-<circle cx="429.474" cy="166.316" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 83, Mat: 84</title>
-</circle>
-<circle cx="467.368" cy="136.842" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 92, Mat: 91</title>
-</circle>
-<circle cx="425.263" cy="174.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 82, Mat: 82</title>
-</circle>
-<circle cx="425.263" cy="187.368" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 82, Mat: 79</title>
-</circle>
-<circle cx="433.684" cy="170.526" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 84, Mat: 83</title>
-</circle>
-<circle cx="416.842" cy="178.947" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 80, Mat: 81</title>
-</circle>
-<circle cx="408.421" cy="191.579" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 78, Mat: 78</title>
-</circle>
-<circle cx="416.842" cy="183.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 80, Mat: 80</title>
-</circle>
-<circle cx="433.684" cy="174.737" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 84, Mat: 82</title>
-</circle>
-<circle cx="433.684" cy="170.526" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 84, Mat: 83</title>
-</circle>
-<circle cx="437.895" cy="170.526" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 85, Mat: 83</title>
-</circle>
-<circle cx="433.684" cy="166.316" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 84, Mat: 84</title>
-</circle>
-<circle cx="433.684" cy="166.316" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 84, Mat: 84</title>
-</circle>
-<circle cx="450.526" cy="153.684" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 88, Mat: 87</title>
-</circle>
-<circle cx="429.474" cy="174.737" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 83, Mat: 82</title>
-</circle>
-<circle cx="425.263" cy="170.526" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 82, Mat: 83</title>
-</circle>
-<circle cx="294.737" cy="296.842" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 51, Mat: 53</title>
-</circle>
-<circle cx="450.526" cy="149.474" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 88, Mat: 88</title>
-</circle>
-<circle cx="429.474" cy="174.737" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 83, Mat: 82</title>
-</circle>
-<circle cx="294.737" cy="309.474" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 51, Mat: 50</title>
-</circle>
-<circle cx="172.632" cy="427.368" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 22, Mat: 22</title>
-</circle>
-<circle cx="138.947" cy="461.053" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 14, Mat: 14</title>
-</circle>
-<circle cx="366.316" cy="233.684" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 68</title>
-</circle>
-<circle cx="357.895" cy="237.895" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 67</title>
-</circle>
-<circle cx="357.895" cy="187.368" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 79</title>
-</circle>
-<circle cx="366.316" cy="233.684" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 68</title>
-</circle>
-<circle cx="353.684" cy="229.474" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 65, Mat: 69</title>
-</circle>
-<circle cx="303.158" cy="296.842" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 53, Mat: 53</title>
-</circle>
-<circle cx="320" cy="288.421" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 57, Mat: 55</title>
-</circle>
-<circle cx="320" cy="275.789" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 57, Mat: 58</title>
-</circle>
-<circle cx="320" cy="271.579" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 57, Mat: 59</title>
-</circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 64</title>
-</circle>
-<circle cx="341.053" cy="254.737" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 63</title>
-</circle>
-<circle cx="357.895" cy="208.421" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 74</title>
-</circle>
-<circle cx="328.421" cy="267.368" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 59, Mat: 60</title>
-</circle>
-<circle cx="320" cy="284.211" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 57, Mat: 56</title>
-</circle>
-<circle cx="307.368" cy="284.211" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 54, Mat: 56</title>
-</circle>
-<circle cx="349.474" cy="246.316" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 65</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="303.158" cy="296.842" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 53, Mat: 53</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 63</title>
-</circle>
-<circle cx="341.053" cy="263.158" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 61</title>
-</circle>
-<circle cx="336.842" cy="263.158" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 61, Mat: 61</title>
-</circle>
-<circle cx="370.526" cy="221.053" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 69, Mat: 71</title>
-</circle>
-<circle cx="324.211" cy="280" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 58, Mat: 57</title>
-</circle>
-<circle cx="315.789" cy="284.211" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 56, Mat: 56</title>
-</circle>
-<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 57, Mat: 57</title>
-</circle>
-<circle cx="328.421" cy="271.579" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 59, Mat: 59</title>
-</circle>
-<circle cx="324.211" cy="284.211" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 58, Mat: 56</title>
-</circle>
-<circle cx="353.684" cy="258.947" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 65, Mat: 62</title>
-</circle>
-<circle cx="341.053" cy="263.158" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 61</title>
-</circle>
-<circle cx="341.053" cy="258.947" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 62</title>
-</circle>
-<circle cx="328.421" cy="242.105" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 59, Mat: 66</title>
-</circle>
-<circle cx="349.474" cy="200" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 76</title>
-</circle>
-<circle cx="349.474" cy="237.895" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 67</title>
-</circle>
-<circle cx="383.158" cy="216.842" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 72, Mat: 72</title>
-</circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 67, Mat: 67</title>
-</circle>
-<circle cx="383.158" cy="221.053" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 72, Mat: 71</title>
-</circle>
-<circle cx="349.474" cy="229.474" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 69</title>
-</circle>
-<circle cx="387.368" cy="233.684" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 73, Mat: 68</title>
-</circle>
-<circle cx="378.947" cy="221.053" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 71, Mat: 71</title>
-</circle>
-<circle cx="374.737" cy="221.053" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 70, Mat: 71</title>
-</circle>
-<circle cx="366.316" cy="212.632" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 73</title>
-</circle>
-<circle cx="366.316" cy="229.474" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 69</title>
-</circle>
-<circle cx="370.526" cy="229.474" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 69, Mat: 69</title>
-</circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 67, Mat: 67</title>
-</circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 64</title>
-</circle>
-<circle cx="341.053" cy="246.316" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 65</title>
-</circle>
-<circle cx="345.263" cy="250.526" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 64</title>
-</circle>
-<circle cx="391.579" cy="195.789" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 74, Mat: 77</title>
-</circle>
-<circle cx="366.316" cy="233.684" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 68</title>
-</circle>
-<circle cx="370.526" cy="233.684" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 69, Mat: 68</title>
-</circle>
-<circle cx="345.263" cy="263.158" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 61</title>
-</circle>
-<circle cx="383.158" cy="216.842" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 72, Mat: 72</title>
-</circle>
-<circle cx="349.474" cy="246.316" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 65</title>
-</circle>
-<circle cx="357.895" cy="237.895" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 67</title>
-</circle>
-<circle cx="374.737" cy="229.474" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 70, Mat: 69</title>
-</circle>
-<circle cx="324.211" cy="280" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 58, Mat: 57</title>
-</circle>
-<circle cx="349.474" cy="254.737" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 63</title>
-</circle>
-<circle cx="357.895" cy="242.105" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 66</title>
-</circle>
-<circle cx="366.316" cy="233.684" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 68</title>
-</circle>
-<circle cx="366.316" cy="221.053" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 71</title>
-</circle>
-<circle cx="378.947" cy="221.053" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 71, Mat: 71</title>
-</circle>
-<circle cx="349.474" cy="221.053" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 71</title>
-</circle>
-<circle cx="387.368" cy="233.684" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 73, Mat: 68</title>
-</circle>
-<circle cx="383.158" cy="212.632" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 72, Mat: 73</title>
-</circle>
-<circle cx="362.105" cy="229.474" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 67, Mat: 69</title>
-</circle>
-<circle cx="383.158" cy="221.053" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 72, Mat: 71</title>
-</circle>
-<circle cx="362.105" cy="242.105" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+<circle cx="335.238" cy="268.571" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 67, Mat: 66</title>
 </circle>
-<circle cx="366.316" cy="208.421" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 74</title>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="374.737" cy="204.211" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 70, Mat: 75</title>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="378.947" cy="216.842" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 71, Mat: 72</title>
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="366.316" cy="212.632" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 73</title>
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="387.368" cy="221.053" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 73, Mat: 71</title>
+<circle cx="300.952" cy="299.048" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 58, Mat: 58</title>
 </circle>
-<circle cx="341.053" cy="242.105" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 62, Mat: 66</title>
+<circle cx="297.143" cy="302.857" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 57, Mat: 57</title>
 </circle>
-<circle cx="383.158" cy="195.789" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 72, Mat: 77</title>
+<circle cx="300.952" cy="299.048" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 58, Mat: 58</title>
 </circle>
-<circle cx="362.105" cy="233.684" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 67, Mat: 68</title>
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="370.526" cy="229.474" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 69, Mat: 69</title>
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="366.316" cy="233.684" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 68</title>
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="391.579" cy="246.316" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 74, Mat: 65</title>
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 60, Mat: 60</title>
 </circle>
-<circle cx="374.737" cy="162.105" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 70, Mat: 85</title>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="374.737" cy="229.474" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 70, Mat: 69</title>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="366.316" cy="237.895" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 67</title>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="362.105" cy="254.737" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 67, Mat: 63</title>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="349.474" cy="254.737" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 64, Mat: 63</title>
-</circle>
-<circle cx="357.895" cy="275.789" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 66, Mat: 58</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="349.474" cy="250.526" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
+</circle>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
+</circle>
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 63</title>
+</circle>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
+</circle>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
+</circle>
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 60, Mat: 60</title>
+</circle>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 63</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 60, Mat: 60</title>
+</circle>
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 60, Mat: 60</title>
+</circle>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
+</circle>
+<circle cx="308.571" cy="291.429" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 60, Mat: 60</title>
+</circle>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 65, Mat: 65</title>
+</circle>
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 59, Mat: 59</title>
+</circle>
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 59, Mat: 59</title>
+</circle>
+<circle cx="297.143" cy="302.857" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 57, Mat: 57</title>
+</circle>
+<circle cx="300.952" cy="299.048" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 58, Mat: 58</title>
+</circle>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
+</circle>
+<circle cx="346.667" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 70, Mat: 71</title>
+</circle>
+<circle cx="365.714" cy="234.286" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 75, Mat: 75</title>
+</circle>
+<circle cx="365.714" cy="234.286" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 75, Mat: 75</title>
+</circle>
+<circle cx="346.667" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 70, Mat: 71</title>
+</circle>
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="332.632" cy="263.158" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 60, Mat: 61</title>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
 </circle>
-<circle cx="370.526" cy="166.316" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 69, Mat: 84</title>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
 </circle>
-<circle cx="383.158" cy="195.789" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 72, Mat: 77</title>
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 59, Mat: 59</title>
 </circle>
-<circle cx="412.632" cy="191.579" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 79, Mat: 78</title>
+<circle cx="300.952" cy="299.048" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 58, Mat: 58</title>
 </circle>
-<circle cx="366.316" cy="237.895" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 68, Mat: 67</title>
-</circle>
-<circle cx="400" cy="187.368" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 76, Mat: 79</title>
-</circle>
-<circle cx="442.105" cy="191.579" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 86, Mat: 78</title>
-</circle>
-<circle cx="450.526" cy="149.474" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 88, Mat: 88</title>
-</circle>
-<circle cx="429.474" cy="120" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 83, Mat: 95</title>
-</circle>
-<circle cx="332.632" cy="225.263" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 60, Mat: 70</title>
-</circle>
-<circle cx="345.263" cy="250.526" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 64</title>
-</circle>
-<circle cx="412.632" cy="174.737" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 79, Mat: 82</title>
-</circle>
-<circle cx="324.211" cy="284.211" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 58, Mat: 56</title>
-</circle>
-<circle cx="370.526" cy="229.474" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 69, Mat: 69</title>
-</circle>
-<circle cx="362.105" cy="237.895" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 67, Mat: 67</title>
-</circle>
-<circle cx="345.263" cy="250.526" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 64</title>
-</circle>
-<circle cx="374.737" cy="229.474" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 70, Mat: 69</title>
-</circle>
-<circle cx="362.105" cy="221.053" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 67, Mat: 71</title>
-</circle>
-<circle cx="345.263" cy="254.737" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 63, Mat: 63</title>
 </circle>
-<circle cx="332.632" cy="271.579" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 60, Mat: 59</title>
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="374.737" cy="233.684" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 70, Mat: 68</title>
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 66, Mat: 66</title>
 </circle>
-<circle cx="458.947" cy="157.895" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 90, Mat: 86</title>
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 65, Mat: 65</title>
 </circle>
-<circle cx="345.263" cy="250.526" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 63, Mat: 64</title>
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 64, Mat: 64</title>
 </circle>
-<circle cx="433.684" cy="166.316" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 64, Mat: 64</title>
+</circle>
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 65, Mat: 65</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 64, Mat: 64</title>
+</circle>
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 63</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="354.286" cy="241.905" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 72, Mat: 73</title>
+</circle>
+<circle cx="369.524" cy="230.476" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 76, Mat: 76</title>
+</circle>
+<circle cx="369.524" cy="230.476" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 76, Mat: 76</title>
+</circle>
+<circle cx="361.905" cy="234.286" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 74, Mat: 75</title>
+</circle>
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 66, Mat: 66</title>
+</circle>
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 63</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 63</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 64, Mat: 64</title>
+</circle>
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 65, Mat: 65</title>
+</circle>
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 63</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="316.19" cy="283.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 62</title>
+</circle>
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 63</title>
+</circle>
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 66, Mat: 66</title>
+</circle>
+<circle cx="342.857" cy="257.143" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 69, Mat: 69</title>
+</circle>
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 66, Mat: 66</title>
+</circle>
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 65, Mat: 65</title>
+</circle>
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 65, Mat: 65</title>
+</circle>
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 66, Mat: 66</title>
+</circle>
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 66, Mat: 66</title>
+</circle>
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 66, Mat: 66</title>
+</circle>
+<circle cx="327.619" cy="272.381" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 65, Mat: 65</title>
+</circle>
+<circle cx="346.667" cy="253.333" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 70, Mat: 70</title>
+</circle>
+<circle cx="361.905" cy="238.095" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 74, Mat: 74</title>
+</circle>
+<circle cx="354.286" cy="245.714" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 72, Mat: 72</title>
+</circle>
+<circle cx="358.095" cy="241.905" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 73, Mat: 73</title>
+</circle>
+<circle cx="369.524" cy="230.476" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 76, Mat: 76</title>
+</circle>
+<circle cx="380.952" cy="222.857" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 79, Mat: 78</title>
+</circle>
+<circle cx="396.19" cy="203.81" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 83, Mat: 83</title>
+</circle>
+<circle cx="396.19" cy="200" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 83, Mat: 84</title>
+</circle>
+<circle cx="430.476" cy="173.333" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 92, Mat: 91</title>
+</circle>
+<circle cx="392.381" cy="207.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 82, Mat: 82</title>
+</circle>
+<circle cx="392.381" cy="219.048" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 82, Mat: 79</title>
+</circle>
+<circle cx="400" cy="203.81" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 84, Mat: 83</title>
+</circle>
+<circle cx="384.762" cy="211.429" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 80, Mat: 81</title>
+</circle>
+<circle cx="377.143" cy="222.857" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 78, Mat: 78</title>
+</circle>
+<circle cx="384.762" cy="215.238" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 80, Mat: 80</title>
+</circle>
+<circle cx="400" cy="207.619" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 84, Mat: 82</title>
+</circle>
+<circle cx="400" cy="203.81" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 84, Mat: 83</title>
+</circle>
+<circle cx="403.81" cy="203.81" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 85, Mat: 83</title>
+</circle>
+<circle cx="400" cy="200" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 84, Mat: 84</title>
 </circle>
-<circle cx="400" cy="204.211" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+<circle cx="400" cy="200" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 84, Mat: 84</title>
+</circle>
+<circle cx="415.238" cy="188.571" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 88, Mat: 87</title>
+</circle>
+<circle cx="396.19" cy="207.619" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 83, Mat: 82</title>
+</circle>
+<circle cx="392.381" cy="203.81" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 82, Mat: 83</title>
+</circle>
+<circle cx="274.286" cy="318.095" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 51, Mat: 53</title>
+</circle>
+<circle cx="419.048" cy="184.762" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 89, Mat: 88</title>
+</circle>
+<circle cx="396.19" cy="207.619" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 83, Mat: 82</title>
+</circle>
+<circle cx="274.286" cy="329.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 51, Mat: 50</title>
+</circle>
+<circle cx="163.81" cy="436.19" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 22, Mat: 22</title>
+</circle>
+<circle cx="133.333" cy="466.667" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 14, Mat: 14</title>
+</circle>
+<circle cx="339.048" cy="260.952" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 68, Mat: 68</title>
+</circle>
+<circle cx="331.429" cy="264.762" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 66, Mat: 67</title>
+</circle>
+<circle cx="331.429" cy="219.048" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 66, Mat: 79</title>
+</circle>
+<circle cx="339.048" cy="260.952" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 68, Mat: 68</title>
+</circle>
+<circle cx="438.095" cy="257.143" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 94, Mat: 69</title>
+</circle>
+<circle cx="300.952" cy="318.095" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 58, Mat: 53</title>
+</circle>
+<circle cx="297.143" cy="310.476" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 57, Mat: 55</title>
+</circle>
+<circle cx="297.143" cy="299.048" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 57, Mat: 58</title>
+</circle>
+<circle cx="297.143" cy="295.238" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 57, Mat: 59</title>
+</circle>
+<circle cx="342.857" cy="276.19" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 69, Mat: 64</title>
+</circle>
+<circle cx="316.19" cy="280" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 63</title>
+</circle>
+<circle cx="426.667" cy="238.095" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 91, Mat: 74</title>
+</circle>
+<circle cx="304.762" cy="291.429" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 59, Mat: 60</title>
+</circle>
+<circle cx="297.143" cy="306.667" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 57, Mat: 56</title>
+</circle>
+<circle cx="327.619" cy="306.667" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 65, Mat: 56</title>
+</circle>
+<circle cx="323.81" cy="272.381" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 64, Mat: 65</title>
+</circle>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
+</circle>
+<circle cx="281.905" cy="318.095" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 53, Mat: 53</title>
+</circle>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
+</circle>
+<circle cx="365.714" cy="280" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 75, Mat: 63</title>
+</circle>
+<circle cx="316.19" cy="287.619" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 61</title>
+</circle>
+<circle cx="312.381" cy="287.619" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 61, Mat: 61</title>
+</circle>
+<circle cx="342.857" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 69, Mat: 71</title>
+</circle>
+<circle cx="300.952" cy="302.857" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 58, Mat: 57</title>
+</circle>
+<circle cx="308.571" cy="306.667" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 60, Mat: 56</title>
+</circle>
+<circle cx="297.143" cy="302.857" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 57, Mat: 57</title>
+</circle>
+<circle cx="304.762" cy="295.238" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 59, Mat: 59</title>
+</circle>
+<circle cx="373.333" cy="306.667" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 77, Mat: 56</title>
+</circle>
+<circle cx="369.524" cy="283.81" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 76, Mat: 62</title>
+</circle>
+<circle cx="316.19" cy="287.619" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 61</title>
+</circle>
+<circle cx="335.238" cy="283.81" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 67, Mat: 62</title>
+</circle>
+<circle cx="350.476" cy="268.571" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 71, Mat: 66</title>
+</circle>
+<circle cx="361.905" cy="230.476" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 74, Mat: 76</title>
+</circle>
+<circle cx="388.571" cy="264.762" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 81, Mat: 67</title>
+</circle>
+<circle cx="358.095" cy="245.714" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 73, Mat: 72</title>
+</circle>
+<circle cx="358.095" cy="264.762" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 73, Mat: 67</title>
+</circle>
+<circle cx="380.952" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 79, Mat: 71</title>
+</circle>
+<circle cx="354.286" cy="257.143" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 72, Mat: 69</title>
+</circle>
+<circle cx="384.762" cy="260.952" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 80, Mat: 68</title>
+</circle>
+<circle cx="350.476" cy="249.524" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 71, Mat: 71</title>
+</circle>
+<circle cx="388.571" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 81, Mat: 71</title>
+</circle>
+<circle cx="380.952" cy="241.905" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 79, Mat: 73</title>
+</circle>
+<circle cx="339.048" cy="257.143" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 68, Mat: 69</title>
+</circle>
+<circle cx="342.857" cy="257.143" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 69, Mat: 69</title>
+</circle>
+<circle cx="335.238" cy="264.762" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 67, Mat: 67</title>
+</circle>
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 64, Mat: 64</title>
+</circle>
+<circle cx="361.905" cy="272.381" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 74, Mat: 65</title>
+</circle>
+<circle cx="350.476" cy="276.19" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 71, Mat: 64</title>
+</circle>
+<circle cx="415.238" cy="226.667" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 88, Mat: 77</title>
+</circle>
+<circle cx="339.048" cy="260.952" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 68, Mat: 68</title>
+</circle>
+<circle cx="377.143" cy="260.952" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 78, Mat: 68</title>
+</circle>
+<circle cx="365.714" cy="287.619" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 75, Mat: 61</title>
+</circle>
+<circle cx="388.571" cy="245.714" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 81, Mat: 72</title>
+</circle>
+<circle cx="377.143" cy="272.381" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 78, Mat: 65</title>
+</circle>
+<circle cx="373.333" cy="264.762" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 77, Mat: 67</title>
+</circle>
+<circle cx="369.524" cy="257.143" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 76, Mat: 69</title>
+</circle>
+<circle cx="316.19" cy="302.857" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 62, Mat: 57</title>
+</circle>
+<circle cx="388.571" cy="280" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 81, Mat: 63</title>
+</circle>
+<circle cx="331.429" cy="268.571" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 66, Mat: 66</title>
+</circle>
+<circle cx="377.143" cy="260.952" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 78, Mat: 68</title>
+</circle>
+<circle cx="369.524" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 76, Mat: 71</title>
+</circle>
+<circle cx="400" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 84, Mat: 71</title>
+</circle>
+<circle cx="354.286" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 72, Mat: 71</title>
+</circle>
+<circle cx="426.667" cy="260.952" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 91, Mat: 68</title>
+</circle>
+<circle cx="377.143" cy="241.905" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 78, Mat: 73</title>
+</circle>
+<circle cx="335.238" cy="257.143" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 67, Mat: 69</title>
+</circle>
+<circle cx="411.429" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 87, Mat: 71</title>
+</circle>
+<circle cx="369.524" cy="268.571" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 76, Mat: 66</title>
+</circle>
+<circle cx="384.762" cy="238.095" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 80, Mat: 74</title>
+</circle>
+<circle cx="380.952" cy="234.286" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 79, Mat: 75</title>
+</circle>
+<circle cx="350.476" cy="245.714" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 71, Mat: 72</title>
+</circle>
+<circle cx="369.524" cy="241.905" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 76, Mat: 73</title>
+</circle>
+<circle cx="415.238" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 88, Mat: 71</title>
+</circle>
+<circle cx="346.667" cy="268.571" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 70, Mat: 66</title>
+</circle>
+<circle cx="403.81" cy="226.667" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 85, Mat: 77</title>
+</circle>
+<circle cx="369.524" cy="260.952" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 76, Mat: 68</title>
+</circle>
+<circle cx="441.905" cy="257.143" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 95, Mat: 69</title>
+</circle>
+<circle cx="400" cy="260.952" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 84, Mat: 68</title>
+</circle>
+<circle cx="400" cy="272.381" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 84, Mat: 65</title>
+</circle>
+<circle cx="400" cy="196.19" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 84, Mat: 85</title>
+</circle>
+<circle cx="346.667" cy="257.143" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 70, Mat: 69</title>
+</circle>
+<circle cx="403.81" cy="264.762" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 85, Mat: 67</title>
+</circle>
+<circle cx="361.905" cy="280" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 74, Mat: 63</title>
+</circle>
+<circle cx="361.905" cy="280" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 74, Mat: 63</title>
+</circle>
+<circle cx="300.952" cy="299.048" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 58, Mat: 58</title>
+</circle>
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 63</title>
+</circle>
+<circle cx="323.81" cy="276.19" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 64, Mat: 64</title>
+</circle>
+<circle cx="308.571" cy="287.619" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 60, Mat: 61</title>
+</circle>
+<circle cx="426.667" cy="200" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 91, Mat: 84</title>
+</circle>
+<circle cx="380.952" cy="226.667" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 79, Mat: 77</title>
+</circle>
+<circle cx="419.048" cy="222.857" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 89, Mat: 78</title>
+</circle>
+<circle cx="339.048" cy="264.762" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 68, Mat: 67</title>
+</circle>
+<circle cx="419.048" cy="219.048" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 89, Mat: 79</title>
+</circle>
+<circle cx="472.381" cy="222.857" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 103, Mat: 78</title>
+</circle>
+<circle cx="480" cy="184.762" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 105, Mat: 88</title>
+</circle>
+<circle cx="445.714" cy="158.095" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 96, Mat: 95</title>
+</circle>
+<circle cx="377.143" cy="253.333" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 78, Mat: 70</title>
+</circle>
+<circle cx="320" cy="276.19" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 64</title>
+</circle>
+<circle cx="411.429" cy="207.619" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 87, Mat: 82</title>
+</circle>
+<circle cx="323.81" cy="306.667" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 64, Mat: 56</title>
+</circle>
+<circle cx="380.952" cy="257.143" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 79, Mat: 69</title>
+</circle>
+<circle cx="396.19" cy="264.762" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 83, Mat: 67</title>
+</circle>
+<circle cx="320" cy="276.19" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 64</title>
+</circle>
+<circle cx="434.286" cy="257.143" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 93, Mat: 69</title>
+</circle>
+<circle cx="361.905" cy="249.524" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 74, Mat: 71</title>
+</circle>
+<circle cx="320" cy="280" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 63</title>
+</circle>
+<circle cx="342.857" cy="295.238" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 69, Mat: 59</title>
+</circle>
+<circle cx="392.381" cy="260.952" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 82, Mat: 68</title>
+</circle>
+<circle cx="457.143" cy="192.381" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 99, Mat: 86</title>
+</circle>
+<circle cx="320" cy="276.19" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 63, Mat: 64</title>
+</circle>
+<circle cx="400" cy="200" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 84, Mat: 84</title>
+</circle>
+<circle cx="369.524" cy="234.286" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 76, Mat: 75</title>
 </circle>
-<circle cx="412.632" cy="187.368" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="380.952" cy="219.048" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 79, Mat: 79</title>
 </circle>
-<circle cx="391.579" cy="208.421" r="3.5" fill="#3498db" fill-opacity="0.7">
+<circle cx="361.905" cy="238.095" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 74, Mat: 74</title>
 </circle>
 </svg>

@@ -187,12 +187,8 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
     // ========================================================================
     // 6. Initialize thresholds from first 2 seconds
     // ========================================================================
-    int skip_edge = W + 2;
-    int init_start = std::min(skip_edge, (int)ecg_m.size());
+    int init_start = 0;
     int init_end = std::min((int)ecg_m.size(), (int)(2.0 * fs));
-    if (init_end - init_start < (int)(0.5 * fs)) {
-        init_start = 0;
-    }
 
     double max_m = 0, sum_m = 0;
     int count_m = 0;
@@ -206,11 +202,8 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
     double SIG_LEV = THR_SIG;
     double NOISE_LEV = THR_NOISE;
 
-    int init_start_h = std::min(skip_edge, (int)ecg_h.size());
+    int init_start_h = 0;
     int init_end_h = std::min((int)ecg_h.size(), (int)(2.0 * fs));
-    if (init_end_h - init_start_h < (int)(0.5 * fs)) {
-        init_start_h = 0;
-    }
 
     double max_h = 0, sum_h = 0;
     int count_h = 0;

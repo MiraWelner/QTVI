@@ -6,10 +6,11 @@
 #include "StatsUtils.h"
 #include "diff2.h"
 #include "ecglaux.h"
+#include <iomanip>
 
 vector<size_t> ecgLms(const vector<double>& ecg, int sampling,
     const vector<double>& b_butter_ecg4mwi,
-    const vector<double>& a_butter_ecg4mwi, int dbg) {
+    const vector<double>& a_butter_ecg4mwi, int dbg, const std::string& fileID) {
     double mwitholdfract = 0.25;
     double mwitholdff = 0.80;
 
@@ -81,6 +82,23 @@ vector<size_t> ecgLms(const vector<double>& ecg, int sampling,
     for (int i = 0; i < mwiwidthpts && i < static_cast<int>(ll); ++i) {
         if (mwiwidthpts < static_cast<int>(ll)) {
             mwisignal[i] = mwisignal[mwiwidthpts];
+        }
+    }
+    // DEBUG - dump first 200 values at each stage
+    {
+        std::string dbg_fname = fileID + "_ecgLms_debug_cpp.csv";
+        std::ofstream dbg(dbg_fname, std::ios::app);
+        if (dbg.is_open()) {
+            dbg << "filtecg,difffiltecg,sqdifffiltecg,mwisignal\n";
+            size_t dump_len = std::min((size_t)200, mwisignal.size());
+            for (size_t idx = 0; idx < dump_len; ++idx) {
+                double fe = (idx < filtecg.size()) ? filtecg[idx] : NAN;
+                double de = (idx < difffiltecg.size()) ? difffiltecg[idx] : NAN;
+                double se = (idx < sqdifffiltecg.size()) ? sqdifffiltecg[idx] : NAN;
+                dbg << std::scientific << std::setprecision(15)
+                    << fe << "," << de << "," << se << "," << mwisignal[idx] << "\n";
+            }
+            dbg.flush();
         }
     }
 

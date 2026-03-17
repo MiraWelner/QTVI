@@ -6,8 +6,8 @@
 <text x="300" y="580" text-anchor="middle" font-family="sans-serif">Bin Detected Pairs</text>
 <text x="25" y="300" text-anchor="middle" transform="rotate(-90 25,300)" font-family="sans-serif">Mat Detected Pairs</text>
 <text x="300" y="40" text-anchor="middle" font-weight="bold" font-family="sans-serif">Detected Pairs Comparison</text>
-<circle cx="443.636" cy="156.364" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 90, Mat: 90</title>
+<circle cx="447.677" cy="156.364" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 91, Mat: 90</title>
 </circle>
 <circle cx="467.879" cy="132.121" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 96, Mat: 96</title>
@@ -384,8 +384,8 @@
 <circle cx="439.596" cy="160.404" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 89, Mat: 89</title>
 </circle>
-<circle cx="463.838" cy="140.202" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 95, Mat: 94</title>
+<circle cx="467.879" cy="140.202" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 96, Mat: 94</title>
 </circle>
 <circle cx="455.758" cy="144.242" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 93, Mat: 93</title>
@@ -852,14 +852,14 @@
 <circle cx="399.192" cy="200.808" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 79, Mat: 79</title>
 </circle>
-<circle cx="435.556" cy="164.444" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 88, Mat: 88</title>
+<circle cx="439.596" cy="164.444" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 89, Mat: 88</title>
 </circle>
 <circle cx="443.636" cy="156.364" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 90, Mat: 90</title>
 </circle>
-<circle cx="463.838" cy="128.081" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 95, Mat: 97</title>
+<circle cx="471.919" cy="128.081" r="3.5" fill="#3498db" fill-opacity="0.7">
+  <title>Bin: 97, Mat: 97</title>
 </circle>
 <circle cx="455.758" cy="140.202" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 93, Mat: 94</title>
@@ -981,8 +981,8 @@
 <circle cx="411.313" cy="188.687" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 82, Mat: 82</title>
 </circle>
-<circle cx="439.596" cy="160.404" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 89, Mat: 89</title>
+<circle cx="447.677" cy="160.404" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 91, Mat: 89</title>
 </circle>
 <circle cx="407.273" cy="192.727" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 81, Mat: 81</title>
@@ -1236,8 +1236,8 @@
 <circle cx="391.111" cy="208.889" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 77, Mat: 77</title>
 </circle>
-<circle cx="395.152" cy="204.848" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 78, Mat: 78</title>
+<circle cx="399.192" cy="204.848" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 79, Mat: 78</title>
 </circle>
 <circle cx="391.111" cy="208.889" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 77, Mat: 77</title>
@@ -1251,8 +1251,8 @@
 <circle cx="395.152" cy="204.848" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 78, Mat: 78</title>
 </circle>
-<circle cx="411.313" cy="188.687" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 82, Mat: 82</title>
+<circle cx="415.354" cy="188.687" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 83, Mat: 82</title>
 </circle>
 <circle cx="378.99" cy="221.01" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 74, Mat: 74</title>
@@ -1482,14 +1482,14 @@
 <circle cx="370.909" cy="229.091" r="3.5" fill="#3498db" fill-opacity="0.7">
   <title>Bin: 72, Mat: 72</title>
 </circle>
-<circle cx="399.192" cy="200.808" r="3.5" fill="#3498db" fill-opacity="0.7">
-  <title>Bin: 79, Mat: 79</title>
+<circle cx="403.232" cy="200.808" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 80, Mat: 79</title>
 </circle>
 <circle cx="451.717" cy="152.323" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 92, Mat: 91</title>
 </circle>
-<circle cx="435.556" cy="156.364" r="3.5" fill="#e74c3c" fill-opacity="0.7">
-  <title>Bin: 88, Mat: 90</title>
+<circle cx="447.677" cy="156.364" r="3.5" fill="#e74c3c" fill-opacity="0.7">
+  <title>Bin: 91, Mat: 90</title>
 </circle>
 <circle cx="407.273" cy="180.606" r="3.5" fill="#e74c3c" fill-opacity="0.7">
   <title>Bin: 81, Mat: 84</title>

@@ -86,7 +86,7 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
 
     vector<double> b = { 5.0 };
     vector<double> a = { 12.0 };
-    output[4] = ecgLms(processedEcg, (int)ecgSamplingRate, b, a, 0);
+    output[4] = ecgLms(processedEcg, (int)ecgSamplingRate, b, a, 0, fileID);
 
     vector<double> dists;
     for (int i = 0; i < 5; ++i) {
@@ -126,6 +126,21 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
     }
 
     // 5. Merge adjacent unique positions
+    {
+        std::ofstream dbg(fileID + "_boundary_debug.csv", std::ios::app);
+        if (dbg.is_open() && uniq.size() >= 2) {
+            dbg << "  PRE_MERGE first gaps: ";
+            for (size_t j = 0; j + 1 < std::min((size_t)8, uniq.size()); ++j) {
+                dbg << uniq[j] << "->" << uniq[j + 1] << "(d=" << (uniq[j + 1] - uniq[j]) << ") ";
+            }
+            dbg << "\n  PRE_MERGE last gaps: ";
+            size_t start = (uniq.size() > 8) ? uniq.size() - 8 : 0;
+            for (size_t j = start; j + 1 < uniq.size(); ++j) {
+                dbg << uniq[j] << "->" << uniq[j + 1] << "(d=" << (uniq[j + 1] - uniq[j]) << ") ";
+            }
+            dbg << "\n";
+        }
+    }
     for (size_t i = 0; i + 1 < uniq.size(); ++i) {
         if ((double)(uniq[i + 1] - uniq[i]) <= diff_range) {
             size_t winner, loser;
@@ -157,6 +172,80 @@ vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate, do
         }
     }
     std::sort(candidates.begin(), candidates.end());
+
+    // ========================================================================
+        // DEBUG: Boundary peak analysis
+        // ========================================================================
+    {
+        std::string dbg_fname = fileID + "_boundary_debug.csv";
+        std::ofstream dbg(dbg_fname, std::ios::app);
+        if (dbg.is_open()) {
+            dbg << "--- BIN " << g_bin_counter
+                << " | N_samples=" << ecgSeg.size()
+                << " | fs=" << ecgSamplingRate
+                << " ---\n";
+
+            std::string alg_names[] = {
+                "rpeakdetect_0.2", "rpeakdetect_0.1", "rpeakdetect_0.4",
+                "pan_tompkin", "ecgLms", "RRsimpleSquared"
+            };
+
+            for (int i = 0; i < 6; ++i) {
+                dbg << "  " << alg_names[i]
+                    << " (w=" << std::fixed << std::setprecision(2) << weights[i]
+                    << ", count=" << output[i].size() << "): ";
+
+                if (output[i].empty()) {
+                    dbg << "NONE";
+                }
+                else {
+                    size_t print_head = std::min((size_t)3, output[i].size());
+                    for (size_t j = 0; j < print_head; ++j) {
+                        dbg << output[i][j] << " ";
+                    }
+                    if (output[i].size() > 6) dbg << "... ";
+                    if (output[i].size() > 3) {
+                        size_t start_tail = output[i].size() - 3;
+                        if (start_tail < print_head) start_tail = print_head;
+                        for (size_t j = start_tail; j < output[i].size(); ++j) {
+                            dbg << output[i][j] << " ";
+                        }
+                    }
+                }
+                dbg << "\n";
+            }
+
+            dbg << "  ACCEPTED (" << candidates.size() << "): ";
+            if (!candidates.empty()) {
+                size_t print_head = std::min((size_t)3, candidates.size());
+                for (size_t j = 0; j < print_head; ++j) {
+                    dbg << candidates[j] << " ";
+                }
+                if (candidates.size() > 6) dbg << "... ";
+                if (candidates.size() > 3) {
+                    size_t start_tail = candidates.size() - 3;
+                    if (start_tail < print_head) start_tail = print_head;
+                    for (size_t j = start_tail; j < candidates.size(); ++j) {
+                        dbg << candidates[j] << " ";
+                    }
+                }
+            }
+            dbg << "\n";
+
+            dbg << "  REJECTED_NEAR_BOUNDARIES: ";
+            bool any_rejected = false;
+            for (const auto& [pos, weight] : weighted_peaks) {
+                if (weight < 2.399 && (pos < 500 || pos + 500 > ecgSeg.size())) {
+                    dbg << pos << "(w=" << std::fixed << std::setprecision(2)
+                        << weight << ") ";
+                    any_rejected = true;
+                }
+            }
+            if (!any_rejected) dbg << "NONE";
+            dbg << "\n\n";
+            dbg.flush();
+        }
+    }
 
     return candidates;
 }
