@@ -1,18 +1,14 @@
 // ============================================================================
 // File: SegmentPPG.h
-// Segment PPG signal to find minima and maxima
+// Segment PPG signal into individual pulses (minima and maxima)
 // ============================================================================
-#ifndef SEGMENTPPG_H
-#define SEGMENTPPG_H
+#pragma once
 
 #include "SignalProcessingTypes.h"
 
-// Segment PPG signal
 struct SegmentPPGResult {
-    vector<size_t> ppgMinAmps;
-    vector<size_t> maxAmps;
+    vector<size_t> ppgMinAmps;  // valley (trough) indices
+    vector<size_t> maxAmps;     // peak indices
 };
 
 SegmentPPGResult SegmentPPG(const vector<double>& ppg, double sampleRate);
-
-#endif // SEGMENTPPG_H

@@ -1,3 +1,7 @@
+// ============================================================================
+// File: pan_tompkin.cpp
+// Pan-Tompkins QRS detection — based on Sedghamiz's implementation
+// ============================================================================
 #include "pan_tompkin.h"
 #include "FilterUtils.h"
 #include "StatsUtils.h"
@@ -6,9 +10,27 @@
 #include <algorithm>
 #include <numeric>
 #include <vector>
-#include <iomanip>
 
 using namespace std;
+
+// ---- Algorithm constants ----
+static constexpr double BANDPASS_LOW_HZ = 5.0;
+static constexpr double BANDPASS_HIGH_HZ = 15.0;
+static constexpr double INTEGRATION_WINDOW_SEC = 0.150;
+static constexpr double MIN_PEAK_DIST_SEC = 0.200;
+static constexpr double TWAVE_REFRACTORY_SEC = 0.360;
+static constexpr double TWAVE_SLOPE_WINDOW_SEC = 0.075;
+static constexpr double SEARCHBACK_MARGIN_SEC = 0.200;
+static constexpr double RR_LOW_FACTOR = 0.92;
+static constexpr double RR_HIGH_FACTOR = 1.16;
+static constexpr double MISSED_QRS_FACTOR = 1.66;
+static constexpr double TWAVE_SLOPE_RATIO = 0.5;
+
+// Adaptive threshold weights
+static constexpr double ADAPT_FAST = 0.125;
+static constexpr double ADAPT_SLOW = 0.875;
+static constexpr double SEARCHBACK_FAST = 0.25;
+static constexpr double SEARCHBACK_SLOW = 0.75;
 
 // Simple linear interpolation replicating MATLAB's interp1(x, v, xq, 'linear')
 static vector<double> interp1_linear(const vector<double>& x, const vector<double>& v,
@@ -28,18 +50,6 @@ static vector<double> interp1_linear(const vector<double>& x, const vector<doubl
     return result;
 }
 
-// Full causal convolution replicating MATLAB's conv(a, b) with output length = len(a)+len(b)-1
-static vector<double> conv_full(const vector<double>& a, const vector<double>& b) {
-    size_t na = a.size(), nb = b.size();
-    vector<double> out(na + nb - 1, 0.0);
-    for (size_t i = 0; i < na; ++i) {
-        for (size_t j = 0; j < nb; ++j) {
-            out[i + j] += a[i] * b[j];
-        }
-    }
-    return out;
-}
-
 PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr, const std::string& fileID) {
     PanTompkinResult result;
     result.delay = 0;
@@ -49,17 +59,16 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
     vector<double> ecg(ecg_input.begin(), ecg_input.end());
 
     // ========================================================================
-    // 1. Bandpass Filter  (5-15 Hz)
+    // 1. Bandpass Filter (5-15 Hz)
     // ========================================================================
     vector<double> ecg_h;
     int delay = 0;
 
     if ((int)fs == 200) {
-        // Remove mean
         double avg = mean(ecg);
         for (auto& v : ecg) v -= avg;
 
-        // Low-pass: butter(3, 12*2/fs, 'low') + filtfilt
+        // Low-pass + high-pass via separate Butterworth stages
         double Wn_lp = 12.0 * 2.0 / fs;
         vector<double> b_lp, a_lp;
         butter(3, Wn_lp, "low", b_lp, a_lp);
@@ -68,8 +77,7 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
             [](double a, double b) { return fabs(a) < fabs(b); });
         if (mx_l != 0) for (auto& v : ecg_l) v /= fabs(mx_l);
 
-        // High-pass: butter(3, 5*2/fs, 'high') + filtfilt
-        double Wn_hp = 5.0 * 2.0 / fs;
+        double Wn_hp = BANDPASS_LOW_HZ * 2.0 / fs;
         vector<double> b_hp, a_hp;
         butter(3, Wn_hp, "high", b_hp, a_hp);
         ecg_h = filtfilt(b_hp, a_hp, ecg_l);
@@ -78,50 +86,26 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
         if (mx_h != 0) for (auto& v : ecg_h) v /= fabs(mx_h);
     }
     else {
-        // Remove mean
-        //double avg = mean(ecg);
-       // for (auto& v : ecg) v -= avg;
-
-        // Bandpass: butter(3, [5 15]*2/fs) + filtfilt
         vector<double> b_bp, a_bp;
 
         if (std::abs(fs - 256.0) < 0.5) {
             // Precomputed from MATLAB: [b,a] = butter(3, [5 15]*2/256)
             b_bp = {
-                 0.0014670007580121303,
-                 0.0,
-                -0.004401002274036391,
-                 0.0,
-                 0.004401002274036391,
-                 0.0,
-                -0.0014670007580121303
+                 0.0014670007580121303,  0.0, -0.004401002274036391,  0.0,
+                 0.004401002274036391,   0.0, -0.0014670007580121303
             };
             a_bp = {
-                 1.0,
-                -5.3856706261642193,
-                12.210142717095941,
-               -14.917369382919638,
-                10.359253074547178,
-                -3.8776092362023347,
-                 0.61132583250308625
+                 1.0, -5.3856706261642193, 12.210142717095941,
+                -14.917369382919638, 10.359253074547178,
+                -3.8776092362023347, 0.61132583250308625
             };
         }
         else if (std::abs(fs - 128.0) < 0.5) {
-            // If you ever need 128 Hz, run in MATLAB:
-            //   [b,a] = butter(3, [5 15]*2/128);
-            //   fprintf('%.17g ', b); fprintf('\n');
-            //   fprintf('%.17g ', a); fprintf('\n');
-            // and paste the results here.
-            //
-            // For now, fall back to runtime computation:
-            double f1 = 5.0, f2 = 15.0;
-            vector<double> Wn = { f1 * 2.0 / fs, f2 * 2.0 / fs };
+            vector<double> Wn = { BANDPASS_LOW_HZ * 2.0 / fs, BANDPASS_HIGH_HZ * 2.0 / fs };
             butter(3, Wn, b_bp, a_bp);
         }
         else {
-            // Fallback for other sample rates
-            double f1 = 5.0, f2 = 15.0;
-            vector<double> Wn = { f1 * 2.0 / fs, f2 * 2.0 / fs };
+            vector<double> Wn = { BANDPASS_LOW_HZ * 2.0 / fs, BANDPASS_HIGH_HZ * 2.0 / fs };
             butter(3, Wn, b_bp, a_bp);
         }
 
@@ -134,10 +118,8 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
     if (ecg_h.empty()) return result;
     int len = (int)ecg_h.size();
 
-
     // ========================================================================
-    // 2. Derivative Filter
-    //    H(z) = (1/8T)(-z^-2 - 2z^-1 + 2z + z^2)
+    // 2. Derivative Filter: H(z) = (1/8T)(-z^-2 - 2z^-1 + 2z + z^2)
     // ========================================================================
     double scale_d = (1.0 / 8.0) * fs;
     vector<double> base_coeffs = { 1.0 * scale_d, 2.0 * scale_d, 0.0, -2.0 * scale_d, -1.0 * scale_d };
@@ -154,8 +136,7 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
         b_d = base_coeffs;
     }
 
-    vector<double> a_one = { 1.0 };
-    vector<double> ecg_d = filtfilt(b_d, a_one, ecg_h);
+    vector<double> ecg_d = filtfilt(b_d, { 1.0 }, ecg_h);
     double mx_d = *max_element(ecg_d.begin(), ecg_d.end());
     if (mx_d != 0) for (auto& v : ecg_d) v /= mx_d;
 
@@ -166,54 +147,45 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
     for (size_t i = 0; i < ecg_d.size(); ++i) ecg_s[i] = ecg_d[i] * ecg_d[i];
 
     // ========================================================================
-    // 4. Moving Average (Causal convolution, MATLAB-style)
-    //    ecg_m = conv(ecg_s, ones(1,W)/W)  where W = round(0.150*fs)
+    // 4. Moving Average (causal convolution)
     // ========================================================================
-    int W = (int)round(0.150 * fs);
+    int W = (int)round(INTEGRATION_WINDOW_SEC * fs);
     if (W < 1) W = 1;
     vector<double> kernel(W, 1.0 / (double)W);
-    vector<double> ecg_m = conv_full(ecg_s, kernel);
+    vector<double> ecg_m = conv(ecg_s, kernel);
     delay += W / 2;
 
     // ========================================================================
-    // 5. Find Peaks on ecg_m
+    // 5. Find peaks on integrated signal
     // ========================================================================
     vector<double> pks;
     vector<size_t> locs;
-    findpeaks(ecg_m, pks, locs, round(0.2 * fs));
+    findpeaks(ecg_m, pks, locs, round(MIN_PEAK_DIST_SEC * fs));
     int LLp = (int)pks.size();
     if (LLp == 0) return result;
 
     // ========================================================================
     // 6. Initialize thresholds from first 2 seconds
     // ========================================================================
-    int init_start = 0;
-    int init_end = std::min((int)ecg_m.size(), (int)(2.0 * fs));
-
+    int init_end_m = std::min((int)ecg_m.size(), (int)(2.0 * fs));
     double max_m = 0, sum_m = 0;
-    int count_m = 0;
-    for (int k = init_start; k < init_end; ++k) {
+    for (int k = 0; k < init_end_m; ++k) {
         if (ecg_m[k] > max_m) max_m = ecg_m[k];
         sum_m += ecg_m[k];
-        count_m++;
     }
-    double THR_SIG = max_m * (1.0 / 3.0);
-    double THR_NOISE = (count_m > 0) ? (sum_m / count_m) * 0.5 : 0;
+    double THR_SIG = max_m / 3.0;
+    double THR_NOISE = (init_end_m > 0) ? (sum_m / init_end_m) * 0.5 : 0;
     double SIG_LEV = THR_SIG;
     double NOISE_LEV = THR_NOISE;
 
-    int init_start_h = 0;
     int init_end_h = std::min((int)ecg_h.size(), (int)(2.0 * fs));
-
     double max_h = 0, sum_h = 0;
-    int count_h = 0;
-    for (int k = init_start_h; k < init_end_h; ++k) {
+    for (int k = 0; k < init_end_h; ++k) {
         if (ecg_h[k] > max_h) max_h = ecg_h[k];
         sum_h += ecg_h[k];
-        count_h++;
     }
-    double THR_SIG1 = max_h * (1.0 / 3.0);
-    double THR_NOISE1 = (count_h > 0) ? (sum_h / count_h) * 0.5 : 0;
+    double THR_SIG1 = max_h / 3.0;
+    double THR_NOISE1 = (init_end_h > 0) ? (sum_h / init_end_h) * 0.5 : 0;
     double SIG_LEV1 = THR_SIG1;
     double NOISE_LEV1 = THR_NOISE1;
 
@@ -224,18 +196,16 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
     vector<double> qrs_i_raw_buf(LLp, 0), qrs_amp_raw_buf(LLp, 0);
     vector<double> nois_c(LLp, 0), nois_i(LLp, 0);
 
-    int Beat_C = 0;
-    int Beat_C1 = 0;
-    int Noise_Count = 0;
+    int Beat_C = 0, Beat_C1 = 0, Noise_Count = 0;
     double m_selected_RR = 0, mean_RR = 0;
     int skip = 0, not_nois = 0, ser_back = 0;
-    int round_150 = (int)round(0.150 * fs);
+    int round_150 = (int)round(INTEGRATION_WINDOW_SEC * fs);
 
     // ========================================================================
     // 8. Main Detection Loop
     // ========================================================================
     for (int i = 0; i < LLp; ++i) {
-        // --- Locate corresponding peak in bandpass signal ecg_h ---
+        // --- Locate corresponding peak in bandpass signal ---
         double y_i = 0;
         int x_i = 0;
 
@@ -284,7 +254,7 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
             mean_RR = (n_rr > 0) ? diffRR_sum / n_rr : 0;
             double comp = qrs_i[Beat_C - 1] - qrs_i[Beat_C - 2];
 
-            if (comp <= 0.92 * mean_RR || comp >= 1.16 * mean_RR) {
+            if (comp <= RR_LOW_FACTOR * mean_RR || comp >= RR_HIGH_FACTOR * mean_RR) {
                 THR_SIG *= 0.5;
                 THR_SIG1 *= 0.5;
             }
@@ -294,15 +264,13 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
         }
 
         // --- Searchback: check if a QRS was missed ---
-        double test_m = 0;
-        if (m_selected_RR)                    test_m = m_selected_RR;
-        else if (mean_RR && !m_selected_RR)   test_m = mean_RR;
+        double test_m = m_selected_RR ? m_selected_RR : mean_RR;
 
         if (test_m && Beat_C >= 1) {
             double last_qrs = qrs_i[Beat_C - 1];
-            if (((double)locs[i] - last_qrs) >= round(1.66 * test_m)) {
-                int sb_start = (int)last_qrs + (int)round(0.200 * fs);
-                int sb_end = (int)locs[i] - (int)round(0.200 * fs);
+            if (((double)locs[i] - last_qrs) >= round(MISSED_QRS_FACTOR * test_m)) {
+                int sb_start = (int)last_qrs + (int)round(SEARCHBACK_MARGIN_SEC * fs);
+                int sb_end = (int)locs[i] - (int)round(SEARCHBACK_MARGIN_SEC * fs);
                 if (sb_start < 0) sb_start = 0;
                 if (sb_end >= (int)ecg_m.size()) sb_end = (int)ecg_m.size() - 1;
 
@@ -345,11 +313,11 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
                             qrs_i_raw_buf[Beat_C1] = (double)(sb_h_start + x_i_t);
                             qrs_amp_raw_buf[Beat_C1] = y_i_t;
                             Beat_C1++;
-                            SIG_LEV1 = 0.25 * y_i_t + 0.75 * SIG_LEV1;
+                            SIG_LEV1 = SEARCHBACK_FAST * y_i_t + SEARCHBACK_SLOW * SIG_LEV1;
                         }
 
                         not_nois = 1;
-                        SIG_LEV = 0.25 * pks_temp + 0.75 * SIG_LEV;
+                        SIG_LEV = SEARCHBACK_FAST * pks_temp + SEARCHBACK_SLOW * SIG_LEV;
                     }
                 }
             }
@@ -360,19 +328,14 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
 
         // --- Main classification: Signal, Noise, or T-wave ---
         if (pks[i] >= THR_SIG) {
-            // T-wave check: if within 360ms of previous QRS
+            // T-wave check: if within refractory period of previous QRS
             if (Beat_C >= 3) {
                 double last_qrs_loc = qrs_i[Beat_C - 1];
-                if (((double)locs[i] - last_qrs_loc) <= round(0.3600 * fs)) {
-                    int slope1_start = (int)locs[i] - (int)round(0.075 * fs);
-                    int slope1_end = (int)locs[i];
-                    int slope2_start = (int)last_qrs_loc - (int)round(0.075 * fs);
-                    int slope2_end = (int)last_qrs_loc;
-
-                    slope1_start = max(0, slope1_start);
-                    slope1_end = min((int)ecg_m.size() - 1, slope1_end);
-                    slope2_start = max(0, slope2_start);
-                    slope2_end = min((int)ecg_m.size() - 1, slope2_end);
+                if (((double)locs[i] - last_qrs_loc) <= round(TWAVE_REFRACTORY_SEC * fs)) {
+                    int slope1_start = max(0, (int)locs[i] - (int)round(TWAVE_SLOPE_WINDOW_SEC * fs));
+                    int slope1_end = min((int)ecg_m.size() - 1, (int)locs[i]);
+                    int slope2_start = max(0, (int)last_qrs_loc - (int)round(TWAVE_SLOPE_WINDOW_SEC * fs));
+                    int slope2_end = min((int)ecg_m.size() - 1, (int)last_qrs_loc);
 
                     double s1 = 0, s2 = 0;
                     int n1 = 0, n2 = 0;
@@ -385,7 +348,7 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
                     if (n1 > 0) s1 /= n1;
                     if (n2 > 0) s2 /= n2;
 
-                    if (fabs(s1) <= fabs(0.5 * s2)) {
+                    if (fabs(s1) <= fabs(TWAVE_SLOPE_RATIO * s2)) {
                         Noise_Count++;
                         if (Noise_Count > (int)nois_c.size()) {
                             nois_c.resize(Noise_Count);
@@ -394,8 +357,8 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
                         nois_c[Noise_Count - 1] = pks[i];
                         nois_i[Noise_Count - 1] = (double)locs[i];
                         skip = 1;
-                        NOISE_LEV1 = 0.125 * y_i + 0.875 * NOISE_LEV1;
-                        NOISE_LEV = 0.125 * pks[i] + 0.875 * NOISE_LEV;
+                        NOISE_LEV1 = ADAPT_FAST * y_i + ADAPT_SLOW * NOISE_LEV1;
+                        NOISE_LEV = ADAPT_FAST * pks[i] + ADAPT_SLOW * NOISE_LEV;
                     }
                     else {
                         skip = 0;
@@ -422,14 +385,14 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
                     }
                     qrs_amp_raw_buf[Beat_C1] = y_i;
                     Beat_C1++;
-                    SIG_LEV1 = 0.125 * y_i + 0.875 * SIG_LEV1;
+                    SIG_LEV1 = ADAPT_FAST * y_i + ADAPT_SLOW * SIG_LEV1;
                 }
-                SIG_LEV = 0.125 * pks[i] + 0.875 * SIG_LEV;
+                SIG_LEV = ADAPT_FAST * pks[i] + ADAPT_SLOW * SIG_LEV;
             }
         }
         else if (pks[i] >= THR_NOISE && pks[i] < THR_SIG) {
-            NOISE_LEV1 = 0.125 * y_i + 0.875 * NOISE_LEV1;
-            NOISE_LEV = 0.125 * pks[i] + 0.875 * NOISE_LEV;
+            NOISE_LEV1 = ADAPT_FAST * y_i + ADAPT_SLOW * NOISE_LEV1;
+            NOISE_LEV = ADAPT_FAST * pks[i] + ADAPT_SLOW * NOISE_LEV;
         }
         else {
             Noise_Count++;
@@ -439,8 +402,8 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
             }
             nois_c[Noise_Count - 1] = pks[i];
             nois_i[Noise_Count - 1] = (double)locs[i];
-            NOISE_LEV1 = 0.125 * y_i + 0.875 * NOISE_LEV1;
-            NOISE_LEV = 0.125 * pks[i] + 0.875 * NOISE_LEV;
+            NOISE_LEV1 = ADAPT_FAST * y_i + ADAPT_SLOW * NOISE_LEV1;
+            NOISE_LEV = ADAPT_FAST * pks[i] + ADAPT_SLOW * NOISE_LEV;
         }
 
         // --- Update adaptive thresholds ---
@@ -453,7 +416,6 @@ PanTompkinResult pan_tompkin(const vector<double>& ecg_input, double fs, int gr,
             THR_NOISE1 = 0.5 * THR_SIG1;
         }
 
-        // Reset per-iteration flags
         skip = 0;
         not_nois = 0;
         ser_back = 0;

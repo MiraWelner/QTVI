@@ -3,15 +3,12 @@
 // ============================================================================
 #include "nanfastsmooth.h"
 
-// Helper function for sliding average
-vector<double> sa(const vector<double>& Y, int smoothwidth, double tol) {
-    if (smoothwidth == 1) {
-        return Y;
-    }
+// Sliding average with NaN handling.
+// For even windows, boundary samples are weighted at 0.5 to center the window.
+static vector<double> sa(const vector<double>& Y, int smoothwidth, double tol) {
+    if (smoothwidth == 1) return Y;
 
-    // Bound tolerance
-    if (tol < 0) tol = 0;
-    if (tol > 1) tol = 1;
+    tol = std::max(0.0, std::min(1.0, tol));
 
     int w = smoothwidth;
     int halfw = w / 2;
@@ -20,8 +17,8 @@ vector<double> sa(const vector<double>& Y, int smoothwidth, double tol) {
     vector<double> s(L, 0.0);
     vector<double> np(L, 0.0);
 
-    if (w % 2 == 1) {  // Odd window
-        // Initialize sums and counts
+    if (w % 2 == 1) {
+        // Odd window: symmetric, all samples weighted equally
         double SumPoints = 0.0;
         double NumPoints = 0.0;
 
@@ -43,7 +40,6 @@ vector<double> sa(const vector<double>& Y, int smoothwidth, double tol) {
                 SumPoints -= Y[removeIdx];
                 NumPoints -= 1.0;
             }
-
             if (addIdx < static_cast<int>(L) && !std::isnan(Y[addIdx])) {
                 SumPoints += Y[addIdx];
                 NumPoints += 1.0;
@@ -53,8 +49,10 @@ vector<double> sa(const vector<double>& Y, int smoothwidth, double tol) {
             np[k] = NumPoints;
         }
     }
-    else {  // Even window
-        // Initialize sums and counts
+    else {
+        // Even window: boundary samples at half-weight to keep the window centered.
+        // Window spans [k - halfw, k + halfw - 1] with the two boundary samples
+        // at indices (k - halfw) and (k + halfw - 1) each contributing 0.5.
         double SumPoints = 0.0;
         double NumPoints = 0.0;
 
@@ -83,17 +81,14 @@ vector<double> sa(const vector<double>& Y, int smoothwidth, double tol) {
                 SumPoints -= 0.5 * Y[removeIdx1];
                 NumPoints -= 0.5;
             }
-
             if (removeIdx2 >= 0 && !std::isnan(Y[removeIdx2])) {
                 SumPoints -= 0.5 * Y[removeIdx2];
                 NumPoints -= 0.5;
             }
-
             if (addIdx1 < static_cast<int>(L) && !std::isnan(Y[addIdx1])) {
                 SumPoints += 0.5 * Y[addIdx1];
                 NumPoints += 0.5;
             }
-
             if (addIdx2 < static_cast<int>(L) && !std::isnan(Y[addIdx2])) {
                 SumPoints += 0.5 * Y[addIdx2];
                 NumPoints += 0.5;
@@ -104,15 +99,14 @@ vector<double> sa(const vector<double>& Y, int smoothwidth, double tol) {
         }
     }
 
-    // Remove the amount of interpolated datapoints desired
-    double minPoints = std::max(w * (1 - tol), 1.0);
+    // Require a minimum fraction of non-NaN points in each window
+    double minPoints = std::max(w * (1.0 - tol), 1.0);
     for (size_t i = 0; i < L; ++i) {
         if (np[i] < minPoints) {
             np[i] = NaN;
         }
     }
 
-    // Calculate smoothed signal
     vector<double> SmoothY(L);
     for (size_t i = 0; i < L; ++i) {
         SmoothY[i] = s[i] / np[i];
@@ -125,13 +119,9 @@ vector<double> nanfastsmooth(const vector<double>& Y, double w, int type, double
     int smoothwidth = static_cast<int>(std::round(w));
 
     switch (type) {
-    case 1:
-        return sa(Y, smoothwidth, tol);
-    case 2:
-        return sa(sa(Y, smoothwidth, tol), smoothwidth, tol);
-    case 3:
-        return sa(sa(sa(Y, smoothwidth, tol), smoothwidth, tol), smoothwidth, tol);
-    default:
-        return sa(Y, smoothwidth, tol);
+    case 1:  return sa(Y, smoothwidth, tol);
+    case 2:  return sa(sa(Y, smoothwidth, tol), smoothwidth, tol);
+    case 3:  return sa(sa(sa(Y, smoothwidth, tol), smoothwidth, tol), smoothwidth, tol);
+    default: return sa(Y, smoothwidth, tol);
     }
 }

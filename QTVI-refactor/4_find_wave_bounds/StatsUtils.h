@@ -2,42 +2,21 @@
 // File: StatsUtils.h
 // Statistical utility functions
 // ============================================================================
-#ifndef STATSUTILS_H
-#define STATSUTILS_H
+#pragma once
 
 #include "SignalProcessingTypes.h"
 
-// Mean calculation
 double mean(const vector<double>& x);
-
-// Standard deviation
 double std_dev(const vector<double>& x);
-
-// Median
 double median(const vector<double>& x);
-
-// Max element and index
-pair<double, size_t> max_element_index(const vector<double>& x, size_t start, size_t end);
-
-// Min element and index
-pair<double, size_t> min_element_index(const vector<double>& x, size_t start, size_t end);
-
-// Moving mean
-vector<double> movmean(const vector<double>& data, size_t window);
-
-// Diff function
-vector<double> diff(const vector<double>& x);
-
-// Sum function
 double sum(const vector<double>& x);
 
-// Sort function
-vector<double> sort(const vector<double>& x);
+pair<double, size_t> max_element_index(const vector<double>& x, size_t start, size_t end);
+pair<double, size_t> min_element_index(const vector<double>& x, size_t start, size_t end);
 
-// Find indices where condition is true
+vector<double> movmean(const vector<double>& data, size_t window);
+vector<double> diff(const vector<double>& x);
+vector<double> sort(const vector<double>& x);
 vector<size_t> find(const vector<bool>& condition);
 
 void detrend(vector<double>& x);
-
-#endif // STATSUTILS_H
-#pragma once

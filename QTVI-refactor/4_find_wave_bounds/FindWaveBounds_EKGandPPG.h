@@ -1,17 +1,15 @@
 // ============================================================================
 // File: FindWaveBounds_EKGandPPG.h
-// Find wave boundaries in ECG and PPG data
+// Top-level processing: detect R-peaks and PPG pulses, pair them
 // ============================================================================
-#ifndef FINDWAVEBOUNDS_EKGANDPPG_H
-#define FINDWAVEBOUNDS_EKGANDPPG_H
+#pragma once
 
 #include <vector>
-#include "FindWaveBounds.h"  // This brings in AnnealedSegment and WaveData
+#include <string>
+#include "FindWaveBounds.h"
 
-// Find wave bounds in ECG and PPG
-std::vector<WaveData> FindWaveBounds_EKGandPPG(const std::vector<AnnealedSegment>& annealedSegments,
+std::vector<WaveData> FindWaveBounds_EKGandPPG(
+    const std::vector<AnnealedSegment>& annealedSegments,
     int dbg_plot,
     bool use_R_algorithm,
     std::string fileID);
-
-#endif // FINDWAVEBOUNDS_EKGANDPPG_H

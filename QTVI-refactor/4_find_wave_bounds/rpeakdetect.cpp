@@ -1,41 +1,28 @@
+// ============================================================================
+// File: rpeakdetect.cpp
+// ============================================================================
 #include "rpeakdetect.h"
 #include "FilterUtils.h"
 #include "StatsUtils.h"
+#include "filterECG128Hz.hpp"
+#include "filterECG256Hz.hpp"
 #include <cmath>
 #include <algorithm>
-#include <iostream>
-#include <vector>
 #include <numeric>
-#include <fstream>
-
-
-// Declarations to resolve C3861 (ensure these match the signatures in filterECG*.cpp)
-std::vector<double> filterECG128Hz(const std::vector<double>& x);
-std::vector<double> filterECG256Hz(const std::vector<double>& x);
-
-// Internal helper for MATLAB-style diff (result size = N-1)
-static std::vector<double> get_diff(const std::vector<double>& v) {
-    if (v.size() < 2) return {};
-    std::vector<double> res;
-    res.reserve(v.size() - 1);
-    for (size_t i = 0; i < v.size() - 1; ++i) {
-        res.push_back(v[i + 1] - v[i]);
-    }
-    return res;
-}
+#include <vector>
 
 RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq, double thresh, int testmode, std::string fileID) {
     RPeakDetectResult result;
-    if (data.size() < 10) return result; // Safety check for very short data
+    if (data.size() < 10) return result;
 
     size_t n_orig = data.size();
     std::vector<double> x = data;
 
     // 1. Detrend: x = x - mean(x)
-    double mu = mean(x); // Using mean from StatsUtils.h
+    double mu = mean(x);
     for (auto& val : x) val -= mu;
 
-    // 2. Bandpass Filtering (Replicating MATLAB exist() logic)
+    // 2. Bandpass filtering
     std::vector<double> bpf;
     if (std::abs(samp_freq - 128.0) < 0.1) {
         bpf = filterECG128Hz(x);
@@ -47,71 +34,60 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
         bpf = x;
     }
 
-    // 3. Differentiation: dff = diff(bpf)
-    std::vector<double> dff = get_diff(bpf);
+    // 3. Differentiation
+    std::vector<double> dff = diff(bpf);
 
-    // 4. Squaring: sqr = dff .* dff
+    // 4. Squaring
     std::vector<double> sqr(dff.size());
     for (size_t i = 0; i < dff.size(); ++i) {
         sqr[i] = dff[i] * dff[i];
     }
-    size_t len = sqr.size(); // Corresponds to 'len = len - 1' in MATLAB
+    size_t len = sqr.size();
 
-    // 5. Integration (Moving Sum)
+    // 5. Integration (moving sum + median filter)
     int win_size = (samp_freq >= 256.0) ? (int)std::round(7.0 * samp_freq / 256.0) : 7;
     std::vector<double> d_kernel(win_size, 1.0);
-    // filter(d, 1, sqr)
     std::vector<double> filtered_sqr = filter(d_kernel, { 1.0 }, sqr);
-    // mdfint = medfilt1(..., 10)
     std::vector<double> mdfint = medfilt1(filtered_sqr, 10);
 
-    // 6. Remove Filter Delay: mdfint = mdfint(delay:length(mdfint))
+    // 6. Remove filter delay
     int delay = (int)std::ceil((double)win_size / 2.0);
     if (delay > 1 && (size_t)delay <= mdfint.size()) {
         mdfint.erase(mdfint.begin(), mdfint.begin() + (delay - 1));
     }
 
-    // 7. Thresholding: NaN-Safe max_h calculation
-    int start_search = (int)std::round((double)len / 4.0) - 1;
-    int end_search = (int)std::round(3.0 * (double)len / 4.0) - 1;
+    // 7. Threshold from middle 50% of signal
+    int start_search = std::max(0, std::min((int)std::round((double)len / 4.0) - 1, (int)mdfint.size() - 1));
+    int end_search = std::max(start_search, std::min((int)std::round(3.0 * (double)len / 4.0) - 1, (int)mdfint.size() - 1));
 
-    start_search = std::max(0, std::min(start_search, (int)mdfint.size() - 1));
-    end_search = std::max(start_search, std::min(end_search, (int)mdfint.size() - 1));
-
-    double max_h = -1e30; // Start with very small value
-    bool found_valid = false;
+    double max_h = 0.0;
     for (int i = start_search; i <= end_search; ++i) {
-        if (std::isfinite(mdfint[i])) {
-            if (mdfint[i] > max_h) {
-                max_h = mdfint[i];
-                found_valid = true;
-            }
+        if (std::isfinite(mdfint[i]) && mdfint[i] > max_h) {
+            max_h = mdfint[i];
         }
     }
-    // Safety: If the whole search range was invalid, default to a sensible threshold
-    if (!found_valid) max_h = 0.0;
 
-    // 8. Identify possible regions (Handle NaN by treating as 0)
+    // 8. Identify candidate regions above threshold
     std::vector<int> poss_reg(mdfint.size(), 0);
     double limit = thresh * max_h;
     for (size_t i = 0; i < mdfint.size(); ++i) {
-        if (!std::isnan(mdfint[i])) {
-            poss_reg[i] = (mdfint[i] > limit) ? 1 : 0;
+        if (!std::isnan(mdfint[i]) && mdfint[i] > limit) {
+            poss_reg[i] = 1;
         }
     }
 
-    // 9. Segment detection
+    // 9. Find region boundaries (rising/falling edges)
     std::vector<int> left, right;
     if (!poss_reg.empty()) {
         if (poss_reg[0] == 1) left.push_back(1);
-        for (size_t i = 1; i < (int)poss_reg.size(); ++i) {
+        for (size_t i = 1; i < poss_reg.size(); ++i) {
             if (poss_reg[i] == 1 && poss_reg[i - 1] == 0) left.push_back(i + 1);
             if (poss_reg[i] == 0 && poss_reg[i - 1] == 1) right.push_back(i);
         }
         if (poss_reg.back() == 1) right.push_back((int)poss_reg.size());
     }
 
-    // 10. Search for local Max/Min
+    // 10. Find local max/min within each region
     size_t num_segs = std::min(left.size(), right.size());
     std::vector<size_t> maxloc, minloc;
     std::vector<double> maxval, minval;
@@ -124,11 +100,9 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
         int cur_max_i = l, cur_min_i = l;
 
         for (int k = l; k <= r; ++k) {
-            if (k >= 0 && k < (int)bpf.size()) {
-                if (!std::isnan(bpf[k])) {
-                    if (bpf[k] > cur_max) { cur_max = bpf[k]; cur_max_i = k; }
-                    if (bpf[k] < cur_min) { cur_min = bpf[k]; cur_min_i = k; }
-                }
+            if (k >= 0 && k < (int)bpf.size() && !std::isnan(bpf[k])) {
+                if (bpf[k] > cur_max) { cur_max = bpf[k]; cur_max_i = k; }
+                if (bpf[k] < cur_min) { cur_min = bpf[k]; cur_min_i = k; }
             }
         }
         maxval.push_back(cur_max);
@@ -137,36 +111,28 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
         minloc.push_back((size_t)cur_min_i);
     }
 
-    // 11. Initial Assignment (MATLAB lines 162-167)
-    result.R_index = maxloc; // R_index = maxloc
+    // 11. Initial assignment
+    result.R_index = maxloc;
     result.R_amp = maxval;
     result.S_amp = minval;
 
-    // Construct time vectors (t = 1/fs : 1/fs : end)
     auto get_time = [&](size_t idx) { return (double)(idx + 1) / samp_freq; };
     for (auto loc : maxloc) result.R_t.push_back(get_time(loc));
     for (auto loc : minloc) result.S_t.push_back(get_time(loc));
 
+    // 12. Lead inversion check: if S-points come after R-points, signal is inverted
+    if (!maxloc.empty() && !minloc.empty() && minloc.back() < maxloc.back()) {
+        result.R_index = minloc;
+        result.R_amp = minval;
+        result.R_t.clear();
+        for (auto loc : minloc) result.R_t.push_back(get_time(loc));
 
-    // 12. Lead Inversion Check
-    // MATLAB: if minloc(end) < maxloc(end), swap R and S entirely
-    // This means R_index must also switch to minloc, because MATLAB's
-    // callers use R_t (which becomes t(minloc)), and our callers use R_index.
-    if (!maxloc.empty() && !minloc.empty()) {
-        if (minloc.back() < maxloc.back()) {
-            // Signal is inverted: the "R-peaks" are actually the minima
-            result.R_index = minloc;    // <-- THIS WAS THE BUG: was not swapped before
-            result.R_amp = minval;
-            result.R_t.clear();
-            for (auto loc : minloc) result.R_t.push_back(get_time(loc));
-
-            result.S_amp = maxval;
-            result.S_t.clear();
-            for (auto loc : maxloc) result.S_t.push_back(get_time(loc));
-        }
+        result.S_amp = maxval;
+        result.S_t.clear();
+        for (auto loc : maxloc) result.S_t.push_back(get_time(loc));
     }
 
-    // 13. HRV calculation: hrv = diff(R_t)
+    // 13. HRV: diff of R-peak times
     if (result.R_t.size() > 1) {
         for (size_t i = 0; i < result.R_t.size() - 1; ++i) {
             result.hrv.push_back(result.R_t[i + 1] - result.R_t[i]);
@@ -174,5 +140,4 @@ RPeakDetectResult rpeakdetect(const std::vector<double>& data, double samp_freq,
     }
 
     return result;
-
 }

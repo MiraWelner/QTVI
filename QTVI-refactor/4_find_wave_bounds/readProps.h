@@ -1,13 +1,9 @@
 // ============================================================================
 // File: readProps.h
-// Read properties from configuration file
+// Read key=value properties from a configuration file
 // ============================================================================
-#ifndef READPROPS_H
-#define READPROPS_H
+#pragma once
 
 #include "SignalProcessingTypes.h"
 
-// readProps - read properties from input file and return a map
 map<string, string> readProps(const string& inputFile);
-
-#endif // READPROPS_H

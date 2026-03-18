@@ -1,13 +1,9 @@
 // ============================================================================
-// File: RRsimpleSquared.h
-// Simple R-R peak detection using squared signal
+// File: RRSimpleSquared.h
+// R-R peak detection using squared signal with threshold
 // ============================================================================
-#ifndef RRSIMPLESQUARED_H
-#define RRSIMPLESQUARED_H
+#pragma once
 
 #include "SignalProcessingTypes.h"
 
-// Simple R-R peak detection
 pair<vector<size_t>, vector<double>> RRsimpleSquared(const vector<double>& ecg, double minDist);
-
-#endif // RRSIMPLESQUARED_H

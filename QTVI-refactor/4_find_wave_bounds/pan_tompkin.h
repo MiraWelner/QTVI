@@ -1,24 +1,19 @@
-#ifndef PAN_TOMPKIN_H
-#define PAN_TOMPKIN_H
+// ============================================================================
+// File: pan_tompkin.h
+// Pan-Tompkins QRS detection algorithm
+// ============================================================================
+#pragma once
 
 #include <vector>
-#include <fstream>
-
+#include <string>
 #include <cstddef>
 
 using namespace std;
 
-// Pan-Tompkins QRS detection result
 struct PanTompkinResult {
-    vector<size_t> qrs_i_raw;   // index of R waves
-    vector<double> qrs_amp_raw; // amplitude of R waves
-    int delay;                  // delay in samples
+    vector<size_t> qrs_i_raw;   // R-wave sample indices
+    vector<double> qrs_amp_raw; // R-wave amplitudes
+    int delay;                  // processing delay in samples
 };
 
-/**
- * Complete 1-1 translation of Sedghamiz's Pan-Tompkins algorithm.
- */
-
 PanTompkinResult pan_tompkin(const std::vector<double>& ecg_input, double fs, int gr, const std::string& fileID);
-
-#endif // PAN_TOMPKIN_H

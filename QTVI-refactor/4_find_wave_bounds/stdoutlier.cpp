@@ -1,4 +1,3 @@
-
 // ============================================================================
 // File: stdoutlier.cpp
 // ============================================================================
@@ -10,8 +9,6 @@ vector<bool> stdoutlier(const vector<double>& data,
     size_t mean_window,
     const string& direction,
     bool debug_plot) {
-    // data == nx1 or 1xn matrix, Multiplier == std multipler (normally ~2.5 or 3)
-    // mean_window == length(data) * .02 normally good value
 
     vector<double> d = diff(data);
     vector<double> x = movmean(d, mean_window);
@@ -19,39 +16,33 @@ vector<bool> stdoutlier(const vector<double>& data,
 
     vector<double> upper_bound(d.size());
     vector<double> lower_bound(d.size());
-
     for (size_t i = 0; i < d.size(); ++i) {
         upper_bound[i] = x[i] + s * multiplier;
         lower_bound[i] = x[i] - s * multiplier;
     }
 
-    vector<bool> weridOnes(d.size(), false);
-
+    vector<bool> outlierDiffs(d.size(), false);
     if (direction == "lower") {
-        for (size_t i = 0; i < d.size(); ++i) {
-            weridOnes[i] = (d[i] < lower_bound[i]);
-        }
+        for (size_t i = 0; i < d.size(); ++i)
+            outlierDiffs[i] = (d[i] < lower_bound[i]);
     }
     else if (direction == "upper") {
-        for (size_t i = 0; i < d.size(); ++i) {
-            weridOnes[i] = (d[i] > upper_bound[i]);
-        }
+        for (size_t i = 0; i < d.size(); ++i)
+            outlierDiffs[i] = (d[i] > upper_bound[i]);
     }
     else {
-        for (size_t i = 0; i < d.size(); ++i) {
-            weridOnes[i] = (d[i] > upper_bound[i] || d[i] < lower_bound[i]);
-        }
+        for (size_t i = 0; i < d.size(); ++i)
+            outlierDiffs[i] = (d[i] > upper_bound[i] || d[i] < lower_bound[i]);
     }
 
+    // Mark both endpoints of each outlier diff
     vector<bool> outliers(data.size(), false);
-
-    for (size_t i = 0; (i + 1) < data.size(); ++i) {
-        if (i < weridOnes.size() && weridOnes[i]) { // Also safety check weridOnes
+    for (size_t i = 0; i + 1 < data.size(); ++i) {
+        if (i < outlierDiffs.size() && outlierDiffs[i]) {
             outliers[i] = true;
             outliers[i + 1] = true;
         }
     }
-
 
     return outliers;
 }

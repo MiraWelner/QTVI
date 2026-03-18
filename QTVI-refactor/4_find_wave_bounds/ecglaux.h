@@ -1,13 +1,11 @@
 // ============================================================================
 // File: ecglaux.h
-// ECG R-wave detection auxiliary function
+// ECG R-wave detection using Moving Window Integration
 // ============================================================================
-#ifndef ECGLAUX_H
-#define ECGLAUX_H
+#pragma once
 
 #include "SignalProcessingTypes.h"
 
-// ECG R-wave detection using Moving Window Integration
 tuple<vector<size_t>, double, double> ecglaux(
     const vector<double>& ecg,
     const vector<double>& mwisignal,
@@ -17,6 +15,4 @@ tuple<vector<size_t>, double, double> ecglaux(
     int mwiwidthpts,
     int refractpts,
     double mwitholdfract,
-    double mwitholdff
-);
-#endif // ECGLAUX_H
+    double mwitholdff);

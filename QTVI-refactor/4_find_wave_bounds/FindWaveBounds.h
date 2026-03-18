@@ -1,9 +1,13 @@
-#ifndef FINDWAVEBOUNDS_H
-#define FINDWAVEBOUNDS_H
+// ============================================================================
+// File: FindWaveBounds.h
+// Data structures for annealed segment input and wave detection output
+// ============================================================================
+#pragma once
 
 #include <vector>
 #include <string>
 #include <cstddef>
+#include <cstdint>
 
 struct AnnealedSegment {
     std::vector<double> po;
@@ -30,11 +34,11 @@ struct WaveData {
     std::vector<double> ecgSignal;
     std::vector<std::size_t> ecgRIndex;
 
-    // Channel 2 (populated only for multi-channel inputs like Bittium/CHAOS)
+    // Channel 2 (populated for multi-channel inputs like Bittium/CHAOS)
     std::vector<double> ecgSignal2;
     std::vector<std::size_t> ecgRIndex2;
 
-    // Channel 3 (populated only for multi-channel inputs like Bittium/CHAOS)
+    // Channel 3 (populated for multi-channel inputs like Bittium/CHAOS)
     std::vector<double> ecgSignal3;
     std::vector<std::size_t> ecgRIndex3;
 
@@ -48,7 +52,6 @@ struct WaveData {
     std::vector<double> ppgSignal;
 };
 
-AnnealedData readCppBin(const std::string& path, double ecgFs, double ppgFs);
+// Defined in main.cpp
+AnnealedData readCppBin(const std::string& path);
 void saveWaveData(const std::string& path, const std::vector<WaveData>& results);
-
-#endif

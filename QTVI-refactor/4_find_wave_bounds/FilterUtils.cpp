@@ -1,13 +1,12 @@
-// ============================================================================
+﻿// ============================================================================
 // File: FilterUtils.cpp
-// Comprehensive implementation of MATLAB-equivalent DSP functions
+// Implementation of DSP functions: filter, filtfilt, butter, conv, medfilt1
 // ============================================================================
 #include "FilterUtils.h"
 #include <cmath>
 #include <complex>
 #include <algorithm>
 #include <vector>
-#include <set>
 
 using namespace std;
 
@@ -18,8 +17,7 @@ using namespace std;
 typedef std::complex<double> cd;
 
 // ============================================================================
-// Helper: polynomial from complex roots
-// Matches: poly(roots) in MATLAB
+// Helper: polynomial from complex roots — matches MATLAB poly(roots)
 // ============================================================================
 static vector<double> poly_from_roots(const vector<cd>& roots) {
     int n = (int)roots.size();
@@ -38,8 +36,7 @@ static vector<double> poly_from_roots(const vector<cd>& roots) {
 }
 
 // ============================================================================
-// 1. Digital IIR Filter (Direct Form II Transposed)
-// Matches: y = filter(b, a, x)
+// Direct Form II Transposed IIR filter — matches y = filter(b, a, x)
 // ============================================================================
 vector<double> filter(const vector<double>& b, const vector<double>& a, const vector<double>& x) {
     if (x.empty() || a.empty()) return {};
@@ -68,7 +65,6 @@ vector<double> filter(const vector<double>& b, const vector<double>& a, const ve
 
 // ============================================================================
 // Helper: filter with initial conditions (Direct Form II Transposed)
-// Matches: y = filter(b, a, x, zi)
 // ============================================================================
 static vector<double> filter_ic(const vector<double>& b, const vector<double>& a,
     const vector<double>& x, vector<double> zi) {
@@ -98,79 +94,29 @@ static vector<double> filter_ic(const vector<double>& b, const vector<double>& a
 
 // ============================================================================
 // Helper: Compute initial conditions for filtfilt
-// Matches MATLAB's internal filtic-like computation:
-//   solve (I - A) * zi = B  where A and B are built from filter coeffs
+//
+// Solves (I - A) * zi = B where A and B are built from the filter coeffs.
+// This is the DC steady-state condition so the filter output is constant
+// when the input is constant.
+//
+// Matches MATLAB's filtfilt.m sparse construction:
+//   mat = eye(m) with a(2:nfilt) in first column,
+//   -1 on superdiagonal
+//   rhs = b(2:nfilt) - b(1)*a(2:nfilt)
 // ============================================================================
 static vector<double> compute_filtfilt_ic(const vector<double>& b, const vector<double>& a) {
     int n_order = (int)max(b.size(), a.size());
     int m = n_order - 1;
     if (m <= 0) return {};
 
-    // Normalize coefficients
     double a0 = a[0];
     vector<double> bn(n_order, 0.0), an(n_order, 0.0);
     for (int i = 0; i < (int)b.size() && i < n_order; i++) bn[i] = b[i] / a0;
     for (int i = 0; i < (int)a.size() && i < n_order; i++) an[i] = a[i] / a0;
 
-    // Build matrix (I - A) where A is the companion-form matrix
-    // and vector B = b[1:] - a[1:]*b[0]
-    // This solves for zi such that the filter output is constant
-    // when the input is constant (the DC steady-state condition).
-    //
-    // MATLAB equivalent: 
-    //   rows = [1:m-1; 1:m-1];  cols = [2:m; 1:m-1];
-    //   vals = [ones(1,m-1); -ones(1,m-1)];
-    //   rhs = b(2:end) - b(1)*a(2:end);
-    //   zi = (eye(m) + diag(a(2:m),1)) \ rhs;
-
-    // Simple Gaussian elimination for small system (m x m)
     // Build the system: mat * zi = rhs
     vector<vector<double>> mat(m, vector<double>(m, 0.0));
     vector<double> rhs(m, 0.0);
-
-    // First row
-    mat[0][0] = 1.0 + an[1];
-    for (int j = 1; j < m; j++) {
-        mat[0][j] = an[j + 1];
-    }
-    rhs[0] = bn[1] - an[1] * bn[0];
-
-    // Rows 2 to m-1
-    for (int i = 1; i < m; i++) {
-        mat[i][i] = 1.0;
-        mat[i][i - 1] = -1.0;
-        if (i + 1 < n_order) {
-            rhs[i] = bn[i + 1] - an[i + 1] * bn[0];
-        }
-        for (int j = i + 1; j < m; j++) {
-            // These are zero already
-        }
-        // Add a[j+1] contributions to first equation style
-        // Actually the MATLAB system is:
-        // (I + A') zi = B where A' has a(2..m) in first row, -1 on subdiagonal
-    }
-
-    // Actually let me implement this more carefully matching MATLAB exactly.
-    // MATLAB builds: 
-    //   A = eye(m) + [a(2) a(3) ... a(m) 0; -eye(m-1) zeros(m-1,1)]  (wrong)
-    // The actual MATLAB code from filtfilt.m is:
-    //   zi = ( eye(nfilt-1) - [-a(2:nfilt)'; eye(nfilt-2) zeros(nfilt-2,1)] ) \ 
-    //        ( b(2:nfilt)' - b(1)*a(2:nfilt)' );
-
-    // Build matrix matching MATLAB's sparse construction in filtfilt.m:
-    //   rows = [1:m, 2:m, 1:m-1];
-    //   cols = [ones(1,m), 2:m, 2:m];
-    //   vals = [1+a(2), a(3:nfilt), ones(1,m-1), -ones(1,m-1)];
-    //
-    // This gives:
-    //   First column:      [1+a[1], a[2], a[3], ..., a[m]]
-    //   Diagonal (i>=1):   1
-    //   Superdiagonal:     -1
-    for (int i = 0; i < m; i++) {
-        for (int j = 0; j < m; j++) {
-            mat[i][j] = 0.0;
-        }
-    }
 
     // First column: a coefficients
     mat[0][0] = 1.0 + an[1];
@@ -197,7 +143,6 @@ static vector<double> compute_filtfilt_ic(const vector<double>& b, const vector<
 
     // Gaussian elimination with partial pivoting
     for (int col = 0; col < m; col++) {
-        // Find pivot
         int pivot = col;
         double maxval = fabs(mat[col][col]);
         for (int row = col + 1; row < m; row++) {
@@ -224,33 +169,29 @@ static vector<double> compute_filtfilt_ic(const vector<double>& b, const vector<
     // Back substitution
     vector<double> zi(m, 0.0);
     for (int i = m - 1; i >= 0; i--) {
-        double sum = rhs[i];
+        double s = rhs[i];
         for (int j = i + 1; j < m; j++) {
-            sum -= mat[i][j] * zi[j];
+            s -= mat[i][j] * zi[j];
         }
         if (fabs(mat[i][i]) > 1e-15)
-            zi[i] = sum / mat[i][i];
+            zi[i] = s / mat[i][i];
     }
 
     return zi;
 }
 
 // ============================================================================
-// 2. Zero-Phase Filtering (Mirror Padding + Initial Conditions)
-// Matches: y = filtfilt(b, a, x)
+// Zero-phase filtering (mirror padding + initial conditions)
 // ============================================================================
 vector<double> filtfilt(const vector<double>& b, const vector<double>& a, const vector<double>& x) {
-    if (x.empty()) return x;
-    if (a.empty() || b.empty()) return x;
+    if (x.empty() || a.empty() || b.empty()) return x;
 
     int nfact = 3 * (max((int)b.size(), (int)a.size()) - 1);
 
-    // CRITICAL: If signal is too short for padding, just do regular filtering
     if ((int)x.size() <= nfact) {
         return filter(b, a, x);
     }
 
-    // Compute initial condition unit vector
     vector<double> zi_unit = compute_filtfilt_ic(b, a);
     int m = (int)zi_unit.size();
 
@@ -266,7 +207,7 @@ vector<double> filtfilt(const vector<double>& b, const vector<double>& a, const 
         padded.push_back(2.0 * x.back() - x[x.size() - 1 - i]);
     }
 
-    // Forward pass with initial conditions scaled by first padded sample
+    // Forward pass
     vector<double> zi_fwd(m);
     for (int i = 0; i < m; i++) zi_fwd[i] = zi_unit[i] * padded[0];
     vector<double> y = filter_ic(b, a, padded, zi_fwd);
@@ -274,22 +215,19 @@ vector<double> filtfilt(const vector<double>& b, const vector<double>& a, const 
     // Reverse
     std::reverse(y.begin(), y.end());
 
-    // Backward pass with initial conditions scaled by first sample of reversed
+    // Backward pass
     vector<double> zi_bwd(m);
     for (int i = 0; i < m; i++) zi_bwd[i] = zi_unit[i] * y[0];
     y = filter_ic(b, a, y, zi_bwd);
 
-    // Reverse back
+    // Reverse back and extract middle
     std::reverse(y.begin(), y.end());
-
-    // Extract middle
     if ((int)y.size() < 2 * nfact) return x;
     return vector<double>(y.begin() + nfact, y.end() - nfact);
 }
 
 // ============================================================================
-// 3a. Butterworth Lowpass/Highpass Design (3rd Order)
-// Matches: [b, a] = butter(3, Wn, 'low') or butter(3, Wn, 'high')
+// Butterworth lowpass/highpass design (3rd order)
 // ============================================================================
 void butter(int N, double Wn, const string& type, vector<double>& b, vector<double>& a) {
     double alpha = tan(M_PI * Wn / 2.0);
@@ -315,37 +253,27 @@ void butter(int N, double Wn, const string& type, vector<double>& b, vector<doub
 }
 
 // ============================================================================
-// 3b. Butterworth Bandpass Design (Proper ZPK implementation)
-// Matches: [b, a] = butter(N, [Wn1 Wn2])
-//
-// Algorithm: buttap -> lp2bp -> bilinear -> zp2tf
-// This is a faithful replication of MATLAB's internal pipeline.
+// Butterworth bandpass design (ZPK pipeline: buttap → lp2bp → bilinear → zp2tf)
 // ============================================================================
 void butter(int N, const vector<double>& Wn, vector<double>& b, vector<double>& a) {
     if (Wn.size() < 2) return;
 
-    const double fs = 2.0;  // MATLAB convention
+    const double fs = 2.0;
 
     // Pre-warp cutoff frequencies to analog domain
-    // MATLAB: u = 2*fs*tan(pi*Wn/fs)
     double u1 = 2.0 * fs * tan(M_PI * Wn[0] / fs);
     double u2 = 2.0 * fs * tan(M_PI * Wn[1] / fs);
     double BW = u2 - u1;
     double W0 = sqrt(u1 * u2);
 
-    // ---- buttap(N): Analog Butterworth prototype ----
-    // Poles on unit circle in left-half s-plane, no zeros, gain = 1
+    // Analog Butterworth prototype poles
     vector<cd> proto_poles;
     for (int k = 1; k <= N; k++) {
         double angle = M_PI * (2.0 * k + N - 1.0) / (2.0 * N);
         proto_poles.push_back(cd(cos(angle), sin(angle)));
     }
 
-    // ---- lp2bp: Lowpass to Bandpass transformation ----
-    // Each prototype pole p maps to two bandpass poles:
-    //   s = p*BW/2 +/- sqrt((p*BW/2)^2 - W0^2)
-    // N zeros are added at s = 0
-    // Gain becomes k * BW^N
+    // Lowpass to bandpass transformation
     vector<cd> bp_poles;
     for (const auto& p : proto_poles) {
         cd pBW2 = p * BW / 2.0;
@@ -357,19 +285,13 @@ void butter(int N, const vector<double>& Wn, vector<double>& b, vector<double>& 
     vector<cd> bp_zeros(N, cd(0.0, 0.0));
     double bp_gain = pow(BW, N);
 
-    // ---- bilinear: Analog to Digital ----
-    // MATLAB: kd = k * real(prod(2*fs - z) / prod(2*fs - p))
+    // Bilinear transform: analog to digital
     cd num_prod(1.0, 0.0);
-    for (const auto& z : bp_zeros) {
-        num_prod *= (2.0 * fs - z);
-    }
+    for (const auto& z : bp_zeros) num_prod *= (2.0 * fs - z);
     cd den_prod(1.0, 0.0);
-    for (const auto& p : bp_poles) {
-        den_prod *= (2.0 * fs - p);
-    }
+    for (const auto& p : bp_poles) den_prod *= (2.0 * fs - p);
     double d_gain = bp_gain * (num_prod / den_prod).real();
 
-    // Map poles: zd = (1 + s/(2*fs)) / (1 - s/(2*fs))
     vector<cd> d_poles, d_zeros;
     for (const auto& p : bp_poles) {
         d_poles.push_back((1.0 + p / (2.0 * fs)) / (1.0 - p / (2.0 * fs)));
@@ -383,19 +305,17 @@ void butter(int N, const vector<double>& Wn, vector<double>& b, vector<double>& 
         d_zeros.push_back(cd(-1.0, 0.0));
     }
 
-    // ---- zp2tf: Zeros/Poles/Gain to Transfer Function ----
+    // Zeros/poles/gain to transfer function
     a = poly_from_roots(d_poles);
     b = poly_from_roots(d_zeros);
 
-    // Apply gain and normalize so a[0] = 1
     double a0 = a[0];
     for (auto& v : b) v *= d_gain / a0;
     for (auto& v : a) v /= a0;
 }
 
 // ============================================================================
-// 4. Convolution
-// Matches: y = conv(a, b)
+// Full convolution: output length = a.size() + b.size() - 1
 // ============================================================================
 vector<double> conv(const vector<double>& a, const vector<double>& b) {
     if (a.empty() || b.empty()) return {};
@@ -409,8 +329,7 @@ vector<double> conv(const vector<double>& a, const vector<double>& b) {
 }
 
 // ============================================================================
-// 5. Median Filter
-// Matches: y = medfilt1(x, window_size)
+// 1D median filter
 // ============================================================================
 std::vector<double> medfilt1(const std::vector<double>& x, int n) {
     if (x.empty()) return {};
