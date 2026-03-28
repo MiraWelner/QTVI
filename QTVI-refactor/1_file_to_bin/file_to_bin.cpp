@@ -1,7 +1,29 @@
 /**
  * @file   file_to_bin.cpp
- * @brief  Take in a MESA, Bittium, or CHAOS file and convert it to a .bin file of uniform format
+ * @brief  Take in a MESA, Bittium, or CHAOS file and converts it to a .bin file of uniform format
+ *
+ * The format is the following:
+ *  * 64-byte header:
+ *   Offset  0: ecgRate       (double)  — ECG sampling rate in Hz - this will ALWAYS be 2000.0 because it is resampled
+ *   Offset  8: ppgRate       (double)  — PPG sampling rate in Hz this will ALWAYS be 2000.0 because it is resampled
+ *   Offset 16: epochSize     (double)  — sleep stage epoch duration in seconds - this is 30 seconds in MESA which is the only format (so far) with sleep
+ *   Offset 24: size1         (uint64)  — number of samples in ECG channel 1
+ *   Offset 32: size2         (uint64)  — number of samples in ECG channel 2
+ *   Offset 40: size3         (uint64)  — number of samples in ECG channel 3
+ *   Offset 48: sizeP         (uint64)  — number of samples in PPG channel
+ *   Offset 56: sizeS         (uint64)  — number of sleep stage values
+ *
+ * Signal data (contiguous doubles, immediately after header):
+ *   [size1 doubles]  ECG channel 1
+ *   [size2 doubles]  ECG channel 2
+ *   [size3 doubles]  ECG channel 3
+ *   [sizeP doubles]  PPG
+ *   [sizeS doubles]  Sleep stages (one value per epoch: 0=Wake, 1=N1, 2=N2, 3=N3, 4=REM, -1=unknown)
+ *
+ * Missing channels are stored as a single -1.0 with their size field set to 1.
+ *
  * @author Mira Welner
+ * @email MEW386@pitt.edu
  * @date   2026-03-18
  */
 
@@ -13,6 +35,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <set>
+#include <cmath>
 
 extern "C" {
 #include "edflib.h"
@@ -32,12 +55,6 @@ struct config_csv_data {
 };
 
 std::vector<std::string> parse_csv_row(const std::string& line) {
-    /*
-    * @brief Parses a single row from the CSV into a vector of strings
-    *
-    * @param line   A single string representing the row to be parsed
-    * @return       A vector of strings 
-    */
     std::vector<std::string> fields;
     std::string cur;
     for (size_t i = 0; i < line.length(); ++i) {
@@ -57,14 +74,6 @@ std::vector<std::string> parse_csv_row(const std::string& line) {
 }
 
 bool contains(std::string search_string, std::string substring) {
-    /*
-    * @brief Checks if a string contains a substring, case insensitive
-    *        If the substring is empty, return false
-    *
-    * @param search_string  String that is being searched
-    * @param substring      String being searched for within search_string
-    * @return               Boolean representing if string was found
-    */
     if (substring.empty()) return false;
     std::transform(search_string.begin(), search_string.end(), search_string.begin(), ::toupper);
     std::transform(substring.begin(), substring.end(), substring.begin(), ::toupper);
@@ -72,22 +81,6 @@ bool contains(std::string search_string, std::string substring) {
 }
 
 void edf_to_bin(int handle, int idx, long long n, double old_rate, std::ofstream& out, uint64_t& sizeOut) {
-    /*
-    * @brief If the file to process is in EDF format (Bittium or MESA), process it into a bin
-    *        The majority of the work is done by edflib.c which is open source and I got here:
-    *        https://www.teuniz.net/edflib/ which is called via the edfread_physical_samples function
-    *        One limitation: If your EDF file has max and min parameters, this edflib will take that into account.
-    *        It is possible (and common in the MESA files) that the min and max are incorrect, so you may
-    *        want to remove them before they are processed.
-    * 
-    * @param handle    An int created by edflib which is used to internally reference the EDF file throughout the rest of the program.
-    * @param idx       Index of the EDF channel. A value of -1 means that channel wasn't found, so the function writes a dummy placeholder instead.
-    * @param n         Number of samples to read from channel. n=0 means dummy placeholder.
-    * @param old_rate  The original sampling rate of the data which must be upsampled to 2000Hz
-    * @param out       Output binary file stream. The raw double samples (or a single -1.0 dummy) get written here.
-    * @param sizeOut   The size is written back to the caller with the number of doubles that were written. This is used later to populate the header so the reader
-                       knows how long each signal is. It's 1 for the dummy case, or n for a real signal.
-    */
     if (idx < 0 || n <= 0) {
         double dummy = -1.0;
         out.write((char*)&dummy, 8);
@@ -104,15 +97,6 @@ void edf_to_bin(int handle, int idx, long long n, double old_rate, std::ofstream
 }
 
 static void dat_to_bin(const std::filesystem::path& path, std::string label, double old_rate, std::ofstream& out, uint64_t& sizeOut) {
-    /*
-    * @brief If the file to process is in .dat format (A CHAOS file), process it into a bin
-    *
-    * @param path      Path to the .dat file being read
-    * @param label     The column header name to search for (e.g., "ECG1", "PPG"). The function scans the header row for this string to figure out which column to extract.
-    * @param out       Output binary file stream. The raw double samples (or a single -1.0 dummy) get written here.
-    * @param sizeOut   The size is written back to the caller with the number of doubles that were written. This is used later to populate the header so the reader
-                       knows how long each signal is. It's 1 for the dummy case, or n for a real signal.
-    */
     std::ifstream in(path);
     if (!in || label.empty()) {
         double v = -1.0; out.write((char*)&v, 8); sizeOut = 1; return;
@@ -123,7 +107,7 @@ static void dat_to_bin(const std::filesystem::path& path, std::string label, dou
         if (contains(line, "Index") || contains(line, label)) {
             std::vector<std::string> hdrs = parse_csv_row(line);
             for (int i = 0; i < (int)hdrs.size(); ++i) {
-                if (contains(hdrs[i], label)) 
+                if (contains(hdrs[i], label))
                 {
                     colIdx = i;
                     headerFound = true;
@@ -157,19 +141,12 @@ static void dat_to_bin(const std::filesystem::path& path, std::string label, dou
 }
 
 static bool load_config(int data_type, config_csv_data& out) {
-    /*
-    * @brief Load the config.csv file which should be in the same folder as the script
-    *
-    * @param data_type   An integer representing what the user selected when prompted for the type of data to be loaded
-    * @param out         A pointer to the config_csv_data being created in load_config (this isn't the return type bc it needs to return a success/fail boolean)
-    * @return            A boolean representing success/failure
-    */
     std::ifstream file(CONFIG_PATH);
     if (!file.is_open()) return false;
 
     std::string target = (data_type == 1) ? "MESA" : (data_type == 2) ? "BITTIUM" : (data_type == 3) ? "CHAOS" : "";
     std::string line;
-    std::getline(file, line); // Skip the header row
+    std::getline(file, line);
 
     while (std::getline(file, line)) {
         if (line.empty()) continue;
@@ -207,14 +184,6 @@ static bool load_config(int data_type, config_csv_data& out) {
 }
 
 static void make_binfile(const std::filesystem::path& path, const std::filesystem::path& xmlPath, const config_csv_data& cfg) {
-    /*
-    * @brief If the file to process is in .dat format (A CHAOS file), process it into a bin
-    *
-    * @param path      Path to the file to process (either an .edf or a text/DAT file containing the ECG and PPG signals).
-    * @param xmlPath   Path to a companion XML file containing sleep stage annotations. If it the file doesn't have sleep data (so CHAOS or Bittium) it is empty
-    * @param cfg       All the data from config.csv which is used to create the binfile
-    */
-
     std::filesystem::path outPath = std::filesystem::path(cfg.outputPath) / (path.stem().string() + ".bin");
     std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
     if (!out.is_open()) {
@@ -233,7 +202,7 @@ static void make_binfile(const std::filesystem::path& path, const std::filesyste
     std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
 
     if (ext == ".EDF") {
-        auto hdr = std::make_unique<edf_hdr_struct>(); //move it onto the heap to avoid stack overflow - unlikely but possible
+        auto hdr = std::make_unique<edf_hdr_struct>();
         if (edfopen_file_readonly(path.string().c_str(), hdr.get(), EDFLIB_READ_ALL_ANNOTATIONS)) {
             std::cerr << "ERROR: cannot open EDF " << path << "\n";
             out.close();
@@ -290,6 +259,7 @@ static void make_binfile(const std::filesystem::path& path, const std::filesyste
     uint64_t ss = static_cast<uint64_t>(stages.size());
     out.write(reinterpret_cast<const char*>(stages.data()), ss * sizeof(double));
 
+    // Write header
     out.seekp(0);
 
     auto writeField = [&](const auto& val) {
@@ -306,13 +276,14 @@ static void make_binfile(const std::filesystem::path& path, const std::filesyste
     writeField(ss);
 
     out.close();
-} 
+}
 
 
 int main(int argc, char* argv[]) {
+    std::cout << "FILE TO BIN\n";
     std::cout << "Select Dataset:\n1: MESA\n2: Bittium\n3: CHAOS\nChoice: ";
     int choice;
-    if (!(std::cin >> choice)) return 1;
+    std::cin >> choice;
 
     config_csv_data cfg;
     if (!load_config(choice, cfg)) {
@@ -348,4 +319,4 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "Processing Complete." << std::endl;
     return 0;
-} 
+}

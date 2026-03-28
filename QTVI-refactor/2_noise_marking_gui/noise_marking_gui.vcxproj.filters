@@ -32,20 +32,14 @@
     <None Include="noise_marking_guiplugin.json">
       <Filter>Resource Files</Filter>
     </None>
-    <QtMoc Include="lower_row_buttons.hpp">
+    <QtMoc Include="gui_handler.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="noise_marking_gui.h">
+    <QtMoc Include="lower_row_buttons.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="noise_marking_gui.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="NoiseManager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -55,12 +49,18 @@
     <ClCompile Include="stdafx.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="gui_handler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="noise_marking_gui.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="NoiseManager.hpp">
+    <ClInclude Include="stdafx.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="stdafx.h">
+    <ClInclude Include="NoiseManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

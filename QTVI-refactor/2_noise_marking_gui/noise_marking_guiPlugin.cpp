@@ -1,4 +1,4 @@
-#include "noise_marking_gui.h"
+#include "gui_handler.h"
 #include "noise_marking_guiPlugin.h"
 
 #include <QtCore/QtPlugin>

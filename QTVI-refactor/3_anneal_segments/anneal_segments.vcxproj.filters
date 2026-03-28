@@ -15,12 +15,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="AnnealSegments.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="common.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="getBinBreaksAndCount.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -62,16 +56,19 @@
     <ClInclude Include="RoundToClosestBin.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="AnnealSegments.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="common.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="getBinBreaksAndCount.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="splitOverlappingBins.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\4_find_wave_bounds\bandpass.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="AnnealSegments.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="common.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

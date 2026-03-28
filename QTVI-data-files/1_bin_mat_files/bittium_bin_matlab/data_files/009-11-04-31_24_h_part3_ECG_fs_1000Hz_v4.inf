@@ -1,0 +1,13 @@
+Patient = 009-11-04-31
+Description = 3-lead during case 
+Date = 08/30/2025 11:04:31 AM
+Number of Channel = 3
+Points for Each Channel = 86400000
+Data Sampling Rate = 1000 points/second
+Start Time = 08/30/2025 11:04:31 AM
+Stop Time = 08/31/2025 11:04:31 AM
+Units: mmHg for pressure and mV for all others
+Channel Number  Channel Label
+1              I
+2              II
+3              III

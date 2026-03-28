@@ -9,9 +9,7 @@
 
 static constexpr int MAX_CONFLICT_ITERATIONS = 100;
 
-vector<vector<double>> pairRtoPPGBeat(const vector<double>& ecg, const vector<double>& ppg,
-    double ecgSamplingRate, double ppgSamplingRate,
-    const vector<size_t>& ecgRIndex, const vector<size_t>& ppgMinAmps) {
+vector<vector<double>> pairRtoPPGBeat(const vector<double>& ecg, const vector<double>& ppg, const vector<size_t>& ecgRIndex, const vector<size_t>& ppgMinAmps) {
 
     if (ecg.empty() || ppg.empty()) return {};
 
@@ -20,10 +18,10 @@ vector<vector<double>> pairRtoPPGBeat(const vector<double>& ecg, const vector<do
     vector<double> ppgtime(ppg.size());
 
     for (size_t i = 0; i < ecg.size(); ++i)
-        ecgtime[i] = (double)i / ecgSamplingRate / 60.0;
+        ecgtime[i] = (double)i / ECG_SAMPLE_RATE / 60.0;
 
     for (size_t i = 0; i < ppg.size(); ++i)
-        ppgtime[i] = (double)i / ppgSamplingRate / 60.0;
+        ppgtime[i] = (double)i / PPG_SAMPLE_RATE / 60.0;
 
     // 2. Initialize pairs: [ppg_valley_idx, ecg_R_idx]
     vector<vector<double>> pairs;

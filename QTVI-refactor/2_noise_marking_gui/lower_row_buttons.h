@@ -1,0 +1,34 @@
+/**
+ * @file   lower_row_buttons.hpp
+ * @brief  Handles the bottom toolbar: undo, clear, skip, save, marking start/stop
+ *         for ECG1/ECG2/ECG3/PPG independently, and window-size radio buttons.
+ */
+#pragma once
+
+#include <QObject>
+
+class noise_marking_gui;
+
+class lower_row_buttons : public QObject {
+    Q_OBJECT
+
+public:
+    explicit lower_row_buttons(noise_marking_gui* parent);
+    ~lower_row_buttons() = default;
+    void setupConnections();
+
+private:
+    noise_marking_gui* m_gui;
+
+    void handle_undo_button();
+    void handle_clearall_button();
+    void handle_finalize_button();
+    void handle_skip_button();
+
+    void handle_ecgmarkingstart_button();
+    void handle_ecgmarkingstop_button();
+    void handle_ppgmarkingstart_button();
+    void handle_ppgmarkingstop_button();
+
+    void handle_window_toggle(bool checked, double duration);
+};

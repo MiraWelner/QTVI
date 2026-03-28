@@ -1,8 +1,12 @@
-// ============================================================================
-// File: main.cpp
-// Entry point: reads annealed binary segments, detects R-peaks and PPG
-// pulses, pairs them, and writes results to binary output.
-// ============================================================================
+/**
+ * @file   main.cpp
+ * @brief  Identify the R peaks on a ECG/PPG signal and pair them with PPG diastolic dips
+ *
+ * @author Mira Welner
+ * @email  MEW386@pitt.edu
+ * @date   2026-03-20
+ */
+
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -14,27 +18,23 @@
 #include <cstdint>
 #include <cmath>
 
-#include "FindWaveBounds.h"
-#include "FindWaveBounds_EKGandPPG.h"
-
-namespace fs = std::filesystem;
+#include "binfile_handling.h"
+#include "create_ecg_ppg_pairs.hpp"
 
 struct ConfigSettings {
     std::string dataType;
     std::string annealedPath;
     std::string wavePath;
-    double ecgFs;
-    double ppgFs;
 };
 
-// ============================================================================
-// Binary I/O
-// ============================================================================
-
-AnnealedData readCppBin(const std::string& path) {
+AnnealedData read_input_binfile(const std::string& path) {
     AnnealedData data;
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) throw std::runtime_error("Could not open: " + path);
+
+    // Read buffer for better I/O performance
+    char read_buf[1 << 16];
+    file.rdbuf()->pubsetbuf(read_buf, sizeof(read_buf));
 
     uint64_t numBins = 0;
     file.read(reinterpret_cast<char*>(&numBins), 8);
@@ -49,23 +49,19 @@ AnnealedData readCppBin(const std::string& path) {
     for (uint64_t i = 0; i < numBins; ++i) {
         auto& bin = data.bins[i];
 
-        // PPG index pairs
+        // PPG index pairs - bulk read
         uint64_t nPpgPairs;
         if (!file.read(reinterpret_cast<char*>(&nPpgPairs), 8)) break;
         bin.ppg_bin_indexs.resize(nPpgPairs);
-        for (uint64_t j = 0; j < nPpgPairs; ++j) {
-            file.read(reinterpret_cast<char*>(&bin.ppg_bin_indexs[j].first), 8);
-            file.read(reinterpret_cast<char*>(&bin.ppg_bin_indexs[j].second), 8);
-        }
+        if (nPpgPairs > 0)
+            file.read(reinterpret_cast<char*>(bin.ppg_bin_indexs.data()), nPpgPairs * 16);
 
-        // ECG index pairs
+        // ECG index pairs - bulk read
         uint64_t nEcgPairs;
         if (!file.read(reinterpret_cast<char*>(&nEcgPairs), 8)) break;
         bin.ecg_bin_indexs.resize(nEcgPairs);
-        for (uint64_t j = 0; j < nEcgPairs; ++j) {
-            file.read(reinterpret_cast<char*>(&bin.ecg_bin_indexs[j].first), 8);
-            file.read(reinterpret_cast<char*>(&bin.ecg_bin_indexs[j].second), 8);
-        }
+        if (nEcgPairs > 0)
+            file.read(reinterpret_cast<char*>(bin.ecg_bin_indexs.data()), nEcgPairs * 16);
 
         // Helper: read a double array preceded by its uint64 count
         auto readDoubleArray = [&](std::vector<double>& vec) -> bool {
@@ -76,36 +72,47 @@ AnnealedData readCppBin(const std::string& path) {
             return true;
             };
 
-        if (!readDoubleArray(bin.po)) break;
-        if (!readDoubleArray(bin.ecg)) break;
-        if (!readDoubleArray(bin.ecg2)) break;
-        if (!readDoubleArray(bin.ecg3)) break;
-        if (!readDoubleArray(bin.sleepStages)) break;
-
-        bin.ecgSampleRate = fileEcgSR;
-        bin.ppgSampleRate = filePpgSR;
+        if (!readDoubleArray(bin.ppg_signal)) break;
+        if (!readDoubleArray(bin.ecg_signal_1)) break;
+        if (!readDoubleArray(bin.ecg_signal_2)) break;
+        if (!readDoubleArray(bin.ecg_signal_3)) break;
+        if (!readDoubleArray(bin.sleep_state_signal)) break;
     }
     return data;
 }
 
-void saveWaveData(const std::string& path, const std::vector<WaveData>& results) {
+/**
+ * @brief  Write output bin file with R-peaks from 3 methods × 3 channels.
+ *
+ * Layout per bin:
+ *   - 9 index arrays (ch1 raw/sq/abs, ch2 raw/sq/abs, ch3 raw/sq/abs)
+ *   - 2 PPG index arrays (maxAmps, minAmps)
+ *   - 4 signal arrays (ppg, ecg1, ecg2, ecg3)
+ *   - 9 noise flags (1 byte each)
+ *   - pairs array
+ *
+ * All index arrays are written 1-based for MATLAB compatibility.
+ */
+void write_output_binfile(const std::string& path, const std::vector<output_binfile_data>& results) {
     std::ofstream file(path, std::ios::binary);
     if (!file.is_open()) return;
+
+    char write_buf[1 << 16];
+    file.rdbuf()->pubsetbuf(write_buf, sizeof(write_buf));
 
     uint64_t numBins = results.size();
     file.write(reinterpret_cast<const char*>(&numBins), 8);
 
     for (const auto& bin : results) {
-        file.write(reinterpret_cast<const char*>(&bin.ecgSamplingRate), 8);
-        file.write(reinterpret_cast<const char*>(&bin.ppgSamplingRate), 8);
 
-        // Write a size_t index array, converting to 1-based for MATLAB compatibility
         auto writeIdx = [&](const std::vector<std::size_t>& v) {
             uint64_t sz = v.size();
             file.write(reinterpret_cast<const char*>(&sz), 8);
-            for (std::size_t val : v) {
-                uint64_t out = static_cast<uint64_t>(val) + 1;
-                file.write(reinterpret_cast<const char*>(&out), 8);
+            if (sz > 0) {
+                std::vector<uint64_t> tmp(sz);
+                for (uint64_t i = 0; i < sz; ++i)
+                    tmp[i] = static_cast<uint64_t>(v[i]) + 1;
+                file.write(reinterpret_cast<const char*>(tmp.data()), sz * 8);
             }
             };
 
@@ -115,29 +122,66 @@ void saveWaveData(const std::string& path, const std::vector<WaveData>& results)
             if (sz > 0) file.write(reinterpret_cast<const char*>(sig.data()), sz * 8);
             };
 
-        writeIdx(bin.ecgRIndex);
-        writeIdx(bin.ecgRIndex2);
-        writeIdx(bin.ecgRIndex3);
+        auto writePairVec = [&](const std::vector<std::pair<uint64_t, uint64_t>>& v) {
+            uint64_t sz = v.size();
+            file.write(reinterpret_cast<const char*>(&sz), 8);
+            if (sz > 0) file.write(reinterpret_cast<const char*>(v.data()), sz * 16);
+            };
+
+        /* R-peak indices: 3 methods × 3 channels = 9 arrays */
+        writeIdx(bin.ch1.raw);
+        writeIdx(bin.ch1.squared);
+        writeIdx(bin.ch1.absval);
+
+        writeIdx(bin.ch2.raw);
+        writeIdx(bin.ch2.squared);
+        writeIdx(bin.ch2.absval);
+
+        writeIdx(bin.ch3.raw);
+        writeIdx(bin.ch3.squared);
+        writeIdx(bin.ch3.absval);
+
+        /* PPG indices */
         writeIdx(bin.ppgMaxAmps);
         writeIdx(bin.ppgMinAmps);
 
+        /* Signals (raw, unmodified) */
         writeSignal(bin.ppgSignal);
         writeSignal(bin.ecgSignal);
         writeSignal(bin.ecgSignal2);
         writeSignal(bin.ecgSignal3);
 
-        // Pairs: [ppg_idx, ecg_idx], converted to 1-based (-1 for invalid)
+        /* 9 noise flags: 3 methods × 3 channels */
+        uint8_t flags[9] = {
+            static_cast<uint8_t>(bin.ch1.raw_noisy),
+            static_cast<uint8_t>(bin.ch1.squared_noisy),
+            static_cast<uint8_t>(bin.ch1.absval_noisy),
+            static_cast<uint8_t>(bin.ch2.raw_noisy),
+            static_cast<uint8_t>(bin.ch2.squared_noisy),
+            static_cast<uint8_t>(bin.ch2.absval_noisy),
+            static_cast<uint8_t>(bin.ch3.raw_noisy),
+            static_cast<uint8_t>(bin.ch3.squared_noisy),
+            static_cast<uint8_t>(bin.ch3.absval_noisy),
+        };
+        file.write(reinterpret_cast<const char*>(flags), 9);
+
+        /* Pairs */
         uint64_t numPairs = bin.pairs.size();
         file.write(reinterpret_cast<const char*>(&numPairs), 8);
-        for (const auto& p : bin.pairs) {
-            int64_t ppg_out = (std::isnan(p[0]) || p[0] < -0.1) ? -1 : static_cast<int64_t>(std::round(p[0])) + 1;
-            int64_t ecg_out = (std::isnan(p[1]) || p[1] < -0.1) ? -1 : static_cast<int64_t>(std::round(p[1])) + 1;
-            file.write(reinterpret_cast<char*>(&ppg_out), 8);
-            file.write(reinterpret_cast<char*>(&ecg_out), 8);
+        if (numPairs > 0) {
+            std::vector<int64_t> pairBuf(numPairs * 2);
+            for (uint64_t i = 0; i < numPairs; ++i) {
+                const auto& p = bin.pairs[i];
+                pairBuf[i * 2] = (std::isnan(p[0]) || p[0] < -0.1) ? -1 : static_cast<int64_t>(std::round(p[0])) + 1;
+                pairBuf[i * 2 + 1] = (std::isnan(p[1]) || p[1] < -0.1) ? -1 : static_cast<int64_t>(std::round(p[1])) + 1;
+            }
+            file.write(reinterpret_cast<const char*>(pairBuf.data()), numPairs * 16);
         }
+
+        writePairVec(bin.ppg_bin_indexs);
+        writePairVec(bin.ecg_bin_indexs);
     }
 }
-
 // ============================================================================
 // Config
 // ============================================================================
@@ -157,8 +201,7 @@ ConfigSettings parseConfig(const std::string& configPath, int type_row) {
             std::string val;
             while (std::getline(ss, val, ',')) row.push_back(val);
 
-            return { row[0], row[6], row[7], std::stod(row[12]),
-                   (row.size() > 13 && !row[13].empty()) ? std::stod(row[13]) : std::stod(row[12]) };
+            return { row[0], row[6], row[7] };
         }
     }
     throw std::runtime_error("Config type row not found");
@@ -176,22 +219,22 @@ int main() {
 
         ConfigSettings cfg = parseConfig("config.csv", choice);
 
-        if (!fs::exists(cfg.wavePath)) {
-            fs::create_directories(cfg.wavePath);
+        if (!std::filesystem::exists(cfg.wavePath)) {
+            std::filesystem::create_directories(cfg.wavePath);
         }
 
-        for (const auto& entry : fs::directory_iterator(cfg.annealedPath)) {
+        for (const auto& entry : std::filesystem::directory_iterator(cfg.annealedPath)) {
             if (entry.path().extension() == ".bin") {
                 std::string currentID = entry.path().stem().string();
                 std::cout << "Processing: " << currentID << "..." << std::endl;
 
-                AnnealedData annealedData = readCppBin(entry.path().string());
+                AnnealedData annealedData = read_input_binfile(entry.path().string());
 
-                std::vector<WaveData> results = FindWaveBounds_EKGandPPG(
-                    annealedData.bins, 0, true, currentID);
+                std::vector<output_binfile_data> results = create_ecg_ppg_pairs(
+                    std::move(annealedData.bins), 0, true, currentID);
 
-                std::string outputPath = cfg.wavePath + "/" + currentID + "_wave_data.bin";
-                saveWaveData(outputPath, results);
+                std::string outputPath = cfg.wavePath + "/" + currentID + "_wave_markings.bin";
+                write_output_binfile(outputPath, results);
             }
         }
         std::cout << "Processing Complete." << std::endl;

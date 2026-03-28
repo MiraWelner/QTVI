@@ -28,8 +28,15 @@ QT_BEGIN_NAMESPACE
 class Ui_noise_marking_gui
 {
 public:
-    QHBoxLayout *rootLayout;
+    QVBoxLayout *dialogTopLayout;
+    QLabel *topLabel;
+    QHBoxLayout *main_layout;
     QVBoxLayout *leftPanel;
+    QVBoxLayout *ampogram_and_sleepstates;
+    QChartView *amp_ecg_axis;
+    QChartView *amp_ppg_axis;
+    QChartView *sleep_state_axis;
+    QLabel *label;
     QGridLayout *window_length_settings;
     QLabel *window_length_label;
     QRadioButton *rb_10s;
@@ -37,6 +44,7 @@ public:
     QRadioButton *rb_1m;
     QRadioButton *rb_5m;
     QRadioButton *rb_10m;
+    QComboBox *ecg_channel_selector;
     QHBoxLayout *eight_hour_nav;
     QPushButton *prev8hours;
     QPushButton *next8hours;
@@ -61,58 +69,54 @@ public:
     QLabel *marking_type_label_2;
     QGridLayout *marking_type_legend;
     QHBoxLayout *hboxLayout;
-    QLabel *signif_color;
-    QLabel *signif_desc;
-    QHBoxLayout *hboxLayout1;
-    QLabel *benign_color;
-    QLabel *benign_desc;
-    QHBoxLayout *hboxLayout2;
-    QLabel *pvc_color;
-    QLabel *pvc_desc;
-    QHBoxLayout *hboxLayout3;
     QLabel *noise_color;
     QLabel *noise_desc;
-    QHBoxLayout *hboxLayout4;
-    QLabel *delay_color;
-    QLabel *delay_desc;
-    QHBoxLayout *hboxLayout5;
+    QHBoxLayout *hboxLayout1;
     QLabel *vt_color;
     QLabel *vt_desc;
-    QHBoxLayout *hboxLayout6;
+    QHBoxLayout *hboxLayout2;
+    QLabel *delay_color;
+    QLabel *delay_desc;
+    QHBoxLayout *hboxLayout3;
     QLabel *pac_color;
     QLabel *pac_desc;
-    QHBoxLayout *hboxLayout7;
+    QHBoxLayout *hboxLayout4;
     QLabel *svt_color;
     QLabel *svt_desc;
-    QHBoxLayout *hboxLayout8;
+    QHBoxLayout *hboxLayout5;
+    QLabel *pvc_color;
+    QLabel *pvc_desc;
+    QHBoxLayout *hboxLayout6;
     QLabel *af_color;
     QLabel *af_desc;
+    QHBoxLayout *hboxLayout7;
+    QLabel *benign_color;
+    QLabel *benign_desc;
+    QHBoxLayout *hboxLayout8;
+    QLabel *signif_color;
+    QLabel *signif_desc;
     QLabel *sleep_states_label;
     QGridLayout *sleep_state_legend;
     QHBoxLayout *hboxLayout9;
-    QLabel *n3_c;
-    QLabel *n3_l;
+    QLabel *wake_c;
+    QLabel *wake_l;
     QHBoxLayout *hboxLayout10;
-    QLabel *n2_c;
-    QLabel *n2_l;
+    QLabel *rem_c;
+    QLabel *rem_l;
     QHBoxLayout *hboxLayout11;
     QLabel *n1_c;
     QLabel *n1_l;
     QHBoxLayout *hboxLayout12;
-    QLabel *rem_c;
-    QLabel *rem_l;
+    QLabel *n2_c;
+    QLabel *n2_l;
     QHBoxLayout *hboxLayout13;
-    QLabel *wake_c;
-    QLabel *wake_l;
+    QLabel *n3_c;
+    QLabel *n3_l;
     QSpacerItem *vspacer;
-    QVBoxLayout *plotArea;
-    QLabel *topLabel;
-    QVBoxLayout *ampogram_and_sleepstates;
-    QChartView *amp_ecg_axis;
-    QChartView *amp_ppg_axis;
-    QChartView *sleep_state_axis;
-    QLabel *label;
-    QChartView *ecg_axis;
+    QVBoxLayout *main_plots;
+    QChartView *ecg_axis_1;
+    QChartView *ecg_axis_2;
+    QChartView *ecg_axis_3;
     QChartView *ppg_axis;
 
     void setupUi(QDialog *noise_marking_gui)
@@ -120,13 +124,57 @@ public:
         if (noise_marking_gui->objectName().isEmpty())
             noise_marking_gui->setObjectName("noise_marking_gui");
         noise_marking_gui->resize(1284, 1200);
-        rootLayout = new QHBoxLayout(noise_marking_gui);
-        rootLayout->setSpacing(15);
-        rootLayout->setObjectName("rootLayout");
-        rootLayout->setContentsMargins(10, 10, 10, 10);
+        dialogTopLayout = new QVBoxLayout(noise_marking_gui);
+        dialogTopLayout->setObjectName("dialogTopLayout");
+        dialogTopLayout->setContentsMargins(6, 6, 6, 6);
+        topLabel = new QLabel(noise_marking_gui);
+        topLabel->setObjectName("topLabel");
+
+        dialogTopLayout->addWidget(topLabel);
+
+        main_layout = new QHBoxLayout();
+        main_layout->setObjectName("main_layout");
         leftPanel = new QVBoxLayout();
         leftPanel->setSpacing(8);
         leftPanel->setObjectName("leftPanel");
+        ampogram_and_sleepstates = new QVBoxLayout();
+        ampogram_and_sleepstates->setSpacing(0);
+        ampogram_and_sleepstates->setObjectName("ampogram_and_sleepstates");
+        amp_ecg_axis = new QChartView(noise_marking_gui);
+        amp_ecg_axis->setObjectName("amp_ecg_axis");
+        QSizePolicy sizePolicy(QSizePolicy::Policy::Preferred, QSizePolicy::Policy::Expanding);
+        sizePolicy.setHorizontalStretch(0);
+        sizePolicy.setVerticalStretch(1);
+        sizePolicy.setHeightForWidth(amp_ecg_axis->sizePolicy().hasHeightForWidth());
+        amp_ecg_axis->setSizePolicy(sizePolicy);
+
+        ampogram_and_sleepstates->addWidget(amp_ecg_axis);
+
+        amp_ppg_axis = new QChartView(noise_marking_gui);
+        amp_ppg_axis->setObjectName("amp_ppg_axis");
+        sizePolicy.setHeightForWidth(amp_ppg_axis->sizePolicy().hasHeightForWidth());
+        amp_ppg_axis->setSizePolicy(sizePolicy);
+
+        ampogram_and_sleepstates->addWidget(amp_ppg_axis);
+
+        sleep_state_axis = new QChartView(noise_marking_gui);
+        sleep_state_axis->setObjectName("sleep_state_axis");
+        sizePolicy.setHeightForWidth(sleep_state_axis->sizePolicy().hasHeightForWidth());
+        sleep_state_axis->setSizePolicy(sizePolicy);
+        sleep_state_axis->setMinimumSize(QSize(0, 60));
+        label = new QLabel(sleep_state_axis);
+        label->setObjectName("label");
+        label->setGeometry(QRect(10, 40, 49, 16));
+        label->setStyleSheet(QString::fromUtf8("border:none;"));
+
+        ampogram_and_sleepstates->addWidget(sleep_state_axis);
+
+        ampogram_and_sleepstates->setStretch(0, 1);
+        ampogram_and_sleepstates->setStretch(1, 1);
+        ampogram_and_sleepstates->setStretch(2, 1);
+
+        leftPanel->addLayout(ampogram_and_sleepstates);
+
         window_length_settings = new QGridLayout();
         window_length_settings->setObjectName("window_length_settings");
         window_length_label = new QLabel(noise_marking_gui);
@@ -161,6 +209,14 @@ public:
 
 
         leftPanel->addLayout(window_length_settings);
+
+        ecg_channel_selector = new QComboBox(noise_marking_gui);
+        ecg_channel_selector->addItem(QString());
+        ecg_channel_selector->addItem(QString());
+        ecg_channel_selector->addItem(QString());
+        ecg_channel_selector->setObjectName("ecg_channel_selector");
+
+        leftPanel->addWidget(ecg_channel_selector);
 
         eight_hour_nav = new QHBoxLayout();
         eight_hour_nav->setObjectName("eight_hour_nav");
@@ -290,156 +346,156 @@ public:
         marking_type_legend->setObjectName("marking_type_legend");
         hboxLayout = new QHBoxLayout();
         hboxLayout->setObjectName("hboxLayout");
-        signif_color = new QLabel(noise_marking_gui);
-        signif_color->setObjectName("signif_color");
-        signif_color->setMinimumSize(QSize(15, 15));
-        signif_color->setMaximumSize(QSize(15, 15));
-
-        hboxLayout->addWidget(signif_color);
-
-        signif_desc = new QLabel(noise_marking_gui);
-        signif_desc->setObjectName("signif_desc");
-
-        hboxLayout->addWidget(signif_desc);
-
-
-        marking_type_legend->addLayout(hboxLayout, 6, 0, 1, 2);
-
-        hboxLayout1 = new QHBoxLayout();
-        hboxLayout1->setObjectName("hboxLayout1");
-        benign_color = new QLabel(noise_marking_gui);
-        benign_color->setObjectName("benign_color");
-        benign_color->setMinimumSize(QSize(15, 15));
-        benign_color->setMaximumSize(QSize(15, 15));
-
-        hboxLayout1->addWidget(benign_color);
-
-        benign_desc = new QLabel(noise_marking_gui);
-        benign_desc->setObjectName("benign_desc");
-
-        hboxLayout1->addWidget(benign_desc);
-
-
-        marking_type_legend->addLayout(hboxLayout1, 5, 0, 1, 2);
-
-        hboxLayout2 = new QHBoxLayout();
-        hboxLayout2->setObjectName("hboxLayout2");
-        pvc_color = new QLabel(noise_marking_gui);
-        pvc_color->setObjectName("pvc_color");
-        pvc_color->setMinimumSize(QSize(15, 15));
-        pvc_color->setMaximumSize(QSize(15, 15));
-
-        hboxLayout2->addWidget(pvc_color);
-
-        pvc_desc = new QLabel(noise_marking_gui);
-        pvc_desc->setObjectName("pvc_desc");
-
-        hboxLayout2->addWidget(pvc_desc);
-
-
-        marking_type_legend->addLayout(hboxLayout2, 2, 1, 1, 1);
-
-        hboxLayout3 = new QHBoxLayout();
-        hboxLayout3->setObjectName("hboxLayout3");
         noise_color = new QLabel(noise_marking_gui);
         noise_color->setObjectName("noise_color");
         noise_color->setMinimumSize(QSize(15, 15));
         noise_color->setMaximumSize(QSize(15, 15));
 
-        hboxLayout3->addWidget(noise_color);
+        hboxLayout->addWidget(noise_color);
 
         noise_desc = new QLabel(noise_marking_gui);
         noise_desc->setObjectName("noise_desc");
 
-        hboxLayout3->addWidget(noise_desc);
+        hboxLayout->addWidget(noise_desc);
 
 
-        marking_type_legend->addLayout(hboxLayout3, 0, 0, 1, 1);
+        marking_type_legend->addLayout(hboxLayout, 0, 0, 1, 1);
 
-        hboxLayout4 = new QHBoxLayout();
-        hboxLayout4->setObjectName("hboxLayout4");
-        delay_color = new QLabel(noise_marking_gui);
-        delay_color->setObjectName("delay_color");
-        delay_color->setMinimumSize(QSize(15, 15));
-        delay_color->setMaximumSize(QSize(15, 15));
-
-        hboxLayout4->addWidget(delay_color);
-
-        delay_desc = new QLabel(noise_marking_gui);
-        delay_desc->setObjectName("delay_desc");
-
-        hboxLayout4->addWidget(delay_desc);
-
-
-        marking_type_legend->addLayout(hboxLayout4, 1, 0, 1, 1);
-
-        hboxLayout5 = new QHBoxLayout();
-        hboxLayout5->setObjectName("hboxLayout5");
+        hboxLayout1 = new QHBoxLayout();
+        hboxLayout1->setObjectName("hboxLayout1");
         vt_color = new QLabel(noise_marking_gui);
         vt_color->setObjectName("vt_color");
         vt_color->setMinimumSize(QSize(15, 15));
         vt_color->setMaximumSize(QSize(15, 15));
 
-        hboxLayout5->addWidget(vt_color);
+        hboxLayout1->addWidget(vt_color);
 
         vt_desc = new QLabel(noise_marking_gui);
         vt_desc->setObjectName("vt_desc");
 
-        hboxLayout5->addWidget(vt_desc);
+        hboxLayout1->addWidget(vt_desc);
 
 
-        marking_type_legend->addLayout(hboxLayout5, 0, 1, 1, 1);
+        marking_type_legend->addLayout(hboxLayout1, 0, 1, 1, 1);
 
-        hboxLayout6 = new QHBoxLayout();
-        hboxLayout6->setObjectName("hboxLayout6");
+        hboxLayout2 = new QHBoxLayout();
+        hboxLayout2->setObjectName("hboxLayout2");
+        delay_color = new QLabel(noise_marking_gui);
+        delay_color->setObjectName("delay_color");
+        delay_color->setMinimumSize(QSize(15, 15));
+        delay_color->setMaximumSize(QSize(15, 15));
+
+        hboxLayout2->addWidget(delay_color);
+
+        delay_desc = new QLabel(noise_marking_gui);
+        delay_desc->setObjectName("delay_desc");
+
+        hboxLayout2->addWidget(delay_desc);
+
+
+        marking_type_legend->addLayout(hboxLayout2, 1, 0, 1, 1);
+
+        hboxLayout3 = new QHBoxLayout();
+        hboxLayout3->setObjectName("hboxLayout3");
         pac_color = new QLabel(noise_marking_gui);
         pac_color->setObjectName("pac_color");
         pac_color->setMinimumSize(QSize(15, 15));
         pac_color->setMaximumSize(QSize(15, 15));
 
-        hboxLayout6->addWidget(pac_color);
+        hboxLayout3->addWidget(pac_color);
 
         pac_desc = new QLabel(noise_marking_gui);
         pac_desc->setObjectName("pac_desc");
 
-        hboxLayout6->addWidget(pac_desc);
+        hboxLayout3->addWidget(pac_desc);
 
 
-        marking_type_legend->addLayout(hboxLayout6, 1, 1, 1, 1);
+        marking_type_legend->addLayout(hboxLayout3, 1, 1, 1, 1);
 
-        hboxLayout7 = new QHBoxLayout();
-        hboxLayout7->setObjectName("hboxLayout7");
+        hboxLayout4 = new QHBoxLayout();
+        hboxLayout4->setObjectName("hboxLayout4");
         svt_color = new QLabel(noise_marking_gui);
         svt_color->setObjectName("svt_color");
         svt_color->setMinimumSize(QSize(15, 15));
         svt_color->setMaximumSize(QSize(15, 15));
 
-        hboxLayout7->addWidget(svt_color);
+        hboxLayout4->addWidget(svt_color);
 
         svt_desc = new QLabel(noise_marking_gui);
         svt_desc->setObjectName("svt_desc");
 
-        hboxLayout7->addWidget(svt_desc);
+        hboxLayout4->addWidget(svt_desc);
 
-        hboxLayout8 = new QHBoxLayout();
-        hboxLayout8->setObjectName("hboxLayout8");
+
+        marking_type_legend->addLayout(hboxLayout4, 2, 0, 1, 1);
+
+        hboxLayout5 = new QHBoxLayout();
+        hboxLayout5->setObjectName("hboxLayout5");
+        pvc_color = new QLabel(noise_marking_gui);
+        pvc_color->setObjectName("pvc_color");
+        pvc_color->setMinimumSize(QSize(15, 15));
+        pvc_color->setMaximumSize(QSize(15, 15));
+
+        hboxLayout5->addWidget(pvc_color);
+
+        pvc_desc = new QLabel(noise_marking_gui);
+        pvc_desc->setObjectName("pvc_desc");
+
+        hboxLayout5->addWidget(pvc_desc);
+
+
+        marking_type_legend->addLayout(hboxLayout5, 2, 1, 1, 1);
+
+        hboxLayout6 = new QHBoxLayout();
+        hboxLayout6->setObjectName("hboxLayout6");
         af_color = new QLabel(noise_marking_gui);
         af_color->setObjectName("af_color");
         af_color->setMinimumSize(QSize(15, 15));
         af_color->setMaximumSize(QSize(15, 15));
 
-        hboxLayout8->addWidget(af_color);
+        hboxLayout6->addWidget(af_color);
 
         af_desc = new QLabel(noise_marking_gui);
         af_desc->setObjectName("af_desc");
 
-        hboxLayout8->addWidget(af_desc);
+        hboxLayout6->addWidget(af_desc);
 
 
-        hboxLayout7->addLayout(hboxLayout8);
+        marking_type_legend->addLayout(hboxLayout6, 3, 0, 1, 1);
+
+        hboxLayout7 = new QHBoxLayout();
+        hboxLayout7->setObjectName("hboxLayout7");
+        benign_color = new QLabel(noise_marking_gui);
+        benign_color->setObjectName("benign_color");
+        benign_color->setMinimumSize(QSize(15, 15));
+        benign_color->setMaximumSize(QSize(15, 15));
+
+        hboxLayout7->addWidget(benign_color);
+
+        benign_desc = new QLabel(noise_marking_gui);
+        benign_desc->setObjectName("benign_desc");
+
+        hboxLayout7->addWidget(benign_desc);
 
 
-        marking_type_legend->addLayout(hboxLayout7, 2, 0, 1, 1);
+        marking_type_legend->addLayout(hboxLayout7, 3, 1, 1, 1);
+
+        hboxLayout8 = new QHBoxLayout();
+        hboxLayout8->setObjectName("hboxLayout8");
+        signif_color = new QLabel(noise_marking_gui);
+        signif_color->setObjectName("signif_color");
+        signif_color->setMinimumSize(QSize(15, 15));
+        signif_color->setMaximumSize(QSize(15, 15));
+
+        hboxLayout8->addWidget(signif_color);
+
+        signif_desc = new QLabel(noise_marking_gui);
+        signif_desc->setObjectName("signif_desc");
+
+        hboxLayout8->addWidget(signif_desc);
+
+
+        marking_type_legend->addLayout(hboxLayout8, 4, 0, 1, 2);
 
 
         leftPanel->addLayout(marking_type_legend);
@@ -455,37 +511,37 @@ public:
         sleep_state_legend->setObjectName("sleep_state_legend");
         hboxLayout9 = new QHBoxLayout();
         hboxLayout9->setObjectName("hboxLayout9");
-        n3_c = new QLabel(noise_marking_gui);
-        n3_c->setObjectName("n3_c");
-        n3_c->setMinimumSize(QSize(15, 15));
-        n3_c->setMaximumSize(QSize(15, 15));
+        wake_c = new QLabel(noise_marking_gui);
+        wake_c->setObjectName("wake_c");
+        wake_c->setMinimumSize(QSize(15, 15));
+        wake_c->setMaximumSize(QSize(15, 15));
 
-        hboxLayout9->addWidget(n3_c);
+        hboxLayout9->addWidget(wake_c);
 
-        n3_l = new QLabel(noise_marking_gui);
-        n3_l->setObjectName("n3_l");
+        wake_l = new QLabel(noise_marking_gui);
+        wake_l->setObjectName("wake_l");
 
-        hboxLayout9->addWidget(n3_l);
+        hboxLayout9->addWidget(wake_l);
 
 
-        sleep_state_legend->addLayout(hboxLayout9, 2, 0, 1, 1);
+        sleep_state_legend->addLayout(hboxLayout9, 0, 0, 1, 1);
 
         hboxLayout10 = new QHBoxLayout();
         hboxLayout10->setObjectName("hboxLayout10");
-        n2_c = new QLabel(noise_marking_gui);
-        n2_c->setObjectName("n2_c");
-        n2_c->setMinimumSize(QSize(15, 15));
-        n2_c->setMaximumSize(QSize(15, 15));
+        rem_c = new QLabel(noise_marking_gui);
+        rem_c->setObjectName("rem_c");
+        rem_c->setMinimumSize(QSize(15, 15));
+        rem_c->setMaximumSize(QSize(15, 15));
 
-        hboxLayout10->addWidget(n2_c);
+        hboxLayout10->addWidget(rem_c);
 
-        n2_l = new QLabel(noise_marking_gui);
-        n2_l->setObjectName("n2_l");
+        rem_l = new QLabel(noise_marking_gui);
+        rem_l->setObjectName("rem_l");
 
-        hboxLayout10->addWidget(n2_l);
+        hboxLayout10->addWidget(rem_l);
 
 
-        sleep_state_legend->addLayout(hboxLayout10, 1, 1, 1, 1);
+        sleep_state_legend->addLayout(hboxLayout10, 0, 1, 1, 1);
 
         hboxLayout11 = new QHBoxLayout();
         hboxLayout11->setObjectName("hboxLayout11");
@@ -506,37 +562,37 @@ public:
 
         hboxLayout12 = new QHBoxLayout();
         hboxLayout12->setObjectName("hboxLayout12");
-        rem_c = new QLabel(noise_marking_gui);
-        rem_c->setObjectName("rem_c");
-        rem_c->setMinimumSize(QSize(15, 15));
-        rem_c->setMaximumSize(QSize(15, 15));
+        n2_c = new QLabel(noise_marking_gui);
+        n2_c->setObjectName("n2_c");
+        n2_c->setMinimumSize(QSize(15, 15));
+        n2_c->setMaximumSize(QSize(15, 15));
 
-        hboxLayout12->addWidget(rem_c);
+        hboxLayout12->addWidget(n2_c);
 
-        rem_l = new QLabel(noise_marking_gui);
-        rem_l->setObjectName("rem_l");
+        n2_l = new QLabel(noise_marking_gui);
+        n2_l->setObjectName("n2_l");
 
-        hboxLayout12->addWidget(rem_l);
+        hboxLayout12->addWidget(n2_l);
 
 
-        sleep_state_legend->addLayout(hboxLayout12, 0, 1, 1, 1);
+        sleep_state_legend->addLayout(hboxLayout12, 1, 1, 1, 1);
 
         hboxLayout13 = new QHBoxLayout();
         hboxLayout13->setObjectName("hboxLayout13");
-        wake_c = new QLabel(noise_marking_gui);
-        wake_c->setObjectName("wake_c");
-        wake_c->setMinimumSize(QSize(15, 15));
-        wake_c->setMaximumSize(QSize(15, 15));
+        n3_c = new QLabel(noise_marking_gui);
+        n3_c->setObjectName("n3_c");
+        n3_c->setMinimumSize(QSize(15, 15));
+        n3_c->setMaximumSize(QSize(15, 15));
 
-        hboxLayout13->addWidget(wake_c);
+        hboxLayout13->addWidget(n3_c);
 
-        wake_l = new QLabel(noise_marking_gui);
-        wake_l->setObjectName("wake_l");
+        n3_l = new QLabel(noise_marking_gui);
+        n3_l->setObjectName("n3_l");
 
-        hboxLayout13->addWidget(wake_l);
+        hboxLayout13->addWidget(n3_l);
 
 
-        sleep_state_legend->addLayout(hboxLayout13, 0, 0, 1, 1);
+        sleep_state_legend->addLayout(hboxLayout13, 2, 0, 1, 1);
 
 
         leftPanel->addLayout(sleep_state_legend);
@@ -546,59 +602,53 @@ public:
         leftPanel->addItem(vspacer);
 
 
-        rootLayout->addLayout(leftPanel);
+        main_layout->addLayout(leftPanel);
 
-        plotArea = new QVBoxLayout();
-        plotArea->setSpacing(0);
-        plotArea->setObjectName("plotArea");
-        topLabel = new QLabel(noise_marking_gui);
-        topLabel->setObjectName("topLabel");
+        main_plots = new QVBoxLayout();
+        main_plots->setObjectName("main_plots");
+        ecg_axis_1 = new QChartView(noise_marking_gui);
+        ecg_axis_1->setObjectName("ecg_axis_1");
+        QSizePolicy sizePolicy1(QSizePolicy::Policy::Expanding, QSizePolicy::Policy::Expanding);
+        sizePolicy1.setHorizontalStretch(0);
+        sizePolicy1.setVerticalStretch(1);
+        sizePolicy1.setHeightForWidth(ecg_axis_1->sizePolicy().hasHeightForWidth());
+        ecg_axis_1->setSizePolicy(sizePolicy1);
 
-        plotArea->addWidget(topLabel);
+        main_plots->addWidget(ecg_axis_1);
 
-        ampogram_and_sleepstates = new QVBoxLayout();
-        ampogram_and_sleepstates->setSpacing(0);
-        ampogram_and_sleepstates->setObjectName("ampogram_and_sleepstates");
-        amp_ecg_axis = new QChartView(noise_marking_gui);
-        amp_ecg_axis->setObjectName("amp_ecg_axis");
+        ecg_axis_2 = new QChartView(noise_marking_gui);
+        ecg_axis_2->setObjectName("ecg_axis_2");
+        sizePolicy1.setHeightForWidth(ecg_axis_2->sizePolicy().hasHeightForWidth());
+        ecg_axis_2->setSizePolicy(sizePolicy1);
 
-        ampogram_and_sleepstates->addWidget(amp_ecg_axis);
+        main_plots->addWidget(ecg_axis_2);
 
-        amp_ppg_axis = new QChartView(noise_marking_gui);
-        amp_ppg_axis->setObjectName("amp_ppg_axis");
+        ecg_axis_3 = new QChartView(noise_marking_gui);
+        ecg_axis_3->setObjectName("ecg_axis_3");
+        sizePolicy1.setHeightForWidth(ecg_axis_3->sizePolicy().hasHeightForWidth());
+        ecg_axis_3->setSizePolicy(sizePolicy1);
 
-        ampogram_and_sleepstates->addWidget(amp_ppg_axis);
-
-        sleep_state_axis = new QChartView(noise_marking_gui);
-        sleep_state_axis->setObjectName("sleep_state_axis");
-        sleep_state_axis->setMinimumSize(QSize(0, 60));
-        label = new QLabel(sleep_state_axis);
-        label->setObjectName("label");
-        label->setGeometry(QRect(10, 40, 49, 16));
-        label->setStyleSheet(QString::fromUtf8("border:none;"));
-
-        ampogram_and_sleepstates->addWidget(sleep_state_axis);
-
-
-        plotArea->addLayout(ampogram_and_sleepstates);
-
-        ecg_axis = new QChartView(noise_marking_gui);
-        ecg_axis->setObjectName("ecg_axis");
-
-        plotArea->addWidget(ecg_axis);
+        main_plots->addWidget(ecg_axis_3);
 
         ppg_axis = new QChartView(noise_marking_gui);
         ppg_axis->setObjectName("ppg_axis");
+        sizePolicy1.setHeightForWidth(ppg_axis->sizePolicy().hasHeightForWidth());
+        ppg_axis->setSizePolicy(sizePolicy1);
 
-        plotArea->addWidget(ppg_axis);
+        main_plots->addWidget(ppg_axis);
 
-        plotArea->setStretch(1, 1);
-        plotArea->setStretch(2, 2);
-        plotArea->setStretch(3, 2);
+        main_plots->setStretch(0, 1);
+        main_plots->setStretch(1, 1);
+        main_plots->setStretch(2, 1);
+        main_plots->setStretch(3, 1);
 
-        rootLayout->addLayout(plotArea);
+        main_layout->addLayout(main_plots);
 
-        rootLayout->setStretch(1, 1);
+        main_layout->setStretch(0, 1);
+        main_layout->setStretch(1, 3);
+
+        dialogTopLayout->addLayout(main_layout);
+
 
         retranslateUi(noise_marking_gui);
 
@@ -608,12 +658,21 @@ public:
     void retranslateUi(QDialog *noise_marking_gui)
     {
         noise_marking_gui->setWindowTitle(QCoreApplication::translate("noise_marking_gui", "PPG/ECG Noise Marker", nullptr));
+        topLabel->setText(QString());
+        amp_ecg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
+        amp_ppg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
+        sleep_state_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
+        label->setText(QCoreApplication::translate("noise_marking_gui", "Time (h)", nullptr));
         window_length_label->setText(QCoreApplication::translate("noise_marking_gui", "Window Length", nullptr));
         rb_10s->setText(QCoreApplication::translate("noise_marking_gui", "10s", nullptr));
         rb_30s->setText(QCoreApplication::translate("noise_marking_gui", "30s", nullptr));
         rb_1m->setText(QCoreApplication::translate("noise_marking_gui", "1m", nullptr));
         rb_5m->setText(QCoreApplication::translate("noise_marking_gui", "5m", nullptr));
         rb_10m->setText(QCoreApplication::translate("noise_marking_gui", "10m", nullptr));
+        ecg_channel_selector->setItemText(0, QCoreApplication::translate("noise_marking_gui", "ECG Channel 1", nullptr));
+        ecg_channel_selector->setItemText(1, QCoreApplication::translate("noise_marking_gui", "ECG Channel 2", nullptr));
+        ecg_channel_selector->setItemText(2, QCoreApplication::translate("noise_marking_gui", "ECG Channel 3", nullptr));
+
         prev8hours->setText(QCoreApplication::translate("noise_marking_gui", "Prev 8h", nullptr));
         next8hours->setText(QCoreApplication::translate("noise_marking_gui", "Next 8h", nullptr));
         undo_button->setText(QCoreApplication::translate("noise_marking_gui", "Undo", nullptr));
@@ -638,41 +697,38 @@ public:
         seconds_to_scroll_label->setText(QCoreApplication::translate("noise_marking_gui", "Scroll Dist", nullptr));
         skip_interval_box->setText(QCoreApplication::translate("noise_marking_gui", "5.0", nullptr));
         marking_type_label_2->setText(QCoreApplication::translate("noise_marking_gui", "Marking Type Legend", nullptr));
-        signif_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: rgb(0, 255, 255); border-radius:3px;", nullptr));
-        signif_desc->setText(QCoreApplication::translate("noise_marking_gui", "Significant Arrhythmia", nullptr));
-        benign_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: rgb(255, 128, 255); border-radius:3px;", nullptr));
-        benign_desc->setText(QCoreApplication::translate("noise_marking_gui", "Benign Arrhythmia", nullptr));
-        pvc_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: rgb(128, 255, 0); border-radius:3px;", nullptr));
-        pvc_desc->setText(QCoreApplication::translate("noise_marking_gui", "PVC", nullptr));
         noise_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: yellow;", nullptr));
         noise_desc->setText(QCoreApplication::translate("noise_marking_gui", "Noise/Artifact", nullptr));
-        delay_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: rgb(128,0,128); border-radius:3px;", nullptr));
-        delay_desc->setText(QCoreApplication::translate("noise_marking_gui", "Conduction Delay", nullptr));
         vt_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: green; border-radius:3px;", nullptr));
         vt_desc->setText(QCoreApplication::translate("noise_marking_gui", "VT", nullptr));
+        delay_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: rgb(128,0,128); border-radius:3px;", nullptr));
+        delay_desc->setText(QCoreApplication::translate("noise_marking_gui", "Conduction Delay", nullptr));
         pac_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: rgb(255,128, 0); border-radius:3px;", nullptr));
         pac_desc->setText(QCoreApplication::translate("noise_marking_gui", "PAC", nullptr));
         svt_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: blue; border-radius:3px;", nullptr));
         svt_desc->setText(QCoreApplication::translate("noise_marking_gui", "SVT", nullptr));
+        pvc_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: rgb(128, 255, 0); border-radius:3px;", nullptr));
+        pvc_desc->setText(QCoreApplication::translate("noise_marking_gui", "PVC", nullptr));
         af_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: red; border-radius:3px;", nullptr));
         af_desc->setText(QCoreApplication::translate("noise_marking_gui", "AF", nullptr));
+        benign_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: rgb(255, 128, 255); border-radius:3px;", nullptr));
+        benign_desc->setText(QCoreApplication::translate("noise_marking_gui", "Benign Arrhythmia", nullptr));
+        signif_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: rgb(0, 255, 255); border-radius:3px;", nullptr));
+        signif_desc->setText(QCoreApplication::translate("noise_marking_gui", "Significant Arrhythmia", nullptr));
         sleep_states_label->setText(QCoreApplication::translate("noise_marking_gui", "Sleep States Legend", nullptr));
-        n3_c->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: red; border-radius:3px;", nullptr));
-        n3_l->setText(QCoreApplication::translate("noise_marking_gui", "NREM3", nullptr));
-        n2_c->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: cyan; border-radius:3px;", nullptr));
-        n2_l->setText(QCoreApplication::translate("noise_marking_gui", "NREM2", nullptr));
-        n1_c->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: blue; border-radius:3px;", nullptr));
-        n1_l->setText(QCoreApplication::translate("noise_marking_gui", "NREM1", nullptr));
-        rem_c->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: green; border-radius:3px;", nullptr));
-        rem_l->setText(QCoreApplication::translate("noise_marking_gui", "REM", nullptr));
         wake_c->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: black; border-radius:3px;", nullptr));
         wake_l->setText(QCoreApplication::translate("noise_marking_gui", "Wake", nullptr));
-        topLabel->setText(QString());
-        amp_ecg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
-        amp_ppg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
-        sleep_state_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
-        label->setText(QCoreApplication::translate("noise_marking_gui", "Time (h)", nullptr));
-        ecg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 2px solid black;", nullptr));
+        rem_c->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: green; border-radius:3px;", nullptr));
+        rem_l->setText(QCoreApplication::translate("noise_marking_gui", "REM", nullptr));
+        n1_c->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: blue; border-radius:3px;", nullptr));
+        n1_l->setText(QCoreApplication::translate("noise_marking_gui", "NREM1", nullptr));
+        n2_c->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: cyan; border-radius:3px;", nullptr));
+        n2_l->setText(QCoreApplication::translate("noise_marking_gui", "NREM2", nullptr));
+        n3_c->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: red; border-radius:3px;", nullptr));
+        n3_l->setText(QCoreApplication::translate("noise_marking_gui", "NREM3", nullptr));
+        ecg_axis_1->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 2px solid black;", nullptr));
+        ecg_axis_2->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 2px solid black;", nullptr));
+        ecg_axis_3->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 2px solid black;", nullptr));
         ppg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid black;", nullptr));
     } // retranslateUi
 

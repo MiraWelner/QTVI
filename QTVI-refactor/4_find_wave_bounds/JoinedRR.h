@@ -6,5 +6,4 @@
 
 #include "SignalProcessingTypes.h"
 
-vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgSamplingRate,
-    double diff_range, const std::string fileID);
+vector<size_t> JoinedRR(const vector<double>& ecgSeg, const std::string fileID);

@@ -114,6 +114,7 @@
       <WarningLevel>Level3</WarningLevel>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <OpenMPSupport>true</OpenMPSupport>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -123,13 +124,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="bandpass.cpp" />
     <ClCompile Include="diff2.cpp" />
     <ClCompile Include="ecglaux.cpp" />
-    <ClCompile Include="ecgLms.cpp" />
-    <ClCompile Include="filterECG128Hz.cpp" />
-    <ClCompile Include="filterECG256Hz.cpp" />
     <ClCompile Include="FilterUtils.cpp" />
-    <ClCompile Include="FindWaveBounds_EKGandPPG.cpp" />
     <ClCompile Include="JoinedRR.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="nanfastsmooth.cpp" />
@@ -137,28 +135,26 @@
     <ClCompile Include="pan_tompkin.cpp" />
     <ClCompile Include="PeakFinder.cpp" />
     <ClCompile Include="readProps.cpp" />
-    <ClCompile Include="rpeakdetect.cpp" />
     <ClCompile Include="RRsimpleSquared.cpp" />
     <ClCompile Include="SegmentPPG.cpp" />
     <ClCompile Include="StatsUtils.cpp" />
     <ClCompile Include="stdoutlier.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="bandpass.h" />
+    <ClInclude Include="binfile_handling.h" />
+    <ClInclude Include="create_ecg_ppg_pairs.hpp" />
     <ClInclude Include="diff2.h" />
     <ClInclude Include="ecglaux.h" />
-    <ClInclude Include="ecgLms.h" />
-    <ClInclude Include="filterECG128Hz.hpp" />
-    <ClInclude Include="filterECG256Hz.hpp" />
+    <ClInclude Include="ecgLms.hpp" />
     <ClInclude Include="FilterUtils.h" />
-    <ClInclude Include="FindWaveBounds.h" />
-    <ClInclude Include="FindWaveBounds_EKGandPPG.h" />
     <ClInclude Include="JoinedRR.h" />
     <ClInclude Include="nanfastsmooth.h" />
     <ClInclude Include="pairRtoPPGBeat.h" />
     <ClInclude Include="pan_tompkin.h" />
     <ClInclude Include="PeakFinder.h" />
     <ClInclude Include="readProps.h" />
-    <ClInclude Include="rpeakdetect.h" />
+    <ClInclude Include="rpeakdetect.hpp" />
     <ClInclude Include="RRSimpleSquared.h" />
     <ClInclude Include="RunLength.h" />
     <ClInclude Include="SegmentPPG.h" />

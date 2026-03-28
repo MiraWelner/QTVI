@@ -1,13 +1,18 @@
-#include "NoiseManager.hpp"
+/**
+ * @file   NoiseManager.cpp
+ * @brief  Implementation of annotation segment storage and export.
+ *
+ * Updated label map: ECG1=2, ECG2=3, ECG3=4 
+ */
+#include "NoiseManager.h"
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
+#include <unordered_map>
 
 NoiseManager::NoiseManager(double fs) : m_sampleRate(fs) {}
 
-void NoiseManager::reserve(size_t n) {
-    m_segments.reserve(n);
-}
+void NoiseManager::reserve(size_t n) { m_segments.reserve(n); }
 
 void NoiseManager::addSegment(size_t start, size_t end, const std::string& label, const std::string& marking_type) {
     AnnotationSegment seg(std::min(start, end), std::max(start, end), label);
@@ -19,7 +24,7 @@ void NoiseManager::exportCSV(const std::string& filename) const {
     std::ofstream file(filename);
     if (!file.is_open()) return;
 
-    file << "start_sample,end_sample,start_sec,end_sec,label, marking_type\n";
+    file << "start_sample,end_sample,start_sec,end_sec,label,marking_type\n";
     for (const auto& seg : m_segments) {
         file << seg.startSample << ","
             << seg.endSample << ","
@@ -27,49 +32,45 @@ void NoiseManager::exportCSV(const std::string& filename) const {
             << (seg.startSample / m_sampleRate) << ","
             << (seg.endSample / m_sampleRate) << ","
             << seg.label << ","
-		    << seg.marking_type << "\n";
+            << seg.marking_type << "\n";
     }
 }
+
 void NoiseManager::exportBinary(const std::string& filename) const {
-    /*
-        This is very similar to the exportCSV function, except it writes a structured
-		array to a bin and it uses numeric labels instead of string labels for efficiency.
-    */
+    /**
+     * @brief Writes annotation segments as a structured binary array.
+     *        Uses numeric IDs for signal label and marking type.
+     *        Format: [uint64 count] then count x [6 doubles per row]
+     *        Row: startSample, endSample, startSec, endSec, labelId, typeId
+     *
+     *        labelId: 0=unknown, 1=PPG, 2=ECG1, 3=ECG2, 4=ECG3
+     */
+    static const std::unordered_map<std::string, double> labelMap = {
+        {"PPG", 1.0}, {"ECG1", 2.0}, {"ECG2", 3.0}, {"ECG3", 4.0}
+    };
+    static const std::unordered_map<std::string, double> typeMap = {
+        {"Noise/Artifact", 1.0}, {"AF", 2.0}, {"SVT", 3.0}, {"VT", 4.0},
+        {"PVC", 5.0}, {"PAC", 6.0}, {"Benign Arrhythmia", 7.0}, {"Significant Arrhythmia", 8.0}
+    };
+
     std::ofstream file(filename, std::ios::binary);
     if (!file.is_open()) return;
 
-    const uint64_t count = m_segments.size();
+    uint64_t count = m_segments.size();
     file.write(reinterpret_cast<const char*>(&count), sizeof(count));
 
     for (const auto& seg : m_segments) {
-
-		//convert the signal label to a numeric ID
-        double labelId = 0.0;
-        if (seg.label == "PPG")      labelId = 1.0;
-        else if (seg.label == "ECG") labelId = 2.0;
-        else if (seg.label == "BOTH") labelId = 3.0;
-
-		//convert the marking type to a numeric ID
-        double typeID = 0.0;
-        if (seg.marking_type == "Noise/Artifact")      typeID = 1.0;
-        else if (seg.marking_type == "AF") typeID = 2.0;
-        else if (seg.marking_type == "SVT") typeID = 3.0;
-        else if (seg.marking_type == "VT") typeID = 4.0;
-        else if (seg.marking_type == "PVC") typeID = 5.0;
-        else if (seg.marking_type == "PAC") typeID = 6.0;
-        else if (seg.marking_type == "Benign Arrhythmia") typeID = 7.0;
-        else if (seg.marking_type == "Significant Arrhythmia") typeID = 8.0;
+        auto labelIt = labelMap.find(seg.label);
+        auto typeIt = typeMap.find(seg.marking_type);
 
         const double row[6] = {
             static_cast<double>(seg.startSample),
             static_cast<double>(seg.endSample),
             seg.startSample / m_sampleRate,
             seg.endSample / m_sampleRate,
-            labelId,
-            typeID,
+            (labelIt != labelMap.end()) ? labelIt->second : 0.0,
+            (typeIt != typeMap.end()) ? typeIt->second : 0.0,
         };
-
         file.write(reinterpret_cast<const char*>(row), sizeof(row));
     }
 }
-

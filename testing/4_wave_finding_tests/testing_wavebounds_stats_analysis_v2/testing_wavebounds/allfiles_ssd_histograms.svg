@@ -1,0 +1,593 @@
+<svg width="1080" height="1090" xmlns="http://www.w3.org/2000/svg">
+<style>
+  text { font-family: Consolas, 'Courier New', monospace; }
+  .title { font-size: 16px; font-weight: bold; }
+  .subtitle { font-size: 10px; font-weight: bold; }
+  .stats { font-size: 12px; fill: #555; }
+  .tick { font-size: 10px; }
+  .axis-label { font-size: 12px; }
+  .y-axis-label { font-size: 10px; }
+  .x-tick { font-size: 10px; }
+  .clipped { font-size: 10px; fill: #e74c3c; font-weight: bold; }
+  .empty { font-size: 10px; fill: #999; }
+</style>
+<rect width="100%" height="100%" fill="#fcfcfc"/>
+<text x="540" y="30" text-anchor="middle" class="title">Per-Bin R-Peak SSD Histograms</text>
+<text x="180" y="66" text-anchor="middle" class="subtitle">3010023_20110817</text>
+<text x="180" y="78" text-anchor="middle" class="stats">clean=598 noisy=2 mean=1059.5321 med=0.0001</text>
+<line x1="55" y1="95" x2="55" y2="265" stroke="#333" stroke-width="1"/>
+<line x1="55" y1="265" x2="315" y2="265" stroke="#333" stroke-width="1"/>
+<text x="22" y="180" text-anchor="middle" class="y-axis-label" transform="rotate(-90 12,180)"># bins with this SSD</text>
+<text x="51" y="268.0000" text-anchor="end" class="tick">0</text>
+<text x="51" y="210.6506" text-anchor="end" class="tick">28</text>
+<line x1="56" y1="207.6506" x2="315" y2="207.6506" stroke="#eee" stroke-width="0.5"/>
+<text x="51" y="155.3494" text-anchor="end" class="tick">55</text>
+<line x1="56" y1="152.3494" x2="315" y2="152.3494" stroke="#eee" stroke-width="0.5"/>
+<text x="51" y="98.0000" text-anchor="end" class="tick">83</text>
+<line x1="56" y1="95.0000" x2="315" y2="95.0000" stroke="#eee" stroke-width="0.5"/>
+<rect x="55.5000" y="95.0000" width="4.2000" height="170.0000" fill="#3498db" fill-opacity="0.8"><title>[0.0000, 648.0000): clean=501 noisy=2</title></rect>
+<text x="57.6000" y="93.0000" text-anchor="middle" class="clipped">503</text>
+<rect x="81.5000" y="123.6747" width="4.2000" height="141.3253" fill="#3498db" fill-opacity="0.8"><title>[3240.0000, 3888.0001): clean=69 noisy=0</title></rect>
+<rect x="112.7000" y="238.3735" width="4.2000" height="26.6265" fill="#3498db" fill-opacity="0.8"><title>[7128.0001, 7776.0001): clean=13 noisy=0</title></rect>
+<rect x="138.7000" y="254.7590" width="4.2000" height="10.2410" fill="#3498db" fill-opacity="0.8"><title>[10368.0001, 11016.0001): clean=5 noisy=0</title></rect>
+<rect x="169.9000" y="260.9036" width="4.2000" height="4.0964" fill="#3498db" fill-opacity="0.8"><title>[14256.0002, 14904.0002): clean=2 noisy=0</title></rect>
+<rect x="195.9000" y="260.9036" width="4.2000" height="4.0964" fill="#3498db" fill-opacity="0.8"><title>[17496.0002, 18144.0002): clean=2 noisy=0</title></rect>
+<rect x="253.1000" y="262.9518" width="4.2000" height="2.0482" fill="#3498db" fill-opacity="0.8"><title>[24624.0003, 25272.0003): clean=1 noisy=0</title></rect>
+<rect x="284.3000" y="256.8072" width="4.2000" height="8.1928" fill="#3498db" fill-opacity="0.8"><title>[28512.0004, 29160.0004): clean=4 noisy=0</title></rect>
+<rect x="310.3000" y="262.9518" width="4.2000" height="2.0482" fill="#3498db" fill-opacity="0.8"><title>[31752.0004, 32400.0004): clean=1 noisy=0</title></rect>
+<text x="55.0000" y="277" text-anchor="middle" class="x-tick">0.0000</text>
+<text x="185.0000" y="277" text-anchor="middle" class="x-tick">16200.0002</text>
+<text x="315.0000" y="277" text-anchor="middle" class="x-tick">32400.0004</text>
+<text x="185" y="290" text-anchor="middle" class="axis-label">SSD Between my and Daniels R Peaks (s)</text>
+<text x="540" y="66" text-anchor="middle" class="subtitle">3010104_20111027</text>
+<text x="540" y="78" text-anchor="middle" class="stats">clean=623 noisy=37 mean=11412.5226 med=0.0003</text>
+<line x1="415" y1="95" x2="415" y2="265" stroke="#333" stroke-width="1"/>
+<line x1="415" y1="265" x2="675" y2="265" stroke="#333" stroke-width="1"/>
+<text x="382" y="180" text-anchor="middle" class="y-axis-label" transform="rotate(-90 372,180)"># bins with this SSD</text>
+<text x="411" y="268.0000" text-anchor="end" class="tick">0</text>
+<text x="411" y="210.4194" text-anchor="end" class="tick">21</text>
+<line x1="416" y1="207.4194" x2="675" y2="207.4194" stroke="#eee" stroke-width="0.5"/>
+<text x="411" y="155.5806" text-anchor="end" class="tick">41</text>
+<line x1="416" y1="152.5806" x2="675" y2="152.5806" stroke="#eee" stroke-width="0.5"/>
+<text x="411" y="98.0000" text-anchor="end" class="tick">62</text>
+<line x1="416" y1="95.0000" x2="675" y2="95.0000" stroke="#eee" stroke-width="0.5"/>
+<rect x="415.5000" y="95.0000" width="4.2000" height="170.0000" fill="#3498db" fill-opacity="0.8"><title>[0.0000, 7128.0000): clean=508 noisy=28</title></rect>
+<text x="417.6000" y="93.0000" text-anchor="middle" class="clipped">536</text>
+<rect x="420.7000" y="125.1613" width="4.2000" height="139.8387" fill="#3498db" fill-opacity="0.8"><title>[7128.0000, 14256.0000): clean=51 noisy=0</title></rect>
+<rect x="425.9000" y="223.8710" width="4.2000" height="41.1290" fill="#3498db" fill-opacity="0.8"><title>[14256.0000, 21384.0000): clean=15 noisy=0</title></rect>
+<rect x="431.1000" y="243.0645" width="4.2000" height="21.9355" fill="#3498db" fill-opacity="0.8"><title>[21384.0000, 28512.0000): clean=8 noisy=0</title></rect>
+<rect x="436.3000" y="254.0323" width="4.2000" height="10.9677" fill="#3498db" fill-opacity="0.8"><title>[28512.0000, 35640.0000): clean=4 noisy=0</title></rect>
+<rect x="441.5000" y="256.7742" width="4.2000" height="8.2258" fill="#3498db" fill-opacity="0.8"><title>[35640.0000, 42768.0000): clean=3 noisy=0</title></rect>
+<rect x="446.7000" y="259.5161" width="4.2000" height="5.4839" fill="#3498db" fill-opacity="0.8"><title>[42768.0000, 49896.0000): clean=2 noisy=0</title></rect>
+<rect x="451.9000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[49896.0000, 57024.0000): clean=1 noisy=0</title></rect>
+<rect x="457.1000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[57024.0000, 64152.0000): clean=1 noisy=0</title></rect>
+<rect x="462.3000" y="256.7742" width="4.2000" height="8.2258" fill="#3498db" fill-opacity="0.8"><title>[64152.0000, 71280.0000): clean=3 noisy=0</title></rect>
+<rect x="472.7000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[78408.0000, 85536.0000): clean=1 noisy=0</title></rect>
+<rect x="477.9000" y="256.7742" width="4.2000" height="8.2258" fill="#3498db" fill-opacity="0.8"><title>[85536.0000, 92664.0000): clean=3 noisy=1</title></rect>
+<rect x="477.9000" y="254.0323" width="4.2000" height="2.7419" fill="#e67e22" fill-opacity="0.7"><title>[85536.0000, 92664.0000): clean=3 noisy=1</title></rect>
+<rect x="483.1000" y="259.5161" width="4.2000" height="5.4839" fill="#3498db" fill-opacity="0.8"><title>[92664.0000, 99792.0000): clean=2 noisy=0</title></rect>
+<rect x="488.3000" y="259.5161" width="4.2000" height="5.4839" fill="#3498db" fill-opacity="0.8"><title>[99792.0000, 106920.0000): clean=2 noisy=0</title></rect>
+<rect x="503.9000" y="259.5161" width="4.2000" height="5.4839" fill="#e67e22" fill-opacity="0.7"><title>[121176.0000, 128304.0000): clean=0 noisy=2</title></rect>
+<rect x="514.3000" y="259.5161" width="4.2000" height="5.4839" fill="#e67e22" fill-opacity="0.7"><title>[135432.0000, 142560.0000): clean=0 noisy=2</title></rect>
+<rect x="519.5000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[142560.0000, 149688.0000): clean=1 noisy=0</title></rect>
+<rect x="524.7000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[149688.0000, 156816.0000): clean=1 noisy=0</title></rect>
+<rect x="529.9000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[156816.0000, 163944.0000): clean=1 noisy=0</title></rect>
+<rect x="535.1000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[163944.0000, 171072.0000): clean=1 noisy=0</title></rect>
+<rect x="540.3000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[171072.0000, 178200.0000): clean=1 noisy=0</title></rect>
+<rect x="550.7000" y="259.5161" width="4.2000" height="5.4839" fill="#3498db" fill-opacity="0.8"><title>[185328.0000, 192456.0000): clean=2 noisy=0</title></rect>
+<rect x="561.1000" y="259.5161" width="4.2000" height="5.4839" fill="#3498db" fill-opacity="0.8"><title>[199584.0000, 206712.0000): clean=2 noisy=0</title></rect>
+<rect x="576.7000" y="259.5161" width="4.2000" height="5.4839" fill="#3498db" fill-opacity="0.8"><title>[220968.0000, 228096.0000): clean=2 noisy=0</title></rect>
+<rect x="587.1000" y="259.5161" width="4.2000" height="5.4839" fill="#3498db" fill-opacity="0.8"><title>[235224.0000, 242352.0000): clean=2 noisy=0</title></rect>
+<rect x="592.3000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[242352.0000, 249480.0000): clean=1 noisy=0</title></rect>
+<rect x="602.7000" y="262.2581" width="4.2000" height="2.7419" fill="#e67e22" fill-opacity="0.7"><title>[256608.0000, 263736.0000): clean=0 noisy=1</title></rect>
+<rect x="607.9000" y="262.2581" width="4.2000" height="2.7419" fill="#e67e22" fill-opacity="0.7"><title>[263736.0000, 270864.0000): clean=0 noisy=1</title></rect>
+<rect x="628.7000" y="262.2581" width="4.2000" height="2.7419" fill="#e67e22" fill-opacity="0.7"><title>[292248.0000, 299376.0000): clean=0 noisy=1</title></rect>
+<rect x="639.1000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[306504.0000, 313632.0000): clean=1 noisy=0</title></rect>
+<rect x="649.5000" y="259.5161" width="4.2000" height="5.4839" fill="#3498db" fill-opacity="0.8"><title>[320760.0000, 327888.0000): clean=2 noisy=0</title></rect>
+<rect x="659.9000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[335016.0000, 342144.0000): clean=1 noisy=0</title></rect>
+<rect x="670.3000" y="262.2581" width="4.2000" height="2.7419" fill="#3498db" fill-opacity="0.8"><title>[349272.0000, 356400.0000): clean=1 noisy=1</title></rect>
+<rect x="670.3000" y="259.5161" width="4.2000" height="2.7419" fill="#e67e22" fill-opacity="0.7"><title>[349272.0000, 356400.0000): clean=1 noisy=1</title></rect>
+<text x="415.0000" y="277" text-anchor="middle" class="x-tick">0.0000</text>
+<text x="545.0000" y="277" text-anchor="middle" class="x-tick">178200.0000</text>
+<text x="675.0000" y="277" text-anchor="middle" class="x-tick">356400.0000</text>
+<text x="545" y="290" text-anchor="middle" class="axis-label">SSD Between my and Daniels R Peaks (s)</text>
+<text x="900" y="66" text-anchor="middle" class="subtitle">3010112_20110725</text>
+<text x="900" y="78" text-anchor="middle" class="stats">clean=530 noisy=10 mean=7926.7943 med=0.0001</text>
+<line x1="775" y1="95" x2="775" y2="265" stroke="#333" stroke-width="1"/>
+<line x1="775" y1="265" x2="1035" y2="265" stroke="#333" stroke-width="1"/>
+<text x="742" y="180" text-anchor="middle" class="y-axis-label" transform="rotate(-90 732,180)"># bins with this SSD</text>
+<text x="771" y="268.0000" text-anchor="end" class="tick">0</text>
+<text x="771" y="225.5000" text-anchor="end" class="tick">1</text>
+<line x1="776" y1="222.5000" x2="1035" y2="222.5000" stroke="#eee" stroke-width="0.5"/>
+<text x="771" y="140.5000" text-anchor="end" class="tick">3</text>
+<line x1="776" y1="137.5000" x2="1035" y2="137.5000" stroke="#eee" stroke-width="0.5"/>
+<text x="771" y="98.0000" text-anchor="end" class="tick">4</text>
+<line x1="776" y1="95.0000" x2="1035" y2="95.0000" stroke="#eee" stroke-width="0.5"/>
+<rect x="775.5000" y="95.0000" width="4.2000" height="170.0000" fill="#3498db" fill-opacity="0.8"><title>[0.0000, 8208.0000): clean=507 noisy=7</title></rect>
+<text x="777.6000" y="93.0000" text-anchor="middle" class="clipped">514</text>
+<rect x="780.7000" y="180.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[8208.0000, 16416.0000): clean=2 noisy=0</title></rect>
+<rect x="785.9000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[16416.0000, 24624.0000): clean=1 noisy=0</title></rect>
+<rect x="796.3000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[32832.0000, 41040.0000): clean=1 noisy=0</title></rect>
+<rect x="832.7000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[90288.0000, 98496.0000): clean=1 noisy=0</title></rect>
+<rect x="837.9000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[98496.0000, 106704.0000): clean=1 noisy=0</title></rect>
+<rect x="843.1000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[106704.0000, 114912.0000): clean=1 noisy=0</title></rect>
+<rect x="858.7000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[131328.0000, 139536.0000): clean=1 noisy=0</title></rect>
+<rect x="863.9000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[139536.0000, 147744.0000): clean=1 noisy=0</title></rect>
+<rect x="874.3000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[155952.0000, 164160.0000): clean=1 noisy=0</title></rect>
+<rect x="879.5000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[164160.0000, 172368.0000): clean=1 noisy=0</title></rect>
+<rect x="884.7000" y="180.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[172368.0000, 180576.0000): clean=2 noisy=1</title></rect>
+<rect x="884.7000" y="137.5000" width="4.2000" height="42.5000" fill="#e67e22" fill-opacity="0.7"><title>[172368.0000, 180576.0000): clean=2 noisy=1</title></rect>
+<rect x="889.9000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[180576.0000, 188784.0000): clean=1 noisy=0</title></rect>
+<rect x="895.1000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[188784.0000, 196992.0000): clean=1 noisy=0</title></rect>
+<rect x="900.3000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[196992.0000, 205200.0000): clean=1 noisy=1</title></rect>
+<rect x="900.3000" y="180.0000" width="4.2000" height="42.5000" fill="#e67e22" fill-opacity="0.7"><title>[196992.0000, 205200.0000): clean=1 noisy=1</title></rect>
+<rect x="905.5000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[205200.0000, 213408.0000): clean=1 noisy=0</title></rect>
+<rect x="921.1000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[229824.0000, 238032.0000): clean=1 noisy=0</title></rect>
+<rect x="931.5000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[246240.0000, 254448.0000): clean=1 noisy=0</title></rect>
+<rect x="947.1000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[270864.0000, 279072.0000): clean=1 noisy=0</title></rect>
+<rect x="957.5000" y="222.5000" width="4.2000" height="42.5000" fill="#e67e22" fill-opacity="0.7"><title>[287280.0000, 295488.0000): clean=0 noisy=1</title></rect>
+<rect x="978.3000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[320112.0000, 328320.0000): clean=1 noisy=0</title></rect>
+<rect x="1014.7000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[377568.0000, 385776.0000): clean=1 noisy=0</title></rect>
+<rect x="1030.3000" y="222.5000" width="4.2000" height="42.5000" fill="#3498db" fill-opacity="0.8"><title>[402192.0000, 410400.0000): clean=1 noisy=0</title></rect>
+<text x="775.0000" y="277" text-anchor="middle" class="x-tick">0.0000</text>
+<text x="905.0000" y="277" text-anchor="middle" class="x-tick">205200.0000</text>
+<text x="1035.0000" y="277" text-anchor="middle" class="x-tick">410400.0000</text>
+<text x="905" y="290" text-anchor="middle" class="axis-label">SSD Between my and Daniels R Peaks (s)</text>
+<text x="180" y="326" text-anchor="middle" class="subtitle">3010139_20110210</text>
+<text x="180" y="338" text-anchor="middle" class="stats">clean=606 noisy=54 mean=29019.8151 med=0.0001</text>
+<line x1="55" y1="355" x2="55" y2="525" stroke="#333" stroke-width="1"/>
+<line x1="55" y1="525" x2="315" y2="525" stroke="#333" stroke-width="1"/>
+<text x="22" y="440" text-anchor="middle" class="y-axis-label" transform="rotate(-90 12,440)"># bins with this SSD</text>
+<text x="51" y="528.0000" text-anchor="end" class="tick">0</text>
+<text x="51" y="466.1818" text-anchor="end" class="tick">4</text>
+<line x1="56" y1="463.1818" x2="315" y2="463.1818" stroke="#eee" stroke-width="0.5"/>
+<text x="51" y="419.8182" text-anchor="end" class="tick">7</text>
+<line x1="56" y1="416.8182" x2="315" y2="416.8182" stroke="#eee" stroke-width="0.5"/>
+<text x="51" y="358.0000" text-anchor="end" class="tick">11</text>
+<line x1="56" y1="355.0000" x2="315" y2="355.0000" stroke="#eee" stroke-width="0.5"/>
+<rect x="55.5000" y="355.0000" width="4.2000" height="170.0000" fill="#3498db" fill-opacity="0.8"><title>[0.0000, 7344.0000): clean=531 noisy=32</title></rect>
+<text x="57.6000" y="353.0000" text-anchor="middle" class="clipped">563</text>
+<rect x="60.7000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[7344.0000, 14688.0000): clean=1 noisy=0</title></rect>
+<rect x="133.5000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[110160.0000, 117504.0000): clean=1 noisy=0</title></rect>
+<rect x="138.7000" y="509.5455" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[117504.0000, 124848.0000): clean=0 noisy=1</title></rect>
+<rect x="154.3000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[139536.0000, 146880.0000): clean=2 noisy=0</title></rect>
+<rect x="159.5000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[146880.0000, 154224.0000): clean=2 noisy=0</title></rect>
+<rect x="169.9000" y="463.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[161568.0000, 168912.0000): clean=4 noisy=0</title></rect>
+<rect x="180.3000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[176256.0000, 183600.0000): clean=1 noisy=0</title></rect>
+<rect x="185.5000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[183600.0000, 190944.0000): clean=2 noisy=0</title></rect>
+<rect x="190.7000" y="463.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[190944.0000, 198288.0000): clean=4 noisy=0</title></rect>
+<rect x="195.9000" y="478.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[198288.0000, 205632.0000): clean=3 noisy=1</title></rect>
+<rect x="195.9000" y="463.1818" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[198288.0000, 205632.0000): clean=3 noisy=1</title></rect>
+<rect x="201.1000" y="478.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[205632.0000, 212976.0000): clean=3 noisy=0</title></rect>
+<rect x="206.3000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[212976.0000, 220320.0000): clean=2 noisy=3</title></rect>
+<rect x="206.3000" y="447.7273" width="4.2000" height="46.3636" fill="#e67e22" fill-opacity="0.7"><title>[212976.0000, 220320.0000): clean=2 noisy=3</title></rect>
+<rect x="211.5000" y="478.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[220320.0000, 227664.0000): clean=3 noisy=1</title></rect>
+<rect x="211.5000" y="463.1818" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[220320.0000, 227664.0000): clean=3 noisy=1</title></rect>
+<rect x="216.7000" y="463.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[227664.0000, 235008.0000): clean=4 noisy=2</title></rect>
+<rect x="216.7000" y="432.2727" width="4.2000" height="30.9091" fill="#e67e22" fill-opacity="0.7"><title>[227664.0000, 235008.0000): clean=4 noisy=2</title></rect>
+<rect x="221.9000" y="463.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[235008.0000, 242352.0000): clean=4 noisy=0</title></rect>
+<rect x="227.1000" y="401.3636" width="4.2000" height="123.6364" fill="#3498db" fill-opacity="0.8"><title>[242352.0000, 249696.0000): clean=8 noisy=1</title></rect>
+<rect x="227.1000" y="385.9091" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[242352.0000, 249696.0000): clean=8 noisy=1</title></rect>
+<rect x="232.3000" y="416.8182" width="4.2000" height="108.1818" fill="#3498db" fill-opacity="0.8"><title>[249696.0000, 257040.0000): clean=7 noisy=1</title></rect>
+<rect x="232.3000" y="401.3636" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[249696.0000, 257040.0000): clean=7 noisy=1</title></rect>
+<rect x="237.5000" y="416.8182" width="4.2000" height="108.1818" fill="#3498db" fill-opacity="0.8"><title>[257040.0000, 264384.0000): clean=7 noisy=0</title></rect>
+<rect x="242.7000" y="463.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[264384.0000, 271728.0000): clean=4 noisy=1</title></rect>
+<rect x="242.7000" y="447.7273" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[264384.0000, 271728.0000): clean=4 noisy=1</title></rect>
+<rect x="247.9000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[271728.0000, 279072.0000): clean=2 noisy=1</title></rect>
+<rect x="247.9000" y="478.6364" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[271728.0000, 279072.0000): clean=2 noisy=1</title></rect>
+<rect x="253.1000" y="478.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[279072.0000, 286416.0000): clean=3 noisy=0</title></rect>
+<rect x="258.3000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[286416.0000, 293760.0000): clean=2 noisy=1</title></rect>
+<rect x="258.3000" y="478.6364" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[286416.0000, 293760.0000): clean=2 noisy=1</title></rect>
+<rect x="263.5000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[293760.0000, 301104.0000): clean=1 noisy=2</title></rect>
+<rect x="263.5000" y="478.6364" width="4.2000" height="30.9091" fill="#e67e22" fill-opacity="0.7"><title>[293760.0000, 301104.0000): clean=1 noisy=2</title></rect>
+<rect x="268.7000" y="463.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[301104.0000, 308448.0000): clean=4 noisy=1</title></rect>
+<rect x="268.7000" y="447.7273" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[301104.0000, 308448.0000): clean=4 noisy=1</title></rect>
+<rect x="273.9000" y="509.5455" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[308448.0000, 315792.0000): clean=0 noisy=1</title></rect>
+<rect x="279.1000" y="509.5455" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[315792.0000, 323136.0000): clean=0 noisy=1</title></rect>
+<rect x="289.5000" y="509.5455" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[330480.0000, 337824.0000): clean=0 noisy=1</title></rect>
+<rect x="294.7000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[337824.0000, 345168.0000): clean=1 noisy=0</title></rect>
+<rect x="305.1000" y="509.5455" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[352512.0000, 359856.0000): clean=0 noisy=1</title></rect>
+<rect x="310.3000" y="494.0909" width="4.2000" height="30.9091" fill="#e67e22" fill-opacity="0.7"><title>[359856.0000, 367200.0000): clean=0 noisy=2</title></rect>
+<text x="55.0000" y="537" text-anchor="middle" class="x-tick">0.0000</text>
+<text x="185.0000" y="537" text-anchor="middle" class="x-tick">183600.0000</text>
+<text x="315.0000" y="537" text-anchor="middle" class="x-tick">367200.0000</text>
+<text x="185" y="550" text-anchor="middle" class="axis-label">SSD Between my and Daniels R Peaks (s)</text>
+<text x="540" y="326" text-anchor="middle" class="subtitle">3010201_20120320</text>
+<text x="540" y="338" text-anchor="middle" class="stats">clean=598 noisy=2 mean=41231.4537 med=0.0001</text>
+<line x1="415" y1="355" x2="415" y2="525" stroke="#333" stroke-width="1"/>
+<line x1="415" y1="525" x2="675" y2="525" stroke="#333" stroke-width="1"/>
+<text x="382" y="440" text-anchor="middle" class="y-axis-label" transform="rotate(-90 372,440)"># bins with this SSD</text>
+<text x="411" y="528.0000" text-anchor="end" class="tick">0</text>
+<text x="411" y="477.0000" text-anchor="end" class="tick">3</text>
+<line x1="416" y1="474.0000" x2="675" y2="474.0000" stroke="#eee" stroke-width="0.5"/>
+<text x="411" y="409.0000" text-anchor="end" class="tick">7</text>
+<line x1="416" y1="406.0000" x2="675" y2="406.0000" stroke="#eee" stroke-width="0.5"/>
+<text x="411" y="358.0000" text-anchor="end" class="tick">10</text>
+<line x1="416" y1="355.0000" x2="675" y2="355.0000" stroke="#eee" stroke-width="0.5"/>
+<rect x="415.5000" y="355.0000" width="4.2000" height="170.0000" fill="#3498db" fill-opacity="0.8"><title>[0.0001, 10296.0027): clean=495 noisy=0</title></rect>
+<text x="417.6000" y="353.0000" text-anchor="middle" class="clipped">495</text>
+<rect x="420.7000" y="423.0000" width="4.2000" height="102.0000" fill="#3498db" fill-opacity="0.8"><title>[10296.0027, 20592.0053): clean=6 noisy=0</title></rect>
+<rect x="425.9000" y="508.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[20592.0053, 30888.0079): clean=1 noisy=0</title></rect>
+<rect x="431.1000" y="508.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[30888.0079, 41184.0105): clean=1 noisy=0</title></rect>
+<rect x="436.3000" y="508.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[41184.0105, 51480.0131): clean=1 noisy=0</title></rect>
+<rect x="462.3000" y="474.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[92664.0234, 102960.0260): clean=3 noisy=0</title></rect>
+<rect x="467.5000" y="491.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[102960.0260, 113256.0286): clean=2 noisy=1</title></rect>
+<rect x="467.5000" y="474.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[102960.0260, 113256.0286): clean=2 noisy=1</title></rect>
+<rect x="472.7000" y="491.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[113256.0286, 123552.0312): clean=2 noisy=0</title></rect>
+<rect x="477.9000" y="440.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[123552.0312, 133848.0338): clean=5 noisy=0</title></rect>
+<rect x="483.1000" y="440.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[133848.0338, 144144.0364): clean=5 noisy=0</title></rect>
+<rect x="488.3000" y="474.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[144144.0364, 154440.0390): clean=3 noisy=0</title></rect>
+<rect x="493.5000" y="457.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[154440.0390, 164736.0416): clean=4 noisy=0</title></rect>
+<rect x="498.7000" y="389.0000" width="4.2000" height="136.0000" fill="#3498db" fill-opacity="0.8"><title>[164736.0416, 175032.0442): clean=8 noisy=0</title></rect>
+<rect x="503.9000" y="474.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[175032.0442, 185328.0468): clean=3 noisy=0</title></rect>
+<rect x="509.1000" y="457.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[185328.0468, 195624.0494): clean=4 noisy=0</title></rect>
+<rect x="514.3000" y="457.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[195624.0494, 205920.0520): clean=4 noisy=0</title></rect>
+<rect x="519.5000" y="423.0000" width="4.2000" height="102.0000" fill="#3498db" fill-opacity="0.8"><title>[205920.0520, 216216.0546): clean=6 noisy=0</title></rect>
+<rect x="524.7000" y="491.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[216216.0546, 226512.0572): clean=2 noisy=0</title></rect>
+<rect x="529.9000" y="474.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[226512.0572, 236808.0598): clean=3 noisy=0</title></rect>
+<rect x="540.3000" y="491.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[247104.0624, 257400.0650): clean=2 noisy=0</title></rect>
+<rect x="545.5000" y="440.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[257400.0650, 267696.0676): clean=5 noisy=0</title></rect>
+<rect x="550.7000" y="491.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[267696.0676, 277992.0702): clean=2 noisy=0</title></rect>
+<rect x="555.9000" y="508.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[277992.0702, 288288.0728): clean=1 noisy=1</title></rect>
+<rect x="555.9000" y="491.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[277992.0702, 288288.0728): clean=1 noisy=1</title></rect>
+<rect x="561.1000" y="508.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[288288.0728, 298584.0754): clean=1 noisy=0</title></rect>
+<rect x="566.3000" y="491.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[298584.0754, 308880.0780): clean=2 noisy=0</title></rect>
+<rect x="576.7000" y="508.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[319176.0806, 329472.0832): clean=1 noisy=0</title></rect>
+<rect x="597.5000" y="508.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[360360.0910, 370656.0936): clean=1 noisy=0</title></rect>
+<rect x="607.9000" y="508.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[380952.0962, 391248.0988): clean=1 noisy=0</title></rect>
+<rect x="613.1000" y="474.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[391248.0988, 401544.1014): clean=3 noisy=0</title></rect>
+<rect x="618.3000" y="474.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[401544.1014, 411840.1040): clean=3 noisy=0</title></rect>
+<rect x="623.5000" y="508.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[411840.1040, 422136.1066): clean=1 noisy=0</title></rect>
+<rect x="628.7000" y="491.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[422136.1066, 432432.1091): clean=2 noisy=0</title></rect>
+<rect x="633.9000" y="491.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[432432.1091, 442728.1117): clean=2 noisy=0</title></rect>
+<rect x="639.1000" y="457.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[442728.1117, 453024.1143): clean=4 noisy=0</title></rect>
+<rect x="644.3000" y="491.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[453024.1143, 463320.1169): clean=2 noisy=0</title></rect>
+<rect x="649.5000" y="491.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[463320.1169, 473616.1195): clean=2 noisy=0</title></rect>
+<rect x="659.9000" y="474.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[483912.1221, 494208.1247): clean=3 noisy=0</title></rect>
+<rect x="665.1000" y="508.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[494208.1247, 504504.1273): clean=1 noisy=0</title></rect>
+<rect x="670.3000" y="508.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[504504.1273, 514800.1299): clean=1 noisy=0</title></rect>
+<text x="415.0000" y="537" text-anchor="middle" class="x-tick">0.0001</text>
+<text x="545.0000" y="537" text-anchor="middle" class="x-tick">257400.0650</text>
+<text x="675.0000" y="537" text-anchor="middle" class="x-tick">514800.1299</text>
+<text x="545" y="550" text-anchor="middle" class="axis-label">SSD Between my and Daniels R Peaks (s)</text>
+<text x="900" y="326" text-anchor="middle" class="subtitle">3010228_20110426</text>
+<text x="900" y="338" text-anchor="middle" class="stats">clean=579 noisy=49 mean=26107.7925 med=0.0002</text>
+<line x1="775" y1="355" x2="775" y2="525" stroke="#333" stroke-width="1"/>
+<line x1="775" y1="525" x2="1035" y2="525" stroke="#333" stroke-width="1"/>
+<text x="742" y="440" text-anchor="middle" class="y-axis-label" transform="rotate(-90 732,440)"># bins with this SSD</text>
+<text x="771" y="528.0000" text-anchor="end" class="tick">0</text>
+<text x="771" y="466.1818" text-anchor="end" class="tick">4</text>
+<line x1="776" y1="463.1818" x2="1035" y2="463.1818" stroke="#eee" stroke-width="0.5"/>
+<text x="771" y="419.8182" text-anchor="end" class="tick">7</text>
+<line x1="776" y1="416.8182" x2="1035" y2="416.8182" stroke="#eee" stroke-width="0.5"/>
+<text x="771" y="358.0000" text-anchor="end" class="tick">11</text>
+<line x1="776" y1="355.0000" x2="1035" y2="355.0000" stroke="#eee" stroke-width="0.5"/>
+<rect x="775.5000" y="355.0000" width="4.2000" height="170.0000" fill="#3498db" fill-opacity="0.8"><title>[0.0000, 7632.1272): clean=510 noisy=35</title></rect>
+<text x="777.6000" y="353.0000" text-anchor="middle" class="clipped">545</text>
+<rect x="832.7000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[83953.3992, 91585.5264): clean=1 noisy=0</title></rect>
+<rect x="843.1000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[99217.6536, 106849.7808): clean=1 noisy=0</title></rect>
+<rect x="848.3000" y="509.5455" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[106849.7808, 114481.9080): clean=0 noisy=1</title></rect>
+<rect x="853.5000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[114481.9080, 122114.0352): clean=2 noisy=2</title></rect>
+<rect x="853.5000" y="463.1818" width="4.2000" height="30.9091" fill="#e67e22" fill-opacity="0.7"><title>[114481.9080, 122114.0352): clean=2 noisy=2</title></rect>
+<rect x="858.7000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[122114.0352, 129746.1624): clean=1 noisy=1</title></rect>
+<rect x="858.7000" y="494.0909" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[122114.0352, 129746.1624): clean=1 noisy=1</title></rect>
+<rect x="863.9000" y="447.7273" width="4.2000" height="77.2727" fill="#3498db" fill-opacity="0.8"><title>[129746.1624, 137378.2896): clean=5 noisy=0</title></rect>
+<rect x="869.1000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[137378.2896, 145010.4168): clean=1 noisy=1</title></rect>
+<rect x="869.1000" y="494.0909" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[137378.2896, 145010.4168): clean=1 noisy=1</title></rect>
+<rect x="874.3000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[145010.4168, 152642.5440): clean=1 noisy=0</title></rect>
+<rect x="879.5000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[152642.5440, 160274.6712): clean=2 noisy=0</title></rect>
+<rect x="884.7000" y="447.7273" width="4.2000" height="77.2727" fill="#3498db" fill-opacity="0.8"><title>[160274.6712, 167906.7984): clean=5 noisy=0</title></rect>
+<rect x="889.9000" y="478.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[167906.7984, 175538.9256): clean=3 noisy=1</title></rect>
+<rect x="889.9000" y="463.1818" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[167906.7984, 175538.9256): clean=3 noisy=1</title></rect>
+<rect x="895.1000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[175538.9256, 183171.0528): clean=2 noisy=0</title></rect>
+<rect x="900.3000" y="432.2727" width="4.2000" height="92.7273" fill="#3498db" fill-opacity="0.8"><title>[183171.0528, 190803.1800): clean=6 noisy=3</title></rect>
+<rect x="900.3000" y="385.9091" width="4.2000" height="46.3636" fill="#e67e22" fill-opacity="0.7"><title>[183171.0528, 190803.1800): clean=6 noisy=3</title></rect>
+<rect x="905.5000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[190803.1800, 198435.3072): clean=2 noisy=1</title></rect>
+<rect x="905.5000" y="478.6364" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[190803.1800, 198435.3072): clean=2 noisy=1</title></rect>
+<rect x="910.7000" y="463.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[198435.3072, 206067.4344): clean=4 noisy=0</title></rect>
+<rect x="921.1000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[213699.5616, 221331.6888): clean=1 noisy=0</title></rect>
+<rect x="926.3000" y="463.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[221331.6888, 228963.8160): clean=4 noisy=0</title></rect>
+<rect x="931.5000" y="463.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[228963.8160, 236595.9432): clean=4 noisy=2</title></rect>
+<rect x="931.5000" y="432.2727" width="4.2000" height="30.9091" fill="#e67e22" fill-opacity="0.7"><title>[228963.8160, 236595.9432): clean=4 noisy=2</title></rect>
+<rect x="941.9000" y="478.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[244228.0704, 251860.1976): clean=3 noisy=0</title></rect>
+<rect x="947.1000" y="478.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[251860.1976, 259492.3248): clean=3 noisy=1</title></rect>
+<rect x="947.1000" y="463.1818" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[251860.1976, 259492.3248): clean=3 noisy=1</title></rect>
+<rect x="957.5000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[267124.4520, 274756.5792): clean=2 noisy=0</title></rect>
+<rect x="962.7000" y="478.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[274756.5792, 282388.7064): clean=3 noisy=0</title></rect>
+<rect x="967.9000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[282388.7064, 290020.8336): clean=2 noisy=0</title></rect>
+<rect x="973.1000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[290020.8336, 297652.9608): clean=2 noisy=1</title></rect>
+<rect x="973.1000" y="478.6364" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[290020.8336, 297652.9608): clean=2 noisy=1</title></rect>
+<rect x="978.3000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[297652.9608, 305285.0880): clean=1 noisy=0</title></rect>
+<rect x="988.7000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[312917.2152, 320549.3424): clean=2 noisy=0</title></rect>
+<rect x="993.9000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[320549.3424, 328181.4696): clean=1 noisy=0</title></rect>
+<rect x="999.1000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[328181.4696, 335813.5968): clean=2 noisy=0</title></rect>
+<rect x="1004.3000" y="494.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[335813.5968, 343445.7240): clean=2 noisy=0</title></rect>
+<rect x="1030.3000" y="509.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[373974.2328, 381606.3600): clean=1 noisy=0</title></rect>
+<text x="775.0000" y="537" text-anchor="middle" class="x-tick">0.0000</text>
+<text x="905.0000" y="537" text-anchor="middle" class="x-tick">190803.1800</text>
+<text x="1035.0000" y="537" text-anchor="middle" class="x-tick">381606.3600</text>
+<text x="905" y="550" text-anchor="middle" class="axis-label">SSD Between my and Daniels R Peaks (s)</text>
+<text x="180" y="586" text-anchor="middle" class="subtitle">3010317_20110413</text>
+<text x="180" y="598" text-anchor="middle" class="stats">clean=693 noisy=27 mean=19449.3590 med=0.0003</text>
+<line x1="55" y1="615" x2="55" y2="785" stroke="#333" stroke-width="1"/>
+<line x1="55" y1="785" x2="315" y2="785" stroke="#333" stroke-width="1"/>
+<text x="22" y="700" text-anchor="middle" class="y-axis-label" transform="rotate(-90 12,700)"># bins with this SSD</text>
+<text x="51" y="788.0000" text-anchor="end" class="tick">0</text>
+<text x="51" y="737.0000" text-anchor="end" class="tick">3</text>
+<line x1="56" y1="734.0000" x2="315" y2="734.0000" stroke="#eee" stroke-width="0.5"/>
+<text x="51" y="669.0000" text-anchor="end" class="tick">7</text>
+<line x1="56" y1="666.0000" x2="315" y2="666.0000" stroke="#eee" stroke-width="0.5"/>
+<text x="51" y="618.0000" text-anchor="end" class="tick">10</text>
+<line x1="56" y1="615.0000" x2="315" y2="615.0000" stroke="#eee" stroke-width="0.5"/>
+<rect x="55.5000" y="615.0000" width="4.2000" height="170.0000" fill="#3498db" fill-opacity="0.8"><title>[0.0000, 7992.0031): clean=630 noisy=12</title></rect>
+<text x="57.6000" y="613.0000" text-anchor="middle" class="clipped">642</text>
+<rect x="60.7000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[7992.0031, 15984.0063): clean=2 noisy=0</title></rect>
+<rect x="71.1000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[23976.0094, 31968.0126): clean=1 noisy=0</title></rect>
+<rect x="97.1000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[63936.0251, 71928.0283): clean=2 noisy=0</title></rect>
+<rect x="102.3000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[71928.0283, 79920.0314): clean=2 noisy=1</title></rect>
+<rect x="102.3000" y="734.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[71928.0283, 79920.0314): clean=2 noisy=1</title></rect>
+<rect x="107.5000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[79920.0314, 87912.0345): clean=1 noisy=0</title></rect>
+<rect x="112.7000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[87912.0345, 95904.0377): clean=3 noisy=0</title></rect>
+<rect x="123.1000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[103896.0408, 111888.0439): clean=3 noisy=1</title></rect>
+<rect x="123.1000" y="717.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[103896.0408, 111888.0439): clean=3 noisy=1</title></rect>
+<rect x="133.5000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[119880.0471, 127872.0502): clean=1 noisy=0</title></rect>
+<rect x="138.7000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[127872.0502, 135864.0534): clean=1 noisy=0</title></rect>
+<rect x="143.9000" y="768.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[135864.0534, 143856.0565): clean=0 noisy=1</title></rect>
+<rect x="149.1000" y="700.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[143856.0565, 151848.0596): clean=5 noisy=0</title></rect>
+<rect x="154.3000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[151848.0596, 159840.0628): clean=1 noisy=1</title></rect>
+<rect x="154.3000" y="751.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[151848.0596, 159840.0628): clean=1 noisy=1</title></rect>
+<rect x="164.7000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[167832.0659, 175824.0691): clean=1 noisy=0</title></rect>
+<rect x="169.9000" y="768.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[175824.0691, 183816.0722): clean=0 noisy=1</title></rect>
+<rect x="175.1000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[183816.0722, 191808.0753): clean=1 noisy=0</title></rect>
+<rect x="185.5000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[199800.0785, 207792.0816): clean=3 noisy=0</title></rect>
+<rect x="190.7000" y="717.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[207792.0816, 215784.0848): clean=4 noisy=0</title></rect>
+<rect x="195.9000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[215784.0848, 223776.0879): clean=2 noisy=1</title></rect>
+<rect x="195.9000" y="734.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[215784.0848, 223776.0879): clean=2 noisy=1</title></rect>
+<rect x="201.1000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[223776.0879, 231768.0910): clean=1 noisy=1</title></rect>
+<rect x="201.1000" y="751.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[223776.0879, 231768.0910): clean=1 noisy=1</title></rect>
+<rect x="206.3000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[231768.0910, 239760.0942): clean=1 noisy=1</title></rect>
+<rect x="206.3000" y="751.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[231768.0910, 239760.0942): clean=1 noisy=1</title></rect>
+<rect x="211.5000" y="683.0000" width="4.2000" height="102.0000" fill="#3498db" fill-opacity="0.8"><title>[239760.0942, 247752.0973): clean=6 noisy=0</title></rect>
+<rect x="216.7000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[247752.0973, 255744.1004): clean=2 noisy=1</title></rect>
+<rect x="216.7000" y="734.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[247752.0973, 255744.1004): clean=2 noisy=1</title></rect>
+<rect x="232.3000" y="700.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[271728.1067, 279720.1099): clean=5 noisy=3</title></rect>
+<rect x="232.3000" y="649.0000" width="4.2000" height="51.0000" fill="#e67e22" fill-opacity="0.7"><title>[271728.1067, 279720.1099): clean=5 noisy=3</title></rect>
+<rect x="237.5000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[279720.1099, 287712.1130): clean=1 noisy=1</title></rect>
+<rect x="237.5000" y="751.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[279720.1099, 287712.1130): clean=1 noisy=1</title></rect>
+<rect x="242.7000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[287712.1130, 295704.1161): clean=3 noisy=1</title></rect>
+<rect x="242.7000" y="717.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[287712.1130, 295704.1161): clean=3 noisy=1</title></rect>
+<rect x="247.9000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[295704.1161, 303696.1193): clean=1 noisy=0</title></rect>
+<rect x="253.1000" y="768.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[303696.1193, 311688.1224): clean=0 noisy=1</title></rect>
+<rect x="258.3000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[311688.1224, 319680.1256): clean=2 noisy=0</title></rect>
+<rect x="263.5000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[319680.1256, 327672.1287): clean=2 noisy=0</title></rect>
+<rect x="268.7000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[327672.1287, 335664.1318): clean=1 noisy=0</title></rect>
+<rect x="273.9000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[335664.1318, 343656.1350): clean=1 noisy=0</title></rect>
+<rect x="289.5000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[359640.1413, 367632.1444): clean=2 noisy=0</title></rect>
+<rect x="294.7000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[367632.1444, 375624.1475): clean=1 noisy=0</title></rect>
+<rect x="310.3000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[391608.1538, 399600.1569): clean=1 noisy=0</title></rect>
+<text x="55.0000" y="797" text-anchor="middle" class="x-tick">0.0000</text>
+<text x="185.0000" y="797" text-anchor="middle" class="x-tick">199800.0785</text>
+<text x="315.0000" y="797" text-anchor="middle" class="x-tick">399600.1569</text>
+<text x="185" y="810" text-anchor="middle" class="axis-label">SSD Between my and Daniels R Peaks (s)</text>
+<text x="540" y="586" text-anchor="middle" class="subtitle">3010457_20111109</text>
+<text x="540" y="598" text-anchor="middle" class="stats">clean=627 noisy=3 mean=57479.4414 med=0.0001</text>
+<line x1="415" y1="615" x2="415" y2="785" stroke="#333" stroke-width="1"/>
+<line x1="415" y1="785" x2="675" y2="785" stroke="#333" stroke-width="1"/>
+<text x="382" y="700" text-anchor="middle" class="y-axis-label" transform="rotate(-90 372,700)"># bins with this SSD</text>
+<text x="411" y="788.0000" text-anchor="end" class="tick">0</text>
+<text x="411" y="726.1818" text-anchor="end" class="tick">4</text>
+<line x1="416" y1="723.1818" x2="675" y2="723.1818" stroke="#eee" stroke-width="0.5"/>
+<text x="411" y="679.8182" text-anchor="end" class="tick">7</text>
+<line x1="416" y1="676.8182" x2="675" y2="676.8182" stroke="#eee" stroke-width="0.5"/>
+<text x="411" y="618.0000" text-anchor="end" class="tick">11</text>
+<line x1="416" y1="615.0000" x2="675" y2="615.0000" stroke="#eee" stroke-width="0.5"/>
+<rect x="415.5000" y="615.0000" width="4.2000" height="170.0000" fill="#3498db" fill-opacity="0.8"><title>[0.0000, 12888.0005): clean=484 noisy=1</title></rect>
+<text x="417.6000" y="613.0000" text-anchor="middle" class="clipped">485</text>
+<rect x="420.7000" y="661.3636" width="4.2000" height="123.6364" fill="#3498db" fill-opacity="0.8"><title>[12888.0005, 25776.0011): clean=8 noisy=1</title></rect>
+<rect x="420.7000" y="645.9091" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[12888.0005, 25776.0011): clean=8 noisy=1</title></rect>
+<rect x="425.9000" y="738.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[25776.0011, 38664.0016): clean=3 noisy=0</title></rect>
+<rect x="431.1000" y="769.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[38664.0016, 51552.0022): clean=1 noisy=0</title></rect>
+<rect x="436.3000" y="707.7273" width="4.2000" height="77.2727" fill="#3498db" fill-opacity="0.8"><title>[51552.0022, 64440.0027): clean=5 noisy=0</title></rect>
+<rect x="441.5000" y="692.2727" width="4.2000" height="92.7273" fill="#3498db" fill-opacity="0.8"><title>[64440.0027, 77328.0033): clean=6 noisy=0</title></rect>
+<rect x="446.7000" y="754.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[77328.0033, 90216.0038): clean=2 noisy=0</title></rect>
+<rect x="451.9000" y="769.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[90216.0038, 103104.0044): clean=1 noisy=0</title></rect>
+<rect x="457.1000" y="738.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[103104.0044, 115992.0049): clean=3 noisy=0</title></rect>
+<rect x="462.3000" y="723.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[115992.0049, 128880.0055): clean=4 noisy=0</title></rect>
+<rect x="467.5000" y="707.7273" width="4.2000" height="77.2727" fill="#3498db" fill-opacity="0.8"><title>[128880.0055, 141768.0060): clean=5 noisy=0</title></rect>
+<rect x="472.7000" y="723.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[141768.0060, 154656.0066): clean=4 noisy=0</title></rect>
+<rect x="477.9000" y="754.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[154656.0066, 167544.0071): clean=2 noisy=0</title></rect>
+<rect x="483.1000" y="723.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[167544.0071, 180432.0077): clean=4 noisy=0</title></rect>
+<rect x="488.3000" y="692.2727" width="4.2000" height="92.7273" fill="#3498db" fill-opacity="0.8"><title>[180432.0077, 193320.0082): clean=6 noisy=0</title></rect>
+<rect x="493.5000" y="692.2727" width="4.2000" height="92.7273" fill="#3498db" fill-opacity="0.8"><title>[193320.0082, 206208.0088): clean=6 noisy=0</title></rect>
+<rect x="498.7000" y="692.2727" width="4.2000" height="92.7273" fill="#3498db" fill-opacity="0.8"><title>[206208.0088, 219096.0093): clean=6 noisy=0</title></rect>
+<rect x="503.9000" y="723.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[219096.0093, 231984.0099): clean=4 noisy=0</title></rect>
+<rect x="509.1000" y="738.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[231984.0099, 244872.0104): clean=3 noisy=0</title></rect>
+<rect x="514.3000" y="754.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[244872.0104, 257760.0110): clean=2 noisy=0</title></rect>
+<rect x="519.5000" y="738.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[257760.0110, 270648.0115): clean=3 noisy=0</title></rect>
+<rect x="524.7000" y="754.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[270648.0115, 283536.0121): clean=2 noisy=0</title></rect>
+<rect x="529.9000" y="723.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[283536.0121, 296424.0126): clean=4 noisy=0</title></rect>
+<rect x="535.1000" y="754.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[296424.0126, 309312.0132): clean=2 noisy=0</title></rect>
+<rect x="540.3000" y="707.7273" width="4.2000" height="77.2727" fill="#3498db" fill-opacity="0.8"><title>[309312.0132, 322200.0137): clean=5 noisy=0</title></rect>
+<rect x="545.5000" y="754.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[322200.0137, 335088.0142): clean=2 noisy=0</title></rect>
+<rect x="550.7000" y="738.6364" width="4.2000" height="46.3636" fill="#3498db" fill-opacity="0.8"><title>[335088.0142, 347976.0148): clean=3 noisy=0</title></rect>
+<rect x="555.9000" y="723.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[347976.0148, 360864.0153): clean=4 noisy=0</title></rect>
+<rect x="561.1000" y="676.8182" width="4.2000" height="108.1818" fill="#3498db" fill-opacity="0.8"><title>[360864.0153, 373752.0159): clean=7 noisy=1</title></rect>
+<rect x="561.1000" y="661.3636" width="4.2000" height="15.4545" fill="#e67e22" fill-opacity="0.7"><title>[360864.0153, 373752.0159): clean=7 noisy=1</title></rect>
+<rect x="566.3000" y="645.9091" width="4.2000" height="139.0909" fill="#3498db" fill-opacity="0.8"><title>[373752.0159, 386640.0164): clean=9 noisy=0</title></rect>
+<rect x="571.5000" y="707.7273" width="4.2000" height="77.2727" fill="#3498db" fill-opacity="0.8"><title>[386640.0164, 399528.0170): clean=5 noisy=0</title></rect>
+<rect x="576.7000" y="692.2727" width="4.2000" height="92.7273" fill="#3498db" fill-opacity="0.8"><title>[399528.0170, 412416.0175): clean=6 noisy=0</title></rect>
+<rect x="581.9000" y="754.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[412416.0175, 425304.0181): clean=2 noisy=0</title></rect>
+<rect x="587.1000" y="723.1818" width="4.2000" height="61.8182" fill="#3498db" fill-opacity="0.8"><title>[425304.0181, 438192.0186): clean=4 noisy=0</title></rect>
+<rect x="592.3000" y="769.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[438192.0186, 451080.0192): clean=1 noisy=0</title></rect>
+<rect x="597.5000" y="754.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[451080.0192, 463968.0197): clean=2 noisy=0</title></rect>
+<rect x="602.7000" y="769.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[463968.0197, 476856.0203): clean=1 noisy=0</title></rect>
+<rect x="613.1000" y="754.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[489744.0208, 502632.0214): clean=2 noisy=0</title></rect>
+<rect x="618.3000" y="754.0909" width="4.2000" height="30.9091" fill="#3498db" fill-opacity="0.8"><title>[502632.0214, 515520.0219): clean=2 noisy=0</title></rect>
+<rect x="623.5000" y="769.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[515520.0219, 528408.0225): clean=1 noisy=0</title></rect>
+<rect x="670.3000" y="769.5455" width="4.2000" height="15.4545" fill="#3498db" fill-opacity="0.8"><title>[631512.0269, 644400.0274): clean=1 noisy=0</title></rect>
+<text x="415.0000" y="797" text-anchor="middle" class="x-tick">0.0000</text>
+<text x="545.0000" y="797" text-anchor="middle" class="x-tick">322200.0137</text>
+<text x="675.0000" y="797" text-anchor="middle" class="x-tick">644400.0274</text>
+<text x="545" y="810" text-anchor="middle" class="axis-label">SSD Between my and Daniels R Peaks (s)</text>
+<text x="900" y="586" text-anchor="middle" class="subtitle">3010660_20120322</text>
+<text x="900" y="598" text-anchor="middle" class="stats">clean=534 noisy=6 mean=43867.4387 med=0.0001</text>
+<line x1="775" y1="615" x2="775" y2="785" stroke="#333" stroke-width="1"/>
+<line x1="775" y1="785" x2="1035" y2="785" stroke="#333" stroke-width="1"/>
+<text x="742" y="700" text-anchor="middle" class="y-axis-label" transform="rotate(-90 732,700)"># bins with this SSD</text>
+<text x="771" y="788.0000" text-anchor="end" class="tick">0</text>
+<text x="771" y="737.0000" text-anchor="end" class="tick">3</text>
+<line x1="776" y1="734.0000" x2="1035" y2="734.0000" stroke="#eee" stroke-width="0.5"/>
+<text x="771" y="669.0000" text-anchor="end" class="tick">7</text>
+<line x1="776" y1="666.0000" x2="1035" y2="666.0000" stroke="#eee" stroke-width="0.5"/>
+<text x="771" y="618.0000" text-anchor="end" class="tick">10</text>
+<line x1="776" y1="615.0000" x2="1035" y2="615.0000" stroke="#eee" stroke-width="0.5"/>
+<rect x="775.5000" y="615.0000" width="4.2000" height="170.0000" fill="#3498db" fill-opacity="0.8"><title>[0.0000, 6624.0015): clean=385 noisy=3</title></rect>
+<text x="777.6000" y="613.0000" text-anchor="middle" class="clipped">388</text>
+<rect x="780.7000" y="700.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[6624.0015, 13248.0029): clean=5 noisy=0</title></rect>
+<rect x="785.9000" y="700.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[13248.0029, 19872.0044): clean=5 noisy=0</title></rect>
+<rect x="791.1000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[19872.0044, 26496.0058): clean=3 noisy=0</title></rect>
+<rect x="796.3000" y="700.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[26496.0058, 33120.0073): clean=5 noisy=0</title></rect>
+<rect x="801.5000" y="700.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[33120.0073, 39744.0087): clean=5 noisy=0</title></rect>
+<rect x="806.7000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[39744.0087, 46368.0102): clean=3 noisy=0</title></rect>
+<rect x="811.9000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[46368.0102, 52992.0116): clean=1 noisy=0</title></rect>
+<rect x="817.1000" y="683.0000" width="4.2000" height="102.0000" fill="#3498db" fill-opacity="0.8"><title>[52992.0116, 59616.0131): clean=6 noisy=0</title></rect>
+<rect x="822.3000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[59616.0131, 66240.0145): clean=2 noisy=0</title></rect>
+<rect x="827.5000" y="700.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[66240.0145, 72864.0160): clean=5 noisy=0</title></rect>
+<rect x="832.7000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[72864.0160, 79488.0175): clean=3 noisy=0</title></rect>
+<rect x="837.9000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[79488.0175, 86112.0189): clean=1 noisy=0</title></rect>
+<rect x="843.1000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[86112.0189, 92736.0204): clean=2 noisy=0</title></rect>
+<rect x="848.3000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[92736.0204, 99360.0218): clean=3 noisy=0</title></rect>
+<rect x="853.5000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[99360.0218, 105984.0233): clean=1 noisy=0</title></rect>
+<rect x="858.7000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[105984.0233, 112608.0247): clean=1 noisy=0</title></rect>
+<rect x="863.9000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[112608.0247, 119232.0262): clean=3 noisy=0</title></rect>
+<rect x="874.3000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[125856.0276, 132480.0291): clean=3 noisy=0</title></rect>
+<rect x="879.5000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[132480.0291, 139104.0305): clean=2 noisy=0</title></rect>
+<rect x="884.7000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[139104.0305, 145728.0320): clean=1 noisy=0</title></rect>
+<rect x="889.9000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[145728.0320, 152352.0334): clean=2 noisy=0</title></rect>
+<rect x="895.1000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[152352.0334, 158976.0349): clean=3 noisy=0</title></rect>
+<rect x="900.3000" y="717.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[158976.0349, 165600.0364): clean=4 noisy=0</title></rect>
+<rect x="905.5000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[165600.0364, 172224.0378): clean=3 noisy=0</title></rect>
+<rect x="910.7000" y="717.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[172224.0378, 178848.0393): clean=4 noisy=0</title></rect>
+<rect x="915.9000" y="649.0000" width="4.2000" height="136.0000" fill="#3498db" fill-opacity="0.8"><title>[178848.0393, 185472.0407): clean=8 noisy=0</title></rect>
+<rect x="921.1000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[185472.0407, 192096.0422): clean=3 noisy=1</title></rect>
+<rect x="921.1000" y="717.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[185472.0407, 192096.0422): clean=3 noisy=1</title></rect>
+<rect x="926.3000" y="649.0000" width="4.2000" height="136.0000" fill="#3498db" fill-opacity="0.8"><title>[192096.0422, 198720.0436): clean=8 noisy=0</title></rect>
+<rect x="931.5000" y="700.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[198720.0436, 205344.0451): clean=5 noisy=0</title></rect>
+<rect x="936.7000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[205344.0451, 211968.0465): clean=3 noisy=0</title></rect>
+<rect x="941.9000" y="700.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[211968.0465, 218592.0480): clean=5 noisy=0</title></rect>
+<rect x="947.1000" y="717.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[218592.0480, 225216.0494): clean=4 noisy=0</title></rect>
+<rect x="952.3000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[225216.0494, 231840.0509): clean=2 noisy=0</title></rect>
+<rect x="957.5000" y="683.0000" width="4.2000" height="102.0000" fill="#3498db" fill-opacity="0.8"><title>[231840.0509, 238464.0524): clean=6 noisy=0</title></rect>
+<rect x="962.7000" y="717.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[238464.0524, 245088.0538): clean=4 noisy=0</title></rect>
+<rect x="967.9000" y="734.0000" width="4.2000" height="51.0000" fill="#3498db" fill-opacity="0.8"><title>[245088.0538, 251712.0553): clean=3 noisy=1</title></rect>
+<rect x="967.9000" y="717.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[245088.0538, 251712.0553): clean=3 noisy=1</title></rect>
+<rect x="973.1000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[251712.0553, 258336.0567): clean=2 noisy=0</title></rect>
+<rect x="978.3000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[258336.0567, 264960.0582): clean=2 noisy=0</title></rect>
+<rect x="983.5000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[264960.0582, 271584.0596): clean=2 noisy=0</title></rect>
+<rect x="988.7000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[271584.0596, 278208.0611): clean=2 noisy=1</title></rect>
+<rect x="988.7000" y="734.0000" width="4.2000" height="17.0000" fill="#e67e22" fill-opacity="0.7"><title>[271584.0596, 278208.0611): clean=2 noisy=1</title></rect>
+<rect x="993.9000" y="700.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[278208.0611, 284832.0625): clean=5 noisy=0</title></rect>
+<rect x="999.1000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[284832.0625, 291456.0640): clean=2 noisy=0</title></rect>
+<rect x="1004.3000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[291456.0640, 298080.0654): clean=2 noisy=0</title></rect>
+<rect x="1009.5000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[298080.0654, 304704.0669): clean=1 noisy=0</title></rect>
+<rect x="1014.7000" y="751.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[304704.0669, 311328.0683): clean=2 noisy=0</title></rect>
+<rect x="1025.1000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[317952.0698, 324576.0713): clean=1 noisy=0</title></rect>
+<rect x="1030.3000" y="768.0000" width="4.2000" height="17.0000" fill="#3498db" fill-opacity="0.8"><title>[324576.0713, 331200.0727): clean=1 noisy=0</title></rect>
+<text x="775.0000" y="797" text-anchor="middle" class="x-tick">0.0000</text>
+<text x="905.0000" y="797" text-anchor="middle" class="x-tick">165600.0364</text>
+<text x="1035.0000" y="797" text-anchor="middle" class="x-tick">331200.0727</text>
+<text x="905" y="810" text-anchor="middle" class="axis-label">SSD Between my and Daniels R Peaks (s)</text>
+<text x="180" y="846" text-anchor="middle" class="subtitle">3010724_20110811</text>
+<text x="180" y="858" text-anchor="middle" class="stats">clean=653 noisy=7 mean=13997.5542 med=0.0001</text>
+<line x1="55" y1="875" x2="55" y2="1045" stroke="#333" stroke-width="1"/>
+<line x1="55" y1="1045" x2="315" y2="1045" stroke="#333" stroke-width="1"/>
+<text x="22" y="960" text-anchor="middle" class="y-axis-label" transform="rotate(-90 12,960)"># bins with this SSD</text>
+<text x="51" y="1048.0000" text-anchor="end" class="tick">0</text>
+<text x="51" y="980.0000" text-anchor="end" class="tick">2</text>
+<line x1="56" y1="977.0000" x2="315" y2="977.0000" stroke="#eee" stroke-width="0.5"/>
+<text x="51" y="946.0000" text-anchor="end" class="tick">3</text>
+<line x1="56" y1="943.0000" x2="315" y2="943.0000" stroke="#eee" stroke-width="0.5"/>
+<text x="51" y="878.0000" text-anchor="end" class="tick">5</text>
+<line x1="56" y1="875.0000" x2="315" y2="875.0000" stroke="#eee" stroke-width="0.5"/>
+<rect x="55.5000" y="875.0000" width="4.2000" height="170.0000" fill="#3498db" fill-opacity="0.8"><title>[0.0000, 10944.0025): clean=609 noisy=3</title></rect>
+<text x="57.6000" y="873.0000" text-anchor="middle" class="clipped">612</text>
+<rect x="60.7000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[10944.0025, 21888.0050): clean=1 noisy=0</title></rect>
+<rect x="71.1000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[32832.0075, 43776.0100): clean=1 noisy=0</title></rect>
+<rect x="81.5000" y="977.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[54720.0125, 65664.0150): clean=2 noisy=1</title></rect>
+<rect x="81.5000" y="943.0000" width="4.2000" height="34.0000" fill="#e67e22" fill-opacity="0.7"><title>[54720.0125, 65664.0150): clean=2 noisy=1</title></rect>
+<rect x="86.7000" y="977.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[65664.0150, 76608.0176): clean=2 noisy=0</title></rect>
+<rect x="91.9000" y="943.0000" width="4.2000" height="102.0000" fill="#3498db" fill-opacity="0.8"><title>[76608.0176, 87552.0201): clean=3 noisy=0</title></rect>
+<rect x="97.1000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[87552.0201, 98496.0226): clean=1 noisy=0</title></rect>
+<rect x="102.3000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[98496.0226, 109440.0251): clean=1 noisy=0</title></rect>
+<rect x="107.5000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[109440.0251, 120384.0276): clean=1 noisy=0</title></rect>
+<rect x="117.9000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[131328.0301, 142272.0326): clean=1 noisy=0</title></rect>
+<rect x="123.1000" y="943.0000" width="4.2000" height="102.0000" fill="#3498db" fill-opacity="0.8"><title>[142272.0326, 153216.0351): clean=3 noisy=0</title></rect>
+<rect x="128.3000" y="977.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[153216.0351, 164160.0376): clean=2 noisy=0</title></rect>
+<rect x="133.5000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[164160.0376, 175104.0401): clean=1 noisy=1</title></rect>
+<rect x="133.5000" y="977.0000" width="4.2000" height="34.0000" fill="#e67e22" fill-opacity="0.7"><title>[164160.0376, 175104.0401): clean=1 noisy=1</title></rect>
+<rect x="138.7000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[175104.0401, 186048.0426): clean=1 noisy=0</title></rect>
+<rect x="143.9000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[186048.0426, 196992.0451): clean=1 noisy=0</title></rect>
+<rect x="149.1000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[196992.0451, 207936.0477): clean=1 noisy=0</title></rect>
+<rect x="159.5000" y="943.0000" width="4.2000" height="102.0000" fill="#3498db" fill-opacity="0.8"><title>[218880.0502, 229824.0527): clean=3 noisy=1</title></rect>
+<rect x="159.5000" y="909.0000" width="4.2000" height="34.0000" fill="#e67e22" fill-opacity="0.7"><title>[218880.0502, 229824.0527): clean=3 noisy=1</title></rect>
+<rect x="164.7000" y="1011.0000" width="4.2000" height="34.0000" fill="#e67e22" fill-opacity="0.7"><title>[229824.0527, 240768.0552): clean=0 noisy=1</title></rect>
+<rect x="169.9000" y="977.0000" width="4.2000" height="68.0000" fill="#3498db" fill-opacity="0.8"><title>[240768.0552, 251712.0577): clean=2 noisy=0</title></rect>
+<rect x="175.1000" y="909.0000" width="4.2000" height="136.0000" fill="#3498db" fill-opacity="0.8"><title>[251712.0577, 262656.0602): clean=4 noisy=0</title></rect>
+<rect x="180.3000" y="909.0000" width="4.2000" height="136.0000" fill="#3498db" fill-opacity="0.8"><title>[262656.0602, 273600.0627): clean=4 noisy=0</title></rect>
+<rect x="185.5000" y="943.0000" width="4.2000" height="102.0000" fill="#3498db" fill-opacity="0.8"><title>[273600.0627, 284544.0652): clean=3 noisy=0</title></rect>
+<rect x="190.7000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[284544.0652, 295488.0677): clean=1 noisy=0</title></rect>
+<rect x="206.3000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[317376.0727, 328320.0752): clean=1 noisy=0</title></rect>
+<rect x="227.1000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[361152.0828, 372096.0853): clean=1 noisy=0</title></rect>
+<rect x="247.9000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[404928.0928, 415872.0953): clean=1 noisy=0</title></rect>
+<rect x="263.5000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[437760.1003, 448704.1028): clean=1 noisy=0</title></rect>
+<rect x="310.3000" y="1011.0000" width="4.2000" height="34.0000" fill="#3498db" fill-opacity="0.8"><title>[536256.1229, 547200.1254): clean=1 noisy=0</title></rect>
+<text x="55.0000" y="1057" text-anchor="middle" class="x-tick">0.0000</text>
+<text x="185.0000" y="1057" text-anchor="middle" class="x-tick">273600.0627</text>
+<text x="315.0000" y="1057" text-anchor="middle" class="x-tick">547200.1254</text>
+<text x="185" y="1070" text-anchor="middle" class="axis-label">SSD Between my and Daniels R Peaks (s)</text>
+<text x="540" y="846" text-anchor="middle" class="subtitle">3010740_20110303</text>
+<text x="540" y="858" text-anchor="middle" class="stats">clean=644 noisy=16 mean=19486.9733 med=0.0002</text>
+<line x1="415" y1="875" x2="415" y2="1045" stroke="#333" stroke-width="1"/>
+<line x1="415" y1="1045" x2="675" y2="1045" stroke="#333" stroke-width="1"/>
+<text x="382" y="960" text-anchor="middle" class="y-axis-label" transform="rotate(-90 372,960)"># bins with this SSD</text>
+<text x="411" y="1048.0000" text-anchor="end" class="tick">0</text>
+<text x="411" y="991.3333" text-anchor="end" class="tick">2</text>
+<line x1="416" y1="988.3333" x2="675" y2="988.3333" stroke="#eee" stroke-width="0.5"/>
+<text x="411" y="934.6667" text-anchor="end" class="tick">4</text>
+<line x1="416" y1="931.6667" x2="675" y2="931.6667" stroke="#eee" stroke-width="0.5"/>
+<text x="411" y="878.0000" text-anchor="end" class="tick">6</text>
+<line x1="416" y1="875.0000" x2="675" y2="875.0000" stroke="#eee" stroke-width="0.5"/>
+<rect x="415.5000" y="875.0000" width="4.2000" height="170.0000" fill="#3498db" fill-opacity="0.8"><title>[0.0000, 8496.0014): clean=590 noisy=15</title></rect>
+<text x="417.6000" y="873.0000" text-anchor="middle" class="clipped">605</text>
+<rect x="420.7000" y="1016.6667" width="4.2000" height="28.3333" fill="#e67e22" fill-opacity="0.7"><title>[8496.0014, 16992.0028): clean=0 noisy=1</title></rect>
+<rect x="425.9000" y="988.3333" width="4.2000" height="56.6667" fill="#3498db" fill-opacity="0.8"><title>[16992.0028, 25488.0042): clean=2 noisy=0</title></rect>
+<rect x="441.5000" y="960.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[42480.0069, 50976.0083): clean=3 noisy=0</title></rect>
+<rect x="446.7000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[50976.0083, 59472.0097): clean=1 noisy=0</title></rect>
+<rect x="457.1000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[67968.0111, 76464.0125): clean=1 noisy=0</title></rect>
+<rect x="462.3000" y="988.3333" width="4.2000" height="56.6667" fill="#3498db" fill-opacity="0.8"><title>[76464.0125, 84960.0139): clean=2 noisy=0</title></rect>
+<rect x="467.5000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[84960.0139, 93456.0153): clean=1 noisy=0</title></rect>
+<rect x="483.1000" y="988.3333" width="4.2000" height="56.6667" fill="#3498db" fill-opacity="0.8"><title>[110448.0181, 118944.0194): clean=2 noisy=0</title></rect>
+<rect x="509.1000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[152928.0250, 161424.0264): clean=1 noisy=0</title></rect>
+<rect x="514.3000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[161424.0264, 169920.0278): clean=1 noisy=0</title></rect>
+<rect x="519.5000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[169920.0278, 178416.0292): clean=1 noisy=0</title></rect>
+<rect x="524.7000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[178416.0292, 186912.0306): clean=1 noisy=0</title></rect>
+<rect x="555.9000" y="931.6667" width="4.2000" height="113.3333" fill="#3498db" fill-opacity="0.8"><title>[229392.0375, 237888.0389): clean=4 noisy=0</title></rect>
+<rect x="561.1000" y="988.3333" width="4.2000" height="56.6667" fill="#3498db" fill-opacity="0.8"><title>[237888.0389, 246384.0403): clean=2 noisy=0</title></rect>
+<rect x="566.3000" y="960.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[246384.0403, 254880.0417): clean=3 noisy=0</title></rect>
+<rect x="571.5000" y="931.6667" width="4.2000" height="113.3333" fill="#3498db" fill-opacity="0.8"><title>[254880.0417, 263376.0431): clean=4 noisy=0</title></rect>
+<rect x="576.7000" y="988.3333" width="4.2000" height="56.6667" fill="#3498db" fill-opacity="0.8"><title>[263376.0431, 271872.0444): clean=2 noisy=0</title></rect>
+<rect x="581.9000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[271872.0444, 280368.0458): clean=1 noisy=0</title></rect>
+<rect x="587.1000" y="931.6667" width="4.2000" height="113.3333" fill="#3498db" fill-opacity="0.8"><title>[280368.0458, 288864.0472): clean=4 noisy=0</title></rect>
+<rect x="592.3000" y="960.0000" width="4.2000" height="85.0000" fill="#3498db" fill-opacity="0.8"><title>[288864.0472, 297360.0486): clean=3 noisy=0</title></rect>
+<rect x="597.5000" y="931.6667" width="4.2000" height="113.3333" fill="#3498db" fill-opacity="0.8"><title>[297360.0486, 305856.0500): clean=4 noisy=0</title></rect>
+<rect x="602.7000" y="903.3333" width="4.2000" height="141.6667" fill="#3498db" fill-opacity="0.8"><title>[305856.0500, 314352.0514): clean=5 noisy=0</title></rect>
+<rect x="613.1000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[322848.0528, 331344.0542): clean=1 noisy=0</title></rect>
+<rect x="618.3000" y="988.3333" width="4.2000" height="56.6667" fill="#3498db" fill-opacity="0.8"><title>[331344.0542, 339840.0556): clean=2 noisy=0</title></rect>
+<rect x="623.5000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[339840.0556, 348336.0569): clean=1 noisy=0</title></rect>
+<rect x="633.9000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[356832.0583, 365328.0597): clean=1 noisy=0</title></rect>
+<rect x="670.3000" y="1016.6667" width="4.2000" height="28.3333" fill="#3498db" fill-opacity="0.8"><title>[416304.0681, 424800.0694): clean=1 noisy=0</title></rect>
+<text x="415.0000" y="1057" text-anchor="middle" class="x-tick">0.0000</text>
+<text x="545.0000" y="1057" text-anchor="middle" class="x-tick">212400.0347</text>
+<text x="675.0000" y="1057" text-anchor="middle" class="x-tick">424800.0694</text>
+<text x="545" y="1070" text-anchor="middle" class="axis-label">SSD Between my and Daniels R Peaks (s)</text>
+</svg>

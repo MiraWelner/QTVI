@@ -27,6 +27,19 @@ struct FinalSegment {
     double scoring_epoch_size_sec;
 };
 
+/**
+ * @brief Per-channel noise markings as time intervals (seconds).
+ *
+ * ECG noise is only excluded when all 3 ECG channels have overlapping
+ * noise marks for a given time region. PPG noise is excluded independently.
+ */
+struct NoiseMarkings {
+    std::vector<std::pair<double, double>> ecg1;
+    std::vector<std::pair<double, double>> ecg2;
+    std::vector<std::pair<double, double>> ecg3;
+    std::vector<std::pair<double, double>> ppg;
+};
+
 struct Exclusion {
     uint64_t idx_start, idx_end;
     int bin_start, bin_end;
@@ -51,5 +64,22 @@ struct BinBreaksResult {
 // MATLAB-compatible round and closest_idx
 // ============================================================================
 
-double matlab_round(double x);
-uint64_t closest_idx(double target_time, double sr);
+inline double matlab_round(double x) {
+    double r = std::round(x);
+    double diff = x - std::floor(x);
+    if (std::abs(diff - 0.5) < 1e-12) {
+        double f = std::floor(x);
+        if (std::fmod(std::abs(f), 2.0) < 0.5)
+            r = f;
+        else
+            r = f + 1.0;
+    }
+    return r;
+}
+
+inline uint64_t closest_idx(double target_time, double sr) {
+    double raw = target_time * sr;
+    double rounded = matlab_round(raw);
+    if (rounded < 0.0) rounded = 0.0;
+    return static_cast<uint64_t>(rounded) + 1;
+}

@@ -107,11 +107,12 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
-  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" />
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -176,25 +177,25 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="gui_handler.cpp" />
+    <ClCompile Include="noise_marking_gui.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
-    <QtMoc Include="noise_marking_gui.h" />
     <QtMoc Include="noise_marking_guiPlugin.h" />
     <ClCompile Include="lower_row_buttons.cpp" />
-    <ClCompile Include="main.cpp" />
     <ClCompile Include="NoiseManager.cpp" />
-    <ClCompile Include="noise_marking_gui.cpp" />
     <ClCompile Include="noise_marking_guiPlugin.cpp" />
     <None Include="noise_marking_guiplugin.json" />
   </ItemGroup>
   <ItemGroup>
+    <QtMoc Include="gui_handler.h" />
+    <QtMoc Include="lower_row_buttons.h" />
+    <ClInclude Include="NoiseManager.h" />
     <ClInclude Include="stdafx.h" />
-    <QtMoc Include="lower_row_buttons.hpp" />
-    <ClInclude Include="NoiseManager.hpp" />
   </ItemGroup>
   <ItemGroup>
     <QtUic Include="noise_marking_gui.ui" />

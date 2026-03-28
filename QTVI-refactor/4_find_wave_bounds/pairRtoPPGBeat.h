@@ -10,7 +10,5 @@
 // -1.0 indicates unpaired
 vector<vector<double>> pairRtoPPGBeat(const vector<double>& ecg,
     const vector<double>& ppg,
-    double ecgSamplingRate,
-    double ppgSamplingRate,
     const vector<size_t>& ecgRIndex,
     const vector<size_t>& ppgMinAmps);

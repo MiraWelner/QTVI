@@ -1,0 +1,10 @@
+﻿C:\Program Files\Microsoft Visual Studio\18\Enterprise\MSBuild\Microsoft\VC\v180\Microsoft.CppBuild.targets(533,5): warning MSB8004: Intermediate Directory does not end with a trailing slash.  This build instance will add the slash as it is required to allow proper evaluation of the Intermediate Directory.
+   Qt/MSBuild: 3.4.1.0
+  Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
+   Qt: 6.10.2
+     Creating library D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.lib and object D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.exp
+lower_row_buttons.obj : error LNK2001: unresolved external symbol "public: virtual int __cdecl lower_row_buttons::qt_metacall(enum QMetaObject::Call,int,void * *)" (?qt_metacall@lower_row_buttons@@UEAAHW4Call@QMetaObject@@HPEAPEAX@Z)
+lower_row_buttons.obj : error LNK2001: unresolved external symbol "public: virtual void * __cdecl lower_row_buttons::qt_metacast(char const *)" (?qt_metacast@lower_row_buttons@@UEAAPEAXPEBD@Z)
+lower_row_buttons.obj : error LNK2001: unresolved external symbol "public: virtual struct QMetaObject const * __cdecl lower_row_buttons::metaObject(void)const " (?metaObject@lower_row_buttons@@UEBAPEBUQMetaObject@@XZ)
+LIBCMT.lib(exe_main.obj) : error LNK2001: unresolved external symbol main
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.exe : fatal error LNK1120: 4 unresolved externals

@@ -11,4 +11,4 @@ struct SegmentPPGResult {
     vector<size_t> maxAmps;     // peak indices
 };
 
-SegmentPPGResult SegmentPPG(const vector<double>& ppg, double sampleRate);
+SegmentPPGResult SegmentPPG(const vector<double>& ppg);

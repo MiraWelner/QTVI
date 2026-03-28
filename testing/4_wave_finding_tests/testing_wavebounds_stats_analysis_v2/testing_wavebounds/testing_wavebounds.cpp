@@ -9,6 +9,7 @@
 #include <numeric>
 #include <cstdint>
 #include <functional>
+#include <sstream>
 
 // ============================================================================
 // Data structures
@@ -26,6 +27,9 @@ struct ComparisonData {
     std::vector<double> ecgSignal;
     std::vector<double> ecgSignal2;
     std::vector<double> ecgSignal3;
+    bool ecg1_noisy = false;
+    bool ecg2_noisy = false;
+    bool ecg3_noisy = false;
     std::vector<std::pair<double, double>> pairs;
 };
 
@@ -41,12 +45,26 @@ struct FileResult {
     long long rPeaksMat = 0;
     int binCountBin = 0;
     int binCountMat = 0;
-    size_t binsWithZeroSSD = 0;
+    int noisyBins = 0;
+    int cleanBins = 0;
     size_t totalBeatsBin = 0;
     size_t totalBeatsMat = 0;
-    double ssdMean = 0.0;
-    double ssdStd = 0.0;
+    double timeSsdMean = 0.0;
+    std::vector<double> perBinSsd;       // clean bins
+    std::vector<double> perBinSsdNoisy;  // noisy bins
 };
+
+// ============================================================================
+// Index-to-time conversion
+// ============================================================================
+
+std::vector<double> indicesToSeconds(const std::vector<double>& indices, double sampleRate) {
+    std::vector<double> times(indices.size());
+    for (size_t i = 0; i < indices.size(); i++) {
+        times[i] = (indices[i] - 1.0) / sampleRate;
+    }
+    return times;
+}
 
 // ============================================================================
 // Statistics helpers
@@ -69,24 +87,102 @@ DatasetStats calculateStats(const std::vector<ComparisonData>& data, Projection 
     return { mean, std::sqrt(variance), static_cast<long long>(sum) };
 }
 
-double computeRPeakLocationSSD(const ComparisonData& bin, const ComparisonData& mat) {
-    size_t nBin = bin.ecgRIndex.size();
-    size_t nMat = mat.ecgRIndex.size();
-    size_t nMax = std::max(nBin, nMat);
-    size_t nMin = std::min(nBin, nMat);
+// ============================================================================
+// Time-based R-peak comparison
+// ============================================================================
 
-    double binLength = static_cast<double>(bin.ecgSignal.size());
+struct TimedSSDResult {
+    double ssd_seconds;
+    size_t matchedCount;
+    size_t unmatchedBin;
+    size_t unmatchedMat;
+    double binRMeanSec;
+    double binRStdSec;
+    double matRMeanSec;
+    double matRStdSec;
+};
 
-    double ssd = 0.0;
-    for (size_t i = 0; i < nMin; ++i) {
-        double diff = bin.ecgRIndex[i] - mat.ecgRIndex[i];
-        ssd += diff * diff;
+TimedSSDResult computeTimedRPeakSSD(
+    const ComparisonData& bin, double binSR,
+    const ComparisonData& mat, double matSR,
+    double toleranceSec = 0.150)
+{
+    auto binTimes = indicesToSeconds(bin.ecgRIndex, binSR);
+    auto matTimes = indicesToSeconds(mat.ecgRIndex, matSR);
+
+    TimedSSDResult result = { 0.0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0 };
+
+    auto meanStd = [](const std::vector<double>& times) -> std::pair<double, double> {
+        if (times.empty()) return { 0.0, 0.0 };
+        double sum = 0.0, sumSq = 0.0;
+        for (double t : times) { sum += t; sumSq += t * t; }
+        double n = static_cast<double>(times.size());
+        double mean = sum / n;
+        double var = (n > 1) ? (sumSq - sum * sum / n) / (n - 1) : 0.0;
+        return { mean, std::sqrt(std::max(0.0, var)) };
+        };
+
+    auto [binMean, binStd] = meanStd(binTimes);
+    auto [matMean, matStd] = meanStd(matTimes);
+    result.binRMeanSec = binMean;
+    result.binRStdSec = binStd;
+    result.matRMeanSec = matMean;
+    result.matRStdSec = matStd;
+
+    if (binTimes.empty() && matTimes.empty()) {
+        return result;
+    }
+    if (binTimes.empty() || matTimes.empty()) {
+        result.unmatchedBin = binTimes.size();
+        result.unmatchedMat = matTimes.size();
+        double duration = std::max(
+            bin.ecgSignal.empty() ? 0.0 : (double)bin.ecgSignal.size() / binSR,
+            mat.ecgSignal.empty() ? 0.0 : (double)mat.ecgSignal.size() / matSR);
+        result.ssd_seconds = (result.unmatchedBin + result.unmatchedMat) * duration * duration;
+        return result;
     }
 
-    size_t nExtra = nMax - nMin;
-    ssd += nExtra * binLength * binLength;
+    std::vector<bool> matUsed(matTimes.size(), false);
+    double sumSqDiff = 0.0;
+    size_t matched = 0;
 
-    return ssd;
+    for (size_t i = 0; i < binTimes.size(); i++) {
+        double bestDiff = toleranceSec + 1.0;
+        int bestJ = -1;
+
+        for (size_t j = 0; j < matTimes.size(); j++) {
+            if (matUsed[j]) continue;
+            double diff = std::abs(binTimes[i] - matTimes[j]);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                bestJ = static_cast<int>(j);
+            }
+            if (matTimes[j] > binTimes[i] + toleranceSec) break;
+        }
+
+        if (bestJ >= 0 && bestDiff <= toleranceSec) {
+            matUsed[bestJ] = true;
+            double diff = binTimes[i] - matTimes[bestJ];
+            sumSqDiff += diff * diff;
+            matched++;
+        }
+    }
+
+    size_t unmatchedMat = 0;
+    for (bool u : matUsed) if (!u) unmatchedMat++;
+
+    double duration = std::max(
+        bin.ecgSignal.empty() ? 0.0 : (double)bin.ecgSignal.size() / binSR,
+        mat.ecgSignal.empty() ? 0.0 : (double)mat.ecgSignal.size() / matSR);
+    size_t unmatchedBin = binTimes.size() - matched;
+    double penalty = (unmatchedBin + unmatchedMat) * duration * duration;
+
+    result.ssd_seconds = sumSqDiff + penalty;
+    result.matchedCount = matched;
+    result.unmatchedBin = unmatchedBin;
+    result.unmatchedMat = unmatchedMat;
+
+    return result;
 }
 
 // ============================================================================
@@ -123,8 +219,6 @@ std::vector<ComparisonData> readAllFromBin(const std::string& path) {
 
     for (uint64_t i = 0; i < numBins; ++i) {
         auto& r = results[i];
-        file.read(reinterpret_cast<char*>(&r.ecgSamplingRate), 8);
-        file.read(reinterpret_cast<char*>(&r.ppgSamplingRate), 8);
 
         readInt64VecAsDouble(file, r.ecgRIndex);
         readInt64VecAsDouble(file, r.ecgRIndex2);
@@ -137,6 +231,16 @@ std::vector<ComparisonData> readAllFromBin(const std::string& path) {
         readDoubleVec(file, r.ecgSignal2);
         readDoubleVec(file, r.ecgSignal3);
 
+        // Noise flags
+        uint8_t n1 = 0, n2 = 0, n3 = 0;
+        file.read(reinterpret_cast<char*>(&n1), 1);
+        file.read(reinterpret_cast<char*>(&n2), 1);
+        file.read(reinterpret_cast<char*>(&n3), 1);
+        r.ecg1_noisy = (n1 != 0);
+        r.ecg2_noisy = (n2 != 0);
+        r.ecg3_noisy = (n3 != 0);
+
+        // Pairs
         uint64_t numPairs = 0;
         if (file.read(reinterpret_cast<char*>(&numPairs), 8) && numPairs < 100000) {
             r.pairs.reserve(numPairs);
@@ -147,6 +251,9 @@ std::vector<ComparisonData> readAllFromBin(const std::string& path) {
                 r.pairs.push_back({ static_cast<double>(ppgIdx), static_cast<double>(ecgIdx) });
             }
         }
+
+        r.ecgSamplingRate = 2000.0;
+        r.ppgSamplingRate = 2000.0;
     }
     return results;
 }
@@ -271,21 +378,23 @@ void generateSVGPlot(const std::string& filename,
         << "\" stroke=\"black\" stroke-width=\"2\"/>\n";
 
     svg << "<text x=\"" << size / 2 << "\" y=\"" << size - 20
-        << "\" text-anchor=\"middle\" font-family=\"sans-serif\">Bin " << label << "</text>\n";
+        << "\" text-anchor=\"middle\" font-family=\"sans-serif\">C++ (2000 Hz) " << label << "</text>\n";
     svg << "<text x=\"25\" y=\"" << size / 2
         << "\" text-anchor=\"middle\" transform=\"rotate(-90 25," << size / 2
-        << ")\" font-family=\"sans-serif\">Mat " << label << "</text>\n";
+        << ")\" font-family=\"sans-serif\">MATLAB (256 Hz) " << label << "</text>\n";
     svg << "<text x=\"" << size / 2 << "\" y=\"40\" text-anchor=\"middle\" "
         << "font-weight=\"bold\" font-family=\"sans-serif\">" << label << " Comparison</text>\n";
 
     for (size_t i = 0; i < n; ++i) {
         double x = selector(binData[i]);
         double y = selector(matData[i]);
-        const char* color = (std::abs(x - y) < 0.0001) ? "#3498db" : "#e74c3c";
+        bool noisy = binData[i].ecg1_noisy;
+        const char* color = noisy ? "#cccccc" : (std::abs(x - y) < 0.0001) ? "#3498db" : "#e74c3c";
+        double opacity = noisy ? 0.4 : 0.7;
 
         svg << "<circle cx=\"" << mapX(x) << "\" cy=\"" << mapY(y)
-            << "\" r=\"3.5\" fill=\"" << color << "\" fill-opacity=\"0.7\">\n"
-            << "  <title>Bin: " << x << ", Mat: " << y << "</title>\n"
+            << "\" r=\"3.5\" fill=\"" << color << "\" fill-opacity=\"" << opacity << "\">\n"
+            << "  <title>Bin " << i << (noisy ? " (NOISY)" : "") << " C++: " << x << ", MATLAB: " << y << "</title>\n"
             << "</circle>\n";
     }
 
@@ -308,55 +417,75 @@ FileResult compareFile(const std::string& id,
         return {};
     }
 
+    // Separate clean vs noisy bins
+    int noisyCount = 0;
+    for (size_t i = 0; i < maxBins; ++i) {
+        if (binData[i].ecg1_noisy) noisyCount++;
+    }
+    int cleanCount = static_cast<int>(maxBins) - noisyCount;
+
+    // Stats on clean bins only
+    std::vector<ComparisonData> cleanBin, cleanMat;
+    for (size_t i = 0; i < maxBins; ++i) {
+        if (!binData[i].ecg1_noisy) {
+            cleanBin.push_back(binData[i]);
+            cleanMat.push_back(matData[i]);
+        }
+    }
+
     auto rPeakProj = [](const ComparisonData& c) { return (double)c.ecgRIndex.size(); };
     auto ppgPeakProj = [](const ComparisonData& c) { return (double)c.ppgMaxAmps.size(); };
     auto ppgDipProj = [](const ComparisonData& c) { return (double)c.ppgMinAmps.size(); };
     auto pairProj = [](const ComparisonData& c) { return (double)c.pairs.size(); };
 
-    DatasetStats binR = calculateStats(binData, rPeakProj);
-    DatasetStats matR = calculateStats(matData, rPeakProj);
-    DatasetStats binPPG = calculateStats(binData, ppgPeakProj);
-    DatasetStats matPPG = calculateStats(matData, ppgPeakProj);
-    DatasetStats binDip = calculateStats(binData, ppgDipProj);
-    DatasetStats matDip = calculateStats(matData, ppgDipProj);
-    DatasetStats binPrs = calculateStats(binData, pairProj);
-    DatasetStats matPrs = calculateStats(matData, pairProj);
+    DatasetStats binR = calculateStats(cleanBin, rPeakProj);
+    DatasetStats matR = calculateStats(cleanMat, rPeakProj);
+    DatasetStats binPPG = calculateStats(cleanBin, ppgPeakProj);
+    DatasetStats matPPG = calculateStats(cleanMat, ppgPeakProj);
+    DatasetStats binDip = calculateStats(cleanBin, ppgDipProj);
+    DatasetStats matDip = calculateStats(cleanMat, ppgDipProj);
+    DatasetStats binPrs = calculateStats(cleanBin, pairProj);
+    DatasetStats matPrs = calculateStats(cleanMat, pairProj);
 
-    size_t binsWithZeroSSD = 0;
     size_t totalBeatsBin = 0, totalBeatsMat = 0;
-    std::vector<double> ssdValues;
-    ssdValues.reserve(maxBins);
+    std::vector<TimedSSDResult> timedResults(maxBins);
+    std::vector<double> perBinSsd;
+    std::vector<double> perBinSsdNoisy;
+
+    double sumTimeSsd = 0;
 
     for (size_t i = 0; i < maxBins; ++i) {
-        double ssd = computeRPeakLocationSSD(binData[i], matData[i]);
-        ssdValues.push_back(ssd);
-        if (ssd == 0.0) ++binsWithZeroSSD;
-        totalBeatsBin += binData[i].ecgRIndex.size();
-        totalBeatsMat += matData[i].ecgRIndex.size();
-    }
+        double binSR = binData[i].ecgSamplingRate;
+        double matSR = matData[i].ecgSamplingRate;
+        if (binSR <= 0) binSR = 2000.0;
+        if (matSR <= 0) matSR = 256.0;
 
-    // Compute SSD mean and std
-    double ssdMean = 0.0, ssdStd = 0.0;
-    if (!ssdValues.empty()) {
-        double sum = 0.0, sumSq = 0.0;
-        for (double v : ssdValues) {
-            sum += v;
-            sumSq += v * v;
+        timedResults[i] = computeTimedRPeakSSD(binData[i], binSR, matData[i], matSR);
+
+        if (!binData[i].ecg1_noisy) {
+            totalBeatsBin += binData[i].ecgRIndex.size();
+            totalBeatsMat += matData[i].ecgRIndex.size();
+            sumTimeSsd += timedResults[i].ssd_seconds;
+            perBinSsd.push_back(timedResults[i].ssd_seconds);
         }
-        double n = static_cast<double>(ssdValues.size());
-        ssdMean = sum / n;
-        ssdStd = (n > 1) ? std::sqrt((sumSq - sum * sum / n) / (n - 1)) : 0.0;
+        else {
+            perBinSsdNoisy.push_back(timedResults[i].ssd_seconds);
+        }
     }
 
-    // --- Write summary ---
-    out << "Data taken from MESA file " << id << "\n\n";
-    out << "=== Summary ===\n";
-    out << "Total bins: " << binData.size() << "\n";
-    out << "Bins with R peaks not in same place: " << (binData.size() - binsWithZeroSSD) << "\n";
-    out << "R-peak index SSD — Mean: " << std::fixed << std::setprecision(4) << ssdMean
-        << "  Std: " << ssdStd << "\n\n";
+    double nClean = static_cast<double>(cleanCount);
+    double timeSsdMean = nClean > 0 ? sumTimeSsd / nClean : 0.0;
 
-    out << "\t\tTotal in .bin\tTotal in .mat\tDiff\n";
+    out << "Data taken from MESA file " << id << "\n";
+
+    out << "=== Summary ===\n";
+    out << "Total bins: " << maxBins << "\n";
+    out << "Noisy bins (excluded): " << noisyCount << "\n";
+    out << "Clean bins (used for stats): " << cleanCount << "\n\n";
+
+    out << "--- Time-based R-peak comparison ---\n";
+
+    out << "\t\tTotal in C++\tTotal in MATLAB\tDiff\n";
     auto writeRow = [&](const char* label, DatasetStats b, DatasetStats m) {
         out << label << "\t" << b.total << "\t\t" << m.total
             << "\t\t" << (m.total - b.total) << "\n";
@@ -367,74 +496,262 @@ FileResult compareFile(const std::string& id,
     writeRow("Pairs\t", binPrs, matPrs);
     out << "\n";
 
-    // --- Per-bin detail ---
-    out << "bin #\tBeats(.bin)\tBeats(.mat)\tMean R idx(.bin)\tMean R idx(.mat)\tR-peak location SSD\n";
+    out << "bin#\tNoisy\tBeats(C++)\tBeats(MAT)\tMean Beat Time (C++)\tMean Beat Time (MAT)\tSTD Beat Time (C++)\tSTD Beat Time (MAT)\tSum of Squared Differences\n";
 
     for (size_t i = 0; i < maxBins; ++i) {
-        size_t nBin = binData[i].ecgRIndex.size();
-        size_t nMat = matData[i].ecgRIndex.size();
-
-        auto meanIdx = [](const std::vector<double>& v) {
-            if (v.empty()) return 0.0;
-            return std::accumulate(v.begin(), v.end(), 0.0) / v.size();
-            };
-
-        double meanBin = meanIdx(binData[i].ecgRIndex);
-        double meanMat = meanIdx(matData[i].ecgRIndex);
-
+        const auto& tr = timedResults[i];
+        bool noisy = binData[i].ecg1_noisy;
         out << std::setw(3) << std::setfill('0') << i << std::setfill(' ')
-            << "\t" << nBin << "\t\t" << nMat << "\t\t"
-            << std::fixed << std::setprecision(1) << meanBin << "\t\t\t"
-            << meanMat << "\t\t\t"
-            << std::setprecision(4) << ssdValues[i] << "\n";
+            << "\t" << (noisy ? "Y" : "N")
+            << "\t" << binData[i].ecgRIndex.size()
+            << "\t\t" << matData[i].ecgRIndex.size()
+            << "\t\t" << std::fixed << std::setprecision(4) << tr.binRMeanSec
+            << "\t\t\t" << tr.matRMeanSec
+            << "\t\t\t" << tr.binRStdSec
+            << "\t\t\t" << tr.matRStdSec
+            << "\t\t\t" << std::setprecision(6) << tr.ssd_seconds
+            << "\n";
     }
 
     return { id, binR.total, matR.total,
              static_cast<int>(binData.size()), static_cast<int>(matData.size()),
-             binsWithZeroSSD, totalBeatsBin, totalBeatsMat, ssdMean, ssdStd };
+             noisyCount, cleanCount,
+             totalBeatsBin, totalBeatsMat, timeSsdMean,
+             std::move(perBinSsd), std::move(perBinSsdNoisy) };
 }
 
 // ============================================================================
-// All-files summary
+// All-files summary: single SVG with one SSD histogram per file
 // ============================================================================
 
-void writeAllFilesSummary(const std::vector<FileResult>& results) {
-    std::ofstream out("allfiles.txt");
-    if (!out) return;
+void writeAllFilesSummary(const std::vector<FileResult>& results,
+    int numBuckets = 50)
+{
+    if (results.empty()) return;
 
-    long long sumBin = 0, sumMat = 0;
-    int sumBinsBin = 0, sumBinsMat = 0;
-    size_t sumZeroSSD = 0;
+    int numFiles = static_cast<int>(results.size());
+    int cols = 3;
+    int rows = (numFiles + cols - 1) / cols;
 
-    for (const auto& r : results) {
-        sumBin += r.rPeaksBin;
-        sumMat += r.rPeaksMat;
-        sumBinsBin += r.binCountBin;
-        sumBinsMat += r.binCountMat;
-        sumZeroSSD += r.binsWithZeroSSD;
+    constexpr int cellW = 360, cellH = 260;
+    constexpr int padL = 55, padR = 45, padT = 45, padB = 45;
+    int chartW = cellW - padL - padR;
+    int chartH = cellH - padT - padB;
+
+    int svgW = cols * cellW;
+    int svgH = rows * cellH + 50;
+
+    std::ofstream svg("allfiles_ssd_histograms.svg");
+    if (!svg.is_open()) return;
+
+    svg << std::fixed;
+    svg << "<svg width=\"" << svgW << "\" height=\"" << svgH
+        << "\" xmlns=\"http://www.w3.org/2000/svg\">\n";
+    svg << "<style>\n"
+        << "  text { font-family: Consolas, 'Courier New', monospace; }\n"
+        << "  .title { font-size: 16px; font-weight: bold; }\n"
+        << "  .subtitle { font-size: 10px; font-weight: bold; }\n"
+        << "  .stats { font-size: 12px; fill: #555; }\n"
+        << "  .tick { font-size: 10px; }\n"
+        << "  .axis-label { font-size: 12px; }\n"
+        << "  .y-axis-label { font-size: 10px; }\n"
+        << "  .x-tick { font-size: 10px; }\n"
+        << "  .clipped { font-size: 10px; fill: #e74c3c; font-weight: bold; }\n"
+        << "  .empty { font-size: 10px; fill: #999; }\n"
+        << "</style>\n";
+    svg << "<rect width=\"100%\" height=\"100%\" fill=\"#fcfcfc\"/>\n";
+
+    svg << "<text x=\"" << svgW / 2 << "\" y=\"30\" text-anchor=\"middle\" "
+        << "class=\"title\">"
+        << "Per-Bin R-Peak SSD Histograms</text>\n";
+
+    for (int f = 0; f < numFiles; ++f) {
+        const auto& fr = results[f];
+        int col = f % cols;
+        int row = f / cols;
+        int ox = col * cellW;
+        int oy = row * cellH + 50;
+
+        // Subtitle
+        svg << "<text x=\"" << ox + cellW / 2 << "\" y=\"" << oy + 16
+            << "\" text-anchor=\"middle\" class=\"subtitle\">"
+            << fr.id << "</text>\n";
+
+        // Merge clean + noisy for range calculation
+        std::vector<double> allSsd;
+        allSsd.insert(allSsd.end(), fr.perBinSsd.begin(), fr.perBinSsd.end());
+        allSsd.insert(allSsd.end(), fr.perBinSsdNoisy.begin(), fr.perBinSsdNoisy.end());
+
+        if (allSsd.empty()) {
+            svg << "<text x=\"" << ox + cellW / 2 << "\" y=\"" << oy + cellH / 2
+                << "\" text-anchor=\"middle\" class=\"empty\">"
+                << "(no bins)</text>\n";
+            continue;
+        }
+
+        // Stats (on clean bins only, as before)
+        double sum = 0.0, sumSq = 0.0;
+        double nClean = static_cast<double>(fr.perBinSsd.size());
+        for (double v : fr.perBinSsd) { sum += v; sumSq += v * v; }
+        double mean = nClean > 0 ? sum / nClean : 0.0;
+
+        std::vector<double> sorted = fr.perBinSsd;
+        std::sort(sorted.begin(), sorted.end());
+        double median = 0.0;
+        if (!sorted.empty()) {
+            median = (sorted.size() % 2 == 0)
+                ? (sorted[sorted.size() / 2 - 1] + sorted[sorted.size() / 2]) / 2.0
+                : sorted[sorted.size() / 2];
+        }
+
+        svg << "<text x=\"" << ox + cellW / 2 << "\" y=\"" << oy + 28
+            << "\" text-anchor=\"middle\" class=\"stats\">"
+            << "clean=" << std::setprecision(0) << nClean
+            << " noisy=" << fr.perBinSsdNoisy.size()
+            << " mean=" << std::setprecision(4) << mean
+            << " med=" << median << "</text>\n";
+
+        // Histogram range from ALL bins (clean + noisy)
+        std::sort(allSsd.begin(), allSsd.end());
+        double minVal = allSsd.front();
+        double maxVal = allSsd.back();
+        if (maxVal - minVal < 1e-15) maxVal = minVal + 1.0;
+        double bucketWidth = (maxVal - minVal) / numBuckets;
+
+        // Separate counts for clean and noisy
+        std::vector<int> cleanCounts(numBuckets, 0);
+        std::vector<int> noisyCounts(numBuckets, 0);
+
+        for (double v : fr.perBinSsd) {
+            int idx = static_cast<int>((v - minVal) / bucketWidth);
+            if (idx >= numBuckets) idx = numBuckets - 1;
+            cleanCounts[idx]++;
+        }
+        for (double v : fr.perBinSsdNoisy) {
+            int idx = static_cast<int>((v - minVal) / bucketWidth);
+            if (idx >= numBuckets) idx = numBuckets - 1;
+            noisyCounts[idx]++;
+        }
+
+        // Stacked total per bucket
+        std::vector<int> totalCounts(numBuckets);
+        for (int b = 0; b < numBuckets; ++b)
+            totalCounts[b] = cleanCounts[b] + noisyCounts[b];
+
+        int maxCount = *std::max_element(totalCounts.begin(), totalCounts.end());
+        if (maxCount == 0) maxCount = 1;
+
+        // Y-axis cutoff (same logic as before, but on total counts)
+        std::vector<int> sortedCounts = totalCounts;
+        std::sort(sortedCounts.begin(), sortedCounts.end());
+        int yAxisMax = maxCount;
+        for (int k = (int)sortedCounts.size() - 2; k >= 0; --k) {
+            if (sortedCounts[k] < maxCount && sortedCounts[k] > 0) {
+                yAxisMax = static_cast<int>(std::ceil(sortedCounts[k] * 1.2));
+                break;
+            }
+        }
+        if (yAxisMax <= 0) yAxisMax = maxCount;
+
+        int cx = ox + padL;
+        int cy = oy + padT;
+        double barW = static_cast<double>(chartW) / numBuckets;
+
+        // Axes
+        svg << "<line x1=\"" << cx << "\" y1=\"" << cy
+            << "\" x2=\"" << cx << "\" y2=\"" << cy + chartH
+            << "\" stroke=\"#333\" stroke-width=\"1\"/>\n";
+        svg << "<line x1=\"" << cx << "\" y1=\"" << cy + chartH
+            << "\" x2=\"" << cx + chartW << "\" y2=\"" << cy + chartH
+            << "\" stroke=\"#333\" stroke-width=\"1\"/>\n";
+
+        // Y-axis label (rotated)
+        svg << "<text x=\"" << ox + 22 << "\" y=\"" << cy + chartH / 2
+            << "\" text-anchor=\"middle\" class=\"y-axis-label\""
+            << " transform=\"rotate(-90 " << ox + 12 << "," << cy + chartH / 2 << ")\">"
+            << "# bins with this SSD</text>\n";
+
+        // Y-axis ticks
+        for (int t = 0; t <= 3; ++t) {
+            int yVal = static_cast<int>(std::round(yAxisMax * t / 3.0));
+            double yPos = cy + chartH - (static_cast<double>(yVal) / yAxisMax) * chartH;
+            svg << "<text x=\"" << cx - 4 << "\" y=\"" << yPos + 3
+                << "\" text-anchor=\"end\" class=\"tick\">"
+                << yVal << "</text>\n";
+            if (t > 0) {
+                svg << "<line x1=\"" << cx + 1 << "\" y1=\"" << yPos
+                    << "\" x2=\"" << cx + chartW << "\" y2=\"" << yPos
+                    << "\" stroke=\"#eee\" stroke-width=\"0.5\"/>\n";
+            }
+        }
+
+        // Stacked bars: clean on bottom (blue), noisy on top (orange)
+        for (int b = 0; b < numBuckets; ++b) {
+            int total = totalCounts[b];
+            if (total == 0) continue;
+
+            bool clipped = total > yAxisMax;
+            double bx = cx + b * barW;
+            double rangeStart = minVal + b * bucketWidth;
+            double rangeEnd = minVal + (b + 1) * bucketWidth;
+
+            // Clean portion (bottom)
+            double cleanDisplay = std::min(static_cast<double>(cleanCounts[b]),
+                static_cast<double>(yAxisMax));
+            double cleanBarH = (cleanDisplay / yAxisMax) * chartH;
+            if (cleanCounts[b] > 0) {
+                double by = cy + chartH - cleanBarH;
+                svg << "<rect x=\"" << bx + 0.5 << "\" y=\"" << by
+                    << "\" width=\"" << barW - 1 << "\" height=\"" << cleanBarH
+                    << "\" fill=\"#3498db\" fill-opacity=\"0.8\">"
+                    << "<title>[" << std::setprecision(4) << rangeStart
+                    << ", " << rangeEnd << "): clean=" << cleanCounts[b]
+                    << " noisy=" << noisyCounts[b] << "</title></rect>\n";
+            }
+
+            // Noisy portion (stacked on top of clean)
+            if (noisyCounts[b] > 0) {
+                double stackBase = cleanDisplay;
+                double noisyDisplay = std::min(
+                    static_cast<double>(noisyCounts[b]),
+                    static_cast<double>(yAxisMax) - stackBase);
+                if (noisyDisplay > 0) {
+                    double noisyBarH = (noisyDisplay / yAxisMax) * chartH;
+                    double by = cy + chartH - (stackBase / yAxisMax) * chartH - noisyBarH;
+                    svg << "<rect x=\"" << bx + 0.5 << "\" y=\"" << by
+                        << "\" width=\"" << barW - 1 << "\" height=\"" << noisyBarH
+                        << "\" fill=\"#e67e22\" fill-opacity=\"0.7\">"
+                        << "<title>[" << std::setprecision(4) << rangeStart
+                        << ", " << rangeEnd << "): clean=" << cleanCounts[b]
+                        << " noisy=" << noisyCounts[b] << "</title></rect>\n";
+                }
+            }
+
+            // Annotate clipped bars
+            if (clipped) {
+                double topY = cy; // top of chart
+                svg << "<text x=\"" << bx + barW / 2.0 << "\" y=\"" << topY - 2
+                    << "\" text-anchor=\"middle\" class=\"clipped\">"
+                    << total << "</text>\n";
+            }
+        }
+
+        // X-axis labels
+        for (int t = 0; t <= 2; ++t) {
+            double val = minVal + (maxVal - minVal) * t / 2.0;
+            double xPos = cx + static_cast<double>(chartW) * t / 2.0;
+            svg << "<text x=\"" << xPos << "\" y=\"" << cy + chartH + 12
+                << "\" text-anchor=\"middle\" class=\"x-tick\">"
+                << std::setprecision(4) << val << "</text>\n";
+        }
+
+        // X label
+        svg << "<text x=\"" << cx + chartW / 2 << "\" y=\"" << cy + chartH + 25
+            << "\" text-anchor=\"middle\" class=\"axis-label\">"
+            << "SSD Between my and Daniels R Peaks (s)</text>\n";
     }
 
-    out << "=== R-Peak Count Summary (All Files) ===\n";
-    out << "\t\t\t\tR Peaks (.bin)\tR Peaks (.mat)\tDiff\tBins w/ same R index\t"
-        << "Total Bins\t% Bins w/ same R index\tSSD Mean\tSSD Std\n";
-
-    out << "All Files Sum\t\t\t"
-        << sumBin << "\t\t" << sumMat << "\t\t" << (sumMat - sumBin) << "\t\t"
-        << sumZeroSSD << "\t\t"
-        << sumBinsBin << "\t\t"
-        << std::fixed << std::setprecision(4)
-        << static_cast<double>(sumZeroSSD) / sumBinsBin << "\n\n";
-
-    for (const auto& r : results) {
-        out << "Mesa ID=" << r.id << "\t"
-            << r.rPeaksBin << "\t\t" << r.rPeaksMat << "\t\t"
-            << (r.rPeaksMat - r.rPeaksBin) << "\t\t"
-            << r.binsWithZeroSSD << "\t\t"
-            << r.binCountBin << "\t\t"
-            << std::fixed << std::setprecision(4)
-            << static_cast<double>(r.binsWithZeroSSD) / r.binCountBin << "\t\t"
-            << r.ssdMean << "\t\t" << r.ssdStd << "\n";
-    }
+    svg << "</svg>\n";
 }
 
 // ============================================================================
@@ -491,7 +808,7 @@ int main() {
             allMatData.push_back(matData[i]);
         }
 
-        std::cout << "Comparison complete for: " << id << "\n";
+        std::cout << "  Done: " << id << "\n";
     }
 
     generateSVGPlot("ALL_ecg_comparison.svg", allBinData, allMatData, "R-Peak Count (All Files)", rPeakCount);
@@ -501,5 +818,6 @@ int main() {
 
     writeAllFilesSummary(results);
 
+    std::cout << "\nAll comparisons complete. See allfiles_ssd_histograms.svg for summary.\n";
     return 0;
 }

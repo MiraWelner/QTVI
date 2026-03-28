@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -21,7 +21,7 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{0f54896a-b927-4d99-a6b2-19b0a04a8348}</ProjectGuid>
+    <ProjectGuid>{d1799e60-47f1-4893-bd6a-27e39ad6b2c2}</ProjectGuid>
     <RootNamespace>My5generatetemplates</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
@@ -44,7 +44,6 @@
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
-    <VCToolsVersion>14.50.35717</VCToolsVersion>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
@@ -71,14 +70,6 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <PropertyGroup Label="Vcpkg">
-    <VcpkgEnabled>true</VcpkgEnabled>
-    <VcpkgManifestInstall>true</VcpkgManifestInstall>
-  </PropertyGroup>
-  <PropertyGroup Label="Vcpkg" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <VcpkgInstalledDir>D:\vcpkg</VcpkgInstalledDir>
-    <VcpkgUseStatic>true</VcpkgUseStatic>
-  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
@@ -114,9 +105,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <LanguageStandard_C>stdc17</LanguageStandard_C>
       <OpenMPSupport>true</OpenMPSupport>
-      <AdditionalIncludeDirectories>D:\USERS\MiraWelner\QTVI\QTVI-refactor\5_generate_templates\eigen-5.0.1;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -140,10 +129,22 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="5_generate_templates.cpp" />
-    <ClCompile Include="load_config.cpp" />
+    <ClCompile Include="StatsUtils.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="load_config.hpp" />
+    <ClInclude Include="AlignWaves.hpp" />
+    <ClInclude Include="binfile_handling.h" />
+    <ClInclude Include="CombineTemplatesGraph.hpp" />
+    <ClInclude Include="CreateEcgTemplates.hpp" />
+    <ClInclude Include="CreatePPGTemplates.hpp" />
+    <ClInclude Include="EnsembleTemplate.hpp" />
+    <ClInclude Include="find_foot_pulseox.hpp" />
+    <ClInclude Include="GenerateTemplates.hpp" />
+    <ClInclude Include="PeakFinder.h" />
+    <ClInclude Include="SignalProcessingTypes.h" />
+    <ClInclude Include="StatsUtils.h" />
+    <ClInclude Include="TemplateTypes.hpp" />
+    <ClInclude Include="WaveDiff.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
