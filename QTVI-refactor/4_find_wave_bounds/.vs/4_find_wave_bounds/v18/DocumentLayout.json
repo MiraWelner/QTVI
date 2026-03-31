@@ -15,92 +15,12 @@
       "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:binfile_handling.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\JoinedRR.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:JoinedRR.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\JoinedRR.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:JoinedRR.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\SegmentPPG.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:SegmentPPG.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\SegmentPPG.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:SegmentPPG.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
       "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\RunLength.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:RunLength.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\RRSimpleSquared.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:RRSimpleSquared.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\RRsimpleSquared.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:RRsimpleSquared.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\readProps.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:readProps.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\readProps.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:readProps.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
       "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\README.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}",
       "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:README.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\PeakFinder.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:PeakFinder.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\PeakFinder.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:PeakFinder.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pan_tompkin.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:pan_tompkin.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pan_tompkin.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:pan_tompkin.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pairRtoPPGBeat.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:pairRtoPPGBeat.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pairRtoPPGBeat.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:pairRtoPPGBeat.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\nanfastsmooth.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:nanfastsmooth.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\nanfastsmooth.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:nanfastsmooth.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\FilterUtils.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:FilterUtils.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\FilterUtils.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:FilterUtils.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\diff2.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:diff2.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\diff2.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:diff2.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\config.csv||{8B382828-6202-11D1-8870-0000F87579D2}",
@@ -113,6 +33,90 @@
     {
       "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecgLms.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:ecgLms.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\JoinedRR.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:JoinedRR.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\SegmentPPG.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:SegmentPPG.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\RRSimpleSquared.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:RRSimpleSquared.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\readProps.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:readProps.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\readProps.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:readProps.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\PeakFinder.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:PeakFinder.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\PeakFinder.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:PeakFinder.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\SegmentPPG.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:SegmentPPG.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pan_tompkin.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:pan_tompkin.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pan_tompkin.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:pan_tompkin.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\RRsimpleSquared.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:RRsimpleSquared.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pairRtoPPGBeat.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:pairRtoPPGBeat.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pairRtoPPGBeat.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:pairRtoPPGBeat.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\nanfastsmooth.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:nanfastsmooth.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\nanfastsmooth.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:nanfastsmooth.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\diff2.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:diff2.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\diff2.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:diff2.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\FilterUtils.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:FilterUtils.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\FilterUtils.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:FilterUtils.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecglaux.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:ecglaux.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\JoinedRR.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:JoinedRR.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
   "DocumentGroupContainers": [
@@ -136,7 +140,7 @@
               "RelativeDocumentMoniker": "create_ecg_ppg_pairs.hpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\create_ecg_ppg_pairs.hpp",
               "RelativeToolTip": "create_ecg_ppg_pairs.hpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAOMAAAABAAAAAAAAAA==",
+              "ViewState": "AgIAACcAAAAAAAAAAAAcwFcAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
               "WhenOpened": "2026-03-23T17:39:18.162Z"
             },
@@ -148,7 +152,7 @@
               "RelativeDocumentMoniker": "main.cpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\main.cpp",
               "RelativeToolTip": "main.cpp",
-              "ViewState": "AgIAAM0AAAAAAAAAAAAtwPYAAAABAAAAAAAAAA==",
+              "ViewState": "AgIAAEsAAAAAAAAAAAAAAMAAAAApAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-03-17T23:28:35.561Z",
               "EditorCaption": ""
@@ -161,13 +165,13 @@
               "RelativeDocumentMoniker": "binfile_handling.h",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\binfile_handling.h",
               "RelativeToolTip": "binfile_handling.h",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAEUAAABkAAAAAAAAAA==",
+              "ViewState": "AgIAABsAAAAAAAAAAAAcwDcAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
               "WhenOpened": "2026-03-23T21:05:01.08Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 26,
+              "DocumentIndex": 6,
               "Title": "rpeakdetect.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\rpeakdetect.hpp",
               "RelativeDocumentMoniker": "rpeakdetect.hpp",
@@ -179,7 +183,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 3,
+              "DocumentIndex": 8,
               "Title": "JoinedRR.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\JoinedRR.cpp",
               "RelativeDocumentMoniker": "JoinedRR.cpp",
@@ -191,7 +195,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 5,
+              "DocumentIndex": 9,
               "Title": "SegmentPPG.h",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\SegmentPPG.h",
               "RelativeDocumentMoniker": "SegmentPPG.h",
@@ -203,7 +207,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 8,
+              "DocumentIndex": 10,
               "Title": "RRSimpleSquared.h",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\RRSimpleSquared.h",
               "RelativeDocumentMoniker": "RRSimpleSquared.h",
@@ -215,7 +219,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 10,
+              "DocumentIndex": 11,
               "Title": "readProps.h",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\readProps.h",
               "RelativeDocumentMoniker": "readProps.h",
@@ -227,7 +231,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 11,
+              "DocumentIndex": 12,
               "Title": "readProps.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\readProps.cpp",
               "RelativeDocumentMoniker": "readProps.cpp",
@@ -239,7 +243,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 7,
+              "DocumentIndex": 3,
               "Title": "RunLength.h",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\RunLength.h",
               "RelativeDocumentMoniker": "RunLength.h",
@@ -251,7 +255,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 12,
+              "DocumentIndex": 4,
               "Title": "README.md",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\README.md",
               "RelativeDocumentMoniker": "README.md",
@@ -287,7 +291,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 6,
+              "DocumentIndex": 15,
               "Title": "SegmentPPG.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\SegmentPPG.cpp",
               "RelativeDocumentMoniker": "SegmentPPG.cpp",
@@ -299,7 +303,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 15,
+              "DocumentIndex": 16,
               "Title": "pan_tompkin.h",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pan_tompkin.h",
               "RelativeDocumentMoniker": "pan_tompkin.h",
@@ -311,7 +315,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 16,
+              "DocumentIndex": 17,
               "Title": "pan_tompkin.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pan_tompkin.cpp",
               "RelativeDocumentMoniker": "pan_tompkin.cpp",
@@ -323,7 +327,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 9,
+              "DocumentIndex": 18,
               "Title": "RRsimpleSquared.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\RRsimpleSquared.cpp",
               "RelativeDocumentMoniker": "RRsimpleSquared.cpp",
@@ -335,7 +339,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 17,
+              "DocumentIndex": 19,
               "Title": "pairRtoPPGBeat.h",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pairRtoPPGBeat.h",
               "RelativeDocumentMoniker": "pairRtoPPGBeat.h",
@@ -347,7 +351,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 18,
+              "DocumentIndex": 20,
               "Title": "pairRtoPPGBeat.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\pairRtoPPGBeat.cpp",
               "RelativeDocumentMoniker": "pairRtoPPGBeat.cpp",
@@ -359,7 +363,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 19,
+              "DocumentIndex": 21,
               "Title": "nanfastsmooth.h",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\nanfastsmooth.h",
               "RelativeDocumentMoniker": "nanfastsmooth.h",
@@ -371,7 +375,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 20,
+              "DocumentIndex": 22,
               "Title": "nanfastsmooth.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\nanfastsmooth.cpp",
               "RelativeDocumentMoniker": "nanfastsmooth.cpp",
@@ -407,7 +411,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 25,
+              "DocumentIndex": 5,
               "Title": "config.csv",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\config.csv",
               "RelativeDocumentMoniker": "config.csv",
@@ -419,7 +423,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 22,
+              "DocumentIndex": 25,
               "Title": "FilterUtils.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\FilterUtils.cpp",
               "RelativeDocumentMoniker": "FilterUtils.cpp",
@@ -431,7 +435,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 21,
+              "DocumentIndex": 26,
               "Title": "FilterUtils.h",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\FilterUtils.h",
               "RelativeDocumentMoniker": "FilterUtils.h",
@@ -445,7 +449,7 @@
         },
         {
           "DockedWidth": 545,
-          "SelectedChildIndex": 1,
+          "SelectedChildIndex": 5,
           "Children": [
             {
               "$type": "Bookmark",
@@ -453,7 +457,18 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 4,
+              "DocumentIndex": 27,
+              "Title": "ecglaux.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecglaux.cpp",
+              "RelativeDocumentMoniker": "ecglaux.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecglaux.cpp",
+              "RelativeToolTip": "ecglaux.cpp",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-03-30T18:48:09.64Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 28,
               "Title": "JoinedRR.h",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\JoinedRR.h",
               "RelativeDocumentMoniker": "JoinedRR.h",
@@ -461,8 +476,7 @@
               "RelativeToolTip": "JoinedRR.h",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAgAAAAPAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-20T19:39:08.751Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-20T19:39:08.751Z"
             },
             {
               "$type": "Bookmark",
@@ -474,7 +488,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 27,
+              "DocumentIndex": 7,
               "Title": "ecgLms.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecgLms.hpp",
               "RelativeDocumentMoniker": "ecgLms.hpp",

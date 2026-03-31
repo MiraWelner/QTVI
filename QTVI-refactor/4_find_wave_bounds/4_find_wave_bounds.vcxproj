@@ -115,6 +115,7 @@
       <LanguageStandard>stdcpp17</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <OpenMPSupport>true</OpenMPSupport>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -124,43 +125,28 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="bandpass.cpp" />
-    <ClCompile Include="diff2.cpp" />
-    <ClCompile Include="ecglaux.cpp" />
-    <ClCompile Include="FilterUtils.cpp" />
-    <ClCompile Include="JoinedRR.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="nanfastsmooth.cpp" />
-    <ClCompile Include="pairRtoPPGBeat.cpp" />
-    <ClCompile Include="pan_tompkin.cpp" />
-    <ClCompile Include="PeakFinder.cpp" />
-    <ClCompile Include="readProps.cpp" />
-    <ClCompile Include="RRsimpleSquared.cpp" />
-    <ClCompile Include="SegmentPPG.cpp" />
-    <ClCompile Include="StatsUtils.cpp" />
-    <ClCompile Include="stdoutlier.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="bandpass.h" />
+    <ClInclude Include="bandpass.hpp" />
     <ClInclude Include="binfile_handling.h" />
     <ClInclude Include="create_ecg_ppg_pairs.hpp" />
-    <ClInclude Include="diff2.h" />
-    <ClInclude Include="ecglaux.h" />
+    <ClInclude Include="diff2.hpp" />
+    <ClInclude Include="ecglaux.hpp" />
     <ClInclude Include="ecgLms.hpp" />
-    <ClInclude Include="FilterUtils.h" />
-    <ClInclude Include="JoinedRR.h" />
-    <ClInclude Include="nanfastsmooth.h" />
-    <ClInclude Include="pairRtoPPGBeat.h" />
-    <ClInclude Include="pan_tompkin.h" />
-    <ClInclude Include="PeakFinder.h" />
-    <ClInclude Include="readProps.h" />
+    <ClInclude Include="FilterUtils.hpp" />
+    <ClInclude Include="JoinedRR.hpp" />
+    <ClInclude Include="nanfastsmooth.hpp" />
+    <ClInclude Include="pairRtoPPGBeat.hpp" />
+    <ClInclude Include="pan_tompkin.hpp" />
+    <ClInclude Include="PeakFinder.hpp" />
     <ClInclude Include="rpeakdetect.hpp" />
-    <ClInclude Include="RRSimpleSquared.h" />
+    <ClInclude Include="RRSimpleSquared.hpp" />
     <ClInclude Include="RunLength.h" />
-    <ClInclude Include="SegmentPPG.h" />
+    <ClInclude Include="SegmentPPG.hpp" />
     <ClInclude Include="SignalProcessingTypes.h" />
-    <ClInclude Include="StatsUtils.h" />
-    <ClInclude Include="stdoutlier.h" />
+    <ClInclude Include="StatsUtils.hpp" />
+    <ClInclude Include="stdoutlier.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

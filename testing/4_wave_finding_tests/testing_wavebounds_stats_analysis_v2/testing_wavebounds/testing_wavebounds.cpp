@@ -1,283 +1,269 @@
+/**
+ * @file   compare_wave_bounds.cpp
+ * @brief  Compare wave bound outputs between C++ (_wave_markings.bin)
+ *         and MATLAB (_wave_data.mat). Only compares raw (ch1) ECG.
+ *         Outputs per-file CSVs and a summary CSV.
+ *
+ * @author Mira Welner
+ * @date   2026-03-31
+ */
+
 #include <iostream>
-#include <vector>
-#include <string>
 #include <fstream>
-#include <matio.h>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <filesystem>
+#include <cstdint>
 #include <cmath>
 #include <algorithm>
-#include <iomanip>
 #include <numeric>
-#include <cstdint>
-#include <functional>
-#include <sstream>
+#include <iomanip>
+
+#include <matio.h>
+
+ // ============================================================================
+ // Config
+ // ============================================================================
+
+static const std::string BIN_DIR =
+"D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\4_wave_bound_files\\mesa_files\\";
+static const std::string MAT_DIR =
+"D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\4_wave_bound_files\\matlab\\";
+static const std::string OUTPUT_DIR =
+"D:\\USERS\\MiraWelner\\QTVI\\testing\\4_wave_bounds\\results\\";
+
+static constexpr double BIN_SR = 2000.0;
+static constexpr double MAT_SR = 256.0;
 
 // ============================================================================
 // Data structures
 // ============================================================================
 
-struct ComparisonData {
-    double ecgSamplingRate = 0.0;
-    double ppgSamplingRate = 0.0;
-    std::vector<double> ecgRIndex;
-    std::vector<double> ecgRIndex2;
-    std::vector<double> ecgRIndex3;
-    std::vector<double> ppgMaxAmps;
-    std::vector<double> ppgMinAmps;
+struct BinData {
+    std::vector<size_t> ecgRIndex;
+    std::vector<size_t> ppgMaxAmps;
+    std::vector<size_t> ppgMinAmps;
     std::vector<double> ppgSignal;
     std::vector<double> ecgSignal;
-    std::vector<double> ecgSignal2;
-    std::vector<double> ecgSignal3;
-    bool ecg1_noisy = false;
-    bool ecg2_noisy = false;
-    bool ecg3_noisy = false;
-    std::vector<std::pair<double, double>> pairs;
+    std::vector<std::vector<double>> pairs;
+    std::vector<std::pair<uint64_t, uint64_t>> ppg_bin_indexs;
+    std::vector<std::pair<uint64_t, uint64_t>> ecg_bin_indexs;
+    bool bad_segment = false;
 };
 
-struct DatasetStats {
-    double mean = 0.0;
-    double stdDev = 0.0;
-    long long total = 0;
+struct MatBinData {
+    std::vector<size_t> ecgRIndex;
+    std::vector<size_t> ppgMaxAmps;
+    std::vector<size_t> ppgMinAmps;
+    size_t pairCount = 0;
+    double ecgSamplingRate = 0.0;
+    double ppgSamplingRate = 0.0;
+};
+
+struct PerBinResult {
+    int bin;
+    size_t rPeaksBin;
+    size_t rPeaksMat;
+    size_t ppgMinBin;
+    size_t ppgMinMat;
+    double ecg_ssd_seconds;
+    double ppg_ssd_seconds;
 };
 
 struct FileResult {
     std::string id;
-    long long rPeaksBin = 0;
-    long long rPeaksMat = 0;
-    int binCountBin = 0;
-    int binCountMat = 0;
-    int noisyBins = 0;
-    int cleanBins = 0;
-    size_t totalBeatsBin = 0;
-    size_t totalBeatsMat = 0;
-    double timeSsdMean = 0.0;
-    std::vector<double> perBinSsd;       // clean bins
-    std::vector<double> perBinSsdNoisy;  // noisy bins
+    int totalBins;
+    std::vector<PerBinResult> bins;
 };
 
 // ============================================================================
-// Index-to-time conversion
+// Statistics
 // ============================================================================
 
-std::vector<double> indicesToSeconds(const std::vector<double>& indices, double sampleRate) {
+struct Stats {
+    double mean = 0.0;
+    double median = 0.0;
+    double std_dev = 0.0;
+    double sum = 0.0;
+    size_t count = 0;
+};
+
+Stats computeStats(const std::vector<double>& vals) {
+    Stats s;
+    if (vals.empty()) return s;
+    std::vector<double> sorted = vals;
+    std::sort(sorted.begin(), sorted.end());
+    s.count = sorted.size();
+    for (double v : sorted) s.sum += v;
+    s.mean = s.sum / s.count;
+    double sumSq = 0.0;
+    for (double v : sorted) sumSq += (v - s.mean) * (v - s.mean);
+    s.std_dev = s.count > 1 ? std::sqrt(sumSq / (s.count - 1)) : 0.0;
+    s.median = (s.count % 2 == 0)
+        ? (sorted[s.count / 2 - 1] + sorted[s.count / 2]) / 2.0
+        : sorted[s.count / 2];
+    return s;
+}
+
+// ============================================================================
+// Time-based SSD
+// ============================================================================
+
+std::vector<double> indicesToSeconds(const std::vector<size_t>& indices, double sr) {
     std::vector<double> times(indices.size());
-    for (size_t i = 0; i < indices.size(); i++) {
-        times[i] = (indices[i] - 1.0) / sampleRate;
-    }
+    for (size_t i = 0; i < indices.size(); ++i)
+        times[i] = static_cast<double>(indices[i]) / sr;
     return times;
 }
 
-// ============================================================================
-// Statistics helpers
-// ============================================================================
-
-template <typename Projection>
-DatasetStats calculateStats(const std::vector<ComparisonData>& data, Projection proj) {
-    if (data.empty()) return {};
-
-    double sum = 0.0, sumSq = 0.0;
-    for (const auto& item : data) {
-        double val = static_cast<double>(proj(item));
-        sum += val;
-        sumSq += val * val;
-    }
-
-    double n = static_cast<double>(data.size());
-    double mean = sum / n;
-    double variance = std::max(0.0, (sumSq / n) - (mean * mean));
-    return { mean, std::sqrt(variance), static_cast<long long>(sum) };
-}
-
-// ============================================================================
-// Time-based R-peak comparison
-// ============================================================================
-
-struct TimedSSDResult {
-    double ssd_seconds;
-    size_t matchedCount;
-    size_t unmatchedBin;
-    size_t unmatchedMat;
-    double binRMeanSec;
-    double binRStdSec;
-    double matRMeanSec;
-    double matRStdSec;
-};
-
-TimedSSDResult computeTimedRPeakSSD(
-    const ComparisonData& bin, double binSR,
-    const ComparisonData& mat, double matSR,
+double computeSSD(const std::vector<size_t>& binIdx, double binSR,
+    const std::vector<size_t>& matIdx, double matSR,
     double toleranceSec = 0.150)
 {
-    auto binTimes = indicesToSeconds(bin.ecgRIndex, binSR);
-    auto matTimes = indicesToSeconds(mat.ecgRIndex, matSR);
+    auto binTimes = indicesToSeconds(binIdx, binSR);
+    auto matTimes = indicesToSeconds(matIdx, matSR);
 
-    TimedSSDResult result = { 0.0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0 };
-
-    auto meanStd = [](const std::vector<double>& times) -> std::pair<double, double> {
-        if (times.empty()) return { 0.0, 0.0 };
-        double sum = 0.0, sumSq = 0.0;
-        for (double t : times) { sum += t; sumSq += t * t; }
-        double n = static_cast<double>(times.size());
-        double mean = sum / n;
-        double var = (n > 1) ? (sumSq - sum * sum / n) / (n - 1) : 0.0;
-        return { mean, std::sqrt(std::max(0.0, var)) };
-        };
-
-    auto [binMean, binStd] = meanStd(binTimes);
-    auto [matMean, matStd] = meanStd(matTimes);
-    result.binRMeanSec = binMean;
-    result.binRStdSec = binStd;
-    result.matRMeanSec = matMean;
-    result.matRStdSec = matStd;
-
-    if (binTimes.empty() && matTimes.empty()) {
-        return result;
-    }
-    if (binTimes.empty() || matTimes.empty()) {
-        result.unmatchedBin = binTimes.size();
-        result.unmatchedMat = matTimes.size();
-        double duration = std::max(
-            bin.ecgSignal.empty() ? 0.0 : (double)bin.ecgSignal.size() / binSR,
-            mat.ecgSignal.empty() ? 0.0 : (double)mat.ecgSignal.size() / matSR);
-        result.ssd_seconds = (result.unmatchedBin + result.unmatchedMat) * duration * duration;
-        return result;
-    }
+    if (binTimes.empty() || matTimes.empty()) return 0.0;
 
     std::vector<bool> matUsed(matTimes.size(), false);
     double sumSqDiff = 0.0;
-    size_t matched = 0;
 
-    for (size_t i = 0; i < binTimes.size(); i++) {
+    for (size_t i = 0; i < binTimes.size(); ++i) {
         double bestDiff = toleranceSec + 1.0;
         int bestJ = -1;
-
-        for (size_t j = 0; j < matTimes.size(); j++) {
+        for (size_t j = 0; j < matTimes.size(); ++j) {
             if (matUsed[j]) continue;
             double diff = std::abs(binTimes[i] - matTimes[j]);
-            if (diff < bestDiff) {
-                bestDiff = diff;
-                bestJ = static_cast<int>(j);
-            }
+            if (diff < bestDiff) { bestDiff = diff; bestJ = static_cast<int>(j); }
             if (matTimes[j] > binTimes[i] + toleranceSec) break;
         }
-
         if (bestJ >= 0 && bestDiff <= toleranceSec) {
             matUsed[bestJ] = true;
             double diff = binTimes[i] - matTimes[bestJ];
             sumSqDiff += diff * diff;
-            matched++;
         }
     }
 
-    size_t unmatchedMat = 0;
-    for (bool u : matUsed) if (!u) unmatchedMat++;
-
-    double duration = std::max(
-        bin.ecgSignal.empty() ? 0.0 : (double)bin.ecgSignal.size() / binSR,
-        mat.ecgSignal.empty() ? 0.0 : (double)mat.ecgSignal.size() / matSR);
-    size_t unmatchedBin = binTimes.size() - matched;
-    double penalty = (unmatchedBin + unmatchedMat) * duration * duration;
-
-    result.ssd_seconds = sumSqDiff + penalty;
-    result.matchedCount = matched;
-    result.unmatchedBin = unmatchedBin;
-    result.unmatchedMat = unmatchedMat;
-
-    return result;
+    return sumSqDiff;
 }
 
 // ============================================================================
-// Binary file I/O
+// Read C++ _wave_markings.bin
 // ============================================================================
 
-void readInt64VecAsDouble(std::ifstream& file, std::vector<double>& vec) {
-    uint64_t count = 0;
-    if (!file.read(reinterpret_cast<char*>(&count), 8)) return;
-    vec.resize(count);
-    for (uint64_t i = 0; i < count; ++i) {
-        int64_t val;
-        file.read(reinterpret_cast<char*>(&val), 8);
-        vec[i] = static_cast<double>(val);
-    }
-}
-
-void readDoubleVec(std::ifstream& file, std::vector<double>& vec) {
-    uint64_t count = 0;
-    if (!file.read(reinterpret_cast<char*>(&count), 8)) return;
-    vec.resize(count);
-    if (count > 0)
-        file.read(reinterpret_cast<char*>(vec.data()), count * 8);
-}
-
-std::vector<ComparisonData> readAllFromBin(const std::string& path) {
-    std::vector<ComparisonData> results;
+std::vector<BinData> readBinFile(const std::string& path) {
+    std::vector<BinData> results;
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) return results;
 
+    constexpr uint64_t MAX_SANE = 50000000;
+
     uint64_t numBins = 0;
-    if (!file.read(reinterpret_cast<char*>(&numBins), 8)) return results;
+    file.read(reinterpret_cast<char*>(&numBins), 8);
+    if (numBins > 100000) return results;
     results.resize(numBins);
 
+    auto readIdx = [&](std::vector<size_t>& v) {
+        uint64_t sz = 0;
+        if (!file.read(reinterpret_cast<char*>(&sz), 8)) { v.clear(); return; }
+        if (sz > MAX_SANE) { v.clear(); return; }
+        v.resize(sz);
+        if (sz > 0) {
+            std::vector<uint64_t> tmp(sz);
+            file.read(reinterpret_cast<char*>(tmp.data()), sz * 8);
+            for (uint64_t j = 0; j < sz; ++j)
+                v[j] = static_cast<size_t>(tmp[j] > 0 ? tmp[j] - 1 : 0);
+        }
+        };
+
+    auto skipIdx = [&]() {
+        uint64_t sz = 0;
+        if (!file.read(reinterpret_cast<char*>(&sz), 8)) return;
+        if (sz > MAX_SANE) return;
+        file.seekg(sz * 8, std::ios::cur);
+        };
+
+    auto readSignal = [&](std::vector<double>& sig) {
+        uint64_t sz = 0;
+        if (!file.read(reinterpret_cast<char*>(&sz), 8)) { sig.clear(); return; }
+        if (sz > MAX_SANE) { sig.clear(); return; }
+        sig.resize(sz);
+        if (sz > 0) file.read(reinterpret_cast<char*>(sig.data()), sz * 8);
+        };
+
+    auto skipSignal = [&]() {
+        uint64_t sz = 0;
+        if (!file.read(reinterpret_cast<char*>(&sz), 8)) return;
+        if (sz > MAX_SANE) return;
+        file.seekg(sz * 8, std::ios::cur);
+        };
+
+    auto readPairVec = [&](std::vector<std::pair<uint64_t, uint64_t>>& v) {
+        uint64_t sz = 0;
+        if (!file.read(reinterpret_cast<char*>(&sz), 8)) { v.clear(); return; }
+        if (sz > MAX_SANE) { v.clear(); return; }
+        v.resize(sz);
+        if (sz > 0) file.read(reinterpret_cast<char*>(v.data()), sz * 16);
+        };
+
     for (uint64_t i = 0; i < numBins; ++i) {
-        auto& r = results[i];
+        auto& bin = results[i];
 
-        readInt64VecAsDouble(file, r.ecgRIndex);
-        readInt64VecAsDouble(file, r.ecgRIndex2);
-        readInt64VecAsDouble(file, r.ecgRIndex3);
-        readInt64VecAsDouble(file, r.ppgMaxAmps);
-        readInt64VecAsDouble(file, r.ppgMinAmps);
+        readIdx(bin.ecgRIndex);
+        skipIdx(); skipIdx();
+        skipIdx(); skipIdx(); skipIdx();
+        skipIdx(); skipIdx(); skipIdx();
 
-        readDoubleVec(file, r.ppgSignal);
-        readDoubleVec(file, r.ecgSignal);
-        readDoubleVec(file, r.ecgSignal2);
-        readDoubleVec(file, r.ecgSignal3);
+        readIdx(bin.ppgMaxAmps);
+        readIdx(bin.ppgMinAmps);
 
-        // Noise flags
-        uint8_t n1 = 0, n2 = 0, n3 = 0;
-        file.read(reinterpret_cast<char*>(&n1), 1);
-        file.read(reinterpret_cast<char*>(&n2), 1);
-        file.read(reinterpret_cast<char*>(&n3), 1);
-        r.ecg1_noisy = (n1 != 0);
-        r.ecg2_noisy = (n2 != 0);
-        r.ecg3_noisy = (n3 != 0);
+        readSignal(bin.ppgSignal);
+        readSignal(bin.ecgSignal);
+        skipSignal(); skipSignal();
 
-        // Pairs
+        skipSignal(); skipSignal();
+        skipSignal(); skipSignal();
+        skipSignal(); skipSignal();
+
+        uint8_t flags[9] = {};
+        file.read(reinterpret_cast<char*>(flags), 9);
+
         uint64_t numPairs = 0;
-        if (file.read(reinterpret_cast<char*>(&numPairs), 8) && numPairs < 100000) {
-            r.pairs.reserve(numPairs);
+        file.read(reinterpret_cast<char*>(&numPairs), 8);
+        if (numPairs < MAX_SANE && numPairs > 0) {
+            bin.pairs.resize(numPairs);
+            std::vector<int64_t> pairBuf(numPairs * 2);
+            file.read(reinterpret_cast<char*>(pairBuf.data()), numPairs * 16);
             for (uint64_t j = 0; j < numPairs; ++j) {
-                int64_t ppgIdx, ecgIdx;
-                if (!file.read(reinterpret_cast<char*>(&ppgIdx), 8)) break;
-                if (!file.read(reinterpret_cast<char*>(&ecgIdx), 8)) break;
-                r.pairs.push_back({ static_cast<double>(ppgIdx), static_cast<double>(ecgIdx) });
+                bin.pairs[j].resize(2);
+                bin.pairs[j][0] = (pairBuf[j * 2] == -1)
+                    ? -1.0 : static_cast<double>(pairBuf[j * 2] - 1);
+                bin.pairs[j][1] = (pairBuf[j * 2 + 1] == -1)
+                    ? -1.0 : static_cast<double>(pairBuf[j * 2 + 1] - 1);
             }
         }
 
-        r.ecgSamplingRate = 2000.0;
-        r.ppgSamplingRate = 2000.0;
+        readPairVec(bin.ppg_bin_indexs);
+        readPairVec(bin.ecg_bin_indexs);
+
+        bool has_any_ecg = !bin.ecgSignal.empty();
+        bool has_any_peaks = !bin.ecgRIndex.empty();
+        bin.bad_segment = !has_any_ecg || (!has_any_peaks && bin.ppgMinAmps.empty());
     }
     return results;
 }
 
 // ============================================================================
-// MAT file I/O
+// Read MATLAB _wave_data.mat
 // ============================================================================
 
-std::vector<double> getMatField(matvar_t* cell, const std::string& fieldName) {
+std::vector<double> getMatField(matvar_t* cell, const char* name) {
     std::vector<double> vec;
-    matvar_t* field = Mat_VarGetStructFieldByName(cell, fieldName.c_str(), 0);
-
-    if (!field && fieldName == "ppgMaxAmps") {
-        field = Mat_VarGetStructFieldByName(cell, "ppgMaxIdx", 0);
-        if (!field) field = Mat_VarGetStructFieldByName(cell, "maxAmps", 0);
-    }
-    if (!field && fieldName == "ppgMinAmps")
-        field = Mat_VarGetStructFieldByName(cell, "ppgMinIdx", 0);
-
+    matvar_t* field = Mat_VarGetStructFieldByName(cell, name, 0);
     if (!field || !field->data) return vec;
-
     size_t n = 1;
-    for (int i = 0; i < field->rank; ++i) n *= field->dims[i];
-
+    for (int d = 0; d < field->rank; ++d) n *= field->dims[d];
     vec.reserve(n);
     for (size_t j = 0; j < n; ++j) {
         if (field->class_type == MAT_C_DOUBLE)
@@ -286,20 +272,23 @@ std::vector<double> getMatField(matvar_t* cell, const std::string& fieldName) {
             vec.push_back(static_cast<double>(static_cast<uint64_t*>(field->data)[j]));
         else if (field->class_type == MAT_C_INT64)
             vec.push_back(static_cast<double>(static_cast<int64_t*>(field->data)[j]));
+        else if (field->class_type == MAT_C_SINGLE)
+            vec.push_back(static_cast<double>(static_cast<float*>(field->data)[j]));
+        else if (field->class_type == MAT_C_INT32)
+            vec.push_back(static_cast<double>(static_cast<int32_t*>(field->data)[j]));
+        else if (field->class_type == MAT_C_UINT32)
+            vec.push_back(static_cast<double>(static_cast<uint32_t*>(field->data)[j]));
     }
     return vec;
 }
 
-std::vector<ComparisonData> readAllFromMat(const std::string& path) {
-    std::vector<ComparisonData> results;
+std::vector<MatBinData> readMatFile(const std::string& path) {
+    std::vector<MatBinData> results;
     mat_t* matfp = Mat_Open(path.c_str(), MAT_ACC_RDONLY);
     if (!matfp) return results;
 
     matvar_t* wave_data = Mat_VarRead(matfp, "wave_data");
-    if (!wave_data) {
-        Mat_Close(matfp);
-        return results;
-    }
+    if (!wave_data) { Mat_Close(matfp); return results; }
 
     size_t numBins = wave_data->dims[0] * wave_data->dims[1];
     results.resize(numBins);
@@ -307,27 +296,28 @@ std::vector<ComparisonData> readAllFromMat(const std::string& path) {
     for (size_t i = 0; i < numBins; ++i) {
         matvar_t* cell = Mat_VarGetCell(wave_data, i);
         if (!cell) continue;
-
         auto& r = results[i];
+
         auto eRate = getMatField(cell, "ecgSamplingRate");
-        r.ecgSamplingRate = eRate.empty() ? 0.0 : eRate[0];
-
+        r.ecgSamplingRate = eRate.empty() ? MAT_SR : eRate[0];
         auto pRate = getMatField(cell, "ppgSamplingRate");
-        r.ppgSamplingRate = pRate.empty() ? 0.0 : pRate[0];
+        r.ppgSamplingRate = pRate.empty() ? MAT_SR : pRate[0];
 
-        r.ecgRIndex = getMatField(cell, "ecgRIndex");
-        r.ppgMaxAmps = getMatField(cell, "ppgMaxAmps");
-        r.ppgMinAmps = getMatField(cell, "ppgMinAmps");
-        r.ppgSignal = getMatField(cell, "ppgSignal");
-        r.ecgSignal = getMatField(cell, "ecgSignal");
+        auto rIdx = getMatField(cell, "ecgRIndex");
+        r.ecgRIndex.reserve(rIdx.size());
+        for (double v : rIdx) r.ecgRIndex.push_back(static_cast<size_t>(v));
+
+        auto maxA = getMatField(cell, "ppgMaxAmps");
+        r.ppgMaxAmps.reserve(maxA.size());
+        for (double v : maxA) r.ppgMaxAmps.push_back(static_cast<size_t>(v));
+
+        auto minA = getMatField(cell, "ppgMinAmps");
+        r.ppgMinAmps.reserve(minA.size());
+        for (double v : minA) r.ppgMinAmps.push_back(static_cast<size_t>(v));
 
         matvar_t* pair_var = Mat_VarGetStructFieldByName(cell, "pairs", 0);
-        if (pair_var && pair_var->data && pair_var->rank == 2) {
-            size_t rows = pair_var->dims[0];
-            double* data = static_cast<double*>(pair_var->data);
-            for (size_t row = 0; row < rows; ++row)
-                r.pairs.push_back({ data[row], data[row + rows] });
-        }
+        if (pair_var && pair_var->data && pair_var->rank == 2)
+            r.pairCount = pair_var->dims[0];
     }
 
     Mat_VarFree(wave_data);
@@ -336,488 +326,397 @@ std::vector<ComparisonData> readAllFromMat(const std::string& path) {
 }
 
 // ============================================================================
-// SVG generation
-// ============================================================================
-
-void generateSVGPlot(const std::string& filename,
-    const std::vector<ComparisonData>& binData,
-    const std::vector<ComparisonData>& matData,
-    const std::string& label,
-    std::function<double(const ComparisonData&)> selector) {
-
-    size_t n = std::min(binData.size(), matData.size());
-    if (n == 0) return;
-
-    double maxVal = 0.0;
-    for (size_t i = 0; i < n; ++i)
-        maxVal = std::max({ maxVal, selector(binData[i]), selector(matData[i]) });
-    maxVal = (maxVal == 0.0) ? 10.0 : maxVal * 1.1;
-
-    constexpr int size = 600, padding = 80;
-    constexpr int chartSize = size - padding * 2;
-
-    std::ofstream svg(filename);
-    if (!svg.is_open()) return;
-
-    auto mapX = [&](double v) { return padding + v / maxVal * chartSize; };
-    auto mapY = [&](double v) { return (size - padding) - v / maxVal * chartSize; };
-
-    svg << "<svg width=\"" << size << "\" height=\"" << size
-        << "\" xmlns=\"http://www.w3.org/2000/svg\">\n"
-        << "<rect width=\"100%\" height=\"100%\" fill=\"#fcfcfc\"/>\n";
-
-    svg << "<line x1=\"" << mapX(0) << "\" y1=\"" << mapY(0)
-        << "\" x2=\"" << mapX(maxVal) << "\" y2=\"" << mapY(maxVal)
-        << "\" stroke=\"#999\" stroke-width=\"1\" stroke-dasharray=\"5,5\"/>\n";
-
-    svg << "<line x1=\"" << padding << "\" y1=\"" << (size - padding)
-        << "\" x2=\"" << (size - padding) << "\" y2=\"" << (size - padding)
-        << "\" stroke=\"black\" stroke-width=\"2\"/>\n";
-    svg << "<line x1=\"" << padding << "\" y1=\"" << padding
-        << "\" x2=\"" << padding << "\" y2=\"" << (size - padding)
-        << "\" stroke=\"black\" stroke-width=\"2\"/>\n";
-
-    svg << "<text x=\"" << size / 2 << "\" y=\"" << size - 20
-        << "\" text-anchor=\"middle\" font-family=\"sans-serif\">C++ (2000 Hz) " << label << "</text>\n";
-    svg << "<text x=\"25\" y=\"" << size / 2
-        << "\" text-anchor=\"middle\" transform=\"rotate(-90 25," << size / 2
-        << ")\" font-family=\"sans-serif\">MATLAB (256 Hz) " << label << "</text>\n";
-    svg << "<text x=\"" << size / 2 << "\" y=\"40\" text-anchor=\"middle\" "
-        << "font-weight=\"bold\" font-family=\"sans-serif\">" << label << " Comparison</text>\n";
-
-    for (size_t i = 0; i < n; ++i) {
-        double x = selector(binData[i]);
-        double y = selector(matData[i]);
-        bool noisy = binData[i].ecg1_noisy;
-        const char* color = noisy ? "#cccccc" : (std::abs(x - y) < 0.0001) ? "#3498db" : "#e74c3c";
-        double opacity = noisy ? 0.4 : 0.7;
-
-        svg << "<circle cx=\"" << mapX(x) << "\" cy=\"" << mapY(y)
-            << "\" r=\"3.5\" fill=\"" << color << "\" fill-opacity=\"" << opacity << "\">\n"
-            << "  <title>Bin " << i << (noisy ? " (NOISY)" : "") << " C++: " << x << ", MATLAB: " << y << "</title>\n"
-            << "</circle>\n";
-    }
-
-    svg << "</svg>";
-}
-
-// ============================================================================
-// Per-file comparison
+// Compare one file
 // ============================================================================
 
 FileResult compareFile(const std::string& id,
-    const std::vector<ComparisonData>& binData,
-    const std::vector<ComparisonData>& matData) {
+    const std::vector<BinData>& binData,
+    const std::vector<MatBinData>& matData) {
+    FileResult fr;
+    fr.id = id;
+    fr.totalBins = static_cast<int>(std::min(binData.size(), matData.size()));
 
-    size_t maxBins = std::min(binData.size(), matData.size());
-    std::string outPath = id + ".txt";
-    std::ofstream out(outPath);
-    if (!out.is_open()) {
-        std::cerr << "Failed to open output file: " << outPath << std::endl;
-        return {};
+    for (int i = 0; i < fr.totalBins; ++i) {
+        const auto& b = binData[i];
+        const auto& m = matData[i];
+
+        PerBinResult pbr;
+        pbr.bin = i;
+        pbr.rPeaksBin = b.ecgRIndex.size();
+        pbr.rPeaksMat = m.ecgRIndex.size();
+        pbr.ppgMinBin = b.ppgMinAmps.size();
+        pbr.ppgMinMat = m.ppgMinAmps.size();
+
+        double matEcgSR = m.ecgSamplingRate > 0 ? m.ecgSamplingRate : MAT_SR;
+        double matPpgSR = m.ppgSamplingRate > 0 ? m.ppgSamplingRate : MAT_SR;
+
+        pbr.ecg_ssd_seconds = computeSSD(b.ecgRIndex, BIN_SR, m.ecgRIndex, matEcgSR);
+        pbr.ppg_ssd_seconds = computeSSD(b.ppgMinAmps, BIN_SR, m.ppgMinAmps, matPpgSR);
+
+        fr.bins.push_back(pbr);
     }
-
-    // Separate clean vs noisy bins
-    int noisyCount = 0;
-    for (size_t i = 0; i < maxBins; ++i) {
-        if (binData[i].ecg1_noisy) noisyCount++;
-    }
-    int cleanCount = static_cast<int>(maxBins) - noisyCount;
-
-    // Stats on clean bins only
-    std::vector<ComparisonData> cleanBin, cleanMat;
-    for (size_t i = 0; i < maxBins; ++i) {
-        if (!binData[i].ecg1_noisy) {
-            cleanBin.push_back(binData[i]);
-            cleanMat.push_back(matData[i]);
-        }
-    }
-
-    auto rPeakProj = [](const ComparisonData& c) { return (double)c.ecgRIndex.size(); };
-    auto ppgPeakProj = [](const ComparisonData& c) { return (double)c.ppgMaxAmps.size(); };
-    auto ppgDipProj = [](const ComparisonData& c) { return (double)c.ppgMinAmps.size(); };
-    auto pairProj = [](const ComparisonData& c) { return (double)c.pairs.size(); };
-
-    DatasetStats binR = calculateStats(cleanBin, rPeakProj);
-    DatasetStats matR = calculateStats(cleanMat, rPeakProj);
-    DatasetStats binPPG = calculateStats(cleanBin, ppgPeakProj);
-    DatasetStats matPPG = calculateStats(cleanMat, ppgPeakProj);
-    DatasetStats binDip = calculateStats(cleanBin, ppgDipProj);
-    DatasetStats matDip = calculateStats(cleanMat, ppgDipProj);
-    DatasetStats binPrs = calculateStats(cleanBin, pairProj);
-    DatasetStats matPrs = calculateStats(cleanMat, pairProj);
-
-    size_t totalBeatsBin = 0, totalBeatsMat = 0;
-    std::vector<TimedSSDResult> timedResults(maxBins);
-    std::vector<double> perBinSsd;
-    std::vector<double> perBinSsdNoisy;
-
-    double sumTimeSsd = 0;
-
-    for (size_t i = 0; i < maxBins; ++i) {
-        double binSR = binData[i].ecgSamplingRate;
-        double matSR = matData[i].ecgSamplingRate;
-        if (binSR <= 0) binSR = 2000.0;
-        if (matSR <= 0) matSR = 256.0;
-
-        timedResults[i] = computeTimedRPeakSSD(binData[i], binSR, matData[i], matSR);
-
-        if (!binData[i].ecg1_noisy) {
-            totalBeatsBin += binData[i].ecgRIndex.size();
-            totalBeatsMat += matData[i].ecgRIndex.size();
-            sumTimeSsd += timedResults[i].ssd_seconds;
-            perBinSsd.push_back(timedResults[i].ssd_seconds);
-        }
-        else {
-            perBinSsdNoisy.push_back(timedResults[i].ssd_seconds);
-        }
-    }
-
-    double nClean = static_cast<double>(cleanCount);
-    double timeSsdMean = nClean > 0 ? sumTimeSsd / nClean : 0.0;
-
-    out << "Data taken from MESA file " << id << "\n";
-
-    out << "=== Summary ===\n";
-    out << "Total bins: " << maxBins << "\n";
-    out << "Noisy bins (excluded): " << noisyCount << "\n";
-    out << "Clean bins (used for stats): " << cleanCount << "\n\n";
-
-    out << "--- Time-based R-peak comparison ---\n";
-
-    out << "\t\tTotal in C++\tTotal in MATLAB\tDiff\n";
-    auto writeRow = [&](const char* label, DatasetStats b, DatasetStats m) {
-        out << label << "\t" << b.total << "\t\t" << m.total
-            << "\t\t" << (m.total - b.total) << "\n";
-        };
-    writeRow("R Peaks\t", binR, matR);
-    writeRow("PPG Peaks", binPPG, matPPG);
-    writeRow("PPG Dips", binDip, matDip);
-    writeRow("Pairs\t", binPrs, matPrs);
-    out << "\n";
-
-    out << "bin#\tNoisy\tBeats(C++)\tBeats(MAT)\tMean Beat Time (C++)\tMean Beat Time (MAT)\tSTD Beat Time (C++)\tSTD Beat Time (MAT)\tSum of Squared Differences\n";
-
-    for (size_t i = 0; i < maxBins; ++i) {
-        const auto& tr = timedResults[i];
-        bool noisy = binData[i].ecg1_noisy;
-        out << std::setw(3) << std::setfill('0') << i << std::setfill(' ')
-            << "\t" << (noisy ? "Y" : "N")
-            << "\t" << binData[i].ecgRIndex.size()
-            << "\t\t" << matData[i].ecgRIndex.size()
-            << "\t\t" << std::fixed << std::setprecision(4) << tr.binRMeanSec
-            << "\t\t\t" << tr.matRMeanSec
-            << "\t\t\t" << tr.binRStdSec
-            << "\t\t\t" << tr.matRStdSec
-            << "\t\t\t" << std::setprecision(6) << tr.ssd_seconds
-            << "\n";
-    }
-
-    return { id, binR.total, matR.total,
-             static_cast<int>(binData.size()), static_cast<int>(matData.size()),
-             noisyCount, cleanCount,
-             totalBeatsBin, totalBeatsMat, timeSsdMean,
-             std::move(perBinSsd), std::move(perBinSsdNoisy) };
+    return fr;
 }
 
 // ============================================================================
-// All-files summary: single SVG with one SSD histogram per file
+// Location stats for per-bin CSV
 // ============================================================================
 
-void writeAllFilesSummary(const std::vector<FileResult>& results,
-    int numBuckets = 50)
-{
-    if (results.empty()) return;
+struct LocStats {
+    size_t count = 0;
+    double rate = 0.0;
+    double mean = 0.0;
+    double median = 0.0;
+    double std_dev = 0.0;
+};
 
-    int numFiles = static_cast<int>(results.size());
-    int cols = 3;
-    int rows = (numFiles + cols - 1) / cols;
-
-    constexpr int cellW = 360, cellH = 260;
-    constexpr int padL = 55, padR = 45, padT = 45, padB = 45;
-    int chartW = cellW - padL - padR;
-    int chartH = cellH - padT - padB;
-
-    int svgW = cols * cellW;
-    int svgH = rows * cellH + 50;
-
-    std::ofstream svg("allfiles_ssd_histograms.svg");
-    if (!svg.is_open()) return;
-
-    svg << std::fixed;
-    svg << "<svg width=\"" << svgW << "\" height=\"" << svgH
-        << "\" xmlns=\"http://www.w3.org/2000/svg\">\n";
-    svg << "<style>\n"
-        << "  text { font-family: Consolas, 'Courier New', monospace; }\n"
-        << "  .title { font-size: 16px; font-weight: bold; }\n"
-        << "  .subtitle { font-size: 10px; font-weight: bold; }\n"
-        << "  .stats { font-size: 12px; fill: #555; }\n"
-        << "  .tick { font-size: 10px; }\n"
-        << "  .axis-label { font-size: 12px; }\n"
-        << "  .y-axis-label { font-size: 10px; }\n"
-        << "  .x-tick { font-size: 10px; }\n"
-        << "  .clipped { font-size: 10px; fill: #e74c3c; font-weight: bold; }\n"
-        << "  .empty { font-size: 10px; fill: #999; }\n"
-        << "</style>\n";
-    svg << "<rect width=\"100%\" height=\"100%\" fill=\"#fcfcfc\"/>\n";
-
-    svg << "<text x=\"" << svgW / 2 << "\" y=\"30\" text-anchor=\"middle\" "
-        << "class=\"title\">"
-        << "Per-Bin R-Peak SSD Histograms</text>\n";
-
-    for (int f = 0; f < numFiles; ++f) {
-        const auto& fr = results[f];
-        int col = f % cols;
-        int row = f / cols;
-        int ox = col * cellW;
-        int oy = row * cellH + 50;
-
-        // Subtitle
-        svg << "<text x=\"" << ox + cellW / 2 << "\" y=\"" << oy + 16
-            << "\" text-anchor=\"middle\" class=\"subtitle\">"
-            << fr.id << "</text>\n";
-
-        // Merge clean + noisy for range calculation
-        std::vector<double> allSsd;
-        allSsd.insert(allSsd.end(), fr.perBinSsd.begin(), fr.perBinSsd.end());
-        allSsd.insert(allSsd.end(), fr.perBinSsdNoisy.begin(), fr.perBinSsdNoisy.end());
-
-        if (allSsd.empty()) {
-            svg << "<text x=\"" << ox + cellW / 2 << "\" y=\"" << oy + cellH / 2
-                << "\" text-anchor=\"middle\" class=\"empty\">"
-                << "(no bins)</text>\n";
-            continue;
-        }
-
-        // Stats (on clean bins only, as before)
-        double sum = 0.0, sumSq = 0.0;
-        double nClean = static_cast<double>(fr.perBinSsd.size());
-        for (double v : fr.perBinSsd) { sum += v; sumSq += v * v; }
-        double mean = nClean > 0 ? sum / nClean : 0.0;
-
-        std::vector<double> sorted = fr.perBinSsd;
-        std::sort(sorted.begin(), sorted.end());
-        double median = 0.0;
-        if (!sorted.empty()) {
-            median = (sorted.size() % 2 == 0)
-                ? (sorted[sorted.size() / 2 - 1] + sorted[sorted.size() / 2]) / 2.0
-                : sorted[sorted.size() / 2];
-        }
-
-        svg << "<text x=\"" << ox + cellW / 2 << "\" y=\"" << oy + 28
-            << "\" text-anchor=\"middle\" class=\"stats\">"
-            << "clean=" << std::setprecision(0) << nClean
-            << " noisy=" << fr.perBinSsdNoisy.size()
-            << " mean=" << std::setprecision(4) << mean
-            << " med=" << median << "</text>\n";
-
-        // Histogram range from ALL bins (clean + noisy)
-        std::sort(allSsd.begin(), allSsd.end());
-        double minVal = allSsd.front();
-        double maxVal = allSsd.back();
-        if (maxVal - minVal < 1e-15) maxVal = minVal + 1.0;
-        double bucketWidth = (maxVal - minVal) / numBuckets;
-
-        // Separate counts for clean and noisy
-        std::vector<int> cleanCounts(numBuckets, 0);
-        std::vector<int> noisyCounts(numBuckets, 0);
-
-        for (double v : fr.perBinSsd) {
-            int idx = static_cast<int>((v - minVal) / bucketWidth);
-            if (idx >= numBuckets) idx = numBuckets - 1;
-            cleanCounts[idx]++;
-        }
-        for (double v : fr.perBinSsdNoisy) {
-            int idx = static_cast<int>((v - minVal) / bucketWidth);
-            if (idx >= numBuckets) idx = numBuckets - 1;
-            noisyCounts[idx]++;
-        }
-
-        // Stacked total per bucket
-        std::vector<int> totalCounts(numBuckets);
-        for (int b = 0; b < numBuckets; ++b)
-            totalCounts[b] = cleanCounts[b] + noisyCounts[b];
-
-        int maxCount = *std::max_element(totalCounts.begin(), totalCounts.end());
-        if (maxCount == 0) maxCount = 1;
-
-        // Y-axis cutoff (same logic as before, but on total counts)
-        std::vector<int> sortedCounts = totalCounts;
-        std::sort(sortedCounts.begin(), sortedCounts.end());
-        int yAxisMax = maxCount;
-        for (int k = (int)sortedCounts.size() - 2; k >= 0; --k) {
-            if (sortedCounts[k] < maxCount && sortedCounts[k] > 0) {
-                yAxisMax = static_cast<int>(std::ceil(sortedCounts[k] * 1.2));
-                break;
-            }
-        }
-        if (yAxisMax <= 0) yAxisMax = maxCount;
-
-        int cx = ox + padL;
-        int cy = oy + padT;
-        double barW = static_cast<double>(chartW) / numBuckets;
-
-        // Axes
-        svg << "<line x1=\"" << cx << "\" y1=\"" << cy
-            << "\" x2=\"" << cx << "\" y2=\"" << cy + chartH
-            << "\" stroke=\"#333\" stroke-width=\"1\"/>\n";
-        svg << "<line x1=\"" << cx << "\" y1=\"" << cy + chartH
-            << "\" x2=\"" << cx + chartW << "\" y2=\"" << cy + chartH
-            << "\" stroke=\"#333\" stroke-width=\"1\"/>\n";
-
-        // Y-axis label (rotated)
-        svg << "<text x=\"" << ox + 22 << "\" y=\"" << cy + chartH / 2
-            << "\" text-anchor=\"middle\" class=\"y-axis-label\""
-            << " transform=\"rotate(-90 " << ox + 12 << "," << cy + chartH / 2 << ")\">"
-            << "# bins with this SSD</text>\n";
-
-        // Y-axis ticks
-        for (int t = 0; t <= 3; ++t) {
-            int yVal = static_cast<int>(std::round(yAxisMax * t / 3.0));
-            double yPos = cy + chartH - (static_cast<double>(yVal) / yAxisMax) * chartH;
-            svg << "<text x=\"" << cx - 4 << "\" y=\"" << yPos + 3
-                << "\" text-anchor=\"end\" class=\"tick\">"
-                << yVal << "</text>\n";
-            if (t > 0) {
-                svg << "<line x1=\"" << cx + 1 << "\" y1=\"" << yPos
-                    << "\" x2=\"" << cx + chartW << "\" y2=\"" << yPos
-                    << "\" stroke=\"#eee\" stroke-width=\"0.5\"/>\n";
-            }
-        }
-
-        // Stacked bars: clean on bottom (blue), noisy on top (orange)
-        for (int b = 0; b < numBuckets; ++b) {
-            int total = totalCounts[b];
-            if (total == 0) continue;
-
-            bool clipped = total > yAxisMax;
-            double bx = cx + b * barW;
-            double rangeStart = minVal + b * bucketWidth;
-            double rangeEnd = minVal + (b + 1) * bucketWidth;
-
-            // Clean portion (bottom)
-            double cleanDisplay = std::min(static_cast<double>(cleanCounts[b]),
-                static_cast<double>(yAxisMax));
-            double cleanBarH = (cleanDisplay / yAxisMax) * chartH;
-            if (cleanCounts[b] > 0) {
-                double by = cy + chartH - cleanBarH;
-                svg << "<rect x=\"" << bx + 0.5 << "\" y=\"" << by
-                    << "\" width=\"" << barW - 1 << "\" height=\"" << cleanBarH
-                    << "\" fill=\"#3498db\" fill-opacity=\"0.8\">"
-                    << "<title>[" << std::setprecision(4) << rangeStart
-                    << ", " << rangeEnd << "): clean=" << cleanCounts[b]
-                    << " noisy=" << noisyCounts[b] << "</title></rect>\n";
-            }
-
-            // Noisy portion (stacked on top of clean)
-            if (noisyCounts[b] > 0) {
-                double stackBase = cleanDisplay;
-                double noisyDisplay = std::min(
-                    static_cast<double>(noisyCounts[b]),
-                    static_cast<double>(yAxisMax) - stackBase);
-                if (noisyDisplay > 0) {
-                    double noisyBarH = (noisyDisplay / yAxisMax) * chartH;
-                    double by = cy + chartH - (stackBase / yAxisMax) * chartH - noisyBarH;
-                    svg << "<rect x=\"" << bx + 0.5 << "\" y=\"" << by
-                        << "\" width=\"" << barW - 1 << "\" height=\"" << noisyBarH
-                        << "\" fill=\"#e67e22\" fill-opacity=\"0.7\">"
-                        << "<title>[" << std::setprecision(4) << rangeStart
-                        << ", " << rangeEnd << "): clean=" << cleanCounts[b]
-                        << " noisy=" << noisyCounts[b] << "</title></rect>\n";
-                }
-            }
-
-            // Annotate clipped bars
-            if (clipped) {
-                double topY = cy; // top of chart
-                svg << "<text x=\"" << bx + barW / 2.0 << "\" y=\"" << topY - 2
-                    << "\" text-anchor=\"middle\" class=\"clipped\">"
-                    << total << "</text>\n";
-            }
-        }
-
-        // X-axis labels
-        for (int t = 0; t <= 2; ++t) {
-            double val = minVal + (maxVal - minVal) * t / 2.0;
-            double xPos = cx + static_cast<double>(chartW) * t / 2.0;
-            svg << "<text x=\"" << xPos << "\" y=\"" << cy + chartH + 12
-                << "\" text-anchor=\"middle\" class=\"x-tick\">"
-                << std::setprecision(4) << val << "</text>\n";
-        }
-
-        // X label
-        svg << "<text x=\"" << cx + chartW / 2 << "\" y=\"" << cy + chartH + 25
-            << "\" text-anchor=\"middle\" class=\"axis-label\">"
-            << "SSD Between my and Daniels R Peaks (s)</text>\n";
-    }
-
-    svg << "</svg>\n";
+LocStats computeLocStats(const std::vector<size_t>& indices, double sampleRate) {
+    LocStats ls;
+    if (indices.empty()) return ls;
+    ls.count = indices.size();
+    std::vector<double> secs(indices.size());
+    for (size_t i = 0; i < indices.size(); ++i)
+        secs[i] = static_cast<double>(indices[i]) / sampleRate;
+    double duration = secs.back();
+    ls.rate = duration > 0 ? (ls.count / duration) * 60.0 : 0.0;
+    double sum = 0.0;
+    for (double v : secs) sum += v;
+    ls.mean = sum / ls.count;
+    double sumSq = 0.0;
+    for (double v : secs) sumSq += (v - ls.mean) * (v - ls.mean);
+    ls.std_dev = ls.count > 1 ? std::sqrt(sumSq / (ls.count - 1)) : 0.0;
+    std::sort(secs.begin(), secs.end());
+    ls.median = (ls.count % 2 == 0)
+        ? (secs[ls.count / 2 - 1] + secs[ls.count / 2]) / 2.0
+        : secs[ls.count / 2];
+    return ls;
 }
 
 // ============================================================================
-// SVG helper lambdas
+// Per-file CSV
 // ============================================================================
 
-static auto rPeakCount = [](const ComparisonData& d) { return (double)d.ecgRIndex.size(); };
-static auto ppgMaxCount = [](const ComparisonData& d) { return (double)d.ppgMaxAmps.size(); };
-static auto ppgMinCount = [](const ComparisonData& d) { return (double)d.ppgMinAmps.size(); };
-static auto pairCount = [](const ComparisonData& d) { return (double)d.pairs.size(); };
+void writePerFileCSV(const std::string& path, const FileResult& fr,
+    const std::vector<BinData>& binData,
+    const std::vector<MatBinData>& matData) {
+    std::ofstream out(path);
+    if (!out.is_open()) return;
+
+    size_t n = static_cast<size_t>(fr.totalBins);
+
+    // Header
+    out << "bin,"
+        << "mat_ecg_count,cpp_ecg_count,mat_ecg_rate,cpp_ecg_rate,mat_ecg_mean,cpp_ecg_mean,mat_ecg_median,cpp_ecg_median,mat_ecg_std,cpp_ecg_std,"
+        << "mat_ppg_count,cpp_ppg_count,mat_ppg_rate,cpp_ppg_rate,mat_ppg_mean,cpp_ppg_mean,mat_ppg_median,cpp_ppg_median,mat_ppg_std,cpp_ppg_std,"
+        << "ecg_ssd_seconds,ppg_ssd_seconds\n";
+
+    out << std::fixed << std::setprecision(6);
+
+    // Collect all values for summary rows
+    std::vector<double> matEcgCounts, cppEcgCounts, matEcgRates, cppEcgRates;
+    std::vector<double> matEcgMeans, cppEcgMeans, matEcgMedians, cppEcgMedians;
+    std::vector<double> matEcgStds, cppEcgStds;
+    std::vector<double> matPpgCounts, cppPpgCounts, matPpgRates, cppPpgRates;
+    std::vector<double> matPpgMeans, cppPpgMeans, matPpgMedians, cppPpgMedians;
+    std::vector<double> matPpgStds, cppPpgStds;
+    std::vector<double> ecgSsds, ppgSsds;
+
+    struct BinRow {
+        LocStats matEcg, cppEcg, matPpg, cppPpg;
+        double ecgSsd, ppgSsd;
+    };
+    std::vector<BinRow> rows(n);
+
+    for (size_t i = 0; i < n; ++i) {
+        const auto& b = binData[i];
+        const auto& m = matData[i];
+        const auto& pb = fr.bins[i];
+
+        rows[i].matEcg = computeLocStats(m.ecgRIndex, m.ecgSamplingRate > 0 ? m.ecgSamplingRate : MAT_SR);
+        rows[i].cppEcg = computeLocStats(b.ecgRIndex, BIN_SR);
+        rows[i].matPpg = computeLocStats(m.ppgMinAmps, m.ppgSamplingRate > 0 ? m.ppgSamplingRate : MAT_SR);
+        rows[i].cppPpg = computeLocStats(b.ppgMinAmps, BIN_SR);
+        rows[i].ecgSsd = pb.ecg_ssd_seconds;
+        rows[i].ppgSsd = pb.ppg_ssd_seconds;
+
+        matEcgCounts.push_back(rows[i].matEcg.count);
+        cppEcgCounts.push_back(rows[i].cppEcg.count);
+        matEcgRates.push_back(rows[i].matEcg.rate);
+        cppEcgRates.push_back(rows[i].cppEcg.rate);
+        matEcgMeans.push_back(rows[i].matEcg.mean);
+        cppEcgMeans.push_back(rows[i].cppEcg.mean);
+        matEcgMedians.push_back(rows[i].matEcg.median);
+        cppEcgMedians.push_back(rows[i].cppEcg.median);
+        matEcgStds.push_back(rows[i].matEcg.std_dev);
+        cppEcgStds.push_back(rows[i].cppEcg.std_dev);
+        matPpgCounts.push_back(rows[i].matPpg.count);
+        cppPpgCounts.push_back(rows[i].cppPpg.count);
+        matPpgRates.push_back(rows[i].matPpg.rate);
+        cppPpgRates.push_back(rows[i].cppPpg.rate);
+        matPpgMeans.push_back(rows[i].matPpg.mean);
+        cppPpgMeans.push_back(rows[i].cppPpg.mean);
+        matPpgMedians.push_back(rows[i].matPpg.median);
+        cppPpgMedians.push_back(rows[i].cppPpg.median);
+        matPpgStds.push_back(rows[i].matPpg.std_dev);
+        cppPpgStds.push_back(rows[i].cppPpg.std_dev);
+        ecgSsds.push_back(rows[i].ecgSsd);
+        ppgSsds.push_back(rows[i].ppgSsd);
+    }
+
+    // MEAN row
+    auto ms = [](const std::vector<double>& v) { return computeStats(v).mean; };
+    out << "MEAN,"
+        << ms(matEcgCounts) << "," << ms(cppEcgCounts) << ","
+        << ms(matEcgRates) << "," << ms(cppEcgRates) << ","
+        << ms(matEcgMeans) << "," << ms(cppEcgMeans) << ","
+        << ms(matEcgMedians) << "," << ms(cppEcgMedians) << ","
+        << ms(matEcgStds) << "," << ms(cppEcgStds) << ","
+        << ms(matPpgCounts) << "," << ms(cppPpgCounts) << ","
+        << ms(matPpgRates) << "," << ms(cppPpgRates) << ","
+        << ms(matPpgMeans) << "," << ms(cppPpgMeans) << ","
+        << ms(matPpgMedians) << "," << ms(cppPpgMedians) << ","
+        << ms(matPpgStds) << "," << ms(cppPpgStds) << ","
+        << ms(ecgSsds) << "," << ms(ppgSsds) << "\n";
+
+    // SUM row
+    auto ss = [](const std::vector<double>& v) { return computeStats(v).sum; };
+    out << "SUM,"
+        << ss(matEcgCounts) << "," << ss(cppEcgCounts) << ","
+        << ss(matEcgRates) << "," << ss(cppEcgRates) << ","
+        << ss(matEcgMeans) << "," << ss(cppEcgMeans) << ","
+        << ss(matEcgMedians) << "," << ss(cppEcgMedians) << ","
+        << ss(matEcgStds) << "," << ss(cppEcgStds) << ","
+        << ss(matPpgCounts) << "," << ss(cppPpgCounts) << ","
+        << ss(matPpgRates) << "," << ss(cppPpgRates) << ","
+        << ss(matPpgMeans) << "," << ss(cppPpgMeans) << ","
+        << ss(matPpgMedians) << "," << ss(cppPpgMedians) << ","
+        << ss(matPpgStds) << "," << ss(cppPpgStds) << ","
+        << ss(ecgSsds) << "," << ss(ppgSsds) << "\n";
+
+    // Per-bin rows
+    for (size_t i = 0; i < n; ++i) {
+        const auto& r = rows[i];
+        out << i << ","
+            << r.matEcg.count << "," << r.cppEcg.count << ","
+            << r.matEcg.rate << "," << r.cppEcg.rate << ","
+            << r.matEcg.mean << "," << r.cppEcg.mean << ","
+            << r.matEcg.median << "," << r.cppEcg.median << ","
+            << r.matEcg.std_dev << "," << r.cppEcg.std_dev << ","
+            << r.matPpg.count << "," << r.cppPpg.count << ","
+            << r.matPpg.rate << "," << r.cppPpg.rate << ","
+            << r.matPpg.mean << "," << r.cppPpg.mean << ","
+            << r.matPpg.median << "," << r.cppPpg.median << ","
+            << r.matPpg.std_dev << "," << r.cppPpg.std_dev << ","
+            << r.ecgSsd << "," << r.ppgSsd << "\n";
+    }
+}
+
+// ============================================================================
+// Summary CSV
+// Rows: Total Subjects, Total Beats (N), Mean RR Interval, Mean Beats/Person, Median Beats/Person
+// Columns: mat_ecg, cpp_ecg, mat_ppg, cpp_ppg
+// ============================================================================
+
+void writeSummaryCSV(const std::string& path, const std::vector<FileResult>& results,
+    const std::vector<std::vector<BinData>>& allBinDataPerFile,
+    const std::vector<std::vector<MatBinData>>& allMatDataPerFile) {
+    std::ofstream out(path);
+    if (!out.is_open()) return;
+
+    out << std::fixed << std::setprecision(6);
+
+    // Collect per-subject totals
+    size_t nSubjects = results.size();
+
+    size_t totalMatEcgBeats = 0, totalCppEcgBeats = 0;
+    size_t totalMatPpgBeats = 0, totalCppPpgBeats = 0;
+
+    std::vector<double> perSubjMatEcgBeats, perSubjCppEcgBeats;
+    std::vector<double> perSubjMatPpgBeats, perSubjCppPpgBeats;
+
+    // For mean RR interval: collect all RR intervals across all subjects
+    std::vector<double> allMatEcgRR, allCppEcgRR;
+    std::vector<double> allMatPpgRR, allCppPpgRR;
+
+    for (size_t f = 0; f < results.size(); ++f) {
+        const auto& binData = allBinDataPerFile[f];
+        const auto& matData = allMatDataPerFile[f];
+        size_t n = static_cast<size_t>(results[f].totalBins);
+
+        size_t subjMatEcg = 0, subjCppEcg = 0;
+        size_t subjMatPpg = 0, subjCppPpg = 0;
+
+        for (size_t i = 0; i < n; ++i) {
+            const auto& b = binData[i];
+            const auto& m = matData[i];
+
+            subjMatEcg += m.ecgRIndex.size();
+            subjCppEcg += b.ecgRIndex.size();
+            subjMatPpg += m.ppgMinAmps.size();
+            subjCppPpg += b.ppgMinAmps.size();
+
+            double matEcgSR = m.ecgSamplingRate > 0 ? m.ecgSamplingRate : MAT_SR;
+            double matPpgSR = m.ppgSamplingRate > 0 ? m.ppgSamplingRate : MAT_SR;
+
+            // RR intervals for mat ECG
+            for (size_t k = 1; k < m.ecgRIndex.size(); ++k)
+                allMatEcgRR.push_back(static_cast<double>(m.ecgRIndex[k] - m.ecgRIndex[k - 1]) / matEcgSR);
+
+            // RR intervals for cpp ECG
+            for (size_t k = 1; k < b.ecgRIndex.size(); ++k)
+                allCppEcgRR.push_back(static_cast<double>(b.ecgRIndex[k] - b.ecgRIndex[k - 1]) / BIN_SR);
+
+            // PP intervals for mat PPG
+            for (size_t k = 1; k < m.ppgMinAmps.size(); ++k)
+                allMatPpgRR.push_back(static_cast<double>(m.ppgMinAmps[k] - m.ppgMinAmps[k - 1]) / matPpgSR);
+
+            // PP intervals for cpp PPG
+            for (size_t k = 1; k < b.ppgMinAmps.size(); ++k)
+                allCppPpgRR.push_back(static_cast<double>(b.ppgMinAmps[k] - b.ppgMinAmps[k - 1]) / BIN_SR);
+        }
+
+        totalMatEcgBeats += subjMatEcg;
+        totalCppEcgBeats += subjCppEcg;
+        totalMatPpgBeats += subjMatPpg;
+        totalCppPpgBeats += subjCppPpg;
+
+        perSubjMatEcgBeats.push_back(static_cast<double>(subjMatEcg));
+        perSubjCppEcgBeats.push_back(static_cast<double>(subjCppEcg));
+        perSubjMatPpgBeats.push_back(static_cast<double>(subjMatPpg));
+        perSubjCppPpgBeats.push_back(static_cast<double>(subjCppPpg));
+    }
+
+    auto matEcgBeatStats = computeStats(perSubjMatEcgBeats);
+    auto cppEcgBeatStats = computeStats(perSubjCppEcgBeats);
+    auto matPpgBeatStats = computeStats(perSubjMatPpgBeats);
+    auto cppPpgBeatStats = computeStats(perSubjCppPpgBeats);
+
+    auto matEcgRRStats = computeStats(allMatEcgRR);
+    auto cppEcgRRStats = computeStats(allCppEcgRR);
+    auto matPpgRRStats = computeStats(allMatPpgRR);
+    auto cppPpgRRStats = computeStats(allCppPpgRR);
+
+    // Mean rate (beats per minute) = 60 / mean RR interval
+    double matEcgBPM = matEcgRRStats.mean > 0 ? 60.0 / matEcgRRStats.mean : 0.0;
+    double cppEcgBPM = cppEcgRRStats.mean > 0 ? 60.0 / cppEcgRRStats.mean : 0.0;
+    double matPpgBPM = matPpgRRStats.mean > 0 ? 60.0 / matPpgRRStats.mean : 0.0;
+    double cppPpgBPM = cppPpgRRStats.mean > 0 ? 60.0 / cppPpgRRStats.mean : 0.0;
+
+    // Write
+    out << ",mat_ecg,cpp_ecg,mat_ppg,cpp_ppg\n";
+
+    out << "Total Subjects,"
+        << nSubjects << "," << nSubjects << ","
+        << nSubjects << "," << nSubjects << "\n";
+
+    out << "Total Beats (N),"
+        << totalMatEcgBeats << "," << totalCppEcgBeats << ","
+        << totalMatPpgBeats << "," << totalCppPpgBeats << "\n";
+
+    out << "Mean Rate (beats/min),"
+        << matEcgBPM << "," << cppEcgBPM << ","
+        << matPpgBPM << "," << cppPpgBPM << "\n";
+
+    out << "Mean Beats Per Person,"
+        << matEcgBeatStats.mean << "," << cppEcgBeatStats.mean << ","
+        << matPpgBeatStats.mean << "," << cppPpgBeatStats.mean << "\n";
+}
 
 // ============================================================================
 // Main
 // ============================================================================
 
 int main() {
-    const std::string binDir = "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\4_wave_bound_files\\mesa_files\\";
-    const std::string matDir = "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\4_wave_bound_files\\matlab\\";
+    std::filesystem::create_directories(OUTPUT_DIR);
 
-    const std::vector<std::string> IDs = {
-        "3010023_20110817", "3010104_20111027", "3010112_20110725",
-        "3010139_20110210", "3010201_20120320", "3010228_20110426",
-        "3010317_20110413", "3010457_20111109", "3010660_20120322",
-        "3010724_20110811", "3010740_20110303"
-    };
+    std::vector<std::string> ids;
+    for (const auto& entry : std::filesystem::directory_iterator(BIN_DIR)) {
+        if (entry.path().extension() != ".bin") continue;
+        std::string stem = entry.path().stem().string();
+        auto pos = stem.find("_wave_markings");
+        if (pos == std::string::npos) continue;
+        std::string id = stem.substr(0, pos);
+        std::string matPath = MAT_DIR + id + "_wave_data.mat";
+        if (std::filesystem::exists(matPath))
+            ids.push_back(id);
+    }
+    std::sort(ids.begin(), ids.end());
+
+    std::cout << "======================================================================\n";
+    std::cout << "WAVE BOUNDS COMPARISON: C++ (2000 Hz) vs MATLAB (256 Hz)\n";
+    std::cout << "======================================================================\n";
+    std::cout << "C++ dir:    " << BIN_DIR << "\n";
+    std::cout << "MATLAB dir: " << MAT_DIR << "\n";
+    std::cout << "Output dir: " << OUTPUT_DIR << "\n";
+    std::cout << "Matched:    " << ids.size() << " files\n\n";
 
     std::vector<FileResult> results;
-    std::vector<ComparisonData> allBinData, allMatData;
+    std::vector<std::vector<BinData>> allBinDataPerFile;
+    std::vector<std::vector<MatBinData>> allMatDataPerFile;
 
-    for (const auto& id : IDs) {
-        std::string binPath = binDir + id + "_annealed_wave_data.bin";
-        std::string matPath = matDir + id + "_wave_data.mat";
+    for (const auto& id : ids) {
+        std::cout << "  " << id << "..." << std::flush;
 
-        auto binData = readAllFromBin(binPath);
-        auto matData = readAllFromMat(matPath);
+        std::string binPath = BIN_DIR + id + "_wave_markings.bin";
+        std::string matPath = MAT_DIR + id + "_wave_data.mat";
 
-        if (binData.empty()) std::cerr << "WARNING: No data from " << binPath << "\n";
-        if (matData.empty()) std::cerr << "WARNING: No data from " << matPath << "\n";
+        auto binData = readBinFile(binPath);
+        auto matData = readMatFile(matPath);
+
         if (binData.empty() || matData.empty()) {
-            std::cerr << "Skipping " << id << " due to missing data.\n";
+            std::cout << " SKIPPED (empty data)\n";
             continue;
         }
 
-        results.push_back(compareFile(id, binData, matData));
+        auto fr = compareFile(id, binData, matData);
+        results.push_back(fr);
+        allBinDataPerFile.push_back(binData);
+        allMatDataPerFile.push_back(matData);
 
-        generateSVGPlot(id + "_ecg_comparison.svg", binData, matData, "R-Peak Count", rPeakCount);
-        generateSVGPlot(id + "_ppg_max_comparison.svg", binData, matData, "PPG Max Amps Count", ppgMaxCount);
-        generateSVGPlot(id + "_ppg_min_comparison.svg", binData, matData, "PPG Min Amps Count", ppgMinCount);
-        generateSVGPlot(id + "_pairs_comparison.svg", binData, matData, "Detected Pairs", pairCount);
+        std::string perFilePath = OUTPUT_DIR + id + "_wave_comparison.csv";
+        writePerFileCSV(perFilePath, fr, binData, matData);
 
-        size_t maxBins = std::min(binData.size(), matData.size());
-        for (size_t i = 0; i < maxBins; ++i) {
-            allBinData.push_back(binData[i]);
-            allMatData.push_back(matData[i]);
-        }
+        std::vector<double> ecgSsdVec;
+        for (const auto& b : fr.bins)
+            ecgSsdVec.push_back(b.ecg_ssd_seconds);
+        auto s = computeStats(ecgSsdVec);
 
-        std::cout << "  Done: " << id << "\n";
+        std::cout << " " << fr.totalBins << " bins"
+            << " ECG SSD[mean=" << std::fixed << std::setprecision(4) << s.mean
+            << " med=" << s.median
+            << " std=" << s.std_dev << "]\n";
     }
 
-    generateSVGPlot("ALL_ecg_comparison.svg", allBinData, allMatData, "R-Peak Count (All Files)", rPeakCount);
-    generateSVGPlot("ALL_ppg_max_comparison.svg", allBinData, allMatData, "PPG Max Amps Count (All Files)", ppgMaxCount);
-    generateSVGPlot("ALL_ppg_min_comparison.svg", allBinData, allMatData, "PPG Min Amps Count (All Files)", ppgMinCount);
-    generateSVGPlot("ALL_pairs_comparison.svg", allBinData, allMatData, "Detected Pairs (All Files)", pairCount);
+    std::string summaryPath = OUTPUT_DIR + "summary.csv";
+    writeSummaryCSV(summaryPath, results, allBinDataPerFile, allMatDataPerFile);
 
-    writeAllFilesSummary(results);
+    std::cout << "\n======================================================================\n";
+    std::cout << "SUMMARY\n";
+    std::cout << "======================================================================\n";
+    std::cout << std::left << std::setw(25) << "Subject"
+        << std::right << std::setw(6) << "Bins"
+        << std::setw(12) << "ECG SSD mn"
+        << std::setw(12) << "ECG SSD md"
+        << std::setw(12) << "ECG SSD sd" << "\n";
+    std::cout << std::string(67, '-') << "\n";
 
-    std::cout << "\nAll comparisons complete. See allfiles_ssd_histograms.svg for summary.\n";
+    for (const auto& fr : results) {
+        std::vector<double> ecgSsdVec;
+        for (const auto& b : fr.bins)
+            ecgSsdVec.push_back(b.ecg_ssd_seconds);
+        auto s = computeStats(ecgSsdVec);
+
+        std::cout << std::left << std::setw(25) << fr.id
+            << std::right << std::setw(6) << fr.totalBins
+            << std::fixed << std::setprecision(4)
+            << std::setw(12) << s.mean
+            << std::setw(12) << s.median
+            << std::setw(12) << s.std_dev << "\n";
+    }
+
+    std::cout << std::string(67, '-') << "\n";
+    std::cout << "\nPer-file CSVs: " << OUTPUT_DIR << "<subject>_wave_comparison.csv\n";
+    std::cout << "Summary CSV:   " << summaryPath << "\n";
+
     return 0;
 }

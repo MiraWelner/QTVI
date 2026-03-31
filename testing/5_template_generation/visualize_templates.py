@@ -4,7 +4,8 @@ visualize_templates.py
 Generates side-by-side visualizations of MATLAB vs C++ template outputs.
 Saves all plots to a results folder. No interactive display.
 
-Compares all 3 C++ ECG methods (raw, squared, absval) against MATLAB (ch1).
+Compares C++ ECG raw method against MATLAB (ch1).
+Shows squared and absval C++ templates without MATLAB overlay.
 Resamples C++ (2000 Hz) to MATLAB (256 Hz) for overlay comparison.
 """
 
@@ -111,8 +112,11 @@ def extract_scalar(val):
 
 
 def extract_vector(val):
-    while isinstance(val, np.ndarray) and val.dtype == object and val.size == 1:
-        val = val.flat[0]
+    while isinstance(val, np.ndarray) and val.dtype == object:
+        if val.size == 1:
+            val = val.flat[0]
+        else:
+            break
     if isinstance(val, np.ndarray):
         return np.array(val, dtype=np.float64).flatten()
     return np.array([], dtype=np.float64)
@@ -145,7 +149,7 @@ def read_matlab_template_mat(path):
         for field in ["ecgTemplate", "ppgTemplate"]:
             try:
                 info[field] = extract_vector(cell[field])
-            except:
+            except Exception as e:
                 info[field] = np.array([], dtype=np.float64)
         try:
             v = extract_scalar(cell["alignment_point"])
@@ -170,10 +174,16 @@ def resample_and_corr(mat_vec, cpp_vec):
     cpp_resampled = scipy_signal.resample(cpp_vec, mat_vec.size)
     mat_r = np.ptp(mat_vec)
     cpp_r = np.ptp(cpp_resampled)
-    if mat_r < 1e-10 or cpp_r < 1e-10:
-        return 0.0, cpp_resampled, mat_vec * 0, cpp_resampled * 0
-    mat_n = (mat_vec - np.min(mat_vec)) / mat_r
-    cpp_n = (cpp_resampled - np.min(cpp_resampled)) / cpp_r
+
+    mat_n = (
+        (mat_vec - np.min(mat_vec)) / mat_r if mat_r > 1e-10 else np.zeros_like(mat_vec)
+    )
+    cpp_n = (
+        (cpp_resampled - np.min(cpp_resampled)) / cpp_r
+        if cpp_r > 1e-10
+        else np.zeros_like(cpp_resampled)
+    )
+
     if np.std(mat_n) > 1e-10 and np.std(cpp_n) > 1e-10:
         corr = np.corrcoef(mat_n, cpp_n)[0, 1]
     else:
@@ -252,7 +262,7 @@ def plot_bin(subject_id, bin_idx, mat, cpp, scores, save_path):
         mat_norm = sc["mat_norm"]
         cpp_norm = sc["cpp_norm"]
 
-        # Row 0: MATLAB — only in top-left subplot (col == 0)
+        # Row 0: MATLAB — only for raw ECG (col 0) and PPG (col 3)
         ax0 = fig.add_subplot(gs[0, col])
         if col == 0:
             if mat_vec.size > 0:
@@ -260,6 +270,12 @@ def plot_bin(subject_id, bin_idx, mat, cpp, scores, save_path):
                 ax0.plot(t, mat_vec, "b-", linewidth=1)
             ax0.set_title(f"MATLAB ECG", fontsize=TITLE_SIZE)
             ax0.set_ylabel("Daniel's Code", fontsize=LABEL_SIZE)
+            ax0.tick_params(labelsize=TICK_SIZE)
+        elif col == 3:
+            if mat_vec.size > 0:
+                t = np.arange(mat_vec.size) / MATLAB_SR * 1000
+                ax0.plot(t, mat_vec, "b-", linewidth=1)
+            ax0.set_title(f"MATLAB PPG", fontsize=TITLE_SIZE)
             ax0.tick_params(labelsize=TICK_SIZE)
         else:
             ax0.axis("off")
@@ -274,30 +290,33 @@ def plot_bin(subject_id, bin_idx, mat, cpp, scores, save_path):
             ax1.set_ylabel("My Code", fontsize=LABEL_SIZE)
         ax1.tick_params(labelsize=TICK_SIZE)
 
-        # Row 2: Normalized overlay
+        # Row 2: Normalized overlay — only for raw ECG (col 0) and PPG (col 3)
         ax2 = fig.add_subplot(gs[2, col])
-        if mat_norm.size > 0 and cpp_norm.size > 0:
-            t = np.arange(mat_norm.size) / MATLAB_SR * 1000
-            ax2.plot(t, mat_norm, "b-", linewidth=1.2, label="MATLAB", alpha=0.8)
-            ax2.plot(
-                t,
-                cpp_norm,
-                "--",
-                color=color,
-                linewidth=1.2,
-                label=f"C++ ({key.split('_')[-1] if '_' in key else 'ppg'})",
-                alpha=0.8,
+        if col == 0 or col == 3:
+            if mat_norm.size > 0 and cpp_norm.size > 0:
+                t = np.arange(mat_norm.size) / MATLAB_SR * 1000
+                ax2.plot(t, mat_norm, "b-", linewidth=1.2, label="MATLAB", alpha=0.8)
+                ax2.plot(
+                    t,
+                    cpp_norm,
+                    "--",
+                    color=color,
+                    linewidth=1.2,
+                    label=f"C++ ({key.split('_')[-1] if '_' in key else 'ppg'})",
+                    alpha=0.8,
+                )
+                ax2.legend(fontsize=LEGEND_SIZE)
+            ax2.set_title(
+                f"corr={corr:.4f}",
+                fontsize=TITLE_SIZE,
+                color="green" if corr >= 0.9 else "orange" if corr >= 0.7 else "red",
             )
-            ax2.legend(fontsize=LEGEND_SIZE)
-        ax2.set_title(
-            f"corr={corr:.4f}",
-            fontsize=TITLE_SIZE,
-            color="green" if corr >= 0.9 else "orange" if corr >= 0.7 else "red",
-        )
-        ax2.set_xlabel("Time (ms)", fontsize=LABEL_SIZE)
-        if col == 0:
-            ax2.set_ylabel("Overlayed", fontsize=LABEL_SIZE)
-        ax2.tick_params(labelsize=TICK_SIZE)
+            ax2.set_xlabel("Time (ms)", fontsize=LABEL_SIZE)
+            if col == 0:
+                ax2.set_ylabel("Overlayed", fontsize=LABEL_SIZE)
+            ax2.tick_params(labelsize=TICK_SIZE)
+        else:
+            ax2.axis("off")
 
     fig.savefig(save_path, dpi=300)
     plt.close(fig)

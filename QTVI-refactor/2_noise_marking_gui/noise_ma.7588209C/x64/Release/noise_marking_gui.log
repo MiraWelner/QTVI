@@ -4,9 +4,9 @@
   gui_handler.cpp
      Creating library D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.lib and object D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.exp
   Generating code
-  2 of 2511 functions (<0.1%) were compiled, the rest were copied from previous compilation.
+  50 of 2588 functions ( 1.9%) were compiled, the rest were copied from previous compilation.
     0 functions were new in current compilation
-    8 functions had inline decision re-evaluated but remain unchanged
+    19 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   noise_marking_gui.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.exe
   'pwsh.exe' is not recognized as an internal or external command,

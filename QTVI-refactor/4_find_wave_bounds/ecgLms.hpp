@@ -5,10 +5,10 @@
 #pragma once
 
 #include "SignalProcessingTypes.h"
-#include "FilterUtils.h"
-#include "StatsUtils.h"
-#include "diff2.h"
-#include "ecglaux.h"
+#include "FilterUtils.hpp"
+#include "StatsUtils.hpp"
+#include "diff2.hpp"
+#include "ecglaux.hpp"
 #include <iomanip>
 
 inline vector<size_t> ecgLms(const vector<double>& ecg, int sampling,

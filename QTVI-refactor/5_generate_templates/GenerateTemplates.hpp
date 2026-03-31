@@ -3,6 +3,13 @@
  * @brief  Orchestrate the full template generation pipeline.
  *         Port of GenerateTemplates.m
  *
+ *         Optimizations vs original:
+ *           - Skip WaveDiff (O(n^2)) and CombineTemplatesGraph since
+ *             combine assigns each template its own bin anyway.
+ *           - Skip full PPG align/diff/combine pipeline; just use
+ *             per-bin PPG templates directly after foot-stripping.
+ *           - ECG gate on bad_segment, not PPG availability.
+ *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
  * @date   2026-03-26
@@ -14,13 +21,10 @@
 #include "CreateEcgTemplates.hpp"
 #include "find_foot_pulseox.hpp"
 #include "AlignWaves.hpp"
-#include "WaveDiff.hpp"
-#include "CombineTemplatesGraph.hpp"
 #include <iostream>
 
 inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>& wave_data) {
     constexpr double std_multiplier = 2.5;
-    constexpr double threshold_percent = 15.0;
 
     size_t n = wave_data.size();
 
@@ -33,51 +37,61 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
         }
     }
 
+    // PPG templates
+    vector<vector<double>> ppg_templates;
     vector<bool> template_good(n, false);
-    CombineResult combined;
 
     if (has_ppg) {
-        // 1. PPG templates (n x max_cols, NaN-padded)
-        std::cerr << "    PPG templates (" << n << " bins)..." << std::endl;
         vector<vector<double>> template_matrix = CreatePPGTemplates(wave_data, std_multiplier);
 
-        // Which templates have actual data
         for (size_t i = 0; i < n; ++i) {
             for (double v : template_matrix[i]) {
                 if (!std::isnan(v)) { template_good[i] = true; break; }
             }
         }
-
-        // 2. Find template feet
-        std::cerr << "    Finding template feet..." << std::endl;
+        // Find feet and strip leading NaN before foot
         FootResult feet = find_foot_pulseox(template_matrix);
 
-        // 3. Align by foot
-        std::cerr << "    Aligning templates..." << std::endl;
-        vector<size_t> foot_idx(n);
-        for (size_t i = 0; i < n; ++i) foot_idx[i] = feet.idx[i];
-        AlignWavesResult aligned = AlignWaves(template_matrix, foot_idx);
+        ppg_templates.resize(n);
 
-        // 4. Diff matrix
-        std::cerr << "    Computing diff matrix..." << std::endl;
-        auto diff_matrix = WaveDiff(aligned.alignedWaves);
+        #pragma omp parallel for schedule(dynamic)
+        for (int i = 0; i < static_cast<int>(n); ++i) {
+            if (!template_good[i]) {
+                ppg_templates[i] = {};
+                continue;
+            }
 
-        // 5. Combine
-        std::cerr << "    Combining templates..." << std::endl;
-        combined = CombineTemplatesGraph(
-            aligned.alignedWaves, diff_matrix, threshold_percent);
+            const auto& tmpl = template_matrix[i];
+            size_t foot = feet.idx[i];
+
+            // Strip leading NaN before foot, trailing NaN after end
+            size_t first_valid = tmpl.size();
+            size_t last_valid = 0;
+            for (size_t c = 0; c < tmpl.size(); ++c) {
+                if (!std::isnan(tmpl[c])) {
+                    if (c < first_valid) first_valid = c;
+                    last_valid = c;
+                }
+            }
+
+            if (first_valid > last_valid) {
+                ppg_templates[i] = {};
+                continue;
+            }
+
+            // Use foot as start if it's within valid range
+            size_t start = (foot >= first_valid && foot <= last_valid) ? foot : first_valid;
+            ppg_templates[i].reserve(last_valid - start + 1);
+            for (size_t c = start; c <= last_valid; ++c) {
+                ppg_templates[i].push_back(std::isnan(tmpl[c]) ? 0.0 : tmpl[c]);
+            }
+        }
     }
-    else {
-        std::cerr << "    No PPG data found, skipping PPG pipeline." << std::endl;
-    }
 
-    // 6. ECG templates (3 methods per bin)
-    std::cerr << "    ECG templates (3 methods x " << n << " bins)..." << std::endl;
+    // ECG templates (3 methods x 3 channels per bin)
     EcgTemplateResult ecg_res = CreateEcgTemplates(wave_data, std_multiplier);
 
-    // 7. Assemble TemplateInfo
-    std::cerr << "    Assembling output..." << std::endl;
-
+    // Assemble TemplateInfo
     auto fill_channel = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {
         dst.ecgTemplate_raw = src.ecgTemplates_raw[i];
         dst.ecgTemplate_squared = src.ecgTemplates_squared[i];
@@ -111,18 +125,13 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
         info.bad_segment = wave_data[i].bad_segment;
 
         if (has_ppg && template_good[i]) {
-            size_t bin_id = combined.bin_numbers[i];
-            info.ppgTemplate = (bin_id < combined.bin_templates.size())
-                ? combined.bin_templates[bin_id]
-                : vector<double>{};
+            info.ppgTemplate = ppg_templates[i];
         }
         else {
             info.ppgTemplate = {};
         }
 
-        // ECG templates are always filled regardless of PPG
-        bool has_ecg = !wave_data[i].bad_segment;
-        if (has_ecg) {
+        if (!wave_data[i].bad_segment) {
             fill_channel(info.ch1, ecg_res.ch1, i);
             fill_channel(info.ch2, ecg_res.ch2, i);
             fill_channel(info.ch3, ecg_res.ch3, i);
@@ -133,6 +142,5 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
             clear_channel(info.ch3);
         }
     }
-
     return result;
 }

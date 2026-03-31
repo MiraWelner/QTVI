@@ -11,9 +11,9 @@
 #include <algorithm>
 #include <numeric>
 
-#include "bandpass.h"
-#include "FilterUtils.h"
-#include "StatsUtils.h"
+#include "bandpass.hpp"
+#include "FilterUtils.hpp"
+#include "StatsUtils.hpp"
 
 using namespace std;
 

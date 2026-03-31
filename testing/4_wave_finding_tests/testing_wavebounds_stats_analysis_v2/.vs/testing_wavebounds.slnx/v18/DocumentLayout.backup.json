@@ -44,7 +44,7 @@
               "RelativeDocumentMoniker": "testing_wavebounds\\testing_wavebounds.cpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\testing\\4_wave_finding_tests\\testing_wavebounds_stats_analysis_v2\\testing_wavebounds\\testing_wavebounds.cpp",
               "RelativeToolTip": "testing_wavebounds\\testing_wavebounds.cpp",
-              "ViewState": "AgIAAKQBAAAAAAAAAAAAAAcDAABDAAAAAAAAAA==",
+              "ViewState": "AgIAAJ0CAAAAAAAAAAAQwNECAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-02-13T17:38:40.299Z",
               "EditorCaption": ""
@@ -53,15 +53,11 @@
         },
         {
           "DockedWidth": 639,
-          "SelectedChildIndex": 2,
+          "SelectedChildIndex": 1,
           "Children": [
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{d78612c7-9962-4b83-95d9-268046dad23a}"
-            },
-            {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
             },
             {
               "$type": "Document",
@@ -75,6 +71,10 @@
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-03-18T15:20:48.823Z",
               "EditorCaption": ""
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
             },
             {
               "$type": "Bookmark",

@@ -2,7 +2,6 @@
  * @file   CreateEcgTemplates.hpp
  * @brief  Create ECG templates for each bin using EnsembleTemplate.
  *         Builds templates from 3 channels x 3 preprocessing methods.
- *         Port of CreateEcgTemplates.m (extended for multi-channel + 3 methods).
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -13,6 +12,12 @@
 #include "TemplateTypes.hpp"
 #include "EnsembleTemplate.hpp"
 #include "StatsUtils.h"
+#include <atomic>
+#include <chrono>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 struct SingleMethodResult {
     vector<double> ecgTemplate;
@@ -31,50 +36,45 @@ static inline SingleMethodResult build_ecg_template_for_method(
     res.ppg_alignment_point = NaN;
     res.avg_r_expand = 0.0;
 
-    if (rpeaks.empty() || ecgSignal.empty()) return res;
+    if (rpeaks.size() < 2 || ecgSignal.empty()) return res;
 
-    // Use first ~10% of the signal for template building
-    size_t reduced_size = ecgSignal.size() / 10;
-    if (reduced_size < 2) reduced_size = ecgSignal.size();
-
-    vector<double> ecg(ecgSignal.begin(),
-        ecgSignal.begin() +
-        std::min(reduced_size, ecgSignal.size()));
-
-    // R peaks within the reduced region
+    // Peaks are already indices into the bin's signal — no extraction needed.
+    // Just filter out any that are out of bounds.
     vector<size_t> r;
-    for (auto idx : rpeaks) {
-        if (idx < reduced_size - 1) r.push_back(idx);
-    }
+    r.reserve(rpeaks.size());
+    for (auto idx : rpeaks)
+        if (idx < ecgSignal.size()) r.push_back(idx);
     if (r.size() < 2) return res;
 
-    // expand = floor(diff(r) / 5)
     vector<size_t> lens;
-    for (size_t j = 0; j + 1 < r.size(); ++j) {
+    lens.reserve(r.size() - 1);
+    for (size_t j = 0; j + 1 < r.size(); ++j)
         lens.push_back(static_cast<size_t>((r[j + 1] - r[j]) / 5));
-    }
 
-    // avg_r_expand = median(lens)
     {
         vector<double> ld(lens.begin(), lens.end());
         res.avg_r_expand = median(ld);
     }
 
+
     try {
-        res.ecgTemplate = EnsembleTemplate(ecg, r, std_multiplier, "ecg", lens);
+        res.ecgTemplate = EnsembleTemplate(ecgSignal, r, std_multiplier, "ecg", lens);
     }
     catch (...) {
         res.ecgTemplate = {};
         return res;
     }
 
-    // ppg_alignment_point = median(pairs(:,1) - pairs(:,2))
+    if (!res.ecgTemplate.empty()) {
+        double minVal = *std::min_element(res.ecgTemplate.begin(), res.ecgTemplate.end());
+        for (auto& v : res.ecgTemplate) v -= minVal;
+    }
+
     if (!pairs.empty()) {
         vector<double> diffs;
         for (const auto& p : pairs) {
-            if (p.size() >= 2 && p[0] >= 0 && p[1] >= 0) {
+            if (p.size() >= 2 && p[0] >= 0 && p[1] >= 0)
                 diffs.push_back(p[0] - p[1]);
-            }
         }
         if (!diffs.empty()) res.ppg_alignment_point = median(diffs);
     }
@@ -109,12 +109,14 @@ static inline void process_channel(
     cr.ppg_alignment_point_raw[i] = raw_res.ppg_alignment_point;
     cr.avg_r_expand_raw[i] = raw_res.avg_r_expand;
 
-    auto sq_res = build_ecg_template_for_method(ecgSignal, ch.squared, bin.pairs, std_multiplier);
+    const auto& sq_sig = ch.squared_signal.empty() ? ecgSignal : ch.squared_signal;
+    auto sq_res = build_ecg_template_for_method(sq_sig, ch.squared, bin.pairs, std_multiplier);
     cr.ecgTemplates_squared[i] = sq_res.ecgTemplate;
     cr.ppg_alignment_point_squared[i] = sq_res.ppg_alignment_point;
     cr.avg_r_expand_squared[i] = sq_res.avg_r_expand;
 
-    auto abs_res = build_ecg_template_for_method(ecgSignal, ch.absval, bin.pairs, std_multiplier);
+    const auto& abs_sig = ch.absval_signal.empty() ? ecgSignal : ch.absval_signal;
+    auto abs_res = build_ecg_template_for_method(abs_sig, ch.absval, bin.pairs, std_multiplier);
     cr.ecgTemplates_absval[i] = abs_res.ecgTemplate;
     cr.ppg_alignment_point_absval[i] = abs_res.ppg_alignment_point;
     cr.avg_r_expand_absval[i] = abs_res.avg_r_expand;
@@ -130,23 +132,28 @@ inline EcgTemplateResult CreateEcgTemplates(
     init_channel_result(res.ch2, n);
     init_channel_result(res.ch3, n);
 
-#pragma omp parallel for schedule(dynamic)
+    std::atomic<int> done{ 0 };
+
+    int max_threads = std::min(8, (int)n);
+    #pragma omp parallel for schedule(dynamic) num_threads(max_threads)
     for (int i = 0; i < static_cast<int>(n); ++i) {
+
+        auto bin_start = std::chrono::steady_clock::now();
+
         const auto& bin = bins[i];
 
-        // Channel 1 (always present)
         process_channel(res.ch1, bins, i, bin.ecgSignal, bin.ch1, std_multiplier);
 
-        // Channel 2 (Bittium has this)
-        if (!bin.ecgSignal2.empty()) {
+        if (!bin.ecgSignal2.empty())
             process_channel(res.ch2, bins, i, bin.ecgSignal2, bin.ch2, std_multiplier);
-        }
 
-        // Channel 3 (Bittium has this)
-        if (!bin.ecgSignal3.empty()) {
+        if (!bin.ecgSignal3.empty())
             process_channel(res.ch3, bins, i, bin.ecgSignal3, bin.ch3, std_multiplier);
-        }
-    }
 
+        auto bin_end = std::chrono::steady_clock::now();
+        double bin_sec = std::chrono::duration<double>(bin_end - bin_start).count();
+
+        int d = ++done;
+    }
     return res;
 }

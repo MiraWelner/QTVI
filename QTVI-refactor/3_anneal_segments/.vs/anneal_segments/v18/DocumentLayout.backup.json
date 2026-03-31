@@ -7,8 +7,12 @@
       "RelativeMoniker": "D:0:0:{DD95144A-F334-6036-4761-0E06E021574F}|anneal_segments.vcxproj|solutionrelative:3_anneal_segments.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{DD95144A-F334-6036-4761-0E06E021574F}|anneal_segments.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\getBinBreaksAndCount.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{DD95144A-F334-6036-4761-0E06E021574F}|anneal_segments.vcxproj|solutionrelative:getBinBreaksAndCount.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{DD95144A-F334-6036-4761-0E06E021574F}|anneal_segments.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\AnnealSegments.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{DD95144A-F334-6036-4761-0E06E021574F}|anneal_segments.vcxproj|solutionrelative:AnnealSegments.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{DD95144A-F334-6036-4761-0E06E021574F}|anneal_segments.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\common.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{DD95144A-F334-6036-4761-0E06E021574F}|anneal_segments.vcxproj|solutionrelative:common.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
   "DocumentGroupContainers": [
@@ -17,7 +21,7 @@
       "VerticalTabListWidth": 256,
       "DocumentGroups": [
         {
-          "DockedWidth": 997,
+          "DockedWidth": 858,
           "SelectedChildIndex": 1,
           "Children": [
             {
@@ -32,32 +36,33 @@
               "RelativeDocumentMoniker": "3_anneal_segments.cpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\3_anneal_segments.cpp",
               "RelativeToolTip": "3_anneal_segments.cpp",
-              "ViewState": "AgIAAPMAAAAAAAAAAAAewAQBAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABgAAAAXAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-03-12T18:24:15.791Z",
               "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 1,
-              "Title": "getBinBreaksAndCount.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\getBinBreaksAndCount.hpp",
-              "RelativeDocumentMoniker": "getBinBreaksAndCount.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\getBinBreaksAndCount.hpp",
-              "RelativeToolTip": "getBinBreaksAndCount.hpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAgAAAAeAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-12T16:39:33.869Z"
             }
           ]
         },
         {
-          "DockedWidth": 447,
-          "SelectedChildIndex": -1,
+          "DockedWidth": 586,
+          "SelectedChildIndex": 1,
           "Children": [
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{d78612c7-9962-4b83-95d9-268046dad23a}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "AnnealSegments.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\AnnealSegments.hpp",
+              "RelativeDocumentMoniker": "AnnealSegments.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\AnnealSegments.hpp",
+              "RelativeToolTip": "AnnealSegments.hpp",
+              "ViewState": "AgIAABMBAAAAAAAAAAAMwCgBAAAvAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-03-30T17:56:17.926Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Bookmark",
@@ -66,6 +71,18 @@
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{3ae79031-e1bc-11d0-8f78-00a0c9110057}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "common.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\common.hpp",
+              "RelativeDocumentMoniker": "common.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\3_anneal_segments\\common.hpp",
+              "RelativeToolTip": "common.hpp",
+              "ViewState": "AgIAACwAAAAAAAAAAAAUwFoAAAABAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-03-30T17:56:37.093Z"
             }
           ]
         }

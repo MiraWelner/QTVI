@@ -15,102 +15,57 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="diff2.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="ecglaux.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="FilterUtils.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="JoinedRR.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="nanfastsmooth.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="pairRtoPPGBeat.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="pan_tompkin.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="PeakFinder.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="readProps.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="RRsimpleSquared.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="SegmentPPG.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="StatsUtils.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="stdoutlier.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="bandpass.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="diff2.h">
+    <ClInclude Include="diff2.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="ecglaux.h">
+    <ClInclude Include="ecglaux.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="FilterUtils.h">
+    <ClInclude Include="FilterUtils.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="JoinedRR.h">
+    <ClInclude Include="JoinedRR.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="nanfastsmooth.h">
+    <ClInclude Include="nanfastsmooth.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="pairRtoPPGBeat.h">
+    <ClInclude Include="pairRtoPPGBeat.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="pan_tompkin.h">
+    <ClInclude Include="pan_tompkin.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="PeakFinder.h">
+    <ClInclude Include="PeakFinder.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="readProps.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="RRSimpleSquared.h">
+    <ClInclude Include="RRSimpleSquared.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="RunLength.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="SegmentPPG.h">
+    <ClInclude Include="SegmentPPG.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="SignalProcessingTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="StatsUtils.h">
+    <ClInclude Include="StatsUtils.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="stdoutlier.h">
+    <ClInclude Include="stdoutlier.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="binfile_handling.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="bandpass.h">
+    <ClInclude Include="bandpass.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="create_ecg_ppg_pairs.hpp">

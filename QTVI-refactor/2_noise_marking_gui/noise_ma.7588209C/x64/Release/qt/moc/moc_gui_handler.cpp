@@ -7,6 +7,7 @@
 *****************************************************************************/
 
 #include "../../../../../gui_handler.h"
+#include <QtCharts/qlineseries.h>
 #include <QtGui/qtextcursor.h>
 #include <QtCore/qmetatype.h>
 
@@ -45,8 +46,6 @@ template <> constexpr inline auto noise_marking_gui::qt_create_metaobjectdata<qt
         "on_skip_interval_box_editingFinished",
         "on_marking_type_currentTextChanged",
         "text",
-        "start_marking_button_clicked",
-        "signalLabel",
         "on_next8hours_clicked",
         "on_prev8hours_clicked"
     };
@@ -60,14 +59,10 @@ template <> constexpr inline auto noise_marking_gui::qt_create_metaobjectdata<qt
         QtMocHelpers::SlotData<void(const QString &)>(4, 2, QMC::AccessPrivate, QMetaType::Void, {{
             { QMetaType::QString, 5 },
         }}),
-        // Slot 'start_marking_button_clicked'
-        QtMocHelpers::SlotData<void(const QString &)>(6, 2, QMC::AccessPrivate, QMetaType::Void, {{
-            { QMetaType::QString, 7 },
-        }}),
         // Slot 'on_next8hours_clicked'
-        QtMocHelpers::SlotData<void()>(8, 2, QMC::AccessPrivate, QMetaType::Void),
+        QtMocHelpers::SlotData<void()>(6, 2, QMC::AccessPrivate, QMetaType::Void),
         // Slot 'on_prev8hours_clicked'
-        QtMocHelpers::SlotData<void()>(9, 2, QMC::AccessPrivate, QMetaType::Void),
+        QtMocHelpers::SlotData<void()>(7, 2, QMC::AccessPrivate, QMetaType::Void),
     };
     QtMocHelpers::UintData qt_properties {
     };
@@ -94,9 +89,8 @@ void noise_marking_gui::qt_static_metacall(QObject *_o, QMetaObject::Call _c, in
         case 0: _t->on_skip_interval_box_returnPressed(); break;
         case 1: _t->on_skip_interval_box_editingFinished(); break;
         case 2: _t->on_marking_type_currentTextChanged((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1]))); break;
-        case 3: _t->start_marking_button_clicked((*reinterpret_cast<std::add_pointer_t<QString>>(_a[1]))); break;
-        case 4: _t->on_next8hours_clicked(); break;
-        case 5: _t->on_prev8hours_clicked(); break;
+        case 3: _t->on_next8hours_clicked(); break;
+        case 4: _t->on_prev8hours_clicked(); break;
         default: ;
         }
     }
@@ -121,14 +115,14 @@ int noise_marking_gui::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 6)
+        if (_id < 5)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 6;
+        _id -= 5;
     }
     if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 6)
+        if (_id < 5)
             *reinterpret_cast<QMetaType *>(_a[0]) = QMetaType();
-        _id -= 6;
+        _id -= 5;
     }
     return _id;
 }

@@ -1,35 +1,15 @@
 ﻿/**
- * @file   anneal_segments.cpp
- * @brief  Takes in a .bin file representing the data (88-byte header format from file_to_bin),
- *         and a noise markings .bin, and outputs 1-minute segments with marked noise removed.
+ * @file   3_anneal_segments.cpp
+ * @brief  Takes a raw data .bin (88-byte header) and a noise markings .bin,
+ *         outputs 1-minute segments with marked noise removed.
  *
  *         Noise exclusion logic:
- *           - ECG noise is only excluded if ALL 3 ECG channels have overlapping noise marks
- *             for a given time region. If only 1 or 2 channels are marked, the data is kept.
+ *           - ECG noise is only excluded if ALL 3 ECG channels have
+ *             overlapping noise marks for a given time region.
  *           - PPG noise is excluded independently.
  *
- *         The output .bin file is a vector of the following format:
- *         Header:
- *                The number of segments (uint64)
- *                PPG sample rate (float64)
- *                ECG sample rate (float64)
- *                Scoring epoch size in seconds
- *         Then for each segment in the file you get:
- *                Number of PPG bins (uint64)
- *                Start and end indices (uint64) of each PPG bin
- *                Number of ECG bins (uint64)
- *                Start and end indices (uint64) of each ECG bin
- *                The number of samples in the PPG signal (uint64)
- *                The PPG values (float64)
- *                The number of samples in the ECG1 signal (uint64)
- *                The ECG1 values (float64)
- *                The number of samples in the ECG2 signal (uint64)
- *                The ECG2 values (float64)
- *                The number of samples in the ECG3 signal (uint64)
- *                The ECG3 values (float64)
- *
  * @author Mira Welner
- * @email MEW386@pitt.edu
+ * @email  MEW386@pitt.edu
  * @date   2026-03-22
  */
 
@@ -41,166 +21,160 @@
 #include <filesystem>
 #include "AnnealSegments.hpp"
 
+namespace fs = std::filesystem;
+double bin_length = 1.0;
 
- /**
-  * @brief Reads a noise markings .bin produced by step 2 (noise_marking_gui).
-  *
-  * Format: [uint64 count] then count x [6 doubles per row]
-  *   Row: startSample, endSample, startSec, endSec, labelId, typeId
-  *   labelId: 0=unknown, 1=PPG, 2=ECG1, 3=ECG2, 4=ECG3
-  *
-  * @return  A NoiseMarkings struct with separate interval lists per channel
-  */
-NoiseMarkings read_noise_bin(const std::string& path) {
-    NoiseMarkings markings;
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) return markings;
+// ============================================================================
+// Binary I/O
+// ============================================================================
+
+/**
+ * @brief Read a noise markings .bin produced by step 2 (noise_marking_gui).
+ *
+ * Format: [uint64 count] then count × [6 doubles per row]
+ *   Row: startSample, endSample, startSec, endSec, labelId, typeId
+ *   labelId: 0=unknown, 1=PPG, 2=ECG1, 3=ECG2, 4=ECG3
+ */
+static NoiseMarkings read_noise_bin(const std::string& path) {
+    NoiseMarkings m;
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) return m;
 
     uint64_t count = 0;
-    file.read(reinterpret_cast<char*>(&count), 8);
+    f.read(reinterpret_cast<char*>(&count), 8);
 
     for (uint64_t i = 0; i < count; ++i) {
         double row[6];
-        file.read(reinterpret_cast<char*>(row), 6 * sizeof(double));
+        f.read(reinterpret_cast<char*>(row), 48);
 
-        double startSec = row[2];
-        double endSec = row[3];
-        int labelId = static_cast<int>(row[4]);
-
-        std::pair<double, double> interval = { startSec, endSec };
-
-        switch (labelId) {
-        case 1: markings.ppg.push_back(interval);  break;
-        case 2: markings.ecg1.push_back(interval); break;
-        case 3: markings.ecg2.push_back(interval); break;
-        case 4: markings.ecg3.push_back(interval); break;
+        std::pair<double, double> iv = { row[2], row[3] };
+        switch (static_cast<int>(row[4])) {
+        case 1: m.ppg.push_back(iv);  break;
+        case 2: m.ecg1.push_back(iv); break;
+        case 3: m.ecg2.push_back(iv); break;
+        case 4: m.ecg3.push_back(iv); break;
         default: break;
         }
     }
-    return markings;
+    return m;
 }
 
-
 /**
- * @brief Reads the 88-byte header data .bin from file_to_bin (step 1).
+ * @brief Read the 88-byte header data .bin from file_to_bin (step 1).
  *
  * 88-byte header:
  *   [double] ecgSR, ppgSR, scoringEpochSec
  *   [uint64] nEcg1, nEcg2, nEcg3, nPpg, nSleep, nAbs1, nAbs2, nAbs3
  *
- * Signal data order: ECG1, ECG2, ECG3, PPG, Sleep, |ECG1|, |ECG2|, |ECG3|
- * Absolute value channels are skipped.
- *
- * @return A RawData object containing the signals
+ * Signal order: ECG1, ECG2, ECG3, PPG, Sleep, |ECG1|, |ECG2|, |ECG3|
+ * Absolute-value channels are skipped.
  */
-RawData read_data_bin(const std::string& path) {
-    RawData data;
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) throw std::runtime_error("Cannot open bin: " + path);
+static RawData read_data_bin(const std::string& path) {
+    RawData d;
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) throw std::runtime_error("Cannot open bin: " + path);
 
-    file.seekg(0, std::ios::end);
-    const uint64_t fileSize = static_cast<uint64_t>(file.tellg());
-    file.seekg(0, std::ios::beg);
+    f.seekg(0, std::ios::end);
+    const uint64_t fileSize = static_cast<uint64_t>(f.tellg());
+    f.seekg(0, std::ios::beg);
 
     double ecgSR, ppgSR, epochSec;
     uint64_t nEcg1, nEcg2, nEcg3, nPpg, nSleep;
 
-    file.read((char*)&ecgSR, 8);
-    file.read((char*)&ppgSR, 8);
-    file.read((char*)&epochSec, 8);
-    file.read((char*)&nEcg1, 8);
-    file.read((char*)&nEcg2, 8);
-    file.read((char*)&nEcg3, 8);
-    file.read((char*)&nPpg, 8);
-    file.read((char*)&nSleep, 8);
+    f.read(reinterpret_cast<char*>(&ecgSR), 8);
+    f.read(reinterpret_cast<char*>(&ppgSR), 8);
+    f.read(reinterpret_cast<char*>(&epochSec), 8);
+    f.read(reinterpret_cast<char*>(&nEcg1), 8);
+    f.read(reinterpret_cast<char*>(&nEcg2), 8);
+    f.read(reinterpret_cast<char*>(&nEcg3), 8);
+    f.read(reinterpret_cast<char*>(&nPpg), 8);
+    f.read(reinterpret_cast<char*>(&nSleep), 8);
 
-    data.ecgSR = ecgSR;
-    data.ppgSR = ppgSR;
-    data.scoringEpochSec = epochSec;
+    // Skip nAbs1, nAbs2, nAbs3 (3 × uint64)
+    f.seekg(24, std::ios::cur);
 
-    // Safe read: clamp to remaining file bytes
-    auto safeRead = [&](std::vector<double>& dest, uint64_t count, const char* name) {
-        uint64_t pos = static_cast<uint64_t>(file.tellg());
+    d.ecgSR = ecgSR;
+    d.ppgSR = ppgSR;
+    d.scoringEpochSec = epochSec;
+
+    auto safeRead = [&](std::vector<double>& dest, uint64_t count) {
+        uint64_t pos = static_cast<uint64_t>(f.tellg());
         uint64_t remaining = (fileSize > pos) ? (fileSize - pos) / 8 : 0;
         uint64_t actual = std::min(count, remaining);
         dest.resize(actual);
         if (actual > 0)
-            file.read((char*)dest.data(), actual * 8);
+            f.read(reinterpret_cast<char*>(dest.data()), actual * 8);
         };
 
-    safeRead(data.ecg1, nEcg1, "ecg1");
-    safeRead(data.ecg2, nEcg2, "ecg2");
-    safeRead(data.ecg3, nEcg3, "ecg3");
-    safeRead(data.ppg, nPpg, "ppg");
-    safeRead(data.sleepStages, nSleep, "sleep");
+    safeRead(d.ecg1, nEcg1);
+    safeRead(d.ecg2, nEcg2);
+    safeRead(d.ecg3, nEcg3);
+    safeRead(d.ppg, nPpg);
+    safeRead(d.sleepStages, nSleep);
 
-    return data;
+    return d;
 }
 
-
-void write_output_bin(const std::string& path, const std::vector<FinalSegment>& segments) {
-    /**
-    * @brief  Writes the bin of the format described in the header string
-    * @param path       The place to write the output
-    * @param segments   A vector representing the segments being written
-    */
+/**
+ * @brief Write the annealed output .bin.
+ *
+ * Header: [uint64 nSegments] [double ppgSR] [double ecgSR] [double epochSec]
+ * Per segment: ppg_bin_indexs, ecg_bin_indexs, ppg, ecg1, ecg2, ecg3, sleep
+ */
+static void write_output_bin(const std::string& path,
+    const std::vector<FinalSegment>& segs)
+{
     std::ofstream out(path, std::ios::binary);
-    uint64_t nB = segments.size();
-    out.write((char*)&nB, 8);
+    uint64_t n = segs.size();
+    out.write(reinterpret_cast<char*>(&n), 8);
 
-    if (nB > 0) {
-        out.write((char*)&segments[0].ppgSampleRate, 8);
-        out.write((char*)&segments[0].ecgSampleRate, 8);
-        out.write((char*)&segments[0].scoring_epoch_size_sec, 8);
+    if (n > 0) {
+        out.write(reinterpret_cast<const char*>(&segs[0].ppgSampleRate), 8);
+        out.write(reinterpret_cast<const char*>(&segs[0].ecgSampleRate), 8);
+        out.write(reinterpret_cast<const char*>(&segs[0].scoring_epoch_size_sec), 8);
     }
 
-    for (const auto& s : segments) {
-        uint64_t nPairs = s.ppg_bin_indexs.size();
-        out.write((char*)&nPairs, 8);
-        for (const auto& p : s.ppg_bin_indexs) {
-            out.write((char*)&p.first, 8);
-            out.write((char*)&p.second, 8);
+    auto writePairs = [&](const std::vector<std::pair<uint64_t, uint64_t>>& v) {
+        uint64_t sz = v.size();
+        out.write(reinterpret_cast<char*>(&sz), 8);
+        for (const auto& p : v) {
+            out.write(reinterpret_cast<const char*>(&p.first), 8);
+            out.write(reinterpret_cast<const char*>(&p.second), 8);
         }
+        };
 
-        uint64_t ePairs = s.ecg_bin_indexs.size();
-        out.write((char*)&ePairs, 8);
-        for (const auto& p : s.ecg_bin_indexs) {
-            out.write((char*)&p.first, 8);
-            out.write((char*)&p.second, 8);
-        }
+    auto writeVec = [&](const std::vector<double>& v) {
+        uint64_t sz = v.size();
+        out.write(reinterpret_cast<char*>(&sz), 8);
+        if (!v.empty())
+            out.write(reinterpret_cast<const char*>(v.data()), sz * 8);
+        };
 
-        uint64_t pS = s.ppg.size();
-        out.write((char*)&pS, 8);
-        out.write((char*)s.ppg.data(), pS * 8);
-
-        uint64_t e1S = s.ecg1.size();
-        out.write((char*)&e1S, 8);
-        out.write((char*)s.ecg1.data(), e1S * 8);
-
-        uint64_t e2S = s.ecg2.size();
-        out.write((char*)&e2S, 8);
-        out.write((char*)s.ecg2.data(), e2S * 8);
-
-        uint64_t e3S = s.ecg3.size();
-        out.write((char*)&e3S, 8);
-        out.write((char*)s.ecg3.data(), e3S * 8);
-
-        uint64_t sS = s.sleep_stages.size();
-        out.write((char*)&sS, 8);
-        out.write((char*)s.sleep_stages.data(), sS * 8);
+    for (const auto& s : segs) {
+        writePairs(s.ppg_bin_indexs);
+        writePairs(s.ecg_bin_indexs);
+        writeVec(s.ppg);
+        writeVec(s.ecg1);
+        writeVec(s.ecg2);
+        writeVec(s.ecg3);
+        writeVec(s.sleep_stages);
     }
 }
 
-int main() {
+// ============================================================================
+// Config parsing
+// ============================================================================
+
+static std::vector<ProjectConfig> readConfig(const std::string& path) {
     std::vector<ProjectConfig> projects;
-    std::ifstream cfg("config.csv");
+    std::ifstream cfg(path);
     if (!cfg.is_open()) {
-        std::cerr << "Could not open config.csv" << std::endl;
-        return 1;
+        std::cerr << "Could not open " << path << std::endl;
+        return projects;
     }
 
     std::string line;
-    std::getline(cfg, line); // Header
+    std::getline(cfg, line); // skip header
     while (std::getline(cfg, line)) {
         if (line.empty()) continue;
         std::stringstream ss(line);
@@ -215,6 +189,16 @@ int main() {
         pc.annealedPath = cols.size() > 6 ? cols[6] : "";
         projects.push_back(pc);
     }
+    return projects;
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+
+int main() {
+    auto projects = readConfig("config.csv");
+    if (projects.empty()) return 1;
 
     std::cout << "Select Dataset:\n";
     for (size_t i = 0; i < projects.size(); ++i)
@@ -223,39 +207,41 @@ int main() {
     int choice;
     std::cin >> choice;
     if (choice < 1 || choice >(int)projects.size()) return 1;
-    ProjectConfig sel = projects[choice - 1];
+    const auto& sel = projects[choice - 1];
 
-    if (!std::filesystem::exists(sel.annealedPath))
-        std::filesystem::create_directories(sel.annealedPath);
+    if (!fs::exists(sel.annealedPath))
+        fs::create_directories(sel.annealedPath);
 
-    int fileCount = 0;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(sel.binPath)) {
+    int processed = 0;
+    for (const auto& entry : fs::recursive_directory_iterator(sel.binPath)) {
         if (!entry.is_regular_file()) continue;
 
         std::string ext = entry.path().extension().string();
         std::string name = entry.path().filename().string();
-
         if (name.find("_noise_markings") != std::string::npos) continue;
         if (ext != ".bin" && ext != ".BIN") continue;
 
-        fileCount++;
         std::string id = entry.path().stem().string();
         try {
             RawData raw = read_data_bin(entry.path().string());
 
-            std::string noise_path = sel.noisePath + "/" + id + "_noise_markings.bin";
-            NoiseMarkings noiseMarkings;
-            if (std::filesystem::exists(noise_path)) {
-                noiseMarkings = read_noise_bin(noise_path);
-            }
+            NoiseMarkings noise;
+            std::string npath = sel.noisePath + "/" + id + "_noise_markings.bin";
+            if (fs::exists(npath))
+                noise = read_noise_bin(npath);
 
-            auto results = AnnealSegments(raw, noiseMarkings, 1.0);
-
+            auto results = AnnealSegments(raw, noise, bin_length);
             write_output_bin(sel.annealedPath + "/" + id + ".bin", results);
+
+            ++processed;
+            std::cerr << "  [" << processed << "] " << id
+                << " -> " << results.size() << " bins\n";
         }
         catch (const std::exception& e) {
-            std::cerr << "Error processing " << id << ": " << e.what() << std::endl;
+            std::cerr << "Error processing " << id << ": " << e.what() << "\n";
         }
     }
+
+    std::cerr << "Done. Processed " << processed << " files.\n";
     return 0;
 }

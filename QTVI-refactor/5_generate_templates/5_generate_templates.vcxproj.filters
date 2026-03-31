@@ -29,9 +29,6 @@
     <ClInclude Include="TemplateTypes.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="WaveDiff.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="CreatePPGTemplates.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>

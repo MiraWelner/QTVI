@@ -1,0 +1,8 @@
+﻿   Qt/MSBuild: 3.4.1.0
+  Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
+   Qt: 6.10.2
+  6_template_marking.cpp
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\6_template_marking\BinPlotWidget.h(1,1): warning C4828: The file contains a character starting at offset 0x64 that is illegal in the current source character set (codepage 65001).
+  (compiling source file '6_template_marking.cpp')
+  
+LINK : fatal error LNK1168: cannot open D:\USERS\MiraWelner\QTVI\QTVI-refactor\6_template_marking\x64\Debug\6_template_marking.exe for writing

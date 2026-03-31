@@ -2,7 +2,9 @@
  * @file   NoiseManager.cpp
  * @brief  Implementation of annotation segment storage and export.
  *
- * Updated label map: ECG1=2, ECG2=3, ECG3=4 
+ *   labelId: 0=unknown, 1=PPG, 2=ECG1, 3=ECG2, 4=ECG3
+ *   typeId:  0=unknown, 1=Noise/Artifact, 2=AF, 3=SVT, 4=VT,
+ *            5=PVC, 6=PAC, 7=Benign Arrhythmia, 8=Significant Arrhythmia
  */
 #include "NoiseManager.h"
 #include <algorithm>
@@ -14,7 +16,9 @@ NoiseManager::NoiseManager(double fs) : m_sampleRate(fs) {}
 
 void NoiseManager::reserve(size_t n) { m_segments.reserve(n); }
 
-void NoiseManager::addSegment(size_t start, size_t end, const std::string& label, const std::string& marking_type) {
+void NoiseManager::addSegment(size_t start, size_t end,
+    const std::string& label,
+    const std::string& marking_type) {
     AnnotationSegment seg(std::min(start, end), std::max(start, end), label);
     seg.marking_type = marking_type;
     m_segments.push_back(seg);
@@ -37,20 +41,13 @@ void NoiseManager::exportCSV(const std::string& filename) const {
 }
 
 void NoiseManager::exportBinary(const std::string& filename) const {
-    /**
-     * @brief Writes annotation segments as a structured binary array.
-     *        Uses numeric IDs for signal label and marking type.
-     *        Format: [uint64 count] then count x [6 doubles per row]
-     *        Row: startSample, endSample, startSec, endSec, labelId, typeId
-     *
-     *        labelId: 0=unknown, 1=PPG, 2=ECG1, 3=ECG2, 4=ECG3
-     */
     static const std::unordered_map<std::string, double> labelMap = {
         {"PPG", 1.0}, {"ECG1", 2.0}, {"ECG2", 3.0}, {"ECG3", 4.0}
     };
     static const std::unordered_map<std::string, double> typeMap = {
         {"Noise/Artifact", 1.0}, {"AF", 2.0}, {"SVT", 3.0}, {"VT", 4.0},
-        {"PVC", 5.0}, {"PAC", 6.0}, {"Benign Arrhythmia", 7.0}, {"Significant Arrhythmia", 8.0}
+        {"PVC", 5.0}, {"PAC", 6.0},
+        {"Benign Arrhythmia", 7.0}, {"Significant Arrhythmia", 8.0}
     };
 
     std::ofstream file(filename, std::ios::binary);

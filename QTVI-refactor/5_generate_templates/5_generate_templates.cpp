@@ -1,11 +1,7 @@
 /**
- * @file   template_main.cpp
+ * @file   5_generate_templates.cpp
  * @brief  Runner for the template generation pipeline.
  *
- *         config.csv layout:
- *           col 0: dataType
- *           col 7: wavePath       (input  - *_wave_data.bin from peak-finding)
- *           col 8: templatePath   (output - *_template_info.bin)
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -32,7 +28,8 @@
  //   per bin:
  //     9 index arrays: ch1(raw,sq,abs), ch2(raw,sq,abs), ch3(raw,sq,abs)
  //     2 PPG index arrays: ppgMaxAmps, ppgMinAmps
- //     4 signal arrays: ppg, ecg1, ecg2, ecg3
+ //     4 raw signal arrays: ppg, ecg1, ecg2, ecg3
+ //     6 preprocessed signal arrays: ch1(sq,abs), ch2(sq,abs), ch3(sq,abs)
  //     9 noise flag bytes: ch1(raw,sq,abs), ch2(raw,sq,abs), ch3(raw,sq,abs)
  //     pairs: uint64 count + int64[count*2]
  //     ppg_bin_indexs: uint64 count + pair<uint64,uint64>[]
@@ -46,13 +43,12 @@ static std::vector<output_binfile_data> read_wave_data_binfile(const std::string
 
     uint64_t numBins = 0;
     file.read(reinterpret_cast<char*>(&numBins), 8);
-    std::cerr << "  numBins = " << numBins << std::endl;
+    std::cerr << "Processing " << numBins << " Bins" <<  std::endl;
     if (numBins > 100000) throw std::runtime_error("numBins too large");
 
     std::vector<output_binfile_data> results;
     results.reserve(numBins);
 
-    // Read uint64 count + uint64[] indices (stored 1-based, convert to 0-based)
     auto readIdx = [&](std::vector<std::size_t>& v) {
         uint64_t sz = 0;
         if (!file.read(reinterpret_cast<char*>(&sz), 8)) { v.clear(); return; }
@@ -66,7 +62,6 @@ static std::vector<output_binfile_data> read_wave_data_binfile(const std::string
         }
         };
 
-    // Read uint64 count + double[]
     auto readSignal = [&](std::vector<double>& sig) {
         uint64_t sz = 0;
         if (!file.read(reinterpret_cast<char*>(&sz), 8)) { sig.clear(); return; }
@@ -75,7 +70,6 @@ static std::vector<output_binfile_data> read_wave_data_binfile(const std::string
         if (sz > 0) file.read(reinterpret_cast<char*>(sig.data()), sz * 8);
         };
 
-    // Read uint64 count + pair<uint64,uint64>[]
     auto readPairVec = [&](std::vector<std::pair<uint64_t, uint64_t>>& v) {
         uint64_t sz = 0;
         if (!file.read(reinterpret_cast<char*>(&sz), 8)) { v.clear(); return; }
@@ -105,11 +99,19 @@ static std::vector<output_binfile_data> read_wave_data_binfile(const std::string
         readIdx(bin.ppgMaxAmps);
         readIdx(bin.ppgMinAmps);
 
-        /* 4 signal arrays */
+        /* 4 raw signal arrays */
         readSignal(bin.ppgSignal);
         readSignal(bin.ecgSignal);
         readSignal(bin.ecgSignal2);
         readSignal(bin.ecgSignal3);
+
+        /* 6 preprocessed signal arrays */
+        readSignal(bin.ch1.squared_signal);
+        readSignal(bin.ch1.absval_signal);
+        readSignal(bin.ch2.squared_signal);
+        readSignal(bin.ch2.absval_signal);
+        readSignal(bin.ch3.squared_signal);
+        readSignal(bin.ch3.absval_signal);
 
         /* 9 noise flags */
         uint8_t flags[9] = {};
@@ -146,10 +148,13 @@ static std::vector<output_binfile_data> read_wave_data_binfile(const std::string
         readPairVec(bin.ecg_bin_indexs);
 
         bin.index = i;
-        bin.bad_segment = bin.ppgMinAmps.empty() && bin.ppgSignal.empty();
+        bool has_any_ecg = !bin.ecgSignal.empty()
+            || !bin.ecgSignal2.empty()
+            || !bin.ecgSignal3.empty();
+        bool has_any_peaks = !bin.ch1.raw.empty() || !bin.ch1.squared.empty()
+            || !bin.ch1.absval.empty();
+        bin.bad_segment = !has_any_ecg || (!has_any_peaks && bin.ppgMinAmps.empty());
     }
-
-    std::cerr << "  Loaded " << results.size() << " bins OK" << std::endl;
     return results;
 }
 
@@ -196,7 +201,6 @@ static void write_template_info_binfile(const std::string& path,
         uint8_t bad = info.bad_segment ? 1 : 0;
         file.write(reinterpret_cast<const char*>(&bad), 1);
 
-        // Helper to write one channel's templates + scalars
         auto writeChannel = [&](const ChannelTemplates& ch) {
             writeVecDouble(ch.ecgTemplate_raw);
             writeVecDouble(ch.ecgTemplate_squared);
@@ -278,17 +282,12 @@ int main() {
 
             std::string outputPath = cfg.templatePath + "/" +
                 currentID + "_template_info.bin";
-            if (std::filesystem::exists(outputPath)) {
-                std::cout << currentID
-                    << "_template_info.bin exists, skipping." << std::endl;
-                continue;
-            }
+       
 
             std::cout << "Processing templates: " << currentID << "..." << std::endl;
 
             auto wave_data = read_wave_data_binfile(entry.path().string());
 
-            std::cerr << "  Generating templates..." << std::endl;
             auto template_info = GenerateTemplates(wave_data);
 
             write_template_info_binfile(outputPath, template_info);

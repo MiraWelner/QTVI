@@ -82,14 +82,18 @@ AnnealedData read_input_binfile(const std::string& path) {
 }
 
 /**
- * @brief  Write output bin file with R-peaks from 3 methods × 3 channels.
+ * @brief  Write output bin file with R-peaks, preprocessed signals,
+ *         and raw signals from 3 methods x 3 channels.
  *
  * Layout per bin:
  *   - 9 index arrays (ch1 raw/sq/abs, ch2 raw/sq/abs, ch3 raw/sq/abs)
  *   - 2 PPG index arrays (maxAmps, minAmps)
- *   - 4 signal arrays (ppg, ecg1, ecg2, ecg3)
+ *   - 4 raw signal arrays (ppg, ecg1, ecg2, ecg3)
+ *   - 6 preprocessed signal arrays (ch1 sq/abs, ch2 sq/abs, ch3 sq/abs)
  *   - 9 noise flags (1 byte each)
  *   - pairs array
+ *   - ppg_bin_indexs
+ *   - ecg_bin_indexs
  *
  * All index arrays are written 1-based for MATLAB compatibility.
  */
@@ -128,7 +132,7 @@ void write_output_binfile(const std::string& path, const std::vector<output_binf
             if (sz > 0) file.write(reinterpret_cast<const char*>(v.data()), sz * 16);
             };
 
-        /* R-peak indices: 3 methods × 3 channels = 9 arrays */
+        /* R-peak indices: 3 methods x 3 channels = 9 arrays */
         writeIdx(bin.ch1.raw);
         writeIdx(bin.ch1.squared);
         writeIdx(bin.ch1.absval);
@@ -145,13 +149,21 @@ void write_output_binfile(const std::string& path, const std::vector<output_binf
         writeIdx(bin.ppgMaxAmps);
         writeIdx(bin.ppgMinAmps);
 
-        /* Signals (raw, unmodified) */
+        /* Raw signals (unmodified) */
         writeSignal(bin.ppgSignal);
         writeSignal(bin.ecgSignal);
         writeSignal(bin.ecgSignal2);
         writeSignal(bin.ecgSignal3);
 
-        /* 9 noise flags: 3 methods × 3 channels */
+        /* Preprocessed signals: squared and absval per channel */
+        writeSignal(bin.ch1.squared_signal);
+        writeSignal(bin.ch1.absval_signal);
+        writeSignal(bin.ch2.squared_signal);
+        writeSignal(bin.ch2.absval_signal);
+        writeSignal(bin.ch3.squared_signal);
+        writeSignal(bin.ch3.absval_signal);
+
+        /* 9 noise flags: 3 methods x 3 channels */
         uint8_t flags[9] = {
             static_cast<uint8_t>(bin.ch1.raw_noisy),
             static_cast<uint8_t>(bin.ch1.squared_noisy),

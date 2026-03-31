@@ -55,12 +55,17 @@ static inline double et_nanstd(const vector<double>& v) {
 }
 
 static inline double et_nanmedian(const vector<double>& v) {
-    vector<double> tmp;
+    thread_local vector<double> tmp;
+    tmp.clear();
     for (double x : v) if (!std::isnan(x)) tmp.push_back(x);
     if (tmp.empty()) return NaN;
-    std::sort(tmp.begin(), tmp.end());
     size_t n = tmp.size();
-    return (n % 2 == 0) ? (tmp[n / 2 - 1] + tmp[n / 2]) / 2.0 : tmp[n / 2];
+    size_t mid = n / 2;
+    std::nth_element(tmp.begin(), tmp.begin() + mid, tmp.end());
+    if (n % 2 != 0) return tmp[mid];
+    double upper = tmp[mid];
+    double lower = *std::max_element(tmp.begin(), tmp.begin() + mid);
+    return (lower + upper) / 2.0;
 }
 
 static inline vector<double> et_col_nanmedian(const vector<vector<double>>& mat, size_t cols) {
@@ -143,6 +148,8 @@ inline vector<double> EnsembleTemplate(
 {
     if (segment_idxs.size() < 2) return {};
 
+
+
     size_t n_segs = segment_idxs.size() - 1;
     vector<std::pair<size_t, size_t>> ranges(n_segs);
 
@@ -175,6 +182,7 @@ inline vector<double> EnsembleTemplate(
             max_seg_len = seg_lengths[i];
     }
     if (max_seg_len == 0) return {};
+
 
     vector<vector<double>> good_segs;
     vector<size_t> good_lens;

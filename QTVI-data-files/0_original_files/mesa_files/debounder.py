@@ -61,19 +61,14 @@ def process_file(path):
 
 
 def main():
+    import os
+
+    path = r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\0_original_files\mesa_files"
+
     ids = [
-        "3010023_20110817",
-        "3010104_20111027",
-        "3010112_20110725",
-        "3010139_20110210",
-        "3010201_20120320",
-        "3010228_20110426",
-        "3010317_20110413",
-        "3010457_20111109",
-        "3010660_20120322",
-        "3010724_20110811",
-        "3010740_20110303",
-        "3010767_20120423",
+        folder.removesuffix("_EDF")
+        for folder in os.listdir(path)
+        if os.path.isdir(os.path.join(path, folder))
     ]
 
     for rid in ids:

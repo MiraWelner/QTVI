@@ -1,7 +1,7 @@
 /**
- * @file   lower_row_buttons.hpp
- * @brief  Handles the bottom toolbar: undo, clear, skip, save, marking start/stop
- *         for ECG1/ECG2/ECG3/PPG independently, and window-size radio buttons.
+ * @file   lower_row_buttons.h
+ * @brief  Handles the bottom toolbar: undo, clear, skip, save, marking
+ *         start/stop for ECG/PPG, and window-size radio buttons.
  */
 #pragma once
 

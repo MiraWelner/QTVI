@@ -2,7 +2,8 @@
 compare_templates.py
 
 Compares MATLAB (256 Hz) vs C++ (2000 Hz) template outputs.
-Outputs per-subject CSVs and a summary CSV.
+Only compares raw ECG method and PPG.
+Outputs per-subject CSVs and a summary CSV with mean, median, and IQR.
 """
 
 import csv
@@ -26,7 +27,6 @@ OUTPUT_DIR = "D:\\USERS\\MiraWelner\\QTVI\\testing\\5_template_generation\\resul
 MATLAB_SR = 256.0
 CPP_SR = 2000.0
 SR_RATIO = CPP_SR / MATLAB_SR
-METHODS = ["raw", "squared", "absval"]
 
 
 def read_cpp_template_bin(path):
@@ -97,8 +97,11 @@ def extract_scalar(val):
 
 
 def extract_vector(val):
-    while isinstance(val, np.ndarray) and val.dtype == object and val.size == 1:
-        val = val.flat[0]
+    while isinstance(val, np.ndarray) and val.dtype == object:
+        if val.size == 1:
+            val = val.flat[0]
+        else:
+            break
     if isinstance(val, np.ndarray):
         return np.array(val, dtype=np.float64).flatten()
     return np.array([], dtype=np.float64)
@@ -170,65 +173,59 @@ def compute_bin_correlations(mat_list, cpp_list):
         cpp = cpp_list[i]
         row = {"bin": i}
         if mat is None or cpp is None:
-            for m in METHODS:
-                row[f"ecg_{m}"] = np.nan
+            row["ecg_raw"] = np.nan
             row["ppg"] = np.nan
-            row["one_good"] = np.nan
             rows.append(row)
             continue
-        for method in METHODS:
-            row[f"ecg_{method}"] = resample_corr(
-                mat["ecgTemplate"], cpp[f"ch1_ecgTemplate_{method}"]
-            )
+        row["ecg_raw"] = resample_corr(mat["ecgTemplate"], cpp["ch1_ecgTemplate_raw"])
         row["ppg"] = resample_corr(mat["ppgTemplate"], cpp["ppgTemplate"])
-
-        # one_good: best of the 3 methods, but treat nan as -inf so that
-        # if ANY method has a value, one_good is not nan
-        ecg_vals = [row[f"ecg_{m}"] for m in METHODS]
-        non_nan = [v for v in ecg_vals if not np.isnan(v)]
-        if non_nan:
-            row["one_good"] = max(non_nan)
-            # Also fill nan methods with -inf for averaging consistency:
-            # if one_good is not nan, the individual methods should also
-            # count as "present" for averaging. Replace nan with the
-            # one_good value so denominators stay aligned.
-            for m in METHODS:
-                if np.isnan(row[f"ecg_{m}"]):
-                    row[f"ecg_{m}"] = row["one_good"]
-        else:
-            row["one_good"] = np.nan
-
         rows.append(row)
     return rows
 
 
-def compute_summary_avgs(rows):
-    """Compute averages for summary. one_good = average of per-bin best ECG correlations."""
-    avgs = {}
-    for f in ["ecg_raw", "ecg_squared", "ecg_absval", "one_good", "ppg"]:
-        vals = [r[f] for r in rows if not np.isnan(r[f])]
-        avgs[f] = np.mean(vals) if vals else np.nan
-    return avgs
+def compute_stats(vals):
+    """Compute mean, median, Q1, Q3 for a list of values, ignoring NaN."""
+    clean = [v for v in vals if not np.isnan(v)]
+    if not clean:
+        return np.nan, np.nan, np.nan, np.nan
+    arr = np.array(clean)
+    return np.mean(arr), np.median(arr), np.percentile(arr, 25), np.percentile(arr, 75)
+
+
+def compute_summary(rows):
+    """Compute summary stats for a set of bin rows."""
+    stats = {}
+    for f in ["ecg_raw", "ppg"]:
+        vals = [r[f] for r in rows]
+        mean, median, q1, q3 = compute_stats(vals)
+        stats[f"{f}_mean"] = mean
+        stats[f"{f}_median"] = median
+        stats[f"{f}_q1"] = q1
+        stats[f"{f}_q3"] = q3
+    return stats
+
+
+def fmt(val):
+    return f"{val:.6f}" if not np.isnan(val) else ""
 
 
 def write_subject_csv(path, rows):
-    fields = ["bin", "ecg_raw", "ecg_squared", "ecg_absval", "one_good", "ppg"]
-    value_fields = ["ecg_raw", "ecg_squared", "ecg_absval", "one_good", "ppg"]
-    averages = compute_summary_avgs(rows)
+    fields = ["bin", "ecg_raw", "ppg"]
+    value_fields = ["ecg_raw", "ppg"]
+    stats = compute_summary(rows)
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(fields)
-        avg_row = ["AVERAGE"]
-        for field in value_fields:
-            avg_row.append(
-                f"{averages[field]:.6f}" if not np.isnan(averages[field]) else ""
-            )
-        writer.writerow(avg_row)
+        writer.writerow(["MEAN", fmt(stats["ecg_raw_mean"]), fmt(stats["ppg_mean"])])
+        writer.writerow(
+            ["MEDIAN", fmt(stats["ecg_raw_median"]), fmt(stats["ppg_median"])]
+        )
+        writer.writerow(["Q1", fmt(stats["ecg_raw_q1"]), fmt(stats["ppg_q1"])])
+        writer.writerow(["Q3", fmt(stats["ecg_raw_q3"]), fmt(stats["ppg_q3"])])
         for row in rows:
             csv_row = [row["bin"]]
             for field in value_fields:
-                val = row[field]
-                csv_row.append(f"{val:.6f}" if not np.isnan(val) else "")
+                csv_row.append(fmt(row[field]))
             writer.writerow(csv_row)
 
 
@@ -236,33 +233,34 @@ def write_summary_csv(path, summary_rows):
     fields = [
         "subject",
         "n_bins",
-        "ecg_raw",
-        "ecg_squared",
-        "ecg_absval",
-        "one_good",
-        "ppg",
+        "ecg_raw_mean",
+        "ecg_raw_median",
+        "ecg_raw_q1",
+        "ecg_raw_q3",
+        "ppg_mean",
+        "ppg_median",
+        "ppg_q1",
+        "ppg_q3",
     ]
-    value_fields = ["ecg_raw", "ecg_squared", "ecg_absval", "one_good", "ppg"]
-    # Grand average: straight average of each column including one_good
-    grand_avg = {}
-    for f in ["ecg_raw", "ecg_squared", "ecg_absval", "one_good", "ppg"]:
+    stat_fields = fields[2:]
+
+    # Grand stats across all subjects
+    grand = {}
+    for f in stat_fields:
         vals = [r[f] for r in summary_rows if not np.isnan(r[f])]
-        grand_avg[f] = np.mean(vals) if vals else np.nan
+        grand[f] = np.mean(vals) if vals else np.nan
 
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(fields)
         avg_row = ["AVERAGE", ""]
-        for field in value_fields:
-            avg_row.append(
-                f"{grand_avg[field]:.6f}" if not np.isnan(grand_avg[field]) else ""
-            )
+        for field in stat_fields:
+            avg_row.append(fmt(grand[field]))
         writer.writerow(avg_row)
         for row in summary_rows:
             csv_row = [row["subject"], row["n_bins"]]
-            for field in value_fields:
-                val = row[field]
-                csv_row.append(f"{val:.6f}" if not np.isnan(val) else "")
+            for field in stat_fields:
+                csv_row.append(fmt(row[field]))
             writer.writerow(csv_row)
 
 
@@ -329,14 +327,15 @@ def main():
         subject_csv = os.path.join(OUTPUT_DIR, f"{sid}_correlations.csv")
         write_subject_csv(subject_csv, rows)
 
-        avgs = compute_summary_avgs(rows)
-        summary_rows.append({"subject": sid, "n_bins": len(rows), **avgs})
+        stats = compute_summary(rows)
+        summary_rows.append({"subject": sid, "n_bins": len(rows), **stats})
 
         print(
             f" {len(rows)} bins  "
-            f"ECG[raw={avgs['ecg_raw']:.3f} sq={avgs['ecg_squared']:.3f} "
-            f"abs={avgs['ecg_absval']:.3f} best={avgs['one_good']:.3f}]  "
-            f"PPG={avgs['ppg']:.3f}"
+            f"ECG[mean={stats['ecg_raw_mean']:.3f} med={stats['ecg_raw_median']:.3f} "
+            f"IQR=({stats['ecg_raw_q1']:.3f},{stats['ecg_raw_q3']:.3f})]  "
+            f"PPG[mean={stats['ppg_mean']:.3f} med={stats['ppg_median']:.3f} "
+            f"IQR=({stats['ppg_q1']:.3f},{stats['ppg_q3']:.3f})]"
         )
 
     summary_csv = os.path.join(OUTPUT_DIR, "summary.csv")
@@ -346,26 +345,41 @@ def main():
     print("SUMMARY")
     print(f"{'=' * 70}")
     print(
-        f"{'Subject':<30s} {'Bins':>5s} {'ECG raw':>9s} {'ECG sq':>9s} {'ECG abs':>9s} {'Best':>9s} {'PPG':>9s}"
+        f"{'Subject':<25s} {'Bins':>5s} "
+        f"{'ECG mean':>9s} {'ECG med':>9s} {'ECG Q1':>9s} {'ECG Q3':>9s} "
+        f"{'PPG mean':>9s} {'PPG med':>9s} {'PPG Q1':>9s} {'PPG Q3':>9s}"
     )
-    print("-" * 80)
+    print("-" * 106)
 
     for row in summary_rows:
         print(
-            f"{row['subject']:<30s} {row['n_bins']:>5d} "
-            f"{row['ecg_raw']:>9.4f} {row['ecg_squared']:>9.4f} "
-            f"{row['ecg_absval']:>9.4f} {row['one_good']:>9.4f} {row['ppg']:>9.4f}"
+            f"{row['subject']:<25s} {row['n_bins']:>5d} "
+            f"{row['ecg_raw_mean']:>9.4f} {row['ecg_raw_median']:>9.4f} "
+            f"{row['ecg_raw_q1']:>9.4f} {row['ecg_raw_q3']:>9.4f} "
+            f"{row['ppg_mean']:>9.4f} {row['ppg_median']:>9.4f} "
+            f"{row['ppg_q1']:>9.4f} {row['ppg_q3']:>9.4f}"
         )
 
-    print("-" * 80)
+    print("-" * 106)
     grand = {}
-    for f in ["ecg_raw", "ecg_squared", "ecg_absval", "one_good", "ppg"]:
+    for f in [
+        "ecg_raw_mean",
+        "ecg_raw_median",
+        "ecg_raw_q1",
+        "ecg_raw_q3",
+        "ppg_mean",
+        "ppg_median",
+        "ppg_q1",
+        "ppg_q3",
+    ]:
         vals = [r[f] for r in summary_rows if not np.isnan(r[f])]
         grand[f] = np.mean(vals) if vals else np.nan
     print(
-        f"{'AVERAGE':<30s} {'':>5s} "
-        f"{grand['ecg_raw']:>9.4f} {grand['ecg_squared']:>9.4f} "
-        f"{grand['ecg_absval']:>9.4f} {grand['one_good']:>9.4f} {grand['ppg']:>9.4f}"
+        f"{'AVERAGE':<25s} {'':>5s} "
+        f"{grand['ecg_raw_mean']:>9.4f} {grand['ecg_raw_median']:>9.4f} "
+        f"{grand['ecg_raw_q1']:>9.4f} {grand['ecg_raw_q3']:>9.4f} "
+        f"{grand['ppg_mean']:>9.4f} {grand['ppg_median']:>9.4f} "
+        f"{grand['ppg_q1']:>9.4f} {grand['ppg_q3']:>9.4f}"
     )
 
     print(f"\nPer-subject CSVs: {OUTPUT_DIR}/<subject>_correlations.csv")
