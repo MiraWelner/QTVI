@@ -152,7 +152,7 @@
               "RelativeDocumentMoniker": "main.cpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\main.cpp",
               "RelativeToolTip": "main.cpp",
-              "ViewState": "AgIAAEsAAAAAAAAAAAAAAMAAAAApAAAAAAAAAA==",
+              "ViewState": "AgIAANUAAAAAAAAAAAAAAFoAAAAyAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-03-17T23:28:35.561Z",
               "EditorCaption": ""
@@ -449,11 +449,24 @@
         },
         {
           "DockedWidth": 545,
-          "SelectedChildIndex": 5,
+          "SelectedChildIndex": 1,
           "Children": [
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{d78612c7-9962-4b83-95d9-268046dad23a}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 7,
+              "Title": "ecgLms.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecgLms.hpp",
+              "RelativeDocumentMoniker": "ecgLms.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecgLms.hpp",
+              "RelativeToolTip": "ecgLms.hpp",
+              "ViewState": "AgIAAEcAAAAAAAAAAAAUwF8AAABUAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-03-23T21:16:31.678Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
@@ -465,6 +478,10 @@
               "RelativeToolTip": "ecglaux.cpp",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-03-30T18:48:09.64Z"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
             },
             {
               "$type": "Document",
@@ -481,22 +498,6 @@
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{3ae79031-e1bc-11d0-8f78-00a0c9110057}"
-            },
-            {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 7,
-              "Title": "ecgLms.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecgLms.hpp",
-              "RelativeDocumentMoniker": "ecgLms.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecgLms.hpp",
-              "RelativeToolTip": "ecgLms.hpp",
-              "ViewState": "AgIAAEcAAAAAAAAAAAAUwF8AAABUAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-23T21:16:31.678Z"
             }
           ]
         }

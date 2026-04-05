@@ -14,10 +14,18 @@
    <string>PPG/ECG Noise Marker</string>
   </property>
   <layout class="QVBoxLayout" name="dialogTopLayout">
-   <property name="leftMargin"><number>6</number></property>
-   <property name="topMargin"><number>6</number></property>
-   <property name="rightMargin"><number>6</number></property>
-   <property name="bottomMargin"><number>6</number></property>
+   <property name="leftMargin">
+    <number>6</number>
+   </property>
+   <property name="topMargin">
+    <number>6</number>
+   </property>
+   <property name="rightMargin">
+    <number>6</number>
+   </property>
+   <property name="bottomMargin">
+    <number>6</number>
+   </property>
    <item>
     <widget class="QLabel" name="topLabel">
      <property name="text">
@@ -28,7 +36,7 @@
    <item>
     <layout class="QHBoxLayout" name="main_layout" stretch="1,3">
      <item>
-      <layout class="QVBoxLayout" name="leftPanel">
+      <layout class="QVBoxLayout" name="leftPanel" stretch="0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0">
        <property name="spacing">
         <number>8</number>
        </property>
@@ -147,25 +155,6 @@
         </layout>
        </item>
        <item>
-        <widget class="QComboBox" name="ecg_channel_selector">
-         <item>
-          <property name="text">
-           <string>ECG Channel 1</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>ECG Channel 2</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>ECG Channel 3</string>
-          </property>
-         </item>
-        </widget>
-       </item>
-       <item>
         <layout class="QHBoxLayout" name="eight_hour_nav">
          <item>
           <widget class="QPushButton" name="prev8hours">
@@ -220,18 +209,72 @@
         </layout>
        </item>
        <item>
-        <layout class="QHBoxLayout" name="ecg_marks">
+        <layout class="QHBoxLayout" name="all_marks">
          <item>
-          <widget class="QPushButton" name="startNoiseECG">
+          <widget class="QPushButton" name="start_all_mark">
            <property name="text">
-            <string>Mark ECG Start</string>
+            <string>Mark All Signals Start</string>
            </property>
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="stopNoiseECG">
+          <widget class="QPushButton" name="stop_all_mark">
            <property name="text">
-            <string>Mark ECG End</string>
+            <string>Mark All Signals Stop</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="ecg1_marks">
+         <item>
+          <widget class="QPushButton" name="start_ecg1_mark">
+           <property name="text">
+            <string>Mark ECG 1 Start</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="stop_ecg1_mark">
+           <property name="text">
+            <string>Mark ECG 1 End</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="ecg2_marks">
+         <item>
+          <widget class="QPushButton" name="start_ecg2_mark">
+           <property name="text">
+            <string>Mark ECG 2 Start</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="stop_ecg2_mark">
+           <property name="text">
+            <string>Mark ECG 2 End</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="ecg3_marks">
+         <item>
+          <widget class="QPushButton" name="start_ecg3_mark">
+           <property name="text">
+            <string>Mark ECG 3 Start</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="stop_ecg3_mark">
+           <property name="text">
+            <string>Mark ECG 3 End</string>
            </property>
           </widget>
          </item>
@@ -360,14 +403,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="noise_color">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: yellow;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: yellow;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="noise_desc">
-             <property name="text"><string>Noise/Artifact</string></property>
+             <property name="text">
+              <string>Noise/Artifact</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -376,14 +433,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="vt_color">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: green; border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: green; border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="vt_desc">
-             <property name="text"><string>VT</string></property>
+             <property name="text">
+              <string>VT</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -392,14 +463,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="delay_color">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: rgb(128,0,128); border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: rgb(128,0,128); border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="delay_desc">
-             <property name="text"><string>Conduction Delay</string></property>
+             <property name="text">
+              <string>Conduction Delay</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -408,14 +493,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="pac_color">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: rgb(255,128, 0); border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: rgb(255,128, 0); border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="pac_desc">
-             <property name="text"><string>PAC</string></property>
+             <property name="text">
+              <string>PAC</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -424,14 +523,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="svt_color">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: blue; border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: blue; border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="svt_desc">
-             <property name="text"><string>SVT</string></property>
+             <property name="text">
+              <string>SVT</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -440,14 +553,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="pvc_color">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: rgb(128, 255, 0); border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: rgb(128, 255, 0); border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="pvc_desc">
-             <property name="text"><string>PVC</string></property>
+             <property name="text">
+              <string>PVC</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -456,14 +583,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="af_color">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: red; border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: red; border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="af_desc">
-             <property name="text"><string>AF</string></property>
+             <property name="text">
+              <string>AF</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -472,14 +613,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="benign_color">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: rgb(255, 128, 255); border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: rgb(255, 128, 255); border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="benign_desc">
-             <property name="text"><string>Benign Arrhythmia</string></property>
+             <property name="text">
+              <string>Benign Arrhythmia</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -488,14 +643,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="signif_color">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: rgb(0, 255, 255); border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: rgb(0, 255, 255); border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="signif_desc">
-             <property name="text"><string>Significant Arrhythmia</string></property>
+             <property name="text">
+              <string>Significant Arrhythmia</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -523,14 +692,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="wake_c">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: black; border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: black; border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="wake_l">
-             <property name="text"><string>Wake</string></property>
+             <property name="text">
+              <string>Wake</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -539,14 +722,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="rem_c">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: green; border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: green; border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="rem_l">
-             <property name="text"><string>REM</string></property>
+             <property name="text">
+              <string>REM</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -555,14 +752,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="n1_c">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: blue; border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: blue; border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="n1_l">
-             <property name="text"><string>NREM1</string></property>
+             <property name="text">
+              <string>NREM1</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -571,14 +782,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="n2_c">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: cyan; border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: cyan; border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="n2_l">
-             <property name="text"><string>NREM2</string></property>
+             <property name="text">
+              <string>NREM2</string>
+             </property>
             </widget>
            </item>
           </layout>
@@ -587,14 +812,28 @@
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="n3_c">
-             <property name="minimumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="maximumSize"><size><width>15</width><height>15</height></size></property>
-             <property name="styleSheet"><string>background-color: red; border-radius:3px;</string></property>
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: red; border-radius:3px;</string>
+             </property>
             </widget>
            </item>
            <item>
             <widget class="QLabel" name="n3_l">
-             <property name="text"><string>NREM3</string></property>
+             <property name="text">
+              <string>NREM3</string>
+             </property>
             </widget>
            </item>
           </layout>

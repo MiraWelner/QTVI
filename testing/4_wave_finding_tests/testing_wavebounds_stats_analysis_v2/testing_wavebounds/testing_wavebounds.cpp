@@ -2,7 +2,8 @@
  * @file   compare_wave_bounds.cpp
  * @brief  Compare wave bound outputs between C++ (_wave_markings.bin)
  *         and MATLAB (_wave_data.mat). Only compares raw (ch1) ECG.
- *         Outputs per-file CSVs and a summary CSV.
+ *         Outputs per-file CSVs, a per-subject beats CSV, a summary CSV,
+ *         a tiled per-subject histogram SVG, and a global histogram SVG.
  *
  * @author Mira Welner
  * @date   2026-03-31
@@ -31,7 +32,7 @@ static const std::string BIN_DIR =
 static const std::string MAT_DIR =
 "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\4_wave_bound_files\\matlab\\";
 static const std::string OUTPUT_DIR =
-"D:\\USERS\\MiraWelner\\QTVI\\testing\\4_wave_bounds\\results\\";
+"D:\\USERS\\MiraWelner\\QTVI\\testing\\4_wave_finding_tests\\results\\";
 
 static constexpr double BIN_SR = 2000.0;
 static constexpr double MAT_SR = 256.0;
@@ -104,6 +105,48 @@ Stats computeStats(const std::vector<double>& vals) {
         ? (sorted[s.count / 2 - 1] + sorted[s.count / 2]) / 2.0
         : sorted[s.count / 2];
     return s;
+}
+
+// ============================================================================
+// Quartiles (for IQR)
+// ============================================================================
+
+struct Quartiles {
+    double q1 = 0.0;
+    double median = 0.0;
+    double q3 = 0.0;
+};
+
+Quartiles computeQuartiles(const std::vector<double>& vals) {
+    Quartiles q;
+    if (vals.empty()) return q;
+    std::vector<double> sorted = vals;
+    std::sort(sorted.begin(), sorted.end());
+    size_t n = sorted.size();
+
+    if (n % 2 == 0)
+        q.median = (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
+    else
+        q.median = sorted[n / 2];
+
+    size_t lower_n = n / 2;
+    if (lower_n > 0) {
+        if (lower_n % 2 == 0)
+            q.q1 = (sorted[lower_n / 2 - 1] + sorted[lower_n / 2]) / 2.0;
+        else
+            q.q1 = sorted[lower_n / 2];
+    }
+
+    size_t upper_start = (n % 2 == 0) ? n / 2 : n / 2 + 1;
+    size_t upper_n = n - upper_start;
+    if (upper_n > 0) {
+        if (upper_n % 2 == 0)
+            q.q3 = (sorted[upper_start + upper_n / 2 - 1] + sorted[upper_start + upper_n / 2]) / 2.0;
+        else
+            q.q3 = sorted[upper_start + upper_n / 2];
+    }
+
+    return q;
 }
 
 // ============================================================================
@@ -404,7 +447,6 @@ void writePerFileCSV(const std::string& path, const FileResult& fr,
 
     size_t n = static_cast<size_t>(fr.totalBins);
 
-    // Header
     out << "bin,"
         << "mat_ecg_count,cpp_ecg_count,mat_ecg_rate,cpp_ecg_rate,mat_ecg_mean,cpp_ecg_mean,mat_ecg_median,cpp_ecg_median,mat_ecg_std,cpp_ecg_std,"
         << "mat_ppg_count,cpp_ppg_count,mat_ppg_rate,cpp_ppg_rate,mat_ppg_mean,cpp_ppg_mean,mat_ppg_median,cpp_ppg_median,mat_ppg_std,cpp_ppg_std,"
@@ -412,7 +454,6 @@ void writePerFileCSV(const std::string& path, const FileResult& fr,
 
     out << std::fixed << std::setprecision(6);
 
-    // Collect all values for summary rows
     std::vector<double> matEcgCounts, cppEcgCounts, matEcgRates, cppEcgRates;
     std::vector<double> matEcgMeans, cppEcgMeans, matEcgMedians, cppEcgMedians;
     std::vector<double> matEcgStds, cppEcgStds;
@@ -463,7 +504,6 @@ void writePerFileCSV(const std::string& path, const FileResult& fr,
         ppgSsds.push_back(rows[i].ppgSsd);
     }
 
-    // MEAN row
     auto ms = [](const std::vector<double>& v) { return computeStats(v).mean; };
     out << "MEAN,"
         << ms(matEcgCounts) << "," << ms(cppEcgCounts) << ","
@@ -478,7 +518,6 @@ void writePerFileCSV(const std::string& path, const FileResult& fr,
         << ms(matPpgStds) << "," << ms(cppPpgStds) << ","
         << ms(ecgSsds) << "," << ms(ppgSsds) << "\n";
 
-    // SUM row
     auto ss = [](const std::vector<double>& v) { return computeStats(v).sum; };
     out << "SUM,"
         << ss(matEcgCounts) << "," << ss(cppEcgCounts) << ","
@@ -493,7 +532,6 @@ void writePerFileCSV(const std::string& path, const FileResult& fr,
         << ss(matPpgStds) << "," << ss(cppPpgStds) << ","
         << ss(ecgSsds) << "," << ss(ppgSsds) << "\n";
 
-    // Per-bin rows
     for (size_t i = 0; i < n; ++i) {
         const auto& r = rows[i];
         out << i << ","
@@ -513,8 +551,6 @@ void writePerFileCSV(const std::string& path, const FileResult& fr,
 
 // ============================================================================
 // Summary CSV
-// Rows: Total Subjects, Total Beats (N), Mean RR Interval, Mean Beats/Person, Median Beats/Person
-// Columns: mat_ecg, cpp_ecg, mat_ppg, cpp_ppg
 // ============================================================================
 
 void writeSummaryCSV(const std::string& path, const std::vector<FileResult>& results,
@@ -525,7 +561,6 @@ void writeSummaryCSV(const std::string& path, const std::vector<FileResult>& res
 
     out << std::fixed << std::setprecision(6);
 
-    // Collect per-subject totals
     size_t nSubjects = results.size();
 
     size_t totalMatEcgBeats = 0, totalCppEcgBeats = 0;
@@ -534,9 +569,8 @@ void writeSummaryCSV(const std::string& path, const std::vector<FileResult>& res
     std::vector<double> perSubjMatEcgBeats, perSubjCppEcgBeats;
     std::vector<double> perSubjMatPpgBeats, perSubjCppPpgBeats;
 
-    // For mean RR interval: collect all RR intervals across all subjects
-    std::vector<double> allMatEcgRR, allCppEcgRR;
-    std::vector<double> allMatPpgRR, allCppPpgRR;
+    std::vector<double> perSubjMatEcgRate, perSubjCppEcgRate;
+    std::vector<double> perSubjMatPpgRate, perSubjCppPpgRate;
 
     for (size_t f = 0; f < results.size(); ++f) {
         const auto& binData = allBinDataPerFile[f];
@@ -545,6 +579,9 @@ void writeSummaryCSV(const std::string& path, const std::vector<FileResult>& res
 
         size_t subjMatEcg = 0, subjCppEcg = 0;
         size_t subjMatPpg = 0, subjCppPpg = 0;
+
+        double subjMatEcgDurSec = 0.0, subjCppEcgDurSec = 0.0;
+        double subjMatPpgDurSec = 0.0, subjCppPpgDurSec = 0.0;
 
         for (size_t i = 0; i < n; ++i) {
             const auto& b = binData[i];
@@ -558,21 +595,14 @@ void writeSummaryCSV(const std::string& path, const std::vector<FileResult>& res
             double matEcgSR = m.ecgSamplingRate > 0 ? m.ecgSamplingRate : MAT_SR;
             double matPpgSR = m.ppgSamplingRate > 0 ? m.ppgSamplingRate : MAT_SR;
 
-            // RR intervals for mat ECG
-            for (size_t k = 1; k < m.ecgRIndex.size(); ++k)
-                allMatEcgRR.push_back(static_cast<double>(m.ecgRIndex[k] - m.ecgRIndex[k - 1]) / matEcgSR);
-
-            // RR intervals for cpp ECG
-            for (size_t k = 1; k < b.ecgRIndex.size(); ++k)
-                allCppEcgRR.push_back(static_cast<double>(b.ecgRIndex[k] - b.ecgRIndex[k - 1]) / BIN_SR);
-
-            // PP intervals for mat PPG
-            for (size_t k = 1; k < m.ppgMinAmps.size(); ++k)
-                allMatPpgRR.push_back(static_cast<double>(m.ppgMinAmps[k] - m.ppgMinAmps[k - 1]) / matPpgSR);
-
-            // PP intervals for cpp PPG
-            for (size_t k = 1; k < b.ppgMinAmps.size(); ++k)
-                allCppPpgRR.push_back(static_cast<double>(b.ppgMinAmps[k] - b.ppgMinAmps[k - 1]) / BIN_SR);
+            if (m.ecgRIndex.size() >= 2)
+                subjMatEcgDurSec += static_cast<double>(m.ecgRIndex.back() - m.ecgRIndex.front()) / matEcgSR;
+            if (b.ecgRIndex.size() >= 2)
+                subjCppEcgDurSec += static_cast<double>(b.ecgRIndex.back() - b.ecgRIndex.front()) / BIN_SR;
+            if (m.ppgMinAmps.size() >= 2)
+                subjMatPpgDurSec += static_cast<double>(m.ppgMinAmps.back() - m.ppgMinAmps.front()) / matPpgSR;
+            if (b.ppgMinAmps.size() >= 2)
+                subjCppPpgDurSec += static_cast<double>(b.ppgMinAmps.back() - b.ppgMinAmps.front()) / BIN_SR;
         }
 
         totalMatEcgBeats += subjMatEcg;
@@ -584,6 +614,16 @@ void writeSummaryCSV(const std::string& path, const std::vector<FileResult>& res
         perSubjCppEcgBeats.push_back(static_cast<double>(subjCppEcg));
         perSubjMatPpgBeats.push_back(static_cast<double>(subjMatPpg));
         perSubjCppPpgBeats.push_back(static_cast<double>(subjCppPpg));
+
+        double subjMatEcgDurMin = subjMatEcgDurSec / 60.0;
+        double subjCppEcgDurMin = subjCppEcgDurSec / 60.0;
+        double subjMatPpgDurMin = subjMatPpgDurSec / 60.0;
+        double subjCppPpgDurMin = subjCppPpgDurSec / 60.0;
+
+        perSubjMatEcgRate.push_back(subjMatEcgDurMin > 0 ? (subjMatEcg - 1) / subjMatEcgDurMin : 0.0);
+        perSubjCppEcgRate.push_back(subjCppEcgDurMin > 0 ? (subjCppEcg - 1) / subjCppEcgDurMin : 0.0);
+        perSubjMatPpgRate.push_back(subjMatPpgDurMin > 0 ? (subjMatPpg - 1) / subjMatPpgDurMin : 0.0);
+        perSubjCppPpgRate.push_back(subjCppPpgDurMin > 0 ? (subjCppPpg - 1) / subjCppPpgDurMin : 0.0);
     }
 
     auto matEcgBeatStats = computeStats(perSubjMatEcgBeats);
@@ -591,35 +631,397 @@ void writeSummaryCSV(const std::string& path, const std::vector<FileResult>& res
     auto matPpgBeatStats = computeStats(perSubjMatPpgBeats);
     auto cppPpgBeatStats = computeStats(perSubjCppPpgBeats);
 
-    auto matEcgRRStats = computeStats(allMatEcgRR);
-    auto cppEcgRRStats = computeStats(allCppEcgRR);
-    auto matPpgRRStats = computeStats(allMatPpgRR);
-    auto cppPpgRRStats = computeStats(allCppPpgRR);
+    auto matEcgRateStats = computeStats(perSubjMatEcgRate);
+    auto cppEcgRateStats = computeStats(perSubjCppEcgRate);
+    auto matPpgRateStats = computeStats(perSubjMatPpgRate);
+    auto cppPpgRateStats = computeStats(perSubjCppPpgRate);
 
-    // Mean rate (beats per minute) = 60 / mean RR interval
-    double matEcgBPM = matEcgRRStats.mean > 0 ? 60.0 / matEcgRRStats.mean : 0.0;
-    double cppEcgBPM = cppEcgRRStats.mean > 0 ? 60.0 / cppEcgRRStats.mean : 0.0;
-    double matPpgBPM = matPpgRRStats.mean > 0 ? 60.0 / matPpgRRStats.mean : 0.0;
-    double cppPpgBPM = cppPpgRRStats.mean > 0 ? 60.0 / cppPpgRRStats.mean : 0.0;
+    auto matEcgRateQ = computeQuartiles(perSubjMatEcgRate);
+    auto cppEcgRateQ = computeQuartiles(perSubjCppEcgRate);
+    auto matPpgRateQ = computeQuartiles(perSubjMatPpgRate);
+    auto cppPpgRateQ = computeQuartiles(perSubjCppPpgRate);
 
-    // Write
+    auto safeRR = [](double rate) -> double { return rate > 0 ? 60000.0 / rate : 0.0; };
+    auto rrQ1 = [&](const Quartiles& rq) -> double { return rq.q3 > 0 ? 60000.0 / rq.q3 : 0.0; };
+    auto rrQ3 = [&](const Quartiles& rq) -> double { return rq.q1 > 0 ? 60000.0 / rq.q1 : 0.0; };
+
     out << ",mat_ecg,cpp_ecg,mat_ppg,cpp_ppg\n";
 
-    out << "Total Subjects,"
+    out << "N Subjects,"
         << nSubjects << "," << nSubjects << ","
         << nSubjects << "," << nSubjects << "\n";
 
-    out << "Total Beats (N),"
+    out << "N Beats Total,"
         << totalMatEcgBeats << "," << totalCppEcgBeats << ","
         << totalMatPpgBeats << "," << totalCppPpgBeats << "\n";
 
-    out << "Mean Rate (beats/min),"
-        << matEcgBPM << "," << cppEcgBPM << ","
-        << matPpgBPM << "," << cppPpgBPM << "\n";
-
-    out << "Mean Beats Per Person,"
+    out << "Mean N Beats Per Patient,"
         << matEcgBeatStats.mean << "," << cppEcgBeatStats.mean << ","
         << matPpgBeatStats.mean << "," << cppPpgBeatStats.mean << "\n";
+
+    out << "Mean Rate (n/min),"
+        << matEcgRateStats.mean << "," << cppEcgRateStats.mean << ","
+        << matPpgRateStats.mean << "," << cppPpgRateStats.mean << "\n";
+
+    out << "Median Rate (n/min),"
+        << matEcgRateQ.median << "," << cppEcgRateQ.median << ","
+        << matPpgRateQ.median << "," << cppPpgRateQ.median << "\n";
+
+    out << "IQR Rate (n/min),"
+        << matEcgRateQ.q1 << "-" << matEcgRateQ.q3 << ","
+        << cppEcgRateQ.q1 << "-" << cppEcgRateQ.q3 << ","
+        << matPpgRateQ.q1 << "-" << matPpgRateQ.q3 << ","
+        << cppPpgRateQ.q1 << "-" << cppPpgRateQ.q3 << "\n";
+
+    out << "Median RR Interval (ms),"
+        << safeRR(matEcgRateQ.median) << "," << safeRR(cppEcgRateQ.median) << ","
+        << safeRR(matPpgRateQ.median) << "," << safeRR(cppPpgRateQ.median) << "\n";
+
+    out << "IQR RR Interval (ms),"
+        << rrQ1(matEcgRateQ) << "-" << rrQ3(matEcgRateQ) << ","
+        << rrQ1(cppEcgRateQ) << "-" << rrQ3(cppEcgRateQ) << ","
+        << rrQ1(matPpgRateQ) << "-" << rrQ3(matPpgRateQ) << ","
+        << rrQ1(cppPpgRateQ) << "-" << rrQ3(cppPpgRateQ) << "\n";
+}
+
+// ============================================================================
+// Per-Subject Beats CSV
+// ============================================================================
+
+void writePerSubjectCSV(const std::string& path, const std::vector<FileResult>& results,
+    const std::vector<std::vector<BinData>>& allBinDataPerFile,
+    const std::vector<std::vector<MatBinData>>& allMatDataPerFile) {
+    std::ofstream out(path);
+    if (!out.is_open()) return;
+
+    out << "subject,mat_ecg_N,cpp_ecg_N,mat_ppg_N,cpp_ppg_N\n";
+
+    for (size_t f = 0; f < results.size(); ++f) {
+        const auto& binData = allBinDataPerFile[f];
+        const auto& matData = allMatDataPerFile[f];
+        size_t n = static_cast<size_t>(results[f].totalBins);
+
+        size_t matEcg = 0, cppEcg = 0, matPpg = 0, cppPpg = 0;
+        for (size_t i = 0; i < n; ++i) {
+            matEcg += matData[i].ecgRIndex.size();
+            cppEcg += binData[i].ecgRIndex.size();
+            matPpg += matData[i].ppgMinAmps.size();
+            cppPpg += binData[i].ppgMinAmps.size();
+        }
+
+        out << results[f].id << ","
+            << matEcg << "," << cppEcg << ","
+            << matPpg << "," << cppPpg << "\n";
+    }
+}
+
+// ============================================================================
+// Single-chart histogram SVG (used for the global chart)
+// ============================================================================
+
+void writeHistogramSVG(const std::string& path,
+    const std::string& title,
+    const std::vector<double>& vals,
+    int numBuckets = 75,
+    int svgW = 800, int svgH = 450,
+    int forceCutoff = -1)
+{
+    std::ofstream out(path);
+    if (!out.is_open() || vals.empty()) return;
+
+    double valMin = *std::min_element(vals.begin(), vals.end());
+    double valMax = *std::max_element(vals.begin(), vals.end());
+    if (valMax <= valMin) valMax = valMin + 1.0;
+
+    double bw = (valMax - valMin) / numBuckets;
+
+    std::vector<int> hist(numBuckets, 0);
+    for (double v : vals) {
+        int b = static_cast<int>((v - valMin) / bw);
+        if (b >= numBuckets) b = numBuckets - 1;
+        if (b < 0) b = 0;
+        hist[b]++;
+    }
+
+    int trueMax = *std::max_element(hist.begin(), hist.end());
+    if (trueMax == 0) trueMax = 1;
+
+    int cutoffMax;
+    if (forceCutoff > 0) {
+        cutoffMax = forceCutoff;
+    }
+    else {
+        std::vector<int> sortedHist = hist;
+        std::sort(sortedHist.rbegin(), sortedHist.rend());
+        int secondMax = sortedHist.size() > 1 ? sortedHist[1] : sortedHist[0];
+        if (secondMax == 0) secondMax = 1;
+        cutoffMax = static_cast<int>(std::ceil(secondMax * 1.2));
+        if (cutoffMax < 1) cutoffMax = 1;
+    }
+    bool anyCapped = (trueMax > cutoffMax);
+
+    const int marginL = 70, marginR = 30, marginT = 50, marginB = 80;
+    const int plotW = svgW - marginL - marginR;
+    const int plotH = svgH - marginT - marginB;
+    double barW = static_cast<double>(plotW) / numBuckets;
+
+    out << std::fixed;
+    out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    out << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << svgW
+        << "\" height=\"" << svgH << "\" viewBox=\"0 0 " << svgW << " " << svgH << "\">\n";
+
+    out << "<rect width=\"" << svgW << "\" height=\"" << svgH << "\" fill=\"white\"/>\n";
+
+    out << "<text x=\"" << svgW / 2 << "\" y=\"30\" text-anchor=\"middle\" "
+        << "font-family=\"Arial,sans-serif\" font-size=\"16\" font-weight=\"bold\">"
+        << title << "</text>\n";
+
+    for (int t = 0; t <= 4; ++t) {
+        double frac = t / 4.0;
+        int yVal = static_cast<int>(std::round(cutoffMax * frac));
+        int y = marginT + plotH - static_cast<int>(plotH * frac);
+        out << "<line x1=\"" << marginL << "\" y1=\"" << y
+            << "\" x2=\"" << marginL + plotW << "\" y2=\"" << y
+            << "\" stroke=\"#e0e0e0\" stroke-width=\"1\"/>\n";
+        out << "<text x=\"" << marginL - 8 << "\" y=\"" << y + 4
+            << "\" text-anchor=\"end\" font-family=\"Arial,sans-serif\" font-size=\"11\">"
+            << yVal << "</text>\n";
+    }
+
+    for (int i = 0; i < numBuckets; ++i) {
+        if (hist[i] == 0) continue;
+        bool isCapped = anyCapped && (hist[i] > cutoffMax);
+        double displayCount = isCapped ? cutoffMax : hist[i];
+        double barH = (displayCount / cutoffMax) * plotH;
+        double x = marginL + i * barW;
+        double y = marginT + plotH - barH;
+
+        out << "<rect x=\"" << std::setprecision(2) << x
+            << "\" y=\"" << y
+            << "\" width=\"" << std::max(barW - 1.0, 1.0)
+            << "\" height=\"" << barH
+            << "\" fill=\"" << (isCapped ? "#d94a4a" : "#4a90d9") << "\"/>\n";
+
+        if (isCapped) {
+            double zigY = y + 2;
+            double x0 = x;
+            double x1 = x + std::max(barW - 1.0, 1.0);
+            double mid = (x0 + x1) / 2.0;
+            out << "<polyline points=\""
+                << std::setprecision(1)
+                << x0 << "," << zigY + 3 << " "
+                << (x0 + (mid - x0) * 0.5) << "," << zigY - 3 << " "
+                << mid << "," << zigY + 3 << " "
+                << (mid + (x1 - mid) * 0.5) << "," << zigY - 3 << " "
+                << x1 << "," << zigY + 3
+                << "\" fill=\"none\" stroke=\"white\" stroke-width=\"1.5\"/>\n";
+
+            // Label with true count on top of the bar, rotated vertically
+            double cx = x + std::max(barW - 1.0, 1.0) / 2.0;
+            double cy = y - 4;
+            out << "<text x=\"" << std::setprecision(2) << cx
+                << "\" y=\"" << cy
+                << "\" text-anchor=\"start\" dominant-baseline=\"central\" "
+                << "font-family=\"Arial,sans-serif\" font-size=\"9\" "
+                << "font-weight=\"bold\" fill=\"black\" "
+                << "transform=\"rotate(-90," << cx << "," << cy << ")\">"
+                << hist[i] << "</text>\n";
+        }
+    }
+
+    out << "<line x1=\"" << marginL << "\" y1=\"" << marginT
+        << "\" x2=\"" << marginL << "\" y2=\"" << marginT + plotH
+        << "\" stroke=\"black\" stroke-width=\"1.5\"/>\n";
+    out << "<line x1=\"" << marginL << "\" y1=\"" << marginT + plotH
+        << "\" x2=\"" << marginL + plotW << "\" y2=\"" << marginT + plotH
+        << "\" stroke=\"black\" stroke-width=\"1.5\"/>\n";
+
+    for (int t = 0; t <= 5; ++t) {
+        double frac = t / 5.0;
+        double xVal = valMin + frac * (valMax - valMin);
+        int x = marginL + static_cast<int>(plotW * frac);
+        out << "<line x1=\"" << x << "\" y1=\"" << marginT + plotH
+            << "\" x2=\"" << x << "\" y2=\"" << marginT + plotH + 5
+            << "\" stroke=\"black\" stroke-width=\"1\"/>\n";
+        out << "<text x=\"" << x << "\" y=\"" << marginT + plotH + 20
+            << "\" text-anchor=\"middle\" font-family=\"Arial,sans-serif\" font-size=\"10\">"
+            << std::setprecision(4) << xVal << "</text>\n";
+    }
+
+    out << "<text x=\"" << svgW / 2 << "\" y=\"" << svgH - 10
+        << "\" text-anchor=\"middle\" font-family=\"Arial,sans-serif\" font-size=\"13\">ECG SSD (s)</text>\n";
+    out << "<text x=\"15\" y=\"" << svgH / 2
+        << "\" text-anchor=\"middle\" font-family=\"Arial,sans-serif\" font-size=\"13\" "
+        << "transform=\"rotate(-90,15," << svgH / 2 << ")\">Count</text>\n";
+
+    out << "</svg>\n";
+}
+
+// ============================================================================
+// Tiled per-subject histogram SVG
+// Each subject gets a 300x300 tile arranged in a grid.
+// ============================================================================
+
+void writeTiledHistogramSVG(const std::string& path,
+    const std::vector<std::string>& ids,
+    const std::vector<std::vector<double>>& allSsdVecs,
+    int numBuckets = 75,
+    int cols = 5)
+{
+    std::ofstream out(path);
+    if (!out.is_open() || ids.empty()) return;
+
+    const int tileW = 300, tileH = 300;
+    const int marginL = 50, marginR = 10, marginT = 30, marginB = 40;
+    const int plotW = tileW - marginL - marginR;
+    const int plotH = tileH - marginT - marginB;
+
+    int nTiles = static_cast<int>(ids.size());
+    int rows = (nTiles + cols - 1) / cols;
+    int svgW = cols * tileW;
+    int svgH = rows * tileH;
+
+    out << std::fixed;
+    out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    out << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << svgW
+        << "\" height=\"" << svgH << "\" viewBox=\"0 0 " << svgW << " " << svgH << "\">\n";
+    out << "<rect width=\"" << svgW << "\" height=\"" << svgH << "\" fill=\"white\"/>\n";
+
+    for (int idx = 0; idx < nTiles; ++idx) {
+        int col = idx % cols;
+        int row = idx / cols;
+        int offX = col * tileW;
+        int offY = row * tileH;
+
+        const auto& vals = allSsdVecs[idx];
+        const auto& id = ids[idx];
+
+        out << "<g transform=\"translate(" << offX << "," << offY << ")\">\n";
+
+        // Tile border
+        out << "<rect x=\"0\" y=\"0\" width=\"" << tileW << "\" height=\"" << tileH
+            << "\" fill=\"none\" stroke=\"#ccc\" stroke-width=\"0.5\"/>\n";
+
+        // Title
+        out << "<text x=\"" << tileW / 2 << "\" y=\"22\" text-anchor=\"middle\" "
+            << "font-family=\"Arial,sans-serif\" font-size=\"14\" font-weight=\"bold\">"
+            << id << "</text>\n";
+
+        if (vals.empty()) {
+            out << "<text x=\"" << tileW / 2 << "\" y=\"" << tileH / 2
+                << "\" text-anchor=\"middle\" font-family=\"Arial,sans-serif\" font-size=\"14\" fill=\"#999\">"
+                << "No data</text>\n";
+            out << "</g>\n";
+            continue;
+        }
+
+        double valMin = *std::min_element(vals.begin(), vals.end());
+        double valMax = *std::max_element(vals.begin(), vals.end());
+        if (valMax <= valMin) valMax = valMin + 1.0;
+
+        double bw = (valMax - valMin) / numBuckets;
+
+        std::vector<int> hist(numBuckets, 0);
+        for (double v : vals) {
+            int b = static_cast<int>((v - valMin) / bw);
+            if (b >= numBuckets) b = numBuckets - 1;
+            if (b < 0) b = 0;
+            hist[b]++;
+        }
+
+        int trueMax = *std::max_element(hist.begin(), hist.end());
+        if (trueMax == 0) trueMax = 1;
+
+        std::vector<int> sortedHist = hist;
+        std::sort(sortedHist.rbegin(), sortedHist.rend());
+        int secondMax = sortedHist.size() > 1 ? sortedHist[1] : sortedHist[0];
+        if (secondMax == 0) secondMax = 1;
+
+        int cutoffMax = static_cast<int>(std::ceil(secondMax * 1.2));
+        if (cutoffMax < 1) cutoffMax = 1;
+        bool anyCapped = (trueMax > cutoffMax);
+
+        double barW = static_cast<double>(plotW) / numBuckets;
+
+        // Y gridlines (3 ticks for compact tiles)
+        for (int t = 0; t <= 2; ++t) {
+            double frac = t / 2.0;
+            int yVal = static_cast<int>(std::round(cutoffMax * frac));
+            int y = marginT + plotH - static_cast<int>(plotH * frac);
+            out << "<line x1=\"" << marginL << "\" y1=\"" << y
+                << "\" x2=\"" << marginL + plotW << "\" y2=\"" << y
+                << "\" stroke=\"#e0e0e0\" stroke-width=\"0.5\"/>\n";
+            out << "<text x=\"" << marginL - 4 << "\" y=\"" << y + 3
+                << "\" text-anchor=\"end\" font-family=\"Arial,sans-serif\" font-size=\"14\">"
+                << yVal << "</text>\n";
+        }
+
+        // Bars
+        for (int i = 0; i < numBuckets; ++i) {
+            if (hist[i] == 0) continue;
+            bool isCapped = anyCapped && (hist[i] > cutoffMax);
+            double displayCount = isCapped ? cutoffMax : hist[i];
+            double barH = (displayCount / cutoffMax) * plotH;
+            double x = marginL + i * barW;
+            double y = marginT + plotH - barH;
+
+            out << "<rect x=\"" << std::setprecision(2) << x
+                << "\" y=\"" << y
+                << "\" width=\"" << std::max(barW - 0.5, 0.5)
+                << "\" height=\"" << barH
+                << "\" fill=\"" << (isCapped ? "#d94a4a" : "#4a90d9") << "\"/>\n";
+
+            if (isCapped) {
+                double zigY = y + 1;
+                double x0 = x;
+                double x1 = x + std::max(barW - 0.5, 0.5);
+                double mid = (x0 + x1) / 2.0;
+                out << "<polyline points=\""
+                    << std::setprecision(1)
+                    << x0 << "," << zigY + 2 << " "
+                    << (x0 + (mid - x0) * 0.5) << "," << zigY - 2 << " "
+                    << mid << "," << zigY + 2 << " "
+                    << (mid + (x1 - mid) * 0.5) << "," << zigY - 2 << " "
+                    << x1 << "," << zigY + 2
+                    << "\" fill=\"none\" stroke=\"white\" stroke-width=\"1\"/>\n";
+
+                out << "<text x=\"" << std::setprecision(2) << (x + std::max(barW - 0.5, 0.5) / 2.0)
+                    << "\" y=\"" << y - 3
+                    << "\" text-anchor=\"middle\" font-family=\"Arial,sans-serif\" font-size=\"14\" "
+                    << "font-weight=\"bold\" fill=\"#d94a4a\">"
+                    << hist[i] << "</text>\n";
+            }
+        }
+
+        // Axes
+        out << "<line x1=\"" << marginL << "\" y1=\"" << marginT
+            << "\" x2=\"" << marginL << "\" y2=\"" << marginT + plotH
+            << "\" stroke=\"black\" stroke-width=\"1\"/>\n";
+        out << "<line x1=\"" << marginL << "\" y1=\"" << marginT + plotH
+            << "\" x2=\"" << marginL + plotW << "\" y2=\"" << marginT + plotH
+            << "\" stroke=\"black\" stroke-width=\"1\"/>\n";
+
+        // X-axis labels (3 ticks for compact tiles)
+        for (int t = 0; t <= 2; ++t) {
+            double frac = t / 2.0;
+            double xVal = valMin + frac * (valMax - valMin);
+            int x = marginL + static_cast<int>(plotW * frac);
+            out << "<line x1=\"" << x << "\" y1=\"" << marginT + plotH
+                << "\" x2=\"" << x << "\" y2=\"" << marginT + plotH + 3
+                << "\" stroke=\"black\" stroke-width=\"1\"/>\n";
+            out << "<text x=\"" << x << "\" y=\"" << marginT + plotH + 14
+                << "\" text-anchor=\"middle\" font-family=\"Arial,sans-serif\" font-size=\"14\">"
+                << std::setprecision(4) << xVal << "</text>\n";
+        }
+
+        // Compact axis labels
+        out << "<text x=\"" << tileW / 2 << "\" y=\"" << tileH - 5
+            << "\" text-anchor=\"middle\" font-family=\"Arial,sans-serif\" font-size=\"14\">ECG SSD (s)</text>\n";
+
+        out << "</g>\n";
+    }
+
+    out << "</svg>\n";
 }
 
 // ============================================================================
@@ -654,6 +1056,10 @@ int main() {
     std::vector<std::vector<BinData>> allBinDataPerFile;
     std::vector<std::vector<MatBinData>> allMatDataPerFile;
 
+    // Collect per-subject SSD vectors for tiled histogram
+    std::vector<std::string> processedIds;
+    std::vector<std::vector<double>> allPerFileSsdVecs;
+
     for (const auto& id : ids) {
         std::cout << "  " << id << "..." << std::flush;
 
@@ -676,9 +1082,14 @@ int main() {
         std::string perFilePath = OUTPUT_DIR + id + "_wave_comparison.csv";
         writePerFileCSV(perFilePath, fr, binData, matData);
 
+        // Collect ECG SSDs for this subject
         std::vector<double> ecgSsdVec;
         for (const auto& b : fr.bins)
             ecgSsdVec.push_back(b.ecg_ssd_seconds);
+
+        processedIds.push_back(id);
+        allPerFileSsdVecs.push_back(ecgSsdVec);
+
         auto s = computeStats(ecgSsdVec);
 
         std::cout << " " << fr.totalBins << " bins"
@@ -687,8 +1098,27 @@ int main() {
             << " std=" << s.std_dev << "]\n";
     }
 
+    // Write summary CSV
     std::string summaryPath = OUTPUT_DIR + "summary.csv";
     writeSummaryCSV(summaryPath, results, allBinDataPerFile, allMatDataPerFile);
+
+    // Write per-subject beats CSV
+    std::string perSubjectPath = OUTPUT_DIR + "per_subject_beats.csv";
+    writePerSubjectCSV(perSubjectPath, results, allBinDataPerFile, allMatDataPerFile);
+
+    // Write tiled per-subject histogram SVG
+    std::string tiledHistPath = OUTPUT_DIR + "per_subject_ecg_ssd_histograms.svg";
+    writeTiledHistogramSVG(tiledHistPath, processedIds, allPerFileSsdVecs);
+
+    // Write global ECG SSD histogram
+    {
+        std::vector<double> allEcgSsd;
+        for (const auto& fr : results)
+            for (const auto& b : fr.bins)
+                allEcgSsd.push_back(b.ecg_ssd_seconds);
+        std::string globalHistPath = OUTPUT_DIR + "all_ecg_ssd_histogram.svg";
+        writeHistogramSVG(globalHistPath, "All Subjects - ECG SSD Histogram", allEcgSsd, 75, 800, 450, 75);
+    }
 
     std::cout << "\n======================================================================\n";
     std::cout << "SUMMARY\n";
@@ -715,8 +1145,11 @@ int main() {
     }
 
     std::cout << std::string(67, '-') << "\n";
-    std::cout << "\nPer-file CSVs: " << OUTPUT_DIR << "<subject>_wave_comparison.csv\n";
-    std::cout << "Summary CSV:   " << summaryPath << "\n";
+    std::cout << "\nPer-file CSVs:       " << OUTPUT_DIR << "<subject>_wave_comparison.csv\n";
+    std::cout << "Tiled histograms:    " << tiledHistPath << "\n";
+    std::cout << "Global histogram:    " << OUTPUT_DIR << "all_ecg_ssd_histogram.svg\n";
+    std::cout << "Per-subject CSV:     " << perSubjectPath << "\n";
+    std::cout << "Summary CSV:         " << summaryPath << "\n";
 
     return 0;
 }

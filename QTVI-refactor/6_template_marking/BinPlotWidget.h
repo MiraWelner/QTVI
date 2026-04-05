@@ -1,33 +1,43 @@
-// ============================================================================
-// BinPlotWidget.h � Single bin plot with PPG, ECG, and draggable dicrotic line
+﻿// ============================================================================
+// BinPlotWidget.h - One ECG lead + optional PPG overlay + draggable dicrotic
+//
+// Right-click cycles:  Good → BadR → BadPPG → Good  (skips BadPPG if no PPG)
+// Left-drag:           move dicrotic notch line
 // ============================================================================
 #pragma once
 #include <QWidget>
+#include <QString>
 #include <vector>
 
 class BinPlotWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit BinPlotWidget(int binIndex, QWidget* parent = nullptr);
+    enum class State { Good, BadR, BadPPG };
+
+    explicit BinPlotWidget(int binIndex, int leadIndex,
+        const QString& leadLabel, QWidget* parent = nullptr);
 
     void setData(const std::vector<double>& ppg,
         const std::vector<double>& ecg,
-        double alignmentPoint,
         int dicroticIdx);
 
-    void setBadR(bool bad);
-    void setBadPPG(bool bad);
+    void setHasPPG(bool has);
+    bool hasPPG() const { return m_hasPPG; }
+
+    void setState(State s);
+    State state() const { return m_state; }
+
     void setDicrotic(int idx);
     int  dicrotic() const { return m_dicrotic; }
-    bool isBadR() const { return m_badR; }
-    bool isBadPPG() const { return m_badPPG; }
+
     int  binIndex() const { return m_binIndex; }
+    int  leadIndex() const { return m_leadIndex; }
 
 signals:
     void dicroticMoved(int binIndex, int newIdx);
-    void badRToggled(int binIndex, bool bad);
-    void badPPGToggled(int binIndex, bool bad);
     void dicroticDragStarted(int binIndex);
+    void badRToggled(int binIndex, int leadIndex, bool bad);
+    void badPPGToggled(int binIndex, bool bad);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -36,18 +46,18 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
 
 private:
-    int sampleFromX(double x) const;
-    double xFromSample(int s) const;
+    int sampleFromX(double x, int nSamples) const;
+    double xFromSample(int s, int nSamples) const;
 
     int m_binIndex;
+    int m_leadIndex;
+    QString m_leadLabel;
     std::vector<double> m_ppg;
     std::vector<double> m_ecg;
-    double m_alignPoint = 0;
     int m_dicrotic = -1;
-    bool m_badR = false;
-    bool m_badPPG = false;
+    State m_state = State::Good;
+    bool m_hasPPG = false;
     bool m_dragging = false;
 
-    // Plot margins
-    static constexpr int kMarginL = 5, kMarginR = 5, kMarginT = 16, kMarginB = 4;
+    static constexpr int kML = 5, kMR = 5, kMT = 16, kMB = 4;
 };

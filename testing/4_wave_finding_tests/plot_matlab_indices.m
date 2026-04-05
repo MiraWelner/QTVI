@@ -11,7 +11,7 @@ if nargin < 3 || isempty(output_dir)
         output_dir = 'matlab_output';
 end
 if nargin < 4
-        time_range = [];
+        time_range = [32,38];
 end
 output_dir = fullfile(pwd, output_dir);
 if ~exist(output_dir, 'dir')

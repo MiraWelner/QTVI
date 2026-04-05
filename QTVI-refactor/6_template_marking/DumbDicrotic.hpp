@@ -10,45 +10,67 @@
 // ---------------------------------------------------------------------------
 namespace dicrotic_detail {
 
-    inline std::vector<double> simpleSmooth(const std::vector<double>& Y, int w) {
+    // Running-sum smooth - O(n) instead of O(n*w)
+    inline void smoothInPlace(const std::vector<double>& Y, int w,
+        std::vector<double>& out) {
         int L = static_cast<int>(Y.size());
+        out.resize(L);
+        if (L == 0) return;
         int halfw = w / 2;
-        std::vector<double> out(L);
-        for (int i = 0; i < L; ++i) {
-            double sum = 0; int cnt = 0;
-            for (int j = std::max(0, i - halfw); j <= std::min(L - 1, i + halfw); ++j) {
-                if (!std::isnan(Y[j])) { sum += Y[j]; ++cnt; }
-            }
-            out[i] = (cnt > 0) ? sum / cnt : std::nan("");
+
+        double sum = 0.0;
+        int cnt = 0;
+
+        // Seed: sum of Y[0..halfw]
+        for (int j = 0; j <= std::min(halfw, L - 1); ++j) {
+            if (!std::isnan(Y[j])) { sum += Y[j]; ++cnt; }
         }
-        return out;
+        out[0] = cnt > 0 ? sum / cnt : std::nan("");
+
+        for (int i = 1; i < L; ++i) {
+            // Remove element leaving the window (i - halfw - 1)
+            int drop = i - halfw - 1;
+            if (drop >= 0 && drop < L && !std::isnan(Y[drop])) {
+                sum -= Y[drop]; --cnt;
+            }
+            // Add element entering the window (i + halfw)
+            int add = i + halfw;
+            if (add < L && !std::isnan(Y[add])) {
+                sum += Y[add]; ++cnt;
+            }
+            out[i] = cnt > 0 ? sum / cnt : std::nan("");
+        }
     }
 
-    inline std::vector<double> shearTransform(const std::vector<double>& time,
-        const std::vector<double>& slice) {
-        if (slice.size() < 2) return slice;
-        double m = (slice.front() - slice.back()) / (time.back() - time.front());
-        double c = -m * time.front();
-        std::vector<double> result(slice.size());
-        for (size_t i = 0; i < slice.size(); ++i) {
-            result[i] = slice[i] + m * (i + 1) + c;
+    inline void shearTransformInPlace(int startIdx, int endIdx,
+        const std::vector<double>& beat,
+        std::vector<double>& result) {
+        int len = endIdx - startIdx + 1;
+        result.resize(len);
+        if (len < 2) { if (len == 1) result[0] = beat[startIdx]; return; }
+
+        double m = (beat[startIdx] - beat[endIdx])
+            / static_cast<double>(endIdx - startIdx);
+        double c = -m * startIdx;
+        for (int i = 0; i < len; ++i) {
+            result[i] = beat[startIdx + i] + m * (i + 1) + c;
         }
-        return result;
     }
 
     inline double pointToLineDist(double px, double py,
-        double x1, double y1, double x2, double y2) {
+        double x1, double y1,
+        double x2, double y2) {
         double dx = x2 - x1, dy = y2 - y1;
-        double len = std::sqrt(dx * dx + dy * dy);
-        if (len < 1e-15) return std::sqrt((px - x1) * (px - x1) + (py - y1) * (py - y1));
-        return std::abs(dy * px - dx * py + x2 * y1 - y2 * x1) / len;
+        double len2 = dx * dx + dy * dy;
+        if (len2 < 1e-30)
+            return std::sqrt((px - x1) * (px - x1) + (py - y1) * (py - y1));
+        return std::abs(dy * px - dx * py + x2 * y1 - y2 * x1) / std::sqrt(len2);
     }
 
-    inline bool orthogonalDistThresh(const std::vector<double>& time,
-        const std::vector<double>& line,
-        const std::vector<double>& curve,
-        double thresh) {
-        for (size_t i = 1; i < time.size(); ++i) {
+    // Works on raw pointers/offsets to avoid allocation
+    inline bool orthogonalDistThresh(const double* time, const double* line,
+        const double* curve, int len, double thresh) {
+        for (int i = 1; i < len; ++i) {
             double d = pointToLineDist(time[i], curve[i],
                 time[i - 1], line[i - 1],
                 time[i], line[i]);
@@ -57,97 +79,122 @@ namespace dicrotic_detail {
         return false;
     }
 
-    inline void normalize(std::vector<double>& v) {
-        double mn = *std::min_element(v.begin(), v.end());
-        double mx = *std::max_element(v.begin(), v.end());
+    inline void normalizeVec(double* v, int len) {
+        double mn = *std::min_element(v, v + len);
+        double mx = *std::max_element(v, v + len);
         double r = mx - mn;
-        if (r < 1e-15) { std::fill(v.begin(), v.end(), 0.0); return; }
-        for (auto& x : v) x = (x - mn) / r;
+        if (r < 1e-15) { std::fill(v, v + len, 0.0); return; }
+        double inv = 1.0 / r;
+        for (int i = 0; i < len; ++i) v[i] = (v[i] - mn) * inv;
     }
 
 } // namespace dicrotic_detail
 
-// ---------------------------------------------------------------------------
-// dumbDicrotic — returns sample index of dicrotic notch, or -1 if not found
-// ---------------------------------------------------------------------------
 inline int dumbDicrotic(const std::vector<double>& beat_in) {
+    /**
+    * @brief returns sample index of dicrotic notch, or -1 if not found
+    */
     using namespace dicrotic_detail;
 
-    if (beat_in.size() < 4) return -1;
+    int N = static_cast<int>(beat_in.size());
+    if (N < 4) return -1;
 
-    std::vector<double> beat = simpleSmooth(beat_in, 15);
+    // Smooth
+    std::vector<double> beat;
+    smoothInPlace(beat_in, 15, beat);
     if (beat.empty()) return -1;
 
     // Find peak
-    auto it = std::max_element(beat.begin(), beat.end());
-    int pmax = static_cast<int>(it - beat.begin());
-    int pmin = static_cast<int>(beat.size()) - 1;
+    int pmax = static_cast<int>(
+        std::max_element(beat.begin(), beat.end()) - beat.begin());
+    int pmin = N - 1;
 
     if (pmax == pmin || pmin - pmax < 2) return -1;
 
     // Regions
-    int p_min_dpdt_region = pmax + static_cast<int>(std::round((pmin - pmax) / 3.0));
-    int init_EP = pmax + static_cast<int>(std::round((pmin - pmax) * 3.0 / 4.0));
+    int p_min_dpdt_region = pmax + static_cast<int>(
+        std::round((pmin - pmax) / 3.0));
+    int init_EP = pmax + static_cast<int>(
+        std::round((pmin - pmax) * 3.0 / 4.0));
 
-    // Find steepest descent point
+    // Steepest descent (fix 1: +1 to match MATLAB indexing)
     int p_min_dpdt = pmax;
     {
         double minDiff = 1e30;
-        for (int i = pmax; i < p_min_dpdt_region && i + 1 < (int)beat.size(); ++i) {
+        int lim = std::min(p_min_dpdt_region, N - 2);
+        for (int i = pmax; i <= lim; ++i) {
             double d = beat[i + 1] - beat[i];
-            if (d < minDiff) { minDiff = d; p_min_dpdt = i; }
+            if (d < minDiff) { minDiff = d; p_min_dpdt = i + 1; }
         }
     }
 
     // Half-pressure level
     double p_half = beat[pmax] - (beat[pmax] - beat[p_min_dpdt]) / 2.0;
 
-    // Find SP candidates: points near p_half in the descent
-    std::vector<std::pair<double, int>> candidates;
-    for (int i = pmax; i <= p_min_dpdt_region && i < (int)beat.size(); ++i) {
-        candidates.push_back({ std::abs(beat[i] - p_half), i });
+    // SP candidates sorted by distance to p_half
+    int sliceLen = std::min(p_min_dpdt_region, N - 1) - pmax + 1;
+    std::vector<std::pair<double, int>> candidates(sliceLen);
+    for (int i = 0; i < sliceLen; ++i) {
+        candidates[i] = { std::abs(beat[pmax + i] - p_half), pmax + i };
     }
     std::sort(candidates.begin(), candidates.end());
 
-    // Find SP using shear transform test
+    // Reusable buffer for shear transform
+    std::vector<double> transformBuf;
+
+    // Find SP (fix 2: float division)
     int SP = pmax;
-    for (const auto& [_, idx] : candidates) {
-        std::vector<double> time_v, slice;
-        for (int i = idx; i <= init_EP && i < (int)beat.size(); ++i) {
-            time_v.push_back(i);
-            slice.push_back(beat[i]);
-        }
-        if (slice.size() < 2) continue;
-        auto transform = shearTransform(time_v, slice);
+    for (const auto& [dist, idx] : candidates) {
+        int len = std::min(init_EP, N - 1) - idx + 1;
+        if (len < 2) continue;
+
+        shearTransformInPlace(idx, std::min(init_EP, N - 1), beat, transformBuf);
+
         int below = 0;
-        for (size_t i = 0; i < transform.size(); ++i) {
-            if (transform[i] < slice[i]) ++below;
+        for (int i = 0; i < len; ++i) {
+            if (transformBuf[i] < beat[idx + i]) ++below;
         }
-        if (below < (int)slice.size() / 2) {
+        if (static_cast<double>(below) / len < 0.5) {
             SP = idx;
             break;
         }
     }
 
-    // Refine EP
+    // EP refinement (fix 3: replicate MATLAB polyfit logic)
+    // Pre-allocate all buffers at max size to avoid per-iteration allocation
+    int maxLen = init_EP - SP + 1;
+    std::vector<double> pressure(maxLen), timeVec(maxLen);
+    std::vector<double> shearline(maxLen), nl(maxLen), np_(maxLen), nt(maxLen);
+
     int EP = init_EP;
     while (EP > SP + 1) {
         int len = EP - SP + 1;
-        std::vector<double> pressure(len), time_v(len), shearline(len);
 
         for (int i = 0; i < len; ++i) {
             pressure[i] = beat[SP + i];
-            time_v[i] = SP + i;
+            timeVec[i] = static_cast<double>(SP + i);
         }
 
-        double m = (pressure.back() - pressure.front()) / (len > 1 ? (len - 1) : 1);
-        for (int i = 0; i < len; ++i) shearline[i] = m * i;
+        // MATLAB's crossed polyfit: x=[EP, SP], y=[pressure[0], pressure[len-1]]
+        double pfit_x1 = static_cast<double>(EP);
+        double pfit_x2 = static_cast<double>(SP);
+        double slope = (pressure[len - 1] - pressure[0]) / (pfit_x2 - pfit_x1);
+        double intercept = pressure[0] - slope * pfit_x1;
 
-        auto nl = shearline; normalize(nl);
-        auto np_ = pressure; normalize(np_);
-        auto nt = time_v; normalize(nt);
+        double m_used = (std::abs(slope) > 1e-15) ? intercept / slope : 0.0;
 
-        if (orthogonalDistThresh(nt, nl, np_, 0.3)) {
+        for (int i = 0; i < len; ++i) shearline[i] = m_used * (i + 1);
+
+        // Copy into normalize buffers (avoid repeated allocation)
+        std::copy_n(shearline.data(), len, nl.data());
+        std::copy_n(pressure.data(), len, np_.data());
+        std::copy_n(timeVec.data(), len, nt.data());
+
+        normalizeVec(nl.data(), len);
+        normalizeVec(np_.data(), len);
+        normalizeVec(nt.data(), len);
+
+        if (orthogonalDistThresh(nt.data(), nl.data(), np_.data(), len, 0.3)) {
             --EP;
         }
         else {
@@ -155,29 +202,29 @@ inline int dumbDicrotic(const std::vector<double>& beat_in) {
         }
     }
 
-    // Final shear transform to find notch
+    // Final: shear transform to find notch
     {
-        std::vector<double> time_v, slice;
-        for (int i = SP; i <= EP && i < (int)beat.size(); ++i) {
-            time_v.push_back(i);
-            slice.push_back(beat[i]);
+        int len = std::min(EP, N - 1) - SP + 1;
+        if (len < 2) return -1;
+
+        shearTransformInPlace(SP, std::min(EP, N - 1), beat, transformBuf);
+
+        int minShearLocal = 0;
+        double minVal = transformBuf[0];
+        for (int i = 1; i < len; ++i) {
+            if (transformBuf[i] < minVal) { minVal = transformBuf[i]; minShearLocal = i; }
         }
-        if (slice.size() < 2) return -1;
-
-        auto transform = shearTransform(time_v, slice);
-
-        auto minIt = std::min_element(transform.begin(), transform.end());
-        int min_shear = SP + static_cast<int>(minIt - transform.begin());
+        int min_shear = SP + minShearLocal;
 
         int start_relax = min_shear;
         double mx = -1e30;
-        for (int i = min_shear; i <= pmin && i < (int)beat.size(); ++i) {
+        for (int i = min_shear; i <= pmin && i < N; ++i) {
             if (beat[i] > mx) { mx = beat[i]; start_relax = i; }
         }
 
         int notch = min_shear;
         double mn = 1e30;
-        for (int i = min_shear; i <= start_relax && i < (int)beat.size(); ++i) {
+        for (int i = min_shear; i <= start_relax && i < N; ++i) {
             if (beat[i] < mn) { mn = beat[i]; notch = i; }
         }
 

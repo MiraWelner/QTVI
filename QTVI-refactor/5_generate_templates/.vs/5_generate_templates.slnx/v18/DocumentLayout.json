@@ -3,6 +3,10 @@
   "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\",
   "Documents": [
     {
+      "AbsoluteMoniker": "D:0:0:{D1799E60-47F1-4893-BD6A-27E39AD6B2C2}|5_generate_templates.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\EnsembleTemplate.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{D1799E60-47F1-4893-BD6A-27E39AD6B2C2}|5_generate_templates.vcxproj|solutionrelative:EnsembleTemplate.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{D1799E60-47F1-4893-BD6A-27E39AD6B2C2}|5_generate_templates.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\CreateEcgTemplates.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{D1799E60-47F1-4893-BD6A-27E39AD6B2C2}|5_generate_templates.vcxproj|solutionrelative:CreateEcgTemplates.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
@@ -17,10 +21,6 @@
     {
       "AbsoluteMoniker": "D:0:0:{D1799E60-47F1-4893-BD6A-27E39AD6B2C2}|5_generate_templates.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\5_generate_templates.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{D1799E60-47F1-4893-BD6A-27E39AD6B2C2}|5_generate_templates.vcxproj|solutionrelative:5_generate_templates.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{D1799E60-47F1-4893-BD6A-27E39AD6B2C2}|5_generate_templates.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\EnsembleTemplate.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{D1799E60-47F1-4893-BD6A-27E39AD6B2C2}|5_generate_templates.vcxproj|solutionrelative:EnsembleTemplate.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{D1799E60-47F1-4893-BD6A-27E39AD6B2C2}|5_generate_templates.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\CreatePPGTemplates.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
@@ -52,7 +52,7 @@
         },
         {
           "DockedWidth": 545,
-          "SelectedChildIndex": 6,
+          "SelectedChildIndex": 7,
           "Children": [
             {
               "$type": "Bookmark",
@@ -64,41 +64,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 3,
-              "Title": "5_generate_templates.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\5_generate_templates.cpp",
-              "RelativeDocumentMoniker": "5_generate_templates.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\5_generate_templates.cpp",
-              "RelativeToolTip": "5_generate_templates.cpp",
-              "ViewState": "AgIAAAkAAAAAAAAAAAAAADAAAAAtAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-03-26T21:42:50.136Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 2,
-              "Title": "GenerateTemplates.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\GenerateTemplates.hpp",
-              "RelativeDocumentMoniker": "GenerateTemplates.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\GenerateTemplates.hpp",
-              "RelativeToolTip": "GenerateTemplates.hpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAIAAAAFAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-26T21:40:50.489Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{3ae79031-e1bc-11d0-8f78-00a0c9110057}"
-            },
-            {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 0,
+              "DocumentIndex": 1,
               "Title": "CreateEcgTemplates.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\CreateEcgTemplates.hpp",
               "RelativeDocumentMoniker": "CreateEcgTemplates.hpp",
@@ -112,19 +78,51 @@
             {
               "$type": "Document",
               "DocumentIndex": 4,
+              "Title": "5_generate_templates.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\5_generate_templates.cpp",
+              "RelativeDocumentMoniker": "5_generate_templates.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\5_generate_templates.cpp",
+              "RelativeToolTip": "5_generate_templates.cpp",
+              "ViewState": "AgIAAAkAAAAAAAAAAAAAADAAAAAtAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-03-26T21:42:50.136Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "GenerateTemplates.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\GenerateTemplates.hpp",
+              "RelativeDocumentMoniker": "GenerateTemplates.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\GenerateTemplates.hpp",
+              "RelativeToolTip": "GenerateTemplates.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAIAAAAFAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-03-26T21:40:50.489Z"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{3ae79031-e1bc-11d0-8f78-00a0c9110057}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
               "Title": "EnsembleTemplate.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\EnsembleTemplate.hpp",
               "RelativeDocumentMoniker": "EnsembleTemplate.hpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\EnsembleTemplate.hpp",
               "RelativeToolTip": "EnsembleTemplate.hpp",
-              "ViewState": "AgIAAIsAAAAAAAAAAAAlwJoAAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAAC0BAAAAAAAAAIAwwE4BAAAFAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
               "WhenOpened": "2026-03-26T21:53:48.119Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 2,
               "Title": "TemplateTypes.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\TemplateTypes.hpp",
               "RelativeDocumentMoniker": "TemplateTypes.hpp",
@@ -132,8 +130,7 @@
               "RelativeToolTip": "TemplateTypes.hpp",
               "ViewState": "AgIAACIAAAAAAAAAAAAgwFUAAAACAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-27T15:49:05.475Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-27T15:49:05.475Z"
             },
             {
               "$type": "Document",
@@ -145,8 +142,7 @@
               "RelativeToolTip": "binfile_handling.h",
               "ViewState": "AgIAABsAAAAAAAAAAAAcwEoAAABkAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-26T21:42:55.454Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-26T21:42:55.454Z"
             },
             {
               "$type": "Document",
@@ -158,8 +154,7 @@
               "RelativeToolTip": "CreatePPGTemplates.hpp",
               "ViewState": "AgIAABkAAAAAAAAAAAAowEIAAAA3AAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-26T23:08:02.576Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-26T23:08:02.576Z"
             },
             {
               "$type": "Document",
@@ -171,8 +166,7 @@
               "RelativeToolTip": "find_foot_pulseox.hpp",
               "ViewState": "AgIAAAoAAAAAAAAAAAAgwCcAAAASAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-26T21:57:37.566Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-26T21:57:37.566Z"
             }
           ]
         }

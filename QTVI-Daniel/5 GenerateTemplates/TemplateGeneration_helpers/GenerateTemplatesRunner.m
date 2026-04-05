@@ -1,5 +1,5 @@
 clear
-props = readProps('../config.txt');
+props = readProps('config.txt');
 GenerateTemplates_input = props('GenerateTemplates_input');
 GenerateTemplates_output = props('GenerateTemplates_output');
 Skip_Existing = logical(str2num(props('Skip_Existing')));

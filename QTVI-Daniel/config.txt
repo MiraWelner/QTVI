@@ -125,8 +125,8 @@ GenerateTemplates_output = D:\USERS\MiraWelner\QTVI\QTVI-data-files\5_generate_t
 #                                      exist then the value here, each screen shown will have the number set (except last which will have remainder).
 #                                      Set to inf or a neg number to show all. Screen may be too small to accommodate all.
 #
-TemplateMarking_input = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\5 GenerateTemplates
-TemplateMarking_output = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\6 TemplateMarking
+TemplateMarking_input = D:\USERS\MiraWelner\QTVI\QTVI-data-files\5_generate_template_files\matlab
+TemplateMarking_output =D:\USERS\MiraWelner\QTVI\QTVI-data-files\6_template_marking_files\matlab
 TemplateMarking_TemplatesToShow = 16
 
 # 7 Generate Features
@@ -142,11 +142,11 @@ TemplateMarking_TemplatesToShow = 16
 #
 #   GenerateFeatures_output directory to output feature data
 #
-Gen_Features_use_manually_reviewed_templates = 1
-GenerateFeatures_annealed_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\3 AnnealSegments
-GenerateFeatures_wavedata_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\4 FindWaveBounds
-GenerateFeatures_template_path = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\6 TemplateMarking
-GenerateFeatures_output = C:\Users\mirae\OneDrive\Documents\PPG-master\PPG-master\src\matlab\src\7 GenerateFeatures
+Gen_Features_use_manually_reviewed_templates = 0
+GenerateFeatures_annealed_path = D:\USERS\MiraWelner\QTVI\QTVI-data-files\3_annealed_files\matlab
+GenerateFeatures_wavedata_path = D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\matlab
+GenerateFeatures_template_path = D:\USERS\MiraWelner\QTVI\QTVI-data-files\6_template_marking_files\matlab
+GenerateFeatures_output = D:\USERS\MiraWelner\QTVI\QTVI-data-files\7_generate_features\matlab
 
 # 8 SaveFeaturesForEsuite
 # Breaks out features generated in #7 into individual files to match loading of data in Entropy Suite.

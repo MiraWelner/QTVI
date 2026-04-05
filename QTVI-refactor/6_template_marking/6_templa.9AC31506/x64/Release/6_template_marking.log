@@ -1,0 +1,18 @@
+﻿   Qt/MSBuild: 3.4.1.0
+  Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
+   Qt: 6.10.2
+  uic TemplateViewerWindow.ui
+  moc BinPlotWidget.h
+  moc TemplateViewerWindow.h
+  6_template_marking.cpp
+  BinPlotWidget.cpp
+  TemplateViewerWindow.cpp
+  moc_BinPlotWidget.cpp
+  moc_TemplateViewerWindow.cpp
+  Generating code
+  Previous IPDB not found, fall back to full compilation.
+  All 1207 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Finished generating code
+  6_template_marking.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\6_template_marking\x64\Release\6_template_marking.exe
+  'pwsh.exe' is not recognized as an internal or external command,
+  operable program or batch file.

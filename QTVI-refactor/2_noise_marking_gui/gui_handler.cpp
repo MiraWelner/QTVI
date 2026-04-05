@@ -95,14 +95,6 @@ noise_marking_gui::ChannelMarkingState& noise_marking_gui::markStateFor(const QS
     return m_markState_ppg;
 }
 
-QString noise_marking_gui::selectedEcgLabel() const {
-    switch (ui->ecg_channel_selector->currentIndex()) {
-    case 1:  return "ECG2";
-    case 2:  return "ECG3";
-    default: return "ECG1";
-    }
-}
-
 QString noise_marking_gui::signalLabelForChartView(QChartView* cv) const {
     if (cv == ui->ecg_axis_1) return "ECG1";
     if (cv == ui->ecg_axis_2) return "ECG2";
@@ -141,6 +133,88 @@ double noise_marking_gui::totalChunkDuration() const {
 }
 
 // ============================================================================
+// Per-channel button helpers
+// ============================================================================
+
+QPushButton* noise_marking_gui::startButtonForSignal(const QString& label) const {
+    if (label == "ECG1") return ui->start_ecg1_mark;
+    if (label == "ECG2") return ui->start_ecg2_mark;
+    if (label == "ECG3") return ui->start_ecg3_mark;
+    if (label == "PPG")  return ui->startNoisePPG;
+    return nullptr;
+}
+
+QPushButton* noise_marking_gui::stopButtonForSignal(const QString& label) const {
+    if (label == "ECG1") return ui->stop_ecg1_mark;
+    if (label == "ECG2") return ui->stop_ecg2_mark;
+    if (label == "ECG3") return ui->stop_ecg3_mark;
+    if (label == "PPG")  return ui->stopNoisePPG;
+    return nullptr;
+}
+
+void noise_marking_gui::updateButtonStatesForChannel(const QString& label) {
+    QPushButton* startBtn = startButtonForSignal(label);
+    QPushButton* stopBtn = stopButtonForSignal(label);
+    if (!startBtn || !stopBtn) return;
+
+    bool active = isChannelActive(label);
+
+    // Gray out both buttons if channel has no data
+    startBtn->setEnabled(active);
+    stopBtn->setEnabled(false);
+
+    // Clear styling
+    startBtn->setStyleSheet("");
+    stopBtn->setStyleSheet("");
+
+    if (!active) {
+        startBtn->setStyleSheet("color: gray;");
+        stopBtn->setStyleSheet("color: gray;");
+    }
+}
+
+void noise_marking_gui::updateAllChannelButtonStates() {
+    for (const QString& label : { "ECG1", "ECG2", "ECG3", "PPG" })
+        updateButtonStatesForChannel(label);
+
+    bool anyActive = !m_activeChannels.isEmpty();
+    ui->start_all_mark->setEnabled(anyActive);
+    ui->start_all_mark->setStyleSheet(anyActive ? "" : "color: gray;");
+
+    if (!anyActive || !m_markAllActive) {
+        ui->stop_all_mark->setEnabled(false);
+        ui->stop_all_mark->setStyleSheet(anyActive ? "" : "color: gray;");
+        return;
+    }
+
+    // Mark-all is in progress — restore button styling based on channel phases
+    bool anyWaitingEnd = false;
+    bool anyWaitingStop = false;
+    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+        if (!isChannelActive(lbl)) continue;
+        MarkPhase p = markStateFor(lbl).phase;
+        if (p == MarkPhase::WaitingForEnd) anyWaitingEnd = true;
+        if (p == MarkPhase::WaitingForStop) anyWaitingStop = true;
+    }
+
+    if (anyWaitingStop) {
+        ui->start_all_mark->setStyleSheet("");
+        ui->stop_all_mark->setEnabled(true);
+        ui->stop_all_mark->setStyleSheet("background-color: #e74c3c; color: white;");
+    }
+    else if (anyWaitingEnd) {
+        ui->start_all_mark->setStyleSheet("background-color: #f39c12; color: white;");
+        ui->stop_all_mark->setEnabled(true);
+        ui->stop_all_mark->setStyleSheet("");
+    }
+    else {
+        ui->start_all_mark->setStyleSheet("background-color: #f39c12; color: white;");
+        ui->stop_all_mark->setEnabled(false);
+        ui->stop_all_mark->setStyleSheet("");
+    }
+}
+
+// ============================================================================
 // Construction / Destruction
 // ============================================================================
 
@@ -164,10 +238,6 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     // Prevent buttons from stealing keyboard focus (arrow keys navigate)
     for (auto* btn : findChildren<QPushButton*>())
         btn->setFocusPolicy(Qt::NoFocus);
-    ui->ecg_channel_selector->setFocusPolicy(Qt::NoFocus);
-
-    if (ui->ecg_channel_selector->count() == 0)
-        ui->ecg_channel_selector->addItems({ "ECG 1", "ECG 2", "ECG 3" });
 
     // --- Navigation shortcuts ---
     new QShortcut(QKeySequence(Qt::Key_Left), this, [this]() {
@@ -210,8 +280,12 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     ui->amp_ecg_axis->chart()->addSeries(m_ecgAmpSeries);
     ui->amp_ppg_axis->chart()->addSeries(m_ppgAmpSeries);
 
-    ui->stopNoiseECG->setEnabled(false);
+    // Initially disable all stop buttons
+    ui->stop_ecg1_mark->setEnabled(false);
+    ui->stop_ecg2_mark->setEnabled(false);
+    ui->stop_ecg3_mark->setEnabled(false);
     ui->stopNoisePPG->setEnabled(false);
+    ui->stop_all_mark->setEnabled(false);
 
     // Cursor bars
     auto addCursor = [](QChartView* view, QLineSeries*& series) {
@@ -314,10 +388,14 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     markActive("ECG3", m_ecg3);
     markActive("PPG", m_ppg);
 
+    // Gray out / enable buttons based on which channels are present
+    updateAllChannelButtonStates();
+
     handle_ampogram_plot();
     handle_data_plot();
     updateAmpogramCursor();
     setupHypnogram();
+    restoreMarkingMarkers();
 
     uint64_t ecgPerChunk = static_cast<uint64_t>(CHUNK_DURATION_SEC * m_ecgSR);
     ui->prev8hours->setEnabled(chunkIndex > 0);
@@ -468,8 +546,7 @@ void noise_marking_gui::handle_ampogram_plot(double sampling_length) {
 // ============================================================================
 
 void noise_marking_gui::handle_data_plot() {
-    // Clean up existing highlights BEFORE plotSignal clears chart series,
-    // to avoid double-deleting the area/upper/lower series.
+    // Clean up existing highlights BEFORE plotSignal clears chart series
     for (auto* area : m_highlights) {
         if (area->chart()) area->chart()->removeSeries(area);
         delete area->upperSeries();
@@ -484,11 +561,9 @@ void noise_marking_gui::handle_data_plot() {
         if (!view || !view->chart()) return { 1e9, -1e9 };
         QChart* chart = view->chart();
 
-        // Clear old content
         for (auto* s : chart->series()) { if (s != marker) { chart->removeSeries(s); delete s; } }
         for (auto* a : chart->axes()) { chart->removeAxis(a); delete a; }
 
-        // X axis — time labels
         auto* xAxis = new QCategoryAxis();
         xAxis->setRange(m_currentStartTime, m_currentStartTime + m_windowDuration);
         double offset = m_currentChunkIndex * CHUNK_DURATION_SEC;
@@ -510,18 +585,15 @@ void noise_marking_gui::handle_data_plot() {
         chart->addAxis(xAxis, Qt::AlignBottom);
         chart->setMargins(QMargins(0, 0, 20, 0));
 
-        // Y axis
         auto* yAxis = new QValueAxis();
         yAxis->setVisible(false);
         chart->addAxis(yAxis, Qt::AlignLeft);
 
-        // If no real data, leave axes in place but plot nothing
         if (data.size() < 2 || sr <= 0.0) {
             yAxis->setRange(-1.0, 1.0);
             return { 1e9, -1e9 };
         }
 
-        // Plot signal
         auto* series = new QLineSeries();
         series->setUseOpenGL(true);
         series->setPen(QPen(color, 1));
@@ -556,7 +628,9 @@ void noise_marking_gui::handle_data_plot() {
         const QVector<double>& data, double sr,
         ChannelMarkingState& state, const QColor& color) {
             if (!isChannelActive(label)) return;
-            plotSignal(view, data, sr, state.startMarkerLine, state.startTimeValue, color);
+            double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+            double localMarkerPos = state.globalStartTime - globalOffset;
+            plotSignal(view, data, sr, state.startMarkerLine, localMarkerPos, color);
         };
 
     maybePlot("ECG1", ui->ecg_axis_1, m_ecg1, m_ecgSR, m_markState_ecg1, COLOR_ECG1);
@@ -576,25 +650,21 @@ void noise_marking_gui::finalizeMarking(QChartView* cv, double endX,
     ChannelMarkingState& state = markStateFor(signalLabel);
     double sr = sampleRateForSignal(signalLabel);
 
-    double startX = state.startTimeValue;
-
-    // Snap to nearest sample
-    double snappedS = std::round(std::min(startX, endX) * sr) / sr;
-    double snappedE = std::round(std::max(startX, endX) * sr) / sr;
-
-    // Convert to global time
     double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
-    double globalStart = snappedS + globalOffset;
-    double globalEnd = snappedE + globalOffset;
+    double globalEnd = endX + globalOffset;
+    double globalStart = state.globalStartTime;
+
+    double snappedS = std::round(std::min(globalStart, globalEnd) * sr) / sr;
+    double snappedE = std::round(std::max(globalStart, globalEnd) * sr) / sr;
 
     m_noiseManager->addSegment(
-        static_cast<size_t>(globalStart * sr),
-        static_cast<size_t>(globalEnd * sr),
+        static_cast<size_t>(snappedS * sr),
+        static_cast<size_t>(snappedE * sr),
         signalLabel.toStdString(),
         m_currentMarkingType.toStdString()
     );
 
-    m_genExc.noiseExc.append({ globalStart, globalEnd });
+    m_genExc.noiseExc.append({ snappedS, snappedE });
     m_genExc.data_type.append(signalLabel);
     m_genExc.marking_type.append(m_currentMarkingType);
 
@@ -602,15 +672,29 @@ void noise_marking_gui::finalizeMarking(QChartView* cv, double endX,
     state.phase = MarkPhase::Idle;
     clearStartMarker(state);
 
-    if (signalLabel.startsWith("ECG")) {
-        ui->startNoiseECG->setStyleSheet("");
-        ui->stopNoiseECG->setStyleSheet("");
-        ui->stopNoiseECG->setEnabled(false);
+    // Reset the buttons for this specific channel
+    if (QPushButton* startBtn = startButtonForSignal(signalLabel))
+        startBtn->setStyleSheet("");
+    if (QPushButton* stopBtn = stopButtonForSignal(signalLabel)) {
+        stopBtn->setStyleSheet("");
+        stopBtn->setEnabled(false);
     }
-    else {
-        ui->startNoisePPG->setStyleSheet("");
-        ui->stopNoisePPG->setStyleSheet("");
-        ui->stopNoisePPG->setEnabled(false);
+
+    // If mark-all mode is active, check if all channels are now idle
+    if (m_markAllActive) {
+        bool allIdle = true;
+        for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+            if (isChannelActive(lbl) && markStateFor(lbl).phase != MarkPhase::Idle) {
+                allIdle = false;
+                break;
+            }
+        }
+        if (allIdle) {
+            m_markAllActive = false;
+            ui->start_all_mark->setStyleSheet("");
+            ui->stop_all_mark->setStyleSheet("");
+            ui->stop_all_mark->setEnabled(false);
+        }
     }
 
     updateNoiseHighlights();
@@ -621,15 +705,11 @@ void noise_marking_gui::cancelMarking(const QString& signalLabel) {
     state.phase = MarkPhase::Idle;
     clearStartMarker(state);
 
-    if (signalLabel.startsWith("ECG")) {
-        ui->startNoiseECG->setStyleSheet("");
-        ui->stopNoiseECG->setStyleSheet("");
-        ui->stopNoiseECG->setEnabled(false);
-    }
-    else {
-        ui->startNoisePPG->setStyleSheet("");
-        ui->stopNoisePPG->setStyleSheet("");
-        ui->stopNoisePPG->setEnabled(false);
+    if (QPushButton* startBtn = startButtonForSignal(signalLabel))
+        startBtn->setStyleSheet("");
+    if (QPushButton* stopBtn = stopButtonForSignal(signalLabel)) {
+        stopBtn->setStyleSheet("");
+        stopBtn->setEnabled(false);
     }
 }
 
@@ -650,7 +730,6 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
         if (me->button() != Qt::LeftButton)
             return QDialog::eventFilter(watched, event);
 
-        // mapToValue returns a value in chart-local coordinates (0 .. chunkDuration)
         double clickedX = cv->chart()->mapToValue(me->pos()).x();
         double chunkDur = totalChunkDuration();
         clickedX = std::clamp(clickedX, 0.0, chunkDur);
@@ -661,30 +740,78 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
             if (!isChannelActive(label))
                 return QDialog::eventFilter(watched, event);
 
+            // Convert click to local chunk time
+            double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+
+            // --- Mark-all mode: propagate click to every active channel ---
+            if (m_markAllActive) {
+                // Check if any active channel is in a waiting phase
+                bool anyWaitingStart = false;
+                bool anyWaitingStop = false;
+                for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+                    if (!isChannelActive(lbl)) continue;
+                    MarkPhase p = markStateFor(lbl).phase;
+                    if (p == MarkPhase::WaitingForStart || p == MarkPhase::WaitingForEnd)
+                        anyWaitingStart = true;
+                    if (p == MarkPhase::WaitingForStop)
+                        anyWaitingStop = true;
+                }
+
+                if (anyWaitingStart) {
+                    // Place start marker on all active channels at this time
+                    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+                        if (!isChannelActive(lbl)) continue;
+                        ChannelMarkingState& st = markStateFor(lbl);
+                        if (st.phase != MarkPhase::WaitingForStart &&
+                            st.phase != MarkPhase::WaitingForEnd)
+                            continue;
+                        st.globalStartTime = clickedX + globalOffset;
+                        QChartView* targetCv = chartViewForSignalLabel(lbl);
+                        QPushButton* stopBtn = stopButtonForSignal(lbl);
+                        showStartMarker(targetCv, clickedX, st,
+                            colorForSignal(lbl), stopBtn);
+                        st.phase = MarkPhase::WaitingForEnd;
+                    }
+                    ui->stop_all_mark->setEnabled(true);
+                    return true;
+                }
+
+                if (anyWaitingStop) {
+                    // Finalize all active channels at this time
+                    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+                        if (!isChannelActive(lbl)) continue;
+                        ChannelMarkingState& st = markStateFor(lbl);
+                        if (st.phase != MarkPhase::WaitingForStop) continue;
+                        QChartView* targetCv = chartViewForSignalLabel(lbl);
+                        finalizeMarking(targetCv, clickedX, lbl);
+                    }
+                    return true;
+                }
+            }
+
+            // --- Single-channel mode (original behavior) ---
             ChannelMarkingState& state = markStateFor(label);
 
             switch (state.phase) {
             case MarkPhase::WaitingForStart:
             case MarkPhase::WaitingForEnd: {
-                // Place or reposition the start marker
-                state.startTimeValue = clickedX;
-                QPushButton* stopBtn = label.startsWith("ECG")
-                    ? ui->stopNoiseECG : ui->stopNoisePPG;
+                state.globalStartTime = clickedX + globalOffset;
+                QPushButton* stopBtn = stopButtonForSignal(label);
                 showStartMarker(cv, clickedX, state, colorForSignal(label), stopBtn);
                 state.phase = MarkPhase::WaitingForEnd;
                 return true;
             }
             case MarkPhase::WaitingForStop:
-                // Place end marker → finalize
                 finalizeMarking(cv, clickedX, label);
                 return true;
 
             case MarkPhase::Idle:
-                // Start a drag
                 m_isDragging = true;
                 m_dragStartPos = me->pos();
                 m_dragSignalLabel = label;
-                state.startTimeValue = clickedX;
+                {
+                    state.globalStartTime = clickedX + globalOffset;
+                }
                 if (!m_draggedViewport) {
                     m_draggedViewport = viewport;
                     m_draggedViewport->grabMouse();
@@ -696,7 +823,6 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
         // --- Ampogram / hypnogram click (navigate) ---
         if (cv == ui->amp_ecg_axis || cv == ui->amp_ppg_axis
             || cv == ui->sleep_state_axis) {
-            // These charts use global x-axes, so re-read the raw click value
             double globalClickX = cv->chart()->mapToValue(me->pos()).x();
             double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
             double localTarget = globalClickX - globalOffset;
@@ -729,7 +855,9 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
                 endX = std::clamp(endX, m_currentStartTime,
                     m_currentStartTime + m_windowDuration);
                 ChannelMarkingState& state = markStateFor(label);
-                if (std::abs(endX - state.startTimeValue) > 0.1)
+                double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+                double localStart = state.globalStartTime - globalOffset;
+                if (std::abs(endX - localStart) > 0.1)
                     finalizeMarking(cv, endX, label);
             }
             m_dragSignalLabel.clear();
@@ -771,7 +899,6 @@ void noise_marking_gui::updateNoiseHighlights() {
     }
     m_highlights.clear();
 
-    // Build a map of chart + axes for each active channel
     struct ChartAxes {
         QChart* chart = nullptr;
         QAbstractAxis* xAxis = nullptr;
@@ -802,7 +929,6 @@ void noise_marking_gui::updateNoiseHighlights() {
         if (!axesMap.contains(segLabel)) continue;
 
         double sr = sampleRateForSignal(segLabel);
-        // Convert global sample positions to local chunk time
         double segStart = seg.startSample / sr - globalOffset;
         double segEnd = seg.endSample / sr - globalOffset;
         if (segEnd < viewStart || segStart > viewEnd) continue;
@@ -871,6 +997,37 @@ QString noise_marking_gui::formatTimeLabel(double seconds) {
 }
 
 // ============================================================================
+// Restore start markers after chunk change
+// ============================================================================
+
+void noise_marking_gui::restoreMarkingMarkers() {
+    double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+    double chunkEnd = globalOffset + CHUNK_DURATION_SEC;
+
+    auto restore = [&](const QString& label, ChannelMarkingState& state) {
+        if (state.phase != MarkPhase::WaitingForEnd &&
+            state.phase != MarkPhase::WaitingForStop)
+            return;
+
+        state.startMarkerLine = nullptr;
+
+        QChartView* cv = chartViewForSignalLabel(label);
+        if (!cv || !isChannelActive(label)) return;
+
+        if (state.globalStartTime >= globalOffset && state.globalStartTime <= chunkEnd) {
+            double localX = state.globalStartTime - globalOffset;
+            QPushButton* stopBtn = stopButtonForSignal(label);
+            showStartMarker(cv, localX, state, colorForSignal(label), stopBtn);
+        }
+        };
+
+    restore("ECG1", m_markState_ecg1);
+    restore("ECG2", m_markState_ecg2);
+    restore("ECG3", m_markState_ecg3);
+    restore("PPG", m_markState_ppg);
+}
+
+// ============================================================================
 // Public marking API (called by lower_row_buttons)
 // ============================================================================
 
@@ -878,7 +1035,6 @@ void noise_marking_gui::beginMarking(const QString& signalLabel) {
     ChannelMarkingState& state = markStateFor(signalLabel);
 
     if (state.phase != MarkPhase::Idle) {
-        // Already active — cancel
         cancelMarking(signalLabel);
         return;
     }
@@ -886,26 +1042,51 @@ void noise_marking_gui::beginMarking(const QString& signalLabel) {
     m_currentMarkingType = ui->marking_type->currentText();
     state.phase = MarkPhase::WaitingForStart;
 
-    if (signalLabel.startsWith("ECG"))
-        ui->startNoiseECG->setStyleSheet("background-color: #f39c12; color: white;");
-    else
-        ui->startNoisePPG->setStyleSheet("background-color: #f39c12; color: white;");
+    if (QPushButton* startBtn = startButtonForSignal(signalLabel))
+        startBtn->setStyleSheet("background-color: #f39c12; color: white;");
+}
+
+void noise_marking_gui::beginMarkingAll() {
+    m_markAllActive = true;
+    m_currentMarkingType = ui->marking_type->currentText();
+
+    for (const QString& label : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+        if (!isChannelActive(label)) continue;
+        ChannelMarkingState& state = markStateFor(label);
+        if (state.phase != MarkPhase::Idle) cancelMarking(label);
+        state.phase = MarkPhase::WaitingForStart;
+        if (QPushButton* startBtn = startButtonForSignal(label))
+            startBtn->setStyleSheet("background-color: #f39c12; color: white;");
+    }
+    ui->start_all_mark->setStyleSheet("background-color: #f39c12; color: white;");
+}
+
+void noise_marking_gui::beginStopPhaseAll() {
+    for (const QString& label : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+        if (!isChannelActive(label)) continue;
+        ChannelMarkingState& state = markStateFor(label);
+        if (state.phase != MarkPhase::WaitingForEnd) continue;
+
+        state.phase = MarkPhase::WaitingForStop;
+        if (QPushButton* stopBtn = stopButtonForSignal(label))
+            stopBtn->setStyleSheet("background-color: #e74c3c; color: white;");
+        if (QPushButton* startBtn = startButtonForSignal(label))
+            startBtn->setStyleSheet("");
+    }
+    ui->start_all_mark->setStyleSheet("");
+    ui->stop_all_mark->setStyleSheet("background-color: #e74c3c; color: white;");
 }
 
 void noise_marking_gui::beginStopPhase(const QString& signalLabel) {
     ChannelMarkingState& state = markStateFor(signalLabel);
-    if (!state.startMarkerLine) return;
+    if (state.phase != MarkPhase::WaitingForEnd) return;
 
     state.phase = MarkPhase::WaitingForStop;
 
-    if (signalLabel.startsWith("ECG")) {
-        ui->stopNoiseECG->setStyleSheet("background-color: #e74c3c; color: white;");
-        ui->startNoiseECG->setStyleSheet("");
-    }
-    else {
-        ui->stopNoisePPG->setStyleSheet("background-color: #e74c3c; color: white;");
-        ui->startNoisePPG->setStyleSheet("");
-    }
+    if (QPushButton* stopBtn = stopButtonForSignal(signalLabel))
+        stopBtn->setStyleSheet("background-color: #e74c3c; color: white;");
+    if (QPushButton* startBtn = startButtonForSignal(signalLabel))
+        startBtn->setStyleSheet("");
 }
 
 // ============================================================================

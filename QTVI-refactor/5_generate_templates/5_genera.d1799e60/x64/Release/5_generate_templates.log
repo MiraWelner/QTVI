@@ -71,9 +71,9 @@ C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717
           ]
   
   Generating code
-  12 of 1673 functions ( 0.7%) were compiled, the rest were copied from previous compilation.
-    1 functions were new in current compilation
-    7 functions had inline decision re-evaluated but remain unchanged
+  7 of 1673 functions ( 0.4%) were compiled, the rest were copied from previous compilation.
+    0 functions were new in current compilation
+    25 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   5_generate_templates.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\5_generate_templates\x64\Release\5_generate_templates.exe
   'pwsh.exe' is not recognized as an internal or external command,

@@ -1,0 +1,617 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="900" viewBox="0 0 1500 900">
+<rect width="1500" height="900" fill="white"/>
+<g transform="translate(0,0)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010023_20110817</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">77</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">154</text>
+<rect x="50.00" y="257.01" width="2.70" height="2.99" fill="#4a90d9"/>
+<rect x="59.60" y="68.83" width="2.70" height="191.17" fill="#4a90d9"/>
+<rect x="62.80" y="30.00" width="2.70" height="230.00" fill="#d94a4a"/>
+<polyline points="62.8,33.0 63.5,29.0 64.2,33.0 64.8,29.0 65.5,33.0" fill="none" stroke="white" stroke-width="1"/>
+<text x="64.15" y="27.00" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold" fill="#d94a4a">433</text>
+<rect x="66.00" y="213.70" width="2.70" height="46.30" fill="#4a90d9"/>
+<rect x="88.40" y="258.51" width="2.70" height="1.49" fill="#4a90d9"/>
+<rect x="178.00" y="257.01" width="2.70" height="2.99" fill="#4a90d9"/>
+<rect x="184.40" y="258.51" width="2.70" height="1.49" fill="#4a90d9"/>
+<rect x="190.80" y="258.51" width="2.70" height="1.49" fill="#4a90d9"/>
+<rect x="286.80" y="258.51" width="2.70" height="1.49" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0000</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0209</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0418</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(300,0)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010104_20111027</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">105</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">209</text>
+<rect x="50.00" y="258.90" width="2.70" height="1.10" fill="#4a90d9"/>
+<rect x="66.00" y="193.97" width="2.70" height="66.03" fill="#4a90d9"/>
+<rect x="69.20" y="30.00" width="2.70" height="230.00" fill="#d94a4a"/>
+<polyline points="69.2,33.0 69.9,29.0 70.6,33.0 71.2,29.0 71.9,33.0" fill="none" stroke="white" stroke-width="1"/>
+<text x="70.55" y="27.00" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold" fill="#d94a4a">349</text>
+<rect x="72.40" y="68.52" width="2.70" height="191.48" fill="#4a90d9"/>
+<rect x="75.60" y="249.00" width="2.70" height="11.00" fill="#4a90d9"/>
+<rect x="78.80" y="258.90" width="2.70" height="1.10" fill="#4a90d9"/>
+<rect x="104.40" y="258.90" width="2.70" height="1.10" fill="#4a90d9"/>
+<rect x="130.00" y="258.90" width="2.70" height="1.10" fill="#4a90d9"/>
+<rect x="270.80" y="258.90" width="2.70" height="1.10" fill="#4a90d9"/>
+<rect x="283.60" y="258.90" width="2.70" height="1.10" fill="#4a90d9"/>
+<rect x="286.80" y="258.90" width="2.70" height="1.10" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0000</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0123</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0247</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(600,0)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010112_20110725</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">64</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">128</text>
+<rect x="50.00" y="256.41" width="2.70" height="3.59" fill="#4a90d9"/>
+<rect x="75.60" y="251.02" width="2.70" height="8.98" fill="#4a90d9"/>
+<rect x="78.80" y="82.11" width="2.70" height="177.89" fill="#4a90d9"/>
+<rect x="82.00" y="30.00" width="2.70" height="230.00" fill="#d94a4a"/>
+<polyline points="82.0,33.0 82.7,29.0 83.3,33.0 84.0,29.0 84.7,33.0" fill="none" stroke="white" stroke-width="1"/>
+<text x="83.35" y="27.00" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold" fill="#d94a4a">258</text>
+<rect x="85.20" y="69.53" width="2.70" height="190.47" fill="#4a90d9"/>
+<rect x="88.40" y="227.66" width="2.70" height="32.34" fill="#4a90d9"/>
+<rect x="91.60" y="240.23" width="2.70" height="19.77" fill="#4a90d9"/>
+<rect x="94.80" y="254.61" width="2.70" height="5.39" fill="#4a90d9"/>
+<rect x="283.60" y="258.20" width="2.70" height="1.80" fill="#4a90d9"/>
+<rect x="286.80" y="258.20" width="2.70" height="1.80" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0000</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0086</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0172</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(900,0)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010139_20110210</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">20</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">39</text>
+<rect x="50.00" y="254.10" width="2.70" height="5.90" fill="#4a90d9"/>
+<rect x="56.40" y="254.10" width="2.70" height="5.90" fill="#4a90d9"/>
+<rect x="59.60" y="236.41" width="2.70" height="23.59" fill="#4a90d9"/>
+<rect x="62.80" y="236.41" width="2.70" height="23.59" fill="#4a90d9"/>
+<rect x="66.00" y="236.41" width="2.70" height="23.59" fill="#4a90d9"/>
+<rect x="69.20" y="248.21" width="2.70" height="11.79" fill="#4a90d9"/>
+<rect x="72.40" y="236.41" width="2.70" height="23.59" fill="#4a90d9"/>
+<rect x="75.60" y="189.23" width="2.70" height="70.77" fill="#4a90d9"/>
+<rect x="78.80" y="189.23" width="2.70" height="70.77" fill="#4a90d9"/>
+<rect x="82.00" y="124.36" width="2.70" height="135.64" fill="#4a90d9"/>
+<rect x="85.20" y="165.64" width="2.70" height="94.36" fill="#4a90d9"/>
+<rect x="88.40" y="124.36" width="2.70" height="135.64" fill="#4a90d9"/>
+<rect x="91.60" y="106.67" width="2.70" height="153.33" fill="#4a90d9"/>
+<rect x="94.80" y="47.69" width="2.70" height="212.31" fill="#4a90d9"/>
+<rect x="98.00" y="77.18" width="2.70" height="182.82" fill="#4a90d9"/>
+<rect x="101.20" y="88.97" width="2.70" height="171.03" fill="#4a90d9"/>
+<rect x="104.40" y="71.28" width="2.70" height="188.72" fill="#4a90d9"/>
+<rect x="107.60" y="124.36" width="2.70" height="135.64" fill="#4a90d9"/>
+<rect x="110.80" y="106.67" width="2.70" height="153.33" fill="#4a90d9"/>
+<rect x="114.00" y="118.46" width="2.70" height="141.54" fill="#4a90d9"/>
+<rect x="117.20" y="100.77" width="2.70" height="159.23" fill="#4a90d9"/>
+<rect x="120.40" y="130.26" width="2.70" height="129.74" fill="#4a90d9"/>
+<rect x="123.60" y="153.85" width="2.70" height="106.15" fill="#4a90d9"/>
+<rect x="126.80" y="171.54" width="2.70" height="88.46" fill="#4a90d9"/>
+<rect x="130.00" y="159.74" width="2.70" height="100.26" fill="#4a90d9"/>
+<rect x="133.20" y="195.13" width="2.70" height="64.87" fill="#4a90d9"/>
+<rect x="136.40" y="171.54" width="2.70" height="88.46" fill="#4a90d9"/>
+<rect x="139.60" y="206.92" width="2.70" height="53.08" fill="#4a90d9"/>
+<rect x="142.80" y="195.13" width="2.70" height="64.87" fill="#4a90d9"/>
+<rect x="146.00" y="218.72" width="2.70" height="41.28" fill="#4a90d9"/>
+<rect x="149.20" y="201.03" width="2.70" height="58.97" fill="#4a90d9"/>
+<rect x="152.40" y="236.41" width="2.70" height="23.59" fill="#4a90d9"/>
+<rect x="155.60" y="242.31" width="2.70" height="17.69" fill="#4a90d9"/>
+<rect x="158.80" y="230.51" width="2.70" height="29.49" fill="#4a90d9"/>
+<rect x="162.00" y="254.10" width="2.70" height="5.90" fill="#4a90d9"/>
+<rect x="165.20" y="236.41" width="2.70" height="23.59" fill="#4a90d9"/>
+<rect x="168.40" y="248.21" width="2.70" height="11.79" fill="#4a90d9"/>
+<rect x="171.60" y="248.21" width="2.70" height="11.79" fill="#4a90d9"/>
+<rect x="174.80" y="248.21" width="2.70" height="11.79" fill="#4a90d9"/>
+<rect x="181.20" y="254.10" width="2.70" height="5.90" fill="#4a90d9"/>
+<rect x="184.40" y="242.31" width="2.70" height="17.69" fill="#4a90d9"/>
+<rect x="187.60" y="254.10" width="2.70" height="5.90" fill="#4a90d9"/>
+<rect x="190.80" y="254.10" width="2.70" height="5.90" fill="#4a90d9"/>
+<rect x="206.80" y="248.21" width="2.70" height="11.79" fill="#4a90d9"/>
+<rect x="213.20" y="248.21" width="2.70" height="11.79" fill="#4a90d9"/>
+<rect x="216.40" y="254.10" width="2.70" height="5.90" fill="#4a90d9"/>
+<rect x="222.80" y="254.10" width="2.70" height="5.90" fill="#4a90d9"/>
+<rect x="232.40" y="254.10" width="2.70" height="5.90" fill="#4a90d9"/>
+<rect x="286.80" y="254.10" width="2.70" height="5.90" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0014</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0020</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0026</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(1200,0)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010155_20110511</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">146</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">292</text>
+<rect x="50.00" y="40.24" width="2.70" height="219.76" fill="#4a90d9"/>
+<rect x="53.20" y="68.60" width="2.70" height="191.40" fill="#4a90d9"/>
+<rect x="56.40" y="252.91" width="2.70" height="7.09" fill="#4a90d9"/>
+<rect x="59.60" y="259.21" width="2.70" height="0.79" fill="#4a90d9"/>
+<rect x="85.20" y="259.21" width="2.70" height="0.79" fill="#4a90d9"/>
+<rect x="98.00" y="259.21" width="2.70" height="0.79" fill="#4a90d9"/>
+<rect x="101.20" y="259.21" width="2.70" height="0.79" fill="#4a90d9"/>
+<rect x="117.20" y="259.21" width="2.70" height="0.79" fill="#4a90d9"/>
+<rect x="155.60" y="259.21" width="2.70" height="0.79" fill="#4a90d9"/>
+<rect x="171.60" y="259.21" width="2.70" height="0.79" fill="#4a90d9"/>
+<rect x="264.40" y="259.21" width="2.70" height="0.79" fill="#4a90d9"/>
+<rect x="286.80" y="259.21" width="2.70" height="0.79" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0013</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0128</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0242</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(0,300)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010201_20120320</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">85</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">170</text>
+<rect x="50.00" y="258.65" width="2.70" height="1.35" fill="#4a90d9"/>
+<rect x="53.20" y="258.65" width="2.70" height="1.35" fill="#4a90d9"/>
+<rect x="56.40" y="237.00" width="2.70" height="23.00" fill="#4a90d9"/>
+<rect x="59.60" y="69.24" width="2.70" height="190.76" fill="#4a90d9"/>
+<rect x="62.80" y="32.71" width="2.70" height="227.29" fill="#4a90d9"/>
+<rect x="66.00" y="92.24" width="2.70" height="167.76" fill="#4a90d9"/>
+<rect x="69.20" y="212.65" width="2.70" height="47.35" fill="#4a90d9"/>
+<rect x="72.40" y="255.94" width="2.70" height="4.06" fill="#4a90d9"/>
+<rect x="187.60" y="258.65" width="2.70" height="1.35" fill="#4a90d9"/>
+<rect x="222.80" y="258.65" width="2.70" height="1.35" fill="#4a90d9"/>
+<rect x="286.80" y="258.65" width="2.70" height="1.35" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0014</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0106</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0198</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(300,300)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010228_20110426</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">18</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">36</text>
+<rect x="50.00" y="234.44" width="2.70" height="25.56" fill="#4a90d9"/>
+<rect x="53.20" y="228.06" width="2.70" height="31.94" fill="#4a90d9"/>
+<rect x="56.40" y="196.11" width="2.70" height="63.89" fill="#4a90d9"/>
+<rect x="59.60" y="208.89" width="2.70" height="51.11" fill="#4a90d9"/>
+<rect x="62.80" y="215.28" width="2.70" height="44.72" fill="#4a90d9"/>
+<rect x="66.00" y="170.56" width="2.70" height="89.44" fill="#4a90d9"/>
+<rect x="69.20" y="215.28" width="2.70" height="44.72" fill="#4a90d9"/>
+<rect x="72.40" y="157.78" width="2.70" height="102.22" fill="#4a90d9"/>
+<rect x="75.60" y="183.33" width="2.70" height="76.67" fill="#4a90d9"/>
+<rect x="78.80" y="125.83" width="2.70" height="134.17" fill="#4a90d9"/>
+<rect x="82.00" y="119.44" width="2.70" height="140.56" fill="#4a90d9"/>
+<rect x="85.20" y="61.94" width="2.70" height="198.06" fill="#4a90d9"/>
+<rect x="88.40" y="119.44" width="2.70" height="140.56" fill="#4a90d9"/>
+<rect x="91.60" y="68.33" width="2.70" height="191.67" fill="#4a90d9"/>
+<rect x="94.80" y="68.33" width="2.70" height="191.67" fill="#4a90d9"/>
+<rect x="98.00" y="119.44" width="2.70" height="140.56" fill="#4a90d9"/>
+<rect x="101.20" y="132.22" width="2.70" height="127.78" fill="#4a90d9"/>
+<rect x="104.40" y="138.61" width="2.70" height="121.39" fill="#4a90d9"/>
+<rect x="107.60" y="87.50" width="2.70" height="172.50" fill="#4a90d9"/>
+<rect x="110.80" y="119.44" width="2.70" height="140.56" fill="#4a90d9"/>
+<rect x="114.00" y="145.00" width="2.70" height="115.00" fill="#4a90d9"/>
+<rect x="117.20" y="170.56" width="2.70" height="89.44" fill="#4a90d9"/>
+<rect x="120.40" y="132.22" width="2.70" height="127.78" fill="#4a90d9"/>
+<rect x="123.60" y="189.72" width="2.70" height="70.28" fill="#4a90d9"/>
+<rect x="126.80" y="189.72" width="2.70" height="70.28" fill="#4a90d9"/>
+<rect x="130.00" y="183.33" width="2.70" height="76.67" fill="#4a90d9"/>
+<rect x="133.20" y="228.06" width="2.70" height="31.94" fill="#4a90d9"/>
+<rect x="136.40" y="215.28" width="2.70" height="44.72" fill="#4a90d9"/>
+<rect x="139.60" y="215.28" width="2.70" height="44.72" fill="#4a90d9"/>
+<rect x="142.80" y="247.22" width="2.70" height="12.78" fill="#4a90d9"/>
+<rect x="146.00" y="234.44" width="2.70" height="25.56" fill="#4a90d9"/>
+<rect x="149.20" y="240.83" width="2.70" height="19.17" fill="#4a90d9"/>
+<rect x="152.40" y="240.83" width="2.70" height="19.17" fill="#4a90d9"/>
+<rect x="155.60" y="240.83" width="2.70" height="19.17" fill="#4a90d9"/>
+<rect x="158.80" y="234.44" width="2.70" height="25.56" fill="#4a90d9"/>
+<rect x="162.00" y="247.22" width="2.70" height="12.78" fill="#4a90d9"/>
+<rect x="168.40" y="247.22" width="2.70" height="12.78" fill="#4a90d9"/>
+<rect x="171.60" y="253.61" width="2.70" height="6.39" fill="#4a90d9"/>
+<rect x="178.00" y="247.22" width="2.70" height="12.78" fill="#4a90d9"/>
+<rect x="181.20" y="253.61" width="2.70" height="6.39" fill="#4a90d9"/>
+<rect x="187.60" y="253.61" width="2.70" height="6.39" fill="#4a90d9"/>
+<rect x="190.80" y="253.61" width="2.70" height="6.39" fill="#4a90d9"/>
+<rect x="200.40" y="253.61" width="2.70" height="6.39" fill="#4a90d9"/>
+<rect x="203.60" y="247.22" width="2.70" height="12.78" fill="#4a90d9"/>
+<rect x="286.80" y="253.61" width="2.70" height="6.39" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0016</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0022</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0029</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(600,300)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010317_20110413</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">100</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">200</text>
+<rect x="50.00" y="149.60" width="2.70" height="110.40" fill="#4a90d9"/>
+<rect x="53.20" y="30.00" width="2.70" height="230.00" fill="#d94a4a"/>
+<polyline points="53.2,33.0 53.9,29.0 54.6,33.0 55.2,29.0 55.9,33.0" fill="none" stroke="white" stroke-width="1"/>
+<text x="54.55" y="27.00" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold" fill="#d94a4a">321</text>
+<rect x="56.40" y="69.10" width="2.70" height="190.90" fill="#4a90d9"/>
+<rect x="59.60" y="220.90" width="2.70" height="39.10" fill="#4a90d9"/>
+<rect x="62.80" y="256.55" width="2.70" height="3.45" fill="#4a90d9"/>
+<rect x="101.20" y="258.85" width="2.70" height="1.15" fill="#4a90d9"/>
+<rect x="261.20" y="258.85" width="2.70" height="1.15" fill="#4a90d9"/>
+<rect x="286.80" y="257.70" width="2.70" height="2.30" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0018</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0120</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0223</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(900,300)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010457_20111109</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">23</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">45</text>
+<rect x="50.00" y="30.00" width="2.70" height="230.00" fill="#d94a4a"/>
+<polyline points="50.0,33.0 50.7,29.0 51.4,33.0 52.0,29.0 52.7,33.0" fill="none" stroke="white" stroke-width="1"/>
+<text x="51.35" y="27.00" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold" fill="#d94a4a">443</text>
+<rect x="53.20" y="70.89" width="2.70" height="189.11" fill="#4a90d9"/>
+<rect x="56.40" y="244.67" width="2.70" height="15.33" fill="#4a90d9"/>
+<rect x="142.80" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="165.20" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="286.80" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0018</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0227</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0435</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(1200,300)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010511_20120201</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">133</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">266</text>
+<rect x="50.00" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="66.00" y="230.60" width="2.70" height="29.40" fill="#4a90d9"/>
+<rect x="69.20" y="30.00" width="2.70" height="230.00" fill="#d94a4a"/>
+<polyline points="69.2,33.0 69.9,29.0 70.6,33.0 71.2,29.0 71.9,33.0" fill="none" stroke="white" stroke-width="1"/>
+<text x="70.55" y="27.00" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold" fill="#d94a4a">271</text>
+<rect x="72.40" y="68.91" width="2.70" height="191.09" fill="#4a90d9"/>
+<rect x="75.60" y="210.71" width="2.70" height="49.29" fill="#4a90d9"/>
+<rect x="78.80" y="255.68" width="2.70" height="4.32" fill="#4a90d9"/>
+<rect x="94.80" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="120.40" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="152.40" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="168.40" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="178.00" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="181.20" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="184.40" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="219.60" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="248.40" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="258.00" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="270.80" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<rect x="286.80" y="259.14" width="2.70" height="0.86" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0000</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0111</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0221</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(0,600)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010627_20110203</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">117</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">233</text>
+<rect x="50.00" y="254.08" width="2.70" height="5.92" fill="#4a90d9"/>
+<rect x="53.20" y="254.08" width="2.70" height="5.92" fill="#4a90d9"/>
+<rect x="56.40" y="61.59" width="2.70" height="198.41" fill="#4a90d9"/>
+<rect x="59.60" y="68.50" width="2.70" height="191.50" fill="#4a90d9"/>
+<rect x="62.80" y="234.33" width="2.70" height="25.67" fill="#4a90d9"/>
+<rect x="66.00" y="247.17" width="2.70" height="12.83" fill="#4a90d9"/>
+<rect x="69.20" y="248.15" width="2.70" height="11.85" fill="#4a90d9"/>
+<rect x="72.40" y="246.18" width="2.70" height="13.82" fill="#4a90d9"/>
+<rect x="75.60" y="228.41" width="2.70" height="31.59" fill="#4a90d9"/>
+<rect x="78.80" y="240.26" width="2.70" height="19.74" fill="#4a90d9"/>
+<rect x="82.00" y="250.13" width="2.70" height="9.87" fill="#4a90d9"/>
+<rect x="85.20" y="251.12" width="2.70" height="8.88" fill="#4a90d9"/>
+<rect x="88.40" y="252.10" width="2.70" height="7.90" fill="#4a90d9"/>
+<rect x="91.60" y="248.15" width="2.70" height="11.85" fill="#4a90d9"/>
+<rect x="94.80" y="252.10" width="2.70" height="7.90" fill="#4a90d9"/>
+<rect x="98.00" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="101.20" y="255.06" width="2.70" height="4.94" fill="#4a90d9"/>
+<rect x="107.60" y="258.03" width="2.70" height="1.97" fill="#4a90d9"/>
+<rect x="110.80" y="257.04" width="2.70" height="2.96" fill="#4a90d9"/>
+<rect x="117.20" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="120.40" y="258.03" width="2.70" height="1.97" fill="#4a90d9"/>
+<rect x="123.60" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="149.20" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="152.40" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="155.60" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="162.00" y="257.04" width="2.70" height="2.96" fill="#4a90d9"/>
+<rect x="165.20" y="256.05" width="2.70" height="3.95" fill="#4a90d9"/>
+<rect x="171.60" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="178.00" y="258.03" width="2.70" height="1.97" fill="#4a90d9"/>
+<rect x="184.40" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="187.60" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="190.80" y="258.03" width="2.70" height="1.97" fill="#4a90d9"/>
+<rect x="197.20" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="200.40" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="210.00" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="226.00" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<rect x="270.80" y="258.03" width="2.70" height="1.97" fill="#4a90d9"/>
+<rect x="286.80" y="259.01" width="2.70" height="0.99" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0006</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0190</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0374</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(300,600)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010660_20120322</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">11</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">21</text>
+<rect x="50.00" y="249.05" width="2.70" height="10.95" fill="#4a90d9"/>
+<rect x="66.00" y="249.05" width="2.70" height="10.95" fill="#4a90d9"/>
+<rect x="69.20" y="238.10" width="2.70" height="21.90" fill="#4a90d9"/>
+<rect x="72.40" y="249.05" width="2.70" height="10.95" fill="#4a90d9"/>
+<rect x="75.60" y="249.05" width="2.70" height="10.95" fill="#4a90d9"/>
+<rect x="78.80" y="249.05" width="2.70" height="10.95" fill="#4a90d9"/>
+<rect x="82.00" y="227.14" width="2.70" height="32.86" fill="#4a90d9"/>
+<rect x="85.20" y="238.10" width="2.70" height="21.90" fill="#4a90d9"/>
+<rect x="88.40" y="216.19" width="2.70" height="43.81" fill="#4a90d9"/>
+<rect x="91.60" y="227.14" width="2.70" height="32.86" fill="#4a90d9"/>
+<rect x="94.80" y="238.10" width="2.70" height="21.90" fill="#4a90d9"/>
+<rect x="98.00" y="227.14" width="2.70" height="32.86" fill="#4a90d9"/>
+<rect x="101.20" y="194.29" width="2.70" height="65.71" fill="#4a90d9"/>
+<rect x="104.40" y="216.19" width="2.70" height="43.81" fill="#4a90d9"/>
+<rect x="107.60" y="227.14" width="2.70" height="32.86" fill="#4a90d9"/>
+<rect x="110.80" y="183.33" width="2.70" height="76.67" fill="#4a90d9"/>
+<rect x="114.00" y="183.33" width="2.70" height="76.67" fill="#4a90d9"/>
+<rect x="117.20" y="139.52" width="2.70" height="120.48" fill="#4a90d9"/>
+<rect x="120.40" y="128.57" width="2.70" height="131.43" fill="#4a90d9"/>
+<rect x="123.60" y="172.38" width="2.70" height="87.62" fill="#4a90d9"/>
+<rect x="126.80" y="117.62" width="2.70" height="142.38" fill="#4a90d9"/>
+<rect x="130.00" y="95.71" width="2.70" height="164.29" fill="#4a90d9"/>
+<rect x="133.20" y="117.62" width="2.70" height="142.38" fill="#4a90d9"/>
+<rect x="136.40" y="139.52" width="2.70" height="120.48" fill="#4a90d9"/>
+<rect x="139.60" y="30.00" width="2.70" height="230.00" fill="#d94a4a"/>
+<polyline points="139.6,33.0 140.3,29.0 141.0,33.0 141.6,29.0 142.3,33.0" fill="none" stroke="white" stroke-width="1"/>
+<text x="140.95" y="27.00" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold" fill="#d94a4a">23</text>
+<rect x="142.80" y="106.67" width="2.70" height="153.33" fill="#4a90d9"/>
+<rect x="146.00" y="84.76" width="2.70" height="175.24" fill="#4a90d9"/>
+<rect x="149.20" y="128.57" width="2.70" height="131.43" fill="#4a90d9"/>
+<rect x="152.40" y="183.33" width="2.70" height="76.67" fill="#4a90d9"/>
+<rect x="155.60" y="194.29" width="2.70" height="65.71" fill="#4a90d9"/>
+<rect x="158.80" y="95.71" width="2.70" height="164.29" fill="#4a90d9"/>
+<rect x="162.00" y="139.52" width="2.70" height="120.48" fill="#4a90d9"/>
+<rect x="165.20" y="73.81" width="2.70" height="186.19" fill="#4a90d9"/>
+<rect x="168.40" y="161.43" width="2.70" height="98.57" fill="#4a90d9"/>
+<rect x="171.60" y="84.76" width="2.70" height="175.24" fill="#4a90d9"/>
+<rect x="174.80" y="150.48" width="2.70" height="109.52" fill="#4a90d9"/>
+<rect x="178.00" y="73.81" width="2.70" height="186.19" fill="#4a90d9"/>
+<rect x="181.20" y="194.29" width="2.70" height="65.71" fill="#4a90d9"/>
+<rect x="184.40" y="183.33" width="2.70" height="76.67" fill="#4a90d9"/>
+<rect x="187.60" y="161.43" width="2.70" height="98.57" fill="#4a90d9"/>
+<rect x="190.80" y="194.29" width="2.70" height="65.71" fill="#4a90d9"/>
+<rect x="194.00" y="205.24" width="2.70" height="54.76" fill="#4a90d9"/>
+<rect x="197.20" y="172.38" width="2.70" height="87.62" fill="#4a90d9"/>
+<rect x="200.40" y="249.05" width="2.70" height="10.95" fill="#4a90d9"/>
+<rect x="203.60" y="227.14" width="2.70" height="32.86" fill="#4a90d9"/>
+<rect x="206.80" y="205.24" width="2.70" height="54.76" fill="#4a90d9"/>
+<rect x="210.00" y="216.19" width="2.70" height="43.81" fill="#4a90d9"/>
+<rect x="213.20" y="205.24" width="2.70" height="54.76" fill="#4a90d9"/>
+<rect x="216.40" y="238.10" width="2.70" height="21.90" fill="#4a90d9"/>
+<rect x="219.60" y="238.10" width="2.70" height="21.90" fill="#4a90d9"/>
+<rect x="222.80" y="238.10" width="2.70" height="21.90" fill="#4a90d9"/>
+<rect x="229.20" y="249.05" width="2.70" height="10.95" fill="#4a90d9"/>
+<rect x="235.60" y="238.10" width="2.70" height="21.90" fill="#4a90d9"/>
+<rect x="251.60" y="249.05" width="2.70" height="10.95" fill="#4a90d9"/>
+<rect x="254.80" y="238.10" width="2.70" height="21.90" fill="#4a90d9"/>
+<rect x="258.00" y="249.05" width="2.70" height="10.95" fill="#4a90d9"/>
+<rect x="270.80" y="249.05" width="2.70" height="10.95" fill="#4a90d9"/>
+<rect x="286.80" y="249.05" width="2.70" height="10.95" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0015</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0019</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0024</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(600,600)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010724_20110811</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">23</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">45</text>
+<rect x="50.00" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="56.40" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="59.60" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="62.80" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="66.00" y="224.22" width="2.70" height="35.78" fill="#4a90d9"/>
+<rect x="69.20" y="224.22" width="2.70" height="35.78" fill="#4a90d9"/>
+<rect x="72.40" y="208.89" width="2.70" height="51.11" fill="#4a90d9"/>
+<rect x="75.60" y="208.89" width="2.70" height="51.11" fill="#4a90d9"/>
+<rect x="78.80" y="147.56" width="2.70" height="112.44" fill="#4a90d9"/>
+<rect x="82.00" y="101.56" width="2.70" height="158.44" fill="#4a90d9"/>
+<rect x="85.20" y="96.44" width="2.70" height="163.56" fill="#4a90d9"/>
+<rect x="88.40" y="91.33" width="2.70" height="168.67" fill="#4a90d9"/>
+<rect x="91.60" y="111.78" width="2.70" height="148.22" fill="#4a90d9"/>
+<rect x="94.80" y="40.22" width="2.70" height="219.78" fill="#4a90d9"/>
+<rect x="98.00" y="111.78" width="2.70" height="148.22" fill="#4a90d9"/>
+<rect x="101.20" y="142.44" width="2.70" height="117.56" fill="#4a90d9"/>
+<rect x="104.40" y="81.11" width="2.70" height="178.89" fill="#4a90d9"/>
+<rect x="107.60" y="70.89" width="2.70" height="189.11" fill="#4a90d9"/>
+<rect x="110.80" y="116.89" width="2.70" height="143.11" fill="#4a90d9"/>
+<rect x="114.00" y="91.33" width="2.70" height="168.67" fill="#4a90d9"/>
+<rect x="117.20" y="122.00" width="2.70" height="138.00" fill="#4a90d9"/>
+<rect x="120.40" y="122.00" width="2.70" height="138.00" fill="#4a90d9"/>
+<rect x="123.60" y="157.78" width="2.70" height="102.22" fill="#4a90d9"/>
+<rect x="126.80" y="214.00" width="2.70" height="46.00" fill="#4a90d9"/>
+<rect x="130.00" y="214.00" width="2.70" height="46.00" fill="#4a90d9"/>
+<rect x="133.20" y="178.22" width="2.70" height="81.78" fill="#4a90d9"/>
+<rect x="136.40" y="214.00" width="2.70" height="46.00" fill="#4a90d9"/>
+<rect x="139.60" y="208.89" width="2.70" height="51.11" fill="#4a90d9"/>
+<rect x="142.80" y="229.33" width="2.70" height="30.67" fill="#4a90d9"/>
+<rect x="146.00" y="249.78" width="2.70" height="10.22" fill="#4a90d9"/>
+<rect x="149.20" y="239.56" width="2.70" height="20.44" fill="#4a90d9"/>
+<rect x="152.40" y="249.78" width="2.70" height="10.22" fill="#4a90d9"/>
+<rect x="155.60" y="229.33" width="2.70" height="30.67" fill="#4a90d9"/>
+<rect x="158.80" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="162.00" y="244.67" width="2.70" height="15.33" fill="#4a90d9"/>
+<rect x="165.20" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="168.40" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="174.80" y="249.78" width="2.70" height="10.22" fill="#4a90d9"/>
+<rect x="181.20" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="184.40" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="190.80" y="249.78" width="2.70" height="10.22" fill="#4a90d9"/>
+<rect x="200.40" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="213.20" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="216.40" y="249.78" width="2.70" height="10.22" fill="#4a90d9"/>
+<rect x="226.00" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="229.20" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="235.60" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="248.40" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="258.00" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<rect x="286.80" y="254.89" width="2.70" height="5.11" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0014</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0022</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0029</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+<g transform="translate(900,600)">
+<rect x="0" y="0" width="300" height="300" fill="none" stroke="#ccc" stroke-width="0.5"/>
+<text x="150" y="22" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="bold">3010740_20110303</text>
+<line x1="50" y1="260" x2="290" y2="260" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="263" text-anchor="end" font-family="Arial,sans-serif" font-size="14">0</text>
+<line x1="50" y1="145" x2="290" y2="145" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="148" text-anchor="end" font-family="Arial,sans-serif" font-size="14">131</text>
+<line x1="50" y1="30" x2="290" y2="30" stroke="#e0e0e0" stroke-width="0.5"/>
+<text x="46" y="33" text-anchor="end" font-family="Arial,sans-serif" font-size="14">262</text>
+<rect x="50.00" y="258.24" width="2.70" height="1.76" fill="#4a90d9"/>
+<rect x="66.00" y="259.12" width="2.70" height="0.88" fill="#4a90d9"/>
+<rect x="69.20" y="231.03" width="2.70" height="28.97" fill="#4a90d9"/>
+<rect x="72.40" y="31.76" width="2.70" height="228.24" fill="#4a90d9"/>
+<rect x="75.60" y="68.63" width="2.70" height="191.37" fill="#4a90d9"/>
+<rect x="78.80" y="230.15" width="2.70" height="29.85" fill="#4a90d9"/>
+<rect x="82.00" y="254.73" width="2.70" height="5.27" fill="#4a90d9"/>
+<rect x="286.80" y="258.24" width="2.70" height="1.76" fill="#4a90d9"/>
+<line x1="50" y1="30" x2="50" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="290" y2="260" stroke="black" stroke-width="1"/>
+<line x1="50" y1="260" x2="50" y2="263" stroke="black" stroke-width="1"/>
+<text x="50" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0000</text>
+<line x1="170" y1="260" x2="170" y2="263" stroke="black" stroke-width="1"/>
+<text x="170" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0112</text>
+<line x1="290" y1="260" x2="290" y2="263" stroke="black" stroke-width="1"/>
+<text x="290" y="274" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">0.0223</text>
+<text x="150" y="295" text-anchor="middle" font-family="Arial,sans-serif" font-size="14">ECG SSD (s)</text>
+</g>
+</svg>

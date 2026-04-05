@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // BinPlotWidget.cpp
 // ============================================================================
 #include "BinPlotWidget.h"
@@ -7,37 +7,58 @@
 #include <algorithm>
 #include <cmath>
 
-BinPlotWidget::BinPlotWidget(int binIndex, QWidget* parent)
-    : QWidget(parent), m_binIndex(binIndex) {
-    setMinimumHeight(80);
+BinPlotWidget::BinPlotWidget(int binIndex, int leadIndex,
+    const QString& leadLabel, QWidget* parent)
+    : QWidget(parent), m_binIndex(binIndex), m_leadIndex(leadIndex),
+    m_leadLabel(leadLabel)
+{
+    setMinimumHeight(60);
     setMouseTracking(true);
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
 void BinPlotWidget::setData(const std::vector<double>& ppg,
-    const std::vector<double>& ecg,
-    double alignmentPoint, int dicroticIdx) {
+    const std::vector<double>& ecg, int dicroticIdx) {
     m_ppg = ppg;
     m_ecg = ecg;
-    m_alignPoint = alignmentPoint;
     m_dicrotic = dicroticIdx;
+    m_hasPPG = !ppg.empty();
     update();
 }
 
-void BinPlotWidget::setBadR(bool bad) { m_badR = bad; update(); }
-void BinPlotWidget::setBadPPG(bool bad) { m_badPPG = bad; update(); }
+void BinPlotWidget::setHasPPG(bool has) { m_hasPPG = has; }
+void BinPlotWidget::setState(State s) { m_state = s; update(); }
 void BinPlotWidget::setDicrotic(int idx) { m_dicrotic = idx; update(); }
 
-int BinPlotWidget::sampleFromX(double x) const {
-    int plotW = width() - kMarginL - kMarginR;
-    int nSamples = std::max((int)m_ppg.size(), 1);
-    return static_cast<int>(std::round((x - kMarginL) * (nSamples - 1.0) / plotW));
+int BinPlotWidget::sampleFromX(double x, int nSamples) const {
+    int pw = width() - kML - kMR;
+    int n = std::max(nSamples, 2);
+    return static_cast<int>(std::round((x - kML) * (n - 1.0) / pw));
 }
 
-double BinPlotWidget::xFromSample(int s) const {
-    int plotW = width() - kMarginL - kMarginR;
-    int nSamples = std::max((int)m_ppg.size(), 1);
-    return kMarginL + s * plotW / (double)(nSamples - 1);
+double BinPlotWidget::xFromSample(int s, int nSamples) const {
+    int pw = width() - kML - kMR;
+    int n = std::max(nSamples, 2);
+    return kML + s * pw / (double)(n - 1);
+}
+
+namespace {
+    void drawTrace(QPainter& p, const std::vector<double>& v,
+        int ml, int mt, int pw, int ph, const QPen& pen) {
+        int n = (int)v.size();
+        if (n < 2) return;
+        double lo = *std::min_element(v.begin(), v.end());
+        double hi = *std::max_element(v.begin(), v.end());
+        double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
+        p.setPen(pen);
+        for (int i = 1; i < n; ++i) {
+            double x0 = ml + (i - 1.0) * pw / (n - 1);
+            double x1 = ml + (double)i * pw / (n - 1);
+            double y0 = mt + ph - (v[i - 1] - lo) / r * ph;
+            double y1 = mt + ph - (v[i] - lo) / r * ph;
+            p.drawLine(QPointF(x0, y0), QPointF(x1, y1));
+        }
+    }
 }
 
 void BinPlotWidget::paintEvent(QPaintEvent*) {
@@ -45,67 +66,39 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     p.setRenderHint(QPainter::Antialiasing);
 
     int w = width(), h = height();
-    int plotW = w - kMarginL - kMarginR;
-    int plotH = h - kMarginT - kMarginB;
+    int pw = w - kML - kMR;
+    int ph = h - kMT - kMB;
 
-    // Background
     p.fillRect(rect(), Qt::white);
 
     // Label
     p.setPen(Qt::black);
     QFont f = p.font(); f.setPointSize(8); p.setFont(f);
-    p.drawText(kMarginL, 11, QString("Bin %1").arg(m_binIndex));
+    p.drawText(kML, 11,
+        QString("Bin %1 - %2").arg(m_binIndex).arg(m_leadLabel));
 
-    if (m_ppg.empty() && m_ecg.empty()) return;
+    // ECG in gray
+    drawTrace(p, m_ecg, kML, kMT, pw, ph, QPen(QColor(180, 180, 180), 1));
 
-    // Draw ECG (gray, right y-axis scale)
-    if (!m_ecg.empty()) {
-        double eMin = *std::min_element(m_ecg.begin(), m_ecg.end());
-        double eMax = *std::max_element(m_ecg.begin(), m_ecg.end());
-        double eRange = (eMax - eMin > 1e-10) ? (eMax - eMin) : 1.0;
+    // PPG in red
+    drawTrace(p, m_ppg, kML, kMT, pw, ph, QPen(Qt::red, 1.5));
 
-        p.setPen(QPen(QColor(180, 180, 180), 1));
-        int n = (int)m_ecg.size();
-        for (int i = 1; i < n; ++i) {
-            double x0 = kMarginL + (i - 1.0) * plotW / (n - 1);
-            double x1 = kMarginL + (double)i * plotW / (n - 1);
-            double y0 = kMarginT + plotH - (m_ecg[i - 1] - eMin) / eRange * plotH;
-            double y1 = kMarginT + plotH - (m_ecg[i] - eMin) / eRange * plotH;
-            p.drawLine(QPointF(x0, y0), QPointF(x1, y1));
-        }
+    // Dicrotic notch line (blue)
+    if (!m_ppg.empty() && m_dicrotic >= 0 && m_dicrotic < (int)m_ppg.size()) {
+        double dx = xFromSample(m_dicrotic, (int)m_ppg.size());
+        p.setPen(QPen(Qt::blue, 2));
+        p.drawLine(QPointF(dx, kMT), QPointF(dx, h - kMB));
     }
 
-    // Draw PPG (red, left y-axis scale)
-    if (!m_ppg.empty()) {
-        double pMin = *std::min_element(m_ppg.begin(), m_ppg.end());
-        double pMax = *std::max_element(m_ppg.begin(), m_ppg.end());
-        double pRange = (pMax - pMin > 1e-10) ? (pMax - pMin) : 1.0;
-
-        p.setPen(QPen(Qt::red, 1.5));
-        int n = (int)m_ppg.size();
-        for (int i = 1; i < n; ++i) {
-            double x0 = kMarginL + (i - 1.0) * plotW / (n - 1);
-            double x1 = kMarginL + (double)i * plotW / (n - 1);
-            double y0 = kMarginT + plotH - (m_ppg[i - 1] - pMin) / pRange * plotH;
-            double y1 = kMarginT + plotH - (m_ppg[i] - pMin) / pRange * plotH;
-            p.drawLine(QPointF(x0, y0), QPointF(x1, y1));
-        }
-
-        // Dicrotic notch line (blue)
-        if (m_dicrotic >= 0 && m_dicrotic < n) {
-            double dx = xFromSample(m_dicrotic);
-            p.setPen(QPen(Qt::blue, 2));
-            p.drawLine(QPointF(dx, kMarginT), QPointF(dx, h - kMarginB));
-        }
-    }
-
-    // Bad overlays
-    if (m_badPPG) {
+    // Bad PPG overlay (red X)
+    if (m_state == State::BadPPG) {
         p.setPen(QPen(Qt::red, 4));
-        p.drawLine(kMarginL, kMarginT, w - kMarginR, h - kMarginB);
-        p.drawLine(kMarginL, h - kMarginB, w - kMarginR, kMarginT);
+        p.drawLine(kML, kMT, w - kMR, h - kMB);
+        p.drawLine(kML, h - kMB, w - kMR, kMT);
     }
-    if (m_badR && !m_badPPG) {
+
+    // Bad R overlay (text)
+    if (m_state == State::BadR) {
         p.setPen(QPen(QColor(200, 0, 0), 2));
         QFont bf = p.font(); bf.setPointSize(14); bf.setBold(true); p.setFont(bf);
         p.drawText(rect(), Qt::AlignCenter, "BAD R");
@@ -113,32 +106,50 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 }
 
 void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
-    if (e->button() == Qt::LeftButton && m_dicrotic >= 0 && !m_ppg.empty()) {
-        double dx = xFromSample(m_dicrotic);
+    // Left click: start dragging dicrotic line
+    if (e->button() == Qt::LeftButton && m_hasPPG
+        && m_dicrotic >= 0 && !m_ppg.empty()) {
+        double dx = xFromSample(m_dicrotic, (int)m_ppg.size());
         if (std::abs(e->position().x() - dx) < 15) {
             m_dragging = true;
             emit dicroticDragStarted(m_binIndex);
             return;
         }
     }
-    if (e->button() == Qt::MiddleButton) {
-        m_badR = !m_badR;
-        emit badRToggled(m_binIndex, m_badR);
-        update();
-        return;
-    }
+
+    // Right click: cycle Good -> BadR -> BadPPG -> Good
+    //              (skip BadPPG if no PPG)
     if (e->button() == Qt::RightButton) {
-        m_badPPG = !m_badPPG;
-        m_badR = m_badPPG ? m_badR : m_badR; // PPG bad doesn't auto-clear R
-        emit badPPGToggled(m_binIndex, m_badPPG);
+        State prev = m_state;
+        switch (m_state) {
+        case State::Good:
+            m_state = State::BadR;
+            emit badRToggled(m_binIndex, m_leadIndex, true);
+            break;
+        case State::BadR:
+            if (m_hasPPG) {
+                m_state = State::BadPPG;
+                emit badRToggled(m_binIndex, m_leadIndex, false);
+                emit badPPGToggled(m_binIndex, true);
+            }
+            else {
+                m_state = State::Good;
+                emit badRToggled(m_binIndex, m_leadIndex, false);
+            }
+            break;
+        case State::BadPPG:
+            m_state = State::Good;
+            emit badPPGToggled(m_binIndex, false);
+            break;
+        }
         update();
         return;
     }
 }
 
 void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
-    if (m_dragging) {
-        int s = sampleFromX(e->position().x());
+    if (m_dragging && !m_ppg.empty()) {
+        int s = sampleFromX(e->position().x(), (int)m_ppg.size());
         s = std::clamp(s, 0, (int)m_ppg.size() - 1);
         m_dicrotic = s;
         emit dicroticMoved(m_binIndex, s);

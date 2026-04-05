@@ -1,25 +1,25 @@
 ﻿  testing_wavebounds.cpp
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(297,52): warning C4267: 'argument': conversion from 'size_t' to 'int', possible loss of data
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(442,46): warning C4244: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(442,46): warning C4244:         with
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(442,46): warning C4244:         [
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(442,46): warning C4244:             _Ty=double
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(442,46): warning C4244:         ]
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(443,46): warning C4244: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(443,46): warning C4244:         with
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(443,46): warning C4244:         [
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(443,46): warning C4244:             _Ty=double
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(443,46): warning C4244:         ]
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(452,46): warning C4244: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(452,46): warning C4244:         with
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(452,46): warning C4244:         [
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(452,46): warning C4244:             _Ty=double
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(452,46): warning C4244:         ]
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(453,46): warning C4244: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(453,46): warning C4244:         with
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(453,46): warning C4244:         [
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(453,46): warning C4244:             _Ty=double
-D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(453,46): warning C4244:         ]
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(340,52): warning C4267: 'argument': conversion from 'size_t' to 'int', possible loss of data
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(483,46): warning C4244: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(483,46): warning C4244:         with
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(483,46): warning C4244:         [
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(483,46): warning C4244:             _Ty=double
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(483,46): warning C4244:         ]
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(484,46): warning C4244: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(484,46): warning C4244:         with
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(484,46): warning C4244:         [
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(484,46): warning C4244:             _Ty=double
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(484,46): warning C4244:         ]
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(493,46): warning C4244: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(493,46): warning C4244:         with
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(493,46): warning C4244:         [
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(493,46): warning C4244:             _Ty=double
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(493,46): warning C4244:         ]
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(494,46): warning C4244: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(494,46): warning C4244:         with
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(494,46): warning C4244:         [
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(494,46): warning C4244:             _Ty=double
+D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\testing_wavebounds\testing_wavebounds.cpp(494,46): warning C4244:         ]
   testing_wavebounds.vcxproj -> D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\testing_wavebounds_stats_analysis_v2\x64\Debug\testing_wavebounds.exe
   'pwsh.exe' is not recognized as an internal or external command,
   operable program or batch file.

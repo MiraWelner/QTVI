@@ -1,15 +1,13 @@
 """
 plot_rpeaks.py
 
-Reads a _wave_data.bin file produced by the C++ pipeline and generates
-a .png for each requested bin showing all ECG channels with R-peak markers
-from 3 detection methods (raw, squared, abs) in a grid layout.
+Reads a _wave_markings.bin file produced by the C++ pipeline and generates
+a .png for each requested bin showing ECG/PPG channels with R-peak markers.
 
-Rows = channels, Columns = methods.
-Noisy channels are highlighted with a red background.
+Grid adapts to available channels and selected preprocessing method(s).
 
 Usage:
-    python plot_rpeaks.py path/to/wave_data.bin 33 34 473
+    python plot_rpeaks.py path/to/wave_markings.bin 33 34 473
 """
 
 import os
@@ -19,7 +17,30 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
+
+# =============================================================================
+# USER CONFIGURATION
+# =============================================================================
+
+# Time range in seconds to display.  Use None for full signal.
+#   Examples:  T_START, T_END = 0, 60       (first minute)
+#              T_START, T_END = 30, 90       (30s–90s)
+#              T_START, T_END = None, None   (entire signal)
+T_START = 0
+T_END = 60
+
+# Which preprocessing method(s) to show as columns.
+# Options: "all", "raw", "squared", "absval"
+#   "all"      -> 3 columns (Raw | Squared | Abs-Value)
+#   "raw"      -> 1 column  (Raw only)
+#   "squared"  -> 1 column  (Squared only)
+#   "absval"   -> 1 column  (Abs-Value only)
+SHOW_METHOD = "all"
+
+# Whether to include the PPG row (with min/max amp markers) when PPG exists.
+SHOW_PPG = False
+
+# =============================================================================
 
 
 def read_wave_bin(path):
@@ -73,59 +94,59 @@ def read_wave_bin(path):
                     )
                 return list(struct.unpack(f"<{sz}d", raw))
 
-            # 9 R-peak index arrays: ch1 raw/sq/abs, ch2 raw/sq/abs, ch3 raw/sq/abs
-            b["ch1_raw"] = read_idx()
-            b["ch1_squared"] = read_idx()
-            b["ch1_absval"] = read_idx()
-            b["ch2_raw"] = read_idx()
-            b["ch2_squared"] = read_idx()
-            b["ch2_absval"] = read_idx()
-            b["ch3_raw"] = read_idx()
-            b["ch3_squared"] = read_idx()
-            b["ch3_absval"] = read_idx()
+            def skip_signal():
+                raw = f.read(8)
+                if len(raw) < 8:
+                    return
+                sz = struct.unpack("<Q", raw)[0]
+                if sz > 100_000_000:
+                    return
+                f.seek(sz * 8, 1)
 
-            # PPG indices
+            def skip_pair_vec():
+                raw = f.read(8)
+                if len(raw) < 8:
+                    return
+                sz = struct.unpack("<Q", raw)[0]
+                if sz > 10_000_000:
+                    return
+                f.seek(sz * 16, 1)
+
+            # -- 9 R-peak index arrays (3 methods x 3 channels) ----------
+            b["ch1_raw_idx"] = read_idx()
+            b["ch1_sq_idx"] = read_idx()
+            b["ch1_abs_idx"] = read_idx()
+            b["ch2_raw_idx"] = read_idx()
+            b["ch2_sq_idx"] = read_idx()
+            b["ch2_abs_idx"] = read_idx()
+            b["ch3_raw_idx"] = read_idx()
+            b["ch3_sq_idx"] = read_idx()
+            b["ch3_abs_idx"] = read_idx()
+
+            # -- PPG indices ----------------------------------------------
             b["ppgMaxAmps"] = read_idx()
             b["ppgMinAmps"] = read_idx()
 
-            # Signals
+            # -- 4 raw signals --------------------------------------------
             b["ppgSignal"] = read_signal()
-            b["ecgSignal"] = read_signal()
-            b["ecgSignal2"] = read_signal()
-            b["ecgSignal3"] = read_signal()
+            b["ch1_raw_sig"] = read_signal()
+            b["ch2_raw_sig"] = read_signal()
+            b["ch3_raw_sig"] = read_signal()
 
-            # 9 noise flags
-            raw = f.read(9)
-            if len(raw) == 9:
-                b["ch1_raw_noisy"] = raw[0] != 0
-                b["ch1_squared_noisy"] = raw[1] != 0
-                b["ch1_absval_noisy"] = raw[2] != 0
-                b["ch2_raw_noisy"] = raw[3] != 0
-                b["ch2_squared_noisy"] = raw[4] != 0
-                b["ch2_absval_noisy"] = raw[5] != 0
-                b["ch3_raw_noisy"] = raw[6] != 0
-                b["ch3_squared_noisy"] = raw[7] != 0
-                b["ch3_absval_noisy"] = raw[8] != 0
-            else:
-                for k in [
-                    "ch1_raw_noisy",
-                    "ch1_squared_noisy",
-                    "ch1_absval_noisy",
-                    "ch2_raw_noisy",
-                    "ch2_squared_noisy",
-                    "ch2_absval_noisy",
-                    "ch3_raw_noisy",
-                    "ch3_squared_noisy",
-                    "ch3_absval_noisy",
-                ]:
-                    b[k] = False
+            # -- 6 preprocessed signals -----------------------------------
+            b["ch1_sq_sig"] = read_signal()
+            b["ch1_abs_sig"] = read_signal()
+            b["ch2_sq_sig"] = read_signal()
+            b["ch2_abs_sig"] = read_signal()
+            b["ch3_sq_sig"] = read_signal()
+            b["ch3_abs_sig"] = read_signal()
 
-            # Pairs
+            # -- 9 noise flag bytes ---------------------------------------
+            f.read(9)
+
+            # -- pairs ----------------------------------------------------
             raw = f.read(8)
-            if len(raw) == 8:
-                num_pairs = struct.unpack("<Q", raw)[0]
-            else:
-                num_pairs = 0
+            num_pairs = struct.unpack("<Q", raw)[0] if len(raw) == 8 else 0
             pairs = []
             if num_pairs < 1_000_000:
                 for _ in range(num_pairs):
@@ -136,209 +157,298 @@ def read_wave_bin(path):
                     pairs.append((p0, p1))
             b["pairs"] = pairs
 
+            skip_pair_vec()
+            skip_pair_vec()
+
             bins.append(b)
 
     return bins
 
 
-# (signal_key, channel_label, dot_color,
-#  raw_rpeak_key, raw_noise_key,
-#  sq_rpeak_key, sq_noise_key,
-#  abs_rpeak_key, abs_noise_key)
-CHANNELS = [
-    (
-        "ecgSignal",
-        "Ch1",
-        "blue",
-        "ch1_raw",
-        "ch1_raw_noisy",
-        "ch1_squared",
-        "ch1_squared_noisy",
-        "ch1_absval",
-        "ch1_absval_noisy",
-    ),
-    (
-        "ecgSignal2",
-        "Ch2",
-        "red",
-        "ch2_raw",
-        "ch2_raw_noisy",
-        "ch2_squared",
-        "ch2_squared_noisy",
-        "ch2_absval",
-        "ch2_absval_noisy",
-    ),
-    (
-        "ecgSignal3",
-        "Ch3",
-        "green",
-        "ch3_raw",
-        "ch3_raw_noisy",
-        "ch3_squared",
-        "ch3_squared_noisy",
-        "ch3_absval",
-        "ch3_absval_noisy",
-    ),
+# Full 3x3 cell definitions:  (signal_key, idx_key, channel, method, color)
+ALL_CELLS = [
+    # Ch1
+    ("ch1_raw_sig", "ch1_raw_idx", "Ch1", "raw", "blue"),
+    ("ch1_sq_sig", "ch1_sq_idx", "Ch1", "squared", "blue"),
+    ("ch1_abs_sig", "ch1_abs_idx", "Ch1", "absval", "blue"),
+    # Ch2
+    ("ch2_raw_sig", "ch2_raw_idx", "Ch2", "raw", "red"),
+    ("ch2_sq_sig", "ch2_sq_idx", "Ch2", "squared", "red"),
+    ("ch2_abs_sig", "ch2_abs_idx", "Ch2", "absval", "red"),
+    # Ch3
+    ("ch3_raw_sig", "ch3_raw_idx", "Ch3", "raw", "green"),
+    ("ch3_sq_sig", "ch3_sq_idx", "Ch3", "squared", "green"),
+    ("ch3_abs_sig", "ch3_abs_idx", "Ch3", "absval", "green"),
 ]
 
-METHODS = ["Raw", "Squared", "Abs"]
+METHOD_LABELS = {"raw": "Raw", "squared": "Squared", "absval": "Abs-Value"}
+
+
+def build_grid(b):
+    """Return (rows, col_methods) based on available data and config."""
+
+    # Determine which methods (columns) to show
+    if SHOW_METHOD == "all":
+        methods = ["raw", "squared", "absval"]
+    elif SHOW_METHOD in METHOD_LABELS:
+        methods = [SHOW_METHOD]
+    else:
+        print(f"  WARNING: Unknown SHOW_METHOD '{SHOW_METHOD}', defaulting to 'all'.")
+        methods = ["raw", "squared", "absval"]
+
+    # Determine which ECG channels are present (have a raw signal)
+    ecg_channels = []
+    for ch in ["Ch1", "Ch2", "Ch3"]:
+        sig_key = f"ch{ch[-1]}_raw_sig"
+        if len(b.get(sig_key, [])) > 0:
+            ecg_channels.append(ch)
+
+    # Build row list: each ECG channel, then optionally PPG
+    rows = []  # list of (row_label, row_type)
+    for ch in ecg_channels:
+        rows.append((ch, "ecg"))
+
+    has_ppg = SHOW_PPG and len(b.get("ppgSignal", [])) > 0
+    if has_ppg:
+        rows.append(("PPG", "ppg"))
+
+    # Build the cell list for ECG rows
+    ecg_cells = [c for c in ALL_CELLS if c[2] in ecg_channels and c[3] in methods]
+
+    return rows, methods, ecg_cells, has_ppg
+
+
+def plot_ecg_cell(ax, b, sig_key, idx_key, color, t_start, t_end, fs):
+    """Plot one ECG signal + R-peak overlay."""
+    ecg = np.array(b[sig_key])
+    r_peaks = np.array(b[idx_key])
+
+    if len(ecg) == 0:
+        ax.text(
+            0.5,
+            0.5,
+            "No signal",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=12,
+            color="gray",
+        )
+        ax.set_xticks([])
+        ax.set_yticks([])
+        return 0
+
+    start_i = max(0, min(int(t_start * fs), len(ecg) - 1))
+    end_i = max(0, min(int(t_end * fs), len(ecg)))
+    t_arr = np.arange(start_i, end_i) / fs
+    ecg_sub = ecg[start_i:end_i]
+
+    ax.plot(t_arr, ecg_sub, color="0.4", linewidth=0.5)
+
+    y_lo = float(np.percentile(ecg_sub, 0.1))
+    y_hi = float(np.percentile(ecg_sub, 99.9))
+
+    if len(r_peaks) > 0:
+        mask = (r_peaks >= start_i) & (r_peaks < end_i) & (r_peaks < len(ecg))
+        vr = r_peaks[mask]
+        ax.scatter(
+            vr / fs, ecg[vr], marker="o", c=color, s=35, zorder=5, linewidths=0.5
+        )
+        if len(vr) > 0:
+            y_lo = min(y_lo, float(ecg[vr].min()))
+            y_hi = max(y_hi, float(ecg[vr].max()))
+
+    pad = (y_hi - y_lo) * 0.15 if y_hi > y_lo else 0.1
+    ax.set_ylim(y_lo - pad, y_hi + pad)
+    ax.set_xlim(t_start, t_end)
+
+    return len(r_peaks)
+
+
+def plot_ppg_row(axes_row, b, methods, t_start, t_end):
+    """Plot the PPG signal across all method columns (same signal, same markers)."""
+    fs = b["ppgFs"]
+    ppg = np.array(b["ppgSignal"])
+    mins = np.array(b["ppgMinAmps"])
+    maxs = np.array(b["ppgMaxAmps"])
+
+    start_i = max(0, min(int(t_start * fs), len(ppg) - 1))
+    end_i = max(0, min(int(t_end * fs), len(ppg)))
+    t_arr = np.arange(start_i, end_i) / fs
+    ppg_sub = ppg[start_i:end_i]
+
+    for col, ax in enumerate(axes_row):
+        ax.plot(t_arr, ppg_sub, color="0.4", linewidth=0.5)
+
+        y_lo = float(np.percentile(ppg_sub, 0.1))
+        y_hi = float(np.percentile(ppg_sub, 99.9))
+
+        # Valleys (minAmps) in purple
+        if len(mins) > 0:
+            mask = (mins >= start_i) & (mins < end_i) & (mins < len(ppg))
+            vm = mins[mask]
+            ax.scatter(
+                vm / fs,
+                ppg[vm],
+                marker="v",
+                c="purple",
+                s=25,
+                zorder=5,
+                linewidths=0.5,
+                label=f"Valleys ({len(mins)})",
+            )
+            if len(vm) > 0:
+                y_lo = min(y_lo, float(ppg[vm].min()))
+
+        # Peaks (maxAmps) in orange
+        if len(maxs) > 0:
+            mask = (maxs >= start_i) & (maxs < end_i) & (maxs < len(ppg))
+            vx = maxs[mask]
+            ax.scatter(
+                vx / fs,
+                ppg[vx],
+                marker="^",
+                c="orange",
+                s=25,
+                zorder=5,
+                linewidths=0.5,
+                label=f"Peaks ({len(maxs)})",
+            )
+            if len(vx) > 0:
+                y_hi = max(y_hi, float(ppg[vx].max()))
+
+        pad = (y_hi - y_lo) * 0.15 if y_hi > y_lo else 0.1
+        ax.set_ylim(y_lo - pad, y_hi + pad)
+        ax.set_xlim(t_start, t_end)
+        ax.set_title(f"PPG  (valleys:{len(mins)}  peaks:{len(maxs)})", fontsize=11)
+
+        if col == 0:
+            ax.set_ylabel("PPG", fontsize=12, fontweight="bold")
+            ax.legend(loc="upper right", fontsize=8)
 
 
 def plot_bin(b, bin_idx, file_id, out_dir):
     fs = b["ecgFs"]
-    t_start, t_end = 0, 60
 
-    active = [ch for ch in CHANNELS if len(b[ch[0]]) > 0]
+    # Resolve time range
+    max_len_samples = max(
+        len(b.get("ch1_raw_sig", [])),
+        len(b.get("ch2_raw_sig", [])),
+        len(b.get("ch3_raw_sig", [])),
+        len(b.get("ppgSignal", [])),
+        1,
+    )
+    t_start = T_START if T_START is not None else 0
+    t_end = T_END if T_END is not None else max_len_samples / fs
 
-    if not active:
-        print(f"  Bin {bin_idx}: no active ECG channels, skipping plot.")
+    rows, methods, ecg_cells, has_ppg = build_grid(b)
+
+    if not rows:
+        print(f"  Bin {bin_idx}: no channels to plot, skipping.")
         return
 
-    n_rows = len(active)
-    n_cols = 3  # raw, squared, abs
+    n_rows = len(rows)
+    n_cols = len(methods)
 
     fig, axes = plt.subplots(
-        n_rows, n_cols, figsize=(8 * n_cols, 4 * n_rows), squeeze=False
+        n_rows, n_cols, figsize=(7 * n_cols, 4 * n_rows), squeeze=False
     )
 
-    for row, ch_def in enumerate(active):
-        (
-            sig_key,
-            ch_label,
-            color,
-            raw_rp,
-            raw_noise,
-            sq_rp,
-            sq_noise,
-            abs_rp,
-            abs_noise,
-        ) = ch_def
+    # --- ECG rows ---
+    ecg_row_map = {ch: r for r, (ch, rtype) in enumerate(rows) if rtype == "ecg"}
+    method_col = {m: c for c, m in enumerate(methods)}
 
-        ecg = np.array(b[sig_key])
-        start_idx = max(0, min(int(t_start * fs), len(ecg) - 1))
-        end_idx = max(0, min(int(t_end * fs), len(ecg)))
-        time_subset = np.arange(start_idx, end_idx) / fs
-        ecg_subset = ecg[start_idx:end_idx]
+    for sig_key, idx_key, ch, method, color in ecg_cells:
+        row = ecg_row_map[ch]
+        col = method_col[method]
+        ax = axes[row][col]
 
-        method_keys = [
-            (raw_rp, raw_noise),
-            (sq_rp, sq_noise),
-            (abs_rp, abs_noise),
-        ]
+        n_peaks = plot_ecg_cell(ax, b, sig_key, idx_key, color, t_start, t_end, fs)
+        ax.set_title(f"{ch} — {METHOD_LABELS[method]}  ({n_peaks} peaks)", fontsize=11)
 
-        for col, (rp_key, noise_key) in enumerate(method_keys):
-            ax = axes[row, col]
-            r_peaks = np.array(b[rp_key])
-            is_noisy = b[noise_key]
+        if col == 0:
+            ax.set_ylabel(ch, fontsize=12, fontweight="bold")
+        if row == n_rows - 1:
+            ax.set_xlabel("Time (s)")
 
-            if is_noisy:
-                ax.set_facecolor("#ffe0e0")
+    # --- PPG row (last row, spans all columns) ---
+    if has_ppg:
+        ppg_row = n_rows - 1
+        plot_ppg_row(axes[ppg_row], b, methods, t_start, t_end)
+        for col in range(n_cols):
+            axes[ppg_row][col].set_xlabel("Time (s)")
 
-            ax.plot(time_subset, ecg_subset, color="0.4", linewidth=0.5)
-
-            y_min = float(np.percentile(ecg_subset, 0.1))
-            y_max = float(np.percentile(ecg_subset, 99.9))
-
-            if len(r_peaks) > 0:
-                valid_mask = (r_peaks >= start_idx) & (r_peaks < end_idx)
-                valid_r = r_peaks[valid_mask]
-                valid_r_times = valid_r / fs
-
-                ax.scatter(
-                    valid_r_times,
-                    ecg[valid_r],
-                    marker="o",
-                    c=color,
-                    s=30,
-                    zorder=5,
-                    linewidths=0.5,
-                )
-
-                if len(valid_r) > 0:
-                    y_min = min(y_min, float(ecg[valid_r].min()))
-                    y_max = max(y_max, float(ecg[valid_r].max()))
-
-            padding = (y_max - y_min) * 0.15
-            ax.set_ylim(y_min - padding, y_max + padding)
-            ax.set_xlim(t_start, t_end)
-
-            noise_tag = " [NOISY]" if is_noisy else ""
-            title_color = "red" if is_noisy else "black"
-            ax.set_title(
-                f"{ch_label} {METHODS[col]} — {len(r_peaks)} Peaks{noise_tag}",
-                color=title_color,
-                fontsize=10,
+    # Column headers
+    if n_cols > 1:
+        for col, m in enumerate(methods):
+            axes[0][col].annotate(
+                METHOD_LABELS[m],
+                xy=(0.5, 1.15),
+                xycoords="axes fraction",
+                ha="center",
+                fontsize=13,
+                fontweight="bold",
             )
 
-            if col == 0:
-                ax.set_ylabel(ch_label)
-            if row == n_rows - 1:
-                ax.set_xlabel("Time (s)")
+    time_label = f"{t_start}–{t_end}s" if T_END is not None else "full"
+    fig.suptitle(
+        f"{file_id}  —  Bin {bin_idx}  [{time_label}]",
+        fontsize=15,
+        fontweight="bold",
+        y=1.0,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
 
-    fig.tight_layout()
-    out_path = os.path.join(out_dir, f"{file_id}_bin{bin_idx:03d}_cpp.png")
-    fig.savefig(out_path, dpi=150)
+    method_tag = SHOW_METHOD if SHOW_METHOD != "all" else "3x3"
+    out_path = os.path.join(out_dir, f"{file_id}_bin{bin_idx:03d}_{method_tag}.png")
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Saved: {out_path}")
+    print(f"  Saved: {out_path}")
 
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python plot_rpeaks.py <wave_data.bin> <bin0> [bin1] [bin2] ...")
-        print("Example: python plot_rpeaks.py results/3010112_wave_data.bin 33 34 473")
+        print("Usage: python plot_rpeaks.py <wave_markings.bin> <bin0> [bin1] ...")
+        print(
+            "Example: python plot_rpeaks.py results/3010112_wave_markings.bin 33 34 473"
+        )
         sys.exit(1)
 
     bin_path = sys.argv[1]
     out_dir = "cpp_output"
-    args = sys.argv[2:]
-    bin_indices = [int(x) for x in args]
+    bin_indices = [int(x) for x in sys.argv[2:]]
 
     os.makedirs(out_dir, exist_ok=True)
-    file_id = Path(bin_path).stem.replace("_wave_data", "")
+    file_id = Path(bin_path).stem.replace("_wave_markings", "")
 
     print(f"Reading: {bin_path}")
+    print(
+        f"Config:  SHOW_METHOD={SHOW_METHOD}  T_START={T_START}  T_END={T_END}  SHOW_PPG={SHOW_PPG}"
+    )
     data = read_wave_bin(bin_path)
     print(f"Loaded {len(data)} bins.\n")
 
     for b_idx in bin_indices:
         if b_idx < 0 or b_idx >= len(data):
-            print(f"Bin {b_idx} out of range (0–{len(data) - 1}), skipping.")
+            print(f"  Bin {b_idx} out of range (0–{len(data) - 1}), skipping.")
             continue
 
         b = data[b_idx]
-        plot_bin(b, b_idx, file_id, out_dir)
-
-        # Summary
-        for ch_name, rp_raw, rp_sq, rp_abs in [
-            ("Ch1", "ch1_raw", "ch1_squared", "ch1_absval"),
-            ("Ch2", "ch2_raw", "ch2_squared", "ch2_absval"),
-            ("Ch3", "ch3_raw", "ch3_squared", "ch3_absval"),
-        ]:
-            print(
-                f"  {ch_name}: raw={len(b[rp_raw])}, sq={len(b[rp_sq])}, abs={len(b[rp_abs])}"
-            )
-
-        # CSV export
-        fs = b["ecgFs"]
-        columns = {}
-        for ch_name, rp_raw, rp_sq, rp_abs in [
-            ("ch1", "ch1_raw", "ch1_squared", "ch1_absval"),
-            ("ch2", "ch2_raw", "ch2_squared", "ch2_absval"),
-            ("ch3", "ch3_raw", "ch3_squared", "ch3_absval"),
-        ]:
-            columns[f"{ch_name}_raw_sec"] = [idx / fs for idx in b[rp_raw]]
-            columns[f"{ch_name}_squared_sec"] = [idx / fs for idx in b[rp_sq]]
-            columns[f"{ch_name}_absval_sec"] = [idx / fs for idx in b[rp_abs]]
-
-        max_len = max(len(v) for v in columns.values()) or 1
-        for k in columns:
-            columns[k] += [""] * (max_len - len(columns[k]))
-
-        pd.DataFrame(columns).to_csv(
-            f"{out_dir}/{file_id}_bin_{b_idx}_indices.csv",
-            index=False,
-            float_format="%.6f",
+        print(f"Bin {b_idx}:")
+        print(
+            f"  Ch1 peaks — raw:{len(b['ch1_raw_idx'])}  sq:{len(b['ch1_sq_idx'])}  abs:{len(b['ch1_abs_idx'])}"
         )
+        print(
+            f"  Ch2 peaks — raw:{len(b['ch2_raw_idx'])}  sq:{len(b['ch2_sq_idx'])}  abs:{len(b['ch2_abs_idx'])}"
+        )
+        print(
+            f"  Ch3 peaks — raw:{len(b['ch3_raw_idx'])}  sq:{len(b['ch3_sq_idx'])}  abs:{len(b['ch3_abs_idx'])}"
+        )
+        print(
+            f"  PPG max:{len(b['ppgMaxAmps'])}  min:{len(b['ppgMinAmps'])}  pairs:{len(b['pairs'])}"
+        )
+
+        plot_bin(b, b_idx, file_id, out_dir)
 
     print("\nDone.")
 

@@ -1,4 +1,4 @@
-props = readProps('../config.txt');
+props = readProps('config.txt');
 EdfToMat_input_path = props('EdfToMat_input_path'); %'/hdd/data/mesa/EDF All';
 EdfToMat_output_path = props('EdfToMat_output_path'); %'/hdd/data/mesa/MATS';
 Skip_Existing = logical(str2num(props('Skip_Existing')));
@@ -51,10 +51,6 @@ function convert(edf_path,xml_path, output_path)
 
     ecgSamplingRate = edf_hdr.frequency(1); % 256 FOR MESA SET
     ppgSamplingRate = edf_hdr.frequency(2); % 256 FOR MESA SET
-
-    % Look at the header info for the Pleth signal
-    disp(edf_hdr.physicalMax(2)); 
-
     try
         if strcmp(xml_path,'')
             scoring_epoch_size_sec = 30.0;

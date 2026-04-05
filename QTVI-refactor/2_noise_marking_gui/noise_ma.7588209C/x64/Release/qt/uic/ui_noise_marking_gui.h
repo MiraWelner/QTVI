@@ -44,7 +44,6 @@ public:
     QRadioButton *rb_1m;
     QRadioButton *rb_5m;
     QRadioButton *rb_10m;
-    QComboBox *ecg_channel_selector;
     QHBoxLayout *eight_hour_nav;
     QPushButton *prev8hours;
     QPushButton *next8hours;
@@ -54,9 +53,18 @@ public:
     QHBoxLayout *skip_and_save;
     QPushButton *skip_button;
     QPushButton *finalize_button;
-    QHBoxLayout *ecg_marks;
-    QPushButton *startNoiseECG;
-    QPushButton *stopNoiseECG;
+    QHBoxLayout *all_marks;
+    QPushButton *start_all_mark;
+    QPushButton *stop_all_mark;
+    QHBoxLayout *ecg1_marks;
+    QPushButton *start_ecg1_mark;
+    QPushButton *stop_ecg1_mark;
+    QHBoxLayout *ecg2_marks;
+    QPushButton *start_ecg2_mark;
+    QPushButton *stop_ecg2_mark;
+    QHBoxLayout *ecg3_marks;
+    QPushButton *start_ecg3_mark;
+    QPushButton *stop_ecg3_mark;
     QHBoxLayout *ppg_marks_row;
     QPushButton *startNoisePPG;
     QPushButton *stopNoisePPG;
@@ -210,14 +218,6 @@ public:
 
         leftPanel->addLayout(window_length_settings);
 
-        ecg_channel_selector = new QComboBox(noise_marking_gui);
-        ecg_channel_selector->addItem(QString());
-        ecg_channel_selector->addItem(QString());
-        ecg_channel_selector->addItem(QString());
-        ecg_channel_selector->setObjectName("ecg_channel_selector");
-
-        leftPanel->addWidget(ecg_channel_selector);
-
         eight_hour_nav = new QHBoxLayout();
         eight_hour_nav->setObjectName("eight_hour_nav");
         prev8hours = new QPushButton(noise_marking_gui);
@@ -263,20 +263,65 @@ public:
 
         leftPanel->addLayout(skip_and_save);
 
-        ecg_marks = new QHBoxLayout();
-        ecg_marks->setObjectName("ecg_marks");
-        startNoiseECG = new QPushButton(noise_marking_gui);
-        startNoiseECG->setObjectName("startNoiseECG");
+        all_marks = new QHBoxLayout();
+        all_marks->setObjectName("all_marks");
+        start_all_mark = new QPushButton(noise_marking_gui);
+        start_all_mark->setObjectName("start_all_mark");
 
-        ecg_marks->addWidget(startNoiseECG);
+        all_marks->addWidget(start_all_mark);
 
-        stopNoiseECG = new QPushButton(noise_marking_gui);
-        stopNoiseECG->setObjectName("stopNoiseECG");
+        stop_all_mark = new QPushButton(noise_marking_gui);
+        stop_all_mark->setObjectName("stop_all_mark");
 
-        ecg_marks->addWidget(stopNoiseECG);
+        all_marks->addWidget(stop_all_mark);
 
 
-        leftPanel->addLayout(ecg_marks);
+        leftPanel->addLayout(all_marks);
+
+        ecg1_marks = new QHBoxLayout();
+        ecg1_marks->setObjectName("ecg1_marks");
+        start_ecg1_mark = new QPushButton(noise_marking_gui);
+        start_ecg1_mark->setObjectName("start_ecg1_mark");
+
+        ecg1_marks->addWidget(start_ecg1_mark);
+
+        stop_ecg1_mark = new QPushButton(noise_marking_gui);
+        stop_ecg1_mark->setObjectName("stop_ecg1_mark");
+
+        ecg1_marks->addWidget(stop_ecg1_mark);
+
+
+        leftPanel->addLayout(ecg1_marks);
+
+        ecg2_marks = new QHBoxLayout();
+        ecg2_marks->setObjectName("ecg2_marks");
+        start_ecg2_mark = new QPushButton(noise_marking_gui);
+        start_ecg2_mark->setObjectName("start_ecg2_mark");
+
+        ecg2_marks->addWidget(start_ecg2_mark);
+
+        stop_ecg2_mark = new QPushButton(noise_marking_gui);
+        stop_ecg2_mark->setObjectName("stop_ecg2_mark");
+
+        ecg2_marks->addWidget(stop_ecg2_mark);
+
+
+        leftPanel->addLayout(ecg2_marks);
+
+        ecg3_marks = new QHBoxLayout();
+        ecg3_marks->setObjectName("ecg3_marks");
+        start_ecg3_mark = new QPushButton(noise_marking_gui);
+        start_ecg3_mark->setObjectName("start_ecg3_mark");
+
+        ecg3_marks->addWidget(start_ecg3_mark);
+
+        stop_ecg3_mark = new QPushButton(noise_marking_gui);
+        stop_ecg3_mark->setObjectName("stop_ecg3_mark");
+
+        ecg3_marks->addWidget(stop_ecg3_mark);
+
+
+        leftPanel->addLayout(ecg3_marks);
 
         ppg_marks_row = new QHBoxLayout();
         ppg_marks_row->setObjectName("ppg_marks_row");
@@ -669,18 +714,20 @@ public:
         rb_1m->setText(QCoreApplication::translate("noise_marking_gui", "1m", nullptr));
         rb_5m->setText(QCoreApplication::translate("noise_marking_gui", "5m", nullptr));
         rb_10m->setText(QCoreApplication::translate("noise_marking_gui", "10m", nullptr));
-        ecg_channel_selector->setItemText(0, QCoreApplication::translate("noise_marking_gui", "ECG Channel 1", nullptr));
-        ecg_channel_selector->setItemText(1, QCoreApplication::translate("noise_marking_gui", "ECG Channel 2", nullptr));
-        ecg_channel_selector->setItemText(2, QCoreApplication::translate("noise_marking_gui", "ECG Channel 3", nullptr));
-
         prev8hours->setText(QCoreApplication::translate("noise_marking_gui", "Prev 8h", nullptr));
         next8hours->setText(QCoreApplication::translate("noise_marking_gui", "Next 8h", nullptr));
         undo_button->setText(QCoreApplication::translate("noise_marking_gui", "Undo", nullptr));
         clearall_button->setText(QCoreApplication::translate("noise_marking_gui", "Clear All", nullptr));
         skip_button->setText(QCoreApplication::translate("noise_marking_gui", "Skip", nullptr));
         finalize_button->setText(QCoreApplication::translate("noise_marking_gui", "Save", nullptr));
-        startNoiseECG->setText(QCoreApplication::translate("noise_marking_gui", "Mark ECG Start", nullptr));
-        stopNoiseECG->setText(QCoreApplication::translate("noise_marking_gui", "Mark ECG End", nullptr));
+        start_all_mark->setText(QCoreApplication::translate("noise_marking_gui", "Mark All Signals Start", nullptr));
+        stop_all_mark->setText(QCoreApplication::translate("noise_marking_gui", "Mark All Signals Stop", nullptr));
+        start_ecg1_mark->setText(QCoreApplication::translate("noise_marking_gui", "Mark ECG 1 Start", nullptr));
+        stop_ecg1_mark->setText(QCoreApplication::translate("noise_marking_gui", "Mark ECG 1 End", nullptr));
+        start_ecg2_mark->setText(QCoreApplication::translate("noise_marking_gui", "Mark ECG 2 Start", nullptr));
+        stop_ecg2_mark->setText(QCoreApplication::translate("noise_marking_gui", "Mark ECG 2 End", nullptr));
+        start_ecg3_mark->setText(QCoreApplication::translate("noise_marking_gui", "Mark ECG 3 Start", nullptr));
+        stop_ecg3_mark->setText(QCoreApplication::translate("noise_marking_gui", "Mark ECG 3 End", nullptr));
         startNoisePPG->setText(QCoreApplication::translate("noise_marking_gui", "Mark PPG Start", nullptr));
         stopNoisePPG->setText(QCoreApplication::translate("noise_marking_gui", "Mark PPG End", nullptr));
         marking_type_label->setText(QCoreApplication::translate("noise_marking_gui", "Mark Type", nullptr));

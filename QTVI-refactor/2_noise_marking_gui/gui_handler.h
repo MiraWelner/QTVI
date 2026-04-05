@@ -75,13 +75,15 @@ public:
 
     struct ChannelMarkingState {
         MarkPhase    phase = MarkPhase::Idle;
-        double       startTimeValue = 0.0;
+        double       globalStartTime = 0.0;   // always in global seconds
         QLineSeries* startMarkerLine = nullptr;
     };
 
     // Called by lower_row_buttons to enter/transition marking phases
     void beginMarking(const QString& signalLabel);
     void beginStopPhase(const QString& signalLabel);
+    void beginMarkingAll();
+    void beginStopPhaseAll();
 
 private:
 
@@ -118,6 +120,9 @@ private:
     QList<QAreaSeries*>     m_highlights;
     QList<QAbstractSeries*> m_hypnoStageSeries;
 
+    // --- Mark-all state ---
+    bool m_markAllActive = false;   // true while "Mark All Signals" mode is in effect
+
     // --- Drag state ---
     bool     m_isDragging = false;
     QWidget* m_draggedViewport = nullptr;
@@ -141,13 +146,18 @@ private:
 
     // --- Lookup helpers ---
     ChannelMarkingState& markStateFor(const QString& label);
-    QString              selectedEcgLabel() const;
     QString              signalLabelForChartView(QChartView* cv) const;
     QChartView* chartViewForSignalLabel(const QString& label) const;
     double               sampleRateForSignal(const QString& label) const;
     QColor               colorForSignal(const QString& label) const;
     bool                 isChannelActive(const QString& label) const;
     double               totalChunkDuration() const;
+
+    // --- Per-channel button helpers ---
+    QPushButton* startButtonForSignal(const QString& label) const;
+    QPushButton* stopButtonForSignal(const QString& label) const;
+    void         updateButtonStatesForChannel(const QString& label);
+    void         updateAllChannelButtonStates();
 
     // --- Plotting ---
     bool loadChunkFromFile(uint64_t chunkIndex);
@@ -160,6 +170,7 @@ private:
     // --- Marking ---
     void finalizeMarking(QChartView* cv, double endX, const QString& signalLabel);
     void cancelMarking(const QString& signalLabel);
+    void restoreMarkingMarkers();
     void showStartMarker(QChartView* cv, double xValue, ChannelMarkingState& state,
         const QColor& color, QPushButton* stopBtn);
     void clearStartMarker(ChannelMarkingState& state);

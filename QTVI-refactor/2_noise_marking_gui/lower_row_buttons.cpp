@@ -22,11 +22,23 @@ void lower_row_buttons::setupConnections() {
     connect(ui->finalize_button, &QPushButton::clicked, this, &lower_row_buttons::handle_finalize_button);
     connect(ui->skip_button, &QPushButton::clicked, this, &lower_row_buttons::handle_skip_button);
 
-    connect(ui->startNoiseECG, &QPushButton::clicked, this, &lower_row_buttons::handle_ecgmarkingstart_button);
-    connect(ui->stopNoiseECG, &QPushButton::clicked, this, &lower_row_buttons::handle_ecgmarkingstop_button);
+    // Per-channel ECG buttons
+    connect(ui->start_ecg1_mark, &QPushButton::clicked, this, [this]() { m_gui->beginMarking("ECG1"); });
+    connect(ui->stop_ecg1_mark, &QPushButton::clicked, this, [this]() { m_gui->beginStopPhase("ECG1"); });
+    connect(ui->start_ecg2_mark, &QPushButton::clicked, this, [this]() { m_gui->beginMarking("ECG2"); });
+    connect(ui->stop_ecg2_mark, &QPushButton::clicked, this, [this]() { m_gui->beginStopPhase("ECG2"); });
+    connect(ui->start_ecg3_mark, &QPushButton::clicked, this, [this]() { m_gui->beginMarking("ECG3"); });
+    connect(ui->stop_ecg3_mark, &QPushButton::clicked, this, [this]() { m_gui->beginStopPhase("ECG3"); });
+
+    // PPG buttons
     connect(ui->startNoisePPG, &QPushButton::clicked, this, &lower_row_buttons::handle_ppgmarkingstart_button);
     connect(ui->stopNoisePPG, &QPushButton::clicked, this, &lower_row_buttons::handle_ppgmarkingstop_button);
 
+    // Mark All Signals buttons
+    connect(ui->start_all_mark, &QPushButton::clicked, this, &lower_row_buttons::handle_allmarkingstart_button);
+    connect(ui->stop_all_mark, &QPushButton::clicked, this, &lower_row_buttons::handle_allmarkingstop_button);
+
+    // Window radio buttons
     connect(ui->rb_10s, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 10);  });
     connect(ui->rb_30s, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 30);  });
     connect(ui->rb_1m, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 60);  });
@@ -58,7 +70,6 @@ void lower_row_buttons::handle_undo_button() {
     m_gui->m_genExc.data_type.removeLast();
     m_gui->m_genExc.marking_type.removeLast();
 
-    // Rebuild NoiseManager from remaining annotations
     m_gui->m_noiseManager = std::make_unique<NoiseManager>(m_gui->m_ecgSR);
     for (int i = 0; i < m_gui->m_genExc.noiseExc.size(); ++i) {
         double sr = m_gui->sampleRateForSignal(m_gui->m_genExc.data_type[i]);
@@ -84,15 +95,15 @@ void lower_row_buttons::handle_clearall_button() {
 }
 
 // ============================================================================
-// ECG start / stop
+// Mark All Signals start / stop
 // ============================================================================
 
-void lower_row_buttons::handle_ecgmarkingstart_button() {
-    m_gui->beginMarking(m_gui->selectedEcgLabel());
+void lower_row_buttons::handle_allmarkingstart_button() {
+    m_gui->beginMarkingAll();
 }
 
-void lower_row_buttons::handle_ecgmarkingstop_button() {
-    m_gui->beginStopPhase(m_gui->selectedEcgLabel());
+void lower_row_buttons::handle_allmarkingstop_button() {
+    m_gui->beginStopPhaseAll();
 }
 
 // ============================================================================

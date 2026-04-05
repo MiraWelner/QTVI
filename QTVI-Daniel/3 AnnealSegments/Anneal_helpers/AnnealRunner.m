@@ -1,6 +1,6 @@
 clear;
 close all;
-props = readProps('../config.txt');
+props = readProps('config.txt');
 AnnealSegments_AnnealType = str2num(props('AnnealSegments_AnnealType'));
 
 AnnealSegments_use_handmarked_noise = str2num(props('AnnealSegments_use_handmarked_noise'));
@@ -15,12 +15,7 @@ Skip_Existing = logical(str2num(props('Skip_Existing')));
 %%
 analysisFiles = SetupAnneal(AnnealSegments_raw_mats, AnnealSegments_noise_input, AnnealSegments_use_handmarked_noise);
 time = 0;
-for i = 1:size(analysisFiles, 1)
-    fprintf('Row %d: name=%s, col2=%s, col3=%s\n', i, ...
-        string(analysisFiles{i,1}), ...
-        string(analysisFiles{i,2}), ...
-        string(analysisFiles{i,3}));
-end
+
 for i = 1:size(analysisFiles, 1)
     name = analysisFiles{i,1};
 

@@ -318,18 +318,34 @@ inline vector<double> EnsembleTemplate(
     for (auto a : align_pts) if (a > alignment_point) alignment_point = a;
 
     vector<double> fa_d(final_align.begin(), final_align.end());
-    vector<double> fl_d(final_lens.begin(), final_lens.end());
     double med_align = et_nanmedian(fa_d);
-    double med_flen = et_nanmedian(fl_d);
 
     size_t beginpos = 0;
     if (alignment_point > static_cast<size_t>(std::round(med_align)))
         beginpos = alignment_point - static_cast<size_t>(std::round(med_align));
 
-    size_t endpos = alignment_point +
-        static_cast<size_t>(std::round(med_flen - med_align));
+
+    // just before building len_minus_align
+    for (size_t i = 0; i < std::min(final_lens.size(), size_t(3)); ++i) {
+        std::cerr << "bin " << i
+            << "  final_lens=" << final_lens[i]
+            << "  final_align=" << final_align[i]
+            << "  len-align=" << (final_lens[i] - final_align[i])
+            << "\n";
+    }
+
+    // median(good_seg_lengths - good_seg_diff_peak(:,2)) — verbatim MATLAB
+    vector<double> len_minus_align(final_lens.size());
+    for (size_t i = 0; i < final_lens.size(); ++i)
+        len_minus_align[i] = static_cast<double>(final_lens[i])
+        - static_cast<double>(final_align[i]);
+    double med_len_minus_align = et_nanmedian(len_minus_align);
+
     size_t total_cols = final_segs.empty() ? 0 : final_segs[0].size();
-    if (endpos >= total_cols) endpos = total_cols - 1;
+    size_t endpos = alignment_point +
+        static_cast<size_t>(std::round(med_len_minus_align));
+    if (endpos >= total_cols) endpos = total_cols - 1;  // match MATLAB bounds check
+
     if (beginpos > endpos) return {};
 
     size_t tmpl_len = endpos - beginpos + 1;
@@ -339,6 +355,5 @@ inline vector<double> EnsembleTemplate(
         for (size_t c = 0; c < tmpl_len; ++c)
             sub[i][c] = final_segs[i][beginpos + c];
     }
-
     return et_col_nanmedian(sub, tmpl_len);
 }

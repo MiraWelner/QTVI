@@ -29,11 +29,10 @@ struct TemplateBin {
     std::vector<double> ppgTemplate;
 
     // Markings (set during review)
-    bool templateBad = false;
-    bool bad_r = false;
-    bool bad_ppg = false;
-    int dicrotic = -1;   // sample index, -1 = not set / NaN
-    int onset = 0;
+    bool bad_r_ch[3] = { false, false, false };
+    uint8_t ppg_issue = 0;   // 0 = ok, 1 = bad, 2 = no ppg
+    int dicrotic = -1;
+    int onset = -1;
     int peak = -1;
     int end_idx = -1;
 };
@@ -112,10 +111,11 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
 //   uint64  numBins
 //   per bin:
 //     uint64  index
-//     uint8   templateBad
-//     uint8   bad_r
-//     uint8   bad_ppg
-//     int32   dicrotic   (-1 = NaN)
+//     uint8   bad_r_ch1
+//     uint8   bad_r_ch2
+//     uint8   bad_r_ch3
+//     uint8   ppg_issue    (0 = ok, 1 = bad, 2 = no ppg)
+//     int32   dicrotic     (-1 = NaN)
 //     int32   onset
 //     int32   peak
 //     int32   end_idx
@@ -132,20 +132,16 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         uint64_t idx = b.index;
         f.write(reinterpret_cast<const char*>(&idx), 8);
 
-        uint8_t tb = b.templateBad ? 1 : 0;
-        uint8_t br = b.bad_r ? 1 : 0;
-        uint8_t bp = b.bad_ppg ? 1 : 0;
-        f.write(reinterpret_cast<const char*>(&tb), 1);
-        f.write(reinterpret_cast<const char*>(&br), 1);
-        f.write(reinterpret_cast<const char*>(&bp), 1);
+        auto w8 = [&](uint8_t v) { f.write(reinterpret_cast<const char*>(&v), 1); };
+        w8(b.bad_r_ch[0] ? 1 : 0);
+        w8(b.bad_r_ch[1] ? 1 : 0);
+        w8(b.bad_r_ch[2] ? 1 : 0);
+        w8(b.ppg_issue);
 
-        int32_t d = b.dicrotic;
-        int32_t o = b.onset;
-        int32_t p = b.peak;
-        int32_t e = b.end_idx;
-        f.write(reinterpret_cast<const char*>(&d), 4);
-        f.write(reinterpret_cast<const char*>(&o), 4);
-        f.write(reinterpret_cast<const char*>(&p), 4);
-        f.write(reinterpret_cast<const char*>(&e), 4);
+        auto w32 = [&](int v) { int32_t i = v; f.write(reinterpret_cast<const char*>(&i), 4); };
+        w32(b.dicrotic);
+        w32(b.onset);
+        w32(b.peak);
+        w32(b.end_idx);
     }
 }
