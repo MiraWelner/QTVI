@@ -17,6 +17,7 @@
 #include <QtCharts/QChartView>
 #include <QVector>
 #include <QSet>
+#include <QMap>
 #include <QColor>
 #include <memory>
 
@@ -26,6 +27,7 @@
 
  // Collected annotations returned to the caller after dialog closes
 struct GenExcStruct {
+    QString filePath;          // source file these markings belong to
     QVector<QPair<double, double>> noiseExc;
     QStringList data_type;     // "ECG1", "ECG2", "ECG3", or "PPG"
     QStringList marking_type;  // "Noise/Artifact", "AF", "SVT", etc.
@@ -39,8 +41,10 @@ public:
     explicit noise_marking_gui(QWidget* parent = nullptr);
     ~noise_marking_gui() override;
 
-    GenExcStruct getMarkings() const { return m_genExc; }
-    void         setFileSource(const QString& filePath);
+    GenExcStruct              getMarkings() const;
+    QVector<GenExcStruct>     getAllMarkings() const;
+    QString                   getFilePath() const { return m_binFilePath; }
+    void                      setFileSource(const QString& filePath);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -51,6 +55,7 @@ private slots:
     void on_marking_type_currentTextChanged(const QString& text);
     void on_next8hours_clicked();
     void on_prev8hours_clicked();
+    void handleBrowseFile();
 
 private:
     // --- Per-channel marking state machine ---
@@ -100,10 +105,12 @@ private:
     QSet<QString> m_activeChannels;
     QString       m_currentMarkingType;
     GenExcStruct  m_genExc;
+    QMap<QString, GenExcStruct> m_fileMarkings;  // stashed markings per file path
 
     // --- Sampling rates ---
     double m_ecgSR = 0.0;
     double m_ppgSR = 0.0;
+    double m_boolSR = 0.0;
     double m_sleepSR = 0.0;
 
     // --- View state ---
@@ -130,16 +137,31 @@ private:
     QString  m_dragSignalLabel;
 
     // --- Signal data ---
-    QVector<double> m_ecg1, m_ecg2, m_ecg3, m_ppg, m_sleepStages;
+    QVector<double> m_ecg1, m_ecg2, m_ecg3, m_ppg;
+    QVector<double> m_accelX, m_accelY, m_accelZ;
+    QVector<double> m_sleepStages;
 
-    // --- File layout ---
+    // --- File layout (new 160-byte header: 40 x uint32) ---
     QString  m_binFilePath;
-    qint64   m_fileHeaderSize = 0;
-    uint64_t m_totalEcg1Samples = 0;
-    uint64_t m_totalEcg2Samples = 0;
-    uint64_t m_totalEcg3Samples = 0;
-    uint64_t m_totalPpgSamples = 0;
-    uint64_t m_totalSleepSamples = 0;
+    static constexpr qint64 FILE_HEADER_SIZE = 160;
+
+    uint32_t m_chanSizes[36] = {};
+    uint32_t m_totalSleepSamples = 0;
+
+    static constexpr int CH_ECG1 = 0, CH_ECG2 = 1, CH_ECG3 = 2, CH_PPG = 3;
+    static constexpr int CH_ACCEL_X = 4, CH_ACCEL_Y = 5, CH_ACCEL_Z = 6;
+    static constexpr int CH_MARKER = 7, CH_TEMP = 8, CH_PACEMAKER = 9;
+    static constexpr int CH_EOG_L = 10, CH_EOG_R = 11, CH_EMG = 12;
+    static constexpr int CH_EEG1 = 13, CH_EEG2 = 14, CH_EEG3 = 15;
+    static constexpr int CH_PRES = 16, CH_FLOW = 17, CH_THOR = 18;
+    static constexpr int CH_ABDO = 19, CH_LEG = 20, CH_THERM = 21;
+    static constexpr int CH_POS = 22;
+    static constexpr int CH_EKG_OFF = 23, CH_EOGL_OFF = 24, CH_EOGR_OFF = 25;
+    static constexpr int CH_EMG_OFF = 26, CH_EEG1_OFF = 27, CH_EEG2_OFF = 28;
+    static constexpr int CH_EEG3_OFF = 29;
+    static constexpr int CH_OXSTATUS = 30, CH_SPO2 = 31;
+    static constexpr int CH_HR = 32, CH_DHR = 33, CH_RESP = 34;
+
     uint64_t m_currentChunkIndex = 0;
 
     static constexpr double CHUNK_DURATION_SEC = 28800.0;  // 8 hours
@@ -174,6 +196,9 @@ private:
     void showStartMarker(QChartView* cv, double xValue, ChannelMarkingState& state,
         const QColor& color, QPushButton* stopBtn);
     void clearStartMarker(ChannelMarkingState& state);
+
+    // --- File selection ---
+    void loadSelectedFile(const QString& filePath);
 
     // --- Formatting ---
     QString formatTimeLabel(double seconds);

@@ -1,685 +1,638 @@
-﻿#pragma once
+#pragma once
 
-#include "data_types.hpp"
+#include "ppg_features.hpp"
 #include <fstream>
-#include <string>
-#include <vector>
-#include <cstdint>
-#include <cmath>
 #include <stdexcept>
-#include <iostream>
-
-/**
- * @file bin_io.hpp
- * @brief Binary file readers and writers for every stage of the pipeline.
- *
- * Formats are derived directly from:
- *   - 3_anneal_segments.cpp  → write_output_bin       (annealed segments)
- *   - main.cpp               → write_output_binfile   (wave markings)
- *   - 5_generate_templates.cpp → write_template_info_binfile (templates)
- *
- * All multi-byte values are little-endian (x86 native).
- * Index arrays written by main.cpp are **1-based** for MATLAB compatibility;
- * readers here convert back to 0-based.
- */
+#include <cstring>
 
 namespace ppg {
-    namespace io {
 
-        // ═══════════════════════════════════════════════════════════════════════════
-        //  Low-level helpers
-        // ═══════════════════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Annealed Segments .bin
+    // ─────────────────────────────────────────────────────────────────────────
+    // Written by 3_anneal_segments.cpp:
+    //   Header:  [uint64 nSegments] [double ppgSR] [double ecgSR] [double epochSec]
+    //   Per seg: ppg_bin_indexs  → [uint64 nPairs] then nPairs × [uint64, uint64]
+    //            ecg_bin_indexs  → same layout
+    //            ppg             → [uint64 len] [len × double]
+    //            ecg1            → same
+    //            ecg2            → same
+    //            ecg3            → same
+    //            sleep_stages    → same
+    // ═══════════════════════════════════════════════════════════════════════════
 
-        namespace detail {
+    inline std::vector<AnnealedSegment> read_annealed_bin(const std::string& path) {
+        std::ifstream f(path, std::ios::binary);
+        if (!f.is_open())
+            throw std::runtime_error("Cannot open annealed bin: " + path);
 
-            inline void read_bytes(std::ifstream& f, void* dst, size_t n) {
-                if (!f.read(reinterpret_cast<char*>(dst), static_cast<std::streamsize>(n)))
-                    throw std::runtime_error("bin_io: unexpected end of file");
+        f.seekg(0, std::ios::end);
+        uint64_t fileSize = static_cast<uint64_t>(f.tellg());
+        f.seekg(0, std::ios::beg);
+
+        auto r64 = [&]() -> uint64_t {
+            uint64_t v = 0; f.read(reinterpret_cast<char*>(&v), 8);
+            if (!f.good()) throw std::runtime_error("Unexpected EOF in annealed at pos " + std::to_string(f.tellg()));
+            return v;
+            };
+        auto rd = [&]() -> double {
+            double v; f.read(reinterpret_cast<char*>(&v), 8); return v;
+            };
+        auto readVec = [&]() -> std::vector<double> {
+            uint64_t n = r64();
+            std::vector<double> v(n);
+            if (n > 0) f.read(reinterpret_cast<char*>(v.data()), n * 8);
+            return v;
+            };
+        auto readPairs = [&]() -> std::vector<std::vector<int>> {
+            uint64_t n = r64();
+            std::vector<std::vector<int>> pairs(n, std::vector<int>(2));
+            for (uint64_t i = 0; i < n; i++) {
+                pairs[i][0] = static_cast<int>(r64());
+                pairs[i][1] = static_cast<int>(r64());
             }
+            return pairs;
+            };
 
-            inline uint64_t read_u64(std::ifstream& f) {
-                uint64_t v = 0;
-                read_bytes(f, &v, 8);
-                return v;
-            }
+        uint64_t nSegments = r64();
+        double ppgSR = 0, ecgSR = 0, epochSec = 0;
+        if (nSegments > 0) {
+            ppgSR = rd();
+            ecgSR = rd();
+            epochSec = rd();
+        }
 
-            inline double read_f64(std::ifstream& f) {
-                double v = 0.0;
-                read_bytes(f, &v, 8);
-                return v;
-            }
+        std::vector<AnnealedSegment> segs(nSegments);
+        for (uint64_t i = 0; i < nSegments; i++) {
+            segs[i].ppgSampleRate = ppgSR;
+            segs[i].ecgSampleRate = ecgSR;
+            segs[i].ppg_bin_indexs = readPairs();
 
-            inline uint8_t read_u8(std::ifstream& f) {
-                uint8_t v = 0;
-                read_bytes(f, &v, 1);
-                return v;
-            }
-
-            /**
-             * @brief Read a length-prefixed double array.
-             * @param f    Input stream.
-             * @param dest Destination vector (resized).
-             */
-            inline void read_vec_f64(std::ifstream& f, std::vector<double>& dest) {
-                uint64_t sz = read_u64(f);
-                if (sz > 50'000'000) throw std::runtime_error("bin_io: vector size too large");
-                dest.resize(sz);
-                if (sz > 0) read_bytes(f, dest.data(), sz * 8);
-            }
-
-            /**
-             * @brief Read a length-prefixed index array (stored as uint64, 1-based) → 0-based int vector.
-             * @param f    Input stream.
-             * @param dest Destination vector.
-             */
-            inline void read_idx_array(std::ifstream& f, std::vector<int>& dest) {
-                uint64_t sz = read_u64(f);
-                if (sz > 50'000'000) throw std::runtime_error("bin_io: index array too large");
-                dest.resize(sz);
-                if (sz > 0) {
-                    std::vector<uint64_t> tmp(sz);
-                    read_bytes(f, tmp.data(), sz * 8);
-                    for (uint64_t i = 0; i < sz; ++i)
-                        dest[i] = static_cast<int>(tmp[i] > 0 ? tmp[i] - 1 : 0);
-                }
-            }
-
-            /**
-             * @brief Read a length-prefixed pair<uint64,uint64> array.
-             * @param f    Input stream.
-             * @param dest Destination vector.
-             */
-            inline void read_pair_vec(std::ifstream& f, std::vector<std::pair<int, int>>& dest) {
-                uint64_t sz = read_u64(f);
-                if (sz > 50'000'000) throw std::runtime_error("bin_io: pair vector too large");
-                dest.resize(sz);
-                if (sz > 0) {
-                    std::vector<uint64_t> buf(sz * 2);
-                    read_bytes(f, buf.data(), sz * 16);
-                    for (uint64_t i = 0; i < sz; ++i) {
-                        dest[i].first = static_cast<int>(buf[i * 2]);
-                        dest[i].second = static_cast<int>(buf[i * 2 + 1]);
-                    }
-                }
-            }
-
-            // ── Write helpers ────────────────────────────────────────────────────────
-
-            inline void write_bytes(std::ofstream& f, const void* src, size_t n) {
-                f.write(reinterpret_cast<const char*>(src), static_cast<std::streamsize>(n));
-            }
-
-            inline void write_u64(std::ofstream& f, uint64_t v) { write_bytes(f, &v, 8); }
-            inline void write_f64(std::ofstream& f, double v) { write_bytes(f, &v, 8); }
-            inline void write_u8(std::ofstream& f, uint8_t v) { write_bytes(f, &v, 1); }
-
-            inline void write_vec_f64(std::ofstream& f, const std::vector<double>& v) {
-                write_u64(f, v.size());
-                if (!v.empty()) write_bytes(f, v.data(), v.size() * 8);
-            }
-
-            /**
-             * @brief Write 0-based int indices as 1-based uint64 array (MATLAB compat).
-             */
-            inline void write_idx_array(std::ofstream& f, const std::vector<int>& v) {
-                write_u64(f, v.size());
-                if (!v.empty()) {
-                    std::vector<uint64_t> tmp(v.size());
-                    for (size_t i = 0; i < v.size(); ++i)
-                        tmp[i] = static_cast<uint64_t>(v[i]) + 1;
-                    write_bytes(f, tmp.data(), v.size() * 8);
-                }
-            }
-
-            inline void write_pair_vec_u64(
-                std::ofstream& f,
-                const std::vector<std::pair<int, int>>& v)
+            // Skip ecg_bin_indexs (not used in feature generation)
             {
-                write_u64(f, v.size());
-                for (const auto& p : v) {
-                    uint64_t a = static_cast<uint64_t>(p.first);
-                    uint64_t b = static_cast<uint64_t>(p.second);
-                    write_bytes(f, &a, 8);
-                    write_bytes(f, &b, 8);
-                }
+                uint64_t n = r64();
+                f.seekg(n * 16, std::ios::cur);
             }
 
-        } // namespace detail
+            segs[i].po = readVec();  // PPG signal
 
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        //  1. Annealed Segments (.bin)
-        //
-        //  Written by 3_anneal_segments.cpp → write_output_bin:
-        //    [u64  nSegments]
-        //    [f64  ppgSR]  [f64  ecgSR]  [f64  epochSec]
-        //    per segment:
-        //      ppg_bin_indexs (pair vec)
-        //      ecg_bin_indexs (pair vec)
-        //      ppg   (f64 vec)
-        //      ecg1  (f64 vec)
-        //      ecg2  (f64 vec)
-        //      ecg3  (f64 vec)
-        //      sleep (f64 vec)
-        // ═══════════════════════════════════════════════════════════════════════════
-
-        /**
-         * @brief Read annealed segments from a .bin file.
-         * @param path  File path.
-         * @return Vector of AnnealedSegment structs.
-         */
-        inline std::vector<AnnealedSegment> read_annealed_bin(const std::string& path) {
-            std::ifstream f(path, std::ios::binary);
-            if (!f) throw std::runtime_error("Cannot open annealed bin: " + path);
-
-            uint64_t n_seg = detail::read_u64(f);
-
-            double ppg_sr = 256.0, ecg_sr = 256.0, epoch_sec = 30.0;
-            if (n_seg > 0) {
-                ppg_sr = detail::read_f64(f);
-                ecg_sr = detail::read_f64(f);
-                epoch_sec = detail::read_f64(f);
+            // Skip ecg channels (not used in feature generation)
+            for (int ch = 0; ch < 3; ch++) {
+                uint64_t n = r64();
+                f.seekg(n * 8, std::ios::cur);
             }
 
-            std::vector<AnnealedSegment> segs(n_seg);
-            for (uint64_t i = 0; i < n_seg; ++i) {
-                auto& s = segs[i];
-                s.ppg_sample_rate = ppg_sr;
-                s.ecg_sample_rate = ecg_sr;
-
-                detail::read_pair_vec(f, s.ppg_bin_indices);
-
-                // ecg_bin_indices (read but stored loosely — not needed downstream)
-                std::vector<std::pair<int, int>> ecg_bins;
-                detail::read_pair_vec(f, ecg_bins);
-
-                detail::read_vec_f64(f, s.po);
-
-                // ecg1, ecg2, ecg3 — skip (not used by feature extraction)
-                std::vector<double> tmp;
-                detail::read_vec_f64(f, tmp);
-                detail::read_vec_f64(f, tmp);
-                detail::read_vec_f64(f, tmp);
-
-                detail::read_vec_f64(f, s.sleep_stages);
-            }
-            return segs;
+            segs[i].sleep_stages = readVec();
         }
-
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        //  2. Wave Markings (.bin)
-        //
-        //  Written by main.cpp → write_output_binfile:
-        //    [u64 numBins]
-        //    per bin:
-        //      9 index arrays  (ch1 raw/sq/abs, ch2 raw/sq/abs, ch3 raw/sq/abs)
-        //      2 PPG idx arrays (maxAmps, minAmps)
-        //      4 raw signals    (ppg, ecg1, ecg2, ecg3)
-        //      6 preproc sigs   (ch1 sq/abs, ch2 sq/abs, ch3 sq/abs)
-        //      9 noise flags    (1 byte each)
-        //      pairs:           [u64 count] [int64 × count × 2]
-        //      ppg_bin_indexs   (pair vec)
-        //      ecg_bin_indexs   (pair vec)
-        // ═══════════════════════════════════════════════════════════════════════════
-
-        /**
-         * @brief Read wave markings from a .bin file.
-         * @param path  File path.
-         * @return Vector of WaveData structs.
-         */
-        inline std::vector<WaveData> read_wave_data_bin(const std::string& path) {
-            std::ifstream f(path, std::ios::binary);
-            if (!f) throw std::runtime_error("Cannot open wave bin: " + path);
-
-            uint64_t n_bins = detail::read_u64(f);
-            std::vector<WaveData> result(n_bins);
-
-            for (uint64_t b = 0; b < n_bins; ++b) {
-                auto& wd = result[b];
-
-                // 9 R-peak index arrays — skip (not used directly by feature extraction)
-                std::vector<int> skip_idx;
-                for (int k = 0; k < 9; ++k) detail::read_idx_array(f, skip_idx);
-
-                // 2 PPG index arrays — skip
-                for (int k = 0; k < 2; ++k) detail::read_idx_array(f, skip_idx);
-
-                // 4 raw signals — skip
-                std::vector<double> skip_sig;
-                for (int k = 0; k < 4; ++k) detail::read_vec_f64(f, skip_sig);
-
-                // 6 preprocessed signals — skip
-                for (int k = 0; k < 6; ++k) detail::read_vec_f64(f, skip_sig);
-
-                // 9 noise flags
-                uint8_t flags[9];
-                detail::read_bytes(f, flags, 9);
-
-                // Pairs: [u64 count] [int64 × count × 2]
-                // 1-based, -1 = unmatched
-                uint64_t num_pairs = detail::read_u64(f);
-                wd.pairs.resize(num_pairs);
-                if (num_pairs > 0) {
-                    std::vector<int64_t> pair_buf(num_pairs * 2);
-                    detail::read_bytes(f, pair_buf.data(), num_pairs * 16);
-                    for (uint64_t i = 0; i < num_pairs; ++i) {
-                        // Convert 1-based → 0-based; -1 stays as -1
-                        int ppg_idx = (pair_buf[i * 2] == -1)
-                            ? -1 : static_cast<int>(pair_buf[i * 2] - 1);
-                        int ecg_idx = (pair_buf[i * 2 + 1] == -1)
-                            ? -1 : static_cast<int>(pair_buf[i * 2 + 1] - 1);
-                        wd.pairs[i] = { ppg_idx, ecg_idx };
-                    }
-                }
-
-                // ppg/ecg bin index pairs — skip
-                std::vector<std::pair<int, int>> skip_pairs;
-                detail::read_pair_vec(f, skip_pairs);
-                detail::read_pair_vec(f, skip_pairs);
-
-                // Determine bad_segment heuristically
-                // (matches logic in 5_generate_templates.cpp)
-                wd.bad_segment = (num_pairs == 0);
-            }
-            return result;
-        }
-
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        //  3. Template Info (.bin)
-        //
-        //  Written by 5_generate_templates.cpp → write_template_info_binfile:
-        //    [u64 nInfos]
-        //    per info:
-        //      [u64 index]
-        //      ppg_bin_indexs  (pair vec)
-        //      ecg_bin_indexs  (pair vec)
-        //      [u8  bad_segment]
-        //      3 × channel template:
-        //        ecgTemplate_raw     (f64 vec)
-        //        ecgTemplate_squared (f64 vec)
-        //        ecgTemplate_absval  (f64 vec)
-        //        alignment_point_raw     (f64)
-        //        alignment_point_squared (f64)
-        //        alignment_point_absval  (f64)
-        //        avg_r_expand_raw        (f64)
-        //        avg_r_expand_squared    (f64)
-        //        avg_r_expand_absval     (f64)
-        //      ppgTemplate     (f64 vec)
-        // ═══════════════════════════════════════════════════════════════════════════
-
-        /**
-         * @brief Read template info from a .bin file produced by 5_generate_templates.
-         *
-         * Note: The step-5 binary does NOT contain Dicrotic/Onset/Peak/End annotations.
-         * Those come from the manual marking step (step 6). If a marking .bin exists
-         * for the same subject, call read_template_markings_bin() to overlay those
-         * values onto the TemplateInfo vector.
-         *
-         * @param path  File path.
-         * @return Vector of TemplateInfo structs.
-         */
-        inline std::vector<TemplateInfo> read_template_info_bin(const std::string& path) {
-            std::ifstream f(path, std::ios::binary);
-            if (!f) throw std::runtime_error("Cannot open template bin: " + path);
-
-            uint64_t n = detail::read_u64(f);
-            std::vector<TemplateInfo> result(n);
-
-            for (uint64_t i = 0; i < n; ++i) {
-                auto& ti = result[i];
-
-                /* index */ detail::read_u64(f);
-
-                // bin index pairs — skip
-                std::vector<std::pair<int, int>> skip_pairs;
-                detail::read_pair_vec(f, skip_pairs);
-                detail::read_pair_vec(f, skip_pairs);
-
-                // bad_segment flag
-                ti.template_bad = (detail::read_u8(f) != 0);
-
-                // 3 channel templates — skip ECG template data,
-                // but read through to keep stream position correct
-                for (int ch = 0; ch < 3; ++ch) {
-                    std::vector<double> skip_vec;
-                    detail::read_vec_f64(f, skip_vec);  // ecgTemplate_raw
-                    detail::read_vec_f64(f, skip_vec);  // ecgTemplate_squared
-                    detail::read_vec_f64(f, skip_vec);  // ecgTemplate_absval
-
-                    double ap_raw = detail::read_f64(f);
-                    /* ap_sq  */ detail::read_f64(f);
-                    /* ap_abs */ detail::read_f64(f);
-                    /* avg_r_raw */ detail::read_f64(f);
-                    /* avg_r_sq  */ detail::read_f64(f);
-                    /* avg_r_abs */ detail::read_f64(f);
-
-                    // Use channel 1's alignment point as the main one
-                    if (ch == 0) ti.alignment_point = ap_raw;
-                }
-
-                // PPG template
-                detail::read_vec_f64(f, ti.ppg_template);
-
-                // Derive flags from template content
-                ti.bad_ppg_templates = ti.ppg_template.empty();
-                ti.bad_r_templates = ti.template_bad;
-
-                // Dicrotic/Onset/Peak/End default to NaN — must be overlaid from
-                // marking files if available (see read_template_markings_bin).
-            }
-            return result;
-        }
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        //  3b. Template Markings (.bin) — from step 6 GUI
-        //
-        //  Written by writeTemplateMarkingsBin() in TemplateBinIO.hpp:
-        //    [u64  numBins]
-        //    per bin:
-        //      [u64  index]
-        //      [u8   bad_r_ch1]
-        //      [u8   bad_r_ch2]
-        //      [u8   bad_r_ch3]
-        //      [u8   ppg_issue]     0=ok, 1=bad, 2=no ppg
-        //      [i32  dicrotic]      -1 = NaN
-        //      [i32  onset]         -1 = NaN
-        //      [i32  peak]          -1 = NaN
-        //      [i32  end_idx]       -1 = NaN
-        // ═══════════════════════════════════════════════════════════════════════════
-
-        /**
-         * @brief Read manually-reviewed template markings and overlay onto TemplateInfo.
-         *
-         * Format matches TemplateBinIO.hpp → writeTemplateMarkingsBin().
-         * If the file does not exist, this is a no-op and the pipeline uses
-         * automatic dicrotic notch estimation (NaN pathway).
-         *
-         * @param path       Path to _template_markings.bin.
-         * @param templates  TemplateInfo vector to update in-place.
-         */
-        inline void read_template_markings_bin(
-            const std::string& path,
-            std::vector<TemplateInfo>& templates)
-        {
-            std::ifstream f(path, std::ios::binary);
-            if (!f) return;
-
-            uint64_t count = detail::read_u64(f);
-
-            for (uint64_t i = 0; i < count && i < templates.size(); ++i) {
-                /* index */ detail::read_u64(f);
-
-                uint8_t bad_r_ch1 = detail::read_u8(f);
-                uint8_t bad_r_ch2 = detail::read_u8(f);
-                uint8_t bad_r_ch3 = detail::read_u8(f);
-                uint8_t ppg_issue = detail::read_u8(f);
-
-                int32_t dicrotic_i32 = 0, onset_i32 = 0, peak_i32 = 0, end_i32 = 0;
-                detail::read_bytes(f, &dicrotic_i32, 4);
-                detail::read_bytes(f, &onset_i32, 4);
-                detail::read_bytes(f, &peak_i32, 4);
-                detail::read_bytes(f, &end_i32, 4);
-
-                // Any R channel flagged bad → bad_r_templates
-                templates[i].bad_r_templates = (bad_r_ch1 != 0 || bad_r_ch2 != 0 || bad_r_ch3 != 0);
-
-                // ppg_issue: 0=ok, 1=bad, 2=no ppg
-                templates[i].bad_ppg_templates = (ppg_issue != 0);
-                templates[i].template_bad = (ppg_issue != 0)
-                    || (bad_r_ch1 != 0 && bad_r_ch2 != 0 && bad_r_ch3 != 0);
-
-                // -1 sentinel → NaN
-                templates[i].dicrotic = (dicrotic_i32 == -1) ? kNaN : static_cast<double>(dicrotic_i32);
-                templates[i].onset = (onset_i32 == -1) ? kNaN : static_cast<double>(onset_i32);
-                templates[i].peak = (peak_i32 == -1) ? kNaN : static_cast<double>(peak_i32);
-                templates[i].end = (end_i32 == -1) ? kNaN : static_cast<double>(end_i32);
-            }
-        }
-
-
-        // ═══════════════════════════════════════════════════════════════════════════
-        //  4. Feature Output (.bin)
-        //
-        //  Custom format for the pipeline output (replaces the .mat output).
-        //  Layout:
-        //    [u64  numBeats]
-        //    [f64  ppgSampleRate]
-        //    per beat:
-        //      All BeatFeatures fields as consecutive f64 values.
-        //      [u64 sqi_count] [f64 × sqi_count] for SQI vector.
-        //    Trailing arrays (one f64 per beat):
-        //      sec_valley_to_valley
-        //      sec_foot_to_foot
-        //      adjusted_sleep_state
-        //      corrected_time_sec
-        //    [u64 ppg_length] [f64 × ppg_length] for ppg_wout_noise
-        // ═══════════════════════════════════════════════════════════════════════════
-
-        /**
-         * @brief Write flattened feature output to a .bin file.
-         * @param path  Output file path.
-         * @param flat  Flattened beat features.
-         */
-        inline void write_feature_output_bin(const std::string& path, const FlattenedBeats& flat) {
-            std::ofstream f(path, std::ios::binary);
-            if (!f) throw std::runtime_error("Cannot open output bin: " + path);
-
-            char buf[1 << 16];
-            f.rdbuf()->pubsetbuf(buf, sizeof(buf));
-
-            const uint64_t n = flat.beats.size();
-            detail::write_u64(f, n);
-            detail::write_f64(f, flat.ppg_sample_rate);
-
-            // Write each beat's scalar features as a fixed-width record
-            for (const auto& b : flat.beats) {
-                auto w = [&](double v) { detail::write_f64(f, v); };
-                auto wi = [&](int v) { detail::write_f64(f, static_cast<double>(v)); };
-
-                // Indices
-                wi(b.idx_begin); wi(b.idx_end); wi(b.idx_foot);
-                wi(b.idx_pos_slope); wi(b.idx_systolic);
-                wi(b.idx_neg_slope_b4); wi(b.idx_dnotch);
-                wi(b.idx_diastolic); wi(b.idx_neg_slope_after);
-
-                // tP positions
-                w(b.tP_20_x); w(b.tP_50_x); w(b.tP_80_x);
-                w(b.tP_20_x_inv); w(b.tP_50_x_inv); w(b.tP_80_x_inv);
-
-                // tR positions
-                w(b.tR_20_x); w(b.tR_50_x); w(b.tR_80_x);
-                w(b.tR_20_x_inv); w(b.tR_50_x_inv); w(b.tR_80_x_inv);
-
-                // tP amplitudes
-                w(b.tP_20_y); w(b.tP_50_y); w(b.tP_80_y);
-                w(b.tP_20_y_inv); w(b.tP_50_y_inv); w(b.tP_80_y_inv);
-
-                // tR amplitudes
-                w(b.tR_20_y); w(b.tR_50_y); w(b.tR_80_y);
-                w(b.tR_20_y_inv); w(b.tR_50_y_inv); w(b.tR_80_y_inv);
-
-                // tP50 timings
-                w(b.msec_tP50_to_valley1); w(b.msec_tP50_to_foot);
-                w(b.msec_tP50_to_tP20); w(b.msec_tP50_to_tP80);
-                w(b.msec_tP50_to_tP20_inv); w(b.msec_tP50_to_tP80_inv);
-                w(b.msec_tP50_to_pos_slope); w(b.msec_tP50_to_systolic);
-                w(b.msec_tP50_to_neg_pre); w(b.msec_tP50_to_dnotch);
-                w(b.msec_tP50_to_diastolic); w(b.msec_tP50_to_neg_post);
-                w(b.msec_tP50_to_tR20); w(b.msec_tP50_to_tR50); w(b.msec_tP50_to_tR80);
-                w(b.msec_tP50_to_tR20_inv); w(b.msec_tP50_to_tR50_inv); w(b.msec_tP50_to_tR80_inv);
-
-                // Durations
-                w(b.msec_beat_length);
-                w(b.msec_dur_tP20); w(b.msec_dur_tP50); w(b.msec_dur_tP80);
-                w(b.msec_dur_tR20); w(b.msec_dur_tR50); w(b.msec_dur_tR80);
-
-                // Raw amplitudes
-                w(b.amp_raw_valley); w(b.amp_raw_foot);
-                w(b.amp_raw_tP20); w(b.amp_raw_tP50); w(b.amp_raw_tP80);
-                w(b.amp_raw_tP20_inv); w(b.amp_raw_tP50_inv); w(b.amp_raw_tP80_inv);
-                w(b.amp_raw_pos_slope); w(b.amp_raw_systolic);
-                w(b.amp_raw_neg_pre); w(b.amp_raw_dnotch);
-                w(b.amp_raw_diastolic); w(b.amp_raw_neg_post);
-                w(b.amp_raw_tR20); w(b.amp_raw_tR50); w(b.amp_raw_tR80);
-                w(b.amp_raw_tR20_inv); w(b.amp_raw_tR50_inv); w(b.amp_raw_tR80_inv);
-
-                // Baselined amplitudes
-                w(b.amp_bl_foot);
-                w(b.amp_bl_tP20); w(b.amp_bl_tP50); w(b.amp_bl_tP80);
-                w(b.amp_bl_tP20_inv); w(b.amp_bl_tP50_inv); w(b.amp_bl_tP80_inv);
-                w(b.amp_bl_pos_slope); w(b.amp_bl_systolic);
-                w(b.amp_bl_neg_pre); w(b.amp_bl_dnotch);
-                w(b.amp_bl_diastolic); w(b.amp_bl_neg_post);
-                w(b.amp_bl_tR20); w(b.amp_bl_tR50); w(b.amp_bl_tR80);
-                w(b.amp_bl_tR20_inv); w(b.amp_bl_tR50_inv); w(b.amp_bl_tR80_inv);
-
-                // Area & misc
-                w(b.area); w(b.area_baselined);
-                w(b.amp_delta_systolic); w(b.proportional_pulse_amp);
-                w(b.abs_amp_foot); w(b.abs_amp_peak);
-
-                // R-peak timings
-                w(b.msec_R_to_valley1); w(b.msec_R_to_foot);
-                w(b.msec_R_to_tP20); w(b.msec_R_to_tP50); w(b.msec_R_to_tP80);
-                w(b.msec_R_to_tP20_inv); w(b.msec_R_to_tP50_inv); w(b.msec_R_to_tP80_inv);
-                w(b.msec_R_to_pos_slope); w(b.msec_R_to_systolic);
-                w(b.msec_R_to_neg_pre); w(b.msec_R_to_dnotch);
-                w(b.msec_R_to_diastolic); w(b.msec_R_to_neg_post);
-                w(b.msec_R_to_valley2);
-                w(b.msec_R_to_tR20); w(b.msec_R_to_tR50); w(b.msec_R_to_tR80);
-                w(b.msec_R_to_tR20_inv); w(b.msec_R_to_tR50_inv); w(b.msec_R_to_tR80_inv);
-
-                // Sleep stage
-                w(b.sleep_stage);
-
-                // SQI vector
-                detail::write_u64(f, b.sqi.size());
-                for (double s : b.sqi) detail::write_f64(f, s);
-            }
-
-            // Trailing per-beat arrays
-            auto write_arr = [&](const std::vector<double>& v) {
-                detail::write_vec_f64(f, v);
-                };
-            write_arr(flat.sec_valley_to_valley);
-            write_arr(flat.sec_foot_to_foot);
-            write_arr(flat.adjusted_sleep_state);
-            write_arr(flat.corrected_time_sec);
-
-            // Edge beat mask as doubles
-            {
-                std::vector<double> mask(flat.edge_beat_mask.begin(), flat.edge_beat_mask.end());
-                write_arr(mask);
-            }
-
-            // Concatenated clean PPG
-            write_arr(flat.ppg_wout_noise);
-        }
-
-        /**
-         * @brief Read flattened feature output from a .bin file.
-         * @param path  Input file path.
-         * @return FlattenedBeats struct.
-         */
-        inline FlattenedBeats read_feature_output_bin(const std::string& path) {
-            std::ifstream f(path, std::ios::binary);
-            if (!f) throw std::runtime_error("Cannot open feature bin: " + path);
-
-            FlattenedBeats flat;
-            uint64_t n = detail::read_u64(f);
-            flat.ppg_sample_rate = detail::read_f64(f);
-            flat.beats.resize(n);
-
-            for (uint64_t i = 0; i < n; ++i) {
-                auto& b = flat.beats[i];
-                auto r = [&]() { return detail::read_f64(f); };
-                auto ri = [&]() { return static_cast<int>(detail::read_f64(f)); };
-
-                b.idx_begin = ri(); b.idx_end = ri(); b.idx_foot = ri();
-                b.idx_pos_slope = ri(); b.idx_systolic = ri();
-                b.idx_neg_slope_b4 = ri(); b.idx_dnotch = ri();
-                b.idx_diastolic = ri(); b.idx_neg_slope_after = ri();
-
-                b.tP_20_x = r(); b.tP_50_x = r(); b.tP_80_x = r();
-                b.tP_20_x_inv = r(); b.tP_50_x_inv = r(); b.tP_80_x_inv = r();
-                b.tR_20_x = r(); b.tR_50_x = r(); b.tR_80_x = r();
-                b.tR_20_x_inv = r(); b.tR_50_x_inv = r(); b.tR_80_x_inv = r();
-
-                b.tP_20_y = r(); b.tP_50_y = r(); b.tP_80_y = r();
-                b.tP_20_y_inv = r(); b.tP_50_y_inv = r(); b.tP_80_y_inv = r();
-                b.tR_20_y = r(); b.tR_50_y = r(); b.tR_80_y = r();
-                b.tR_20_y_inv = r(); b.tR_50_y_inv = r(); b.tR_80_y_inv = r();
-
-                b.msec_tP50_to_valley1 = r(); b.msec_tP50_to_foot = r();
-                b.msec_tP50_to_tP20 = r(); b.msec_tP50_to_tP80 = r();
-                b.msec_tP50_to_tP20_inv = r(); b.msec_tP50_to_tP80_inv = r();
-                b.msec_tP50_to_pos_slope = r(); b.msec_tP50_to_systolic = r();
-                b.msec_tP50_to_neg_pre = r(); b.msec_tP50_to_dnotch = r();
-                b.msec_tP50_to_diastolic = r(); b.msec_tP50_to_neg_post = r();
-                b.msec_tP50_to_tR20 = r(); b.msec_tP50_to_tR50 = r(); b.msec_tP50_to_tR80 = r();
-                b.msec_tP50_to_tR20_inv = r(); b.msec_tP50_to_tR50_inv = r(); b.msec_tP50_to_tR80_inv = r();
-
-                b.msec_beat_length = r();
-                b.msec_dur_tP20 = r(); b.msec_dur_tP50 = r(); b.msec_dur_tP80 = r();
-                b.msec_dur_tR20 = r(); b.msec_dur_tR50 = r(); b.msec_dur_tR80 = r();
-
-                b.amp_raw_valley = r(); b.amp_raw_foot = r();
-                b.amp_raw_tP20 = r(); b.amp_raw_tP50 = r(); b.amp_raw_tP80 = r();
-                b.amp_raw_tP20_inv = r(); b.amp_raw_tP50_inv = r(); b.amp_raw_tP80_inv = r();
-                b.amp_raw_pos_slope = r(); b.amp_raw_systolic = r();
-                b.amp_raw_neg_pre = r(); b.amp_raw_dnotch = r();
-                b.amp_raw_diastolic = r(); b.amp_raw_neg_post = r();
-                b.amp_raw_tR20 = r(); b.amp_raw_tR50 = r(); b.amp_raw_tR80 = r();
-                b.amp_raw_tR20_inv = r(); b.amp_raw_tR50_inv = r(); b.amp_raw_tR80_inv = r();
-
-                b.amp_bl_foot = r();
-                b.amp_bl_tP20 = r(); b.amp_bl_tP50 = r(); b.amp_bl_tP80 = r();
-                b.amp_bl_tP20_inv = r(); b.amp_bl_tP50_inv = r(); b.amp_bl_tP80_inv = r();
-                b.amp_bl_pos_slope = r(); b.amp_bl_systolic = r();
-                b.amp_bl_neg_pre = r(); b.amp_bl_dnotch = r();
-                b.amp_bl_diastolic = r(); b.amp_bl_neg_post = r();
-                b.amp_bl_tR20 = r(); b.amp_bl_tR50 = r(); b.amp_bl_tR80 = r();
-                b.amp_bl_tR20_inv = r(); b.amp_bl_tR50_inv = r(); b.amp_bl_tR80_inv = r();
-
-                b.area = r(); b.area_baselined = r();
-                b.amp_delta_systolic = r(); b.proportional_pulse_amp = r();
-                b.abs_amp_foot = r(); b.abs_amp_peak = r();
-
-                b.msec_R_to_valley1 = r(); b.msec_R_to_foot = r();
-                b.msec_R_to_tP20 = r(); b.msec_R_to_tP50 = r(); b.msec_R_to_tP80 = r();
-                b.msec_R_to_tP20_inv = r(); b.msec_R_to_tP50_inv = r(); b.msec_R_to_tP80_inv = r();
-                b.msec_R_to_pos_slope = r(); b.msec_R_to_systolic = r();
-                b.msec_R_to_neg_pre = r(); b.msec_R_to_dnotch = r();
-                b.msec_R_to_diastolic = r(); b.msec_R_to_neg_post = r();
-                b.msec_R_to_valley2 = r();
-                b.msec_R_to_tR20 = r(); b.msec_R_to_tR50 = r(); b.msec_R_to_tR80 = r();
-                b.msec_R_to_tR20_inv = r(); b.msec_R_to_tR50_inv = r(); b.msec_R_to_tR80_inv = r();
-
-                b.sleep_stage = r();
-
-                uint64_t sqi_n = detail::read_u64(f);
-                b.sqi.resize(sqi_n);
-                for (uint64_t j = 0; j < sqi_n; ++j) b.sqi[j] = detail::read_f64(f);
-            }
-
-            detail::read_vec_f64(f, flat.sec_valley_to_valley);
-            detail::read_vec_f64(f, flat.sec_foot_to_foot);
-            detail::read_vec_f64(f, flat.adjusted_sleep_state);
-            detail::read_vec_f64(f, flat.corrected_time_sec);
-
-            {
-                std::vector<double> mask;
-                detail::read_vec_f64(f, mask);
-                flat.edge_beat_mask.resize(mask.size());
-                for (size_t i = 0; i < mask.size(); ++i)
-                    flat.edge_beat_mask[i] = static_cast<int>(mask[i]);
-            }
-
-            detail::read_vec_f64(f, flat.ppg_wout_noise);
-            return flat;
-        }
-
+        return segs;
     }
-} // namespace ppg::io
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Wave Data .bin
+    // ─────────────────────────────────────────────────────────────────────────
+    // Layout:
+    //   Header:  [uint64 nBins]
+    //   Per bin:
+    //     -- 9 ECG R-peak index arrays (ch1 raw/sq/abs, ch2 raw/sq/abs, ch3 raw/sq/abs)
+    //        each: [uint64 len] then len × [int64]
+    //     -- 2 PPG index arrays (maxAmps, minAmps)
+    //        each: [uint64 len] then len × [double]
+    //     -- 4 raw signal arrays (ppg, ecg1, ecg2, ecg3)
+    //        each: [uint64 len] then len × [double]
+    //     -- 6 preprocessed signal arrays (ch1 sq/abs, ch2 sq/abs, ch3 sq/abs)
+    //        each: [uint64 len] then len × [double]
+    //     -- 9 noise flags (1 byte each, uint8)
+    //     -- pairs array: [uint64 nPairs] then nPairs × [int64 ppgIdx, int64 ecgIdx]
+    //     -- ppg_bin_indexs: [uint64 n] then n × [uint64, uint64]
+    //     -- ecg_bin_indexs: [uint64 n] then n × [uint64, uint64]
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    inline std::vector<WaveData> read_wave_data_bin(const std::string& path) {
+        std::ifstream f(path, std::ios::binary);
+        if (!f.is_open())
+            throw std::runtime_error("Cannot open wave_data bin: " + path);
+
+        // File size for bounds checking
+        f.seekg(0, std::ios::end);
+        uint64_t fileSize = static_cast<uint64_t>(f.tellg());
+        f.seekg(0, std::ios::beg);
+
+        auto r64 = [&]() -> uint64_t {
+            uint64_t v = 0;
+            f.read(reinterpret_cast<char*>(&v), 8);
+            if (!f.good()) throw std::runtime_error("Unexpected EOF in wave_data at pos " + std::to_string(f.tellg()));
+            return v;
+            };
+
+        // Read an array of uint64 indices, converting from 1-based to 0-based
+        auto readIdxArr = [&](const char* label) -> std::vector<int> {
+            uint64_t n = r64();
+            if (n > fileSize / 8) throw std::runtime_error(
+                std::string("Implausible array size ") + std::to_string(n) + " for " + label
+                + " at pos " + std::to_string(f.tellg()));
+            std::vector<int> v(n);
+            for (uint64_t i = 0; i < n; i++) {
+                uint64_t val;
+                f.read(reinterpret_cast<char*>(&val), 8);
+                v[i] = static_cast<int>(val > 0 ? val - 1 : 0);  // 1-based → 0-based
+            }
+            return v;
+            };
+
+        // Read an array of doubles
+        auto readDblArr = [&](const char* label) -> std::vector<double> {
+            uint64_t n = r64();
+            if (n > fileSize / 8) throw std::runtime_error(
+                std::string("Implausible array size ") + std::to_string(n) + " for " + label
+                + " at pos " + std::to_string(f.tellg()));
+            std::vector<double> v(n);
+            if (n > 0) f.read(reinterpret_cast<char*>(v.data()), n * 8);
+            return v;
+            };
+
+        // Skip a double array without storing
+        auto skipDblArr = [&](const char* label) {
+            uint64_t n = r64();
+            if (n > fileSize / 8) throw std::runtime_error(
+                std::string("Implausible skip size ") + std::to_string(n) + " for " + label
+                + " at pos " + std::to_string(f.tellg()));
+            if (n > 0) f.seekg(n * 8, std::ios::cur);
+            };
+
+        // Read pairs of uint64
+        auto readPairArr = [&]() -> std::vector<std::vector<int>> {
+            uint64_t n = r64();
+            std::vector<std::vector<int>> pairs(n, std::vector<int>(2));
+            for (uint64_t i = 0; i < n; i++) {
+                pairs[i][0] = static_cast<int>(r64());
+                pairs[i][1] = static_cast<int>(r64());
+            }
+            return pairs;
+            };
+
+        uint64_t nBins = r64();
+        if (nBins > 100000) throw std::runtime_error(
+            "Implausible nBins=" + std::to_string(nBins) + " — wrong file format?");
+        std::vector<WaveData> segs(nBins);
+
+        for (uint64_t b = 0; b < nBins; b++) {
+            auto& seg = segs[b];
+            if (b < 2 || b == nBins - 1 || b % 100 == 0)
+            {
+            } // progress (removed verbose output)
+
+       // ── 9 ECG R-peak index arrays ──
+            seg.ch1_raw_idx = readIdxArr("ch1_raw_idx");
+            seg.ch1_sq_idx = readIdxArr("ch1_sq_idx");
+            seg.ch1_abs_idx = readIdxArr("ch1_abs_idx");
+            seg.ch2_raw_idx = readIdxArr("ch2_raw_idx");
+            seg.ch2_sq_idx = readIdxArr("ch2_sq_idx");
+            seg.ch2_abs_idx = readIdxArr("ch2_abs_idx");
+            seg.ch3_raw_idx = readIdxArr("ch3_raw_idx");
+            seg.ch3_sq_idx = readIdxArr("ch3_sq_idx");
+            seg.ch3_abs_idx = readIdxArr("ch3_abs_idx");
+
+            // ── 2 PPG index arrays (not used in feature gen — skip) ──
+            { uint64_t n = r64(); f.seekg(n * 8, std::ios::cur); }  // ppgMaxAmps
+            { uint64_t n = r64(); f.seekg(n * 8, std::ios::cur); }  // ppgMinAmps
+
+            // ── 4 raw signal arrays (not needed for feature gen — skip) ──
+            skipDblArr("ppg_raw");
+            skipDblArr("ecg1_raw");
+            skipDblArr("ecg2_raw");
+            skipDblArr("ecg3_raw");
+
+            // ── 6 preprocessed signal arrays (skip) ──
+            skipDblArr("ch1_sq");
+            skipDblArr("ch1_abs");
+            skipDblArr("ch2_sq");
+            skipDblArr("ch2_abs");
+            skipDblArr("ch3_sq");
+            skipDblArr("ch3_abs");
+
+            // ── 9 noise flags (1 byte each) ──
+            f.read(reinterpret_cast<char*>(seg.noise_flags), 9);
+
+            // ── pairs array (int64, 1-based → 0-based, -1 stays as -1) ──
+            {
+                uint64_t nPairs = r64();
+                seg.pairs.data.resize(nPairs, std::vector<int>(2));
+                for (uint64_t p = 0; p < nPairs; p++) {
+                    int64_t a, b_val;
+                    f.read(reinterpret_cast<char*>(&a), 8);
+                    f.read(reinterpret_cast<char*>(&b_val), 8);
+                    seg.pairs.data[p][0] = (a == -1) ? -1 : static_cast<int>(a - 1);
+                    seg.pairs.data[p][1] = (b_val == -1) ? -1 : static_cast<int>(b_val - 1);
+                }
+            }
+
+            // ── ppg_bin_indexs ──
+            seg.ppg_bin_indexs = readPairArr();
+
+            // ── ecg_bin_indexs ──
+            seg.ecg_bin_indexs = readPairArr();
+
+            // Derive bad_segment: bad if no pairs were detected
+            seg.bad_segment = seg.pairs.data.empty() ? 1 : 0;
+        }
+        return segs;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Template Info .bin  (written by your template generation step)
+    // ─────────────────────────────────────────────────────────────────────────
+    // Expected layout:
+    //   Header:  [uint64 nSegments]
+    //   Per seg: [uint64 ppgTemplateLen] [ppgTemplateLen × double]
+    //            [uint64 ecgTemplateLen] [ecgTemplateLen × double]
+    //            [double alignment_point]
+    //
+    // This file carries the computed templates but NOT the manual markings.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    inline std::vector<TemplateInfo> read_template_info_bin(const std::string& path) {
+        std::ifstream f(path, std::ios::binary);
+        if (!f.is_open())
+            throw std::runtime_error("Cannot open template_info bin: " + path);
+
+        f.seekg(0, std::ios::end);
+        uint64_t fileSize = static_cast<uint64_t>(f.tellg());
+        f.seekg(0, std::ios::beg);
+
+        auto r64 = [&]() -> uint64_t {
+            uint64_t v = 0; f.read(reinterpret_cast<char*>(&v), 8);
+            if (!f.good()) throw std::runtime_error("EOF in template at pos " + std::to_string(f.tellg()));
+            return v;
+            };
+        auto rd = [&]() -> double {
+            double v = 0; f.read(reinterpret_cast<char*>(&v), 8); return v;
+            };
+        auto readVecDbl = [&]() -> std::vector<double> {
+            uint64_t n = r64();
+            if (n > fileSize / 8) throw std::runtime_error(
+                "vec too large " + std::to_string(n) + " at pos " + std::to_string(f.tellg()));
+            std::vector<double> v(n);
+            if (n > 0) f.read(reinterpret_cast<char*>(v.data()), n * 8);
+            return v;
+            };
+        auto skipVecDbl = [&]() {
+            uint64_t n = r64();
+            if (n > fileSize / 8) throw std::runtime_error(
+                "skip too large " + std::to_string(n) + " at pos " + std::to_string(f.tellg()));
+            if (n > 0) f.seekg(n * 8, std::ios::cur);
+            };
+        auto skipPairs = [&]() {
+            uint64_t n = r64();
+            if (n > fileSize / 16) throw std::runtime_error(
+                "pairs too large " + std::to_string(n) + " at pos " + std::to_string(f.tellg()));
+            if (n > 0) f.seekg(n * 16, std::ios::cur);
+            };
+
+        uint64_t nT = r64();
+        if (nT > 100000) throw std::runtime_error("nTemplates too large");
+
+        std::vector<TemplateInfo> infos(nT);
+
+        for (uint64_t i = 0; i < nT; i++) {
+            uint64_t idx = r64();
+            (void)idx;
+
+            skipPairs();
+            skipPairs();
+
+            uint8_t bad = 0;
+            f.read(reinterpret_cast<char*>(&bad), 1);
+            infos[i].TemplateBad = bad ? 1 : 0;
+
+            for (int ch = 0; ch < 3; ch++) {
+                skipVecDbl();
+                skipVecDbl();
+                skipVecDbl();
+                rd(); rd(); rd();
+                rd(); rd(); rd();
+            }
+
+            infos[i].ppgTemplate = readVecDbl();
+
+            infos[i].bad_r_templates = bad ? 1 : 0;
+            infos[i].bad_ppg_templates = infos[i].ppgTemplate.empty() ? 1 : 0;
+            infos[i].Dicrotic = NaN;
+            infos[i].Onset = NaN;
+            infos[i].Peak = NaN;
+            infos[i].End = NaN;
+        }
+        return infos;
+    }
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Template Markings .bin  (written by writeTemplateMarkingsBin)
+    // ─────────────────────────────────────────────────────────────────────────
+    // Layout:
+    //   [uint64 nBins]
+    //   Per bin: [uint64 index]
+    //            [uint8  bad_r_ch0] [uint8 bad_r_ch1] [uint8 bad_r_ch2]
+    //            [uint8  ppg_issue]
+    //            [int32  dicrotic] [int32 onset] [int32 peak] [int32 end_idx]
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    inline void apply_template_markings_bin(const std::string& path,
+        std::vector<TemplateInfo>& infos) {
+        std::ifstream f(path, std::ios::binary);
+        if (!f.is_open()) return;  // No markings file is OK (unreviewed)
+
+        auto r64 = [&]() -> uint64_t {
+            uint64_t v; f.read(reinterpret_cast<char*>(&v), 8); return v;
+            };
+
+        uint64_t nBins = r64();
+        for (uint64_t i = 0; i < nBins; i++) {
+            uint64_t index = r64();
+
+            uint8_t bad_r0, bad_r1, bad_r2, ppg_issue;
+            f.read(reinterpret_cast<char*>(&bad_r0), 1);
+            f.read(reinterpret_cast<char*>(&bad_r1), 1);
+            f.read(reinterpret_cast<char*>(&bad_r2), 1);
+            f.read(reinterpret_cast<char*>(&ppg_issue), 1);
+
+            int32_t dicrotic, onset, peak, end_idx;
+            f.read(reinterpret_cast<char*>(&dicrotic), 4);
+            f.read(reinterpret_cast<char*>(&onset), 4);
+            f.read(reinterpret_cast<char*>(&peak), 4);
+            f.read(reinterpret_cast<char*>(&end_idx), 4);
+
+            if (index < infos.size()) {
+                auto& t = infos[index];
+
+                // All 3 ECG channels bad → bad R templates
+                t.bad_r_templates = (bad_r0 && bad_r1 && bad_r2) ? 1 : 0;
+                t.bad_ppg_templates = ppg_issue ? 1 : 0;
+                t.TemplateBad = (t.bad_r_templates || t.bad_ppg_templates) ? 1 : 0;
+
+                t.Dicrotic = (dicrotic >= 0) ? static_cast<double>(dicrotic) : NaN;
+                t.Onset = (onset >= 0) ? static_cast<double>(onset) : NaN;
+                t.Peak = (peak >= 0) ? static_cast<double>(peak) : NaN;
+                t.End = (end_idx >= 0) ? static_cast<double>(end_idx) : NaN;
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Feature Output .bin  (replaces save to .mat)
+    // ─────────────────────────────────────────────────────────────────────────
+    // Layout:
+    //   [uint64 nBeats]
+    //   [uint64 nFields]
+    //   Per field: [uint64 nameLen] [chars...] [nBeats × double]
+    //
+    // Also writes ppg_wout_noise as a separate trailing block:
+    //   [uint64 ppgLen] [ppgLen × double]
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    inline void write_feature_output_bin(const std::string& path,
+        const BeatsFlattened& flat,
+        int nBeats) {
+        std::ofstream f(path, std::ios::binary);
+        if (!f.is_open())
+            throw std::runtime_error("Cannot write output: " + path);
+
+        auto w64 = [&](uint64_t v) { f.write(reinterpret_cast<const char*>(&v), 8); };
+        auto writeVec = [&](const std::vector<double>& v) {
+            uint64_t n = v.size();
+            w64(n);
+            if (n > 0)
+                f.write(reinterpret_cast<const char*>(v.data()), n * 8);
+            };
+        auto writeField = [&](const std::string& name, const std::vector<double>& data) {
+            uint64_t nameLen = name.size();
+            w64(nameLen);
+            f.write(name.data(), nameLen);
+            writeVec(data);
+            };
+
+        w64(static_cast<uint64_t>(nBeats));
+
+        // Collect all named fields into a list for writing
+        std::vector<std::pair<std::string, const std::vector<double>*>> all_fields;
+
+#define ADD_FIELD(member) all_fields.push_back({#member, &flat.member})
+
+        // Index fields
+        ADD_FIELD(idx_begin); ADD_FIELD(idx_end); ADD_FIELD(idx_foot);
+        ADD_FIELD(idx_pos_slope); ADD_FIELD(idx_systolic);
+        ADD_FIELD(idx_neg_slope_b4); ADD_FIELD(idx_neg_slope_after);
+        ADD_FIELD(idx_diastolic); ADD_FIELD(idx_dnotch);
+
+        // tP/tR x-values
+        ADD_FIELD(tP_20_x); ADD_FIELD(tP_50_x); ADD_FIELD(tP_80_x);
+        ADD_FIELD(tP_20_x_inv); ADD_FIELD(tP_50_x_inv); ADD_FIELD(tP_80_x_inv);
+        ADD_FIELD(tR_20_x); ADD_FIELD(tR_50_x); ADD_FIELD(tR_80_x);
+        ADD_FIELD(tR_20_x_inv); ADD_FIELD(tR_50_x_inv); ADD_FIELD(tR_80_x_inv);
+
+        // Scalars
+        ADD_FIELD(sleep_stages); ADD_FIELD(area_baselined); ADD_FIELD(area);
+        ADD_FIELD(amp_delta_systolic); ADD_FIELD(abs_amp_foot); ADD_FIELD(abs_amp_peak);
+        ADD_FIELD(msec_beat_length);
+
+        // tP50-relative timings
+        ADD_FIELD(msec_tP_50_2_first_valley); ADD_FIELD(msec_tP_50_2_foot);
+        ADD_FIELD(msec_tP_50_2_tP_20); ADD_FIELD(msec_tP_50_2_tP_80);
+        ADD_FIELD(msec_tP_50_2_tP_20_inv); ADD_FIELD(msec_tP_50_2_tP_80_inv);
+        ADD_FIELD(msec_tP_50_2_pos_slope); ADD_FIELD(msec_tP_50_2_systolic_peak);
+        ADD_FIELD(msec_tP_50_2_negslopes_pre_dnotch); ADD_FIELD(msec_tP_50_2_dicrotic_notch);
+        ADD_FIELD(msec_tP_50_2_diastolic_peak); ADD_FIELD(msec_tP_50_2_negslopes_post_dnotch);
+        ADD_FIELD(msec_tP_50_2_second_valley);
+        ADD_FIELD(msec_tP_50_2_tR_20); ADD_FIELD(msec_tP_50_2_tR_50); ADD_FIELD(msec_tP_50_2_tR_80);
+        ADD_FIELD(msec_tP_50_2_tR_20_inv); ADD_FIELD(msec_tP_50_2_tR_50_inv); ADD_FIELD(msec_tP_50_2_tR_80_inv);
+        ADD_FIELD(msec_total_duration_20); ADD_FIELD(msec_total_duration_50); ADD_FIELD(msec_total_duration_80);
+        ADD_FIELD(msec_total_duration_tR_20); ADD_FIELD(msec_total_duration_tR_50); ADD_FIELD(msec_total_duration_tR_80);
+
+        // R-peak timings
+        ADD_FIELD(msec_R_2_first_valley); ADD_FIELD(msec_R_2_foot);
+        ADD_FIELD(msec_R_2_tP_20); ADD_FIELD(msec_R_2_tP_50); ADD_FIELD(msec_R_2_tP_80);
+        ADD_FIELD(msec_R_2_tP_20_inv); ADD_FIELD(msec_R_2_tP_50_inv); ADD_FIELD(msec_R_2_tP_80_inv);
+        ADD_FIELD(msec_R_2_pos_slope); ADD_FIELD(msec_R_2_systolic_peak);
+        ADD_FIELD(msec_R_2_negslopes_pre_dnotch); ADD_FIELD(msec_R_2_dicrotic_notch);
+        ADD_FIELD(msec_R_2_tR_20); ADD_FIELD(msec_R_2_tR_50); ADD_FIELD(msec_R_2_tR_80);
+        ADD_FIELD(msec_R_2_tR_20_inv); ADD_FIELD(msec_R_2_tR_50_inv); ADD_FIELD(msec_R_2_tR_80_inv);
+        ADD_FIELD(msec_R_2_diastolic_peak); ADD_FIELD(msec_R_2_negslopes_post_dnotch);
+        ADD_FIELD(msec_R_2_second_valley);
+
+        // Raw amplitudes
+        ADD_FIELD(amp_raw_vallies); ADD_FIELD(amp_raw_feets);
+        ADD_FIELD(amp_raw_tP_20); ADD_FIELD(amp_raw_tP_50); ADD_FIELD(amp_raw_tP_80);
+        ADD_FIELD(amp_raw_tP_20_inv); ADD_FIELD(amp_raw_tP_50_inv); ADD_FIELD(amp_raw_tP_80_inv);
+        ADD_FIELD(amp_raw_tR_20); ADD_FIELD(amp_raw_tR_50); ADD_FIELD(amp_raw_tR_80);
+        ADD_FIELD(amp_raw_tR_20_inv); ADD_FIELD(amp_raw_tR_50_inv); ADD_FIELD(amp_raw_tR_80_inv);
+        ADD_FIELD(amp_raw_pos_slopes); ADD_FIELD(amp_raw_systolic_peaks);
+        ADD_FIELD(amp_raw_neg_slopes_pre_dnotch); ADD_FIELD(amp_raw_dicrotic_notches);
+        ADD_FIELD(amp_raw_diastolic_peaks); ADD_FIELD(amp_raw_neg_slopes_after_dnotch);
+
+        // Baselined amplitudes
+        ADD_FIELD(amp_baselined_feets);
+        ADD_FIELD(amp_baselined_tP_20); ADD_FIELD(amp_baselined_tP_50); ADD_FIELD(amp_baselined_tP_80);
+        ADD_FIELD(amp_baselined_tP_20_inv); ADD_FIELD(amp_baselined_tP_50_inv); ADD_FIELD(amp_baselined_tP_80_inv);
+        ADD_FIELD(amp_baselined_tR_20); ADD_FIELD(amp_baselined_tR_50); ADD_FIELD(amp_baselined_tR_80);
+        ADD_FIELD(amp_baselined_tR_20_inv); ADD_FIELD(amp_baselined_tR_50_inv); ADD_FIELD(amp_baselined_tR_80_inv);
+        ADD_FIELD(amp_baselined_pos_slopes); ADD_FIELD(amp_baselined_systolic_peaks);
+        ADD_FIELD(amp_baselined_neg_slopes_pre_dnotch); ADD_FIELD(amp_baselined_dicrotic_notches);
+        ADD_FIELD(amp_baselined_diastolic_peaks); ADD_FIELD(amp_baselined_neg_slopes_after_dnotch);
+        ADD_FIELD(proportional_pulse_amp);
+
+        // SQI
+        ADD_FIELD(sqi_mean_corr_dtw); ADD_FIELD(sqi_corrcoff_direct);
+        ADD_FIELD(sqi_corrcoff_interp); ADD_FIELD(sqi_dtw); ADD_FIELD(sqi_frechet);
+
+        // Inter-beat intervals
+        ADD_FIELD(sec_valley_2_valley); ADD_FIELD(sec_foot_2_foot);
+        ADD_FIELD(sec_tP_20_2_tP_20); ADD_FIELD(sec_tP_50_2_tP_50); ADD_FIELD(sec_tP_80_2_tP_80);
+        ADD_FIELD(sec_tP_20_inv_2_tP_20_inv); ADD_FIELD(sec_tP_50_inv_2_tP_50_inv); ADD_FIELD(sec_tP_80_inv_2_tP_80_inv);
+        ADD_FIELD(sec_pos_slope_2_pos_slope); ADD_FIELD(sec_systolic_2_systolic);
+        ADD_FIELD(sec_neg_slope_b4_2_neg_slope_b4); ADD_FIELD(sec_neg_slope_after_2_neg_slope_after);
+        ADD_FIELD(sec_diastolic_2_diastolic); ADD_FIELD(sec_dnotch_2_dnotch);
+        ADD_FIELD(sec_tR_20_2_tR_20); ADD_FIELD(sec_tR_50_2_tR_50); ADD_FIELD(sec_tR_80_2_tR_80);
+        ADD_FIELD(sec_tR_20_inv_2_tR_20_inv); ADD_FIELD(sec_tR_50_inv_2_tR_50_inv); ADD_FIELD(sec_tR_80_inv_2_tR_80_inv);
+
+        // Special fields
+        ADD_FIELD(adjusted_sleep_state);
+        ADD_FIELD(corrected_time_sec);
+        ADD_FIELD(sec_to_first_onset_of_sleep);
+        ADD_FIELD(sec_from_last_onset_of_sleep);
+        ADD_FIELD(ppg_flat_time_msec);
+
+#undef ADD_FIELD
+
+        w64(static_cast<uint64_t>(all_fields.size() + 1)); // +1 for edge_beat_mask
+
+        for (auto& [name, data] : all_fields) {
+            writeField(name, *data);
+        }
+
+        // edge_beat_mask as doubles
+        {
+            std::vector<double> edge(flat.edge_beat_mask.begin(), flat.edge_beat_mask.end());
+            writeField("edge_beat_mask", edge);
+        }
+
+        // ppg_wout_noise as trailing block
+        writeVec(flat.ppg_wout_noise);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Setup: find matching files across directories
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    struct BinPaths {
+        std::string uuid;
+        std::string anneal_path;      // *_annealed.bin  or *.bin
+        std::string wave_path;        // *_wave_data.bin
+        std::string template_path;    // *_template_info.bin  (empty if not using templates)
+        std::string marking_path;     // *_template_markings.bin
+    };
+
+    inline std::vector<BinPaths> find_analysis_files(
+        const std::string& annealed_dir,
+        const std::string& wave_dir,
+        const std::string& template_dir,
+        const std::string& marking_dir,
+        bool use_templates)
+    {
+        namespace fs = std::filesystem;
+
+        // Collect .bin stems from a directory, optionally stripping a suffix.
+        // If suffix is empty, the full stem is the ID.
+        // If suffix is non-empty, only files ending with that suffix match,
+        // and the suffix is stripped to produce the ID.
+        auto collect_ids = [](const std::string& dir,
+            const std::string& suffix = "")
+            -> std::vector<std::string>
+            {
+                std::vector<std::string> ids;
+                if (!fs::exists(dir)) return ids;
+                for (auto& entry : fs::recursive_directory_iterator(dir)) {
+                    if (!entry.is_regular_file()) continue;
+                    if (entry.path().extension() != ".bin" &&
+                        entry.path().extension() != ".BIN") continue;
+                    std::string stem = entry.path().stem().string();
+                    if (suffix.empty()) {
+                        ids.push_back(stem);
+                    }
+                    else {
+                        auto pos = stem.rfind(suffix);
+                        if (pos != std::string::npos &&
+                            pos + suffix.size() == stem.size()) {
+                            ids.push_back(stem.substr(0, pos));
+                        }
+                    }
+                }
+                std::sort(ids.begin(), ids.end());
+                ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+                return ids;
+            };
+
+        // ── Annealed: <id>.bin (full stem = id) ──
+        auto anneal_ids = collect_ids(annealed_dir);
+        std::cout << "  Annealed dir: " << annealed_dir
+            << "  ->  " << anneal_ids.size() << " .bin files\n";
+
+        // ── Wave: try known suffixes, fall back to bare <id>.bin ──
+        auto wave_ids = collect_ids(wave_dir, "_wave_data");
+        std::string wave_suffix = "_wave_data";
+        if (wave_ids.empty()) {
+            wave_ids = collect_ids(wave_dir, "_wave_markings");
+            wave_suffix = "_wave_markings";
+        }
+        if (wave_ids.empty()) {
+            wave_ids = collect_ids(wave_dir);
+            wave_suffix = "";
+        }
+        std::cout << "  Wave dir:     " << wave_dir
+            << "  ->  " << wave_ids.size() << " .bin files"
+            << (wave_suffix.empty() ? " (bare stems)"
+                : (" (*" + wave_suffix + ")").c_str()) << "\n";
+
+        // Intersect annealed ∩ wave
+        std::vector<std::string> common;
+        std::set_intersection(anneal_ids.begin(), anneal_ids.end(),
+            wave_ids.begin(), wave_ids.end(),
+            std::back_inserter(common));
+        std::cout << "  Annealed ∩ Wave: " << common.size() << " matched IDs\n";
+
+        if (use_templates) {
+            auto tmpl_ids = collect_ids(template_dir, "_template_info");
+            std::cout << "  Template dir: " << template_dir
+                << "  ->  " << tmpl_ids.size() << " *_template_info.bin files\n";
+            std::vector<std::string> common2;
+            std::set_intersection(common.begin(), common.end(),
+                tmpl_ids.begin(), tmpl_ids.end(),
+                std::back_inserter(common2));
+            common = common2;
+            std::cout << "  After template intersect: " << common.size() << " matched IDs\n";
+        }
+
+        // Print a few sample IDs for debugging
+        if (!common.empty()) {
+            int show = std::min(3, (int)common.size());
+            std::cout << "  Sample IDs: ";
+            for (int i = 0; i < show; i++) std::cout << common[i] << "  ";
+            std::cout << (common.size() > 3 ? "..." : "") << "\n";
+        }
+        else if (!anneal_ids.empty() && !wave_ids.empty()) {
+            std::cout << "  WARNING: No ID overlap. Sample annealed ID: " << anneal_ids[0]
+                << "  Sample wave ID: " << wave_ids[0] << "\n";
+        }
+
+        std::vector<BinPaths> result;
+        for (auto& id : common) {
+            BinPaths bp;
+            bp.uuid = id;
+            bp.anneal_path = (fs::path(annealed_dir) / (id + ".bin")).string();
+            bp.wave_path = (fs::path(wave_dir) / (id + wave_suffix + ".bin")).string();
+            if (use_templates) {
+                bp.template_path = (fs::path(template_dir) / (id + "_template_info.bin")).string();
+                bp.marking_path = (fs::path(marking_dir) / (id + "_template_markings.bin")).string();
+            }
+            result.push_back(bp);
+        }
+        return result;
+    }
+
+} // namespace ppg

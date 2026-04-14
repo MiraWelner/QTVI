@@ -1,6 +1,6 @@
-/**
+﻿/**
  * @file   noise_marking_gui.cpp
- * @brief  Entry point � iterates .bin files, opens the marking GUI for each,
+ * @brief  Entry point � iterates .bin files, opens the marking GUI for each,
  *         and exports annotations as CSV + binary.
  *
  * @author Mira Welner
@@ -15,6 +15,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QSet>
 
 #include <iostream>
 #include <fstream>
@@ -25,7 +26,7 @@
 #include <memory>
 
 static const std::string CONFIG_PATH = "config.csv";
-static const int         SAMPLING_RATE = 2000;
+static const int         SAMPLING_RATE = 1000;
 
 // ============================================================================
 // Config helpers
@@ -120,32 +121,77 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    for (const QString& binPath : binFiles) {
-        QFileInfo info(binPath);
+    QSet<QString> savedFiles;
+    QSet<QString> skippedFiles;   // explicitly skipped via Skip button
 
-        auto gui = std::make_unique<noise_marking_gui>();
-        gui->setWindowTitle("Marking: " + info.fileName());
-        gui->setFileSource(binPath);
+    bool madeProgress = true;
+    while (madeProgress) {
+        madeProgress = false;
 
-        if (gui->exec() != QDialog::Accepted) continue;
+        for (const QString& binPath : binFiles) {
+            if (savedFiles.contains(binPath) || skippedFiles.contains(binPath))
+                continue;
 
-        const GenExcStruct markings = gui->getMarkings();
-        NoiseManager noiseHandler(SAMPLING_RATE);
+            QFileInfo info(binPath);
 
-        for (int i = 0; i < markings.noiseExc.size(); ++i) {
-            noiseHandler.addSegment(
-                static_cast<size_t>(markings.noiseExc[i].first * SAMPLING_RATE),
-                static_cast<size_t>(markings.noiseExc[i].second * SAMPLING_RATE),
-                markings.data_type[i].toStdString(),
-                markings.marking_type[i].toStdString()
-            );
+            auto gui = std::make_unique<noise_marking_gui>();
+            gui->setWindowTitle("Marking: " + info.fileName());
+            gui->setFileSource(binPath);
+
+            if (gui->exec() != QDialog::Accepted) {
+                skippedFiles.insert(binPath);
+                madeProgress = true;
+                continue;
+            }
+
+            QVector<GenExcStruct> allMarkings = gui->getAllMarkings();
+            QString currentFile = gui->getFilePath();
+
+            // If the user browsed to a different file, the loop's file
+            // was never actually worked on — don't mark it as done.
+            // Only mark files that were explicitly exported.
+
+            if (allMarkings.isEmpty()) {
+                // User hit Save without marking anything — export empty
+                // file for whatever is currently loaded.
+                NoiseManager noiseHandler(SAMPLING_RATE);
+                QFileInfo curInfo(currentFile);
+                QString outBase = QDir(markingFolder).filePath(
+                    curInfo.baseName() + "_noise_markings");
+                noiseHandler.exportCSV(outBase.toStdString() + ".csv");
+                noiseHandler.exportBinary(outBase.toStdString() + ".bin");
+                std::cout << "Saved markings for "
+                    << curInfo.fileName().toStdString()
+                    << std::endl;
+                savedFiles.insert(currentFile);
+            }
+            else {
+                for (const GenExcStruct& markings : allMarkings) {
+                    NoiseManager noiseHandler(SAMPLING_RATE);
+                    for (int i = 0; i < markings.noiseExc.size(); ++i) {
+                        noiseHandler.addSegment(
+                            static_cast<size_t>(markings.noiseExc[i].first * SAMPLING_RATE),
+                            static_cast<size_t>(markings.noiseExc[i].second * SAMPLING_RATE),
+                            markings.data_type[i].toStdString(),
+                            markings.marking_type[i].toStdString()
+                        );
+                    }
+
+                    QFileInfo markedFileInfo(markings.filePath);
+                    QString outBase = QDir(markingFolder).filePath(
+                        markedFileInfo.baseName() + "_noise_markings");
+                    noiseHandler.exportCSV(outBase.toStdString() + ".csv");
+                    noiseHandler.exportBinary(outBase.toStdString() + ".bin");
+                    std::cout << "Saved markings for "
+                        << markedFileInfo.fileName().toStdString()
+                        << std::endl;
+
+                    savedFiles.insert(markings.filePath);
+                }
+            }
+
+            madeProgress = true;
         }
-
-        QString outBase = QDir(markingFolder).filePath(
-            info.baseName() + "_noise_markings");
-        noiseHandler.exportCSV(outBase.toStdString() + ".csv");
-        noiseHandler.exportBinary(outBase.toStdString() + ".bin");
-        std::cout << "Saved markings for " << info.fileName().toStdString() << "\n";
     }
 
     std::cout << "Marking Complete.\n";

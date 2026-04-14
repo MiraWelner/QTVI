@@ -54,7 +54,7 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
 
         ppg_templates.resize(n);
 
-        #pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic)
         for (int i = 0; i < static_cast<int>(n); ++i) {
             if (!template_good[i]) {
                 ppg_templates[i] = {};
@@ -88,7 +88,7 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
         }
     }
 
-    // ECG templates (3 methods x 3 channels per bin)
+    // ECG templates (4 methods x 3 channels per bin)
     EcgTemplateResult ecg_res = CreateEcgTemplates(wave_data, std_multiplier);
 
     // Assemble TemplateInfo
@@ -96,24 +96,34 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
         dst.ecgTemplate_raw = src.ecgTemplates_raw[i];
         dst.ecgTemplate_squared = src.ecgTemplates_squared[i];
         dst.ecgTemplate_absval = src.ecgTemplates_absval[i];
+        dst.ecgTemplate_unfiltered = src.ecgTemplates_unfiltered[i];
+
         dst.alignment_point_raw = std::isnan(src.ppg_alignment_point_raw[i]) ? 0.0 : src.ppg_alignment_point_raw[i];
         dst.alignment_point_squared = std::isnan(src.ppg_alignment_point_squared[i]) ? 0.0 : src.ppg_alignment_point_squared[i];
         dst.alignment_point_absval = std::isnan(src.ppg_alignment_point_absval[i]) ? 0.0 : src.ppg_alignment_point_absval[i];
+        dst.alignment_point_unfiltered = std::isnan(src.ppg_alignment_point_unfiltered[i]) ? 0.0 : src.ppg_alignment_point_unfiltered[i];
+
         dst.avg_r_expand_raw = src.avg_r_expand_raw[i];
         dst.avg_r_expand_squared = src.avg_r_expand_squared[i];
         dst.avg_r_expand_absval = src.avg_r_expand_absval[i];
+        dst.avg_r_expand_unfiltered = src.avg_r_expand_unfiltered[i];
         };
 
     auto clear_channel = [](ChannelTemplates& dst) {
         dst.ecgTemplate_raw = {};
         dst.ecgTemplate_squared = {};
         dst.ecgTemplate_absval = {};
+        dst.ecgTemplate_unfiltered = {};
+
         dst.alignment_point_raw = NaN;
         dst.alignment_point_squared = NaN;
         dst.alignment_point_absval = NaN;
+        dst.alignment_point_unfiltered = NaN;
+
         dst.avg_r_expand_raw = 0.0;
         dst.avg_r_expand_squared = 0.0;
         dst.avg_r_expand_absval = 0.0;
+        dst.avg_r_expand_unfiltered = 0.0;
         };
 
     vector<TemplateInfo> result(n);

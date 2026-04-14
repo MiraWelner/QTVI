@@ -83,7 +83,7 @@ AnnealedData read_input_binfile(const std::string& path) {
 
 /**
  * @brief  Write output bin file with R-peaks, preprocessed signals,
- *         and raw signals from 3 methods x 3 channels.
+ *         pre-bandpass signals, and raw signals from 3 methods x 3 channels.
  *
  * Layout per bin:
  *   - 9 index arrays (ch1 raw/sq/abs, ch2 raw/sq/abs, ch3 raw/sq/abs)

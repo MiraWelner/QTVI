@@ -148,8 +148,6 @@ inline vector<double> EnsembleTemplate(
 {
     if (segment_idxs.size() < 2) return {};
 
-
-
     size_t n_segs = segment_idxs.size() - 1;
     vector<std::pair<size_t, size_t>> ranges(n_segs);
 
@@ -323,16 +321,6 @@ inline vector<double> EnsembleTemplate(
     size_t beginpos = 0;
     if (alignment_point > static_cast<size_t>(std::round(med_align)))
         beginpos = alignment_point - static_cast<size_t>(std::round(med_align));
-
-
-    // just before building len_minus_align
-    for (size_t i = 0; i < std::min(final_lens.size(), size_t(3)); ++i) {
-        std::cerr << "bin " << i
-            << "  final_lens=" << final_lens[i]
-            << "  final_align=" << final_align[i]
-            << "  len-align=" << (final_lens[i] - final_align[i])
-            << "\n";
-    }
 
     // median(good_seg_lengths - good_seg_diff_peak(:,2)) — verbatim MATLAB
     vector<double> len_minus_align(final_lens.size());

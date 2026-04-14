@@ -7,11 +7,17 @@ function plot_matlab_indices(mat_path, bins, output_dir, time_range)
 %   bins       — array of 0-based bin indices to plot
 %   output_dir — folder where .png and .csv files will be saved (created if needed)
 %   time_range — [start, end] in seconds (optional)
+% Convert string arguments from command-line calls
+if ischar(bins) || isstring(bins)
+    bins = str2num(bins); %#ok<ST2NM>
+end
 if nargin < 3 || isempty(output_dir)
         output_dir = 'matlab_output';
 end
 if nargin < 4
-        time_range = [32,38];
+        time_range = [54,56];
+elseif ischar(time_range) || isstring(time_range)
+    time_range = str2num(time_range); %#ok<ST2NM>
 end
 output_dir = fullfile(pwd, output_dir);
 if ~exist(output_dir, 'dir')
@@ -21,11 +27,9 @@ end
     wave_data = data.wave_data;
     [~, file_id, ~] = fileparts(mat_path);
     file_id = strrep(file_id, '_wave_data', '');
-
 for k = 1:length(bins)
         bin_idx = bins(k);
         matlab_idx = bin_idx + 1;
-
 if matlab_idx > length(wave_data) || matlab_idx < 1
             fprintf('Bin %d out of range (max %d), skipping.\n', bin_idx, length(wave_data)-1);
 continue;
@@ -34,21 +38,18 @@ end
         ecg = seg.ecgSeg;
         fs  = seg.ecgSamplingRate;
         r   = seg.ecgRIndex;
-
-        % Write R-peak times (seconds) to CSV
+% Write R-peak times (seconds) to CSV
         csv_path = fullfile(output_dir, sprintf('%s_bin%03d_rpeaks.csv', file_id, bin_idx));
         disp(csv_path);
         fid = fopen(csv_path, 'w');
         fprintf(fid, 'r_peak_time_sec\n');
-        for j = 1:length(r)
+for j = 1:length(r)
             r_time_sec = (r(j) - 1) / fs;
             fprintf(fid, '%.6f\n', r_time_sec);
-        end
+end
         fclose(fid);
-
         time = (0:length(ecg)-1) / fs;
-
-        % Filter by time range if specified
+% Filter by time range if specified
 if ~isempty(time_range)
             mask = (time >= time_range(1)) & (time <= time_range(2));
 if ~any(mask)
@@ -64,7 +65,7 @@ if ~isempty(r)
 end
 end
         fig = figure('Visible', 'off', 'Position', [70 70 1000 500]);
-        plot(time, ecg, 'Color', [0.4 0.4 0.4], 'LineWidth', 0.5);
+        scatter(time, ecg, 3, [0.4 0.4 0.4], 'filled');
         hold on;
 if ~isempty(r)
             scatter((r-1)/fs, seg.ecgSeg(r), 50, 'r', 'v', 'filled', ...

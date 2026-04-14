@@ -90,11 +90,9 @@ static RawData read_data_bin(const std::string& path) {
     f.read(reinterpret_cast<char*>(&nPpg), 8);
     f.read(reinterpret_cast<char*>(&nSleep), 8);
 
-    // Skip nAbs1, nAbs2, nAbs3 (3 × uint64)
-    f.seekg(24, std::ios::cur);
-
     d.ecgSR = ecgSR;
     d.ppgSR = ppgSR;
+    std::cout << ecgSR;
     d.scoringEpochSec = epochSec;
 
     auto safeRead = [&](std::vector<double>& dest, uint64_t count) {

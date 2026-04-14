@@ -7,7 +7,6 @@
 *****************************************************************************/
 
 #include "../../../../../TemplateViewerWindow.h"
-#include <QtGui/qtextcursor.h>
 #include <QtCore/qmetatype.h>
 
 #include <QtCore/qtmochelpers.h>
@@ -47,6 +46,7 @@ template <> constexpr inline auto TemplateViewerWindow::qt_create_metaobjectdata
         "newIdx",
         "onDicroticDragStarted",
         "onBadRToggled",
+        "leadIdx",
         "bad",
         "onBadPPGToggled",
         "onFinish",
@@ -67,21 +67,21 @@ template <> constexpr inline auto TemplateViewerWindow::qt_create_metaobjectdata
             { QMetaType::Int, 4 },
         }}),
         // Slot 'onBadRToggled'
-        QtMocHelpers::SlotData<void(int, bool)>(7, 2, QMC::AccessPrivate, QMetaType::Void, {{
-            { QMetaType::Int, 4 }, { QMetaType::Bool, 8 },
+        QtMocHelpers::SlotData<void(int, int, bool)>(7, 2, QMC::AccessPrivate, QMetaType::Void, {{
+            { QMetaType::Int, 4 }, { QMetaType::Int, 8 }, { QMetaType::Bool, 9 },
         }}),
         // Slot 'onBadPPGToggled'
-        QtMocHelpers::SlotData<void(int, bool)>(9, 2, QMC::AccessPrivate, QMetaType::Void, {{
-            { QMetaType::Int, 4 }, { QMetaType::Bool, 8 },
+        QtMocHelpers::SlotData<void(int, bool)>(10, 2, QMC::AccessPrivate, QMetaType::Void, {{
+            { QMetaType::Int, 4 }, { QMetaType::Bool, 9 },
         }}),
         // Slot 'onFinish'
-        QtMocHelpers::SlotData<void()>(10, 2, QMC::AccessPrivate, QMetaType::Void),
-        // Slot 'onToggleMode'
         QtMocHelpers::SlotData<void()>(11, 2, QMC::AccessPrivate, QMetaType::Void),
-        // Slot 'onNextPage'
+        // Slot 'onToggleMode'
         QtMocHelpers::SlotData<void()>(12, 2, QMC::AccessPrivate, QMetaType::Void),
-        // Slot 'onPrevPage'
+        // Slot 'onNextPage'
         QtMocHelpers::SlotData<void()>(13, 2, QMC::AccessPrivate, QMetaType::Void),
+        // Slot 'onPrevPage'
+        QtMocHelpers::SlotData<void()>(14, 2, QMC::AccessPrivate, QMetaType::Void),
     };
     QtMocHelpers::UintData qt_properties {
     };
@@ -108,7 +108,7 @@ void TemplateViewerWindow::qt_static_metacall(QObject *_o, QMetaObject::Call _c,
         case 0: _t->finished(); break;
         case 1: _t->onDicroticMoved((*reinterpret_cast<std::add_pointer_t<int>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<int>>(_a[2]))); break;
         case 2: _t->onDicroticDragStarted((*reinterpret_cast<std::add_pointer_t<int>>(_a[1]))); break;
-        case 3: _t->onBadRToggled((*reinterpret_cast<std::add_pointer_t<int>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<bool>>(_a[2]))); break;
+        case 3: _t->onBadRToggled((*reinterpret_cast<std::add_pointer_t<int>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<int>>(_a[2])),(*reinterpret_cast<std::add_pointer_t<bool>>(_a[3]))); break;
         case 4: _t->onBadPPGToggled((*reinterpret_cast<std::add_pointer_t<int>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<bool>>(_a[2]))); break;
         case 5: _t->onFinish(); break;
         case 6: _t->onToggleMode(); break;

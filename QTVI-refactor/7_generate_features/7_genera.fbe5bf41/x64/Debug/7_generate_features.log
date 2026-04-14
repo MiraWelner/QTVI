@@ -1,0 +1,7 @@
+﻿  7_generate_features.cpp
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\7_generate_features\bin_io.hpp(532,22): warning C4566: character represented by universal-character-name '\u2229' cannot be represented in the current code page (1252)
+  (compiling source file '7_generate_features.cpp')
+  
+  7_generate_features.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\7_generate_features\x64\Debug\7_generate_features.exe
+  'pwsh.exe' is not recognized as an internal or external command,
+  operable program or batch file.

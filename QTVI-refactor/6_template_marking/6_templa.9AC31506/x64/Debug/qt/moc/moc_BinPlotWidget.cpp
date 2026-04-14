@@ -43,10 +43,11 @@ template <> constexpr inline auto BinPlotWidget::qt_create_metaobjectdata<qt_met
         "",
         "binIndex",
         "newIdx",
+        "dicroticDragStarted",
         "badRToggled",
+        "leadIndex",
         "bad",
-        "badPPGToggled",
-        "dicroticDragStarted"
+        "badPPGToggled"
     };
 
     QtMocHelpers::UintData qt_methods {
@@ -54,17 +55,17 @@ template <> constexpr inline auto BinPlotWidget::qt_create_metaobjectdata<qt_met
         QtMocHelpers::SignalData<void(int, int)>(1, 2, QMC::AccessPublic, QMetaType::Void, {{
             { QMetaType::Int, 3 }, { QMetaType::Int, 4 },
         }}),
+        // Signal 'dicroticDragStarted'
+        QtMocHelpers::SignalData<void(int)>(5, 2, QMC::AccessPublic, QMetaType::Void, {{
+            { QMetaType::Int, 3 },
+        }}),
         // Signal 'badRToggled'
-        QtMocHelpers::SignalData<void(int, bool)>(5, 2, QMC::AccessPublic, QMetaType::Void, {{
-            { QMetaType::Int, 3 }, { QMetaType::Bool, 6 },
+        QtMocHelpers::SignalData<void(int, int, bool)>(6, 2, QMC::AccessPublic, QMetaType::Void, {{
+            { QMetaType::Int, 3 }, { QMetaType::Int, 7 }, { QMetaType::Bool, 8 },
         }}),
         // Signal 'badPPGToggled'
-        QtMocHelpers::SignalData<void(int, bool)>(7, 2, QMC::AccessPublic, QMetaType::Void, {{
-            { QMetaType::Int, 3 }, { QMetaType::Bool, 6 },
-        }}),
-        // Signal 'dicroticDragStarted'
-        QtMocHelpers::SignalData<void(int)>(8, 2, QMC::AccessPublic, QMetaType::Void, {{
-            { QMetaType::Int, 3 },
+        QtMocHelpers::SignalData<void(int, bool)>(9, 2, QMC::AccessPublic, QMetaType::Void, {{
+            { QMetaType::Int, 3 }, { QMetaType::Bool, 8 },
         }}),
     };
     QtMocHelpers::UintData qt_properties {
@@ -90,20 +91,20 @@ void BinPlotWidget::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _i
     if (_c == QMetaObject::InvokeMetaMethod) {
         switch (_id) {
         case 0: _t->dicroticMoved((*reinterpret_cast<std::add_pointer_t<int>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<int>>(_a[2]))); break;
-        case 1: _t->badRToggled((*reinterpret_cast<std::add_pointer_t<int>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<bool>>(_a[2]))); break;
-        case 2: _t->badPPGToggled((*reinterpret_cast<std::add_pointer_t<int>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<bool>>(_a[2]))); break;
-        case 3: _t->dicroticDragStarted((*reinterpret_cast<std::add_pointer_t<int>>(_a[1]))); break;
+        case 1: _t->dicroticDragStarted((*reinterpret_cast<std::add_pointer_t<int>>(_a[1]))); break;
+        case 2: _t->badRToggled((*reinterpret_cast<std::add_pointer_t<int>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<int>>(_a[2])),(*reinterpret_cast<std::add_pointer_t<bool>>(_a[3]))); break;
+        case 3: _t->badPPGToggled((*reinterpret_cast<std::add_pointer_t<int>>(_a[1])),(*reinterpret_cast<std::add_pointer_t<bool>>(_a[2]))); break;
         default: ;
         }
     }
     if (_c == QMetaObject::IndexOfMethod) {
         if (QtMocHelpers::indexOfMethod<void (BinPlotWidget::*)(int , int )>(_a, &BinPlotWidget::dicroticMoved, 0))
             return;
-        if (QtMocHelpers::indexOfMethod<void (BinPlotWidget::*)(int , bool )>(_a, &BinPlotWidget::badRToggled, 1))
+        if (QtMocHelpers::indexOfMethod<void (BinPlotWidget::*)(int )>(_a, &BinPlotWidget::dicroticDragStarted, 1))
             return;
-        if (QtMocHelpers::indexOfMethod<void (BinPlotWidget::*)(int , bool )>(_a, &BinPlotWidget::badPPGToggled, 2))
+        if (QtMocHelpers::indexOfMethod<void (BinPlotWidget::*)(int , int , bool )>(_a, &BinPlotWidget::badRToggled, 2))
             return;
-        if (QtMocHelpers::indexOfMethod<void (BinPlotWidget::*)(int )>(_a, &BinPlotWidget::dicroticDragStarted, 3))
+        if (QtMocHelpers::indexOfMethod<void (BinPlotWidget::*)(int , bool )>(_a, &BinPlotWidget::badPPGToggled, 3))
             return;
     }
 }
@@ -146,20 +147,20 @@ void BinPlotWidget::dicroticMoved(int _t1, int _t2)
 }
 
 // SIGNAL 1
-void BinPlotWidget::badRToggled(int _t1, bool _t2)
+void BinPlotWidget::dicroticDragStarted(int _t1)
 {
-    QMetaObject::activate<void>(this, &staticMetaObject, 1, nullptr, _t1, _t2);
+    QMetaObject::activate<void>(this, &staticMetaObject, 1, nullptr, _t1);
 }
 
 // SIGNAL 2
-void BinPlotWidget::badPPGToggled(int _t1, bool _t2)
+void BinPlotWidget::badRToggled(int _t1, int _t2, bool _t3)
 {
-    QMetaObject::activate<void>(this, &staticMetaObject, 2, nullptr, _t1, _t2);
+    QMetaObject::activate<void>(this, &staticMetaObject, 2, nullptr, _t1, _t2, _t3);
 }
 
 // SIGNAL 3
-void BinPlotWidget::dicroticDragStarted(int _t1)
+void BinPlotWidget::badPPGToggled(int _t1, bool _t2)
 {
-    QMetaObject::activate<void>(this, &staticMetaObject, 3, nullptr, _t1);
+    QMetaObject::activate<void>(this, &staticMetaObject, 3, nullptr, _t1, _t2);
 }
 QT_WARNING_POP

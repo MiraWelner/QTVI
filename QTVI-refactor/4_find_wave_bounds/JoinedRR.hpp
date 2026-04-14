@@ -15,9 +15,18 @@
 #include <vector>
 #include <map>
 
+/**
+ * @brief  Result from JoinedRR: the accepted R-peak indices plus
+ *         the detrended (pre-bandpass) signal that was fed into the
+ *         detection algorithms.
+ */
+struct JoinedRRResult {
+    std::vector<std::size_t> peaks;         ///< Accepted R-peak sample indices
+};
+
 namespace joinedrr_detail {
 
-    constexpr int diff_range = 16; // was 2 for 256hz, scaled to 2000hz: 2/256*2000 ~ 16
+    constexpr int diff_range = 8; // was 2 for 256hz, scaled to 1000hz: 2/256*1000 ~ 8
 
     // Refinement helper: snap detected R-wave locations to the local maximum
     inline vector<size_t> RPeakfromRWave(const vector<double>& ecg,
@@ -48,10 +57,20 @@ namespace joinedrr_detail {
 
 } // namespace joinedrr_detail
 
-inline vector<size_t> JoinedRR(const vector<double>& ecgSeg, const std::string fileID) {
+/**
+ * @brief  Original interface preserved for backward compatibility.
+ *         Returns only the peak indices (delegates to the full version).
+ */
+inline vector<size_t> JoinedRR(const vector<double>& ecgSeg, const std::string fileID);
+
+/**
+ * @brief  Full interface that also returns the pre-bandpass (detrended) signal.
+ */
+inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, const std::string fileID) {
     using namespace joinedrr_detail;
 
-    if (ecgSeg.empty() || std_dev(ecgSeg) == 0) return {};
+    JoinedRRResult result;
+    if (ecgSeg.empty() || std_dev(ecgSeg) == 0) return result;
 
     // 0. Detrend
     vector<double> processedEcg = ecgSeg;
@@ -102,7 +121,7 @@ inline vector<size_t> JoinedRR(const vector<double>& ecgSeg, const std::string f
     std::sort(all_weighted.begin(), all_weighted.end(),
         [](const auto& a, const auto& b) { return a.pos < b.pos; });
 
-    if (all_weighted.empty()) return {};
+    if (all_weighted.empty()) return result;
 
     // 4. Get unique positions
     vector<size_t> uniq;
@@ -137,5 +156,13 @@ inline vector<size_t> JoinedRR(const vector<double>& ecgSeg, const std::string f
             candidates.push_back(pos);
 
     std::sort(candidates.begin(), candidates.end());
-    return candidates;
+    result.peaks = candidates;
+    return result;
+}
+
+/**
+ * @brief  Backward-compatible wrapper — returns only peak indices.
+ */
+inline vector<size_t> JoinedRR(const vector<double>& ecgSeg, const std::string fileID) {
+    return JoinedRR_full(ecgSeg, fileID).peaks;
 }

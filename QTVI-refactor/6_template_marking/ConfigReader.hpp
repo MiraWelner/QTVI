@@ -28,14 +28,13 @@ inline std::vector<DatasetConfig> readConfig(const QString& csvPath) {
         if (line.isEmpty()) continue;
 
         QStringList cols = line.split(',');
-        if (cols.size() < 16) continue;
 
         DatasetConfig cfg;
         cfg.dataType = cols[0].trimmed();
         cfg.templatePath = cols[8].trimmed();
         cfg.markingPath = cols[9].trimmed();
-        cfg.ecgSamplingRate = cols[14].trimmed().toDouble();
-        cfg.ppgSamplingRate = cols[15].trimmed().toDouble();
+        cfg.ecgSamplingRate = 1000.0;
+        cfg.ppgSamplingRate = 1000.0;
         result.push_back(cfg);
     }
     return result;

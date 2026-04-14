@@ -43,7 +43,6 @@ static std::vector<output_binfile_data> read_wave_data_binfile(const std::string
 
     uint64_t numBins = 0;
     file.read(reinterpret_cast<char*>(&numBins), 8);
-    std::cerr << "Processing " << numBins << " Bins" <<  std::endl;
     if (numBins > 100000) throw std::runtime_error("numBins too large");
 
     std::vector<output_binfile_data> results;
@@ -68,6 +67,13 @@ static std::vector<output_binfile_data> read_wave_data_binfile(const std::string
         if (sz > MAX_SANE) throw std::runtime_error("bad signal size: " + std::to_string(sz));
         sig.resize(sz);
         if (sz > 0) file.read(reinterpret_cast<char*>(sig.data()), sz * 8);
+        };
+
+    auto skipSignal = [&]() {
+        uint64_t sz = 0;
+        if (!file.read(reinterpret_cast<char*>(&sz), 8)) return;
+        if (sz > MAX_SANE) return;
+        file.seekg(sz * 8, std::ios::cur);
         };
 
     auto readPairVec = [&](std::vector<std::pair<uint64_t, uint64_t>>& v) {
@@ -160,6 +166,23 @@ static std::vector<output_binfile_data> read_wave_data_binfile(const std::string
 
 // ============================================================================
 // Write template_info .bin
+//
+// Layout per template:
+//   uint64 index
+//   ppg_bin_indexs (pair vec)
+//   ecg_bin_indexs (pair vec)
+//   uint8 bad_segment
+//   per channel (ch1, ch2, ch3):
+//     ecgTemplate_raw (vec<double>)
+//     ecgTemplate_squared (vec<double>)
+//     ecgTemplate_absval (vec<double>)
+//     alignment_point_raw (double)
+//     alignment_point_squared (double)
+//     alignment_point_absval (double)
+//     avg_r_expand_raw (double)
+//     avg_r_expand_squared (double)
+//     avg_r_expand_absval (double)
+//   ppgTemplate (vec<double>)
 // ============================================================================
 static void write_template_info_binfile(const std::string& path,
     const std::vector<TemplateInfo>& infos) {
@@ -205,9 +228,11 @@ static void write_template_info_binfile(const std::string& path,
             writeVecDouble(ch.ecgTemplate_raw);
             writeVecDouble(ch.ecgTemplate_squared);
             writeVecDouble(ch.ecgTemplate_absval);
+
             writeDouble(ch.alignment_point_raw);
             writeDouble(ch.alignment_point_squared);
             writeDouble(ch.alignment_point_absval);
+
             writeDouble(ch.avg_r_expand_raw);
             writeDouble(ch.avg_r_expand_squared);
             writeDouble(ch.avg_r_expand_absval);
@@ -282,7 +307,7 @@ int main() {
 
             std::string outputPath = cfg.templatePath + "/" +
                 currentID + "_template_info.bin";
-       
+
 
             std::cout << "Processing templates: " << currentID << "..." << std::endl;
 

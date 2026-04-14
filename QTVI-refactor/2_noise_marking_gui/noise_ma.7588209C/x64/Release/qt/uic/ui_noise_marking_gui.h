@@ -29,6 +29,9 @@ class Ui_noise_marking_gui
 {
 public:
     QVBoxLayout *dialogTopLayout;
+    QHBoxLayout *file_selector_layout;
+    QSpacerItem *horizontalSpacer;
+    QPushButton *browse_file_button;
     QLabel *topLabel;
     QHBoxLayout *main_layout;
     QVBoxLayout *leftPanel;
@@ -126,6 +129,7 @@ public:
     QChartView *ecg_axis_2;
     QChartView *ecg_axis_3;
     QChartView *ppg_axis;
+    QChartView *accel_axis;
 
     void setupUi(QDialog *noise_marking_gui)
     {
@@ -135,6 +139,20 @@ public:
         dialogTopLayout = new QVBoxLayout(noise_marking_gui);
         dialogTopLayout->setObjectName("dialogTopLayout");
         dialogTopLayout->setContentsMargins(6, 6, 6, 6);
+        file_selector_layout = new QHBoxLayout();
+        file_selector_layout->setObjectName("file_selector_layout");
+        horizontalSpacer = new QSpacerItem(40, 20, QSizePolicy::Policy::Expanding, QSizePolicy::Policy::Minimum);
+
+        file_selector_layout->addItem(horizontalSpacer);
+
+        browse_file_button = new QPushButton(noise_marking_gui);
+        browse_file_button->setObjectName("browse_file_button");
+
+        file_selector_layout->addWidget(browse_file_button);
+
+
+        dialogTopLayout->addLayout(file_selector_layout);
+
         topLabel = new QLabel(noise_marking_gui);
         topLabel->setObjectName("topLabel");
 
@@ -682,10 +700,15 @@ public:
 
         main_plots->addWidget(ppg_axis);
 
+        accel_axis = new QChartView(noise_marking_gui);
+        accel_axis->setObjectName("accel_axis");
+        sizePolicy1.setHeightForWidth(accel_axis->sizePolicy().hasHeightForWidth());
+        accel_axis->setSizePolicy(sizePolicy1);
+
+        main_plots->addWidget(accel_axis);
+
         main_plots->setStretch(0, 1);
-        main_plots->setStretch(1, 1);
-        main_plots->setStretch(2, 1);
-        main_plots->setStretch(3, 1);
+        main_plots->setStretch(4, 1);
 
         main_layout->addLayout(main_plots);
 
@@ -703,6 +726,7 @@ public:
     void retranslateUi(QDialog *noise_marking_gui)
     {
         noise_marking_gui->setWindowTitle(QCoreApplication::translate("noise_marking_gui", "PPG/ECG Noise Marker", nullptr));
+        browse_file_button->setText(QCoreApplication::translate("noise_marking_gui", "Browse Different File", nullptr));
         topLabel->setText(QString());
         amp_ecg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
         amp_ppg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
@@ -776,7 +800,8 @@ public:
         ecg_axis_1->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 2px solid black;", nullptr));
         ecg_axis_2->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 2px solid black;", nullptr));
         ecg_axis_3->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 2px solid black;", nullptr));
-        ppg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid black;", nullptr));
+        ppg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 2px solid black;", nullptr));
+        accel_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid black;", nullptr));
     } // retranslateUi
 
 };

@@ -1,7 +1,12 @@
 /**
  * @file   CreateEcgTemplates.hpp
  * @brief  Create ECG templates for each bin using EnsembleTemplate.
- *         Builds templates from 3 channels x 3 preprocessing methods.
+ *         Builds templates from 3 channels x 4 preprocessing methods
+ *         (raw, squared, absval, unfiltered).
+ *
+ *         The "unfiltered" method uses the original ECG signal (ecgSignal,
+ *         ecgSignal2, ecgSignal3) with the raw R-peaks to build a template
+ *         from the signal before any preprocessing or filtering.
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -13,7 +18,6 @@
 #include "EnsembleTemplate.hpp"
 #include "StatsUtils.h"
 #include <atomic>
-#include <chrono>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -38,7 +42,7 @@ static inline SingleMethodResult build_ecg_template_for_method(
 
     if (rpeaks.size() < 2 || ecgSignal.empty()) return res;
 
-    // Peaks are already indices into the bin's signal — no extraction needed.
+    // Peaks are already indices into the bin's signal - no extraction needed.
     // Just filter out any that are out of bounds.
     vector<size_t> r;
     r.reserve(rpeaks.size());
@@ -55,7 +59,6 @@ static inline SingleMethodResult build_ecg_template_for_method(
         vector<double> ld(lens.begin(), lens.end());
         res.avg_r_expand = median(ld);
     }
-
 
     try {
         res.ecgTemplate = EnsembleTemplate(ecgSignal, r, std_multiplier, "ecg", lens);
@@ -86,40 +89,66 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
     cr.ecgTemplates_raw.resize(n);
     cr.ecgTemplates_squared.resize(n);
     cr.ecgTemplates_absval.resize(n);
+    cr.ecgTemplates_unfiltered.resize(n);
+
     cr.ppg_alignment_point_raw.resize(n, NaN);
     cr.ppg_alignment_point_squared.resize(n, NaN);
     cr.ppg_alignment_point_absval.resize(n, NaN);
+    cr.ppg_alignment_point_unfiltered.resize(n, NaN);
+
     cr.avg_r_expand_raw.resize(n, 0.0);
     cr.avg_r_expand_squared.resize(n, 0.0);
     cr.avg_r_expand_absval.resize(n, 0.0);
+    cr.avg_r_expand_unfiltered.resize(n, 0.0);
 }
 
+/**
+ * @brief  Process all 4 methods for one channel in one bin.
+ *
+ * @param cr             Channel result accumulator
+ * @param bins           All bins (for pairs access)
+ * @param i              Current bin index
+ * @param ecgSignal      The signal used for raw/sq/abs methods (may be preprocessed)
+ * @param origSignal     The original unfiltered ECG signal for this channel
+ * @param ch             Channel R-peaks struct
+ * @param std_multiplier Outlier threshold multiplier
+ */
 static inline void process_channel(
     EcgChannelResult& cr,
     const vector<output_binfile_data>& bins,
     size_t i,
     const vector<double>& ecgSignal,
+    const vector<double>& origSignal,
     const ChannelRPeaks& ch,
     double std_multiplier)
 {
     const auto& bin = bins[i];
 
+    // Method 1: raw (detection signal + raw R-peaks)
     auto raw_res = build_ecg_template_for_method(ecgSignal, ch.raw, bin.pairs, std_multiplier);
     cr.ecgTemplates_raw[i] = raw_res.ecgTemplate;
     cr.ppg_alignment_point_raw[i] = raw_res.ppg_alignment_point;
     cr.avg_r_expand_raw[i] = raw_res.avg_r_expand;
 
+    // Method 2: squared (squared signal + squared R-peaks)
     const auto& sq_sig = ch.squared_signal.empty() ? ecgSignal : ch.squared_signal;
     auto sq_res = build_ecg_template_for_method(sq_sig, ch.squared, bin.pairs, std_multiplier);
     cr.ecgTemplates_squared[i] = sq_res.ecgTemplate;
     cr.ppg_alignment_point_squared[i] = sq_res.ppg_alignment_point;
     cr.avg_r_expand_squared[i] = sq_res.avg_r_expand;
 
+    // Method 3: absval (abs-value signal + absval R-peaks)
     const auto& abs_sig = ch.absval_signal.empty() ? ecgSignal : ch.absval_signal;
     auto abs_res = build_ecg_template_for_method(abs_sig, ch.absval, bin.pairs, std_multiplier);
     cr.ecgTemplates_absval[i] = abs_res.ecgTemplate;
     cr.ppg_alignment_point_absval[i] = abs_res.ppg_alignment_point;
     cr.avg_r_expand_absval[i] = abs_res.avg_r_expand;
+
+    // Method 4: unfiltered (original ECG signal + raw R-peaks)
+    auto unfilt_res = build_ecg_template_for_method(origSignal, ch.raw, bin.pairs, std_multiplier);
+    cr.ecgTemplates_unfiltered[i] = unfilt_res.ecgTemplate;
+    cr.ppg_alignment_point_unfiltered[i] = unfilt_res.ppg_alignment_point;
+    cr.avg_r_expand_unfiltered[i] = unfilt_res.avg_r_expand;
 }
 
 inline EcgTemplateResult CreateEcgTemplates(
@@ -135,25 +164,23 @@ inline EcgTemplateResult CreateEcgTemplates(
     std::atomic<int> done{ 0 };
 
     int max_threads = std::min(8, (int)n);
-    #pragma omp parallel for schedule(dynamic) num_threads(max_threads)
+#pragma omp parallel for schedule(dynamic) num_threads(max_threads)
     for (int i = 0; i < static_cast<int>(n); ++i) {
-
-        auto bin_start = std::chrono::steady_clock::now();
 
         const auto& bin = bins[i];
 
-        process_channel(res.ch1, bins, i, bin.ecgSignal, bin.ch1, std_multiplier);
+        // Ch1: ecgSignal is both the detection signal and the original
+        process_channel(res.ch1, bins, i, bin.ecgSignal, bin.ecgSignal, bin.ch1, std_multiplier);
 
+        // Ch2: ecgSignal2 is both the detection signal and the original
         if (!bin.ecgSignal2.empty())
-            process_channel(res.ch2, bins, i, bin.ecgSignal2, bin.ch2, std_multiplier);
+            process_channel(res.ch2, bins, i, bin.ecgSignal2, bin.ecgSignal2, bin.ch2, std_multiplier);
 
+        // Ch3: ecgSignal3 is both the detection signal and the original
         if (!bin.ecgSignal3.empty())
-            process_channel(res.ch3, bins, i, bin.ecgSignal3, bin.ch3, std_multiplier);
+            process_channel(res.ch3, bins, i, bin.ecgSignal3, bin.ecgSignal3, bin.ch3, std_multiplier);
 
-        auto bin_end = std::chrono::steady_clock::now();
-        double bin_sec = std::chrono::duration<double>(bin_end - bin_start).count();
-
-        int d = ++done;
+        ++done;
     }
     return res;
 }

@@ -6,7 +6,7 @@ Saves all plots to a results folder. No interactive display.
 
 Compares C++ ECG raw method against MATLAB (ch1).
 Shows squared and absval C++ templates without MATLAB overlay.
-Resamples C++ (2000 Hz) to MATLAB (256 Hz) for overlay comparison.
+Displays R-peak counts (N) from wave_markings files on each plot.
 """
 
 import os
@@ -29,20 +29,24 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-MATLAB_DIR = (
-    "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\5_generate_template_files\\matlab"
+MATLAB_DIR = "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\5_generate_template_files\\mesa_templates_daniel"
+CPP_DIR = "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\5_generate_template_files\\mesa_templates_mira"
+WAVE_MARKINGS_CPP_DIR = (
+    "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\4_wave_bound_files\\mesa_rloc_mira"
 )
-CPP_DIR = (
-    "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\5_generate_template_files\\mesa"
+WAVE_MARKINGS_MATLAB_DIR = (
+    "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\4_wave_bound_files\\mesa_rloc_daniel"
 )
-RESULTS_DIR = (
-    "D:\\USERS\\MiraWelner\\QTVI\\testing\\5_template_generation\\results\\plots"
-)
-MATLAB_SR = 256.0
-CPP_SR = 2000.0
+RESULTS_DIR = "D:\\USERS\\MiraWelner\\QTVI\\testing\\5_template_generation\\results\\mesa_rloc_cpp"
+MATLAB_SR = 1000.0
+CPP_SR = 1000.0
 SR_RATIO = CPP_SR / MATLAB_SR
 METHODS = ["raw", "squared", "absval"]
-METHOD_COLORS = {"raw": "red", "squared": "orange", "absval": "purple"}
+METHOD_COLORS = {
+    "raw": "red",
+    "squared": "orange",
+    "absval": "purple",
+}
 
 
 # ============================================================================
@@ -98,6 +102,88 @@ def read_cpp_template_bin(path):
             info["ppgTemplate"] = read_double_vec()
             templates.append(info)
     return templates
+
+
+def read_cpp_wave_markings_bin(path):
+    bins = []
+    with open(path, "rb") as f:
+
+        def read_u64():
+            d = f.read(8)
+            return struct.unpack("<Q", d)[0] if len(d) == 8 else None
+
+        def read_u8():
+            d = f.read(1)
+            return struct.unpack("<B", d)[0] if len(d) == 1 else None
+
+        def skip_idx_array():
+            sz = read_u64()
+            if sz is None:
+                return 0
+            if sz > 0:
+                f.read(sz * 8)
+            return sz
+
+        def skip_signal_array():
+            sz = read_u64()
+            if sz is None:
+                return
+            if sz > 0:
+                f.read(sz * 8)
+
+        def skip_pair_vec():
+            sz = read_u64()
+            if sz is None:
+                return
+            if sz > 0:
+                f.read(sz * 16)
+
+        num_bins = read_u64()
+        if num_bins is None:
+            return bins
+
+        for _ in range(num_bins):
+            info = {}
+
+            # 9 R-peak index arrays: 3 methods x 3 channels
+            info["ch1_raw_n"] = skip_idx_array()
+            info["ch1_squared_n"] = skip_idx_array()
+            info["ch1_absval_n"] = skip_idx_array()
+            info["ch2_raw_n"] = skip_idx_array()
+            info["ch2_squared_n"] = skip_idx_array()
+            info["ch2_absval_n"] = skip_idx_array()
+            info["ch3_raw_n"] = skip_idx_array()
+            info["ch3_squared_n"] = skip_idx_array()
+            info["ch3_absval_n"] = skip_idx_array()
+
+            # 2 PPG index arrays
+            info["ppgMaxAmps_n"] = skip_idx_array()
+            info["ppgMinAmps_n"] = skip_idx_array()
+
+            # 4 raw signals
+            for _ in range(4):
+                skip_signal_array()
+
+            # 6 preprocessed signals
+            for _ in range(6):
+                skip_signal_array()
+
+            # 9 noise flags
+            for _ in range(9):
+                read_u8()
+
+            # pairs array
+            num_pairs = read_u64()
+            if num_pairs is not None and num_pairs > 0:
+                f.read(num_pairs * 16)
+
+            # ppg_bin_indexs, ecg_bin_indexs
+            skip_pair_vec()
+            skip_pair_vec()
+
+            bins.append(info)
+
+    return bins
 
 
 def extract_scalar(val):
@@ -163,6 +249,70 @@ def read_matlab_template_mat(path):
             info["avg_r_expand"] = 0.0
         templates.append(info)
     return templates
+
+
+# ============================================================================
+# Wave markings lookup
+# ============================================================================
+def read_matlab_wave_markings_mat(path):
+    mat = sio.loadmat(path, squeeze_me=False)
+    key = None
+    for k in ["wave_data", "data"]:
+        if k in mat:
+            key = k
+            break
+    if key is None:
+        for k in mat:
+            if not k.startswith("_"):
+                key = k
+                break
+    if key is None:
+        return None
+
+    raw = mat[key].flatten()
+    bins = []
+    for i in range(len(raw)):
+        cell = raw[i]
+        while isinstance(cell, np.ndarray) and cell.dtype == object and cell.ndim == 0:
+            cell = cell.flat[0]
+        if cell is None or (isinstance(cell, np.ndarray) and cell.size == 0):
+            bins.append({"ecgRIndex_n": 0, "ppgMinAmps_n": 0})
+            continue
+        info = {}
+        try:
+            v = cell["ecgRIndex"]
+            v = extract_vector(v) if v is not None else np.array([])
+            info["ecgRIndex_n"] = int(v.size)
+        except:
+            info["ecgRIndex_n"] = 0
+        try:
+            v = cell["ppgMinAmps"]
+            v = extract_vector(v) if v is not None else np.array([])
+            info["ppgMinAmps_n"] = int(v.size)
+        except:
+            info["ppgMinAmps_n"] = 0
+        bins.append(info)
+    return bins
+
+
+def find_wave_markings_cpp(subject_id):
+    wm_path = Path(WAVE_MARKINGS_CPP_DIR) / f"{subject_id}_wave_markings.bin"
+    if wm_path.exists():
+        try:
+            return read_cpp_wave_markings_bin(str(wm_path))
+        except Exception as e:
+            print(f"Warning: could not read C++ wave markings {wm_path}: {e}")
+    return None
+
+
+def find_wave_markings_matlab(subject_id):
+    wm_path = Path(WAVE_MARKINGS_MATLAB_DIR) / f"{subject_id}_wave_data.mat"
+    if wm_path.exists():
+        try:
+            return read_matlab_wave_markings_mat(str(wm_path))
+        except Exception as e:
+            print(f"Warning: could not read MATLAB wave markings {wm_path}: {e}")
+    return None
 
 
 # ============================================================================
@@ -232,23 +382,62 @@ def score_bin(mat, cpp):
 
 # ============================================================================
 # Plotting
+#
+# Grid layout (3 rows x 4 cols):
+#   Row 0 (MATLAB):     col0=MATLAB ECG, col1-2=empty, col3=MATLAB PPG
+#   Row 1 (C++):        col0=raw, col1=squared, col2=absval, col3=PPG
+#   Row 2 (Overlay):    col0=raw overlay, col1-2=empty, col3=PPG overlay
 # ============================================================================
-def plot_bin(subject_id, bin_idx, mat, cpp, scores, save_path):
-    fig = plt.figure(figsize=(20, 14), constrained_layout=True)
-    fig.suptitle(f"{subject_id}  —  Bin {bin_idx}", fontsize=18, fontweight="bold")
-    gs = GridSpec(3, 4, figure=fig)
+def plot_bin(
+    subject_id, bin_idx, mat, cpp, scores, save_path, wm_cpp=None, wm_matlab=None
+):
+    n_cols = len(METHODS) + 1  # 3 ECG methods + 1 PPG = 4
 
+    fig = plt.figure(figsize=(5 * n_cols, 14), constrained_layout=True)
+    fig.suptitle(f"{subject_id}  —  Bin {bin_idx}", fontsize=18, fontweight="bold")
+    gs = GridSpec(3, n_cols, figure=fig)
+
+    # Build column configs: (col_idx, score_key, label, color)
     col_configs = []
     for ci, method in enumerate(METHODS):
         col_configs.append(
             (ci, f"ecgTemplate_{method}", f"ECG ({method})", METHOD_COLORS[method])
         )
-    col_configs.append((3, "ppgTemplate", "PPG", "blue"))
+    col_configs.append((len(METHODS), "ppgTemplate", "PPG", "blue"))
 
     TITLE_SIZE = 20
     LABEL_SIZE = 20
     TICK_SIZE = 11
     LEGEND_SIZE = 11
+
+    # Build R-peak count strings from wave markings
+    cpp_labels = {}
+    matlab_labels = {}
+
+    if wm_cpp is not None:
+        for method in METHODS:
+            key = f"ch1_{method}_n"
+            n = wm_cpp.get(key, None)
+            cpp_labels[method] = f"N = {n} R-peaks" if n is not None else ""
+        n_ppg = wm_cpp.get("ppgMinAmps_n", None)
+        cpp_labels["ppg"] = f"N = {n_ppg} PPG valleys" if n_ppg is not None else ""
+    else:
+        for method in METHODS:
+            cpp_labels[method] = ""
+        cpp_labels["ppg"] = ""
+
+    if wm_matlab is not None:
+        n_ecg = wm_matlab.get("ecgRIndex_n", None)
+        matlab_labels["ecg"] = f"N = {n_ecg} R-peaks" if n_ecg is not None else ""
+        n_ppg = wm_matlab.get("ppgMinAmps_n", None)
+        matlab_labels["ppg"] = f"N = {n_ppg} PPG valleys" if n_ppg is not None else ""
+    else:
+        matlab_labels["ecg"] = ""
+        matlab_labels["ppg"] = ""
+
+    # Columns that get a MATLAB row (row 0) and overlay row (row 2)
+    MATLAB_COLS = {0, len(METHODS)}  # raw ECG and PPG
+    OVERLAY_COLS = {0, len(METHODS)}  # raw and PPG
 
     for col, key, label, color in col_configs:
         sc = scores[key]
@@ -256,27 +445,45 @@ def plot_bin(subject_id, bin_idx, mat, cpp, scores, save_path):
         if key == "ppgTemplate":
             mat_vec = mat["ppgTemplate"]
             cpp_vec = cpp["ppgTemplate"]
+            cpp_count_label = cpp_labels["ppg"]
+            matlab_count_label = matlab_labels["ppg"]
         else:
             mat_vec = mat["ecgTemplate"]
             cpp_vec = cpp[f"ch1_{key}"]
+            method_name = key.split("_")[-1]
+            cpp_count_label = cpp_labels.get(method_name, "")
+            matlab_count_label = matlab_labels["ecg"]
         mat_norm = sc["mat_norm"]
         cpp_norm = sc["cpp_norm"]
 
-        # Row 0: MATLAB — only for raw ECG (col 0) and PPG (col 3)
+        # Row 0: MATLAB
         ax0 = fig.add_subplot(gs[0, col])
-        if col == 0:
+        if col in MATLAB_COLS:
             if mat_vec.size > 0:
                 t = np.arange(mat_vec.size) / MATLAB_SR * 1000
-                ax0.plot(t, mat_vec, "b-", linewidth=1)
-            ax0.set_title(f"MATLAB ECG", fontsize=TITLE_SIZE)
-            ax0.set_ylabel("Daniel's Code", fontsize=LABEL_SIZE)
+                ax0.scatter(t, mat_vec, s=1)
+            title_str = "MATLAB ECG" if col == 0 else "MATLAB PPG"
+            ax0.set_title(title_str, fontsize=TITLE_SIZE)
+            if col == 0:
+                ax0.set_ylabel("Daniel's Code", fontsize=LABEL_SIZE)
             ax0.tick_params(labelsize=TICK_SIZE)
-        elif col == 3:
-            if mat_vec.size > 0:
-                t = np.arange(mat_vec.size) / MATLAB_SR * 1000
-                ax0.plot(t, mat_vec, "b-", linewidth=1)
-            ax0.set_title(f"MATLAB PPG", fontsize=TITLE_SIZE)
-            ax0.tick_params(labelsize=TICK_SIZE)
+            if matlab_count_label:
+                ax0.text(
+                    0.98,
+                    0.95,
+                    matlab_count_label,
+                    transform=ax0.transAxes,
+                    fontsize=12,
+                    fontweight="bold",
+                    ha="right",
+                    va="top",
+                    bbox=dict(
+                        boxstyle="round,pad=0.3",
+                        facecolor="white",
+                        alpha=0.8,
+                        edgecolor="gray",
+                    ),
+                )
         else:
             ax0.axis("off")
 
@@ -284,25 +491,43 @@ def plot_bin(subject_id, bin_idx, mat, cpp, scores, save_path):
         ax1 = fig.add_subplot(gs[1, col])
         if cpp_vec.size > 0:
             t = np.arange(cpp_vec.size) / CPP_SR * 1000
-            ax1.plot(t, cpp_vec, color=color, linewidth=1)
+            ax1.scatter(t, cpp_vec, s=1, color=color)
         ax1.set_title(f"C++ {label}", fontsize=TITLE_SIZE)
         if col == 0:
             ax1.set_ylabel("My Code", fontsize=LABEL_SIZE)
         ax1.tick_params(labelsize=TICK_SIZE)
 
-        # Row 2: Normalized overlay — only for raw ECG (col 0) and PPG (col 3)
+        if cpp_count_label:
+            ax1.text(
+                0.98,
+                0.95,
+                cpp_count_label,
+                transform=ax1.transAxes,
+                fontsize=12,
+                fontweight="bold",
+                ha="right",
+                va="top",
+                bbox=dict(
+                    boxstyle="round,pad=0.3",
+                    facecolor="white",
+                    alpha=0.8,
+                    edgecolor="gray",
+                ),
+            )
+
+        # Row 2: Normalized overlay
         ax2 = fig.add_subplot(gs[2, col])
-        if col == 0 or col == 3:
+        if col in OVERLAY_COLS:
             if mat_norm.size > 0 and cpp_norm.size > 0:
                 t = np.arange(mat_norm.size) / MATLAB_SR * 1000
-                ax2.plot(t, mat_norm, "b-", linewidth=1.2, label="MATLAB", alpha=0.8)
-                ax2.plot(
+                ax2.scatter(t, mat_norm, label="MATLAB", s=1, alpha=0.8)
+                method_tag = key.split("_")[-1] if "_" in key else "ppg"
+                ax2.scatter(
                     t,
                     cpp_norm,
-                    "--",
                     color=color,
-                    linewidth=1.2,
-                    label=f"C++ ({key.split('_')[-1] if '_' in key else 'ppg'})",
+                    s=1,
+                    label=f"C++ ({method_tag})",
                     alpha=0.8,
                 )
                 ax2.legend(fontsize=LEGEND_SIZE)
@@ -343,14 +568,15 @@ def plot_summary(subject_id, mat_list, cpp_list, save_path):
         pc, _, _, _ = resample_and_corr(mat["ppgTemplate"], cpp["ppgTemplate"])
         ppg_corrs.append(pc)
 
-    fig, axes = plt.subplots(4, 1, figsize=(4, 2), sharex=True)
+    n_plot_rows = len(METHODS) + 1
+    fig, axes = plt.subplots(n_plot_rows, 1, figsize=(4, 2 * n_plot_rows), sharex=True)
     fig.suptitle(f"{subject_id}  —  Template Correlations ({n} bins)", fontsize=13)
     x = np.arange(n)
 
-    for ax_idx, (method, ax) in enumerate(zip(METHODS, axes[:3])):
+    for ax_idx, (method, ax) in enumerate(zip(METHODS, axes[: len(METHODS)])):
         arr = np.array(corrs[method])
         colors = ["green" if c >= 0.9 else "orange" if c >= 0.7 else "red" for c in arr]
-        ax.bar(x, arr, color=colors, width=1.0, edgecolor="none")
+        ax.scatter(x, arr, c=colors, s=0.2, edgecolors="none")
         ax.axhline(0.9, color="green", linestyle="--", alpha=0.5)
         ax.set_ylabel("Corr")
         above90 = np.sum(arr >= 0.9)
@@ -365,19 +591,19 @@ def plot_summary(subject_id, mat_list, cpp_list, save_path):
 
     ppg_arr = np.array(ppg_corrs)
     colors = ["green" if c >= 0.9 else "orange" if c >= 0.7 else "red" for c in ppg_arr]
-    axes[3].bar(x, ppg_arr, color=colors, width=1.0, edgecolor="none")
-    axes[3].axhline(0.9, color="green", linestyle="--", alpha=0.5)
-    axes[3].set_ylabel("Corr", fontsize=9)
-    axes[3].set_xlabel("Bin Index")
+    axes[-1].scatter(x, ppg_arr, c=colors, s=1, edgecolors="none")
+    axes[-1].axhline(0.9, color="green", linestyle="--", alpha=0.5)
+    axes[-1].set_ylabel("Corr", fontsize=9)
+    axes[-1].set_xlabel("Bin Index")
     above90 = np.sum(ppg_arr >= 0.9)
     above80 = np.sum(ppg_arr >= 0.8)
-    axes[3].set_title(
+    axes[-1].set_title(
         f"PPG  —  ≥0.9: {above90}/{n} ({100 * above90 / n:.1f}%)  "
         f"≥0.8: {above80}/{n} ({100 * above80 / n:.1f}%)  "
         f"mean={np.mean(ppg_arr):.3f}",
         fontsize=9,
     )
-    axes[3].set_ylim(-0.2, 1.05)
+    axes[-1].set_ylim(-0.2, 1.05)
 
     plt.tight_layout()
     fig.savefig(save_path, dpi=100, bbox_inches="tight")
@@ -435,11 +661,49 @@ def main():
         print(f"Bin {args.bin} is None")
         return 1
 
+    # Load wave markings for R-peak counts
+    wm_cpp_list = find_wave_markings_cpp(args.subject)
+    wm_matlab_list = find_wave_markings_matlab(args.subject)
+
+    wm_cpp = None
+    if wm_cpp_list is not None and args.bin < len(wm_cpp_list):
+        wm_cpp = wm_cpp_list[args.bin]
+
+    wm_matlab = None
+    if wm_matlab_list is not None and args.bin < len(wm_matlab_list):
+        wm_matlab = wm_matlab_list[args.bin]
+
     os.makedirs(RESULTS_DIR, exist_ok=True)
     scores = score_bin(mat, cpp)
     save_path = os.path.join(RESULTS_DIR, f"{args.subject}_bin_{args.bin:04d}.svg")
-    plot_bin(args.subject, args.bin, mat, cpp, scores, save_path)
+    plot_bin(
+        args.subject,
+        args.bin,
+        mat,
+        cpp,
+        scores,
+        save_path,
+        wm_cpp=wm_cpp,
+        wm_matlab=wm_matlab,
+    )
     print(f"Saved: {save_path}")
+
+    if wm_cpp is not None:
+        print(f"C++ R-peak counts for bin {args.bin}:")
+        for method in METHODS:
+            key = f"ch1_{method}_n"
+            print(f"  ch1 {method}: N = {wm_cpp.get(key, '?')}")
+        print(f"  PPG valleys: N = {wm_cpp.get('ppgMinAmps_n', '?')}")
+    else:
+        print("Warning: C++ wave markings file not found")
+
+    if wm_matlab is not None:
+        print(f"MATLAB R-peak counts for bin {args.bin}:")
+        print(f"  ecgRIndex: N = {wm_matlab.get('ecgRIndex_n', '?')}")
+        print(f"  PPG valleys: N = {wm_matlab.get('ppgMinAmps_n', '?')}")
+    else:
+        print("Warning: MATLAB wave markings file not found")
+
     return 0
 
 

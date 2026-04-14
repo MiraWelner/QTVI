@@ -1,145 +1,128 @@
-﻿#pragma once
-
-#include "common.hpp"
-#include <vector>
-#include <cmath>
-#include <algorithm>
-#include <utility>
-
-/**
- * @file find_foot_pulseox.hpp
- * @brief Detect the "foot" (onset) of a PPG pulse beat using
- *        tangent-intersection via rotation.
- *
- * Port of find_foot_pulseox.m.
-*/
-
-const double M_PI = 3.14159265358979;
+#pragma once
+// ═══════════════════════════════════════════════════════════════════════════════
+// find_foot_pulseox.hpp — Exact match of find_foot_pulseox.m
+// ═══════════════════════════════════════════════════════════════════════════════
+#include "ppg_features.hpp"
 
 namespace ppg {
 
-    /**
-     * @brief Result of foot detection.
-     */
-    struct FootResult {
-        double value;  ///< Value of the rotated-max metric.
-        int    index;  ///< 0-based index of the foot within the beat.
-    };
-
-    /**
-     * @brief Find peaks in the first-difference of data that precede the max.
-     * @param data  A single beat waveform (1-D vector).
-     * @return Pair of vectors: (peak_amplitudes, peak_indices) — 0-based indices.
-     */
-    inline std::pair<std::vector<double>, std::vector<int>> find_diff_peaks(
-        const std::vector<double>& data)
-    {
-        auto d = diff(data);
-        std::vector<double> amps;
-        std::vector<int>    locs;
-
-        for (int i = 1; i + 1 < static_cast<int>(d.size()); ++i) {
-            if (d[i] > d[i - 1] && d[i] > d[i + 1]) {
-                amps.push_back(d[i]);
-                locs.push_back(i);
+namespace detail {
+    inline void findpeaks(const std::vector<double>& data,
+                          std::vector<double>& peak_vals,
+                          std::vector<int>& peak_locs) {
+        peak_vals.clear(); peak_locs.clear();
+        for (int i = 1; i < (int)data.size() - 1; i++) {
+            if (data[i] > data[i-1] && data[i] > data[i+1]) {
+                peak_vals.push_back(data[i]);
+                peak_locs.push_back(i);
             }
         }
-        return { amps, locs };
+    }
+} // namespace detail
+
+// Returns {value_at_foot, foot_index} (0-based)
+// Matches MATLAB: [val,idx] = find_foot_pulseox(data', 0)
+// MATLAB passes data as a row vector; we accept column vector.
+inline std::pair<double, int> find_foot_pulseox(const std::vector<double>& data) {
+    if (data.empty() || data.size() < 4) return {0.0, 0};
+
+    int n = (int)data.size();
+    double mx_val = *std::max_element(data.begin(), data.end());
+
+    // MATLAB: data = data - max(data)
+    std::vector<double> shifted(n);
+    for (int i = 0; i < n; i++) shifted[i] = data[i] - mx_val;
+
+    // MATLAB: [~,m] = max(data)
+    int m_idx = 0;
+    for (int i = 1; i < n; i++)
+        if (shifted[i] > shifted[m_idx]) m_idx = i;
+
+    // MATLAB: diff(data,1,2) — for row vector this is diff along columns
+    std::vector<double> ddata(n - 1);
+    for (int i = 0; i < n - 1; i++) ddata[i] = shifted[i+1] - shifted[i];
+
+    // MATLAB: [a,b] = findpeaks(diff(data))
+    std::vector<double> pvals; std::vector<int> plocs;
+    detail::findpeaks(ddata, pvals, plocs);
+
+    // MATLAB: points_of_intrest: peaks where b <= m
+    std::vector<std::pair<double, int>> poi;
+    for (size_t i = 0; i < plocs.size(); i++)
+        if (plocs[i] <= m_idx) poi.push_back({pvals[i], plocs[i]});
+
+    if (poi.empty()) {
+        // MATLAB: tmp(:,1) = m; tmp(:,2) = 0;
+        // But then the overshoot loop below would use this.
+        // Actually MATLAB does: if isempty(tmp), set tmp = [m(i), 0]
+        // which means the diffpeak location defaults to m_idx
+        auto it = std::max_element(ddata.begin(), ddata.end());
+        poi.push_back({*it, (int)(it - ddata.begin())});
     }
 
-    /**
-     * @brief Detect the foot (onset) index of a single PPG beat.
-     * @param beat  PPG beat waveform (single pulse, valley to valley).
-     * @return FootResult with the foot index and associated metric value.
-     */
-    inline FootResult find_foot_pulseox(const std::vector<double>& beat) {
-        if (beat.empty() || beat.size() < 4)
-            return { 0.0, 0 };
+    // MATLAB: sorted = sortrows(x, 'descend') — sort by amplitude descending
+    std::sort(poi.begin(), poi.end(),
+              [](auto& a, auto& b) { return a.first > b.first; });
 
-        const int n = static_cast<int>(beat.size());
-
-        // Normalise: subtract max so waveform is ≤ 0
-        double mx_val = *std::max_element(beat.begin(), beat.end());
-        std::vector<double> data(n);
-        for (int i = 0; i < n; ++i) data[i] = beat[i] - mx_val;
-
-        // Find location of max in original
-        int m_idx = static_cast<int>(std::max_element(beat.begin(), beat.end()) - beat.begin());
-
-        // Find diff-peaks before the max
-        auto [peak_amps, peak_locs] = find_diff_peaks(data);
-
-        std::vector<double> pre_amps;
-        std::vector<int>    pre_locs;
-        for (size_t k = 0; k < peak_locs.size(); ++k) {
-            if (peak_locs[k] <= m_idx) {
-                pre_amps.push_back(peak_amps[k]);
-                pre_locs.push_back(peak_locs[k]);
-            }
+    // MATLAB: overshoot logic — walk through sorted candidates
+    double best_val = 0;
+    int best_loc = poi[0].second;
+    int overshoot = 0;
+    for (auto& [cury, curx] : poi) {
+        if (cury > best_val) {
+            best_val = cury;
+            best_loc = curx;
+            overshoot = 0;
+        } else {
+            overshoot++;
         }
-
-        // Find the dominant diff-peak (largest amplitude, allowing small overshoot)
-        int best_loc = 0;
-        double best_amp = 0.0;
-        if (!pre_amps.empty()) {
-            // Sort descending by amplitude
-            std::vector<size_t> order(pre_amps.size());
-            std::iota(order.begin(), order.end(), 0);
-            std::sort(order.begin(), order.end(),
-                [&](size_t a, size_t b) { return pre_amps[a] > pre_amps[b]; });
-
-            int overshoot = 0;
-            for (size_t idx : order) {
-                if (pre_amps[idx] > best_amp) {
-                    best_amp = pre_amps[idx];
-                    best_loc = pre_locs[idx];
-                    overshoot = 0;
-                }
-                else {
-                    ++overshoot;
-                }
-                if (overshoot > 2) break;
-            }
-        }
-
-        if (best_loc == 0) {
-            // Fallback: max of diff
-            auto d = diff(data);
-            if (!d.empty()) {
-                best_loc = static_cast<int>(std::max_element(d.begin(), d.end()) - d.begin());
-            }
-        }
-
-        int end_pt = best_loc;
-        if (end_pt < 1) end_pt = 1;
-
-        // Tangent-intersection via rotation
-        // Move begin point to origin
-        double begin_y = data[0];
-        double end_x = static_cast<double>(end_pt);
-        double end_y = data[end_pt] - begin_y;
-
-        std::vector<double> moved(end_pt + 1);
-        for (int i = 0; i <= end_pt; ++i) moved[i] = data[i] - begin_y;
-
-        // Rotation angle
-        double theta = std::atan2(end_x, end_y) * 180.0 / M_PI;
-        if (theta < 0.0) theta = -theta;
-        double rad = theta * M_PI / 180.0;
-        double cos_t = std::cos(rad), sin_t = std::sin(rad);
-
-        // Rotate the curve and find the max of the x-component
-        double max_rot = -kInf;
-        int foot_idx = 0;
-        for (int i = 0; i <= end_pt; ++i) {
-            double rx = cos_t * (i + 1) + (-sin_t) * moved[i];
-            if (rx > max_rot) {
-                max_rot = rx;
-                foot_idx = i;
-            }
-        }
-
-        return { max_rot, foot_idx };
+        if (overshoot > 2) break;
     }
+
+    // MATLAB: if diffpeaks(i,2) == 0 → use max(diff(data))
+    if (best_loc == 0) {
+        auto it = std::max_element(ddata.begin(), ddata.end());
+        best_loc = (int)(it - ddata.begin());
+    }
+
+    int diffpeak_loc = std::max(1, best_loc);
+
+    // MATLAB: p1_prime = [1 0] - beginPoints → translation so point starts at (1,0)
+    // beginPoints = [1, data(1)] → p1_prime = [0, -data(1)]
+    double p1_y_offset = -shifted[0];
+
+    // MATLAB: moved = data + p1_prime(:,2)
+    std::vector<double> moved(diffpeak_loc + 1);
+    for (int i = 0; i <= diffpeak_loc; i++) moved[i] = shifted[i] + p1_y_offset;
+
+    // MATLAB: p2_prime = endPoints + p1_prime
+    // endPoints = [diffpeaks(i,2), data(i, diffpeaks(i,2))]
+    double p2_x = (double)diffpeak_loc;  // 0-based index used as coordinate
+    double p2_y = shifted[diffpeak_loc] + p1_y_offset;
+
+    // MATLAB: theta = atand(p2_prime(i,1)/p2_prime(i,2))
+    // then: if theta < 0, theta = theta * -1
+    double theta_deg = std::atan2(p2_x, p2_y) * 180.0 / M_PI;
+    // MATLAB uses atand(p2_x/p2_y) which is atan(p2_x/p2_y) in radians→degrees
+    theta_deg = std::atan(p2_x / p2_y) * 180.0 / M_PI;
+    if (theta_deg < 0) theta_deg = -theta_deg;
+
+    double theta_rad = theta_deg * M_PI / 180.0;
+    double cos_t = std::cos(theta_rad), sin_t = std::sin(theta_rad);
+
+    // MATLAB: R = [cosd(theta) -sind(theta); sind(theta) cosd(theta)]
+    // tmp = R * [1:diffpeaks(i,2); moved(i,1:diffpeaks(i,2))]
+    // rotated = tmp(1,:)
+    // [val,idx] = max(rotated)
+    // Note: MATLAB uses 1:diffpeaks(i,2) as x-coords (1-based, integers)
+    int best_idx = 0; double best_rotated = -1e18;
+    for (int i = 0; i <= diffpeak_loc; i++) {
+        // MATLAB x-coord is (i+1) since it uses 1-based indexing
+        double rx = cos_t * (double)(i + 1) - sin_t * moved[i];
+        if (rx > best_rotated) { best_rotated = rx; best_idx = i; }
+    }
+
+    return {data[best_idx], best_idx};
+}
 
 } // namespace ppg

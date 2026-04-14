@@ -23,8 +23,8 @@ using std::map;
 using std::pair;
 using std::tuple;
 
-constexpr double ECG_SAMPLE_RATE = 2000.0;
-constexpr double PPG_SAMPLE_RATE = 2000.0;
+constexpr double ECG_SAMPLE_RATE = 1000.0;
+constexpr double PPG_SAMPLE_RATE = 1000.0;
 
 inline constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 inline constexpr double Inf = std::numeric_limits<double>::infinity();

@@ -1,6 +1,7 @@
 ﻿   Qt/MSBuild: 3.4.1.0
   Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
    Qt: 6.10.2
+  6_template_marking.cpp
   6_template_marking.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\6_template_marking\x64\Debug\6_template_marking.exe
   'pwsh.exe' is not recognized as an internal or external command,
   operable program or batch file.

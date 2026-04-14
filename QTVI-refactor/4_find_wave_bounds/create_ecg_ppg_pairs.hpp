@@ -2,7 +2,7 @@
  * @file   create_ecg_ppg_pairs.hpp
  * @brief  Identify R-peaks on ECG channels using three preprocessing methods
  *         (raw, squared, abs-value), pair channel-1 raw R-peaks with PPG valleys.
- *         Original and preprocessed signals are stored in the output.
+ *         Original, preprocessed, and pre-bandpass signals are stored in the output.
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -23,7 +23,8 @@
  /**
   * @brief  Run R-peak detection on three versions of a signal: raw,
   *         squared, and absolute value. Each is independently noise-checked.
-  *         The squared and absval signals are stored in the result.
+  *         The squared and absval signals are stored in the result, along
+  *         with the pre-bandpass (detrended) version of each.
   *
   * @param[in]  signal    Original ECG channel.
   * @param[in]  fileID    Study identifier forwarded to JoinedRR.
@@ -53,7 +54,8 @@ static inline ChannelRPeaks detect_channel_3way(
             }
 
             try {
-                rIndex = JoinedRR(sig, fileID);
+                JoinedRRResult jrr = JoinedRR_full(sig, fileID);
+                rIndex = std::move(jrr.peaks);
 
                 if (hasPPG && ppgCount > 0) {
                     double r = static_cast<double>(rIndex.size());
@@ -160,6 +162,8 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs(
 
         /* ----------------------------------------------------------------
          * Step 2 - ECG R-peak detection (3 methods per channel)
+         *          Pre-bandpass signals are now captured automatically
+         *          by detect_channel_3way via JoinedRR_full.
          * ---------------------------------------------------------------- */
         if (use_R_algorithm && !seg.ecg_signal_1.empty()) {
             d.ch1 = detect_channel_3way(seg.ecg_signal_1, fileID, hasPPG, d.ppgMinAmps.size());

@@ -7,7 +7,7 @@
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
- * @date   2026-03-26
+ * @date   2026-03-30
  */
 #pragma once
 
@@ -43,6 +43,13 @@ struct ChannelRPeaks {
 
     std::vector<double> squared_signal; ///< The squared version of the ECG channel
     std::vector<double> absval_signal;  ///< The abs-value version of the ECG channel
+
+    /// Pre-bandpass (detrended) signals used as input to each detection method.
+    /// "raw_prebp" is the detrended original; "squared_prebp" and "absval_prebp"
+    /// are the detrended squared / abs-value versions before their own bandpass.
+    std::vector<double> raw_prebp;
+    std::vector<double> squared_prebp;
+    std::vector<double> absval_prebp;
 
     bool raw_noisy = false;
     bool squared_noisy = false;

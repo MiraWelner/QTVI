@@ -1,1 +1,0 @@
-Please view readme.md at top of repository for more details

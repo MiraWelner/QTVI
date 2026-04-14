@@ -32,7 +32,7 @@
           "Children": [
             {
               "$type": "Bookmark",
-              "Name": "ST:0:0:{d78612c7-9962-4b83-95d9-268046dad23a}"
+              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
             },
             {
               "$type": "Document",
@@ -42,9 +42,10 @@
               "RelativeDocumentMoniker": "resample.hpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\1_file_to_bin\\resample.hpp",
               "RelativeToolTip": "resample.hpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA0AAAAQAAAAAAAAAA==",
+              "ViewState": "AgIAADMAAAAAAAAAAAAAABcAAAAkAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-18T19:40:58.586Z"
+              "WhenOpened": "2026-03-18T19:40:58.586Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
@@ -54,10 +55,14 @@
               "RelativeDocumentMoniker": "file_to_bin.cpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\1_file_to_bin\\file_to_bin.cpp",
               "RelativeToolTip": "file_to_bin.cpp",
-              "ViewState": "AgIAAAgBAAAAAAAAAAAqwEEBAAABAAAAAAAAAA==",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAD4CAAA7AAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-03-18T15:27:13.282Z",
               "EditorCaption": ""
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{d78612c7-9962-4b83-95d9-268046dad23a}"
             },
             {
               "$type": "Bookmark",

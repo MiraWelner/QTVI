@@ -42,7 +42,7 @@ inline RPeakDetectResult rpeakdetect(const vector<double>& data,
     for (auto& val : x) val -= mu;
 
     // 2. Bandpass filtering
-    std::vector<double> bpf = bandpass_filtfilt(2, 0.05, 100.0, 2000.0, x);
+    std::vector<double> bpf = bandpass_filtfilt(2, 0.05, 100.0, 1000.0, x);
 
     // 3. Differentiation
     std::vector<double> dff = diff(bpf);

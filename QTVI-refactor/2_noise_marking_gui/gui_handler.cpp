@@ -2,22 +2,19 @@
  * @file   gui_handler.cpp
  * @brief  Entry point of the noise marking program. Makes a GUI where you can
  *         mark the noise you see in the ECG1/ECG2/ECG3/PPG, and outputs a csv
- *         and a .bin file.
+ *         and a .bin file. Also displays acceleration data (read-only).
  *
- * Input .bin format (88-byte header):
- *   Offset  0: ecgRate       (double)  — ECG sampling rate in Hz
- *   Offset  8: ppgRate       (double)  — PPG sampling rate in Hz
- *   Offset 16: epochSize     (double)  — sleep stage epoch duration in seconds
- *   Offset 24: size1–sizeS   (uint64)  — sample counts per channel
+ * Input .bin format (160-byte header, 40 × uint32):
+ *   Offset  0: signal_rate    (uint32) — upsampled signal rate (1000 Hz)
+ *   Offset  4: boolean_rate   (uint32) — boolean channel rate (1 Hz)
+ *   Offset  8: pacemaker_rate (uint32) — pacemaker epoch rate
+ *   Offset 12: sleep_rate     (uint32) — sleep epoch duration in seconds
+ *   Offset 16–156: 36 × uint32 channel sizes (ECG1..Resp)
+ *   Offset 156: size_sleep    (uint32) — sleep stage epoch count
  *
  * Signal data (contiguous doubles after header):
- *   [size1] ECG1, [size2] ECG2, [size3] ECG3, [sizeP] PPG, [sizeS] Sleep
- *
- * Missing channels are stored as a single -1.0 with their size field set to 1.
- *
- * Output .bin format:
- *   [uint64] count, then count × 6 doubles:
- *     startSample, endSample, startSec, endSec, labelId, typeId
+ *   36 channels in header order, then sleep stages.
+ *   Missing channels are stored as a single -1.0 with size = 1.
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -36,6 +33,9 @@
 #include <QKeyEvent>
 #include <QShortcut>
 #include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QMessageBox>
 #include <algorithm>
 
  // ============================================================================
@@ -46,6 +46,9 @@ static const QColor COLOR_ECG1 = QColor("#1ABC9C");
 static const QColor COLOR_ECG2 = QColor("#3498DB");
 static const QColor COLOR_ECG3 = QColor("#9B59B6");
 static const QColor COLOR_PPG = QColor("#E74C3C");
+static const QColor COLOR_ACCEL_X = QColor("#F39C12");  // orange
+static const QColor COLOR_ACCEL_Y = QColor("#27AE60");  // green
+static const QColor COLOR_ACCEL_Z = QColor("#8E44AD");  // purple
 
 static const QMap<QString, QColor> MARKING_COLORS = {
     {"Noise/Artifact",         QColor(255, 255, 0,   30)},
@@ -67,7 +70,7 @@ namespace {
 
     void clearAxes(QChart* chart) {
         if (!chart) return;
-        for (auto* axis : chart->axes()) chart->removeAxis(axis);
+        for (QAbstractAxis* axis : chart->axes()) chart->removeAxis(axis);
     }
 
     void setupChartDefaults(QChartView* view) {
@@ -159,17 +162,43 @@ void noise_marking_gui::updateButtonStatesForChannel(const QString& label) {
 
     bool active = isChannelActive(label);
 
-    // Gray out both buttons if channel has no data
-    startBtn->setEnabled(active);
-    stopBtn->setEnabled(false);
-
-    // Clear styling
-    startBtn->setStyleSheet("");
-    stopBtn->setStyleSheet("");
-
     if (!active) {
+        startBtn->setEnabled(false);
+        stopBtn->setEnabled(false);
         startBtn->setStyleSheet("color: gray;");
         stopBtn->setStyleSheet("color: gray;");
+        return;
+    }
+
+    // Channel is active — restore button appearance based on marking phase
+    MarkPhase phase = markStateFor(label).phase;
+
+    switch (phase) {
+    case MarkPhase::WaitingForStart:
+        startBtn->setEnabled(true);
+        startBtn->setStyleSheet("background-color: #f39c12; color: white;");
+        stopBtn->setEnabled(false);
+        stopBtn->setStyleSheet("");
+        break;
+    case MarkPhase::WaitingForEnd:
+        startBtn->setEnabled(true);
+        startBtn->setStyleSheet("background-color: #f39c12; color: white;");
+        stopBtn->setEnabled(true);
+        stopBtn->setStyleSheet("");
+        break;
+    case MarkPhase::WaitingForStop:
+        startBtn->setEnabled(true);
+        startBtn->setStyleSheet("");
+        stopBtn->setEnabled(true);
+        stopBtn->setStyleSheet("background-color: #e74c3c; color: white;");
+        break;
+    case MarkPhase::Idle:
+    default:
+        startBtn->setEnabled(true);
+        startBtn->setStyleSheet("");
+        stopBtn->setEnabled(false);
+        stopBtn->setStyleSheet("");
+        break;
     }
 }
 
@@ -256,9 +285,11 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     // --- Chart setup ---
     const QList<QChartView*> charts = {
         ui->sleep_state_axis, ui->amp_ecg_axis, ui->amp_ppg_axis,
-        ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3, ui->ppg_axis
+        ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3, ui->ppg_axis,
+        ui->accel_axis
     };
     for (auto* view : charts) {
+        if (!view) continue;
         view->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         view->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         view->setRenderHint(QPainter::Antialiasing);
@@ -270,9 +301,12 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     m_skipInterval = ui->skip_interval_box->text().toDouble();
     if (m_skipInterval <= 0.0) m_skipInterval = 5.0;
 
-    for (auto* cv : { ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
-                     ui->ppg_axis, ui->amp_ecg_axis, ui->amp_ppg_axis })
-        setupChartDefaults(cv);
+    QList<QChartView*> defaultCharts = { ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
+                                         ui->ppg_axis, ui->amp_ecg_axis, ui->amp_ppg_axis,
+                                         ui->accel_axis };
+    for (int i = 0; i < defaultCharts.size(); ++i) {
+        if (defaultCharts[i]) setupChartDefaults(defaultCharts[i]);
+    }
 
     // Ampogram series
     m_ecgAmpSeries = new QLineSeries();
@@ -307,39 +341,115 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     hypnoChart->addSeries(m_hypnoCursorBar);
 
     m_currentMarkingType = ui->marking_type->currentText();
+
+    // Explicit connects for the file selector
+    connect(ui->browse_file_button, &QPushButton::clicked,
+        this, &noise_marking_gui::handleBrowseFile);
+
 }
 
 noise_marking_gui::~noise_marking_gui() = default;
+
+GenExcStruct noise_marking_gui::getMarkings() const {
+    GenExcStruct result = m_genExc;
+    result.filePath = m_binFilePath;
+    return result;
+}
+
+QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
+    // Start with stashed markings for other files
+    QMap<QString, GenExcStruct> all = m_fileMarkings;
+    // Overwrite / add the current file's live markings
+    GenExcStruct current = m_genExc;
+    current.filePath = m_binFilePath;
+    all[m_binFilePath] = current;
+
+    QVector<GenExcStruct> result;
+    for (auto it = all.cbegin(); it != all.cend(); ++it) {
+        if (!it->noiseExc.isEmpty())
+            result.append(it.value());
+    }
+    return result;
+}
 
 // ============================================================================
 // File Loading
 // ============================================================================
 
 void noise_marking_gui::setFileSource(const QString& filePath) {
+    loadSelectedFile(filePath);
+}
+
+void noise_marking_gui::loadSelectedFile(const QString& filePath) {
+    // Stash markings for the file we're leaving
+    if (!m_binFilePath.isEmpty()) {
+        m_genExc.filePath = m_binFilePath;
+        m_fileMarkings[m_binFilePath] = m_genExc;
+    }
+
     m_binFilePath = filePath;
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) return;
 
-    double ecgRate = 0, ppgRate = 0, epochSize = 0;
-    file.read(reinterpret_cast<char*>(&ecgRate), sizeof(double));
-    file.read(reinterpret_cast<char*>(&ppgRate), sizeof(double));
-    file.read(reinterpret_cast<char*>(&epochSize), sizeof(double));
-
-    m_ecgSR = ecgRate;
-    m_ppgSR = ppgRate;
-    m_sleepSR = (epochSize > 0) ? (1.0 / epochSize) : 0;
-
-    file.read(reinterpret_cast<char*>(&m_totalEcg1Samples), sizeof(uint64_t));
-    file.read(reinterpret_cast<char*>(&m_totalEcg2Samples), sizeof(uint64_t));
-    file.read(reinterpret_cast<char*>(&m_totalEcg3Samples), sizeof(uint64_t));
-    file.read(reinterpret_cast<char*>(&m_totalPpgSamples), sizeof(uint64_t));
-    file.read(reinterpret_cast<char*>(&m_totalSleepSamples), sizeof(uint64_t));
-
-    m_fileHeaderSize = file.pos();
+    uint32_t header[40] = {};
+    file.read(reinterpret_cast<char*>(header), sizeof(header));
     file.close();
 
-    m_noiseManager = std::make_unique<NoiseManager>(m_ecgSR);
+    m_ecgSR = static_cast<double>(header[0]);
+    m_boolSR = static_cast<double>(header[1]);
+    m_ppgSR = m_ecgSR;
+    double sleepEpoch = static_cast<double>(header[3]);
+    m_sleepSR = (sleepEpoch > 0) ? (1.0 / sleepEpoch) : 0;
+
+    for (int i = 0; i < 36; ++i)
+        m_chanSizes[i] = header[4 + i];
+    m_totalSleepSamples = header[4 + 36];
+
+    // Restore markings if we've seen this file before, otherwise start fresh
+    if (m_fileMarkings.contains(filePath)) {
+        m_genExc = m_fileMarkings[filePath];
+        m_noiseManager = std::make_unique<NoiseManager>(m_ecgSR);
+        for (int i = 0; i < m_genExc.noiseExc.size(); ++i) {
+            double sr = sampleRateForSignal(m_genExc.data_type[i]);
+            m_noiseManager->addSegment(
+                static_cast<size_t>(m_genExc.noiseExc[i].first * sr),
+                static_cast<size_t>(m_genExc.noiseExc[i].second * sr),
+                m_genExc.data_type[i].toStdString(),
+                m_genExc.marking_type[i].toStdString()
+            );
+        }
+    }
+    else {
+        m_genExc = GenExcStruct();
+        m_genExc.filePath = filePath;
+        m_noiseManager = std::make_unique<NoiseManager>(m_ecgSR);
+    }
+
+    m_currentStartTime = 0.0;
+    m_markAllActive = false;
+
+    cancelMarking("ECG1");
+    cancelMarking("ECG2");
+    cancelMarking("ECG3");
+    cancelMarking("PPG");
+
+    setWindowTitle("Marking: " + QFileInfo(filePath).fileName());
+
     loadChunkFromFile(0);
+}
+
+void noise_marking_gui::handleBrowseFile() {
+    QString startDir;
+    if (!m_binFilePath.isEmpty())
+        startDir = QFileInfo(m_binFilePath).absolutePath();
+
+    QString path = QFileDialog::getOpenFileName(
+        this, "Select Binary Signal File", startDir,
+        "Binary files (*.bin);;All files (*)");
+
+    if (path.isEmpty() || path == m_binFilePath) return;
+
+    loadSelectedFile(path);
 }
 
 bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
@@ -348,33 +458,65 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 
     m_currentChunkIndex = chunkIndex;
 
-    auto loadSignal = [&](QVector<double>& dest, uint64_t totalSamples,
-        double sr, uint64_t sampleOffset) {
-            uint64_t perChunk = static_cast<uint64_t>(CHUNK_DURATION_SEC * sr);
-            uint64_t start = chunkIndex * perChunk;
-            uint64_t count = (totalSamples > start)
-                ? std::min(perChunk, totalSamples - start) : 0;
-            dest.resize(static_cast<int>(count));
-            file.seek(m_fileHeaderSize + (sampleOffset + start) * sizeof(double));
-            file.read(reinterpret_cast<char*>(dest.data()), count * sizeof(double));
+    // Compute byte offset of each channel's data after the 160-byte header
+    uint64_t chanByteOffsets[36];
+    uint64_t running = 0;
+    for (int i = 0; i < 36; ++i) {
+        chanByteOffsets[i] = running;
+        running += m_chanSizes[i];
+    }
+    uint64_t sleepByteOffset = running;
+
+    // Rate for a given channel index
+    auto rateForChannel = [this](int chIdx) -> double {
+        if (chIdx == CH_MARKER || chIdx == CH_TEMP || chIdx == CH_PACEMAKER)
+            return m_boolSR;
+        if (chIdx >= CH_EKG_OFF && chIdx <= CH_EEG3_OFF)
+            return m_boolSR;
+        if (chIdx == CH_OXSTATUS || chIdx == CH_SPO2 || chIdx == CH_HR)
+            return m_boolSR;
+        return m_ecgSR;
         };
 
-    uint64_t offset = 0;
-    loadSignal(m_ecg1, m_totalEcg1Samples, m_ecgSR, offset);  offset += m_totalEcg1Samples;
-    loadSignal(m_ecg2, m_totalEcg2Samples, m_ecgSR, offset);  offset += m_totalEcg2Samples;
-    loadSignal(m_ecg3, m_totalEcg3Samples, m_ecgSR, offset);  offset += m_totalEcg3Samples;
-    loadSignal(m_ppg, m_totalPpgSamples, m_ppgSR, offset);  offset += m_totalPpgSamples;
-    loadSignal(m_sleepStages, m_totalSleepSamples, m_sleepSR, offset);
+    auto loadSignal = [&](QVector<double>& dest, int chIdx) {
+        double sr = rateForChannel(chIdx);
+        uint64_t totalSamples = m_chanSizes[chIdx];
+        uint64_t perChunk = static_cast<uint64_t>(CHUNK_DURATION_SEC * sr);
+        uint64_t start = chunkIndex * perChunk;
+        uint64_t count = (totalSamples > start)
+            ? std::min(perChunk, totalSamples - start) : 0;
+        dest.resize(static_cast<int>(count));
+        file.seek(FILE_HEADER_SIZE + (chanByteOffsets[chIdx] + start) * sizeof(double));
+        file.read(reinterpret_cast<char*>(dest.data()), count * sizeof(double));
+        };
+
+    loadSignal(m_ecg1, CH_ECG1);
+    loadSignal(m_ecg2, CH_ECG2);
+    loadSignal(m_ecg3, CH_ECG3);
+    loadSignal(m_ppg, CH_PPG);
+    loadSignal(m_accelX, CH_ACCEL_X);
+    loadSignal(m_accelY, CH_ACCEL_Y);
+    loadSignal(m_accelZ, CH_ACCEL_Z);
+
+    // Sleep stages
+    {
+        uint64_t perChunk = static_cast<uint64_t>(CHUNK_DURATION_SEC * m_sleepSR);
+        uint64_t start = chunkIndex * perChunk;
+        uint64_t count = (m_totalSleepSamples > start)
+            ? std::min(perChunk, m_totalSleepSamples - start) : 0;
+        m_sleepStages.resize(static_cast<int>(count));
+        file.seek(FILE_HEADER_SIZE + (sleepByteOffset + start) * sizeof(double));
+        file.read(reinterpret_cast<char*>(m_sleepStages.data()), count * sizeof(double));
+    }
+
     file.close();
 
-    // Header label
     int startHr = chunkIndex * 8;
     ui->topLabel->setText(
         QString("     Data Range: Hour %1 to Hour %2").arg(startHr).arg(startHr + 8));
 
     m_currentStartTime = 0;
 
-    // Determine which channels have real data
     m_activeChannels.clear();
     auto markActive = [this](const QString& label, const QVector<double>& data) {
         bool missing = isMissingSignal(data);
@@ -388,7 +530,14 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     markActive("ECG3", m_ecg3);
     markActive("PPG", m_ppg);
 
-    // Gray out / enable buttons based on which channels are present
+    // Accel axis: show if any accel channel has data
+    if (ui->accel_axis) {
+        bool accelPresent = !isMissingSignal(m_accelX)
+            || !isMissingSignal(m_accelY)
+            || !isMissingSignal(m_accelZ);
+        ui->accel_axis->setVisible(accelPresent);
+    }
+
     updateAllChannelButtonStates();
 
     handle_ampogram_plot();
@@ -399,7 +548,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 
     uint64_t ecgPerChunk = static_cast<uint64_t>(CHUNK_DURATION_SEC * m_ecgSR);
     ui->prev8hours->setEnabled(chunkIndex > 0);
-    ui->next8hours->setEnabled((chunkIndex * ecgPerChunk + m_ecg1.size()) < m_totalEcg1Samples);
+    ui->next8hours->setEnabled((chunkIndex * ecgPerChunk + m_ecg1.size()) < m_chanSizes[CH_ECG1]);
 
     return true;
 }
@@ -556,13 +705,25 @@ void noise_marking_gui::handle_data_plot() {
     m_highlights.clear();
 
     auto plotSignal = [&](QChartView* view, const QVector<double>& data, double sr,
-        QLineSeries* marker, double markerPos, const QColor& color)
+        QLineSeries* marker, double markerPos, const QColor& color,
+        const QString& signalName = QString())
         -> std::pair<double, double> {
         if (!view || !view->chart()) return { 1e9, -1e9 };
         QChart* chart = view->chart();
 
         for (auto* s : chart->series()) { if (s != marker) { chart->removeSeries(s); delete s; } }
         for (auto* a : chart->axes()) { chart->removeAxis(a); delete a; }
+
+        // Show signal name as a small left-aligned title
+        if (!signalName.isEmpty()) {
+            chart->setTitle(signalName);
+            QFont titleFont("Arial", 8, QFont::Bold);
+            chart->setTitleFont(titleFont);
+            chart->setTitleBrush(color);
+        }
+        else {
+            chart->setTitle(QString());
+        }
 
         auto* xAxis = new QCategoryAxis();
         xAxis->setRange(m_currentStartTime, m_currentStartTime + m_windowDuration);
@@ -630,13 +791,95 @@ void noise_marking_gui::handle_data_plot() {
             if (!isChannelActive(label)) return;
             double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
             double localMarkerPos = state.globalStartTime - globalOffset;
-            plotSignal(view, data, sr, state.startMarkerLine, localMarkerPos, color);
+            plotSignal(view, data, sr, state.startMarkerLine, localMarkerPos, color, label);
         };
 
     maybePlot("ECG1", ui->ecg_axis_1, m_ecg1, m_ecgSR, m_markState_ecg1, COLOR_ECG1);
     maybePlot("ECG2", ui->ecg_axis_2, m_ecg2, m_ecgSR, m_markState_ecg2, COLOR_ECG2);
     maybePlot("ECG3", ui->ecg_axis_3, m_ecg3, m_ecgSR, m_markState_ecg3, COLOR_ECG3);
     maybePlot("PPG", ui->ppg_axis, m_ppg, m_ppgSR, m_markState_ppg, COLOR_PPG);
+
+    // Accel: display-only, overlay X/Y/Z on one chart
+    if (ui->accel_axis) {
+        bool anyAccel = !isMissingSignal(m_accelX)
+            || !isMissingSignal(m_accelY)
+            || !isMissingSignal(m_accelZ);
+        if (anyAccel) {
+            // Plot X first to set up the chart axes, then add Y and Z as extra series
+            QChartView* av = ui->accel_axis;
+            QChart* chart = av->chart();
+
+            // Clear existing
+            for (auto* s : chart->series()) { chart->removeSeries(s); delete s; }
+            for (auto* a : chart->axes()) { chart->removeAxis(a); delete a; }
+
+            chart->setTitle("ACCEL");
+            chart->setTitleFont(QFont("Arial", 8, QFont::Bold));
+            chart->setTitleBrush(COLOR_ACCEL_X);
+
+            // X axis (time)
+            auto* xAxis = new QCategoryAxis();
+            xAxis->setRange(m_currentStartTime, m_currentStartTime + m_windowDuration);
+            double offset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+            for (int i = 0; i <= 4; ++i) {
+                double val = m_currentStartTime + i * m_windowDuration / 4.0;
+                double t = offset + val;
+                int h = static_cast<int>(t / 3600);
+                int mn = static_cast<int>(fmod(t, 3600) / 60);
+                double s = fmod(t, 60.0);
+                xAxis->append(QString("%1:%2:%3")
+                    .arg(h, 2, 10, QChar('0'))
+                    .arg(mn, 2, 10, QChar('0'))
+                    .arg(s, 5, 'f', 2, QChar('0')), val);
+            }
+            xAxis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
+            xAxis->setGridLineVisible(false);
+            xAxis->setLabelsFont(QFont("Arial", 7));
+            xAxis->setLabelsVisible(false);
+            chart->addAxis(xAxis, Qt::AlignBottom);
+            chart->setMargins(QMargins(0, 0, 20, 0));
+
+            // Y axis
+            auto* yAxis = new QValueAxis();
+            yAxis->setVisible(false);
+            chart->addAxis(yAxis, Qt::AlignLeft);
+
+            // Find global min/max across all 3 axes
+            double gMin = 1e9, gMax = -1e9;
+
+            auto addAccelSeries = [&](const QVector<double>& data, const QColor& color) {
+                if (isMissingSignal(data)) return;
+                auto* series = new QLineSeries();
+                series->setUseOpenGL(true);
+                series->setPen(QPen(color, 1));
+                chart->addSeries(series);
+
+                int startIdx = std::clamp(static_cast<int>(m_currentStartTime * m_ecgSR),
+                    0, static_cast<int>(data.size() - 1));
+                int endIdx = std::clamp(static_cast<int>((m_currentStartTime + m_windowDuration) * m_ecgSR),
+                    0, static_cast<int>(data.size()));
+
+                QList<QPointF> pts;
+                for (int i = startIdx; i < endIdx; ++i) {
+                    pts.append({ static_cast<double>(i) / m_ecgSR, data[i] });
+                    gMin = std::min(gMin, data[i]);
+                    gMax = std::max(gMax, data[i]);
+                }
+                series->replace(pts);
+                series->attachAxis(xAxis);
+                series->attachAxis(yAxis);
+                };
+
+            addAccelSeries(m_accelX, COLOR_ACCEL_X);
+            addAccelSeries(m_accelY, COLOR_ACCEL_Y);
+            addAccelSeries(m_accelZ, COLOR_ACCEL_Z);
+
+            if (gMin < gMax)
+                yAxis->setRange(gMin - 0.5, gMax + 0.5);
+            else
+                yAxis->setRange(-1.0, 1.0);
+        }
+    }
 
     updateNoiseHighlights();
 }
@@ -745,20 +988,40 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
 
             // --- Mark-all mode: propagate click to every active channel ---
             if (m_markAllActive) {
-                // Check if any active channel is in a waiting phase
-                bool anyWaitingStart = false;
-                bool anyWaitingStop = false;
+                // Categorise the phases of all active channels
+                bool anyWaitingForFirstClick = false; // WaitingForStart only
+                bool anyWaitingForEnd = false;        // WaitingForEnd (start placed)
+                bool anyWaitingStop = false;          // WaitingForStop
                 for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
                     if (!isChannelActive(lbl)) continue;
                     MarkPhase p = markStateFor(lbl).phase;
-                    if (p == MarkPhase::WaitingForStart || p == MarkPhase::WaitingForEnd)
-                        anyWaitingStart = true;
+                    if (p == MarkPhase::WaitingForStart)
+                        anyWaitingForFirstClick = true;
+                    if (p == MarkPhase::WaitingForEnd)
+                        anyWaitingForEnd = true;
                     if (p == MarkPhase::WaitingForStop)
                         anyWaitingStop = true;
                 }
 
-                if (anyWaitingStart) {
-                    // Place start marker on all active channels at this time
+                // 1) Finalize any channels that are WaitingForStop first.
+                //    This handles the case where some channels were individually
+                //    stopped while others are still in WaitingForEnd.
+                if (anyWaitingStop) {
+                    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+                        if (!isChannelActive(lbl)) continue;
+                        ChannelMarkingState& st = markStateFor(lbl);
+                        if (st.phase != MarkPhase::WaitingForStop) continue;
+                        QChartView* targetCv = chartViewForSignalLabel(lbl);
+                        finalizeMarking(targetCv, clickedX, lbl);
+                    }
+                    // Don't touch channels that are still in other phases;
+                    // they keep their existing start markers.
+                    return true;
+                }
+
+                // 2) Place (or move) the start marker on channels that
+                //    haven't had their start set yet, or are having it moved.
+                if (anyWaitingForFirstClick || anyWaitingForEnd) {
                     for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
                         if (!isChannelActive(lbl)) continue;
                         ChannelMarkingState& st = markStateFor(lbl);
@@ -773,18 +1036,6 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
                         st.phase = MarkPhase::WaitingForEnd;
                     }
                     ui->stop_all_mark->setEnabled(true);
-                    return true;
-                }
-
-                if (anyWaitingStop) {
-                    // Finalize all active channels at this time
-                    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
-                        if (!isChannelActive(lbl)) continue;
-                        ChannelMarkingState& st = markStateFor(lbl);
-                        if (st.phase != MarkPhase::WaitingForStop) continue;
-                        QChartView* targetCv = chartViewForSignalLabel(lbl);
-                        finalizeMarking(targetCv, clickedX, lbl);
-                    }
                     return true;
                 }
             }

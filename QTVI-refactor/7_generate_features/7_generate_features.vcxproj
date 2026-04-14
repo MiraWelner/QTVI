@@ -21,7 +21,7 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{57158e30-306b-4925-8ac3-8c7d02801497}</ProjectGuid>
+    <ProjectGuid>{fbe5bf41-55ea-4e0e-a3b9-6977116b1dec}</ProjectGuid>
     <RootNamespace>My7generatefeatures</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
@@ -51,6 +51,7 @@
     <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
+    <EnableASAN>false</EnableASAN>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -120,6 +121,9 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <OpenMPSupport>true</OpenMPSupport>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -128,6 +132,15 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="7_generate_features.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="beat_features.hpp" />
+    <ClInclude Include="bin_io.hpp" />
+    <ClInclude Include="dicrotic_sqi.hpp" />
+    <ClInclude Include="find_foot_pulseox.hpp" />
+    <ClInclude Include="flatten_and_generate.hpp" />
+    <ClInclude Include="ppg_features.hpp" />
+    <ClInclude Include="ppg_utils.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

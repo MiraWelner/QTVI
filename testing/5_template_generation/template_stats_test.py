@@ -19,21 +19,17 @@ import numpy as np
 import scipy.io as sio
 from scipy import signal as scipy_signal
 
-MATLAB_DIR = (
-    "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\5_generate_template_files\\matlab"
-)
-CPP_DIR = (
-    "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\5_generate_template_files\\mesa"
-)
+MATLAB_DIR = "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\5_generate_template_files\\mesa_templates_daniel"
+CPP_DIR = "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\5_generate_template_files\\mesa_templates_mira"
 MATLAB_WAVE_DIR = (
-    "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\4_wave_bound_files\\matlab"
+    "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\4_wave_bound_files\\mesa_rloc_daniel"
 )
 CPP_WAVE_DIR = (
-    "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\4_wave_bound_files\\mesa_files"
+    "D:\\USERS\\MiraWelner\\QTVI\\QTVI-data-files\\4_wave_bound_files\\mesa_rloc_mira"
 )
 OUTPUT_DIR = "D:\\USERS\\MiraWelner\\QTVI\\testing\\5_template_generation\\results"
-MATLAB_SR = 256.0
-CPP_SR = 2000.0
+MATLAB_SR = 1000.0
+CPP_SR = 1000.0
 SR_RATIO = CPP_SR / MATLAB_SR
 
 

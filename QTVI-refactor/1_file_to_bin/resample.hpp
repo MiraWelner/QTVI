@@ -21,7 +21,7 @@
 #define M_upsample_factorI 3.14159265358979323846
 #endif
 
-static constexpr int TARGET_RATE = 2000;
+static constexpr int TARGET_RATE = 1000;
 
 
 

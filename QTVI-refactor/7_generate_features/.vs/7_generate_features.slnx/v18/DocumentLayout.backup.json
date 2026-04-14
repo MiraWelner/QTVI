@@ -3,28 +3,24 @@
   "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\generate_features.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:generate_features.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{FBE5BF41-55EA-4E0E-A3B9-6977116B1DEC}|7_generate_features.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\flatten_and_generate.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{FBE5BF41-55EA-4E0E-A3B9-6977116B1DEC}|7_generate_features.vcxproj|solutionrelative:flatten_and_generate.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\ppg_sqi.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:ppg_sqi.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{FBE5BF41-55EA-4E0E-A3B9-6977116B1DEC}|7_generate_features.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\ppg_utils.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{FBE5BF41-55EA-4E0E-A3B9-6977116B1DEC}|7_generate_features.vcxproj|solutionrelative:ppg_utils.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\discrete_frechet.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:discrete_frechet.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{FBE5BF41-55EA-4E0E-A3B9-6977116B1DEC}|7_generate_features.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\dicrotic_sqi.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{FBE5BF41-55EA-4E0E-A3B9-6977116B1DEC}|7_generate_features.vcxproj|solutionrelative:dicrotic_sqi.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\bin_io.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:bin_io.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{FBE5BF41-55EA-4E0E-A3B9-6977116B1DEC}|7_generate_features.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\ppg_features.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{FBE5BF41-55EA-4E0E-A3B9-6977116B1DEC}|7_generate_features.vcxproj|solutionrelative:ppg_features.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\runner.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:runner.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{57158E30-306B-4925-8AC3-8C7D02801497}|7_generate_features.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\7_generate_features.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{57158E30-306B-4925-8AC3-8C7D02801497}|7_generate_features.vcxproj|solutionrelative:7_generate_features.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{FBE5BF41-55EA-4E0E-A3B9-6977116B1DEC}|7_generate_features.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\beat_features.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{FBE5BF41-55EA-4E0E-A3B9-6977116B1DEC}|7_generate_features.vcxproj|solutionrelative:beat_features.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
   "DocumentGroupContainers": [
@@ -44,92 +40,76 @@
         },
         {
           "DockedWidth": 545,
-          "SelectedChildIndex": 2,
+          "SelectedChildIndex": 5,
           "Children": [
             {
               "$type": "Bookmark",
-              "Name": "ST:0:0:{d78612c7-9962-4b83-95d9-268046dad23a}"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 1,
-              "Title": "ppg_sqi.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\ppg_sqi.hpp",
-              "RelativeDocumentMoniker": "ppg_sqi.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\ppg_sqi.hpp",
-              "RelativeToolTip": "ppg_sqi.hpp",
-              "ViewState": "AgIAAH4CAAAAAAAAAAAmwLQCAAASAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-04-03T19:59:12.314Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 0,
-              "Title": "generate_features.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\generate_features.hpp",
-              "RelativeDocumentMoniker": "generate_features.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\generate_features.hpp",
-              "RelativeToolTip": "generate_features.hpp",
-              "ViewState": "AgIAAHAAAAAAAAAAAAAmwKUAAAASAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-04-03T19:58:45.895Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 2,
-              "Title": "discrete_frechet.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\discrete_frechet.hpp",
-              "RelativeDocumentMoniker": "discrete_frechet.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\discrete_frechet.hpp",
-              "RelativeToolTip": "discrete_frechet.hpp",
-              "ViewState": "AgIAABcAAAAAAAAAAAAmwEwAAAASAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-04-03T19:28:03.535Z",
-              "EditorCaption": ""
+              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
             },
             {
               "$type": "Document",
               "DocumentIndex": 3,
-              "Title": "bin_io.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\bin_io.hpp",
-              "RelativeDocumentMoniker": "bin_io.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\bin_io.hpp",
-              "RelativeToolTip": "bin_io.hpp",
-              "ViewState": "AgIAADECAAAAAAAAAAAmwFACAAAhAAAAAAAAAA==",
+              "Title": "ppg_features.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\ppg_features.hpp",
+              "RelativeDocumentMoniker": "ppg_features.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\ppg_features.hpp",
+              "RelativeToolTip": "ppg_features.hpp",
+              "ViewState": "AgIAACQBAAAAAAAAAAAswDgBAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-04-03T19:21:49.36Z",
+              "WhenOpened": "2026-04-11T00:55:31.434Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
               "DocumentIndex": 4,
-              "Title": "runner.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\runner.hpp",
-              "RelativeDocumentMoniker": "runner.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\runner.hpp",
-              "RelativeToolTip": "runner.hpp",
-              "ViewState": "AgIAAAYAAAAAAAAAAAAAACQAAAAAAAAAAAAAAA==",
+              "Title": "beat_features.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\beat_features.hpp",
+              "RelativeDocumentMoniker": "beat_features.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\beat_features.hpp",
+              "RelativeToolTip": "beat_features.hpp",
+              "ViewState": "AgIAADEBAAAAAAAAAAAcwOgBAAAYAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-04-03T18:28:11.398Z",
+              "WhenOpened": "2026-04-10T19:37:30.904Z",
               "EditorCaption": ""
             },
             {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "dicrotic_sqi.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\dicrotic_sqi.hpp",
+              "RelativeDocumentMoniker": "dicrotic_sqi.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\dicrotic_sqi.hpp",
+              "RelativeToolTip": "dicrotic_sqi.hpp",
+              "ViewState": "AgIAALsBAAAAAAAAAAAswNUBAAAqAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-04-10T19:37:18.33Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 5,
-              "Title": "7_generate_features.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\7_generate_features.cpp",
-              "RelativeDocumentMoniker": "7_generate_features.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\7_generate_features.cpp",
-              "RelativeToolTip": "7_generate_features.cpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA0AAAAuAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-04-03T17:05:10.536Z"
+              "DocumentIndex": 1,
+              "Title": "ppg_utils.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\ppg_utils.hpp",
+              "RelativeDocumentMoniker": "ppg_utils.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\ppg_utils.hpp",
+              "RelativeToolTip": "ppg_utils.hpp",
+              "ViewState": "AgIAACcBAAAAAAAAAAAswD0BAABTAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-04-10T19:29:43.114Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "flatten_and_generate.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\flatten_and_generate.hpp",
+              "RelativeDocumentMoniker": "flatten_and_generate.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\7_generate_features\\flatten_and_generate.hpp",
+              "RelativeToolTip": "flatten_and_generate.hpp",
+              "ViewState": "AgIAAAUCAAAAAAAAAAAswEECAAASAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-04-10T15:31:56.222Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Bookmark",

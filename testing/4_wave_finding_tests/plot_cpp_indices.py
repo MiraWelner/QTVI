@@ -3,6 +3,7 @@ plot_rpeaks.py
 
 Reads a _wave_markings.bin file produced by the C++ pipeline and generates
 a .png for each requested bin showing ECG/PPG channels with R-peak markers.
+Also exports a CSV of indices for each requested bin.
 
 Grid adapts to available channels and selected preprocessing method(s).
 
@@ -10,9 +11,11 @@ Usage:
     python plot_rpeaks.py path/to/wave_markings.bin 33 34 473
 """
 
+import csv
 import os
 import struct
 import sys
+from itertools import zip_longest
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -23,22 +26,22 @@ import numpy as np
 # =============================================================================
 
 # Time range in seconds to display.  Use None for full signal.
-#   Examples:  T_START, T_END = 0, 60       (first minute)
-#              T_START, T_END = 30, 90       (30s–90s)
-#              T_START, T_END = None, None   (entire signal)
 T_START = 0
-T_END = 60
+T_END = 10
 
 # Which preprocessing method(s) to show as columns.
 # Options: "all", "raw", "squared", "absval"
-#   "all"      -> 3 columns (Raw | Squared | Abs-Value)
-#   "raw"      -> 1 column  (Raw only)
-#   "squared"  -> 1 column  (Squared only)
-#   "absval"   -> 1 column  (Abs-Value only)
-SHOW_METHOD = "all"
+SHOW_METHOD = "raw"
 
 # Whether to include the PPG row (with min/max amp markers) when PPG exists.
 SHOW_PPG = False
+
+# Scatter point size for the signal trace (small dots).
+SIGNAL_SCATTER_SIZE = 0.5
+
+# Max sane sizes - at 2000 Hz, 8 hours = 57.6M samples
+MAX_SANE_IDX = 50_000_000
+MAX_SANE_SIG = 200_000_000
 
 # =============================================================================
 
@@ -57,125 +60,139 @@ def read_wave_bin(path):
                 break
 
             b = {}
-            b["ecgFs"] = 2000.0
-            b["ppgFs"] = 2000.0
+            b["ecgFs"] = 1000.0
+            b["ppgFs"] = 1000.0
 
-            def read_idx():
-                raw = f.read(8)
-                if len(raw) < 8:
-                    return []
-                sz = struct.unpack("<Q", raw)[0]
-                if sz > 10_000_000:
-                    print(f"  WARNING: Suspicious idx count {sz}, skipping.")
-                    return []
-                vals = []
-                for _ in range(sz):
-                    raw = f.read(8)
-                    if len(raw) < 8:
-                        break
-                    v = struct.unpack("<Q", raw)[0]
-                    vals.append(v - 1 if v >= 1 else 0)
-                return vals
-
-            def read_signal():
-                raw = f.read(8)
-                if len(raw) < 8:
-                    return []
-                sz = struct.unpack("<Q", raw)[0]
-                if sz == 0:
-                    return []
-                if sz > 100_000_000:
-                    print(f"  WARNING: Suspicious signal size {sz}, skipping.")
-                    return []
-                raw = f.read(sz * 8)
-                if len(raw) < sz * 8:
-                    return list(
-                        struct.unpack(f"<{len(raw) // 8}d", raw[: len(raw) // 8 * 8])
-                    )
-                return list(struct.unpack(f"<{sz}d", raw))
-
-            def skip_signal():
-                raw = f.read(8)
-                if len(raw) < 8:
-                    return
-                sz = struct.unpack("<Q", raw)[0]
-                if sz > 100_000_000:
-                    return
-                f.seek(sz * 8, 1)
-
-            def skip_pair_vec():
-                raw = f.read(8)
-                if len(raw) < 8:
-                    return
-                sz = struct.unpack("<Q", raw)[0]
-                if sz > 10_000_000:
-                    return
-                f.seek(sz * 16, 1)
-
-            # -- 9 R-peak index arrays (3 methods x 3 channels) ----------
-            b["ch1_raw_idx"] = read_idx()
-            b["ch1_sq_idx"] = read_idx()
-            b["ch1_abs_idx"] = read_idx()
-            b["ch2_raw_idx"] = read_idx()
-            b["ch2_sq_idx"] = read_idx()
-            b["ch2_abs_idx"] = read_idx()
-            b["ch3_raw_idx"] = read_idx()
-            b["ch3_sq_idx"] = read_idx()
-            b["ch3_abs_idx"] = read_idx()
-
-            # -- PPG indices ----------------------------------------------
-            b["ppgMaxAmps"] = read_idx()
-            b["ppgMinAmps"] = read_idx()
-
-            # -- 4 raw signals --------------------------------------------
-            b["ppgSignal"] = read_signal()
-            b["ch1_raw_sig"] = read_signal()
-            b["ch2_raw_sig"] = read_signal()
-            b["ch3_raw_sig"] = read_signal()
-
-            # -- 6 preprocessed signals -----------------------------------
-            b["ch1_sq_sig"] = read_signal()
-            b["ch1_abs_sig"] = read_signal()
-            b["ch2_sq_sig"] = read_signal()
-            b["ch2_abs_sig"] = read_signal()
-            b["ch3_sq_sig"] = read_signal()
-            b["ch3_abs_sig"] = read_signal()
-
-            # -- 9 noise flag bytes ---------------------------------------
-            f.read(9)
-
-            # -- pairs ----------------------------------------------------
-            raw = f.read(8)
-            num_pairs = struct.unpack("<Q", raw)[0] if len(raw) == 8 else 0
-            pairs = []
-            if num_pairs < 1_000_000:
-                for _ in range(num_pairs):
-                    raw = f.read(16)
-                    if len(raw) < 16:
-                        break
-                    p0, p1 = struct.unpack("<qq", raw)
-                    pairs.append((p0, p1))
-            b["pairs"] = pairs
-
-            skip_pair_vec()
-            skip_pair_vec()
+            try:
+                _read_bin_contents(f, b, i)
+            except (ValueError, struct.error) as e:
+                print(f"  ERROR at bin {i}: {e}")
+                print(f"  Successfully read {len(bins)} bins before error.")
+                break
 
             bins.append(b)
 
     return bins
 
 
+def _read_bin_contents(f, b, bin_index):
+    """Read all fields for one bin. Raises ValueError on corrupt data."""
+
+    def read_idx():
+        raw = f.read(8)
+        if len(raw) < 8:
+            raise ValueError("Unexpected EOF reading idx count")
+        sz = struct.unpack("<Q", raw)[0]
+        if sz == 0:
+            return []
+        if sz > MAX_SANE_IDX:
+            raise ValueError(f"idx count {sz} exceeds limit at offset {f.tell()}")
+        data = f.read(sz * 8)
+        if len(data) < sz * 8:
+            raise ValueError(f"Truncated idx array, expected {sz * 8} got {len(data)}")
+        vals = struct.unpack(f"<{sz}Q", data)
+        return [v - 1 if v >= 1 else 0 for v in vals]
+
+    def read_signal():
+        raw = f.read(8)
+        if len(raw) < 8:
+            raise ValueError("Unexpected EOF reading signal count")
+        sz = struct.unpack("<Q", raw)[0]
+        if sz == 0:
+            return []
+        if sz > MAX_SANE_SIG:
+            raise ValueError(f"signal size {sz} exceeds limit at offset {f.tell()}")
+        data = f.read(sz * 8)
+        if len(data) < sz * 8:
+            raise ValueError(f"Truncated signal, expected {sz * 8} got {len(data)}")
+        return list(struct.unpack(f"<{sz}d", data))
+
+    def skip_idx():
+        raw = f.read(8)
+        if len(raw) < 8:
+            raise ValueError("Unexpected EOF in skip_idx")
+        sz = struct.unpack("<Q", raw)[0]
+        if sz > MAX_SANE_IDX:
+            raise ValueError(f"skip_idx: count {sz} exceeds limit")
+        f.seek(sz * 8, 1)
+
+    def skip_pair_vec():
+        raw = f.read(8)
+        if len(raw) < 8:
+            raise ValueError("Unexpected EOF in skip_pair_vec")
+        sz = struct.unpack("<Q", raw)[0]
+        if sz > MAX_SANE_IDX:
+            raise ValueError(f"skip_pair_vec: count {sz} exceeds limit")
+        f.seek(sz * 16, 1)
+
+    # -- 9 R-peak index arrays (3 methods x 3 channels) ----------
+    b["ch1_raw_idx"] = read_idx()
+    b["ch1_sq_idx"] = read_idx()
+    b["ch1_abs_idx"] = read_idx()
+    b["ch2_raw_idx"] = read_idx()
+    b["ch2_sq_idx"] = read_idx()
+    b["ch2_abs_idx"] = read_idx()
+    b["ch3_raw_idx"] = read_idx()
+    b["ch3_sq_idx"] = read_idx()
+    b["ch3_abs_idx"] = read_idx()
+
+    # -- PPG indices ----------------------------------------------
+    b["ppgMaxAmps"] = read_idx()
+    b["ppgMinAmps"] = read_idx()
+
+    # -- 4 raw signals --------------------------------------------
+    b["ppgSignal"] = read_signal()
+    b["ch1_raw_sig"] = read_signal()
+    b["ch2_raw_sig"] = read_signal()
+    b["ch3_raw_sig"] = read_signal()
+
+    # -- 6 preprocessed signals (squared + absval per channel) ----
+    b["ch1_sq_sig"] = read_signal()
+    b["ch1_abs_sig"] = read_signal()
+    b["ch2_sq_sig"] = read_signal()
+    b["ch2_abs_sig"] = read_signal()
+    b["ch3_sq_sig"] = read_signal()
+    b["ch3_abs_sig"] = read_signal()
+
+    # -- 9 noise flag bytes ---------------------------------------
+    flags_raw = f.read(9)
+    if len(flags_raw) < 9:
+        raise ValueError("Truncated noise flags")
+
+    # -- pairs ----------------------------------------------------
+    raw = f.read(8)
+    if len(raw) < 8:
+        raise ValueError("Unexpected EOF reading pair count")
+    num_pairs = struct.unpack("<Q", raw)[0]
+    pairs = []
+    if num_pairs > MAX_SANE_IDX:
+        raise ValueError(f"Pair count {num_pairs} exceeds limit")
+    if num_pairs > 0:
+        pair_data = f.read(num_pairs * 16)
+        if len(pair_data) < num_pairs * 16:
+            raise ValueError(
+                f"Truncated pairs, expected {num_pairs * 16} got {len(pair_data)}"
+            )
+        for j in range(num_pairs):
+            p0, p1 = struct.unpack_from("<qq", pair_data, j * 16)
+            pairs.append((p0, p1))
+    b["pairs"] = pairs
+
+    # -- ppg/ecg bin index pairs ----------------------------------
+    skip_pair_vec()
+    skip_pair_vec()
+
+    return bin
+
+
 # Full 3x3 cell definitions:  (signal_key, idx_key, channel, method, color)
 ALL_CELLS = [
-    # Ch1
     ("ch1_raw_sig", "ch1_raw_idx", "Ch1", "raw", "blue"),
     ("ch1_sq_sig", "ch1_sq_idx", "Ch1", "squared", "blue"),
     ("ch1_abs_sig", "ch1_abs_idx", "Ch1", "absval", "blue"),
-    # Ch2
     ("ch2_raw_sig", "ch2_raw_idx", "Ch2", "raw", "red"),
     ("ch2_sq_sig", "ch2_sq_idx", "Ch2", "squared", "red"),
     ("ch2_abs_sig", "ch2_abs_idx", "Ch2", "absval", "red"),
-    # Ch3
     ("ch3_raw_sig", "ch3_raw_idx", "Ch3", "raw", "green"),
     ("ch3_sq_sig", "ch3_sq_idx", "Ch3", "squared", "green"),
     ("ch3_abs_sig", "ch3_abs_idx", "Ch3", "absval", "green"),
@@ -187,7 +204,6 @@ METHOD_LABELS = {"raw": "Raw", "squared": "Squared", "absval": "Abs-Value"}
 def build_grid(b):
     """Return (rows, col_methods) based on available data and config."""
 
-    # Determine which methods (columns) to show
     if SHOW_METHOD == "all":
         methods = ["raw", "squared", "absval"]
     elif SHOW_METHOD in METHOD_LABELS:
@@ -196,15 +212,13 @@ def build_grid(b):
         print(f"  WARNING: Unknown SHOW_METHOD '{SHOW_METHOD}', defaulting to 'all'.")
         methods = ["raw", "squared", "absval"]
 
-    # Determine which ECG channels are present (have a raw signal)
     ecg_channels = []
     for ch in ["Ch1", "Ch2", "Ch3"]:
         sig_key = f"ch{ch[-1]}_raw_sig"
         if len(b.get(sig_key, [])) > 0:
             ecg_channels.append(ch)
 
-    # Build row list: each ECG channel, then optionally PPG
-    rows = []  # list of (row_label, row_type)
+    rows = []
     for ch in ecg_channels:
         rows.append((ch, "ecg"))
 
@@ -212,7 +226,6 @@ def build_grid(b):
     if has_ppg:
         rows.append(("PPG", "ppg"))
 
-    # Build the cell list for ECG rows
     ecg_cells = [c for c in ALL_CELLS if c[2] in ecg_channels and c[3] in methods]
 
     return rows, methods, ecg_cells, has_ppg
@@ -243,7 +256,7 @@ def plot_ecg_cell(ax, b, sig_key, idx_key, color, t_start, t_end, fs):
     t_arr = np.arange(start_i, end_i) / fs
     ecg_sub = ecg[start_i:end_i]
 
-    ax.plot(t_arr, ecg_sub, color="0.4", linewidth=0.5)
+    ax.scatter(t_arr, ecg_sub, s=SIGNAL_SCATTER_SIZE, c="0.2", edgecolors="none")
 
     y_lo = float(np.percentile(ecg_sub, 0.1))
     y_hi = float(np.percentile(ecg_sub, 99.9))
@@ -266,7 +279,7 @@ def plot_ecg_cell(ax, b, sig_key, idx_key, color, t_start, t_end, fs):
 
 
 def plot_ppg_row(axes_row, b, methods, t_start, t_end):
-    """Plot the PPG signal across all method columns (same signal, same markers)."""
+    """Plot the PPG signal across all method columns."""
     fs = b["ppgFs"]
     ppg = np.array(b["ppgSignal"])
     mins = np.array(b["ppgMinAmps"])
@@ -278,12 +291,11 @@ def plot_ppg_row(axes_row, b, methods, t_start, t_end):
     ppg_sub = ppg[start_i:end_i]
 
     for col, ax in enumerate(axes_row):
-        ax.plot(t_arr, ppg_sub, color="0.4", linewidth=0.5)
+        ax.scatter(t_arr, ppg_sub, s=SIGNAL_SCATTER_SIZE, c="0.4", edgecolors="none")
 
         y_lo = float(np.percentile(ppg_sub, 0.1))
         y_hi = float(np.percentile(ppg_sub, 99.9))
 
-        # Valleys (minAmps) in purple
         if len(mins) > 0:
             mask = (mins >= start_i) & (mins < end_i) & (mins < len(ppg))
             vm = mins[mask]
@@ -300,7 +312,6 @@ def plot_ppg_row(axes_row, b, methods, t_start, t_end):
             if len(vm) > 0:
                 y_lo = min(y_lo, float(ppg[vm].min()))
 
-        # Peaks (maxAmps) in orange
         if len(maxs) > 0:
             mask = (maxs >= start_i) & (maxs < end_i) & (maxs < len(ppg))
             vx = maxs[mask]
@@ -327,10 +338,44 @@ def plot_ppg_row(axes_row, b, methods, t_start, t_end):
             ax.legend(loc="upper right", fontsize=8)
 
 
+def export_indices_csv(b, bin_idx, file_id, out_dir):
+    """Write a CSV with one column per index array for this bin."""
+    idx_columns = [
+        ("ch1_raw_idx", "ch1_raw_idx"),
+        ("ch1_sq_idx", "ch1_sq_idx"),
+        ("ch1_abs_idx", "ch1_abs_idx"),
+        ("ch2_raw_idx", "ch2_raw_idx"),
+        ("ch2_sq_idx", "ch2_sq_idx"),
+        ("ch2_abs_idx", "ch2_abs_idx"),
+        ("ch3_raw_idx", "ch3_raw_idx"),
+        ("ch3_sq_idx", "ch3_sq_idx"),
+        ("ch3_abs_idx", "ch3_abs_idx"),
+        ("ppgMaxAmps", "ppg_max_amps"),
+        ("ppgMinAmps", "ppg_min_amps"),
+    ]
+
+    ecg_fs = b["ecgFs"]
+    ppg_fs = b["ppgFs"]
+
+    headers = [label + "_sec" for _, label in idx_columns]
+    columns = []
+    for key, label in idx_columns:
+        fs = ppg_fs if key.startswith("ppg") else ecg_fs
+        columns.append([idx / fs for idx in b.get(key, [])])
+
+    csv_path = os.path.join(out_dir, f"{file_id}_bin{bin_idx:03d}_indices.csv")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        for row in zip_longest(*columns, fillvalue=""):
+            writer.writerow(row)
+
+    print(f"  Saved CSV: {csv_path}")
+
+
 def plot_bin(b, bin_idx, file_id, out_dir):
     fs = b["ecgFs"]
 
-    # Resolve time range
     max_len_samples = max(
         len(b.get("ch1_raw_sig", [])),
         len(b.get("ch2_raw_sig", [])),
@@ -354,7 +399,6 @@ def plot_bin(b, bin_idx, file_id, out_dir):
         n_rows, n_cols, figsize=(7 * n_cols, 4 * n_rows), squeeze=False
     )
 
-    # --- ECG rows ---
     ecg_row_map = {ch: r for r, (ch, rtype) in enumerate(rows) if rtype == "ecg"}
     method_col = {m: c for c, m in enumerate(methods)}
 
@@ -364,21 +408,19 @@ def plot_bin(b, bin_idx, file_id, out_dir):
         ax = axes[row][col]
 
         n_peaks = plot_ecg_cell(ax, b, sig_key, idx_key, color, t_start, t_end, fs)
-        ax.set_title(f"{ch} — {METHOD_LABELS[method]}  ({n_peaks} peaks)", fontsize=11)
+        ax.set_title(f"{ch} - {METHOD_LABELS[method]}  ({n_peaks} peaks)", fontsize=11)
 
         if col == 0:
             ax.set_ylabel(ch, fontsize=12, fontweight="bold")
         if row == n_rows - 1:
             ax.set_xlabel("Time (s)")
 
-    # --- PPG row (last row, spans all columns) ---
     if has_ppg:
         ppg_row = n_rows - 1
         plot_ppg_row(axes[ppg_row], b, methods, t_start, t_end)
         for col in range(n_cols):
             axes[ppg_row][col].set_xlabel("Time (s)")
 
-    # Column headers
     if n_cols > 1:
         for col, m in enumerate(methods):
             axes[0][col].annotate(
@@ -390,9 +432,9 @@ def plot_bin(b, bin_idx, file_id, out_dir):
                 fontweight="bold",
             )
 
-    time_label = f"{t_start}–{t_end}s" if T_END is not None else "full"
+    time_label = f"{t_start}-{t_end}s" if T_END is not None else "full"
     fig.suptitle(
-        f"{file_id}  —  Bin {bin_idx}  [{time_label}]",
+        f"{file_id}  -  Bin {bin_idx}  [{time_label}]",
         fontsize=15,
         fontweight="bold",
         y=1.0,
@@ -415,7 +457,7 @@ def main():
         sys.exit(1)
 
     bin_path = sys.argv[1]
-    out_dir = "cpp_output"
+    out_dir = r"D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\cpp_output"
     bin_indices = [int(x) for x in sys.argv[2:]]
 
     os.makedirs(out_dir, exist_ok=True)
@@ -430,25 +472,26 @@ def main():
 
     for b_idx in bin_indices:
         if b_idx < 0 or b_idx >= len(data):
-            print(f"  Bin {b_idx} out of range (0–{len(data) - 1}), skipping.")
+            print(f"  Bin {b_idx} out of range (0-{len(data) - 1}), skipping.")
             continue
 
         b = data[b_idx]
         print(f"Bin {b_idx}:")
         print(
-            f"  Ch1 peaks — raw:{len(b['ch1_raw_idx'])}  sq:{len(b['ch1_sq_idx'])}  abs:{len(b['ch1_abs_idx'])}"
+            f"  Ch1 peaks - raw:{len(b['ch1_raw_idx'])}  sq:{len(b['ch1_sq_idx'])}  abs:{len(b['ch1_abs_idx'])}"
         )
         print(
-            f"  Ch2 peaks — raw:{len(b['ch2_raw_idx'])}  sq:{len(b['ch2_sq_idx'])}  abs:{len(b['ch2_abs_idx'])}"
+            f"  Ch2 peaks - raw:{len(b['ch2_raw_idx'])}  sq:{len(b['ch2_sq_idx'])}  abs:{len(b['ch2_abs_idx'])}"
         )
         print(
-            f"  Ch3 peaks — raw:{len(b['ch3_raw_idx'])}  sq:{len(b['ch3_sq_idx'])}  abs:{len(b['ch3_abs_idx'])}"
+            f"  Ch3 peaks - raw:{len(b['ch3_raw_idx'])}  sq:{len(b['ch3_sq_idx'])}  abs:{len(b['ch3_abs_idx'])}"
         )
         print(
             f"  PPG max:{len(b['ppgMaxAmps'])}  min:{len(b['ppgMinAmps'])}  pairs:{len(b['pairs'])}"
         )
 
         plot_bin(b, b_idx, file_id, out_dir)
+        export_indices_csv(b, b_idx, file_id, out_dir)
 
     print("\nDone.")
 
