@@ -34,15 +34,22 @@ void lower_row_buttons::setupConnections() {
     connect(ui->startNoisePPG, &QPushButton::clicked, this, &lower_row_buttons::handle_ppgmarkingstart_button);
     connect(ui->stopNoisePPG, &QPushButton::clicked, this, &lower_row_buttons::handle_ppgmarkingstop_button);
 
+    // ABP buttons
+    connect(ui->startNoiseABP, &QPushButton::clicked, this,
+        [this]() { m_gui->beginMarking("ABP"); });
+    connect(ui->stopNoiseABP, &QPushButton::clicked, this,
+        [this]() { m_gui->beginStopPhase("ABP"); });
+
     // Mark All Signals buttons
     connect(ui->start_all_mark, &QPushButton::clicked, this, &lower_row_buttons::handle_allmarkingstart_button);
     connect(ui->stop_all_mark, &QPushButton::clicked, this, &lower_row_buttons::handle_allmarkingstop_button);
 
     // Window radio buttons
+    connect(ui->rb_1s, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 1);   });
+    connect(ui->rb_3s, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 3);   });
     connect(ui->rb_10s, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 10);  });
     connect(ui->rb_30s, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 30);  });
     connect(ui->rb_1m, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 60);  });
-    connect(ui->rb_5m, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 300); });
     connect(ui->rb_10m, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 600); });
 }
 

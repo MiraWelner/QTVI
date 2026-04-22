@@ -3,16 +3,16 @@
   "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\",
   "Documents": [
     {
+      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\main.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:main.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\JoinedRR.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:JoinedRR.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\rpeakdetect.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:rpeakdetect.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\main.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|solutionrelative:main.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{55033544-FA72-E1BA-8724-167496A3A509}|4_find_wave_bounds.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\SignalProcessingTypes.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
@@ -126,7 +126,7 @@
       "DocumentGroups": [
         {
           "DockedWidth": 899,
-          "SelectedChildIndex": 5,
+          "SelectedChildIndex": 2,
           "Children": [
             {
               "$type": "Bookmark",
@@ -142,18 +142,17 @@
               "RelativeToolTip": "create_ecg_ppg_pairs.hpp",
               "ViewState": "AgIAADYAAAAAAAAAAAAswFgAAABKAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-23T17:39:18.162Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-23T17:39:18.162Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 0,
               "Title": "main.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\main.cpp",
               "RelativeDocumentMoniker": "main.cpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\main.cpp",
               "RelativeToolTip": "main.cpp",
-              "ViewState": "AgIAAEEAAAAAAAAAAAAswFoAAAAyAAAAAAAAAA==",
+              "ViewState": "AgIAAEEAAAAAAAAAAAAswF8AAAAVAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-03-17T23:28:35.561Z",
               "EditorCaption": ""
@@ -168,12 +167,11 @@
               "RelativeToolTip": "binfile_handling.h",
               "ViewState": "AgIAABwAAAAAAAAAAAAmwCwAAABVAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-23T21:05:01.08Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-23T21:05:01.08Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 2,
               "Title": "rpeakdetect.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\rpeakdetect.hpp",
               "RelativeDocumentMoniker": "rpeakdetect.hpp",
@@ -181,21 +179,19 @@
               "RelativeToolTip": "rpeakdetect.hpp",
               "ViewState": "AgIAABEAAAAAAAAAAAAWwC0AAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-23T21:21:19.109Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-23T21:21:19.109Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 0,
+              "DocumentIndex": 1,
               "Title": "JoinedRR.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\JoinedRR.hpp",
               "RelativeDocumentMoniker": "JoinedRR.hpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\JoinedRR.hpp",
               "RelativeToolTip": "JoinedRR.hpp",
-              "ViewState": "AgIAAAEAAAAAAAAAAAAWwBwAAAAgAAAAAAAAAA==",
+              "ViewState": "AgIAAFUAAAAAAAAAAAAWwBMAAABEAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-04-06T04:01:09.164Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-04-06T04:01:09.164Z"
             },
             {
               "$type": "Document",
@@ -453,8 +449,12 @@
         },
         {
           "DockedWidth": 545,
-          "SelectedChildIndex": 0,
+          "SelectedChildIndex": 1,
           "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
+            },
             {
               "$type": "Document",
               "DocumentIndex": 3,
@@ -469,8 +469,15 @@
               "EditorCaption": ""
             },
             {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
+              "$type": "Document",
+              "DocumentIndex": 28,
+              "Title": "ecglaux.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecglaux.cpp",
+              "RelativeDocumentMoniker": "ecglaux.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecglaux.cpp",
+              "RelativeToolTip": "ecglaux.cpp",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-03-30T18:48:09.64Z"
             },
             {
               "$type": "Bookmark",
@@ -491,17 +498,6 @@
               "ViewState": "AgIAAEcAAAAAAAAAAAAUwF8AAABUAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
               "WhenOpened": "2026-03-23T21:16:31.678Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 28,
-              "Title": "ecglaux.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecglaux.cpp",
-              "RelativeDocumentMoniker": "ecglaux.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\4_find_wave_bounds\\ecglaux.cpp",
-              "RelativeToolTip": "ecglaux.cpp",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-03-30T18:48:09.64Z"
             },
             {
               "$type": "Bookmark",

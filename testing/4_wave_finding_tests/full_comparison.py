@@ -23,8 +23,7 @@ MAT_DIR = Path(
 )
 OUTPUT_DIR = Path(r"D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\results")
 
-BIN_SR = 1000.0
-MAT_SR = 1000.0
+SR = 1000.0
 MAX_SANE = 50_000_000
 
 # ============================================================================
@@ -75,24 +74,24 @@ def read_bin_file(path):
 
         for _ in range(num_bins):
             b = {}
-            b["ecgRIndex"] = read_idx()  # ch1 raw
-            skip_idx()
-            skip_idx()  # ch1 sq, abs
+            b["ecgRIndex"] = read_idx()
             skip_idx()
             skip_idx()
-            skip_idx()  # ch2
             skip_idx()
             skip_idx()
-            skip_idx()  # ch3
-            skip_idx()  # ppgMaxAmps
-            b["ppgMinAmps"] = read_idx()  # ppgMinAmps
+            skip_idx()
+            skip_idx()
+            skip_idx()
+            skip_idx()
+            skip_idx()
+            b["ppgMinAmps"] = read_idx()
             b["ppgSignal"] = read_signal()
             b["ecgSignal"] = read_signal()
             skip_signal()
             skip_signal()
             for _ in range(6):
                 skip_signal()
-            f.read(9)  # noise flags
+            f.read(9)
 
             num_pairs = read_u64()
             if 0 < num_pairs < MAX_SANE:
@@ -105,8 +104,8 @@ def read_bin_file(path):
             else:
                 b["pairs"] = np.empty((0, 2), dtype=np.float64)
 
-            read_pair_vec()  # ppg_bin_indexs
-            read_pair_vec()  # ecg_bin_indexs
+            read_pair_vec()
+            read_pair_vec()
             results.append(b)
 
     return results
@@ -126,8 +125,6 @@ def read_mat_file(path):
         r = {
             "ecgRIndex": np.array([]),
             "ppgMinAmps": np.array([]),
-            "ecgSamplingRate": MAT_SR,
-            "ppgSamplingRate": MAT_SR,
             "ecgSignal": np.array([]),
             "ppgSignal": np.array([]),
         }
@@ -151,11 +148,10 @@ def read_mat_file(path):
                 val = val.squeeze()
             return np.array(val, dtype=np.float64).flatten()
 
-        eRate = get_field("ecgSamplingRate")
-        r["ecgSamplingRate"] = float(eRate[0]) if len(eRate) > 0 else MAT_SR
-        pRate = get_field("ppgSamplingRate")
-        r["ppgSamplingRate"] = float(pRate[0]) if len(pRate) > 0 else MAT_SR
         r["ecgRIndex"] = get_field("ecgRIndex").astype(np.intp)
+        r["ecgRIndex_f"] = get_field(
+            "ecgRIndex"
+        )  # float64, preserves sub-sample precision
         r["ppgMinAmps"] = get_field("ppgMinAmps").astype(np.intp)
         r["ecgSignal"] = (
             get_field("ecg")
@@ -177,7 +173,7 @@ def read_mat_file(path):
 # ============================================================================
 
 
-def rr_stats(indices, sr):
+def rr_stats(indices):
     idx = np.array(indices, dtype=np.float64)
     if len(idx) < 2:
         return dict(
@@ -190,7 +186,7 @@ def rr_stats(indices, sr):
             rate_q1=np.nan,
             rate_q3=np.nan,
         )
-    rr_ms = np.diff(idx) / sr * 1000.0
+    rr_ms = np.diff(idx) / SR * 1000.0
     rate = 60000.0 / rr_ms
     return dict(
         mean=float(np.mean(rr_ms)),
@@ -218,13 +214,13 @@ def amp_stats(indices, signal):
     )
 
 
-def rr_ssd(bin_idx, bin_sr, mat_idx, mat_sr):
-    rr_s = np.diff(np.array(bin_idx, dtype=np.float64)) / bin_sr
-    m_s = np.diff(np.array(mat_idx, dtype=np.float64)) / mat_sr
-    if len(rr_s) == 0 or len(m_s) == 0:
+def rr_ssd(bin_idx, mat_idx):
+    rr_b = np.diff(np.array(bin_idx, dtype=np.float64))
+    rr_m = np.diff(np.array(mat_idx, dtype=np.float64))
+    if len(rr_b) == 0 or len(rr_m) == 0:
         return np.nan
-    n = min(len(rr_s), len(m_s))
-    return float(np.sum((rr_s[:n] - m_s[:n]) ** 2))
+    n = min(len(rr_b), len(rr_m))
+    return float(np.sum((rr_b[:n] - rr_m[:n]) ** 2)) / (SR * SR)
 
 
 def compare_file(file_id, bin_data, mat_data):
@@ -233,32 +229,45 @@ def compare_file(file_id, bin_data, mat_data):
     for i in range(total):
         b = bin_data[i]
         m = mat_data[i]
-        mat_ecg_sr = m["ecgSamplingRate"] if m["ecgSamplingRate"] > 0 else MAT_SR
-        mat_ppg_sr = m["ppgSamplingRate"] if m["ppgSamplingRate"] > 0 else MAT_SR
 
-        b_rr = rr_stats(b["ecgRIndex"], BIN_SR)
-        m_rr = rr_stats(m["ecgRIndex"], mat_ecg_sr)
-        b_ppg = rr_stats(b["ppgMinAmps"], BIN_SR)
-        m_ppg = rr_stats(m["ppgMinAmps"], mat_ppg_sr)
+        b_rr = rr_stats(b["ecgRIndex"])
+        m_rr = rr_stats(m["ecgRIndex"])
+        b_ppg = rr_stats(b["ppgMinAmps"])
+        m_ppg = rr_stats(m["ppgMinAmps"])
 
         b_ecg_amp = amp_stats(b["ecgRIndex"], b["ecgSignal"])
         m_ecg_amp = amp_stats(m["ecgRIndex"], m["ecgSignal"])
         b_ppg_amp = amp_stats(b["ppgMinAmps"], b["ppgSignal"])
         m_ppg_amp = amp_stats(m["ppgMinAmps"], m["ppgSignal"])
 
-        # Check if RR intervals are identical within quantization limits.
-        # C++ is at 1000 Hz, MATLAB at 256 Hz — intervals can differ by up to
-        # half a sample at the lower rate.  Use 1 sample at the lower rate as
-        # the tolerance (≈3.9 ms for 256 Hz).
-        b_idx = np.array(b["ecgRIndex"], dtype=np.float64)
-        m_idx = np.array(m["ecgRIndex"], dtype=np.float64)
-        b_rr_sec = np.diff(b_idx) / BIN_SR
-        m_rr_sec = np.diff(m_idx) / mat_ecg_sr
-        if len(b_rr_sec) == len(m_rr_sec) and len(b_rr_sec) > 0:
-            tol = 1.0 / min(BIN_SR, mat_ecg_sr)  # 1 sample at lower rate
-            rr_identical = np.allclose(b_rr_sec, m_rr_sec, atol=tol, rtol=0)
+        b_rr_raw = np.diff(np.array(b["ecgRIndex"], dtype=np.float64))
+        m_rr_raw = np.diff(np.array(m["ecgRIndex"], dtype=np.float64))
+        if len(b_rr_raw) == len(m_rr_raw) and len(b_rr_raw) > 0:
+            rr_identical = np.array_equal(b_rr_raw, m_rr_raw)
         else:
             rr_identical = False
+
+        # Per-bin SSD of R-location differences (s^2)
+        # sum((r_cpp[i] - r_mat[i])^2) / SR^2 across matched peaks
+        b_rloc = np.array(b["ecgRIndex"], dtype=np.float64)
+        m_rloc_f = np.array(m.get("ecgRIndex_f", m["ecgRIndex"]), dtype=np.float64)
+        n_rloc = min(len(b_rloc), len(m_rloc_f))
+        if n_rloc > 0:
+            rloc_ssd = float(np.sum((b_rloc[:n_rloc] - m_rloc_f[:n_rloc]) ** 2)) / (
+                SR * SR
+            )
+        else:
+            rloc_ssd = float("nan")
+
+        # Per-bin offset (for scatter): constant R-location offset if consistent
+        if len(b_rloc) == len(m_rloc_f) and len(b_rloc) > 0:
+            signed_f = b_rloc - m_rloc_f
+            if np.all(np.abs(signed_f - signed_f[0]) < 1e-6):
+                bin_offset_s = float(signed_f[0]) / SR
+            else:
+                bin_offset_s = -0.1
+        else:
+            bin_offset_s = float("nan")
 
         bins.append(
             {
@@ -275,8 +284,10 @@ def compare_file(file_id, bin_data, mat_data):
                 "ecg_amp_mat": m_ecg_amp,
                 "ppg_amp_cpp": b_ppg_amp,
                 "ppg_amp_mat": m_ppg_amp,
-                "rr_ssd": rr_ssd(b["ecgRIndex"], BIN_SR, m["ecgRIndex"], mat_ecg_sr),
+                "rr_ssd": rr_ssd(b["ecgRIndex"], m["ecgRIndex"]),
                 "rr_identical": rr_identical,
+                "rloc_ssd": rloc_ssd,
+                "bin_offset_s": bin_offset_s,
             }
         )
     return {"id": file_id, "total_bins": total, "bins": bins}
@@ -302,7 +313,7 @@ def nanpercentile(vals, p):
     return float(np.percentile(v, p)) if v else np.nan
 
 
-def fmt(v, d=4):
+def fmt(v, d=3):
     return "" if (v is None or (isinstance(v, float) and np.isnan(v))) else round(v, d)
 
 
@@ -334,23 +345,44 @@ def write_summary_csv(path, results):
         sum(b["n_ppg_mat"] for b in all_bins),
     ]
 
-    abs_diff_ecg = sum(abs(b["n_ecg_cpp"] - b["n_ecg_mat"]) for b in all_bins)
-    abs_diff_ppg = sum(abs(b["n_ppg_cpp"] - b["n_ppg_mat"]) for b in all_bins)
-
     rows = [
         ["Metric"] + cols,
         make_row("N Subjects", [n_subjects] * 4),
         make_row("N Beats Total", n_beats),
         make_row(
-            "Abs R Peak Diff", [abs_diff_ecg, abs_diff_ecg, abs_diff_ppg, abs_diff_ppg]
+            "Extra Beats MATLAB",
+            [
+                sum(max(b["n_ecg_mat"] - b["n_ecg_cpp"], 0) for b in all_bins),
+                sum(max(b["n_ecg_mat"] - b["n_ecg_cpp"], 0) for b in all_bins),
+                sum(max(b["n_ppg_mat"] - b["n_ppg_cpp"], 0) for b in all_bins),
+                sum(max(b["n_ppg_mat"] - b["n_ppg_cpp"], 0) for b in all_bins),
+            ],
         ),
         make_row(
-            "Mean N Beats Per Patient",
+            "Extra Beats C++",
+            [
+                sum(max(b["n_ecg_cpp"] - b["n_ecg_mat"], 0) for b in all_bins),
+                sum(max(b["n_ecg_cpp"] - b["n_ecg_mat"], 0) for b in all_bins),
+                sum(max(b["n_ppg_cpp"] - b["n_ppg_mat"], 0) for b in all_bins),
+                sum(max(b["n_ppg_cpp"] - b["n_ppg_mat"], 0) for b in all_bins),
+            ],
+        ),
+        make_row(
+            "Mean N Beats Per Bin",
             [
                 nanmean(collect(lambda b: b["n_ecg_cpp"])),
                 nanmean(collect(lambda b: b["n_ecg_mat"])),
                 nanmean(collect(lambda b: b["n_ppg_cpp"])),
                 nanmean(collect(lambda b: b["n_ppg_mat"])),
+            ],
+        ),
+        make_row(
+            "Mean N Beats Per Patient",
+            [
+                nanmean([sum(b["n_ecg_cpp"] for b in fr["bins"]) for fr in results]),
+                nanmean([sum(b["n_ecg_mat"] for b in fr["bins"]) for fr in results]),
+                nanmean([sum(b["n_ppg_cpp"] for b in fr["bins"]) for fr in results]),
+                nanmean([sum(b["n_ppg_mat"] for b in fr["bins"]) for fr in results]),
             ],
         ),
         make_row(
@@ -440,10 +472,12 @@ def write_file_summary_csv(path, results):
                 "MESA ID",
                 "MATLAB R Peak N",
                 "C++ R Peak N",
-                "R Peak Diff",
+                "Extra ECG MATLAB",
+                "Extra ECG C++",
                 "MATLAB PPG Peak N",
                 "C++ PPG Peak N",
-                "PPG Diff",
+                "Extra PPG MATLAB",
+                "Extra PPG C++",
             ]
         )
         for fr in results:
@@ -451,15 +485,29 @@ def write_file_summary_csv(path, results):
             cpp_ecg = sum(b["n_ecg_cpp"] for b in fr["bins"])
             mat_ppg = sum(b["n_ppg_mat"] for b in fr["bins"])
             cpp_ppg = sum(b["n_ppg_cpp"] for b in fr["bins"])
+            extra_ecg_mat = sum(
+                max(b["n_ecg_mat"] - b["n_ecg_cpp"], 0) for b in fr["bins"]
+            )
+            extra_ecg_cpp = sum(
+                max(b["n_ecg_cpp"] - b["n_ecg_mat"], 0) for b in fr["bins"]
+            )
+            extra_ppg_mat = sum(
+                max(b["n_ppg_mat"] - b["n_ppg_cpp"], 0) for b in fr["bins"]
+            )
+            extra_ppg_cpp = sum(
+                max(b["n_ppg_cpp"] - b["n_ppg_mat"], 0) for b in fr["bins"]
+            )
             w.writerow(
                 [
                     fr["id"],
                     mat_ecg,
                     cpp_ecg,
-                    cpp_ecg - mat_ecg,
+                    extra_ecg_mat,
+                    extra_ecg_cpp,
                     mat_ppg,
                     cpp_ppg,
-                    cpp_ppg - mat_ppg,
+                    extra_ppg_mat,
+                    extra_ppg_cpp,
                 ]
             )
 
@@ -558,220 +606,16 @@ def write_per_file_csv(path, fr):
 
 
 # ============================================================================
-# Per-file SSD Histograms (one small chart per subject, 4 columns for PPT)
-# ============================================================================
-
-
-def write_allfiles_ssd_histograms(path, results, num_buckets=50):
-    """
-    Generate a single SVG with one small SSD histogram per subject,
-    laid out 4 across to fit on a PowerPoint slide.
-    """
-    if not results:
-        return
-
-    num_files = len(results)
-    n_cols = 5
-    n_rows = (num_files + n_cols - 1) // n_cols
-
-    cell_w, cell_h = 260, 275
-    pad_l, pad_r, pad_t, pad_b = 50, 25, 48, 42
-    chart_w = cell_w - pad_l - pad_r
-    chart_h = cell_h - pad_t - pad_b
-
-    svg_w = n_cols * cell_w
-    svg_h = n_rows * cell_h + 55
-
-    lines = []
-    lines.append(
-        f'<svg width="{svg_w}" height="{svg_h}" xmlns="http://www.w3.org/2000/svg">'
-    )
-    lines.append(
-        "<style>\n"
-        "  text { font-family: Consolas, 'Courier New', monospace; }\n"
-        "  .title { font-size: 16px; font-weight: bold; }\n"
-        "  .subtitle { font-size: 12px; font-weight: bold; }\n"
-        "  .stats { font-size: 12px; fill: #555; }\n"
-        "  .tick { font-size: 12px; }\n"
-        "  .axis-label { font-size: 12px; }\n"
-        "  .y-axis-label { font-size: 12px; }\n"
-        "  .x-tick { font-size: 12px; }\n"
-        "  .clipped { font-size: 12px; fill: #e74c3c; font-weight: bold; }\n"
-        "  .empty { font-size: 12px; fill: #999; }\n"
-        "</style>"
-    )
-    lines.append('<rect width="100%" height="100%" fill="#fcfcfc"/>')
-    lines.append(
-        f'<text x="{svg_w // 2}" y="30" text-anchor="middle" class="title">'
-        f"MESA Summary Statistics histograms for all {num_files} files</text>"
-    )
-
-    for f_idx, fr in enumerate(results):
-        col = f_idx % n_cols
-        row = f_idx // n_cols
-        ox = col * cell_w
-        oy = row * cell_h + 50
-
-        file_id = fr["id"]
-        all_bins = fr["bins"]
-
-        ssd_vals = [b["rr_ssd"] for b in all_bins if not np.isnan(b["rr_ssd"])]
-
-        # "Zero error" = bins where all RR intervals are identical
-        zero_count = sum(1 for b in all_bins if b["rr_identical"])
-        zero_pct = (zero_count / len(all_bins) * 100.0) if all_bins else 0.0
-
-        lines.append(
-            f'<text x="{ox + cell_w // 2}" y="{oy + 14}" '
-            f'text-anchor="middle" class="subtitle">'
-            f"{file_id} ({zero_pct:.1f}% zero err)</text>"
-        )
-
-        if not ssd_vals:
-            lines.append(
-                f'<text x="{ox + cell_w // 2}" y="{oy + cell_h // 2}" '
-                f'text-anchor="middle" class="empty">(no bins)</text>'
-            )
-            continue
-
-        arr = np.array(ssd_vals)
-        mn = float(np.mean(arr))
-        md = float(np.median(arr))
-
-        lines.append(
-            f'<text x="{ox + cell_w // 2}" y="{oy + 26}" '
-            f'text-anchor="middle" class="stats">'
-            f"n={len(ssd_vals)}  mean={mn:.4f}  med={md:.4f}</text>"
-        )
-
-        min_val = float(arr.min())
-        max_val = float(arr.max())
-        if max_val - min_val < 1e-15:
-            max_val = min_val + 1.0
-        bucket_width = (max_val - min_val) / num_buckets
-
-        counts = np.zeros(num_buckets, dtype=int)
-        for v in ssd_vals:
-            bi = int((v - min_val) / bucket_width)
-            if bi >= num_buckets:
-                bi = num_buckets - 1
-            counts[bi] += 1
-
-        max_count = int(counts.max()) if counts.max() > 0 else 1
-
-        sorted_counts = np.sort(counts)
-        y_axis_max = max_count
-        for k in range(len(sorted_counts) - 2, -1, -1):
-            if sorted_counts[k] < max_count and sorted_counts[k] > 0:
-                y_axis_max = int(np.ceil(sorted_counts[k] * 1.4))
-                break
-        if y_axis_max <= 0:
-            y_axis_max = max_count
-
-        cx = ox + pad_l
-        cy = oy + pad_t
-        bar_w = chart_w / num_buckets
-
-        # Y axis
-        lines.append(
-            f'<line x1="{cx}" y1="{cy}" x2="{cx}" y2="{cy + chart_h}" '
-            f'stroke="#333" stroke-width="1"/>'
-        )
-        # X axis
-        lines.append(
-            f'<line x1="{cx}" y1="{cy + chart_h}" '
-            f'x2="{cx + chart_w}" y2="{cy + chart_h}" '
-            f'stroke="#333" stroke-width="1"/>'
-        )
-
-        # Y-axis label
-        lines.append(
-            f'<text x="{ox + 18}" y="{cy + chart_h // 2}" '
-            f'text-anchor="middle" class="y-axis-label" '
-            f'transform="rotate(-90 {ox + 10},{cy + chart_h // 2})">'
-            f"# bins</text>"
-        )
-
-        # Y ticks
-        for t in range(4):
-            y_val = int(round(y_axis_max * t / 3.0))
-            y_pos = cy + chart_h - (y_val / y_axis_max) * chart_h
-            lines.append(
-                f'<text x="{cx - 3}" y="{y_pos + 3}" '
-                f'text-anchor="end" class="tick">{y_val}</text>'
-            )
-            if t > 0:
-                lines.append(
-                    f'<line x1="{cx + 1}" y1="{y_pos}" '
-                    f'x2="{cx + chart_w}" y2="{y_pos}" '
-                    f'stroke="#eee" stroke-width="0.5"/>'
-                )
-
-        # Bars
-        for b_idx in range(num_buckets):
-            c = counts[b_idx]
-            if c == 0:
-                continue
-
-            clipped = c > y_axis_max
-            display_h = min(c, y_axis_max)
-            bar_h = (display_h / y_axis_max) * chart_h
-            bx = cx + b_idx * bar_w
-            by = cy + chart_h - bar_h
-
-            range_start = min_val + b_idx * bucket_width
-            range_end = min_val + (b_idx + 1) * bucket_width
-            tip = f"[{range_start:.4f}, {range_end:.4f}): {c}"
-
-            lines.append(
-                f'<rect x="{bx + 0.5:.1f}" y="{by:.1f}" '
-                f'width="{bar_w - 1:.1f}" height="{bar_h:.1f}" '
-                f'fill="#3498db" fill-opacity="0.8">'
-                f"<title>{tip}</title></rect>"
-            )
-
-            if clipped:
-                lines.append(
-                    f'<text x="{bx + bar_w / 2:.1f}" y="{cy - 2}" '
-                    f'text-anchor="middle" class="clipped">{c}</text>'
-                )
-
-        # X ticks
-        for t in range(3):
-            val = min_val + (max_val - min_val) * t / 2.0
-            x_pos = cx + chart_w * t / 2.0
-            lines.append(
-                f'<text x="{x_pos:.1f}" y="{cy + chart_h + 10}" '
-                f'text-anchor="middle" class="x-tick">{val:.4f}</text>'
-            )
-
-        # X-axis label
-        lines.append(
-            f'<text x="{cx + chart_w // 2}" y="{cy + chart_h + 22}" '
-            f'text-anchor="middle" class="axis-label">ECG SSD (s)</text>'
-        )
-
-    lines.append("</svg>")
-
-    with open(path, "w") as fout:
-        fout.write("\n".join(lines))
-
-
-# ============================================================================
 # Combined SSD Histogram (all files pooled into one large chart)
 # ============================================================================
 
 
 def write_combined_ssd_histogram(path, results, num_buckets=80):
-    """
-    Generate a single large histogram SVG pooling all per-bin SSD values
-    across every subject.
-    """
     all_ssd = []
     for fr in results:
         for b in fr["bins"]:
             if not np.isnan(b["rr_ssd"]):
-                all_ssd.append(b["rr_ssd"])
+                all_ssd.append(round(b["rr_ssd"], 3))
 
     if not all_ssd:
         return
@@ -810,7 +654,6 @@ def write_combined_ssd_histogram(path, results, num_buckets=80):
 
     max_count = int(counts.max()) if counts.max() > 0 else 1
 
-    # Clip y-axis like per-file version
     sorted_counts = np.sort(counts)
     y_axis_max = max_count
     for k in range(len(sorted_counts) - 2, -1, -1):
@@ -840,33 +683,28 @@ def write_combined_ssd_histogram(path, results, num_buckets=80):
     )
     lines.append('<rect width="100%" height="100%" fill="#fcfcfc"/>')
 
-    # Title
     lines.append(
         f'<text x="{svg_w // 2}" y="24" text-anchor="middle" class="title">'
         f"Combined ECG SSD Histogram - All {len(results)} Subjects "
         f"({len(all_ssd)} bins, {zero_pct:.1f}% zero err)</text>"
     )
 
-    # Stats line
     lines.append(
         f'<text x="{svg_w // 2}" y="44" text-anchor="middle" class="stats">'
         f"mean={mn:.6f}  median={md:.6f}  "
         f"IQR=[{q1:.6f}, {q3:.6f}]</text>"
     )
 
-    # Y axis
     lines.append(
         f'<line x1="{cx}" y1="{cy}" x2="{cx}" y2="{cy + chart_h}" '
         f'stroke="#333" stroke-width="1"/>'
     )
-    # X axis
     lines.append(
         f'<line x1="{cx}" y1="{cy + chart_h}" '
         f'x2="{cx + chart_w}" y2="{cy + chart_h}" '
         f'stroke="#333" stroke-width="1"/>'
     )
 
-    # Y-axis label
     lines.append(
         f'<text x="18" y="{cy + chart_h // 2}" '
         f'text-anchor="middle" class="y-axis-label" '
@@ -874,7 +712,6 @@ def write_combined_ssd_histogram(path, results, num_buckets=80):
         f"# bins</text>"
     )
 
-    # Y ticks
     n_y_ticks = 5
     for t in range(n_y_ticks + 1):
         y_val = int(round(y_axis_max * t / n_y_ticks))
@@ -890,7 +727,6 @@ def write_combined_ssd_histogram(path, results, num_buckets=80):
                 f'stroke="#eee" stroke-width="0.5"/>'
             )
 
-    # Bars
     for b_idx in range(num_buckets):
         c = counts[b_idx]
         if c == 0:
@@ -919,7 +755,6 @@ def write_combined_ssd_histogram(path, results, num_buckets=80):
                 f'text-anchor="middle" class="clipped">{c}</text>'
             )
 
-    # X ticks
     n_x_ticks = 5
     for t in range(n_x_ticks + 1):
         val = min_val + (max_val - min_val) * t / n_x_ticks
@@ -929,7 +764,6 @@ def write_combined_ssd_histogram(path, results, num_buckets=80):
             f'text-anchor="middle" class="tick">{val:.4f}</text>'
         )
 
-    # X-axis label
     lines.append(
         f'<text x="{cx + chart_w // 2}" y="{cy + chart_h + 38}" '
         f'text-anchor="middle" class="axis-label">ECG SSD (s)</text>'
@@ -937,7 +771,790 @@ def write_combined_ssd_histogram(path, results, num_buckets=80):
 
     lines.append("</svg>")
 
-    with open(path, "w") as fout:
+    with open(path, "w", encoding="utf-8") as fout:
+        fout.write("\n".join(lines))
+
+
+# ============================================================================
+# Helper: render a single "zero-difference" reference histogram panel into
+# an existing lines list.  All N values are placed in bin 0; the x-axis
+# spans [0, ref_max_val] so it matches the neighbouring real histogram.
+# ============================================================================
+
+
+def _append_zero_ref_panel(
+    lines,
+    ox,
+    oy,
+    cell_w,
+    cell_h,
+    pad_l,
+    pad_r,
+    pad_t,
+    pad_b,
+    n_total,
+    ref_max_val,
+    x_label,
+    num_buckets=50,
+    fill_color="#2ecc71",
+):
+    chart_w = cell_w - pad_l - pad_r
+    chart_h = cell_h - pad_t - pad_b
+    cx = ox + pad_l
+    cy = oy + pad_t
+
+    # Title row
+    lines.append(
+        f'<text x="{ox + cell_w // 2}" y="{oy + 14}" '
+        f'text-anchor="middle" class="subtitle" fill="#27ae60">'
+        f"ZERO-DIFF REFERENCE (n={n_total})</text>"
+    )
+    lines.append(
+        f'<text x="{ox + cell_w // 2}" y="{oy + 26}" '
+        f'text-anchor="middle" class="stats">'
+        f"all diffs=0 | x-range=[0, {ref_max_val:.4f}]</text>"
+    )
+
+    # Axes
+    lines.append(
+        f'<line x1="{cx}" y1="{cy}" x2="{cx}" y2="{cy + chart_h}" '
+        f'stroke="#333" stroke-width="1"/>'
+    )
+    lines.append(
+        f'<line x1="{cx}" y1="{cy + chart_h}" '
+        f'x2="{cx + chart_w}" y2="{cy + chart_h}" '
+        f'stroke="#333" stroke-width="1"/>'
+    )
+    lines.append(
+        f'<text x="{ox + 18}" y="{cy + chart_h // 2}" '
+        f'text-anchor="middle" class="y-axis-label" '
+        f'transform="rotate(-90 {ox + 10},{cy + chart_h // 2})">'
+        f"# bins</text>"
+    )
+
+    y_axis_max = n_total if n_total > 0 else 1
+
+    # Y-axis ticks
+    for t in range(4):
+        y_val = int(round(y_axis_max * t / 3.0))
+        y_pos = cy + chart_h - (y_val / y_axis_max) * chart_h
+        lines.append(
+            f'<text x="{cx - 3}" y="{y_pos + 3}" '
+            f'text-anchor="end" class="tick">{y_val}</text>'
+        )
+        if t > 0:
+            lines.append(
+                f'<line x1="{cx + 1}" y1="{y_pos}" '
+                f'x2="{cx + chart_w}" y2="{y_pos}" '
+                f'stroke="#eee" stroke-width="0.5"/>'
+            )
+
+    # Single bar in bin 0
+    bar_w = chart_w / num_buckets
+    bx = cx  # bin 0
+    bar_h = chart_h  # full height (all values here)
+    by = cy
+    lines.append(
+        f'<rect x="{bx + 0.5:.1f}" y="{by:.1f}" '
+        f'width="{bar_w - 1:.1f}" height="{bar_h:.1f}" '
+        f'fill="{fill_color}" fill-opacity="0.8">'
+        f"<title>[0, first_bucket): {n_total}</title></rect>"
+    )
+    lines.append(
+        f'<text x="{bx + bar_w / 2:.1f}" y="{cy - 2}" '
+        f'text-anchor="middle" class="clipped" fill="{fill_color}">{n_total}</text>'
+    )
+
+    # X-axis ticks (same scale as real chart: 0 to ref_max_val)
+    for t in range(3):
+        val = ref_max_val * t / 2.0
+        x_pos = cx + chart_w * t / 2.0
+        lines.append(
+            f'<text x="{x_pos:.1f}" y="{cy + chart_h + 16}" '
+            f'text-anchor="middle" class="x-tick">{val:.4f}</text>'
+        )
+
+    lines.append(
+        f'<text x="{cx + chart_w // 2}" y="{cy + chart_h + 30}" '
+        f'text-anchor="middle" class="axis-label">{x_label}</text>'
+    )
+
+
+# ============================================================================
+# Per-file SSD Histograms with zero-reference panels (RR interval SSD)
+# ============================================================================
+
+
+def write_allfiles_ssd_histograms(path, results, num_buckets=50):
+    """
+    One chart per subject (5 columns), plus a single zero-difference reference
+    panel placed in the next available grid cell after the last subject.
+    Bin 0 collects only exact-zero SSD values; remaining bins divide (0, max].
+    """
+    if not results:
+        return
+
+    num_files = len(results)
+    n_cols = 5
+    # +1 for the zero-ref panel placed in the next grid slot
+    n_rows = (num_files + 1 + n_cols - 1) // n_cols
+
+    cell_w, cell_h = 260, 275
+    pad_l, pad_r, pad_t, pad_b = 50, 25, 48, 42
+    chart_w = cell_w - pad_l - pad_r
+    chart_h = cell_h - pad_t - pad_b
+
+    svg_w = n_cols * cell_w
+    svg_h = n_rows * cell_h + 55
+
+    lines = []
+    lines.append(
+        f'<svg width="{svg_w}" height="{svg_h}" xmlns="http://www.w3.org/2000/svg">'
+    )
+    lines.append(
+        "<style>\n"
+        "  text { font-family: Consolas, 'Courier New', monospace; }\n"
+        "  .title { font-size: 16px; font-weight: bold; }\n"
+        "  .subtitle { font-size: 12px; font-weight: bold; }\n"
+        "  .stats { font-size: 12px; fill: #555; }\n"
+        "  .tick { font-size: 12px; }\n"
+        "  .axis-label { font-size: 12px; }\n"
+        "  .y-axis-label { font-size: 12px; }\n"
+        "  .x-tick { font-size: 12px; }\n"
+        "  .clipped { font-size: 12px; fill: #e74c3c; font-weight: bold; }\n"
+        "  .empty { font-size: 12px; fill: #999; }\n"
+        "</style>"
+    )
+    lines.append('<rect width="100%" height="100%" fill="#fcfcfc"/>')
+    lines.append(
+        f'<text x="{svg_w // 2}" y="30" text-anchor="middle" class="title">'
+        f"MESA Summary Statistics histograms for all {num_files} files</text>"
+    )
+
+    all_max_vals = []
+    all_n_ssd = []
+
+    for f_idx, fr in enumerate(results):
+        col = f_idx % n_cols
+        row = f_idx // n_cols
+        ox = col * cell_w
+        oy = row * cell_h + 50
+
+        file_id = fr["id"]
+        all_bins = fr["bins"]
+
+        ssd_vals = [
+            round(b["rr_ssd"], 3) for b in all_bins if not np.isnan(b["rr_ssd"])
+        ]
+        zero_count = sum(1 for b in all_bins if b["rr_identical"])
+        zero_pct = (zero_count / len(all_bins) * 100.0) if all_bins else 0.0
+
+        lines.append(
+            f'<text x="{ox + cell_w // 2}" y="{oy + 14}" '
+            f'text-anchor="middle" class="subtitle">'
+            f"{file_id} ({zero_pct:.1f}% zero err)</text>"
+        )
+
+        if not ssd_vals:
+            lines.append(
+                f'<text x="{ox + cell_w // 2}" y="{oy + cell_h // 2}" '
+                f'text-anchor="middle" class="empty">(no bins)</text>'
+            )
+            continue
+
+        arr = np.array(ssd_vals)
+        mn = float(np.mean(arr))
+        md = float(np.median(arr))
+
+        nonzero = arr[arr > 0]
+        max_val = float(nonzero.max()) if len(nonzero) > 0 else 1.0
+
+        all_max_vals.append(max_val)
+        all_n_ssd.append(len(ssd_vals))
+
+        lines.append(
+            f'<text x="{ox + cell_w // 2}" y="{oy + 26}" '
+            f'text-anchor="middle" class="stats">'
+            f"n={len(ssd_vals)}  mean={mn:.4f}  med={md:.4f}</text>"
+        )
+
+        # Bin 0 = exact zeros; bins 1..num_buckets-1 divide (0, max_val]
+        n_nonzero_bins = num_buckets - 1
+        bucket_width = max_val / n_nonzero_bins if n_nonzero_bins > 0 else 1.0
+
+        counts = np.zeros(num_buckets, dtype=int)
+        for v in ssd_vals:
+            if v == 0.0:
+                counts[0] += 1
+            else:
+                bi = 1 + int((v - 1e-300) / bucket_width)
+                if bi >= num_buckets:
+                    bi = num_buckets - 1
+                counts[bi] += 1
+
+        max_count = int(counts.max()) if counts.max() > 0 else 1
+        sorted_counts = np.sort(counts)
+        y_axis_max = max_count
+        for k in range(len(sorted_counts) - 2, -1, -1):
+            if sorted_counts[k] < max_count and sorted_counts[k] > 0:
+                y_axis_max = int(np.ceil(sorted_counts[k] * 1.4))
+                break
+        if y_axis_max <= 0:
+            y_axis_max = max_count
+
+        cx = ox + pad_l
+        cy = oy + pad_t
+        bar_w = chart_w / num_buckets
+
+        lines.append(
+            f'<line x1="{cx}" y1="{cy}" x2="{cx}" y2="{cy + chart_h}" '
+            f'stroke="#333" stroke-width="1"/>'
+        )
+        lines.append(
+            f'<line x1="{cx}" y1="{cy + chart_h}" '
+            f'x2="{cx + chart_w}" y2="{cy + chart_h}" '
+            f'stroke="#333" stroke-width="1"/>'
+        )
+        lines.append(
+            f'<text x="{ox + 18}" y="{cy + chart_h // 2}" '
+            f'text-anchor="middle" class="y-axis-label" '
+            f'transform="rotate(-90 {ox + 10},{cy + chart_h // 2})">'
+            f"# bins</text>"
+        )
+
+        for t in range(4):
+            y_val = int(round(y_axis_max * t / 3.0))
+            y_pos = cy + chart_h - (y_val / y_axis_max) * chart_h
+            lines.append(
+                f'<text x="{cx - 3}" y="{y_pos + 3}" '
+                f'text-anchor="end" class="tick">{y_val}</text>'
+            )
+            if t > 0:
+                lines.append(
+                    f'<line x1="{cx + 1}" y1="{y_pos}" '
+                    f'x2="{cx + chart_w}" y2="{y_pos}" '
+                    f'stroke="#eee" stroke-width="0.5"/>'
+                )
+
+        for b_idx in range(num_buckets):
+            c = counts[b_idx]
+            if c == 0:
+                continue
+
+            clipped = c > y_axis_max
+            display_h = min(c, y_axis_max)
+            bar_h = (display_h / y_axis_max) * chart_h
+            bx = cx + b_idx * bar_w
+            by = cy + chart_h - bar_h
+
+            if b_idx == 0:
+                tip = f"[0, 0]: {c}"
+            else:
+                rs = (b_idx - 1) * bucket_width
+                re = b_idx * bucket_width
+                tip = f"({rs:.4f}, {re:.4f}]: {c}"
+
+            lines.append(
+                f'<rect x="{bx + 0.5:.1f}" y="{by:.1f}" '
+                f'width="{bar_w - 1:.1f}" height="{bar_h:.1f}" '
+                f'fill="#1a5fa8" fill-opacity="0.92">'
+                f"<title>{tip}</title></rect>"
+            )
+
+            if clipped:
+                lines.append(
+                    f'<text x="{bx + bar_w / 2:.1f}" y="{cy - 2}" '
+                    f'text-anchor="middle" class="clipped">{c}</text>'
+                )
+
+        for t in range(3):
+            val = max_val * t / 2.0
+            x_pos = cx + chart_w * t / 2.0
+            lines.append(
+                f'<text x="{x_pos:.1f}" y="{cy + chart_h + 16}" '
+                f'text-anchor="middle" class="x-tick">{val:.4f}</text>'
+            )
+
+        lines.append(
+            f'<text x="{cx + chart_w // 2}" y="{cy + chart_h + 30}" '
+            f'text-anchor="middle" class="axis-label">ECG SSD (s)</text>'
+        )
+
+    # ---- Zero-reference panel in next grid slot ----
+    if all_max_vals:
+        global_max = float(max(all_max_vals))
+        mean_n = int(round(sum(all_n_ssd) / len(all_n_ssd)))
+        ref_idx = num_files  # next slot after all subjects
+        ref_col = ref_idx % n_cols
+        ref_row = ref_idx // n_cols
+        ox_ref = ref_col * cell_w
+        oy_ref = ref_row * cell_h + 50
+        _append_zero_ref_panel(
+            lines,
+            ox=ox_ref,
+            oy=oy_ref,
+            cell_w=cell_w,
+            cell_h=cell_h,
+            pad_l=pad_l,
+            pad_r=pad_r,
+            pad_t=pad_t,
+            pad_b=pad_b,
+            n_total=mean_n,
+            ref_max_val=global_max,
+            x_label="ECG SSD (s)",
+            num_buckets=num_buckets,
+            fill_color="#2ecc71",
+        )
+
+    lines.append("</svg>")
+
+    with open(path, "w", encoding="utf-8") as fout:
+        fout.write("\n".join(lines))
+
+
+# ============================================================================
+# Per-file R-location difference Histograms (raw sample offsets, not intervals)
+# ============================================================================
+
+
+def write_allfiles_rloc_histograms(path, results, num_buckets=50):
+    """
+    One chart per subject (5 columns) of |r_cpp - r_mat| (raw R-location diffs),
+    plus a single zero-difference reference panel in the next grid slot.
+    Bin 0 collects only exact-zero differences; remaining bins divide (0, max].
+    """
+    if not results:
+        return
+
+    num_files = len(results)
+    n_cols = 5
+    n_rows = (num_files + 1 + n_cols - 1) // n_cols
+
+    cell_w, cell_h = 260, 275
+    pad_l, pad_r, pad_t, pad_b = 50, 25, 48, 42
+    chart_w = cell_w - pad_l - pad_r
+    chart_h = cell_h - pad_t - pad_b
+
+    svg_w = n_cols * cell_w
+    svg_h = n_rows * cell_h + 55
+
+    lines = []
+    lines.append(
+        f'<svg width="{svg_w}" height="{svg_h}" xmlns="http://www.w3.org/2000/svg">'
+    )
+    lines.append(
+        "<style>\n"
+        "  text { font-family: Consolas, 'Courier New', monospace; }\n"
+        "  .title { font-size: 16px; font-weight: bold; }\n"
+        "  .subtitle { font-size: 12px; font-weight: bold; }\n"
+        "  .stats { font-size: 12px; fill: #555; }\n"
+        "  .tick { font-size: 12px; }\n"
+        "  .axis-label { font-size: 12px; }\n"
+        "  .y-axis-label { font-size: 12px; }\n"
+        "  .x-tick { font-size: 12px; }\n"
+        "  .clipped { font-size: 12px; fill: #e74c3c; font-weight: bold; }\n"
+        "  .empty { font-size: 12px; fill: #999; }\n"
+        "</style>"
+    )
+    lines.append('<rect width="100%" height="100%" fill="#fcfcfc"/>')
+    lines.append(
+        f'<text x="{svg_w // 2}" y="30" text-anchor="middle" class="title">'
+        f"MESA Per-Bin R-Location SSD Histograms for all {num_files} files</text>"
+    )
+
+    all_max_vals = []
+    all_n_beats = []
+
+    for f_idx, fr in enumerate(results):
+        col = f_idx % n_cols
+        row = f_idx // n_cols
+        ox = col * cell_w
+        oy = row * cell_h + 50
+
+        file_id = fr["id"]
+        all_bins = fr["bins"]
+
+        rloc_vals = [
+            round(b["rloc_ssd"], 3)
+            for b in all_bins
+            if not np.isnan(b.get("rloc_ssd", float("nan")))
+        ]
+
+        n_total_beats = len(rloc_vals)  # actually n bins here
+        zero_count = sum(1 for v in rloc_vals if v == 0.0)
+        zero_pct = (zero_count / n_total_beats * 100.0) if n_total_beats > 0 else 0.0
+
+        lines.append(
+            f'<text x="{ox + cell_w // 2}" y="{oy + 14}" '
+            f'text-anchor="middle" class="subtitle">'
+            f"{file_id} ({zero_pct:.1f}% zero err)</text>"
+        )
+
+        if not rloc_vals:
+            lines.append(
+                f'<text x="{ox + cell_w // 2}" y="{oy + cell_h // 2}" '
+                f'text-anchor="middle" class="empty">(no data)</text>'
+            )
+            continue
+
+        arr = np.array(rloc_vals)
+        mn = float(np.mean(arr))
+        md = float(np.median(arr))
+
+        nonzero_rloc = arr[arr > 0]
+        max_val = float(nonzero_rloc.max()) if len(nonzero_rloc) > 0 else 1.0
+
+        all_max_vals.append(max_val)
+        all_n_beats.append(n_total_beats)
+
+        lines.append(
+            f'<text x="{ox + cell_w // 2}" y="{oy + 26}" '
+            f'text-anchor="middle" class="stats">'
+            f"n={n_total_beats}  mean={mn:.5f}  med={md:.5f}</text>"
+        )
+
+        # Bin 0 = exact zeros; bins 1..num_buckets-1 divide (0, max_val]
+        n_nonzero_bins = num_buckets - 1
+        bucket_width = max_val / n_nonzero_bins if n_nonzero_bins > 0 else 1.0
+
+        counts = np.zeros(num_buckets, dtype=int)
+        for v in rloc_vals:
+            if v == 0.0:
+                counts[0] += 1
+            else:
+                bi = 1 + int((v - 1e-300) / bucket_width)
+                if bi >= num_buckets:
+                    bi = num_buckets - 1
+                counts[bi] += 1
+
+        max_count = int(counts.max()) if counts.max() > 0 else 1
+        sorted_counts = np.sort(counts)
+        y_axis_max = max_count
+        for k in range(len(sorted_counts) - 2, -1, -1):
+            if sorted_counts[k] < max_count and sorted_counts[k] > 0:
+                y_axis_max = int(np.ceil(sorted_counts[k] * 1.4))
+                break
+        if y_axis_max <= 0:
+            y_axis_max = max_count
+
+        cx = ox + pad_l
+        cy = oy + pad_t
+        bar_w = chart_w / num_buckets
+
+        lines.append(
+            f'<line x1="{cx}" y1="{cy}" x2="{cx}" y2="{cy + chart_h}" '
+            f'stroke="#333" stroke-width="1"/>'
+        )
+        lines.append(
+            f'<line x1="{cx}" y1="{cy + chart_h}" '
+            f'x2="{cx + chart_w}" y2="{cy + chart_h}" '
+            f'stroke="#333" stroke-width="1"/>'
+        )
+        lines.append(
+            f'<text x="{ox + 18}" y="{cy + chart_h // 2}" '
+            f'text-anchor="middle" class="y-axis-label" '
+            f'transform="rotate(-90 {ox + 10},{cy + chart_h // 2})">'
+            f"# bins</text>"
+        )
+
+        for t in range(4):
+            y_val = int(round(y_axis_max * t / 3.0))
+            y_pos = cy + chart_h - (y_val / y_axis_max) * chart_h
+            lines.append(
+                f'<text x="{cx - 3}" y="{y_pos + 3}" '
+                f'text-anchor="end" class="tick">{y_val}</text>'
+            )
+            if t > 0:
+                lines.append(
+                    f'<line x1="{cx + 1}" y1="{y_pos}" '
+                    f'x2="{cx + chart_w}" y2="{y_pos}" '
+                    f'stroke="#eee" stroke-width="0.5"/>'
+                )
+
+        for b_idx in range(num_buckets):
+            c = counts[b_idx]
+            if c == 0:
+                continue
+
+            clipped = c > y_axis_max
+            display_h = min(c, y_axis_max)
+            bar_h = (display_h / y_axis_max) * chart_h
+            bx = cx + b_idx * bar_w
+            by = cy + chart_h - bar_h
+
+            if b_idx == 0:
+                tip = f"[0, 0]: {c}"
+            else:
+                rs = (b_idx - 1) * bucket_width
+                re = b_idx * bucket_width
+                tip = f"({rs:.5f}, {re:.5f}]: {c}"
+
+            lines.append(
+                f'<rect x="{bx + 0.5:.1f}" y="{by:.1f}" '
+                f'width="{bar_w - 1:.1f}" height="{bar_h:.1f}" '
+                f'fill="#e67e22" fill-opacity="0.8">'
+                f"<title>{tip}</title></rect>"
+            )
+
+            if clipped:
+                lines.append(
+                    f'<text x="{bx + bar_w / 2:.1f}" y="{cy - 2}" '
+                    f'text-anchor="middle" class="clipped">{c}</text>'
+                )
+
+        for t in range(3):
+            val = max_val * t / 2.0
+            x_pos = cx + chart_w * t / 2.0
+            lines.append(
+                f'<text x="{x_pos:.1f}" y="{cy + chart_h + 16}" '
+                f'text-anchor="middle" class="x-tick">{val:.4f}</text>'
+            )
+
+        lines.append(
+            f'<text x="{cx + chart_w // 2}" y="{cy + chart_h + 30}" '
+            f'text-anchor="middle" class="axis-label">RR sq err (s^2)</text>'
+        )
+
+    # ---- Zero-reference panel in next grid slot ----
+    if all_max_vals:
+        global_max = float(max(all_max_vals))
+        mean_n = int(round(sum(all_n_beats) / len(all_n_beats)))
+        ref_idx = num_files
+        ref_col = ref_idx % n_cols
+        ref_row = ref_idx // n_cols
+        ox_ref = ref_col * cell_w
+        oy_ref = ref_row * cell_h + 50
+        _append_zero_ref_panel(
+            lines,
+            ox=ox_ref,
+            oy=oy_ref,
+            cell_w=cell_w,
+            cell_h=cell_h,
+            pad_l=pad_l,
+            pad_r=pad_r,
+            pad_t=pad_t,
+            pad_b=pad_b,
+            n_total=mean_n,
+            ref_max_val=global_max,
+            x_label="RR sq err (s^2)",
+            num_buckets=num_buckets,
+            fill_color="#9b59b6",
+        )
+
+    lines.append("</svg>")
+
+    with open(path, "w", encoding="utf-8") as fout:
+        fout.write("\n".join(lines))
+
+
+# ============================================================================
+# Per-file R-location offset scatterplots (one small chart per subject)
+# ============================================================================
+
+
+def write_allfiles_offset_scatter(path, results):
+    """
+    One scatterplot per subject (5 columns).
+    X axis = bin index, Y axis = signed R-location offset in seconds.
+    Bins with inconsistent offsets are plotted at y = -0.1 in red.
+    Bins with no data are skipped.
+    """
+    if not results:
+        return
+
+    num_files = len(results)
+    n_cols = 5
+    n_rows = (num_files + n_cols - 1) // n_cols
+
+    cell_w, cell_h = 260, 275
+    pad_l, pad_r, pad_t, pad_b = 55, 25, 48, 50
+    chart_w = cell_w - pad_l - pad_r
+    chart_h = cell_h - pad_t - pad_b
+
+    svg_w = n_cols * cell_w
+    svg_h = n_rows * cell_h + 55
+
+    lines = []
+    lines.append(
+        f'<svg width="{svg_w}" height="{svg_h}" xmlns="http://www.w3.org/2000/svg">'
+    )
+    lines.append(
+        "<style>\n"
+        "  text { font-family: Consolas, 'Courier New', monospace; }\n"
+        "  .title { font-size: 16px; font-weight: bold; }\n"
+        "  .subtitle { font-size: 12px; font-weight: bold; }\n"
+        "  .stats { font-size: 12px; fill: #555; }\n"
+        "  .tick { font-size: 11px; }\n"
+        "  .axis-label { font-size: 12px; }\n"
+        "  .y-axis-label { font-size: 12px; }\n"
+        "  .empty { font-size: 12px; fill: #999; }\n"
+        "</style>"
+    )
+    lines.append('<rect width="100%" height="100%" fill="#fcfcfc"/>')
+    lines.append(
+        f'<text x="{svg_w // 2}" y="30" text-anchor="middle" class="title">'
+        f"MESA Per-Bin R-Location Offset (C++ minus MATLAB) for all {num_files} files</text>"
+    )
+
+    for f_idx, fr in enumerate(results):
+        col = f_idx % n_cols
+        row = f_idx // n_cols
+        ox = col * cell_w
+        oy = row * cell_h + 50
+
+        file_id = fr["id"]
+        all_bins = fr["bins"]
+
+        # Collect (bin_index, offset_s) pairs, skip nan
+        points = []
+        for b in all_bins:
+            off = b.get("bin_offset_s", float("nan"))
+            if not (off != off):  # skip nan
+                points.append((b["bin"], off))
+
+        lines.append(
+            f'<text x="{ox + cell_w // 2}" y="{oy + 14}" '
+            f'text-anchor="middle" class="subtitle">'
+            f"{file_id}</text>"
+        )
+
+        if not points:
+            lines.append(
+                f'<text x="{ox + cell_w // 2}" y="{oy + cell_h // 2}" '
+                f'text-anchor="middle" class="empty">(no data)</text>'
+            )
+            continue
+
+        n_bins_total = len(all_bins)
+        offsets = [p[1] for p in points]
+        sentinel = -0.1
+        # Inconsistent bins display at 0
+        display_offsets = [0.0 if v == sentinel else v for v in offsets]
+        real_offsets = [v for v in offsets if v != sentinel]
+
+        y_min = min(display_offsets)
+        y_max = max(display_offsets)
+        if y_max - y_min < 1e-9:
+            y_min -= 0.005
+            y_max += 0.005
+        y_lo = y_min - (y_max - y_min) * 0.15
+        y_hi = y_max + (y_max - y_min) * 0.15
+
+        def to_y(val):
+            return oy + pad_t + chart_h - (val - y_lo) / (y_hi - y_lo) * chart_h
+
+        def to_x(bin_idx):
+            return ox + pad_l + bin_idx / max(n_bins_total - 1, 1) * chart_w
+
+        cx_ax = ox + pad_l
+        cy_ax = oy + pad_t
+
+        # Axes
+        lines.append(
+            f'<line x1="{cx_ax}" y1="{cy_ax}" x2="{cx_ax}" y2="{cy_ax + chart_h}" '
+            f'stroke="#333" stroke-width="1"/>'
+        )
+        lines.append(
+            f'<line x1="{cx_ax}" y1="{cy_ax + chart_h}" '
+            f'x2="{cx_ax + chart_w}" y2="{cy_ax + chart_h}" '
+            f'stroke="#333" stroke-width="1"/>'
+        )
+
+        # Y axis label
+        lines.append(
+            f'<text x="{ox + 14}" y="{cy_ax + chart_h // 2}" '
+            f'text-anchor="middle" class="y-axis-label" '
+            f'transform="rotate(-90 {ox + 14},{cy_ax + chart_h // 2})">'
+            f"offset (s)</text>"
+        )
+
+        # Y ticks: show a few real values
+        n_y_ticks = 4
+        y_range = y_max - y_min
+        # Choose precision based on range magnitude
+        if y_range < 0.001:
+            tick_fmt = ".5f"
+        elif y_range < 0.01:
+            tick_fmt = ".4f"
+        else:
+            tick_fmt = ".3f"
+        for t in range(n_y_ticks + 1):
+            val = y_min + y_range * t / n_y_ticks
+            yp = to_y(val)
+            lines.append(
+                f'<line x1="{cx_ax - 3}" y1="{yp:.1f}" x2="{cx_ax + chart_w}" y2="{yp:.1f}" '
+                f'stroke="#eee" stroke-width="0.5"/>'
+            )
+            lines.append(
+                f'<text x="{cx_ax - 5}" y="{yp + 3:.1f}" '
+                f'text-anchor="end" class="tick">{val:{tick_fmt}}</text>'
+            )
+
+        # Dashed reference line at -0.0015 s (always drawn; clamped to chart if outside range)
+        REF_LINE = -0.0015
+        y_ref_raw = to_y(REF_LINE)
+        y_ref_px = max(oy + pad_t, min(oy + pad_t + chart_h, y_ref_raw))
+        lines.append(
+            f'<line x1="{cx_ax}" y1="{y_ref_px:.1f}" x2="{cx_ax + chart_w}" y2="{y_ref_px:.1f}" '
+            f'stroke="#e67e22" stroke-width="1.2" stroke-dasharray="4,3"/>'
+        )
+        lines.append(
+            f'<text x="{cx_ax + chart_w - 2}" y="{y_ref_px - 3:.1f}" '
+            f'text-anchor="end" class="tick" fill="#e67e22">-0.0015s</text>'
+        )
+
+        # X ticks
+        n_x_ticks = min(5, n_bins_total)
+        for t in range(n_x_ticks + 1):
+            bin_i = int(round((n_bins_total - 1) * t / n_x_ticks))
+            xp = to_x(bin_i)
+            lines.append(
+                f'<text x="{xp:.1f}" y="{cy_ax + chart_h + 14}" '
+                f'text-anchor="middle" class="tick">{bin_i}</text>'
+            )
+
+        lines.append(
+            f'<text x="{cx_ax + chart_w // 2}" y="{cy_ax + chart_h + 28}" '
+            f'text-anchor="middle" class="axis-label">bin</text>'
+        )
+
+        # Stats line
+        n_inconsistent = sum(1 for v in offsets if v == sentinel)
+        n_consistent = len(offsets) - n_inconsistent
+        med_off = float(np.median(real_offsets)) if real_offsets else float("nan")
+        lines.append(
+            f'<text x="{ox + cell_w // 2}" y="{oy + 26}" '
+            f'text-anchor="middle" class="stats">'
+            f"ok={n_consistent}  incons={n_inconsistent}  med={med_off:.4f}s</text>"
+        )
+
+        # Draw zero line if in range
+        if y_lo < 0 < y_hi:
+            y_zero = to_y(0.0)
+            lines.append(
+                f'<line x1="{cx_ax}" y1="{y_zero:.1f}" x2="{cx_ax + chart_w}" y2="{y_zero:.1f}" '
+                f'stroke="#aaa" stroke-width="0.8" stroke-dasharray="2,2"/>'
+            )
+
+        # Points (inconsistent bins plot at y=0, shown in orange)
+        for (bin_i, off), disp in zip(points, display_offsets):
+            xp = to_x(bin_i)
+            yp = to_y(disp)
+            color = "#e74c3c" if off == sentinel else "#1a5fa8"
+            label = (
+                f"bin {bin_i}: inconsistent (plotted at 0)"
+                if off == sentinel
+                else f"bin {bin_i}: {off:.5f}s"
+            )
+            lines.append(
+                f'<circle cx="{xp:.1f}" cy="{yp:.1f}" r="3" '
+                f'fill="{color}" fill-opacity="0.85">'
+                f"<title>{label}</title></circle>"
+            )
+
+    lines.append("</svg>")
+
+    with open(path, "w", encoding="utf-8") as fout:
         fout.write("\n".join(lines))
 
 
@@ -985,11 +1602,17 @@ def main():
     write_summary_csv(OUTPUT_DIR / "summary.csv", results)
     write_file_summary_csv(OUTPUT_DIR / "file_summary.csv", results)
     write_allfiles_ssd_histograms(OUTPUT_DIR / "allfiles_ssd_histograms.svg", results)
+    write_allfiles_rloc_histograms(
+        OUTPUT_DIR / "allfiles_ssd_histograms_rr.svg", results
+    )
+    write_allfiles_offset_scatter(OUTPUT_DIR / "allfiles_offset_scatter.svg", results)
     write_combined_ssd_histogram(OUTPUT_DIR / "combined_ssd_histogram.svg", results)
 
     print(f"\nSummary CSV:       {OUTPUT_DIR / 'summary.csv'}")
     print(f"File Summary CSV:  {OUTPUT_DIR / 'file_summary.csv'}")
     print(f"SSD Per-File:      {OUTPUT_DIR / 'allfiles_ssd_histograms.svg'}")
+    print(f"RLoc Per-File:     {OUTPUT_DIR / 'allfiles_ssd_histograms_rr.svg'}")
+    print(f"Offset Scatter:    {OUTPUT_DIR / 'allfiles_offset_scatter.svg'}")
     print(f"SSD Combined:      {OUTPUT_DIR / 'combined_ssd_histogram.svg'}")
     print(f"Per-file CSVs:     {OUTPUT_DIR}/<subject>_wave_comparison.csv")
 

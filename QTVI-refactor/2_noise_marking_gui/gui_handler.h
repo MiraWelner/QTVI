@@ -29,7 +29,7 @@
 struct GenExcStruct {
     QString filePath;          // source file these markings belong to
     QVector<QPair<double, double>> noiseExc;
-    QStringList data_type;     // "ECG1", "ECG2", "ECG3", or "PPG"
+    QStringList data_type;     // "ECG1", "ECG2", "ECG3", "PPG", or "ABP"
     QStringList marking_type;  // "Noise/Artifact", "AF", "SVT", etc.
 };
 
@@ -77,6 +77,7 @@ private:
     //
 public:
     enum class MarkPhase { Idle, WaitingForStart, WaitingForEnd, WaitingForStop };
+    enum class PlotMode { Line, Scatter };
 
     struct ChannelMarkingState {
         MarkPhase    phase = MarkPhase::Idle;
@@ -96,6 +97,7 @@ private:
     ChannelMarkingState  m_markState_ecg2;
     ChannelMarkingState  m_markState_ecg3;
     ChannelMarkingState  m_markState_ppg;
+    ChannelMarkingState  m_markState_abp;
 
     // --- Core components ---
     std::unique_ptr<Ui::noise_marking_gui> ui;
@@ -121,14 +123,21 @@ private:
     // --- Ampogram / hypnogram series ---
     QLineSeries* m_ecgAmpSeries = nullptr;
     QLineSeries* m_ppgAmpSeries = nullptr;
+    QLineSeries* m_respAmpSeries = nullptr;   // RESP 8h overview (min/max-decimated raw)
+    QLineSeries* m_cvpAmpSeries = nullptr;   // CVP  8h overview (min/max-decimated raw)
     QLineSeries* m_ecgCursorBar = nullptr;
     QLineSeries* m_ppgCursorBar = nullptr;
+    QLineSeries* m_respCursorBar = nullptr;
+    QLineSeries* m_cvpCursorBar = nullptr;
     QLineSeries* m_hypnoCursorBar = nullptr;
     QList<QAreaSeries*>     m_highlights;
     QList<QAbstractSeries*> m_hypnoStageSeries;
 
     // --- Mark-all state ---
     bool m_markAllActive = false;   // true while "Mark All Signals" mode is in effect
+
+    // --- Plot style (global, applies to all signal charts) ---
+    PlotMode m_plotMode = PlotMode::Line;
 
     // --- Drag state ---
     bool     m_isDragging = false;
@@ -139,13 +148,16 @@ private:
     // --- Signal data ---
     QVector<double> m_ecg1, m_ecg2, m_ecg3, m_ppg;
     QVector<double> m_accelX, m_accelY, m_accelZ;
+    QVector<double> m_resp;        // respiration (slot 34)
+    QVector<double> m_cvp;         // central venous pressure (slot 16, Bittium)
+    QVector<double> m_abp;         // arterial blood pressure (slot 35, Bittium)
     QVector<double> m_sleepStages;
 
-    // --- File layout (new 160-byte header: 40 x uint32) ---
+    // --- File layout (180-byte header: 45 x uint32 = 4 rates + 40 chan-sizes + 1 sleep) ---
     QString  m_binFilePath;
-    static constexpr qint64 FILE_HEADER_SIZE = 160;
+    static constexpr qint64 FILE_HEADER_SIZE = 180;
 
-    uint32_t m_chanSizes[36] = {};
+    uint32_t m_chanSizes[40] = {};
     uint32_t m_totalSleepSamples = 0;
 
     static constexpr int CH_ECG1 = 0, CH_ECG2 = 1, CH_ECG3 = 2, CH_PPG = 3;
@@ -161,6 +173,8 @@ private:
     static constexpr int CH_EEG3_OFF = 29;
     static constexpr int CH_OXSTATUS = 30, CH_SPO2 = 31;
     static constexpr int CH_HR = 32, CH_DHR = 33, CH_RESP = 34;
+    static constexpr int CH_ABP = 35, CH_EEG4 = 36;
+    static constexpr int CH_ART = 37, CH_ART_PULM = 38;
 
     uint64_t m_currentChunkIndex = 0;
 

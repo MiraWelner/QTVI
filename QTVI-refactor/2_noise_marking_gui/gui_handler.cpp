@@ -27,11 +27,14 @@
 #include <QtCharts/QChartView>
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QScatterSeries>
+#include <QtCharts/QXYSeries>
 #include <QtCharts/QValueAxis>
 #include <QtCharts/QCategoryAxis>
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QShortcut>
+#include <QButtonGroup>
+#include <QRadioButton>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -49,6 +52,9 @@ static const QColor COLOR_PPG = QColor("#E74C3C");
 static const QColor COLOR_ACCEL_X = QColor("#F39C12");  // orange
 static const QColor COLOR_ACCEL_Y = QColor("#27AE60");  // green
 static const QColor COLOR_ACCEL_Z = QColor("#8E44AD");  // purple
+static const QColor COLOR_RESP = QColor("#16A085");  // teal
+static const QColor COLOR_CVP = QColor("#2980B9");  // blue
+static const QColor COLOR_ABP = QColor("#C0392B");  // red
 
 static const QMap<QString, QColor> MARKING_COLORS = {
     {"Noise/Artifact",         QColor(255, 255, 0,   30)},
@@ -95,6 +101,7 @@ noise_marking_gui::ChannelMarkingState& noise_marking_gui::markStateFor(const QS
     if (label == "ECG1") return m_markState_ecg1;
     if (label == "ECG2") return m_markState_ecg2;
     if (label == "ECG3") return m_markState_ecg3;
+    if (label == "ABP")  return m_markState_abp;
     return m_markState_ppg;
 }
 
@@ -103,6 +110,14 @@ QString noise_marking_gui::signalLabelForChartView(QChartView* cv) const {
     if (cv == ui->ecg_axis_2) return "ECG2";
     if (cv == ui->ecg_axis_3) return "ECG3";
     if (cv == ui->ppg_axis)   return "PPG";
+
+    if (cv == ui->accel_or_abg_axis) {
+        bool anyAccel = !isMissingSignal(m_accelX)
+            || !isMissingSignal(m_accelY)
+            || !isMissingSignal(m_accelZ);
+        if (!anyAccel && !isMissingSignal(m_abp)) return "ABP";
+    }
+
     return {};
 }
 
@@ -111,6 +126,7 @@ QChartView* noise_marking_gui::chartViewForSignalLabel(const QString& label) con
     if (label == "ECG2") return ui->ecg_axis_2;
     if (label == "ECG3") return ui->ecg_axis_3;
     if (label == "PPG")  return ui->ppg_axis;
+    if (label == "ABP")  return ui->accel_or_abg_axis;
     return nullptr;
 }
 
@@ -122,6 +138,7 @@ QColor noise_marking_gui::colorForSignal(const QString& label) const {
     if (label == "ECG1") return COLOR_ECG1;
     if (label == "ECG2") return COLOR_ECG2;
     if (label == "ECG3") return COLOR_ECG3;
+    if (label == "ABP")  return COLOR_ABP;
     return COLOR_PPG;
 }
 
@@ -144,6 +161,7 @@ QPushButton* noise_marking_gui::startButtonForSignal(const QString& label) const
     if (label == "ECG2") return ui->start_ecg2_mark;
     if (label == "ECG3") return ui->start_ecg3_mark;
     if (label == "PPG")  return ui->startNoisePPG;
+    if (label == "ABP")  return ui->startNoiseABP;
     return nullptr;
 }
 
@@ -152,6 +170,7 @@ QPushButton* noise_marking_gui::stopButtonForSignal(const QString& label) const 
     if (label == "ECG2") return ui->stop_ecg2_mark;
     if (label == "ECG3") return ui->stop_ecg3_mark;
     if (label == "PPG")  return ui->stopNoisePPG;
+    if (label == "ABP")  return ui->stopNoiseABP;
     return nullptr;
 }
 
@@ -203,7 +222,7 @@ void noise_marking_gui::updateButtonStatesForChannel(const QString& label) {
 }
 
 void noise_marking_gui::updateAllChannelButtonStates() {
-    for (const QString& label : { "ECG1", "ECG2", "ECG3", "PPG" })
+    for (const QString& label : { "ECG1", "ECG2", "ECG3", "PPG", "ABP" })
         updateButtonStatesForChannel(label);
 
     bool anyActive = !m_activeChannels.isEmpty();
@@ -219,7 +238,7 @@ void noise_marking_gui::updateAllChannelButtonStates() {
     // Mark-all is in progress — restore button styling based on channel phases
     bool anyWaitingEnd = false;
     bool anyWaitingStop = false;
-    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG", "ABP" }) {
         if (!isChannelActive(lbl)) continue;
         MarkPhase p = markStateFor(lbl).phase;
         if (p == MarkPhase::WaitingForEnd) anyWaitingEnd = true;
@@ -284,9 +303,10 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     // --- Chart setup ---
     const QList<QChartView*> charts = {
-        ui->sleep_state_axis, ui->amp_ecg_axis, ui->amp_ppg_axis,
+        ui->sleep_or_cvp_axis, ui->amp_ecg1_axis, ui->amp_ppg_axis,
+        ui->resp_axis,
         ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3, ui->ppg_axis,
-        ui->accel_axis
+        ui->accel_or_abg_axis
     };
     for (auto* view : charts) {
         if (!view) continue;
@@ -301,18 +321,43 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     m_skipInterval = ui->skip_interval_box->text().toDouble();
     if (m_skipInterval <= 0.0) m_skipInterval = 5.0;
 
+    // --- Plot-style toggle (Line / Scatter) ---
+    // Uses the radio buttons defined in noise_marking_gui.ui.
+    ui->line_plot->setChecked(true);
+    ui->line_plot->setFocusPolicy(Qt::NoFocus);
+    ui->scatter_plot->setFocusPolicy(Qt::NoFocus);
+    {
+        auto* plotModeGroup = new QButtonGroup(this);
+        plotModeGroup->setExclusive(true);
+        plotModeGroup->addButton(ui->line_plot);
+        plotModeGroup->addButton(ui->scatter_plot);
+
+        auto onPlotModeToggle = [this](bool checked) {
+            if (!checked) return;   // toggled fires on both sides; only react to the checked one
+            m_plotMode = ui->scatter_plot->isChecked() ? PlotMode::Scatter : PlotMode::Line;
+            handle_data_plot();
+            };
+        connect(ui->line_plot, &QRadioButton::toggled, this, onPlotModeToggle);
+        connect(ui->scatter_plot, &QRadioButton::toggled, this, onPlotModeToggle);
+    }
+
     QList<QChartView*> defaultCharts = { ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
-                                         ui->ppg_axis, ui->amp_ecg_axis, ui->amp_ppg_axis,
-                                         ui->accel_axis };
+                                         ui->ppg_axis, ui->amp_ecg1_axis, ui->amp_ppg_axis,
+                                         ui->resp_axis, ui->accel_or_abg_axis };
     for (int i = 0; i < defaultCharts.size(); ++i) {
         if (defaultCharts[i]) setupChartDefaults(defaultCharts[i]);
     }
 
-    // Ampogram series
+    // Ampogram / 8h-overview series
     m_ecgAmpSeries = new QLineSeries();
     m_ppgAmpSeries = new QLineSeries();
-    ui->amp_ecg_axis->chart()->addSeries(m_ecgAmpSeries);
+    m_respAmpSeries = new QLineSeries();
+    ui->amp_ecg1_axis->chart()->addSeries(m_ecgAmpSeries);
     ui->amp_ppg_axis->chart()->addSeries(m_ppgAmpSeries);
+    ui->resp_axis->chart()->addSeries(m_respAmpSeries);
+    // NOTE: m_cvpAmpSeries and m_cvpCursorBar are NOT pre-created in the
+    // ctor, because sleep_or_cvp_axis is multi-purpose (hypnogram OR CVP).
+    // They are created/destroyed lazily in handle_ampogram_plot().
 
     // Initially disable all stop buttons
     ui->stop_ecg1_mark->setEnabled(false);
@@ -321,20 +366,21 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     ui->stopNoisePPG->setEnabled(false);
     ui->stop_all_mark->setEnabled(false);
 
-    // Cursor bars
+    // Cursor bars (black vertical line tracking the currently-viewed window)
     auto addCursor = [](QChartView* view, QLineSeries*& series) {
         series = new QLineSeries();
         series->setPen(QPen(Qt::black, 2));
         view->chart()->addSeries(series);
         };
-    addCursor(ui->amp_ecg_axis, m_ecgCursorBar);
+    addCursor(ui->amp_ecg1_axis, m_ecgCursorBar);
     addCursor(ui->amp_ppg_axis, m_ppgCursorBar);
+    addCursor(ui->resp_axis, m_respCursorBar);
 
     // Hypnogram chart
     auto* hypnoChart = new QChart();
     hypnoChart->legend()->hide();
     hypnoChart->setMargins(QMargins(0, 0, 0, 0));
-    ui->sleep_state_axis->setChart(hypnoChart);
+    ui->sleep_or_cvp_axis->setChart(hypnoChart);
 
     m_hypnoCursorBar = new QLineSeries();
     m_hypnoCursorBar->setPen(QPen(Qt::black, 2));
@@ -391,7 +437,7 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) return;
 
-    uint32_t header[40] = {};
+    uint32_t header[45] = {};
     file.read(reinterpret_cast<char*>(header), sizeof(header));
     file.close();
 
@@ -401,9 +447,9 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     double sleepEpoch = static_cast<double>(header[3]);
     m_sleepSR = (sleepEpoch > 0) ? (1.0 / sleepEpoch) : 0;
 
-    for (int i = 0; i < 36; ++i)
+    for (int i = 0; i < 40; ++i)
         m_chanSizes[i] = header[4 + i];
-    m_totalSleepSamples = header[4 + 36];
+    m_totalSleepSamples = header[4 + 40];
 
     // Restore markings if we've seen this file before, otherwise start fresh
     if (m_fileMarkings.contains(filePath)) {
@@ -432,6 +478,7 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     cancelMarking("ECG2");
     cancelMarking("ECG3");
     cancelMarking("PPG");
+    cancelMarking("ABP");
 
     setWindowTitle("Marking: " + QFileInfo(filePath).fileName());
 
@@ -458,10 +505,10 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 
     m_currentChunkIndex = chunkIndex;
 
-    // Compute byte offset of each channel's data after the 160-byte header
-    uint64_t chanByteOffsets[36];
+    // Compute byte offset of each channel's data after the 180-byte header
+    uint64_t chanByteOffsets[40];
     uint64_t running = 0;
-    for (int i = 0; i < 36; ++i) {
+    for (int i = 0; i < 40; ++i) {
         chanByteOffsets[i] = running;
         running += m_chanSizes[i];
     }
@@ -497,6 +544,9 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     loadSignal(m_accelX, CH_ACCEL_X);
     loadSignal(m_accelY, CH_ACCEL_Y);
     loadSignal(m_accelZ, CH_ACCEL_Z);
+    loadSignal(m_cvp, CH_PRES);       // slot 16 — MESA nasal pressure / Bittium CVP
+    loadSignal(m_resp, CH_RESP);      // slot 34 — respiration
+    loadSignal(m_abp, CH_ABP);        // slot 35 — Bittium arterial blood pressure
 
     // Sleep stages
     {
@@ -530,20 +580,39 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     markActive("ECG3", m_ecg3);
     markActive("PPG", m_ppg);
 
-    // Accel axis: show if any accel channel has data
-    if (ui->accel_axis) {
+    bool anyAccel = !isMissingSignal(m_accelX)
+        || !isMissingSignal(m_accelY)
+        || !isMissingSignal(m_accelZ);
+    if (!anyAccel) markActive("ABP", m_abp);
+
+    // accel_or_abg_axis: show if accel OR ABP has data
+    if (ui->accel_or_abg_axis) {
         bool accelPresent = !isMissingSignal(m_accelX)
             || !isMissingSignal(m_accelY)
             || !isMissingSignal(m_accelZ);
-        ui->accel_axis->setVisible(accelPresent);
+        bool abpPresent = !isMissingSignal(m_abp);
+        ui->accel_or_abg_axis->setVisible(accelPresent || abpPresent);
+    }
+
+    // resp_axis: show if respiration has data
+    if (ui->resp_axis) {
+        ui->resp_axis->setVisible(!isMissingSignal(m_resp));
+    }
+
+    // sleep_or_cvp_axis: show if sleep stages OR CVP has data
+    if (ui->sleep_or_cvp_axis) {
+        bool sleepPresent = !m_sleepStages.isEmpty()
+            && !(m_sleepStages.size() == 1 && m_sleepStages[0] == -1.0);
+        bool cvpPresent = !isMissingSignal(m_cvp);
+        ui->sleep_or_cvp_axis->setVisible(sleepPresent || cvpPresent);
     }
 
     updateAllChannelButtonStates();
 
     handle_ampogram_plot();
     handle_data_plot();
+    setupHypnogram();        // may replace sleep_or_cvp_axis contents; must run before cursor update
     updateAmpogramCursor();
-    setupHypnogram();
     restoreMarkingMarkers();
 
     uint64_t ecgPerChunk = static_cast<uint64_t>(CHUNK_DURATION_SEC * m_ecgSR);
@@ -562,7 +631,25 @@ void noise_marking_gui::on_prev8hours_clicked() { if (m_currentChunkIndex > 0) l
 
 void noise_marking_gui::setupHypnogram() {
     if (m_sleepSR <= 0.0) return;
-    auto* chart = ui->sleep_state_axis->chart();
+
+    // No sleep stages in this file � the sleep_or_cvp_axis is being
+    // used for CVP (handled in handle_data_plot). Do nothing here.
+    bool sleepPresent = !m_sleepStages.isEmpty()
+        && !(m_sleepStages.size() == 1 && m_sleepStages[0] == -1.0);
+    if (!sleepPresent) return;
+
+    auto* chart = ui->sleep_or_cvp_axis->chart();
+
+    // If we're coming from a previous file that had CVP (no sleep stages),
+    // the CVP overview series + its cursor are still on this chart.
+    // Remove them before we repaint as a hypnogram.
+    if (m_cvpAmpSeries && m_cvpAmpSeries->chart() == chart) {
+        chart->removeSeries(m_cvpAmpSeries);
+        // don't delete; reusable
+    }
+    if (m_cvpCursorBar && m_cvpCursorBar->chart() == chart) {
+        chart->removeSeries(m_cvpCursorBar);
+    }
 
     for (auto* s : m_hypnoStageSeries) { chart->removeSeries(s); delete s; }
     m_hypnoStageSeries.clear();
@@ -592,6 +679,11 @@ void noise_marking_gui::setupHypnogram() {
     }
 
     clearAxes(chart);
+
+    // Match the labelling style used for the ampograms.
+    chart->setTitle("Sleep stages");
+    chart->setTitleFont(QFont("Arial", 8, QFont::Bold));
+    chart->setTitleBrush(Qt::black);
 
     auto* xAxis = new QCategoryAxis();
     xAxis->setRange(globalOffset, globalOffset + CHUNK_DURATION_SEC);
@@ -645,15 +737,69 @@ void noise_marking_gui::handle_ampogram_plot(double sampling_length) {
             return pts;
         };
 
+    // ----------------------------------------------------------------------
+    // Min/max-per-pixel envelope: for each of `targetPts` time buckets,
+    // emit the sample-min and sample-max in time order. Drawn with a
+    // QLineSeries, this produces an envelope visually identical to plotting
+    // the raw 28.8M-sample signal, but with a few thousand points instead.
+    // Used for the 8h raw-signal overviews (RESP, CVP).
+    // ----------------------------------------------------------------------
+    auto calcEnvelopePoints = [globalOffset](
+        const QVector<double>& data, double sr, int targetPts) {
+            QList<QPointF> pts;
+            if (data.isEmpty() || sr <= 0.0 || targetPts < 1) return pts;
+
+            const int n = data.size();
+            if (n <= targetPts * 2) {
+                // Few enough samples to plot directly.
+                pts.reserve(n);
+                for (int i = 0; i < n; ++i)
+                    pts.append({ globalOffset + i / sr, data[i] });
+                return pts;
+            }
+
+            pts.reserve(targetPts * 2);
+            for (int b = 0; b < targetPts; ++b) {
+                int s = static_cast<int>((int64_t)b * n / targetPts);
+                int e = static_cast<int>((int64_t)(b + 1) * n / targetPts);
+                if (e > n) e = n;
+                if (s >= e) continue;
+                auto [miIt, maIt] = std::minmax_element(data.begin() + s, data.begin() + e);
+                double tMin = globalOffset + (s + (miIt - (data.begin() + s))) / sr;
+                double tMax = globalOffset + (s + (maIt - (data.begin() + s))) / sr;
+                // Emit in time order so the line connecting them looks right.
+                if (tMin <= tMax) {
+                    pts.append({ tMin, *miIt });
+                    pts.append({ tMax, *maIt });
+                }
+                else {
+                    pts.append({ tMax, *maIt });
+                    pts.append({ tMin, *miIt });
+                }
+            }
+            return pts;
+        };
+
     auto setupPlot = [this, globalOffset](
         QChartView* view, QLineSeries* series, const QList<QPointF>& pts,
-        QLineSeries* cursor, const QColor& color) {
+        QLineSeries* cursor, const QColor& color, const QString& title) {
             series->replace(pts);
             series->setPen(QPen(color, 1));
 
             auto* chart = view->chart();
             clearAxes(chart);
             chart->legend()->hide();
+
+            // Small colored title in the top-left of the chart (matches the
+            // labelling style used by plotDisplayChart).
+            if (!title.isEmpty()) {
+                chart->setTitle(title);
+                chart->setTitleFont(QFont("Arial", 8, QFont::Bold));
+                chart->setTitleBrush(color);
+            }
+            else {
+                chart->setTitle(QString());
+            }
 
             auto* xAxis = new QCategoryAxis();
             xAxis->setRange(globalOffset, globalOffset + CHUNK_DURATION_SEC);
@@ -684,10 +830,69 @@ void noise_marking_gui::handle_ampogram_plot(double sampling_length) {
             if (cursor) cursor->attachAxis(yAxis);
         };
 
-    setupPlot(ui->amp_ecg_axis, m_ecgAmpSeries,
-        calcPoints(m_ecg1, m_ecgSR), m_ecgCursorBar, COLOR_ECG1);
+    setupPlot(ui->amp_ecg1_axis, m_ecgAmpSeries,
+        calcPoints(m_ecg1, m_ecgSR), m_ecgCursorBar, COLOR_ECG1,
+        "ECG1 amplitude");
     setupPlot(ui->amp_ppg_axis, m_ppgAmpSeries,
-        calcPoints(m_ppg, m_ppgSR), m_ppgCursorBar, COLOR_PPG);
+        calcPoints(m_ppg, m_ppgSR), m_ppgCursorBar, COLOR_PPG,
+        "PPG amplitude");
+
+    // --- RESP 8h overview (raw, min/max-decimated) ---
+    if (m_respAmpSeries && !isMissingSignal(m_resp)) {
+        const int viewportPx = ui->resp_axis->viewport()
+            ? ui->resp_axis->viewport()->width() : 1200;
+        setupPlot(ui->resp_axis, m_respAmpSeries,
+            calcEnvelopePoints(m_resp, m_ecgSR, std::max(1, viewportPx)),
+            m_respCursorBar, COLOR_RESP, "RESP");
+    }
+
+    // --- CVP 8h overview (raw, min/max-decimated) ---
+    // Only owns sleep_or_cvp_axis when there are no sleep stages.
+    // setupHypnogram() runs after us (from loadChunkFromFile) and will
+    // wipe the chart if sleep stages are present, so we only lay down
+    // the CVP overview here when that path won't overwrite us.
+    bool sleepPresent = !m_sleepStages.isEmpty()
+        && !(m_sleepStages.size() == 1 && m_sleepStages[0] == -1.0);
+    if (!sleepPresent && !isMissingSignal(m_cvp) && ui->sleep_or_cvp_axis) {
+        auto* chart = ui->sleep_or_cvp_axis->chart();
+
+        // If we're coming from a previous file that had sleep stages,
+        // the hypnogram stage series (and cursor) are still on this chart.
+        // Strip them out before we take over.
+        for (auto* s : m_hypnoStageSeries) { chart->removeSeries(s); delete s; }
+        m_hypnoStageSeries.clear();
+        if (m_hypnoCursorBar && m_hypnoCursorBar->chart() == chart) {
+            chart->removeSeries(m_hypnoCursorBar);
+            // don't delete: it's reusable; will re-add if a future file has sleep stages
+        }
+
+        // Lazily create the CVP overview series + cursor (they are NOT
+        // pre-created in the ctor because this chart is multi-purpose).
+        if (!m_cvpAmpSeries) {
+            m_cvpAmpSeries = new QLineSeries();
+            chart->addSeries(m_cvpAmpSeries);
+        }
+        else if (m_cvpAmpSeries->chart() != chart) {
+            if (m_cvpAmpSeries->chart())
+                m_cvpAmpSeries->chart()->removeSeries(m_cvpAmpSeries);
+            chart->addSeries(m_cvpAmpSeries);
+        }
+        if (!m_cvpCursorBar) {
+            m_cvpCursorBar = new QLineSeries();
+            m_cvpCursorBar->setPen(QPen(Qt::black, 2));
+            chart->addSeries(m_cvpCursorBar);
+        }
+        else if (m_cvpCursorBar->chart() != chart) {
+            if (m_cvpCursorBar->chart())
+                m_cvpCursorBar->chart()->removeSeries(m_cvpCursorBar);
+            chart->addSeries(m_cvpCursorBar);
+        }
+        const int viewportPx = ui->sleep_or_cvp_axis->viewport()
+            ? ui->sleep_or_cvp_axis->viewport()->width() : 1200;
+        setupPlot(ui->sleep_or_cvp_axis, m_cvpAmpSeries,
+            calcEnvelopePoints(m_cvp, m_ecgSR, std::max(1, viewportPx)),
+            m_cvpCursorBar, COLOR_CVP, "CVP");
+    }
 }
 
 // ============================================================================
@@ -703,6 +908,58 @@ void noise_marking_gui::handle_data_plot() {
         delete area;
     }
     m_highlights.clear();
+
+    // Pick the bottommost currently-visible main chart. Its x-axis will show
+    // the time labels; every chart above it hides them. This way if ABP, PPG,
+    // or any of the ECGs is the last visible row, it gets the time ruler.
+    QChartView* xLabelOwner = nullptr;
+    {
+        const QList<QChartView*> order = {
+            ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
+            ui->ppg_axis, ui->accel_or_abg_axis
+        };
+        for (auto* cv : order) {
+            if (cv && cv->isVisible()) xLabelOwner = cv;
+        }
+    }
+
+    // Belt-and-suspenders: wipe every managed chart's series + axes up front.
+    // This prevents stale series from a previous plot mode (line vs. scatter)
+    // from being left behind on a chart that the current redraw path doesn't
+    // visit (e.g. a channel that just became inactive, or CVP/RESP getting
+    // hidden by a toggle).
+    auto wipeChart = [](QChartView* cv, const QList<QAbstractSeries*>& keep) {
+        if (!cv || !cv->chart()) return;
+        QChart* chart = cv->chart();
+        const auto serieses = chart->series();
+        for (auto* s : serieses) {
+            if (keep.contains(s)) continue;
+            chart->removeSeries(s);
+            delete s;
+        }
+        const auto axes = chart->axes();
+        for (auto* a : axes) { chart->removeAxis(a); delete a; }
+        };
+    // Preserve each channel's active start marker (we don't want to delete
+    // an in-progress marking just because of a redraw).
+    QList<QAbstractSeries*> keepECG1 = m_markState_ecg1.startMarkerLine
+        ? QList<QAbstractSeries*>{ m_markState_ecg1.startMarkerLine } : QList<QAbstractSeries*>{};
+    QList<QAbstractSeries*> keepECG2 = m_markState_ecg2.startMarkerLine
+        ? QList<QAbstractSeries*>{ m_markState_ecg2.startMarkerLine } : QList<QAbstractSeries*>{};
+    QList<QAbstractSeries*> keepECG3 = m_markState_ecg3.startMarkerLine
+        ? QList<QAbstractSeries*>{ m_markState_ecg3.startMarkerLine } : QList<QAbstractSeries*>{};
+    QList<QAbstractSeries*> keepPPG = m_markState_ppg.startMarkerLine
+        ? QList<QAbstractSeries*>{ m_markState_ppg.startMarkerLine } : QList<QAbstractSeries*>{};
+    wipeChart(ui->ecg_axis_1, keepECG1);
+    wipeChart(ui->ecg_axis_2, keepECG2);
+    wipeChart(ui->ecg_axis_3, keepECG3);
+    wipeChart(ui->ppg_axis, keepPPG);
+    wipeChart(ui->accel_or_abg_axis, {});
+    // Note: resp_axis and sleep_or_cvp_axis are NOT wiped here.
+    //   - resp_axis is owned by handle_ampogram_plot (8h RESP overview).
+    //   - sleep_or_cvp_axis is owned by either setupHypnogram() or the
+    //     CVP branch of handle_ampogram_plot.
+    // Wiping here would delete the series they manage.
 
     auto plotSignal = [&](QChartView* view, const QVector<double>& data, double sr,
         QLineSeries* marker, double markerPos, const QColor& color,
@@ -742,7 +999,7 @@ void noise_marking_gui::handle_data_plot() {
         xAxis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
         xAxis->setGridLineVisible(false);
         xAxis->setLabelsFont(QFont("Arial", 7));
-        if (view != ui->ppg_axis) xAxis->setLabelsVisible(false);
+        if (view != xLabelOwner) xAxis->setLabelsVisible(false);
         chart->addAxis(xAxis, Qt::AlignBottom);
         chart->setMargins(QMargins(0, 0, 20, 0));
 
@@ -755,10 +1012,24 @@ void noise_marking_gui::handle_data_plot() {
             return { 1e9, -1e9 };
         }
 
-        auto* series = new QLineSeries();
-        series->setUseOpenGL(true);
-        series->setPen(QPen(color, 1));
-        chart->addSeries(series);
+        QXYSeries* plotSeries = nullptr;
+        if (m_plotMode == PlotMode::Scatter) {
+            auto* sc = new QScatterSeries();
+            sc->setColor(color);
+            sc->setBorderColor(Qt::transparent);   // no border: keeps 2px points crisp and fast
+            sc->setMarkerSize(2.0);
+            sc->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+            sc->setUseOpenGL(true);                // scatter supports OpenGL since Qt 5.9
+            chart->addSeries(sc);
+            plotSeries = sc;
+        }
+        else {
+            auto* ln = new QLineSeries();
+            ln->setUseOpenGL(true);
+            ln->setPen(QPen(color, 1));
+            chart->addSeries(ln);
+            plotSeries = ln;
+        }
 
         int startIdx = std::clamp(static_cast<int>(m_currentStartTime * sr),
             0, static_cast<int>(data.size() - 1));
@@ -766,15 +1037,16 @@ void noise_marking_gui::handle_data_plot() {
             0, static_cast<int>(data.size()));
 
         QList<QPointF> pts;
+        pts.reserve(endIdx - startIdx);
         double lMin = 1e9, lMax = -1e9;
         for (int i = startIdx; i < endIdx; ++i) {
             pts.append({ static_cast<double>(i) / sr, data[i] });
-            lMin = std::min(lMin, data[i]);
-            lMax = std::max(lMax, data[i]);
+            if (data[i] < lMin) lMin = data[i];
+            if (data[i] > lMax) lMax = data[i];
         }
-        series->replace(pts);
-        series->attachAxis(xAxis);
-        series->attachAxis(yAxis);
+        plotSeries->replace(pts);
+        plotSeries->attachAxis(xAxis);
+        plotSeries->attachAxis(yAxis);
 
         yAxis->setRange(lMin - 0.5, lMax + 0.5);
         if (marker && marker->chart() == chart) {
@@ -799,25 +1071,29 @@ void noise_marking_gui::handle_data_plot() {
     maybePlot("ECG3", ui->ecg_axis_3, m_ecg3, m_ecgSR, m_markState_ecg3, COLOR_ECG3);
     maybePlot("PPG", ui->ppg_axis, m_ppg, m_ppgSR, m_markState_ppg, COLOR_PPG);
 
-    // Accel: display-only, overlay X/Y/Z on one chart
-    if (ui->accel_axis) {
-        bool anyAccel = !isMissingSignal(m_accelX)
-            || !isMissingSignal(m_accelY)
-            || !isMissingSignal(m_accelZ);
-        if (anyAccel) {
-            // Plot X first to set up the chart axes, then add Y and Z as extra series
-            QChartView* av = ui->accel_axis;
-            QChart* chart = av->chart();
+    // ------------------------------------------------------------------
+    // Display-only charts (no marking): helper to plot 1..N signals on
+    // a chart with the shared time axis and auto-ranged Y axis.
+    // ------------------------------------------------------------------
+    struct DisplaySeries {
+        const QVector<double>* data;
+        QColor                 color;
+    };
 
-            // Clear existing
+    auto plotDisplayChart = [&](QChartView* view, const QString& title,
+        const QColor& titleColor,
+        const QList<DisplaySeries>& serieses,
+        bool forceLine = false) {
+            if (!view || !view->chart()) return;
+            QChart* chart = view->chart();
+
             for (auto* s : chart->series()) { chart->removeSeries(s); delete s; }
             for (auto* a : chart->axes()) { chart->removeAxis(a); delete a; }
 
-            chart->setTitle("ACCEL");
+            chart->setTitle(title);
             chart->setTitleFont(QFont("Arial", 8, QFont::Bold));
-            chart->setTitleBrush(COLOR_ACCEL_X);
+            chart->setTitleBrush(titleColor);
 
-            // X axis (time)
             auto* xAxis = new QCategoryAxis();
             xAxis->setRange(m_currentStartTime, m_currentStartTime + m_windowDuration);
             double offset = m_currentChunkIndex * CHUNK_DURATION_SEC;
@@ -835,51 +1111,86 @@ void noise_marking_gui::handle_data_plot() {
             xAxis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
             xAxis->setGridLineVisible(false);
             xAxis->setLabelsFont(QFont("Arial", 7));
-            xAxis->setLabelsVisible(false);
+            xAxis->setLabelsVisible(view == xLabelOwner);
             chart->addAxis(xAxis, Qt::AlignBottom);
             chart->setMargins(QMargins(0, 0, 20, 0));
 
-            // Y axis
             auto* yAxis = new QValueAxis();
             yAxis->setVisible(false);
             chart->addAxis(yAxis, Qt::AlignLeft);
 
-            // Find global min/max across all 3 axes
-            double gMin = 1e9, gMax = -1e9;
+            const bool useScatter = (m_plotMode == PlotMode::Scatter) && !forceLine;
 
-            auto addAccelSeries = [&](const QVector<double>& data, const QColor& color) {
-                if (isMissingSignal(data)) return;
-                auto* series = new QLineSeries();
-                series->setUseOpenGL(true);
-                series->setPen(QPen(color, 1));
-                chart->addSeries(series);
+            double gMin = 1e9, gMax = -1e9;
+            for (const auto& d : serieses) {
+                if (!d.data || isMissingSignal(*d.data)) continue;
+
+                QXYSeries* plotSeries = nullptr;
+                if (useScatter) {
+                    auto* sc = new QScatterSeries();
+                    sc->setColor(d.color);
+                    sc->setBorderColor(Qt::transparent);   // no border: crisp + faster
+                    sc->setMarkerSize(2.0);
+                    sc->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+                    sc->setUseOpenGL(true);
+                    chart->addSeries(sc);
+                    plotSeries = sc;
+                }
+                else {
+                    auto* ln = new QLineSeries();
+                    ln->setUseOpenGL(true);
+                    ln->setPen(QPen(d.color, 1));
+                    chart->addSeries(ln);
+                    plotSeries = ln;
+                }
 
                 int startIdx = std::clamp(static_cast<int>(m_currentStartTime * m_ecgSR),
-                    0, static_cast<int>(data.size() - 1));
+                    0, static_cast<int>(d.data->size() - 1));
                 int endIdx = std::clamp(static_cast<int>((m_currentStartTime + m_windowDuration) * m_ecgSR),
-                    0, static_cast<int>(data.size()));
+                    0, static_cast<int>(d.data->size()));
 
                 QList<QPointF> pts;
+                pts.reserve(endIdx - startIdx);
                 for (int i = startIdx; i < endIdx; ++i) {
-                    pts.append({ static_cast<double>(i) / m_ecgSR, data[i] });
-                    gMin = std::min(gMin, data[i]);
-                    gMax = std::max(gMax, data[i]);
+                    double v = (*d.data)[i];
+                    pts.append({ static_cast<double>(i) / m_ecgSR, v });
+                    if (v < gMin) gMin = v;
+                    if (v > gMax) gMax = v;
                 }
-                series->replace(pts);
-                series->attachAxis(xAxis);
-                series->attachAxis(yAxis);
-                };
+                plotSeries->replace(pts);
+                plotSeries->attachAxis(xAxis);
+                plotSeries->attachAxis(yAxis);
+            }
 
-            addAccelSeries(m_accelX, COLOR_ACCEL_X);
-            addAccelSeries(m_accelY, COLOR_ACCEL_Y);
-            addAccelSeries(m_accelZ, COLOR_ACCEL_Z);
+            if (gMin < gMax) yAxis->setRange(gMin - 0.5, gMax + 0.5);
+            else             yAxis->setRange(-1.0, 1.0);
+        };
 
-            if (gMin < gMax)
-                yAxis->setRange(gMin - 0.5, gMax + 0.5);
-            else
-                yAxis->setRange(-1.0, 1.0);
+    // --- accel_or_abg_axis: prefer accel; if absent, fall through to ABP ---
+    if (ui->accel_or_abg_axis) {
+        bool anyAccel = !isMissingSignal(m_accelX)
+            || !isMissingSignal(m_accelY)
+            || !isMissingSignal(m_accelZ);
+        bool hasAbp = !isMissingSignal(m_abp);
+
+        if (anyAccel) {
+            plotDisplayChart(ui->accel_or_abg_axis, "ACCEL", COLOR_ACCEL_X, {
+                { &m_accelX, COLOR_ACCEL_X },
+                { &m_accelY, COLOR_ACCEL_Y },
+                { &m_accelZ, COLOR_ACCEL_Z },
+                });
+        }
+        else if (hasAbp) {
+            // Route ABP through the markable path so it gets the start marker,
+            // noise-highlight overlay, and click-to-mark behavior like ECG/PPG.
+            maybePlot("ABP", ui->accel_or_abg_axis, m_abp, m_ecgSR,
+                m_markState_abp, COLOR_ABP);
         }
     }
+
+    // resp_axis and sleep_or_cvp_axis are 8-hour overview charts (like the
+    // ampograms), owned by handle_ampogram_plot() and setupHypnogram(),
+    // not by the 10-second-window plotter. Nothing to do here.
 
     updateNoiseHighlights();
 }
@@ -926,7 +1237,7 @@ void noise_marking_gui::finalizeMarking(QChartView* cv, double endX,
     // If mark-all mode is active, check if all channels are now idle
     if (m_markAllActive) {
         bool allIdle = true;
-        for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+        for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG", "ABP" }) {
             if (isChannelActive(lbl) && markStateFor(lbl).phase != MarkPhase::Idle) {
                 allIdle = false;
                 break;
@@ -992,7 +1303,7 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
                 bool anyWaitingForFirstClick = false; // WaitingForStart only
                 bool anyWaitingForEnd = false;        // WaitingForEnd (start placed)
                 bool anyWaitingStop = false;          // WaitingForStop
-                for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+                for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG", "ABP" }) {
                     if (!isChannelActive(lbl)) continue;
                     MarkPhase p = markStateFor(lbl).phase;
                     if (p == MarkPhase::WaitingForStart)
@@ -1007,7 +1318,7 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
                 //    This handles the case where some channels were individually
                 //    stopped while others are still in WaitingForEnd.
                 if (anyWaitingStop) {
-                    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+                    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG", "ABP" }) {
                         if (!isChannelActive(lbl)) continue;
                         ChannelMarkingState& st = markStateFor(lbl);
                         if (st.phase != MarkPhase::WaitingForStop) continue;
@@ -1022,7 +1333,7 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
                 // 2) Place (or move) the start marker on channels that
                 //    haven't had their start set yet, or are having it moved.
                 if (anyWaitingForFirstClick || anyWaitingForEnd) {
-                    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+                    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG", "ABP" }) {
                         if (!isChannelActive(lbl)) continue;
                         ChannelMarkingState& st = markStateFor(lbl);
                         if (st.phase != MarkPhase::WaitingForStart &&
@@ -1071,9 +1382,24 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
             }
         }
 
-        // --- Ampogram / hypnogram click (navigate) ---
-        if (cv == ui->amp_ecg_axis || cv == ui->amp_ppg_axis
-            || cv == ui->sleep_state_axis) {
+        // --- Overview click (navigate) ---
+        // Ampograms (amp_ecg1, amp_ppg) are always full-8h overview charts.
+        // resp_axis is always a full-8h RESP overview when RESP is present.
+        // sleep_or_cvp_axis is an 8h overview in BOTH modes now:
+        //   - hypnogram when sleep stages are present
+        //   - CVP overview when CVP is present and no sleep stages
+        // In all these cases, a click maps global-chart-X to a chunk-local
+        // time, which is what we want for scrubbing.
+        bool sleepPresent = !m_sleepStages.isEmpty()
+            && !(m_sleepStages.size() == 1 && m_sleepStages[0] == -1.0);
+        bool respPresent = !isMissingSignal(m_resp);
+        bool cvpPresent = !isMissingSignal(m_cvp);
+        bool isNavChart =
+            (cv == ui->amp_ecg1_axis)
+            || (cv == ui->amp_ppg_axis)
+            || (cv == ui->resp_axis && respPresent)
+            || (cv == ui->sleep_or_cvp_axis && (sleepPresent || cvpPresent));
+        if (isNavChart) {
             double globalClickX = cv->chart()->mapToValue(me->pos()).x();
             double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
             double localTarget = globalClickX - globalOffset;
@@ -1136,9 +1462,21 @@ void noise_marking_gui::updateAmpogramCursor() {
         cursor->replace({ {x, yAxis->min()}, {x, yAxis->max()} });
         };
 
-    draw(ui->amp_ecg_axis, m_ecgCursorBar);
+    draw(ui->amp_ecg1_axis, m_ecgCursorBar);
     draw(ui->amp_ppg_axis, m_ppgCursorBar);
-    draw(ui->sleep_state_axis, m_hypnoCursorBar);
+
+    // RESP overview (always full 8h when present).
+    if (!isMissingSignal(m_resp))
+        draw(ui->resp_axis, m_respCursorBar);
+
+    // sleep_or_cvp_axis is multi-purpose. Use the hypno cursor when
+    // sleep stages are showing; otherwise use the CVP cursor.
+    bool sleepPresent = !m_sleepStages.isEmpty()
+        && !(m_sleepStages.size() == 1 && m_sleepStages[0] == -1.0);
+    if (sleepPresent)
+        draw(ui->sleep_or_cvp_axis, m_hypnoCursorBar);
+    else if (!isMissingSignal(m_cvp))
+        draw(ui->sleep_or_cvp_axis, m_cvpCursorBar);
 }
 
 void noise_marking_gui::updateNoiseHighlights() {
@@ -1157,7 +1495,7 @@ void noise_marking_gui::updateNoiseHighlights() {
     };
     QMap<QString, ChartAxes> axesMap;
 
-    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+    for (const QString& lbl : { "ECG1", "ECG2", "ECG3", "PPG", "ABP" }) {
         if (!isChannelActive(lbl)) continue;
         auto* cv = chartViewForSignalLabel(lbl);
         if (!cv) continue;
@@ -1276,6 +1614,7 @@ void noise_marking_gui::restoreMarkingMarkers() {
     restore("ECG2", m_markState_ecg2);
     restore("ECG3", m_markState_ecg3);
     restore("PPG", m_markState_ppg);
+    restore("ABP", m_markState_abp);
 }
 
 // ============================================================================
@@ -1301,7 +1640,7 @@ void noise_marking_gui::beginMarkingAll() {
     m_markAllActive = true;
     m_currentMarkingType = ui->marking_type->currentText();
 
-    for (const QString& label : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+    for (const QString& label : { "ECG1", "ECG2", "ECG3", "PPG", "ABP" }) {
         if (!isChannelActive(label)) continue;
         ChannelMarkingState& state = markStateFor(label);
         if (state.phase != MarkPhase::Idle) cancelMarking(label);
@@ -1313,7 +1652,7 @@ void noise_marking_gui::beginMarkingAll() {
 }
 
 void noise_marking_gui::beginStopPhaseAll() {
-    for (const QString& label : { "ECG1", "ECG2", "ECG3", "PPG" }) {
+    for (const QString& label : { "ECG1", "ECG2", "ECG3", "PPG", "ABP" }) {
         if (!isChannelActive(label)) continue;
         ChannelMarkingState& state = markStateFor(label);
         if (state.phase != MarkPhase::WaitingForEnd) continue;

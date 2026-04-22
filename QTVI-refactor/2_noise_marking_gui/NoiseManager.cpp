@@ -2,7 +2,7 @@
  * @file   NoiseManager.cpp
  * @brief  Implementation of annotation segment storage and export.
  *
- *   labelId: 0=unknown, 1=PPG, 2=ECG1, 3=ECG2, 4=ECG3
+ *   labelId: 0=unknown, 1=PPG, 2=ECG1, 3=ECG2, 4=ECG3, 5=ABP
  *   typeId:  0=unknown, 1=Noise/Artifact, 2=AF, 3=SVT, 4=VT,
  *            5=PVC, 6=PAC, 7=Benign Arrhythmia, 8=Significant Arrhythmia
  */
@@ -42,7 +42,7 @@ void NoiseManager::exportCSV(const std::string& filename) const {
 
 void NoiseManager::exportBinary(const std::string& filename) const {
     static const std::unordered_map<std::string, double> labelMap = {
-        {"PPG", 1.0}, {"ECG1", 2.0}, {"ECG2", 3.0}, {"ECG3", 4.0}
+        {"PPG", 1.0}, {"ECG1", 2.0}, {"ECG2", 3.0}, {"ECG3", 4.0}, {"ABP", 5.0}
     };
     static const std::unordered_map<std::string, double> typeMap = {
         {"Noise/Artifact", 1.0}, {"AF", 2.0}, {"SVT", 3.0}, {"VT", 4.0},

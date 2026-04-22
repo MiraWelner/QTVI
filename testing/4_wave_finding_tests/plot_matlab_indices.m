@@ -1,4 +1,4 @@
-function plot_matlab_indices(mat_path, bins, output_dir, time_range)
+function plot_matlab_indices(id, bins, output_dir, time_range)
 % PLOT_RPEAKS  Plot ECG signal with R-peak markers and export R-peak times to CSV.
 %
 %   plot_matlab_indices('path/to/wave_data.mat', [33 34], 'output_plots', [10 20])
@@ -8,6 +8,13 @@ function plot_matlab_indices(mat_path, bins, output_dir, time_range)
 %   output_dir — folder where .png and .csv files will be saved (created if needed)
 %   time_range — [start, end] in seconds (optional)
 % Convert string arguments from command-line calls
+MAT_DIR = 'D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\mesa_rloc_daniel';
+matches = dir(fullfile(MAT_DIR, [id '_wave_data.mat']));
+if isempty(matches)
+    error('No wave_data.mat found for ID %s in %s', id, MAT_DIR);
+end
+mat_path = fullfile(MAT_DIR, matches(1).name);
+
 if ischar(bins) || isstring(bins)
     bins = str2num(bins); %#ok<ST2NM>
 end
@@ -15,7 +22,7 @@ if nargin < 3 || isempty(output_dir)
         output_dir = 'matlab_output';
 end
 if nargin < 4
-        time_range = [54,56];
+        time_range = [0,60];
 elseif ischar(time_range) || isstring(time_range)
     time_range = str2num(time_range); %#ok<ST2NM>
 end

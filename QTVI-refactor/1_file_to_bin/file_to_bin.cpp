@@ -1,13 +1,13 @@
-/**
+ï»¿/**
  * @file   file_to_bin.cpp
  * @brief  Take in a MESA, Bittium, or CHAOS file and converts it to a .bin file of uniform format
  *
  * The format is the following:
- *  * 160-byte header (40 x uint32):
- *   Offset  0: signal_rate           (uint32)  — Sampling rate for continuous signals (1000 Hz after upsampling)
- *   Offset  4: boolean_rate          (uint32)  — Sampling rate for booleans that were originally 1 Hz
- *   Offset  8: pacemaker_event_rate  (uint32)  — Pacemaker event epoch duration (8 Hz, not upsampled)
- *   Offset 12: sleep_state_rate      (uint32)  — Sleep stage epoch duration in seconds (30s for MESA)
+ *  * 180-byte header (45 x uint32):
+ *   Offset  0: signal_rate           (uint32)  -Sampling rate for continuous signals (1000 Hz after upsampling)
+ *   Offset  4: boolean_rate          (uint32)  -Sampling rate for booleans that were originally 1 Hz
+ *   Offset  8: pacemaker_event_rate  (uint32)  -Pacemaker event epoch duration (8 Hz, not upsampled)
+ *   Offset 12: sleep_state_rate      (uint32)  -Sleep stage epoch duration in seconds (30s for MESA)
  *   Offset 16: size_ecg_1            (uint32)
  *   Offset 20: size_ecg_2            (uint32)
  *   Offset 24: size_ecg_3            (uint32)
@@ -24,7 +24,7 @@
  *   Offset 68: size_eeg_1            (uint32)
  *   Offset 72: size_eeg_2            (uint32)
  *   Offset 76: size_eeg_3            (uint32)
- *   Offset 80: size_pres             (uint32)
+ *   Offset 80: size_pres             (uint32)   -MESA nasal pressure / Bittium+CHAOS CVP
  *   Offset 84: size_flow             (uint32)
  *   Offset 88: size_thor             (uint32)
  *   Offset 92: size_abdo             (uint32)
@@ -43,7 +43,12 @@
  *   Offset 144: size_HR              (uint32)
  *   Offset 148: size_DHR             (uint32)
  *   Offset 152: size_resp            (uint32)
- *   Offset 156: size_sleep           (uint32)
+ *   Offset 156: size_abp             (uint32)   -Bittium+CHAOS arterial blood pressure (NLS_NOM_PRESS_BLD_ART_ABP)
+ *   Offset 160: size_eeg_4           (uint32)   -Bittium+CHAOS 4th EEG channel
+ *   Offset 164: size_art             (uint32)   -CHAOS systemic arterial (NLS_NOM_PRESS_BLD_ART)
+ *   Offset 168: size_art_pulm        (uint32)   -CHAOS pulmonary arterial (NLS_NOM_PRESS_BLD_ART_PULM)
+ *   Offset 172: size_sleep           (uint32)
+ *   (total header: 4 rate + 40 channel-sizes + 1 sleep-size = 45 x uint32 = 180 bytes)
  *
  * Signal data (contiguous doubles, immediately after header):
  *   Written in the same order as the size fields above.
@@ -72,13 +77,13 @@ extern "C" {
 #include "pugixml.hpp"
 #include "resample.hpp"
 
-// 40 uint32 fields = 160 bytes
-static const int NUM_HEADER_FIELDS = 40;
+// 45 uint32 fields = 180 bytes (4 rate + 40 chan-size + 1 sleep-size)
+static const int NUM_HEADER_FIELDS = 45;
 static const std::streamoff HEADER_SIZE = NUM_HEADER_FIELDS * sizeof(uint32_t);
 static const double SLEEP_STATE_LENGTH = 30.0;
 static const std::string CONFIG_PATH = "config.csv";
 static const double final_sampling_rate = 1000.0;
-static const double BOOLEAN_RATE = 1.0;  // 1 Hz channels — do not upsample
+static const double BOOLEAN_RATE = 1.0;  // 1 Hz channels -do not upsample
 
 struct config_csv_data {
     std::string dataType, mainExt, sleepExt, inputPath, outputPath;
@@ -112,6 +117,214 @@ bool contains(std::string search_string, std::string substring) {
     return search_string.find(substring) != std::string::npos;
 }
 
+// Case-insensitive equality check on trimmed strings.
+// Use this instead of contains() when channel names share a common prefix
+// (e.g. NLS_NOM_PRESS_BLD_ART vs NLS_NOM_PRESS_BLD_ART_PULM vs NLS_NOM_PRESS_BLD_ART_ABP).
+static bool equals_ci(std::string a, std::string b) {
+    std::transform(a.begin(), a.end(), a.begin(), ::toupper);
+    std::transform(b.begin(), b.end(), b.begin(), ::toupper);
+    return a == b;
+}
+
+// ============================================================================
+// Locate the real CSV header row in a CHAOS/Bittium .dat file. Some files have
+// a metadata line and a confidentiality NOTICE before the real CSV header, so
+// "first non-empty line" isn't reliable. We treat a line as the header iff it
+// contains either a known channel-name token (NLS_NOM_, NLS_EEG_) or the words
+// "Index" and "TimeStamp" on the same line.
+//
+// Leaves `in` positioned at the line AFTER the header (first data row).
+// Returns the parsed header cells, or an empty vector if no header was found.
+// ============================================================================
+static std::vector<std::string> find_real_header(std::istream& in) {
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.find_first_not_of(" \t\r\n") == std::string::npos) continue;
+        // Cheap pre-check: the header row always contains at least one known token.
+        bool looksLikeHeader =
+            contains(line, "NLS_NOM_") ||
+            contains(line, "NLS_EEG_") ||
+            (contains(line, "Index") && contains(line, "TimeStamp"));
+        if (!looksLikeHeader) continue;
+        return parse_csv_row(line);
+    }
+    return {};
+}
+
+
+// ============================================================================
+// Infer the file's row rate (Hz) from the difference between the first two
+// timestamps. In CHAOS .dat files, every row has a monitor timestamp even if
+// most data columns on that row are empty, so this gives a single authoritative
+// sample-slot rate for the whole file.
+//
+// Returns 0.0 on failure.
+// ============================================================================
+static double infer_row_rate(const std::filesystem::path& path,
+    const std::string& tsColumnName)
+{
+    std::ifstream in(path);
+    if (!in) return 0.0;
+
+    std::vector<std::string> hdrs = find_real_header(in);
+    if (hdrs.empty()) return 0.0;
+
+    int tsCol = -1;
+    for (int i = 0; i < (int)hdrs.size(); ++i) {
+        if (contains(hdrs[i], tsColumnName)) { tsCol = i; break; }
+    }
+    if (tsCol < 0) return 0.0;
+
+    auto parseMs = [](const std::string& s) -> long long {
+        size_t sp = s.find_last_of(' ');
+        std::string t = (sp == std::string::npos) ? s : s.substr(sp + 1);
+        int hh = 0, mm = 0, ss = 0, ms = 0;
+        if (std::sscanf(t.c_str(), "%d:%d:%d.%d", &hh, &mm, &ss, &ms) < 3)
+            return -1;
+        return ((long long)hh * 3600 + mm * 60 + ss) * 1000LL + ms;
+        };
+
+    long long firstMs = -1, secondMs = -1, lastMs = -1;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        std::vector<std::string> cells = parse_csv_row(line);
+        if (tsCol >= (int)cells.size()) continue;
+        const std::string& ts = cells[tsCol];
+        if (ts.empty()) continue;
+        long long ms = parseMs(ts);
+        if (ms < 0) continue;
+
+        // Track the last-seen timestamp for the duration sanity check below.
+        lastMs = ms;
+
+        if (firstMs < 0) { firstMs = ms; continue; }
+        if (secondMs < 0) {
+            if (ms == firstMs) continue;   // same-ms duplicate; wait for the stride to appear
+            secondMs = ms;
+            // don't break -- keep reading so lastMs reaches end of file
+        }
+    }
+    if (firstMs < 0 || secondMs < 0 || secondMs <= firstMs) return 0.0;
+
+    // Sanity check: warn if the file's actual duration is wildly off expected.
+    if (lastMs > firstMs) {
+        double secs = (lastMs - firstMs) / 1000.0;
+        if (secs < 14 * 60 || secs > 16 * 60) {
+            std::cout << "Unexpected file length: " << secs << " seconds\n";
+        }
+    }
+
+    double dtSec = (secondMs - firstMs) / 1000.0;
+    if (dtSec <= 0.0) return 0.0;
+    return 1.0 / dtSec;
+}
+
+
+// ============================================================================
+// Read one column from a CHAOS .dat file into a dense vector of length N
+// (= total number of data rows).  Empty cells are filled by linear
+// interpolation between the surrounding populated cells.  Leading/trailing
+// empty cells are filled with the first/last populated value, respectively.
+//
+// Returns an empty vector if the column is either absent or entirely empty.
+//
+// - If `exactMatch` is true, header names must match `label` exactly
+//   (case-insensitive). Use this when multiple columns share a prefix
+//   (e.g. NLS_NOM_PRESS_BLD_ART vs NLS_NOM_PRESS_BLD_ART_ABP).
+// - If false, `contains()` matching is used.
+// ============================================================================
+static std::vector<double> read_dat_column_interpolated(
+    const std::filesystem::path& path,
+    const std::string& label,
+    bool exactMatch)
+{
+    std::ifstream in(path);
+    if (!in || label.empty()) return {};
+
+    std::vector<std::string> hdrs = find_real_header(in);
+    if (hdrs.empty()) return {};
+
+    int colIdx = -1;
+    for (int i = 0; i < (int)hdrs.size(); ++i) {
+        bool match = exactMatch ? equals_ci(hdrs[i], label)
+            : contains(hdrs[i], label);
+        if (match) { colIdx = i; break; }
+    }
+    if (colIdx < 0) return {};
+
+    // First pass: read all rows. `present[i]` flags whether row i had a value.
+    std::vector<double> values;
+    std::vector<bool>   present;
+    values.reserve(1 << 18);
+    present.reserve(1 << 18);
+
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        std::vector<std::string> row = parse_csv_row(line);
+        if (colIdx >= (int)row.size() || row[colIdx].empty()) {
+            values.push_back(0.0);
+            present.push_back(false);
+            continue;
+        }
+        try {
+            values.push_back(std::stod(row[colIdx]));
+            present.push_back(true);
+        }
+        catch (...) {
+            values.push_back(0.0);
+            present.push_back(false);
+        }
+    }
+
+    const size_t n = values.size();
+    if (n == 0) return {};
+
+    // Is there any populated cell at all?
+    size_t firstPresent = n;
+    size_t lastPresent = n;
+    for (size_t i = 0; i < n; ++i)
+        if (present[i]) { firstPresent = i; break; }
+    if (firstPresent == n) return {};   // entirely empty column
+    for (size_t i = n; i-- > 0; )
+        if (present[i]) { lastPresent = i; break; }
+
+    // Leading run of missings: fill with first known value.
+    for (size_t i = 0; i < firstPresent; ++i) {
+        values[i] = values[firstPresent];
+        present[i] = true;
+    }
+    // Trailing run of missings: fill with last known value.
+    for (size_t i = lastPresent + 1; i < n; ++i) {
+        values[i] = values[lastPresent];
+        present[i] = true;
+    }
+
+    // Interior gaps: walk forward. Whenever we enter a run of missings,
+    // find the next present index and linearly interpolate across.
+    size_t i = firstPresent;
+    while (i < lastPresent) {
+        if (present[i + 1]) { ++i; continue; }
+        // Find the next present index j.
+        size_t j = i + 2;
+        while (j <= lastPresent && !present[j]) ++j;
+        // i is present, j is present, (i, j) are missings.
+        const double v0 = values[i];
+        const double v1 = values[j];
+        const double span = static_cast<double>(j - i);
+        for (size_t k = i + 1; k < j; ++k) {
+            const double f = static_cast<double>(k - i) / span;
+            values[k] = v0 * (1.0 - f) + v1 * f;
+            present[k] = true;
+        }
+        i = j;
+    }
+
+    return values;
+}
+
+
 // ============================================================================
 // Write an EDF channel to binary output.
 // If skip_resample is true, writes raw samples without upsampling.
@@ -136,57 +349,6 @@ void edf_to_bin(int handle, int idx, long long n, double old_rate,
     sizeOut = (uint32_t)buf.size();
 }
 
-// ============================================================================
-// Write a .dat (CSV) channel to binary output.
-// If skip_resample is true, writes raw samples without upsampling.
-// ============================================================================
-static void dat_to_bin(const std::filesystem::path& path, const std::string& label,
-    double old_rate, std::ofstream& out, uint32_t& sizeOut,
-    bool skip_resample = false) {
-    std::ifstream in(path);
-    if (!in || label.empty()) {
-        double v = -1.0; out.write((char*)&v, 8); sizeOut = 1; return;
-    }
-
-    std::string line; int colIdx = -1; bool headerFound = false;
-    while (std::getline(in, line)) {
-        if (contains(line, "Index") || contains(line, label)) {
-            std::vector<std::string> hdrs = parse_csv_row(line);
-            for (int i = 0; i < (int)hdrs.size(); ++i) {
-                if (contains(hdrs[i], label)) {
-                    colIdx = i;
-                    headerFound = true;
-                    break;
-                }
-            }
-            if (headerFound) break;
-        }
-    }
-
-    if (!headerFound || colIdx == -1) {
-        double v = -1.0; out.write((char*)&v, 8); sizeOut = 1; return;
-    }
-
-    std::vector<double> samples;
-    while (std::getline(in, line)) {
-        if (line.empty()) continue;
-        std::vector<std::string> row = parse_csv_row(line);
-        if (colIdx < (int)row.size() && !row[colIdx].empty()) {
-            try { samples.push_back(std::stod(row[colIdx])); }
-            catch (...) {}
-        }
-    }
-    if (samples.empty()) {
-        double v = -1.0; out.write((char*)&v, 8); sizeOut = 1;
-    }
-    else {
-        if (!skip_resample) {
-            samples = upsample(samples, old_rate);
-        }
-        out.write((char*)samples.data(), samples.size() * 8);
-        sizeOut = (uint32_t)samples.size();
-    }
-}
 
 // ============================================================================
 // Write a placeholder (missing channel): single -1.0
@@ -241,7 +403,7 @@ static bool load_config(int data_type, config_csv_data& out) {
 }
 
 // ============================================================================
-// Channel map — holds EDF signal index for each channel
+// Channel map -holds EDF signal index for each channel
 // ============================================================================
 struct ChannelMap {
     int ecg1 = -1, ecg2 = -1, ecg3 = -1, ppg = -1;
@@ -254,6 +416,8 @@ struct ChannelMap {
     int ekg_off = -1, eog_l_off = -1, eog_r_off = -1, emg_off = -1;
     int eeg1_off = -1, eeg2_off = -1, eeg3_off = -1;
     int oxstatus = -1, spo2 = -1, hr = -1, dhr = -1, resp = -1;
+    int abp = -1, eeg4 = -1;
+    int art = -1, art_pulm = -1;
 };
 
 static ChannelMap build_edf_channel_map(const edf_hdr_struct* hdr, const config_csv_data& cfg) {
@@ -370,7 +534,7 @@ static void make_binfile_edf(const std::filesystem::path& path,
 
     ChannelMap cm = build_edf_channel_map(hdr.get(), cfg);
 
-    uint32_t sizes[36] = {};
+    uint32_t sizes[40] = {};
 
     // Helper: write one EDF channel.
     // Determines skip_resample automatically: if the channel's native rate
@@ -397,17 +561,17 @@ static void make_binfile_edf(const std::filesystem::path& path,
     writeChannel(cm.temp, 8);
     writeChannel(cm.pacemaker, 9);
 
-    // 10-12: EOG-L, EOG-R, EMG (256 Hz in MESA — upsample)
+    // 10-12: EOG-L, EOG-R, EMG (256 Hz in MESA -upsample)
     writeChannel(cm.eog_l, 10);
     writeChannel(cm.eog_r, 11);
     writeChannel(cm.emg, 12);
 
-    // 13-15: EEG 1-3 (256 Hz in MESA — upsample)
+    // 13-15: EEG 1-3 (256 Hz in MESA -upsample)
     writeChannel(cm.eeg1, 13);
     writeChannel(cm.eeg2, 14);
     writeChannel(cm.eeg3, 15);
 
-    // 16-22: Pres, Flow, Thor, Abdo, Leg, Therm, Pos (32 Hz in MESA — upsample)
+    // 16-22: Pres, Flow, Thor, Abdo, Leg, Therm, Pos (32 Hz in MESA -upsample)
     writeChannel(cm.pres, 16);
     writeChannel(cm.flow, 17);
     writeChannel(cm.thor, 18);
@@ -416,7 +580,7 @@ static void make_binfile_edf(const std::filesystem::path& path,
     writeChannel(cm.therm, 21);
     writeChannel(cm.pos, 22);
 
-    // 23-29: Offset channels (1 Hz — no upsample)
+    // 23-29: Offset channels (1 Hz -no upsample)
     writeChannel(cm.ekg_off, 23);
     writeChannel(cm.eog_l_off, 24);
     writeChannel(cm.eog_r_off, 25);
@@ -425,18 +589,30 @@ static void make_binfile_edf(const std::filesystem::path& path,
     writeChannel(cm.eeg2_off, 28);
     writeChannel(cm.eeg3_off, 29);
 
-    // 30-31: OxStatus (1 Hz — no upsample), SpO2 (1 Hz — no upsample)
+    // 30-31: OxStatus (1 Hz -no upsample), SpO2 (1 Hz -no upsample)
     writeChannel(cm.oxstatus, 30);
     writeChannel(cm.spo2, 31);
 
-    // 32: HR (1 Hz — no upsample)
+    // 32: HR (1 Hz -no upsample)
     writeChannel(cm.hr, 32);
 
-    // 33: DHR (256 Hz in MESA — upsample)
+    // 33: DHR (256 Hz in MESA -upsample)
     writeChannel(cm.dhr, 33);
 
     // 34: Resp
     writeChannel(cm.resp, 34);
+
+    // 35: ABP (Bittium only -not in MESA EDF)
+    writeChannel(cm.abp, 35);
+
+    // 36: EEG4 (Bittium only -not in MESA EDF)
+    writeChannel(cm.eeg4, 36);
+
+    // 37: ART systemic (CHAOS only -not in MESA EDF)
+    writeChannel(cm.art, 37);
+
+    // 38: ART_PULM pulmonary (CHAOS only -not in MESA EDF)
+    writeChannel(cm.art_pulm, 38);
 
     edfclose_file(hdr->handle);
 
@@ -470,13 +646,12 @@ static void make_binfile_edf(const std::filesystem::path& path,
     out.write((char*)&pace_rate, 4);
     out.write((char*)&sleep_rate, 4);
 
-    for (int i = 0; i < 36; ++i)
+    for (int i = 0; i < 40; ++i)
         out.write((char*)&sizes[i], 4);
 
     out.write((char*)&ss, 4);
 
     out.close();
-    std::cout << "  -> " << outPath << std::endl;
 }
 
 // ============================================================================
@@ -496,53 +671,92 @@ static void make_binfile_dat(const std::filesystem::path& path,
     std::vector<char> zeroes(HEADER_SIZE, 0);
     out.write(zeroes.data(), HEADER_SIZE);
 
-    uint32_t sizes[36] = {};
+    uint32_t sizes[40] = {};
 
-    // 0-3: ECG 1-3, PPG (upsample)
-    dat_to_bin(path, cfg.ecg1Label, cfg.ecgRate, out, sizes[0]);
-    dat_to_bin(path, cfg.ecg2Label, cfg.ecgRate, out, sizes[1]);
-    dat_to_bin(path, cfg.ecg3Label, cfg.ecgRate, out, sizes[2]);
-    dat_to_bin(path, cfg.ppgLabel, cfg.ppgRate, out, sizes[3]);
+    // --- Row rate from the first two monitor timestamps ---
+    // Every row in a CHAOS .dat has a Monitor TimeStamp even when most data
+    // cells on that row are blank, so the row rate is one authoritative
+    // "sample slot rate" that applies to every column in the file.
+    double row_rate = infer_row_rate(path, "Monitor TimeStamp");
+    if (row_rate <= 0.0) row_rate = infer_row_rate(path, "System TimeStamp UTC");
+    if (row_rate <= 0.0) {
+        // Last-resort fallback: guess from the config's ECG rate.
+        row_rate = (cfg.ecgRate > 0.0) ? cfg.ecgRate : 500.0;
+        std::cout << "  [warn] couldn't infer row rate; using fallback "
+            << row_rate << " Hz\n";
+    }
+    else {
+        std::cout << "  [info] row rate = " << row_rate << " Hz\n";
+    }
 
-    // 4-6: Accelerometers — not in Bittium
+    // Helper: read a column, interpolate across gaps, upsample from row_rate
+    // to the target rate, and write to `out`. Writes a single -1.0 placeholder
+    // (sizeOut=1) if the column is absent or completely empty.
+    auto writeCol = [&](const std::string& label, bool exact,
+        uint32_t& sizeOut) {
+            std::vector<double> samples =
+                read_dat_column_interpolated(path, label, exact);
+            if (samples.empty()) {
+                double v = -1.0;
+                out.write((char*)&v, 8);
+                sizeOut = 1;
+                return;
+            }
+            samples = upsample(samples, row_rate);
+            out.write((char*)samples.data(), samples.size() * 8);
+            sizeOut = (uint32_t)samples.size();
+        };
+
+    // 0-3: ECG 1-3, PPG
+    writeCol(cfg.ecg1Label, false, sizes[0]);
+    writeCol(cfg.ecg2Label, false, sizes[1]);
+    writeCol(cfg.ecg3Label, false, sizes[2]);
+    writeCol(cfg.ppgLabel, false, sizes[3]);
+
+    // 4-6: Accelerometers (not present in CHAOS .dat)
     write_missing(out, sizes[4]);
     write_missing(out, sizes[5]);
     write_missing(out, sizes[6]);
 
-    // 7-9: Marker, Temp, Pacemaker — not in Bittium
+    // 7-9: Marker, Temp, Pacemaker (not present)
     write_missing(out, sizes[7]);
     write_missing(out, sizes[8]);
     write_missing(out, sizes[9]);
 
-    // 10-12: EOG, EMG — not in Bittium
+    // 10-12: EOG, EMG (not present)
     write_missing(out, sizes[10]);
     write_missing(out, sizes[11]);
     write_missing(out, sizes[12]);
 
-    // 13-15: EEG — Bittium has EEG columns (upsample)
-    dat_to_bin(path, "NLS_EEG_NAMES_EEG_CHAN1", cfg.ecgRate, out, sizes[13]);
-    dat_to_bin(path, "NLS_EEG_NAMES_EEG_CHAN2", cfg.ecgRate, out, sizes[14]);
-    dat_to_bin(path, "NLS_EEG_NAMES_EEG_CHAN3", cfg.ecgRate, out, sizes[15]);
+    // 13-15: EEG 1-3 (contains-match; the real columns have _LBL suffix)
+    writeCol("NLS_EEG_NAMES_EEG_CHAN1", false, sizes[13]);
+    writeCol("NLS_EEG_NAMES_EEG_CHAN2", false, sizes[14]);
+    writeCol("NLS_EEG_NAMES_EEG_CHAN3", false, sizes[15]);
 
-    // 16: Pres — Bittium blood pressure (upsample)
-    dat_to_bin(path, "NLS_NOM_PRESS_BLD_VEN_CENT", cfg.ecgRate, out, sizes[16]);
+    // 16: Pres / CVP
+    writeCol("NLS_NOM_PRESS_BLD_VEN_CENT", false, sizes[16]);
 
-    // 17-22: Flow, Thor, Abdo, Leg, Therm, Pos — not in Bittium
-    for (int i = 17; i <= 22; ++i)
-        write_missing(out, sizes[i]);
+    // 17-22: Flow, Thor, Abdo, Leg, Therm, Pos (not present)
+    for (int i = 17; i <= 22; ++i) write_missing(out, sizes[i]);
 
-    // 23-29: Offset channels — not in Bittium
-    for (int i = 23; i <= 29; ++i)
-        write_missing(out, sizes[i]);
+    // 23-29: MESA offset channels (not present)
+    for (int i = 23; i <= 29; ++i) write_missing(out, sizes[i]);
 
-    // 30-33: OxStatus, SpO2, HR, DHR — not in Bittium
-    for (int i = 30; i <= 33; ++i)
-        write_missing(out, sizes[i]);
+    // 30-33: OxStatus, SpO2, HR, DHR (not present)
+    for (int i = 30; i <= 33; ++i) write_missing(out, sizes[i]);
 
-    // 34: Resp — Bittium has NLS_NOM_RESP (upsample)
-    dat_to_bin(path, "NLS_NOM_RESP", cfg.ecgRate, out, sizes[34]);
+    // 34: Resp
+    writeCol("NLS_NOM_RESP", false, sizes[34]);
+    // 35: ABP (exact match -- distinguishes from ART / ART_PULM)
+    writeCol("NLS_NOM_PRESS_BLD_ART_ABP", true, sizes[35]);
+    // 36: EEG4 (contains-match)
+    writeCol("NLS_EEG_NAMES_EEG_CHAN4", false, sizes[36]);
+    // 37: ART systemic arterial (exact match)
+    writeCol("NLS_NOM_PRESS_BLD_ART", true, sizes[37]);
+    // 38: ART_PULM pulmonary arterial (exact match)
+    writeCol("NLS_NOM_PRESS_BLD_ART_PULM", true, sizes[38]);
 
-    // No sleep data for Bittium
+    // No sleep data for Bittium or CHAOS CSV
     std::vector<double> stages = { -1.0 };
     uint32_t ss = 1;
     out.write(reinterpret_cast<const char*>(stages.data()), ss * sizeof(double));
@@ -560,13 +774,12 @@ static void make_binfile_dat(const std::filesystem::path& path,
     out.write((char*)&pace_rate, 4);
     out.write((char*)&sleep_rate, 4);
 
-    for (int i = 0; i < 36; ++i)
+    for (int i = 0; i < 40; ++i)
         out.write((char*)&sizes[i], 4);
 
     out.write((char*)&ss, 4);
 
     out.close();
-    std::cout << "  -> " << outPath << std::endl;
 }
 
 // ============================================================================

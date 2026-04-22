@@ -27,7 +27,7 @@ import numpy as np
 
 # Time range in seconds to display.  Use None for full signal.
 T_START = 0
-T_END = 10
+T_END = 60
 
 # Which preprocessing method(s) to show as columns.
 # Options: "all", "raw", "squared", "absval"
@@ -450,24 +450,32 @@ def plot_bin(b, bin_idx, file_id, out_dir):
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python plot_rpeaks.py <wave_markings.bin> <bin0> [bin1] ...")
-        print(
-            "Example: python plot_rpeaks.py results/3010112_wave_markings.bin 33 34 473"
-        )
+        print("Usage: python plot_rpeaks.py <id> <bin0> [bin1] ...")
+        print("Example: python plot_rpeaks.py 3010023 33 34 473")
         sys.exit(1)
 
-    bin_path = sys.argv[1]
-    out_dir = r"D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\cpp_output"
+    subject_id = sys.argv[1]
     bin_indices = [int(x) for x in sys.argv[2:]]
 
+    BIN_DIR = Path(
+        r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\mesa_rloc_mira"
+    )
+    matches = list(BIN_DIR.glob(f"{subject_id}_wave_markings.bin"))
+
+    if not matches:
+        print(f"No wave_markings.bin found for ID {subject_id} in {BIN_DIR}")
+        sys.exit(1)
+    bin_path = matches[0]
+
+    out_dir = r"D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\cpp_output"
     os.makedirs(out_dir, exist_ok=True)
-    file_id = Path(bin_path).stem.replace("_wave_markings", "")
+    file_id = bin_path.stem.replace("_wave_markings", "")
 
     print(f"Reading: {bin_path}")
     print(
         f"Config:  SHOW_METHOD={SHOW_METHOD}  T_START={T_START}  T_END={T_END}  SHOW_PPG={SHOW_PPG}"
     )
-    data = read_wave_bin(bin_path)
+    data = read_wave_bin(str(bin_path))
     print(f"Loaded {len(data)} bins.\n")
 
     for b_idx in bin_indices:

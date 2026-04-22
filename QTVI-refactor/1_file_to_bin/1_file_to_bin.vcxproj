@@ -125,7 +125,9 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="edflib.c" />
-    <ClCompile Include="file_to_bin.cpp" />
+    <ClCompile Include="file_to_bin.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="pugixml.cpp" />
   </ItemGroup>
   <ItemGroup>
