@@ -51,6 +51,27 @@ function convert(edf_path,xml_path, output_path)
 
     ecgSamplingRate = edf_hdr.frequency(1); % 256 FOR MESA SET
     ppgSamplingRate = edf_hdr.frequency(2); % 256 FOR MESA SET
+
+    % ====================================================================
+    % Upsample to 1000 Hz here so the entire downstream pipeline (annealer,
+    % FindWaveBounds, etc.) runs at 1000 Hz natively. Mirrors what the C++
+    % file_to_bin step does at ingest, so MATLAB and C++ slice the same
+    % continuous 1000 Hz signal in the same way and produce matching bins.
+    % ====================================================================
+    target_fs = 1000;
+
+    if ecgSamplingRate ~= target_fs
+        [p_e, q_e] = rat(target_fs / ecgSamplingRate);
+        ecg = resample(double(ecg(:)), p_e, q_e).';
+        ecgSamplingRate = target_fs;
+    end
+
+    if ppgSamplingRate ~= target_fs
+        [p_p, q_p] = rat(target_fs / ppgSamplingRate);
+        ppg = resample(double(ppg(:)), p_p, q_p).';
+        ppgSamplingRate = target_fs;
+    end
+
     try
         if strcmp(xml_path,'')
             scoring_epoch_size_sec = 30.0;

@@ -97,7 +97,7 @@ def _read_bin_contents(f, b):
         if sz > MAX_SANE_IDX:
             raise ValueError(f"idx count {sz} exceeds limit")
         data = f.read(sz * 8)
-        return [v - 1 if v >= 1 else 0 for v in struct.unpack(f"<{sz}Q", data)]
+        return list(struct.unpack(f"<{sz}Q", data))
 
     def read_signal():
         sz = struct.unpack("<Q", f.read(8))[0]
