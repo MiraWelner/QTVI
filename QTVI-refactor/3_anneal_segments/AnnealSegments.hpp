@@ -111,7 +111,15 @@ namespace anneal {
             ? (int)std::floor((double)total_len / bin_size)
             : (int)std::ceil((double)total_len / bin_size);
 
-        for (uint64_t b = bin_size + 1; b <= total_len; b += bin_size)
+        // breaks[n-1] is the LAST sample of bin n (1-based, inclusive). So
+        // bin n spans [breaks[n-1] - bin_size + 1, breaks[n-1]] for exactly
+        // bin_size samples = bin_size / sr seconds.
+        //
+        // Old code used `b = bin_size + 1`, treating breaks as "first sample
+        // of next bin", which made the inclusive `[bin_begin, bin_end]`
+        // ranges below contain bin_size + 1 samples and shifted bin n's
+        // start time by (n-1)/sr seconds in downstream consumers.
+        for (uint64_t b = bin_size; b <= total_len; b += bin_size)
             r.bin_breaks.push_back(b);
 
         if ((int)r.bin_breaks.size() < r.bin_count)
@@ -155,16 +163,21 @@ namespace anneal {
             uint64_t saved_end = ex[i].idx_end;
             int saved_bin_end = ex[i].bin_end;
 
+            // breaks[b-1] is now the LAST sample of bin b, so the next
+            // bin's piece starts at breaks[b-1] + 1. Old code with breaks
+            // as "first of next bin" naturally chained pieces by reusing
+            // the same value, which now requires an explicit +1 between
+            // pieces to avoid 1-sample overlap.
             for (int b = ex[i].bin_start; b <= saved_bin_end; ++b) {
                 if (b == ex[i].bin_start) {
                     ex[i].idx_end = breaks[b - 1];
                     ex[i].bin_end = b;
                 }
                 else if (b == saved_bin_end) {
-                    ex.push_back({ breaks[b - 2], saved_end, b, b });
+                    ex.push_back({ breaks[b - 2] + 1, saved_end, b, b });
                 }
                 else {
-                    ex.push_back({ breaks[b - 2], breaks[b - 1], b, b });
+                    ex.push_back({ breaks[b - 2] + 1, breaks[b - 1], b, b });
                 }
             }
         }
@@ -217,7 +230,7 @@ namespace anneal {
         std::vector<Section> marked;
 
         for (int cur : affected) {
-            uint64_t bin_begin = breaks[cur - 1] - bin_size;
+            uint64_t bin_begin = breaks[cur - 1] - bin_size + 1;
             uint64_t bin_end = breaks[cur - 1];
             double   bin_half = (double)(bin_end - (bin_size / 2));
 
@@ -357,7 +370,7 @@ inline std::vector<FinalSegment> AnnealSegments(
     std::vector<Section> good;
     for (int b = 1; b <= bin_count; ++b) {
         if (affected.count(b) == 0)
-            good.push_back({ breaks[b - 1] - bin_size, breaks[b - 1], 0, 0 });
+            good.push_back({ breaks[b - 1] - bin_size + 1, breaks[b - 1], 0, 0 });
     }
 
     auto marked = markForMovement(exclusions, breaks, bin_count,

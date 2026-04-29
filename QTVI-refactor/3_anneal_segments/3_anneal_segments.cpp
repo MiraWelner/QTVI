@@ -1,7 +1,9 @@
 ﻿/**
  * @file   3_anneal_segments.cpp
- * @brief  Takes a raw data .bin (88-byte header) and a noise markings .bin,
- *         outputs 1-minute segments with marked noise removed.
+ * @brief  Takes a v2 raw data .bin (512-byte header, 41 channels) and a
+ *         noise markings .bin, outputs 1-minute segments with marked noise
+ *         removed. The output preserves all 41 input channels (upsampled
+ *         + raw (t,v) blocks) sliced to each segment's time window.
  *
  *         Noise exclusion logic:
  *           - ECG noise is only excluded if ALL 3 ECG channels have
@@ -19,10 +21,30 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <cstdint>
+#include <cstring>
 #include "AnnealSegments.hpp"
 
 namespace fs = std::filesystem;
 double bin_length = 1.0;
+
+// Side-channel data carried alongside RawData. The algorithm only reads
+// RawData; this struct lets the writer emit all 41 channels without the
+// algorithm needing to know about them.
+static constexpr int NUM_CHANNELS = 41;
+struct Extras {
+    // NB: parenthesis-init via assignment to invoke the count constructor.
+    // Brace-init {NUM_CHANNELS} on a vector<vector<double>> hits the
+    // initializer_list ctor, producing a 1-element outer vector instead of
+    // a NUM_CHANNELS-element one -- which silently corrupts memory the
+    // moment we index past slot 0.
+    std::vector<std::vector<double>> upsampled =
+        std::vector<std::vector<double>>(NUM_CHANNELS);   // per-slot upsampled samples
+    std::vector<std::vector<double>> rawFlat =
+        std::vector<std::vector<double>>(NUM_CHANNELS);   // per-slot interleaved (t,v,t,v,...)
+    std::vector<float> nativeRates = std::vector<float>(NUM_CHANNELS, 0.0f);
+    uint32_t signal_rate = 0, boolean_rate = 0, pacemaker_rate = 0, sleep_rate = 0;
+};
 
 // ============================================================================
 // Binary I/O
@@ -60,67 +82,97 @@ static NoiseMarkings read_noise_bin(const std::string& path) {
 }
 
 /**
- * @brief Read the 88-byte header data .bin from file_to_bin (step 1).
+ * @brief Read the v2 data .bin produced by file_to_bin (step 1).
  *
- * 88-byte header:
- *   [double] ecgSR, ppgSR, scoringEpochSec
- *   [uint64] nEcg1, nEcg2, nEcg3, nPpg, nSleep, nAbs1, nAbs2, nAbs3
+ * v2 layout: 512-byte header (4 uint32 rates + 41 upsampled-sizes (uint32) +
+ * 41 raw-sizes (uint32) + 41 native-rates (float32) + 1 sleep-size (uint32)),
+ * then per slot {upsampled doubles, raw (t,v)-pair doubles}, then sleep doubles.
  *
- * Signal order: ECG1, ECG2, ECG3, PPG, Sleep, |ECG1|, |ECG2|, |ECG3|
- * Absolute-value channels are skipped.
+ * Slot order: 0=Timestamp, 1=ECG1, 2=ECG2, 3=ECG3, 4=PPG, 5..40=other.
+ * The algorithm only needs ECG1..PPG + sleep + rates -- those go in `data`.
+ * Everything else (all 41 upsampled + raw blocks, native rates, and the
+ * file-level rate scalars) goes in `extras` so the writer can re-emit them.
  */
-static RawData read_data_bin(const std::string& path) {
-    RawData d;
+static void read_data_bin(const std::string& path, RawData& data, Extras& extras) {
     std::ifstream f(path, std::ios::binary);
     if (!f.is_open()) throw std::runtime_error("Cannot open bin: " + path);
-
     f.seekg(0, std::ios::end);
     const uint64_t fileSize = static_cast<uint64_t>(f.tellg());
     f.seekg(0, std::ios::beg);
 
-    double ecgSR, ppgSR, epochSec;
-    uint64_t nEcg1, nEcg2, nEcg3, nPpg, nSleep;
+    constexpr size_t NHF = 4 + 3 * NUM_CHANNELS + 1;   // = 128 fields
+    constexpr size_t HDR = NHF * 4;                    // = 512 bytes
+    if (fileSize < HDR) throw std::runtime_error("Bin too small: " + path);
 
-    f.read(reinterpret_cast<char*>(&ecgSR), 8);
-    f.read(reinterpret_cast<char*>(&ppgSR), 8);
-    f.read(reinterpret_cast<char*>(&epochSec), 8);
-    f.read(reinterpret_cast<char*>(&nEcg1), 8);
-    f.read(reinterpret_cast<char*>(&nEcg2), 8);
-    f.read(reinterpret_cast<char*>(&nEcg3), 8);
-    f.read(reinterpret_cast<char*>(&nPpg), 8);
-    f.read(reinterpret_cast<char*>(&nSleep), 8);
+    uint32_t hdr[NHF] = {};
+    f.read(reinterpret_cast<char*>(hdr), HDR);
 
-    d.ecgSR = ecgSR;
-    d.ppgSR = ppgSR;
-    std::cout << ecgSR;
-    d.scoringEpochSec = epochSec;
+    extras.signal_rate = hdr[0];
+    extras.boolean_rate = hdr[1];
+    extras.pacemaker_rate = hdr[2];
+    extras.sleep_rate = hdr[3];
 
-    auto safeRead = [&](std::vector<double>& dest, uint64_t count) {
-        uint64_t pos = static_cast<uint64_t>(f.tellg());
-        uint64_t remaining = (fileSize > pos) ? (fileSize - pos) / 8 : 0;
-        uint64_t actual = std::min(count, remaining);
+    std::vector<uint32_t> sizes_up(NUM_CHANNELS), sizes_raw(NUM_CHANNELS);
+    for (int i = 0; i < NUM_CHANNELS; ++i) {
+        sizes_up[i] = hdr[4 + i];
+        sizes_raw[i] = hdr[4 + NUM_CHANNELS + i];
+        std::memcpy(&extras.nativeRates[i], &hdr[4 + 2 * NUM_CHANNELS + i], 4);
+    }
+    const uint32_t sleep_count = hdr[4 + 3 * NUM_CHANNELS];
+
+    data.ecgSR = static_cast<double>(extras.signal_rate);
+    data.ppgSR = static_cast<double>(extras.signal_rate);
+    data.scoringEpochSec = static_cast<double>(extras.sleep_rate);
+
+    // Sequential read: header is followed by 41 x {upsampled, raw} blocks,
+    // then sleep stages. safeReadDoubles clamps to whatever's left in the
+    // file so a truncated bin doesn't throw.
+    auto safeReadDoubles = [&](std::vector<double>& dest, uint64_t count) {
+        const uint64_t pos = static_cast<uint64_t>(f.tellg());
+        const uint64_t avail = (fileSize > pos) ? (fileSize - pos) / 8 : 0;
+        const uint64_t actual = std::min<uint64_t>(count, avail);
         dest.resize(actual);
         if (actual > 0)
-            f.read(reinterpret_cast<char*>(dest.data()), actual * 8);
+            f.read(reinterpret_cast<char*>(dest.data()),
+                static_cast<std::streamsize>(actual * 8));
         };
+    for (int i = 0; i < NUM_CHANNELS; ++i) {
+        safeReadDoubles(extras.upsampled[i], sizes_up[i]);
+        safeReadDoubles(extras.rawFlat[i], static_cast<uint64_t>(sizes_raw[i]) * 2);
+    }
+    safeReadDoubles(data.sleepStages, sleep_count);
 
-    safeRead(d.ecg1, nEcg1);
-    safeRead(d.ecg2, nEcg2);
-    safeRead(d.ecg3, nEcg3);
-    safeRead(d.ppg, nPpg);
-    safeRead(d.sleepStages, nSleep);
-
-    return d;
+    // Mirror algorithm-facing channels into RawData (slots 1..4).
+    data.ecg1 = extras.upsampled[1];
+    data.ecg2 = extras.upsampled[2];
+    data.ecg3 = extras.upsampled[3];
+    data.ppg = extras.upsampled[4];
 }
 
 /**
- * @brief Write the annealed output .bin.
+ * @brief Write the annealed output .bin (all 41 channels preserved).
  *
- * Header: [uint64 nSegments] [double ppgSR] [double ecgSR] [double epochSec]
- * Per segment: ppg_bin_indexs, ecg_bin_indexs, ppg, ecg1, ecg2, ecg3, sleep
+ * Layout:
+ *   Header: [uint64 nSegments][double ppgSR][double ecgSR][double epochSec]
+ *           [uint32 nChannels=41][41 x float32 nativeRates]
+ *   Per segment: ppg_bin_indexs, ecg_bin_indexs,
+ *                ppg, ecg1, ecg2, ecg3, sleep,
+ *                then 41 x {upsampled_slice, raw_slice} blocks.
+ *
+ * The first 7 fields per segment are preserved verbatim from the original
+ * schema. The trailing 41 x {upsampled, raw} blocks carry every input
+ * channel sliced to this segment's time window:
+ *   - Upsampled slice: indices proportional to ecg_bin_indexs. Since every
+ *     channel covers the same total duration, ECG-index i in an N-sample
+ *     ECG block maps to channel-X-index ceil(i * M / N) in an M-sample
+ *     channel-X block. This avoids any per-channel rate bookkeeping.
+ *   - Raw slice: filter (t, v) pairs whose t falls inside the segment's
+ *     ECG time window. Timestamps stay in absolute seconds-from-recording-
+ *     start (same time space as the input).
  */
 static void write_output_bin(const std::string& path,
-    const std::vector<FinalSegment>& segs)
+    const std::vector<FinalSegment>& segs,
+    const Extras& extras)
 {
     std::ofstream out(path, std::ios::binary);
     uint64_t n = segs.size();
@@ -131,6 +183,10 @@ static void write_output_bin(const std::string& path,
         out.write(reinterpret_cast<const char*>(&segs[0].ecgSampleRate), 8);
         out.write(reinterpret_cast<const char*>(&segs[0].scoring_epoch_size_sec), 8);
     }
+    const uint32_t nch = NUM_CHANNELS;
+    out.write(reinterpret_cast<const char*>(&nch), 4);
+    out.write(reinterpret_cast<const char*>(extras.nativeRates.data()),
+        NUM_CHANNELS * sizeof(float));
 
     auto writePairs = [&](const std::vector<std::pair<uint64_t, uint64_t>>& v) {
         uint64_t sz = v.size();
@@ -148,6 +204,20 @@ static void write_output_bin(const std::string& path,
             out.write(reinterpret_cast<const char*>(v.data()), sz * 8);
         };
 
+    // ECG block size is the reference for proportional slicing. signal_rate
+    // gives the time axis for raw filtering.
+    const size_t ecgN = extras.upsampled[1].size();   // slot 1 = ECG1
+    const double sr = (extras.signal_rate > 0)
+        ? static_cast<double>(extras.signal_rate) : 1000.0;
+
+    // Per-channel forward cursors into rwSrc, preserved across segments.
+    // Raw pairs are time-sorted and segments are time-ordered, so we never
+    // need to revisit pairs we've already passed. Without this, MESA files
+    // (8h of data, dense raw blocks, ~500 segments) re-scanned each raw
+    // vector from the start for every segment -- quadratic in the number
+    // of segments.
+    std::vector<size_t> rawCursor(NUM_CHANNELS, 0);
+
     for (const auto& s : segs) {
         writePairs(s.ppg_bin_indexs);
         writePairs(s.ecg_bin_indexs);
@@ -156,6 +226,85 @@ static void write_output_bin(const std::string& path,
         writeVec(s.ecg2);
         writeVec(s.ecg3);
         writeVec(s.sleep_stages);
+
+        // Per-channel slices. Indices in s.ecg_bin_indexs are 1-based at sr.
+        for (int ch = 0; ch < NUM_CHANNELS; ++ch) {
+            const auto& upSrc = extras.upsampled[ch];
+            const auto& rwSrc = extras.rawFlat[ch];
+
+            // ---- Upsampled slice via proportional indexing ----
+            // Sentinel passthrough: file_to_bin writes a single -1.0 for
+            // missing channels. Pass it through so the schema is uniform.
+            std::vector<double> upOut;
+            if (upSrc.size() == 1 && upSrc[0] == -1.0) {
+                upOut = upSrc;
+            }
+            else if (!upSrc.empty() && ecgN > 0) {
+                const double scale = static_cast<double>(upSrc.size()) /
+                    static_cast<double>(ecgN);
+                // Pre-size from the index pairs so we do one allocation
+                // instead of n geometric growths.
+                size_t totalSamples = 0;
+                for (const auto& p : s.ecg_bin_indexs) {
+                    if (p.second < p.first) continue;
+                    uint64_t a = static_cast<uint64_t>((p.first - 1) * scale) + 1;
+                    uint64_t b = static_cast<uint64_t>((p.second - 1) * scale) + 1;
+                    if (a > upSrc.size()) continue;
+                    if (b > upSrc.size()) b = upSrc.size();
+                    totalSamples += static_cast<size_t>(b - a + 1);
+                }
+                upOut.reserve(totalSamples);
+                for (const auto& p : s.ecg_bin_indexs) {
+                    if (p.second < p.first) continue;
+                    uint64_t a = static_cast<uint64_t>((p.first - 1) * scale) + 1;
+                    uint64_t b = static_cast<uint64_t>((p.second - 1) * scale) + 1;
+                    if (a > upSrc.size()) continue;
+                    if (b > upSrc.size()) b = upSrc.size();
+                    // Bulk insert is one memcpy versus (b - a + 1) push_backs.
+                    upOut.insert(upOut.end(),
+                        upSrc.begin() + (a - 1),
+                        upSrc.begin() + b);
+                }
+            }
+            writeVec(upOut);
+
+            // ---- Raw (t, v) slice via time-window filter ----
+            // Sentinel passthrough: missing raw channel is a single (-1, -1).
+            std::vector<double> rwOut;
+            const bool rawIsSentinel = (rwSrc.size() == 2 &&
+                rwSrc[0] == -1.0 && rwSrc[1] == -1.0);
+            if (rawIsSentinel) {
+                rwOut = { -1.0, -1.0 };
+            }
+            else if (!rwSrc.empty()) {
+                // Walk forward through rwSrc using rawCursor[ch], which is
+                // preserved across segments. For each window we advance to
+                // the first pair with t >= t0, then scan until t > t1, and
+                // leave the cursor parked at the next pair to consider for
+                // the next window/segment.
+                size_t k = rawCursor[ch];
+                const size_t N = rwSrc.size();
+                for (const auto& p : s.ecg_bin_indexs) {
+                    if (p.second < p.first) continue;
+                    const double t0 = static_cast<double>(p.first - 1) / sr;
+                    const double t1 = static_cast<double>(p.second - 1) / sr;
+                    // Advance past pairs strictly before t0.
+                    while (k + 1 < N && rwSrc[k] < t0) k += 2;
+                    // Collect pairs with t in [t0, t1].
+                    while (k + 1 < N && rwSrc[k] <= t1) {
+                        rwOut.push_back(rwSrc[k]);
+                        rwOut.push_back(rwSrc[k + 1]);
+                        k += 2;
+                    }
+                }
+                rawCursor[ch] = k;
+            }
+            const uint64_t nPairs = rwOut.size() / 2;
+            out.write(reinterpret_cast<const char*>(&nPairs), 8);
+            if (!rwOut.empty())
+                out.write(reinterpret_cast<const char*>(rwOut.data()),
+                    rwOut.size() * 8);
+        }
     }
 }
 
@@ -221,7 +370,9 @@ int main() {
 
         std::string id = entry.path().stem().string();
         try {
-            RawData raw = read_data_bin(entry.path().string());
+            RawData raw;
+            Extras  extras;
+            read_data_bin(entry.path().string(), raw, extras);
 
             NoiseMarkings noise;
             std::string npath = sel.noisePath + "/" + id + "_noise_markings.bin";
@@ -229,7 +380,7 @@ int main() {
                 noise = read_noise_bin(npath);
 
             auto results = AnnealSegments(raw, noise, bin_length);
-            write_output_bin(sel.annealedPath + "/" + id + ".bin", results);
+            write_output_bin(sel.annealedPath + "/" + id + ".bin", results, extras);
 
             ++processed;
             std::cerr << "  [" << processed << "] " << id

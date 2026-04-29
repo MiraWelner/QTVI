@@ -25,6 +25,15 @@ struct AnnealedSegment {
     std::vector<double> sleep_state_signal;
     std::vector<std::pair<uint64_t, uint64_t>> ppg_bin_indexs;
     std::vector<std::pair<uint64_t, uint64_t>> ecg_bin_indexs;
+
+    // Pass-through: full set of input channels carried alongside the
+    // algorithm-facing signals above. The peakfinding algorithm doesn't
+    // touch these -- they're just routed from the annealed input through
+    // to the wave_markings output. Indexed by the same 41-slot layout as
+    // step 3's annealed bin (slot 0 = timestamp, 1 = ECG1, ..., 4 = PPG,
+    // 5..40 = other channels).
+    std::vector<std::vector<double>> all_upsampled;          // per-slot upsampled samples
+    std::vector<std::vector<double>> all_raw_pairs_flat;     // per-slot interleaved (t, v, t, v, ...)
 };
 
 
@@ -69,6 +78,12 @@ struct output_binfile_data {
     std::size_t index = 0;
     std::vector<std::pair<uint64_t, uint64_t>> ppg_bin_indexs;
     std::vector<std::pair<uint64_t, uint64_t>> ecg_bin_indexs;
+
+    // Pass-through channels routed from the annealed input through to the
+    // wave_markings output without modification. Same 41-slot layout as
+    // AnnealedSegment.all_upsampled / all_raw_pairs_flat.
+    std::vector<std::vector<double>> all_upsampled;
+    std::vector<std::vector<double>> all_raw_pairs_flat;
 };
 
 AnnealedData read_input_binfile(const std::string& path);

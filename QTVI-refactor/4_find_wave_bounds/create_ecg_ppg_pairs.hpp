@@ -141,6 +141,13 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs(
         d.ppg_bin_indexs = std::move(seg.ppg_bin_indexs);
         d.ecg_bin_indexs = std::move(seg.ecg_bin_indexs);
 
+        /* Pass-through: route the full 41-channel set from input to output
+           untouched. Move-semantics since the input segment is consumed
+           in this loop iteration. The peakfinding algorithm below does
+           not read or modify these vectors. */
+        d.all_upsampled = std::move(seg.all_upsampled);
+        d.all_raw_pairs_flat = std::move(seg.all_raw_pairs_flat);
+
         bool hasPPG = !seg.ppg_signal.empty();
         bool hasEcg2 = !seg.ecg_signal_2.empty();
         bool hasEcg3 = !seg.ecg_signal_3.empty();

@@ -44,6 +44,13 @@ AnnealedData read_input_binfile(const std::string& path) {
     file.read(reinterpret_cast<char*>(&fileEcgSR), 8);
     file.read(reinterpret_cast<char*>(&scoringEpoch), 8);
 
+    // Channel count + native rates: consumed but not retained. The writer
+    // recovers per-segment channel count from bin.all_upsampled.size().
+    uint32_t nChannels = 0;
+    file.read(reinterpret_cast<char*>(&nChannels), 4);
+    if (nChannels > 0)
+        file.seekg(static_cast<std::streamoff>(nChannels) * 4, std::ios::cur);
+
     data.bins.resize(numBins);
 
     for (uint64_t i = 0; i < numBins; ++i) {
@@ -77,13 +84,34 @@ AnnealedData read_input_binfile(const std::string& path) {
         if (!readDoubleArray(bin.ecg_signal_2)) break;
         if (!readDoubleArray(bin.ecg_signal_3)) break;
         if (!readDoubleArray(bin.sleep_state_signal)) break;
+
+        // Per-segment 41 x {upsampled samples, raw (t, v) pairs}. Each
+        // upsampled block is preceded by its sample count; each raw block
+        // by its pair count (block byte length = 2 * pair_count * 8). We
+        // read both into flat vectors -- keeping (t, v) interleaved
+        // matches the on-disk layout exactly, so the writer can pass it
+        // through with one bulk write.
+        bin.all_upsampled.resize(nChannels);
+        bin.all_raw_pairs_flat.resize(nChannels);
+        bool ok = true;
+        for (uint32_t ch = 0; ch < nChannels; ++ch) {
+            if (!readDoubleArray(bin.all_upsampled[ch])) { ok = false; break; }
+            uint64_t nPairs;
+            if (!file.read(reinterpret_cast<char*>(&nPairs), 8)) { ok = false; break; }
+            bin.all_raw_pairs_flat[ch].resize(nPairs * 2);
+            if (nPairs > 0)
+                file.read(reinterpret_cast<char*>(bin.all_raw_pairs_flat[ch].data()),
+                    nPairs * 2 * sizeof(double));
+        }
+        if (!ok) break;
     }
     return data;
 }
 
 /**
  * @brief  Write output bin file with R-peaks, preprocessed signals,
- *         pre-bandpass signals, and raw signals from 3 methods x 3 channels.
+ *         pre-bandpass signals, and raw signals from 3 methods x 3 channels,
+ *         plus pass-through copies of every input channel.
  *
  * Layout per bin:
  *   - 9 index arrays (ch1 raw/sq/abs, ch2 raw/sq/abs, ch3 raw/sq/abs)
@@ -94,6 +122,8 @@ AnnealedData read_input_binfile(const std::string& path) {
  *   - pairs array
  *   - ppg_bin_indexs
  *   - ecg_bin_indexs
+ *   - bin.all_upsampled.size() x { upsampled doubles + raw (t, v) pair doubles }
+ *     (pass-through from the annealed input; same slot order as step 3)
  *
  * All index arrays are written 1-based for MATLAB compatibility.
  */
@@ -192,6 +222,24 @@ void write_output_binfile(const std::string& path, const std::vector<output_binf
 
         writePairVec(bin.ppg_bin_indexs);
         writePairVec(bin.ecg_bin_indexs);
+
+        /* Pass-through: per-channel { upsampled samples, raw (t, v) pairs },
+           in the same slot order as step 3. The reader sized both vectors
+           identically per segment, so they have the same length and that
+           length serves as the segment's channel count. */
+        for (size_t ch = 0; ch < bin.all_upsampled.size(); ++ch) {
+            writeSignal(bin.all_upsampled[ch]);
+
+            // Raw block: pair-count followed by 2*pair-count doubles
+            // (interleaved t, v). bin.all_raw_pairs_flat[ch] is already in
+            // interleaved form so just emit count + bulk-write.
+            const auto& rwSrc = bin.all_raw_pairs_flat[ch];
+            uint64_t nPairs = rwSrc.size() / 2;
+            file.write(reinterpret_cast<const char*>(&nPairs), 8);
+            if (nPairs > 0)
+                file.write(reinterpret_cast<const char*>(rwSrc.data()),
+                    nPairs * 2 * sizeof(double));
+        }
     }
 }
 // ============================================================================

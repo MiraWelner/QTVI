@@ -1,0 +1,76 @@
+<svg width="1300" height="330" xmlns="http://www.w3.org/2000/svg">
+<style>
+  text { font-family: Consolas, 'Courier New', monospace; }
+  .title { font-size: 16px; font-weight: bold; }
+  .subtitle { font-size: 12px; font-weight: bold; }
+  .stats { font-size: 12px; fill: #555; }
+  .tick { font-size: 12px; }
+  .axis-label { font-size: 12px; }
+  .y-axis-label { font-size: 12px; }
+  .x-tick { font-size: 12px; }
+  .clipped { font-size: 12px; fill: #e74c3c; font-weight: bold; }
+  .empty { font-size: 12px; fill: #999; }
+</style>
+<rect width="100%" height="100%" fill="#fcfcfc"/>
+<text x="650" y="30" text-anchor="middle" class="title">MESA R Locations - all 1 files</text>
+<text x="130" y="64" text-anchor="middle" class="subtitle">3010023_20110817 (0.0% zero err)</text>
+<text x="130" y="76" text-anchor="middle" class="stats">n=582  mean=279.771478  med=47.229019</text>
+<line x1="50" y1="98" x2="50" y2="283" stroke="#333" stroke-width="1"/>
+<line x1="50" y1="283" x2="235" y2="283" stroke="#333" stroke-width="1"/>
+<text x="18" y="190" text-anchor="middle" class="y-axis-label" transform="rotate(-90 10,190)"># bins (log)</text>
+<line x1="47" y1="283.0" x2="51" y2="283.0" stroke="#333" stroke-width="1"/>
+<text x="45" y="287.0" text-anchor="end" class="tick">0</text>
+<line x1="47" y1="266.9" x2="51" y2="266.9" stroke="#333" stroke-width="1"/>
+<text x="45" y="270.9" text-anchor="end" class="tick">1</text>
+<line x1="51" y1="266.9" x2="10049" y2="266.9" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="227.3" x2="51" y2="227.3" stroke="#333" stroke-width="1"/>
+<text x="45" y="231.3" text-anchor="end" class="tick">10</text>
+<line x1="51" y1="227.3" x2="10049" y2="227.3" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="175.7" x2="51" y2="175.7" stroke="#333" stroke-width="1"/>
+<text x="45" y="179.7" text-anchor="end" class="tick">100</text>
+<line x1="51" y1="175.7" x2="10049" y2="175.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="140.7" x2="51" y2="140.7" stroke="#333" stroke-width="1"/>
+<text x="45" y="144.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">455</text>
+<line x1="51" y1="140.7" x2="10049" y2="140.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="54.2" y="140.7" width="2.7" height="142.3" fill="#e67e22" fill-opacity="0.8"><title>(0.000000, 218.143358]: 455</title></rect>
+<rect x="57.9" y="192.5" width="2.7" height="90.5" fill="#e67e22" fill-opacity="0.8"><title>(218.143358, 436.286716]: 48</title></rect>
+<rect x="61.6" y="211.2" width="2.7" height="71.8" fill="#e67e22" fill-opacity="0.8"><title>(436.286716, 654.430074]: 21</title></rect>
+<rect x="65.3" y="225.2" width="2.7" height="57.8" fill="#e67e22" fill-opacity="0.8"><title>(654.430074, 872.573432]: 11</title></rect>
+<rect x="69.0" y="225.2" width="2.7" height="57.8" fill="#e67e22" fill-opacity="0.8"><title>(872.573432, 1090.716790]: 11</title></rect>
+<rect x="72.7" y="241.4" width="2.7" height="41.6" fill="#e67e22" fill-opacity="0.8"><title>(1090.716790, 1308.860148]: 5</title></rect>
+<rect x="76.4" y="241.4" width="2.7" height="41.6" fill="#e67e22" fill-opacity="0.8"><title>(1308.860148, 1527.003506]: 5</title></rect>
+<rect x="80.1" y="250.8" width="2.7" height="32.2" fill="#e67e22" fill-opacity="0.8"><title>(1527.003506, 1745.146864]: 3</title></rect>
+<rect x="83.8" y="250.8" width="2.7" height="32.2" fill="#e67e22" fill-opacity="0.8"><title>(1745.146864, 1963.290222]: 3</title></rect>
+<rect x="87.5" y="266.9" width="2.7" height="16.1" fill="#e67e22" fill-opacity="0.8"><title>(1963.290222, 2181.433580]: 1</title></rect>
+<rect x="91.2" y="257.5" width="2.7" height="25.5" fill="#e67e22" fill-opacity="0.8"><title>(2181.433580, 2399.576938]: 2</title></rect>
+<rect x="94.9" y="266.9" width="2.7" height="16.1" fill="#e67e22" fill-opacity="0.8"><title>(2399.576938, 2617.720296]: 1</title></rect>
+<rect x="98.6" y="250.8" width="2.7" height="32.2" fill="#e67e22" fill-opacity="0.8"><title>(2617.720296, 2835.863654]: 3</title></rect>
+<rect x="102.3" y="250.8" width="2.7" height="32.2" fill="#e67e22" fill-opacity="0.8"><title>(2835.863654, 3054.007012]: 3</title></rect>
+<rect x="109.7" y="245.6" width="2.7" height="37.4" fill="#e67e22" fill-opacity="0.8"><title>(3272.150370, 3490.293728]: 4</title></rect>
+<rect x="117.1" y="257.5" width="2.7" height="25.5" fill="#e67e22" fill-opacity="0.8"><title>(3708.437086, 3926.580444]: 2</title></rect>
+<rect x="120.8" y="266.9" width="2.7" height="16.1" fill="#e67e22" fill-opacity="0.8"><title>(3926.580444, 4144.723802]: 1</title></rect>
+<rect x="139.3" y="257.5" width="2.7" height="25.5" fill="#e67e22" fill-opacity="0.8"><title>(5017.297234, 5235.440592]: 2</title></rect>
+<rect x="231.8" y="266.9" width="2.7" height="16.1" fill="#e67e22" fill-opacity="0.8"><title>(10470.881184, 10689.024542]: 1</title></rect>
+<text x="50.0" y="299" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="142.5" y="299" text-anchor="middle" class="x-tick">5344.512271</text>
+<text x="235.0" y="299" text-anchor="middle" class="x-tick">10689.024542</text>
+<text x="142" y="313" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="390" y="64" text-anchor="middle" class="subtitle" fill="#27ae60">ZERO-DIFF REFERENCE (n=582)</text>
+<text x="390" y="76" text-anchor="middle" class="stats">all diffs=0 | x-range=[0, 10689.024542]</text>
+<line x1="310" y1="98" x2="310" y2="283" stroke="#333" stroke-width="1"/>
+<line x1="310" y1="283" x2="495" y2="283" stroke="#333" stroke-width="1"/>
+<text x="278" y="190" text-anchor="middle" class="y-axis-label" transform="rotate(-90 270,190)"># bins</text>
+<text x="307" y="286.0" text-anchor="end" class="tick">0</text>
+<text x="307" y="224.33333333333334" text-anchor="end" class="tick">194</text>
+<line x1="311" y1="221.33333333333334" x2="495" y2="221.33333333333334" stroke="#eee" stroke-width="0.5"/>
+<text x="307" y="162.66666666666669" text-anchor="end" class="tick">388</text>
+<line x1="311" y1="159.66666666666669" x2="495" y2="159.66666666666669" stroke="#eee" stroke-width="0.5"/>
+<text x="307" y="101.0" text-anchor="end" class="tick">582</text>
+<line x1="311" y1="98.0" x2="495" y2="98.0" stroke="#eee" stroke-width="0.5"/>
+<rect x="310.5" y="98.0" width="2.7" height="185.0" fill="#9b59b6" fill-opacity="0.8"><title>[0, first_bucket): 582</title></rect>
+<text x="311.9" y="96" text-anchor="middle" class="clipped" fill="#9b59b6">582</text>
+<text x="310.0" y="299" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="402.5" y="299" text-anchor="middle" class="x-tick">5344.512271</text>
+<text x="495.0" y="299" text-anchor="middle" class="x-tick">10689.024542</text>
+<text x="402" y="313" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+</svg>

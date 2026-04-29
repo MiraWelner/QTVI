@@ -1,0 +1,7 @@
+Takes **EDF 2.0 Format** and associated **.xml** containing sleep and extracts the PPG and ECG lead 2 signals from .edf and sleep states from .xml and combines them into one .mat file.  \*.xmls read are intended to match format of MESA "\*.edf.XML" files. If one does not have associated .xml sleep states will be marked as wake for whole recording.
+
+**Ensure config.txt file exists in the common directory above with proper paths filled in before running**
+
+To run open run_*.m file and click run in matlab.
+
+Please view readme.md at top of repository for more details

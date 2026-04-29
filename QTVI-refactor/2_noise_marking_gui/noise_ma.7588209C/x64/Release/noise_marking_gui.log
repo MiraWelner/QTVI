@@ -1,17 +1,12 @@
 ﻿   Qt/MSBuild: 3.4.1.0
   Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
    Qt: 6.10.2
-  uic noise_marking_gui.ui
   gui_handler.cpp
-  lower_row_buttons.cpp
-  noise_marking_gui.cpp
-  noise_marking_guiPlugin.cpp
-  moc_gui_handler.cpp
      Creating library D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.lib and object D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.exp
   Generating code
-  51 of 3224 functions ( 1.6%) were compiled, the rest were copied from previous compilation.
+  2 of 3272 functions (<0.1%) were compiled, the rest were copied from previous compilation.
     0 functions were new in current compilation
-    100 functions had inline decision re-evaluated but remain unchanged
+    26 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   noise_marking_gui.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\2_noise_marking_gui\x64\Release\noise_marking_gui.exe
   'pwsh.exe' is not recognized as an internal or external command,

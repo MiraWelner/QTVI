@@ -192,8 +192,8 @@
     <None Include="noise_marking_guiplugin.json" />
   </ItemGroup>
   <ItemGroup>
-    <QtMoc Include="gui_handler.h" />
     <QtMoc Include="lower_row_buttons.h" />
+    <QtMoc Include="gui_handler.hpp" />
     <ClInclude Include="NoiseManager.h" />
     <ClInclude Include="stdafx.h" />
   </ItemGroup>

@@ -1,12 +1,12 @@
 /****************************************************************************
-** Meta object code from reading C++ file 'gui_handler.h'
+** Meta object code from reading C++ file 'gui_handler.hpp'
 **
 ** Created by: The Qt Meta Object Compiler version 69 (Qt 6.10.2)
 **
 ** WARNING! All changes made in this file will be lost!
 *****************************************************************************/
 
-#include "../../../../../gui_handler.h"
+#include "../../../../../gui_handler.hpp"
 #include <QtCharts/qlineseries.h>
 #include <QtGui/qtextcursor.h>
 #include <QtCore/qmetatype.h>
@@ -18,7 +18,7 @@
 
 #include <QtCore/qxptype_traits.h>
 #if !defined(Q_MOC_OUTPUT_REVISION)
-#error "The header file 'gui_handler.h' doesn't include <QObject>."
+#error "The header file 'gui_handler.hpp' doesn't include <QObject>."
 #elif Q_MOC_OUTPUT_REVISION != 69
 #error "This file was generated using the moc from 6.10.2. It"
 #error "cannot be used with the include files from this version of Qt."

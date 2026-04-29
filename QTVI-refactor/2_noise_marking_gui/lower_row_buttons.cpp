@@ -6,7 +6,7 @@
  * @date   2026-01-20
  */
 #include "lower_row_buttons.h"
-#include "gui_handler.h"
+#include "gui_handler.hpp"
 #include "ui_noise_marking_gui.h"
 #include <QMessageBox>
 
@@ -43,14 +43,13 @@ void lower_row_buttons::setupConnections() {
     // Mark All Signals buttons
     connect(ui->start_all_mark, &QPushButton::clicked, this, &lower_row_buttons::handle_allmarkingstart_button);
     connect(ui->stop_all_mark, &QPushButton::clicked, this, &lower_row_buttons::handle_allmarkingstop_button);
-
-    // Window radio buttons
-    connect(ui->rb_1s, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 1);   });
-    connect(ui->rb_3s, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 3);   });
-    connect(ui->rb_10s, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 10);  });
-    connect(ui->rb_30s, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 30);  });
-    connect(ui->rb_1m, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 60);  });
-    connect(ui->rb_10m, &QRadioButton::toggled, this, [this](bool c) { handle_window_toggle(c, 600); });
+    
+    // set up window length selector, ensure it starts on 10 seconds
+    connect(ui->window_length_selector, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        const int windowValues[] = { 1, 3, 10, 30, 60, 600 };
+        handle_window_toggle(true, windowValues[index]);
+        });
+    ui->window_length_selector->setCurrentIndex(2);
 }
 
 // ============================================================================

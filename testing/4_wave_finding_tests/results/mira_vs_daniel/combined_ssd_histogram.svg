@@ -1,0 +1,67 @@
+<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">
+<style>
+  text { font-family: Consolas, 'Courier New', monospace; }
+  .title { font-size: 16px; font-weight: bold; }
+  .stats { font-size: 12px; fill: #555; }
+  .tick { font-size: 11px; }
+  .axis-label { font-size: 13px; }
+  .y-axis-label { font-size: 12px; }
+</style>
+<rect width="100%" height="100%" fill="#fcfcfc"/>
+<text x="450" y="24" text-anchor="middle" class="title">Combined ECG SSD Histogram - All 1 Subjects (596 bins, 32.2% zero err)</text>
+<text x="450" y="44" text-anchor="middle" class="stats">mean=0.454257  median=0.004808  IQR=[0.000000, 0.013105]</text>
+<line x1="70" y1="70" x2="70" y2="440" stroke="#333" stroke-width="1"/>
+<line x1="70" y1="440" x2="860" y2="440" stroke="#333" stroke-width="1"/>
+<text x="18" y="255" text-anchor="middle" class="y-axis-label" transform="rotate(-90 18,255)"># bins (log)</text>
+<line x1="67" y1="440.0" x2="71" y2="440.0" stroke="#333" stroke-width="1"/>
+<text x="65" y="444.0" text-anchor="end" class="tick">0</text>
+<line x1="67" y1="407.8" x2="71" y2="407.8" stroke="#333" stroke-width="1"/>
+<text x="65" y="411.8" text-anchor="end" class="tick">1</text>
+<line x1="71" y1="407.8" x2="10069" y2="407.8" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="67" y1="328.7" x2="71" y2="328.7" stroke="#333" stroke-width="1"/>
+<text x="65" y="332.7" text-anchor="end" class="tick">10</text>
+<line x1="71" y1="328.7" x2="10069" y2="328.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="67" y1="225.8" x2="71" y2="225.8" stroke="#333" stroke-width="1"/>
+<text x="65" y="229.8" text-anchor="end" class="tick">100</text>
+<line x1="71" y1="225.8" x2="10069" y2="225.8" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="67" y1="155.4" x2="71" y2="155.4" stroke="#333" stroke-width="1"/>
+<text x="65" y="159.4" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">460</text>
+<line x1="71" y1="155.4" x2="10069" y2="155.4" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="70.5" y="155.4" width="8.9" height="284.6" fill="#3498db" fill-opacity="0.85"><title>[0.000000, 0.208941): 460</title></rect>
+<rect x="80.4" y="305.9" width="8.9" height="134.1" fill="#3498db" fill-opacity="0.85"><title>[0.208941, 0.417881): 17</title></rect>
+<rect x="90.2" y="298.7" width="8.9" height="141.3" fill="#3498db" fill-opacity="0.85"><title>[0.417881, 0.626822): 20</title></rect>
+<rect x="100.1" y="333.2" width="8.9" height="106.8" fill="#3498db" fill-opacity="0.85"><title>[0.626822, 0.835762): 9</title></rect>
+<rect x="110.0" y="308.5" width="8.9" height="131.5" fill="#3498db" fill-opacity="0.85"><title>[0.835762, 1.044703): 16</title></rect>
+<rect x="119.9" y="308.5" width="8.9" height="131.5" fill="#3498db" fill-opacity="0.85"><title>[1.044703, 1.253644): 16</title></rect>
+<rect x="129.8" y="317.5" width="8.9" height="122.5" fill="#3498db" fill-opacity="0.85"><title>[1.253644, 1.462584): 13</title></rect>
+<rect x="139.6" y="365.3" width="8.9" height="74.7" fill="#3498db" fill-opacity="0.85"><title>[1.462584, 1.671525): 4</title></rect>
+<rect x="149.5" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[1.671525, 1.880466): 1</title></rect>
+<rect x="159.4" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[1.880466, 2.089406): 1</title></rect>
+<rect x="169.2" y="365.3" width="8.9" height="74.7" fill="#3498db" fill-opacity="0.85"><title>[2.089406, 2.298347): 4</title></rect>
+<rect x="179.1" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[2.298347, 2.507287): 1</title></rect>
+<rect x="189.0" y="375.7" width="8.9" height="64.3" fill="#3498db" fill-opacity="0.85"><title>[2.507287, 2.716228): 3</title></rect>
+<rect x="198.9" y="365.3" width="8.9" height="74.7" fill="#3498db" fill-opacity="0.85"><title>[2.716228, 2.925169): 4</title></rect>
+<rect x="208.8" y="349.7" width="8.9" height="90.3" fill="#3498db" fill-opacity="0.85"><title>[2.925169, 3.134109): 6</title></rect>
+<rect x="218.6" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[3.134109, 3.343050): 1</title></rect>
+<rect x="228.5" y="356.9" width="8.9" height="83.1" fill="#3498db" fill-opacity="0.85"><title>[3.343050, 3.551990): 5</title></rect>
+<rect x="238.4" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[3.551990, 3.760931): 1</title></rect>
+<rect x="297.6" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[4.805634, 5.014575): 1</title></rect>
+<rect x="327.2" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[5.432456, 5.641397): 1</title></rect>
+<rect x="337.1" y="389.0" width="8.9" height="51.0" fill="#3498db" fill-opacity="0.85"><title>[5.641397, 5.850337): 2</title></rect>
+<rect x="347.0" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[5.850337, 6.059278): 1</title></rect>
+<rect x="366.8" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[6.268218, 6.477159): 1</title></rect>
+<rect x="386.5" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[6.686100, 6.895040): 1</title></rect>
+<rect x="396.4" y="389.0" width="8.9" height="51.0" fill="#3498db" fill-opacity="0.85"><title>[6.895040, 7.103981): 2</title></rect>
+<rect x="426.0" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[7.521862, 7.730803): 1</title></rect>
+<rect x="435.9" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[7.730803, 7.939743): 1</title></rect>
+<rect x="524.8" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[9.611268, 9.820209): 1</title></rect>
+<rect x="830.9" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[16.088427, 16.297368): 1</title></rect>
+<rect x="850.6" y="407.8" width="8.9" height="32.2" fill="#3498db" fill-opacity="0.85"><title>[16.506308, 16.715249): 1</title></rect>
+<text x="70.0" y="456" text-anchor="middle" class="tick">0.000000</text>
+<text x="228.0" y="456" text-anchor="middle" class="tick">3.343050</text>
+<text x="386.0" y="456" text-anchor="middle" class="tick">6.686100</text>
+<text x="544.0" y="456" text-anchor="middle" class="tick">10.029149</text>
+<text x="702.0" y="456" text-anchor="middle" class="tick">13.372199</text>
+<text x="860.0" y="456" text-anchor="middle" class="tick">16.715249</text>
+<text x="465" y="478" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+</svg>

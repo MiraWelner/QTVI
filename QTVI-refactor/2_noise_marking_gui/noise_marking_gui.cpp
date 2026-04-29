@@ -7,7 +7,7 @@
  * @email  MEW386@pitt.edu
  * @date   2026-03-18
  */
-#include "gui_handler.h"
+#include "gui_handler.hpp"
 #include "NoiseManager.h"
 
 #include <QtWidgets/QApplication>
