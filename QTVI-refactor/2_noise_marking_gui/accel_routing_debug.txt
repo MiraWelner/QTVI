@@ -1,0 +1,32 @@
+[ACCEL ROUTING] plotting accel into ppg_axis=0000021894447AA0 (accel_or_abg_axis=0000021894449520)
+[VISIBILITY] anyAccel=1 abpPresent=0
+  ecg_axis_1        ptr=000002198AC6C3E0 visible=0
+  ecg_axis_2        ptr=000002198AC6C7A0 visible=0
+  ecg_axis_3        ptr=000002198AC6CB20 visible=0
+  ppg_axis          ptr=000002198AC6CB60 visible=0
+  accel_or_abg_axis ptr=000002198AC6BC60 visible=0
+[ACCEL ROUTING] plotting accel into ppg_axis=000002198AC6CB60 (accel_or_abg_axis=000002198AC6BC60)
+[VISIBILITY] anyAccel=0 abpPresent=1
+  ecg_axis_1        ptr=00000233D8936AF0 visible=0
+  ecg_axis_2        ptr=00000233D89377B0 visible=0
+  ecg_axis_3        ptr=00000233D8937170 visible=0
+  ppg_axis          ptr=00000233D8936D30 visible=0
+  accel_or_abg_axis ptr=00000233D89379B0 visible=0
+[VISIBILITY] anyAccel=0 abpPresent=1
+  ecg_axis_1        ptr=00000233F047F030 visible=0
+  ecg_axis_2        ptr=00000233F0480870 visible=0
+  ecg_axis_3        ptr=00000233F0480A70 visible=0
+  ppg_axis          ptr=00000233F0480BB0 visible=0
+  accel_or_abg_axis ptr=00000233F0480930 visible=0
+[VISIBILITY] anyAccel=0 abpPresent=1
+  ecg_axis_1        ptr=000002ABB9E286D0 visible=0
+  ecg_axis_2        ptr=000002ABB9E28150 visible=0
+  ecg_axis_3        ptr=000002ABB9E28090 visible=0
+  ppg_axis          ptr=000002ABB9E28290 visible=0
+  accel_or_abg_axis ptr=000002ABB9E27950 visible=0
+[VISIBILITY] anyAccel=0 abpPresent=0
+  ecg_axis_1        ptr=000002ABB9E286D0 visible=1
+  ecg_axis_2        ptr=000002ABB9E28150 visible=1
+  ecg_axis_3        ptr=000002ABB9E28090 visible=1
+  ppg_axis          ptr=000002ABB9E28290 visible=1
+  accel_or_abg_axis ptr=000002ABB9E27950 visible=0

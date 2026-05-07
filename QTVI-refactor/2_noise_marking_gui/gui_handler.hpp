@@ -6,16 +6,16 @@
  *
  * @details Expects the paired-channel .bin format (512-byte header):
  *            - 4 rate fields (signal, boolean, pacemaker, sleep-epoch-length)
- *            - 41 upsampled-block sizes
- *            - 41 raw-block sizes (each counts (timestamp, value) PAIRS,
+ *            - 40 upsampled-block sizes
+ *            - 40 raw-block sizes (each counts (timestamp, value) PAIRS,
  *              so the on-disk byte length is 2 * size * sizeof(double))
- *            - 41 native sampling rates (float32; 0 = absent)
+ *            - 40 native sampling rates (float32; 0 = absent)
  *            - 1 sleep-sample count
  *          Channel 0 is a Timestamp channel (seconds from recording start).
  *          It's loaded alongside the rest but not plotted -- the GUI only
  *          plots channels it already plotted, and the timestamp slot is
  *          treated like any other unplotted channel.
- *          For each of the 41 channels, the upsampled block is written
+ *          For each of the 40 channels, the upsampled block is written
  *          first, followed by the raw block of (t, v) pairs in seconds
  *          from start of recording. For markable channels (ECG1/2/3, PPG,
  *          ABP) the raw block is overlaid on the plot as a grayscale
@@ -39,11 +39,14 @@
 #include <QMap>
 #include <QColor>
 #include <QPointF>
+#include <iostream>
 #include <memory>
 
 #include "ui_noise_marking_gui.h"
-#include "NoiseManager.h"
+#include "noise_manager.h"
 #include "lower_row_buttons.h"
+#include "config_entry.hpp"
+
 
  /**
   * @brief Collected annotations returned to the caller after the dialog closes.
@@ -114,6 +117,12 @@ private slots:
 public:
     enum class MarkPhase { Idle, WaitingForStart, WaitingForEnd, WaitingForStop };
     enum class PlotMode { Line, Scatter };
+    
+    void setConfig(const config_entry & cfg) {
+        m_cfg = cfg;
+    }
+    
+
 
     /**
      * @brief Per-channel state for the marking state machine.
@@ -139,6 +148,8 @@ public:
     void beginStopPhaseAll();
 
 private:
+    config_entry m_cfg;
+
     // ------------------------------------------------------------------------
     //  Channel lookup table
     //
@@ -243,14 +254,14 @@ private:
     //     where t is chunk-local seconds. The loader filters the on-disk
     //     pair stream to this chunk. ---
     QVector<QPointF> m_ecg1Raw, m_ecg2Raw, m_ecg3Raw, m_ppgRaw, m_abpRaw;
-    QVector<QPointF> m_accelXRaw, m_accelYRaw, m_accelZRaw;
+    QVector<QPointF> m_accelXRaw, m_accelYRaw, m_accelZRaw, m_respRaw, m_cvpRaw;
 
     // ------------------------------------------------------------------------
     //  File layout (v2):
     //    512-byte header (128 x uint32-sized fields) =
-    //      4 rates + 41 upsampled-sizes + 41 raw-sizes + 41 native-rate
+    //      4 rates + 40 upsampled-sizes + 40 raw-sizes + 40 native-rate
     //      floats + 1 sleep-size
-    //    Then, for each of the 41 channels, in order:
+    //    Then, for each of the 40 channels, in order:
     //      upsampled block (m_chanSizes[i] doubles)
     //      raw block       (m_chanSizesRaw[i] * 2 doubles, interleaved (t, v))
     //    Then sleep stages (m_totalSleepSamples doubles).
@@ -263,8 +274,8 @@ private:
     //    parsed so the member stays in sync with the file format.
     // ------------------------------------------------------------------------
     QString m_binFilePath;
-    static constexpr qint64 FILE_HEADER_SIZE = 512;
-    static constexpr int NUM_CHANNELS = 41;
+    static constexpr qint64 FILE_HEADER_SIZE = 500;
+    static constexpr int NUM_CHANNELS = 40;
 
     uint32_t m_chanSizes[NUM_CHANNELS] = {};      ///< upsampled-block sizes
     uint32_t m_chanSizesRaw[NUM_CHANNELS] = {};   ///< raw-block sizes (PAIRS)
@@ -274,23 +285,21 @@ private:
     // Channel indices. Slot 0 is the new Timestamp channel; every other
     // channel has shifted +1 from the v1 layout. CH_RESERVED_40 is a
     // reserved tail slot (always absent on disk).
-    static constexpr int CH_TIMESTAMP = 0;
-    static constexpr int CH_ECG1 = 1, CH_ECG2 = 2, CH_ECG3 = 3, CH_PPG = 4;
-    static constexpr int CH_ACCEL_X = 5, CH_ACCEL_Y = 6, CH_ACCEL_Z = 7;
-    static constexpr int CH_MARKER = 8, CH_TEMP = 9, CH_PACEMAKER = 10;
-    static constexpr int CH_EOG_L = 11, CH_EOG_R = 12, CH_EMG = 13;
-    static constexpr int CH_EEG1 = 14, CH_EEG2 = 15, CH_EEG3 = 16;
-    static constexpr int CH_PRES = 17, CH_FLOW = 18, CH_THOR = 19;
-    static constexpr int CH_ABDO = 20, CH_LEG = 21, CH_THERM = 22;
-    static constexpr int CH_POS = 23;
-    static constexpr int CH_EKG_OFF = 24, CH_EOGL_OFF = 25, CH_EOGR_OFF = 26;
-    static constexpr int CH_EMG_OFF = 27, CH_EEG1_OFF = 28, CH_EEG2_OFF = 29;
-    static constexpr int CH_EEG3_OFF = 30;
-    static constexpr int CH_OXSTATUS = 31, CH_SPO2 = 32;
-    static constexpr int CH_HR = 33, CH_DHR = 34, CH_RESP = 35;
-    static constexpr int CH_ABP = 36, CH_EEG4 = 37;
-    static constexpr int CH_ART = 38, CH_ART_PULM = 39;
-    static constexpr int CH_RESERVED_40 = 40;
+    enum ChannelIdx {
+        CH_TIMESTAMP = 0,
+        CH_ECG1, CH_ECG2, CH_ECG3, CH_PPG,
+        CH_ACCEL_X, CH_ACCEL_Y, CH_ACCEL_Z,
+        CH_MARKER, CH_TEMP, CH_PACEMAKER,
+        CH_EOG_L, CH_EOG_R, CH_EMG,
+        CH_EEG1, CH_EEG2, CH_EEG3, CH_EEG4,
+        CH_PRES, CH_FLOW, CH_THOR, CH_ABDO,
+        CH_LEG, CH_THERM, CH_POS,
+        CH_EKG_OFF, CH_EOG_L_OFF, CH_EOG_R_OFF, CH_EMG_OFF,
+        CH_EEG1_OFF, CH_EEG2_OFF, CH_EEG3_OFF,
+        CH_OXSTATUS, CH_SPO2, CH_HR, CH_DHR,
+        CH_RESP, CH_ABP,
+        CH_ART, CH_ART_PULM
+    };
 
     uint64_t m_currentChunkIndex = 0;
 

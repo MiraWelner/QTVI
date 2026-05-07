@@ -52,11 +52,20 @@
         },
         {
           "DockedWidth": 545,
-          "SelectedChildIndex": 5,
+          "SelectedChildIndex": 0,
           "Children": [
             {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "5_generate_templates.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\5_generate_templates.cpp",
+              "RelativeDocumentMoniker": "5_generate_templates.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\5_generate_templates.cpp",
+              "RelativeToolTip": "5_generate_templates.cpp",
+              "ViewState": "AgIAABgBAAAAAAAAAAAwwEcBAAABAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-03-26T21:42:50.136Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
@@ -68,8 +77,7 @@
               "RelativeToolTip": "GenerateTemplates.hpp",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAABMAAAAOAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-26T21:40:50.489Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-03-26T21:40:50.489Z"
             },
             {
               "$type": "Bookmark",
@@ -90,19 +98,6 @@
               "ViewState": "AgIAAIQAAAAAAAAAAAAmwLkAAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
               "WhenOpened": "2026-03-26T23:08:02.419Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 0,
-              "Title": "5_generate_templates.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\5_generate_templates.cpp",
-              "RelativeDocumentMoniker": "5_generate_templates.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\5_generate_templates\\5_generate_templates.cpp",
-              "RelativeToolTip": "5_generate_templates.cpp",
-              "ViewState": "AgIAAPYAAAAAAAAAAAAAAAYBAAAsAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-03-26T21:42:50.136Z",
-              "EditorCaption": ""
             },
             {
               "$type": "Document",

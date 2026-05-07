@@ -1,0 +1,561 @@
+<svg width="1300" height="880" xmlns="http://www.w3.org/2000/svg">
+<style>
+  text { font-family: Consolas, 'Courier New', monospace; }
+  .title { font-size: 16px; font-weight: bold; }
+  .subtitle { font-size: 12px; font-weight: bold; }
+  .stats { font-size: 12px; fill: #555; }
+  .tick { font-size: 12px; }
+  .axis-label { font-size: 12px; }
+  .y-axis-label { font-size: 12px; }
+  .x-tick { font-size: 12px; }
+  .clipped { font-size: 12px; fill: #e74c3c; font-weight: bold; }
+  .empty { font-size: 12px; fill: #999; }
+</style>
+<rect width="100%" height="100%" fill="#fcfcfc"/>
+<text x="650" y="30" text-anchor="middle" class="title">Comparison of R Peak Intervals between Daniel and Deep's Peak Finding Code - all 13 files</text>
+<text x="130" y="64" text-anchor="middle" class="subtitle">3010023_20110817 (0.2% 0.000000 err)</text>
+<text x="130" y="76" text-anchor="middle" class="stats">n=595  mean=0.097353  med=0.000041</text>
+<line x1="50" y1="98" x2="50" y2="283" stroke="#333" stroke-width="1"/>
+<line x1="50" y1="283" x2="235" y2="283" stroke="#333" stroke-width="1"/>
+<text x="18" y="190" text-anchor="middle" class="y-axis-label" transform="rotate(-90 10,190)"># bins (log)</text>
+<line x1="47" y1="283.0" x2="51" y2="283.0" stroke="#333" stroke-width="1"/>
+<text x="45" y="287.0" text-anchor="end" class="tick">0</text>
+<line x1="47" y1="267.2" x2="51" y2="267.2" stroke="#333" stroke-width="1"/>
+<text x="45" y="271.2" text-anchor="end" class="tick">1</text>
+<line x1="51" y1="267.2" x2="10049" y2="267.2" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="228.5" x2="51" y2="228.5" stroke="#333" stroke-width="1"/>
+<text x="45" y="232.5" text-anchor="end" class="tick">10</text>
+<line x1="51" y1="228.5" x2="10049" y2="228.5" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="178.1" x2="51" y2="178.1" stroke="#333" stroke-width="1"/>
+<text x="45" y="182.1" text-anchor="end" class="tick">100</text>
+<line x1="51" y1="178.1" x2="10049" y2="178.1" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="140.7" x2="51" y2="140.7" stroke="#333" stroke-width="1"/>
+<text x="45" y="144.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">523</text>
+<line x1="51" y1="140.7" x2="10049" y2="140.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="50.5" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>[0, 0]: 1</title></rect>
+<rect x="54.2" y="140.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 0.138621]: 523</title></rect>
+<rect x="57.9" y="217.3" width="2.7" height="65.7" fill="#1a5fa8" fill-opacity="0.92"><title>(0.138621, 0.277241]: 17</title></rect>
+<rect x="61.6" y="224.7" width="2.7" height="58.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.277241, 0.415862]: 12</title></rect>
+<rect x="65.3" y="221.5" width="2.7" height="61.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.415862, 0.554483]: 14</title></rect>
+<rect x="69.0" y="233.1" width="2.7" height="49.9" fill="#1a5fa8" fill-opacity="0.92"><title>(0.554483, 0.693103]: 8</title></rect>
+<rect x="72.7" y="251.5" width="2.7" height="31.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.693103, 0.831724]: 3</title></rect>
+<rect x="76.4" y="251.5" width="2.7" height="31.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.831724, 0.970344]: 3</title></rect>
+<rect x="80.1" y="258.0" width="2.7" height="25.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.970344, 1.108965]: 2</title></rect>
+<rect x="83.8" y="251.5" width="2.7" height="31.5" fill="#1a5fa8" fill-opacity="0.92"><title>(1.108965, 1.247586]: 3</title></rect>
+<rect x="91.2" y="258.0" width="2.7" height="25.0" fill="#1a5fa8" fill-opacity="0.92"><title>(1.386206, 1.524827]: 2</title></rect>
+<rect x="98.6" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(1.663448, 1.802068]: 1</title></rect>
+<rect x="109.7" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(2.079309, 2.217930]: 1</title></rect>
+<rect x="120.8" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(2.495171, 2.633792]: 1</title></rect>
+<rect x="139.3" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(3.188275, 3.326895]: 1</title></rect>
+<rect x="143.0" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(3.326895, 3.465516]: 1</title></rect>
+<rect x="176.3" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(4.574481, 4.713102]: 1</title></rect>
+<rect x="231.8" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(6.653790, 6.792411]: 1</title></rect>
+<text x="50.0" y="299" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="142.5" y="299" text-anchor="middle" class="x-tick">3.396206</text>
+<text x="235.0" y="299" text-anchor="middle" class="x-tick">6.792411</text>
+<text x="142" y="313" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="390" y="64" text-anchor="middle" class="subtitle">3010104_20111027 (0.0% 0.000000 err)</text>
+<text x="390" y="76" text-anchor="middle" class="stats">n=592  mean=0.357020  med=0.000031</text>
+<line x1="310" y1="98" x2="310" y2="283" stroke="#333" stroke-width="1"/>
+<line x1="310" y1="283" x2="495" y2="283" stroke="#333" stroke-width="1"/>
+<text x="278" y="190" text-anchor="middle" class="y-axis-label" transform="rotate(-90 270,190)"># bins (log)</text>
+<line x1="307" y1="283.0" x2="311" y2="283.0" stroke="#333" stroke-width="1"/>
+<text x="305" y="287.0" text-anchor="end" class="tick">0</text>
+<line x1="307" y1="267.2" x2="311" y2="267.2" stroke="#333" stroke-width="1"/>
+<text x="305" y="271.2" text-anchor="end" class="tick">1</text>
+<line x1="311" y1="267.2" x2="10309" y2="267.2" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="307" y1="228.4" x2="311" y2="228.4" stroke="#333" stroke-width="1"/>
+<text x="305" y="232.4" text-anchor="end" class="tick">10</text>
+<line x1="311" y1="228.4" x2="10309" y2="228.4" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="307" y1="177.9" x2="311" y2="177.9" stroke="#333" stroke-width="1"/>
+<text x="305" y="181.9" text-anchor="end" class="tick">100</text>
+<line x1="311" y1="177.9" x2="10309" y2="177.9" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="307" y1="140.7" x2="311" y2="140.7" stroke="#333" stroke-width="1"/>
+<text x="305" y="144.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">517</text>
+<line x1="311" y1="140.7" x2="10309" y2="140.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="314.2" y="140.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 0.240642]: 517</title></rect>
+<rect x="317.9" y="233.0" width="2.7" height="50.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.240642, 0.481284]: 8</title></rect>
+<rect x="321.6" y="228.4" width="2.7" height="54.6" fill="#1a5fa8" fill-opacity="0.92"><title>(0.481284, 0.721927]: 10</title></rect>
+<rect x="325.3" y="242.2" width="2.7" height="40.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.721927, 0.962569]: 5</title></rect>
+<rect x="329.0" y="235.7" width="2.7" height="47.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.962569, 1.203211]: 7</title></rect>
+<rect x="332.7" y="242.2" width="2.7" height="40.8" fill="#1a5fa8" fill-opacity="0.92"><title>(1.203211, 1.443853]: 5</title></rect>
+<rect x="336.4" y="238.7" width="2.7" height="44.3" fill="#1a5fa8" fill-opacity="0.92"><title>(1.443853, 1.684496]: 6</title></rect>
+<rect x="340.1" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(1.684496, 1.925138]: 1</title></rect>
+<rect x="343.8" y="242.2" width="2.7" height="40.8" fill="#1a5fa8" fill-opacity="0.92"><title>(1.925138, 2.165780]: 5</title></rect>
+<rect x="347.5" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(2.165780, 2.406422]: 1</title></rect>
+<rect x="351.2" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(2.406422, 2.647064]: 1</title></rect>
+<rect x="354.9" y="251.4" width="2.7" height="31.6" fill="#1a5fa8" fill-opacity="0.92"><title>(2.647064, 2.887707]: 3</title></rect>
+<rect x="362.3" y="251.4" width="2.7" height="31.6" fill="#1a5fa8" fill-opacity="0.92"><title>(3.128349, 3.368991]: 3</title></rect>
+<rect x="366.0" y="258.0" width="2.7" height="25.0" fill="#1a5fa8" fill-opacity="0.92"><title>(3.368991, 3.609633]: 2</title></rect>
+<rect x="380.8" y="258.0" width="2.7" height="25.0" fill="#1a5fa8" fill-opacity="0.92"><title>(4.331560, 4.572202]: 2</title></rect>
+<rect x="384.5" y="258.0" width="2.7" height="25.0" fill="#1a5fa8" fill-opacity="0.92"><title>(4.572202, 4.812844]: 2</title></rect>
+<rect x="388.2" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(4.812844, 5.053487]: 1</title></rect>
+<rect x="391.9" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(5.053487, 5.294129]: 1</title></rect>
+<rect x="395.6" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(5.294129, 5.534771]: 1</title></rect>
+<rect x="406.7" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(6.016056, 6.256698]: 1</title></rect>
+<rect x="410.4" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(6.256698, 6.497340]: 1</title></rect>
+<rect x="417.8" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(6.737982, 6.978625]: 1</title></rect>
+<rect x="421.5" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(6.978625, 7.219267]: 1</title></rect>
+<rect x="428.9" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(7.459909, 7.700551]: 1</title></rect>
+<rect x="447.4" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(8.663120, 8.903762]: 1</title></rect>
+<rect x="451.1" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(8.903762, 9.144405]: 1</title></rect>
+<rect x="484.4" y="258.0" width="2.7" height="25.0" fill="#1a5fa8" fill-opacity="0.92"><title>(11.069542, 11.310185]: 2</title></rect>
+<rect x="491.8" y="258.0" width="2.7" height="25.0" fill="#1a5fa8" fill-opacity="0.92"><title>(11.550827, 11.791469]: 2</title></rect>
+<text x="310.0" y="299" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="402.5" y="299" text-anchor="middle" class="x-tick">5.895734</text>
+<text x="495.0" y="299" text-anchor="middle" class="x-tick">11.791469</text>
+<text x="402" y="313" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="650" y="64" text-anchor="middle" class="subtitle">3010112_20110725 (0.0% 0.000000 err)</text>
+<text x="650" y="76" text-anchor="middle" class="stats">n=502  mean=0.032653  med=0.000034</text>
+<line x1="570" y1="98" x2="570" y2="283" stroke="#333" stroke-width="1"/>
+<line x1="570" y1="283" x2="755" y2="283" stroke="#333" stroke-width="1"/>
+<text x="538" y="190" text-anchor="middle" class="y-axis-label" transform="rotate(-90 530,190)"># bins (log)</text>
+<line x1="567" y1="283.0" x2="571" y2="283.0" stroke="#333" stroke-width="1"/>
+<text x="565" y="287.0" text-anchor="end" class="tick">0</text>
+<line x1="567" y1="267.0" x2="571" y2="267.0" stroke="#333" stroke-width="1"/>
+<text x="565" y="271.0" text-anchor="end" class="tick">1</text>
+<line x1="571" y1="267.0" x2="10569" y2="267.0" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="567" y1="227.8" x2="571" y2="227.8" stroke="#333" stroke-width="1"/>
+<text x="565" y="231.8" text-anchor="end" class="tick">10</text>
+<line x1="571" y1="227.8" x2="10569" y2="227.8" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="567" y1="176.7" x2="571" y2="176.7" stroke="#333" stroke-width="1"/>
+<text x="565" y="180.7" text-anchor="end" class="tick">100</text>
+<line x1="571" y1="176.7" x2="10569" y2="176.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="567" y1="140.7" x2="571" y2="140.7" stroke="#333" stroke-width="1"/>
+<text x="565" y="144.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">482</text>
+<line x1="571" y1="140.7" x2="10569" y2="140.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="574.2" y="140.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 0.124097]: 482</title></rect>
+<rect x="581.6" y="238.2" width="2.7" height="44.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.248195, 0.372292]: 6</title></rect>
+<rect x="585.3" y="235.1" width="2.7" height="47.9" fill="#1a5fa8" fill-opacity="0.92"><title>(0.372292, 0.496390]: 7</title></rect>
+<rect x="589.0" y="267.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.496390, 0.620487]: 1</title></rect>
+<rect x="592.7" y="257.7" width="2.7" height="25.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.620487, 0.744585]: 2</title></rect>
+<rect x="600.1" y="267.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.868682, 0.992779]: 1</title></rect>
+<rect x="603.8" y="257.7" width="2.7" height="25.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.992779, 1.116877]: 2</title></rect>
+<rect x="751.8" y="267.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(5.956677, 6.080774]: 1</title></rect>
+<text x="570.0" y="299" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="662.5" y="299" text-anchor="middle" class="x-tick">3.040387</text>
+<text x="755.0" y="299" text-anchor="middle" class="x-tick">6.080774</text>
+<text x="662" y="313" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="910" y="64" text-anchor="middle" class="subtitle">3010139_20110210 (0.2% 0.000000 err)</text>
+<text x="910" y="76" text-anchor="middle" class="stats">n=532  mean=0.031232  med=0.000023</text>
+<line x1="830" y1="98" x2="830" y2="283" stroke="#333" stroke-width="1"/>
+<line x1="830" y1="283" x2="1015" y2="283" stroke="#333" stroke-width="1"/>
+<text x="798" y="190" text-anchor="middle" class="y-axis-label" transform="rotate(-90 790,190)"># bins (log)</text>
+<line x1="827" y1="283.0" x2="831" y2="283.0" stroke="#333" stroke-width="1"/>
+<text x="825" y="287.0" text-anchor="end" class="tick">0</text>
+<line x1="827" y1="267.2" x2="831" y2="267.2" stroke="#333" stroke-width="1"/>
+<text x="825" y="271.2" text-anchor="end" class="tick">1</text>
+<line x1="831" y1="267.2" x2="10829" y2="267.2" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="827" y1="228.2" x2="831" y2="228.2" stroke="#333" stroke-width="1"/>
+<text x="825" y="232.2" text-anchor="end" class="tick">10</text>
+<line x1="831" y1="228.2" x2="10829" y2="228.2" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="827" y1="177.6" x2="831" y2="177.6" stroke="#333" stroke-width="1"/>
+<text x="825" y="181.6" text-anchor="end" class="tick">100</text>
+<line x1="831" y1="177.6" x2="10829" y2="177.6" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="827" y1="140.7" x2="831" y2="140.7" stroke="#333" stroke-width="1"/>
+<text x="825" y="144.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">506</text>
+<line x1="831" y1="140.7" x2="10829" y2="140.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="830.5" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>[0, 0]: 1</title></rect>
+<rect x="834.2" y="140.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 0.036241]: 506</title></rect>
+<rect x="841.6" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.072482, 0.108723]: 1</title></rect>
+<rect x="867.5" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.326169, 0.362410]: 1</title></rect>
+<rect x="871.2" y="257.9" width="2.7" height="25.1" fill="#1a5fa8" fill-opacity="0.92"><title>(0.362410, 0.398651]: 2</title></rect>
+<rect x="874.9" y="257.9" width="2.7" height="25.1" fill="#1a5fa8" fill-opacity="0.92"><title>(0.398651, 0.434892]: 2</title></rect>
+<rect x="878.6" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.434892, 0.471132]: 1</title></rect>
+<rect x="882.3" y="257.9" width="2.7" height="25.1" fill="#1a5fa8" fill-opacity="0.92"><title>(0.471132, 0.507373]: 2</title></rect>
+<rect x="886.0" y="251.3" width="2.7" height="31.7" fill="#1a5fa8" fill-opacity="0.92"><title>(0.507373, 0.543614]: 3</title></rect>
+<rect x="889.7" y="257.9" width="2.7" height="25.1" fill="#1a5fa8" fill-opacity="0.92"><title>(0.543614, 0.579855]: 2</title></rect>
+<rect x="893.4" y="251.3" width="2.7" height="31.7" fill="#1a5fa8" fill-opacity="0.92"><title>(0.579855, 0.616096]: 3</title></rect>
+<rect x="897.1" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.616096, 0.652337]: 1</title></rect>
+<rect x="904.5" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.688578, 0.724819]: 1</title></rect>
+<rect x="908.2" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.724819, 0.761060]: 1</title></rect>
+<rect x="923.0" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.869783, 0.906024]: 1</title></rect>
+<rect x="948.9" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(1.123470, 1.159711]: 1</title></rect>
+<rect x="967.4" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(1.304675, 1.340915]: 1</title></rect>
+<rect x="971.1" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(1.340915, 1.377156]: 1</title></rect>
+<rect x="1011.8" y="267.2" width="2.7" height="15.8" fill="#1a5fa8" fill-opacity="0.92"><title>(1.739566, 1.775807]: 1</title></rect>
+<text x="830.0" y="299" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="922.5" y="299" text-anchor="middle" class="x-tick">0.887903</text>
+<text x="1015.0" y="299" text-anchor="middle" class="x-tick">1.775807</text>
+<text x="922" y="313" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="1170" y="64" text-anchor="middle" class="subtitle">3010155_20110511 (0.0% 0.000000 err)</text>
+<text x="1170" y="76" text-anchor="middle" class="stats">n=536  mean=0.244351  med=0.000037</text>
+<line x1="1090" y1="98" x2="1090" y2="283" stroke="#333" stroke-width="1"/>
+<line x1="1090" y1="283" x2="1275" y2="283" stroke="#333" stroke-width="1"/>
+<text x="1058" y="190" text-anchor="middle" class="y-axis-label" transform="rotate(-90 1050,190)"># bins (log)</text>
+<line x1="1087" y1="283.0" x2="1091" y2="283.0" stroke="#333" stroke-width="1"/>
+<text x="1085" y="287.0" text-anchor="end" class="tick">0</text>
+<line x1="1087" y1="267.1" x2="1091" y2="267.1" stroke="#333" stroke-width="1"/>
+<text x="1085" y="271.1" text-anchor="end" class="tick">1</text>
+<line x1="1091" y1="267.1" x2="11089" y2="267.1" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="1087" y1="228.0" x2="1091" y2="228.0" stroke="#333" stroke-width="1"/>
+<text x="1085" y="232.0" text-anchor="end" class="tick">10</text>
+<line x1="1091" y1="228.0" x2="11089" y2="228.0" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="1087" y1="177.1" x2="1091" y2="177.1" stroke="#333" stroke-width="1"/>
+<text x="1085" y="181.1" text-anchor="end" class="tick">100</text>
+<line x1="1091" y1="177.1" x2="11089" y2="177.1" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="1087" y1="140.7" x2="1091" y2="140.7" stroke="#333" stroke-width="1"/>
+<text x="1085" y="144.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">493</text>
+<line x1="1091" y1="140.7" x2="11089" y2="140.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="1094.2" y="140.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 0.440254]: 493</title></rect>
+<rect x="1097.9" y="222.5" width="2.7" height="60.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.440254, 0.880509]: 13</title></rect>
+<rect x="1101.6" y="251.2" width="2.7" height="31.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.880509, 1.320763]: 3</title></rect>
+<rect x="1105.3" y="251.2" width="2.7" height="31.8" fill="#1a5fa8" fill-opacity="0.92"><title>(1.320763, 1.761017]: 3</title></rect>
+<rect x="1109.0" y="235.3" width="2.7" height="47.7" fill="#1a5fa8" fill-opacity="0.92"><title>(1.761017, 2.201271]: 7</title></rect>
+<rect x="1112.7" y="251.2" width="2.7" height="31.8" fill="#1a5fa8" fill-opacity="0.92"><title>(2.201271, 2.641526]: 3</title></rect>
+<rect x="1116.4" y="246.1" width="2.7" height="36.9" fill="#1a5fa8" fill-opacity="0.92"><title>(2.641526, 3.081780]: 4</title></rect>
+<rect x="1120.1" y="267.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(3.081780, 3.522034]: 1</title></rect>
+<rect x="1123.8" y="257.8" width="2.7" height="25.2" fill="#1a5fa8" fill-opacity="0.92"><title>(3.522034, 3.962288]: 2</title></rect>
+<rect x="1127.5" y="257.8" width="2.7" height="25.2" fill="#1a5fa8" fill-opacity="0.92"><title>(3.962288, 4.402543]: 2</title></rect>
+<rect x="1138.6" y="267.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(5.283051, 5.723305]: 1</title></rect>
+<rect x="1171.9" y="267.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(9.245340, 9.685594]: 1</title></rect>
+<rect x="1190.4" y="267.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(11.446611, 11.886865]: 1</title></rect>
+<rect x="1220.0" y="267.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(14.968645, 15.408899]: 1</title></rect>
+<rect x="1271.8" y="267.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(21.132205, 21.572459]: 1</title></rect>
+<text x="1090.0" y="299" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="1182.5" y="299" text-anchor="middle" class="x-tick">10.786229</text>
+<text x="1275.0" y="299" text-anchor="middle" class="x-tick">21.572459</text>
+<text x="1182" y="313" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="130" y="339" text-anchor="middle" class="subtitle">3010201_20120320 (0.0% 0.000000 err)</text>
+<text x="130" y="351" text-anchor="middle" class="stats">n=496  mean=0.034007  med=0.000032</text>
+<line x1="50" y1="373" x2="50" y2="558" stroke="#333" stroke-width="1"/>
+<line x1="50" y1="558" x2="235" y2="558" stroke="#333" stroke-width="1"/>
+<text x="18" y="465" text-anchor="middle" class="y-axis-label" transform="rotate(-90 10,465)"># bins (log)</text>
+<line x1="47" y1="558.0" x2="51" y2="558.0" stroke="#333" stroke-width="1"/>
+<text x="45" y="562.0" text-anchor="end" class="tick">0</text>
+<line x1="47" y1="542.0" x2="51" y2="542.0" stroke="#333" stroke-width="1"/>
+<text x="45" y="546.0" text-anchor="end" class="tick">1</text>
+<line x1="51" y1="542.0" x2="10049" y2="542.0" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="502.7" x2="51" y2="502.7" stroke="#333" stroke-width="1"/>
+<text x="45" y="506.7" text-anchor="end" class="tick">10</text>
+<line x1="51" y1="502.7" x2="10049" y2="502.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="451.5" x2="51" y2="451.5" stroke="#333" stroke-width="1"/>
+<text x="45" y="455.5" text-anchor="end" class="tick">100</text>
+<line x1="51" y1="451.5" x2="10049" y2="451.5" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="415.7" x2="51" y2="415.7" stroke="#333" stroke-width="1"/>
+<text x="45" y="419.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">475</text>
+<line x1="51" y1="415.7" x2="10049" y2="415.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="54.2" y="415.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 0.039183]: 475</title></rect>
+<rect x="57.9" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.039183, 0.078367]: 1</title></rect>
+<rect x="61.6" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.078367, 0.117550]: 1</title></rect>
+<rect x="72.7" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.195917, 0.235100]: 1</title></rect>
+<rect x="76.4" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.235100, 0.274284]: 1</title></rect>
+<rect x="80.1" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.274284, 0.313467]: 1</title></rect>
+<rect x="91.2" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.391834, 0.431017]: 1</title></rect>
+<rect x="94.9" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.431017, 0.470201]: 1</title></rect>
+<rect x="98.6" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.470201, 0.509384]: 1</title></rect>
+<rect x="106.0" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.548567, 0.587751]: 1</title></rect>
+<rect x="109.7" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.587751, 0.626934]: 1</title></rect>
+<rect x="113.4" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.626934, 0.666118]: 1</title></rect>
+<rect x="120.8" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.705301, 0.744484]: 1</title></rect>
+<rect x="124.5" y="532.6" width="2.7" height="25.4" fill="#1a5fa8" fill-opacity="0.92"><title>(0.744484, 0.783668]: 2</title></rect>
+<rect x="135.6" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(0.862035, 0.901218]: 1</title></rect>
+<rect x="161.5" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(1.136318, 1.175502]: 1</title></rect>
+<rect x="187.4" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(1.410602, 1.449785]: 1</title></rect>
+<rect x="194.8" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(1.488969, 1.528152]: 1</title></rect>
+<rect x="209.6" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(1.645702, 1.684886]: 1</title></rect>
+<rect x="228.1" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(1.841619, 1.880803]: 1</title></rect>
+<rect x="231.8" y="542.0" width="2.7" height="16.0" fill="#1a5fa8" fill-opacity="0.92"><title>(1.880803, 1.919986]: 1</title></rect>
+<text x="50.0" y="574" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="142.5" y="574" text-anchor="middle" class="x-tick">0.959993</text>
+<text x="235.0" y="574" text-anchor="middle" class="x-tick">1.919986</text>
+<text x="142" y="588" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="390" y="339" text-anchor="middle" class="subtitle">3010228_20110426 (0.0% 0.000000 err)</text>
+<text x="390" y="351" text-anchor="middle" class="stats">n=512  mean=0.023871  med=0.000029</text>
+<line x1="310" y1="373" x2="310" y2="558" stroke="#333" stroke-width="1"/>
+<line x1="310" y1="558" x2="495" y2="558" stroke="#333" stroke-width="1"/>
+<text x="278" y="465" text-anchor="middle" class="y-axis-label" transform="rotate(-90 270,465)"># bins (log)</text>
+<line x1="307" y1="558.0" x2="311" y2="558.0" stroke="#333" stroke-width="1"/>
+<text x="305" y="562.0" text-anchor="end" class="tick">0</text>
+<line x1="307" y1="542.1" x2="311" y2="542.1" stroke="#333" stroke-width="1"/>
+<text x="305" y="546.1" text-anchor="end" class="tick">1</text>
+<line x1="311" y1="542.1" x2="10309" y2="542.1" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="307" y1="503.0" x2="311" y2="503.0" stroke="#333" stroke-width="1"/>
+<text x="305" y="507.0" text-anchor="end" class="tick">10</text>
+<line x1="311" y1="503.0" x2="10309" y2="503.0" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="307" y1="452.1" x2="311" y2="452.1" stroke="#333" stroke-width="1"/>
+<text x="305" y="456.1" text-anchor="end" class="tick">100</text>
+<line x1="311" y1="452.1" x2="10309" y2="452.1" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="307" y1="415.7" x2="311" y2="415.7" stroke="#333" stroke-width="1"/>
+<text x="305" y="419.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">492</text>
+<line x1="311" y1="415.7" x2="10309" y2="415.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="314.2" y="415.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 0.027958]: 492</title></rect>
+<rect x="351.2" y="532.8" width="2.7" height="25.2" fill="#1a5fa8" fill-opacity="0.92"><title>(0.279579, 0.307537]: 2</title></rect>
+<rect x="354.9" y="526.2" width="2.7" height="31.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.307537, 0.335495]: 3</title></rect>
+<rect x="358.6" y="542.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(0.335495, 0.363452]: 1</title></rect>
+<rect x="362.3" y="526.2" width="2.7" height="31.8" fill="#1a5fa8" fill-opacity="0.92"><title>(0.363452, 0.391410]: 3</title></rect>
+<rect x="373.4" y="542.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(0.447326, 0.475284]: 1</title></rect>
+<rect x="377.1" y="542.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(0.475284, 0.503242]: 1</title></rect>
+<rect x="395.6" y="542.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(0.615073, 0.643031]: 1</title></rect>
+<rect x="399.3" y="542.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(0.643031, 0.670989]: 1</title></rect>
+<rect x="403.0" y="542.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(0.670989, 0.698947]: 1</title></rect>
+<rect x="421.5" y="532.8" width="2.7" height="25.2" fill="#1a5fa8" fill-opacity="0.92"><title>(0.810778, 0.838736]: 2</title></rect>
+<rect x="454.8" y="532.8" width="2.7" height="25.2" fill="#1a5fa8" fill-opacity="0.92"><title>(1.062399, 1.090357]: 2</title></rect>
+<rect x="458.5" y="542.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(1.090357, 1.118315]: 1</title></rect>
+<rect x="491.8" y="542.1" width="2.7" height="15.9" fill="#1a5fa8" fill-opacity="0.92"><title>(1.341978, 1.369936]: 1</title></rect>
+<text x="310.0" y="574" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="402.5" y="574" text-anchor="middle" class="x-tick">0.684968</text>
+<text x="495.0" y="574" text-anchor="middle" class="x-tick">1.369936</text>
+<text x="402" y="588" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="650" y="339" text-anchor="middle" class="subtitle">3010317_20110413 (0.0% 0.000000 err)</text>
+<text x="650" y="351" text-anchor="middle" class="stats">n=632  mean=0.041459  med=0.000031</text>
+<line x1="570" y1="373" x2="570" y2="558" stroke="#333" stroke-width="1"/>
+<line x1="570" y1="558" x2="755" y2="558" stroke="#333" stroke-width="1"/>
+<text x="538" y="465" text-anchor="middle" class="y-axis-label" transform="rotate(-90 530,465)"># bins (log)</text>
+<line x1="567" y1="558.0" x2="571" y2="558.0" stroke="#333" stroke-width="1"/>
+<text x="565" y="562.0" text-anchor="end" class="tick">0</text>
+<line x1="567" y1="542.6" x2="571" y2="542.6" stroke="#333" stroke-width="1"/>
+<text x="565" y="546.6" text-anchor="end" class="tick">1</text>
+<line x1="571" y1="542.6" x2="10569" y2="542.6" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="567" y1="504.6" x2="571" y2="504.6" stroke="#333" stroke-width="1"/>
+<text x="565" y="508.6" text-anchor="end" class="tick">10</text>
+<line x1="571" y1="504.6" x2="10569" y2="504.6" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="567" y1="455.3" x2="571" y2="455.3" stroke="#333" stroke-width="1"/>
+<text x="565" y="459.3" text-anchor="end" class="tick">100</text>
+<line x1="571" y1="455.3" x2="10569" y2="455.3" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="567" y1="415.7" x2="571" y2="415.7" stroke="#333" stroke-width="1"/>
+<text x="565" y="419.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">596</text>
+<line x1="571" y1="415.7" x2="10569" y2="415.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="574.2" y="415.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 0.098995]: 596</title></rect>
+<rect x="577.9" y="542.6" width="2.7" height="15.4" fill="#1a5fa8" fill-opacity="0.92"><title>(0.098995, 0.197990]: 1</title></rect>
+<rect x="581.6" y="502.7" width="2.7" height="55.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.197990, 0.296985]: 11</title></rect>
+<rect x="585.3" y="506.7" width="2.7" height="51.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.296985, 0.395980]: 9</title></rect>
+<rect x="589.0" y="533.5" width="2.7" height="24.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.395980, 0.494975]: 2</title></rect>
+<rect x="592.7" y="533.5" width="2.7" height="24.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.494975, 0.593970]: 2</title></rect>
+<rect x="596.4" y="542.6" width="2.7" height="15.4" fill="#1a5fa8" fill-opacity="0.92"><title>(0.593970, 0.692965]: 1</title></rect>
+<rect x="600.1" y="527.1" width="2.7" height="30.9" fill="#1a5fa8" fill-opacity="0.92"><title>(0.692965, 0.791960]: 3</title></rect>
+<rect x="611.2" y="542.6" width="2.7" height="15.4" fill="#1a5fa8" fill-opacity="0.92"><title>(0.989950, 1.088945]: 1</title></rect>
+<rect x="614.9" y="533.5" width="2.7" height="24.5" fill="#1a5fa8" fill-opacity="0.92"><title>(1.088945, 1.187940]: 2</title></rect>
+<rect x="629.7" y="542.6" width="2.7" height="15.4" fill="#1a5fa8" fill-opacity="0.92"><title>(1.484925, 1.583920]: 1</title></rect>
+<rect x="637.1" y="542.6" width="2.7" height="15.4" fill="#1a5fa8" fill-opacity="0.92"><title>(1.682915, 1.781910]: 1</title></rect>
+<rect x="714.8" y="542.6" width="2.7" height="15.4" fill="#1a5fa8" fill-opacity="0.92"><title>(3.761811, 3.860806]: 1</title></rect>
+<rect x="751.8" y="542.6" width="2.7" height="15.4" fill="#1a5fa8" fill-opacity="0.92"><title>(4.751761, 4.850756]: 1</title></rect>
+<text x="570.0" y="574" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="662.5" y="574" text-anchor="middle" class="x-tick">2.425378</text>
+<text x="755.0" y="574" text-anchor="middle" class="x-tick">4.850756</text>
+<text x="662" y="588" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="910" y="339" text-anchor="middle" class="subtitle">3010457_20111109 (0.0% 0.000000 err)</text>
+<text x="910" y="351" text-anchor="middle" class="stats">n=486  mean=0.225645  med=0.000049</text>
+<line x1="830" y1="373" x2="830" y2="558" stroke="#333" stroke-width="1"/>
+<line x1="830" y1="558" x2="1015" y2="558" stroke="#333" stroke-width="1"/>
+<text x="798" y="465" text-anchor="middle" class="y-axis-label" transform="rotate(-90 790,465)"># bins (log)</text>
+<line x1="827" y1="558.0" x2="831" y2="558.0" stroke="#333" stroke-width="1"/>
+<text x="825" y="562.0" text-anchor="end" class="tick">0</text>
+<line x1="827" y1="541.8" x2="831" y2="541.8" stroke="#333" stroke-width="1"/>
+<text x="825" y="545.8" text-anchor="end" class="tick">1</text>
+<line x1="831" y1="541.8" x2="10829" y2="541.8" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="827" y1="501.8" x2="831" y2="501.8" stroke="#333" stroke-width="1"/>
+<text x="825" y="505.8" text-anchor="end" class="tick">10</text>
+<line x1="831" y1="501.8" x2="10829" y2="501.8" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="827" y1="449.9" x2="831" y2="449.9" stroke="#333" stroke-width="1"/>
+<text x="825" y="453.9" text-anchor="end" class="tick">100</text>
+<line x1="831" y1="449.9" x2="10829" y2="449.9" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="827" y1="415.7" x2="831" y2="415.7" stroke="#333" stroke-width="1"/>
+<text x="825" y="419.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">433</text>
+<line x1="831" y1="415.7" x2="10829" y2="415.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="834.2" y="415.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 0.106173]: 433</title></rect>
+<rect x="837.9" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(0.106173, 0.212347]: 1</title></rect>
+<rect x="845.3" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(0.318520, 0.424693]: 1</title></rect>
+<rect x="849.0" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(0.424693, 0.530866]: 2</title></rect>
+<rect x="852.7" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(0.530866, 0.637040]: 2</title></rect>
+<rect x="856.4" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(0.637040, 0.743213]: 2</title></rect>
+<rect x="860.1" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(0.743213, 0.849386]: 1</title></rect>
+<rect x="867.5" y="520.3" width="2.7" height="37.7" fill="#1a5fa8" fill-opacity="0.92"><title>(0.955560, 1.061733]: 4</title></rect>
+<rect x="871.2" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(1.061733, 1.167906]: 1</title></rect>
+<rect x="874.9" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(1.167906, 1.274079]: 2</title></rect>
+<rect x="878.6" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(1.274079, 1.380253]: 2</title></rect>
+<rect x="886.0" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(1.486426, 1.592599]: 2</title></rect>
+<rect x="889.7" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(1.592599, 1.698773]: 2</title></rect>
+<rect x="893.4" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(1.698773, 1.804946]: 2</title></rect>
+<rect x="900.8" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(1.911119, 2.017292]: 1</title></rect>
+<rect x="904.5" y="520.3" width="2.7" height="37.7" fill="#1a5fa8" fill-opacity="0.92"><title>(2.017292, 2.123466]: 4</title></rect>
+<rect x="908.2" y="525.5" width="2.7" height="32.5" fill="#1a5fa8" fill-opacity="0.92"><title>(2.123466, 2.229639]: 3</title></rect>
+<rect x="911.9" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(2.229639, 2.335812]: 2</title></rect>
+<rect x="919.3" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(2.441986, 2.548159]: 2</title></rect>
+<rect x="923.0" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(2.548159, 2.654332]: 1</title></rect>
+<rect x="926.7" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(2.654332, 2.760505]: 2</title></rect>
+<rect x="930.4" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(2.760505, 2.866679]: 2</title></rect>
+<rect x="937.8" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(2.972852, 3.079025]: 2</title></rect>
+<rect x="941.5" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(3.079025, 3.185199]: 1</title></rect>
+<rect x="945.2" y="532.3" width="2.7" height="25.7" fill="#1a5fa8" fill-opacity="0.92"><title>(3.185199, 3.291372]: 2</title></rect>
+<rect x="948.9" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(3.291372, 3.397545]: 1</title></rect>
+<rect x="956.3" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(3.503718, 3.609892]: 1</title></rect>
+<rect x="963.7" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(3.716065, 3.822238]: 1</title></rect>
+<rect x="967.4" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(3.822238, 3.928412]: 1</title></rect>
+<rect x="982.2" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(4.246931, 4.353105]: 1</title></rect>
+<rect x="1004.4" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(4.883971, 4.990144]: 1</title></rect>
+<rect x="1011.8" y="541.8" width="2.7" height="16.2" fill="#1a5fa8" fill-opacity="0.92"><title>(5.096318, 5.202491]: 1</title></rect>
+<text x="830.0" y="574" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="922.5" y="574" text-anchor="middle" class="x-tick">2.601246</text>
+<text x="1015.0" y="574" text-anchor="middle" class="x-tick">5.202491</text>
+<text x="922" y="588" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="1170" y="339" text-anchor="middle" class="subtitle">3010511_20120201 (0.0% 0.000000 err)</text>
+<text x="1170" y="351" text-anchor="middle" class="stats">n=605  mean=0.360181  med=0.000059</text>
+<line x1="1090" y1="373" x2="1090" y2="558" stroke="#333" stroke-width="1"/>
+<line x1="1090" y1="558" x2="1275" y2="558" stroke="#333" stroke-width="1"/>
+<text x="1058" y="465" text-anchor="middle" class="y-axis-label" transform="rotate(-90 1050,465)"># bins (log)</text>
+<line x1="1087" y1="558.0" x2="1091" y2="558.0" stroke="#333" stroke-width="1"/>
+<text x="1085" y="562.0" text-anchor="end" class="tick">0</text>
+<line x1="1087" y1="542.3" x2="1091" y2="542.3" stroke="#333" stroke-width="1"/>
+<text x="1085" y="546.3" text-anchor="end" class="tick">1</text>
+<line x1="1091" y1="542.3" x2="11089" y2="542.3" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="1087" y1="503.7" x2="1091" y2="503.7" stroke="#333" stroke-width="1"/>
+<text x="1085" y="507.7" text-anchor="end" class="tick">10</text>
+<line x1="1091" y1="503.7" x2="11089" y2="503.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="1087" y1="453.5" x2="1091" y2="453.5" stroke="#333" stroke-width="1"/>
+<text x="1085" y="457.5" text-anchor="end" class="tick">100</text>
+<line x1="1091" y1="453.5" x2="11089" y2="453.5" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="1087" y1="415.7" x2="1091" y2="415.7" stroke="#333" stroke-width="1"/>
+<text x="1085" y="419.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">535</text>
+<line x1="1091" y1="415.7" x2="11089" y2="415.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="1094.2" y="415.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 0.190963]: 535</title></rect>
+<rect x="1097.9" y="521.6" width="2.7" height="36.4" fill="#1a5fa8" fill-opacity="0.92"><title>(0.190963, 0.381927]: 4</title></rect>
+<rect x="1101.6" y="526.6" width="2.7" height="31.4" fill="#1a5fa8" fill-opacity="0.92"><title>(0.381927, 0.572890]: 3</title></rect>
+<rect x="1105.3" y="521.6" width="2.7" height="36.4" fill="#1a5fa8" fill-opacity="0.92"><title>(0.572890, 0.763853]: 4</title></rect>
+<rect x="1112.7" y="526.6" width="2.7" height="31.4" fill="#1a5fa8" fill-opacity="0.92"><title>(0.954817, 1.145780]: 3</title></rect>
+<rect x="1116.4" y="517.4" width="2.7" height="40.6" fill="#1a5fa8" fill-opacity="0.92"><title>(1.145780, 1.336743]: 5</title></rect>
+<rect x="1120.1" y="533.1" width="2.7" height="24.9" fill="#1a5fa8" fill-opacity="0.92"><title>(1.336743, 1.527706]: 2</title></rect>
+<rect x="1123.8" y="526.6" width="2.7" height="31.4" fill="#1a5fa8" fill-opacity="0.92"><title>(1.527706, 1.718670]: 3</title></rect>
+<rect x="1127.5" y="533.1" width="2.7" height="24.9" fill="#1a5fa8" fill-opacity="0.92"><title>(1.718670, 1.909633]: 2</title></rect>
+<rect x="1131.2" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(1.909633, 2.100596]: 1</title></rect>
+<rect x="1134.9" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(2.100596, 2.291560]: 1</title></rect>
+<rect x="1138.6" y="533.1" width="2.7" height="24.9" fill="#1a5fa8" fill-opacity="0.92"><title>(2.291560, 2.482523]: 2</title></rect>
+<rect x="1142.3" y="526.6" width="2.7" height="31.4" fill="#1a5fa8" fill-opacity="0.92"><title>(2.482523, 2.673486]: 3</title></rect>
+<rect x="1146.0" y="526.6" width="2.7" height="31.4" fill="#1a5fa8" fill-opacity="0.92"><title>(2.673486, 2.864450]: 3</title></rect>
+<rect x="1149.7" y="533.1" width="2.7" height="24.9" fill="#1a5fa8" fill-opacity="0.92"><title>(2.864450, 3.055413]: 2</title></rect>
+<rect x="1153.4" y="533.1" width="2.7" height="24.9" fill="#1a5fa8" fill-opacity="0.92"><title>(3.055413, 3.246376]: 2</title></rect>
+<rect x="1157.1" y="526.6" width="2.7" height="31.4" fill="#1a5fa8" fill-opacity="0.92"><title>(3.246376, 3.437340]: 3</title></rect>
+<rect x="1160.8" y="521.6" width="2.7" height="36.4" fill="#1a5fa8" fill-opacity="0.92"><title>(3.437340, 3.628303]: 4</title></rect>
+<rect x="1164.5" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(3.628303, 3.819266]: 1</title></rect>
+<rect x="1168.2" y="533.1" width="2.7" height="24.9" fill="#1a5fa8" fill-opacity="0.92"><title>(3.819266, 4.010229]: 2</title></rect>
+<rect x="1175.6" y="526.6" width="2.7" height="31.4" fill="#1a5fa8" fill-opacity="0.92"><title>(4.201193, 4.392156]: 3</title></rect>
+<rect x="1179.3" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(4.392156, 4.583119]: 1</title></rect>
+<rect x="1183.0" y="521.6" width="2.7" height="36.4" fill="#1a5fa8" fill-opacity="0.92"><title>(4.583119, 4.774083]: 4</title></rect>
+<rect x="1197.8" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(5.346973, 5.537936]: 1</title></rect>
+<rect x="1201.5" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(5.537936, 5.728899]: 1</title></rect>
+<rect x="1208.9" y="533.1" width="2.7" height="24.9" fill="#1a5fa8" fill-opacity="0.92"><title>(5.919862, 6.110826]: 2</title></rect>
+<rect x="1212.6" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(6.110826, 6.301789]: 1</title></rect>
+<rect x="1216.3" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(6.301789, 6.492752]: 1</title></rect>
+<rect x="1223.7" y="533.1" width="2.7" height="24.9" fill="#1a5fa8" fill-opacity="0.92"><title>(6.683716, 6.874679]: 2</title></rect>
+<rect x="1227.4" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(6.874679, 7.065642]: 1</title></rect>
+<rect x="1253.3" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(8.211422, 8.402385]: 1</title></rect>
+<rect x="1264.4" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(8.784312, 8.975275]: 1</title></rect>
+<rect x="1271.8" y="542.3" width="2.7" height="15.7" fill="#1a5fa8" fill-opacity="0.92"><title>(9.166239, 9.357202]: 1</title></rect>
+<text x="1090.0" y="574" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="1182.5" y="574" text-anchor="middle" class="x-tick">4.678601</text>
+<text x="1275.0" y="574" text-anchor="middle" class="x-tick">9.357202</text>
+<text x="1182" y="588" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="130" y="614" text-anchor="middle" class="subtitle">3010724_20110811 (0.0% 0.000000 err)</text>
+<text x="130" y="626" text-anchor="middle" class="stats">n=588  mean=0.173461  med=0.000027</text>
+<line x1="50" y1="648" x2="50" y2="833" stroke="#333" stroke-width="1"/>
+<line x1="50" y1="833" x2="235" y2="833" stroke="#333" stroke-width="1"/>
+<text x="18" y="740" text-anchor="middle" class="y-axis-label" transform="rotate(-90 10,740)"># bins (log)</text>
+<line x1="47" y1="833.0" x2="51" y2="833.0" stroke="#333" stroke-width="1"/>
+<text x="45" y="837.0" text-anchor="end" class="tick">0</text>
+<line x1="47" y1="817.5" x2="51" y2="817.5" stroke="#333" stroke-width="1"/>
+<text x="45" y="821.5" text-anchor="end" class="tick">1</text>
+<line x1="51" y1="817.5" x2="10049" y2="817.5" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="779.4" x2="51" y2="779.4" stroke="#333" stroke-width="1"/>
+<text x="45" y="783.4" text-anchor="end" class="tick">10</text>
+<line x1="51" y1="779.4" x2="10049" y2="779.4" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="729.9" x2="51" y2="729.9" stroke="#333" stroke-width="1"/>
+<text x="45" y="733.9" text-anchor="end" class="tick">100</text>
+<line x1="51" y1="729.9" x2="10049" y2="729.9" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="47" y1="690.7" x2="51" y2="690.7" stroke="#333" stroke-width="1"/>
+<text x="45" y="694.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">584</text>
+<line x1="51" y1="690.7" x2="10049" y2="690.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="54.2" y="690.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 1.684993]: 584</title></rect>
+<rect x="57.9" y="808.5" width="2.7" height="24.5" fill="#1a5fa8" fill-opacity="0.92"><title>(1.684993, 3.369985]: 2</title></rect>
+<rect x="61.6" y="817.5" width="2.7" height="15.5" fill="#1a5fa8" fill-opacity="0.92"><title>(3.369985, 5.054978]: 1</title></rect>
+<rect x="231.8" y="817.5" width="2.7" height="15.5" fill="#1a5fa8" fill-opacity="0.92"><title>(80.879645, 82.564638]: 1</title></rect>
+<text x="50.0" y="849" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="142.5" y="849" text-anchor="middle" class="x-tick">41.282319</text>
+<text x="235.0" y="849" text-anchor="middle" class="x-tick">82.564638</text>
+<text x="142" y="863" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="390" y="614" text-anchor="middle" class="subtitle">3010740_20110303 (0.0% 0.000000 err)</text>
+<text x="390" y="626" text-anchor="middle" class="stats">n=588  mean=0.011666  med=0.000030</text>
+<line x1="310" y1="648" x2="310" y2="833" stroke="#333" stroke-width="1"/>
+<line x1="310" y1="833" x2="495" y2="833" stroke="#333" stroke-width="1"/>
+<text x="278" y="740" text-anchor="middle" class="y-axis-label" transform="rotate(-90 270,740)"># bins (log)</text>
+<line x1="307" y1="833.0" x2="311" y2="833.0" stroke="#333" stroke-width="1"/>
+<text x="305" y="837.0" text-anchor="end" class="tick">0</text>
+<line x1="307" y1="817.5" x2="311" y2="817.5" stroke="#333" stroke-width="1"/>
+<text x="305" y="821.5" text-anchor="end" class="tick">1</text>
+<line x1="311" y1="817.5" x2="10309" y2="817.5" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="307" y1="779.3" x2="311" y2="779.3" stroke="#333" stroke-width="1"/>
+<text x="305" y="783.3" text-anchor="end" class="tick">10</text>
+<line x1="311" y1="779.3" x2="10309" y2="779.3" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="307" y1="729.7" x2="311" y2="729.7" stroke="#333" stroke-width="1"/>
+<text x="305" y="733.7" text-anchor="end" class="tick">100</text>
+<line x1="311" y1="729.7" x2="10309" y2="729.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="307" y1="690.7" x2="311" y2="690.7" stroke="#333" stroke-width="1"/>
+<text x="305" y="694.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">577</text>
+<line x1="311" y1="690.7" x2="10309" y2="690.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="314.2" y="690.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 0.040249]: 577</title></rect>
+<rect x="317.9" y="817.5" width="2.7" height="15.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.040249, 0.080498]: 1</title></rect>
+<rect x="329.0" y="817.5" width="2.7" height="15.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.160997, 0.201246]: 1</title></rect>
+<rect x="332.7" y="817.5" width="2.7" height="15.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.201246, 0.241495]: 1</title></rect>
+<rect x="340.1" y="808.4" width="2.7" height="24.6" fill="#1a5fa8" fill-opacity="0.92"><title>(0.281745, 0.321994]: 2</title></rect>
+<rect x="343.8" y="817.5" width="2.7" height="15.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.321994, 0.362243]: 1</title></rect>
+<rect x="347.5" y="817.5" width="2.7" height="15.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.362243, 0.402492]: 1</title></rect>
+<rect x="354.9" y="817.5" width="2.7" height="15.5" fill="#1a5fa8" fill-opacity="0.92"><title>(0.442742, 0.482991]: 1</title></rect>
+<rect x="425.2" y="817.5" width="2.7" height="15.5" fill="#1a5fa8" fill-opacity="0.92"><title>(1.207477, 1.247727]: 1</title></rect>
+<rect x="440.0" y="817.5" width="2.7" height="15.5" fill="#1a5fa8" fill-opacity="0.92"><title>(1.368474, 1.408724]: 1</title></rect>
+<rect x="491.8" y="817.5" width="2.7" height="15.5" fill="#1a5fa8" fill-opacity="0.92"><title>(1.931964, 1.972213]: 1</title></rect>
+<text x="310.0" y="849" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="402.5" y="849" text-anchor="middle" class="x-tick">0.986106</text>
+<text x="495.0" y="849" text-anchor="middle" class="x-tick">1.972213</text>
+<text x="402" y="863" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="650" y="614" text-anchor="middle" class="subtitle">3010767_20120423 (0.0% 0.000000 err)</text>
+<text x="650" y="626" text-anchor="middle" class="stats">n=281  mean=5.560997  med=0.987610</text>
+<line x1="570" y1="648" x2="570" y2="833" stroke="#333" stroke-width="1"/>
+<line x1="570" y1="833" x2="755" y2="833" stroke="#333" stroke-width="1"/>
+<text x="538" y="740" text-anchor="middle" class="y-axis-label" transform="rotate(-90 530,740)"># bins (log)</text>
+<line x1="567" y1="833.0" x2="571" y2="833.0" stroke="#333" stroke-width="1"/>
+<text x="565" y="837.0" text-anchor="end" class="tick">0</text>
+<line x1="567" y1="815.0" x2="571" y2="815.0" stroke="#333" stroke-width="1"/>
+<text x="565" y="819.0" text-anchor="end" class="tick">1</text>
+<line x1="571" y1="815.0" x2="10569" y2="815.0" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="567" y1="770.8" x2="571" y2="770.8" stroke="#333" stroke-width="1"/>
+<text x="565" y="774.8" text-anchor="end" class="tick">10</text>
+<line x1="571" y1="770.8" x2="10569" y2="770.8" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="567" y1="713.3" x2="571" y2="713.3" stroke="#333" stroke-width="1"/>
+<text x="565" y="717.3" text-anchor="end" class="tick">100</text>
+<line x1="571" y1="713.3" x2="10569" y2="713.3" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="567" y1="690.7" x2="571" y2="690.7" stroke="#333" stroke-width="1"/>
+<text x="565" y="694.7" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">241</text>
+<line x1="571" y1="690.7" x2="10569" y2="690.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="574.2" y="690.7" width="2.7" height="142.3" fill="#1a5fa8" fill-opacity="0.92"><title>(0.000000, 6.701593]: 241</title></rect>
+<rect x="577.9" y="762.8" width="2.7" height="70.2" fill="#1a5fa8" fill-opacity="0.92"><title>(6.701593, 13.403187]: 14</title></rect>
+<rect x="581.6" y="779.1" width="2.7" height="53.9" fill="#1a5fa8" fill-opacity="0.92"><title>(13.403187, 20.104780]: 7</title></rect>
+<rect x="585.3" y="786.5" width="2.7" height="46.5" fill="#1a5fa8" fill-opacity="0.92"><title>(20.104780, 26.806374]: 5</title></rect>
+<rect x="589.0" y="791.3" width="2.7" height="41.7" fill="#1a5fa8" fill-opacity="0.92"><title>(26.806374, 33.507967]: 4</title></rect>
+<rect x="592.7" y="804.5" width="2.7" height="28.5" fill="#1a5fa8" fill-opacity="0.92"><title>(33.507967, 40.209561]: 2</title></rect>
+<rect x="596.4" y="797.1" width="2.7" height="35.9" fill="#1a5fa8" fill-opacity="0.92"><title>(40.209561, 46.911154]: 3</title></rect>
+<rect x="600.1" y="815.0" width="2.7" height="18.0" fill="#1a5fa8" fill-opacity="0.92"><title>(46.911154, 53.612748]: 1</title></rect>
+<rect x="603.8" y="804.5" width="2.7" height="28.5" fill="#1a5fa8" fill-opacity="0.92"><title>(53.612748, 60.314341]: 2</title></rect>
+<rect x="614.9" y="815.0" width="2.7" height="18.0" fill="#1a5fa8" fill-opacity="0.92"><title>(73.717528, 80.419121]: 1</title></rect>
+<rect x="751.8" y="815.0" width="2.7" height="18.0" fill="#1a5fa8" fill-opacity="0.92"><title>(321.676486, 328.378079]: 1</title></rect>
+<text x="570.0" y="849" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="662.5" y="849" text-anchor="middle" class="x-tick">164.189040</text>
+<text x="755.0" y="849" text-anchor="middle" class="x-tick">328.378079</text>
+<text x="662" y="863" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+<text x="910" y="614" text-anchor="middle" class="subtitle" fill="#27ae60">ZERO-DIFF REFERENCE (n=534)</text>
+<text x="910" y="626" text-anchor="middle" class="stats">all diffs=0 | x-range=[0, 328.378079]</text>
+<line x1="830" y1="648" x2="830" y2="833" stroke="#333" stroke-width="1"/>
+<line x1="830" y1="833" x2="1015" y2="833" stroke="#333" stroke-width="1"/>
+<text x="798" y="740" text-anchor="middle" class="y-axis-label" transform="rotate(-90 790,740)"># bins</text>
+<text x="827" y="836.0" text-anchor="end" class="tick">0</text>
+<text x="827" y="774.3333333333334" text-anchor="end" class="tick">178</text>
+<line x1="831" y1="771.3333333333334" x2="1015" y2="771.3333333333334" stroke="#eee" stroke-width="0.5"/>
+<text x="827" y="712.6666666666666" text-anchor="end" class="tick">356</text>
+<line x1="831" y1="709.6666666666666" x2="1015" y2="709.6666666666666" stroke="#eee" stroke-width="0.5"/>
+<text x="827" y="651.0" text-anchor="end" class="tick">534</text>
+<line x1="831" y1="648.0" x2="1015" y2="648.0" stroke="#eee" stroke-width="0.5"/>
+<rect x="830.5" y="648.0" width="2.7" height="185.0" fill="#2ecc71" fill-opacity="0.8"><title>[0, first_bucket): 534</title></rect>
+<text x="831.9" y="646" text-anchor="middle" class="clipped" fill="#2ecc71">534</text>
+<text x="830.0" y="849" text-anchor="middle" class="x-tick">0.000000</text>
+<text x="922.5" y="849" text-anchor="middle" class="x-tick">164.189040</text>
+<text x="1015.0" y="849" text-anchor="middle" class="x-tick">328.378079</text>
+<text x="922" y="863" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+</svg>

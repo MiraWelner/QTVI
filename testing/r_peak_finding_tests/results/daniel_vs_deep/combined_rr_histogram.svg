@@ -1,0 +1,70 @@
+<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">
+<style>
+  text { font-family: Consolas, 'Courier New', monospace; }
+  .title { font-size: 16px; font-weight: bold; }
+  .stats { font-size: 12px; fill: #555; }
+  .tick { font-size: 11px; }
+  .axis-label { font-size: 13px; }
+  .y-axis-label { font-size: 12px; }
+</style>
+<rect width="100%" height="100%" fill="#fcfcfc"/>
+<text x="450" y="24" text-anchor="middle" class="title">Daniel vs Deep: RR Interval SSD (pooled) - All 13 Subjects (6945 bins, 0.0% 0.000000 err)</text>
+<text x="450" y="44" text-anchor="middle" class="stats">mean=0.358188  median=0.000034  IQR=[0.000025, 0.000049]</text>
+<line x1="70" y1="70" x2="70" y2="440" stroke="#333" stroke-width="1"/>
+<line x1="70" y1="440" x2="860" y2="440" stroke="#333" stroke-width="1"/>
+<text x="18" y="255" text-anchor="middle" class="y-axis-label" transform="rotate(-90 18,255)"># bins (log)</text>
+<line x1="67" y1="440.0" x2="71" y2="440.0" stroke="#333" stroke-width="1"/>
+<text x="65" y="444.0" text-anchor="end" class="tick">0</text>
+<line x1="67" y1="417.7" x2="71" y2="417.7" stroke="#333" stroke-width="1"/>
+<text x="65" y="421.7" text-anchor="end" class="tick">1</text>
+<line x1="71" y1="417.7" x2="10069" y2="417.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="67" y1="362.7" x2="71" y2="362.7" stroke="#333" stroke-width="1"/>
+<text x="65" y="366.7" text-anchor="end" class="tick">10</text>
+<line x1="71" y1="362.7" x2="10069" y2="362.7" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="67" y1="291.2" x2="71" y2="291.2" stroke="#333" stroke-width="1"/>
+<text x="65" y="295.2" text-anchor="end" class="tick">100</text>
+<line x1="71" y1="291.2" x2="10069" y2="291.2" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="67" y1="217.3" x2="71" y2="217.3" stroke="#333" stroke-width="1"/>
+<text x="65" y="221.3" text-anchor="end" class="tick">1000</text>
+<line x1="71" y1="217.3" x2="10069" y2="217.3" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="67" y1="155.4" x2="71" y2="155.4" stroke="#333" stroke-width="1"/>
+<text x="65" y="159.4" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">6832</text>
+<line x1="71" y1="155.4" x2="10069" y2="155.4" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="70.5" y="404.6" width="8.9" height="35.4" fill="#3498db" fill-opacity="0.85"><title>[0.000000, 4.156685): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="80.4" y="155.4" width="8.9" height="284.6" fill="#3498db" fill-opacity="0.85"><title>[4.156685, 8.313369): 6832</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="90.2" y="307.0" width="8.9" height="133.0" fill="#3498db" fill-opacity="0.85"><title>[8.313369, 12.470054): 61</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="100.1" y="343.4" width="8.9" height="96.6" fill="#3498db" fill-opacity="0.85"><title>[12.470054, 16.626738): 19</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="110.0" y="373.0" width="8.9" height="67.0" fill="#3498db" fill-opacity="0.85"><title>[16.626738, 20.783423): 7</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="119.9" y="388.1" width="8.9" height="51.9" fill="#3498db" fill-opacity="0.85"><title>[20.783423, 24.940107): 4</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="129.8" y="404.6" width="8.9" height="35.4" fill="#3498db" fill-opacity="0.85"><title>[24.940107, 29.096792): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="139.6" y="382.2" width="8.9" height="57.8" fill="#3498db" fill-opacity="0.85"><title>[29.096792, 33.253476): 5</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="149.5" y="404.6" width="8.9" height="35.4" fill="#3498db" fill-opacity="0.85"><title>[33.253476, 37.410161): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="159.4" y="417.7" width="8.9" height="22.3" fill="#3498db" fill-opacity="0.85"><title>[37.410161, 41.566845): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="169.2" y="395.3" width="8.9" height="44.7" fill="#3498db" fill-opacity="0.85"><title>[41.566845, 45.723530): 3</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="179.1" y="417.7" width="8.9" height="22.3" fill="#3498db" fill-opacity="0.85"><title>[45.723530, 49.880215): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="198.9" y="417.7" width="8.9" height="22.3" fill="#3498db" fill-opacity="0.85"><title>[54.036899, 58.193584): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="208.8" y="417.7" width="8.9" height="22.3" fill="#3498db" fill-opacity="0.85"><title>[58.193584, 62.350268): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="218.6" y="417.7" width="8.9" height="22.3" fill="#3498db" fill-opacity="0.85"><title>[62.350268, 66.506953): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="258.1" y="417.7" width="8.9" height="22.3" fill="#3498db" fill-opacity="0.85"><title>[78.977006, 83.133691): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="268.0" y="417.7" width="8.9" height="22.3" fill="#3498db" fill-opacity="0.85"><title>[83.133691, 87.290375): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<rect x="850.6" y="417.7" width="8.9" height="22.3" fill="#3498db" fill-opacity="0.85"><title>[328.378079, 332.534764): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">328.378079</text>
+<text x="465" y="478" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+</svg>

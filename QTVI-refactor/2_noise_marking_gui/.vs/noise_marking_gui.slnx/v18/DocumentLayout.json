@@ -3,39 +3,124 @@
   "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\lower_row_buttons.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:lower_row_buttons.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\file_to_bin.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:file_to_bin.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\bin_handler.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:bin_handler.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\gui_handler.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:gui_handler.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MIRAWELNER\\QTVI\\QTVI-REFACTOR\\2_NOISE_MARKING_GUI\\POST_PROCESS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:POST_PROCESS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\config_entry.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:config_entry.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\annealing_to_bin\\anneal_handler.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:annealing_to_bin\\anneal_handler.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\annealing_to_bin\\anneal_handler.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:annealing_to_bin\\anneal_handler.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\annealing_to_bin\\AnnealSegments.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:annealing_to_bin\\AnnealSegments.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\gui_handler.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:gui_handler.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\lower_row_buttons.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:lower_row_buttons.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|C:\\QT\\6.10.2\\MSVC2022_64\\INCLUDE\\QTCORE\\QJSONOBJECT.H||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_marking_guiPlugin.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:noise_marking_guiPlugin.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_marking_gui.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:noise_marking_gui.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\NoiseManager.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:NoiseManager.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MIRAWELNER\\QTVI\\QTVI-REFACTOR\\2_NOISE_MARKING_GUI\\PEAK_FINDING\\RUN_FIND_R_PEAKS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\RUN_FIND_R_PEAKS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\NoiseManager.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:NoiseManager.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\RRSIMPLESQUARED.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\RRSIMPLESQUARED.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\FILTERUTILS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\FILTERUTILS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\ECGLMS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\ECGLMS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\PAIRRTOPPGBEAT.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\PAIRRTOPPGBEAT.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\RPEAKDETECT.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\RPEAKDETECT.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\JOINEDRR.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\JOINEDRR.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\RUNLENGTH.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\RUNLENGTH.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\stdoutlier.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:peak_finding\\stdoutlier.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\ECGLAUX.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\ECGLAUX.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\DIFF2.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\DIFF2.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\SEGMENTPPG.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\SEGMENTPPG.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\STATSUTILS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\STATSUTILS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\NANFASTSMOOTH.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\NANFASTSMOOTH.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\PEAK_FINDING\\CREATE_ECG_PPG_PAIRS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:PEAK_FINDING\\CREATE_ECG_PPG_PAIRS.HPP||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_manager.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:noise_manager.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\run_find_r_peaks.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:peak_finding\\run_find_r_peaks.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\bin_handler.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:bin_handler.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\file_to_bin.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|solutionrelative:file_to_bin.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_manager.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7588209C-C5FE-4483-8C82-FB43356EBCCC}|noise_marking_gui.vcxproj|solutionrelative:noise_manager.h||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
   "DocumentGroupContainers": [
@@ -44,138 +129,405 @@
       "VerticalTabListWidth": 256,
       "DocumentGroups": [
         {
-          "DockedWidth": 187,
-          "SelectedChildIndex": 1,
+          "DockedWidth": 676,
+          "SelectedChildIndex": -1,
           "Children": [
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{aa2115a1-9712-457b-9047-dbb71ca2cdd2}"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 0,
-              "Title": "lower_row_buttons.h",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\lower_row_buttons.h",
-              "RelativeDocumentMoniker": "lower_row_buttons.h",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\lower_row_buttons.h",
-              "RelativeToolTip": "lower_row_buttons.h",
-              "ViewState": "AgIAABkAAAAAAAAAAAAAABkAAAAiAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-18T21:32:36.805Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 6,
-              "Title": "noise_marking_gui.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_marking_gui.cpp",
-              "RelativeDocumentMoniker": "noise_marking_gui.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_marking_gui.cpp",
-              "RelativeToolTip": "noise_marking_gui.cpp",
-              "ViewState": "AgIAAIsAAAAAAAAAAAAgwMYAAAABAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-03-31T17:34:11.367Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 7,
-              "Title": "NoiseManager.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\NoiseManager.cpp",
-              "RelativeDocumentMoniker": "NoiseManager.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\NoiseManager.cpp",
-              "RelativeToolTip": "NoiseManager.cpp",
-              "ViewState": "AgIAAAwAAAAAAAAAAAAUwEgAAAABAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-03-18T21:22:08.758Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 8,
-              "Title": "NoiseManager.h",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\NoiseManager.h",
-              "RelativeDocumentMoniker": "NoiseManager.h",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\NoiseManager.h",
-              "RelativeToolTip": "NoiseManager.h",
-              "ViewState": "AgIAABcAAAAAAAAAAAAqwCYAAAACAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-03-18T21:23:11.066Z"
             }
           ]
         },
         {
-          "DockedWidth": 1257,
+          "DockedWidth": 768,
           "SelectedChildIndex": 0,
           "Children": [
             {
               "$type": "Document",
-              "DocumentIndex": 1,
-              "Title": "gui_handler.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\gui_handler.cpp",
-              "RelativeDocumentMoniker": "gui_handler.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\gui_handler.cpp",
-              "RelativeToolTip": "gui_handler.cpp",
-              "ViewState": "AgIAALMFAAAAAAAAAAAEwNAFAAAFAAAAAAAAAA==",
+              "DocumentIndex": 0,
+              "Title": "file_to_bin.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\file_to_bin.cpp",
+              "RelativeDocumentMoniker": "file_to_bin.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\file_to_bin.cpp",
+              "RelativeToolTip": "file_to_bin.cpp",
+              "ViewState": "AgIAAPsCAAAAAAAAAAApwBADAAApAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-04-22T21:55:23.98Z",
+              "WhenOpened": "2026-05-07T16:56:32.027Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 3,
-              "Title": "lower_row_buttons.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\lower_row_buttons.cpp",
-              "RelativeDocumentMoniker": "lower_row_buttons.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\lower_row_buttons.cpp",
-              "RelativeToolTip": "lower_row_buttons.cpp",
-              "ViewState": "AgIAAE8AAAAAAAAAAAAIwHUAAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-04-27T20:46:17.721Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 2,
-              "Title": "gui_handler.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\gui_handler.hpp",
-              "RelativeDocumentMoniker": "gui_handler.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\gui_handler.hpp",
-              "RelativeToolTip": "gui_handler.hpp",
-              "ViewState": "AgIAAO4AAAAAAAAAAAAkwAUBAAA4AAAAAAAAAA==",
+              "DocumentIndex": 4,
+              "Title": "config_entry.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\config_entry.hpp",
+              "RelativeDocumentMoniker": "config_entry.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\config_entry.hpp",
+              "RelativeToolTip": "config_entry.hpp",
+              "ViewState": "AgIAAAgAAAAAAAAAAAApwB8AAAAdAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-04-22T20:42:13.804Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 5,
-              "Title": "noise_marking_guiPlugin.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_marking_guiPlugin.cpp",
-              "RelativeDocumentMoniker": "noise_marking_guiPlugin.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_marking_guiPlugin.cpp",
-              "RelativeToolTip": "noise_marking_guiPlugin.cpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAMAAAAaAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-04-22T20:46:12.948Z"
+              "WhenOpened": "2026-05-07T13:55:14.162Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Bookmark",
-              "Name": "ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
+              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
             },
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{d78612c7-9962-4b83-95d9-268046dad23a}"
             },
             {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}"
+            },
+            {
               "$type": "Document",
-              "DocumentIndex": 4,
-              "Title": "qjsonobject.h",
-              "DocumentMoniker": "C:\\Qt\\6.10.2\\msvc2022_64\\include\\QtCore\\qjsonobject.h",
-              "ToolTip": "C:\\Qt\\6.10.2\\msvc2022_64\\include\\QtCore\\qjsonobject.h",
-              "ViewState": "AgIAADABAAAAAAAAAAAMwEcBAAA7AAAAAAAAAA==",
+              "DocumentIndex": 3,
+              "Title": "post_process.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\post_process.hpp",
+              "RelativeDocumentMoniker": "post_process.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\post_process.hpp",
+              "RelativeToolTip": "post_process.hpp",
+              "ViewState": "AgIAACEAAAAAAAAAAAAAADIAAABXAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-04-22T21:43:21.422Z"
+              "WhenOpened": "2026-05-07T00:30:03.004Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "gui_handler.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\gui_handler.cpp",
+              "RelativeDocumentMoniker": "gui_handler.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\gui_handler.cpp",
+              "RelativeToolTip": "gui_handler.cpp",
+              "ViewState": "AgIAAOIDAAAAAAAAAAApwAUEAAArAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-05-05T22:54:40.362Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "anneal_handler.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\annealing_to_bin\\anneal_handler.cpp",
+              "RelativeDocumentMoniker": "annealing_to_bin\\anneal_handler.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\annealing_to_bin\\anneal_handler.cpp",
+              "RelativeToolTip": "annealing_to_bin\\anneal_handler.cpp",
+              "ViewState": "AgIAACsBAAAAAAAAAAApwEIBAAA+AAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-05-06T04:04:01.114Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "bin_handler.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\bin_handler.cpp",
+              "RelativeDocumentMoniker": "bin_handler.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\bin_handler.cpp",
+              "RelativeToolTip": "bin_handler.cpp",
+              "ViewState": "AgIAAIIAAAAAAAAAAAAQwJ4AAAATAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-05-05T22:09:07.758Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "anneal_handler.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\annealing_to_bin\\anneal_handler.hpp",
+              "RelativeDocumentMoniker": "annealing_to_bin\\anneal_handler.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\annealing_to_bin\\anneal_handler.hpp",
+              "RelativeToolTip": "annealing_to_bin\\anneal_handler.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAApwBcAAAAFAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T04:04:01.434Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{3ae79031-e1bc-11d0-8f78-00a0c9110057}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 7,
+              "Title": "AnnealSegments.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\annealing_to_bin\\AnnealSegments.hpp",
+              "RelativeDocumentMoniker": "annealing_to_bin\\AnnealSegments.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\annealing_to_bin\\AnnealSegments.hpp",
+              "RelativeToolTip": "annealing_to_bin\\AnnealSegments.hpp",
+              "ViewState": "AgIAAC0AAAAAAAAAAAAQwEMAAAAoAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T03:31:39.057Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 8,
+              "Title": "gui_handler.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\gui_handler.hpp",
+              "RelativeDocumentMoniker": "gui_handler.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\gui_handler.hpp",
+              "RelativeToolTip": "gui_handler.hpp",
+              "ViewState": "AgIAAEABAAAAAAAAAAApwFcBAAAdAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T04:17:21.766Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 9,
+              "Title": "noise_marking_gui.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_marking_gui.cpp",
+              "RelativeDocumentMoniker": "noise_marking_gui.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_marking_gui.cpp",
+              "RelativeToolTip": "noise_marking_gui.cpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA0AAAAbAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-05-05T22:09:51.485Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 10,
+              "Title": "run_find_r_peaks.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\run_find_r_peaks.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\run_find_r_peaks.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\run_find_r_peaks.hpp",
+              "RelativeToolTip": "peak_finding\\run_find_r_peaks.hpp",
+              "ViewState": "AgIAAPwAAAAAAAAAAAAAAA0BAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:48:53.322Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 11,
+              "Title": "RRSimpleSquared.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\RRSimpleSquared.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\RRSimpleSquared.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\RRSimpleSquared.hpp",
+              "RelativeToolTip": "peak_finding\\RRSimpleSquared.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAcAAAAjAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:59:19.25Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 26,
+              "Title": "run_find_r_peaks.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\run_find_r_peaks.cpp",
+              "RelativeDocumentMoniker": "peak_finding\\run_find_r_peaks.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\run_find_r_peaks.cpp",
+              "RelativeToolTip": "peak_finding\\run_find_r_peaks.cpp",
+              "ViewState": "AgIAAP8AAAAAAAAAAAAAABABAAA1AAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-05-06T21:42:40.062Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 28,
+              "Title": "file_to_bin.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\file_to_bin.hpp",
+              "RelativeDocumentMoniker": "file_to_bin.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\file_to_bin.hpp",
+              "RelativeToolTip": "file_to_bin.hpp",
+              "ViewState": "AgIAAEEAAAAAAAAAAAAIwFIAAAAdAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-05T22:01:35.725Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 12,
+              "Title": "FilterUtils.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\FilterUtils.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\FilterUtils.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\FilterUtils.hpp",
+              "RelativeToolTip": "peak_finding\\FilterUtils.hpp",
+              "ViewState": "AgIAAP0AAAAAAAAAAAAAAAoBAAAtAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:57:10.965Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 18,
+              "Title": "stdoutlier.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\stdoutlier.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\stdoutlier.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\stdoutlier.hpp",
+              "RelativeToolTip": "peak_finding\\stdoutlier.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAYAAAAjAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:55:35.005Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 13,
+              "Title": "ecgLms.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\ecgLms.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\ecgLms.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\ecgLms.hpp",
+              "RelativeToolTip": "peak_finding\\ecgLms.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAYAAAAjAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:58:55.833Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 14,
+              "Title": "pairRtoPPGBeat.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\pairRtoPPGBeat.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\pairRtoPPGBeat.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\pairRtoPPGBeat.hpp",
+              "RelativeToolTip": "peak_finding\\pairRtoPPGBeat.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAgAAAAjAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:58:35.541Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 15,
+              "Title": "rpeakdetect.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\rpeakdetect.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\rpeakdetect.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\rpeakdetect.hpp",
+              "RelativeToolTip": "peak_finding\\rpeakdetect.hpp",
+              "ViewState": "AgIAAEUAAAAAAAAAAAAAAF0AAABLAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:57:24.417Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 16,
+              "Title": "JoinedRR.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\JoinedRR.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\JoinedRR.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\JoinedRR.hpp",
+              "RelativeToolTip": "peak_finding\\JoinedRR.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAYAAAAjAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:57:00.093Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 17,
+              "Title": "RunLength.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\RunLength.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\RunLength.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\RunLength.hpp",
+              "RelativeToolTip": "peak_finding\\RunLength.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAYAAAAjAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:56:47.674Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 19,
+              "Title": "ecglaux.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\ecglaux.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\ecglaux.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\ecglaux.hpp",
+              "RelativeToolTip": "peak_finding\\ecglaux.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAYAAAAjAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:55:23.042Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 20,
+              "Title": "diff2.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\diff2.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\diff2.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\diff2.hpp",
+              "RelativeToolTip": "peak_finding\\diff2.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABYAAAAjAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:54:43.073Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 21,
+              "Title": "SegmentPPG.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\SegmentPPG.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\SegmentPPG.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\SegmentPPG.hpp",
+              "RelativeToolTip": "peak_finding\\SegmentPPG.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABgAAAAdAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:49:15.25Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 22,
+              "Title": "StatsUtils.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\StatsUtils.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\StatsUtils.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\StatsUtils.hpp",
+              "RelativeToolTip": "peak_finding\\StatsUtils.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAYAAAAjAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:52:08.427Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 23,
+              "Title": "nanfastsmooth.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\nanfastsmooth.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\nanfastsmooth.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\nanfastsmooth.hpp",
+              "RelativeToolTip": "peak_finding\\nanfastsmooth.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAYAAAAjAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:49:47.092Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 24,
+              "Title": "create_ecg_ppg_pairs.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\create_ecg_ppg_pairs.hpp",
+              "RelativeDocumentMoniker": "peak_finding\\create_ecg_ppg_pairs.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\peak_finding\\create_ecg_ppg_pairs.hpp",
+              "RelativeToolTip": "peak_finding\\create_ecg_ppg_pairs.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABAAAAAeAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:49:04.054Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 25,
+              "Title": "noise_manager.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_manager.cpp",
+              "RelativeDocumentMoniker": "noise_manager.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_manager.cpp",
+              "RelativeToolTip": "noise_manager.cpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABsAAABBAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-05-06T21:28:24.84Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 29,
+              "Title": "noise_manager.h",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_manager.h",
+              "RelativeDocumentMoniker": "noise_manager.h",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\noise_manager.h",
+              "RelativeToolTip": "noise_manager.h",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAYAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-06T21:22:57.14Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 27,
+              "Title": "bin_handler.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\bin_handler.hpp",
+              "RelativeDocumentMoniker": "bin_handler.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\2_noise_marking_gui\\bin_handler.hpp",
+              "RelativeToolTip": "bin_handler.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABwAAAAdAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-05T22:09:07.919Z"
             }
           ]
         }

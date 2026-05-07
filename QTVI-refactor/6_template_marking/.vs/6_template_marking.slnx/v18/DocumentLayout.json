@@ -52,6 +52,16 @@
             },
             {
               "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "vector",
+              "DocumentMoniker": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\include\\vector",
+              "ToolTip": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\include\\vector",
+              "ViewState": "AgIAAHsIAAAAAAAAAADwv4cIAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-04-09T16:42:54.474Z"
+            },
+            {
+              "$type": "Document",
               "DocumentIndex": 1,
               "Title": "6_template_marking.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\6_template_marking\\6_template_marking.cpp",
@@ -60,8 +70,7 @@
               "RelativeToolTip": "6_template_marking.cpp",
               "ViewState": "AgIAAEIAAAAAAAAAAAAAAGMAAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-04-09T19:51:48.742Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-04-09T19:51:48.742Z"
             },
             {
               "$type": "Document",
@@ -73,23 +82,7 @@
               "RelativeToolTip": "ConfigReader.hpp",
               "ViewState": "AgIAAAUAAAAAAAAAAAApwCMAAAAlAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-04-09T18:55:14.055Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 3,
-              "Title": "vector",
-              "DocumentMoniker": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\include\\vector",
-              "ToolTip": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\include\\vector",
-              "ViewState": "AgIAAHsIAAAAAAAAAADwv4cIAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
-              "WhenOpened": "2026-04-09T16:42:54.474Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-04-09T18:55:14.055Z"
             },
             {
               "$type": "Bookmark",

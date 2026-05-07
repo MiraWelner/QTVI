@@ -1,5 +1,0 @@
-﻿  3_anneal_segments.cpp
-LINK : warning LNK4075: ignoring '/INCREMENTAL' due to '/OPT:ICF' specification
-  anneal_segments.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\3_anneal_segments\x64\Release\anneal_segments.exe
-  'pwsh.exe' is not recognized as an internal or external command,
-  operable program or batch file.

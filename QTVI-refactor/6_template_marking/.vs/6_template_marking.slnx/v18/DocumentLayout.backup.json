@@ -3,6 +3,14 @@
   "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\6_template_marking\\",
   "Documents": [
     {
+      "AbsoluteMoniker": "D:0:0:{9AC31506-5B07-4CF8-B58F-B272B4C933FD}|6_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\6_template_marking\\TemplateBinIO.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{9AC31506-5B07-4CF8-B58F-B272B4C933FD}|6_template_marking.vcxproj|solutionrelative:TemplateBinIO.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{9AC31506-5B07-4CF8-B58F-B272B4C933FD}|6_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\6_template_marking\\6_template_marking.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{9AC31506-5B07-4CF8-B58F-B272B4C933FD}|6_template_marking.vcxproj|solutionrelative:6_template_marking.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{9AC31506-5B07-4CF8-B58F-B272B4C933FD}|6_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\6_template_marking\\ConfigReader.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{9AC31506-5B07-4CF8-B58F-B272B4C933FD}|6_template_marking.vcxproj|solutionrelative:ConfigReader.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
@@ -32,6 +40,41 @@
             {
               "$type": "Document",
               "DocumentIndex": 0,
+              "Title": "TemplateBinIO.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\6_template_marking\\TemplateBinIO.hpp",
+              "RelativeDocumentMoniker": "TemplateBinIO.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\6_template_marking\\TemplateBinIO.hpp",
+              "RelativeToolTip": "TemplateBinIO.hpp",
+              "ViewState": "AgIAAGUAAAAAAAAAAAAAAHoAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-04-09T19:53:30.214Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "vector",
+              "DocumentMoniker": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\include\\vector",
+              "ToolTip": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\include\\vector",
+              "ViewState": "AgIAAHsIAAAAAAAAAADwv4cIAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-04-09T16:42:54.474Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "6_template_marking.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\6_template_marking\\6_template_marking.cpp",
+              "RelativeDocumentMoniker": "6_template_marking.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\6_template_marking\\6_template_marking.cpp",
+              "RelativeToolTip": "6_template_marking.cpp",
+              "ViewState": "AgIAAEIAAAAAAAAAAAAAAGMAAAABAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-04-09T19:51:48.742Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
               "Title": "ConfigReader.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\6_template_marking\\ConfigReader.hpp",
               "RelativeDocumentMoniker": "ConfigReader.hpp",
@@ -39,23 +82,7 @@
               "RelativeToolTip": "ConfigReader.hpp",
               "ViewState": "AgIAAAUAAAAAAAAAAAApwCMAAAAlAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-04-09T18:55:14.055Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 1,
-              "Title": "vector",
-              "DocumentMoniker": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\include\\vector",
-              "ToolTip": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\VC\\Tools\\MSVC\\14.44.35207\\include\\vector",
-              "ViewState": "AgIAAHsIAAAAAAAAAADwv4cIAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
-              "WhenOpened": "2026-04-09T16:42:54.474Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-04-09T18:55:14.055Z"
             },
             {
               "$type": "Bookmark",

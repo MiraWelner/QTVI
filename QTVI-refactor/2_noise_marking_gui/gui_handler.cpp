@@ -31,8 +31,14 @@
  * @email   MEW386@pitt.edu
  * @date    2026-03-22
  */
-#include "gui_handler.hpp"
 
+#include "annealing_to_bin//anneal_handler.hpp"
+#include "peak_finding//run_find_r_peaks.hpp"
+#include "gui_handler.hpp"
+#include "post_process.hpp"
+
+#include <QFutureWatcher>
+#include <QtConcurrent>
 #include <QtCharts/QAreaSeries>
 #include <QtCharts/QChart>
 #include <QtCharts/QChartView>
@@ -53,14 +59,15 @@
 #include <QtCharts/QLegendMarker>
 #include <algorithm>
 #include <cstring>
+#include <iostream>
 
  // ============================================================================
  // Constants
  // ============================================================================
 
-static const QColor COLOR_ECG1 = QColor("#BF00FF");
-static const QColor COLOR_ECG2 = QColor("#BF00FF");
-static const QColor COLOR_ECG3 = QColor("#BF00FF");
+static const QColor COLOR_ECG1 = QColor("#FF0000");
+static const QColor COLOR_ECG2 = QColor("#0000FF");
+static const QColor COLOR_ECG3 = QColor("#00AA00");
 static const QColor COLOR_PPG = QColor("#BF00FF");
 static const QColor COLOR_ABP = QColor("#BF00FF");
 static const QColor COLOR_ACCEL_X = QColor("#F39C12");  // orange
@@ -486,9 +493,33 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     m_currentMarkingType = ui->marking_type->currentText();
 
-    // Explicit connects for the file selector
     connect(ui->browse_file_button, &QPushButton::clicked,
         this, &noise_marking_gui::handleBrowseFile);
+    //process the output via annealing, then wave marking
+    connect(ui->process_button, &QPushButton::clicked, this, [this]() {
+        if (m_cfg.bin_file_path.empty() || m_cfg.annealed_data_path.empty()) {
+            QMessageBox::warning(this, "Process Output",
+                "Config not set or annealedDataPath missing in config.csv.");
+            return;
+        }
+
+        ui->process_button->setEnabled(false);
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+
+        auto* watcher = new QFutureWatcher<int>(this);
+        connect(watcher, &QFutureWatcher<int>::finished, this, [this, watcher]() {
+            QApplication::restoreOverrideCursor();
+            ui->process_button->setEnabled(true);
+            QMessageBox::information(this, "Process Output",
+                QString("Pipeline complete. Processed %1 files.").arg(watcher->result()));
+            watcher->deleteLater();
+            });
+
+        config_entry cfgCopy = m_cfg;
+        watcher->setFuture(QtConcurrent::run([cfgCopy]() {
+            return processDataset(cfgCopy);
+            }));
+        });
 
 }
 
@@ -742,6 +773,8 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     loadRaw(m_accelXRaw, CH_ACCEL_X);
     loadRaw(m_accelYRaw, CH_ACCEL_Y);
     loadRaw(m_accelZRaw, CH_ACCEL_Z);
+    loadRaw(m_respRaw, CH_RESP);
+    loadRaw(m_cvpRaw, CH_PRES);
 
     // Sleep stages live just past the last channel slot.
     {
@@ -780,13 +813,16 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         || !isMissingSignal(m_accelZ);
     if (!anyAccel) markActive("ABP", m_abp);
 
-    // accel_or_abg_axis: show if accel OR ABP has data
+    // accel_or_abg_axis (right column, bottom): ABP only. Accel now lives
+    // in resp_cvp_axis on the left.
     if (ui->accel_or_abg_axis) {
-        bool accelPresent = !isMissingSignal(m_accelX)
-            || !isMissingSignal(m_accelY)
-            || !isMissingSignal(m_accelZ);
         bool abpPresent = !isMissingSignal(m_abp);
-        ui->accel_or_abg_axis->setVisible(accelPresent || abpPresent);
+        ui->accel_or_abg_axis->setVisible(abpPresent);
+    }
+
+    // amp_ppg_axis (left column, PPG ampogram): hide when PPG is missing.
+    if (ui->amp_ppg_axis) {
+        ui->amp_ppg_axis->setVisible(!isMissingSignal(m_ppg));
     }
 
     // resp_cvp_axis: show if respiration has data
@@ -794,12 +830,14 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         ui->resp_cvp_axis->setVisible(!isMissingSignal(m_resp));
     }
 
-    // resp_cvp_axis: show if sleep stages OR CVP has data
+    // resp_cvp_axis: show if sleep stages OR CVP OR accel has data.
+    // Accel is mutually exclusive with sleep/RESP/CVP, so when it's present
+    // it owns this slot.
     if (ui->resp_cvp_axis) {
         bool sleepPresent = !m_sleepStages.isEmpty()
             && !(m_sleepStages.size() == 1 && m_sleepStages[0] == -1.0);
         bool cvpPresent = !isMissingSignal(m_cvp);
-        ui->resp_cvp_axis->setVisible(sleepPresent || cvpPresent);
+        ui->resp_cvp_axis->setVisible(sleepPresent || cvpPresent || anyAccel);
     }
 
     updateAllChannelButtonStates();
@@ -982,12 +1020,16 @@ void noise_marking_gui::handle_ampogram_plot(double range) {
 
 
     auto* chart = ui->ecg_ampogram_axis->chart();
-    chart->removeSeries(ecg2_ampogram_series);
-    chart->removeSeries(ecg3_ampogram_series);;
+    if (ecg2_ampogram_series->chart() == chart) {
+        chart->removeSeries(ecg2_ampogram_series);
+    }
+    if (ecg3_ampogram_series->chart() == chart) {
+        chart->removeSeries(ecg3_ampogram_series);
+    }
 
     // 1. Plot ECG1 (sets up axes + cursor)
     create_plot(ui->ecg_ampogram_axis, ecg1_ampogram_series,
-        ecg1Pts, m_ecgCursorBar, QColor("#BF00FF"), "ECG amplitude");
+        ecg1Pts, m_ecgCursorBar, QColor(COLOR_ECG1), "ECG Amp-O-Gram");
 
     // 2. Add ECG2 and ECG3
     auto* xAxis = chart->axes(Qt::Horizontal).first();
@@ -995,14 +1037,14 @@ void noise_marking_gui::handle_ampogram_plot(double range) {
 
     if (!ecg2Pts.isEmpty()) {
         ecg2_ampogram_series->replace(ecg2Pts);
-        ecg2_ampogram_series->setPen(QPen(QColor("#FF0000"), 1));
+        ecg2_ampogram_series->setPen(QPen(QColor(COLOR_ECG2), 1));
         chart->addSeries(ecg2_ampogram_series);
         ecg2_ampogram_series->attachAxis(xAxis);
         ecg2_ampogram_series->attachAxis(yAxis);
     }
     if (!ecg3Pts.isEmpty()) {
         ecg3_ampogram_series->replace(ecg3Pts);
-        ecg3_ampogram_series->setPen(QPen(QColor("#0000FF"), 1));
+        ecg3_ampogram_series->setPen(QPen(QColor(COLOR_ECG3), 1));
         chart->addSeries(ecg3_ampogram_series);
         ecg3_ampogram_series->attachAxis(xAxis);
         ecg3_ampogram_series->attachAxis(yAxis);
@@ -1015,12 +1057,7 @@ void noise_marking_gui::handle_ampogram_plot(double range) {
             [](const QPointF& a, const QPointF& b) { return a.y() < b.y(); });
         yAxis->setRange(mi->y(), ma->y());
     }
-    chart->setTitle("Amp-O-Gram");
-    chart->legend()->show();
     const auto markers = chart->legend()->markers(m_ecgCursorBar);
-    for (auto* m : markers) m->setVisible(false);
-    chart->legend()->setAlignment(Qt::AlignTop);
-    chart->legend()->setFont(QFont("Arial", 7));
 
 
     create_plot(ui->amp_ppg_axis, ppg_ampogram_series, calculate_amplitude(m_ppg, m_ppgSR), m_ppgCursorBar, COLOR_PPG,
@@ -1371,10 +1408,19 @@ void noise_marking_gui::handle_data_plot() {
             for (const auto& d : serieses) {
                 if (!d.data || isMissingSignal(*d.data)) continue;
 
-                // (1) Upsampled foreground (line in Line mode, scatter in
-                //     Scatter mode -- same as before).
+                const bool hasRaw = d.rawData && isRawUsable(*d.rawData);
+
+                // (1) Upsampled foreground:
+                //     - Line mode: drawn as a colored line.
+                //     - Scatter mode WITH raw available: skipped entirely,
+                //       so the only markers are the native-rate raw dots
+                //       drawn in step (2). Still scanned for Y-range so
+                //       the axis stays honest.
+                //     - Scatter mode WITHOUT raw (e.g. RESP/CVP): drawn as
+                //       a scatter of the upsampled samples, since that's
+                //       the only data we have.
                 QXYSeries* plotSeries = nullptr;
-                if (useScatter) {
+                if (useScatter && !hasRaw) {
                     auto* sc = new QScatterSeries();
                     sc->setColor(d.color);
                     sc->setBorderColor(Qt::transparent);   // no border: crisp + faster
@@ -1384,13 +1430,14 @@ void noise_marking_gui::handle_data_plot() {
                     chart->addSeries(sc);
                     plotSeries = sc;
                 }
-                else {
+                else if (!useScatter) {
                     auto* ln = new QLineSeries();
                     ln->setUseOpenGL(true);
                     ln->setPen(QPen(d.color, 1));
                     chart->addSeries(ln);
                     plotSeries = ln;
                 }
+                // else: useScatter && hasRaw -> no upsampled foreground.
 
                 int startIdx = std::clamp(static_cast<int>(m_currentStartTime * m_ecgSR),
                     0, static_cast<int>(d.data->size() - 1));
@@ -1405,9 +1452,11 @@ void noise_marking_gui::handle_data_plot() {
                     if (v < gMin) gMin = v;
                     if (v > gMax) gMax = v;
                 }
-                plotSeries->replace(pts);
-                plotSeries->attachAxis(xAxis);
-                plotSeries->attachAxis(yAxis);
+                if (plotSeries) {
+                    plotSeries->replace(pts);
+                    plotSeries->attachAxis(xAxis);
+                    plotSeries->attachAxis(yAxis);
+                }
 
                 // (2) Optional raw scatter overlay -- drawn AFTER the line so
                 //     the dots sit on top. Same color as the upsampled line so
@@ -1454,40 +1503,37 @@ void noise_marking_gui::handle_data_plot() {
             }
         };
 
-    // --- accel_or_abg_axis: prefer accel; if absent, fall through to ABP ---
-    if (ui->accel_or_abg_axis) {
-        bool anyAccel = !isMissingSignal(m_accelX)
-            || !isMissingSignal(m_accelY)
-            || !isMissingSignal(m_accelZ);
-        bool hasAbp = !isMissingSignal(m_abp);
-
-        if (anyAccel) {
-            plotDisplayChart(ui->accel_or_abg_axis, "ACCEL", COLOR_ACCEL_X, {
-                { &m_accelX, COLOR_ACCEL_X, &m_accelXRaw },
-                { &m_accelY, COLOR_ACCEL_Y, &m_accelYRaw },
-                { &m_accelZ, COLOR_ACCEL_Z, &m_accelZRaw },
-                });
-        }
-        else if (hasAbp) {
-            // Route ABP through the markable path so it gets the start marker,
-            // noise-highlight overlay, and click-to-mark behavior like ECG/PPG.
-            // The new maybePlot reads ABP's upsampled + raw overlays and
-            // chart view from channelRefs("ABP") -- all uniform with ECG/PPG.
-            maybePlot("ABP");
-        }
+    // --- accel_or_abg_axis: ABP only (accel now lives in resp_cvp_axis). ---
+    if (ui->accel_or_abg_axis && !isMissingSignal(m_abp)) {
+        // Route ABP through the markable path so it gets the start marker,
+        // noise-highlight overlay, and click-to-mark behavior like ECG/PPG.
+        // The new maybePlot reads ABP's upsampled + raw overlays and
+        // chart view from channelRefs("ABP") -- all uniform with ECG/PPG.
+        maybePlot("ABP");
     }
 
-    // --- resp_cvp_axis: windowed RESP and CVP together (CVP only if present) ---
+    // --- resp_cvp_axis: accel when present; otherwise windowed RESP/CVP.
+    //     Accel is mutually exclusive with sleep/RESP/CVP in the dataset.
+    bool anyAccel = !isMissingSignal(m_accelX)
+        || !isMissingSignal(m_accelY)
+        || !isMissingSignal(m_accelZ);
     bool sleepPresent = !m_sleepStages.isEmpty()
         && !(m_sleepStages.size() == 1 && m_sleepStages[0] == -1.0);
-    if (!sleepPresent && ui->resp_cvp_axis &&
-        (!isMissingSignal(m_resp) || !isMissingSignal(m_cvp))) {
-        plotDisplayChart(ui->resp_cvp_axis, "RESP / CVP", COLOR_RESP, {
-            { &m_resp, COLOR_RESP },
-            { &m_cvp,  COLOR_CVP  },
+    if (anyAccel && ui->resp_cvp_axis) {
+        plotDisplayChart(ui->resp_cvp_axis, "ACCEL", COLOR_ACCEL_X, {
+            { &m_accelX, COLOR_ACCEL_X, &m_accelXRaw },
+            { &m_accelY, COLOR_ACCEL_Y, &m_accelYRaw },
+            { &m_accelZ, COLOR_ACCEL_Z, &m_accelZRaw },
             });
     }
-    
+    else if (!sleepPresent && ui->resp_cvp_axis &&
+        (!isMissingSignal(m_resp) || !isMissingSignal(m_cvp))) {
+        plotDisplayChart(ui->resp_cvp_axis, "RESP / CVP", COLOR_RESP, {
+            { &m_resp, COLOR_RESP, &m_respRaw },
+            { &m_cvp,  COLOR_CVP,  &m_cvpRaw  },
+            });
+    }
+
     updateNoiseHighlights();
 }
 
@@ -1924,6 +1970,21 @@ void noise_marking_gui::beginMarking(const QString& signalLabel) {
 }
 
 void noise_marking_gui::beginMarkingAll() {
+    // Toggle: pressing Start All while it's already active cancels every
+    // channel's pending mark and resets the buttons. Mirrors the single-
+    // channel beginMarking() behavior.
+    if (m_markAllActive) {
+        for (const QString& label : markableChannelLabels()) {
+            if (isChannelActive(label))
+                cancelMarking(label);
+        }
+        m_markAllActive = false;
+        ui->start_all_mark->setStyleSheet("");
+        ui->stop_all_mark->setStyleSheet("");
+        ui->stop_all_mark->setEnabled(false);
+        return;
+    }
+
     m_markAllActive = true;
     m_currentMarkingType = ui->marking_type->currentText();
 

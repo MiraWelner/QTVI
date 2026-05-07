@@ -1,0 +1,126 @@
+<svg width="900" height="500" xmlns="http://www.w3.org/2000/svg">
+<style>
+  text { font-family: Consolas, 'Courier New', monospace; }
+  .title { font-size: 16px; font-weight: bold; }
+  .stats { font-size: 12px; fill: #555; }
+  .tick { font-size: 11px; }
+  .axis-label { font-size: 13px; }
+  .y-axis-label { font-size: 12px; }
+</style>
+<rect width="100%" height="100%" fill="#fcfcfc"/>
+<text x="450" y="24" text-anchor="middle" class="title">Mira vs Daniel: R-Location SSD (pooled) - All 13 Subjects (7006 bins, 73.2% 0.000000 err)</text>
+<text x="450" y="44" text-anchor="middle" class="stats">mean=0.981468  median=0.000000  IQR=[0.000000, 0.000001]</text>
+<line x1="70" y1="70" x2="70" y2="440" stroke="#333" stroke-width="1"/>
+<line x1="70" y1="440" x2="860" y2="440" stroke="#333" stroke-width="1"/>
+<text x="18" y="255" text-anchor="middle" class="y-axis-label" transform="rotate(-90 18,255)"># bins (log)</text>
+<line x1="67" y1="440.0" x2="71" y2="440.0" stroke="#333" stroke-width="1"/>
+<text x="65" y="444.0" text-anchor="end" class="tick">0</text>
+<line x1="67" y1="416.9" x2="71" y2="416.9" stroke="#333" stroke-width="1"/>
+<text x="65" y="420.9" text-anchor="end" class="tick">1</text>
+<line x1="71" y1="416.9" x2="10069" y2="416.9" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="67" y1="360.1" x2="71" y2="360.1" stroke="#333" stroke-width="1"/>
+<text x="65" y="364.1" text-anchor="end" class="tick">10</text>
+<line x1="71" y1="360.1" x2="10069" y2="360.1" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="67" y1="286.2" x2="71" y2="286.2" stroke="#333" stroke-width="1"/>
+<text x="65" y="290.2" text-anchor="end" class="tick">100</text>
+<line x1="71" y1="286.2" x2="10069" y2="286.2" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="67" y1="209.8" x2="71" y2="209.8" stroke="#333" stroke-width="1"/>
+<text x="65" y="213.8" text-anchor="end" class="tick">1000</text>
+<line x1="71" y1="209.8" x2="10069" y2="209.8" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<line x1="67" y1="155.4" x2="71" y2="155.4" stroke="#333" stroke-width="1"/>
+<text x="65" y="159.4" text-anchor="end" class="tick" fill="#e74c3c" font-weight="bold">5129</text>
+<line x1="71" y1="155.4" x2="10069" y2="155.4" stroke="#eee" stroke-width="0.5" stroke-dasharray="2,2"/>
+<rect x="70.5" y="155.4" width="8.9" height="284.6" fill="#3498db" fill-opacity="0.85"><title>[0.000000, 1.949367): 5129</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="80.4" y="195.9" width="8.9" height="244.1" fill="#3498db" fill-opacity="0.85"><title>[1.949367, 3.898734): 1520</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="90.2" y="269.9" width="8.9" height="170.1" fill="#3498db" fill-opacity="0.85"><title>[3.898734, 5.848101): 164</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="100.1" y="309.7" width="8.9" height="130.3" fill="#3498db" fill-opacity="0.85"><title>[5.848101, 7.797468): 49</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="110.0" y="322.5" width="8.9" height="117.5" fill="#3498db" fill-opacity="0.85"><title>[7.797468, 9.746835): 33</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="119.9" y="345.6" width="8.9" height="94.4" fill="#3498db" fill-opacity="0.85"><title>[9.746835, 11.696203): 16</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="129.8" y="363.3" width="8.9" height="76.7" fill="#3498db" fill-opacity="0.85"><title>[11.696203, 13.645570): 9</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="139.6" y="393.8" width="8.9" height="46.2" fill="#3498db" fill-opacity="0.85"><title>[13.645570, 15.594937): 3</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="149.5" y="375.2" width="8.9" height="64.8" fill="#3498db" fill-opacity="0.85"><title>[15.594937, 17.544304): 6</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="159.4" y="393.8" width="8.9" height="46.2" fill="#3498db" fill-opacity="0.85"><title>[17.544304, 19.493671): 3</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="169.2" y="403.4" width="8.9" height="36.6" fill="#3498db" fill-opacity="0.85"><title>[19.493671, 21.443038): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="179.1" y="386.4" width="8.9" height="53.6" fill="#3498db" fill-opacity="0.85"><title>[21.443038, 23.392405): 4</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="189.0" y="403.4" width="8.9" height="36.6" fill="#3498db" fill-opacity="0.85"><title>[23.392405, 25.341772): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="198.9" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[25.341772, 27.291139): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="208.8" y="403.4" width="8.9" height="36.6" fill="#3498db" fill-opacity="0.85"><title>[27.291139, 29.240506): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="218.6" y="393.8" width="8.9" height="46.2" fill="#3498db" fill-opacity="0.85"><title>[29.240506, 31.189873): 3</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="228.5" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[31.189873, 33.139241): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="287.8" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[42.886076, 44.835443): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="327.2" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[50.683544, 52.632911): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="347.0" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[54.582278, 56.531646): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="376.6" y="403.4" width="8.9" height="36.6" fill="#3498db" fill-opacity="0.85"><title>[60.430380, 62.379747): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="386.5" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[62.379747, 64.329114): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="396.4" y="393.8" width="8.9" height="46.2" fill="#3498db" fill-opacity="0.85"><title>[64.329114, 66.278481): 3</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="406.2" y="403.4" width="8.9" height="36.6" fill="#3498db" fill-opacity="0.85"><title>[66.278481, 68.227848): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="426.0" y="403.4" width="8.9" height="36.6" fill="#3498db" fill-opacity="0.85"><title>[70.177215, 72.126582): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="435.9" y="375.2" width="8.9" height="64.8" fill="#3498db" fill-opacity="0.85"><title>[72.126582, 74.075949): 6</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="445.8" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[74.075949, 76.025316): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="455.6" y="380.3" width="8.9" height="59.7" fill="#3498db" fill-opacity="0.85"><title>[76.025316, 77.974684): 5</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="465.5" y="403.4" width="8.9" height="36.6" fill="#3498db" fill-opacity="0.85"><title>[77.974684, 79.924051): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="495.1" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[83.822785, 85.772152): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="505.0" y="403.4" width="8.9" height="36.6" fill="#3498db" fill-opacity="0.85"><title>[85.772152, 87.721519): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="514.9" y="403.4" width="8.9" height="36.6" fill="#3498db" fill-opacity="0.85"><title>[87.721519, 89.670886): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="524.8" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[89.670886, 91.620253): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="534.6" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[91.620253, 93.569620): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="544.5" y="375.2" width="8.9" height="64.8" fill="#3498db" fill-opacity="0.85"><title>[93.569620, 95.518987): 6</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="554.4" y="380.3" width="8.9" height="59.7" fill="#3498db" fill-opacity="0.85"><title>[95.518987, 97.468354): 5</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="564.2" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[97.468354, 99.417722): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="574.1" y="403.4" width="8.9" height="36.6" fill="#3498db" fill-opacity="0.85"><title>[99.417722, 101.367089): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="593.9" y="393.8" width="8.9" height="46.2" fill="#3498db" fill-opacity="0.85"><title>[103.316456, 105.265823): 3</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="603.8" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[105.265823, 107.215190): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="613.6" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[107.215190, 109.164557): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="623.5" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[109.164557, 111.113924): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="633.4" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[111.113924, 113.063291): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="643.2" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[113.063291, 115.012658): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="742.0" y="416.9" width="8.9" height="23.1" fill="#3498db" fill-opacity="0.85"><title>[132.556962, 134.506329): 1</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<rect x="850.6" y="403.4" width="8.9" height="36.6" fill="#3498db" fill-opacity="0.85"><title>[154.000000, 155.949367): 2</title></rect>
+<text x="860.0" y="456" text-anchor="middle" class="tick">154.000000</text>
+<text x="465" y="478" text-anchor="middle" class="axis-label">SSD (s^2)</text>
+</svg>
