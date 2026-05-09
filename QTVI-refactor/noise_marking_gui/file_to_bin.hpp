@@ -115,4 +115,3 @@ void make_binfile_dat(const std::filesystem::path& path,
 void make_binfile(const std::filesystem::path& path,
     const std::filesystem::path& xmlPath,
     const config_entry& cfg);
-

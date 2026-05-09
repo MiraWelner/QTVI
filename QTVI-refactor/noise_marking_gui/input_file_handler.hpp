@@ -27,3 +27,9 @@ QStringList discoverSourceFiles(const config_entry& cfg);
 /// failure.
 std::filesystem::path convertToBin(const std::filesystem::path& src,
     const config_entry& cfg);
+
+
+/**
+* @brief if the paths are not in the config file, prompt for them
+*/
+bool promptForMissingPaths(config_entry& cfg);

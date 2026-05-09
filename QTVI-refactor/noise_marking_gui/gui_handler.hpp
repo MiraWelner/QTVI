@@ -397,4 +397,14 @@ private:
      * @return "HH:MM:SS.ss"-formatted string.
      */
     QString formatTimeLabel(double seconds);
+
+
+    bool handleMousePress(QChartView* cv, QWidget* viewport, QMouseEvent* event);
+
+    /** @return Y-axis multiplier for a signal: when the chart's "Fix Scale"
+ *          checkbox is checked, returns the spinbox value; otherwise 1.
+ *          Multiplier > 1 widens the visible y range (signal looks shorter). */
+    double yScaleForSignal(const QString& label) const;
+
+    void resetUnpinnedGains();
 };

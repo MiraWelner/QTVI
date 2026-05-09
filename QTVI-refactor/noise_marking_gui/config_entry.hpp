@@ -24,10 +24,17 @@ struct config_entry {
     std::string template_path;
 
 
+
+    //this stuff is not in the config but is rather in input_file_handler.cpp. 
+    // it is put here so it can easily be added into the config and because it is dependent on the type of file
     std::string ecg1Label;
     std::string ecg2Label;
     std::string ecg3Label;
     std::string ppgLabel;
+
+    std::string accelXLabel;
+    std::string accelYLabel;
+    std::string accelZLabel;
 
     double bin_length_minutes;
 };

@@ -575,9 +575,9 @@ namespace {
         m[CH_ECG3] = find(cfg.ecg3Label);
         m[CH_PPG] = find(cfg.ppgLabel);
 
-        m[CH_ACCEL_X] = find("Accelerometer_X");
-        m[CH_ACCEL_Y] = find("Accelerometer_Y");
-        m[CH_ACCEL_Z] = find("Accelerometer_Z");
+        m[CH_ACCEL_X] = find(cfg.accelXLabel);
+        m[CH_ACCEL_Y] = find(cfg.accelYLabel);
+        m[CH_ACCEL_Z] = find(cfg.accelZLabel);
 
         m[CH_MARKER] = find("Marker");
         m[CH_TEMP] = find("DEV_Temperature");

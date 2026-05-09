@@ -34,6 +34,10 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: dataset " << choice << " not in config.csv\n";
         return 1;
     }
+    if (!promptForMissingPaths(cfg)) {
+        return 1;
+    }
+
 
     QString markingFolder = QString::fromStdString(cfg.noise_data_path);
     QDir().mkpath(markingFolder);

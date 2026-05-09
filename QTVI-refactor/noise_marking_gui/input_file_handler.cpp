@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QFileDialog>
 
 #include <algorithm>
 #include <cctype>
@@ -41,20 +42,20 @@ namespace {
         return fields;
     }
 
-    // Channel labels per dataset. These were dropped from config.csv during
-    // the merge; if they ever need to vary per recording, restore those
-    // columns to config.csv and parse them in loadConfig instead.
-    //
-    // REPLACE these placeholder strings with the actual channel-name
-    // substrings from your data. The find() in build_edf_channel_map does
-    // case-insensitive substring matching against EDF channel labels.
+    // Channel labels per dataset.
+
     void applyDefaultChannelLabels(config_entry& cfg) {
         if (cfg.dataType == "MESA") {
             cfg.ecg1Label = "EKG";
             cfg.ppgLabel = "Pleth";
         }
         else if (cfg.dataType == "Bittium") {
-            cfg.ecg1Label = "ECG";
+            cfg.ecg1Label = "ECG_1";
+            cfg.ecg2Label = "ECG_2";
+            cfg.ecg3Label = "ECG_3";
+            cfg.accelXLabel = "Accelerometer_X";
+            cfg.accelYLabel = "Accelerometer_Y";
+            cfg.accelZLabel = "Accelerometer_Z";
         }
         else if (cfg.dataType == "CHAOS") {
             cfg.ecg1Label = "NLS_NOM_ECG_ELEC_pOTL_I";
@@ -130,6 +131,38 @@ bool loadConfig(int dataType, config_entry& out) {
         return true;
     }
     return false;
+}
+
+bool promptForMissingPaths(config_entry& cfg) {
+    // Ordered so the user is asked for inputs first (sources, then where to
+    // cache derived data, then output trees). Each entry is (label shown in
+    // the dialog title, pointer to the field to fill).
+    const std::vector<std::pair<const char*, std::string*>> fields = {
+        { "source recordings",    &cfg.original_file_path },
+        { ".bin cache",           &cfg.bin_file_path      },
+        { "noise marking output", &cfg.noise_data_path    },
+        { "annealed output",      &cfg.annealed_data_path },
+        { "R-peak output",        &cfg.r_peak_data_path   },
+        { "template output",      &cfg.template_path      },
+    };
+
+    for (const auto& [label, fieldPtr] : fields) {
+        if (!fieldPtr->empty()) continue;
+
+        QString title = QString("Select folder for %1 (%2)")
+            .arg(label, QString::fromStdString(cfg.dataType));
+        QString chosen = QFileDialog::getExistingDirectory(
+            nullptr, title, QString(),
+            QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+
+        if (chosen.isEmpty()) {
+            std::cerr << "ERROR: no folder selected for " << label
+                << "; aborting.\n";
+            return false;
+        }
+        *fieldPtr = chosen.toStdString();
+    }
+    return true;
 }
 
 QStringList discoverSourceFiles(const config_entry& cfg) {
