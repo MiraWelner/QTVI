@@ -25,16 +25,25 @@ struct config_entry {
 
 
 
-    //this stuff is not in the config but is rather in input_file_handler.cpp. 
-    // it is put here so it can easily be added into the config and because it is dependent on the type of file
+    // these parameters are not in the config but rather in input_file_handler.cpp. 
+    // different filetypes have different labels for the same type of signal
     std::string ecg1Label;
     std::string ecg2Label;
     std::string ecg3Label;
     std::string ppgLabel;
-
     std::string accelXLabel;
     std::string accelYLabel;
     std::string accelZLabel;
+    std::string cvpLabel;
+    std::string respLabel;
+    std::string eeg1Label;
+    std::string eeg2Label;
+    std::string eeg3Label;
+    std::string eeg4Label;
+    std::string abpLabel;
+    std::string artLabel;
+    std::string artPulmLabel;
+
 
     double bin_length_minutes;
 };

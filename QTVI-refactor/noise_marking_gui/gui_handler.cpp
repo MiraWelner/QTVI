@@ -12,15 +12,15 @@
  *            - In Line mode, the *upsampled* samples (1 kHz) are drawn as
  *              a colored line underneath the raw black scatter.
  *
- *          Input .bin format: 512-byte header (128 x uint32-sized fields):
+*          Input .bin format: 500-byte header (125 x uint32-sized fields):
  *            Offset  0:   signal_rate    (uint32) -- upsampled rate (1 kHz)
  *            Offset  4:   boolean_rate   (uint32) -- 1 Hz channels
  *            Offset  8:   pacemaker_rate (uint32)
  *            Offset 12:   sleep_rate     (uint32) -- epoch length in seconds
- *            Offset 16:   41 x upsampled-block sizes     (uint32)
- *            Offset 180:  41 x raw-block sizes           (uint32)
- *            Offset 344:  41 x native sampling rates     (float32, Hz; 0 = absent)
- *            Offset 508:  sleep_sample_count             (uint32)
+ *            Offset 16:   40 x upsampled-block sizes     (uint32)
+ *            Offset 176:  40 x raw-block sizes           (uint32)
+ *            Offset 336:  40 x native sampling rates     (float32, Hz; 0 = absent)
+ *            Offset 496:  sleep_sample_count             (uint32)
  *
  * @author  Mira Welner
  * @email   MEW386@pitt.edu
@@ -322,6 +322,23 @@ void noise_marking_gui::resetUnpinnedGains() {
     reset(ui->ecg_3_check, ui->ecg_3_gain);
     reset(ui->ppg_check, ui->ppg_gain);
     reset(ui->abg_check, ui->abg_gain);
+}
+
+void noise_marking_gui::mousePressEvent(QMouseEvent* event) {
+    // If a spinbox currently has focus and the click landed outside it,
+    // take focus back to the dialog. That fires editingFinished on the
+    // spinbox, which runs the clearFocus lambda from wireGain. Without
+    // this, ClickFocus spinboxes are sticky because clicking on a chart
+    // (NoFocus policy) doesn't pull focus away.
+    QWidget* focused = QApplication::focusWidget();
+    if (auto* sb = qobject_cast<QDoubleSpinBox*>(focused)) {
+        const QPoint global = event->globalPosition().toPoint();
+        const QRect sbRect(sb->mapToGlobal(QPoint(0, 0)), sb->size());
+        if (!sbRect.contains(global)) {
+            setFocus(Qt::MouseFocusReason);
+        }
+    }
+    QDialog::mousePressEvent(event);
 }
 
 double noise_marking_gui::totalChunkDuration() const {
@@ -1184,11 +1201,44 @@ namespace {
             int endIdx = std::clamp(static_cast<int>((currentStartTime + windowDuration) * ecgSR),
                 0, static_cast<int>(d.data->size()));
 
+            // ---- Compute scaling center for this series ----
+            // Two-pass: find the unscaled min/max in the visible window, take
+            // the midpoint, then scale every sample around it. Keeps the
+            // trace's vertical position stable while yScale changes its
+            // amplitude. Axis range itself comes from the SCALED values so
+            // it grows/shrinks with the trace.
+            double winMin = 1e9, winMax = -1e9;
+            for (int i = startIdx; i < endIdx; ++i) {
+                double v = (*d.data)[i];
+                if (v < winMin) winMin = v;
+                if (v > winMax) winMax = v;
+            }
+            // Fold raw overlay into the same center so foreground and
+            // overlay scale around the same line.
+            if (hasRaw) {
+                const double viewStart = currentStartTime;
+                const double viewEnd = currentStartTime + windowDuration;
+                for (const QPointF& p : *d.rawData) {
+                    if (p.x() < viewStart) continue;
+                    if (p.x() > viewEnd)   break;
+                    if (p.y() < winMin) winMin = p.y();
+                    if (p.y() > winMax) winMax = p.y();
+                }
+            }
+            const double center = (winMin <= winMax)
+                ? 0.5 * (winMin + winMax)
+                : 0.0;
+
             QList<QPointF> pts;
             pts.reserve(endIdx - startIdx);
             for (int i = startIdx; i < endIdx; ++i) {
-                double raw = (*d.data)[i];
-                pts.append({ static_cast<double>(i) / ecgSR, raw * yScale });
+                const double raw = (*d.data)[i];
+                const double scaled = (raw - center) * yScale + center;
+                pts.append({ static_cast<double>(i) / ecgSR, scaled });
+                // Axis range tracks the UNSCALED values so the chart's
+                // pixel-per-unit stays fixed across gain changes. That's
+                // what lets the trace visibly grow/shrink in pixels when
+                // yScale changes.
                 if (raw < gMin) gMin = raw;
                 if (raw > gMax) gMax = raw;
             }
@@ -1216,7 +1266,8 @@ namespace {
                 for (const QPointF& p : *d.rawData) {
                     if (p.x() < viewStart) continue;
                     if (p.x() > viewEnd)   break;
-                    rawPts.append({ p.x(), p.y() * yScale });
+                    const double scaled = (p.y() - center) * yScale + center;
+                    rawPts.append({ p.x(), scaled });
                     if (p.y() < gMin) gMin = p.y();
                     if (p.y() > gMax) gMax = p.y();
                 }

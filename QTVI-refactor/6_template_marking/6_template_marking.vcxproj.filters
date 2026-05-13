@@ -32,6 +32,9 @@
     <ClCompile Include="BinPlotWidget.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="template_io.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="TemplateBinIO.hpp">
@@ -43,12 +46,18 @@
     <ClInclude Include="DumbDicrotic.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="TemplateFileName.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="template_io.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <QtMoc Include="TemplateViewerWindow.h">
+    <QtMoc Include="BinPlotWidget.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="BinPlotWidget.h">
+    <QtMoc Include="TemplateViewerWindow.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>

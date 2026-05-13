@@ -1,4 +1,10 @@
 #pragma once
+//
+// Adapter layer: reads the new template_io binary format and projects it
+// into the TemplateBin shape the viewer expects. Writing markings stays
+// in this file -- markings are a separate file from the template file,
+// so write_template_binfile (in template_io) is irrelevant here.
+//
 
 #include <vector>
 #include <string>
@@ -6,11 +12,18 @@
 #include <cmath>
 #include <utility>
 #include <fstream>
+#include <stdexcept>
+
+#include "template_io.hpp"
+
+// ---------------------------------------------------------------------------
+// In-memory model used by the viewer.
+// ---------------------------------------------------------------------------
 
 struct ChannelTemplateData {
     std::vector<double> ecgTemplate_raw;
-    std::vector<double> ecgTemplate_squared;
-    std::vector<double> ecgTemplate_absval;
+    std::vector<double> ecgTemplate_squared;   // unused by viewer
+    std::vector<double> ecgTemplate_absval;    // unused by viewer
     double alignment_point_raw = 0;
     double alignment_point_squared = 0;
     double alignment_point_absval = 0;
@@ -28,120 +41,94 @@ struct TemplateBin {
     ChannelTemplateData ch1, ch2, ch3;
     std::vector<double> ppgTemplate;
 
-    // Markings (set during review)
-    bool bad_r_ch[3] = { false, false, false };
+    // Markings produced by the viewer. ECG markings are per-channel
+    // (the morphology differs by lead). PPG markings are shared across
+    // channels of the same bin (the PPG trace is identical in all three
+    // channel views).
+    bool    bad_r_ch[3] = { false, false, false };
     uint8_t ppg_issue = 0;   // 0 = ok, 1 = bad, 2 = no ppg
-    int dicrotic = -1;
-    int onset = -1;
-    int peak = -1;
-    int end_idx = -1;
+
+    // ECG: per-channel sample indices into the channel's ecgTemplate_raw.
+    int q_begin_ch[3] = { -1, -1, -1 };
+    int t_begin_ch[3] = { -1, -1, -1 };
+    int t_end_ch[3] = { -1, -1, -1 };
+
+    // PPG: sample indices into ppgTemplate. Shared across channels.
+    int ppg_onset = -1;
+    int ppg_peak = -1;
 };
 
 // ---------------------------------------------------------------------------
-// Read helpers
-// ---------------------------------------------------------------------------
-namespace detail {
-
-    inline uint64_t readU64(std::ifstream& f) {
-        uint64_t v = 0; f.read(reinterpret_cast<char*>(&v), 8); return v;
-    }
-    inline double readF64(std::ifstream& f) {
-        double v = 0; f.read(reinterpret_cast<char*>(&v), 8); return v;
-    }
-    inline uint8_t readU8(std::ifstream& f) {
-        uint8_t v = 0; f.read(reinterpret_cast<char*>(&v), 1); return v;
-    }
-    inline std::vector<double> readDoubleVec(std::ifstream& f) {
-        uint64_t sz = readU64(f);
-        if (sz == 0) return {};
-        std::vector<double> v(sz);
-        f.read(reinterpret_cast<char*>(v.data()), sz * 8);
-        return v;
-    }
-    inline std::vector<std::pair<uint64_t, uint64_t>> readPairVec(std::ifstream& f) {
-        uint64_t sz = readU64(f);
-        if (sz == 0) return {};
-        std::vector<std::pair<uint64_t, uint64_t>> v(sz);
-        f.read(reinterpret_cast<char*>(v.data()), sz * 16);
-        return v;
-    }
-    inline ChannelTemplateData readChannel(std::ifstream& f) {
-        ChannelTemplateData ch;
-        ch.ecgTemplate_raw = readDoubleVec(f);
-        ch.ecgTemplate_squared = readDoubleVec(f);
-        ch.ecgTemplate_absval = readDoubleVec(f);
-        ch.alignment_point_raw = readF64(f);
-        ch.alignment_point_squared = readF64(f);
-        ch.alignment_point_absval = readF64(f);
-        ch.avg_r_expand_raw = readF64(f);
-        ch.avg_r_expand_squared = readF64(f);
-        ch.avg_r_expand_absval = readF64(f);
-        return ch;
-    }
-
-} // namespace detail
-
-// ---------------------------------------------------------------------------
-// Read template_info.bin
+// Read: convert template_io::TemplateFile -> std::vector<TemplateBin>
 // ---------------------------------------------------------------------------
 inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f.is_open()) return {};
+    template_io::TemplateFile tf = template_io::read_template_binfile(path);
 
-    uint64_t n = detail::readU64(f);
-    std::vector<TemplateBin> bins(n);
+    std::vector<TemplateBin> bins(tf.bins.size());
+    for (size_t i = 0; i < tf.bins.size(); ++i) {
+        const auto& src = tf.bins[i];
+        auto& dst = bins[i];
 
-    for (uint64_t i = 0; i < n; ++i) {
-        auto& b = bins[i];
-        b.index = detail::readU64(f);
-        b.ppg_bin_indexs = detail::readPairVec(f);
-        b.ecg_bin_indexs = detail::readPairVec(f);
-        b.bad_segment = detail::readU8(f) != 0;
-        b.ch1 = detail::readChannel(f);
-        b.ch2 = detail::readChannel(f);
-        b.ch3 = detail::readChannel(f);
-        b.ppgTemplate = detail::readDoubleVec(f);
+        dst.index = static_cast<uint64_t>(i);
+        dst.bad_segment = src.bad_segment;
+        dst.ppgTemplate = src.ppgTemplate;
+
+        dst.ch1.ecgTemplate_raw = src.ch1_raw.ecgTemplate;
+        dst.ch1.alignment_point_raw = src.ch1_raw.alignment_point;
+        dst.ch1.avg_r_expand_raw = src.ch1_raw.avg_r_expand;
+
+        dst.ch2.ecgTemplate_raw = src.ch2_raw.ecgTemplate;
+        dst.ch2.alignment_point_raw = src.ch2_raw.alignment_point;
+        dst.ch2.avg_r_expand_raw = src.ch2_raw.avg_r_expand;
+
+        dst.ch3.ecgTemplate_raw = src.ch3_raw.ecgTemplate;
+        dst.ch3.alignment_point_raw = src.ch3_raw.alignment_point;
+        dst.ch3.avg_r_expand_raw = src.ch3_raw.avg_r_expand;
     }
     return bins;
 }
 
 // ---------------------------------------------------------------------------
-// Write template_markings.bin
+// Write template_markings.bin. Format:
 //
 //   uint64  numBins
 //   per bin:
 //     uint64  index
-//     uint8   bad_r_ch1
-//     uint8   bad_r_ch2
-//     uint8   bad_r_ch3
-//     uint8   ppg_issue    (0 = ok, 1 = bad, 2 = no ppg)
-//     int32   dicrotic     (-1 = NaN)
-//     int32   onset
-//     int32   peak
-//     int32   end_idx
+//     uint8   bad_r_ch1, bad_r_ch2, bad_r_ch3
+//     uint8   ppg_issue          (0 = ok, 1 = bad, 2 = no ppg)
+//     int32   q_begin_ch1, q_begin_ch2, q_begin_ch3
+//     int32   t_begin_ch1, t_begin_ch2, t_begin_ch3
+//     int32   t_end_ch1,   t_end_ch2,   t_end_ch3
+//     int32   ppg_onset, ppg_peak
+//
+// All int32 fields use -1 as the "unmarked / not applicable" sentinel.
 // ---------------------------------------------------------------------------
 inline void writeTemplateMarkingsBin(const std::string& path,
     const std::vector<TemplateBin>& bins) {
     std::ofstream f(path, std::ios::binary);
-    if (!f.is_open()) return;
+    if (!f.is_open())
+        throw std::runtime_error("cannot open for write: " + path);
 
     uint64_t n = bins.size();
     f.write(reinterpret_cast<const char*>(&n), 8);
+
+    auto w8 = [&](uint8_t v) { f.write(reinterpret_cast<const char*>(&v), 1); };
+    auto w32 = [&](int v) { int32_t i = v; f.write(reinterpret_cast<const char*>(&i), 4); };
 
     for (const auto& b : bins) {
         uint64_t idx = b.index;
         f.write(reinterpret_cast<const char*>(&idx), 8);
 
-        auto w8 = [&](uint8_t v) { f.write(reinterpret_cast<const char*>(&v), 1); };
         w8(b.bad_r_ch[0] ? 1 : 0);
         w8(b.bad_r_ch[1] ? 1 : 0);
         w8(b.bad_r_ch[2] ? 1 : 0);
         w8(b.ppg_issue);
 
-        auto w32 = [&](int v) { int32_t i = v; f.write(reinterpret_cast<const char*>(&i), 4); };
-        w32(b.dicrotic);
-        w32(b.onset);
-        w32(b.peak);
-        w32(b.end_idx);
+        for (int c = 0; c < 3; ++c) w32(b.q_begin_ch[c]);
+        for (int c = 0; c < 3; ++c) w32(b.t_begin_ch[c]);
+        for (int c = 0; c < 3; ++c) w32(b.t_end_ch[c]);
+
+        w32(b.ppg_onset);
+        w32(b.ppg_peak);
     }
 }

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file   GenerateTemplates.hpp
  * @brief  Orchestrate the full template generation pipeline.
  *         Port of GenerateTemplates.m
@@ -49,9 +49,15 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
                 if (!std::isnan(v)) { template_good[i] = true; break; }
             }
         }
-        // Find feet and strip leading NaN before foot
+
+        // MATLAB pipeline: find_foot → AlignWaves → CombineTemplatesGraph.
+        // The graph-combine step does the NaN-stripping that produces the
+        // final per-bin PPG templates.
         FootResult feet = find_foot_pulseox(template_matrix);
 
+        // AlignWaves: shifts each template so its foot lands at the global
+        // max foot column, padding with NaN.
+        AlignWavesResult aligned = AlignWaves(template_matrix, feet.idx);
         ppg_templates.resize(n);
 
 #pragma omp parallel for schedule(dynamic)
@@ -61,30 +67,13 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
                 continue;
             }
 
-            const auto& tmpl = template_matrix[i];
-            size_t foot = feet.idx[i];
-
-            // Strip leading NaN before foot, trailing NaN after end
-            size_t first_valid = tmpl.size();
-            size_t last_valid = 0;
-            for (size_t c = 0; c < tmpl.size(); ++c) {
-                if (!std::isnan(tmpl[c])) {
-                    if (c < first_valid) first_valid = c;
-                    last_valid = c;
-                }
+            const auto& row = aligned.alignedWaves[i];
+            vector<double> stripped;
+            stripped.reserve(row.size());
+            for (double v : row) {
+                if (!std::isnan(v)) stripped.push_back(v);
             }
-
-            if (first_valid > last_valid) {
-                ppg_templates[i] = {};
-                continue;
-            }
-
-            // Use foot as start if it's within valid range
-            size_t start = (foot >= first_valid && foot <= last_valid) ? foot : first_valid;
-            ppg_templates[i].reserve(last_valid - start + 1);
-            for (size_t c = start; c <= last_valid; ++c) {
-                ppg_templates[i].push_back(std::isnan(tmpl[c]) ? 0.0 : tmpl[c]);
-            }
+            ppg_templates[i] = std::move(stripped);
         }
     }
 
@@ -130,20 +119,14 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
     for (size_t i = 0; i < n; ++i) {
         auto& info = result[i];
 
-        if (has_ppg && template_good[i]) {
-            info.ppgTemplate = ppg_templates[i];
-        }
-        else {
-            info.ppgTemplate = {};
-        }
+        const bool ppg_template_good = has_ppg && template_good[i];
 
-        if (!wave_data[i].bad_segment) {
+        if (ppg_template_good) {
             fill_channel(info.ch1, ecg_res.ch1, i);
             fill_channel(info.ch2, ecg_res.ch2, i);
             fill_channel(info.ch3, ecg_res.ch3, i);
+            info.ppgTemplate = ppg_templates[i];
 
-            // Hand off the captured ch1-raw beats so build_templates can
-            // write them to the _beats.bin file.
             if (i < ecg_res.ch1.kept_beats_raw.size()) {
                 info.kept_beats_ch1_raw = std::move(ecg_res.ch1.kept_beats_raw[i]);
             }

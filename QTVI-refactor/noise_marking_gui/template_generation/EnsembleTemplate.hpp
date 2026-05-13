@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file   EnsembleTemplate.hpp
  * @brief  Build an ensemble-averaged template from segmented waveform data.
  *         Port of EnsembleTemplate.m
@@ -16,7 +16,7 @@
 #include "AlignWaves.hpp"
 
  // Simple local-maxima finder (no min-distance constraint).
- // Only used here for ECG alignment � not the full R-peak findpeaks.
+ // Only used here for ECG alignment — not the full R-peak findpeaks.
 static inline void et_findpeaks_simple(const vector<double>& data,
     vector<double>& pks,
     vector<size_t>& locs) {
@@ -171,8 +171,8 @@ inline vector<double> EnsembleTemplate(
     vector<double> sl_d(seg_lengths.begin(), seg_lengths.end());
     double med_len = et_nanmedian(sl_d);
     double std_len = et_nanstd(sl_d);
-    double len_min = med_len - std_multiplier * std_len;
-    double len_max = med_len + std_multiplier * std_len;
+    double len_min = std::round(med_len - std_multiplier * std_len);
+    double len_max = std::round(med_len + std_multiplier * std_len);
 
     size_t max_seg_len = 0;
     for (size_t i = 0; i < n_segs; ++i) {
@@ -248,29 +248,35 @@ inline vector<double> EnsembleTemplate(
         }
     }
     else {
+        // MATLAB EnsembleTemplate.m bug: inside the loop,
+        // good_seg_diff_peak(:,1/2) is indexed with (:,1) instead of (i,1),
+        // so the last segment's peak is broadcast to every row. Replicate
+        // that here for bit-for-bit MATLAB parity.
+        size_t last_peak_pos = 0;
         for (size_t i = 0; i < good_segs.size(); ++i) {
-            double seg_med = et_nanmedian(good_segs[i]);
-            double seg_std = et_nanstd(good_segs[i]);
+            const auto& seg = good_segs[i];
+            double seg_med = et_nanmedian(seg);
+            double seg_std = et_nanstd(seg);
             double min_h = seg_med + seg_std * 2.5;
 
             vector<double> pks;
             vector<size_t> locs;
-            et_findpeaks_simple(good_segs[i], pks, locs);
+            et_findpeaks_simple(seg, pks, locs);
 
             bool found = false;
             for (size_t k = 0; k < pks.size(); ++k) {
-                if (pks[k] >= min_h) {
-                    align_pts[i] = locs[k];
+                if (pks[k] > min_h) {
+                    last_peak_pos = locs[k];
                     found = true;
                     break;
                 }
             }
             if (!found) {
-                vector<double> pv; vector<size_t> pp;
-                et_compute_peaks({ good_segs[i] }, pv, pp);
-                align_pts[i] = pp[0];
+                // MATLAB: good_seg_diff_peak(:,2) = 1 (1-indexed) → 0 here
+                last_peak_pos = 0;
             }
         }
+        std::fill(align_pts.begin(), align_pts.end(), last_peak_pos);
     }
 
     // ---- 5. Align ----
@@ -289,12 +295,11 @@ inline vector<double> EnsembleTemplate(
             double v = aw[i][c];
             if (std::isnan(v) || std::isnan(cmean[c]) || std::isnan(cstd[c])) continue;
             double dev = std::abs(v - cmean[c]);
+            if (dev > 2.5 * cstd[c]) waveScore[i] += 1.0;
+            if (dev > 3.0 * cstd[c]) waveScore[i] += 3.0;
             if (dev > 4.0 * cstd[c]) waveScore[i] += 9.0;
-            else if (dev > 3.0 * cstd[c]) waveScore[i] += 3.0;
-            else if (dev > 2.5 * cstd[c]) waveScore[i] += 1.0;
         }
     }
-
     for (size_t i = 0; i < aw.size(); ++i) {
         if (i < good_lens.size() && good_lens[i] > 0)
             waveScore[i] /= static_cast<double>(good_lens[i]);
@@ -313,27 +318,45 @@ inline vector<double> EnsembleTemplate(
     if (final_segs.empty()) return {};
 
     // ---- 7. Build template ----
+    // MATLAB (with the broadcast bug): alignment_point = max(good_seg_diff_peak(:,2)),
+    // but that column is constant after the bug, so it equals any element of align_pts.
+    // For PPG (no bug) we keep the original max() semantics.
     size_t alignment_point = 0;
-    for (auto a : align_pts) if (a > alignment_point) alignment_point = a;
+    if (type == "ppg") {
+        for (auto a : align_pts) if (a > alignment_point) alignment_point = a;
+    }
+    else {
+        // ECG: every align_pts entry is the same broadcast value.
+        alignment_point = align_pts.empty() ? 0 : align_pts[0];
+    }
 
-    vector<double> fa_d(final_align.begin(), final_align.end());
-    double med_align = et_nanmedian(fa_d);
-
+    // beginpos: MATLAB computes alignment_point - round(nanmedian(good_seg_diff_peak(:,2))).
+    // For ECG with the broadcast bug, that median == alignment_point → beginpos = 0
+    // (MATLAB clamps the equivalent to 1 in 1-indexed land). For PPG, use final_align.
     size_t beginpos = 0;
-    if (alignment_point > static_cast<size_t>(std::round(med_align)))
-        beginpos = alignment_point - static_cast<size_t>(std::round(med_align));
+    if (type == "ppg") {
+        vector<double> fa_d(final_align.begin(), final_align.end());
+        double med_align = et_nanmedian(fa_d);
+        if (alignment_point > static_cast<size_t>(std::round(med_align)))
+            beginpos = alignment_point - static_cast<size_t>(std::round(med_align));
+    }
+    // else: ECG beginpos = 0
 
-    // median(good_seg_lengths - good_seg_diff_peak(:,2)) � verbatim MATLAB
+    // endpos: MATLAB alignment_point + round(nanmedian(good_seg_lengths - good_seg_diff_peak(:,2))).
+    // For ECG, good_seg_diff_peak(:,2) is the constant alignment_point.
     vector<double> len_minus_align(final_lens.size());
-    for (size_t i = 0; i < final_lens.size(); ++i)
-        len_minus_align[i] = static_cast<double>(final_lens[i])
-        - static_cast<double>(final_align[i]);
+    for (size_t i = 0; i < final_lens.size(); ++i) {
+        double peak_pos = (type == "ppg")
+            ? static_cast<double>(final_align[i])
+            : static_cast<double>(alignment_point);
+        len_minus_align[i] = static_cast<double>(final_lens[i]) - peak_pos;
+    }
     double med_len_minus_align = et_nanmedian(len_minus_align);
 
     size_t total_cols = final_segs.empty() ? 0 : final_segs[0].size();
     size_t endpos = alignment_point +
         static_cast<size_t>(std::round(med_len_minus_align));
-    if (endpos >= total_cols) endpos = total_cols - 1;  // match MATLAB bounds check
+    if (endpos >= total_cols) endpos = total_cols - 1;
 
     if (beginpos > endpos) return {};
 

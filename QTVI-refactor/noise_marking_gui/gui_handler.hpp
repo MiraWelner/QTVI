@@ -106,6 +106,13 @@ public:
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
+    // Clicking anywhere on the dialog (outside a focused spinbox) steals
+    // focus from that spinbox so its editingFinished fires and the
+    // clearFocus lambda runs. Without this, ClickFocus-policy spinboxes
+    // keep focus indefinitely because clicking on a chart -- which has
+    // NoFocus policy -- doesn't transfer focus.
+    void mousePressEvent(QMouseEvent* event) override;
+
 private slots:
     void on_skip_interval_box_returnPressed();
     void on_skip_interval_box_editingFinished();
@@ -117,11 +124,11 @@ private slots:
 public:
     enum class MarkPhase { Idle, WaitingForStart, WaitingForEnd, WaitingForStop };
     enum class PlotMode { Line, Scatter };
-    
-    void setConfig(const config_entry & cfg) {
+
+    void setConfig(const config_entry& cfg) {
         m_cfg = cfg;
     }
-    
+
 
 
     /**

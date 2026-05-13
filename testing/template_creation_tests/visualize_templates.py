@@ -52,12 +52,12 @@ RESULTS_DIR = r"D:\USERS\MiraWelner\QTVI\testing\template_creation_tests"
 
 DANIEL_SR = 1000.0
 MIRA_SR = 1000.0
-DEEP_SR_DEFAULT = 1000.0  # overridden by ALLavgstdcycSampRate when readable
+DEEP_SR_DEFAULT = 1000.0
 
-DANIEL_COLOR = "C0"  # blue
-MIRA_COLOR = "red"
-DEEP_COLOR = "green"
-BEAT_COLOR = "0.8"  # medium gray for individual beats
+DANIEL_COLOR = "red"
+MIRA_COLOR = "black"
+DEEP_COLOR = "blue"
+BEAT_COLOR = "0.6"  # light gray for individual beats
 
 
 # ============================================================================
@@ -340,16 +340,12 @@ def safe_corr(a, b):
     return float(np.corrcoef(a, b)[0, 1])
 
 
-def corr_pair_aligned(a, b, sr_a=1000.0, sr_b=1000.0):
+def corr_pair_aligned(a, b, sr_a=1000.0, sr_b=1000.0, max_post_r_ms=None):
     """Correlation between two normalized templates, aligned at the R-peak.
 
-    Both signals are shifted so their R-peak (argmax) lands at t=0. We then
-    crop each to the OVERLAPPING time window — the part both signals cover
-    around the R-peak. Correlation is computed on those equal-length crops
-    after resampling them to a common sample count.
-
-    This makes the score reflect "how similar is the morphology around
-    the R-peak" rather than "do these vectors happen to line up index-wise."
+    If `max_post_r_ms` is given, the comparison window is capped at that
+    many ms after the R-peak. This matches a visually cropped plot so the
+    PCC reflects only the morphology actually shown.
     """
     if a.size == 0 or b.size == 0:
         return np.nan
@@ -357,20 +353,21 @@ def corr_pair_aligned(a, b, sr_a=1000.0, sr_b=1000.0):
     r_a = int(np.argmax(a))
     r_b = int(np.argmax(b))
 
-    # Each signal's window in MILLISECONDS, relative to its own R-peak.
-    # Negative values are pre-R, positive are post-R.
     a_left_ms = -r_a / sr_a * 1000
     a_right_ms = (a.size - 1 - r_a) / sr_a * 1000
     b_left_ms = -r_b / sr_b * 1000
     b_right_ms = (b.size - 1 - r_b) / sr_b * 1000
 
-    # Overlap window: the part both signals cover relative to the R-peak.
     overlap_left = max(a_left_ms, b_left_ms)
     overlap_right = min(a_right_ms, b_right_ms)
-    if overlap_right <= overlap_left:
-        return np.nan  # no shared coverage
 
-    # Convert overlap back to sample indices in each signal.
+    # Cap the post-R window so the score reflects only the cropped region.
+    if max_post_r_ms is not None:
+        overlap_right = min(overlap_right, max_post_r_ms)
+
+    if overlap_right <= overlap_left:
+        return np.nan
+
     a_start = int(round(r_a + overlap_left * sr_a / 1000))
     a_end = int(round(r_a + overlap_right * sr_a / 1000)) + 1
     b_start = int(round(r_b + overlap_left * sr_b / 1000))
@@ -382,8 +379,6 @@ def corr_pair_aligned(a, b, sr_a=1000.0, sr_b=1000.0):
     if a_crop.size < 2 or b_crop.size < 2:
         return np.nan
 
-    # Equal length for corrcoef. Resample the longer one down (truncating
-    # invented samples again, but at least both crops cover the same time).
     n = min(a_crop.size, b_crop.size)
     return safe_corr(
         resample_to_length(a_crop, n),
@@ -403,7 +398,7 @@ def find_r_peak_idx(vec):
 
 
 # ============================================================================
-# Plot: chunks of 12 bins per file
+# Plot: chunks of 9 bins per file
 # ============================================================================
 def plot_chunk(
     subject_id,
@@ -414,12 +409,12 @@ def plot_chunk(
     start_idx,
     save_path,
     deep_sr,
-    cols_per_row=4,
+    cols_per_row=3,
 ):
     n = max(len(daniel_chunk), len(mira_chunk), len(deep_chunk))
     rows = math.ceil(n / cols_per_row)
 
-    panel_w, panel_h = 4.5, 3.2
+    panel_w, panel_h = 8, 5
     fig, axes = plt.subplots(
         rows,
         cols_per_row,
@@ -561,7 +556,7 @@ def plot_chunk(
                 color=DEEP_COLOR,
                 alpha=0.85,
                 label="Deep",
-                zorder=3,
+                zorder=5,
             )
             chunk_max_x = max(chunk_max_x, float(t_p[-1]))
             chunk_min_x = min(chunk_min_x, float(t_p[0]))
@@ -572,57 +567,40 @@ def plot_chunk(
         c_dp = corr_pair_aligned(d_n, p_n)
         c_mp = corr_pair_aligned(m_n, p_n)
 
-        # Tint by the WORST scored pair so the mismatch is visible at a glance.
-        scored = [c for c in (c_dm, c_dp, c_mp) if not np.isnan(c)]
-        if scored:
-            worst = min(scored)
-            if worst >= 0.9:
-                tint = "#e8f5e9"
-            elif worst >= 0.8:
-                tint = "#fffde7"
-            else:
-                tint = "#ffebee"
-        else:
+        if np.isnan(c_dm):
             tint = "#f0f0f0"
+        elif c_dm >= 1.0 - 1e-6:
+            tint = "#e8f5e9"  # green: perfect match to 6 decimals
+        elif c_dm >= 0.9:
+            tint = "#fffde7"  # yellow: close
+        else:
+            tint = "#ffebee"  # red: diverging
         ax.set_facecolor(tint)
 
         def fmt(label, c):
             if np.isnan(c):
                 return f"{label} -"
-            return f"{label} {c:.2f}"
+            return f"{label} {c:.6f}"
 
         n_beats = sum(1 for b in beats if b.size > 0) if beats else 0
-        beats_tag = f"  ({n_beats} beats)" if n_beats > 0 else ""
 
-        title = (
-            f"bin {bin_idx}{beats_tag}    "
-            f"{fmt('D-M', c_dm)}    "
-            f"{fmt('D-P', c_dp)}    "
-            f"{fmt('M-P', c_mp)}"
-        )
-        ax.set_title(title, fontsize=9)
+        title = f"Bin {bin_idx}: {fmt('Daniel-Mira', c_dm)} {fmt('Daniel-Deep', c_dp)} {fmt('Mira-Deep', c_mp)}"
+        ax.set_title(title, fontsize=12)
         ax.set_ylim(-0.3, 1.3)  # widened so individual beats aren't clipped
 
         if not legend_added:
             ax.legend(fontsize=8, loc="upper right")
             legend_added = True
 
-    # Apply shared x-range to every panel that has data plotted.
-    if chunk_max_x > chunk_min_x:
-        for ax in axes.flat:
-            if ax.has_data():
-                ax.set_xlim(chunk_min_x, chunk_max_x)
-
     last_idx = start_idx + n - 1
     fig.suptitle(
-        f"{subject_id}  -  bins {start_idx}-{last_idx}  "
-        f"(D=Daniel  M=Mira  P=Deep,  gray=individual Mira beats,  x in ms)",
+        f"{subject_id}  -  bins {start_idx}-{last_idx}",
         fontsize=12,
         fontweight="bold",
     )
     fig.tight_layout(rect=[0, 0, 1, 0.96])
-    fig.subplots_adjust(wspace=0.15, hspace=0.25)
-    fig.savefig(save_path, dpi=150)
+    fig.subplots_adjust(wspace=0.30, hspace=0.40)
+    fig.savefig(save_path, format="svg", bbox_inches="tight", pad_inches=0.3)
     plt.close(fig)
 
 
@@ -634,8 +612,8 @@ def plot_in_chunks(
     beats_list,
     deep_sr,
     results_dir,
-    bins_per_plot=12,
-    cols_per_row=4,
+    bins_per_plot=9,
+    cols_per_row=3,
 ):
     n = max(len(daniel_list), len(mira_list), len(deep_list))
     if n == 0:
@@ -734,14 +712,14 @@ def main():
     parser.add_argument(
         "--bins-per-plot",
         type=int,
-        default=12,
-        help="Bins per output file (default: 12)",
+        default=4,
+        help="Bins per output file (default: 9, i.e. 3x3)",
     )
     parser.add_argument(
         "--cols",
         type=int,
-        default=4,
-        help="Panels per row within a plot (default: 4)",
+        default=2,
+        help="Panels per row within a plot (default: 3)",
     )
     args = parser.parse_args()
 

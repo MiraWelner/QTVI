@@ -60,8 +60,17 @@ namespace {
         else if (cfg.dataType == "CHAOS") {
             cfg.ecg1Label = "NLS_NOM_ECG_ELEC_pOTL_I";
             cfg.ecg2Label = "NLS_NOM_ECG_ELEC_pOTL_II";
-            cfg.ecg3Label = "NLS_NOM_ECG_ELEC_pOTL_V";
-            cfg.ppgLabel = "NLS_NOM_PLETH";
+            cfg.ecg3Label = "NLS_NOM_ECG_ELEC_pOTL_III";
+            cfg.ppgLabel = "NLS_NOM_PULS_OXIM_PLETH";
+            cfg.eeg1Label = "NLS_EEG_NAMES_EEG_CHAN1";
+            cfg.eeg2Label = "NLS_EEG_NAMES_EEG_CHAN2";
+            cfg.eeg3Label = "NLS_EEG_NAMES_EEG_CHAN3";
+            cfg.eeg4Label = "NLS_EEG_NAMES_EEG_CHAN4";
+            cfg.cvpLabel = "NLS_NOM_PRESS_BLD_VEN_CENT";
+            cfg.respLabel = "NLS_NOM_RESP";
+            cfg.abpLabel = "NLS_NOM_PRESS_BLD_ART_ABP";
+            cfg.artLabel = "NLS_NOM_PRESS_BLD_ART";
+            cfg.artPulmLabel = "NLS_NOM_PRESS_BLD_ART_PULM";
         }
     }
 

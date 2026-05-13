@@ -8,14 +8,30 @@
 #include <optional>
 
 struct DatasetConfig {
-    QString dataType;         // col 0
-    QString templatePath;     // col 8
-    QString markingPath;      // col 9
-    double ecgSamplingRate;   // col 14
-    double ppgSamplingRate;   // col 15
+    QString dataType;          // col 0   DATA_TYPE
+    QString templatePath;      // col 12  template_path
+    QString markingPath;       // col 13  markings_path
+    double  ecgSamplingRate;   // col 3   ecg_rate
+    double  ppgSamplingRate;   // col 4   ppg_rate     (0 if absent)
+    double  upsampledRate;     // col 5   upsampled_rate
+    int     binMinutes;        // col 6   bin_size_minutes
 };
 
+namespace config_detail {
+    inline double toDouble(const QString& s) {
+        bool ok = false;
+        double v = s.trimmed().toDouble(&ok);
+        return ok ? v : 0.0;
+    }
+    // Safe column access: returns "" if the row is short.
+    inline QString col(const QStringList& cols, int i) {
+        return (i < cols.size()) ? cols[i].trimmed() : QString();
+    }
+}
+
 inline std::vector<DatasetConfig> readConfig(const QString& csvPath) {
+    using namespace config_detail;
+
     std::vector<DatasetConfig> result;
     QFile file(csvPath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return result;
@@ -24,17 +40,19 @@ inline std::vector<DatasetConfig> readConfig(const QString& csvPath) {
     bool first = true;
     while (!in.atEnd()) {
         QString line = in.readLine().trimmed();
-        if (first) { first = false; continue; }
+        if (first) { first = false; continue; }   // skip header
         if (line.isEmpty()) continue;
 
         QStringList cols = line.split(',');
 
         DatasetConfig cfg;
-        cfg.dataType = cols[0].trimmed();
-        cfg.templatePath = cols[8].trimmed();
-        cfg.markingPath = cols[9].trimmed();
-        cfg.ecgSamplingRate = 1000.0;
-        cfg.ppgSamplingRate = 1000.0;
+        cfg.dataType = col(cols, 0);
+        cfg.ecgSamplingRate = toDouble(col(cols, 3));
+        cfg.ppgSamplingRate = toDouble(col(cols, 4));
+        cfg.upsampledRate = toDouble(col(cols, 5));
+        cfg.binMinutes = static_cast<int>(toDouble(col(cols, 6)));
+        cfg.templatePath = col(cols, 12);
+        cfg.markingPath = col(cols, 13);
         result.push_back(cfg);
     }
     return result;

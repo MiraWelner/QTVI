@@ -30,7 +30,7 @@ public:
     QAction *actionMoveSubsequent;
     QWidget *centralwidget;
     QVBoxLayout *mainLayout;
-    QLabel *label;
+    QLabel *instructionsLabel;
     QHBoxLayout *topBar;
     QLabel *subjectLabel;
     QSpacerItem *sL;
@@ -48,7 +48,7 @@ public:
     {
         if (TemplateViewerWindow->objectName().isEmpty())
             TemplateViewerWindow->setObjectName("TemplateViewerWindow");
-        TemplateViewerWindow->resize(1200, 900);
+        TemplateViewerWindow->resize(1400, 1200);
         actionMoveSubsequent = new QAction(TemplateViewerWindow);
         actionMoveSubsequent->setObjectName("actionMoveSubsequent");
         actionMoveSubsequent->setCheckable(true);
@@ -59,10 +59,10 @@ public:
         mainLayout->setSpacing(4);
         mainLayout->setObjectName("mainLayout");
         mainLayout->setContentsMargins(4, 4, 4, 4);
-        label = new QLabel(centralwidget);
-        label->setObjectName("label");
+        instructionsLabel = new QLabel(centralwidget);
+        instructionsLabel->setObjectName("instructionsLabel");
 
-        mainLayout->addWidget(label);
+        mainLayout->addWidget(instructionsLabel);
 
         topBar = new QHBoxLayout();
         topBar->setObjectName("topBar");
@@ -136,6 +136,14 @@ public:
         TemplateViewerWindow->setCentralWidget(centralwidget);
 
         retranslateUi(TemplateViewerWindow);
+        QObject::connect(finishButton, SIGNAL(clicked()), TemplateViewerWindow, SLOT(onFinish()));
+        QObject::connect(prevButton, SIGNAL(clicked()), TemplateViewerWindow, SLOT(onPrevPage()));
+        QObject::connect(nextButton, SIGNAL(clicked()), TemplateViewerWindow, SLOT(onNextPage()));
+        QObject::connect(modeButton, &QPushButton::toggled, actionMoveSubsequent, &QAction::setChecked);
+        QObject::connect(actionMoveSubsequent, &QAction::toggled, modeButton, &QPushButton::setChecked);
+
+        finishButton->setDefault(true);
+
 
         QMetaObject::connectSlotsByName(TemplateViewerWindow);
     } // setupUi
@@ -144,13 +152,25 @@ public:
     {
         TemplateViewerWindow->setWindowTitle(QCoreApplication::translate("TemplateViewerWindow", "Template Marking Viewer", nullptr));
         actionMoveSubsequent->setText(QCoreApplication::translate("TemplateViewerWindow", "Move Subsequent Dicrotic", nullptr));
-        label->setText(QCoreApplication::translate("TemplateViewerWindow", "Simple Right Click: Marks bad R peak                Double Right Click: Marks bad PPG if PPG present (throw away that template)           The red line marks the dicrotic notch, click and drag to move", nullptr));
+        instructionsLabel->setText(QCoreApplication::translate("TemplateViewerWindow", "Simple Right Click: Marks bad R peak                Double Right Click: Marks bad PPG if PPG present (throw away that template)           The red line marks the dicrotic notch, click and drag to move", nullptr));
         subjectLabel->setText(QCoreApplication::translate("TemplateViewerWindow", "No subject loaded", nullptr));
         prevButton->setText(QCoreApplication::translate("TemplateViewerWindow", "<  Prev", nullptr));
+#if QT_CONFIG(shortcut)
+        prevButton->setShortcut(QCoreApplication::translate("TemplateViewerWindow", "Left", nullptr));
+#endif // QT_CONFIG(shortcut)
         pageLabel->setText(QCoreApplication::translate("TemplateViewerWindow", "1 / 1", nullptr));
         nextButton->setText(QCoreApplication::translate("TemplateViewerWindow", "Next  >", nullptr));
+#if QT_CONFIG(shortcut)
+        nextButton->setShortcut(QCoreApplication::translate("TemplateViewerWindow", "Right", nullptr));
+#endif // QT_CONFIG(shortcut)
         modeButton->setText(QCoreApplication::translate("TemplateViewerWindow", "Mode: Move Subsequent", nullptr));
+#if QT_CONFIG(shortcut)
+        modeButton->setShortcut(QCoreApplication::translate("TemplateViewerWindow", "M", nullptr));
+#endif // QT_CONFIG(shortcut)
         finishButton->setText(QCoreApplication::translate("TemplateViewerWindow", "Finish && Save", nullptr));
+#if QT_CONFIG(shortcut)
+        finishButton->setShortcut(QCoreApplication::translate("TemplateViewerWindow", "Return", nullptr));
+#endif // QT_CONFIG(shortcut)
     } // retranslateUi
 
 };

@@ -106,9 +106,12 @@
     <ClCompile Include="6_template_marking.cpp" />
     <ClCompile Include="BinPlotWidget.cpp" />
     <ClCompile Include="TemplateViewerWindow.cpp" />
+    <ClCompile Include="template_io.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ConfigReader.hpp" />
+    <ClInclude Include="TemplateFileName.hpp" />
+    <ClInclude Include="template_io.hpp" />
     <QtMoc Include="BinPlotWidget.h" />
     <ClInclude Include="DumbDicrotic.hpp" />
     <ClInclude Include="TemplateBinIO.hpp" />

@@ -47,12 +47,22 @@ static inline SingleMethodResult build_ecg_template_for_method(
 
     if (rpeaks.size() < 2 || ecgSignal.empty()) return res;
 
-    // Peaks are already indices into the bin's signal - no extraction needed.
-    // Just filter out any that are out of bounds.
+    // MATLAB Daniel: reduce ECG to the first 10% of the bin and drop
+    // R-peaks at/after (reduced_size - 1). The trailing -1 is a 1-sample
+    // safety margin so the very last beat's window can't run off the end.
+    const size_t reduced_size =
+        static_cast<size_t>(std::round(static_cast<double>(ecgSignal.size()) / 10.0));
+    if (reduced_size < 2) return res;
+
+    vector<double> ecg_reduced(ecgSignal.begin(),
+        ecgSignal.begin() + reduced_size);
+
     vector<size_t> r;
     r.reserve(rpeaks.size());
-    for (auto idx : rpeaks)
-        if (idx < ecgSignal.size()) r.push_back(idx);
+    for (auto idx : rpeaks) {
+        // MATLAB: r = ecgRIndex(ecgRIndex < reduced_size - 1)
+        if (idx + 1 < reduced_size) r.push_back(idx);
+    }
     if (r.size() < 2) return res;
 
     vector<size_t> lens;
@@ -67,28 +77,12 @@ static inline SingleMethodResult build_ecg_template_for_method(
 
     try {
         res.ecgTemplate = EnsembleTemplate(
-            ecgSignal, r, std_multiplier, "ecg", lens, out_kept_beats);
+            ecg_reduced, r, std_multiplier, "ecg", lens, out_kept_beats);
     }
     catch (...) {
         res.ecgTemplate = {};
         if (out_kept_beats) out_kept_beats->clear();
         return res;
-    }
-
-    // Subtract the per-template minimum so the template baseline is at 0.
-    // Apply the same shift to captured beats so the gray cloud and the red
-    // mean line share a vertical reference; otherwise the beats would
-    // appear offset from the template they were averaged into.
-    if (!res.ecgTemplate.empty()) {
-        double minVal = *std::min_element(res.ecgTemplate.begin(), res.ecgTemplate.end());
-        for (auto& v : res.ecgTemplate) v -= minVal;
-        if (out_kept_beats) {
-            for (auto& beat : *out_kept_beats) {
-                for (auto& s : beat) {
-                    if (!std::isnan(s)) s -= minVal;
-                }
-            }
-        }
     }
 
     if (!pairs.empty()) {
