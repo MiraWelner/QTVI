@@ -790,6 +790,28 @@ def main():
             )
             continue
         bin_obj = data[bin_idx]
+        print(f"  Mira {rate}Hz bin {bin_idx} peak counts:")
+        print(
+            f"    ch1: raw={len(bin_obj['ch1_raw_idx'])} "
+            f"sq={len(bin_obj['ch1_sq_idx'])} "
+            f"abs={len(bin_obj['ch1_abs_idx'])}"
+        )
+        print(
+            f"    ch2: raw={len(bin_obj['ch2_raw_idx'])} "
+            f"sq={len(bin_obj['ch2_sq_idx'])} "
+            f"abs={len(bin_obj['ch2_abs_idx'])}"
+        )
+        print(
+            f"    ch3: raw={len(bin_obj['ch3_raw_idx'])} "
+            f"sq={len(bin_obj['ch3_sq_idx'])} "
+            f"abs={len(bin_obj['ch3_abs_idx'])}"
+        )
+        print(
+            f"    ppg: max={len(bin_obj['ppgMaxAmps'])} "
+            f"min={len(bin_obj['ppgMinAmps'])}"
+        )
+        print(f"    signal len={len(bin_obj['ch1_raw_sig'])}")
+
         raw_pairs_full = bin_obj.get("ch1_raw_pairs")
         # Bin window start (absolute seconds from recording start). The
         # ANNEALER stamps each segment with its (start_sample, end_sample)

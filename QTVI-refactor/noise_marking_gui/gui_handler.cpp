@@ -31,9 +31,11 @@
 #include "peak_finding//run_find_r_peaks.hpp"
 #include "gui_handler.hpp"
 #include "post_process.hpp"
+#include "input_file_handler.hpp"
 
 #include <QFutureWatcher>
 #include <QtConcurrent>
+#include <QEventLoop>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QtCharts/QAreaSeries>
@@ -53,10 +55,13 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QLineEdit>
 #include <QMessageBox>
+#include <QProgressDialog>
 #include <QtCharts/QLegendMarker>
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 
  // ============================================================================
@@ -492,6 +497,13 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     m_skipInterval = ui->skip_interval_box->text().toDouble();
     if (m_skipInterval <= 0.0) m_skipInterval = 5.0;
 
+    // skip_interval_box is a QLineEdit that historically traps focus during
+    // chart wipes / dialog closures (Qt's tab-order fallback picks it because
+    // it's the next focus-accepting widget). ClickFocus means it only gets
+    // focus when the user deliberately clicks into it -- it won't be picked
+    // up by automatic focus reassignment.
+    ui->skip_interval_box->setFocusPolicy(Qt::ClickFocus);
+
     ui->scatter_line->setCurrentIndex(0);  // Line by default
     ui->scatter_line->setFocusPolicy(Qt::NoFocus);
 
@@ -713,12 +725,154 @@ void noise_marking_gui::handleBrowseFile() {
     if (!m_binFilePath.isEmpty())
         startDir = QFileInfo(m_binFilePath).absolutePath();
 
+    // The marking dialog ultimately needs a converted .bin (loadChunkFromFile
+    // reads that specific header layout), but users naturally browse for the
+    // source recordings themselves. Accept both: source extensions (.edf /
+    // .dat / .csv -- whatever convertToBin can handle) get auto-converted
+    // through the same cache convertToBin uses in the main loop, and an
+    // already-converted .bin is used directly.
     QString path = QFileDialog::getOpenFileName(
-        this, "Select Binary Signal File", startDir,
-        "Binary files (*.bin);;All files (*)");
+        this, "Select Signal File", startDir,
+        "All supported (*.bin *.edf *.dat *.csv);;"
+        "Converted bin files (*.bin);;"
+        "EDF recordings (*.edf);;"
+        "DAT recordings (*.dat);;"
+        "CSV recordings (*.csv);;"
+        "All files (*)");
 
-    if (path.isEmpty() || path == m_binFilePath) return;
-    loadSelectedFile(path);
+    if (path.isEmpty()) return;
+
+    const QString ext = QFileInfo(path).suffix().toLower();
+    const QString displayName = QFileInfo(path).fileName();
+    QString binPath = path;
+
+    // Show an indeterminate progress dialog covering BOTH the (optional)
+    // conversion step and the chunk load. Both block the GUI thread, so
+    // without this the window paints stale content for several seconds and
+    // looks broken.
+    //
+    // Focus handling: the progress dialog is given Qt::NoFocus so Qt won't
+    // pick it (or its successor) when reassigning focus on close. We also
+    // explicitly clear focus from any QLineEdit (e.g. skip_interval_box)
+    // that may have stolen it, and restore focus to the main dialog at the
+    // end -- otherwise the skip-interval QLineEdit ends up trapping the
+    // keyboard cursor after the progress dialog closes.
+    QWidget* prevFocus = QApplication::focusWidget();
+    QProgressDialog progress(this);
+    progress.setWindowTitle("Loading");
+    progress.setRange(0, 0);
+    progress.setCancelButton(nullptr);
+    progress.setMinimumDuration(0);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setAutoClose(false);
+    progress.setAutoReset(false);
+    progress.setFocusPolicy(Qt::NoFocus);
+
+    auto setStep = [&](const QString& msg) {
+        progress.setLabelText(msg);
+        progress.show();
+        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        };
+    auto closeProgressAndRestoreFocus = [&]() {
+        progress.close();
+        // Restore focus deterministically. If a QLineEdit was focused before
+        // (e.g. user just typed into the skip-interval box), prefer to put
+        // focus back on the main dialog so the QLineEdit doesn't trap
+        // keystrokes intended for the chart shortcuts.
+        if (prevFocus && !qobject_cast<QLineEdit*>(prevFocus)) {
+            prevFocus->setFocus(Qt::OtherFocusReason);
+        }
+        else {
+            this->setFocus(Qt::OtherFocusReason);
+        }
+        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+        };
+
+    if (ext != "bin") {
+        if (m_cfg.bin_file_path.empty()) {
+            QMessageBox::warning(this, "Conversion unavailable",
+                "This file is a source recording, but the bin-cache folder "
+                "isn't configured. Pick an already-converted .bin file, or "
+                "restart from the dataset selection screen.");
+            return;
+        }
+
+        setStep(QString("Converting %1\u2026").arg(displayName));
+        std::cout << "Converting " << displayName.toStdString() << " ...\n" << std::flush;
+
+        // Conversion can take many minutes for a 100-hour EDF, so we run it
+        // on a worker thread. The GUI thread stays inside a local event loop
+        // (driven by QFutureWatcher::finished) which keeps the progress
+        // dialog animating, the window responsive to mouse focus, and stops
+        // Windows from marking the app as "Not Responding".
+        std::filesystem::path produced;
+        std::exception_ptr convertException;
+        const std::filesystem::path src(path.toStdString());
+        const config_entry cfgCopy = m_cfg;  // don't share by reference
+
+        QFutureWatcher<void> watcher;
+        QFuture<void> future = QtConcurrent::run([&produced, &convertException,
+            src, cfgCopy]() {
+                try {
+                    produced = convertToBin(src, cfgCopy);
+                }
+                catch (...) {
+                    convertException = std::current_exception();
+                }
+            });
+        watcher.setFuture(future);
+
+        QEventLoop loop;
+        QObject::connect(&watcher, &QFutureWatcher<void>::finished,
+            &loop, &QEventLoop::quit);
+        loop.exec();
+
+        if (convertException) {
+            closeProgressAndRestoreFocus();
+            QString msg;
+            try { std::rethrow_exception(convertException); }
+            catch (const std::exception& e) { msg = e.what(); }
+            catch (...) { msg = "unknown exception"; }
+            QMessageBox::warning(this, "Conversion failed",
+                QString("convertToBin threw: %1").arg(msg));
+            return;
+        }
+
+        if (produced.empty()) {
+            closeProgressAndRestoreFocus();
+            QMessageBox::warning(this, "Conversion failed",
+                "convertToBin returned an empty path (unsupported extension "
+                "or converter failure). See the console for details.");
+            return;
+        }
+        if (!std::filesystem::exists(produced)) {
+            closeProgressAndRestoreFocus();
+            QMessageBox::warning(this, "Conversion failed",
+                QString("Expected output file not found:\n%1\n\n"
+                    "The converter ran but didn't produce a .bin. "
+                    "See the console for details.")
+                .arg(QString::fromStdString(produced.string())));
+            return;
+        }
+        binPath = QString::fromStdString(produced.string());
+        std::cout << "  -> " << produced.filename().string() << "\n";
+    }
+
+    if (binPath == m_binFilePath) {
+        closeProgressAndRestoreFocus();
+        return;
+    }
+
+    if (!QFileInfo(binPath).isReadable()) {
+        closeProgressAndRestoreFocus();
+        QMessageBox::warning(this, "Cannot open file",
+            QString("File is not readable:\n%1").arg(binPath));
+        return;
+    }
+
+    setStep(QString("Loading %1\u2026").arg(QFileInfo(binPath).fileName()));
+    loadSelectedFile(binPath);
+    closeProgressAndRestoreFocus();
 }
 
 bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
@@ -762,11 +916,15 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         file.read(reinterpret_cast<char*>(dest.data()), count * sizeof(double));
         };
 
-    // Stream raw (t, v) pair block, keeping only pairs in the current chunk.
-    // Pairs are time-sorted, so we bail out as soon as t >= chunkEnd.
+    // Load the (t, v) raw pairs falling inside the current 8-hour window.
+    // Pairs are time-sorted on disk, so we binary-search the chunk's bounds
+    // and bulk-read only the slice we need. Falls back to the original
+    // streaming loop if the binary-search prereqs aren't met (corrupt
+    // header, unsorted pairs, allocation too large, etc.) so a bad file
+    // can never crash the GUI -- just makes that one chunk load slower.
     auto loadRaw = [&](QVector<QPointF>& dest, int chIdx) {
         dest.clear();
-        uint64_t totalPairs = m_chanSizesRaw[chIdx];
+        const uint64_t totalPairs = m_chanSizesRaw[chIdx];
 
         // Sentinel: file stores a single (-1.0, -1.0) pair for missing.
         if (totalPairs <= 1) {
@@ -781,28 +939,114 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 
         const double chunkStart = chunkIndex * CHUNK_DURATION_SEC;
         const double chunkEnd = chunkStart + CHUNK_DURATION_SEC;
+        const qint64 baseBytes =
+            FILE_HEADER_SIZE + static_cast<qint64>(chanRawOffset[chIdx]) * sizeof(double);
 
-        constexpr uint64_t BLOCK_PAIRS = 1 << 15;
-        std::vector<double> buf(BLOCK_PAIRS * 2);
-
-        file.seek(FILE_HEADER_SIZE + chanRawOffset[chIdx] * sizeof(double));
-        uint64_t pairsRead = 0;
-        bool done = false;
-        while (!done && pairsRead < totalPairs) {
-            uint64_t thisBlock = std::min<uint64_t>(BLOCK_PAIRS, totalPairs - pairsRead);
-            qint64 got = file.read(reinterpret_cast<char*>(buf.data()),
-                thisBlock * 2 * sizeof(double));
-            if (got <= 0) break;
-            uint64_t gotPairs = static_cast<uint64_t>(got) / (2 * sizeof(double));
-
-            for (uint64_t k = 0; k < gotPairs; ++k) {
-                double t = buf[k * 2];
-                double v = buf[k * 2 + 1];
-                if (t < chunkStart) continue;
-                if (t >= chunkEnd) { done = true; break; }
-                dest.append(QPointF(t - chunkStart, v));
+        // Streaming fallback: matches the original implementation exactly.
+        // Used when binary search isn't safe (pairs not sorted, sizes look
+        // wrong) so the GUI never crashes on an unexpected file layout.
+        auto streamFallback = [&]() {
+            constexpr uint64_t BLOCK_PAIRS = 1 << 15;
+            std::vector<double> buf(BLOCK_PAIRS * 2);
+            file.seek(baseBytes);
+            uint64_t pairsRead = 0;
+            bool done = false;
+            while (!done && pairsRead < totalPairs) {
+                uint64_t thisBlock = std::min<uint64_t>(BLOCK_PAIRS, totalPairs - pairsRead);
+                qint64 got = file.read(reinterpret_cast<char*>(buf.data()),
+                    thisBlock * 2 * sizeof(double));
+                if (got <= 0) break;
+                uint64_t gotPairs = static_cast<uint64_t>(got) / (2 * sizeof(double));
+                for (uint64_t k = 0; k < gotPairs; ++k) {
+                    double t = buf[k * 2];
+                    double v = buf[k * 2 + 1];
+                    if (t < chunkStart) continue;
+                    if (t >= chunkEnd) { done = true; break; }
+                    dest.append(QPointF(t - chunkStart, v));
+                }
+                pairsRead += gotPairs;
             }
-            pairsRead += gotPairs;
+            };
+
+        // Sanity-check file size before any seeks past EOF. QFile::seek does
+        // not fail on an out-of-range position; the failure surfaces later
+        // as a short read, which we treat as "stop" below.
+        const qint64 fileSize = file.size();
+        if (fileSize <= 0 || baseBytes >= fileSize) return;
+        const uint64_t maxPairsByFile =
+            static_cast<uint64_t>((fileSize - baseBytes) / 16);
+        // If the header says there are more pairs than physically fit, the
+        // file is truncated/corrupt -- fall back to streaming, which handles
+        // short reads gracefully.
+        if (totalPairs > maxPairsByFile) { streamFallback(); return; }
+
+        auto readT = [&](uint64_t k, double& out) -> bool {
+            if (!file.seek(baseBytes + static_cast<qint64>(k) * 16)) return false;
+            return file.read(reinterpret_cast<char*>(&out), sizeof(double))
+                == static_cast<qint64>(sizeof(double));
+            };
+
+        // Verify monotone-time assumption with a cheap spot check on the
+        // first and last pair. If they violate it, the binary search would
+        // produce wrong results -- fall back to streaming.
+        {
+            double tFirst, tLast;
+            if (!readT(0, tFirst) || !readT(totalPairs - 1, tLast)) {
+                streamFallback();
+                return;
+            }
+            if (!(tFirst <= tLast)) { streamFallback(); return; }
+            // Whole block lies entirely outside the chunk -- nothing to do.
+            if (tLast < chunkStart || tFirst >= chunkEnd) return;
+        }
+
+        auto lowerBound = [&](double target) -> uint64_t {
+            uint64_t lo = 0, hi = totalPairs;
+            while (lo < hi) {
+                uint64_t mid = lo + (hi - lo) / 2;
+                double t;
+                if (!readT(mid, t)) return totalPairs;
+                if (t < target) lo = mid + 1;
+                else            hi = mid;
+            }
+            return lo;
+            };
+
+        const uint64_t firstPair = lowerBound(chunkStart);
+        const uint64_t endPair = lowerBound(chunkEnd);
+        if (firstPair >= endPair || endPair > totalPairs) return;
+
+        const uint64_t sliceCount = endPair - firstPair;
+
+        // Defensive cap. A typical 8-hour chunk at native ECG rates (250 Hz)
+        // is 7.2M pairs (~115 MB of QPointF storage). 50M pairs would be
+        // 800 MB -- if we see that, something is wrong with the file layout
+        // and streaming is the safer path.
+        constexpr uint64_t MAX_SLICE_PAIRS = 50'000'000;
+        if (sliceCount > MAX_SLICE_PAIRS) { streamFallback(); return; }
+
+        std::vector<double> buf;
+        try {
+            buf.resize(sliceCount * 2);
+        }
+        catch (const std::bad_alloc&) {
+            streamFallback();
+            return;
+        }
+
+        if (!file.seek(baseBytes + static_cast<qint64>(firstPair) * 16)) return;
+        const qint64 want = static_cast<qint64>(sliceCount) * 16;
+        const qint64 got = file.read(reinterpret_cast<char*>(buf.data()), want);
+        if (got <= 0) return;
+        const uint64_t gotPairs = static_cast<uint64_t>(got) / 16;
+        if (gotPairs == 0) return;
+
+        dest.reserve(static_cast<int>(std::min<uint64_t>(gotPairs,
+            static_cast<uint64_t>(std::numeric_limits<int>::max()))));
+        for (uint64_t k = 0; k < gotPairs; ++k) {
+            const double t = buf[k * 2];
+            const double v = buf[k * 2 + 1];
+            dest.append(QPointF(t - chunkStart, v));
         }
         };
 
@@ -1230,17 +1474,19 @@ namespace {
                 : 0.0;
 
             QList<QPointF> pts;
-            pts.reserve(endIdx - startIdx);
+            if (plotSeries) pts.reserve(endIdx - startIdx);
             for (int i = startIdx; i < endIdx; ++i) {
                 const double raw = (*d.data)[i];
-                const double scaled = (raw - center) * yScale + center;
-                pts.append({ static_cast<double>(i) / ecgSR, scaled });
                 // Axis range tracks the UNSCALED values so the chart's
                 // pixel-per-unit stays fixed across gain changes. That's
                 // what lets the trace visibly grow/shrink in pixels when
                 // yScale changes.
                 if (raw < gMin) gMin = raw;
                 if (raw > gMax) gMax = raw;
+                if (plotSeries) {
+                    const double scaled = (raw - center) * yScale + center;
+                    pts.append({ static_cast<double>(i) / ecgSR, scaled });
+                }
             }
             if (plotSeries) {
                 plotSeries->replace(pts);
@@ -1285,10 +1531,12 @@ namespace {
 
 void noise_marking_gui::handle_data_plot() {
     // Clear noise highlights before any chart wipes.
+    // QAreaSeries takes ownership of its upper/lower QLineSeries -- the
+    // QAreaSeries destructor deletes them for us, so don't delete them
+    // explicitly (that's a double-free and was the cause of 0xc0000005
+    // access violations when re-running this on the second-or-later mark).
     for (auto* area : m_highlights) {
         if (area->chart()) area->chart()->removeSeries(area);
-        delete area->upperSeries();
-        delete area->lowerSeries();
         delete area;
     }
     m_highlights.clear();
@@ -1309,15 +1557,29 @@ void noise_marking_gui::handle_data_plot() {
     }
 
     // Wipe charts up front so stale series from other plot modes / inactive
-    // channels don't linger. Preserve any in-progress start markers.
-    auto preservedMarker = [](const ChannelMarkingState& st) -> QList<QAbstractSeries*> {
-        return st.startMarkerLine ? QList<QAbstractSeries*>{ st.startMarkerLine }
-        : QList<QAbstractSeries*>{};
-        };
-    wipeChartContent(ui->ecg_axis_1->chart(), preservedMarker(m_markState_ecg1));
-    wipeChartContent(ui->ecg_axis_2->chart(), preservedMarker(m_markState_ecg2));
-    wipeChartContent(ui->ecg_axis_3->chart(), preservedMarker(m_markState_ecg3));
-    wipeChartContent(ui->ppg_axis->chart(), preservedMarker(m_markState_ppg));
+    // channels don't linger.
+    //
+    // We DON'T try to preserve start-marker lines across the wipe -- they
+    // live on the chart's series list and renderWindowedChart (called by
+    // plotMarkable below) wipes that list unconditionally. So whether we
+    // pass them in a "keep" set or not, they're going to be deleted before
+    // plotMarkable's marker-positioning block runs. Trying to use a
+    // preserved pointer afterwards was reading freed memory -- the 0xc0000005
+    // when scrolling chunks with a start mark in progress.
+    //
+    // Instead, null the dangling pointers now and let restoreMarkingMarkers
+    // (called later in loadChunkFromFile) recreate the marker on the new
+    // charts via showStartMarker.
+    m_markState_ecg1.startMarkerLine = nullptr;
+    m_markState_ecg2.startMarkerLine = nullptr;
+    m_markState_ecg3.startMarkerLine = nullptr;
+    m_markState_ppg.startMarkerLine = nullptr;
+    m_markState_abp.startMarkerLine = nullptr;
+
+    wipeChartContent(ui->ecg_axis_1->chart());
+    wipeChartContent(ui->ecg_axis_2->chart());
+    wipeChartContent(ui->ecg_axis_3->chart());
+    wipeChartContent(ui->ppg_axis->chart());
 
     // resp_cvp_axis is owned here only when no sleep stages -- otherwise
     // setupHypnogram() owns it and we leave it alone.
@@ -1356,29 +1618,23 @@ void noise_marking_gui::handle_data_plot() {
         r.chartView->chart()->setTitleFont(QFont("Arial", 8, QFont::Bold));
         r.chartView->chart()->setTitleBrush(r.color);
 
-        // Render. Markable channels always force a colored line for the
-        // upsampled foreground; raw overlay is solid black (COLOR_RAW_SCATTER).
+        // Render. In Line mode, force a colored line for the upsampled
+        // foreground (with raw black scatter on top). In Scatter mode, drop
+        // the line and let the raw dots be the only foreground -- the
+        // renderWindowedChart decision tree handles both via the two flags
+        // below.
         QList<WindowedSeries> serieses = { { r.data, r.color, &rawData } };
         auto [yMin, yMax] = renderWindowedChart(
             r.chartView, serieses,
             m_currentStartTime, m_windowDuration, globalOffset, sr,
             /*labelsVisible*/ r.chartView == xLabelOwnerRight,
-            /*useScatterMode*/ false,             // ignored when forceLine=true
+            /*useScatterMode*/ m_plotMode == PlotMode::Scatter,
             /*forceLineForUpsampled*/ m_plotMode == PlotMode::Line,
             COLOR_RAW_SCATTER, /*useSingleRawColor*/ true,
             /*yScale*/ yScaleForSignal(label));
 
-        // Place the start-marker line if this channel has one in progress.
-        if (r.state->startMarkerLine && r.state->startMarkerLine->chart() == r.chartView->chart()) {
-            const double localMarkerPos = r.state->globalStartTime - globalOffset;
-            auto* yAxis = qobject_cast<QValueAxis*>(
-                r.chartView->chart()->axes(Qt::Vertical).first());
-            r.state->startMarkerLine->replace(
-                { {localMarkerPos, yAxis->min()}, {localMarkerPos, yAxis->max()} });
-            r.state->startMarkerLine->attachAxis(
-                r.chartView->chart()->axes(Qt::Horizontal).first());
-            r.state->startMarkerLine->attachAxis(yAxis);
-        }
+        // Start markers were nulled before the chart wipe; restoreMarkingMarkers
+        // (called later in loadChunkFromFile) recreates them on the new charts.
         };
 
     plotMarkable("ECG1");
@@ -1674,10 +1930,10 @@ void noise_marking_gui::updateAmpogramCursor() {
 }
 
 void noise_marking_gui::updateNoiseHighlights() {
+    // QAreaSeries takes ownership of its upper/lower QLineSeries; deleting
+    // them explicitly here would double-free when ~QAreaSeries runs.
     for (auto* area : m_highlights) {
         if (area->chart()) area->chart()->removeSeries(area);
-        delete area->upperSeries();
-        delete area->lowerSeries();
         delete area;
     }
     m_highlights.clear();

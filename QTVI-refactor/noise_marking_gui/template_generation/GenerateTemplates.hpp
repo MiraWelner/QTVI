@@ -120,12 +120,17 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
         auto& info = result[i];
 
         const bool ppg_template_good = has_ppg && template_good[i];
+        // ECG quality is independent of PPG availability. Previously this
+        // function gated ECG fill on ppg_template_good, which cleared the
+        // ECG templates for every bin of datasets without PPG (Bittium).
+        // The top-of-file comment block documents the correct gate as
+        // bad_segment, so we use that here.
+        const bool ecg_good = (i < wave_data.size()) && !wave_data[i].bad_segment;
 
-        if (ppg_template_good) {
+        if (ecg_good) {
             fill_channel(info.ch1, ecg_res.ch1, i);
             fill_channel(info.ch2, ecg_res.ch2, i);
             fill_channel(info.ch3, ecg_res.ch3, i);
-            info.ppgTemplate = ppg_templates[i];
 
             if (i < ecg_res.ch1.kept_beats_raw.size()) {
                 info.kept_beats_ch1_raw = std::move(ecg_res.ch1.kept_beats_raw[i]);
@@ -137,6 +142,12 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
             clear_channel(info.ch3);
             info.kept_beats_ch1_raw.clear();
         }
+
+        if (ppg_template_good) {
+            info.ppgTemplate = ppg_templates[i];
+        }
+        // else: info.ppgTemplate stays default-empty, which the viewer
+        // already interprets as "no PPG for this bin".
     }
     return result;
 }

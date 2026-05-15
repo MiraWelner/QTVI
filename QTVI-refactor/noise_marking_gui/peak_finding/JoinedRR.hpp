@@ -1,4 +1,4 @@
-// ============================================================================
+ï»¿// ============================================================================
 // File: JoinedRR.hpp
 // Ensemble R-R detection using multiple weighted algorithms (header-only)
 // ============================================================================
@@ -85,9 +85,14 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, const std::str
     vector<vector<size_t>> output(6);
     vector<double> weights = { 0.75, 0.25, 0.25, 1.25, 1.5, 0.75 };
 
-    output[0] = rpeakdetect(processedEcg, ECG_SAMPLE_RATE, 0.2, 0, fileID).R_index;
-    output[1] = rpeakdetect(processedEcg, ECG_SAMPLE_RATE, 0.1, 0, fileID).R_index;
-    output[2] = rpeakdetect(processedEcg, ECG_SAMPLE_RATE, 0.4, 0, fileID).R_index;
+    // Algorithms 0-2 share threshold-independent preprocessing. Original code
+    // ran rpeakdetect() three times -- bandpass+filter+medfilt1 once each
+    // -- when only the threshold differs. We do the prep once and apply
+    // three thresholds. Output is bit-identical.
+    auto rpd_prep = rpeakdetect_prep(processedEcg, ECG_SAMPLE_RATE, 0, fileID);
+    output[0] = rpeakdetect_apply(rpd_prep, 0.2).R_index;
+    output[1] = rpeakdetect_apply(rpd_prep, 0.1).R_index;
+    output[2] = rpeakdetect_apply(rpd_prep, 0.4).R_index;
 
     PanTompkinResult pt_res = pan_tompkin(ecgSeg, ECG_SAMPLE_RATE, 0, fileID);
     output[3].assign(pt_res.qrs_i_raw.begin(), pt_res.qrs_i_raw.end());
@@ -161,7 +166,7 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, const std::str
 }
 
 /**
- * @brief  Backward-compatible wrapper — returns only peak indices.
+ * @brief  Backward-compatible wrapper ï¿½ returns only peak indices.
  */
 inline vector<size_t> JoinedRR(const vector<double>& ecgSeg, const std::string fileID) {
     return JoinedRR_full(ecgSeg, fileID).peaks;

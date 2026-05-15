@@ -1,4 +1,4 @@
-// ============================================================================
+ï»¿// ============================================================================
 // File: FilterUtils.hpp
 // Digital filtering utilities
 // Includes: filter, filtfilt, butter (lowpass/highpass/bandpass), conv, medfilt1
@@ -16,7 +16,7 @@ namespace filter_detail {
 
     using cd = std::complex<double>;
 
-    // Polynomial from complex roots — matches MATLAB poly(roots)
+    // Polynomial from complex roots ï¿½ matches MATLAB poly(roots)
     inline vector<double> poly_from_roots(const vector<cd>& roots) {
         int n = (int)roots.size();
         vector<cd> c(n + 1, cd(0.0, 0.0));
@@ -116,7 +116,7 @@ namespace filter_detail {
 } // namespace filter_detail
 
 // ============================================================================
-// Direct Form II Transposed IIR filter — matches y = filter(b, a, x)
+// Direct Form II Transposed IIR filter ï¿½ matches y = filter(b, a, x)
 // ============================================================================
 inline vector<double> filter(const vector<double>& b, const vector<double>& a, const vector<double>& x) {
     if (x.empty() || a.empty()) return {};
@@ -124,6 +124,29 @@ inline vector<double> filter(const vector<double>& b, const vector<double>& a, c
     size_t nb = b.size();
     size_t na = a.size();
     size_t n_order = std::max(nb, na);
+
+    // Fast path: pure FIR with uniform b. Result = (b[0]) * causal sliding sum
+    // of x over the last nb samples. This is the case for rpeakdetect step 5
+    // (filter(d_kernel, {1.0}, sqr) with d_kernel = vector(W, 1.0)). The general
+    // direct-form-II-transposed loop above would do O(N*W) work; the sliding
+    // sum is O(N). Results match the original within FP reorder noise.
+    if (na == 1 && nb >= 2 && a[0] != 0.0) {
+        bool uniform = true;
+        for (size_t j = 1; j < nb; ++j) {
+            if (b[j] != b[0]) { uniform = false; break; }
+        }
+        if (uniform) {
+            const double c = b[0] / a[0];
+            vector<double> y(n);
+            double s = 0.0;
+            for (size_t i = 0; i < n; ++i) {
+                s += x[i];
+                if (i >= nb) s -= x[i - nb];
+                y[i] = c * s;
+            }
+            return y;
+        }
+    }
 
     vector<double> y(n);
     vector<double> z(n_order, 0.0);
@@ -259,10 +282,43 @@ inline void butter(int N, const vector<double>& Wn, vector<double>& b, vector<do
 
 // ============================================================================
 // Full convolution: output length = a.size() + b.size() - 1
+// Includes a fast path for uniform kernels (all elements equal): a uniform
+// kernel of width W reduces convolution to a scaled sliding sum, O(N) instead
+// of O(N*W). Results agree with the naive form to within floating-point
+// reorder noise (~1e-15 relative).
 // ============================================================================
 inline vector<double> conv(const vector<double>& a, const vector<double>& b) {
     if (a.empty() || b.empty()) return {};
-    vector<double> res(a.size() + b.size() - 1, 0.0);
+
+    // Fast path: uniform kernel detection. Cheap to check, huge payoff
+    // for the moving-average kernels in pan_tompkin and rpeakdetect.
+    auto try_uniform = [](const vector<double>& sig, const vector<double>& kernel,
+        vector<double>& out) -> bool {
+            if (kernel.size() < 2) return false;
+            const double c = kernel[0];
+            for (size_t i = 1; i < kernel.size(); ++i) {
+                if (kernel[i] != c) return false;
+            }
+            const size_t N = sig.size();
+            const size_t W = kernel.size();
+            const size_t outN = N + W - 1;
+            out.assign(outN, 0.0);
+            // Sliding sum: at output index k, accumulate sig[max(0,k-W+1)..min(N-1,k)]
+            double s = 0.0;
+            for (size_t k = 0; k < outN; ++k) {
+                if (k < N) s += sig[k];
+                if (k >= W) s -= sig[k - W];
+                out[k] = c * s;
+            }
+            return true;
+        };
+
+    vector<double> res;
+    if (try_uniform(a, b, res)) return res;
+    if (try_uniform(b, a, res)) return res;
+
+    // General path.
+    res.assign(a.size() + b.size() - 1, 0.0);
     for (size_t i = 0; i < a.size(); ++i)
         for (size_t j = 0; j < b.size(); ++j)
             res[i + j] += a[i] * b[j];

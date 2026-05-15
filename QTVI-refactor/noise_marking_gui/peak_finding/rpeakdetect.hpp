@@ -26,64 +26,98 @@ struct RPeakDetectResult {
     vector<double> S_amp;
 };
 
-inline RPeakDetectResult rpeakdetect(const vector<double>& data,
-    double samp_freq = 256.0,
-    double thresh = 0.2,
-    int testmode = 0,
-    std::string fileID = "") {
-    RPeakDetectResult result;
-    if (data.size() < 10) return result;
+/**
+ * @brief Threshold-independent preprocessing for rpeakdetect.
+ *
+ * Steps 1-7 of the original rpeakdetect() (detrend, bandpass, diff, square,
+ * integration, medfilt1, delay removal, max_h estimation) are identical
+ * across calls that only differ in `thresh`. Splitting them out lets a caller
+ * (e.g. JoinedRR, which currently invokes rpeakdetect 3 times with thresh
+ * 0.2 / 0.1 / 0.4) do this work once and reuse it.
+ *
+ * The returned struct carries everything rpeakdetect_apply() needs to finish
+ * detection at any threshold.
+ */
+struct RPeakDetectPrep {
+    vector<double> bpf;     // bandpass-filtered, detrended signal
+    vector<double> mdfint;  // integration output after delay removal
+    double max_h = 0.0;     // max of mdfint over the middle 50% of len
+    size_t len = 0;         // original sqr length (used for threshold-region indexing)
+    double samp_freq = 0.0;
+    bool ok = false;
+};
 
-    size_t n_orig = data.size();
+inline RPeakDetectPrep rpeakdetect_prep(const vector<double>& data,
+    double samp_freq = 256.0,
+    int /*testmode*/ = 0,
+    std::string /*fileID*/ = "")
+{
+    RPeakDetectPrep prep;
+    prep.samp_freq = samp_freq;
+    if (data.size() < 10) return prep;
+
     std::vector<double> x = data;
 
-    // 1. Detrend: x = x - mean(x)
+    // 1. Detrend
     double mu = mean(x);
     for (auto& val : x) val -= mu;
 
     // 2. Bandpass filtering
-    std::vector<double> bpf = bandpass_filtfilt(2, 0.05, 100.0, 1000.0, x);
+    prep.bpf = bandpass_filtfilt(2, 0.05, 100.0, 1000.0, x);
 
     // 3. Differentiation
-    std::vector<double> dff = diff(bpf);
+    std::vector<double> dff = diff(prep.bpf);
 
     // 4. Squaring
     std::vector<double> sqr(dff.size());
-    for (size_t i = 0; i < dff.size(); ++i) {
-        sqr[i] = dff[i] * dff[i];
-    }
-    size_t len = sqr.size();
+    for (size_t i = 0; i < dff.size(); ++i) sqr[i] = dff[i] * dff[i];
+    prep.len = sqr.size();
 
     // 5. Integration (moving sum + median filter)
     int win_size = (samp_freq >= 256.0) ? (int)std::round(7.0 * samp_freq / 256.0) : 7;
     std::vector<double> d_kernel(win_size, 1.0);
     std::vector<double> filtered_sqr = filter(d_kernel, { 1.0 }, sqr);
-    std::vector<double> mdfint = medfilt1(filtered_sqr, 10);
+    prep.mdfint = medfilt1(filtered_sqr, 10);
 
     // 6. Remove filter delay
     int delay = (int)std::ceil((double)win_size / 2.0);
-    if (delay > 1 && (size_t)delay <= mdfint.size()) {
-        mdfint.erase(mdfint.begin(), mdfint.begin() + (delay - 1));
+    if (delay > 1 && (size_t)delay <= prep.mdfint.size()) {
+        prep.mdfint.erase(prep.mdfint.begin(), prep.mdfint.begin() + (delay - 1));
     }
 
-    // 7. Threshold from middle 50% of signal
-    int start_search = std::max(0, std::min((int)std::round((double)len / 4.0) - 1, (int)mdfint.size() - 1));
-    int end_search = std::max(start_search, std::min((int)std::round(3.0 * (double)len / 4.0) - 1, (int)mdfint.size() - 1));
-
-    double max_h = 0.0;
+    // 7. Threshold reference from middle 50% of signal
+    int start_search = std::max(0, std::min((int)std::round((double)prep.len / 4.0) - 1,
+        (int)prep.mdfint.size() - 1));
+    int end_search = std::max(start_search,
+        std::min((int)std::round(3.0 * (double)prep.len / 4.0) - 1,
+            (int)prep.mdfint.size() - 1));
+    prep.max_h = 0.0;
     for (int i = start_search; i <= end_search; ++i) {
-        if (std::isfinite(mdfint[i]) && mdfint[i] > max_h) {
-            max_h = mdfint[i];
+        if (std::isfinite(prep.mdfint[i]) && prep.mdfint[i] > prep.max_h) {
+            prep.max_h = prep.mdfint[i];
         }
     }
+    prep.ok = true;
+    return prep;
+}
+
+/**
+ * @brief Threshold-dependent portion: steps 8-12 of the original rpeakdetect.
+ *        Uses the prep struct produced by rpeakdetect_prep().
+ */
+inline RPeakDetectResult rpeakdetect_apply(const RPeakDetectPrep& prep, double thresh) {
+    RPeakDetectResult result;
+    if (!prep.ok) return result;
+
+    const auto& mdfint = prep.mdfint;
+    const auto& bpf = prep.bpf;
+    const double samp_freq = prep.samp_freq;
 
     // 8. Identify candidate regions above threshold
     std::vector<int> poss_reg(mdfint.size(), 0);
-    double limit = thresh * max_h;
+    double limit = thresh * prep.max_h;
     for (size_t i = 0; i < mdfint.size(); ++i) {
-        if (!std::isnan(mdfint[i]) && mdfint[i] > limit) {
-            poss_reg[i] = 1;
-        }
+        if (!std::isnan(mdfint[i]) && mdfint[i] > limit) poss_reg[i] = 1;
     }
 
     // 9. Find region boundaries (rising/falling edges)
@@ -101,14 +135,14 @@ inline RPeakDetectResult rpeakdetect(const vector<double>& data,
     size_t num_segs = std::min(left.size(), right.size());
     std::vector<size_t> maxloc;
     std::vector<double> maxval;
+    maxloc.reserve(num_segs);
+    maxval.reserve(num_segs);
 
     for (size_t i = 0; i < num_segs; ++i) {
         int l = left[i] - 1;
         int r = right[i] - 1;
-
         double cur_max = -1e30;
         int cur_max_i = l;
-
         for (int k = l; k <= r; ++k) {
             if (k >= 0 && k < (int)bpf.size() && !std::isnan(bpf[k])) {
                 if (bpf[k] > cur_max) { cur_max = bpf[k]; cur_max_i = k; }
@@ -118,19 +152,33 @@ inline RPeakDetectResult rpeakdetect(const vector<double>& data,
         maxloc.push_back((size_t)cur_max_i);
     }
 
-    // 11. Assign results (polarity is handled upstream, always use maxima as R-peaks)
+    // 11. Assign results
     result.R_index = maxloc;
     result.R_amp = maxval;
-
     auto get_time = [&](size_t idx) { return (double)(idx + 1) / samp_freq; };
+    result.R_t.reserve(maxloc.size());
     for (auto loc : maxloc) result.R_t.push_back(get_time(loc));
 
-    // 12. HRV: diff of R-peak times
+    // 12. HRV
     if (result.R_t.size() > 1) {
-        for (size_t i = 0; i < result.R_t.size() - 1; ++i) {
+        result.hrv.reserve(result.R_t.size() - 1);
+        for (size_t i = 0; i + 1 < result.R_t.size(); ++i)
             result.hrv.push_back(result.R_t[i + 1] - result.R_t[i]);
-        }
     }
-
     return result;
+}
+
+/**
+ * @brief Backward-compatible wrapper: identical signature and behavior to the
+ *        original rpeakdetect(). Internally calls prep + apply.
+ */
+inline RPeakDetectResult rpeakdetect(const vector<double>& data,
+    double samp_freq = 256.0,
+    double thresh = 0.2,
+    int testmode = 0,
+    std::string fileID = "")
+{
+    auto prep = rpeakdetect_prep(data, samp_freq, testmode, fileID);
+    if (!prep.ok) return RPeakDetectResult{};
+    return rpeakdetect_apply(prep, thresh);
 }

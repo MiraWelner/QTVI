@@ -6,6 +6,8 @@ MATLAB (_wave_data.mat), and Deep's whole-case _wholecaseRRiQTi.csv.
 
 import csv
 import math as _math
+import os
+import re
 import struct
 from pathlib import Path
 
@@ -25,18 +27,13 @@ MAT_DIR = Path(
 CSV_DIR = Path(
     r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\mesa_rloc_deep"
 )
-OUTPUT_DIR = Path(r"D:\USERS\MiraWelner\QTVI\testing\4_wave_finding_tests\results")
+OUTPUT_DIR = Path(r"D:\USERS\MiraWelner\QTVI\testing\r_peak_finding_tests\results")
 
 SR = 1000.0
 MAX_SANE = 50_000_000
-PASSTHROUGH_NUM_CHANNELS = 41
+PASSTHROUGH_NUM_CHANNELS = 40
 
-# Deep's data is stored as one whole-case tab-separated CSV per subject,
-# e.g. 3010023_20110817_part1_ECG_fs1000_wholecaseRRiQTi.csv. Columns include:
-#     timestamp (i) ; seconds from 1st Midnight
-# We read the absolute timestamp column, subtract the first timestamp so the
-# series starts at zero, then convert to sample indices (multiply by SR).
-# The peak series is then sliced per bin using Mira's bin signal lengths.
+# Deep's data is stored as one whole-case tab-separated CSV per subject.
 DEEP_FILE_SUFFIX = "_wholecaseRRiQTi.csv"
 
 # Per-position penalty (in seconds) added in quadrature for every entry
@@ -49,88 +46,164 @@ MATCH_TOLERANCE_S = 0.15
 
 
 # ============================================================================
+# Subject ID normalization
+# ============================================================================
+#
+# Mira's bin files are named {id}_{date}_{hz}_{binlength}_wave_markings.bin
+# (e.g. "3010023_20110817_1000_005_wave_markings.bin"). Daniel's .mat and
+# Deep's whole-case CSV both key off the {id}_{date} prefix only. We
+# normalize Mira's stems down to {id}_{date} so set intersections actually
+# populate when Mira's bin-length or sample-rate suffix varies across runs.
+
+_MIRA_ID_RE = re.compile(r"^(\d+_\d+)")
+
+
+def normalize_mira_id(stem_without_suffix):
+    """Extract '{id}_{date}' from a Mira file stem.
+
+    Input is the filename stem with '_wave_markings' already removed,
+    e.g. '3010023_20110817_1000_005'. Returns '3010023_20110817'.
+    Falls back to the input string when the pattern doesn't match.
+    """
+    m = _MIRA_ID_RE.match(stem_without_suffix)
+    return m.group(1) if m else stem_without_suffix
+
+
+# ============================================================================
 # Read C++ _wave_markings.bin
+#
+# Port of compare_single.py's _read_bin_contents, which is known to parse
+# these files correctly (verified by recovering ch1.raw peaks on real data).
+# Every bin is parsed in full -- no fast-skip path, no MAX_SANE guards that
+# silently swallow desyncs. Output dict is reshaped at the end to match
+# compare_wave_bounds.py's expected field names (ecgRIndex, ppgMinAmps,
+# ppgSignal, ecgSignal, pairs, ppg_bin_indexs, ecg_bin_indexs).
 # ============================================================================
 
 
+def _read_bin_contents(f, b, num_passthrough):
+    """Parse one bin starting at f's current position. Mirrors the C++ writer
+    field-for-field. Throws if anything goes wrong -- no silent swallowing."""
+    import struct as _s
+
+    def read_u64():
+        data = f.read(8)
+        if len(data) != 8:
+            raise EOFError("short read on uint64")
+        return _s.unpack("<Q", data)[0]
+
+    def read_idx():
+        """Read a 1-based idx array, return 0-based intp."""
+        sz = read_u64()
+        if sz == 0:
+            return np.array([], dtype=np.intp)
+        raw = np.frombuffer(f.read(sz * 8), dtype=np.uint64).copy()
+        return (raw - 1).astype(np.intp)
+
+    def read_signal():
+        sz = read_u64()
+        if sz == 0:
+            return np.array([], dtype=np.float64)
+        return np.frombuffer(f.read(sz * 8), dtype=np.float64).copy()
+
+    def skip_signal():
+        sz = read_u64()
+        f.seek(sz * 8, 1)
+
+    def skip_raw_pairs():
+        n = read_u64()
+        f.seek(n * 16, 1)
+
+    def read_pair_vec():
+        sz = read_u64()
+        if sz == 0:
+            return np.empty((0, 2), dtype=np.uint64)
+        return np.frombuffer(f.read(sz * 16), dtype=np.uint64).reshape(sz, 2).copy()
+
+    # 9 R-peak idx arrays (3 channels x 3 methods)
+    b["ch1_raw_idx"] = read_idx()
+    b["ch1_sq_idx"] = read_idx()
+    b["ch1_abs_idx"] = read_idx()
+    b["ch2_raw_idx"] = read_idx()
+    b["ch2_sq_idx"] = read_idx()
+    b["ch2_abs_idx"] = read_idx()
+    b["ch3_raw_idx"] = read_idx()
+    b["ch3_sq_idx"] = read_idx()
+    b["ch3_abs_idx"] = read_idx()
+
+    # 2 PPG idx arrays
+    b["ppgMaxAmps"] = read_idx()
+    b["ppgMinAmps"] = read_idx()
+
+    # 4 raw signals
+    b["ppgSignal"] = read_signal()
+    b["ecgSignal"] = read_signal()
+    skip_signal()  # ecgSignal2
+    skip_signal()  # ecgSignal3
+
+    # 6 preprocessed signals
+    for _ in range(6):
+        skip_signal()
+
+    # 9 noise flag bytes
+    f.read(9)
+
+    # Pairs (int64 with -1 sentinel)
+    num_pairs = read_u64()
+    if num_pairs > 0:
+        raw = (
+            np.frombuffer(f.read(num_pairs * 16), dtype=np.int64)
+            .reshape(num_pairs, 2)
+            .copy()
+        )
+        b["pairs"] = np.where(raw == -1, -1.0, raw - 1).astype(np.float64)
+    else:
+        b["pairs"] = np.empty((0, 2), dtype=np.float64)
+
+    # ppg_bin_indexs, ecg_bin_indexs (uint64 pairs)
+    b["ppg_bin_indexs"] = read_pair_vec()
+    b["ecg_bin_indexs"] = read_pair_vec()
+
+    # N pass-through channels: { upsampled doubles, raw (t,v) pair doubles }
+    for _ in range(num_passthrough):
+        skip_signal()
+        skip_raw_pairs()
+
+
 def read_bin_file(path):
+    """Read all bins from a _wave_markings.bin. Mirrors compare_single.py's
+    reader (which is known to parse these files correctly), then reshapes
+    each bin to the field names this script expects downstream."""
     results = []
+    file_size = os.path.getsize(path)
+
     with open(path, "rb") as f:
-
-        def read_u64():
-            return struct.unpack("<Q", f.read(8))[0]
-
-        def read_idx():
-            sz = read_u64()
-            if sz > MAX_SANE or sz == 0:
-                return np.array([], dtype=np.intp)
-            return (np.frombuffer(f.read(sz * 8), dtype=np.uint64).copy() - 1).astype(
-                np.intp
-            )
-
-        def skip_idx():
-            sz = read_u64()
-            if sz <= MAX_SANE:
-                f.seek(sz * 8, 1)
-
-        def read_signal():
-            sz = read_u64()
-            if sz > MAX_SANE or sz == 0:
-                return np.array([], dtype=np.float64)
-            return np.frombuffer(f.read(sz * 8), dtype=np.float64).copy()
-
-        def skip_signal():
-            sz = read_u64()
-            if sz <= MAX_SANE:
-                f.seek(sz * 8, 1)
-
-        def skip_raw_pairs():
-            n_pairs = read_u64()
-            if n_pairs <= MAX_SANE:
-                f.seek(n_pairs * 16, 1)
-
-        def read_pair_vec():
-            sz = read_u64()
-            if sz > MAX_SANE or sz == 0:
-                return np.empty((0, 2), dtype=np.uint64)
-            return np.frombuffer(f.read(sz * 16), dtype=np.uint64).reshape(sz, 2).copy()
-
-        num_bins = read_u64()
+        num_bins = struct.unpack("<Q", f.read(8))[0]
         if num_bins > 100_000:
             return results
 
-        for _ in range(num_bins):
-            b = {}
-            b["ecgRIndex"] = read_idx()
-            for _ in range(9):
-                skip_idx()
-            b["ppgMinAmps"] = read_idx()
-            b["ppgSignal"] = read_signal()
-            b["ecgSignal"] = read_signal()
-            skip_signal()
-            skip_signal()
-            for _ in range(6):
-                skip_signal()
-            f.read(9)
+        for bin_i in range(num_bins):
+            if f.tell() >= file_size:
+                break
+            raw = {}
+            try:
+                _read_bin_contents(f, raw, PASSTHROUGH_NUM_CHANNELS)
+            except (ValueError, struct.error, EOFError) as e:
+                print(f"  ERROR parsing bin {bin_i} in {path}: {e}")
+                break
 
-            num_pairs = read_u64()
-            if 0 < num_pairs < MAX_SANE:
-                raw = (
-                    np.frombuffer(f.read(num_pairs * 16), dtype=np.int64)
-                    .reshape(num_pairs, 2)
-                    .copy()
-                )
-                b["pairs"] = np.where(raw == -1, -1.0, raw - 1).astype(np.float64)
-            else:
-                b["pairs"] = np.empty((0, 2), dtype=np.float64)
-
-            read_pair_vec()
-            read_pair_vec()
-
-            for _ in range(PASSTHROUGH_NUM_CHANNELS):
-                skip_signal()
-                skip_raw_pairs()
-
+            # Reshape to the field names the rest of this script expects.
+            # ch1.raw is the primary ECG R-peak source (matches Daniel's
+            # ecgRIndex semantics).
+            b = {
+                "ecgRIndex": raw["ch1_raw_idx"],
+                "ppgMinAmps": raw["ppgMinAmps"],
+                "ppgSignal": raw["ppgSignal"],
+                "ecgSignal": raw["ecgSignal"],
+                "pairs": raw["pairs"],
+                "ppg_bin_indexs": raw["ppg_bin_indexs"],
+                "ecg_bin_indexs": raw["ecg_bin_indexs"],
+            }
             results.append(b)
 
     return results
@@ -187,19 +260,17 @@ def read_mat_file(path):
 #
 # Deep's pipeline emits one tab-separated file per subject covering the whole
 # recording. We read the absolute timestamp column ("seconds from 1st
-# Midnight"), subtract the first timestamp so the series starts at zero, then
-# convert to sample indices by multiplying by SR. The resulting global peak
-# array is sliced per bin using Mira's bin signal lengths.
+# Midnight") and convert to sample indices by multiplying by SR. The
+# resulting global peak array is sliced per bin using whichever anchor
+# source (Mira or Daniel) is available for the current pair.
 
 
 def _parse_deep_timestamps_s(csv_path, debug=False):
     """Parse Deep's whole-case CSV and return absolute timestamps in seconds.
 
-    The file is tab-separated. Column 1 (0-based) is
-    "timestamp (i) ; seconds from 1st Midnight". The header row is
-    skipped automatically because its cell fails to float-parse.
-
-    Returns a numpy array of timestamps in seconds (not yet zeroed).
+    Column 1 (0-based) is "timestamp (i) ; seconds from 1st Midnight".
+    The header row is skipped automatically because its cell fails to
+    float-parse.
     """
     timestamps = []
     n_skipped = 0
@@ -216,7 +287,6 @@ def _parse_deep_timestamps_s(csv_path, debug=False):
             try:
                 timestamps.append(float(parts[1].strip()))
             except (ValueError, IndexError):
-                # Header row or malformed cell — skip.
                 n_skipped += 1
                 continue
 
@@ -230,12 +300,7 @@ def _parse_deep_timestamps_s(csv_path, debug=False):
 
 
 def _derive_deep_global_peaks(csv_path, fs):
-    """Return Deep's R-peak indices in global sample coordinates.
-
-    Reads absolute timestamps (seconds from first midnight), converts to sample indices by multiplying by fs.
-    Both Deep and Mira use seconds-from-midnight as their time reference,
-    so no zeroing offset is needed.
-    """
+    """Return Deep's R-peak indices in global sample coordinates."""
     if csv_path is None:
         return np.array([], dtype=np.intp)
     csv_path = Path(csv_path)
@@ -249,18 +314,33 @@ def _derive_deep_global_peaks(csv_path, fs):
     return np.round(timestamps_s * fs).astype(np.intp)
 
 
-def read_deep_file(csv_path, mira_bins, n_bins_expected):
+def _bin_start_sample(b):
+    """Return the bin's start sample in the original recording, or None.
+
+    Mira's bin files carry ecg_bin_indexs as pairs of (start, end) sample
+    indices in the source recording. The first pair's start is the bin's
+    anchor. Daniel's .mat doesn't expose this, in which case we return
+    None and the caller falls back to a running-sum offset.
+    """
+    eb = b.get("ecg_bin_indexs")
+    if eb is None or len(eb) == 0:
+        return None
+    try:
+        return int(eb[0][0])
+    except (IndexError, TypeError):
+        return None
+
+
+def read_deep_file(csv_path, anchor_bins, n_bins_expected):
     """Return a per-bin list of Deep dicts, sliced from the whole-case CSV.
 
     csv_path:        Path to the *_wholecaseRRiQTi.csv (or None / missing).
-    mira_bins:       Mira's bin list, used to compute each bin's start and
-                     length in the global sample timeline.
-    n_bins_expected: Number of bins to return. Trailing bins beyond Mira's
-                     range are returned empty.
-
-    Each output dict mirrors the schema from read_bin_file / read_mat_file.
-    Only ecgRIndex / ecgRIndex_f are populated; signals are empty (Deep's
-    file carries no waveform).
+    anchor_bins:     Bin list from whichever source anchors the comparison
+                     (Mira preferred, since it carries ecg_bin_indexs;
+                     Daniel works too but assumes contiguous bins).
+                     Each bin's signal length determines how Deep's global
+                     peak array is sliced.
+    n_bins_expected: Number of bins to return.
     """
     empty = {
         "ecgRIndex": np.array([], dtype=np.intp),
@@ -270,27 +350,30 @@ def read_deep_file(csv_path, mira_bins, n_bins_expected):
         "ppgSignal": np.array([], dtype=np.float64),
     }
 
-    if csv_path is None or not Path(csv_path).is_file() or not mira_bins:
+    if csv_path is None or not Path(csv_path).is_file() or not anchor_bins:
         return [dict(empty) for _ in range(n_bins_expected)]
 
     global_peaks = _derive_deep_global_peaks(csv_path, SR)
     if len(global_peaks) == 0:
         return [dict(empty) for _ in range(n_bins_expected)]
 
-    # Build bin start offsets from Mira's signal lengths.
+    # Build bin start offsets. Prefer the anchor's recorded ecg_bin_indexs
+    # (which give the true start sample in the source recording); fall back
+    # to a running sum of signal lengths when those aren't available.
     bin_offsets = []
     cum = 0
-    for b in mira_bins:
-        bin_offsets.append(cum)
+    for b in anchor_bins:
+        start = _bin_start_sample(b)
+        bin_offsets.append(start if start is not None else cum)
         cum += len(b.get("ecgSignal", []))
 
     results = []
     for bin_idx in range(n_bins_expected):
-        if bin_idx >= len(mira_bins):
+        if bin_idx >= len(anchor_bins):
             results.append(dict(empty))
             continue
         bin_start = bin_offsets[bin_idx]
-        bin_length = len(mira_bins[bin_idx].get("ecgSignal", []))
+        bin_length = len(anchor_bins[bin_idx].get("ecgSignal", []))
         if bin_length <= 0:
             results.append(dict(empty))
             continue
@@ -955,10 +1038,10 @@ def _make_log_y_axis(lines, cx, cy, chart_h, max_count):
             f'<line x1="{cx - 3}" y1="{yp:.1f}" x2="{cx + 1}" y2="{yp:.1f}" '
             f'stroke="#333" stroke-width="1"/>'
         )
+        extra = ' fill="#e74c3c" font-weight="bold"' if is_max else ""
         lines.append(
             f'<text x="{cx - 5}" y="{yp + 4:.1f}" '
-            f'text-anchor="end" class="tick"'
-            f"{' fill="#e74c3c" font-weight="bold"' if is_max else ''}>"
+            f'text-anchor="end" class="tick"{extra}>'
             f"{tv}</text>"
         )
         if tv > 0:
@@ -1067,7 +1150,6 @@ def _append_zero_ref_panel(
 
 
 def write_combined_histogram(path, results, field, chart_title, num_buckets=80):
-    """One big histogram pooling `field` across every bin of every subject."""
     all_vals = []
     for fr in results:
         for b in fr["bins"]:
@@ -1191,7 +1273,7 @@ def write_combined_histogram(path, results, field, chart_title, num_buckets=80):
 
 
 # ============================================================================
-# Per-subject histograms (unified for both RR and R-loc)
+# Per-subject histograms
 # ============================================================================
 
 
@@ -1204,9 +1286,6 @@ def write_per_subject_histograms(
     ref_color="#2ecc71",
     num_buckets=50,
 ):
-    """Per-subject grid (5 columns) of `field` (e.g. 'rr_ssd' or 'rloc_ssd'),
-    plus a zero-difference reference panel in the next free slot.
-    Bin 0 collects only exact-zero values; remaining bins divide (0, max]."""
     if not results:
         return
 
@@ -1399,193 +1478,6 @@ def write_per_subject_histograms(
 
 
 # ============================================================================
-# Per-bin offset scatter
-# ============================================================================
-
-
-def write_allfiles_offset_scatter(path, results):
-    if not results:
-        return
-
-    num_files = len(results)
-    n_cols = 5
-    n_rows = (num_files + n_cols - 1) // n_cols
-
-    cell_w, cell_h = 260, 275
-    pad_l, pad_r, pad_t, pad_b = 55, 25, 48, 50
-    chart_w = cell_w - pad_l - pad_r
-    chart_h = cell_h - pad_t - pad_b
-
-    svg_w = n_cols * cell_w
-    svg_h = n_rows * cell_h + 55
-
-    lines = []
-    lines.append(
-        f'<svg width="{svg_w}" height="{svg_h}" xmlns="http://www.w3.org/2000/svg">'
-    )
-    lines.append(
-        "<style>\n"
-        "  text { font-family: Consolas, 'Courier New', monospace; }\n"
-        "  .title { font-size: 16px; font-weight: bold; }\n"
-        "  .subtitle { font-size: 12px; font-weight: bold; }\n"
-        "  .stats { font-size: 12px; fill: #555; }\n"
-        "  .tick { font-size: 11px; }\n"
-        "  .axis-label { font-size: 12px; }\n"
-        "  .y-axis-label { font-size: 12px; }\n"
-        "  .empty { font-size: 12px; fill: #999; }\n"
-        "</style>"
-    )
-    lines.append('<rect width="100%" height="100%" fill="#fcfcfc"/>')
-    lines.append(
-        f'<text x="{svg_w // 2}" y="30" text-anchor="middle" class="title">'
-        f"Per-Bin R-Location Offset (C++ minus MATLAB) for all {num_files} files</text>"
-    )
-
-    for f_idx, fr in enumerate(results):
-        col = f_idx % n_cols
-        row = f_idx // n_cols
-        ox = col * cell_w
-        oy = row * cell_h + 50
-
-        file_id = fr["id"]
-        all_bins = fr["bins"]
-
-        points = []
-        for b in all_bins:
-            off = b.get("bin_offset_s", float("nan"))
-            if not (off != off):
-                points.append((b["bin"], off))
-
-        lines.append(
-            f'<text x="{ox + cell_w // 2}" y="{oy + 14}" '
-            f'text-anchor="middle" class="subtitle">{file_id}</text>'
-        )
-
-        if not points:
-            lines.append(
-                f'<text x="{ox + cell_w // 2}" y="{oy + cell_h // 2}" '
-                f'text-anchor="middle" class="empty">(no data)</text>'
-            )
-            continue
-
-        n_bins_total = len(all_bins)
-        offsets = [p[1] for p in points]
-        sentinel = -0.1
-        display_offsets = [0.0 if v == sentinel else v for v in offsets]
-        real_offsets = [v for v in offsets if v != sentinel]
-
-        y_min = min(display_offsets)
-        y_max = max(display_offsets)
-        if y_max - y_min < 1e-9:
-            y_min -= 0.005
-            y_max += 0.005
-        y_lo = y_min - (y_max - y_min) * 0.15
-        y_hi = y_max + (y_max - y_min) * 0.15
-
-        def to_y(val):
-            return oy + pad_t + chart_h - (val - y_lo) / (y_hi - y_lo) * chart_h
-
-        def to_x(bin_idx):
-            return ox + pad_l + bin_idx / max(n_bins_total - 1, 1) * chart_w
-
-        cx_ax = ox + pad_l
-        cy_ax = oy + pad_t
-
-        lines.append(
-            f'<line x1="{cx_ax}" y1="{cy_ax}" x2="{cx_ax}" y2="{cy_ax + chart_h}" '
-            f'stroke="#333" stroke-width="1"/>'
-        )
-        lines.append(
-            f'<line x1="{cx_ax}" y1="{cy_ax + chart_h}" '
-            f'x2="{cx_ax + chart_w}" y2="{cy_ax + chart_h}" '
-            f'stroke="#333" stroke-width="1"/>'
-        )
-
-        lines.append(
-            f'<text x="{ox + 14}" y="{cy_ax + chart_h // 2}" '
-            f'text-anchor="middle" class="y-axis-label" '
-            f'transform="rotate(-90 {ox + 14},{cy_ax + chart_h // 2})">'
-            f"offset (s)</text>"
-        )
-
-        n_y_ticks = 4
-        y_range = y_max - y_min
-        for t in range(n_y_ticks + 1):
-            val = y_min + y_range * t / n_y_ticks
-            yp = to_y(val)
-            lines.append(
-                f'<line x1="{cx_ax - 3}" y1="{yp:.1f}" x2="{cx_ax + chart_w}" y2="{yp:.1f}" '
-                f'stroke="#eee" stroke-width="0.5"/>'
-            )
-            lines.append(
-                f'<text x="{cx_ax - 5}" y="{yp + 3:.1f}" '
-                f'text-anchor="end" class="tick">{val:.6f}</text>'
-            )
-
-        REF_LINE = -0.0015
-        y_ref_raw = to_y(REF_LINE)
-        y_ref_px = max(oy + pad_t, min(oy + pad_t + chart_h, y_ref_raw))
-        lines.append(
-            f'<line x1="{cx_ax}" y1="{y_ref_px:.1f}" x2="{cx_ax + chart_w}" y2="{y_ref_px:.1f}" '
-            f'stroke="#e67e22" stroke-width="1.2" stroke-dasharray="4,3"/>'
-        )
-        lines.append(
-            f'<text x="{cx_ax + chart_w - 2}" y="{y_ref_px - 3:.1f}" '
-            f'text-anchor="end" class="tick" fill="#e67e22">-0.0015s</text>'
-        )
-
-        n_x_ticks = min(5, n_bins_total)
-        for t in range(n_x_ticks + 1):
-            bin_i = int(round((n_bins_total - 1) * t / n_x_ticks))
-            xp = to_x(bin_i)
-            lines.append(
-                f'<text x="{xp:.1f}" y="{cy_ax + chart_h + 14}" '
-                f'text-anchor="middle" class="tick">{bin_i}</text>'
-            )
-
-        lines.append(
-            f'<text x="{cx_ax + chart_w // 2}" y="{cy_ax + chart_h + 28}" '
-            f'text-anchor="middle" class="axis-label">bin</text>'
-        )
-
-        n_inconsistent = sum(1 for v in offsets if v == sentinel)
-        n_consistent = len(offsets) - n_inconsistent
-        med_off = float(np.median(real_offsets)) if real_offsets else float("nan")
-        lines.append(
-            f'<text x="{ox + cell_w // 2}" y="{oy + 26}" '
-            f'text-anchor="middle" class="stats">'
-            f"ok={n_consistent}  incons={n_inconsistent}  med={med_off:.6f}s</text>"
-        )
-
-        if y_lo < 0 < y_hi:
-            y_zero = to_y(0.0)
-            lines.append(
-                f'<line x1="{cx_ax}" y1="{y_zero:.1f}" x2="{cx_ax + chart_w}" y2="{y_zero:.1f}" '
-                f'stroke="#aaa" stroke-width="0.8" stroke-dasharray="2,2"/>'
-            )
-
-        for (bin_i, off), disp in zip(points, display_offsets):
-            xp = to_x(bin_i)
-            yp = to_y(disp)
-            color = "#e74c3c" if off == sentinel else "#1a5fa8"
-            label = (
-                f"bin {bin_i}: inconsistent (plotted at 0)"
-                if off == sentinel
-                else f"bin {bin_i}: {off:.6f}s"
-            )
-            lines.append(
-                f'<circle cx="{xp:.1f}" cy="{yp:.1f}" r="3" '
-                f'fill="{color}" fill-opacity="0.85">'
-                f"<title>{label}</title></circle>"
-            )
-
-    lines.append("</svg>")
-
-    with open(path, "w", encoding="utf-8") as fout:
-        fout.write("\n".join(lines))
-
-
-# ============================================================================
 # Main
 # ============================================================================
 
@@ -1654,8 +1546,6 @@ def run_pair(pair_label, ids, load_a, load_b, out_dir, label_a, label_b):
         chart_title=f"{label_a} vs {label_b}: R-Location SSD (pooled)",
     )
 
-    write_allfiles_offset_scatter(out_dir / "rloc_offset_scatter.svg", results)
-
     print(f"  Wrote outputs to {out_dir}\n")
     return results
 
@@ -1667,9 +1557,13 @@ def main():
     print("MAT_DIR exists:", MAT_DIR.exists())
     print("CSV_DIR exists:", CSV_DIR.exists())
 
+    # Mira's bin files use a longer naming convention than the other two
+    # sources. Normalize to '{id}_{date}' so set intersections actually
+    # populate when the bin-length or sample-rate suffix varies.
     mira = {}
     for p in BIN_DIR.glob("*_wave_markings.bin"):
-        mira[p.stem.replace("_wave_markings", "")] = p
+        raw_id = p.stem.replace("_wave_markings", "")
+        mira[normalize_mira_id(raw_id)] = p
     daniel = {}
     if MAT_DIR.exists():
         for p in MAT_DIR.glob("*_wave_data.mat"):
@@ -1704,58 +1598,79 @@ def main():
 
     def get_mira_bins(fid):
         if fid not in mira_bins_cache:
-            if fid in mira:
-                mira_bins_cache[fid] = read_bin_file(mira[fid])
-            else:
-                mira_bins_cache[fid] = []
+            mira_bins_cache[fid] = read_bin_file(mira[fid]) if fid in mira else []
         return mira_bins_cache[fid]
 
     def get_daniel_bins(fid):
         if fid not in daniel_bins_cache:
-            if fid in daniel:
-                daniel_bins_cache[fid] = read_mat_file(daniel[fid])
-            else:
-                daniel_bins_cache[fid] = []
+            daniel_bins_cache[fid] = read_mat_file(daniel[fid]) if fid in daniel else []
         return daniel_bins_cache[fid]
 
-    def get_deep_bins(fid):
-        if fid not in deep_bins_cache:
-            if fid in deep:
-                # Still pass mira_bins so we can compute per-bin offsets for
-                # slicing; Deep's timestamps are now self-contained (no anchor).
-                bins = get_mira_bins(fid)
-                deep_bins_cache[fid] = read_deep_file(deep[fid], bins, len(bins))
-            else:
-                deep_bins_cache[fid] = []
-        return deep_bins_cache[fid]
+    def get_deep_bins(fid, anchor):
+        """Return Deep bins, sliced using whichever anchor source is given.
 
-    def min_bins_across_sources(fid):
+        anchor is the list of bins from the source that's being paired
+        against Deep. Mira anchors give the most accurate slicing because
+        the bin files carry ecg_bin_indexs; Daniel anchors fall back to
+        running-sum offsets (correct only for contiguous bins).
+        """
+        cache_key = (fid, id(anchor))
+        if cache_key in deep_bins_cache:
+            return deep_bins_cache[cache_key]
+        if fid not in deep or not anchor:
+            deep_bins_cache[cache_key] = []
+            return deep_bins_cache[cache_key]
+        deep_bins_cache[cache_key] = read_deep_file(deep[fid], anchor, len(anchor))
+        return deep_bins_cache[cache_key]
+
+    def cap_for_pair(fid, sources):
+        """Min bin count across the named sources (Mira/Daniel only)."""
         counts = []
-        if fid in mira:
+        if "mira" in sources and fid in mira:
             counts.append(len(get_mira_bins(fid)))
-        if fid in daniel:
+        if "daniel" in sources and fid in daniel:
             counts.append(len(get_daniel_bins(fid)))
-        if fid in deep:
-            counts.append(len(get_deep_bins(fid)))
         return min(counts) if counts else 0
 
-    def load_mira(fid, *_):
-        return get_mira_bins(fid)[: min_bins_across_sources(fid)]
+    # --- Mira vs Daniel ---
+    def load_mira_md(fid, *_):
+        return get_mira_bins(fid)[: cap_for_pair(fid, ("mira", "daniel"))]
 
-    def load_daniel(fid, *_):
-        return get_daniel_bins(fid)[: min_bins_across_sources(fid)]
+    def load_daniel_md(fid, *_):
+        return get_daniel_bins(fid)[: cap_for_pair(fid, ("mira", "daniel"))]
 
-    def load_deep(fid, *_):
-        return get_deep_bins(fid)[: min_bins_across_sources(fid)]
+    # --- Mira vs Deep ---
+    def load_mira_mde(fid, *_):
+        return get_mira_bins(fid)[: cap_for_pair(fid, ("mira",))]
+
+    def load_deep_via_mira(fid, *_):
+        anchor = get_mira_bins(fid)
+        if not anchor:
+            return []
+        cap = cap_for_pair(fid, ("mira",))
+        return get_deep_bins(fid, anchor)[:cap]
+
+    # --- Daniel vs Deep ---
+    def load_daniel_dde(fid, *_):
+        return get_daniel_bins(fid)[: cap_for_pair(fid, ("daniel",))]
+
+    def load_deep_via_daniel(fid, *_):
+        anchor = get_daniel_bins(fid)
+        if not anchor:
+            return []
+        cap = cap_for_pair(fid, ("daniel",))
+        return get_deep_bins(fid, anchor)[:cap]
 
     pair_results = {}
+
     ids = sorted(set(mira) & set(daniel))
+    print(f"Mira vs Daniel: {len(ids)} shared subjects")
     if ids:
         r = run_pair(
             "Mira vs Daniel",
             ids,
-            load_mira,
-            load_daniel,
+            load_mira_md,
+            load_daniel_md,
             OUTPUT_DIR / "mira_vs_daniel",
             "Mira",
             "Daniel",
@@ -1764,12 +1679,13 @@ def main():
             pair_results[("Mira", "Daniel")] = r
 
     ids = sorted(set(mira) & set(deep))
+    print(f"Mira vs Deep:   {len(ids)} shared subjects")
     if ids:
         r = run_pair(
             "Mira vs Deep",
             ids,
-            load_mira,
-            load_deep,
+            load_mira_mde,
+            load_deep_via_mira,
             OUTPUT_DIR / "mira_vs_deep",
             "Mira",
             "Deep",
@@ -1778,12 +1694,13 @@ def main():
             pair_results[("Mira", "Deep")] = r
 
     ids = sorted(set(daniel) & set(deep))
+    print(f"Daniel vs Deep: {len(ids)} shared subjects")
     if ids:
         r = run_pair(
             "Daniel vs Deep",
             ids,
-            load_daniel,
-            load_deep,
+            load_daniel_dde,
+            load_deep_via_daniel,
             OUTPUT_DIR / "daniel_vs_deep",
             "Daniel",
             "Deep",

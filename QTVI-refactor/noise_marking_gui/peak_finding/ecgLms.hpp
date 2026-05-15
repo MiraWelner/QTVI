@@ -57,34 +57,46 @@ inline vector<size_t> ecgLms(const vector<double>& ecg, int sampling,
 
     size_t ll = sqdifffiltecg.size();
 
-    // Create Moving-Window-Integration
-    vector<double> mwisignal(ll, 0.0);
-    for (int cnt = 0; cnt < mwiwidthpts && cnt < static_cast<int>(ll); ++cnt) {
-        for (int j = 0; j <= cnt; ++j) {
-            mwisignal[cnt] += sqdifffiltecg[j];
-        }
-    }
-
+    // Build the running prefix sum once; it is the only quantity we need.
+    // The original code first computed mwisignal[cnt] = sum_{j=0..cnt} sqdiff[j]
+    // via an O(W^2) double loop, then immediately overwrote those same
+    // entries (when mwiwidthpts < ll) with mwisignal[mwiwidthpts]. The only
+    // surviving case is mwiwidthpts >= ll, and in that case
+    // mwisignal[cnt] = wholesum[cnt] exactly. So we read it from wholesum
+    // directly and skip the quadratic work.
     int l = mwiwidthpts;
     vector<double> wholesum(ll);
-    wholesum[0] = sqdifffiltecg[0];
+    if (ll > 0) wholesum[0] = sqdifffiltecg[0];
     for (size_t i = 1; i < ll; ++i) {
         wholesum[i] = wholesum[i - 1] + sqdifffiltecg[i];
     }
 
-    double maxWhole = *std::max_element(wholesum.begin(), wholesum.end());
+    double maxWhole = ll ? *std::max_element(wholesum.begin(), wholesum.end()) : 0.0;
     if (maxWhole > std::numeric_limits<double>::max() / 100.0) {
         throw std::runtime_error("wholesum comes close to exceeding max allowed value");
     }
 
+    vector<double> mwisignal(ll, 0.0);
+
+    // Main sliding sum: mwisignal[i] = sum_{j=i-l+1..i} sqdiff[j] for i >= l
     for (size_t i = l; i < ll; ++i) {
         mwisignal[i] = wholesum[i] - wholesum[i - l];
     }
 
-    // The beginning of mwisignal always starts near zero
-    for (int i = 0; i < mwiwidthpts && i < static_cast<int>(ll); ++i) {
-        if (mwiwidthpts < static_cast<int>(ll)) {
-            mwisignal[i] = mwisignal[mwiwidthpts];
+    // Boundary fill: replicate mwisignal[mwiwidthpts] for the initial
+    // window when there is enough signal; otherwise the original
+    // O(W^2) loop's values (which equal wholesum[cnt]) survive untouched.
+    if (mwiwidthpts < static_cast<int>(ll)) {
+        const double fill = mwisignal[mwiwidthpts];
+        for (int i = 0; i < mwiwidthpts; ++i) {
+            mwisignal[i] = fill;
+        }
+    }
+    else {
+        // mwiwidthpts >= ll: preserve the original behavior where
+        // mwisignal[cnt] held the prefix sum sum_{j=0..cnt} sqdiff[j].
+        for (int i = 0; i < static_cast<int>(ll); ++i) {
+            mwisignal[i] = wholesum[i];
         }
     }
 

@@ -2,10 +2,6 @@
   Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
    Qt: 6.10.2
   gui_handler.cpp
-  noise_marking_gui.cpp
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\JoinedRR.hpp(1,1): warning C4828: The file contains a character starting at offset 0x1740 that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'gui_handler.cpp')
-  
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\bandpass.hpp(1,1): warning C4828: The file contains a character starting at offset 0x47f that is illegal in the current source character set (codepage 65001).
   (compiling source file 'gui_handler.cpp')
   
@@ -15,80 +11,22 @@ D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\bandpass.h
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\bandpass.hpp(1,1): warning C4828: The file contains a character starting at offset 0x147d that is illegal in the current source character set (codepage 65001).
   (compiling source file 'gui_handler.cpp')
   
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\FilterUtils.hpp(1,1): warning C4828: The file contains a character starting at offset 0x222 that is illegal in the current source character set (codepage 65001).
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(128,76): warning C4267: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(128,76): warning C4267:         with
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(128,76): warning C4267:         [
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(128,76): warning C4267:             _Ty=int
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(128,76): warning C4267:         ]
   (compiling source file 'gui_handler.cpp')
   
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\FilterUtils.hpp(1,1): warning C4828: The file contains a character starting at offset 0x116c that is illegal in the current source character set (codepage 65001).
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(129,75): warning C4267: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(129,75): warning C4267:         with
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(129,75): warning C4267:         [
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(129,75): warning C4267:             _Ty=int
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(129,75): warning C4267:         ]
   (compiling source file 'gui_handler.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(94,76): warning C4267: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(94,76): warning C4267:         with
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(94,76): warning C4267:         [
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(94,76): warning C4267:             _Ty=int
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(94,76): warning C4267:         ]
-  (compiling source file 'gui_handler.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(95,75): warning C4267: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(95,75): warning C4267:         with
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(95,75): warning C4267:         [
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(95,75): warning C4267:             _Ty=int
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(95,75): warning C4267:         ]
-  (compiling source file 'gui_handler.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\PeakFinder.hpp(1,1): warning C4828: The file contains a character starting at offset 0x50a that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'gui_handler.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\JoinedRR.hpp(1,1): warning C4828: The file contains a character starting at offset 0x1740 that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'noise_marking_gui.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\bandpass.hpp(1,1): warning C4828: The file contains a character starting at offset 0x47f that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'noise_marking_gui.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\bandpass.hpp(1,1): warning C4828: The file contains a character starting at offset 0x1062 that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'noise_marking_gui.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\bandpass.hpp(1,1): warning C4828: The file contains a character starting at offset 0x147d that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'noise_marking_gui.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\FilterUtils.hpp(1,1): warning C4828: The file contains a character starting at offset 0x222 that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'noise_marking_gui.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\FilterUtils.hpp(1,1): warning C4828: The file contains a character starting at offset 0x116c that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'noise_marking_gui.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(94,76): warning C4267: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(94,76): warning C4267:         with
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(94,76): warning C4267:         [
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(94,76): warning C4267:             _Ty=int
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(94,76): warning C4267:         ]
-  (compiling source file 'noise_marking_gui.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(95,75): warning C4267: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(95,75): warning C4267:         with
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(95,75): warning C4267:         [
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(95,75): warning C4267:             _Ty=int
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(95,75): warning C4267:         ]
-  (compiling source file 'noise_marking_gui.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\PeakFinder.hpp(1,1): warning C4828: The file contains a character starting at offset 0x50a that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'noise_marking_gui.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\template_generation\find_foot_pulseox.hpp(1,1): warning C4828: The file contains a character starting at offset 0x1ef that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'noise_marking_gui.cpp')
   
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\template_generation\find_foot_pulseox.hpp(1,1): warning C4828: The file contains a character starting at offset 0x1ef that is illegal in the current source character set (codepage 65001).
   (compiling source file 'gui_handler.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\RunLength.hpp(38,26): warning C4244: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\RunLength.hpp(38,26): warning C4244:         with
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\RunLength.hpp(38,26): warning C4244:         [
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\RunLength.hpp(38,26): warning C4244:             _Ty=double
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\RunLength.hpp(38,26): warning C4244:         ]
-  (compiling source file 'gui_handler.cpp')
-      D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\RunLength.hpp(38,26):
-      the template instantiation context (the oldest one first) is
-          D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\SegmentPPG.hpp(33,9):
-          see reference to function template instantiation 'void RunLength<int>(const std::vector<int,std::allocator<int>> &,std::vector<int,std::allocator<int>> &,std::vector<double,std::allocator<double>> &,std::vector<double,std::allocator<double>> &)' being compiled
   
 C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(508,64): warning C4244: 'initializing': conversion from 'size_t' to '_Ty', possible loss of data
 C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717\include\xutility(508,64): warning C4244:         with
@@ -163,9 +101,9 @@ C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717
   
      Creating library D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\x64\Release\noise_marking_gui.lib and object D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\x64\Release\noise_marking_gui.exp
   Generating code
-  7 of 8266 functions (<0.1%) were compiled, the rest were copied from previous compilation.
-    0 functions were new in current compilation
-    45 functions had inline decision re-evaluated but remain unchanged
+  118 of 8607 functions ( 1.4%) were compiled, the rest were copied from previous compilation.
+    72 functions were new in current compilation
+    251 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   noise_marking_gui.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\x64\Release\noise_marking_gui.exe
   'pwsh.exe' is not recognized as an internal or external command,

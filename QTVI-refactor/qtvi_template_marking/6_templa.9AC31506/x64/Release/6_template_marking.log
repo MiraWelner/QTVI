@@ -1,0 +1,17 @@
+﻿   Qt/MSBuild: 3.4.1.0
+  Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
+   Qt: 6.10.2
+  moc BinPlotWidget.hpp
+  BinPlotWidget.cpp
+  TemplateViewerWindow.cpp
+  template_marking.cpp
+  moc_BinPlotWidget.cpp
+  moc_TemplateViewerWindow.cpp
+  Generating code
+  152 of 1319 functions (11.5%) were compiled, the rest were copied from previous compilation.
+    0 functions were new in current compilation
+    79 functions had inline decision re-evaluated but remain unchanged
+  Finished generating code
+  6_template_marking.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\qtvi_template_marking\x64\Release\6_template_marking.exe
+  'pwsh.exe' is not recognized as an internal or external command,
+  operable program or batch file.
