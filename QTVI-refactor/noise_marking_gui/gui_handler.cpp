@@ -31,7 +31,7 @@
 #include "peak_finding//run_find_r_peaks.hpp"
 #include "gui_handler.hpp"
 #include "post_process.hpp"
-#include "input_file_handler.hpp"
+#include "config_loader.hpp"
 
 #include <QFutureWatcher>
 #include <QtConcurrent>
@@ -63,6 +63,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <file_to_bin.hpp>
 
  // ============================================================================
  // Constants
@@ -84,8 +85,8 @@ static const QMap<QString, QColor> MARKING_COLORS = {
     {"Noise/Artifact",         QColor(255, 255, 0,   30)},
     {"Conduction Delay",       QColor(128, 0,   128, 30)},
     {"AF",                     QColor(255, 0,   0,   30)},
-    {"SVT",                    QColor(0,   255, 0,   60)},
-    {"VT",                     QColor(0,   0,   255, 60)},
+    {"SVT",                    QColor(0,   0,   255,   60)},
+    {"VT",                     QColor(0,   255,   0, 60)},
     {"PVC",                    QColor(128, 255, 0,   60)},
     {"PAC",                    QColor(255, 128, 0,   60)},
     {"Benign Arrhythmia",      QColor(255, 128, 255, 60)},
@@ -245,7 +246,7 @@ noise_marking_gui::ChannelRefs noise_marking_gui::channelRefs(const QString& lab
         r.color = COLOR_PPG;
     }
     else if (label == "ABP") {
-        r.chartView = ui->accel_or_abg_axis;
+        r.chartView = ui->accel_or_abp_axis;
         r.startButton = ui->startNoiseABP;
         r.stopButton = ui->stopNoiseABP;
         r.state = &self->m_markState_abp;
@@ -269,9 +270,9 @@ QString noise_marking_gui::signalLabelForChartView(QChartView* cv) const {
     if (cv == ui->ecg_axis_3) return "ECG3";
     if (cv == ui->ppg_axis)   return "PPG";
 
-    // accel_or_abg_axis is shared: it's "ABP" only when no accel channels
+    // accel_or_abp_axis is shared: it's "ABP" only when no accel channels
     // are present on the currently loaded file.
-    if (cv == ui->accel_or_abg_axis) {
+    if (cv == ui->accel_or_abp_axis) {
         bool anyAccel = !isMissingSignal(m_accelX)
             || !isMissingSignal(m_accelY)
             || !isMissingSignal(m_accelZ);
@@ -306,7 +307,7 @@ double noise_marking_gui::yScaleForSignal(const QString& label) const {
     else if (label == "ECG3") { check = ui->ecg_3_check; gain = ui->ecg_3_gain; }
     else if (label == "PPG") { check = ui->ppg_check;   gain = ui->ppg_gain; }
     else if (label == "ABP" || label == "ACCEL") {
-        check = ui->abg_check; gain = ui->abg_gain;
+        check = ui->abp_check; gain = ui->abp_gain;
     }
     if (!gain) return 1.0;
     double v = gain->value();
@@ -326,7 +327,7 @@ void noise_marking_gui::resetUnpinnedGains() {
     reset(ui->ecg_2_check, ui->ecg_2_gain);
     reset(ui->ecg_3_check, ui->ecg_3_gain);
     reset(ui->ppg_check, ui->ppg_gain);
-    reset(ui->abg_check, ui->abg_gain);
+    reset(ui->abp_check, ui->abp_gain);
 }
 
 void noise_marking_gui::mousePressEvent(QMouseEvent* event) {
@@ -446,7 +447,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     : QDialog(parent)
     , ui(std::make_unique<Ui::noise_marking_gui>())
     , m_noiseManager(std::make_unique<NoiseManager>(256.0))
-    , m_buttonHandler(std::make_unique<lower_row_buttons>(this))
+    , m_buttonHandler(std::make_unique<user_control_handler>(this))
 {
     ui->setupUi(this);
 
@@ -482,8 +483,8 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     // --- All chart views: scrollbars off, antialiasing on, event filter. ---
     const QList<QChartView*> allCharts = {
         ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
-        ui->ppg_axis, ui->accel_or_abg_axis,
-        ui->ecg_ampogram_axis, ui->amp_ppg_axis, ui->resp_cvp_axis
+        ui->ppg_axis, ui->accel_or_abp_axis,
+        ui->ecg_ampogram_axis, ui->ppg_ampogram_axis, ui->hyp_accel_resp_cvp_axis
     };
     for (auto* view : allCharts) {
         if (!view) continue;
@@ -534,7 +535,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     wireGain(ui->ecg_2_check, ui->ecg_2_gain);
     wireGain(ui->ecg_3_check, ui->ecg_3_gain);
     wireGain(ui->ppg_check, ui->ppg_gain);
-    wireGain(ui->abg_check, ui->abg_gain);
+    wireGain(ui->abp_check, ui->abp_gain);
 
 
 
@@ -564,7 +565,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     ui->ecg_ampogram_axis->chart()->addSeries(ecg1_ampogram_series);
     ui->ecg_ampogram_axis->chart()->addSeries(ecg2_ampogram_series);
     ui->ecg_ampogram_axis->chart()->addSeries(ecg3_ampogram_series);
-    ui->amp_ppg_axis->chart()->addSeries(ppg_ampogram_series);
+    ui->ppg_ampogram_axis->chart()->addSeries(ppg_ampogram_series);
 
     // Initially disable all stop buttons.
     ui->stop_ecg1_mark->setEnabled(false);
@@ -580,12 +581,12 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         view->chart()->addSeries(series);
         };
     addCursor(ui->ecg_ampogram_axis, m_ecgCursorBar);
-    addCursor(ui->amp_ppg_axis, m_ppgCursorBar);
+    addCursor(ui->ppg_ampogram_axis, m_ppgCursorBar);
 
-    // Hypnogram chart (replaces resp_cvp_axis chart object).
+    // Replace the widget's default QChart with a custom hypnogram chart.
     auto* hypnoChart = new QChart();
     hypnoChart->legend()->hide();
-    ui->resp_cvp_axis->setChart(hypnoChart);
+    ui->hyp_accel_resp_cvp_axis->setChart(hypnoChart);
 
     m_hypnoCursorBar = new QLineSeries();
     m_hypnoCursorBar->setPen(QPen(Qt::black, 2));
@@ -814,7 +815,7 @@ void noise_marking_gui::handleBrowseFile() {
         QFuture<void> future = QtConcurrent::run([&produced, &convertException,
             src, cfgCopy]() {
                 try {
-                    produced = convertToBin(src, cfgCopy);
+                    produced = make_binfile(src, cfgCopy);
                 }
                 catch (...) {
                     convertException = std::current_exception();
@@ -834,7 +835,7 @@ void noise_marking_gui::handleBrowseFile() {
             catch (const std::exception& e) { msg = e.what(); }
             catch (...) { msg = "unknown exception"; }
             QMessageBox::warning(this, "Conversion failed",
-                QString("convertToBin threw: %1").arg(msg));
+                QString("make_binfile threw: %1").arg(msg));
             return;
         }
 
@@ -1108,15 +1109,15 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         || !isMissingSignal(m_accelZ);
     if (!anyAccel) markActive("ABP", m_abp);
 
-    if (ui->accel_or_abg_axis)
-        ui->accel_or_abg_axis->setVisible(!isMissingSignal(m_abp));
-    if (ui->amp_ppg_axis)
-        ui->amp_ppg_axis->setVisible(!isMissingSignal(m_ppg));
+    if (ui->accel_or_abp_axis)
+        ui->accel_or_abp_axis->setVisible(!isMissingSignal(m_abp));
+    if (ui->ppg_ampogram_axis)
+        ui->ppg_ampogram_axis->setVisible(!isMissingSignal(m_ppg));
 
-    if (ui->resp_cvp_axis) {
+    if (ui->hyp_accel_resp_cvp_axis) {
         bool sleepPresent = sleepDataPresent(m_sleepStages);
         bool cvpPresent = !isMissingSignal(m_cvp);
-        ui->resp_cvp_axis->setVisible(sleepPresent || cvpPresent || anyAccel);
+        ui->hyp_accel_resp_cvp_axis->setVisible(sleepPresent || cvpPresent || anyAccel);
     }
 
     updateAllChannelButtonStates();
@@ -1145,7 +1146,7 @@ void noise_marking_gui::setupHypnogram() {
     if (m_sleepSR <= 0.0) return;
     if (!sleepDataPresent(m_sleepStages)) return;
 
-    auto* chart = ui->resp_cvp_axis->chart();
+    auto* chart = ui->hyp_accel_resp_cvp_axis->chart();
 
 
     if (m_cvpCursorBar && m_cvpCursorBar->chart() == chart)
@@ -1297,7 +1298,7 @@ void noise_marking_gui::handle_ampogram_plot(double range) {
 
     const bool sleepPresent = sleepDataPresent(m_sleepStages);
     const bool ppgAmpHasLabels = !sleepPresent
-        && ui->amp_ppg_axis && !ui->amp_ppg_axis->isHidden();
+        && ui->ppg_ampogram_axis && !ui->ppg_ampogram_axis->isHidden();
     const bool ecgAmpHasLabels = !sleepPresent && !ppgAmpHasLabels;
 
     auto* chart = ui->ecg_ampogram_axis->chart();
@@ -1330,7 +1331,7 @@ void noise_marking_gui::handle_ampogram_plot(double range) {
         yAxis->setRange(mi->y(), ma->y());
     }
 
-    create_plot(ui->amp_ppg_axis, ppg_ampogram_series,
+    create_plot(ui->ppg_ampogram_axis, ppg_ampogram_series,
         calculate_amplitude(m_ppg, m_ppgSR),
         m_ppgCursorBar, COLOR_PPG, "PPG Amp-O-Gram",
         /*showLabels*/ ppgAmpHasLabels);
@@ -1402,6 +1403,21 @@ namespace {
         double gMin = 1e9;
         double gMax = -1e9;
 
+        // Two-pass to keep raw scatter always on top of every line.
+        //
+        // QChart draws series in insertion order: later-added wins on overlap.
+        // The original single-loop form added line-then-scatter per series, but
+        // when multiple series share one chart (e.g. accel X/Y/Z), iteration
+        // N+1's line landed on top of iteration N's scatter and partially
+        // hid it. Splitting into "all lines first, then all scatters" fixes
+        // the stacking for any number of series.
+        struct PendingRaw {
+            const QVector<QPointF>* rawData;
+            QColor color;
+            double center;
+        };
+        QList<PendingRaw> rawsToAdd;
+
         for (const auto& d : serieses) {
             if (!d.data || isMissingSignal(*d.data)) continue;
 
@@ -1458,7 +1474,9 @@ namespace {
                 if (v > winMax) winMax = v;
             }
             // Fold raw overlay into the same center so foreground and
-            // overlay scale around the same line.
+            // overlay scale around the same line. Also folds raw values
+            // into the gMin/gMax axis range here (was previously done in
+            // the inline scatter block, which is now in pass 2).
             if (hasRaw) {
                 const double viewStart = currentStartTime;
                 const double viewEnd = currentStartTime + windowDuration;
@@ -1467,6 +1485,8 @@ namespace {
                     if (p.x() > viewEnd)   break;
                     if (p.y() < winMin) winMin = p.y();
                     if (p.y() > winMax) winMax = p.y();
+                    if (p.y() < gMin) gMin = p.y();
+                    if (p.y() > gMax) gMax = p.y();
                 }
             }
             const double center = (winMin <= winMax)
@@ -1494,33 +1514,37 @@ namespace {
                 plotSeries->attachAxis(yAxis);
             }
 
-            // Raw scatter overlay (drawn after so it sits on top).
             if (hasRaw) {
-                auto* rawScatter = new QScatterSeries();
-                rawScatter->setColor(useSingleRawColor ? singleRawColor : d.color);
-                rawScatter->setBorderColor(Qt::transparent);
-                rawScatter->setMarkerSize(useSingleRawColor ? 3.0 : 3.5);
-                rawScatter->setMarkerShape(QScatterSeries::MarkerShapeCircle);
-                rawScatter->setUseOpenGL(true);
-                chart->addSeries(rawScatter);
-
-                const double viewStart = currentStartTime;
-                const double viewEnd = currentStartTime + windowDuration;
-
-                QList<QPointF> rawPts;
-                rawPts.reserve(std::min<int>(d.rawData->size(), 4096));
-                for (const QPointF& p : *d.rawData) {
-                    if (p.x() < viewStart) continue;
-                    if (p.x() > viewEnd)   break;
-                    const double scaled = (p.y() - center) * yScale + center;
-                    rawPts.append({ p.x(), scaled });
-                    if (p.y() < gMin) gMin = p.y();
-                    if (p.y() > gMax) gMax = p.y();
-                }
-                rawScatter->replace(rawPts);
-                rawScatter->attachAxis(xAxis);
-                rawScatter->attachAxis(yAxis);
+                rawsToAdd.append({ d.rawData, d.color, center });
             }
+        }
+
+        // Pass 2: add every raw scatter overlay after all lines. Insertion
+        // order is rendering order in QChart, so this guarantees scatter
+        // sits on bottom regardless of how many channels share the chart.
+        for (const auto& r : rawsToAdd) {
+            auto* rawScatter = new QScatterSeries();
+            rawScatter->setColor(useSingleRawColor ? singleRawColor : r.color);
+            rawScatter->setBorderColor(Qt::transparent);
+            rawScatter->setMarkerSize(useSingleRawColor ? 3.0 : 3.5);
+            rawScatter->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+            rawScatter->setUseOpenGL(false);
+            chart->addSeries(rawScatter);
+
+            const double viewStart = currentStartTime;
+            const double viewEnd = currentStartTime + windowDuration;
+
+            QList<QPointF> rawPts;
+            rawPts.reserve(std::min<int>(r.rawData->size(), 4096));
+            for (const QPointF& p : *r.rawData) {
+                if (p.x() < viewStart) continue;
+                if (p.x() > viewEnd)   break;
+                const double scaled = (p.y() - r.center) * yScale + r.center;
+                rawPts.append({ p.x(), scaled });
+            }
+            rawScatter->replace(rawPts);
+            rawScatter->attachAxis(xAxis);
+            rawScatter->attachAxis(yAxis);
         }
 
         setPaddedYRange(yAxis, gMin, gMax);
@@ -1547,13 +1571,13 @@ void noise_marking_gui::handle_data_plot() {
     {
         const QList<QChartView*> rightCol = {
             ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
-            ui->ppg_axis,   ui->accel_or_abg_axis
+            ui->ppg_axis,   ui->accel_or_abp_axis
         };
         for (auto* cv : rightCol)
             if (cv && cv->isVisible()) xLabelOwnerRight = cv;
 
-        if (ui->resp_cvp_axis && ui->resp_cvp_axis->isVisible())
-            xLabelOwnerLeft = ui->resp_cvp_axis;
+        if (ui->hyp_accel_resp_cvp_axis && ui->hyp_accel_resp_cvp_axis->isVisible())
+            xLabelOwnerLeft = ui->hyp_accel_resp_cvp_axis;
     }
 
     // Wipe charts up front so stale series from other plot modes / inactive
@@ -1581,11 +1605,11 @@ void noise_marking_gui::handle_data_plot() {
     wipeChartContent(ui->ecg_axis_3->chart());
     wipeChartContent(ui->ppg_axis->chart());
 
-    // resp_cvp_axis is owned here only when no sleep stages -- otherwise
+    // hyp_accel_resp_cvp_axis is owned here only when no sleep stages -- otherwise
     // setupHypnogram() owns it and we leave it alone.
     const bool sleepPresent = sleepDataPresent(m_sleepStages);
-    if (!sleepPresent && ui->resp_cvp_axis)
-        wipeChartContent(ui->resp_cvp_axis->chart());
+    if (!sleepPresent && ui->hyp_accel_resp_cvp_axis)
+        wipeChartContent(ui->hyp_accel_resp_cvp_axis->chart());
 
     // ----------------------------------------------------------------------
     // Render one markable channel: line + raw black scatter overlay,
@@ -1663,25 +1687,25 @@ void noise_marking_gui::handle_data_plot() {
                 QColor(), /*useSingleRawColor*/ false);
         };
 
-    // accel_or_abg_axis: ABP only -- routed through the markable path so
+    // accel_or_abp_axis: ABP only -- routed through the markable path so
     // it gets the start marker, click-to-mark, and noise-highlight overlay.
-    if (ui->accel_or_abg_axis && !isMissingSignal(m_abp))
+    if (ui->accel_or_abp_axis && !isMissingSignal(m_abp))
         plotMarkable("ABP");
 
-    // resp_cvp_axis: accel when present; otherwise windowed RESP/CVP.
+    // hyp_accel_resp_cvp_axis: accel when present; otherwise windowed RESP/CVP.
     const bool anyAccel = !isMissingSignal(m_accelX)
         || !isMissingSignal(m_accelY)
         || !isMissingSignal(m_accelZ);
-    if (anyAccel && ui->resp_cvp_axis) {
-        plotDisplay(ui->resp_cvp_axis, "ACCEL", {
+    if (anyAccel && ui->hyp_accel_resp_cvp_axis) {
+        plotDisplay(ui->hyp_accel_resp_cvp_axis, "ACCEL", {
             { &m_accelX, COLOR_ACCEL_X, &m_accelXRaw },
             { &m_accelY, COLOR_ACCEL_Y, &m_accelYRaw },
             { &m_accelZ, COLOR_ACCEL_Z, &m_accelZRaw },
             });
     }
-    else if (!sleepPresent && ui->resp_cvp_axis &&
+    else if (!sleepPresent && ui->hyp_accel_resp_cvp_axis &&
         (!isMissingSignal(m_resp) || !isMissingSignal(m_cvp))) {
-        plotDisplay(ui->resp_cvp_axis, "RESP / CVP", {
+        plotDisplay(ui->hyp_accel_resp_cvp_axis, "RESP / CVP", {
             { &m_resp, COLOR_RESP, &m_respRaw },
             { &m_cvp,  COLOR_CVP,  &m_cvpRaw  },
             });
@@ -1888,8 +1912,8 @@ bool noise_marking_gui::handleMousePress(QChartView* cv, QWidget* viewport,
     const bool sleepPresent = sleepDataPresent(m_sleepStages);
     const bool isNavChart =
         (cv == ui->ecg_ampogram_axis)
-        || (cv == ui->amp_ppg_axis)
-        || (cv == ui->resp_cvp_axis && sleepPresent);
+        || (cv == ui->ppg_ampogram_axis)
+        || (cv == ui->hyp_accel_resp_cvp_axis && sleepPresent);
     if (isNavChart) {
         const double globalClickX = cv->chart()->mapToValue(me->pos()).x();
         const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
@@ -1923,10 +1947,10 @@ void noise_marking_gui::updateAmpogramCursor() {
         };
 
     draw(ui->ecg_ampogram_axis, m_ecgCursorBar);
-    draw(ui->amp_ppg_axis, m_ppgCursorBar);
+    draw(ui->ppg_ampogram_axis, m_ppgCursorBar);
 
     if (sleepDataPresent(m_sleepStages))
-        draw(ui->resp_cvp_axis, m_hypnoCursorBar);
+        draw(ui->hyp_accel_resp_cvp_axis, m_hypnoCursorBar);
 }
 
 void noise_marking_gui::updateNoiseHighlights() {

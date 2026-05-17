@@ -338,14 +338,12 @@ inline std::vector<double> medfilt1(const std::vector<double>& x, int n) {
     int n_minus = n / 2;
     int n_plus = (n % 2 == 0) ? (n / 2 - 1) : (n / 2);
 
+    std::vector<double> window(n);   // <-- allocated ONCE, outside the loop
+
     for (int i = 0; i < (int)len; ++i) {
-        std::vector<double> window;
-        window.reserve(n);
-        for (int j = i - n_minus; j <= i + n_plus; ++j) {
-            if (j >= 0 && j < (int)len)
-                window.push_back(x[j]);
-            else
-                window.push_back(0.0);
+        int k = 0;
+        for (int j = i - n_minus; j <= i + n_plus; ++j, ++k) {
+            window[k] = (j >= 0 && j < (int)len) ? x[j] : 0.0;
         }
         std::sort(window.begin(), window.end());
         if (n % 2 != 0)

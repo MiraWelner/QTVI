@@ -40,6 +40,9 @@
     <ClCompile Include="template_marking.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="config_loader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="BinPlotWidget.hpp">
@@ -50,9 +53,6 @@
     </QtMoc>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="ConfigReader.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="template_io.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -60,6 +60,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="TemplateFileName.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="config_entry.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="config_loader.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -46,7 +46,7 @@
  *
  * @author Mira Welner
  * @email MEW386@pitt.edu
- * @date   2026-05-04
+ * @date   2026-05-15
  */
 
 #include <filesystem>
@@ -88,30 +88,19 @@ enum ChannelIdx {
  * @brief Convert one EDF recording (with optional sleep-stage XML sidecar)
  *        into a 40-channel .bin file at cfg.binFilePath.
  *
- *        Output filename is `<source-stem>_<rate>.bin` where rate is
- *        cfg.finalSamplingRate. Every channel is resampled to that rate
- *        for the upsampled block; the raw block keeps the channel's
- *        native (t, v) samples unchanged.
- *
  * @param path     Path to the source .edf
- * @param xmlPath  Path to a matching sleep-stage XML, or empty
  * @param cfg      Dataset config (paths, rates, channel labels)
  */
-void make_binfile_edf(const std::filesystem::path& path,
-    const std::filesystem::path& xmlPath,
-    const config_entry& cfg);
+void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg);
 
 /**
- * @brief Convert one CHAOS / Bittium .dat (CSV) recording into a 40-channel
+ * @brief Convert one CHAOS / Bittium .dat recording into a 40-channel
  *        .bin file at cfg.binFilePath. See make_binfile_edf for details.
  */
-void make_binfile_dat(const std::filesystem::path& path,
-    const config_entry& cfg);
+void make_binfile_dat(const std::filesystem::path& path, const config_entry& cfg);
 
 /**
  * @brief Dispatch to make_binfile_edf or make_binfile_dat based on `path`'s
  *        extension. Logs an error and does nothing for unsupported types.
  */
-void make_binfile(const std::filesystem::path& path,
-    const std::filesystem::path& xmlPath,
-    const config_entry& cfg);
+std::filesystem::path make_binfile(const std::filesystem::path& path, const config_entry& cfg);

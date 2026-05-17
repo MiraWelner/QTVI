@@ -1001,6 +1001,13 @@
        </item>
        <item row="2" column="1">
         <layout class="QGridLayout" name="gridLayout_4">
+         <item row="0" column="0">
+          <widget class="QPushButton" name="process_button">
+           <property name="text">
+            <string>Process Output</string>
+           </property>
+          </widget>
+         </item>
          <item row="1" column="0">
           <widget class="QPushButton" name="browse_file_button">
            <property name="text">
@@ -1008,10 +1015,10 @@
            </property>
           </widget>
          </item>
-         <item row="0" column="0">
-          <widget class="QPushButton" name="process_button">
+         <item row="0" column="1">
+          <widget class="QPushButton" name="save_current_plot">
            <property name="text">
-            <string>Process Output</string>
+            <string>Save Current Plot</string>
            </property>
           </widget>
          </item>
@@ -1041,7 +1048,7 @@
         </widget>
        </item>
        <item>
-        <widget class="QChartView" name="amp_ppg_axis" native="true">
+        <widget class="QChartView" name="ppg_ampogram_axis" native="true">
          <property name="sizePolicy">
           <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
            <horstretch>0</horstretch>
@@ -1054,7 +1061,7 @@
         </widget>
        </item>
        <item>
-        <widget class="QChartView" name="resp_cvp_axis" native="true">
+        <widget class="QChartView" name="hyp_accel_resp_cvp_axis" native="true">
          <property name="sizePolicy">
           <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
            <horstretch>0</horstretch>
@@ -1274,7 +1281,7 @@
       </widget>
      </item>
      <item>
-      <widget class="QChartView" name="accel_or_abg_axis" native="true">
+      <widget class="QChartView" name="accel_or_abp_axis" native="true">
        <property name="sizePolicy">
         <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
          <horstretch>1</horstretch>
@@ -1284,7 +1291,7 @@
        <property name="styleSheet">
         <string>background-color: white; border: 1px solid black;</string>
        </property>
-       <widget class="QDoubleSpinBox" name="abg_gain">
+       <widget class="QDoubleSpinBox" name="abp_gain">
         <property name="geometry">
          <rect>
           <x>80</x>
@@ -1294,7 +1301,7 @@
          </rect>
         </property>
        </widget>
-       <widget class="QCheckBox" name="abg_check">
+       <widget class="QCheckBox" name="abp_check">
         <property name="geometry">
          <rect>
           <x>1</x>

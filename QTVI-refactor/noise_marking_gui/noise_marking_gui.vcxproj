@@ -194,24 +194,6 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="annealing_to_bin\anneal_handler.cpp" />
-    <ClCompile Include="edflib.c" />
-    <ClCompile Include="file_to_bin.cpp" />
-    <ClCompile Include="gui_handler.cpp" />
-    <ClCompile Include="input_file_handler.cpp" />
-    <ClCompile Include="noise_manager.cpp" />
-    <ClCompile Include="noise_marking_gui.cpp" />
-    <ClCompile Include="pugixml.cpp" />
-    <ClCompile Include="stdafx.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="template_generation\template_io.cpp" />
-    <QtMoc Include="noise_marking_guiPlugin.h" />
-    <ClCompile Include="lower_row_buttons.cpp" />
-    <ClCompile Include="noise_marking_guiPlugin.cpp" />
     <None Include="noise_marking_guiplugin.json" />
   </ItemGroup>
   <ItemGroup>
@@ -226,13 +208,12 @@
     <ClInclude Include="template_generation\StatsUtils.h" />
     <ClInclude Include="template_generation\TemplateTypes.hpp" />
     <ClInclude Include="template_generation\template_io.hpp" />
-    <QtMoc Include="lower_row_buttons.h" />
+    <QtMoc Include="user_control_handler.h" />
     <QtMoc Include="gui_handler.hpp" />
     <ClInclude Include="annealing_to_bin\AnnealSegments.hpp" />
     <ClInclude Include="annealing_to_bin\anneal_handler.hpp" />
     <ClInclude Include="config_entry.hpp" />
     <ClInclude Include="edflib.h" />
-    <ClInclude Include="input_file_handler.hpp" />
     <ClInclude Include="noise_manager.h" />
     <ClInclude Include="pugiconfig.hpp" />
     <ClInclude Include="pugixml.hpp" />
@@ -240,6 +221,24 @@
   </ItemGroup>
   <ItemGroup>
     <QtUic Include="noise_marking_gui.ui" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="annealing_to_bin\anneal_handler.cpp" />
+    <ClCompile Include="config_loader.cpp" />
+    <ClCompile Include="edflib.c" />
+    <ClCompile Include="file_to_bin.cpp" />
+    <ClCompile Include="gui_handler.cpp" />
+    <ClCompile Include="noise_manager.cpp" />
+    <ClCompile Include="noise_marking_gui.cpp" />
+    <ClCompile Include="pugixml.cpp" />
+    <ClCompile Include="stdafx.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="template_generation\template_io.cpp" />
+    <ClCompile Include="user_control_handler.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">

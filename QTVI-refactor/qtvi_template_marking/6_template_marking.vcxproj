@@ -39,11 +39,13 @@
     <QtInstall>msvc</QtInstall>
     <QtModules>core;widgets</QtModules>
     <QtBuildConfig>debug</QtBuildConfig>
+    <QtDeploy>true</QtDeploy>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="QtSettings">
     <QtInstall>msvc</QtInstall>
     <QtModules>core;widgets</QtModules>
     <QtBuildConfig>release</QtBuildConfig>
+    <QtDeploy>true</QtDeploy>
   </PropertyGroup>
   <Target Name="QtMsBuildNotFound" BeforeTargets="CustomBuild;ClCompile" Condition="!Exists('$(QtMsBuild)\qt.targets') or !Exists('$(QtMsBuild)\qt.props')">
     <Message Importance="High" Text="QtMsBuild: could not locate qt.targets, qt.props; project may not build correctly." />
@@ -107,6 +109,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="BinPlotWidget.cpp" />
+    <ClCompile Include="config_loader.cpp" />
     <ClCompile Include="TemplateViewerWindow.cpp" />
     <ClCompile Include="template_io.cpp" />
     <ClCompile Include="template_marking.cpp" />
@@ -115,7 +118,8 @@
     <QtMoc Include="BinPlotWidget.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="ConfigReader.hpp" />
+    <ClInclude Include="config_entry.hpp" />
+    <ClInclude Include="config_loader.hpp" />
     <ClInclude Include="TemplateBinIO.hpp" />
     <ClInclude Include="TemplateFileName.hpp" />
     <QtMoc Include="TemplateViewerWindow.hpp" />

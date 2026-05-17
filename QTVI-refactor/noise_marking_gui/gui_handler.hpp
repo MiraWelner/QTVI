@@ -44,7 +44,7 @@
 
 #include "ui_noise_marking_gui.h"
 #include "noise_manager.h"
-#include "lower_row_buttons.h"
+#include "user_control_handler.h"
 #include "config_entry.hpp"
 
 
@@ -65,7 +65,7 @@ struct GenExcStruct {
 
 class noise_marking_gui : public QDialog {
     Q_OBJECT
-        friend class lower_row_buttons;
+        friend class user_control_handler;
 
 public:
     /**
@@ -140,7 +140,7 @@ public:
         QLineSeries* startMarkerLine = nullptr;
     };
 
-    // --- Called by lower_row_buttons to enter/transition marking phases ---
+    // --- Called by user_control_handler to enter/transition marking phases ---
 
     /** @brief Enter WaitingForStart on `signalLabel`'s state machine. */
     void beginMarking(const QString& signalLabel);
@@ -202,7 +202,7 @@ private:
     // --- Core components ---
     std::unique_ptr<Ui::noise_marking_gui> ui;
     std::unique_ptr<NoiseManager>          m_noiseManager;
-    std::unique_ptr<lower_row_buttons>     m_buttonHandler;
+    std::unique_ptr<user_control_handler>     m_buttonHandler;
 
     QSet<QString>               m_activeChannels;
     QString                     m_currentMarkingType;

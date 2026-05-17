@@ -1,65 +1,58 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
-#include <QMessageBox>
 #include <QEventLoop>
+#include <QObject>
 #include <iostream>
 #include <string>
-#include "ConfigReader.hpp"
+#include <vector>
+#include <algorithm>
+
+#include "config_loader.hpp"
+#include "config_entry.hpp"
 #include "TemplateFileName.hpp"
 #include "TemplateViewerWindow.hpp"
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
-    QString configPath = QCoreApplication::applicationDirPath() + "/config.csv";
-    if (!QFileInfo::exists(configPath)) configPath = "config.csv";
-
-    auto configs = readConfig(configPath);
-    if (configs.empty()) {
-        std::cerr << "Error: Could not read config.csv (tried: "
-            << configPath.toStdString() << ")\n";
-        return 1;
-    }
-
-    // Terminal dataset selection
-    std::cout << "\n=== Select Dataset ===\n";
-    for (size_t i = 0; i < configs.size(); ++i)
-        std::cout << "  " << (i + 1) << ") " << configs[i].dataType.toStdString() << "\n";
-    std::cout << "\nEnter number (1-" << configs.size() << "): ";
-    std::cout.flush();
+    // Dataset prompt -- matches the noise-marking GUI for consistency.
+    std::cout << "\n=== Select Dataset ===\n"
+        << "  1) MESA\n  2) BITTIUM\n  3) CHAOS\n"
+        << "Enter number (1-3): " << std::flush;
 
     int choice = 0;
-    std::string line;
-    if (!std::getline(std::cin, line)) return 0;
-    try { choice = std::stoi(line); }
-    catch (...) { choice = 0; }
+    if (!(std::cin >> choice)) return 1;
 
-    if (choice < 1 || choice >(int)configs.size()) {
-        std::cerr << "Invalid selection.\n";
+    config_entry cfg;
+    if (!load_config(choice, cfg)) {
+        std::cerr << "Error: dataset " << choice << " not in config.csv\n";
         return 1;
     }
+    if (!promptForMissingPaths(cfg)) return 1;
 
-    const auto& cfg = configs[choice - 1];
-    std::cout << "\nTemplate path: " << cfg.templatePath.toStdString()
-        << "\nMarking path:  " << cfg.markingPath.toStdString()
-        << "\nExpected rate: " << cfg.upsampledRate << " Hz\n\n";
+    const QString templatePath = QString::fromStdString(cfg.template_path);
+    const QString markingPath = QString::fromStdString(cfg.qtvi_marker_path);
+    const int     expectedRate = static_cast<int>(cfg.finalSamplingRate);
+    const int     expectedBin = static_cast<int>(cfg.bin_length_minutes);
 
-    // Discover candidates
-    QDir templateDir(cfg.templatePath);
+    std::cout << "\nTemplate path: " << templatePath.toStdString()
+        << "\nMarking path:  " << markingPath.toStdString()
+        << "\nExpected rate: " << expectedRate << " Hz"
+        << "\nExpected bin:  " << expectedBin << " min\n\n";
 
+    // Discover candidates.
+    QDir templateDir(templatePath);
     if (!templateDir.exists()) {
         std::cerr << "Template directory does not exist: "
-            << cfg.templatePath.toStdString() << "\n";
+            << templatePath.toStdString() << "\n";
         return 1;
     }
 
     QStringList allFiles = templateDir.entryList({ "*_templates.bin" }, QDir::Files);
-
     if (allFiles.isEmpty()) {
         std::cerr << "No *_templates.bin files in: "
-            << cfg.templatePath.toStdString() << "\n";
-        // Show what IS there so the mismatch is obvious
+            << templatePath.toStdString() << "\n";
         QStringList everything = templateDir.entryList(QDir::Files);
         if (!everything.isEmpty()) {
             std::cerr << "Directory contains " << everything.size()
@@ -70,13 +63,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Filter by filename-encoded rate / bin length
+    // Filter by filename-encoded rate / bin length.
     struct Subject { QString file; QString id; };
     std::vector<Subject> subjects;
     int skippedRate = 0, skippedBin = 0, skippedParse = 0;
-
-    const int expectedRate = static_cast<int>(cfg.upsampledRate);
-    const int expectedBin = cfg.binMinutes;
 
     for (const QString& f : allFiles) {
         QString stem = QFileInfo(f).completeBaseName();   // strip ".bin"
@@ -94,7 +84,6 @@ int main(int argc, char* argv[]) {
             ++skippedRate;
             continue;
         }
-
         if (expectedBin > 0 && parsed->binMinutes != expectedBin) {
             std::cerr << "  skip (bin " << parsed->binMinutes
                 << " != " << expectedBin << "): "
@@ -117,12 +106,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    QDir().mkpath(cfg.markingPath);
+    // template_marking owns its output tree -- create it before opening the
+    // viewer so the first save doesn't fail on a missing directory.
+    QDir().mkpath(markingPath);
 
     TemplateViewerWindow viewer;
     viewer.show();
 
-    int total = static_cast<int>(subjects.size());
+    const int total = static_cast<int>(subjects.size());
     for (int fi = 0; fi < total; ++fi) {
         const auto& s = subjects[fi];
 
@@ -131,8 +122,8 @@ int main(int argc, char* argv[]) {
             << " | Remaining: " << (total - fi - 1) << "\n";
         std::cout.flush();
 
-        QString templateFile = cfg.templatePath + "/" + s.file;
-        viewer.loadSubject(templateFile, cfg.markingPath, s.id);
+        QString templateFile = templatePath + "/" + s.file;
+        viewer.loadSubject(templateFile, markingPath, s.id);
 
         QEventLoop loop;
         QObject::connect(&viewer, &TemplateViewerWindow::finished,

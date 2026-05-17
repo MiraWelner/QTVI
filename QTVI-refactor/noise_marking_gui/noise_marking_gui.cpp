@@ -13,7 +13,8 @@
 #include "gui_handler.hpp"
 #include "post_process.hpp"
 #include "noise_manager.h"
-#include "input_file_handler.hpp"
+#include "config_loader.hpp"
+#include "file_to_bin.hpp"
 
 #include <QtWidgets/QApplication>
 #include <QDir>
@@ -30,7 +31,7 @@ int main(int argc, char* argv[]) {
     if (!(std::cin >> choice)) return 1;
 
     config_entry cfg;
-    if (!loadConfig(choice, cfg)) {
+    if (!load_config(choice, cfg)) {
         std::cerr << "Error: dataset " << choice << " not in config.csv\n";
         return 1;
     }
@@ -45,18 +46,14 @@ int main(int argc, char* argv[]) {
     QStringList srcFiles = discoverSourceFiles(cfg);
     if (srcFiles.isEmpty()) {
         std::cerr << "No " << cfg.mainExt << " files in: "
-            << cfg.original_file_path << "\n";
+            << cfg.input_path << "\n";
         return 0;
     }
 
     // Single pass over every source file: convert, mark, export.
-    // (The previous version had an outer "while (madeProgress)" loop, but
-    // the source-file list is fixed at startup so a second pass would do
-    // nothing -- removed.)
     for (const QString& srcPath : srcFiles) {
-        std::cout << "Loading file for noise marking: "
-            << QFileInfo(srcPath).fileName().toStdString() << "\n";
-        auto binFs = convertToBin(srcPath.toStdString(), cfg);
+        std::cout << "Loading file for noise marking:" << QFileInfo(srcPath).fileName().toStdString() << "\n";
+        auto binFs = make_binfile(srcPath.toStdString(), cfg);
         if (binFs.empty()) {
             std::cerr << "  conversion failed; skipping\n";
             continue;

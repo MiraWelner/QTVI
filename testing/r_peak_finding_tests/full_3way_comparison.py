@@ -18,14 +18,14 @@ import scipy.io as sio
 # Config
 # ============================================================================
 
-BIN_DIR = Path(
-    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\mesa_rloc_mira"
+MIRA_DIR = Path(
+    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_mira\mesa\r_peak_finding_output"
 )
-MAT_DIR = Path(
-    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\mesa_rloc_daniel"
+DANIEL_DIR = Path(
+    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_daniel\r_peak_finding_output"
 )
-CSV_DIR = Path(
-    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\mesa_rloc_deep"
+DEEP_DIR = Path(
+    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_deep\mesa\r_peak_finding_output"
 )
 OUTPUT_DIR = Path(r"D:\USERS\MiraWelner\QTVI\testing\r_peak_finding_tests\results")
 
@@ -1553,20 +1553,20 @@ def run_pair(pair_label, ids, load_a, load_b, out_dir, label_a, label_b):
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("BIN_DIR exists:", BIN_DIR.exists())
-    print("MAT_DIR exists:", MAT_DIR.exists())
-    print("CSV_DIR exists:", CSV_DIR.exists())
+    print("MIRA_DIR exists:", MIRA_DIR.exists())
+    print("DANIEL_DIR exists:", DANIEL_DIR.exists())
+    print("DEEP_DIR exists:", DEEP_DIR.exists())
 
     # Mira's bin files use a longer naming convention than the other two
     # sources. Normalize to '{id}_{date}' so set intersections actually
     # populate when the bin-length or sample-rate suffix varies.
     mira = {}
-    for p in BIN_DIR.glob("*_wave_markings.bin"):
+    for p in MIRA_DIR.glob("*_wave_markings.bin"):
         raw_id = p.stem.replace("_wave_markings", "")
         mira[normalize_mira_id(raw_id)] = p
     daniel = {}
-    if MAT_DIR.exists():
-        for p in MAT_DIR.glob("*_wave_data.mat"):
+    if DANIEL_DIR.exists():
+        for p in DANIEL_DIR.glob("*_wave_data.mat"):
             daniel[p.stem.replace("_wave_data", "")] = p
     deep = {}
     deep_full_suffixes = [
@@ -1574,8 +1574,8 @@ def main():
         "_ECG_fs1000_wholecaseRRiQTi.csv",
         "_wholecaseRRiQTi.csv",
     ]
-    if CSV_DIR.exists():
-        for p in CSV_DIR.glob(f"*{DEEP_FILE_SUFFIX}"):
+    if DEEP_DIR.exists():
+        for p in DEEP_DIR.glob(f"*{DEEP_FILE_SUFFIX}"):
             if not p.is_file():
                 continue
             name = p.name

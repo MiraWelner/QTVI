@@ -114,12 +114,13 @@ public:
     QLabel *signif_color;
     QLabel *signif_desc;
     QGridLayout *gridLayout_4;
-    QPushButton *browse_file_button;
     QPushButton *process_button;
+    QPushButton *browse_file_button;
+    QPushButton *save_current_plot;
     QVBoxLayout *ampogram_and_sleepstates;
     QChartView *ecg_ampogram_axis;
-    QChartView *amp_ppg_axis;
-    QChartView *resp_cvp_axis;
+    QChartView *ppg_ampogram_axis;
+    QChartView *hyp_accel_resp_cvp_axis;
     QVBoxLayout *main_plots;
     QChartView *ecg_axis_1;
     QCheckBox *ecg_1_check;
@@ -133,9 +134,9 @@ public:
     QChartView *ppg_axis;
     QDoubleSpinBox *ppg_gain;
     QCheckBox *ppg_check;
-    QChartView *accel_or_abg_axis;
-    QDoubleSpinBox *abg_gain;
-    QCheckBox *abg_check;
+    QChartView *accel_or_abp_axis;
+    QDoubleSpinBox *abp_gain;
+    QCheckBox *abp_check;
 
     void setupUi(QDialog *noise_marking_gui)
     {
@@ -647,15 +648,20 @@ public:
 
         gridLayout_4 = new QGridLayout();
         gridLayout_4->setObjectName("gridLayout_4");
+        process_button = new QPushButton(noise_marking_gui);
+        process_button->setObjectName("process_button");
+
+        gridLayout_4->addWidget(process_button, 0, 0, 1, 1);
+
         browse_file_button = new QPushButton(noise_marking_gui);
         browse_file_button->setObjectName("browse_file_button");
 
         gridLayout_4->addWidget(browse_file_button, 1, 0, 1, 1);
 
-        process_button = new QPushButton(noise_marking_gui);
-        process_button->setObjectName("process_button");
+        save_current_plot = new QPushButton(noise_marking_gui);
+        save_current_plot->setObjectName("save_current_plot");
 
-        gridLayout_4->addWidget(process_button, 0, 0, 1, 1);
+        gridLayout_4->addWidget(save_current_plot, 0, 1, 1, 1);
 
 
         buttons->addLayout(gridLayout_4, 2, 1, 1, 1);
@@ -677,20 +683,20 @@ public:
 
         ampogram_and_sleepstates->addWidget(ecg_ampogram_axis);
 
-        amp_ppg_axis = new QChartView(noise_marking_gui);
-        amp_ppg_axis->setObjectName("amp_ppg_axis");
-        sizePolicy.setHeightForWidth(amp_ppg_axis->sizePolicy().hasHeightForWidth());
-        amp_ppg_axis->setSizePolicy(sizePolicy);
+        ppg_ampogram_axis = new QChartView(noise_marking_gui);
+        ppg_ampogram_axis->setObjectName("ppg_ampogram_axis");
+        sizePolicy.setHeightForWidth(ppg_ampogram_axis->sizePolicy().hasHeightForWidth());
+        ppg_ampogram_axis->setSizePolicy(sizePolicy);
 
-        ampogram_and_sleepstates->addWidget(amp_ppg_axis);
+        ampogram_and_sleepstates->addWidget(ppg_ampogram_axis);
 
-        resp_cvp_axis = new QChartView(noise_marking_gui);
-        resp_cvp_axis->setObjectName("resp_cvp_axis");
-        sizePolicy.setHeightForWidth(resp_cvp_axis->sizePolicy().hasHeightForWidth());
-        resp_cvp_axis->setSizePolicy(sizePolicy);
-        resp_cvp_axis->setMinimumSize(QSize(0, 85));
+        hyp_accel_resp_cvp_axis = new QChartView(noise_marking_gui);
+        hyp_accel_resp_cvp_axis->setObjectName("hyp_accel_resp_cvp_axis");
+        sizePolicy.setHeightForWidth(hyp_accel_resp_cvp_axis->sizePolicy().hasHeightForWidth());
+        hyp_accel_resp_cvp_axis->setSizePolicy(sizePolicy);
+        hyp_accel_resp_cvp_axis->setMinimumSize(QSize(0, 85));
 
-        ampogram_and_sleepstates->addWidget(resp_cvp_axis);
+        ampogram_and_sleepstates->addWidget(hyp_accel_resp_cvp_axis);
 
         ampogram_and_sleepstates->setStretch(2, 1);
 
@@ -770,18 +776,18 @@ public:
 
         main_plots->addWidget(ppg_axis);
 
-        accel_or_abg_axis = new QChartView(noise_marking_gui);
-        accel_or_abg_axis->setObjectName("accel_or_abg_axis");
-        sizePolicy1.setHeightForWidth(accel_or_abg_axis->sizePolicy().hasHeightForWidth());
-        accel_or_abg_axis->setSizePolicy(sizePolicy1);
-        abg_gain = new QDoubleSpinBox(accel_or_abg_axis);
-        abg_gain->setObjectName("abg_gain");
-        abg_gain->setGeometry(QRect(80, 1, 66, 20));
-        abg_check = new QCheckBox(accel_or_abg_axis);
-        abg_check->setObjectName("abg_check");
-        abg_check->setGeometry(QRect(1, 2, 66, 18));
+        accel_or_abp_axis = new QChartView(noise_marking_gui);
+        accel_or_abp_axis->setObjectName("accel_or_abp_axis");
+        sizePolicy1.setHeightForWidth(accel_or_abp_axis->sizePolicy().hasHeightForWidth());
+        accel_or_abp_axis->setSizePolicy(sizePolicy1);
+        abp_gain = new QDoubleSpinBox(accel_or_abp_axis);
+        abp_gain->setObjectName("abp_gain");
+        abp_gain->setGeometry(QRect(80, 1, 66, 20));
+        abp_check = new QCheckBox(accel_or_abp_axis);
+        abp_check->setObjectName("abp_check");
+        abp_check->setGeometry(QRect(1, 2, 66, 18));
 
-        main_plots->addWidget(accel_or_abg_axis);
+        main_plots->addWidget(accel_or_abp_axis);
 
         main_plots->setStretch(0, 1);
         main_plots->setStretch(2, 1);
@@ -878,17 +884,18 @@ public:
         benign_desc->setText(QCoreApplication::translate("noise_marking_gui", "Benign", nullptr));
         signif_color->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: rgb(0, 255, 255); border-radius:3px;", nullptr));
         signif_desc->setText(QCoreApplication::translate("noise_marking_gui", "Significant Arrhythmia", nullptr));
-        browse_file_button->setText(QCoreApplication::translate("noise_marking_gui", "Browse Different File", nullptr));
         process_button->setText(QCoreApplication::translate("noise_marking_gui", "Process Output", nullptr));
+        browse_file_button->setText(QCoreApplication::translate("noise_marking_gui", "Browse Different File", nullptr));
+        save_current_plot->setText(QCoreApplication::translate("noise_marking_gui", "Save Current Plot", nullptr));
         ecg_ampogram_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
-        amp_ppg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
-        resp_cvp_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
+        ppg_ampogram_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
+        hyp_accel_resp_cvp_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
         ecg_1_check->setText(QCoreApplication::translate("noise_marking_gui", "Fix Scale", nullptr));
         ecg_2_check->setText(QCoreApplication::translate("noise_marking_gui", "Fix Scale", nullptr));
         ecg_3_check->setText(QCoreApplication::translate("noise_marking_gui", "Fix Scale", nullptr));
         ppg_check->setText(QCoreApplication::translate("noise_marking_gui", "Fix Scale", nullptr));
-        accel_or_abg_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid black;", nullptr));
-        abg_check->setText(QCoreApplication::translate("noise_marking_gui", "Fix Scale", nullptr));
+        accel_or_abp_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid black;", nullptr));
+        abp_check->setText(QCoreApplication::translate("noise_marking_gui", "Fix Scale", nullptr));
     } // retranslateUi
 
 };

@@ -2,7 +2,7 @@
 #pragma once
 /**
  * @file   config_entry.hpp
- * @brief  a struct containing all the 
+ * @brief  a struct containing all the rates, paths, and labels
  */
 
 #include <string>
@@ -16,7 +16,11 @@ struct config_entry {
     double      ppgRate = 0.0;
     double      finalSamplingRate = 1000.0;
 
-    std::string original_file_path;
+    std::string input_path;
+    //the output_path is never directly used, but is rather the
+    //parent folder of all the below paths. It is its own entry in the config
+    // becuase it is can be set by the user, the below folders are derived from it
+    std::string output_path;
     std::string bin_file_path;       
     std::string noise_data_path;     
     std::string annealed_data_path;  
@@ -26,7 +30,7 @@ struct config_entry {
 
 
     // these parameters are not in the config but rather in input_file_handler.cpp. 
-    // different filetypes have different labels for the same type of signal
+    // different filetypes have different labels for the same type of signal - for example, ECG_1 vs EKG is talking about the same thing
     std::string ecg1Label;
     std::string ecg2Label;
     std::string ecg3Label;

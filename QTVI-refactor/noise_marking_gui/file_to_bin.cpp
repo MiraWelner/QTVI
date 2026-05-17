@@ -48,8 +48,7 @@ namespace {
 
     // ---------- polyphase resampler ----------
     //
-    // Used to be in resample.hpp; folded in here because file_to_bin is the only
-    // consumer. The resampler builds a filter bank of small filters (one per
+    // The resampler builds a filter bank of small filters (one per
     // fractional phase between input samples), then for each output sample
     // dot-products the right sub-filter against a window of inputs. Output is
     // split into a leading boundary (filter hangs off the left edge), a multi-
@@ -578,8 +577,6 @@ namespace {
         return (idx < 0) ? 0 : hdr->signalparam[idx].smp_in_file;
     }
 
-    // ---------- shared output filename ----------
-
     std::filesystem::path make_out_path(const std::filesystem::path& src,
         const config_entry& cfg)
     {
@@ -590,15 +587,31 @@ namespace {
                 ".bin");
     }
 
+
+    // Find a sleep-stage XML next to the source file when sleepExt is set.
+    std::filesystem::path findSleepXml(const std::filesystem::path& src,
+        const std::string& sleepExt) {
+        if (sleepExt.empty()) return {};
+        std::string want = sleepExt;
+        std::transform(want.begin(), want.end(), want.begin(), ::toupper);
+        std::string stem = src.stem().string();
+        for (const auto& f :
+            std::filesystem::directory_iterator(src.parent_path())) {
+            std::string e = f.path().extension().string();
+            std::transform(e.begin(), e.end(), e.begin(), ::toupper);
+            if (e == want && f.path().stem().string().find(stem) != std::string::npos)
+                return f.path();
+        }
+        return {};
+    }
+
 }   // anonymous namespace
 
 // ============================================================================
 // Public entry points
 // ============================================================================
 
-void make_binfile_edf(const std::filesystem::path& path,
-    const std::filesystem::path& xmlPath,
-    const config_entry& cfg)
+void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg)
 {
     std::filesystem::path outPath = make_out_path(path, cfg);
 
@@ -705,11 +718,13 @@ void make_binfile_edf(const std::filesystem::path& path,
 
     edfclose_file(hdr->handle);
 
+    auto sleep_path = findSleepXml(path, cfg.sleepExt);
+
     std::vector<double> stages;
-    if (!cfg.sleepExt.empty() && !xmlPath.empty()
-        && std::filesystem::exists(xmlPath)) {
+    if (!cfg.sleepExt.empty() && !sleep_path.empty()
+        && std::filesystem::exists(sleep_path)) {
         pugi::xml_document doc;
-        if (doc.load_file(xmlPath.string().c_str())) {
+        if (doc.load_file(sleep_path.string().c_str())) {
             for (auto node : doc.select_nodes("//SleepStage")) {
                 double v = node.node().text().as_double();
                 stages.push_back(v == 5.0 ? 4.0 : v);
@@ -899,21 +914,36 @@ void make_binfile_dat(const std::filesystem::path& path,
         sizes_up, sizes_raw, native_rates, sleep_size);
 }
 
-void make_binfile(const std::filesystem::path& path,
-    const std::filesystem::path& xmlPath,
-    const config_entry& cfg)
+std::filesystem::path make_binfile(const std::filesystem::path& path, const config_entry& cfg)
 {
+    std::filesystem::path out =
+        std::filesystem::path(cfg.bin_file_path) /
+        (path.stem().string() + "_" +
+            std::to_string((int)cfg.finalSamplingRate) + "_" +
+            std::format("{:03d}", static_cast<int>(cfg.bin_length_minutes)) +
+            ".bin");
+
+    if (std::filesystem::exists(out)) {
+        std::cout << "  Using existing bin file: "
+            << out.filename().string() << "\n";
+        return out;
+    }
+
+    std::filesystem::create_directories(cfg.bin_file_path);
+
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
 
     if (ext == ".EDF") {
-        make_binfile_edf(path, xmlPath, cfg);
+        make_binfile_edf(path, cfg);
     }
-    else if (ext == ".DAT" || ext == ".CSV") {
+    else if (ext == ".DAT") {
         make_binfile_dat(path, cfg);
     }
     else {
         std::cerr << "ERROR: unsupported file type " << ext
             << " for " << path << "\n";
+        return {};
     }
+    return out;
 }
