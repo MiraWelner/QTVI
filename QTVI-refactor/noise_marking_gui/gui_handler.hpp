@@ -37,6 +37,7 @@
 #include <QVector>
 #include <QSet>
 #include <QMap>
+#include <QHash>
 #include <QColor>
 #include <QPointF>
 #include <iostream>
@@ -140,7 +141,7 @@ public:
         QLineSeries* startMarkerLine = nullptr;
     };
 
-    // --- Called by user_control_handler to enter/transition marking phases ---
+    // --- Called by lower_row_buttons to enter/transition marking phases ---
 
     /** @brief Enter WaitingForStart on `signalLabel`'s state machine. */
     void beginMarking(const QString& signalLabel);
@@ -235,6 +236,20 @@ private:
     QLineSeries* m_hypnoCursorBar = nullptr;
     QList<QAreaSeries*>     m_highlights;
     QList<QAbstractSeries*> m_hypnoStageSeries;
+
+    // --- Persistent line series, keyed by chart view ---
+    //
+    // Each chart has one QLineSeries per logical series slot, allocated
+    // lazily on first render and kept alive for the lifetime of the dialog.
+    // renderWindowedChart() reuses these instead of allocating+deleting per
+    // frame -- the OpenGL teardown in ~QLineSeries was costing tens of
+    // seconds on a Line->Scatter mode switch, because every chart had a
+    // dense GL-backed line that had to release GPU buffers.
+    //
+    // In Scatter mode the lines are hidden via setVisible(false) but not
+    // freed; switching back to Line mode just toggles visibility and calls
+    // replace() with the new window's data.
+    QHash<QChartView*, QList<QLineSeries*>> m_persistentLines;
 
     // --- Mark-all state ---
     bool m_markAllActive = false;   ///< true while "Mark All Signals" mode is in effect

@@ -4,7 +4,6 @@
 // ============================================================================
 #pragma once
 
-#include "SignalProcessingTypes.hpp"
 #include "FilterUtils.hpp"
 #include "StatsUtils.hpp"
 #include "diff2.hpp"

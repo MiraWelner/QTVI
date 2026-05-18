@@ -4,8 +4,25 @@
 // ============================================================================
 #pragma once
 
-#include "SignalProcessingTypes.hpp"
 #include "StatsUtils.hpp"
+#include <vector>
+#include <cmath>
+#include <algorithm>
+#include <numeric>
+#include <limits>
+#include <stdexcept>
+#include <map>
+#include <string>
+#include <fstream>
+#include <sstream>
+#include <functional>
+#include <tuple>
+
+using std::vector;
+using std::string;
+using std::map;
+using std::pair;
+using std::tuple;
 
 inline vector<bool> stdoutlier(const vector<double>& data,
     double multiplier,

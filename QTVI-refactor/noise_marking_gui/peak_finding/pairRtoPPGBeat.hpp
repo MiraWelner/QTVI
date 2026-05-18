@@ -6,7 +6,6 @@
 // ============================================================================
 #pragma once
 
-#include "SignalProcessingTypes.hpp"
 #include "RunLength.hpp"
 #include <algorithm>
 #include <cmath>
@@ -21,7 +20,9 @@ inline vector<vector<double>> pairRtoPPGBeat(
     const vector<double>& ecg,
     const vector<double>& ppg,
     const vector<size_t>& ecgRIndex,
-    const vector<size_t>& ppgMinAmps)
+    const vector<size_t>& ppgMinAmps,
+    double ecgRate,
+    double ppgRate)
 {
     if (ecg.empty() || ppg.empty()) return {};
 
@@ -30,9 +31,9 @@ inline vector<vector<double>> pairRtoPPGBeat(
     vector<double> ppgtime(ppg.size());
 
     for (size_t i = 0; i < ecg.size(); ++i)
-        ecgtime[i] = (double)i / ECG_SAMPLE_RATE / 60.0;
+        ecgtime[i] = (double)i / ecgRate / 60.0;
     for (size_t i = 0; i < ppg.size(); ++i)
-        ppgtime[i] = (double)i / PPG_SAMPLE_RATE / 60.0;
+        ppgtime[i] = (double)i / ppgRate / 60.0;
 
     // 2. Initialize pairs: [ppg_valley_idx, ecg_R_idx]
     vector<vector<double>> pairs;
@@ -40,7 +41,7 @@ inline vector<vector<double>> pairRtoPPGBeat(
 
     for (size_t i = 0; i < ecgRIndex.size(); ++i) {
         if (ecgRIndex[i] < ecg.size())
-            pairs.push_back({ NaN, (double)ecgRIndex[i] });
+            pairs.push_back({ std::numeric_limits<double>::quiet_NaN(), (double)ecgRIndex[i] });
     }
 
     // 3. Pair every R-peak to the nearest PPG valley within the neighboring R-R interval.

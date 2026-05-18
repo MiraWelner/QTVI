@@ -32,9 +32,9 @@
 #include <vector>
 
 extern "C" {
-#include "edflib.h"
+#include "file_format_parsing/edflib.h"
 }
-#include "pugixml.hpp"
+#include "file_format_parsing/pugixml.hpp"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

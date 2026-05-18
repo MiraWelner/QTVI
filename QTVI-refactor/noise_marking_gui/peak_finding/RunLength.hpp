@@ -4,8 +4,26 @@
 // ============================================================================
 #pragma once
 
-#include "SignalProcessingTypes.hpp"
 #include <type_traits>
+#include <vector>
+#include <cmath>
+#include <algorithm>
+#include <numeric>
+#include <limits>
+#include <stdexcept>
+#include <map>
+#include <string>
+#include <fstream>
+#include <sstream>
+#include <functional>
+#include <tuple>
+
+using std::vector;
+using std::string;
+using std::map;
+using std::pair;
+using std::tuple;
+
 
 // Encode: consecutive equal values are grouped into (value, count, start_index).
 //

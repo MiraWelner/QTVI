@@ -20,8 +20,6 @@
  */
 #pragma once
 
-#include "SignalProcessingTypes.hpp"
-
 inline vector<double> diff2(const vector<double>& X, int nd = 1) {
     if (X.empty()) return {};
 

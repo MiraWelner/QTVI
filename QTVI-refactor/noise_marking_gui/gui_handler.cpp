@@ -50,6 +50,7 @@
 #include <QKeyEvent>
 #include <QShortcut>
 #include <QSignalBlocker>
+#include <QSet>
 #include <QButtonGroup>
 #include <QRadioButton>
 #include <QFile>
@@ -624,7 +625,16 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         });
 }
 
-noise_marking_gui::~noise_marking_gui() = default;
+noise_marking_gui::~noise_marking_gui() {
+    // Persistent line series outlive their chart attachments (we
+    // removeSeries() them on every render but don't delete them), so they
+    // need explicit cleanup. At this point the dialog is closing so the
+    // tens-of-seconds OpenGL teardown cost no longer matters.
+    for (auto& list : m_persistentLines) {
+        for (auto* ln : list) delete ln;
+    }
+    m_persistentLines.clear();
+}
 
 GenExcStruct noise_marking_gui::getMarkings() const {
     GenExcStruct result = m_genExc;
@@ -1373,6 +1383,7 @@ namespace {
     std::pair<double, double> renderWindowedChart(
         QChartView* view,
         const QList<WindowedSeries>& serieses,
+        QList<QLineSeries*>& persistentLines,    // owned by caller; lazily grown
         double currentStartTime, double windowDuration,
         double globalOffset, double ecgSR,
         bool labelsVisible,
@@ -1385,10 +1396,19 @@ namespace {
         if (!view || !view->chart()) return { 1e9, -1e9 };
         QChart* chart = view->chart();
 
-        // Wipe everything except series the caller already preserved by
-        // attaching them to other charts (we don't pass keep here -- keep
-        // is handled at the higher level by wipeChartContent before this).
-        for (auto* s : chart->series()) { chart->removeSeries(s); delete s; }
+        // Wipe non-persistent content. Persistent line series stay alive
+        // across renders to avoid the multi-second OpenGL teardown that
+        // happens in ~QLineSeries -- we detach them from the chart here so
+        // they can be re-added in a fresh order with fresh axis attachments.
+        // Everything else (scatter overlays, area highlights, axes) is
+        // recreated per render and gets deleted as before.
+        QSet<QAbstractSeries*> persistentSet;
+        for (auto* ln : persistentLines) persistentSet.insert(ln);
+
+        for (auto* s : chart->series()) {
+            chart->removeSeries(s);
+            if (!persistentSet.contains(s)) delete s;
+        }
         for (auto* a : chart->axes()) { chart->removeAxis(a);  delete a; }
 
         auto* xAxis = makeWindowedTimeAxis(currentStartTime, windowDuration,
@@ -1418,22 +1438,41 @@ namespace {
         };
         QList<PendingRaw> rawsToAdd;
 
-        for (const auto& d : serieses) {
+        for (int slot = 0; slot < serieses.size(); ++slot) {
+            const auto& d = serieses[slot];
             if (!d.data || isMissingSignal(*d.data)) continue;
 
             const bool hasRaw = d.rawData && isRawUsable(*d.rawData);
 
+            // Grow persistentLines on demand so we can reuse the same
+            // QLineSeries pointer for slot `slot` across renders. This is
+            // the key to avoiding the slow ~QLineSeries on every Line<->
+            // Scatter switch -- the OpenGL backend keeps its buffers, we
+            // just refresh the points.
+            auto ensurePersistentLine = [&]() -> QLineSeries* {
+                while (persistentLines.size() <= slot)
+                    persistentLines.append(nullptr);
+                if (!persistentLines[slot]) {
+                    auto* ln = new QLineSeries();
+                    ln->setUseOpenGL(true);
+                    persistentLines[slot] = ln;
+                }
+                QLineSeries* ln = persistentLines[slot];
+                ln->setPen(QPen(d.color, 1));
+                return ln;
+                };
+
             // Decide what the upsampled foreground looks like:
-            //  - forceLine: always line
-            //  - else if scatter mode + raw available: skip foreground entirely
-            //    (the raw dots are the only markers; we still scan for Y range)
+            //  - forceLine: always line  (persistent)
+            //  - else if scatter mode + raw available: skip foreground; hide
+            //    the persistent line if one exists
             //  - else if scatter mode + no raw: scatter the upsampled samples
-            //  - else (line mode): line
+            //    (non-persistent; this branch rarely fires in practice)
+            //  - else (line mode): line  (persistent)
             QXYSeries* plotSeries = nullptr;
             if (forceLineForUpsampled) {
-                auto* ln = new QLineSeries();
-                ln->setUseOpenGL(true);
-                ln->setPen(QPen(d.color, 1));
+                QLineSeries* ln = ensurePersistentLine();
+                ln->setVisible(true);
                 chart->addSeries(ln);
                 plotSeries = ln;
             }
@@ -1448,11 +1487,17 @@ namespace {
                 plotSeries = sc;
             }
             else if (!useScatterMode) {
-                auto* ln = new QLineSeries();
-                ln->setUseOpenGL(true);
-                ln->setPen(QPen(d.color, 1));
+                QLineSeries* ln = ensurePersistentLine();
+                ln->setVisible(true);
                 chart->addSeries(ln);
                 plotSeries = ln;
+            }
+            else {
+                // Scatter mode + raw available -> no foreground. Hide the
+                // persistent line so old data doesn't peek through.
+                if (slot < persistentLines.size() && persistentLines[slot]) {
+                    persistentLines[slot]->setVisible(false);
+                }
             }
 
             // Upsampled samples (and Y-range scan).
@@ -1521,15 +1566,24 @@ namespace {
 
         // Pass 2: add every raw scatter overlay after all lines. Insertion
         // order is rendering order in QChart, so this guarantees scatter
-        // sits on bottom regardless of how many channels share the chart.
+        // sits on top regardless of how many channels share the chart.
+        QList<QScatterSeries*> scattersForTopReorder;
         for (const auto& r : rawsToAdd) {
             auto* rawScatter = new QScatterSeries();
             rawScatter->setColor(useSingleRawColor ? singleRawColor : r.color);
             rawScatter->setBorderColor(Qt::transparent);
             rawScatter->setMarkerSize(useSingleRawColor ? 3.0 : 3.5);
             rawScatter->setMarkerShape(QScatterSeries::MarkerShapeCircle);
-            rawScatter->setUseOpenGL(false);
+            // Both scatter and lines on OpenGL for speed. Z-ordering
+            // between GL series isn't fully reliable in Qt Charts when
+            // multiple series share a chart, but a deferred remove+add
+            // of every raw scatter after rendering nudges Qt to draw
+            // them last consistently. (See pass 3 at the end of this
+            // function.) CPU rendering of the scatter was correct but
+            // too slow on every chart for arrow-key responsiveness.
+            rawScatter->setUseOpenGL(true);
             chart->addSeries(rawScatter);
+            scattersForTopReorder.append(rawScatter);
 
             const double viewStart = currentStartTime;
             const double viewEnd = currentStartTime + windowDuration;
@@ -1545,6 +1599,19 @@ namespace {
             rawScatter->replace(rawPts);
             rawScatter->attachAxis(xAxis);
             rawScatter->attachAxis(yAxis);
+        }
+
+        // Pass 3: nudge GL render order. By removing each raw scatter and
+        // re-adding it AFTER all foreground series have been added (and
+        // had their data set), we maximize the chance that Qt's GL backend
+        // renders scatter strictly last. Without this, GL-overlay
+        // compositing can put a line stroke over a dot drawn earlier in
+        // the same pipeline.
+        for (auto* scatter : scattersForTopReorder) {
+            chart->removeSeries(scatter);
+            chart->addSeries(scatter);
+            scatter->attachAxis(xAxis);
+            scatter->attachAxis(yAxis);
         }
 
         setPaddedYRange(yAxis, gMin, gMax);
@@ -1600,16 +1667,32 @@ void noise_marking_gui::handle_data_plot() {
     m_markState_ppg.startMarkerLine = nullptr;
     m_markState_abp.startMarkerLine = nullptr;
 
-    wipeChartContent(ui->ecg_axis_1->chart());
-    wipeChartContent(ui->ecg_axis_2->chart());
-    wipeChartContent(ui->ecg_axis_3->chart());
-    wipeChartContent(ui->ppg_axis->chart());
+    // Wipe non-persistent content (scatter overlays, axes, area highlights)
+    // from the markable charts. Persistent line series stay alive across
+    // wipes -- they're listed in `keep` so wipeChartContent skips them
+    // (it removes them from the chart but doesn't delete them; they'll be
+    // re-added by renderWindowedChart below). Without this, the old line
+    // would get deleted here, triggering the slow OpenGL teardown and
+    // defeating the whole point of persisting the series.
+    auto keepFor = [&](QChartView* cv) -> QList<QAbstractSeries*> {
+        QList<QAbstractSeries*> keep;
+        auto it = m_persistentLines.constFind(cv);
+        if (it != m_persistentLines.constEnd())
+            for (auto* ln : it.value()) if (ln) keep.append(ln);
+        return keep;
+        };
+
+    wipeChartContent(ui->ecg_axis_1->chart(), keepFor(ui->ecg_axis_1));
+    wipeChartContent(ui->ecg_axis_2->chart(), keepFor(ui->ecg_axis_2));
+    wipeChartContent(ui->ecg_axis_3->chart(), keepFor(ui->ecg_axis_3));
+    wipeChartContent(ui->ppg_axis->chart(), keepFor(ui->ppg_axis));
 
     // hyp_accel_resp_cvp_axis is owned here only when no sleep stages -- otherwise
     // setupHypnogram() owns it and we leave it alone.
     const bool sleepPresent = sleepDataPresent(m_sleepStages);
     if (!sleepPresent && ui->hyp_accel_resp_cvp_axis)
-        wipeChartContent(ui->hyp_accel_resp_cvp_axis->chart());
+        wipeChartContent(ui->hyp_accel_resp_cvp_axis->chart(),
+            keepFor(ui->hyp_accel_resp_cvp_axis));
 
     // ----------------------------------------------------------------------
     // Render one markable channel: line + raw black scatter overlay,
@@ -1650,6 +1733,7 @@ void noise_marking_gui::handle_data_plot() {
         QList<WindowedSeries> serieses = { { r.data, r.color, &rawData } };
         auto [yMin, yMax] = renderWindowedChart(
             r.chartView, serieses,
+            m_persistentLines[r.chartView],
             m_currentStartTime, m_windowDuration, globalOffset, sr,
             /*labelsVisible*/ r.chartView == xLabelOwnerRight,
             /*useScatterMode*/ m_plotMode == PlotMode::Scatter,
@@ -1680,6 +1764,7 @@ void noise_marking_gui::handle_data_plot() {
 
             renderWindowedChart(
                 view, serieses,
+                m_persistentLines[view],
                 m_currentStartTime, m_windowDuration, globalOffset, m_ecgSR,
                 labelsVisible,
                 /*useScatterMode*/ m_plotMode == PlotMode::Scatter,

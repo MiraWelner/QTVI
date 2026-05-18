@@ -197,6 +197,8 @@
     <None Include="noise_marking_guiplugin.json" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="file_format_parsing\edflib.h" />
+    <ClInclude Include="file_format_parsing\pugixml.hpp" />
     <ClInclude Include="template_generation\AlignWaves.hpp" />
     <ClInclude Include="template_generation\build_templates.hpp" />
     <ClInclude Include="template_generation\CombineTemplatesGraph.hpp" />
@@ -213,11 +215,7 @@
     <ClInclude Include="annealing_to_bin\AnnealSegments.hpp" />
     <ClInclude Include="annealing_to_bin\anneal_handler.hpp" />
     <ClInclude Include="config_entry.hpp" />
-    <ClInclude Include="edflib.h" />
     <ClInclude Include="noise_manager.h" />
-    <ClInclude Include="pugiconfig.hpp" />
-    <ClInclude Include="pugixml.hpp" />
-    <ClInclude Include="stdafx.h" />
   </ItemGroup>
   <ItemGroup>
     <QtUic Include="noise_marking_gui.ui" />
@@ -225,18 +223,21 @@
   <ItemGroup>
     <ClCompile Include="annealing_to_bin\anneal_handler.cpp" />
     <ClCompile Include="config_loader.cpp" />
-    <ClCompile Include="edflib.c" />
+    <ClCompile Include="file_format_parsing\edflib.c" />
+    <ClCompile Include="file_format_parsing\pugixml.cpp" />
     <ClCompile Include="file_to_bin.cpp" />
-    <ClCompile Include="gui_handler.cpp" />
+    <ClCompile Include="gui_handler.cpp">
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(Filename).moc</QtMocFileName>
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Filename).moc</QtMocFileName>
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">%(Filename).moc</QtMocFileName>
+      <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|x64'">input</DynamicSource>
+      <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Filename).moc</QtMocFileName>
+    </ClCompile>
     <ClCompile Include="noise_manager.cpp" />
     <ClCompile Include="noise_marking_gui.cpp" />
-    <ClCompile Include="pugixml.cpp" />
-    <ClCompile Include="stdafx.cpp">
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
-      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
-    </ClCompile>
     <ClCompile Include="template_generation\template_io.cpp" />
     <ClCompile Include="user_control_handler.cpp" />
   </ItemGroup>

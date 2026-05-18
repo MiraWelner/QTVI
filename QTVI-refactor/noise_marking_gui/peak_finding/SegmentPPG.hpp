@@ -4,11 +4,10 @@
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
- * @date   2026-03-30
+ * @date   2026-05-17
  */
 #pragma once
 
-#include "SignalProcessingTypes.hpp"
 #include "nanfastsmooth.hpp"
 #include "StatsUtils.hpp"
 #include "stdoutlier.hpp"
@@ -16,6 +15,7 @@
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>
+#include <vector>
 
 struct SegmentPPGResult {
     vector<size_t> minAmps;  // valley (trough) indices
@@ -25,8 +25,7 @@ struct SegmentPPGResult {
 namespace segmentppg_detail {
 
     // Segment signal into peaks and valleys based on above/below baseline mask
-    inline pair<vector<size_t>, vector<size_t>> segBeats(
-        const vector<double>& ppg, const vector<int>& mask)
+    inline pair<vector<size_t>, vector<size_t>> segBeats(const vector<double>& ppg, const vector<int>& mask)
     {
         vector<int> B;
         vector<double> N, BI;
@@ -69,12 +68,12 @@ namespace segmentppg_detail {
 
 } // namespace segmentppg_detail
 
-inline SegmentPPGResult SegmentPPG(const vector<double>& ppg) {
+inline SegmentPPGResult SegmentPPG(const vector<double>& ppg, double ppgRate) {
     if (ppg.empty()) throw std::runtime_error("Empty PPG signal");
 
     // 1. Smooth and compute baseline
-    vector<double> ppg_smooth = nanfastsmooth(ppg, PPG_SAMPLE_RATE * 0.25, 3);
-    vector<double> baseline = movmean(ppg_smooth, static_cast<size_t>(PPG_SAMPLE_RATE));
+    vector<double> ppg_smooth = nanfastsmooth(ppg, ppgRate * 0.25, 3);
+    vector<double> baseline = movmean(ppg_smooth, static_cast<size_t>(ppgRate));
 
     // 2. Build mask: 1 where smoothed signal is above baseline, 0 below
     vector<int> mask(ppg.size());

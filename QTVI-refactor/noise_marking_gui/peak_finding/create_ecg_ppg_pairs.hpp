@@ -19,6 +19,7 @@
 #include "JoinedRR.hpp"
 #include "pairRtoPPGBeat.hpp"
 #include "StatsUtils.hpp"
+#include "SegmentPPG.hpp"
 
  /**
   * @brief  Run R-peak detection on three versions of a signal: raw,
@@ -34,6 +35,7 @@
   */
 static inline ChannelRPeaks detect_channel_3way(
     const std::vector<double>& signal,
+    double ecgRate,
     const std::string& fileID,
     bool hasPPG,
     std::size_t ppgCount)
@@ -54,7 +56,7 @@ static inline ChannelRPeaks detect_channel_3way(
             }
 
             try {
-                JoinedRRResult jrr = JoinedRR_full(sig, fileID);
+                JoinedRRResult jrr = JoinedRR_full(sig, ecgRate, fileID);
                 rIndex = std::move(jrr.peaks);
 
                 if (hasPPG && ppgCount > 0) {
@@ -119,9 +121,8 @@ static inline std::vector<std::vector<double>> build_unpaired(
  * @param[in] fileID            Study identifier forwarded to sub-algorithms.
  * @return    One output_binfile_data per segment.
  */
-inline std::vector<output_binfile_data> create_ecg_ppg_pairs(
-    std::vector<AnnealedSegment> annealedSegments,
-    int dbg_plot, bool use_R_algorithm, std::string fileID)
+inline std::vector<output_binfile_data> create_ecg_ppg_pairs(std::vector<AnnealedSegment> annealedSegments, int dbg_plot, bool use_R_algorithm, std::string fileID, 
+    double ecgRate, double ppgRate)
 {
     std::vector<output_binfile_data> data(annealedSegments.size());
 
@@ -157,7 +158,7 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs(
          * ---------------------------------------------------------------- */
         if (hasPPG) {
             try {
-                SegmentPPGResult ppgResult = SegmentPPG(seg.ppg_signal);
+                SegmentPPGResult ppgResult = SegmentPPG(seg.ppg_signal, ppgRate);
                 d.ppgMinAmps = ppgResult.minAmps;
                 d.ppgMaxAmps = ppgResult.maxAmps;
             }
@@ -173,13 +174,13 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs(
          *          by detect_channel_3way via JoinedRR_full.
          * ---------------------------------------------------------------- */
         if (use_R_algorithm && !seg.ecg_signal_1.empty()) {
-            d.ch1 = detect_channel_3way(seg.ecg_signal_1, fileID, hasPPG, d.ppgMinAmps.size());
+            d.ch1 = detect_channel_3way(seg.ecg_signal_1, ecgRate, fileID, hasPPG, d.ppgMinAmps.size());
 
             if (hasEcg2) {
-                d.ch2 = detect_channel_3way(seg.ecg_signal_2, fileID, hasPPG, d.ppgMinAmps.size());
+                d.ch2 = detect_channel_3way(seg.ecg_signal_2, ecgRate, fileID, hasPPG, d.ppgMinAmps.size());
             }
             if (hasEcg3) {
-                d.ch3 = detect_channel_3way(seg.ecg_signal_3, fileID, hasPPG, d.ppgMinAmps.size());
+                d.ch3 = detect_channel_3way(seg.ecg_signal_3, ecgRate, fileID, hasPPG, d.ppgMinAmps.size());
             }
         }
 
@@ -189,7 +190,7 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs(
         d.bad_segment = false;
         if (!d.ch1.raw.empty() && !d.ppgMinAmps.empty()) {
             try {
-                d.pairs = pairRtoPPGBeat(d.ecgSignal, d.ppgSignal, d.ch1.raw, d.ppgMinAmps);
+               d.pairs = pairRtoPPGBeat(d.ecgSignal, d.ppgSignal, d.ch1.raw, d.ppgMinAmps, ecgRate, ppgRate);
             }
             catch (...) {
                 d.pairs = build_unpaired(d.ppgMinAmps);

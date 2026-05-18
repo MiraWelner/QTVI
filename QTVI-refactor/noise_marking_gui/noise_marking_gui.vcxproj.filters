@@ -31,19 +31,7 @@
     </QtMoc>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="stdafx.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="edflib.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="config_entry.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="pugixml.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="pugiconfig.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="annealing_to_bin\AnnealSegments.hpp">
@@ -88,7 +76,10 @@
     <ClInclude Include="template_generation\CombineTemplatesGraph.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="user_control_handler.h">
+    <ClInclude Include="file_format_parsing\pugixml.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="file_format_parsing\edflib.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -104,19 +95,10 @@
     <ClCompile Include="file_to_bin.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="gui_handler.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="noise_manager.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="noise_marking_gui.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="pugixml.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="stdafx.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="annealing_to_bin\anneal_handler.cpp">
@@ -125,11 +107,22 @@
     <ClCompile Include="template_generation\template_io.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="edflib.c">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="user_control_handler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="gui_handler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="file_format_parsing\pugixml.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="file_format_parsing\edflib.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <QtMoc Include="user_control_handler.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
   </ItemGroup>
 </Project>

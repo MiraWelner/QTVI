@@ -3,8 +3,12 @@
 // Fast smoothing with moving average, ignoring NaN values
 // ============================================================================
 #pragma once
+#include <vector>
+#include <cmath>
+#include <limits>   
+#include <algorithm>
 
-#include "SignalProcessingTypes.hpp"
+using std::vector;
 
 namespace nanfastsmooth_detail {
 
@@ -91,7 +95,7 @@ namespace nanfastsmooth_detail {
 
         double minPoints = std::max(w * (1.0 - tol), 1.0);
         for (size_t i = 0; i < L; ++i) {
-            if (np[i] < minPoints) np[i] = NaN;
+            if (np[i] < minPoints) np[i] = std::numeric_limits<double>::quiet_NaN();
         }
 
         vector<double> SmoothY(L);

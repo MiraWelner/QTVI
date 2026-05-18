@@ -4,7 +4,6 @@
 // ============================================================================
 #pragma once
 
-#include "SignalProcessingTypes.hpp"
 #include "StatsUtils.hpp"
 
 inline tuple<vector<size_t>, double, double> ecglaux(

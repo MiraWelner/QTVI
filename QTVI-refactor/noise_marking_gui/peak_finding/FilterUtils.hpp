@@ -5,7 +5,6 @@
 // ============================================================================
 #pragma once
 
-#include "SignalProcessingTypes.hpp"
 #include <complex>
 
 #ifndef M_PI

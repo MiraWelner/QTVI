@@ -4,7 +4,6 @@
 // ============================================================================
 #pragma once
 
-#include "SignalProcessingTypes.hpp"
 #include "rpeakdetect.hpp"
 #include "pan_tompkin.hpp"
 #include "ecgLms.hpp"
@@ -57,16 +56,11 @@ namespace joinedrr_detail {
 
 } // namespace joinedrr_detail
 
-/**
- * @brief  Original interface preserved for backward compatibility.
- *         Returns only the peak indices (delegates to the full version).
- */
-inline vector<size_t> JoinedRR(const vector<double>& ecgSeg, const std::string fileID);
 
 /**
  * @brief  Full interface that also returns the pre-bandpass (detrended) signal.
  */
-inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, const std::string fileID) {
+inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, double ecgRate, const std::string fileID) {
     using namespace joinedrr_detail;
 
     JoinedRRResult result;
@@ -89,17 +83,17 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, const std::str
     // ran rpeakdetect() three times -- bandpass+filter+medfilt1 once each
     // -- when only the threshold differs. We do the prep once and apply
     // three thresholds. Output is bit-identical.
-    auto rpd_prep = rpeakdetect_prep(processedEcg, ECG_SAMPLE_RATE, 0, fileID);
+    auto rpd_prep = rpeakdetect_prep(processedEcg, ecgRate, 0, fileID);
     output[0] = rpeakdetect_apply(rpd_prep, 0.2).R_index;
     output[1] = rpeakdetect_apply(rpd_prep, 0.1).R_index;
     output[2] = rpeakdetect_apply(rpd_prep, 0.4).R_index;
 
-    PanTompkinResult pt_res = pan_tompkin(ecgSeg, ECG_SAMPLE_RATE, 0, fileID);
+    PanTompkinResult pt_res = pan_tompkin(ecgSeg, ecgRate, 0, fileID);
     output[3].assign(pt_res.qrs_i_raw.begin(), pt_res.qrs_i_raw.end());
 
     vector<double> b = { 5.0 };
     vector<double> a = { 12.0 };
-    output[4] = ecgLms(processedEcg, (int)ECG_SAMPLE_RATE, b, a, 0, fileID);
+    output[4] = ecgLms(processedEcg, (int)ecgRate, b, a, 0, fileID);
 
     // Algorithm 6 depends on median distances from the first 5
     vector<double> dists;
@@ -109,12 +103,12 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, const std::str
             dists.push_back(median(d));
         }
     }
-    double m_dist = (!dists.empty()) ? median(dists) : (ECG_SAMPLE_RATE * 0.6);
+    double m_dist = (!dists.empty()) ? median(dists) : (ecgRate * 0.6);
     output[5] = RRsimpleSquared(ecgSeg, m_dist / 2.0).first;
 
     // 2. Refine algorithms 4, 5, 6 (indices 3-5, matching MATLAB)
     for (size_t r = 3; r < 6; ++r)
-        output[r] = RPeakfromRWave(ecgSeg, output[r], ECG_SAMPLE_RATE);
+        output[r] = RPeakfromRWave(ecgSeg, output[r], ecgRate);
 
     // 3. Build weighted detection list
     struct DetWithWeight { size_t pos; double weight; };
@@ -166,8 +160,8 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, const std::str
 }
 
 /**
- * @brief  Backward-compatible wrapper � returns only peak indices.
+ * @brief  Backward-compatible wrapper, returns only peak indices.
  */
-inline vector<size_t> JoinedRR(const vector<double>& ecgSeg, const std::string fileID) {
-    return JoinedRR_full(ecgSeg, fileID).peaks;
+inline vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgRate, const std::string fileID) {
+    return JoinedRR_full(ecgSeg, ecgRate, fileID).peaks;
 }

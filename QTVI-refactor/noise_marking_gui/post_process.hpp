@@ -65,7 +65,7 @@ namespace post_process_detail {
             try {
                 AnnealedData annealedData = read_input_binfile(annealedPath.string());
                 peakResults = create_ecg_ppg_pairs(
-                    std::move(annealedData.bins), 0, true, stem);
+                    std::move(annealedData.bins), 0, true, stem, cfg.finalSamplingRate, cfg.finalSamplingRate);
                 write_output_binfile(rPeakPath.string(), peakResults);
                 std::cerr << "  -> " << peakResults.size() << " bins -> "
                     << rPeakPath.filename() << "\n";

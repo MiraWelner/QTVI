@@ -3,8 +3,16 @@
 // Statistical utility functions (header-only)
 // ============================================================================
 #pragma once
+#include <vector>
+#include <utility>
+#include <cmath>
+#include <algorithm>
+#include <limits> 
 
-#include "SignalProcessingTypes.hpp"
+using std::vector; 
+using std::pair;
+inline constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
+inline constexpr double Inf = std::numeric_limits<double>::infinity();
 
 inline void detrend(std::vector<double>& x) {
     size_t n = x.size();
