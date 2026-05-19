@@ -63,9 +63,9 @@ namespace {
             cfg.accelZLabel = "Accelerometer_Z";
         }
         else if (cfg.dataType == "CHAOS") {
-            cfg.ecg1Label = "NLS_NOM_ECG_ELEC_pOTL_I";
-            cfg.ecg2Label = "NLS_NOM_ECG_ELEC_pOTL_II";
-            cfg.ecg3Label = "NLS_NOM_ECG_ELEC_pOTL_III";
+            cfg.ecg1Label = "NLS_NOM_ECG_ELEC_POTL_I";
+            cfg.ecg2Label = "NLS_NOM_ECG_ELEC_POTL_II";
+            cfg.ecg3Label = "NLS_NOM_ECG_ELEC_POTL_III";
             cfg.ppgLabel = "NLS_NOM_PULS_OXIM_PLETH";
             cfg.eeg1Label = "NLS_EEG_NAMES_EEG_CHAN1";
             cfg.eeg2Label = "NLS_EEG_NAMES_EEG_CHAN2";

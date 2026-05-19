@@ -61,11 +61,11 @@ void user_control_handler::setupConnections() {
     connect(ui->stop_all_mark, &QPushButton::clicked, this, &user_control_handler::handle_allmarkingstop_button);
 
     // Window-length selector: combo index -> seconds. Default is index 2 (10 s).
-    static constexpr double kWindowSeconds[] = { 1, 3, 10, 30, 60, 600 };
+    static constexpr double window_length_options[] = { 1, 3, 10, 30, 60, 120,300 };
     connect(ui->window_length_selector,
         QOverload<int>::of(&QComboBox::currentIndexChanged),
         this,
-        [this](int idx) { handle_window_toggle(true, kWindowSeconds[idx]); });
+        [this](int idx) { handle_window_toggle(true, window_length_options[idx]); });
     ui->window_length_selector->setCurrentIndex(2);
 }
 

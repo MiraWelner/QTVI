@@ -9,7 +9,7 @@
  *            - The *raw* native-rate samples drawn as a solid black scatter
  *              overlay, always. In Scatter mode, this is the ONLY thing
  *              shown (no upsampled foreground).
- *            - In Line mode, the *upsampled* samples (1 kHz) are drawn as
+ *            - In Line mode, the *upsampled* samples are drawn as
  *              a colored line underneath the raw black scatter.
  *
 *          Input .bin format: 500-byte header (125 x uint32-sized fields):
@@ -2170,7 +2170,7 @@ void noise_marking_gui::restoreMarkingMarkers() {
 }
 
 // ============================================================================
-// Public marking API (called by lower_row_buttons)
+// Public marking API (called by user_control_handler)
 // ============================================================================
 
 void noise_marking_gui::beginMarking(const QString& signalLabel) {

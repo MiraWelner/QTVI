@@ -1,8 +1,10 @@
 ﻿   Qt/MSBuild: 3.4.1.0
   Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
    Qt: 6.10.2
+  uic noise_marking_gui.ui
   gui_handler.cpp
   noise_marking_gui.cpp
+  user_control_handler.cpp
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\bandpass.hpp(1,1): warning C4828: The file contains a character starting at offset 0x47f that is illegal in the current source character set (codepage 65001).
   (compiling source file 'gui_handler.cpp')
   
@@ -35,6 +37,7 @@ D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\bandpass.h
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\bandpass.hpp(1,1): warning C4828: The file contains a character starting at offset 0x147d that is illegal in the current source character set (codepage 65001).
   (compiling source file 'noise_marking_gui.cpp')
   
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\user_control_handler.cpp(98,11): warning C4834: discarding return value of function with [[nodiscard]] attribute
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(128,76): warning C4267: 'argument': conversion from 'size_t' to '_Ty', possible loss of data
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(128,76): warning C4267:         with
 D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\peak_finding\rpeakdetect.hpp(128,76): warning C4267:         [
@@ -126,11 +129,11 @@ C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.50.35717
               _Objty=double
           ]
   
+  moc_gui_handler.cpp
   Generating code
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\post_process.hpp(117): warning C4715: 'post_process_detail::processOneFile': not all control paths return a value
-  672 of 8822 functions ( 7.6%) were compiled, the rest were copied from previous compilation.
-    109 functions were new in current compilation
-    268 functions had inline decision re-evaluated but remain unchanged
+  198 of 8870 functions ( 2.2%) were compiled, the rest were copied from previous compilation.
+    167 functions were new in current compilation
+    58 functions had inline decision re-evaluated but remain unchanged
   Finished generating code
   noise_marking_gui.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\x64\Release\noise_marking_gui.exe
   'pwsh.exe' is not recognized as an internal or external command,

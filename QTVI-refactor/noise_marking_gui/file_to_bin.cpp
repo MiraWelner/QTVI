@@ -659,11 +659,18 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
 
     auto writeChannel = [&](ChannelIdx ch, double rateOverride = 0.0) {
         int chIdx = sigmap[ch];
-        double rate = (rateOverride > 0.0)
-            ? rateOverride
-            : edf_channel_rate(hdr.get(), chIdx);
-        edf_to_bin(hdr->handle, chIdx, edf_samples(hdr.get(), chIdx),
-            rate, cfg.finalSamplingRate, out,
+        double rate;
+        if (chIdx < 0) {
+            rate = 0.0;   // doesn't matter; edf_to_bin will write_missing
+        }
+        else if (rateOverride > 0.0) {
+            rate = rateOverride;
+        }
+        else {
+            rate = edf_channel_rate(hdr.get(), chIdx);
+        }
+        long long n = (chIdx < 0) ? 0 : edf_samples(hdr.get(), chIdx);
+        edf_to_bin(hdr->handle, chIdx, n, rate, cfg.finalSamplingRate, out,
             sizes_up[ch], sizes_raw[ch], native_rates[ch]);
         };
 
@@ -841,6 +848,7 @@ void make_binfile_dat(const std::filesystem::path& path,
 
         std::vector<double> up =
             resample_from_sparse(rawValues, rawRowIdx, prescan.totalRows);
+
         if (up.empty()) {
             double v = -1.0;
             out.write(reinterpret_cast<const char*>(&v), 8);

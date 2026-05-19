@@ -117,6 +117,7 @@ public:
     QPushButton *process_button;
     QPushButton *browse_file_button;
     QPushButton *save_current_plot;
+    QCheckBox *show_peaks_check;
     QVBoxLayout *ampogram_and_sleepstates;
     QChartView *ecg_ampogram_axis;
     QChartView *ppg_ampogram_axis;
@@ -467,6 +468,7 @@ public:
         window_length_selector->addItem(QString());
         window_length_selector->addItem(QString());
         window_length_selector->addItem(QString());
+        window_length_selector->addItem(QString());
         window_length_selector->setObjectName("window_length_selector");
 
         gridLayout_3->addWidget(window_length_selector, 1, 0, 1, 1);
@@ -663,6 +665,11 @@ public:
 
         gridLayout_4->addWidget(save_current_plot, 0, 1, 1, 1);
 
+        show_peaks_check = new QCheckBox(noise_marking_gui);
+        show_peaks_check->setObjectName("show_peaks_check");
+
+        gridLayout_4->addWidget(show_peaks_check, 1, 1, 1, 1);
+
 
         buttons->addLayout(gridLayout_4, 2, 1, 1, 1);
 
@@ -831,15 +838,15 @@ public:
         start_ecg3_mark->setText(QCoreApplication::translate("noise_marking_gui", "3", nullptr));
         marking_type_label->setText(QCoreApplication::translate("noise_marking_gui", "Mark Type", nullptr));
         label_3->setText(QCoreApplication::translate("noise_marking_gui", "Mark ECG Channel Stop", nullptr));
-        marking_type->setItemText(0, QCoreApplication::translate("noise_marking_gui", "Noise/Artifact", nullptr));
-        marking_type->setItemText(1, QCoreApplication::translate("noise_marking_gui", "Conduction Delay", nullptr));
-        marking_type->setItemText(2, QCoreApplication::translate("noise_marking_gui", "AF", nullptr));
-        marking_type->setItemText(3, QCoreApplication::translate("noise_marking_gui", "SVT", nullptr));
-        marking_type->setItemText(4, QCoreApplication::translate("noise_marking_gui", "VT", nullptr));
-        marking_type->setItemText(5, QCoreApplication::translate("noise_marking_gui", "PVC", nullptr));
-        marking_type->setItemText(6, QCoreApplication::translate("noise_marking_gui", "PAC", nullptr));
-        marking_type->setItemText(7, QCoreApplication::translate("noise_marking_gui", "Benign Arrhythmia", nullptr));
-        marking_type->setItemText(8, QCoreApplication::translate("noise_marking_gui", "Significant Arrhythmia", nullptr));
+        marking_type->setItemText(0, QCoreApplication::translate("noise_marking_gui", "1) Noise/Artifact", nullptr));
+        marking_type->setItemText(1, QCoreApplication::translate("noise_marking_gui", "2) Cond. Delay", nullptr));
+        marking_type->setItemText(2, QCoreApplication::translate("noise_marking_gui", "3) AF", nullptr));
+        marking_type->setItemText(3, QCoreApplication::translate("noise_marking_gui", "4) SVT", nullptr));
+        marking_type->setItemText(4, QCoreApplication::translate("noise_marking_gui", "5) VT", nullptr));
+        marking_type->setItemText(5, QCoreApplication::translate("noise_marking_gui", "6) PVC", nullptr));
+        marking_type->setItemText(6, QCoreApplication::translate("noise_marking_gui", "7) PAC", nullptr));
+        marking_type->setItemText(7, QCoreApplication::translate("noise_marking_gui", "8) Benign Arr.", nullptr));
+        marking_type->setItemText(8, QCoreApplication::translate("noise_marking_gui", "9) Significant Arr.", nullptr));
 
         label_2->setText(QCoreApplication::translate("noise_marking_gui", "Mark ECG Channel Start", nullptr));
         marking_type_label_2->setText(QCoreApplication::translate("noise_marking_gui", "Marking Type Legend", nullptr));
@@ -860,7 +867,8 @@ public:
         window_length_selector->setItemText(2, QCoreApplication::translate("noise_marking_gui", "10 Seconds", nullptr));
         window_length_selector->setItemText(3, QCoreApplication::translate("noise_marking_gui", "30 Seconds", nullptr));
         window_length_selector->setItemText(4, QCoreApplication::translate("noise_marking_gui", "1 Minute", nullptr));
-        window_length_selector->setItemText(5, QCoreApplication::translate("noise_marking_gui", "10 Minutes", nullptr));
+        window_length_selector->setItemText(5, QCoreApplication::translate("noise_marking_gui", "2 Minutes", nullptr));
+        window_length_selector->setItemText(6, QCoreApplication::translate("noise_marking_gui", "5 Minutes", nullptr));
 
         scatter_line->setItemText(0, QCoreApplication::translate("noise_marking_gui", "Line Plot", nullptr));
         scatter_line->setItemText(1, QCoreApplication::translate("noise_marking_gui", "Scatter Plot", nullptr));
@@ -887,6 +895,7 @@ public:
         process_button->setText(QCoreApplication::translate("noise_marking_gui", "Process Output", nullptr));
         browse_file_button->setText(QCoreApplication::translate("noise_marking_gui", "Browse Different File", nullptr));
         save_current_plot->setText(QCoreApplication::translate("noise_marking_gui", "Save Current Plot", nullptr));
+        show_peaks_check->setText(QCoreApplication::translate("noise_marking_gui", "Show Peaks?", nullptr));
         ecg_ampogram_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
         ppg_ampogram_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));
         hyp_accel_resp_cvp_axis->setStyleSheet(QCoreApplication::translate("noise_marking_gui", "background-color: white; border: 1px solid gray;", nullptr));

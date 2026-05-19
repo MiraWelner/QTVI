@@ -3,6 +3,9 @@
   "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\",
   "Documents": [
     {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\noise_marking_gui\\gui_handler.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{9AC31506-5B07-4CF8-B58F-B272B4C933FD}|6_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\config_loader.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{9AC31506-5B07-4CF8-B58F-B272B4C933FD}|6_template_marking.vcxproj|solutionrelative:config_loader.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
@@ -60,47 +63,24 @@
         },
         {
           "DockedWidth": 545,
-          "SelectedChildIndex": 3,
+          "SelectedChildIndex": 0,
           "Children": [
             {
               "$type": "Document",
-              "DocumentIndex": 2,
-              "Title": "TemplateFileName.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateFileName.hpp",
-              "RelativeDocumentMoniker": "TemplateFileName.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateFileName.hpp",
-              "RelativeToolTip": "TemplateFileName.hpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-05-15T23:04:41.348Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 3,
-              "Title": "template_marking.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\template_marking.cpp",
-              "RelativeDocumentMoniker": "template_marking.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\template_marking.cpp",
-              "RelativeToolTip": "template_marking.cpp",
-              "ViewState": "AgIAAFQAAAAAAAAAAAAkwIcAAAABAAAAAAAAAA==",
+              "DocumentIndex": 0,
+              "Title": "gui_handler.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\noise_marking_gui\\gui_handler.cpp",
+              "RelativeDocumentMoniker": "..\\noise_marking_gui\\gui_handler.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\noise_marking_gui\\gui_handler.cpp",
+              "RelativeToolTip": "..\\noise_marking_gui\\gui_handler.cpp",
+              "ViewState": "AgIAAKMIAAAAAAAAAAAAAHwIAAA1AAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-05-15T00:55:21.502Z"
+              "WhenOpened": "2026-05-18T16:26:17.455Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
               "DocumentIndex": 1,
-              "Title": "TemplateViewerWindow.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.hpp",
-              "RelativeDocumentMoniker": "TemplateViewerWindow.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.hpp",
-              "RelativeToolTip": "TemplateViewerWindow.hpp",
-              "ViewState": "AgIAAEcAAAAAAAAAAAAAAAYAAAAbAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-05-15T00:27:24.231Z"
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 0,
               "Title": "config_loader.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\config_loader.cpp",
               "RelativeDocumentMoniker": "config_loader.cpp",
@@ -113,7 +93,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 7,
+              "DocumentIndex": 8,
               "Title": "markers_automatic_position.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\markers_automatic_position.hpp",
               "RelativeDocumentMoniker": "markers_automatic_position.hpp",
@@ -122,6 +102,42 @@
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
               "WhenOpened": "2026-05-15T23:04:40.572Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "TemplateFileName.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateFileName.hpp",
+              "RelativeDocumentMoniker": "TemplateFileName.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateFileName.hpp",
+              "RelativeToolTip": "TemplateFileName.hpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-15T23:04:41.348Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "template_marking.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\template_marking.cpp",
+              "RelativeDocumentMoniker": "template_marking.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\template_marking.cpp",
+              "RelativeToolTip": "template_marking.cpp",
+              "ViewState": "AgIAAFQAAAAAAAAAAAAkwIcAAAABAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-05-15T00:55:21.502Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "TemplateViewerWindow.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.hpp",
+              "RelativeDocumentMoniker": "TemplateViewerWindow.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.hpp",
+              "RelativeToolTip": "TemplateViewerWindow.hpp",
+              "ViewState": "AgIAAEcAAAAAAAAAAAAAAAYAAAAbAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-15T00:27:24.231Z"
             },
             {
               "$type": "Bookmark",
@@ -137,7 +153,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 8,
+              "DocumentIndex": 9,
               "Title": "config_entry.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\config_entry.hpp",
               "RelativeDocumentMoniker": "config_entry.hpp",
@@ -149,7 +165,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 4,
+              "DocumentIndex": 5,
               "Title": "TemplateViewerWindow.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.cpp",
               "RelativeDocumentMoniker": "TemplateViewerWindow.cpp",
@@ -161,7 +177,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 5,
+              "DocumentIndex": 6,
               "Title": "TemplateBinIO.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateBinIO.hpp",
               "RelativeDocumentMoniker": "TemplateBinIO.hpp",
@@ -173,7 +189,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 6,
+              "DocumentIndex": 7,
               "Title": "template_io.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\template_io.cpp",
               "RelativeDocumentMoniker": "template_io.cpp",
@@ -185,7 +201,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 9,
+              "DocumentIndex": 10,
               "Title": "config_loader.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\config_loader.hpp",
               "RelativeDocumentMoniker": "config_loader.hpp",

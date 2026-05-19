@@ -256,6 +256,7 @@ private:
 
     // --- Plot style (global, applies to all signal charts) ---
     PlotMode m_plotMode = PlotMode::Line;
+    bool m_showPeaks = false;
 
     // --- Drag state ---
     bool     m_isDragging = false;
@@ -358,6 +359,11 @@ private:
 
     /** @brief Redraw the 10-second signal plots for the current view window. */
     void handle_data_plot();
+
+    /** @brief Run the simple peak finder on `label`'s raw data restricted
+    *      to the current view window. Returns chunk-local (t, v) of
+    *      detected peaks. Empty when m_showPeaks is false. */
+    QVector<QPointF> peaksForWindow(const QString& label) const;
 
     /**
      * @brief  Redraw the 8-hour amplitude overviews and raw-signal overviews.
