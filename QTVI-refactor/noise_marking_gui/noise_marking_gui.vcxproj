@@ -199,6 +199,7 @@
   <ItemGroup>
     <ClInclude Include="file_format_parsing\edflib.h" />
     <ClInclude Include="file_format_parsing\pugixml.hpp" />
+    <ClInclude Include="post_process_queue.hpp" />
     <ClInclude Include="template_generation\AlignWaves.hpp" />
     <ClInclude Include="template_generation\build_templates.hpp" />
     <ClInclude Include="template_generation\CombineTemplatesGraph.hpp" />
@@ -210,12 +211,12 @@
     <ClInclude Include="template_generation\StatsUtils.h" />
     <ClInclude Include="template_generation\TemplateTypes.hpp" />
     <ClInclude Include="template_generation\template_io.hpp" />
+    <ClInclude Include="user_annotation_handler.h" />
     <QtMoc Include="user_control_handler.h" />
     <QtMoc Include="gui_handler.hpp" />
     <ClInclude Include="annealing_to_bin\AnnealSegments.hpp" />
     <ClInclude Include="annealing_to_bin\anneal_handler.hpp" />
     <ClInclude Include="config_entry.hpp" />
-    <ClInclude Include="noise_manager.h" />
   </ItemGroup>
   <ItemGroup>
     <QtUic Include="noise_marking_gui.ui" />
@@ -236,9 +237,10 @@
       <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Release|x64'">input</DynamicSource>
       <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Filename).moc</QtMocFileName>
     </ClCompile>
-    <ClCompile Include="noise_manager.cpp" />
     <ClCompile Include="noise_marking_gui.cpp" />
+    <ClCompile Include="post_process_queue.cpp" />
     <ClCompile Include="template_generation\template_io.cpp" />
+    <ClCompile Include="user_annotation_handler.cpp" />
     <ClCompile Include="user_control_handler.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

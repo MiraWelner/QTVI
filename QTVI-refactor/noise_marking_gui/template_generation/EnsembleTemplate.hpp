@@ -358,6 +358,14 @@ inline vector<double> EnsembleTemplate(
         static_cast<size_t>(std::round(med_len_minus_align));
     if (endpos >= total_cols) endpos = total_cols - 1;
 
+    if (type == "ppg" && total_cols > 0) {
+        constexpr size_t kLeftPad = 15;   // tight pre-foot
+        constexpr size_t kRightPad = 50;   // generous post-trough
+        beginpos = (beginpos > kLeftPad) ? beginpos - kLeftPad : 0;
+        endpos = std::min(endpos + kRightPad, total_cols - 1);
+        endpos = std::min(endpos + kRightPad, total_cols - 1);
+    }
+
     if (beginpos > endpos) return {};
 
     size_t tmpl_len = endpos - beginpos + 1;

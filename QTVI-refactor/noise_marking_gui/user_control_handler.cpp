@@ -171,7 +171,7 @@ void user_control_handler::handle_undo_button() {
     exc.data_type.removeLast();
     exc.marking_type.removeLast();
 
-    m_gui->m_noiseManager = std::make_unique<NoiseManager>(m_gui->m_ecgSR);
+    m_gui->m_noiseManager = std::make_unique<annotation_handler>(m_gui->m_ecgSR);
     for (int i = 0; i < exc.noiseExc.size(); ++i) {
         const double sr = m_gui->sampleRateForSignal(exc.data_type[i]);
         m_gui->m_noiseManager->addSegment(
@@ -191,7 +191,7 @@ void user_control_handler::handle_clearall_button() {
     exc.noiseExc.clear();
     exc.data_type.clear();
     exc.marking_type.clear();
-    m_gui->m_noiseManager = std::make_unique<NoiseManager>(m_gui->m_ecgSR);
+    m_gui->m_noiseManager = std::make_unique<annotation_handler>(m_gui->m_ecgSR);
     m_gui->updateNoiseHighlights();
 }
 

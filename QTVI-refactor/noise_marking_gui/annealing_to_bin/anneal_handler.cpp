@@ -912,7 +912,11 @@ bool annealOneFile(const std::filesystem::path& binPath,
         return true;
     }
     catch (const std::exception& e) {
-        std::cerr << "  ERROR: " << e.what() << "\n";
+        std::cerr << "  ERROR: " << e.what() << std::endl;
+        return false;
+    }
+    catch (...) {
+        std::cerr << "  ERROR: unknown exception type\n" << std::flush;
         return false;
     }
 }

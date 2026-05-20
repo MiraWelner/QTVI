@@ -32,6 +32,8 @@
 #include "gui_handler.hpp"
 #include "post_process.hpp"
 #include "config_loader.hpp"
+#include "post_process_queue.hpp"
+#include "simple_peak_finder.hpp"
 
 #include <QFutureWatcher>
 #include <QtConcurrent>
@@ -83,15 +85,15 @@ static const QColor COLOR_CVP = QColor("#2980B9");
 static const QColor COLOR_RAW_SCATTER = QColor(0, 0, 0, 255);
 
 static const QMap<QString, QColor> MARKING_COLORS = {
-    {"Noise/Artifact",         QColor(255, 255, 0,   30)},
-    {"Conduction Delay",       QColor(128, 0,   128, 30)},
-    {"AF",                     QColor(255, 0,   0,   30)},
-    {"SVT",                    QColor(0,   0,   255,   60)},
-    {"VT",                     QColor(0,   255,   0, 60)},
-    {"PVC",                    QColor(128, 255, 0,   60)},
-    {"PAC",                    QColor(255, 128, 0,   60)},
-    {"Benign Arrhythmia",      QColor(255, 128, 255, 60)},
-    {"Significant Arrhythmia", QColor(0,   255, 255, 60)}
+    {"1) Noise/Artifact",         QColor(255, 255, 0,   30)},
+    {"2) Cond. Delay",       QColor(128, 0,   128, 30)},
+    {"3) AF",                     QColor(255, 0,   0,   30)},
+    {"4) SVT",                    QColor(0,   0,   255,   60)},
+    {"5) VT",                     QColor(0,   255,   0, 60)},
+    {"6) PVC",                    QColor(128, 255, 0,   60)},
+    {"7) PAC",                    QColor(255, 128, 0,   60)},
+    {"8) Benign Arr.",      QColor(255, 128, 255, 60)},
+    {"9) Significant Arr.", QColor(0,   255, 255, 60)}
 };
 
 // ============================================================================
@@ -121,11 +123,15 @@ namespace {
     }
 
     QString formatChartTitle(const QString& signalName,
-        double nativeHz, double pxPerSample) {
-        return QString("%1  -- Original Frequency: %2 Hz -- Pixel Resolution: %3 px/sample")
+        double nativeHz, double pxPerSample,
+        double bpm = -1.0) {
+        QString base = QString("%1  -- Original Frequency: %2 Hz -- Pixel Resolution: %3 px/sample")
             .arg(signalName)
             .arg(nativeHz, 0, 'f', 1)
             .arg(pxPerSample, 0, 'f', 3);
+        if (bpm >= 0.0)
+            base += QString("  --  %1 bpm").arg(bpm, 0, 'f', 0);
+        return base;
     }
 
     void setupChartDefaults(QChartView* view) {
@@ -315,6 +321,23 @@ double noise_marking_gui::yScaleForSignal(const QString& label) const {
     return (v > 0.0) ? v : 1.0;
 }
 
+QVector<QPointF> noise_marking_gui::peaksForWindow(const QString& label) const {
+    if (!m_showPeaks) return {};
+
+    ChannelRefs r = channelRefs(label);
+    if (!r.dataRaw) return {};
+
+    const double tStart = m_currentStartTime;
+    const double tEnd = m_currentStartTime + m_windowDuration;
+    const auto params = simple_peak_finder::paramsFor(label);
+
+    if (label == "PPG" || label == "ABP") {
+        return simple_peak_finder::findPeaksDerivative(
+            *r.dataRaw, tStart, tEnd, params);
+    }
+    return simple_peak_finder::findPeaks(*r.dataRaw, tStart, tEnd, params);
+}
+
 void noise_marking_gui::resetUnpinnedGains() {
     // For each pair, if the checkbox is unchecked, snap the spinbox back to
     // 1.0 without firing handle_data_plot (we're about to redraw anyway).
@@ -447,7 +470,7 @@ void noise_marking_gui::updateAllChannelButtonStates() {
 noise_marking_gui::noise_marking_gui(QWidget* parent)
     : QDialog(parent)
     , ui(std::make_unique<Ui::noise_marking_gui>())
-    , m_noiseManager(std::make_unique<NoiseManager>(256.0))
+    , m_noiseManager(std::make_unique<annotation_handler>(256.0))
     , m_buttonHandler(std::make_unique<user_control_handler>(this))
 {
     ui->setupUi(this);
@@ -508,11 +531,19 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     ui->scatter_line->setCurrentIndex(0);  // Line by default
     ui->scatter_line->setFocusPolicy(Qt::NoFocus);
+    ui->window_length_selector->setFocusPolicy(Qt::NoFocus);
 
     connect(ui->scatter_line, QOverload<int>::of(&QComboBox::currentIndexChanged),
         this, [this](int index) {
             m_plotMode = (index == 1) ? PlotMode::Scatter : PlotMode::Line;
             handle_data_plot();
+        });
+
+    ui->show_peaks_check->setChecked(false);
+    ui->show_peaks_check->setFocusPolicy(Qt::NoFocus);
+    connect(ui->show_peaks_check, &QCheckBox::toggled, this, [this](bool on) {
+        m_showPeaks = on;
+        handle_data_plot();
         });
 
 
@@ -554,7 +585,9 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
                 const double pxPerSec = (m_windowDuration > 0.0)
                     ? v->chart()->plotArea().width() / m_windowDuration : 0.0;
                 const double pxPerSample = (nativeHz > 0.0) ? pxPerSec / nativeHz : 0.0;
-                v->chart()->setTitle(formatChartTitle(sigName, nativeHz, pxPerSample));
+                const double bpm = v->property("bpm").isValid()
+                    ? v->property("bpm").toDouble() : -1.0;
+                v->chart()->setTitle(formatChartTitle(sigName, nativeHz, pxPerSample, bpm));
             });
     }
 
@@ -600,6 +633,14 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     // Annealing pipeline button.
     connect(ui->process_button, &QPushButton::clicked, this, [this]() {
+        if (m_postQueue && m_postQueue->pendingCount() > 0) {
+            QMessageBox::warning(this, "Process Output",
+                QString("Background post-processing is still running "
+                    "(%1 files pending). Wait for it to finish before "
+                    "running Process Output.")
+                .arg(m_postQueue->pendingCount()));
+            return;
+        }
         if (m_cfg.bin_file_path.empty() || m_cfg.annealed_data_path.empty()) {
             QMessageBox::warning(this, "Process Output",
                 "Config not set or annealedDataPath missing in config.csv.");
@@ -706,7 +747,7 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     // Restore markings if we've seen this file before, otherwise start fresh.
     if (m_fileMarkings.contains(filePath)) {
         m_genExc = m_fileMarkings[filePath];
-        m_noiseManager = std::make_unique<NoiseManager>(m_ecgSR);
+        m_noiseManager = std::make_unique<annotation_handler>(m_ecgSR);
         for (int i = 0; i < m_genExc.noiseExc.size(); ++i) {
             double sr = sampleRateForSignal(m_genExc.data_type[i]);
             m_noiseManager->addSegment(
@@ -719,7 +760,7 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     else {
         m_genExc = GenExcStruct();
         m_genExc.filePath = filePath;
-        m_noiseManager = std::make_unique<NoiseManager>(m_ecgSR);
+        m_noiseManager = std::make_unique<annotation_handler>(m_ecgSR);
     }
 
     m_currentStartTime = 0.0;
@@ -879,6 +920,20 @@ void noise_marking_gui::handleBrowseFile() {
         QMessageBox::warning(this, "Cannot open file",
             QString("File is not readable:\n%1").arg(binPath));
         return;
+    }
+
+    // Refuse to open a file currently being post-processed.
+    if (m_postQueue) {
+        const std::filesystem::path binFs(binPath.toStdString());
+        if (m_postQueue->isLocked(binFs)) {
+            closeProgressAndRestoreFocus();
+            QMessageBox::warning(this, "File busy",
+                QString("This file is currently being post-processed in the "
+                    "background and can't be opened for re-marking yet.\n\n"
+                    "%1\n\nTry again in a few moments.")
+                .arg(QFileInfo(binPath).fileName()));
+            return;
+        }
     }
 
     setStep(QString("Loading %1\u2026").arg(QFileInfo(binPath).fileName()));
@@ -1127,7 +1182,9 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     if (ui->hyp_accel_resp_cvp_axis) {
         bool sleepPresent = sleepDataPresent(m_sleepStages);
         bool cvpPresent = !isMissingSignal(m_cvp);
-        ui->hyp_accel_resp_cvp_axis->setVisible(sleepPresent || cvpPresent || anyAccel);
+        bool respPresent = !isMissingSignal(m_resp);
+        ui->hyp_accel_resp_cvp_axis->setVisible(
+            sleepPresent || cvpPresent || anyAccel || respPresent);
     }
 
     updateAllChannelButtonStates();
@@ -1715,13 +1772,13 @@ void noise_marking_gui::handle_data_plot() {
             nativeHz = (rawData.size() - 1) / (rawData.last().x() - rawData.first().x());
         }
 
-        // Title (channel name + native Hz + px/sample).
+        // Title placeholder (channel name + native Hz + px/sample). Set
+        // below after peaks are computed so BPM can be included.
         const double pxPerSec = (m_windowDuration > 0.0)
             ? r.chartView->chart()->plotArea().width() / m_windowDuration : 0.0;
         const double pxPerSample = (nativeHz > 0.0) ? pxPerSec / nativeHz : 0.0;
         r.chartView->setProperty("signalName", label);
         r.chartView->setProperty("nativeHz", nativeHz);
-        r.chartView->chart()->setTitle(formatChartTitle(label, nativeHz, pxPerSample));
         r.chartView->chart()->setTitleFont(QFont("Arial", 8, QFont::Bold));
         r.chartView->chart()->setTitleBrush(r.color);
 
@@ -1743,6 +1800,58 @@ void noise_marking_gui::handle_data_plot() {
 
         // Start markers were nulled before the chart wipe; restoreMarkingMarkers
         // (called later in loadChunkFromFile) recreates them on the new charts.
+
+        // --- Peak overlay (if enabled) and title with BPM ---
+        const QVector<QPointF> peaks = peaksForWindow(label);
+
+        // Set the title every render, regardless of whether peaks were
+        // detected. BPM = -1 hides the BPM segment when peaks are off.
+        double bpm = -1.0;
+        if (m_showPeaks && m_windowDuration > 0.0) {
+            bpm = peaks.size() * 60.0 / m_windowDuration;
+        }
+        r.chartView->setProperty("bpm", bpm);
+        r.chartView->chart()->setTitle(formatChartTitle(label, nativeHz, pxPerSample, bpm));
+
+        if (!peaks.isEmpty()) {
+            auto* peakSeries = new QScatterSeries();
+            peakSeries->setColor(Qt::red);
+            peakSeries->setBorderColor(Qt::white);
+            peakSeries->setMarkerSize(8.0);
+            peakSeries->setMarkerShape(QScatterSeries::MarkerShapeTriangle);
+            peakSeries->setUseOpenGL(true);
+
+            const double yScale = yScaleForSignal(label);
+            QList<QPointF> scaled;
+            scaled.reserve(peaks.size());
+            if (std::abs(yScale - 1.0) > 1e-9) {
+                const double viewStart = m_currentStartTime;
+                const double viewEnd = m_currentStartTime + m_windowDuration;
+                std::vector<double> vals;
+                vals.reserve(r.dataRaw->size());
+                for (const QPointF& p : *r.dataRaw) {
+                    if (p.x() < viewStart) continue;
+                    if (p.x() > viewEnd)   break;
+                    vals.push_back(p.y());
+                }
+                double center = 0.0;
+                if (!vals.empty()) {
+                    auto mid = vals.begin() + vals.size() / 2;
+                    std::nth_element(vals.begin(), mid, vals.end());
+                    center = *mid;
+                }
+                for (const QPointF& p : peaks)
+                    scaled.append({ p.x(), (p.y() - center) * yScale + center });
+            }
+            else {
+                for (const QPointF& p : peaks) scaled.append(p);
+            }
+
+            peakSeries->replace(scaled);
+            r.chartView->chart()->addSeries(peakSeries);
+            peakSeries->attachAxis(r.chartView->chart()->axes(Qt::Horizontal).first());
+            peakSeries->attachAxis(r.chartView->chart()->axes(Qt::Vertical).first());
+        }
         };
 
     plotMarkable("ECG1");
@@ -2083,6 +2192,7 @@ void noise_marking_gui::updateNoiseHighlights() {
 
         const double ds = std::max(segStart, viewStart);
         const double de = std::min(segEnd, viewEnd);
+
         const QColor color = MARKING_COLORS.value(
             QString::fromStdString(seg.marking_type), QColor(0, 0, 0, 100));
 

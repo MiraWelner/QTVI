@@ -124,16 +124,16 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath,
 // ========================================================================
 // Per-bin marker seeding.
 //
-// All five markers are autodetected by Ecgmarkers.hpp. Detectors return a
-// sample index or -1 ("no marker"). Detected indices are clamped into the
-// visible portion of their trace — for ECG, that's the per-trace cutoff
-// computed by BinPlotWidget::computeEcgVisibleN (cuts off before the next
-// beat's P-wave).
+// Markers detected: ECG (per channel) P-begin, Q-begin, T-begin, T-end;
+// PPG Onset, Peak, Dicrotic notch, 50% recovery, End. Detectors return a
+// sample index or -1 ("no marker"). Detected indices are clamped into
+// the visible portion of their trace -- for ECG, that's the per-trace
+// cutoff computed by BinPlotWidget::computeEcgVisibleN (cuts off before
+// the next beat's P-wave).
 // ========================================================================
 
 namespace {
     inline int clampToVisible(int idx, int visN) {
-        if (idx < 0 || visN < 1) return -1;
         return std::clamp(idx, 0, visN - 1);
     }
 
@@ -143,10 +143,16 @@ namespace {
             b.ppg_issue = 2;
             b.ppg_onset = -1;
             b.ppg_peak = -1;
+            b.ppg_dicrotic = -1;
+            b.ppg_50 = -1;
+            b.ppg_end = -1;
         }
         else if (b.ppg_issue == 1) {
             b.ppg_onset = -1;
             b.ppg_peak = -1;
+            b.ppg_dicrotic = -1;
+            b.ppg_50 = -1;
+            b.ppg_end = -1;
         }
         else {
             const int visN = BinPlotWidget::visiblePpgCount(
@@ -159,6 +165,18 @@ namespace {
                 int raw = ecg_markers::detect_ppg_peak(b.ppgTemplate);
                 b.ppg_peak = clampToVisible(raw, visN);
             }
+            if (b.ppg_dicrotic < 0) {
+                int raw = ecg_markers::detect_ppg_dicrotic(b.ppgTemplate);
+                b.ppg_dicrotic = clampToVisible(raw, visN);
+            }
+            if (b.ppg_50 < 0) {
+                int raw = ecg_markers::detect_ppg_50(b.ppgTemplate);
+                b.ppg_50 = clampToVisible(raw, visN);
+            }
+            if (b.ppg_end < 0) {
+                int raw = ecg_markers::detect_ppg_end(b.ppgTemplate);
+                b.ppg_end = clampToVisible(raw, visN);
+            }
         }
 
         // ---- ECG (per channel) -----------------------------------------
@@ -167,6 +185,7 @@ namespace {
             const auto& ecg = chs[c]->ecgTemplate_raw;
             if (ecg.empty()) {
                 b.bad_r_ch[c] = true;
+                b.p_begin_ch[c] = -1;
                 b.q_begin_ch[c] = -1;
                 b.t_begin_ch[c] = -1;
                 b.t_end_ch[c] = -1;
@@ -186,6 +205,9 @@ namespace {
             // Clamp T-end into the visible range now that we know visN.
             b.t_end_ch[c] = clampToVisible(b.t_end_ch[c], visN);
 
+            if (b.p_begin_ch[c] < 0)
+                b.p_begin_ch[c] = clampToVisible(
+                    ecg_markers::detect_p_begin(ecg), visN);
             if (b.q_begin_ch[c] < 0)
                 b.q_begin_ch[c] = clampToVisible(
                     ecg_markers::detect_q_begin(ecg), visN);
@@ -261,9 +283,19 @@ void TemplateViewerWindow::showPage() {
             const auto& ppg = hasPPG ? b.ppgTemplate : empty;
 
             int c = leads[li].channelIndex;
-            pw->setData(ppg, ecg,
-                b.q_begin_ch[c], b.t_begin_ch[c], b.t_end_ch[c],
-                b.ppg_onset, b.ppg_peak);
+            const double rPeak = (c == 0) ? b.ch1.alignment_point_raw
+                : (c == 1) ? b.ch2.alignment_point_raw
+                : b.ch3.alignment_point_raw;
+
+            // Use setDataAll so all nine markers (4 ECG + 5 PPG) land on
+            // the widget. The old 5-marker setData is still available but
+            // would leave P / Dc / 50 / End hidden.
+            pw->setDataAll(ppg, ecg,
+                b.p_begin_ch[c], b.q_begin_ch[c],
+                b.t_begin_ch[c], b.t_end_ch[c],
+                b.ppg_onset, b.ppg_peak,
+                b.ppg_dicrotic, b.ppg_50, b.ppg_end,
+                rPeak);
             pw->setHasPPG(hasPPG);
 
             if (b.ppg_issue == 1)
@@ -311,11 +343,15 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
         const TemplateBin& b = m_bins[binIdx];
         for (auto* pw : m_binPlots[li]) {
             int c = pw->leadIndex();
+            pw->setMarker(BinPlotWidget::EcgP, b.p_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgQBegin, b.q_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgTBegin, b.t_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgTEnd, b.t_end_ch[c]);
             pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
             pw->setMarker(BinPlotWidget::PpgPeak, b.ppg_peak);
+            pw->setMarker(BinPlotWidget::PpgDicrotic, b.ppg_dicrotic);
+            pw->setMarker(BinPlotWidget::Ppg50, b.ppg_50);
+            pw->setMarker(BinPlotWidget::PpgEnd, b.ppg_end);
         }
         break;
     }
@@ -330,6 +366,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
     if (BinPlotWidget::markerIsEcg(marker)) {
         if (leadIdx < 0 || leadIdx > 2) return;
         switch (marker) {
+        case BinPlotWidget::EcgP:      b.p_begin_ch[leadIdx] = newIdx; break;
         case BinPlotWidget::EcgQBegin: b.q_begin_ch[leadIdx] = newIdx; break;
         case BinPlotWidget::EcgTBegin: b.t_begin_ch[leadIdx] = newIdx; break;
         case BinPlotWidget::EcgTEnd:   b.t_end_ch[leadIdx] = newIdx; break;
@@ -346,6 +383,8 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 if (newIdx >= (int)chs[leadIdx]->ecgTemplate_raw.size()) continue;
 
                 switch (marker) {
+                case BinPlotWidget::EcgP:
+                    m_bins[i].p_begin_ch[leadIdx] = newIdx; break;
                 case BinPlotWidget::EcgQBegin:
                     m_bins[i].q_begin_ch[leadIdx] = newIdx; break;
                 case BinPlotWidget::EcgTBegin:
@@ -365,19 +404,25 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
 
     if (BinPlotWidget::markerIsPpg(marker)) {
         switch (marker) {
-        case BinPlotWidget::PpgOnset: b.ppg_onset = newIdx; break;
-        case BinPlotWidget::PpgPeak:  b.ppg_peak = newIdx; break;
+        case BinPlotWidget::PpgOnset:    b.ppg_onset = newIdx; break;
+        case BinPlotWidget::PpgPeak:     b.ppg_peak = newIdx; break;
+        case BinPlotWidget::PpgDicrotic: b.ppg_dicrotic = newIdx; break;
+        case BinPlotWidget::Ppg50:       b.ppg_50 = newIdx; break;
+        case BinPlotWidget::PpgEnd:      b.ppg_end = newIdx; break;
         }
         refreshBinMarkers(binIdx);
 
         if (m_moveSubsequent) {
             for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
                 if (m_bins[i].ppg_issue != 0) continue;
-                if (newIdx < (int)m_bins[i].ppgTemplate.size()) {
-                    if (marker == BinPlotWidget::PpgOnset)
-                        m_bins[i].ppg_onset = newIdx;
-                    else
-                        m_bins[i].ppg_peak = newIdx;
+                if (newIdx >= (int)m_bins[i].ppgTemplate.size()) continue;
+
+                switch (marker) {
+                case BinPlotWidget::PpgOnset:    m_bins[i].ppg_onset = newIdx; break;
+                case BinPlotWidget::PpgPeak:     m_bins[i].ppg_peak = newIdx; break;
+                case BinPlotWidget::PpgDicrotic: m_bins[i].ppg_dicrotic = newIdx; break;
+                case BinPlotWidget::Ppg50:       m_bins[i].ppg_50 = newIdx; break;
+                case BinPlotWidget::PpgEnd:      m_bins[i].ppg_end = newIdx; break;
                 }
             }
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {

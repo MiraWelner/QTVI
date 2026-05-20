@@ -44,9 +44,10 @@
 #include <memory>
 
 #include "ui_noise_marking_gui.h"
-#include "noise_manager.h"
+#include "user_annotation_handler.h"
 #include "user_control_handler.h"
 #include "config_entry.hpp"
+class PostProcessQueue;
 
 
  /**
@@ -125,7 +126,7 @@ private slots:
 public:
     enum class MarkPhase { Idle, WaitingForStart, WaitingForEnd, WaitingForStop };
     enum class PlotMode { Line, Scatter };
-
+    void setPostProcessQueue(PostProcessQueue* q) { m_postQueue = q; }
     void setConfig(const config_entry& cfg) {
         m_cfg = cfg;
     }
@@ -157,6 +158,7 @@ public:
 
 private:
     config_entry m_cfg;
+    PostProcessQueue* m_postQueue = nullptr;
 
     // ------------------------------------------------------------------------
     //  Channel lookup table
@@ -202,7 +204,7 @@ private:
 
     // --- Core components ---
     std::unique_ptr<Ui::noise_marking_gui> ui;
-    std::unique_ptr<NoiseManager>          m_noiseManager;
+    std::unique_ptr<annotation_handler>          m_noiseManager;
     std::unique_ptr<user_control_handler>     m_buttonHandler;
 
     QSet<QString>               m_activeChannels;

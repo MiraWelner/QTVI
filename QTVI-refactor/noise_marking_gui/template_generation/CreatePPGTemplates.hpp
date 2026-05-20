@@ -73,8 +73,7 @@ inline vector<vector<double>> CreatePPGTemplates(
         }
         try {
             vector<size_t> localPeaks;
-            vector<double> segment = extract_ppg_segment(
-                bins[i].ppgSignal, bins[i].ppgMinAmps, localPeaks);
+            vector<double> segment = extract_ppg_segment(bins[i].ppgSignal, bins[i].ppgMinAmps, localPeaks);
 
             if (segment.empty() || localPeaks.size() < 2) {
                 templates[i] = {};

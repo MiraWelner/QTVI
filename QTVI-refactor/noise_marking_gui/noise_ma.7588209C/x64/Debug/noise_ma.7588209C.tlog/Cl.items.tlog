@@ -1,0 +1,13 @@
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\annealing_to_bin\anneal_handler.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\anneal_handler.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\config_loader.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\config_loader.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\file_format_parsing\edflib.c;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\edflib.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\file_format_parsing\pugixml.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\pugixml.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\file_to_bin.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\file_to_bin.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\gui_handler.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\gui_handler.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_marking_gui.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\noise_marking_gui.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\post_process_queue.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\post_process_queue.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\template_generation\template_io.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\template_io.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\user_annotation_handler.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\user_annotation_handler.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\user_control_handler.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\user_control_handler.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\qt\moc\moc_user_control_handler.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\moc_user_control_handler.obj
+D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\qt\moc\moc_gui_handler.cpp;D:\USERS\MiraWelner\QTVI\QTVI-refactor\noise_marking_gui\noise_ma.7588209C\x64\Debug\moc_gui_handler.obj

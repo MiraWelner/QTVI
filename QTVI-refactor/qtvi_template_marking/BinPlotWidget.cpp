@@ -1,5 +1,11 @@
 ﻿// ============================================================================
 // BinPlotWidget.cpp
+//
+// ECG and PPG are drawn at a single fixed pixels-per-sample scale
+// (BinPlotWidget::kPxPerSample). The widget reports a sizeHint() that
+// expands to fit whichever trace runs longer, so the full PPG tail
+// (including any pre-foot / post-trough widening from the templater) is
+// always visible and shares the ECG's time axis.
 // ============================================================================
 #include "BinPlotWidget.hpp"
 #include <QPainter>
@@ -10,27 +16,89 @@
 #include <iostream>
 
 namespace {
+
+    // ------------------------------------------------------------------
+    // Colors
+    //
+    // Trace colors:
+    //   ECG  - dark blue
+    //   PPG  - dark red
+    //
+    // Marker colors are grouped by trace and lightened/darkened to
+    // disambiguate the individual landmarks within each group:
+    //   ECG markers - shades of black / dark blue
+    //   PPG markers - shades of red
+    //
+    // Edit these constants in one place; markerColor() does the lookup.
+    // ------------------------------------------------------------------
+    constexpr QColor kColorEcgTrace{ 10,  20,  90 };   // dark navy blue
+    constexpr QColor kColorPpgTrace{ 130,  10,  20 };   // dark red
+
+    // ECG markers (P, Q, Tb, Te) - blacks and dark blues, darkest to lightest.
+    constexpr QColor kColorEcgP{ 0,   0,   0 };   // black
+    constexpr QColor kColorEcgQBegin{ 20,  20,  60 };   // very dark navy
+    constexpr QColor kColorEcgTBegin{ 40,  50, 110 };   // dark navy
+    constexpr QColor kColorEcgTEnd{ 70,  90, 160 };   // medium navy
+
+    // PPG markers (On, Pk, Dc, 50, En) - shades of red, darkest to lightest.
+    constexpr QColor kColorPpgOnset{ 110,   0,   0 };  // dark red
+    constexpr QColor kColorPpgPeak{ 180,   0,   0 };  // red
+    constexpr QColor kColorPpgDicrotic{ 220,  50,  50 };  // medium red
+    constexpr QColor kColorPpg50{ 235, 100, 100 };  // light red
+    constexpr QColor kColorPpgEnd{ 200,  60,  90 };  // dark pink-red
+
     QColor markerColor(int m) {
         switch (m) {
-            // ECG markers — shades of green
-        case BinPlotWidget::EcgQBegin: return QColor(20, 130, 40);
-        case BinPlotWidget::EcgTBegin: return QColor(80, 180, 80);
-        case BinPlotWidget::EcgTEnd:   return QColor(140, 200, 60);
-            // PPG markers — shades of blue
-        case BinPlotWidget::PpgOnset:  return QColor(3, 0, 255);
-        case BinPlotWidget::PpgPeak:   return QColor(1, 0, 120);
+        case BinPlotWidget::EcgP:        return kColorEcgP;
+        case BinPlotWidget::EcgQBegin:   return kColorEcgQBegin;
+        case BinPlotWidget::EcgTBegin:   return kColorEcgTBegin;
+        case BinPlotWidget::EcgTEnd:     return kColorEcgTEnd;
+        case BinPlotWidget::PpgOnset:    return kColorPpgOnset;
+        case BinPlotWidget::PpgPeak:     return kColorPpgPeak;
+        case BinPlotWidget::PpgDicrotic: return kColorPpgDicrotic;
+        case BinPlotWidget::Ppg50:       return kColorPpg50;
+        case BinPlotWidget::PpgEnd:      return kColorPpgEnd;
         }
         return Qt::black;
     }
     const char* markerShortLabel(int m) {
         switch (m) {
-        case BinPlotWidget::EcgQBegin: return "Q";
-        case BinPlotWidget::EcgTBegin: return "Tb";
-        case BinPlotWidget::EcgTEnd:   return "Te";
-        case BinPlotWidget::PpgOnset:  return "On";
-        case BinPlotWidget::PpgPeak:   return "Pk";
+        case BinPlotWidget::EcgP:        return "P";
+        case BinPlotWidget::EcgQBegin:   return "Q";
+        case BinPlotWidget::EcgTBegin:   return "Tb";
+        case BinPlotWidget::EcgTEnd:     return "Te";
+        case BinPlotWidget::PpgOnset:    return "On";
+        case BinPlotWidget::PpgPeak:     return "Pk";
+        case BinPlotWidget::PpgDicrotic: return "Dc";
+        case BinPlotWidget::Ppg50:       return "50";
+        case BinPlotWidget::PpgEnd:      return "En";
         }
         return "?";
+    }
+
+    // Draw a trace at a fixed pixels-per-sample scale. The caller specifies
+    // where sample 0 lands (startPx) and how many pixels each sample takes
+    // (pxPerSample). No right-edge clipping -- the widget is sized to fit.
+    void drawTraceFixedScale(QPainter& p, const std::vector<double>& v,
+        double startPx, int mt, int ph,
+        double pxPerSample, const QPen& pen, int visN)
+    {
+        if (visN < 2 || (int)v.size() < 2) return;
+
+        double lo = *std::min_element(v.begin(), v.begin() + visN);
+        double hi = *std::max_element(v.begin(), v.begin() + visN);
+        double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
+
+        QPainterPath path;
+        for (int i = 0; i < visN; ++i) {
+            double x = startPx + (double)i * pxPerSample;
+            double y = mt + ph - (v[i] - lo) / r * ph;
+            if (i == 0) path.moveTo(x, y);
+            else        path.lineTo(x, y);
+        }
+
+        p.setPen(pen);
+        p.drawPath(path);
     }
 }
 
@@ -47,22 +115,46 @@ BinPlotWidget::BinPlotWidget(int binIndex, int leadIndex,
 void BinPlotWidget::setData(const std::vector<double>& ppg,
     const std::vector<double>& ecg,
     int qBegin, int tBegin, int tEnd,
-    int ppgOnset, int ppgPeak)
+    int ppgOnset, int ppgPeak, double rPeakSample)
+{
+    // Defer to setDataAll with the new markers hidden (-1). Callers
+    // that have positions for the additional markers should use
+    // setDataAll directly.
+    setDataAll(ppg, ecg,
+        /*ecgP=*/-1, qBegin, tBegin, tEnd,
+        ppgOnset, ppgPeak,
+        /*ppgDicrotic=*/-1, /*ppg50=*/-1, /*ppgEnd=*/-1,
+        rPeakSample);
+}
+
+void BinPlotWidget::setDataAll(const std::vector<double>& ppg,
+    const std::vector<double>& ecg,
+    int ecgP, int qBegin, int tBegin, int tEnd,
+    int ppgOnset, int ppgPeak,
+    int ppgDicrotic, int ppg50, int ppgEnd,
+    double rPeakSample)
 {
     m_ppg = ppg;
     m_ecg = ecg;
+    m_markers[EcgP] = ecgP;
     m_markers[EcgQBegin] = qBegin;
     m_markers[EcgTBegin] = tBegin;
     m_markers[EcgTEnd] = tEnd;
     m_markers[PpgOnset] = ppgOnset;
     m_markers[PpgPeak] = ppgPeak;
+    m_markers[PpgDicrotic] = ppgDicrotic;
+    m_markers[Ppg50] = ppg50;
+    m_markers[PpgEnd] = ppgEnd;
     m_hasPPG = !ppg.empty();
+    m_rPeakSample = rPeakSample;
 
     // Cache the per-trace visible counts so paint, hit-test, and
     // drag-clamp all see the same numbers.
     m_ecgVisibleN = computeEcgVisibleN(m_ecg, tEnd);
     m_ppgVisibleN = visiblePpgCount(static_cast<int>(m_ppg.size()));
 
+    // sizeHint depends on visible counts; notify layout.
+    updateGeometry();
     update();
 }
 
@@ -78,18 +170,38 @@ int BinPlotWidget::visibleN(bool isEcg) const {
     return isEcg ? m_ecgVisibleN : m_ppgVisibleN;
 }
 
+int BinPlotWidget::requiredWidth() const {
+    // ECG draws from kML to kML + (visN-1)*pxPerSample.
+    // PPG draws from rPeakPx to rPeakPx + (visN-1)*pxPerSample.
+    // Widget must be wide enough for whichever ends further right, plus kMR.
+    const double ecgRight = (m_ecgVisibleN > 1)
+        ? kML + (m_ecgVisibleN - 1) * kPxPerSample
+        : kML;
+    const double rPeakPx = kML + m_rPeakSample * kPxPerSample;
+    const double ppgRight = (m_ppgVisibleN > 1)
+        ? rPeakPx + (m_ppgVisibleN - 1) * kPxPerSample
+        : kML;
+    return static_cast<int>(std::ceil(std::max(ecgRight, ppgRight))) + kMR;
+}
+
 int BinPlotWidget::sampleFromX(double x, bool isEcg) const {
-    const int pw = width() - kML - kMR;
-    const int n = visibleN(isEcg);
-    if (n < 2 || pw < 1) return 0;
-    return static_cast<int>(std::round((x - kML) * (n - 1.0) / pw));
+    if (isEcg) {
+        return static_cast<int>(std::round((x - kML) / kPxPerSample));
+    }
+    else {
+        const double rPeakPx = kML + m_rPeakSample * kPxPerSample;
+        return static_cast<int>(std::round((x - rPeakPx) / kPxPerSample));
+    }
 }
 
 double BinPlotWidget::xFromSample(int s, bool isEcg) const {
-    const int pw = width() - kML - kMR;
-    const int n = visibleN(isEcg);
-    if (n < 2) return kML;
-    return kML + s * pw / static_cast<double>(n - 1);
+    if (isEcg) {
+        return kML + s * kPxPerSample;
+    }
+    else {
+        const double rPeakPx = kML + m_rPeakSample * kPxPerSample;
+        return rPeakPx + s * kPxPerSample;
+    }
 }
 
 int BinPlotWidget::markerAtX(double x) const {
@@ -110,35 +222,12 @@ int BinPlotWidget::markerAtX(double x) const {
     return best;
 }
 
-namespace {
-    void drawTrace(QPainter& p, const std::vector<double>& v,
-        int ml, int mt, int pw, int ph, const QPen& pen, int visN) {
-        if (visN < 2 || (int)v.size() < 2) return;
-
-        double lo = *std::min_element(v.begin(), v.begin() + visN);
-        double hi = *std::max_element(v.begin(), v.begin() + visN);
-        double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
-
-        QPainterPath path;
-        for (int i = 0; i < visN; ++i) {
-            double x = ml + (double)i * pw / (visN - 1);
-            double y = mt + ph - (v[i] - lo) / r * ph;
-            if (i == 0) path.moveTo(x, y);
-            else        path.lineTo(x, y);
-        }
-
-        p.setPen(pen);
-        p.drawPath(path);
-    }
-}
-
 void BinPlotWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
-    int w = width(), h = height();
-    int pw = w - kML - kMR;
-    int ph = h - kMT - kMB;
+    const int h = height();
+    const int ph = h - kMT - kMB;
 
     p.fillRect(rect(), Qt::white);
 
@@ -146,11 +235,17 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     QFont f = p.font(); f.setPointSize(8); p.setFont(f);
     p.drawText(kML, 11,
         QString("Bin %1  [%2]").arg(m_binIndex + 1).arg(m_leadLabel));
-    
-    drawTrace(p, m_ecg, kML, kMT, pw, ph,
-        QPen(QColor(0, 207, 34), 1.5), m_ecgVisibleN);
-    drawTrace(p, m_ppg, kML, kMT, pw, ph,
-        QPen(QColor(0, 0, 82), 1.5), m_ppgVisibleN);
+
+    // ECG starts at the left margin and uses the fixed scale.
+    drawTraceFixedScale(p, m_ecg, kML, kMT, ph,
+        kPxPerSample, QPen(kColorEcgTrace, 1.5), m_ecgVisibleN);
+
+    // PPG starts at the R-peak x-position. The R-peak's sample index
+    // maps to pixels via the same fixed scale, which is what gives
+    // the two traces a common time axis.
+    const double rPeakPx = kML + m_rPeakSample * kPxPerSample;
+    drawTraceFixedScale(p, m_ppg, rPeakPx, kMT, ph,
+        kPxPerSample, QPen(kColorPpgTrace, 1.5), m_ppgVisibleN);
 
     QFont smallF = p.font(); smallF.setPointSize(7); p.setFont(smallF);
     for (int m = 0; m < MarkerCount; ++m) {
@@ -169,6 +264,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     }
 
     if (m_state == State::BadPPG) {
+        const int w = width();
         p.setPen(QPen(Qt::red, 4));
         p.drawLine(kML, kMT, w - kMR, h - kMB);
         p.drawLine(kML, h - kMB, w - kMR, kMT);

@@ -1,12 +1,19 @@
 ﻿// ============================================================================
-// BinPlotWidget.h - One ECG lead + optional PPG overlay + 5 draggable markers
+// BinPlotWidget.h - One ECG lead + optional PPG overlay + draggable markers
 //
 // Markers:
-//   ECG (per channel):  Q-begin (green), T-begin (yellow), T-end (magenta)
-//   PPG (shared/bin):   Onset (cyan), Peak (orange)
+//   ECG (per channel):  P-onset, Q-begin, T-begin, T-end
+//   PPG (shared/bin):   Onset, Peak, Dicrotic notch, 50% point, End
 //
 // Right-click cycles:  Good -> BadR -> BadPPG -> Good  (skips BadPPG if no PPG)
 // Left-drag:           move whichever marker is closest to the click
+//
+// Drawing scale:
+//   The widget uses a FIXED pixels-per-sample scale (kPxPerSample). The widget
+//   reports a sizeHint() that grows to whatever width is required to draw both
+//   traces in full at that scale. This is what guarantees temporal alignment
+//   between the ECG and PPG -- one sample of ECG occupies the same pixel
+//   width as one sample of PPG, regardless of how long each visible trace is.
 // ============================================================================
 #pragma once
 #include <QWidget>
@@ -21,17 +28,29 @@ class BinPlotWidget : public QWidget {
 public:
     enum class State { Good, BadR, BadPPG };
 
+    // Each enum value MUST be unique (it's used as an array index into
+    // m_markers). ECG markers come first, then PPG markers, so
+    // markerIsEcg / markerIsPpg can use range checks.
     enum Marker : int {
-        EcgQBegin = 0,
-        EcgTBegin = 1,
-        EcgTEnd = 2,
-        PpgOnset = 3,
-        PpgPeak = 4,
-        MarkerCount = 5
+        // --- ECG markers (contiguous, starting at 0) ---
+        EcgP = 0,   // P-wave onset
+        EcgQBegin = 1,
+        EcgTBegin = 2,
+        EcgTEnd = 3,
+        // --- PPG markers (contiguous, immediately after ECG) ---
+        PpgOnset = 4,
+        PpgPeak = 5,
+        PpgDicrotic = 6,   // dicrotic notch
+        Ppg50 = 7,   // 50% point
+        PpgEnd = 8,   // end-of-pulse / trough after descent
+        // --- size sentinel ---
+        MarkerCount = 9
     };
 
-    static bool markerIsEcg(int m) { return m >= EcgQBegin && m <= EcgTEnd; }
-    static bool markerIsPpg(int m) { return m == PpgOnset || m == PpgPeak; }
+    // Range-based predicates. Update these bounds if you add more
+    // markers to either group.
+    static bool markerIsEcg(int m) { return m >= EcgP && m <= EcgTEnd; }
+    static bool markerIsPpg(int m) { return m >= PpgOnset && m <= PpgEnd; }
 
     // ----------------------------------------------------------------------
     // Visible-range rules.
@@ -53,6 +72,12 @@ public:
     // linearly with sample rate), this is sample-rate independent.
     // ----------------------------------------------------------------------
     static constexpr double kPMarginRRFrac = 0.25;
+
+    // Fixed pixels-per-sample. Both ECG and PPG use this same value so
+    // that one second of ECG occupies the same chart width as one second
+    // of PPG. The widget's sizeHint grows to accommodate whichever trace
+    // extends further. Tune this if bins come out too wide or too narrow.
+    static constexpr double kPxPerSample = 0.4;
 
     static int visiblePpgCount(int nFull) {
         return std::max(nFull, 2);
@@ -82,10 +107,23 @@ public:
     explicit BinPlotWidget(int binIndex, int leadIndex,
         const QString& leadLabel, QWidget* parent = nullptr);
 
+    // The old setData keeps its 5-marker positional API for compatibility.
+    // The new markers default to -1 (hidden) until set explicitly via
+    // setMarker(). Use setDataAll if you want to provide all of them at
+    // once.
     void setData(const std::vector<double>& ppg,
         const std::vector<double>& ecg,
         int qBegin, int tBegin, int tEnd,
-        int ppgOnset, int ppgPeak);
+        int ppgOnset, int ppgPeak, double rPeakSample);
+
+    // Extended setter that takes every marker at once. Pass -1 for any
+    // marker you don't have a position for.
+    void setDataAll(const std::vector<double>& ppg,
+        const std::vector<double>& ecg,
+        int ecgP, int qBegin, int tBegin, int tEnd,
+        int ppgOnset, int ppgPeak,
+        int ppgDicrotic, int ppg50, int ppgEnd,
+        double rPeakSample);
 
     void setHasPPG(bool has);
     bool hasPPG() const { return m_hasPPG; }
@@ -100,6 +138,13 @@ public:
     int  leadIndex() const { return m_leadIndex; }
 
     int  ecgVisibleN() const { return m_ecgVisibleN; }
+
+    // Width required to draw both traces in full at kPxPerSample.
+    // Used by sizeHint and minimumSizeHint.
+    int requiredWidth() const;
+
+    QSize sizeHint() const override { return QSize(requiredWidth(), 120); }
+    QSize minimumSizeHint() const override { return QSize(requiredWidth(), 60); }
 
 signals:
     void markerMoved(int binIndex, int leadIndex, int marker, int newIdx);
@@ -119,6 +164,8 @@ private:
     double xFromSample(int s, bool isEcg) const;
     int    markerAtX(double x) const;
     int    visibleN(bool isEcg) const;
+    double m_rPeakSample = 0.0;   // ECG R-peak sample index (the PPG draw origin)
+
 
     int m_binIndex;
     int m_leadIndex;
@@ -129,7 +176,9 @@ private:
     int m_ecgVisibleN = 0;
     int m_ppgVisibleN = 0;
 
-    int m_markers[MarkerCount] = { -1, -1, -1, -1, -1 };
+    // Storage sized by MarkerCount so it grows automatically if you add
+    // more entries to the enum. All marker slots start hidden (-1).
+    int m_markers[MarkerCount] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
 
     State m_state = State::Good;
     bool  m_hasPPG = false;

@@ -9,3 +9,10 @@
 /Deep_QTVi_MATLAB_Code_19_09_2025
 /QTVI-data-files
 *.zip
+*.sln
+*.vcxproj
+*.filters
+*.user
+/QTVI-refactor/convert_uniform_bin/.vs
+/QTVI-refactor/noise_marking_gui/.vs
+/QTVI-refactor/qtvi_template_marking/6_templa.9AC31506/x64

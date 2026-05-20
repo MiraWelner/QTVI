@@ -25,8 +25,8 @@
 namespace simple_peak_finder {
 
     struct Params {
-        double thresholdFrac = 2.0 / 3.0;  ///< gate at this fraction of min->max span
-        double refractorySec = 0.05;       ///< suppress duplicates within this window
+        double thresholdFrac = 2.0 / 3.0;  //< gate at this fraction of min->max span
+        double refractorySec = 0.05;       //< suppress duplicates within this window
     };
 
     inline Params paramsFor(const QString& /*label*/) { return {}; }
@@ -120,26 +120,28 @@ namespace simple_peak_finder {
         return out;
     }
 
-    /// PPG / ABP peak finder via first-derivative method.
-    ///
-    /// PPG and ABP have rounded systolic peaks that the threshold-based
-    /// findPeaks() handles poorly (the dicrotic notch often clears the
-    /// gate, baseline drift moves the reference around, the flat apex
-    /// makes local-max testing unreliable). The derivative method
-    /// sidesteps all of this:
-    ///
-    ///   1. Compute the squared first derivative. The systolic upstroke
-    ///      -- the steepest part of the rise -- becomes a sharp,
-    ///      well-isolated peak in the derivative even though the apex
-    ///      itself is rounded.
-    ///   2. Find local maxima of the squared derivative above an
-    ///      adaptive gate.
-    ///   3. For each upstroke, walk forward in the raw signal until
-    ///      the signal starts descending. That's the systolic peak.
-    ///
-    /// Robust to baseline drift (derivative kills DC), insensitive to
-    /// the dicrotic notch (notch's upstroke is much weaker than systolic
-    /// upstroke), and naturally produces one detection per beat.
+    /*
+     PPG / ABP peak finder via first-derivative method.
+    
+     PPG and ABP have rounded systolic peaks that the threshold-based
+     findPeaks() handles poorly (the dicrotic notch often clears the
+     gate, baseline drift moves the reference around, the flat apex
+     makes local-max testing unreliable). The derivative method
+     sidesteps all of this:
+    
+       1. Compute the squared first derivative. The systolic upstroke
+          -- the steepest part of the rise -- becomes a sharp,
+          well-isolated peak in the derivative even though the apex
+          itself is rounded.
+       2. Find local maxima of the squared derivative above an
+          adaptive gate.
+       3. For each upstroke, walk forward in the raw signal until
+          the signal starts descending. That's the systolic peak.
+    
+     Robust to baseline drift (derivative kills DC), insensitive to
+     the dicrotic notch (notch's upstroke is much weaker than systolic
+     upstroke), and naturally produces one detection per beat.
+     */
     inline QVector<QPointF> findPeaksDerivative(const QVector<QPointF>& rawPairs,
         double tStart, double tEnd,
         const Params& p)
@@ -179,7 +181,7 @@ namespace simple_peak_finder {
         std::sort(d2sorted.begin(), d2sorted.end());
         const double d90 = d2sorted[(int)(0.9 * d2sorted.size())];
         if (d90 <= 0.0) return out;          // flat window
-        const double upstrokeGate = 0.3 * d90;
+        const double upstrokeGate = 0.6 * d90;
 
         // ---- 4. Walk the derivative; find upstroke peaks. ----
         // For each local max in d2 above the gate, scan forward in the
