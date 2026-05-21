@@ -68,7 +68,7 @@
         },
         {
           "DockedWidth": 545,
-          "SelectedChildIndex": 2,
+          "SelectedChildIndex": 1,
           "Children": [
             {
               "$type": "Document",
@@ -80,21 +80,7 @@
               "RelativeToolTip": "markers_automatic_position.hpp",
               "ViewState": "AgIAAPIAAAAAAAAAAAAAwCEBAAAFAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-05-19T20:45:38.257Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 3,
-              "Title": "BinPlotWidget.hpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.hpp",
-              "RelativeDocumentMoniker": "BinPlotWidget.hpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.hpp",
-              "RelativeToolTip": "BinPlotWidget.hpp",
-              "ViewState": "AgIAAIMAAAAAAAAAAADwv5wAAAATAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-05-19T20:08:13.183Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-05-19T20:45:38.257Z"
             },
             {
               "$type": "Document",
@@ -110,8 +96,16 @@
               "EditorCaption": ""
             },
             {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "BinPlotWidget.hpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.hpp",
+              "RelativeDocumentMoniker": "BinPlotWidget.hpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.hpp",
+              "RelativeToolTip": "BinPlotWidget.hpp",
+              "ViewState": "AgIAAIMAAAAAAAAAAADwv5wAAAATAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
+              "WhenOpened": "2026-05-19T20:08:13.183Z"
             },
             {
               "$type": "Document",
@@ -195,8 +189,7 @@
               "RelativeToolTip": "TemplateViewerWindow.cpp",
               "ViewState": "AgIAAG4AAAAAAAAAAAD4v54AAAA4AAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-05-15T00:27:38.803Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-05-15T00:27:38.803Z"
             },
             {
               "$type": "Document",

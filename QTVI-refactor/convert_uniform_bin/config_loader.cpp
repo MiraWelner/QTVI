@@ -1,9 +1,6 @@
 /**
  * @file   input_file_handler.cpp
- * @brief  Loads the merged config.csv, walks the source-file directory,
- *         and converts source files to .bin via file_to_bin. The marking
- *         GUI's main() pulls one .bin at a time from make_binfile and
- *         doesn't need to know whether it was just produced or cached.
+ * @brief  Loads the config.csv and extracts the feilds that are useful for creating the bin file
  */
 
 #include "config_loader.hpp"
@@ -83,8 +80,8 @@ void apply_dataset_specific_channel_labels(config_entry& cfg) {
 
 bool load_config(int dataType, config_entry& out) {
     /*
-    * Loads the config.csv (or whatever is in CONFIG_PATH) and fills up a config_entry 
-    * struct with all the data. Note that this particular function does NOT load the 
+    * Loads the config.csv (or whatever is in CONFIG_PATH) and fills up a config_entry
+    * struct with all the data. Note that this particular function does NOT load the
     * file paths, because those may be empty. Those are handled in build_derived_paths
     */
     std::ifstream file(CONFIG_PATH);
@@ -111,32 +108,12 @@ bool load_config(int dataType, config_entry& out) {
         out.ppgRate = std::stod(row[4]);
         out.finalSamplingRate = std::stod(row[5]);
         out.bin_length_minutes = std::stod(row[6]);
-        
+
 
         apply_dataset_specific_channel_labels(out);
         return true;
     }
     return false;
-}
-
-static void build_derived_paths(config_entry& cfg) {
-    /*
-        Whether the user gives the paths at runtime or they are in the config file, this creates
-        the subdirectories within the output path
-    */
-    cfg.bin_file_path = cfg.output_path + "/input_binfile/";
-    cfg.noise_data_path = cfg.output_path + "/noise_marking_output/";
-    cfg.annealed_data_path = cfg.output_path + "/annealed_output/";
-    cfg.r_peak_data_path = cfg.output_path + "/r_peak_finding_output/";
-    cfg.template_path = cfg.output_path + "/template_path/";
-
-    for (const auto& p : { cfg.bin_file_path,
-                       cfg.noise_data_path,
-                       cfg.annealed_data_path,
-                       cfg.r_peak_data_path,
-                       cfg.template_path }) {
-        std::filesystem::create_directories(p);
-    }
 }
 
 bool promptForMissingPaths(config_entry& cfg) {
@@ -145,14 +122,14 @@ bool promptForMissingPaths(config_entry& cfg) {
             to navigate to the paths via the QT GUI which has a built in file navigator    
     */
     const std::vector<std::pair<const char*, std::string*>> fields = {
-        { "Raw EDF or .dat files, or processed .bin files:", &cfg.input_path },
-        { "Output Folder", &cfg.output_path },
+        { "Raw EDF or DAT files", &cfg.input_path },
+        { "Output", &cfg.output_path },
     };
 
     for (const auto& [label, fieldPtr] : fields) {
         if (!fieldPtr->empty()) continue;
 
-        QString title = QString("Select folder for %1 (%2)")
+        QString title = QString("%1 (%2)")
             .arg(label, QString::fromStdString(cfg.dataType));
         QString chosen = QFileDialog::getExistingDirectory(
             nullptr, title, QString(),
@@ -160,8 +137,6 @@ bool promptForMissingPaths(config_entry& cfg) {
         if (chosen.isEmpty()) return false;
         *fieldPtr = chosen.toStdString();
     }
-
-    build_derived_paths(cfg);   // runs whether or not we prompted
     return true;
 }
 

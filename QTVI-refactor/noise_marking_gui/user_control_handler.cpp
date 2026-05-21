@@ -36,7 +36,6 @@ void user_control_handler::setupConnections() {
     connect(ui->save_current_plot, &QPushButton::clicked, this, &user_control_handler::save_current_plot);
 
     // Per-channel marking start/stop. Every channel follows the same pattern
-    // (start = beginMarking, stop = beginStopPhase), so a small table beats
     // a dozen near-identical connect() lines.
     struct MarkButtons {
         QPushButton* start;

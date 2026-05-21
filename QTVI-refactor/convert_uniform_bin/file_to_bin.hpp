@@ -1,11 +1,8 @@
 #pragma once
 /**
  * @file   file_to_bin.hpp
- * @brief  The 'step zero' of the QTVi processing
-           Take in a MESA, Bittium, or CHAOS file and convert it to a .bin file with 40 channels.
- *         Some channels will be empty depending on the file being read - for example, when loading
- *         CHAOS, sleep state will be empty.
- *         Uses polyphase upsampling with a filter bank for speed and efficiency
+ * @brief  Uses polyphase upsampling with a filter bank for speed and efficiency to convert an .edf or  .dat file to a 
+ *         .bin file with the following structure:
  *
  *   500-byte header (125 x 32-bit fields):
  *

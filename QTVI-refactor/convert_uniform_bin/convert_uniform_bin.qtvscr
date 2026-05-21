@@ -1,0 +1,429 @@
+<FlowDocument xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" FontFamily="Segoe UI" FontSize="12">
+  <FlowDocument.Tag><![CDATA[{
+  "timestamp": "2026-05-20 13:24:27",
+  "files": {
+    "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\convert_uniform_bin\\convert_uniform_bin.vcxproj": {
+      "before": "7Vnfb+o2GL3Pk/YP7CmKegVIg9DSom4NuSqBIjT6Q6W3fbkSMsGANyeOHKcr293/PsexExJCS9a1t9rah0o4n+0vx+ccPn/8+MOHD+anBxdr95AGiHgdfb/R1DXoOWSGvEVHD9m8fqx/sr7/zryi5FfoMK0H5yDE7AbQBWRBR++GCM90ja/i8U9LxvyfDSNwltAFQcNFDiUBmbOGQ1xjBu8hJj6khhtMo2nGQbPZ0vnqmmYOGXQHlIS+NgJTiDu63NAm3hwtQgoYTzCIg3l40VNt6Dk4nMGO3oPTcPH1DnmtAzWDz8ksZYkY08gORqlEf+YVBmxOqGuJRUwj+RxH8IEYj6LpTyR3DTEEAXwiPRn1LRKM0XtoHz4XO77EiyD3WGo741YyOdNIGBoTlhOAU5mtMqQdYDIFOKXprS15chsrzNo/bjRNY2NYskoGD0I0s/7sts+ODg9+suvt5lGv3uqdndb7p91mvdk9O27t99r20XH7r4SIYo5c5he4+p3QWczdaE3TUENRhJiT5i715/qEMk1m0NH3qre2FPkVYMval/NEy7bvN6QNNHyOQqBrRhEmXBszFMm2o1f2qhml1L7uVZWkapVOp7Km2IquLCAzRZExK+OblQ+tU9/HyBEOkdOLeCxR+RxAscsITSmgCAYWoyE0jc1xdRrSA24IwQFk1v3+4VHKZzW6FVEOZQqyVgaMjEO8Hhxzztw3iUdiSK+HxVunBnev1wPjhYkxLGc9WcuJJ2dMuP/AoBfVM2PIGK9jpB1zBxcbidh108tMHi8BhbPYbHaboXQ+XkJeEemllJ6xPZETt+dNPLhF0WtCWA/RvBGv+Wgj5GHKkdf8Bj6ggAVV7sGl16nUEjMeEQdg7rQ9wICy7sT4d4L2OUDlLPEdqqQm3vJVKgziHabtMClG/feAUjrL+Fok/XMQXccS0Wbj1gyjXLWmSDZC3m/8BkahCz0GsKyu8qMvUC6tlQffPBfFKnFtrCQ1ax6FuLzIj74ANiqfDMvz+5bMJroI8fofeaK4j1n2bPbY2CaujzCURxjdwSn0KXFgEBCa7hdYd8OL1sHJpNfvfh6cTOzLi/HlqH/ysbolvhbdd4pXigt9vtUdoB6vFEZRh8IS/1umkRmMQ/n1IpenGYGZ5jyAHuS9ivimMfSiFoK4l0g1bH2cZDIOp+NVwBG2OKQBwbwgT4dUEsme8a00BWe9tvlXTinDm/y7P3JG76cjLtoFUhFcEe2u3LGVKhyVrnM+U+KEYhVd/G9VxMnb98AUQ/vyvHd6c0Zw1POUOi16kkj00mfIRX/AaziHlDdLk05CwYPXVKzixD/V7DsX3hYXUjPnXE2UnXa5HdEan2ACZvze5/i+quyKw+f8y3USfyFNfMAb/t7iC5zNMZo2nPIz/XCBeNN/x20ZmUyRtx680U/NtlfFK8h+/sYb8/qSrhrL3Atvi5b4PBn+CD7LDD4bGxXNVPjstq3EZy14E59yXRIW/0CjEpdNhcyVIOmTyD5vcdMj6TBbfwM=",
+      "after": "7VltT+NGEL7Pldrf4FpUSaQSBwKIHo5P5AWKmvAWDr4gRY69SdzaXne9pqS9/veOvS9+iQMELhTpuA8crGdnZ2eeeXZ29gflwwf9073nKneIhA72W+pWvaEqyLew7fjTlhrRyea++sn4/jv9nODfkUWVLpqYkUuvTDJFNGyp7chxbVUBLT78NaM0+KhpoTVDnhnWPcciOMQTWrewp9noDrk4QETzwnE8TdtuNJoqaFcU/YQi75jgKFD65hi5LZUv2MH+xJlGxKRgYMiEQbzsq3LiW25ko5baReNo+uXG8ZvbYgbMyakyEhldyw/GpsT/9HPXpBNMPCNRomvybyYBA8wfZdMfMe4SucgM0SPmcan/w0Dmvfu9nZf6DlSsxXMPmfZkv61onK5JhDLAAgAAynSeA+2xi8emm8L0usNxcs0yzNjarzd0bWGYo4oLH0eObfzT3jva3dn+pbO519jtbja7R4ebvcN2Y7PRPtpvbnX3Orv7e/9KICZzuJrf0PwvTGyG3VinromhgsQFvR6O7poNiFNB4oIOwiS3FYC47cTZ11IrG1U5Xqu0WpWKcnap/Ni7d0IaVnNfb/+kdcpIolJTjY3qYJio41vsOgTYBJN57VZq1DX5K3NxnGSpjzlPeAEmVOFqWupG9brDyejcpLPa7UByTicI6pyu6gFoClVFK4tdfoO5jK592aiK1E82nGGWiiqoKjdFJE2ebq7mATIOg8B1rITJCnmdfOax+RyiZJW+MyYmcVBoUBIhXVscF6jhXHWFsRsiatxt7eymeSdGY+EELUWP5pxciHZuZwvOyDHZ67ljAhn2Jv0hifP1fPHWoQEs+3rOWDMwTlajnjzlLE6WZFcDrhzZrK4KBVNlSGkJvRamAMuW0xuvpy7oEFEKZR3QYEY5kPbDSZ5nvFICfeEKRRpZxxrZ1FyHfrEHhne+AjuXlFPTg5pUhvsU0yMc+VA0txGUmEiW0p0opNhLTsmDjtvBXuC4KBesx0/a5efxBWXQik9jfnAMUBiaU6QwbJq+BWb+6kxnqnKF7mnG5I+KhSPXVnxMFRfDCYaU9Hj/Of49AfuBAv8ltwTPnCfCSZkPk0l82rvzuoSoxnadPdNzhVTvniI/vpNI0BpQgSUJmMgtnTicmQTZ6hOlxdk3nCG4zeR8vVpiCJcupjkc2+QSYwoVT7E4ydQW9QjESnIfydJqZT0xIfDM7EPMXKg+uiY1RTkjQgFVwaLREqxxeSbM4qh+Uhhe4liRS8nVqyLRumjlyi7JBfhbdG2GBt8RS3OM8zUQm7D/N+1Y4cWca+M8HZhxK0iQTtwiSe8hz69HhK/7jv8HdH8I8pBPTZffmIqja7gClSRUcVVWohdH12DLEt4srvzq9uSy4oXWxE0YuNM7ftKRYCh7djUr0COLLT4Q9/8ICgi2oEDCJF0vNG5OTpvbB6Nur/35+GDUOTsdnvV7Bz9Vl8jX4ht3uSZWg8FSNybxoSzvx91RI/nZ1LXcoBQdQOfVgdRhdrEKMWkncMAv/85UQNdB1JVi73E80m0fIx9Bq5U1IE78uAOa1b/0s7RwGI2H8xCCZEBUQuzCPT0dEkbINVlTLfVvtrT7KoHOQa+49wfC/B5gaKBn4//2AryE7VYIMsvl0/dcfn6oIYV6vjl2Ueds0D28OsJu/HDE2ajsi8TRWUAdz/kbXaIJIvDiJNucJR9ekzcErJ7LHO9wegFzvE04pacS2Cf5JX1ttJInypGLTRvu8FYQiCq3XHwCXZ0RO1lHgQkPr/70FtkT1xnXrdVnBtHUgcfXJy5L8Wjs+FnhhXet/DNXsgX+rrqwY6i1ybw+K2x4mTT3z6PiD/gHOlOsCVFuVtlM4Z+nLcv9kxFe9M9qXWDK3sCE4Q/3WtKmWq5TsaQBnHlfE53fTIdM9H5kJ433GRdbY/IN0fgP"
+    }
+  }
+}]]></FlowDocument.Tag>
+  <Section Margin="0,24" TextAlignment="Center">
+    <Paragraph FontSize="24" FontWeight="Bold" Margin="12,0">
+      <LineBreak />
+      <Span Foreground="Gray">Qt Visual Studio Tools</Span>
+    </Paragraph>
+    <Paragraph FontSize="42" Margin="12,0" FontWeight="Bold">
+      <Span TextDecorations="Underline">Project Format Conversion</Span>
+    </Paragraph>
+    <Paragraph Margin="12,8" FontSize="18">
+      <Span>Report generated on 2026-05-20 13:24:27</Span>
+    </Paragraph>
+  </Section>
+  <Section>
+    <Paragraph FontSize="32" FontWeight="Bold" Margin="12,0">
+      <Span>Files</Span>
+    </Paragraph>
+    <Paragraph Margin="24,12,0,0">
+      <Span FontFamily="Consolas" FontSize="14" Background="WhiteSmoke"><![CDATA[D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj]]></Span>
+      <LineBreak />
+      <Hyperlink NavigateUri="file://D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj?before">[Before]</Hyperlink>
+      <Hyperlink NavigateUri="file://D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj?after">[After]</Hyperlink>
+      <Hyperlink NavigateUri="file://D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj?diff&amp;before&amp;after">
+                        [Diff before/after]
+                    </Hyperlink>
+      <Hyperlink NavigateUri="file://D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj?diff&amp;before&amp;current">
+                        [Diff before/current]
+                    </Hyperlink>
+      <Hyperlink NavigateUri="file://D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj?diff&amp;after&amp;current">
+                        [Diff after/current]
+                    </Hyperlink>
+      <LineBreak />
+    </Paragraph>
+  </Section>
+  <Section>
+    <Paragraph FontSize="32" FontWeight="Bold" Margin="12,0">
+      <Span>Changes</Span>
+    </Paragraph>
+    <Paragraph FontSize="20" FontWeight="Bold" Margin="12">
+      <Span><![CDATA[🡺 Enabling multi-processor compilation]]></Span>
+    </Paragraph>
+    <Table CellSpacing="0" BorderBrush="Gray" BorderThickness="0.5">
+      <Table.Columns>
+        <TableColumn />
+        <TableColumn />
+      </Table.Columns>
+      <TableRowGroup>
+        <TableRow Background="Orange">
+          <TableCell ColumnSpan="2" BorderThickness="0.5" BorderBrush="Gray">
+            <Paragraph Margin="10,5" FontWeight="Bold">
+              <Span><![CDATA[D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[      <MultiProcessorCompilation>true</MultiProcessorCompilation>]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[      <MultiProcessorCompilation>true</MultiProcessorCompilation>]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[      <MultiProcessorCompilation>true</MultiProcessorCompilation>]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[      <MultiProcessorCompilation>true</MultiProcessorCompilation>]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+      </TableRowGroup>
+    </Table>
+    <Paragraph FontSize="20" FontWeight="Bold" Margin="12">
+      <Span><![CDATA[🡺 Project format version]]></Span>
+    </Paragraph>
+    <Table CellSpacing="0" BorderBrush="Gray" BorderThickness="0.5">
+      <Table.Columns>
+        <TableColumn />
+        <TableColumn />
+      </Table.Columns>
+      <TableRowGroup>
+        <TableRow Background="Orange">
+          <TableCell ColumnSpan="2" BorderThickness="0.5" BorderBrush="Gray">
+            <Paragraph Margin="10,5" FontWeight="Bold">
+              <Span><![CDATA[D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[    <Keyword>QtVS_v304</Keyword>]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+      </TableRowGroup>
+    </Table>
+    <Paragraph FontSize="20" FontWeight="Bold" Margin="12">
+      <Span><![CDATA[🡺 Fallback for QTMSBUILD environment variable]]></Span>
+    </Paragraph>
+    <Table CellSpacing="0" BorderBrush="Gray" BorderThickness="0.5">
+      <Table.Columns>
+        <TableColumn />
+        <TableColumn />
+      </Table.Columns>
+      <TableRowGroup>
+        <TableRow Background="Orange">
+          <TableCell ColumnSpan="2" BorderThickness="0.5" BorderBrush="Gray">
+            <Paragraph Margin="10,5" FontWeight="Bold">
+              <Span><![CDATA[D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[    <QtMsBuild Condition="'$(QtMsBuild)'=='' OR !Exists('$(QtMsBuild)\qt.targets')">$(MSBuildProjectDirectory)\QtMsBuild</QtMsBuild>]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+      </TableRowGroup>
+    </Table>
+    <Paragraph FontSize="20" FontWeight="Bold" Margin="12">
+      <Span><![CDATA[🡺 Default Qt properties]]></Span>
+    </Paragraph>
+    <Table CellSpacing="0" BorderBrush="Gray" BorderThickness="0.5">
+      <Table.Columns>
+        <TableColumn />
+        <TableColumn />
+      </Table.Columns>
+      <TableRowGroup>
+        <TableRow Background="Orange">
+          <TableCell ColumnSpan="2" BorderThickness="0.5" BorderBrush="Gray">
+            <Paragraph Margin="10,5" FontWeight="Bold">
+              <Span><![CDATA[D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[  <Import Project="$(QtMsBuild)\qt_defaults.props" Condition="Exists('$(QtMsBuild)\qt_defaults.props')" />]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+      </TableRowGroup>
+    </Table>
+    <Paragraph FontSize="20" FontWeight="Bold" Margin="12">
+      <Span><![CDATA[🡺 Qt build settings]]></Span>
+    </Paragraph>
+    <Table CellSpacing="0" BorderBrush="Gray" BorderThickness="0.5">
+      <Table.Columns>
+        <TableColumn />
+        <TableColumn />
+      </Table.Columns>
+      <TableRowGroup>
+        <TableRow Background="Orange">
+          <TableCell ColumnSpan="2" BorderThickness="0.5" BorderBrush="Gray">
+            <Paragraph Margin="10,5" FontWeight="Bold">
+              <Span><![CDATA[D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[  <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" />]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[  <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" />]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[  <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" />]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[  <PropertyGroup Label="QtSettings" Condition="'$(Configuration)|$(Platform)'=='Release|x64'" />]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+      </TableRowGroup>
+    </Table>
+    <Paragraph FontSize="20" FontWeight="Bold" Margin="12">
+      <Span><![CDATA[🡺 Warn if Qt/MSBuild is not found]]></Span>
+    </Paragraph>
+    <Table CellSpacing="0" BorderBrush="Gray" BorderThickness="0.5">
+      <Table.Columns>
+        <TableColumn />
+        <TableColumn />
+      </Table.Columns>
+      <TableRowGroup>
+        <TableRow Background="Orange">
+          <TableCell ColumnSpan="2" BorderThickness="0.5" BorderBrush="Gray">
+            <Paragraph Margin="10,5" FontWeight="Bold">
+              <Span><![CDATA[D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[  <Target Name="QtMsBuildNotFound" BeforeTargets="CustomBuild;ClCompile" Condition="!Exists('$(QtMsBuild)\qt.targets') OR !Exists('$(QtMsBuild)\Qt.props')">]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[    <Message Importance="High" Text="QtMsBuild: could not locate qt.targets, qt.props; project may not build correctly." />]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[  </Target>]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+      </TableRowGroup>
+    </Table>
+    <Paragraph FontSize="20" FontWeight="Bold" Margin="12">
+      <Span><![CDATA[🡺 Qt property sheet]]></Span>
+    </Paragraph>
+    <Table CellSpacing="0" BorderBrush="Gray" BorderThickness="0.5">
+      <Table.Columns>
+        <TableColumn />
+        <TableColumn />
+      </Table.Columns>
+      <TableRowGroup>
+        <TableRow Background="Orange">
+          <TableCell ColumnSpan="2" BorderThickness="0.5" BorderBrush="Gray">
+            <Paragraph Margin="10,5" FontWeight="Bold">
+              <Span><![CDATA[D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[    <Import Project="$(QtMsBuild)\Qt.props" />]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[    <Import Project="$(QtMsBuild)\Qt.props" />]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[    <Import Project="$(QtMsBuild)\Qt.props" />]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[    <Import Project="$(QtMsBuild)\Qt.props" />]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+      </TableRowGroup>
+    </Table>
+    <Paragraph FontSize="20" FontWeight="Bold" Margin="12">
+      <Span><![CDATA[🡺 Qt targets]]></Span>
+    </Paragraph>
+    <Table CellSpacing="0" BorderBrush="Gray" BorderThickness="0.5">
+      <Table.Columns>
+        <TableColumn />
+        <TableColumn />
+      </Table.Columns>
+      <TableRowGroup>
+        <TableRow Background="Orange">
+          <TableCell ColumnSpan="2" BorderThickness="0.5" BorderBrush="Gray">
+            <Paragraph Margin="10,5" FontWeight="Bold">
+              <Span><![CDATA[D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\convert_uniform_bin.vcxproj]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+        <TableRow>
+          <TableCell ColumnSpan="2" Background="WhiteSmoke" BorderBrush="Gray" BorderThickness="0.5" />
+        </TableRow>
+        <TableRow>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0" />
+          </TableCell>
+          <TableCell BorderThickness="0, 0, 0.5, 0" BorderBrush="Gray">
+            <Paragraph FontFamily="Consolas" Margin="4, 0">
+              <Span Background="LightGreen"><![CDATA[  <Import Project="$(QtMsBuild)\qt.targets" Condition="Exists('$(QtMsBuild)\qt.targets')" />]]></Span>
+            </Paragraph>
+          </TableCell>
+        </TableRow>
+      </TableRowGroup>
+    </Table>
+  </Section>
+  <Section>
+    <Paragraph />
+  </Section>
+</FlowDocument>
+<!--97My/xhsQ0XkQaSZl8/DuMgnX8HoTXUrVoOoAGbjuQ0=-->

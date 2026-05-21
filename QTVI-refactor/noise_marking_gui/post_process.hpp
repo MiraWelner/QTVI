@@ -28,7 +28,9 @@ namespace post_process_detail {
         const std::filesystem::path rPeakPath =
             std::filesystem::path(cfg.r_peak_data_path) / (stem + "_wave_markings.bin");
         const std::filesystem::path templatePath =
-            std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
+            std::filesystem::path(cfg.template_path) /
+            (stem + "_" + std::to_string(static_cast<int>(cfg.bin_length_minutes)) +
+                "_templates.bin");
 
         // ---- Step 1: Anneal ----
         bool annealedFresh = std::filesystem::exists(annealedPath) &&

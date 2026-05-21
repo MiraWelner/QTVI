@@ -1,69 +1,71 @@
-﻿/**
- * @file   noise_marking_gui.cpp
- * @brief  Entry point. For each source file in cfg.originalFilePath:
- *           1. Convert (or pull from cache) into a .bin in cfg.binFilePath
- *           2. Open the marking dialog on that .bin
- *           3. Export marking results (CSV + .bin) into cfg.noiseDataPath
- *
- * @author Mira Welner
- * @email  MEW386@pitt.edu
- * @date   2026-03-18
- */
-
-#include "gui_handler.hpp"
+﻿#include "gui_handler.hpp"
 #include "post_process.hpp"
 #include "user_annotation_handler.h"
 #include "config_loader.hpp"
-#include "file_to_bin.hpp"
 #include "post_process_queue.hpp"
-
 
 #include <QtWidgets/QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QDirIterator>
+#include <filesystem>
 #include <chrono>
 #include <thread>
 #include <iostream>
 #include <memory>
 
+
+int get_dataset_choice() {
+    /*
+        Ask the user to select a MESA, Bittium, or CHAOS dataset
+    */
+    std::cout << "Select Dataset:\n1: MESA\n2: Bittium\n3: CHAOS\nChoice: ";
+    int choice;
+    if (!(std::cin >> choice)) return -1;
+    while (choice < 1 || choice > 3) {
+        std::cout << "Invalid choice. Please enter 1, 2, or 3: ";
+        if (!(std::cin >> choice)) return -1;
+	}
+    return choice;
+}
+
+
+std::vector<std::filesystem::path> load_binfiles(config_entry cfg) {
+    std::vector<std::filesystem::path> binFiles;
+    for (const auto& entry : std::filesystem::directory_iterator(cfg.bin_file_path)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".bin")
+            binFiles.push_back(entry.path());
+    }
+    std::sort(binFiles.begin(), binFiles.end());
+
+	return binFiles;
+}
+
+
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
-    std::cout << "Select Dataset:\n1: MESA\n2: Bittium\n3: CHAOS\nChoice: ";
-    int choice;
-    if (!(std::cin >> choice)) return 1;
-
-    config_entry cfg;
-    if (!load_config(choice, cfg)) {
-        std::cerr << "Error: dataset " << choice << " not in config.csv\n";
+    int dataset_choice = get_dataset_choice();
+    auto cfgOpt = load_config(dataset_choice);
+    if (!cfgOpt) {
+        std::cerr << "Error Loading config.csv";
         return 1;
     }
-    if (!promptForMissingPaths(cfg)) return 1;
-
-    QString markingFolder = QString::fromStdString(cfg.noise_data_path);
-    QDir().mkpath(markingFolder);
-
-    QStringList srcFiles = discoverSourceFiles(cfg);
-    if (srcFiles.isEmpty()) {
-        std::cerr << "No " << cfg.mainExt << " files in: "
-            << cfg.input_path << "\n";
-        return 0;
-    }
+    const config_entry& cfg = *cfgOpt;
 
     PostProcessQueue postQueue;
 
-    for (const QString& srcPath : srcFiles) {
+    std::vector<std::filesystem::path> binFiles = load_binfiles(cfg);
+
+    if (!binFiles.size()) {
+        std::cerr << "No .bin files in: " << cfg.bin_file_path << "\n";
+        return 0;
+    }
+
+    for (const std::filesystem::path& binFs : binFiles) {
         std::cout << "Loading file for noise marking: "
-            << QFileInfo(srcPath).fileName().toStdString() << "\n";
+            << binFs.filename().string() << "\n";
 
-        auto binFs = make_binfile(srcPath.toStdString(), cfg);
-        if (binFs.empty()) {
-            std::cerr << "  conversion failed; skipping\n";
-            continue;
-        }
-
-        // Sequential loop usually skips this; covers the case where a
-        // previous session queued this file and it's still in flight.
         if (postQueue.isLocked(binFs)) {
             std::cout << "  waiting for background processing of "
                 << binFs.filename().string() << " to finish...\n";
@@ -72,20 +74,19 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        QString binPath = QString::fromStdString(binFs.string());
-
         auto gui = std::make_unique<noise_marking_gui>();
         gui->setConfig(cfg);
         gui->setPostProcessQueue(&postQueue);
-        gui->setWindowTitle("Marking: " + QFileInfo(binPath).fileName());
-        gui->setFileSource(binPath);
+        gui->setWindowTitle(QString::fromStdString(
+            "Marking: " + binFs.filename().string()));
+        gui->setFileSource(QString::fromStdString(binFs.string()));
 
         if (gui->exec() != QDialog::Accepted) continue;
 
         QVector<GenExcStruct> allMarkings = gui->getAllMarkings();
-        QString currentBinFile = gui->getFilePath();
+        std::filesystem::path currentBinFile = gui->getFilePath().toStdString();
 
-        auto exportOne = [&](const QString& binFile,
+        auto exportOne = [&](const std::filesystem::path& binFile,
             const GenExcStruct* markings) {
                 annotation_handler nm(cfg.finalSamplingRate);
                 if (markings) {
@@ -97,13 +98,12 @@ int main(int argc, char* argv[]) {
                             markings->marking_type[i].toStdString());
                     }
                 }
-                QFileInfo info(binFile);
-                QString base = QDir(markingFolder).filePath(
-                    info.baseName() + "_noise_markings");
-                nm.exportCSV(base.toStdString() + ".csv");
-                nm.exportBinary(base.toStdString() + ".bin");
+                std::filesystem::path base = std::filesystem::path(cfg.noise_data_path)
+                    / (binFile.stem().string() + "_noise_markings");
+                nm.exportCSV(base.string() + ".csv");
+                nm.exportBinary(base.string() + ".bin");
                 std::cout << "Saved markings for "
-                    << info.fileName().toStdString() << "\n";
+                    << binFile.filename().string() << "\n";
             };
 
         if (allMarkings.isEmpty()) {
@@ -111,14 +111,13 @@ int main(int argc, char* argv[]) {
         }
         else {
             for (const GenExcStruct& m : allMarkings) {
-                exportOne(m.filePath, &m);
+                exportOne(std::filesystem::path(m.filePath.toStdString()), &m);
             }
         }
 
-        // Kick off background post-processing. Locks binFs until done;
-        // the next iteration's isLocked() check above honors the lock.
         postQueue.enqueue(binFs, cfg);
     }
+
 
     std::cout << "All files marked. Waiting for background "
         "post-processing to finish...\n";

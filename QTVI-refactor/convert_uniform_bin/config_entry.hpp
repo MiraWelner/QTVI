@@ -14,19 +14,10 @@ struct config_entry {
 
     double      ecgRate = 0.0;
     double      ppgRate = 0.0;
-    double      finalSamplingRate = 1000.0;
+    double      finalSamplingRate = 0.0;
 
     std::string input_path;
-    //the output_path is never directly used, but is rather the
-    //parent folder of all the below paths. It is its own entry in the config
-    // becuase it is can be set by the user, the below folders are derived from it
     std::string output_path;
-    std::string bin_file_path;       
-    std::string noise_data_path;     
-    std::string annealed_data_path;  
-    std::string r_peak_data_path;
-    std::string template_path;
-
 
 
     // these parameters are not in the config but rather in input_file_handler.cpp. 

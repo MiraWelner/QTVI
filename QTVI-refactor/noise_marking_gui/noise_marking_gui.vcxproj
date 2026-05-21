@@ -197,8 +197,6 @@
     <None Include="noise_marking_guiplugin.json" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="file_format_parsing\edflib.h" />
-    <ClInclude Include="file_format_parsing\pugixml.hpp" />
     <ClInclude Include="post_process_queue.hpp" />
     <ClInclude Include="template_generation\AlignWaves.hpp" />
     <ClInclude Include="template_generation\build_templates.hpp" />
@@ -224,9 +222,6 @@
   <ItemGroup>
     <ClCompile Include="annealing_to_bin\anneal_handler.cpp" />
     <ClCompile Include="config_loader.cpp" />
-    <ClCompile Include="file_format_parsing\edflib.c" />
-    <ClCompile Include="file_format_parsing\pugixml.cpp" />
-    <ClCompile Include="file_to_bin.cpp" />
     <ClCompile Include="gui_handler.cpp">
       <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">input</DynamicSource>
       <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(Filename).moc</QtMocFileName>

@@ -580,11 +580,9 @@ namespace {
     std::filesystem::path make_out_path(const std::filesystem::path& src,
         const config_entry& cfg)
     {
-        return std::filesystem::path(cfg.bin_file_path) /
+        return std::filesystem::path(cfg.output_path) /
             (src.stem().string() + "_" +
-                std::to_string((int)cfg.finalSamplingRate) + "_" +
-                std::format("{:03d}", static_cast<int>(cfg.bin_length_minutes)) +
-                ".bin");
+                std::to_string((int)cfg.finalSamplingRate) + ".bin");
     }
 
 
@@ -925,42 +923,13 @@ void make_binfile_dat(const std::filesystem::path& path,
 std::filesystem::path make_binfile(const std::filesystem::path& path, const config_entry& cfg)
 {
     /*
-        Takes all the files to be loaded, if they are already .bin, just use as it. otherwise, send to the edf or dat processor
+		creates output path, and calls the edf or dat specific function to write the bin file.
     */
-    std::filesystem::path out =
-        std::filesystem::path(cfg.bin_file_path) /
-        (path.stem().string() + "_" +
-            std::to_string((int)cfg.finalSamplingRate) + "_" +
-            std::format("{:03d}", static_cast<int>(cfg.bin_length_minutes)) +
-            ".bin");
-
-    if (std::filesystem::exists(out)) {
-        std::cout << "  Using existing bin file: "
-            << out.filename().string() << "\n";
-        return out;
-    }
-
-    std::filesystem::create_directories(cfg.bin_file_path);
+    std::filesystem::path out = std::filesystem::path(cfg.output_path) /
+        (path.stem().string() + "_" + std::to_string((int)cfg.finalSamplingRate) + ".bin");
 
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
-
-
-    if (ext == ".BIN") {
-        if (!std::filesystem::exists(path)) {
-            std::cerr << "ERROR: bin file missing: " << path << "\n";
-            return {};
-        }
-        const auto sz = std::filesystem::file_size(path);
-        if (sz < static_cast<uintmax_t>(HEADER_SIZE)) {
-            std::cerr << "ERROR: bin file too small to be valid: " << path << "\n";
-            return {};
-        }
-        std::cout << "  Using pre-converted bin: "
-            << path.filename().string() << "\n";
-        return path;
-    }
-
 
     if (ext == ".EDF") {
         make_binfile_edf(path, cfg);

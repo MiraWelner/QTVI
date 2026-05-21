@@ -61,9 +61,6 @@ void PostProcessQueue::run() {
             // not just dequeues. Removing on dequeue would unlock the
             // file while processing was still mid-flight.
         }
-
-        std::cerr << "=== background post-process: "
-            << job.binPath.stem().string() << " ===\n";
         try {
             post_process_detail::processOneFile(job.cfg, job.binPath);
         }

@@ -103,6 +103,288 @@
          </item>
         </layout>
        </item>
+       <item row="3" column="2">
+        <layout class="QGridLayout" name="sleep_state_legend">
+         <property name="spacing">
+          <number>4</number>
+         </property>
+         <item row="0" column="1">
+          <layout class="QHBoxLayout">
+           <item>
+            <widget class="QLabel" name="rem_c">
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: green; border-radius:3px;</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="rem_l">
+             <property name="text">
+              <string>REM</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="1" column="0">
+          <layout class="QHBoxLayout">
+           <item>
+            <widget class="QLabel" name="n1_c">
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: blue; border-radius:3px;</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="n1_l">
+             <property name="text">
+              <string>NREM1</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="2" column="0">
+          <layout class="QHBoxLayout">
+           <item>
+            <widget class="QLabel" name="n3_c">
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: red; border-radius:3px;</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="n3_l">
+             <property name="text">
+              <string>NREM3</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="1" column="1">
+          <layout class="QHBoxLayout">
+           <item>
+            <widget class="QLabel" name="n2_c">
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: cyan; border-radius:3px;</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="n2_l">
+             <property name="text">
+              <string>NREM2</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="0" column="0">
+          <layout class="QHBoxLayout">
+           <item>
+            <widget class="QLabel" name="wake_c">
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: black; border-radius:3px;</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="wake_l">
+             <property name="text">
+              <string>Wake</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="marking_type_label_2">
+         <property name="font">
+          <font>
+           <bold>true</bold>
+          </font>
+         </property>
+         <property name="text">
+          <string>Marking Type Legend</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <layout class="QGridLayout" name="gridLayout_4">
+         <item row="0" column="0">
+          <widget class="QPushButton" name="process_button">
+           <property name="text">
+            <string>Process Output</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="0">
+          <widget class="QPushButton" name="browse_file_button">
+           <property name="text">
+            <string>Browse Different File</string>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="QPushButton" name="save_current_plot">
+           <property name="text">
+            <string>Save Current Plot</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="QCheckBox" name="show_peaks_check">
+           <property name="text">
+            <string>Show Peaks?</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item row="0" column="0">
+        <layout class="QGridLayout" name="gridLayout_3">
+         <item row="0" column="0">
+          <widget class="QLabel" name="window_length_label">
+           <property name="font">
+            <font>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="text">
+            <string>Window Length:</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="0">
+          <widget class="QComboBox" name="window_length_selector">
+           <item>
+            <property name="text">
+             <string>1 Second</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>3 Second</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>10 Seconds</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>30 Seconds</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>1 Minute</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>2 Minutes</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>5 Minutes</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="QComboBox" name="scatter_line">
+           <item>
+            <property name="text">
+             <string>Line Plot</string>
+            </property>
+           </item>
+           <item>
+            <property name="text">
+             <string>Scatter Plot</string>
+            </property>
+           </item>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="QLabel" name="label_4">
+           <property name="font">
+            <font>
+             <bold>true</bold>
+            </font>
+           </property>
+           <property name="text">
+            <string>Plotting Style</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
        <item row="0" column="2">
         <layout class="QGridLayout" name="gridLayout_2">
          <item row="1" column="0">
@@ -190,6 +472,18 @@
           </widget>
          </item>
         </layout>
+       </item>
+       <item row="2" column="2">
+        <widget class="QLabel" name="sleep_states_label">
+         <property name="font">
+          <font>
+           <bold>true</bold>
+          </font>
+         </property>
+         <property name="text">
+          <string>Sleep States Legend</string>
+         </property>
+        </widget>
        </item>
        <item row="3" column="1">
         <layout class="QGridLayout" name="gridLayout" columnstretch="0,0" columnminimumwidth="0,0">
@@ -471,27 +765,18 @@
          </item>
         </layout>
        </item>
-       <item row="2" column="0">
-        <widget class="QLabel" name="marking_type_label_2">
-         <property name="font">
-          <font>
-           <bold>true</bold>
-          </font>
-         </property>
-         <property name="text">
-          <string>Marking Type Legend</string>
-         </property>
-        </widget>
-       </item>
-       <item row="3" column="2">
-        <layout class="QGridLayout" name="sleep_state_legend">
-         <property name="spacing">
+       <item row="3" column="0">
+        <layout class="QGridLayout" name="marking_type_legend">
+         <property name="horizontalSpacing">
           <number>4</number>
          </property>
-         <item row="0" column="1">
+         <property name="verticalSpacing">
+          <number>2</number>
+         </property>
+         <item row="6" column="0" colspan="2">
           <layout class="QHBoxLayout">
            <item>
-            <widget class="QLabel" name="rem_c">
+            <widget class="QLabel" name="signif_color">
              <property name="minimumSize">
               <size>
                <width>15</width>
@@ -505,23 +790,23 @@
               </size>
              </property>
              <property name="styleSheet">
-              <string>background-color: green; border-radius:3px;</string>
+              <string>background-color: rgb(0, 255, 255); border-radius:3px;</string>
              </property>
             </widget>
            </item>
            <item>
-            <widget class="QLabel" name="rem_l">
+            <widget class="QLabel" name="signif_desc">
              <property name="text">
-              <string>REM</string>
+              <string>9) Significant Arrhythmia</string>
              </property>
             </widget>
            </item>
           </layout>
          </item>
-         <item row="1" column="0">
+         <item row="0" column="0">
           <layout class="QHBoxLayout">
            <item>
-            <widget class="QLabel" name="n1_c">
+            <widget class="QLabel" name="noise_color">
              <property name="minimumSize">
               <size>
                <width>15</width>
@@ -535,14 +820,14 @@
               </size>
              </property>
              <property name="styleSheet">
-              <string>background-color: blue; border-radius:3px;</string>
+              <string notr="true">background-color: rgb(255,255,0)</string>
              </property>
             </widget>
            </item>
            <item>
-            <widget class="QLabel" name="n1_l">
+            <widget class="QLabel" name="noise_desc">
              <property name="text">
-              <string>NREM1</string>
+              <string>1) Noise/Artifact</string>
              </property>
             </widget>
            </item>
@@ -551,7 +836,7 @@
          <item row="2" column="0">
           <layout class="QHBoxLayout">
            <item>
-            <widget class="QLabel" name="n3_c">
+            <widget class="QLabel" name="af_color">
              <property name="minimumSize">
               <size>
                <width>15</width>
@@ -570,229 +855,9 @@
             </widget>
            </item>
            <item>
-            <widget class="QLabel" name="n3_l">
+            <widget class="QLabel" name="af_desc">
              <property name="text">
-              <string>NREM3</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-         <item row="1" column="1">
-          <layout class="QHBoxLayout">
-           <item>
-            <widget class="QLabel" name="n2_c">
-             <property name="minimumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="styleSheet">
-              <string>background-color: cyan; border-radius:3px;</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLabel" name="n2_l">
-             <property name="text">
-              <string>NREM2</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-         <item row="0" column="0">
-          <layout class="QHBoxLayout">
-           <item>
-            <widget class="QLabel" name="wake_c">
-             <property name="minimumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="styleSheet">
-              <string>background-color: black; border-radius:3px;</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLabel" name="wake_l">
-             <property name="text">
-              <string>Wake</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-        </layout>
-       </item>
-       <item row="2" column="2">
-        <widget class="QLabel" name="sleep_states_label">
-         <property name="font">
-          <font>
-           <bold>true</bold>
-          </font>
-         </property>
-         <property name="text">
-          <string>Sleep States Legend</string>
-         </property>
-        </widget>
-       </item>
-       <item row="0" column="0">
-        <layout class="QGridLayout" name="gridLayout_3">
-         <item row="0" column="0">
-          <widget class="QLabel" name="window_length_label">
-           <property name="font">
-            <font>
-             <bold>true</bold>
-            </font>
-           </property>
-           <property name="text">
-            <string>Window Length:</string>
-           </property>
-          </widget>
-         </item>
-         <item row="1" column="0">
-          <widget class="QComboBox" name="window_length_selector">
-           <item>
-            <property name="text">
-             <string>1 Second</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>3 Second</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>10 Seconds</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>30 Seconds</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>1 Minute</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>2 Minutes</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>5 Minutes</string>
-            </property>
-           </item>
-          </widget>
-         </item>
-         <item row="1" column="1">
-          <widget class="QComboBox" name="scatter_line">
-           <item>
-            <property name="text">
-             <string>Line Plot</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>Scatter Plot</string>
-            </property>
-           </item>
-          </widget>
-         </item>
-         <item row="0" column="1">
-          <widget class="QLabel" name="label_4">
-           <property name="font">
-            <font>
-             <bold>true</bold>
-            </font>
-           </property>
-           <property name="text">
-            <string>Plotting Style</string>
-           </property>
-          </widget>
-         </item>
-        </layout>
-       </item>
-       <item row="3" column="0">
-        <layout class="QGridLayout" name="marking_type_legend">
-         <property name="spacing">
-          <number>4</number>
-         </property>
-         <item row="0" column="0">
-          <layout class="QHBoxLayout">
-           <item>
-            <widget class="QLabel" name="noise_color">
-             <property name="minimumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="styleSheet">
-              <string>background-color: yellow;</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLabel" name="noise_desc">
-             <property name="text">
-              <string>Noise/Artifact</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-         <item row="0" column="1">
-          <layout class="QHBoxLayout">
-           <item>
-            <widget class="QLabel" name="vt_color">
-             <property name="minimumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="styleSheet">
-              <string>background-color: green; border-radius:3px;</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLabel" name="vt_desc">
-             <property name="text">
-              <string>VT</string>
+              <string>3) AF</string>
              </property>
             </widget>
            </item>
@@ -822,43 +887,13 @@
            <item>
             <widget class="QLabel" name="delay_desc">
              <property name="text">
-              <string>Cond. Delay</string>
+              <string>2) Cond. Delay</string>
              </property>
             </widget>
            </item>
           </layout>
          </item>
-         <item row="1" column="1">
-          <layout class="QHBoxLayout">
-           <item>
-            <widget class="QLabel" name="pac_color">
-             <property name="minimumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="styleSheet">
-              <string>background-color: rgb(255,128, 0); border-radius:3px;</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLabel" name="pac_desc">
-             <property name="text">
-              <string>PAC</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-         <item row="2" column="0">
+         <item row="3" column="0">
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="svt_color">
@@ -882,13 +917,73 @@
            <item>
             <widget class="QLabel" name="svt_desc">
              <property name="text">
-              <string>SVT</string>
+              <string>4) SVT</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="0" column="1">
+          <layout class="QHBoxLayout">
+           <item>
+            <widget class="QLabel" name="vt_color">
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: green; border-radius:3px;</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="vt_desc">
+             <property name="text">
+              <string>5) VT</string>
              </property>
             </widget>
            </item>
           </layout>
          </item>
          <item row="2" column="1">
+          <layout class="QHBoxLayout">
+           <item>
+            <widget class="QLabel" name="pac_color">
+             <property name="minimumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>15</width>
+               <height>15</height>
+              </size>
+             </property>
+             <property name="styleSheet">
+              <string>background-color: rgb(255,128, 0); border-radius:3px;</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="pac_desc">
+             <property name="text">
+              <string>7) PAC</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item row="1" column="1">
           <layout class="QHBoxLayout">
            <item>
             <widget class="QLabel" name="pvc_color">
@@ -912,37 +1007,7 @@
            <item>
             <widget class="QLabel" name="pvc_desc">
              <property name="text">
-              <string>PVC</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-         <item row="3" column="0">
-          <layout class="QHBoxLayout">
-           <item>
-            <widget class="QLabel" name="af_color">
-             <property name="minimumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="styleSheet">
-              <string>background-color: red; border-radius:3px;</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLabel" name="af_desc">
-             <property name="text">
-              <string>AF</string>
+              <string>6) PVC</string>
              </property>
             </widget>
            </item>
@@ -972,73 +1037,11 @@
            <item>
             <widget class="QLabel" name="benign_desc">
              <property name="text">
-              <string>Benign</string>
+              <string>8) Benign</string>
              </property>
             </widget>
            </item>
           </layout>
-         </item>
-         <item row="4" column="0" colspan="2">
-          <layout class="QHBoxLayout">
-           <item>
-            <widget class="QLabel" name="signif_color">
-             <property name="minimumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>15</width>
-               <height>15</height>
-              </size>
-             </property>
-             <property name="styleSheet">
-              <string>background-color: rgb(0, 255, 255); border-radius:3px;</string>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <widget class="QLabel" name="signif_desc">
-             <property name="text">
-              <string>Significant Arrhythmia</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-        </layout>
-       </item>
-       <item row="2" column="1">
-        <layout class="QGridLayout" name="gridLayout_4">
-         <item row="0" column="0">
-          <widget class="QPushButton" name="process_button">
-           <property name="text">
-            <string>Process Output</string>
-           </property>
-          </widget>
-         </item>
-         <item row="1" column="0">
-          <widget class="QPushButton" name="browse_file_button">
-           <property name="text">
-            <string>Browse Different File</string>
-           </property>
-          </widget>
-         </item>
-         <item row="0" column="1">
-          <widget class="QPushButton" name="save_current_plot">
-           <property name="text">
-            <string>Save Current Plot</string>
-           </property>
-          </widget>
-         </item>
-         <item row="1" column="1">
-          <widget class="QCheckBox" name="show_peaks_check">
-           <property name="text">
-            <string>Show Peaks?</string>
-           </property>
-          </widget>
          </item>
         </layout>
        </item>

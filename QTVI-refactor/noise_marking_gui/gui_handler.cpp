@@ -66,7 +66,6 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
-#include <file_to_bin.hpp>
 
  // ============================================================================
  // Constants
@@ -84,14 +83,14 @@ static const QColor COLOR_RESP = QColor("#16A085");
 static const QColor COLOR_CVP = QColor("#2980B9");
 static const QColor COLOR_RAW_SCATTER = QColor(0, 0, 0, 255);
 
-static const QMap<QString, QColor> MARKING_COLORS = {
-    {"1) Noise/Artifact",         QColor(255, 255, 0,   30)},
-    {"2) Cond. Delay",       QColor(128, 0,   128, 30)},
-    {"3) AF",                     QColor(255, 0,   0,   30)},
-    {"4) SVT",                    QColor(0,   0,   255,   60)},
-    {"5) VT",                     QColor(0,   255,   0, 60)},
-    {"6) PVC",                    QColor(128, 255, 0,   60)},
-    {"7) PAC",                    QColor(255, 128, 0,   60)},
+static const QMap<QString,  QColor> MARKING_COLORS = {
+    {"1) Noise/Artifact",   QColor(255, 255, 0,   60)},
+    {"2) Cond. Delay",      QColor(128, 0,   128, 60)},
+    {"3) AF",               QColor(255, 0,   0,   60)},
+    {"4) SVT",              QColor(0,   0,   255, 60)},
+    {"5) VT",               QColor(0,   255,   0, 60)},
+    {"6) PVC",              QColor(128, 255, 0,   60)},
+    {"7) PAC",              QColor(255, 128, 0,   60)},
     {"8) Benign Arr.",      QColor(255, 128, 255, 60)},
     {"9) Significant Arr.", QColor(0,   255, 255, 60)}
 };
@@ -776,147 +775,17 @@ void noise_marking_gui::handleBrowseFile() {
     QString startDir;
     if (!m_binFilePath.isEmpty())
         startDir = QFileInfo(m_binFilePath).absolutePath();
+    else if (!m_cfg.bin_file_path.empty())
+        startDir = QString::fromStdString(m_cfg.bin_file_path);
 
-    // The marking dialog ultimately needs a converted .bin (loadChunkFromFile
-    // reads that specific header layout), but users naturally browse for the
-    // source recordings themselves. Accept both: source extensions (.edf /
-    // .dat / .csv -- whatever convertToBin can handle) get auto-converted
-    // through the same cache convertToBin uses in the main loop, and an
-    // already-converted .bin is used directly.
-    QString path = QFileDialog::getOpenFileName(
-        this, "Select Signal File", startDir,
-        "All supported (*.bin *.edf *.dat *.csv);;"
-        "Converted bin files (*.bin);;"
-        "EDF recordings (*.edf);;"
-        "DAT recordings (*.dat);;"
-        "CSV recordings (*.csv);;"
-        "All files (*)");
+    QString binPath = QFileDialog::getOpenFileName(
+        this, "Select Bin File", startDir,
+        "Converted bin files (*.bin);;All files (*)");
 
-    if (path.isEmpty()) return;
-
-    const QString ext = QFileInfo(path).suffix().toLower();
-    const QString displayName = QFileInfo(path).fileName();
-    QString binPath = path;
-
-    // Show an indeterminate progress dialog covering BOTH the (optional)
-    // conversion step and the chunk load. Both block the GUI thread, so
-    // without this the window paints stale content for several seconds and
-    // looks broken.
-    //
-    // Focus handling: the progress dialog is given Qt::NoFocus so Qt won't
-    // pick it (or its successor) when reassigning focus on close. We also
-    // explicitly clear focus from any QLineEdit (e.g. skip_interval_box)
-    // that may have stolen it, and restore focus to the main dialog at the
-    // end -- otherwise the skip-interval QLineEdit ends up trapping the
-    // keyboard cursor after the progress dialog closes.
-    QWidget* prevFocus = QApplication::focusWidget();
-    QProgressDialog progress(this);
-    progress.setWindowTitle("Loading");
-    progress.setRange(0, 0);
-    progress.setCancelButton(nullptr);
-    progress.setMinimumDuration(0);
-    progress.setWindowModality(Qt::WindowModal);
-    progress.setAutoClose(false);
-    progress.setAutoReset(false);
-    progress.setFocusPolicy(Qt::NoFocus);
-
-    auto setStep = [&](const QString& msg) {
-        progress.setLabelText(msg);
-        progress.show();
-        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-        };
-    auto closeProgressAndRestoreFocus = [&]() {
-        progress.close();
-        // Restore focus deterministically. If a QLineEdit was focused before
-        // (e.g. user just typed into the skip-interval box), prefer to put
-        // focus back on the main dialog so the QLineEdit doesn't trap
-        // keystrokes intended for the chart shortcuts.
-        if (prevFocus && !qobject_cast<QLineEdit*>(prevFocus)) {
-            prevFocus->setFocus(Qt::OtherFocusReason);
-        }
-        else {
-            this->setFocus(Qt::OtherFocusReason);
-        }
-        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-        };
-
-    if (ext != "bin") {
-        if (m_cfg.bin_file_path.empty()) {
-            QMessageBox::warning(this, "Conversion unavailable",
-                "This file is a source recording, but the bin-cache folder "
-                "isn't configured. Pick an already-converted .bin file, or "
-                "restart from the dataset selection screen.");
-            return;
-        }
-
-        setStep(QString("Converting %1\u2026").arg(displayName));
-        std::cout << "Converting " << displayName.toStdString() << " ...\n" << std::flush;
-
-        // Conversion can take many minutes for a 100-hour EDF, so we run it
-        // on a worker thread. The GUI thread stays inside a local event loop
-        // (driven by QFutureWatcher::finished) which keeps the progress
-        // dialog animating, the window responsive to mouse focus, and stops
-        // Windows from marking the app as "Not Responding".
-        std::filesystem::path produced;
-        std::exception_ptr convertException;
-        const std::filesystem::path src(path.toStdString());
-        const config_entry cfgCopy = m_cfg;  // don't share by reference
-
-        QFutureWatcher<void> watcher;
-        QFuture<void> future = QtConcurrent::run([&produced, &convertException,
-            src, cfgCopy]() {
-                try {
-                    produced = make_binfile(src, cfgCopy);
-                }
-                catch (...) {
-                    convertException = std::current_exception();
-                }
-            });
-        watcher.setFuture(future);
-
-        QEventLoop loop;
-        QObject::connect(&watcher, &QFutureWatcher<void>::finished,
-            &loop, &QEventLoop::quit);
-        loop.exec();
-
-        if (convertException) {
-            closeProgressAndRestoreFocus();
-            QString msg;
-            try { std::rethrow_exception(convertException); }
-            catch (const std::exception& e) { msg = e.what(); }
-            catch (...) { msg = "unknown exception"; }
-            QMessageBox::warning(this, "Conversion failed",
-                QString("make_binfile threw: %1").arg(msg));
-            return;
-        }
-
-        if (produced.empty()) {
-            closeProgressAndRestoreFocus();
-            QMessageBox::warning(this, "Conversion failed",
-                "convertToBin returned an empty path (unsupported extension "
-                "or converter failure). See the console for details.");
-            return;
-        }
-        if (!std::filesystem::exists(produced)) {
-            closeProgressAndRestoreFocus();
-            QMessageBox::warning(this, "Conversion failed",
-                QString("Expected output file not found:\n%1\n\n"
-                    "The converter ran but didn't produce a .bin. "
-                    "See the console for details.")
-                .arg(QString::fromStdString(produced.string())));
-            return;
-        }
-        binPath = QString::fromStdString(produced.string());
-        std::cout << "  -> " << produced.filename().string() << "\n";
-    }
-
-    if (binPath == m_binFilePath) {
-        closeProgressAndRestoreFocus();
-        return;
-    }
+    if (binPath.isEmpty()) return;
+    if (binPath == m_binFilePath) return;
 
     if (!QFileInfo(binPath).isReadable()) {
-        closeProgressAndRestoreFocus();
         QMessageBox::warning(this, "Cannot open file",
             QString("File is not readable:\n%1").arg(binPath));
         return;
@@ -926,7 +795,6 @@ void noise_marking_gui::handleBrowseFile() {
     if (m_postQueue) {
         const std::filesystem::path binFs(binPath.toStdString());
         if (m_postQueue->isLocked(binFs)) {
-            closeProgressAndRestoreFocus();
             QMessageBox::warning(this, "File busy",
                 QString("This file is currently being post-processed in the "
                     "background and can't be opened for re-marking yet.\n\n"
@@ -936,10 +804,37 @@ void noise_marking_gui::handleBrowseFile() {
         }
     }
 
-    setStep(QString("Loading %1\u2026").arg(QFileInfo(binPath).fileName()));
+    // Show a brief progress dialog around the chunk-load, which can block
+    // the GUI thread for a few seconds on large files. Focus is steered
+    // back to the main dialog afterwards so the skip-interval QLineEdit
+    // doesn't trap keystrokes intended for chart shortcuts.
+    QWidget* prevFocus = QApplication::focusWidget();
+    QProgressDialog progress(this);
+    progress.setWindowTitle("Loading");
+    progress.setLabelText(QString("Loading %1\u2026")
+        .arg(QFileInfo(binPath).fileName()));
+    progress.setRange(0, 0);
+    progress.setCancelButton(nullptr);
+    progress.setMinimumDuration(0);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setAutoClose(false);
+    progress.setAutoReset(false);
+    progress.setFocusPolicy(Qt::NoFocus);
+    progress.show();
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+
     loadSelectedFile(binPath);
-    closeProgressAndRestoreFocus();
+
+    progress.close();
+    if (prevFocus && !qobject_cast<QLineEdit*>(prevFocus)) {
+        prevFocus->setFocus(Qt::OtherFocusReason);
+    }
+    else {
+        this->setFocus(Qt::OtherFocusReason);
+    }
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 }
+
 
 bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     QFile file(m_binFilePath);
