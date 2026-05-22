@@ -1,8 +1,0 @@
-﻿   Qt/MSBuild: 3.4.1.0
-  Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
-   Qt: 6.10.2
-  file_to_bin.cpp
-LINK : warning LNK4075: ignoring '/INCREMENTAL' due to '/OPT:ICF' specification
-  convert_uniform_bin.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\convert_uniform_bin\x64\Release\convert_uniform_bin.exe
-  'pwsh.exe' is not recognized as an internal or external command,
-  operable program or batch file.

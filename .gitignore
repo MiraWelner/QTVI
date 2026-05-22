@@ -15,4 +15,4 @@
 *.user
 /QTVI-refactor/convert_uniform_bin/.vs
 /QTVI-refactor/noise_marking_gui/.vs
-/QTVI-refactor/qtvi_template_marking/6_templa.9AC31506/x64
+*x64/
