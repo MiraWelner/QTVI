@@ -14,8 +14,8 @@
 #include <limits>
 
 namespace {
-    constexpr double kMinorSpacingSec = 0.1;
-    constexpr double kMajorSpacingSec = 0.5;
+    constexpr double kMinorSpacingSec = 0.04;
+    constexpr double kMajorSpacingSec = 0.2;
 }
 
 pulse_overlay::pulse_overlay(noise_marking_gui* gui, const QStringList& labels)

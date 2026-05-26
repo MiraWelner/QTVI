@@ -700,6 +700,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
             }));
         });
     m_pulseOverlay = std::make_unique<pulse_overlay>(this, markableChannelLabels());
+    m_gapIndicator = std::make_unique<gap_indicator>(this);
 
     // Grid is off by default. The pulse_overlay starts in the enabled
     // state (its constructor starts the timer), so flip it off here to
@@ -1095,6 +1096,9 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     loadRaw(m_accelZRaw, CH_ACCEL_Z);
     loadRaw(m_respRaw, CH_RESP);
     loadRaw(m_cvpRaw, CH_PRES);
+
+    // Time-gap detection: must run after the raw vectors are populated.
+    if (m_gapIndicator) m_gapIndicator->rescan();
 
     // Sleep stages.
     {
@@ -1645,6 +1649,12 @@ void noise_marking_gui::handle_data_plot() {
     }
     m_highlights.clear();
 
+    // Same idea for gap indicator series. The indicator owns them and
+    // must be told to drop them BEFORE wipeChartContent runs, otherwise
+    // the wipe would see and delete them, leaving the indicator with
+    // dangling pointers.
+    if (m_gapIndicator) m_gapIndicator->clearSeries();
+
     // Bottom-most visible chart in each column gets the time-ruler labels.
     QChartView* xLabelOwnerRight = nullptr;
     QChartView* xLabelOwnerLeft = nullptr;
@@ -1891,6 +1901,7 @@ void noise_marking_gui::handle_data_plot() {
 
     updateNoiseHighlights();
     if (m_pulseOverlay) m_pulseOverlay->refresh();
+    if (m_gapIndicator) m_gapIndicator->refresh();
 }
 
 // ============================================================================

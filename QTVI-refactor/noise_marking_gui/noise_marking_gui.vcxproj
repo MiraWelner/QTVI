@@ -195,6 +195,7 @@
   <ItemGroup>
     <QtMoc Include="chart_overlay.hpp" />
     <QtMoc Include="gui_handler.h" />
+    <ClInclude Include="gap_indicator.hpp" />
     <ClInclude Include="post_process_queue.hpp" />
     <ClInclude Include="template_generation\AlignWaves.hpp" />
     <ClInclude Include="template_generation\build_templates.hpp" />
@@ -220,6 +221,7 @@
     <ClCompile Include="annealing_to_bin\anneal_handler.cpp" />
     <ClCompile Include="chart_overlay.cpp" />
     <ClCompile Include="config_loader.cpp" />
+    <ClCompile Include="gap_indicator.cpp" />
     <ClCompile Include="gui_handler.cpp">
       <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">input</DynamicSource>
       <QtMocFileName Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">%(Filename).moc</QtMocFileName>

@@ -76,6 +76,9 @@
     <ClInclude Include="user_annotation_handler.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="gap_indicator.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <QtUic Include="noise_marking_gui.ui">
@@ -108,6 +111,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="gui_handler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="gap_indicator.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

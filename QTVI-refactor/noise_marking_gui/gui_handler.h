@@ -48,6 +48,7 @@
 #include "user_control_handler.h"
 #include "config_entry.hpp"
 #include "chart_overlay.hpp"
+#include "gap_indicator.hpp"
 class PostProcessQueue;
 
 
@@ -69,6 +70,7 @@ struct GenExcStruct {
 class noise_marking_gui : public QDialog {
     Q_OBJECT
         friend class user_control_handler;
+    friend class gap_indicator;
 
 public:
     /**
@@ -210,6 +212,7 @@ private:
     std::unique_ptr<annotation_handler>          m_noiseManager;
     std::unique_ptr<user_control_handler>     m_buttonHandler;
     std::unique_ptr<pulse_overlay>            m_pulseOverlay;
+    std::unique_ptr<gap_indicator>            m_gapIndicator;
 
     QSet<QString>               m_activeChannels;
     QString                     m_currentMarkingType;
