@@ -12,7 +12,7 @@
 #include <numeric>
 
 #include "FilterUtils.hpp"
-#include "StatsUtils.hpp"
+#include "stats_utils.hpp"
 #include "PeakFinder.hpp"
 
 using namespace std;

@@ -8,11 +8,7 @@
 #include "pan_tompkin.hpp"
 #include "ecgLms.hpp"
 #include "RRSimpleSquared.hpp"
-#include "StatsUtils.hpp"
 #include "FilterUtils.hpp"
-#include <algorithm>
-#include <vector>
-#include <map>
 
 /**
  * @brief  Result from JoinedRR: the accepted R-peak indices plus

@@ -13,7 +13,7 @@
 
 #include "bandpass.hpp"
 #include "FilterUtils.hpp"
-#include "StatsUtils.hpp"
+#include "stats_utils.hpp"
 
 using namespace std;
 

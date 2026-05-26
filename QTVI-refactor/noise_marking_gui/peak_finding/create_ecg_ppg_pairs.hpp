@@ -18,8 +18,6 @@
 #include "SegmentPPG.hpp"
 #include "JoinedRR.hpp"
 #include "pairRtoPPGBeat.hpp"
-#include "StatsUtils.hpp"
-#include "SegmentPPG.hpp"
 
  /**
   * @brief  Run R-peak detection on three versions of a signal: raw,

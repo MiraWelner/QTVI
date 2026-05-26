@@ -5,7 +5,7 @@
 #pragma once
 
 #include "FilterUtils.hpp"
-#include "StatsUtils.hpp"
+#include "stats_utils.hpp"
 #include "diff2.hpp"
 #include "ecglaux.hpp"
 #include <iomanip>

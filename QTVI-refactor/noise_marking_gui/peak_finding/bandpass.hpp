@@ -1,6 +1,6 @@
 // ============================================================================
 // File: bandpass.hpp
-// Butterworth filter via cascaded biquads with filtfilt (header-only)
+// Butterworth filter via cascaded biquads with filtfilt
 // ============================================================================
 #pragma once
 
@@ -36,7 +36,7 @@ namespace bandpass_detail {
 } // namespace bandpass_detail
 
 // ============================================================================
-// Lowpass design via bilinear transform — cascaded second-order sections
+// Lowpass design via bilinear transform - cascaded second-order sections
 // ============================================================================
 inline std::vector<Biquad> butterworth_lowpass(int order, double cutoff_hz, double sample_rate) {
     if (order < 1) throw std::invalid_argument("Order must be >= 1");
@@ -141,7 +141,7 @@ inline std::vector<double> apply_sos(const std::vector<Biquad>& sos, const std::
 }
 
 // ============================================================================
-// filtfilt — zero-phase filtering (forward + reverse) for biquad cascade
+// filtfilt - zero-phase filtering (forward + reverse) for biquad cascade
 // ============================================================================
 inline std::vector<double> filtfilt(const std::vector<Biquad>& sos, const std::vector<double>& x) {
     if (x.size() < 4) return x;

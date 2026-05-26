@@ -59,25 +59,21 @@
     <Import Project="$(QtMsBuild)\qt_defaults.props" />
   </ImportGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'" Label="QtSettings">
-    <QtInstall>msvc</QtInstall>
     <QtModules>core;gui;widgets;concurrent;charts;designer</QtModules>
     <QtBuildConfig>debug</QtBuildConfig>
     <QtPlugin>true</QtPlugin>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="QtSettings">
-    <QtInstall>6.10.1_msvc2022_64</QtInstall>
     <QtModules>core;gui;widgets;charts;designer</QtModules>
     <QtBuildConfig>debug</QtBuildConfig>
     <QtPlugin>true</QtPlugin>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'" Label="QtSettings">
-    <QtInstall>msvc</QtInstall>
     <QtModules>core;gui;widgets;concurrent;charts;designer</QtModules>
     <QtBuildConfig>release</QtBuildConfig>
     <QtPlugin>true</QtPlugin>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="QtSettings">
-    <QtInstall>6.10.1_msvc2022_64</QtInstall>
     <QtModules>core;gui;widgets;designer</QtModules>
     <QtBuildConfig>release</QtBuildConfig>
     <QtPlugin>true</QtPlugin>
@@ -197,6 +193,8 @@
     <None Include="noise_marking_guiplugin.json" />
   </ItemGroup>
   <ItemGroup>
+    <QtMoc Include="chart_overlay.hpp" />
+    <QtMoc Include="gui_handler.h" />
     <ClInclude Include="post_process_queue.hpp" />
     <ClInclude Include="template_generation\AlignWaves.hpp" />
     <ClInclude Include="template_generation\build_templates.hpp" />
@@ -211,7 +209,6 @@
     <ClInclude Include="template_generation\template_io.hpp" />
     <ClInclude Include="user_annotation_handler.h" />
     <QtMoc Include="user_control_handler.h" />
-    <QtMoc Include="gui_handler.hpp" />
     <ClInclude Include="annealing_to_bin\AnnealSegments.hpp" />
     <ClInclude Include="annealing_to_bin\anneal_handler.hpp" />
     <ClInclude Include="config_entry.hpp" />
@@ -221,6 +218,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="annealing_to_bin\anneal_handler.cpp" />
+    <ClCompile Include="chart_overlay.cpp" />
     <ClCompile Include="config_loader.cpp" />
     <ClCompile Include="gui_handler.cpp">
       <DynamicSource Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">input</DynamicSource>

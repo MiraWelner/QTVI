@@ -4,7 +4,7 @@
 // ============================================================================
 #pragma once
 
-#include "StatsUtils.hpp"
+#include "stats_utils.hpp"
 
 inline tuple<vector<size_t>, double, double> ecglaux(
     const vector<double>& ecg,

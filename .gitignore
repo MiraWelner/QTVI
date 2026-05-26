@@ -15,4 +15,13 @@
 *.user
 /QTVI-refactor/convert_uniform_bin/.vs
 /QTVI-refactor/noise_marking_gui/.vs
-*x64/
+*64x/
+*.pro
+/QTVI-refactor/convert_uniform_bin/convert_.B6F5429C
+/QTVI-refactor/noise_marking_gui/noise_ma.7588209C
+*.filters
+*.vcxproj
+*.vcxproj
+/QTVI-refactor/noise_marking_gui/.vs
+/QTVI-refactor/convert_uniform_bin/x64
+/QTVI-refactor/noise_marking_gui/.vs

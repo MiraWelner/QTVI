@@ -296,11 +296,22 @@
           </widget>
          </item>
          <item row="1" column="1">
-          <widget class="QCheckBox" name="show_peaks_check">
-           <property name="text">
-            <string>Show Peaks?</string>
-           </property>
-          </widget>
+          <layout class="QHBoxLayout" name="horizontalLayout">
+           <item>
+            <widget class="QCheckBox" name="show_grid_check">
+             <property name="text">
+              <string>Show Grid</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="show_peaks_check">
+             <property name="text">
+              <string>Show Peaks?</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
          </item>
         </layout>
        </item>

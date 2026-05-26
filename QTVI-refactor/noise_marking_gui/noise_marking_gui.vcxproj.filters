@@ -26,9 +26,6 @@
     <None Include="noise_marking_guiplugin.json">
       <Filter>Resource Files</Filter>
     </None>
-    <QtMoc Include="gui_handler.hpp">
-      <Filter>Header Files</Filter>
-    </QtMoc>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="config_entry.hpp">
@@ -101,18 +98,27 @@
     <ClCompile Include="user_control_handler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="gui_handler.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="post_process_queue.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="user_annotation_handler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="chart_overlay.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="gui_handler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="user_control_handler.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="gui_handler.h">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="chart_overlay.hpp">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>

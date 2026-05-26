@@ -20,7 +20,6 @@
 
 #include "TemplateTypes.hpp"
 #include "EnsembleTemplate.hpp"
-#include "StatsUtils.hpp"
 #include <atomic>
 
 #ifdef _OPENMP

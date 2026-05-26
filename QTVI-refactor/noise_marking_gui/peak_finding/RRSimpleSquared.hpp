@@ -5,27 +5,7 @@
 // ============================================================================
 #pragma once
 
-#include "StatsUtils.hpp"
 #include "PeakFinder.hpp"
-
-#include <vector>
-#include <cmath>
-#include <algorithm>
-#include <numeric>
-#include <limits>
-#include <stdexcept>
-#include <map>
-#include <string>
-#include <fstream>
-#include <sstream>
-#include <functional>
-#include <tuple>
-
-using std::vector;
-using std::string;
-using std::map;
-using std::pair;
-using std::tuple;
 
 inline pair<vector<size_t>, vector<double>> RRsimpleSquared(const vector<double>& ecg, double minDist) {
     if (ecg.size() < 3) return { {}, {} };

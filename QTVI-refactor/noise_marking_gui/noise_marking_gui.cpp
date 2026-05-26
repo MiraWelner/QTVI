@@ -1,4 +1,4 @@
-﻿#include "gui_handler.hpp"
+﻿#include "gui_handler.h"
 #include "post_process.hpp"
 #include "user_annotation_handler.h"
 #include "config_loader.hpp"

@@ -29,7 +29,8 @@
 
 #include "annealing_to_bin//anneal_handler.hpp"
 #include "peak_finding//run_find_r_peaks.hpp"
-#include "gui_handler.hpp"
+#include "gui_handler.h"
+#include "chart_overlay.hpp"
 #include "post_process.hpp"
 #include "config_loader.hpp"
 #include "post_process_queue.hpp"
@@ -83,7 +84,7 @@ static const QColor COLOR_RESP = QColor("#16A085");
 static const QColor COLOR_CVP = QColor("#2980B9");
 static const QColor COLOR_RAW_SCATTER = QColor(0, 0, 0, 255);
 
-static const QMap<QString,  QColor> MARKING_COLORS = {
+static const QMap<QString, QColor> MARKING_COLORS = {
     {"1) Noise/Artifact",   QColor(255, 255, 0,   60)},
     {"2) Cond. Delay",      QColor(128, 0,   128, 60)},
     {"3) AF",               QColor(255, 0,   0,   60)},
@@ -107,13 +108,24 @@ namespace {
     }
 
     // Wipe every series and axis on a chart, optionally preserving a list of
-    // series the caller wants to keep (e.g. an in-progress start marker).
+    // series the caller wants to keep (e.g. an in-progress start marker,
+    // persistent line series, the pulse overlay).
+    //
+    // "Keep" means "don't delete" -- but we still remove them from the
+    // chart. Reason: this function also deletes every axis. If we left a
+    // kept series attached to the chart while its axes were being deleted,
+    // the next paint would dereference dangling axis pointers and crash
+    // with an access violation. The caller is expected to re-add kept
+    // series (and re-attach them to fresh axes) after this returns.
     void wipeChartContent(QChart* chart,
         const QList<QAbstractSeries*>& keep = {}) {
         if (!chart) return;
         const auto serieses = chart->series();
         for (auto* s : serieses) {
-            if (keep.contains(s)) continue;
+            if (keep.contains(s)) {
+                chart->removeSeries(s);   // detach but don't delete
+                continue;
+            }
             chart->removeSeries(s);
             delete s;
         }
@@ -337,6 +349,37 @@ QVector<QPointF> noise_marking_gui::peaksForWindow(const QString& label) const {
     return simple_peak_finder::findPeaks(*r.dataRaw, tStart, tEnd, params);
 }
 
+QVector<QPointF> noise_marking_gui::peaksForBpmWindow(const QString& label,
+    double& outDuration) const {
+    // BPM is unstable when computed over very short windows (e.g. 1 s gives
+    // either 0 or 1 peak, so the BPM jumps wildly). When the visible
+    // window is < 10 s, extend backwards to a 10 s minimum so the BPM
+    // estimate is stable. The peak overlay itself still uses the visible
+    // window -- only the BPM number sees the extended span.
+    outDuration = 0.0;
+    if (!m_showPeaks) return {};
+
+    ChannelRefs r = channelRefs(label);
+    if (!r.dataRaw) return {};
+
+    constexpr double kMinBpmWindowSec = 10.0;
+
+    const double tVisEnd = m_currentStartTime + m_windowDuration;
+    double tStart = m_currentStartTime;
+    if (m_windowDuration < kMinBpmWindowSec) {
+        tStart = std::max(0.0, tVisEnd - kMinBpmWindowSec);
+    }
+    outDuration = tVisEnd - tStart;
+    if (outDuration <= 0.0) return {};
+
+    const auto params = simple_peak_finder::paramsFor(label);
+    if (label == "PPG" || label == "ABP") {
+        return simple_peak_finder::findPeaksDerivative(
+            *r.dataRaw, tStart, tVisEnd, params);
+    }
+    return simple_peak_finder::findPeaks(*r.dataRaw, tStart, tVisEnd, params);
+}
+
 void noise_marking_gui::resetUnpinnedGains() {
     // For each pair, if the checkbox is unchecked, snap the spinbox back to
     // 1.0 without firing handle_data_plot (we're about to redraw anyway).
@@ -473,13 +516,6 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     , m_buttonHandler(std::make_unique<user_control_handler>(this))
 {
     ui->setupUi(this);
-
-    // Size to 75% × 90% of screen
-    if (auto* screen = QGuiApplication::primaryScreen()) {
-        const QRect avail = screen->availableGeometry();
-        resize(avail.width() * 3 / 4, static_cast<int>(avail.height() * 0.9));
-        move(avail.center() - rect().center());
-    }
 
     m_buttonHandler->setupConnections();
 
@@ -663,6 +699,31 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
             return processDataset(cfgCopy);
             }));
         });
+    m_pulseOverlay = std::make_unique<pulse_overlay>(this, markableChannelLabels());
+
+    // Grid is off by default. The pulse_overlay starts in the enabled
+    // state (its constructor starts the timer), so flip it off here to
+    // match the unchecked checkbox. QSignalBlocker prevents setChecked
+    // from firing the toggled() handler before the rest of the dialog is
+    // wired up.
+    {
+        QSignalBlocker block(ui->show_grid_check);
+        ui->show_grid_check->setChecked(false);
+    }
+    ui->show_grid_check->setFocusPolicy(Qt::NoFocus);
+    m_pulseOverlay->setEnabled(false);
+    connect(ui->show_grid_check, &QCheckBox::toggled, this, [this](bool on) {
+        if (!m_pulseOverlay) return;
+        m_pulseOverlay->setEnabled(on);
+        // Detaching the series from the chart in setEnabled() doesn't
+        // force a repaint on its own -- the old lines stay visible until
+        // something invalidates the chart. handle_data_plot() rerenders
+        // the markable charts, which clears stale overlay strokes and
+        // (when re-enabling) calls m_pulseOverlay->refresh() at the end
+        // to rebuild the geometry.
+        handle_data_plot();
+        });
+
 }
 
 noise_marking_gui::~noise_marking_gui() {
@@ -1626,11 +1687,30 @@ void noise_marking_gui::handle_data_plot() {
     // re-added by renderWindowedChart below). Without this, the old line
     // would get deleted here, triggering the slow OpenGL teardown and
     // defeating the whole point of persisting the series.
+    //
+    // The pulse overlay's series are also in `keep`: pulse_overlay owns
+    // them (deletes them in its dtor), so wipeChartContent must NOT free
+    // them out from under the overlay. Forgetting this is a use-after-
+    // free -- the overlay's timer ticks would touch deleted memory and
+    // crash with an access violation on the next chart wipe / arrow-key.
     auto keepFor = [&](QChartView* cv) -> QList<QAbstractSeries*> {
         QList<QAbstractSeries*> keep;
         auto it = m_persistentLines.constFind(cv);
         if (it != m_persistentLines.constEnd())
             for (auto* ln : it.value()) if (ln) keep.append(ln);
+        if (m_pulseOverlay) {
+            const QString label = signalLabelForChartView(cv);
+            if (!label.isEmpty()) {
+                // seriesForLabel returns the overlay's minor + major lines
+                // for this chart; both must survive the wipe (the overlay
+                // owns them).
+                const QList<QLineSeries*> overlaySeries =
+                    m_pulseOverlay->seriesForLabel(label);
+                for (QLineSeries* s : overlaySeries) {
+                    if (s) keep.append(s);
+                }
+            }
+        }
         return keep;
         };
 
@@ -1701,9 +1781,18 @@ void noise_marking_gui::handle_data_plot() {
 
         // Set the title every render, regardless of whether peaks were
         // detected. BPM = -1 hides the BPM segment when peaks are off.
+        //
+        // BPM is computed over a separate window: when the visible window
+        // is < 10 s, the BPM window is extended backwards (still ending at
+        // the visible end) so the BPM estimate stays stable. Peaks drawn
+        // on the chart still come from the visible window only.
         double bpm = -1.0;
-        if (m_showPeaks && m_windowDuration > 0.0) {
-            bpm = peaks.size() * 60.0 / m_windowDuration;
+        if (m_showPeaks) {
+            double bpmWindowDur = 0.0;
+            const QVector<QPointF> bpmPeaks = peaksForBpmWindow(label, bpmWindowDur);
+            if (bpmWindowDur > 0.0) {
+                bpm = bpmPeaks.size() * 60.0 / bpmWindowDur;
+            }
         }
         r.chartView->setProperty("bpm", bpm);
         r.chartView->chart()->setTitle(formatChartTitle(label, nativeHz, pxPerSample, bpm));
@@ -1801,6 +1890,7 @@ void noise_marking_gui::handle_data_plot() {
     }
 
     updateNoiseHighlights();
+    if (m_pulseOverlay) m_pulseOverlay->refresh();
 }
 
 // ============================================================================

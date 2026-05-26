@@ -6,7 +6,7 @@
  * @date   2026-01-20
  */
 #include "user_control_handler.h"
-#include "gui_handler.hpp"
+#include "gui_handler.h"
 #include "ui_noise_marking_gui.h"
 
 #include <QDateTime>

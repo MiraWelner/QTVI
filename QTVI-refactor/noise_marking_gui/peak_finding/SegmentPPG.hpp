@@ -9,8 +9,8 @@
 #pragma once
 
 #include "nanfastsmooth.hpp"
-#include "StatsUtils.hpp"
-#include "stdoutlier.hpp"
+#include "stats_utils.hpp"
+#include "peak_finding//stdoutlier.hpp"
 #include "RunLength.hpp"
 #include <stdexcept>
 #include <cmath>
