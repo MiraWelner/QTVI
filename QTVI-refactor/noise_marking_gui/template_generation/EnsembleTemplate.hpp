@@ -6,6 +6,12 @@
  *         Steps: segment -> remove bad lengths -> remove bad peak amplitudes ->
  *         remove bad peak positions -> align -> wave-score pruning -> median.
  *
+ *         The final step collapses the surviving aligned-and-cropped beat
+ *         matrix to its column-wise median (= the template). At the same
+ *         place we can optionally compute the column-wise std of that same
+ *         matrix and hand it back via out_std -- this is what the viewer
+ *         draws as a gray band around the template.
+ *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
  * @date   2026-03-26
@@ -84,6 +90,32 @@ static inline vector<double> et_col_nanmedian(const vector<vector<double>>& mat,
     return result;
 }
 
+// Column-wise sample std (skipping NaN, ddof=1). Returns 0 in columns
+// with fewer than 2 valid samples. Output length is `cols`.
+static inline vector<double> et_col_nanstd(const vector<vector<double>>& mat, size_t cols) {
+    vector<double> result(cols, 0.0);
+    for (size_t c = 0; c < cols; ++c) {
+        // Two-pass for numerical stability: mean first, then variance.
+        double sum = 0.0;
+        size_t n = 0;
+        for (const auto& row : mat) {
+            if (c < row.size() && !std::isnan(row[c])) { sum += row[c]; ++n; }
+        }
+        if (n < 2) { result[c] = 0.0; continue; }
+        double mean = sum / static_cast<double>(n);
+        double ss = 0.0;
+        for (const auto& row : mat) {
+            if (c < row.size() && !std::isnan(row[c])) {
+                double d = row[c] - mean;
+                ss += d * d;
+            }
+        }
+        // ddof=1 sample std, matches Python/MATLAB std() default.
+        result[c] = std::sqrt(ss / static_cast<double>(n - 1));
+    }
+    return result;
+}
+
 static inline void et_col_stats(const vector<vector<double>>& mat, size_t cols,
     vector<double>& cmean, vector<double>& cstd) {
     cmean.assign(cols, NaN);
@@ -138,6 +170,11 @@ static inline void et_remove_masked(const vector<bool>& mask, Vecs&... vecs) {
 
 // ---------------------------------------------------------------------------
 // EnsembleTemplate
+//
+// Both optional outputs are filled at the same place (final median step),
+// so the cost of producing std is one extra column-wise pass over the
+// already-aligned-and-cropped beat matrix. Pass nullptr for either to
+// skip it.
 // ---------------------------------------------------------------------------
 inline vector<double> EnsembleTemplate(
     const vector<double>& wave,
@@ -145,7 +182,8 @@ inline vector<double> EnsembleTemplate(
     double std_multiplier,
     const string& type,
     const vector<size_t>& expand = {},
-    vector<vector<double>>* out_kept_beats = nullptr)
+    vector<vector<double>>* out_kept_beats = nullptr,
+    vector<double>* out_std = nullptr)
 {
     if (segment_idxs.size() < 2) return {};
 
@@ -381,6 +419,13 @@ inline vector<double> EnsembleTemplate(
     // copying it preserves what actually contributed to the template.
     if (out_kept_beats) {
         *out_kept_beats = sub;
+    }
+
+    // Optional per-sample std over the same matrix the median is taken on.
+    // This is what the viewer renders as a gray ±std band around the
+    // template. ddof=1 sample std, NaN-skipping per column.
+    if (out_std) {
+        *out_std = et_col_nanstd(sub, tmpl_len);
     }
 
     return et_col_nanmedian(sub, tmpl_len);

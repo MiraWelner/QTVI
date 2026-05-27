@@ -10,6 +10,12 @@
  *             per-bin PPG templates directly after foot-stripping.
  *           - ECG gate on bad_segment, not PPG availability.
  *
+ *         std vectors: per-sample std for the ECG raw method and the
+ *         PPG template are produced inside EnsembleTemplate. For PPG,
+ *         the std vector has to ride through the same AlignWaves shift
+ *         and NaN-strip the template gets -- otherwise the band wouldn't
+ *         line up with the line.
+ *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
  * @date   2026-03-26
@@ -37,12 +43,15 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
         }
     }
 
-    // PPG templates
+    // PPG templates (+ per-sample std, parallel shape)
     vector<vector<double>> ppg_templates;
+    vector<vector<double>> ppg_template_stds;
     vector<bool> template_good(n, false);
 
     if (has_ppg) {
-        vector<vector<double>> template_matrix = CreatePPGTemplates(wave_data, std_multiplier);
+        PPGTemplatesResult ppg_res = CreatePPGTemplates(wave_data, std_multiplier);
+        auto& template_matrix = ppg_res.templates;
+        auto& template_std_matrix = ppg_res.stds;
 
         for (size_t i = 0; i < n; ++i) {
             for (double v : template_matrix[i]) {
@@ -58,22 +67,56 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
         // AlignWaves: shifts each template so its foot lands at the global
         // max foot column, padding with NaN.
         AlignWavesResult aligned = AlignWaves(template_matrix, feet.idx);
+
+        // The std vector for each bin has to undergo the same shift as the
+        // template, so std[k] stays paired with template[k] after the
+        // align. We replicate AlignWaves' index math here directly --
+        // there's no peak-shift (that's a vertical adjustment to the
+        // template values, not the std), so this is just a horizontal
+        // shift with NaN padding.
+        const size_t aligned_cols = aligned.alignedWaves.empty()
+            ? 0 : aligned.alignedWaves[0].size();
+        vector<vector<double>> aligned_stds(n, vector<double>(aligned_cols, NaN));
+        for (size_t i = 0; i < n; ++i) {
+            if (!template_good[i]) continue;
+            const int mv = (i < aligned.move_dist.size()) ? aligned.move_dist[i] : 0;
+            const size_t dst_start = static_cast<size_t>(std::max(0, mv));
+            const auto& src = template_std_matrix[i];
+            for (size_t j = 0; j < src.size() && dst_start + j < aligned_cols; ++j) {
+                aligned_stds[i][dst_start + j] = src[j];
+            }
+        }
+
         ppg_templates.resize(n);
+        ppg_template_stds.resize(n);
 
 #pragma omp parallel for schedule(dynamic)
         for (int i = 0; i < static_cast<int>(n); ++i) {
             if (!template_good[i]) {
                 ppg_templates[i] = {};
+                ppg_template_stds[i] = {};
                 continue;
             }
 
             const auto& row = aligned.alignedWaves[i];
+            const auto& sd_row = aligned_stds[i];
+
+            // Strip NaN positions from the template -- and strip the SAME
+            // positions from the std vector so they stay aligned.
             vector<double> stripped;
+            vector<double> stripped_sd;
             stripped.reserve(row.size());
-            for (double v : row) {
-                if (!std::isnan(v)) stripped.push_back(v);
+            stripped_sd.reserve(row.size());
+            for (size_t k = 0; k < row.size(); ++k) {
+                if (!std::isnan(row[k])) {
+                    stripped.push_back(row[k]);
+                    // sd_row may be NaN in padding columns; 0 is a safe
+                    // replacement (band collapses to the line there).
+                    stripped_sd.push_back(std::isnan(sd_row[k]) ? 0.0 : sd_row[k]);
+                }
             }
             ppg_templates[i] = std::move(stripped);
+            ppg_template_stds[i] = std::move(stripped_sd);
         }
     }
 
@@ -83,6 +126,11 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
     // Assemble TemplateInfo
     auto fill_channel = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {
         dst.ecgTemplate_raw = src.ecgTemplates_raw[i];
+        // Per-sample std for the raw method only -- the other three
+        // methods are never displayed, so they don't have std computed.
+        if (i < src.ecgTemplates_raw_std.size())
+            dst.ecgTemplate_raw_std = src.ecgTemplates_raw_std[i];
+
         dst.ecgTemplate_squared = src.ecgTemplates_squared[i];
         dst.ecgTemplate_absval = src.ecgTemplates_absval[i];
         dst.ecgTemplate_unfiltered = src.ecgTemplates_unfiltered[i];
@@ -100,6 +148,7 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
 
     auto clear_channel = [](ChannelTemplates& dst) {
         dst.ecgTemplate_raw = {};
+        dst.ecgTemplate_raw_std = {};
         dst.ecgTemplate_squared = {};
         dst.ecgTemplate_absval = {};
         dst.ecgTemplate_unfiltered = {};
@@ -145,9 +194,10 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
 
         if (ppg_template_good) {
             info.ppgTemplate = ppg_templates[i];
+            info.ppgTemplate_std = ppg_template_stds[i];
         }
-        // else: info.ppgTemplate stays default-empty, which the viewer
-        // already interprets as "no PPG for this bin".
+        // else: info.ppgTemplate / ppgTemplate_std stay default-empty,
+        // which the viewer already interprets as "no PPG for this bin".
     }
     return result;
 }

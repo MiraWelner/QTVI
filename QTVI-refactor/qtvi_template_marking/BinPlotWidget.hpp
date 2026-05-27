@@ -14,6 +14,12 @@
 //   traces in full at that scale. This is what guarantees temporal alignment
 //   between the ECG and PPG -- one sample of ECG occupies the same pixel
 //   width as one sample of PPG, regardless of how long each visible trace is.
+//
+// Per-sample std (gray band):
+//   When std vectors matching the trace length are provided, the widget
+//   paints a translucent gray polygon between mean-std and mean+std
+//   underneath each line. Empty std vectors just disable the band for
+//   that trace.
 // ============================================================================
 #pragma once
 #include <QWidget>
@@ -107,19 +113,15 @@ public:
     explicit BinPlotWidget(int binIndex, int leadIndex,
         const QString& leadLabel, QWidget* parent = nullptr);
 
-    // The old setData keeps its 5-marker positional API for compatibility.
-    // The new markers default to -1 (hidden) until set explicitly via
-    // setMarker(). Use setDataAll if you want to provide all of them at
-    // once.
+    // Sole data setter. Pass empty std vectors to draw without a band
+    // for that trace; pass -1 for any marker you don't have a position
+    // for. Std vectors that are shorter than the visible sample count
+    // are ignored at draw time (the band silently disappears for that
+    // trace), so it's safe to call this with stale data.
     void setData(const std::vector<double>& ppg,
+        const std::vector<double>& ppgStd,
         const std::vector<double>& ecg,
-        int qBegin, int tBegin, int tEnd,
-        int ppgOnset, int ppgPeak, double rPeakSample);
-
-    // Extended setter that takes every marker at once. Pass -1 for any
-    // marker you don't have a position for.
-    void setDataAll(const std::vector<double>& ppg,
-        const std::vector<double>& ecg,
+        const std::vector<double>& ecgStd,
         int ecgP, int qBegin, int tBegin, int tEnd,
         int ppgOnset, int ppgPeak,
         int ppgDicrotic, int ppg50, int ppgEnd,
@@ -171,7 +173,9 @@ private:
     int m_leadIndex;
     QString m_leadLabel;
     std::vector<double> m_ppg;
+    std::vector<double> m_ppgStd;
     std::vector<double> m_ecg;
+    std::vector<double> m_ecgStd;
 
     int m_ecgVisibleN = 0;
     int m_ppgVisibleN = 0;

@@ -8,9 +8,13 @@
  *         ecgSignal2, ecgSignal3) with the raw R-peaks to build a template
  *         from the signal before any preprocessing or filtering.
  *
- *         For the "raw" method on ch1 only, we additionally capture the
- *         surviving aligned beats that contributed to the template, so
- *         downstream code can write them out for QC visualization.
+ *         For the "raw" method we also capture two extra outputs:
+ *           - The surviving aligned beats that contributed to the template
+ *             (ch1 only -- downstream code writes these out for QC).
+ *           - The per-sample std across those beats (all channels), which
+ *             the viewer draws as a gray band around the displayed
+ *             template. The other three methods (squared/absval/unfiltered)
+ *             don't get std computed since the viewer never displays them.
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -28,6 +32,7 @@
 
 struct SingleMethodResult {
     vector<double> ecgTemplate;
+    vector<double> ecgTemplate_std;   // empty for methods that don't compute std
     double ppg_alignment_point;
     double avg_r_expand;
 };
@@ -37,10 +42,12 @@ static inline SingleMethodResult build_ecg_template_for_method(
     const vector<size_t>& rpeaks,
     const vector<vector<double>>& pairs,
     double std_multiplier,
-    vector<vector<double>>* out_kept_beats = nullptr)
+    vector<vector<double>>* out_kept_beats = nullptr,
+    bool compute_std = false)
 {
     SingleMethodResult res;
     res.ecgTemplate = {};
+    res.ecgTemplate_std = {};
     res.ppg_alignment_point = NaN;
     res.avg_r_expand = 0.0;
 
@@ -75,11 +82,17 @@ static inline SingleMethodResult build_ecg_template_for_method(
     }
 
     try {
+        // Pass &res.ecgTemplate_std only when caller wants it -- saves
+        // one column-wise pass through the beat matrix for methods we
+        // never display.
+        vector<double>* std_out = compute_std ? &res.ecgTemplate_std : nullptr;
         res.ecgTemplate = EnsembleTemplate(
-            ecg_reduced, r, std_multiplier, "ecg", lens, out_kept_beats);
+            ecg_reduced, r, std_multiplier, "ecg", lens,
+            out_kept_beats, std_out);
     }
     catch (...) {
         res.ecgTemplate = {};
+        res.ecgTemplate_std = {};
         if (out_kept_beats) out_kept_beats->clear();
         return res;
     }
@@ -98,6 +111,7 @@ static inline SingleMethodResult build_ecg_template_for_method(
 
 static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
     cr.ecgTemplates_raw.resize(n);
+    cr.ecgTemplates_raw_std.resize(n);
     cr.ecgTemplates_squared.resize(n);
     cr.ecgTemplates_absval.resize(n);
     cr.ecgTemplates_unfiltered.resize(n);
@@ -117,6 +131,10 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
 
 /**
  * @brief  Process all 4 methods for one channel in one bin.
+ *
+ *         Only the raw method computes std (the other three are never
+ *         displayed in the viewer). Only ch1 captures the surviving raw
+ *         beats for QC output.
  *
  * @param cr             Channel result accumulator
  * @param bins           All bins (for pairs access)
@@ -140,32 +158,42 @@ static inline void process_channel(
 {
     const auto& bin = bins[i];
 
-    // Method 1: raw (detection signal + raw R-peaks)
+    // Method 1: raw (detection signal + raw R-peaks).
+    // This is the one the viewer renders, so it's the only method that
+    // gets per-sample std computed.
     vector<vector<double>>* capture =
         (capture_raw_beats && i < cr.kept_beats_raw.size())
         ? &cr.kept_beats_raw[i] : nullptr;
     auto raw_res = build_ecg_template_for_method(
-        ecgSignal, ch.raw, bin.pairs, std_multiplier, capture);
+        ecgSignal, ch.raw, bin.pairs, std_multiplier,
+        capture, /*compute_std=*/true);
     cr.ecgTemplates_raw[i] = raw_res.ecgTemplate;
+    cr.ecgTemplates_raw_std[i] = raw_res.ecgTemplate_std;
     cr.ppg_alignment_point_raw[i] = raw_res.ppg_alignment_point;
     cr.avg_r_expand_raw[i] = raw_res.avg_r_expand;
 
-    // Method 2: squared (squared signal + squared R-peaks)
+    // Method 2: squared (squared signal + squared R-peaks). No std.
     const auto& sq_sig = ch.squared_signal.empty() ? ecgSignal : ch.squared_signal;
-    auto sq_res = build_ecg_template_for_method(sq_sig, ch.squared, bin.pairs, std_multiplier);
+    auto sq_res = build_ecg_template_for_method(
+        sq_sig, ch.squared, bin.pairs, std_multiplier,
+        nullptr, /*compute_std=*/false);
     cr.ecgTemplates_squared[i] = sq_res.ecgTemplate;
     cr.ppg_alignment_point_squared[i] = sq_res.ppg_alignment_point;
     cr.avg_r_expand_squared[i] = sq_res.avg_r_expand;
 
-    // Method 3: absval (abs-value signal + absval R-peaks)
+    // Method 3: absval (abs-value signal + absval R-peaks). No std.
     const auto& abs_sig = ch.absval_signal.empty() ? ecgSignal : ch.absval_signal;
-    auto abs_res = build_ecg_template_for_method(abs_sig, ch.absval, bin.pairs, std_multiplier);
+    auto abs_res = build_ecg_template_for_method(
+        abs_sig, ch.absval, bin.pairs, std_multiplier,
+        nullptr, /*compute_std=*/false);
     cr.ecgTemplates_absval[i] = abs_res.ecgTemplate;
     cr.ppg_alignment_point_absval[i] = abs_res.ppg_alignment_point;
     cr.avg_r_expand_absval[i] = abs_res.avg_r_expand;
 
-    // Method 4: unfiltered (original ECG signal + raw R-peaks)
-    auto unfilt_res = build_ecg_template_for_method(origSignal, ch.raw, bin.pairs, std_multiplier);
+    // Method 4: unfiltered (original ECG signal + raw R-peaks). No std.
+    auto unfilt_res = build_ecg_template_for_method(
+        origSignal, ch.raw, bin.pairs, std_multiplier,
+        nullptr, /*compute_std=*/false);
     cr.ecgTemplates_unfiltered[i] = unfilt_res.ecgTemplate;
     cr.ppg_alignment_point_unfiltered[i] = unfilt_res.ppg_alignment_point;
     cr.avg_r_expand_unfiltered[i] = unfilt_res.avg_r_expand;

@@ -2,6 +2,11 @@
 * @file   build_templates.hpp
 * @brief  Run the template-generation pipeline on peak-finding output
 *         and produce a TemplateFile ready to write to disk.
+*
+*         Carries per-sample std for the ECG raw method (the one the
+*         viewer displays) and for PPG, from the in-memory TemplateInfo
+*         into the on-disk BinTemplates layout. The other three ECG
+*         methods don't have std computed and write empty std vectors.
 */
 
 #pragma once
@@ -16,11 +21,17 @@
 
 namespace template_generation_detail {
 
+    // Copy one template (+ optional std) into the on-disk method block.
+    // The non-raw methods pass an empty tmpl_std and the on-disk std
+    // field stays sz=0 (no payload). Both writer and reader handle that
+    // uniformly, so there's only ever one code path.
     inline void copyMethod(template_io::ChannelMethodTemplate& dst,
         const std::vector<double>& tmpl,
+        const std::vector<double>& tmpl_std,
         double alignment, double rExpand)
     {
         dst.ecgTemplate = tmpl;
+        dst.ecgTemplate_std = tmpl_std;
         dst.alignment_point = std::isnan(alignment) ? 0.0 : alignment;
         dst.avg_r_expand = rExpand;
     }
@@ -31,34 +42,42 @@ namespace template_generation_detail {
         bt.bad_segment = bad_segment;
         if (bad_segment) return;
 
+        // Only the raw methods carry std; the other three pass an empty
+        // vector via the default-constructed std::vector<double>{}.
+        const std::vector<double> noStd;
+
         copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw,
+            info.ch1.ecgTemplate_raw_std,
             info.ch1.alignment_point_raw, info.ch1.avg_r_expand_raw);
-        copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared,
+        copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd,
             info.ch1.alignment_point_squared, info.ch1.avg_r_expand_squared);
-        copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval,
+        copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval, noStd,
             info.ch1.alignment_point_absval, info.ch1.avg_r_expand_absval);
-        copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered,
+        copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, noStd,
             info.ch1.alignment_point_unfiltered, info.ch1.avg_r_expand_unfiltered);
 
         copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw,
+            info.ch2.ecgTemplate_raw_std,
             info.ch2.alignment_point_raw, info.ch2.avg_r_expand_raw);
-        copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared,
+        copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd,
             info.ch2.alignment_point_squared, info.ch2.avg_r_expand_squared);
-        copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval,
+        copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval, noStd,
             info.ch2.alignment_point_absval, info.ch2.avg_r_expand_absval);
-        copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered,
+        copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, noStd,
             info.ch2.alignment_point_unfiltered, info.ch2.avg_r_expand_unfiltered);
 
         copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw,
+            info.ch3.ecgTemplate_raw_std,
             info.ch3.alignment_point_raw, info.ch3.avg_r_expand_raw);
-        copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared,
+        copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd,
             info.ch3.alignment_point_squared, info.ch3.avg_r_expand_squared);
-        copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval,
+        copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval, noStd,
             info.ch3.alignment_point_absval, info.ch3.avg_r_expand_absval);
-        copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered,
+        copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered, noStd,
             info.ch3.alignment_point_unfiltered, info.ch3.avg_r_expand_unfiltered);
 
         bt.ppgTemplate = info.ppgTemplate;
+        bt.ppgTemplate_std = info.ppgTemplate_std;
     }
 
     inline template_io::AveragedTemplate

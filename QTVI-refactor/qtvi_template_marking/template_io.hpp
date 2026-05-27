@@ -17,11 +17,13 @@
  *
  *       Each block:
  *         [uint64 sz][sz x double ecgTemplate]
+ *         [uint64 sz][sz x double ecgTemplate_std]   (sz=0 for non-raw methods)
  *         [double alignment_point]
  *         [double avg_r_expand]
  *
- *       Then PPG template:
+ *       Then PPG template + its std:
  *         [uint64 sz][sz x double ppgTemplate]
+ *         [uint64 sz][sz x double ppgTemplate_std]
  *
  *       Then bad-segment flag:
  *         [uint8 bad_segment]
@@ -31,6 +33,11 @@
  *       (12 ECG methods + PPG). Each:
  *         [uint64 sz][sz x double avg]
  *         [uint64 n_contributing_bins]
+ *       (No std on SAECG -- the viewer doesn't currently display it.)
+ *
+ *   Only the ECG "raw" method writes a populated std vector; the other
+ *   three methods (squared, absval, unfiltered) write an empty vector
+ *   (sz=0, no payload) since the viewer doesn't display them.
  */
 
 #pragma once
@@ -42,6 +49,11 @@ namespace template_io {
 
     struct ChannelMethodTemplate {
         std::vector<double> ecgTemplate;
+        // Per-sample standard deviation across the beats that contributed
+        // to this template. Same length as ecgTemplate, OR empty when not
+        // computed (e.g. the squared/absval/unfiltered methods, which the
+        // viewer doesn't display).
+        std::vector<double> ecgTemplate_std;
         double alignment_point = 0.0;
         double avg_r_expand = 0.0;
     };
@@ -51,6 +63,9 @@ namespace template_io {
         ChannelMethodTemplate ch2_raw, ch2_squared, ch2_absval, ch2_unfiltered;
         ChannelMethodTemplate ch3_raw, ch3_squared, ch3_absval, ch3_unfiltered;
         std::vector<double>   ppgTemplate;
+        // Per-sample std for the PPG template, same length as ppgTemplate
+        // (or empty if no PPG / not computed).
+        std::vector<double>   ppgTemplate_std;
         bool                  bad_segment = false;
     };
 

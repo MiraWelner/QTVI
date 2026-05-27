@@ -6,6 +6,13 @@
 // expands to fit whichever trace runs longer, so the full PPG tail
 // (including any pre-foot / post-trough widening from the templater) is
 // always visible and shares the ECG's time axis.
+//
+// Std band: when a per-sample std vector is available for the trace
+// (covering at least the visible samples), the widget paints a
+// translucent gray polygon between mean-std and mean+std underneath
+// the line. The band uses the SAME lo/hi vertical range as the trace
+// so it lines up with the line at every sample. Empty std => no band,
+// just the line.
 // ============================================================================
 #include "BinPlotWidget.hpp"
 #include <QPainter>
@@ -33,6 +40,12 @@ namespace {
     // ------------------------------------------------------------------
     constexpr QColor kColorEcgTrace{ 10,  20,  90 };   // dark navy blue
     constexpr QColor kColorPpgTrace{ 130,  10,  20 };   // dark red
+
+    // Gray std band -- semi-transparent so the trace line on top stays
+    // visible at every sample. Same color for ECG and PPG bands; the
+    // bands sit behind their respective traces, so the trace color
+    // disambiguates which signal each band belongs to.
+    constexpr QColor kColorStdBand{ 200, 200, 200, 110 };
 
     // ECG markers (P, Q, Tb, Te) - blacks and dark blues, darkest to lightest.
     constexpr QColor kColorEcgP{ 0,   0,   0 };   // black
@@ -76,18 +89,69 @@ namespace {
         return "?";
     }
 
-    // Draw a trace at a fixed pixels-per-sample scale. The caller specifies
-    // where sample 0 lands (startPx) and how many pixels each sample takes
-    // (pxPerSample). No right-edge clipping -- the widget is sized to fit.
-    void drawTraceFixedScale(QPainter& p, const std::vector<double>& v,
+    // Compute the visible-range vertical bounds for a trace. If a matching
+    // std vector is supplied, expand the range to include mean±std at
+    // every visible sample so the band fits inside the drawing area
+    // without clipping.
+    void computeVisibleRange(const std::vector<double>& v,
+        const std::vector<double>& sd,
+        int visN,
+        double& lo, double& hi)
+    {
+        lo = *std::min_element(v.begin(), v.begin() + visN);
+        hi = *std::max_element(v.begin(), v.begin() + visN);
+        if ((int)sd.size() < visN) return;
+        for (int i = 0; i < visN; ++i) {
+            lo = std::min(lo, v[i] - sd[i]);
+            hi = std::max(hi, v[i] + sd[i]);
+        }
+    }
+
+    // Draw the gray ±std band at a fixed pixels-per-sample scale using
+    // the supplied (lo, hi) range. The caller must use the SAME range
+    // for the trace draw so the band and line agree vertically.
+    void drawStdBand(QPainter& p,
+        const std::vector<double>& v,
+        const std::vector<double>& sd,
         double startPx, int mt, int ph,
-        double pxPerSample, const QPen& pen, int visN)
+        double pxPerSample, int visN,
+        double lo, double hi)
     {
         if (visN < 2 || (int)v.size() < 2) return;
+        if ((int)sd.size() < visN) return;          // empty/mismatched => no band
+        const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
 
-        double lo = *std::min_element(v.begin(), v.begin() + visN);
-        double hi = *std::max_element(v.begin(), v.begin() + visN);
-        double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
+        QPainterPath band;
+        // Top edge: mean + std, left to right.
+        for (int i = 0; i < visN; ++i) {
+            double x = startPx + (double)i * pxPerSample;
+            double y = mt + ph - ((v[i] + sd[i]) - lo) / r * ph;
+            if (i == 0) band.moveTo(x, y);
+            else        band.lineTo(x, y);
+        }
+        // Bottom edge: mean - std, right to left, to close the polygon.
+        for (int i = visN - 1; i >= 0; --i) {
+            double x = startPx + (double)i * pxPerSample;
+            double y = mt + ph - ((v[i] - sd[i]) - lo) / r * ph;
+            band.lineTo(x, y);
+        }
+        band.closeSubpath();
+
+        p.setPen(Qt::NoPen);
+        p.setBrush(kColorStdBand);
+        p.drawPath(band);
+    }
+
+    // Draw a trace at a fixed pixels-per-sample scale using the supplied
+    // (lo, hi) vertical range. Caller-supplied range so that the band
+    // and the line share an axis.
+    void drawTraceFixedScale(QPainter& p, const std::vector<double>& v,
+        double startPx, int mt, int ph,
+        double pxPerSample, const QPen& pen, int visN,
+        double lo, double hi)
+    {
+        if (visN < 2 || (int)v.size() < 2) return;
+        const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
 
         QPainterPath path;
         for (int i = 0; i < visN; ++i) {
@@ -98,6 +162,7 @@ namespace {
         }
 
         p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
         p.drawPath(path);
     }
 }
@@ -113,29 +178,18 @@ BinPlotWidget::BinPlotWidget(int binIndex, int leadIndex,
 }
 
 void BinPlotWidget::setData(const std::vector<double>& ppg,
+    const std::vector<double>& ppgStd,
     const std::vector<double>& ecg,
-    int qBegin, int tBegin, int tEnd,
-    int ppgOnset, int ppgPeak, double rPeakSample)
-{
-    // Defer to setDataAll with the new markers hidden (-1). Callers
-    // that have positions for the additional markers should use
-    // setDataAll directly.
-    setDataAll(ppg, ecg,
-        /*ecgP=*/-1, qBegin, tBegin, tEnd,
-        ppgOnset, ppgPeak,
-        /*ppgDicrotic=*/-1, /*ppg50=*/-1, /*ppgEnd=*/-1,
-        rPeakSample);
-}
-
-void BinPlotWidget::setDataAll(const std::vector<double>& ppg,
-    const std::vector<double>& ecg,
+    const std::vector<double>& ecgStd,
     int ecgP, int qBegin, int tBegin, int tEnd,
     int ppgOnset, int ppgPeak,
     int ppgDicrotic, int ppg50, int ppgEnd,
     double rPeakSample)
 {
     m_ppg = ppg;
+    m_ppgStd = ppgStd;
     m_ecg = ecg;
+    m_ecgStd = ecgStd;
     m_markers[EcgP] = ecgP;
     m_markers[EcgQBegin] = qBegin;
     m_markers[EcgTBegin] = tBegin;
@@ -236,16 +290,35 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     p.drawText(kML, 11,
         QString("Bin %1  [%2]").arg(m_binIndex + 1).arg(m_leadLabel));
 
-    // ECG starts at the left margin and uses the fixed scale.
-    drawTraceFixedScale(p, m_ecg, kML, kMT, ph,
-        kPxPerSample, QPen(kColorEcgTrace, 1.5), m_ecgVisibleN);
+    // -------- ECG --------
+    // Compute vertical range including std, draw the band first so the
+    // trace line stacks on top of it.
+    if (m_ecgVisibleN >= 2 && (int)m_ecg.size() >= 2) {
+        double lo, hi;
+        computeVisibleRange(m_ecg, m_ecgStd, m_ecgVisibleN, lo, hi);
 
+        drawStdBand(p, m_ecg, m_ecgStd, kML, kMT, ph,
+            kPxPerSample, m_ecgVisibleN, lo, hi);
+        drawTraceFixedScale(p, m_ecg, kML, kMT, ph,
+            kPxPerSample, QPen(kColorEcgTrace, 1.5),
+            m_ecgVisibleN, lo, hi);
+    }
+
+    // -------- PPG --------
     // PPG starts at the R-peak x-position. The R-peak's sample index
-    // maps to pixels via the same fixed scale, which is what gives
-    // the two traces a common time axis.
-    const double rPeakPx = kML + m_rPeakSample * kPxPerSample;
-    drawTraceFixedScale(p, m_ppg, rPeakPx, kMT, ph,
-        kPxPerSample, QPen(kColorPpgTrace, 1.5), m_ppgVisibleN);
+    // maps to pixels via the same fixed scale, which is what gives the
+    // two traces a common time axis.
+    if (m_ppgVisibleN >= 2 && (int)m_ppg.size() >= 2) {
+        const double rPeakPx = kML + m_rPeakSample * kPxPerSample;
+        double lo, hi;
+        computeVisibleRange(m_ppg, m_ppgStd, m_ppgVisibleN, lo, hi);
+
+        drawStdBand(p, m_ppg, m_ppgStd, rPeakPx, kMT, ph,
+            kPxPerSample, m_ppgVisibleN, lo, hi);
+        drawTraceFixedScale(p, m_ppg, rPeakPx, kMT, ph,
+            kPxPerSample, QPen(kColorPpgTrace, 1.5),
+            m_ppgVisibleN, lo, hi);
+    }
 
     QFont smallF = p.font(); smallF.setPointSize(7); p.setFont(smallF);
     for (int m = 0; m < MarkerCount; ++m) {

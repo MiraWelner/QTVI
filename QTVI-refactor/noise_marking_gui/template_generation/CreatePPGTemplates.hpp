@@ -8,6 +8,12 @@
  *         peaks (with margin) and adjust indices to be local, matching
  *         MATLAB's bins{i}.ppgSeg behaviour.
  *
+ *         Returns a struct carrying both the templates and a parallel
+ *         vector of per-sample std vectors (same shape). The std is
+ *         computed inside EnsembleTemplate over the surviving aligned
+ *         beats, and downstream code in GenerateTemplates carries it
+ *         through the same AlignWaves shift as the templates.
+ *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
  * @date   2026-03-26
@@ -17,11 +23,16 @@
 #include "TemplateTypes.hpp"
 #include "EnsembleTemplate.hpp"
 
- /**
-  * @brief  Extract the minimal segment of the full signal that contains
-  *         all peaks, with a margin of the median peak-to-peak interval
-  *         on each side. Returns the segment and adjusts peaks to local indices.
-  */
+struct PPGTemplatesResult {
+    vector<vector<double>> templates;   // [bin][sample]
+    vector<vector<double>> stds;        // [bin][sample], same shape as templates
+};
+
+/**
+ * @brief  Extract the minimal segment of the full signal that contains
+ *         all peaks, with a margin of the median peak-to-peak interval
+ *         on each side. Returns the segment and adjusts peaks to local indices.
+ */
 static inline vector<double> extract_ppg_segment(
     const vector<double>& fullSignal,
     const vector<size_t>& peaks,
@@ -57,47 +68,57 @@ static inline vector<double> extract_ppg_segment(
     return segment;
 }
 
-inline vector<vector<double>> CreatePPGTemplates(
+inline PPGTemplatesResult CreatePPGTemplates(
     const vector<output_binfile_data>& bins,
     double std_multiplier)
 {
     size_t n = bins.size();
-    vector<vector<double>> templates(n);
+    PPGTemplatesResult out;
+    out.templates.assign(n, {});
+    out.stds.assign(n, {});
 
     int ppg_threads = std::min(8, static_cast<int>(n));
-    #pragma omp parallel for schedule(dynamic) num_threads(ppg_threads)
+#pragma omp parallel for schedule(dynamic) num_threads(ppg_threads)
     for (int i = 0; i < static_cast<int>(n); ++i) {
         if (bins[i].bad_segment || bins[i].ppgMinAmps.empty()) {
-            templates[i] = {};
-            continue;
+            continue;  // templates[i] and stds[i] stay empty
         }
         try {
             vector<size_t> localPeaks;
-            vector<double> segment = extract_ppg_segment(bins[i].ppgSignal, bins[i].ppgMinAmps, localPeaks);
+            vector<double> segment = extract_ppg_segment(
+                bins[i].ppgSignal, bins[i].ppgMinAmps, localPeaks);
 
             if (segment.empty() || localPeaks.size() < 2) {
-                templates[i] = {};
                 continue;
             }
 
-            templates[i] = EnsembleTemplate(
+            // Capture per-sample std alongside the template.
+            vector<double> sd;
+            out.templates[i] = EnsembleTemplate(
                 segment,
                 localPeaks,
                 std_multiplier,
-                "ppg");
+                "ppg",
+                {},        // expand
+                nullptr,   // out_kept_beats (not used for PPG)
+                &sd);      // out_std
+            out.stds[i] = std::move(sd);
         }
         catch (...) {
-            templates[i] = {};
+            out.templates[i] = {};
+            out.stds[i] = {};
         }
     }
 
-    // Pad all to same length with NaN
+    // Pad templates to a common length with NaN, as before. Pad stds the
+    // same way but with 0 so the band collapses to the line in padded
+    // regions (no spurious gray bulge at the tail).
     size_t max_len = 0;
-    for (const auto& t : templates)
+    for (const auto& t : out.templates)
         if (t.size() > max_len) max_len = t.size();
 
-    for (auto& t : templates)
-        t.resize(max_len, NaN);
+    for (auto& t : out.templates) t.resize(max_len, NaN);
+    for (auto& s : out.stds)      s.resize(max_len, 0.0);
 
-    return templates;
+    return out;
 }

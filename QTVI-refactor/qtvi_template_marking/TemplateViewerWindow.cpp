@@ -287,10 +287,15 @@ void TemplateViewerWindow::showPage() {
                 : (c == 1) ? b.ch2.alignment_point_raw
                 : b.ch3.alignment_point_raw;
 
-            // Use setDataAll so all nine markers (4 ECG + 5 PPG) land on
-            // the widget. The old 5-marker setData is still available but
-            // would leave P / Dc / 50 / End hidden.
-            pw->setDataAll(ppg, ecg,
+            // std vectors for this channel + PPG. Empty if the templater
+            // didn't compute them for this bin -- the widget treats empty
+            // std as "no band, just the line".
+            const auto& ecgStd = (c == 0) ? b.ch1.ecgTemplate_raw_std
+                : (c == 1) ? b.ch2.ecgTemplate_raw_std
+                : b.ch3.ecgTemplate_raw_std;
+            const auto& ppgStd = hasPPG ? b.ppgTemplate_std : empty;
+
+            pw->setData(ppg, ppgStd, ecg, ecgStd,
                 b.p_begin_ch[c], b.q_begin_ch[c],
                 b.t_begin_ch[c], b.t_end_ch[c],
                 b.ppg_onset, b.ppg_peak,
