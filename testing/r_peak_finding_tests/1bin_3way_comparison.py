@@ -36,13 +36,13 @@ import scipy.io as sio
 # ============================================================================
 
 BIN_DIR = Path(
-    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\mesa_rloc_mira"
+    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_mira\mesa\r_peak_finding_output"
 )
 MAT_DIR = Path(
-    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\mesa_rloc_daniel"
+    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_daniel\r_peak_finding_output"
 )
 CSV_DIR = Path(
-    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\4_wave_bound_files\mesa_rloc_deep"
+    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_deep\mesa\r_peak_finding_output"
 )
 DEEP_FILE_SUFFIX = "_wholecaseRRiQTi.csv"
 OUT_DIR = Path(r"D:\USERS\MiraWelner\QTVI\testing\r_peak_finding_tests\single_bin")
@@ -713,7 +713,7 @@ def find_subject_files(subject_id):
     """Return ({rate: path} for Mira, daniel_mat_path, deep_csv_path)."""
     mira_paths = {}
     for rate in MIRA_RATES:
-        m = list(BIN_DIR.glob(f"{subject_id}_{rate}_{BIN_LENGTH}_wave_markings.bin"))
+        m = list(BIN_DIR.glob(f"{subject_id}_{rate}_wave_markings.bin"))
         if m:
             mira_paths[rate] = m[0]
     mat_matches = list(MAT_DIR.glob(f"{subject_id}_wave_data.mat"))

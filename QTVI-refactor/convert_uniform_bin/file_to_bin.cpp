@@ -22,6 +22,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -282,51 +283,9 @@ namespace {
         return {};
     }
 
-    double infer_row_rate(const std::filesystem::path& path,
-        const std::string& tsColumnName)
-    {
-        std::ifstream in(path);
-        if (!in) return 0.0;
+    // infer_row_rate was removed; the .dat row rate now comes from
+    // cfg.ecgRate directly. One source of truth.
 
-        std::vector<std::string> hdrs = find_real_header(in);
-        if (hdrs.empty()) return 0.0;
-
-        int tsCol = -1;
-        for (int i = 0; i < (int)hdrs.size(); ++i) {
-            if (contains(hdrs[i], tsColumnName)) { tsCol = i; break; }
-        }
-        if (tsCol < 0) return 0.0;
-
-        auto parseMs = [](const std::string& s) -> long long {
-            size_t sp = s.find_last_of(' ');
-            std::string t = (sp == std::string::npos) ? s : s.substr(sp + 1);
-            int hh = 0, mm = 0, ss = 0, ms = 0;
-            if (std::sscanf(t.c_str(), "%d:%d:%d.%d", &hh, &mm, &ss, &ms) < 3)
-                return -1;
-            return ((long long)hh * 3600 + mm * 60 + ss) * 1000LL + ms;
-            };
-
-        long long firstMs = -1, secondMs = -1;
-        std::string line;
-        while (std::getline(in, line)) {
-            if (line.empty()) continue;
-            std::vector<std::string> cells = parse_csv_row(line);
-            if (tsCol >= (int)cells.size() || cells[tsCol].empty()) continue;
-            long long ms = parseMs(cells[tsCol]);
-            if (ms < 0) continue;
-
-            if (firstMs < 0) { firstMs = ms; continue; }
-            if (secondMs < 0) {
-                if (ms == firstMs) continue;
-                secondMs = ms;
-                break;
-            }
-        }
-        if (firstMs < 0 || secondMs < 0 || secondMs <= firstMs) return 0.0;
-
-        double dtSec = (secondMs - firstMs) / 1000.0;
-        return (dtSec > 0.0) ? (1.0 / dtSec) : 0.0;
-    }
 
     // One-pass column store for a CHAOS .dat file. Reading the same file 80+
     // times to extract 40 channels is the main bottleneck in make_binfile_dat.
@@ -603,6 +562,110 @@ namespace {
         return {};
     }
 
+    // Parse the wall-clock timestamp column of a CHAOS .dat into a per-row
+    // vector of "seconds since the first row's timestamp." Returns a vector
+    // of size totalRows; rows that fail to parse get a sentinel of -1.0
+    // (caller can then fall back to the synthetic row_idx/row_rate timeline
+    // for those rows).
+    //
+    // Prefers "System TimeStamp UTC" (wall-clock, has the gaps) over
+    // "Monitor TimeStamp" (device-relative). std::stod can't parse
+    // "YYYYMMDD HH:MM:SS.mmm" so the prescan's per-column double vectors
+    // are useless for this; we do a dedicated text pass here.
+    std::vector<double> parse_dat_timestamps(const std::filesystem::path& path,
+        size_t totalRows)
+    {
+        std::vector<double> times(totalRows, -1.0);
+        if (totalRows == 0) return times;
+
+        std::ifstream in(path);
+        if (!in) return times;
+
+        std::vector<std::string> hdrs = find_real_header(in);
+        if (hdrs.empty()) return times;
+
+        int tsCol = -1;
+        for (int i = 0; i < (int)hdrs.size(); ++i) {
+            if (contains(hdrs[i], "System TimeStamp UTC")) { tsCol = i; break; }
+        }
+        if (tsCol < 0) {
+            for (int i = 0; i < (int)hdrs.size(); ++i) {
+                if (contains(hdrs[i], "Monitor TimeStamp")) { tsCol = i; break; }
+            }
+        }
+        if (tsCol < 0) return times;
+
+        auto daysFromCivil = [](int y, int m, int d) -> long long {
+            y -= (m <= 2);
+            const int era = (y >= 0 ? y : y - 399) / 400;
+            const unsigned yoe = static_cast<unsigned>(y - era * 400);
+            const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+            const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+            return (long long)era * 146097 + (long long)doe - 719468;
+            };
+
+        auto parseAbsSec = [&](const std::string& s, double& outSec) -> bool {
+            int y = 0, mo = 0, d = 0, hh = 0, mm = 0, ss = 0, ms = 0;
+            if (std::sscanf(s.c_str(), "%4d%2d%2d %d:%d:%d.%d",
+                &y, &mo, &d, &hh, &mm, &ss, &ms) >= 6 ||
+                std::sscanf(s.c_str(), "%4d%2d%2d %d:%d:%d",
+                    &y, &mo, &d, &hh, &mm, &ss) == 6)
+            {
+                const long long days = daysFromCivil(y, mo, d);
+                outSec = (double)days * 86400.0
+                    + hh * 3600.0 + mm * 60.0 + ss + ms / 1000.0;
+                return true;
+            }
+            return false;
+            };
+
+        double firstAbs = 0.0;
+        bool   firstSet = false;
+        std::string line;
+        size_t rowIdx = 0;
+        while (std::getline(in, line) && rowIdx < totalRows) {
+            if (line.empty()) { ++rowIdx; continue; }
+            std::vector<std::string> cells = parse_csv_row(line);
+            if (tsCol < (int)cells.size() && !cells[tsCol].empty()) {
+                double abs = 0.0;
+                if (parseAbsSec(cells[tsCol], abs)) {
+                    if (!firstSet) { firstAbs = abs; firstSet = true; }
+                    times[rowIdx] = abs - firstAbs;
+                }
+            }
+            ++rowIdx;
+        }
+
+        // Backfill any unparsed rows by linear interpolation between the
+        // nearest valid neighbors. Edge unparsed runs (start / end) carry
+        // the nearest valid value.
+        if (firstSet) {
+            int n = (int)times.size();
+            int firstValid = -1;
+            for (int i = 0; i < n; ++i) if (times[i] >= 0.0) { firstValid = i; break; }
+            if (firstValid < 0) return times;
+            for (int i = 0; i < firstValid; ++i) times[i] = times[firstValid];
+
+            int i = firstValid;
+            while (i < n) {
+                int j = i + 1;
+                while (j < n && times[j] < 0.0) ++j;
+                if (j >= n) {
+                    for (int k = i + 1; k < n; ++k) times[k] = times[i];
+                    break;
+                }
+                if (j > i + 1) {
+                    const double t0 = times[i], t1 = times[j];
+                    const double step = (t1 - t0) / (j - i);
+                    for (int k = i + 1; k < j; ++k) times[k] = t0 + step * (k - i);
+                }
+                i = j;
+            }
+        }
+
+        return times;
+    }
+
 }   // anonymous namespace
 
 // ============================================================================
@@ -766,14 +829,25 @@ void make_binfile_dat(const std::filesystem::path& path,
     uint32_t sizes_raw[NUM_CHANNELS] = {};
     float    native_rates[NUM_CHANNELS] = {};
 
-    double row_rate = infer_row_rate(path, "Monitor TimeStamp");
-    if (row_rate <= 0.0) row_rate = infer_row_rate(path, "System TimeStamp UTC");
+    // The .dat has one row per ECG sample, so the row rate IS the ECG
+    // native rate from the config. No inference -- config is the single
+    // source of truth.
+    const double row_rate = cfg.ecgRate;
     if (row_rate <= 0.0) {
-        row_rate = (cfg.ecgRate > 0.0) ? cfg.ecgRate : 500.0;
-        std::cout << "  [warn] couldn't infer row rate; using fallback "
-            << row_rate << " Hz\n";
+        std::cerr << "ERROR: cfg.ecgRate is 0; aborting conversion of "
+            << path.filename().string() << "\n";
+        return;
     }
     PrescannedDat prescan = prescan_dat_columns(path);
+
+    // Real per-row wall-clock timestamps (seconds since first row's
+    // System TimeStamp UTC). Used by writeCol() to put each raw (t, v)
+    // pair at its true time -- otherwise gaps in the source recording
+    // get silently filled by the row_idx/row_rate timeline below.
+    std::vector<double> rowTimestamps = parse_dat_timestamps(path, prescan.totalRows);
+    const bool haveRealTimestamps = !rowTimestamps.empty()
+        && std::any_of(rowTimestamps.begin(), rowTimestamps.end(),
+            [](double t) { return t > 0.0; });
 
     // Resample a channel to finalSamplingRate using ONLY its real populated
     // samples, placed at their true times. Linear interpolation between
@@ -815,55 +889,62 @@ void make_binfile_dat(const std::filesystem::path& path,
             return result;
         };
 
-    auto infer_native_rate = [&](const std::vector<size_t>& rawRowIdx) -> double {
-        if (rawRowIdx.size() < 2 || row_rate <= 0.0) return 0.0;
-        const size_t span = rawRowIdx.back() - rawRowIdx.front();
-        if (span == 0) return 0.0;
-        const double rowsPerSample = (double)span / (rawRowIdx.size() - 1);
-        return (rowsPerSample > 0.0) ? (row_rate / rowsPerSample) : 0.0;
-        };
-
-    // Write one column from the .dat. Empty label or column-not-found both
-    // produce a missing-channel placeholder.
+    // Write one column from the .dat. Empty label, column-not-found, or
+    // nativeHz<=0 all produce a missing-channel placeholder.
     //
     // `exact` controls header matching: substring (false) for most channels,
     // exact (true) when names share a common prefix (e.g. ART vs ART_PULM
     // vs ART_ABP) and substring would alias.
-    auto writeCol = [&](const std::string& label, bool exact, ChannelIdx ch) {
-        if (label.empty()) {
-            write_missing(out, sizes_up[ch], sizes_raw[ch], native_rates[ch]);
-            return;
-        }
+    // `nativeHz` is stamped directly into the .bin's native-rates header.
+    auto writeCol = [&](const std::string& label, bool exact, ChannelIdx ch,
+        double nativeHz) {
+            if (label.empty() || nativeHz <= 0.0) {
+                write_missing(out, sizes_up[ch], sizes_raw[ch], native_rates[ch]);
+                return;
+            }
 
-        std::vector<double> rawValues;
-        std::vector<size_t> rawRowIdx;
-        column_raw_with_indices(prescan, label, exact, rawValues, rawRowIdx);
+            std::vector<double> rawValues;
+            std::vector<size_t> rawRowIdx;
+            column_raw_with_indices(prescan, label, exact, rawValues, rawRowIdx);
 
-        if (rawValues.empty()) {
-            write_missing(out, sizes_up[ch], sizes_raw[ch], native_rates[ch]);
-            return;
-        }
+            if (rawValues.empty()) {
+                write_missing(out, sizes_up[ch], sizes_raw[ch], native_rates[ch]);
+                return;
+            }
 
-        std::vector<double> up =
-            resample_from_sparse(rawValues, rawRowIdx, prescan.totalRows);
+            std::vector<double> up =
+                resample_from_sparse(rawValues, rawRowIdx, prescan.totalRows);
 
-        if (up.empty()) {
-            double v = -1.0;
-            out.write(reinterpret_cast<const char*>(&v), 8);
-            sizes_up[ch] = 1;
-        }
-        else {
-            out.write(reinterpret_cast<const char*>(up.data()), up.size() * 8);
-            sizes_up[ch] = (uint32_t)up.size();
-        }
+            if (up.empty()) {
+                double v = -1.0;
+                out.write(reinterpret_cast<const char*>(&v), 8);
+                sizes_up[ch] = 1;
+            }
+            else {
+                out.write(reinterpret_cast<const char*>(up.data()), up.size() * 8);
+                sizes_up[ch] = (uint32_t)up.size();
+            }
 
-        const double dt = (row_rate > 0.0) ? (1.0 / row_rate) : 0.0;
-        for (size_t k = 0; k < rawValues.size(); ++k) {
-            double pair[2] = { (double)rawRowIdx[k] * dt, rawValues[k] };
-            out.write(reinterpret_cast<const char*>(pair), 16);
-        }
-        sizes_raw[ch] = (uint32_t)rawValues.size();
-        native_rates[ch] = (float)infer_native_rate(rawRowIdx);
+            // Raw block: real wall-clock timestamps when we have them, so
+            // gaps in the source recording survive into the .bin and the
+            // gap_indicator can find them. Falls back to row_idx*dt only for
+            // rows whose timestamp didn't parse.
+            const double dt = (row_rate > 0.0) ? (1.0 / row_rate) : 0.0;
+            for (size_t k = 0; k < rawValues.size(); ++k) {
+                const size_t rIdx = rawRowIdx[k];
+                double t;
+                if (haveRealTimestamps && rIdx < rowTimestamps.size()
+                    && rowTimestamps[rIdx] >= 0.0) {
+                    t = rowTimestamps[rIdx];
+                }
+                else {
+                    t = (double)rIdx * dt;
+                }
+                double pair[2] = { t, rawValues[k] };
+                out.write(reinterpret_cast<const char*>(pair), 16);
+            }
+            sizes_raw[ch] = (uint32_t)rawValues.size();
+            native_rates[ch] = (float)nativeHz;
         };
 
     auto writeMissing = [&](ChannelIdx ch) {
@@ -880,24 +961,26 @@ void make_binfile_dat(const std::filesystem::path& path,
     }
 
     // Algorithm-facing channels.
-    writeCol(cfg.ecg1Label, false, CH_ECG1);
-    writeCol(cfg.ecg2Label, false, CH_ECG2);
-    writeCol(cfg.ecg3Label, false, CH_ECG3);
-    writeCol(cfg.ppgLabel, false, CH_PPG);
+    writeCol(cfg.ecg1Label, false, CH_ECG1, cfg.ecgRate);
+    writeCol(cfg.ecg2Label, false, CH_ECG2, cfg.ecgRate);
+    writeCol(cfg.ecg3Label, false, CH_ECG3, cfg.ecgRate);
+    writeCol(cfg.ppgLabel, false, CH_PPG, cfg.ppgRate);
 
     // Accel / marker / temp / pacemaker / EOG / EMG aren't in CHAOS .dat
     // files. Emit placeholders so the 40-slot layout stays consistent.
     for (int ch = CH_ACCEL_X; ch <= CH_EMG; ++ch)
         writeMissing((ChannelIdx)ch);
 
-    // EEG.
-    writeCol(cfg.eeg1Label, false, CH_EEG1);
-    writeCol(cfg.eeg2Label, false, CH_EEG2);
-    writeCol(cfg.eeg3Label, false, CH_EEG3);
-    writeCol(cfg.eeg4Label, false, CH_EEG4);
+    // EEG: no rate in config.csv, so passes 0 -> writeCol emits a missing
+    // placeholder. Add an eeg_rate column to config.csv + cfg.eegRate to
+    // config_entry if you ever need to populate these.
+    writeCol(cfg.eeg1Label, false, CH_EEG1, 0.0);
+    writeCol(cfg.eeg2Label, false, CH_EEG2, 0.0);
+    writeCol(cfg.eeg3Label, false, CH_EEG3, 0.0);
+    writeCol(cfg.eeg4Label, false, CH_EEG4, 0.0);
 
     // Central venous pressure.
-    writeCol(cfg.cvpLabel, false, CH_PRES);
+    writeCol(cfg.cvpLabel, false, CH_PRES, cfg.cvpRate);
 
     // Sleep apnea slots and SpO2 family aren't in CHAOS .dat.
     for (int ch = CH_FLOW; ch <= CH_DHR; ++ch)
@@ -907,10 +990,12 @@ void make_binfile_dat(const std::filesystem::path& path,
     //
     // ABP / ART / ART_PULM use exact-match because their labels share the
     // prefix NLS_NOM_PRESS_BLD_ART and substring matching would alias them.
-    writeCol(cfg.respLabel, false, CH_RESP);
-    writeCol(cfg.abpLabel, true, CH_ABP);
-    writeCol(cfg.artLabel, true, CH_ART);
-    writeCol(cfg.artPulmLabel, true, CH_ART_PULM);
+    // ART and ART_PULM use abpRate -- they're variants on the same
+    // arterial-pressure sensor and share its native rate.
+    writeCol(cfg.respLabel, false, CH_RESP, cfg.respRate);
+    writeCol(cfg.abpLabel, true, CH_ABP, cfg.abpRate);
+    writeCol(cfg.artLabel, true, CH_ART, cfg.abpRate);
+    writeCol(cfg.artPulmLabel, true, CH_ART_PULM, cfg.abpRate);
 
     double placeholder = -1.0;
     out.write(reinterpret_cast<const char*>(&placeholder), sizeof(double));
@@ -923,7 +1008,7 @@ void make_binfile_dat(const std::filesystem::path& path,
 std::filesystem::path make_binfile(const std::filesystem::path& path, const config_entry& cfg)
 {
     /*
-		creates output path, and calls the edf or dat specific function to write the bin file.
+        creates output path, and calls the edf or dat specific function to write the bin file.
     */
     std::filesystem::path out = std::filesystem::path(cfg.output_path) /
         (path.stem().string() + "_" + std::to_string((int)cfg.finalSamplingRate) + ".bin");

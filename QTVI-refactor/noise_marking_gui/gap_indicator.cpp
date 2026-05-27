@@ -14,8 +14,6 @@
 #include <QFont>
 #include <QPen>
 
-#include <algorithm>
-
 namespace {
 
     // ------------------------------------------------------------------
@@ -28,17 +26,24 @@ namespace {
     constexpr double kGapThresholdSec = 60.0;
 
     // Bracket-line style.
-    const QColor  COLOR_GAP_LINE = QColor(120, 120, 120, 200);
+    const QColor  COLOR_GAP_LINE = QColor(255, 20, 147, 255);
     constexpr double kBracketWidthPx = 1.5;
 
     // Label style.
-    const QColor  COLOR_GAP_LABEL = QColor(60, 60, 60, 255);
+    const QColor  COLOR_GAP_LABEL = QColor(255, 20, 147, 255);
     const QFont   GAP_LABEL_FONT = QFont("Arial", 9, QFont::Bold);
 
     // True iff a raw vector contains real data (not the (-1, -1) sentinel
     // file_to_bin writes for missing channels).
     bool isRawUsable(const QVector<QPointF>& v) {
         return v.size() >= 2 && !(v.size() == 1 && v[0].x() == -1.0);
+    }
+
+    // Format a gap duration as a short human-readable label.
+    QString formatGapDuration(double sec) {
+        if (sec < 60.0)        return QString("%1 sec gap").arg(sec, 0, 'f', 1);
+        if (sec < 3600.0)      return QString("%1 min gap").arg(sec / 60.0, 0, 'f', 1);
+        return                       QString("%1 hour gap").arg(sec / 3600.0, 0, 'f', 2);
     }
 
 }  // namespace
@@ -53,21 +58,40 @@ void gap_indicator::rescan() {
     m_gaps.clear();
     if (!m_gui) return;
 
-    // The recording's gap structure is shared across channels (a real
-    // dropout affects all signals at once), so we only need to scan one
-    // raw vector. Prefer ECG1, fall back to other markable channels.
+    // Pick the source vector to scan. All channels share the same gap
+    // structure (they come from the same .dat), so one is enough. Prefer
+    // ECG1; fall back through the other markable channels.
+    // We ALSO need that channel's native rate to convert sample indices
+    // into chart-x positions. After the GUI's raw-timestamp rewrite, the
+    // post-gap sample sits at chart x = idx / native_rate, regardless of
+    // its real wall-clock stamp. That same chart x is correct for every
+    // other channel too, since they're all rate-aligned in real time.
+    int srcCh = -1;
     const QVector<QPointF>* src = nullptr;
-    if (isRawUsable(m_gui->m_ecg1Raw)) src = &m_gui->m_ecg1Raw;
-    else if (isRawUsable(m_gui->m_ecg2Raw)) src = &m_gui->m_ecg2Raw;
-    else if (isRawUsable(m_gui->m_ecg3Raw)) src = &m_gui->m_ecg3Raw;
-    else if (isRawUsable(m_gui->m_ppgRaw))  src = &m_gui->m_ppgRaw;
-    else if (isRawUsable(m_gui->m_abpRaw))  src = &m_gui->m_abpRaw;
-    if (!src) return;
+    if (isRawUsable(m_gui->m_ecg1Raw)) { src = &m_gui->m_ecg1Raw; srcCh = noise_marking_gui::CH_ECG1; }
+    else if (isRawUsable(m_gui->m_ecg2Raw)) { src = &m_gui->m_ecg2Raw; srcCh = noise_marking_gui::CH_ECG2; }
+    else if (isRawUsable(m_gui->m_ecg3Raw)) { src = &m_gui->m_ecg3Raw; srcCh = noise_marking_gui::CH_ECG3; }
+    else if (isRawUsable(m_gui->m_ppgRaw)) { src = &m_gui->m_ppgRaw;  srcCh = noise_marking_gui::CH_PPG; }
+    else if (isRawUsable(m_gui->m_abpRaw)) { src = &m_gui->m_abpRaw;  srcCh = noise_marking_gui::CH_ABP; }
+    if (!src || srcCh < 0) return;
 
+    const float nativeHz = m_gui->m_chanNativeRates[srcCh];
+    if (nativeHz <= 0.0f) return;
+    const double dt = 1.0 / nativeHz;
+
+    // Scan the REAL timestamps for jumps. Caller must have arranged that
+    // this runs BEFORE the timestamp rewrite (gui_handler.cpp does so).
     for (int i = 1; i < src->size(); ++i) {
-        const double dt = (*src)[i].x() - (*src)[i - 1].x();
-        if (dt > kGapThresholdSec) {
-            m_gaps.append({ (*src)[i - 1].x(), (*src)[i].x() });
+        const double realDt = (*src)[i].x() - (*src)[i - 1].x();
+        if (realDt > kGapThresholdSec) {
+            // Bracket sits at the index-time position of the post-gap
+            // sample. Sub-pixel-wide visually; effectively one vertical
+            // line between the last pre-gap sample and the first post-
+            // gap sample.
+            GapEntry e;
+            e.xPos = i * dt;
+            e.durationSec = realDt;
+            m_gaps.append(e);
         }
     }
 }
@@ -104,39 +128,24 @@ void gap_indicator::refresh() {
         const double yMid = 0.5 * (yLo + yHi);
 
         for (const auto& gap : m_gaps) {
-            // Visible-window intersection. Outside-the-window gaps are
-            // skipped entirely.
-            if (gap.second < viewStart) continue;
-            if (gap.first > viewEnd)   continue;
+            if (gap.xPos < viewStart || gap.xPos > viewEnd) continue;
 
-            auto addBracket = [&](double x) {
-                if (x < viewStart || x > viewEnd) return;
-                auto* line = new QLineSeries();
-                line->setPen(QPen(COLOR_GAP_LINE, kBracketWidthPx, Qt::DashLine));
-                // OpenGL OFF: GL backend ignores dash patterns and pen
-                // alpha. The bracket has 2 points; software rendering
-                // is trivially cheap.
-                line->setUseOpenGL(false);
-                line->append(x, yLo);
-                line->append(x, yHi);
-                chart->addSeries(line);
-                line->attachAxis(hAxes.first());
-                line->attachAxis(yAx);
-                m_series.append(line);
-                };
-            addBracket(gap.first);
-            addBracket(gap.second);
+            // One dashed vertical line at the gap position.
+            auto* line = new QLineSeries();
+            line->setPen(QPen(COLOR_GAP_LINE, kBracketWidthPx, Qt::DotLine));
+            // OpenGL OFF: GL backend ignores dash patterns and pen alpha.
+            line->setUseOpenGL(false);
+            line->append(gap.xPos, yLo);
+            line->append(gap.xPos, yHi);
+            chart->addSeries(line);
+            line->attachAxis(hAxes.first());
+            line->attachAxis(yAx);
+            m_series.append(line);
 
-            // Label at the visible midpoint so it's always shown when
-            // the gap touches the window, even if the gap is wider than
-            // the window (in which case both brackets are off-screen).
-            const double visStart = std::max(gap.first, viewStart);
-            const double visEnd = std::min(gap.second, viewEnd);
-            const double midX = 0.5 * (visStart + visEnd);
-
-            // QScatterSeries with an invisible marker is the cheapest
-            // way to place freely-positioned text in chart coordinates;
-            // Qt Charts has no first-class annotation primitive.
+            // Duration label. QScatterSeries with an invisible marker is
+            // the cheapest way to place freely-positioned text in chart
+            // coordinates; Qt Charts has no first-class annotation
+            // primitive. Place at the gap x, at vertical mid-axis.
             auto* labelSeries = new QScatterSeries();
             labelSeries->setMarkerSize(0.1);
             labelSeries->setColor(Qt::transparent);
@@ -145,10 +154,8 @@ void gap_indicator::refresh() {
             labelSeries->setPointLabelsColor(COLOR_GAP_LABEL);
             labelSeries->setPointLabelsFont(GAP_LABEL_FONT);
             labelSeries->setPointLabelsClipping(false);
-            const double dur = gap.second - gap.first;
-            labelSeries->setPointLabelsFormat(
-                QString("%1 s gap").arg(dur, 0, 'f', 1));
-            labelSeries->append(midX, yMid);
+            labelSeries->setPointLabelsFormat(formatGapDuration(gap.durationSec));
+            labelSeries->append(gap.xPos, yMid);
             chart->addSeries(labelSeries);
             labelSeries->attachAxis(hAxes.first());
             labelSeries->attachAxis(yAx);

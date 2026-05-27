@@ -2,7 +2,7 @@
  * @file   config_loader.cpp
  * @brief  Loads the config.csv file, parses it based on the datset type selected by the user, and fills up a config_entry struct with the relevant paths, rates, and channel labels.
  *         The channel labels (eg. "ECG_1" vs "EKG") are dataset-specific but not in the config file, so they are assigned in apply_dataset_specific_channel_labels() based on the dataset type.
- *         The output paths are either found in the config file, or prompted for manually if the config file cells are blank. The output_path is used to create the subfolders where the 
+ *         The output paths are either found in the config file, or prompted for manually if the config file cells are blank. The output_path is used to create the subfolders where the
  *         specific types of cfg put are found.
  */
 
@@ -149,7 +149,10 @@ std::optional<config_entry> load_config(int dataType) {
 
     while (std::getline(file, line)) {
         auto row = parse_csv_row(line);
-        if (row.size() < 9) continue;
+        // 12 columns: data_type, main_ext, sleep_ext, ecg_rate, ppg_rate,
+        // cvp_rate, abp_rate, resp_rate, upsampled_rate, bin_size_minutes,
+        // original_file_path, output_folder.
+        if (row.size() < 12) continue;
 
         std::string rowType = row[0];
         std::transform(rowType.begin(), rowType.end(), rowType.begin(), ::toupper);
@@ -169,10 +172,18 @@ std::optional<config_entry> load_config(int dataType) {
             };
         cfg.ecgRate = stod_or_zero(row[3]);
         cfg.ppgRate = stod_or_zero(row[4]);
-        cfg.finalSamplingRate = stod_or_zero(row[5]);
-        cfg.bin_length_minutes = stod_or_zero(row[6]);
-        cfg.bin_file_path = row[7];
-        cfg.output_path = row[8];
+        cfg.cvpRate = stod_or_zero(row[5]);
+        cfg.abpRate = stod_or_zero(row[6]);
+        cfg.respRate = stod_or_zero(row[7]);
+        cfg.finalSamplingRate = stod_or_zero(row[8]);
+        cfg.bin_length_minutes = stod_or_zero(row[9]);
+        // CSV column 10 is the *source* folder used by the file_to_bin
+        // utility; the GUI doesn't load from it but we read it into
+        // cfg.input_path anyway so the same struct keeps working across
+        // both programs. The GUI gets its .bin folder via the manual
+        // file dialog in manually_select_folder() (cfg.bin_file_path).
+        cfg.input_path = row[10];
+        cfg.output_path = row[11];
         deriveSubpaths(cfg);
 
         apply_dataset_specific_channel_labels(cfg);

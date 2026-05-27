@@ -1,4 +1,3 @@
-
 #pragma once
 /**
  * @file   config_entry.hpp
@@ -15,6 +14,15 @@ struct config_entry {
     double      ecgRate = 0.0;
     double      ppgRate = 0.0;
     double      finalSamplingRate = 0.0;
+
+    // Native sampling rates (Hz) for the remaining channels. Zero means
+    // "absent" -- the corresponding channel slot in the .bin gets a
+    // missing-channel placeholder.
+    // ART and ART_PULM share abpRate since they're variants on the
+    // same arterial-pressure sensor.
+    double      cvpRate = 0.0;
+    double      abpRate = 0.0;
+    double      respRate = 0.0;
 
     std::string input_path;
     std::string output_path;

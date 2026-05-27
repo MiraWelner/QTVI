@@ -939,12 +939,19 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         file.read(reinterpret_cast<char*>(dest.data()), count * sizeof(double));
         };
 
-    // Load the (t, v) raw pairs falling inside the current 8-hour window.
-    // Pairs are time-sorted on disk, so we binary-search the chunk's bounds
-    // and bulk-read only the slice we need. Falls back to the original
-    // streaming loop if the binary-search prereqs aren't met (corrupt
-    // header, unsorted pairs, allocation too large, etc.) so a bad file
-    // can never crash the GUI -- just makes that one chunk load slower.
+    // Load the raw (t, v) pairs for this chunk. Bounds are by sample
+    // INDEX, not by stored timestamp -- mirroring loadSignal so the raw
+    // block and upsampled block always cover the same range of samples
+    // for the same chunk index. Earlier this filtered by stored t, which
+    // worked when timestamps were synthetic & monotone in 1:1 step with
+    // sample index, but broke once the converter started storing real
+    // wall-clock timestamps: a multi-hour gap in the source would push
+    // all post-gap samples' stored t past chunkEnd, silently dropping
+    // them. The on-screen result was "scatter ends, line continues."
+    //
+    // We preserve the stored t in dest so gap_indicator->rescan() can
+    // walk the real timestamps and detect jumps; the gui then rewrites
+    // each pair's x to index-time before any plotting happens.
     auto loadRaw = [&](QVector<QPointF>& dest, int chIdx) {
         dest.clear();
         const uint64_t totalPairs = m_chanSizesRaw[chIdx];
@@ -960,105 +967,27 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
             return;
         }
 
-        const double chunkStart = chunkIndex * CHUNK_DURATION_SEC;
-        const double chunkEnd = chunkStart + CHUNK_DURATION_SEC;
+        const float nativeHz = m_chanNativeRates[chIdx];
+        if (nativeHz <= 0.0f) return;
+        const uint64_t perChunk = static_cast<uint64_t>(
+            CHUNK_DURATION_SEC * (double)nativeHz);
+        const uint64_t firstPair = chunkIndex * perChunk;
+        if (firstPair >= totalPairs) return;
+        const uint64_t count = std::min(perChunk, totalPairs - firstPair);
+        if (count == 0) return;
+
         const qint64 baseBytes =
             FILE_HEADER_SIZE + static_cast<qint64>(chanRawOffset[chIdx]) * sizeof(double);
-
-        // Streaming fallback: matches the original implementation exactly.
-        // Used when binary search isn't safe (pairs not sorted, sizes look
-        // wrong) so the GUI never crashes on an unexpected file layout.
-        auto streamFallback = [&]() {
-            constexpr uint64_t BLOCK_PAIRS = 1 << 15;
-            std::vector<double> buf(BLOCK_PAIRS * 2);
-            file.seek(baseBytes);
-            uint64_t pairsRead = 0;
-            bool done = false;
-            while (!done && pairsRead < totalPairs) {
-                uint64_t thisBlock = std::min<uint64_t>(BLOCK_PAIRS, totalPairs - pairsRead);
-                qint64 got = file.read(reinterpret_cast<char*>(buf.data()),
-                    thisBlock * 2 * sizeof(double));
-                if (got <= 0) break;
-                uint64_t gotPairs = static_cast<uint64_t>(got) / (2 * sizeof(double));
-                for (uint64_t k = 0; k < gotPairs; ++k) {
-                    double t = buf[k * 2];
-                    double v = buf[k * 2 + 1];
-                    if (t < chunkStart) continue;
-                    if (t >= chunkEnd) { done = true; break; }
-                    dest.append(QPointF(t - chunkStart, v));
-                }
-                pairsRead += gotPairs;
-            }
-            };
-
-        // Sanity-check file size before any seeks past EOF. QFile::seek does
-        // not fail on an out-of-range position; the failure surfaces later
-        // as a short read, which we treat as "stop" below.
-        const qint64 fileSize = file.size();
-        if (fileSize <= 0 || baseBytes >= fileSize) return;
-        const uint64_t maxPairsByFile =
-            static_cast<uint64_t>((fileSize - baseBytes) / 16);
-        // If the header says there are more pairs than physically fit, the
-        // file is truncated/corrupt -- fall back to streaming, which handles
-        // short reads gracefully.
-        if (totalPairs > maxPairsByFile) { streamFallback(); return; }
-
-        auto readT = [&](uint64_t k, double& out) -> bool {
-            if (!file.seek(baseBytes + static_cast<qint64>(k) * 16)) return false;
-            return file.read(reinterpret_cast<char*>(&out), sizeof(double))
-                == static_cast<qint64>(sizeof(double));
-            };
-
-        // Verify monotone-time assumption with a cheap spot check on the
-        // first and last pair. If they violate it, the binary search would
-        // produce wrong results -- fall back to streaming.
-        {
-            double tFirst, tLast;
-            if (!readT(0, tFirst) || !readT(totalPairs - 1, tLast)) {
-                streamFallback();
-                return;
-            }
-            if (!(tFirst <= tLast)) { streamFallback(); return; }
-            // Whole block lies entirely outside the chunk -- nothing to do.
-            if (tLast < chunkStart || tFirst >= chunkEnd) return;
-        }
-
-        auto lowerBound = [&](double target) -> uint64_t {
-            uint64_t lo = 0, hi = totalPairs;
-            while (lo < hi) {
-                uint64_t mid = lo + (hi - lo) / 2;
-                double t;
-                if (!readT(mid, t)) return totalPairs;
-                if (t < target) lo = mid + 1;
-                else            hi = mid;
-            }
-            return lo;
-            };
-
-        const uint64_t firstPair = lowerBound(chunkStart);
-        const uint64_t endPair = lowerBound(chunkEnd);
-        if (firstPair >= endPair || endPair > totalPairs) return;
-
-        const uint64_t sliceCount = endPair - firstPair;
-
-        // Defensive cap. A typical 8-hour chunk at native ECG rates (250 Hz)
-        // is 7.2M pairs (~115 MB of QPointF storage). 50M pairs would be
-        // 800 MB -- if we see that, something is wrong with the file layout
-        // and streaming is the safer path.
-        constexpr uint64_t MAX_SLICE_PAIRS = 50'000'000;
-        if (sliceCount > MAX_SLICE_PAIRS) { streamFallback(); return; }
+        if (!file.seek(baseBytes + static_cast<qint64>(firstPair) * 16)) return;
 
         std::vector<double> buf;
         try {
-            buf.resize(sliceCount * 2);
+            buf.resize(count * 2);
         }
         catch (const std::bad_alloc&) {
-            streamFallback();
             return;
         }
-
-        if (!file.seek(baseBytes + static_cast<qint64>(firstPair) * 16)) return;
-        const qint64 want = static_cast<qint64>(sliceCount) * 16;
+        const qint64 want = static_cast<qint64>(count) * 16;
         const qint64 got = file.read(reinterpret_cast<char*>(buf.data()), want);
         if (got <= 0) return;
         const uint64_t gotPairs = static_cast<uint64_t>(got) / 16;
@@ -1067,9 +996,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         dest.reserve(static_cast<int>(std::min<uint64_t>(gotPairs,
             static_cast<uint64_t>(std::numeric_limits<int>::max()))));
         for (uint64_t k = 0; k < gotPairs; ++k) {
-            const double t = buf[k * 2];
-            const double v = buf[k * 2 + 1];
-            dest.append(QPointF(t - chunkStart, v));
+            dest.append(QPointF(buf[k * 2], buf[k * 2 + 1]));
         }
         };
 
@@ -1097,8 +1024,46 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     loadRaw(m_respRaw, CH_RESP);
     loadRaw(m_cvpRaw, CH_PRES);
 
-    // Time-gap detection: must run after the raw vectors are populated.
+    // Time-gap detection MUST run before the raw-timestamp rewrite below,
+    // since detection looks for jumps in the real wall-clock timestamps.
     if (m_gapIndicator) m_gapIndicator->rescan();
+
+    // ------------------------------------------------------------------
+    // Raw-timestamp rewrite: replace each scatter pair's stored real
+    // wall-clock x with an index-time x (i / native_rate). The GUI then
+    // plots samples at uniform x-spacing regardless of how big the real-
+    // time gaps between them are.
+    //
+    // Why: a recording with an 8-hour gap would otherwise eat 8 hours of
+    // chart x-axis showing nothing. With index-time x, the chart shows
+    // every actual sample at uniform spacing; the gap_indicator's
+    // bracket+label is the only visible sign that a gap is there.
+    //
+    // Annotations are persisted as sample indices (annotation_handler
+    // takes sample positions, not seconds), so this rewrite doesn't
+    // affect what gets written to the marking CSV/bin. The .bin file's
+    // raw block on disk still holds the real timestamps (untouched);
+    // only the in-memory representation we plot from gets remapped.
+    // ------------------------------------------------------------------
+    auto rewriteRawToIndexTime = [&](QVector<QPointF>& raw, int chIdx) {
+        if (raw.size() < 2) return;       // missing-channel sentinel; leave alone
+        const float nativeHz = m_chanNativeRates[chIdx];
+        if (nativeHz <= 0.0f) return;
+        const double dt = 1.0 / nativeHz;
+        for (int i = 0; i < raw.size(); ++i) {
+            raw[i].setX(i * dt);
+        }
+        };
+    rewriteRawToIndexTime(m_ecg1Raw, CH_ECG1);
+    rewriteRawToIndexTime(m_ecg2Raw, CH_ECG2);
+    rewriteRawToIndexTime(m_ecg3Raw, CH_ECG3);
+    rewriteRawToIndexTime(m_ppgRaw, CH_PPG);
+    rewriteRawToIndexTime(m_abpRaw, CH_ABP);
+    rewriteRawToIndexTime(m_accelXRaw, CH_ACCEL_X);
+    rewriteRawToIndexTime(m_accelYRaw, CH_ACCEL_Y);
+    rewriteRawToIndexTime(m_accelZRaw, CH_ACCEL_Z);
+    rewriteRawToIndexTime(m_respRaw, CH_RESP);
+    rewriteRawToIndexTime(m_cvpRaw, CH_PRES);
 
     // Sleep stages.
     {

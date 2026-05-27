@@ -13,23 +13,33 @@
 #include "TemplateFileName.hpp"
 #include "TemplateViewerWindow.hpp"
 
+int get_dataset_choice() {
+    /*
+        Ask the user to select a MESA, Bittium, or CHAOS dataset
+    */
+    std::cout << "Select Dataset:\n1: MESA\n2: Bittium\n3: CHAOS\nChoice: ";
+    int choice;
+    if (!(std::cin >> choice)) return -1;
+    while (choice < 1 || choice > 3) {
+        std::cout << "Invalid choice. Please enter 1, 2, or 3: ";
+        if (!(std::cin >> choice)) return -1;
+    }
+    return choice;
+}
+
+
+
+
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
 
-    // Dataset prompt -- matches the noise-marking GUI for consistency.
-    std::cout << "\n=== Select Dataset ===\n"
-        << "  1) MESA\n  2) BITTIUM\n  3) CHAOS\n"
-        << "Enter number (1-3): " << std::flush;
-
-    int choice = 0;
-    if (!(std::cin >> choice)) return 1;
-
-    config_entry cfg;
-    if (!load_config(choice, cfg)) {
-        std::cerr << "Error: dataset " << choice << " not in config.csv\n";
+    int dataset_choice = get_dataset_choice();
+    auto cfgOpt = load_config(dataset_choice);
+    if (!cfgOpt) {
+        std::cerr << "Error Loading config.csv";
         return 1;
     }
-    if (!promptForMissingPaths(cfg)) return 1;
+    const config_entry& cfg = *cfgOpt;
 
     const QString templatePath = QString::fromStdString(cfg.template_path);
     const QString markingPath = QString::fromStdString(cfg.qtvi_marker_path);

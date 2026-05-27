@@ -1,5 +1,5 @@
 /**
- * @file   input_file_handler.cpp
+ * @file   config_loader.cpp
  * @brief  Loads the config.csv and extracts the feilds that are useful for creating the bin file
  */
 
@@ -98,17 +98,35 @@ bool load_config(int dataType, config_entry& out) {
 
     while (std::getline(file, line)) {
         auto row = parse_config_row(line);
+        // 12 columns: data_type, main_ext, sleep_ext, ecg_rate, ppg_rate,
+        // cvp_rate, abp_rate, resp_rate, upsampled_rate, bin_size_minutes,
+        // original_file_path, output_folder.
+        if (row.size() < 12) continue;
+
         std::string rowType = row[0];
         std::transform(rowType.begin(), rowType.end(), rowType.begin(), ::toupper);
         if (rowType != input_file_type) continue;
+
+        // Some cells are intentionally blank (e.g. MESA has no cvp_rate).
+        // std::stod throws on empty strings, so guard.
+        auto stod_or_zero = [](const std::string& s) -> double {
+            if (s.empty()) return 0.0;
+            try { return std::stod(s); }
+            catch (...) { return 0.0; }
+            };
+
         out.dataType = rowType;
         out.mainExt = row[1];
         out.sleepExt = row[2];
-        out.ecgRate = std::stod(row[3]);
-        out.ppgRate = std::stod(row[4]);
-        out.finalSamplingRate = std::stod(row[5]);
-        out.bin_length_minutes = std::stod(row[6]);
-
+        out.ecgRate = stod_or_zero(row[3]);
+        out.ppgRate = stod_or_zero(row[4]);
+        out.cvpRate = stod_or_zero(row[5]);
+        out.abpRate = stod_or_zero(row[6]);
+        out.respRate = stod_or_zero(row[7]);
+        out.finalSamplingRate = stod_or_zero(row[8]);
+        out.bin_length_minutes = stod_or_zero(row[9]);
+        out.input_path = row[10];
+        out.output_path = row[11];
 
         apply_dataset_specific_channel_labels(out);
         return true;
@@ -119,7 +137,7 @@ bool load_config(int dataType, config_entry& out) {
 bool promptForMissingPaths(config_entry& cfg) {
     /*
             If the path sections of the config file are empty, prompt the user
-            to navigate to the paths via the QT GUI which has a built in file navigator    
+            to navigate to the paths via the QT GUI which has a built in file navigator
     */
     const std::vector<std::pair<const char*, std::string*>> fields = {
         { "Raw EDF or DAT files", &cfg.input_path },
