@@ -91,8 +91,15 @@ namespace post_process_detail {
             std::cerr << "  Templates: " << stem << "\n";
             try {
                 if (!peakResultsInMemory) {
-                    std::cerr << "    loading r-peak data from " << rPeakPath.filename() << "\n";
-                    peakResults = read_output_binfile(rPeakPath.string());
+                    // wave_markings holds the R-peak indices, PPG event
+                    // indices, preprocessed (squared/absval) ECG channels,
+                    // noise flags and pairs. The raw ECG/PPG signals and
+                    // the bin-index ranges come from the annealed .bin,
+                    // so pass both paths into the re-hydrating overload.
+                    std::cerr << "    loading r-peak data from " << rPeakPath.filename()
+                        << " (+ raw signals from " << annealedPath.filename() << ")\n";
+                    peakResults = read_output_binfile(rPeakPath.string(),
+                        annealedPath.string());
                 }
 
                 auto [templateData, beatsData] =

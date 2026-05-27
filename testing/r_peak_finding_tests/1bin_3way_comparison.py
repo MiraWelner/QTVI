@@ -38,6 +38,13 @@ import scipy.io as sio
 BIN_DIR = Path(
     r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_mira\mesa\r_peak_finding_output"
 )
+# wave_markings.bin no longer carries raw signals or the pass-through (t, v)
+# pair channels -- those live in the annealed .bin written one step
+# upstream. We pair every wave_markings file with its annealed sibling
+# below; a missing sibling is a hard error since this script needs both.
+ANNEALED_DIR = Path(
+    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_mira\mesa\annealed_output"
+)
 MAT_DIR = Path(
     r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_daniel\r_peak_finding_output"
 )
@@ -74,39 +81,76 @@ SIGNAL_SCATTER_SIZE = 3
 MISS_PENALTY_S = 1.0
 MATCH_TOLERANCE_S = 0.15
 RAW_ECG_CH1_SLOT = 1
-PASSTHROUGH_NUM_CHANNELS = 40
 RAW_NATIVE_SR = 256.0
 MAX_SANE_IDX = 50_000_000
 MAX_SANE_SIG = 200_000_000
 
 
 # ============================================================================
-# Mira reader
+# Mira reader -- wave_markings.bin + annealed sibling
+#
+# wave_markings.bin no longer holds raw signals, bin-index ranges, or
+# pass-through channels. Those moved to the annealed .bin one step
+# upstream. We pair the two files at read time and merge the fields
+# downstream code expects into a single per-bin dict.
+#
+# wave_markings.bin per-bin layout:
+#   9 R-peak idx arrays (3 channels x 3 methods, 1-based on disk)
+#   ppgMaxAmps, ppgMinAmps                                   (1-based)
+#   6 preprocessed signals (ch1/2/3 x squared/absval)       (uint64 count + doubles)
+#   9 noise flag bytes
+#   int64 pairBuf[2 * numPairs]                              (1-based; -1 sentinel)
+#
+# annealed .bin layout:
+#   Header: numBins (u64), 3 doubles, nChannels (u32), nChannels x u32 native rates
+#   Per bin:
+#     ppg_bin_indexs, ecg_bin_indexs as (u64 count + (u64,u64) pairs)
+#     5 signals (ppg, ecg1, ecg2, ecg3, sleep_state) as (u64 count + doubles)
+#     nChannels pass-through slots: { (u64 count + upsampled doubles),
+#                                     (u64 count + raw (t,v) doubles) }
+#
+# Both readers keep the original `keep` optimization: only the target
+# bin allocates signals + raw pairs; earlier bins record lengths via
+# _LenProxy so the Deep boundary-derivation code can still call len()
+# on every bin without us materializing each signal.
 # ============================================================================
 
 
 def read_wave_bin(path, max_bins=None):
-    """Read up to `max_bins` bins from a wave_markings.bin.
+    """Read up to `max_bins` bins from a wave_markings.bin paired with
+    its annealed sibling. Only the LAST bin we read is fully populated;
+    earlier bins record signal lengths via _LenProxy so the Deep
+    boundary derivation can call len() cheaply without us parsing the
+    full signal."""
+    path = Path(path)
+    ann_path = _annealed_path_for(path)
 
-    Optimization: only the LAST bin we read fully populates its signal
-    arrays. Earlier bins record `len(ch1_raw_sig)` (needed by the Deep
-    boundary derivation) but skip past every other heavy field. This
-    turns "load bin N" from O(N) full parses into O(N) cheap header
-    walks — the difference between minutes and seconds at large N.
-    """
-    bins = []
     file_size = os.path.getsize(path)
-    with open(path, "rb") as f:
-        num_bins = struct.unpack("<Q", f.read(8))[0]
+    ann_file_size = os.path.getsize(ann_path)
+
+    with open(path, "rb") as f, open(ann_path, "rb") as af:
+        num_bins_wave = struct.unpack("<Q", f.read(8))[0]
+        num_bins_ann, n_channels = _read_annealed_header(af)
+
+        if num_bins_wave != num_bins_ann:
+            raise ValueError(
+                f"bin-count mismatch between wave_markings and annealed for {path.name}: "
+                f"{num_bins_wave} vs {num_bins_ann} (annealed at {ann_path})"
+            )
+
+        num_bins = num_bins_wave
         if max_bins is not None:
             num_bins = min(num_bins, max_bins)
+
+        bins = []
         for i in range(num_bins):
-            if f.tell() >= file_size:
+            if f.tell() >= file_size or af.tell() >= ann_file_size:
                 break
             b = {}
             keep = i == num_bins - 1
             try:
-                _read_bin_contents(f, b, keep=keep)
+                _read_wave_bin_contents(f, b, keep=keep)
+                _read_annealed_bin_contents(af, b, n_channels, keep=keep)
             except (ValueError, struct.error) as e:
                 print(f"  ERROR at bin {i}: {e}")
                 break
@@ -114,14 +158,47 @@ def read_wave_bin(path, max_bins=None):
     return bins
 
 
-def _read_bin_contents(f, b, keep=True):
-    """Parse one bin's contents starting at the current file offset.
+def _annealed_path_for(wave_markings_path):
+    """Given .../{stem}_wave_markings.bin, return ANNEALED_DIR/{stem}.bin.
+    A missing sibling is a hard error -- this script needs both halves."""
+    stem = wave_markings_path.stem
+    if stem.endswith("_wave_markings"):
+        stem = stem[: -len("_wave_markings")]
+    candidate = ANNEALED_DIR / f"{stem}.bin"
+    if not candidate.is_file():
+        raise FileNotFoundError(
+            f"annealed sibling not found for {wave_markings_path}\n"
+            f"  expected: {candidate}\n"
+            f"  set ANNEALED_DIR at the top of this script if the layout is different"
+        )
+    return candidate
 
-    If `keep` is False, we skip past every field we don't need for the
-    Deep-boundary derivation (which only needs `len(ch1_raw_sig)` per
-    bin). This is the difference between allocating ~1 GB of Python
-    floats per skipped bin and just doing some seeks.
-    """
+
+def _annealed_num_bins(path):
+    """Peek the bin count without opening the file as part of the main
+    read loop. Kept around for callers that just want the count."""
+    with open(path, "rb") as f:
+        return struct.unpack("<Q", f.read(8))[0]
+
+
+def _read_annealed_header(af):
+    """Read the annealed .bin header. Returns (num_bins, n_channels);
+    leaves the file positioned at the first per-bin record."""
+    num_bins = struct.unpack("<Q", af.read(8))[0]
+    af.read(24)  # 3 doubles: ppg/ecg sample rates, scoring epoch
+    n_channels = struct.unpack("<I", af.read(4))[0]
+    if n_channels > 0:
+        af.seek(n_channels * 4, 1)  # nChannels x uint32 native sample rates
+    return num_bins, n_channels
+
+
+def _read_wave_bin_contents(f, b, keep=True):
+    """Parse one bin's worth of wave_markings.bin into `b`.
+
+    If `keep` is False, R-peak idx arrays and pairs are skipped past
+    without materializing -- only the target bin needs them. The
+    preprocessed signals and noise flags are always skipped (this
+    script doesn't use them)."""
 
     def read_idx():
         sz = struct.unpack("<Q", f.read(8))[0]
@@ -134,55 +211,13 @@ def _read_bin_contents(f, b, keep=True):
         f.seek(sz * 8, 1)
         return []
 
-    def read_signal_np():
-        """Read a signal block. Returns a numpy array if keep=True;
-        otherwise seeks past it and returns the sample count."""
-        sz = struct.unpack("<Q", f.read(8))[0]
-        if sz > MAX_SANE_SIG:
-            raise ValueError(f"signal size {sz} exceeds limit")
-        if keep:
-            if sz == 0:
-                return np.empty(0, dtype=np.float64)
-            return np.frombuffer(f.read(sz * 8), dtype=np.float64).copy()
-        f.seek(sz * 8, 1)
-        return sz  # return count so callers can record length without parsing
-
     def skip_signal():
         sz = struct.unpack("<Q", f.read(8))[0]
         if sz > MAX_SANE_SIG:
-            raise ValueError(
-                f"signal size {sz} exceeds limit (file desync — wrong channel count?)"
-            )
+            raise ValueError(f"signal size {sz} exceeds limit (file desync?)")
         f.seek(sz * 8, 1)
 
-    def skip_raw_pairs():
-        n = struct.unpack("<Q", f.read(8))[0]
-        if n > MAX_SANE_IDX:
-            raise ValueError(
-                f"raw pairs count {n} exceeds limit (file desync — wrong channel count?)"
-            )
-        f.seek(n * 16, 1)
-
-    def read_raw_pairs():
-        n = struct.unpack("<Q", f.read(8))[0]
-        if n == 0:
-            return np.empty((0, 2), dtype=np.float64)
-        if n > MAX_SANE_IDX:
-            raise ValueError(f"raw pairs count {n} exceeds limit")
-        if keep:
-            return np.frombuffer(f.read(n * 16), dtype=np.float64).reshape(n, 2).copy()
-        f.seek(n * 16, 1)
-        return np.empty((0, 2), dtype=np.float64)
-
-    def skip_pair_vec():
-        sz = struct.unpack("<Q", f.read(8))[0]
-        if sz > MAX_SANE_IDX:
-            raise ValueError(
-                f"pair vec size {sz} exceeds limit (file desync — wrong channel count?)"
-            )
-        f.seek(sz * 16, 1)
-
-    # 11 idx arrays (R-peak indices). Only kept bins materialize them.
+    # 11 idx arrays. Only kept bins materialize them.
     b["ch1_raw_idx"] = read_idx()
     b["ch1_sq_idx"] = read_idx()
     b["ch1_abs_idx"] = read_idx()
@@ -195,56 +230,105 @@ def _read_bin_contents(f, b, keep=True):
     b["ppgMaxAmps"] = read_idx()
     b["ppgMinAmps"] = read_idx()
 
-    # Raw signals. ppg + 3 ECG channels. Earlier bins only need to know
-    # ch1_raw_sig's length (Deep cumulates lengths to find bin offsets).
+    # 6 preprocessed signals (squared/absval per channel) -- not used by
+    # this script.
+    for _ in range(6):
+        skip_signal()
+
+    # 9 noise flag bytes.
+    f.read(9)
+
+    # Pairs: 1-based int64 with -1 sentinel. Not used by this script;
+    # always skipped.
+    num_pairs = struct.unpack("<Q", f.read(8))[0]
+    if 0 < num_pairs <= MAX_SANE_IDX:
+        f.seek(num_pairs * 16, 1)
+
+
+def _read_annealed_bin_contents(af, b, n_channels, keep=True):
+    """Parse one bin's worth of annealed .bin into `b`, merging fields
+    downstream code expects: ppgSignal, ch{1,2,3}_raw_sig (or _LenProxy
+    for non-kept bins so len() still works), ecg_bin_first_sample,
+    ch1_raw_pairs (slot-1 raw (t,v) pairs from pass-through)."""
+
+    def read_signal_np():
+        sz = struct.unpack("<Q", af.read(8))[0]
+        if sz > MAX_SANE_SIG:
+            raise ValueError(f"signal size {sz} exceeds limit (annealed desync?)")
+        if keep:
+            if sz == 0:
+                return np.empty(0, dtype=np.float64)
+            return np.frombuffer(af.read(sz * 8), dtype=np.float64).copy()
+        af.seek(sz * 8, 1)
+        return sz  # length for _LenProxy
+
+    def skip_signal():
+        sz = struct.unpack("<Q", af.read(8))[0]
+        if sz > MAX_SANE_SIG:
+            raise ValueError(f"signal size {sz} exceeds limit (annealed desync?)")
+        af.seek(sz * 8, 1)
+
+    def skip_raw_pairs():
+        n = struct.unpack("<Q", af.read(8))[0]
+        if n > MAX_SANE_IDX:
+            raise ValueError(f"raw pairs count {n} exceeds limit (annealed desync?)")
+        af.seek(n * 16, 1)
+
+    def read_raw_pairs():
+        n = struct.unpack("<Q", af.read(8))[0]
+        if n == 0:
+            return np.empty((0, 2), dtype=np.float64)
+        if n > MAX_SANE_IDX:
+            raise ValueError(f"raw pairs count {n} exceeds limit")
+        if keep:
+            return np.frombuffer(af.read(n * 16), dtype=np.float64).reshape(n, 2).copy()
+        af.seek(n * 16, 1)
+        return np.empty((0, 2), dtype=np.float64)
+
+    # ppg_bin_indexs: skipped (only ecg_bin_indexs[0].start is consumed).
+    n_ppg = struct.unpack("<Q", af.read(8))[0]
+    if n_ppg > MAX_SANE_IDX:
+        raise ValueError(f"ppg_bin_indexs count {n_ppg} exceeds limit")
+    af.seek(n_ppg * 16, 1)
+
+    # ecg_bin_indexs: pull the first pair's start for cross-rate alignment.
+    n_ecg = struct.unpack("<Q", af.read(8))[0]
+    if n_ecg > MAX_SANE_IDX:
+        raise ValueError(f"ecg_bin_indexs count {n_ecg} exceeds limit")
+    if keep:
+        if n_ecg > 0:
+            first_start = struct.unpack("<Q", af.read(8))[0]
+            af.seek(8, 1)  # skip the end half of the first pair
+            if n_ecg > 1:
+                af.seek((n_ecg - 1) * 16, 1)
+            b["ecg_bin_first_sample"] = first_start
+        else:
+            b["ecg_bin_first_sample"] = None
+    else:
+        af.seek(n_ecg * 16, 1)
+
+    # 5 signals: ppg, ecg1, ecg2, ecg3, sleep_state. ecg1 is the canonical
+    # raw ECG channel (ch1_raw_sig in the old field layout); we also record
+    # ch2_raw_sig and ch3_raw_sig as length-proxies for compatibility with
+    # any downstream caller, since materializing them isn't needed.
     if keep:
         b["ppgSignal"] = read_signal_np()
         b["ch1_raw_sig"] = read_signal_np()
         b["ch2_raw_sig"] = read_signal_np()
         b["ch3_raw_sig"] = read_signal_np()
     else:
-        skip_signal()  # ppgSignal
-        ch1_len = read_signal_np()  # ch1_raw_sig: count only
-        b["ch1_raw_sig"] = _LenProxy(ch1_len)  # supports len() cheaply
-        skip_signal()  # ch2_raw_sig
-        skip_signal()  # ch3_raw_sig
-
-    # 6 preprocessed signals: always skipped (not used by this script).
-    for _ in range(6):
         skip_signal()
-    f.read(9)  # 9 noise flag bytes
-    num_pairs = struct.unpack("<Q", f.read(8))[0]
-    if 0 < num_pairs <= MAX_SANE_IDX:
-        f.seek(num_pairs * 16, 1)
+        ch1_len = read_signal_np()  # length only
+        b["ch1_raw_sig"] = _LenProxy(ch1_len)
+        skip_signal()
+        skip_signal()
+    skip_signal()  # sleep_state_signal
 
-    # ppg_bin_indexs and ecg_bin_indexs: each is a uint64 count followed by
-    # `count` (start, end) pairs at the file's signal_rate. We only need
-    # ecg_bin_indexs[0].first for cross-rate alignment (gives us the bin's
-    # window start in signal-rate sample units; caller divides by signal_rate
-    # to get absolute seconds-from-recording-start). PPG indexs are skipped.
-    skip_pair_vec()  # ppg_bin_indexs
-    if keep:
-        ecg_pair_count = struct.unpack("<Q", f.read(8))[0]
-        if ecg_pair_count > MAX_SANE_IDX:
-            raise ValueError(f"ecg_bin_indexs count {ecg_pair_count} exceeds limit")
-        if ecg_pair_count > 0:
-            # First pair is (start_sample, end_sample) as uint64.
-            first_start = struct.unpack("<Q", f.read(8))[0]
-            f.seek(8, 1)  # skip the end half
-            # Skip the rest of the pairs.
-            if ecg_pair_count > 1:
-                f.seek((ecg_pair_count - 1) * 16, 1)
-            b["ecg_bin_first_sample"] = first_start
-        else:
-            b["ecg_bin_first_sample"] = None
-    else:
-        skip_pair_vec()  # ecg_bin_indexs
-
-    # Per-channel pass-through: { upsampled, raw (t,v) pairs } x N channels.
-    # Only the kept bin's slot-1 raw pairs are loaded; all upsampled blocks
-    # and other slots' raw pairs are skipped.
+    # Pass-through: { upsampled, raw (t, v) pairs } x n_channels. Only the
+    # kept bin's slot-1 raw pairs are materialized (slot 1 = ch1, by the
+    # annealer's 41-slot convention: 0=timestamp, 1=ECG1, ..., 4=PPG).
     b["ch1_raw_pairs"] = np.empty((0, 2), dtype=np.float64)
-    for ch in range(PASSTHROUGH_NUM_CHANNELS):
+    for ch in range(n_channels):
         skip_signal()
         if keep and ch == RAW_ECG_CH1_SLOT:
             b["ch1_raw_pairs"] = read_raw_pairs()

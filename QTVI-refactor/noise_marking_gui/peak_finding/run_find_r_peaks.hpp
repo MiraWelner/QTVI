@@ -3,8 +3,19 @@
  * @brief  Binary I/O for the R-peak / PPG-pairing pipeline.
  *         Provides read_input_binfile() to load an annealed-segments .bin
  *         produced upstream, and write_output_binfile() to serialize the
- *         per-segment results (R-peaks, preprocessed signals, PPG pairing)
- *         to disk. The peak detection itself lives in create_ecg_ppg_pairs().
+ *         per-segment results (R-peak indices, PPG event indices,
+ *         preprocessed ECG channels, noise flags, PPG-ECG pairs) to
+ *         disk. The peak detection itself lives in create_ecg_ppg_pairs().
+ *
+ *         The wave_markings .bin no longer carries the raw signals, the
+ *         PPG/ECG bin-index ranges, or the 40-slot pass-through channels:
+ *         all of those are already in the annealed .bin.
+ *         read_output_binfile() in peakfinding_io.hpp has an overload
+ *         that re-hydrates them from the annealed file when a consumer
+ *         (e.g. template generation rebuilding from disk) needs them.
+ *         The preprocessed (squared / absval) channels stay on disk
+ *         here -- recomputing them is cheap but not free, and keeping
+ *         them avoids redoing pointwise work on every rebuild.
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -50,10 +61,11 @@
   *       uint64   nUp;     double upsampled[nUp]
   *       uint64   nPairs;  double raw_tv_interleaved[2 * nPairs]   // (t,v,t,v,...)
   *
-  * The pass-through channels are not consumed by the peak-detection pipeline;
-  * they are routed through to write_output_binfile() unchanged. Keeping (t,v)
-  * interleaved on disk lets the writer pass them through with a single bulk
-  * write per slot.
+  *  The pass-through channels are not consumed by the peak-detection
+  *  pipeline. They were previously routed through to the wave_markings
+  *  file unchanged; that copy has been dropped, but the read path here
+  *  still loads them so the re-hydrating reader in peakfinding_io.hpp
+  *  can populate any field a downstream consumer needs.
   */
 inline AnnealedData read_input_binfile(const std::string& path) {
     AnnealedData data;
@@ -139,14 +151,17 @@ inline AnnealedData read_input_binfile(const std::string& path) {
 /**
  * @brief  Write per-segment R-peak / PPG-pairing results to a .bin file.
  *
- * On-disk layout (little-endian, native widths):
+ * On-disk layout (little-endian, native widths). Only fields that are
+ * actually computed by the peak-finding step are written; signals and
+ * pass-through channels live in the annealed .bin and are reconstructed
+ * from there by peakfinding_io.hpp's re-hydrating reader.
  *
  *   uint64   numBins
  *
  *   For each bin (in order):
  *
  *     // R-peak indices: 3 channels x 3 preprocessing methods = 9 arrays.
- *     // Each: uint64 count + count uint64 indices (1-based, see note below).
+ *     // Each: uint64 count + count uint64 indices (1-based on disk).
  *     ch1.raw, ch1.squared, ch1.absval
  *     ch2.raw, ch2.squared, ch2.absval
  *     ch3.raw, ch3.squared, ch3.absval
@@ -155,10 +170,10 @@ inline AnnealedData read_input_binfile(const std::string& path) {
  *     ppgMaxAmps
  *     ppgMinAmps
  *
- *     // Raw signals (uint64 count + count doubles, unmodified):
- *     ppgSignal, ecgSignal, ecgSignal2, ecgSignal3
- *
- *     // Preprocessed signals (uint64 count + count doubles):
+ *     // Preprocessed signals (uint64 count + count doubles): squared
+ *     // then absval, per channel. These are easily recomputed pointwise
+ *     // from the raw ECG (x*x and |x|), but we still write them so the
+ *     // rebuild path doesn't have to redo that work on every load.
  *     ch1.squared_signal, ch1.absval_signal
  *     ch2.squared_signal, ch2.absval_signal
  *     ch3.squared_signal, ch3.absval_signal
@@ -171,21 +186,8 @@ inline AnnealedData read_input_binfile(const std::string& path) {
  *     uint64   numPairs
  *     int64    pairBuf[2 * numPairs]    // interleaved (ppg, ecg); 1-based with -1 sentinel
  *
- *     // PPG / ECG bin-index ranges (uint64 pairs, written raw / 0-based):
- *     uint64   nPpgBinIdx;  (uint64,uint64) ppg_bin_indexs[nPpgBinIdx]
- *     uint64   nEcgBinIdx;  (uint64,uint64) ecg_bin_indexs[nEcgBinIdx]
- *
- *     // Pass-through channels: bin.all_upsampled.size() slots, same order
- *     // as the input file. Each slot:
- *     //   uint64 nUp;     double upsampled[nUp]
- *     //   uint64 nPairs;  double raw_tv[2 * nPairs]    // interleaved (t,v)
- *     // The slot count is recovered from bin.all_upsampled.size() at read
- *     // time -- it is NOT written into the file as a per-segment header.
- *
  * Index 1-basing summary:
- *   1-based (writer adds 1):  R-peak arrays, ppgMaxAmps, ppgMinAmps, pairBuf entries
- *   0-based (raw passthrough): ppg_bin_indexs, ecg_bin_indexs, nUp/nPairs counts,
- *                               and the raw (t, v) doubles in pass-through slots
+ *   1-based on disk (writer adds 1):  R-peak arrays, ppgMaxAmps, ppgMinAmps, pairBuf entries
  *
  * The -1 sentinel in pairBuf marks an unpaired side; NaN or negative
  * doubles in bin.pairs are mapped to -1 on write.
@@ -221,13 +223,6 @@ inline void write_output_binfile(const std::string& path, const std::vector<outp
             if (sz > 0) file.write(reinterpret_cast<const char*>(sig.data()), sz * 8);
             };
 
-        // Write a (uint64 count, count (uint64,uint64) pairs) block, raw (no offset).
-        auto writePairVec = [&](const std::vector<std::pair<uint64_t, uint64_t>>& v) {
-            uint64_t sz = v.size();
-            file.write(reinterpret_cast<const char*>(&sz), 8);
-            if (sz > 0) file.write(reinterpret_cast<const char*>(v.data()), sz * 16);
-            };
-
         /* R-peak indices: 3 channels x 3 methods = 9 arrays (all 1-based). */
         writeIdx(bin.ch1.raw);
         writeIdx(bin.ch1.squared);
@@ -245,13 +240,9 @@ inline void write_output_binfile(const std::string& path, const std::vector<outp
         writeIdx(bin.ppgMaxAmps);
         writeIdx(bin.ppgMinAmps);
 
-        /* Raw signals (unmodified). */
-        writeSignal(bin.ppgSignal);
-        writeSignal(bin.ecgSignal);
-        writeSignal(bin.ecgSignal2);
-        writeSignal(bin.ecgSignal3);
-
-        /* Preprocessed signals: squared then absval, per channel. */
+        /* Preprocessed signals: squared then absval, per channel. Kept on
+           disk (rather than recomputed on read) to avoid redoing pointwise
+           work on every template rebuild. */
         writeSignal(bin.ch1.squared_signal);
         writeSignal(bin.ch1.absval_signal);
         writeSignal(bin.ch2.squared_signal);
@@ -285,29 +276,6 @@ inline void write_output_binfile(const std::string& path, const std::vector<outp
                 pairBuf[i * 2 + 1] = (std::isnan(p[1]) || p[1] < -0.1) ? -1 : static_cast<int64_t>(std::round(p[1])) + 1;
             }
             file.write(reinterpret_cast<const char*>(pairBuf.data()), numPairs * 16);
-        }
-
-        /* Bin-index range arrays: written raw as uint64 pairs (NOT 1-based). */
-        writePairVec(bin.ppg_bin_indexs);
-        writePairVec(bin.ecg_bin_indexs);
-
-        /* Pass-through: per-slot { uint64 nUp + nUp doubles, uint64 nPairs +
-           2*nPairs interleaved (t,v) doubles }. Slot order matches the
-           input file. No per-segment slot-count header is written -- the
-           reader sizes both vectors identically and recovers the count
-           from bin.all_upsampled.size(). */
-        for (size_t ch = 0; ch < bin.all_upsampled.size(); ++ch) {
-            writeSignal(bin.all_upsampled[ch]);
-
-            // Raw (t,v) block: uint64 pair-count, then 2*pair-count doubles.
-            // all_raw_pairs_flat[ch] is already interleaved on disk-layout,
-            // so we emit count + a single bulk-write.
-            const auto& rwSrc = bin.all_raw_pairs_flat[ch];
-            uint64_t nPairs = rwSrc.size() / 2;
-            file.write(reinterpret_cast<const char*>(&nPairs), 8);
-            if (nPairs > 0)
-                file.write(reinterpret_cast<const char*>(rwSrc.data()),
-                    nPairs * 2 * sizeof(double));
         }
     }
 }

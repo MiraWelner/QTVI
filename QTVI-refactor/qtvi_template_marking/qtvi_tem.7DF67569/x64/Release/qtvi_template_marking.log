@@ -1,11 +1,6 @@
 ﻿   Qt/MSBuild: 3.4.1.0
   Reading Qt configuration (C:/Qt/6.10.2/msvc2022_64/bin/qmake)
    Qt: 6.10.2
-  TemplateViewerWindow.cpp
-  template_io.cpp
-  template_marking.cpp
-  moc_BinPlotWidget.cpp
-  moc_TemplateViewerWindow.cpp
 LINK : warning LNK4075: ignoring '/INCREMENTAL' due to '/OPT:ICF' specification
   qtvi_template_marking.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\qtvi_template_marking\x64\Release\qtvi_template_marking.exe
   'pwsh.exe' is not recognized as an internal or external command,

@@ -21,6 +21,9 @@ import scipy.io as sio
 MIRA_DIR = Path(
     r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_mira\mesa\r_peak_finding_output"
 )
+ANNEALED_DIR = Path(
+    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_mira\mesa\annealed_output"
+)
 DANIEL_DIR = Path(
     r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_daniel\r_peak_finding_output"
 )
@@ -31,7 +34,6 @@ OUTPUT_DIR = Path(r"D:\USERS\MiraWelner\QTVI\testing\r_peak_finding_tests\result
 
 SR = 1000.0
 MAX_SANE = 50_000_000
-PASSTHROUGH_NUM_CHANNELS = 40
 
 # Deep's data is stored as one whole-case tab-separated CSV per subject.
 DEEP_FILE_SUFFIX = "_wholecaseRRiQTi.csv"
@@ -70,142 +72,243 @@ def normalize_mira_id(stem_without_suffix):
 
 
 # ============================================================================
-# Read C++ _wave_markings.bin
+# Read C++ _wave_markings.bin + its annealed sibling
 #
-# Port of compare_single.py's _read_bin_contents, which is known to parse
-# these files correctly (verified by recovering ch1.raw peaks on real data).
-# Every bin is parsed in full -- no fast-skip path, no MAX_SANE guards that
-# silently swallow desyncs. Output dict is reshaped at the end to match
-# compare_wave_bounds.py's expected field names (ecgRIndex, ppgMinAmps,
-# ppgSignal, ecgSignal, pairs, ppg_bin_indexs, ecg_bin_indexs).
+# The wave_markings.bin now only contains what the peak-finding step
+# actually computes (R-peak indices, PPG min/max-amp indices, the
+# squared/absval preprocessed ECG channels, 9 noise flags, PPG-ECG pairs).
+# Raw signals and the per-bin (start, end) sample ranges that this
+# script needs for Deep slicing live in the matching annealed .bin one
+# step upstream. We pair the two files at read time so downstream code
+# keeps seeing a single per-bin dict with the same field names as before.
+#
+# wave_markings.bin per-bin layout (see write_output_binfile in
+# run_find_r_peaks.hpp for the authoritative spec):
+#
+#   9 R-peak idx arrays (3 channels x 3 methods), uint64 count + count
+#       x uint64 indices, 1-based on disk
+#   ppgMaxAmps, ppgMinAmps                       (same uint64 + 1-based layout)
+#   6 preprocessed signals (ch1/2/3 x squared/absval), uint64 count + doubles
+#   9 noise flag bytes
+#   int64 pairBuf[2 * numPairs]                  (1-based; -1 sentinel)
+#
+# annealed .bin layout (see write_output_bin in anneal_handler.cpp):
+#
+#   Header:
+#     uint64 numBins
+#     double filePpgSR, fileEcgSR, scoringEpoch
+#     uint32 nChannels    + uint32 nativeSR[nChannels]   (pass-through count)
+#
+#   Per bin:
+#     uint64 nPpgPairs + (uint64,uint64) ppg_bin_indexs[nPpgPairs]
+#     uint64 nEcgPairs + (uint64,uint64) ecg_bin_indexs[nEcgPairs]
+#     5 (uint64 count + count x double) blocks:
+#       ppg_signal, ecg_signal_1, ecg_signal_2, ecg_signal_3, sleep_state_signal
+#     nChannels pass-through slots, each:
+#       uint64 nUp + double upsampled[nUp]
+#       uint64 nPairs + double raw_tv_interleaved[2 * nPairs]
 # ============================================================================
 
 
-def _read_bin_contents(f, b, num_passthrough):
-    """Parse one bin starting at f's current position. Mirrors the C++ writer
-    field-for-field. Throws if anything goes wrong -- no silent swallowing."""
-    import struct as _s
+def _read_wave_markings_bin(path):
+    """Parse a wave_markings.bin and return one dict per bin with the
+    R-peak indices and pairs this script needs downstream. Raw signals
+    and bin-index ranges are populated by _merge_annealed() later.
 
-    def read_u64():
-        data = f.read(8)
-        if len(data) != 8:
-            raise EOFError("short read on uint64")
-        return _s.unpack("<Q", data)[0]
-
-    def read_idx():
-        """Read a 1-based idx array, return 0-based intp."""
-        sz = read_u64()
-        if sz == 0:
-            return np.array([], dtype=np.intp)
-        raw = np.frombuffer(f.read(sz * 8), dtype=np.uint64).copy()
-        return (raw - 1).astype(np.intp)
-
-    def read_signal():
-        sz = read_u64()
-        if sz == 0:
-            return np.array([], dtype=np.float64)
-        return np.frombuffer(f.read(sz * 8), dtype=np.float64).copy()
-
-    def skip_signal():
-        sz = read_u64()
-        f.seek(sz * 8, 1)
-
-    def skip_raw_pairs():
-        n = read_u64()
-        f.seek(n * 16, 1)
-
-    def read_pair_vec():
-        sz = read_u64()
-        if sz == 0:
-            return np.empty((0, 2), dtype=np.uint64)
-        return np.frombuffer(f.read(sz * 16), dtype=np.uint64).reshape(sz, 2).copy()
-
-    # 9 R-peak idx arrays (3 channels x 3 methods)
-    b["ch1_raw_idx"] = read_idx()
-    b["ch1_sq_idx"] = read_idx()
-    b["ch1_abs_idx"] = read_idx()
-    b["ch2_raw_idx"] = read_idx()
-    b["ch2_sq_idx"] = read_idx()
-    b["ch2_abs_idx"] = read_idx()
-    b["ch3_raw_idx"] = read_idx()
-    b["ch3_sq_idx"] = read_idx()
-    b["ch3_abs_idx"] = read_idx()
-
-    # 2 PPG idx arrays
-    b["ppgMaxAmps"] = read_idx()
-    b["ppgMinAmps"] = read_idx()
-
-    # 4 raw signals
-    b["ppgSignal"] = read_signal()
-    b["ecgSignal"] = read_signal()
-    skip_signal()  # ecgSignal2
-    skip_signal()  # ecgSignal3
-
-    # 6 preprocessed signals
-    for _ in range(6):
-        skip_signal()
-
-    # 9 noise flag bytes
-    f.read(9)
-
-    # Pairs (int64 with -1 sentinel)
-    num_pairs = read_u64()
-    if num_pairs > 0:
-        raw = (
-            np.frombuffer(f.read(num_pairs * 16), dtype=np.int64)
-            .reshape(num_pairs, 2)
-            .copy()
-        )
-        b["pairs"] = np.where(raw == -1, -1.0, raw - 1).astype(np.float64)
-    else:
-        b["pairs"] = np.empty((0, 2), dtype=np.float64)
-
-    # ppg_bin_indexs, ecg_bin_indexs (uint64 pairs)
-    b["ppg_bin_indexs"] = read_pair_vec()
-    b["ecg_bin_indexs"] = read_pair_vec()
-
-    # N pass-through channels: { upsampled doubles, raw (t,v) pair doubles }
-    for _ in range(num_passthrough):
-        skip_signal()
-        skip_raw_pairs()
-
-
-def read_bin_file(path):
-    """Read all bins from a _wave_markings.bin. Mirrors compare_single.py's
-    reader (which is known to parse these files correctly), then reshapes
-    each bin to the field names this script expects downstream."""
+    Keys per bin:
+      ecgRIndex     ch1 raw R-peaks (intp, 0-based)
+      ppgMinAmps    PPG-valley indices (intp, 0-based)
+      pairs         (n, 2) float64 of (ppg_idx, ecg_idx) pairs, -1 sentinels preserved
+    """
     results = []
     file_size = os.path.getsize(path)
 
+    def read_u64(f):
+        data = f.read(8)
+        if len(data) != 8:
+            raise EOFError("short read on uint64")
+        return struct.unpack("<Q", data)[0]
+
+    def read_idx_array(f):
+        """Read a 1-based idx array, return 0-based intp."""
+        sz = read_u64(f)
+        if sz == 0:
+            return np.array([], dtype=np.intp)
+        if sz > MAX_SANE:
+            raise ValueError(f"idx count {sz} exceeds limit")
+        raw = np.frombuffer(f.read(sz * 8), dtype=np.uint64).copy()
+        return (raw - 1).astype(np.intp)
+
+    def skip_signal(f):
+        sz = read_u64(f)
+        if sz > MAX_SANE:
+            raise ValueError(f"signal size {sz} exceeds limit (file desync?)")
+        f.seek(sz * 8, 1)
+
     with open(path, "rb") as f:
-        num_bins = struct.unpack("<Q", f.read(8))[0]
+        num_bins = read_u64(f)
         if num_bins > 100_000:
             return results
 
         for bin_i in range(num_bins):
             if f.tell() >= file_size:
                 break
-            raw = {}
+            b = {}
             try:
-                _read_bin_contents(f, raw, PASSTHROUGH_NUM_CHANNELS)
+                # 9 R-peak idx arrays: only ch1.raw is consumed downstream.
+                b["ecgRIndex"] = read_idx_array(f)
+                for _ in range(8):
+                    # ch1.squared, ch1.absval, ch2.{raw,sq,abs}, ch3.{raw,sq,abs}
+                    sz = read_u64(f)
+                    f.seek(sz * 8, 1)
+
+                # PPG idx arrays: skip max, keep min (matches old reader's
+                # ppgMinAmps semantics).
+                sz = read_u64(f)
+                f.seek(sz * 8, 1)  # ppgMaxAmps
+                b["ppgMinAmps"] = read_idx_array(f)
+
+                # 6 preprocessed signals (squared/absval per channel) -- not
+                # consumed by this script.
+                for _ in range(6):
+                    skip_signal(f)
+
+                # 9 noise flag bytes.
+                f.read(9)
+
+                # Pairs: int64 with -1 sentinel, 1-based on disk.
+                num_pairs = read_u64(f)
+                if num_pairs > 0:
+                    if num_pairs > MAX_SANE:
+                        raise ValueError(f"pair count {num_pairs} exceeds limit")
+                    raw = (
+                        np.frombuffer(f.read(num_pairs * 16), dtype=np.int64)
+                        .reshape(num_pairs, 2)
+                        .copy()
+                    )
+                    b["pairs"] = np.where(raw == -1, -1.0, raw - 1).astype(np.float64)
+                else:
+                    b["pairs"] = np.empty((0, 2), dtype=np.float64)
             except (ValueError, struct.error, EOFError) as e:
-                print(f"  ERROR parsing bin {bin_i} in {path}: {e}")
+                print(f"  ERROR parsing wave_markings bin {bin_i} in {path}: {e}")
                 break
 
-            # Reshape to the field names the rest of this script expects.
-            # ch1.raw is the primary ECG R-peak source (matches Daniel's
-            # ecgRIndex semantics).
-            b = {
-                "ecgRIndex": raw["ch1_raw_idx"],
-                "ppgMinAmps": raw["ppgMinAmps"],
-                "ppgSignal": raw["ppgSignal"],
-                "ecgSignal": raw["ecgSignal"],
-                "pairs": raw["pairs"],
-                "ppg_bin_indexs": raw["ppg_bin_indexs"],
-                "ecg_bin_indexs": raw["ecg_bin_indexs"],
-            }
             results.append(b)
 
+    return results
+
+
+def _read_annealed_bin(path):
+    """Parse the matching annealed .bin and return per-bin (ppg, ecg,
+    ppg_bin_indexs, ecg_bin_indexs). All four are needed by the rest of
+    this script: signals for the amplitude stats, indexs for the Deep
+    boundary derivation."""
+    results = []
+    file_size = os.path.getsize(path)
+
+    def read_u64(f):
+        return struct.unpack("<Q", f.read(8))[0]
+
+    def read_signal(f):
+        sz = read_u64(f)
+        if sz == 0:
+            return np.array([], dtype=np.float64)
+        return np.frombuffer(f.read(sz * 8), dtype=np.float64).copy()
+
+    def skip_signal(f):
+        sz = read_u64(f)
+        f.seek(sz * 8, 1)
+
+    def read_pair_vec(f):
+        sz = read_u64(f)
+        if sz == 0:
+            return np.empty((0, 2), dtype=np.uint64)
+        return np.frombuffer(f.read(sz * 16), dtype=np.uint64).reshape(sz, 2).copy()
+
+    with open(path, "rb") as f:
+        num_bins = read_u64(f)
+
+        # Header: 3 doubles (ppg/ecg sample rates, scoring epoch) + uint32
+        # channel count + nChannels uint32 native sample rates.
+        f.seek(24, 1)
+        n_channels = struct.unpack("<I", f.read(4))[0]
+        if n_channels > 0:
+            f.seek(n_channels * 4, 1)
+
+        for _ in range(num_bins):
+            if f.tell() >= file_size:
+                break
+            b = {
+                "ppg_bin_indexs": read_pair_vec(f),
+                "ecg_bin_indexs": read_pair_vec(f),
+                "ppgSignal": read_signal(f),
+                "ecgSignal": read_signal(f),
+            }
+            # ecg_signal_2, ecg_signal_3, sleep_state_signal: not used.
+            skip_signal(f)
+            skip_signal(f)
+            skip_signal(f)
+            # Pass-through channels: { upsampled, raw (t,v) pairs } x n_channels.
+            for _ in range(n_channels):
+                skip_signal(f)
+                n_pairs = read_u64(f)
+                f.seek(n_pairs * 16, 1)
+            results.append(b)
+
+    return results
+
+
+def _annealed_path_for(wave_markings_path):
+    """Given .../{stem}_wave_markings.bin, return the matching
+    ANNEALED_DIR / {stem}.bin. The two files come in pairs and a missing
+    sibling is a hard error -- this script needs both halves to produce
+    correct per-bin output."""
+    stem = wave_markings_path.stem
+    if stem.endswith("_wave_markings"):
+        stem = stem[: -len("_wave_markings")]
+    candidate = ANNEALED_DIR / f"{stem}.bin"
+    if not candidate.is_file():
+        raise FileNotFoundError(
+            f"annealed sibling not found for {wave_markings_path}\n"
+            f"  expected: {candidate}\n"
+            f"  set ANNEALED_DIR at the top of this script if the layout is different"
+        )
+    return candidate
+
+
+def read_bin_file(path):
+    """Read all bins for one subject. Pairs the wave_markings.bin with
+    its annealed sibling and merges the fields the rest of this script
+    expects into a single per-bin dict.
+
+    A bin-count mismatch between the two files is a hard error: it
+    means the pair is out of sync and any downstream comparison would
+    silently misalign R-peaks against the wrong signal window.
+    """
+    path = Path(path)
+    wave_bins = _read_wave_markings_bin(path)
+    ann_path = _annealed_path_for(path)
+    ann_bins = _read_annealed_bin(ann_path)
+
+    if len(wave_bins) != len(ann_bins):
+        raise ValueError(
+            f"bin-count mismatch between wave_markings and annealed for {path.name}: "
+            f"{len(wave_bins)} vs {len(ann_bins)} (annealed at {ann_path})"
+        )
+
+    results = []
+    for wb, ab in zip(wave_bins, ann_bins):
+        results.append(
+            {
+                "ecgRIndex": wb["ecgRIndex"],
+                "ppgMinAmps": wb["ppgMinAmps"],
+                "ppgSignal": ab["ppgSignal"],
+                "ecgSignal": ab["ecgSignal"],
+                "pairs": wb["pairs"],
+                "ppg_bin_indexs": ab["ppg_bin_indexs"],
+                "ecg_bin_indexs": ab["ecg_bin_indexs"],
+            }
+        )
     return results
 
 

@@ -44,9 +44,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-daniel_path = r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\5_generate_template_files\mesa_templates_daniel"
-mira_path = r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\5_generate_template_files\mesa_templates_mira"
-deep_path = r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\5_generate_template_files\mesa_templates_deep"
+daniel_path = r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_daniel\template_path"
+mira_path = r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_mira\mesa\template_path"
+deep_path = (
+    r"D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_deep\mesa\mesa_templates_deep"
+)
 
 RESULTS_DIR = r"D:\USERS\MiraWelner\QTVI\testing\template_creation_tests"
 
@@ -62,52 +64,124 @@ BEAT_COLOR = "0.6"  # light gray for individual beats
 
 # ============================================================================
 # Mira reader (C++ _templates.bin)
+#
+# On-disk format (matches template_io.cpp's write_template_binfile):
+#
+#   [u64 n_bins]
+#
+#   per bin:
+#     12 method blocks in fixed order: ch1_raw, ch1_squared, ch1_absval,
+#     ch1_unfiltered, ch2_raw, ch2_squared, ch2_absval, ch2_unfiltered,
+#     ch3_raw, ch3_squared, ch3_absval, ch3_unfiltered.
+#       per method block:
+#         [u64 sz][sz x f64 ecgTemplate]
+#         [u64 sz][sz x f64 ecgTemplate_std]   (sz=0 for non-raw methods)
+#         [f64 alignment_point]
+#         [f64 avg_r_expand]
+#     [u64 sz][sz x f64 ppgTemplate]
+#     [u64 sz][sz x f64 ppgTemplate_std]
+#     [u8  bad_segment]
+#
+#   SAECG tail (once at end of file):
+#     13 averaged waveforms in the same order as per-bin (12 ECG methods
+#     + PPG). Each:
+#       [u64 sz][sz x f64 waveform]
+#       [u64 n_contributing_bins]
+#
+# We pull out only what the comparator and histogram scripts use --
+# ch1_raw template, its alignment point, its std, and bad_segment -- and
+# stream past everything else without materializing it. If a downstream
+# consumer needs the other 11 methods, the PPG template, or the SAECG
+# tail later, the reader can be extended without changing this format.
 # ============================================================================
 def read_mira_template_bin(path):
+    """Read a Mira template .bin and return one dict per bin with the
+    ch1-raw fields used by the comparator + a bad_segment flag.
+
+    Keys returned per bin:
+      ch1_raw_template      : np.ndarray (float64)
+      ch1_raw_template_std  : np.ndarray (float64) — empty if not computed
+      ch1_raw_alignment_point : float
+      ch1_raw_avg_r_expand    : float
+      bad_segment           : bool
+      index                 : int
+    """
     templates = []
     with open(path, "rb") as f:
 
+        def read_exact(n):
+            d = f.read(n)
+            if len(d) != n:
+                raise EOFError(
+                    f"template file truncated: wanted {n} bytes, got {len(d)} "
+                    f"at offset {f.tell() - len(d)} of {path}"
+                )
+            return d
+
         def read_u64():
-            d = f.read(8)
-            return struct.unpack("<Q", d)[0] if len(d) == 8 else None
+            return struct.unpack("<Q", read_exact(8))[0]
 
         def read_f64():
-            d = f.read(8)
-            return struct.unpack("<d", d)[0] if len(d) == 8 else None
+            return struct.unpack("<d", read_exact(8))[0]
 
         def read_u8():
-            d = f.read(1)
-            return struct.unpack("<B", d)[0] if len(d) == 1 else None
+            return struct.unpack("<B", read_exact(1))[0]
 
         def read_double_vec():
             sz = read_u64()
-            if sz is None or sz == 0:
+            if sz == 0:
                 return np.array([], dtype=np.float64)
-            return np.frombuffer(f.read(sz * 8), dtype=np.float64).copy()
+            return np.frombuffer(read_exact(sz * 8), dtype=np.float64).copy()
 
         def skip_double_vec():
             sz = read_u64()
-            if sz and sz > 0:
+            if sz > 0:
                 f.seek(sz * 8, 1)
 
         def skip_method_block():
+            # Method block: ecgTemplate, ecgTemplate_std, alignment_point,
+            # avg_r_expand. Two sized vectors then two doubles.
+            skip_double_vec()
             skip_double_vec()
             f.seek(16, 1)  # alignment_point + avg_r_expand
 
-        num_bins = read_u64()
-        if num_bins is None:
-            return templates
+        def skip_averaged():
+            # SAECG entry: waveform + n_contributing (u64).
+            skip_double_vec()
+            f.seek(8, 1)
 
-        for i in range(num_bins):
+        n_bins = read_u64()
+
+        for i in range(n_bins):
             info = {"index": i}
+
+            # ch1_raw: the only method block we actually unpack.
             info["ch1_raw_template"] = read_double_vec()
+            info["ch1_raw_template_std"] = read_double_vec()
             info["ch1_raw_alignment_point"] = read_f64()
             info["ch1_raw_avg_r_expand"] = read_f64()
-            for _ in range(11):  # ch1_squared, ch1_absval, ch1_unfiltered, ch2x4, ch3x4
+
+            # The remaining 11 method blocks (ch1_squared, ch1_absval,
+            # ch1_unfiltered, ch2x4, ch3x4) -- read past without
+            # allocating into the dict.
+            for _ in range(11):
                 skip_method_block()
-            skip_double_vec()  # PPG
+
+            skip_double_vec()  # ppgTemplate
+            skip_double_vec()  # ppgTemplate_std
             info["bad_segment"] = bool(read_u8())
             templates.append(info)
+
+        # SAECG tail: 13 averaged waveforms. Read past so any caller that
+        # later tries to read additional data from the same file handle
+        # lands at EOF cleanly, rather than mid-tail. Wrapped in try/except
+        # so older files written before the tail existed don't error here.
+        try:
+            for _ in range(13):
+                skip_averaged()
+        except EOFError:
+            pass
+
     return templates
 
 
