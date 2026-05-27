@@ -30,7 +30,7 @@
 #include "annealing_to_bin//anneal_handler.hpp"
 #include "peak_finding//run_find_r_peaks.hpp"
 #include "gui_handler.h"
-#include "chart_overlay.hpp"
+#include "grid_overlay.hpp"
 #include "post_process.hpp"
 #include "config_loader.hpp"
 #include "post_process_queue.hpp"
@@ -72,7 +72,7 @@
  // Constants
  // ============================================================================
 
-static const QColor COLOR_ECG1 = QColor("#FF0000");
+static const QColor COLOR_ECG1 = QColor(101, 67, 33);
 static const QColor COLOR_ECG2 = QColor("#0000FF");
 static const QColor COLOR_ECG3 = QColor("#00AA00");
 static const QColor COLOR_PPG = QColor("#BF00FF");

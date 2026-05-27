@@ -47,7 +47,7 @@
 #include "user_annotation_handler.h"
 #include "user_control_handler.h"
 #include "config_entry.hpp"
-#include "chart_overlay.hpp"
+#include "grid_overlay.hpp"
 #include "gap_indicator.hpp"
 class PostProcessQueue;
 

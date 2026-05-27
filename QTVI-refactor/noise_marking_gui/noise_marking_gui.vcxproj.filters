@@ -107,13 +107,13 @@
     <ClCompile Include="user_annotation_handler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="chart_overlay.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="gui_handler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="gap_indicator.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="grid_overlay.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -124,7 +124,7 @@
     <QtMoc Include="gui_handler.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="chart_overlay.hpp">
+    <QtMoc Include="grid_overlay.hpp">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>

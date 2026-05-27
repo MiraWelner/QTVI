@@ -6,10 +6,4 @@
 
 ## Minor
 
-* Make grid have horizontal lines too
-
 * add check box to select only PPG or ECG singals
-
-* remove duplcate from outline
-
-* Ensure that testing still works
