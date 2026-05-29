@@ -4,14 +4,14 @@
 #include <QEventLoop>
 #include <QObject>
 #include <iostream>
-#include <string>
 #include <vector>
 #include <algorithm>
 
 #include "config_loader.hpp"
 #include "config_entry.hpp"
-#include "TemplateFileName.hpp"
+#include "parse_data_from_filename.hpp"
 #include "TemplateViewerWindow.hpp"
+#include <theme/theme.h>
 
 int get_dataset_choice() {
     /*
@@ -32,6 +32,9 @@ int get_dataset_choice() {
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
+
+    Theme::apply(app);
+
 
     int dataset_choice = get_dataset_choice();
     auto cfgOpt = load_config(dataset_choice);
@@ -102,7 +105,15 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        subjects.push_back({ f, parsed->subjectId });
+        // Display label: for datasets that have a date field (MESA), show
+        // "{subjectId}_{date}" so the recording can be uniquely identified;
+        // for datasets without a date (Bittium), the subject id is already
+        // unique on its own.
+        QString displayId = parsed->date.isEmpty()
+            ? parsed->subjectId
+            : parsed->subjectId + "_" + parsed->date;
+
+        subjects.push_back({ f, displayId });
     }
 
     if (skippedParse + skippedRate + skippedBin > 0) {

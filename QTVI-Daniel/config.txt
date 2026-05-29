@@ -125,8 +125,8 @@ GenerateTemplates_output = D:\USERS\MiraWelner\QTVI\QTVI-data-files\5_generate_t
 #                                      exist then the value here, each screen shown will have the number set (except last which will have remainder).
 #                                      Set to inf or a neg number to show all. Screen may be too small to accommodate all.
 #
-TemplateMarking_input = D:\USERS\MiraWelner\QTVI\QTVI-data-files\5_generate_template_files\mesa_templates_daniel
-TemplateMarking_output = D:\USERS\MiraWelner\QTVI\QTVI-data-files\6_template_marking_files\mesa_templatemarking_daniel
+TemplateMarking_input = D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_daniel\template_path
+TemplateMarking_output = D:\USERS\MiraWelner\QTVI\QTVI-data-files\output_daniel\qtvi_marker_path
 TemplateMarking_TemplatesToShow = 16
 
 # 7 Generate Features

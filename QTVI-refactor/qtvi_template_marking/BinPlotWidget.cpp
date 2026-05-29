@@ -20,7 +20,6 @@
 #include <QMouseEvent>
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 
 namespace {
 
@@ -199,9 +198,8 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_markers[PpgDicrotic] = ppgDicrotic;
     m_markers[Ppg50] = ppg50;
     m_markers[PpgEnd] = ppgEnd;
-    m_hasPPG = !ppg.empty();
     m_rPeakSample = rPeakSample;
-
+    m_hasPPG = !ppg.empty();
     // Cache the per-trace visible counts so paint, hit-test, and
     // drag-clamp all see the same numbers.
     m_ecgVisibleN = computeEcgVisibleN(m_ecg, tEnd);
@@ -215,6 +213,18 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
 void BinPlotWidget::setHasPPG(bool has) { m_hasPPG = has; }
 void BinPlotWidget::setState(State s) { m_state = s; update(); }
 
+void BinPlotWidget::setShowEcgMarkers(bool show) {
+    if (m_showEcgMarkers == show) return;
+    m_showEcgMarkers = show;
+    update();
+}
+
+void BinPlotWidget::setShowPpgMarkers(bool show) {
+    if (m_showPpgMarkers == show) return;
+    m_showPpgMarkers = show;
+    update();
+}
+
 void BinPlotWidget::setMarker(Marker m, int idx) {
     m_markers[m] = idx;
     update();
@@ -225,9 +235,7 @@ int BinPlotWidget::visibleN(bool isEcg) const {
 }
 
 int BinPlotWidget::requiredWidth() const {
-    // ECG draws from kML to kML + (visN-1)*pxPerSample.
-    // PPG draws from rPeakPx to rPeakPx + (visN-1)*pxPerSample.
-    // Widget must be wide enough for whichever ends further right, plus kMR.
+    // Widget must be wide enough for whichever trace ends further right, plus kMR.
     const double ecgRight = (m_ecgVisibleN > 1)
         ? kML + (m_ecgVisibleN - 1) * kPxPerSample
         : kML;
@@ -265,6 +273,7 @@ int BinPlotWidget::markerAtX(double x) const {
         int idx = m_markers[m];
         if (idx < 0) continue;
         const bool isEcg = markerIsEcg(m);
+        if (isEcg ? !m_showEcgMarkers : !m_showPpgMarkers) continue;
         const auto& vec = isEcg ? m_ecg : m_ppg;
         if (vec.empty() || idx >= (int)vec.size()) continue;
         if (!isEcg && !m_hasPPG) continue;
@@ -288,7 +297,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     p.setPen(Qt::black);
     QFont f = p.font(); f.setPointSize(8); p.setFont(f);
     p.drawText(kML, 11,
-        QString("Bin %1  [%2]").arg(m_binIndex + 1).arg(m_leadLabel));
+        QString("Bin %1  [%2]").arg(m_binIndex).arg(m_leadLabel));
 
     // -------- ECG --------
     // Compute vertical range including std, draw the band first so the
@@ -305,19 +314,38 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     }
 
     // -------- PPG --------
-    // PPG starts at the R-peak x-position. The R-peak's sample index
-    // maps to pixels via the same fixed scale, which is what gives the
-    // two traces a common time axis.
+    // Mirror the MATLAB template_plot approach: ECG shifts left by
+    // alignment_point so its R-peak lands at x=0 (PPG onset). Here we
+    // do the non-mirror equivalent -- prepend m_rPeakSample flat baseline
+    // samples to the PPG so both traces draw from kML and the PPG onset
+    // naturally aligns with the ECG R-peak. Markers use xFromSample which
+    // still adds rPeakSample, so their pixel positions are unchanged.
     if (m_ppgVisibleN >= 2 && (int)m_ppg.size() >= 2) {
-        const double rPeakPx = kML + m_rPeakSample * kPxPerSample;
-        double lo, hi;
-        computeVisibleRange(m_ppg, m_ppgStd, m_ppgVisibleN, lo, hi);
+        const int pad = static_cast<int>(std::round(m_rPeakSample));
+        const int visN = pad + m_ppgVisibleN;
 
-        drawStdBand(p, m_ppg, m_ppgStd, rPeakPx, kMT, ph,
-            kPxPerSample, m_ppgVisibleN, lo, hi);
-        drawTraceFixedScale(p, m_ppg, rPeakPx, kMT, ph,
+        std::vector<double> ppgPadded;
+        ppgPadded.reserve(visN);
+        ppgPadded.insert(ppgPadded.end(), pad, m_ppg[0]);
+        ppgPadded.insert(ppgPadded.end(), m_ppg.begin(),
+            m_ppg.begin() + m_ppgVisibleN);
+
+        std::vector<double> stdPadded;
+        if ((int)m_ppgStd.size() >= m_ppgVisibleN) {
+            stdPadded.reserve(visN);
+            stdPadded.insert(stdPadded.end(), pad, 0.0);
+            stdPadded.insert(stdPadded.end(), m_ppgStd.begin(),
+                m_ppgStd.begin() + m_ppgVisibleN);
+        }
+
+        double lo, hi;
+        computeVisibleRange(ppgPadded, stdPadded, visN, lo, hi);
+
+        drawStdBand(p, ppgPadded, stdPadded, kML, kMT, ph,
+            kPxPerSample, visN, lo, hi);
+        drawTraceFixedScale(p, ppgPadded, kML, kMT, ph,
             kPxPerSample, QPen(kColorPpgTrace, 1.5),
-            m_ppgVisibleN, lo, hi);
+            visN, lo, hi);
     }
 
     QFont smallF = p.font(); smallF.setPointSize(7); p.setFont(smallF);
@@ -325,6 +353,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         int idx = m_markers[m];
         if (idx < 0) continue;
         bool isEcg = markerIsEcg(m);
+        if (isEcg ? !m_showEcgMarkers : !m_showPpgMarkers) continue;
         const auto& vec = isEcg ? m_ecg : m_ppg;
         if (vec.empty() || idx >= (int)vec.size()) continue;
         if (!isEcg && !m_hasPPG) continue;

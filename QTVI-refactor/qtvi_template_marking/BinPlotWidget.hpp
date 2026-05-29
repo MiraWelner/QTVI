@@ -23,7 +23,6 @@
 // ============================================================================
 #pragma once
 #include <QWidget>
-#include <iostream>
 #include <QString>
 #include <algorithm>
 #include <cmath>
@@ -136,6 +135,12 @@ public:
     void setMarker(Marker m, int idx);
     int  marker(Marker m) const { return m_markers[m]; }
 
+    // Per-trace marker visibility. When false, that group's markers
+    // are neither drawn nor hit-testable (drag-pick ignores them).
+    // Both default to true.
+    void setShowEcgMarkers(bool show);
+    void setShowPpgMarkers(bool show);
+
     int  binIndex()  const { return m_binIndex; }
     int  leadIndex() const { return m_leadIndex; }
 
@@ -166,8 +171,8 @@ private:
     double xFromSample(int s, bool isEcg) const;
     int    markerAtX(double x) const;
     int    visibleN(bool isEcg) const;
-    double m_rPeakSample = 0.0;   // ECG R-peak sample index (the PPG draw origin)
 
+    double m_rPeakSample = 0.0;   // R-peak sample index within the ECG template
 
     int m_binIndex;
     int m_leadIndex;
@@ -186,6 +191,8 @@ private:
 
     State m_state = State::Good;
     bool  m_hasPPG = false;
+    bool  m_showEcgMarkers = true;
+    bool  m_showPpgMarkers = true;
     int   m_dragMarker = -1;
 
     static constexpr int kML = 5, kMR = 5, kMT = 16, kMB = 4;

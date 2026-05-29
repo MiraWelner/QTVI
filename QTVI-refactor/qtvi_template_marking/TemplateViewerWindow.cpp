@@ -21,13 +21,24 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
     moveGroup->setExclusive(true);
 
     connect(ui->MoveSubsequent, &QRadioButton::toggled, this,
-        [this](bool on) {
-            m_moveSubsequent = on;
-            std::cout << "MoveSubsequent toggled to " << on << std::endl;
-        });
+        [this](bool on) { m_moveSubsequent = on; });
 
 
     m_moveSubsequent = ui->MoveSubsequent->isChecked();
+
+    // Marker-visibility toggles. The checkboxes start checked in the
+    // .ui, so read their initial state into our flags rather than
+    // hard-coding true.
+    m_showEcgMarkers = ui->show_ecg->isChecked();
+    m_showPpgMarkers = ui->show_ppg->isChecked();
+    connect(ui->show_ecg, &QCheckBox::toggled, this, [this](bool on) {
+        m_showEcgMarkers = on;
+        applyMarkerVisibility();
+        });
+    connect(ui->show_ppg, &QCheckBox::toggled, this, [this](bool on) {
+        m_showPpgMarkers = on;
+        applyMarkerVisibility();
+        });
 }
 
 TemplateViewerWindow::~TemplateViewerWindow() { delete ui; }
@@ -192,7 +203,7 @@ namespace {
                 continue;
             }
             const int rHint = static_cast<int>(std::round(
-                chs[c]->alignment_point_raw));
+                chs[c]->avg_r_expand_raw));
 
             // T-end first — its detector doesn't need visN, and we need T-end
             // to compute the visible cutoff.
@@ -283,9 +294,11 @@ void TemplateViewerWindow::showPage() {
             const auto& ppg = hasPPG ? b.ppgTemplate : empty;
 
             int c = leads[li].channelIndex;
-            const double rPeak = (c == 0) ? b.ch1.alignment_point_raw
-                : (c == 1) ? b.ch2.alignment_point_raw
-                : b.ch3.alignment_point_raw;
+            // avg_r_expand_raw = median(RR/5) = R-peak position within the
+            // ECG template. Used to start PPG at the correct pixel offset.
+            const double rPeak = (c == 0) ? b.ch1.avg_r_expand_raw
+                : (c == 1) ? b.ch2.avg_r_expand_raw
+                : b.ch3.avg_r_expand_raw;
 
             // std vectors for this channel + PPG. Empty if the templater
             // didn't compute them for this bin -- the widget treats empty
@@ -335,7 +348,15 @@ void TemplateViewerWindow::showPage() {
         m_binPlots[i] = std::move(group);
     }
 
+    applyMarkerVisibility();
     updatePageControls();
+}
+
+void TemplateViewerWindow::applyMarkerVisibility() {
+    for (auto* pw : m_allPlots) {
+        pw->setShowEcgMarkers(m_showEcgMarkers);
+        pw->setShowPpgMarkers(m_showPpgMarkers);
+    }
 }
 
 // ========================================================================

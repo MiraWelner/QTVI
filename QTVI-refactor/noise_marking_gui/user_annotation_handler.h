@@ -13,7 +13,7 @@ struct AnnotationSegment {
     size_t      startSample;
     size_t      endSample;
     std::string label;         // "ECG1", "ECG2", "ECG3", "PPG", or "ABP"
-    std::string marking_type;  // "Noise/Artifact", "AF", "SVT", etc.
+    std::string marking_type;  // "Noise/Art.", "AF", "SVT", etc.
 
     AnnotationSegment(size_t s, size_t e, const std::string& l)
         : startSample(s), endSample(e), label(l) {

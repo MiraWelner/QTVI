@@ -69,4 +69,9 @@ private:
     int m_totalPages = 1;
 
     bool m_moveSubsequent = true;
+    bool m_showEcgMarkers = true;
+    bool m_showPpgMarkers = true;
+
+    // Push m_showEcgMarkers / m_showPpgMarkers into every visible plot.
+    void applyMarkerVisibility();
 };

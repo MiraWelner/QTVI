@@ -42,9 +42,9 @@ void annotation_handler::exportBinary(const std::string& filename) const {
         {"PPG", 1.0}, {"ECG1", 2.0}, {"ECG2", 3.0}, {"ECG3", 4.0}, {"ABP", 5.0}
     };
     static const std::unordered_map<std::string, double> typeMap = {
-        {"1) Noise/Artifact", 1.0},{"2) Cond. Delay", 2.0}, {"3) AF", 3.0}, {"4) SVT", 4.0}, {"5) VT", 5.0},
+        {"1) Noise/Art.", 1.0},{"2) Cond. Delay", 2.0}, {"3) AF", 3.0}, {"4) SVT", 4.0}, {"5) VT", 5.0},
         {"6) PVC", 6.0}, {"7) PAC", 7.0},
-        {"8) Benign Arrhythmia", 8.0}, {"9) Significant Arrhythmia", 9.0},
+        {"8) Benign Arr.", 8.0}, {"9) Sig. Arr.", 9.0},
         
     };
 

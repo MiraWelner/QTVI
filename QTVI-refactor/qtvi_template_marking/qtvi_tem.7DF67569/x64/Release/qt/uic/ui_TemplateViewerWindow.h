@@ -13,6 +13,7 @@
 #include <QtGui/QAction>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QButtonGroup>
+#include <QtWidgets/QCheckBox>
 #include <QtWidgets/QGridLayout>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
@@ -35,6 +36,8 @@ public:
     QLabel *instructionsLabel;
     QHBoxLayout *topBar;
     QLabel *subjectLabel;
+    QCheckBox *show_ecg;
+    QCheckBox *show_ppg;
     QSpacerItem *sL;
     QPushButton *prevButton;
     QLabel *pageLabel;
@@ -77,6 +80,18 @@ public:
         subjectLabel->setFont(font);
 
         topBar->addWidget(subjectLabel);
+
+        show_ecg = new QCheckBox(centralwidget);
+        show_ecg->setObjectName("show_ecg");
+        show_ecg->setChecked(true);
+
+        topBar->addWidget(show_ecg);
+
+        show_ppg = new QCheckBox(centralwidget);
+        show_ppg->setObjectName("show_ppg");
+        show_ppg->setChecked(true);
+
+        topBar->addWidget(show_ppg);
 
         sL = new QSpacerItem(0, 0, QSizePolicy::Policy::Expanding, QSizePolicy::Policy::Minimum);
 
@@ -163,6 +178,8 @@ public:
         actionMoveSubsequent->setText(QCoreApplication::translate("TemplateViewerWindow", "Move Subsequent Dicrotic", nullptr));
         instructionsLabel->setText(QCoreApplication::translate("TemplateViewerWindow", "Single Right Click: Marks bad R peak                Double Right Click: Marks bad PPG if PPG present (throw away that template)           Click and Drag Markers to Move", nullptr));
         subjectLabel->setText(QCoreApplication::translate("TemplateViewerWindow", "No subject loaded", nullptr));
+        show_ecg->setText(QCoreApplication::translate("TemplateViewerWindow", "Show ECG Markers", nullptr));
+        show_ppg->setText(QCoreApplication::translate("TemplateViewerWindow", "Show PPG Markers", nullptr));
         prevButton->setText(QCoreApplication::translate("TemplateViewerWindow", "<  Prev", nullptr));
 #if QT_CONFIG(shortcut)
         prevButton->setShortcut(QCoreApplication::translate("TemplateViewerWindow", "Left", nullptr));

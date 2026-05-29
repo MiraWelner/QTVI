@@ -85,7 +85,7 @@ static const QColor COLOR_CVP = QColor("#2980B9");
 static const QColor COLOR_RAW_SCATTER = QColor(0, 0, 0, 255);
 
 static const QMap<QString, QColor> MARKING_COLORS = {
-    {"1) Noise/Artifact",   QColor(255, 255, 0,   60)},
+    {"1) Noise/Art.",   QColor(255, 255, 0,   60)},
     {"2) Cond. Delay",      QColor(128, 0,   128, 60)},
     {"3) AF",               QColor(255, 0,   0,   60)},
     {"4) SVT",              QColor(0,   0,   255, 60)},
@@ -93,7 +93,7 @@ static const QMap<QString, QColor> MARKING_COLORS = {
     {"6) PVC",              QColor(128, 255, 0,   60)},
     {"7) PAC",              QColor(255, 128, 0,   60)},
     {"8) Benign Arr.",      QColor(255, 128, 255, 60)},
-    {"9) Significant Arr.", QColor(0,   255, 255, 60)}
+    {"9) Sig. Arr.", QColor(0,   255, 255, 60)}
 };
 
 // ============================================================================
@@ -148,7 +148,9 @@ namespace {
     void setupChartDefaults(QChartView* view) {
         auto* chart = new QChart();
         chart->legend()->hide();
-        chart->setMargins(QMargins(0, 0, 0, 0));
+        chart->setMargins(QMargins(0, 0, 20, 0));
+        for (auto* axis : chart->axes())
+            chart->removeAxis(axis);
         chart->setBackgroundRoundness(0);
         view->setChart(chart);
     }
@@ -397,11 +399,12 @@ void noise_marking_gui::resetUnpinnedGains() {
 }
 
 void noise_marking_gui::mousePressEvent(QMouseEvent* event) {
-    // If a spinbox currently has focus and the click landed outside it,
-    // take focus back to the dialog. That fires editingFinished on the
-    // spinbox, which runs the clearFocus lambda from wireGain. Without
-    // this, ClickFocus spinboxes are sticky because clicking on a chart
-    // (NoFocus policy) doesn't pull focus away.
+    /*
+        QT has a weird feature where if you click inside a spin box
+        it will not let you shift left/right using arrowkeys until you click outside
+		the spin box again, this fixes that by checking if the focused widget is a spin box 
+        and if the click is outside of it, then we set the focus to the main window
+    */
     QWidget* focused = QApplication::focusWidget();
     if (auto* sb = qobject_cast<QDoubleSpinBox*>(focused)) {
         const QPoint global = event->globalPosition().toPoint();
@@ -1242,7 +1245,6 @@ void noise_marking_gui::handle_ampogram_plot(double range) {
             if (!title.isEmpty()) {
                 chart->setTitle(title);
                 chart->setTitleFont(QFont("Arial", 8, QFont::Bold));
-                chart->setTitleBrush(color);
             }
             else {
                 chart->setTitle(QString());
@@ -1396,7 +1398,7 @@ namespace {
         auto* xAxis = makeWindowedTimeAxis(currentStartTime, windowDuration,
             globalOffset, labelsVisible);
         chart->addAxis(xAxis, Qt::AlignBottom);
-        chart->setMargins(QMargins(0, 0, 20, 0));
+        chart->setMargins(QMargins(0, 0, 0, 0));
 
         auto* yAxis = new QValueAxis();
         yAxis->setVisible(false);
@@ -1602,86 +1604,77 @@ namespace {
 
 }  // namespace
 
+// Replot every chart for the currently visible window.
+//
+// Pipeline, top-to-bottom:
+//   1. wipe transient state (highlights, gap markers, start-marker lines)
+//   2. decide which charts own the time-ruler labels (bottom-most visible
+//      chart in each column)
+//   3. wipe each chart's contents, preserving persistent lines + overlay
+//      series so they survive across reloads
+//   4. plot every active markable channel (ECG1/2/3, PPG, ABP) with peak
+//      overlay + BPM title
+//   5. plot the second-column display chart (accel, or RESP/CVP)
+//   6. refresh the overlays that paint ON TOP of everything (noise
+//      highlights, pulse grid, gap indicator)
+//   7. force a deferred relayout on the label-owning charts so x-axis
+//      tick labels show up on the FIRST paint instead of only after a
+//      window resize or grid toggle (see "X-label fix" below).
 void noise_marking_gui::handle_data_plot() {
-    // Clear noise highlights before any chart wipes.
-    // QAreaSeries takes ownership of its upper/lower QLineSeries -- the
-    // QAreaSeries destructor deletes them for us, so don't delete them
-    // explicitly (that's a double-free and was the cause of 0xc0000005
-    // access violations when re-running this on the second-or-later mark).
+    // ----------------------------------------------------------------------
+    // 1. Wipe transient state
+    // ----------------------------------------------------------------------
     for (auto* area : m_highlights) {
         if (area->chart()) area->chart()->removeSeries(area);
         delete area;
     }
     m_highlights.clear();
-
-    // Same idea for gap indicator series. The indicator owns them and
-    // must be told to drop them BEFORE wipeChartContent runs, otherwise
-    // the wipe would see and delete them, leaving the indicator with
-    // dangling pointers.
     if (m_gapIndicator) m_gapIndicator->clearSeries();
 
-    // Bottom-most visible chart in each column gets the time-ruler labels.
-    QChartView* xLabelOwnerRight = nullptr;
-    QChartView* xLabelOwnerLeft = nullptr;
-    {
-        const QList<QChartView*> rightCol = {
-            ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
-            ui->ppg_axis,   ui->accel_or_abp_axis
-        };
-        for (auto* cv : rightCol)
-            if (cv && cv->isVisible()) xLabelOwnerRight = cv;
-
-        if (ui->hyp_accel_resp_cvp_axis && ui->hyp_accel_resp_cvp_axis->isVisible())
-            xLabelOwnerLeft = ui->hyp_accel_resp_cvp_axis;
-    }
-
-    // Wipe charts up front so stale series from other plot modes / inactive
-    // channels don't linger.
-    //
-    // We DON'T try to preserve start-marker lines across the wipe -- they
-    // live on the chart's series list and renderWindowedChart (called by
-    // plotMarkable below) wipes that list unconditionally. So whether we
-    // pass them in a "keep" set or not, they're going to be deleted before
-    // plotMarkable's marker-positioning block runs. Trying to use a
-    // preserved pointer afterwards was reading freed memory -- the 0xc0000005
-    // when scrolling chunks with a start mark in progress.
-    //
-    // Instead, null the dangling pointers now and let restoreMarkingMarkers
-    // (called later in loadChunkFromFile) recreate the marker on the new
-    // charts via showStartMarker.
+    // Start-marker lines are owned by the charts we're about to wipe;
+    // null the pointers so restoreMarkingMarkers() (called later by
+    // loadChunkFromFile) recreates them on the new charts.
     m_markState_ecg1.startMarkerLine = nullptr;
     m_markState_ecg2.startMarkerLine = nullptr;
     m_markState_ecg3.startMarkerLine = nullptr;
     m_markState_ppg.startMarkerLine = nullptr;
     m_markState_abp.startMarkerLine = nullptr;
 
-    // Wipe non-persistent content (scatter overlays, axes, area highlights)
-    // from the markable charts. Persistent line series stay alive across
-    // wipes -- they're listed in `keep` so wipeChartContent skips them
-    // (it removes them from the chart but doesn't delete them; they'll be
-    // re-added by renderWindowedChart below). Without this, the old line
-    // would get deleted here, triggering the slow OpenGL teardown and
-    // defeating the whole point of persisting the series.
-    //
-    // The pulse overlay's series are also in `keep`: pulse_overlay owns
-    // them (deletes them in its dtor), so wipeChartContent must NOT free
-    // them out from under the overlay. Forgetting this is a use-after-
-    // free -- the overlay's timer ticks would touch deleted memory and
-    // crash with an access violation on the next chart wipe / arrow-key.
+    // ----------------------------------------------------------------------
+    // 2. Pick the bottom-most visible chart in each column. That chart
+    //    gets the time-ruler labels; everything above it draws ticks only.
+    // ----------------------------------------------------------------------
+    QChartView* xLabelOwnerRight = nullptr;
+    QChartView* xLabelOwnerLeft = nullptr;
+    {
+        const QList<QChartView*> rightCol = {
+            ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
+            ui->ppg_axis,   ui->accel_or_abp_axis,
+        };
+        for (auto* cv : rightCol) {
+            if (cv && !cv->isHidden()) xLabelOwnerRight = cv;
+        }
+        if (ui->hyp_accel_resp_cvp_axis && !ui->hyp_accel_resp_cvp_axis->isHidden()) {
+            xLabelOwnerLeft = ui->hyp_accel_resp_cvp_axis;
+        }
+    }
+
+    // ----------------------------------------------------------------------
+    // 3. Wipe chart contents. Persistent lines and pulse-overlay series
+    //    must survive the wipe -- collect them into a keep list first.
+    // ----------------------------------------------------------------------
     auto keepFor = [&](QChartView* cv) -> QList<QAbstractSeries*> {
         QList<QAbstractSeries*> keep;
+        if (!cv) return keep;
+
         auto it = m_persistentLines.constFind(cv);
-        if (it != m_persistentLines.constEnd())
+        if (it != m_persistentLines.constEnd()) {
             for (auto* ln : it.value()) if (ln) keep.append(ln);
+        }
         if (m_pulseOverlay) {
             const QString label = signalLabelForChartView(cv);
             if (!label.isEmpty()) {
-                // seriesForLabel returns the overlay's minor + major lines
-                // for this chart; both must survive the wipe (the overlay
-                // owns them).
-                const QList<QLineSeries*> overlaySeries =
-                    m_pulseOverlay->seriesForLabel(label);
-                for (QLineSeries* s : overlaySeries) {
+                for (QLineSeries* s : m_pulseOverlay->seriesForLabel(label)) {
                     if (s) keep.append(s);
                 }
             }
@@ -1694,181 +1687,181 @@ void noise_marking_gui::handle_data_plot() {
     wipeChartContent(ui->ecg_axis_3->chart(), keepFor(ui->ecg_axis_3));
     wipeChartContent(ui->ppg_axis->chart(), keepFor(ui->ppg_axis));
 
-    // hyp_accel_resp_cvp_axis is owned here only when no sleep stages -- otherwise
-    // setupHypnogram() owns it and we leave it alone.
     const bool sleepPresent = sleepDataPresent(m_sleepStages);
-    if (!sleepPresent && ui->hyp_accel_resp_cvp_axis)
+    if (!sleepPresent && ui->hyp_accel_resp_cvp_axis) {
         wipeChartContent(ui->hyp_accel_resp_cvp_axis->chart(),
             keepFor(ui->hyp_accel_resp_cvp_axis));
+    }
 
     // ----------------------------------------------------------------------
-    // Render one markable channel: line + raw black scatter overlay,
-    // chart title with native Hz + px/s, and a marker line if active.
+    // 4. Markable signals (ECG1/2/3, PPG, ABP). Each one goes through the
+    //    same recipe -- compute native Hz, render trace, set title with
+    //    BPM, overlay peak markers -- so it lives in a local lambda.
     // ----------------------------------------------------------------------
     auto plotMarkable = [&](const QString& label) {
         if (!isChannelActive(label)) return;
-        ChannelRefs r = channelRefs(label);
+
+        const ChannelRefs r = channelRefs(label);
         if (!r.chartView || !r.data || !r.state) return;
 
-        const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
-        const double sr = (r.sampleRate ? *r.sampleRate : m_ecgSR);
+        const double sr = r.sampleRate ? *r.sampleRate : m_ecgSR;
         const QVector<QPointF> emptyRaw;
         const QVector<QPointF>& rawData = r.dataRaw ? *r.dataRaw : emptyRaw;
 
-        // Compute native Hz from the raw block timestamps when available.
+        // 4a. Native sample rate from raw block timestamps. Falls back to
+        //     the upsampled rate when the raw block is empty or is the
+        //     (-1, -1) sentinel file_to_bin writes for missing channels.
         double nativeHz = sr;
-        if (rawData.size() >= 2 && rawData.last().x() > rawData.first().x()
-            && !(rawData.size() == 1 && rawData[0].x() == -1.0)) {
-            nativeHz = (rawData.size() - 1) / (rawData.last().x() - rawData.first().x());
+        const bool hasRealRaw = rawData.size() >= 2
+            && rawData.last().x() > rawData.first().x()
+            && !(rawData.size() == 1 && rawData[0].x() == -1.0);
+        if (hasRealRaw) {
+            nativeHz = (rawData.size() - 1)
+                / (rawData.last().x() - rawData.first().x());
         }
 
-        // Title placeholder (channel name + native Hz + px/sample). Set
-        // below after peaks are computed so BPM can be included.
+        // 4b. Render the trace.
         const double pxPerSec = (m_windowDuration > 0.0)
-            ? r.chartView->chart()->plotArea().width() / m_windowDuration : 0.0;
+            ? r.chartView->chart()->plotArea().width() / m_windowDuration
+            : 0.0;
         const double pxPerSample = (nativeHz > 0.0) ? pxPerSec / nativeHz : 0.0;
         r.chartView->setProperty("signalName", label);
         r.chartView->setProperty("nativeHz", nativeHz);
         r.chartView->chart()->setTitleFont(QFont("Arial", 8, QFont::Bold));
-        r.chartView->chart()->setTitleBrush(r.color);
 
-        // Render. In Line mode, force a colored line for the upsampled
-        // foreground (with raw black scatter on top). In Scatter mode, drop
-        // the line and let the raw dots be the only foreground -- the
-        // renderWindowedChart decision tree handles both via the two flags
-        // below.
-        QList<WindowedSeries> serieses = { { r.data, r.color, &rawData } };
-        auto [yMin, yMax] = renderWindowedChart(
+        const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+        const QList<WindowedSeries> serieses = { { r.data, r.color, &rawData } };
+        renderWindowedChart(
             r.chartView, serieses,
             m_persistentLines[r.chartView],
             m_currentStartTime, m_windowDuration, globalOffset, sr,
-            /*labelsVisible*/ r.chartView == xLabelOwnerRight,
-            /*useScatterMode*/ m_plotMode == PlotMode::Scatter,
+            /*labelsVisible*/         r.chartView == xLabelOwnerRight,
+            /*useScatterMode*/        m_plotMode == PlotMode::Scatter,
             /*forceLineForUpsampled*/ m_plotMode == PlotMode::Line,
             COLOR_RAW_SCATTER, /*useSingleRawColor*/ true,
-            /*yScale*/ yScaleForSignal(label));
+            /*yScale*/                yScaleForSignal(label));
 
-        // Start markers were nulled before the chart wipe; restoreMarkingMarkers
-        // (called later in loadChunkFromFile) recreates them on the new charts.
-
-        // --- Peak overlay (if enabled) and title with BPM ---
-        const QVector<QPointF> peaks = peaksForWindow(label);
-
-        // Set the title every render, regardless of whether peaks were
-        // detected. BPM = -1 hides the BPM segment when peaks are off.
-        //
-        // BPM is computed over a separate window: when the visible window
-        // is < 10 s, the BPM window is extended backwards (still ending at
-        // the visible end) so the BPM estimate stays stable. Peaks drawn
-        // on the chart still come from the visible window only.
+        // 4c. BPM (if peaks are enabled) and chart title. BPM stays at -1
+        //     when peaks are off; formatChartTitle drops it from the title.
         double bpm = -1.0;
         if (m_showPeaks) {
             double bpmWindowDur = 0.0;
             const QVector<QPointF> bpmPeaks = peaksForBpmWindow(label, bpmWindowDur);
-            if (bpmWindowDur > 0.0) {
-                bpm = bpmPeaks.size() * 60.0 / bpmWindowDur;
-            }
+            if (bpmWindowDur > 0.0) bpm = bpmPeaks.size() * 60.0 / bpmWindowDur;
         }
         r.chartView->setProperty("bpm", bpm);
-        r.chartView->chart()->setTitle(formatChartTitle(label, nativeHz, pxPerSample, bpm));
+        r.chartView->chart()->setTitle(
+            formatChartTitle(label, nativeHz, pxPerSample, bpm));
 
-        if (!peaks.isEmpty()) {
-            auto* peakSeries = new QScatterSeries();
-            peakSeries->setColor(Qt::red);
-            peakSeries->setBorderColor(Qt::white);
-            peakSeries->setMarkerSize(8.0);
-            peakSeries->setMarkerShape(QScatterSeries::MarkerShapeTriangle);
-            peakSeries->setUseOpenGL(true);
+        // 4d. Peak markers (red triangles). Skip if peaks are off or none
+        //     fall inside the visible window.
+        const QVector<QPointF> peaks = peaksForWindow(label);
+        if (peaks.isEmpty()) return;
 
-            const double yScale = yScaleForSignal(label);
-            QList<QPointF> scaled;
-            scaled.reserve(peaks.size());
-            if (std::abs(yScale - 1.0) > 1e-9) {
-                const double viewStart = m_currentStartTime;
-                const double viewEnd = m_currentStartTime + m_windowDuration;
-                std::vector<double> vals;
-                vals.reserve(r.dataRaw->size());
-                for (const QPointF& p : *r.dataRaw) {
-                    if (p.x() < viewStart) continue;
-                    if (p.x() > viewEnd)   break;
-                    vals.push_back(p.y());
-                }
-                double center = 0.0;
-                if (!vals.empty()) {
-                    auto mid = vals.begin() + vals.size() / 2;
-                    std::nth_element(vals.begin(), mid, vals.end());
-                    center = *mid;
-                }
-                for (const QPointF& p : peaks)
-                    scaled.append({ p.x(), (p.y() - center) * yScale + center });
+        // Y-scaling: when yScaleForSignal != 1 the trace is stretched
+        // around the window's median; peaks have to follow the same
+        // transform or they float off the trace.
+        const double yScale = yScaleForSignal(label);
+        QList<QPointF> scaledPeaks;
+        scaledPeaks.reserve(peaks.size());
+
+        if (std::abs(yScale - 1.0) > 1e-9) {
+            const double viewStart = m_currentStartTime;
+            const double viewEnd = m_currentStartTime + m_windowDuration;
+            std::vector<double> vals;
+            vals.reserve(rawData.size());
+            for (const QPointF& p : rawData) {
+                if (p.x() < viewStart) continue;
+                if (p.x() > viewEnd)   break;
+                vals.push_back(p.y());
             }
-            else {
-                for (const QPointF& p : peaks) scaled.append(p);
+            double center = 0.0;
+            if (!vals.empty()) {
+                const auto mid = vals.begin() + vals.size() / 2;
+                std::nth_element(vals.begin(), mid, vals.end());
+                center = *mid;
             }
-
-            peakSeries->replace(scaled);
-            r.chartView->chart()->addSeries(peakSeries);
-            peakSeries->attachAxis(r.chartView->chart()->axes(Qt::Horizontal).first());
-            peakSeries->attachAxis(r.chartView->chart()->axes(Qt::Vertical).first());
+            for (const QPointF& p : peaks) {
+                scaledPeaks.append({ p.x(), (p.y() - center) * yScale + center });
+            }
         }
+        else {
+            for (const QPointF& p : peaks) scaledPeaks.append(p);
+        }
+
+        auto* peakSeries = new QScatterSeries();
+        peakSeries->setColor(Qt::red);
+        peakSeries->setMarkerSize(8.0);
+        peakSeries->setMarkerShape(QScatterSeries::MarkerShapeTriangle);
+        peakSeries->setUseOpenGL(true);
+        peakSeries->replace(scaledPeaks);
+        r.chartView->chart()->addSeries(peakSeries);
+        peakSeries->attachAxis(r.chartView->chart()->axes(Qt::Horizontal).first());
+        peakSeries->attachAxis(r.chartView->chart()->axes(Qt::Vertical).first());
         };
 
     plotMarkable("ECG1");
     plotMarkable("ECG2");
     plotMarkable("ECG3");
     plotMarkable("PPG");
+    if (ui->accel_or_abp_axis && !isMissingSignal(m_abp)) {
+        plotMarkable("ABP");
+    }
 
     // ----------------------------------------------------------------------
-    // Display-only chart: 1..N series, no marker / click. RESP/CVP/accel.
+    // 5. Second-column display chart: accelerometer if present, otherwise
+    //    RESP/CVP, otherwise nothing (sleep stages own the slot instead).
+    //    No marking, no peaks here -- it's purely informational.
     // ----------------------------------------------------------------------
-    auto plotDisplay = [&](QChartView* view, const QString& title,
-        const QList<WindowedSeries>& serieses) {
+    auto plotDisplay = [&](QChartView* view, const QString& title,const QList<WindowedSeries>& serieses) {
             if (!view || !view->chart()) return;
             view->chart()->setTitle(title);
             view->chart()->setTitleFont(QFont("Arial", 8, QFont::Bold));
 
             const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
-            const bool labelsVisible = (view == xLabelOwnerRight) || (view == xLabelOwnerLeft);
-
+            const bool   labelsVisible = (view == xLabelOwnerRight)
+                || (view == xLabelOwnerLeft);
             renderWindowedChart(
                 view, serieses,
                 m_persistentLines[view],
                 m_currentStartTime, m_windowDuration, globalOffset, m_ecgSR,
                 labelsVisible,
-                /*useScatterMode*/ m_plotMode == PlotMode::Scatter,
+                /*useScatterMode*/        m_plotMode == PlotMode::Scatter,
                 /*forceLineForUpsampled*/ false,
                 QColor(), /*useSingleRawColor*/ false);
         };
 
-    // accel_or_abp_axis: ABP only -- routed through the markable path so
-    // it gets the start marker, click-to-mark, and noise-highlight overlay.
-    if (ui->accel_or_abp_axis && !isMissingSignal(m_abp))
-        plotMarkable("ABP");
-
-    // hyp_accel_resp_cvp_axis: accel when present; otherwise windowed RESP/CVP.
-    const bool anyAccel = !isMissingSignal(m_accelX)
-        || !isMissingSignal(m_accelY)
-        || !isMissingSignal(m_accelZ);
-    if (anyAccel && ui->hyp_accel_resp_cvp_axis) {
-        plotDisplay(ui->hyp_accel_resp_cvp_axis, "ACCEL", {
-            { &m_accelX, COLOR_ACCEL_X, &m_accelXRaw },
-            { &m_accelY, COLOR_ACCEL_Y, &m_accelYRaw },
-            { &m_accelZ, COLOR_ACCEL_Z, &m_accelZRaw },
-            });
+    if (ui->hyp_accel_resp_cvp_axis) {
+        const bool anyAccel = !isMissingSignal(m_accelX)
+            || !isMissingSignal(m_accelY)
+            || !isMissingSignal(m_accelZ);
+        if (anyAccel) {
+            plotDisplay(ui->hyp_accel_resp_cvp_axis, "ACCEL", {
+                { &m_accelX, COLOR_ACCEL_X, &m_accelXRaw },
+                { &m_accelY, COLOR_ACCEL_Y, &m_accelYRaw },
+                { &m_accelZ, COLOR_ACCEL_Z, &m_accelZRaw },
+                });
+        }
+        else if (!sleepPresent
+            && (!isMissingSignal(m_resp) || !isMissingSignal(m_cvp))) {
+			plotDisplay(ui->hyp_accel_resp_cvp_axis,//sorry i know html is ugly but this is the only way to get multi-color titles in Qt Charts
+                "<span style='color:#16A085'>RESP</span> / "
+                "<span style='color:#2980B9'>CVP</span>",
+                {
+                    { &m_resp, COLOR_RESP, &m_respRaw },
+                    { &m_cvp,  COLOR_CVP,  &m_cvpRaw  },
+                });
+        }
     }
-    else if (!sleepPresent && ui->hyp_accel_resp_cvp_axis &&
-        (!isMissingSignal(m_resp) || !isMissingSignal(m_cvp))) {
-        plotDisplay(ui->hyp_accel_resp_cvp_axis, "RESP / CVP", {
-            { &m_resp, COLOR_RESP, &m_respRaw },
-            { &m_cvp,  COLOR_CVP,  &m_cvpRaw  },
-            });
-    }
 
+    // ----------------------------------------------------------------------
+    // 6. Overlays that paint on top of the freshly-rendered traces.
+    // ----------------------------------------------------------------------
     updateNoiseHighlights();
     if (m_pulseOverlay) m_pulseOverlay->refresh();
     if (m_gapIndicator) m_gapIndicator->refresh();
-}
 
+}
 // ============================================================================
 // Marking
 // ============================================================================

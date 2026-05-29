@@ -52,6 +52,26 @@
        </widget>
       </item>
       <item>
+       <widget class="QCheckBox" name="show_ecg">
+        <property name="text">
+         <string>Show ECG Markers</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="show_ppg">
+        <property name="text">
+         <string>Show PPG Markers</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
        <spacer name="sL">
         <property name="orientation">
          <enum>Qt::Orientation::Horizontal</enum>

@@ -15,8 +15,6 @@
 
 #include <vector>
 #include <algorithm>
-#include <iostream>
-#include <fstream>
 #include <cmath>
 
 namespace ecg_markers {

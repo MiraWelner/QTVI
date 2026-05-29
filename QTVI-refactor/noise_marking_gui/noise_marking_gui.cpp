@@ -13,6 +13,7 @@
 #include <thread>
 #include <iostream>
 #include <memory>
+#include <theme/theme.h>
 
 
 int get_dataset_choice() {
@@ -42,8 +43,11 @@ std::vector<std::filesystem::path> load_binfiles(config_entry cfg) {
 }
 
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[])
+{
     QApplication app(argc, argv);
+
+    Theme::apply(app);
 
     int dataset_choice = get_dataset_choice();
     auto cfgOpt = load_config(dataset_choice);
@@ -77,6 +81,9 @@ int main(int argc, char* argv[]) {
         auto gui = std::make_unique<noise_marking_gui>();
         gui->setConfig(cfg);
         gui->setPostProcessQueue(&postQueue);
+        QScreen* screen = QGuiApplication::primaryScreen();
+        QRect available = screen->availableGeometry();
+        gui->setMaximumHeight(available.height() - 40);
         gui->setWindowTitle(QString::fromStdString(
             "Marking: " + binFs.filename().string()));
         gui->setFileSource(QString::fromStdString(binFs.string()));

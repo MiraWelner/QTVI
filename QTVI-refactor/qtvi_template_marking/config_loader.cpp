@@ -1,30 +1,29 @@
 /**
  * @file   config_loader.cpp
- * @brief  Loads the config.csv file, parses it based on the datset type selected by the user, and fills up a config_entry struct with the relevant paths, rates, and channel labels.
- *         The channel labels (eg. "ECG_1" vs "EKG") are dataset-specific but not in the config file, so they are assigned in apply_dataset_specific_channel_labels() based on the dataset type.
- *         The output paths are either found in the config file, or prompted for manually if the config file cells are blank. The output_path is used to create the subfolders where the
- *         specific types of cfg put are found.
+ * @brief  Loads the rate / bin-length cells for the user-selected dataset
+ *         from config.csv and prompts for the noise-marking GUI's output
+ *         folder. QTVI_markings/ is created inside that folder as the
+ *         destination for this GUI's *_template_markings.bin output.
  */
 
 #include "config_loader.hpp"
 
-#include <QDir>
-#include <QDirIterator>
-#include <QFileInfo>
 #include <QFileDialog>
+#include <QString>
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <format>
-#include <vector>
 #include <optional>
-
+#include <string>
+#include <vector>
 
 static const std::string CONFIG_PATH = "config.csv";
 
 namespace {
+
     std::vector<std::string> parse_csv_row(const std::string& line) {
         std::vector<std::string> fields;
         std::string cur;
@@ -42,152 +41,67 @@ namespace {
         return fields;
     }
 
-    void apply_dataset_specific_channel_labels(config_entry& cfg) {
-        /*
-            Each dataset uses different names for the same channel. For example,
-            the EKG channel in MESA is equivalent to the NLS_NOM_ECG_ELEC_POTL_I
-            label in CHAOS and the ECG_1 label in Bittium. Each channel is a
-            feature of the config_entry cfg, and they are assigned here.
-        */
-        if (cfg.dataType == "MESA") {
-            cfg.ecg1Label = "EKG";
-            cfg.ppgLabel = "Pleth";
-        }
-        else if (cfg.dataType == "BITTIUM") {
-            cfg.ecg1Label = "ECG_1";
-            cfg.ecg2Label = "ECG_2";
-            cfg.ecg3Label = "ECG_3";
-            cfg.accelXLabel = "Accelerometer_X";
-            cfg.accelYLabel = "Accelerometer_Y";
-            cfg.accelZLabel = "Accelerometer_Z";
-        }
-        else if (cfg.dataType == "CHAOS") {
-            cfg.ecg1Label = "NLS_NOM_ECG_ELEC_pOTL_I";
-            cfg.ecg2Label = "NLS_NOM_ECG_ELEC_pOTL_II";
-            cfg.ecg3Label = "NLS_NOM_ECG_ELEC_pOTL_III";
-            cfg.ppgLabel = "NLS_NOM_PULS_OXIM_PLETH";
-            cfg.eeg1Label = "NLS_EEG_NAMES_EEG_CHAN1";
-            cfg.eeg2Label = "NLS_EEG_NAMES_EEG_CHAN2";
-            cfg.eeg3Label = "NLS_EEG_NAMES_EEG_CHAN3";
-            cfg.eeg4Label = "NLS_EEG_NAMES_EEG_CHAN4";
-            cfg.cvpLabel = "NLS_NOM_PRESS_BLD_VEN_CENT";
-            cfg.respLabel = "NLS_NOM_RESP";
-            cfg.abpLabel = "NLS_NOM_PRESS_BLD_ART_ABP";
-            cfg.artLabel = "NLS_NOM_PRESS_BLD_ART";
-            cfg.artPulmLabel = "NLS_NOM_PRESS_BLD_ART_PULM";
-        }
+    double stod_or_zero(const std::string& s) {
+        if (s.empty()) return 0.0;
+        try { return std::stod(s); }
+        catch (...) { return 0.0; }
     }
 
-    void deriveSubpaths(config_entry& cfg) {
-        /*
-            All the types of output are stored in their own subfolder of output_path, which are defined in this function
-        */
-        cfg.noise_data_path = cfg.output_path + "/noise_marking_output/";
-        cfg.annealed_data_path = cfg.output_path + "/annealed_output/";
-        cfg.r_peak_data_path = cfg.output_path + "/r_peak_finding_output/";
+    // Inside the user-chosen root, this GUI's deliverables live in a single
+    // subfolder. template_path is wherever the prior pipeline step
+    // (template generation) wrote its templates; we read from there.
+    void derive_paths(config_entry& cfg) {
         cfg.template_path = cfg.output_path + "/template_path/";
-        cfg.qtvi_marker_path = cfg.output_path + "/qtvi_marker_path/";
-        cfg.qtvi_data_path = cfg.output_path + "/qtvi_data_path/";
-
-        std::filesystem::create_directories(cfg.noise_data_path);
-        std::filesystem::create_directories(cfg.annealed_data_path);
-        std::filesystem::create_directories(cfg.r_peak_data_path);
-        std::filesystem::create_directories(cfg.template_path);
+        cfg.qtvi_marker_path = cfg.output_path + "/QTVI_markings/";
         std::filesystem::create_directories(cfg.qtvi_marker_path);
-        std::filesystem::create_directories(cfg.qtvi_data_path);
-
     }
 
-    bool manually_select_folder(config_entry& cfg) {
-        /*
-            If a folder is not in the config.csv (i.e. its field is empty),
-            prompt the user to select it. Fields already populated by
-            load_config() are left alone -- no prompt, no overwrite.
-        */
-        const std::vector<std::pair<const char*, std::string*>> fields = {
-            { "Bin Files:", &cfg.bin_file_path },
-            { "Output", &cfg.output_path },
-        };
-
-        bool outputChanged = false;
-        for (const auto& [label, fieldPtr] : fields) {
-            if (!fieldPtr->empty()) continue;
-
-            QString title = QString("%1 (%2)").arg(label, QString::fromStdString(cfg.dataType));
-            QString chosen = QFileDialog::getExistingDirectory(
-                nullptr, title, QString(),
-                QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
-            if (chosen.isEmpty()) return false;
-            *fieldPtr = chosen.toStdString();
-            if (fieldPtr == &cfg.output_path) outputChanged = true;
-        }
-
-        if (outputChanged) deriveSubpaths(cfg);
+    // Prompt the user once for the noise-marking GUI's output folder.
+    bool prompt_for_output_folder(config_entry& cfg, const std::string& dataType) {
+        QString title = QString("Noise-marking GUI output folder (%1)")
+            .arg(QString::fromStdString(dataType));
+        QString chosen = QFileDialog::getExistingDirectory(
+            nullptr, title, QString(),
+            QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+        if (chosen.isEmpty()) return false;
+        cfg.output_path = chosen.toStdString();
+        derive_paths(cfg);
         return true;
     }
-}
+
+}  // anonymous namespace
 
 std::optional<config_entry> load_config(int dataType) {
-    /*
-    * Loads the config.csv (or whatever is in CONFIG_PATH) and fills up a
-    * config_entry struct. The config.csv only has an output_folder; the
-    * sub-output paths (template_path, noise_data_path, etc.) are derived
-    * from output_path by deriveSubpaths().
-    */
     std::ifstream file(CONFIG_PATH);
     if (!file.is_open()) {
         std::cerr << "ERROR: cannot open " << CONFIG_PATH << "\n";
         return std::nullopt;
     }
 
-    std::string input_file_type = (dataType == 1) ? "MESA"
-        : (dataType == 2) ? "BITTIUM"
-        : (dataType == 3) ? "CHAOS" : "";
+    const std::string wanted_type =
+        (dataType == 1) ? "MESA" :
+        (dataType == 2) ? "BITTIUM" :
+        (dataType == 3) ? "CHAOS" : "";
 
     std::string line;
     std::getline(file, line);   // skip header
 
     while (std::getline(file, line)) {
         auto row = parse_csv_row(line);
-        // 12 columns: data_type, main_ext, sleep_ext, ecg_rate, ppg_rate,
-        // cvp_rate, abp_rate, resp_rate, upsampled_rate, bin_size_minutes,
-        // original_file_path, output_folder.
-        if (row.size() < 12) continue;
+        // We only need columns 0 (type), 8 (final rate), and 9 (bin minutes).
+        // Other columns belong to sibling programs in the pipeline and are
+        // ignored here.
+        if (row.size() < 10) continue;
 
         std::string rowType = row[0];
         std::transform(rowType.begin(), rowType.end(), rowType.begin(), ::toupper);
-        if (rowType != input_file_type) continue;
+        if (rowType != wanted_type) continue;
+
         config_entry cfg;
-
-        cfg.dataType = rowType;
-        cfg.mainExt = row[1];
-        cfg.sleepExt = row[2];
-
-        // Some CSV cells are intentionally blank (e.g. Bittium has no PPG
-        // rate). std::stod throws on empty strings, so guard.
-        auto stod_or_zero = [](const std::string& s) -> double {
-            if (s.empty()) return 0.0;
-            try { return std::stod(s); }
-            catch (...) { return 0.0; }
-            };
-        cfg.ecgRate = stod_or_zero(row[3]);
-        cfg.ppgRate = stod_or_zero(row[4]);
-        cfg.cvpRate = stod_or_zero(row[5]);
-        cfg.abpRate = stod_or_zero(row[6]);
-        cfg.respRate = stod_or_zero(row[7]);
         cfg.finalSamplingRate = stod_or_zero(row[8]);
         cfg.bin_length_minutes = stod_or_zero(row[9]);
-        // CSV column 10 is the *source* folder used by the file_to_bin
-        // utility; the GUI doesn't load from it but we read it into
-        // cfg.input_path anyway so the same struct keeps working across
-        // both programs. The GUI gets its .bin folder via the manual
-        // file dialog in manually_select_folder() (cfg.bin_file_path).
-        cfg.input_path = row[10];
-        cfg.output_path = row[11];
-        deriveSubpaths(cfg);
 
-        apply_dataset_specific_channel_labels(cfg);
-        if (!manually_select_folder(cfg)) return std::nullopt;
+        if (!prompt_for_output_folder(cfg, rowType)) return std::nullopt;
         return cfg;
     }
     return std::nullopt;
