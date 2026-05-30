@@ -28,62 +28,6 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="config_entry.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="annealing_to_bin\AnnealSegments.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="annealing_to_bin\anneal_handler.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="template_generation\template_io.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="template_generation\TemplateTypes.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="template_generation\StatsUtils.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="template_generation\CreateEcgTemplates.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="template_generation\CreatePPGTemplates.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="template_generation\EnsembleTemplate.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="template_generation\find_foot_pulseox.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="template_generation\GenerateTemplates.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="template_generation\AlignWaves.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="template_generation\build_templates.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="template_generation\CombineTemplatesGraph.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="post_process_queue.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="user_annotation_handler.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="gap_indicator.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="theme\theme.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
     <QtUic Include="noise_marking_gui.ui">
       <Filter>Form Files</Filter>
     </QtUic>
@@ -122,15 +66,69 @@
     <ClCompile Include="theme\theme.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="user_marking_handler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="signal_renderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="bin_chunk_loader.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <QtMoc Include="user_control_handler.h">
       <Filter>Header Files</Filter>
     </QtMoc>
+    <QtMoc Include="grid_overlay.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="template_generation\AlignWaves.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="annealing_to_bin\anneal_handler.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="template_generation\build_templates.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="template_generation\CombineTemplatesGraph.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="config_entry.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="template_generation\CreateEcgTemplates.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="template_generation\CreatePPGTemplates.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="template_generation\EnsembleTemplate.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="template_generation\find_foot_pulseox.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="gap_indicator.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="template_generation\GenerateTemplates.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
     <QtMoc Include="gui_handler.h">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="grid_overlay.hpp">
+    <QtMoc Include="post_process_queue.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="template_generation\template_io.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="template_generation\TemplateTypes.hpp">
+      <Filter>Header Files</Filter>
+    </QtMoc>
+    <QtMoc Include="user_annotation_handler.h">
       <Filter>Header Files</Filter>
     </QtMoc>
   </ItemGroup>
@@ -143,5 +141,21 @@
     <Image Include="noisemark_pic.ico">
       <Filter>Resource Files</Filter>
     </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="template_generation\StatsUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="annealing_to_bin\AnnealSegments.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="theme\theme.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <QtRcc Include="resources.qrc">
+      <Filter>Resource Files</Filter>
+    </QtRcc>
   </ItemGroup>
 </Project>

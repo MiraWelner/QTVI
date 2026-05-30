@@ -1,7 +1,7 @@
-// ============================================================================
-// File: bandpass.hpp
-// Butterworth filter via cascaded biquads with filtfilt
-// ============================================================================
+/**
+ * @file   bandpass.hpp
+ * @brief  Butterworth filter via cascaded biquads with filtfilt
+ */
 #pragma once
 
 #include <vector>

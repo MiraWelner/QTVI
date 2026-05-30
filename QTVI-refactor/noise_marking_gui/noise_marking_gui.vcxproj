@@ -193,33 +193,34 @@
     <None Include="noise_marking_guiplugin.json" />
   </ItemGroup>
   <ItemGroup>
-    <QtMoc Include="gui_handler.h" />
-    <ClInclude Include="gap_indicator.hpp" />
+    <QtMoc Include="gap_indicator.hpp" />
     <QtMoc Include="grid_overlay.hpp" />
-    <ClInclude Include="post_process_queue.hpp" />
-    <ClInclude Include="template_generation\AlignWaves.hpp" />
-    <ClInclude Include="template_generation\build_templates.hpp" />
-    <ClInclude Include="template_generation\CombineTemplatesGraph.hpp" />
-    <ClInclude Include="template_generation\CreateEcgTemplates.hpp" />
-    <ClInclude Include="template_generation\CreatePPGTemplates.hpp" />
-    <ClInclude Include="template_generation\EnsembleTemplate.hpp" />
-    <ClInclude Include="template_generation\find_foot_pulseox.hpp" />
-    <ClInclude Include="template_generation\GenerateTemplates.hpp" />
+    <QtMoc Include="gui_handler.h" />
+    <QtMoc Include="post_process_queue.hpp" />
+    <QtMoc Include="template_generation\AlignWaves.hpp" />
+    <QtMoc Include="template_generation\build_templates.hpp" />
+    <QtMoc Include="template_generation\CombineTemplatesGraph.hpp" />
+    <QtMoc Include="template_generation\CreateEcgTemplates.hpp" />
+    <QtMoc Include="template_generation\CreatePPGTemplates.hpp" />
+    <QtMoc Include="template_generation\EnsembleTemplate.hpp" />
+    <QtMoc Include="template_generation\find_foot_pulseox.hpp" />
+    <QtMoc Include="template_generation\GenerateTemplates.hpp" />
     <ClInclude Include="template_generation\StatsUtils.h" />
-    <ClInclude Include="template_generation\TemplateTypes.hpp" />
-    <ClInclude Include="template_generation\template_io.hpp" />
+    <QtMoc Include="template_generation\TemplateTypes.hpp" />
+    <QtMoc Include="template_generation\template_io.hpp" />
     <ClInclude Include="theme\theme.h" />
-    <ClInclude Include="user_annotation_handler.h" />
+    <QtMoc Include="user_annotation_handler.h" />
     <QtMoc Include="user_control_handler.h" />
     <ClInclude Include="annealing_to_bin\AnnealSegments.hpp" />
-    <ClInclude Include="annealing_to_bin\anneal_handler.hpp" />
-    <ClInclude Include="config_entry.hpp" />
+    <QtMoc Include="annealing_to_bin\anneal_handler.hpp" />
+    <QtMoc Include="config_entry.hpp" />
   </ItemGroup>
   <ItemGroup>
     <QtUic Include="noise_marking_gui.ui" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="annealing_to_bin\anneal_handler.cpp" />
+    <ClCompile Include="bin_chunk_loader.cpp" />
     <ClCompile Include="config_loader.cpp" />
     <ClCompile Include="gap_indicator.cpp" />
     <ClCompile Include="grid_overlay.cpp" />
@@ -235,16 +236,21 @@
     </ClCompile>
     <ClCompile Include="noise_marking_gui.cpp" />
     <ClCompile Include="post_process_queue.cpp" />
+    <ClCompile Include="signal_renderer.cpp" />
     <ClCompile Include="template_generation\template_io.cpp" />
     <ClCompile Include="theme\theme.cpp" />
     <ClCompile Include="user_annotation_handler.cpp" />
     <ClCompile Include="user_control_handler.cpp" />
+    <ClCompile Include="user_marking_handler.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="app.rc" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="noisemark_pic.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <QtRcc Include="resources.qrc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Condition="Exists('$(QtMsBuild)\qt.targets')">
