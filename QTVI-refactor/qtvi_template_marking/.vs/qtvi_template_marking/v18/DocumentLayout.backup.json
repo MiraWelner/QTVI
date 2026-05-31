@@ -7,12 +7,12 @@
       "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:TemplateViewerWindow.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:BinPlotWidget.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
       "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:BinPlotWidget.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:BinPlotWidget.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
@@ -72,22 +72,23 @@
               "RelativeDocumentMoniker": "TemplateViewerWindow.cpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.cpp",
               "RelativeToolTip": "TemplateViewerWindow.cpp",
-              "ViewState": "AgIAAMkBAAAAAAAAAAAiwNkBAAABAAAAAAAAAA==",
+              "ViewState": "AgIAAO0BAAAAAAAAAAAqwAgCAAAcAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-05-27T02:35:23.622Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 2,
               "Title": "BinPlotWidget.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.cpp",
               "RelativeDocumentMoniker": "BinPlotWidget.cpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.cpp",
               "RelativeToolTip": "BinPlotWidget.cpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAALABAAABAAAAAAAAAA==",
+              "ViewState": "AgIAAJYBAAAAAAAAAAAqwLoBAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-05-27T20:06:54.519Z"
+              "WhenOpened": "2026-05-27T20:06:54.519Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Bookmark",
@@ -151,15 +152,16 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 1,
               "Title": "BinPlotWidget.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.hpp",
               "RelativeDocumentMoniker": "BinPlotWidget.hpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.hpp",
               "RelativeToolTip": "BinPlotWidget.hpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAMcAAAACAAAAAAAAAA==",
+              "ViewState": "AgIAAKkAAAAAAAAAAAAqwLAAAAAJAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-05-29T15:54:01.8Z"
+              "WhenOpened": "2026-05-29T15:54:01.8Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",

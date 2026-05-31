@@ -9,11 +9,14 @@
 // Left-drag:           move whichever marker is closest to the click
 //
 // Drawing scale:
-//   The widget uses a FIXED pixels-per-sample scale (kPxPerSample). The widget
-//   reports a sizeHint() that grows to whatever width is required to draw both
-//   traces in full at that scale. This is what guarantees temporal alignment
-//   between the ECG and PPG -- one sample of ECG occupies the same pixel
-//   width as one sample of PPG, regardless of how long each visible trace is.
+//   The widget fills whatever width its layout cell gives it. The
+//   pixels-per-sample scale is computed at draw time (pxPerSample()) so
+//   that the widest trace exactly spans the drawable width -- i.e. every
+//   bin window is the SAME on-screen length regardless of how many
+//   samples it holds. ECG and PPG still share that single scale within a
+//   widget, so they stay temporally aligned with each other; only the
+//   scale differs from one bin to the next (which is fine -- bins don't
+//   need to share an x-axis, just a length).
 //
 // Per-sample std (gray band):
 //   When std vectors matching the trace length are provided, the widget
@@ -78,11 +81,9 @@ public:
     // ----------------------------------------------------------------------
     static constexpr double kPMarginRRFrac = 0.25;
 
-    // Fixed pixels-per-sample. Both ECG and PPG use this same value so
-    // that one second of ECG occupies the same chart width as one second
-    // of PPG. The widget's sizeHint grows to accommodate whichever trace
-    // extends further. Tune this if bins come out too wide or too narrow.
-    static constexpr double kPxPerSample = 0.4;
+    // Pixels-per-sample is no longer fixed. It's derived per-paint from
+    // the widget's current width and the widest trace (see pxPerSample()),
+    // so each bin window comes out the same on-screen length.
 
     static int visiblePpgCount(int nFull) {
         return std::max(nFull, 2);
@@ -146,12 +147,12 @@ public:
 
     int  ecgVisibleN() const { return m_ecgVisibleN; }
 
-    // Width required to draw both traces in full at kPxPerSample.
-    // Used by sizeHint and minimumSizeHint.
-    int requiredWidth() const;
-
-    QSize sizeHint() const override { return QSize(requiredWidth(), 120); }
-    QSize minimumSizeHint() const override { return QSize(requiredWidth(), 60); }
+    // The widget no longer dictates its width from the trace length.
+    // It advertises a modest preferred width and a small minimum so the
+    // grid can hand every cell an equal share of the window; the trace is
+    // then scaled to fill whatever width the cell receives.
+    QSize sizeHint() const override { return QSize(220, 120); }
+    QSize minimumSizeHint() const override { return QSize(40, 60); }
 
 signals:
     void markerMoved(int binIndex, int leadIndex, int marker, int newIdx);
@@ -171,6 +172,11 @@ private:
     double xFromSample(int s, bool isEcg) const;
     int    markerAtX(double x) const;
     int    visibleN(bool isEcg) const;
+
+    // Widest sample extent any trace needs (in samples), and the
+    // pixels-per-sample that makes that extent fill the drawable width.
+    int    totalSampleSpan() const;
+    double pxPerSample() const;
 
     double m_rPeakSample = 0.0;   // R-peak sample index within the ECG template
 

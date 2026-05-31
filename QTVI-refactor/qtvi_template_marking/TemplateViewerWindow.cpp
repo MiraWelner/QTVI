@@ -249,6 +249,13 @@ void TemplateViewerWindow::clearPlots() {
     m_allPlots.clear();
     m_binPlots.clear();
     m_pageGlobalIdx.clear();
+
+    // Drop stretch factors left over from a previous (possibly larger) page
+    // so unused rows/columns don't reserve empty space on the next page.
+    for (int c = 0; c < ui->plotGrid->columnCount(); ++c)
+        ui->plotGrid->setColumnStretch(c, 0);
+    for (int r = 0; r < ui->plotGrid->rowCount(); ++r)
+        ui->plotGrid->setRowStretch(r, 0);
 }
 
 void TemplateViewerWindow::showPage() {
@@ -272,6 +279,8 @@ void TemplateViewerWindow::showPage() {
 
     m_binPlots.resize(count);
     m_pageGlobalIdx.resize(count);
+
+    int usedRows = 0, usedCols = 0;
 
     for (int i = 0; i < count; ++i) {
         int gi = start + i;
@@ -334,11 +343,15 @@ void TemplateViewerWindow::showPage() {
                 int row = i % gridRows;
                 int col = i / gridRows;
                 ui->plotGrid->addWidget(pw, row, col);
+                usedRows = std::max(usedRows, row + 1);
+                usedCols = std::max(usedCols, col + 1);
             }
             else {
                 int rowspan = (li == (int)leads.size() - 1)
                     ? (gridRows - li) : 1;
                 ui->plotGrid->addWidget(pw, li, i, rowspan, 1);
+                usedRows = std::max(usedRows, li + rowspan);
+                usedCols = std::max(usedCols, i + 1);
             }
 
             m_allPlots.push_back(pw);
@@ -347,6 +360,13 @@ void TemplateViewerWindow::showPage() {
 
         m_binPlots[i] = std::move(group);
     }
+
+    // Equal stretch on every used row/column => equal-width, equal-height
+    // cells that together fill the whole plot area. Combined with each
+    // widget scaling its trace to its cell width, every bin window ends up
+    // the same on-screen length.
+    for (int c = 0; c < usedCols; ++c) ui->plotGrid->setColumnStretch(c, 1);
+    for (int r = 0; r < usedRows; ++r) ui->plotGrid->setRowStretch(r, 1);
 
     applyMarkerVisibility();
     updatePageControls();

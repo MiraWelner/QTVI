@@ -624,6 +624,9 @@
            </item>
            <item row="4" column="3">
             <layout class="QHBoxLayout">
+             <property name="spacing">
+              <number>4</number>
+             </property>
              <item>
               <widget class="QLabel" name="benign_color">
                <property name="minimumSize">

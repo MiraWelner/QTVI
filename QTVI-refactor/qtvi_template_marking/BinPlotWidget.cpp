@@ -1,11 +1,11 @@
 ﻿// ============================================================================
 // BinPlotWidget.cpp
 //
-// ECG and PPG are drawn at a single fixed pixels-per-sample scale
-// (BinPlotWidget::kPxPerSample). The widget reports a sizeHint() that
-// expands to fit whichever trace runs longer, so the full PPG tail
-// (including any pre-foot / post-trough widening from the templater) is
-// always visible and shares the ECG's time axis.
+// ECG and PPG are drawn at a single per-paint pixels-per-sample scale
+// (BinPlotWidget::pxPerSample()), chosen so the widest trace fills the
+// cell the layout gives this widget. Every bin window therefore comes out
+// the same on-screen length; the full PPG tail stays visible and shares
+// the ECG's time axis within the widget.
 //
 // Std band: when a per-sample std vector is available for the trace
 // (covering at least the visible samples), the widget paints a
@@ -234,35 +234,44 @@ int BinPlotWidget::visibleN(bool isEcg) const {
     return isEcg ? m_ecgVisibleN : m_ppgVisibleN;
 }
 
-int BinPlotWidget::requiredWidth() const {
-    // Widget must be wide enough for whichever trace ends further right, plus kMR.
-    const double ecgRight = (m_ecgVisibleN > 1)
-        ? kML + (m_ecgVisibleN - 1) * kPxPerSample
-        : kML;
-    const double rPeakPx = kML + m_rPeakSample * kPxPerSample;
-    const double ppgRight = (m_ppgVisibleN > 1)
-        ? rPeakPx + (m_ppgVisibleN - 1) * kPxPerSample
-        : kML;
-    return static_cast<int>(std::ceil(std::max(ecgRight, ppgRight))) + kMR;
+int BinPlotWidget::totalSampleSpan() const {
+    // ECG runs over samples [0, m_ecgVisibleN). The PPG is drawn shifted
+    // right by the R-peak offset, so it runs over [0, rPeak + ppgVisibleN).
+    // The widest of the two is what has to fit in the drawable width.
+    const int pad = static_cast<int>(std::round(m_rPeakSample));
+    const int ppgSpan = (m_ppgVisibleN > 0) ? pad + m_ppgVisibleN : 0;
+    return std::max(std::max(m_ecgVisibleN, ppgSpan), 2);
+}
+
+double BinPlotWidget::pxPerSample() const {
+    // Scale so the widest trace exactly fills the drawable width. ECG and
+    // PPG share this one value, so they stay aligned within this widget;
+    // different bins use different values, which is what makes every bin
+    // window come out the same on-screen length.
+    const int span = totalSampleSpan();
+    const double drawW = std::max(1, width() - kML - kMR);
+    return (span > 1) ? (drawW / static_cast<double>(span - 1)) : 1.0;
 }
 
 int BinPlotWidget::sampleFromX(double x, bool isEcg) const {
+    const double pps = pxPerSample();
     if (isEcg) {
-        return static_cast<int>(std::round((x - kML) / kPxPerSample));
+        return static_cast<int>(std::round((x - kML) / pps));
     }
     else {
-        const double rPeakPx = kML + m_rPeakSample * kPxPerSample;
-        return static_cast<int>(std::round((x - rPeakPx) / kPxPerSample));
+        const double rPeakPx = kML + m_rPeakSample * pps;
+        return static_cast<int>(std::round((x - rPeakPx) / pps));
     }
 }
 
 double BinPlotWidget::xFromSample(int s, bool isEcg) const {
+    const double pps = pxPerSample();
     if (isEcg) {
-        return kML + s * kPxPerSample;
+        return kML + s * pps;
     }
     else {
-        const double rPeakPx = kML + m_rPeakSample * kPxPerSample;
-        return rPeakPx + s * kPxPerSample;
+        const double rPeakPx = kML + m_rPeakSample * pps;
+        return rPeakPx + s * pps;
     }
 }
 
@@ -291,6 +300,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
     const int h = height();
     const int ph = h - kMT - kMB;
+    const double pps = pxPerSample();   // one scale for both traces this paint
 
     p.fillRect(rect(), Qt::white);
 
@@ -307,9 +317,9 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         computeVisibleRange(m_ecg, m_ecgStd, m_ecgVisibleN, lo, hi);
 
         drawStdBand(p, m_ecg, m_ecgStd, kML, kMT, ph,
-            kPxPerSample, m_ecgVisibleN, lo, hi);
+            pps, m_ecgVisibleN, lo, hi);
         drawTraceFixedScale(p, m_ecg, kML, kMT, ph,
-            kPxPerSample, QPen(kColorEcgTrace, 1.5),
+            pps, QPen(kColorEcgTrace, 1.5),
             m_ecgVisibleN, lo, hi);
     }
 
@@ -342,9 +352,9 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         computeVisibleRange(ppgPadded, stdPadded, visN, lo, hi);
 
         drawStdBand(p, ppgPadded, stdPadded, kML, kMT, ph,
-            kPxPerSample, visN, lo, hi);
+            pps, visN, lo, hi);
         drawTraceFixedScale(p, ppgPadded, kML, kMT, ph,
-            kPxPerSample, QPen(kColorPpgTrace, 1.5),
+            pps, QPen(kColorPpgTrace, 1.5),
             visN, lo, hi);
     }
 

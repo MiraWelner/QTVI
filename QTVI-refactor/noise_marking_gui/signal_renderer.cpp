@@ -392,23 +392,24 @@ namespace {
             int endIdx = std::clamp(static_cast<int>((currentStartTime + windowDuration) * ecgSR),
                 0, static_cast<int>(d.data->size()));
 
-            double winMin = 1e9, winMax = -1e9;
-            for (int i = startIdx; i < endIdx; ++i) {
-                double v = (*d.data)[i];
-                if (v < winMin) winMin = v;
-                if (v > winMax) winMax = v;
+			//for scaling, use median as the center, so the scaling is robust to noise
+            std::vector<double> winVals;
+            winVals.reserve(endIdx - startIdx);
+            for (int i = startIdx; i < endIdx; ++i)
+                winVals.push_back((*d.data)[i]);
+            for (const QPointF& p : *d.rawData) {
+                if (p.x() < currentStartTime) continue;
+                if (p.x() > currentStartTime + windowDuration) break;
+                winVals.push_back(p.y());
+                if (p.y() < gMin) gMin = p.y();
+                if (p.y() > gMax) gMax = p.y();
             }
-            if (hasRaw) {
-                for (const QPointF& p : *d.rawData) {
-                    if (p.x() < currentStartTime) continue;
-                    if (p.x() > currentStartTime + windowDuration) break;
-                    if (p.y() < winMin) winMin = p.y();
-                    if (p.y() > winMax) winMax = p.y();
-                    if (p.y() < gMin) gMin = p.y();
-                    if (p.y() > gMax) gMax = p.y();
-                }
+            double center = 0.0;
+            if (!winVals.empty()) {
+                const auto mid = winVals.begin() + winVals.size() / 2;
+                std::nth_element(winVals.begin(), mid, winVals.end());
+                center = *mid;
             }
-            const double center = (winMin <= winMax) ? 0.5 * (winMin + winMax) : 0.0;
 
             QList<QPointF> pts;
             if (plotSeries) pts.reserve(endIdx - startIdx);
@@ -511,6 +512,9 @@ void noise_marking_gui::handle_data_plot() {
     wipeChartContent(ui->ecg_axis_2->chart(), keepFor(ui->ecg_axis_2));
     wipeChartContent(ui->ecg_axis_3->chart(), keepFor(ui->ecg_axis_3));
     wipeChartContent(ui->ppg_axis->chart(), keepFor(ui->ppg_axis));
+    if (ui->accel_or_abp_axis && !isMissingSignal(m_abp))
+        wipeChartContent(ui->accel_or_abp_axis->chart(),
+            keepFor(ui->accel_or_abp_axis));
 
     const bool sleepPresent = sleepDataPresent(m_sleepStages);
     if (!sleepPresent && ui->hyp_accel_resp_cvp_axis)
