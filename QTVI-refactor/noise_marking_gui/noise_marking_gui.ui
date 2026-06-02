@@ -13,26 +13,748 @@
   <property name="windowTitle">
    <string>PPG/ECG Noise Marker</string>
   </property>
-  <layout class="QVBoxLayout" name="verticalLayout" stretch="1,4">
+  <layout class="QVBoxLayout" name="verticalLayout" stretch="0,1">
    <property name="spacing">
     <number>0</number>
    </property>
    <property name="leftMargin">
-    <number>3</number>
+    <number>2</number>
    </property>
    <property name="topMargin">
-    <number>3</number>
+    <number>2</number>
    </property>
    <property name="rightMargin">
-    <number>3</number>
+    <number>2</number>
    </property>
    <property name="bottomMargin">
-    <number>3</number>
+    <number>2</number>
    </property>
    <item>
-    <layout class="QHBoxLayout" name="buttons_and_ampograms" stretch="0,1">
+    <layout class="QHBoxLayout" name="top" stretch="0,1">
+     <property name="spacing">
+      <number>0</number>
+     </property>
      <item>
       <layout class="QGridLayout" name="buttons">
+       <property name="spacing">
+        <number>0</number>
+       </property>
+       <item row="0" column="0">
+        <layout class="QHBoxLayout" name="bottom_grid">
+         <item>
+          <layout class="QGridLayout" name="marking_type_legend">
+           <property name="spacing">
+            <number>2</number>
+           </property>
+           <item row="2" column="0">
+            <widget class="QLabel" name="label_3">
+             <property name="font">
+              <font>
+               <bold>false</bold>
+              </font>
+             </property>
+             <property name="text">
+              <string>Mark ECG Channel Stop</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="2">
+            <widget class="QPushButton" name="undo_button">
+             <property name="maximumSize">
+              <size>
+               <width>65</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Undo</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="1">
+            <widget class="QPushButton" name="skip_button">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>65</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Skip</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="3">
+            <layout class="QHBoxLayout">
+             <item>
+              <widget class="QLabel" name="delay_color">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="font">
+                <font>
+                 <fontweight>DemiBold</fontweight>
+                </font>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: rgb(128,0,128); border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="delay_desc">
+               <property name="text">
+                <string> 2) Cond. Delay</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="3" column="4">
+            <layout class="QHBoxLayout">
+             <item>
+              <layout class="QHBoxLayout">
+               <item>
+                <widget class="QLabel" name="pac_color">
+                 <property name="minimumSize">
+                  <size>
+                   <width>15</width>
+                   <height>10</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>15</width>
+                   <height>10</height>
+                  </size>
+                 </property>
+                 <property name="styleSheet">
+                  <string>background-color: rgb(255,128, 0); border-radius:3px;</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="pac_desc">
+                 <property name="text">
+                  <string> 7) PAC</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </item>
+           <item row="2" column="4">
+            <layout class="QHBoxLayout" name="horizontalLayout_6">
+             <item>
+              <widget class="QLabel" name="vt_color">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: green; border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="vt_desc">
+               <property name="text">
+                <string> 5) VT</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="3" column="3">
+            <layout class="QHBoxLayout">
+             <item>
+              <widget class="QLabel" name="pvc_color">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: rgb(128, 255, 0); border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="pvc_desc">
+               <property name="text">
+                <string> 6) PVC</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="1" column="2">
+            <layout class="QHBoxLayout">
+             <item>
+              <widget class="QLabel" name="n2_c">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: cyan; border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="n2_l">
+               <property name="text">
+                <string> NREM2</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="2" column="2">
+            <layout class="QHBoxLayout">
+             <item>
+              <widget class="QLabel" name="wake_c">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: black; border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="wake_l">
+               <property name="text">
+                <string> Wake</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="1" column="4">
+            <layout class="QHBoxLayout" stretch="0,0">
+             <item>
+              <widget class="QLabel" name="af_color">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: red; border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="af_desc">
+               <property name="text">
+                <string> 3) AF</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="2" column="1">
+            <layout class="QHBoxLayout">
+             <item>
+              <widget class="QLabel" name="n3_c">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: red; border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="n3_l">
+               <property name="text">
+                <string> NREM3</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="4" column="3">
+            <layout class="QHBoxLayout">
+             <property name="spacing">
+              <number>4</number>
+             </property>
+             <item>
+              <widget class="QLabel" name="benign_color">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: rgb(255, 128, 255); border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="benign_desc">
+               <property name="text">
+                <string> 8) Benign Arr.</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="0" column="4">
+            <layout class="QHBoxLayout">
+             <item>
+              <widget class="QLabel" name="noise_color">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">background-color: rgb(255,255,0)</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="noise_desc">
+               <property name="text">
+                <string> 1) Noise/Art.</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="3" column="0">
+            <layout class="QHBoxLayout" name="horizontalLayout_4">
+             <item>
+              <widget class="QPushButton" name="end_ecg_all">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>0</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>75</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>All ECG</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="stop_ecg1_mark">
+               <property name="minimumSize">
+                <size>
+                 <width>26</width>
+                 <height>0</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>26</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>1</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="stop_ecg2_mark">
+               <property name="minimumSize">
+                <size>
+                 <width>26</width>
+                 <height>0</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>26</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>2</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="stop_ecg3_mark">
+               <property name="minimumSize">
+                <size>
+                 <width>26</width>
+                 <height>0</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>26</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>3</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="1" column="1">
+            <layout class="QHBoxLayout">
+             <item>
+              <widget class="QLabel" name="n1_c">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: blue; border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="n1_l">
+               <property name="text">
+                <string> NREM1</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="0" column="0">
+            <widget class="QLabel" name="label_2">
+             <property name="font">
+              <font>
+               <bold>false</bold>
+              </font>
+             </property>
+             <property name="text">
+              <string>Mark ECG Channel Start</string>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="2">
+            <layout class="QHBoxLayout">
+             <item>
+              <widget class="QLabel" name="rem_c">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: green; border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="rem_l">
+               <property name="text">
+                <string> REM</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="0" column="1">
+            <widget class="QLabel" name="sleep_states_label">
+             <property name="font">
+              <font>
+               <fontweight>DemiBold</fontweight>
+              </font>
+             </property>
+             <property name="text">
+              <string>Sleep States:</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <layout class="QHBoxLayout" name="horizontalLayout_2">
+             <item>
+              <widget class="QPushButton" name="start_ecg_all">
+               <property name="maximumSize">
+                <size>
+                 <width>75</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>All ECG</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="start_ecg1_mark">
+               <property name="minimumSize">
+                <size>
+                 <width>26</width>
+                 <height>0</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>26</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>1</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="start_ecg2_mark">
+               <property name="minimumSize">
+                <size>
+                 <width>26</width>
+                 <height>0</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>26</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>2</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="start_ecg3_mark">
+               <property name="minimumSize">
+                <size>
+                 <width>26</width>
+                 <height>0</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>26</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+               <property name="text">
+                <string>3</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="0" column="3">
+            <widget class="QLabel" name="marking_type_label_2">
+             <property name="font">
+              <font>
+               <fontweight>DemiBold</fontweight>
+              </font>
+             </property>
+             <property name="text">
+              <string>Annotations:</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="2">
+            <widget class="QPushButton" name="finalize_button">
+             <property name="maximumSize">
+              <size>
+               <width>65</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Save</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="1">
+            <widget class="QPushButton" name="clearall_button">
+             <property name="maximumSize">
+              <size>
+               <width>65</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="text">
+              <string>Clear</string>
+             </property>
+            </widget>
+           </item>
+           <item row="4" column="4">
+            <layout class="QHBoxLayout">
+             <item>
+              <widget class="QLabel" name="signif_color">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: rgb(0, 255, 255); border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="signif_desc">
+               <property name="text">
+                <string> 9) Sig. Arr.</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="2" column="3">
+            <layout class="QHBoxLayout" name="horizontalLayout_3">
+             <item>
+              <widget class="QLabel" name="svt_color">
+               <property name="minimumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="maximumSize">
+                <size>
+                 <width>15</width>
+                 <height>10</height>
+                </size>
+               </property>
+               <property name="styleSheet">
+                <string>background-color: blue; border-radius:3px;</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="svt_desc">
+               <property name="text">
+                <string> 4) SVT</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item row="4" column="0">
+            <widget class="QCheckBox" name="checkBox">
+             <property name="text">
+              <string>Filter Baseline Drift</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </item>
        <item row="1" column="0">
         <layout class="QGridLayout" name="top_grid">
          <item row="3" column="5">
@@ -66,125 +788,6 @@
           <widget class="QPushButton" name="process_button">
            <property name="text">
             <string>Process Output</string>
-           </property>
-          </widget>
-         </item>
-         <item row="3" column="3">
-          <layout class="QHBoxLayout" name="horizontalLayout_5">
-           <item>
-            <widget class="QPushButton" name="prev8hours">
-             <property name="maximumSize">
-              <size>
-               <width>16777215</width>
-               <height>16777215</height>
-              </size>
-             </property>
-             <property name="text">
-              <string>Prev 8h</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-         <item row="1" column="5">
-          <widget class="QComboBox" name="marking_type">
-           <property name="sizePolicy">
-            <sizepolicy hsizetype="Preferred" vsizetype="Ignored">
-             <horstretch>0</horstretch>
-             <verstretch>0</verstretch>
-            </sizepolicy>
-           </property>
-           <property name="maximumSize">
-            <size>
-             <width>150</width>
-             <height>16777215</height>
-            </size>
-           </property>
-           <item>
-            <property name="text">
-             <string>1) Noise/Art.</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>2) Cond. Delay</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>3) AF</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>4) SVT</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>5) VT</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>6) PVC</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>7) PAC</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>8) Benign Arr.</string>
-            </property>
-           </item>
-           <item>
-            <property name="text">
-             <string>9) Sig. Arr.</string>
-            </property>
-           </item>
-          </widget>
-         </item>
-         <item row="2" column="5">
-          <widget class="QLabel" name="seconds_to_scroll_label">
-           <property name="font">
-            <font>
-             <bold>false</bold>
-            </font>
-           </property>
-           <property name="text">
-            <string>Scroll Distance</string>
-           </property>
-          </widget>
-         </item>
-         <item row="2" column="3">
-          <layout class="QHBoxLayout" name="horizontalLayout_7">
-           <item>
-            <widget class="QPushButton" name="next8hours">
-             <property name="maximumSize">
-              <size>
-               <width>16777215</width>
-               <height>16777215</height>
-              </size>
-             </property>
-             <property name="text">
-              <string>Next 8h</string>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </item>
-         <item row="0" column="5">
-          <widget class="QLabel" name="marking_type_label">
-           <property name="font">
-            <font>
-             <bold>false</bold>
-            </font>
-           </property>
-           <property name="text">
-            <string>Mark Type</string>
            </property>
           </widget>
          </item>
@@ -349,725 +952,124 @@
            </property>
           </widget>
          </item>
-        </layout>
-       </item>
-       <item row="0" column="0">
-        <layout class="QHBoxLayout" name="bottom_grid">
-         <item>
-          <layout class="QGridLayout" name="marking_type_legend">
-           <property name="spacing">
-            <number>2</number>
+         <item row="2" column="5">
+          <widget class="QLabel" name="seconds_to_scroll_label">
+           <property name="font">
+            <font>
+             <bold>false</bold>
+            </font>
            </property>
-           <item row="1" column="4">
-            <layout class="QHBoxLayout" stretch="0,0">
-             <item>
-              <widget class="QLabel" name="af_color">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: red; border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="af_desc">
-               <property name="text">
-                <string> 3) AF</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
+           <property name="text">
+            <string>Scroll Distance</string>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="3">
+          <widget class="QPushButton" name="next8hours">
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>Next 8h</string>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="3">
+          <widget class="QPushButton" name="prev8hours">
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>Prev 8h</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="5">
+          <widget class="QComboBox" name="marking_type">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Preferred" vsizetype="Ignored">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>150</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <item>
+            <property name="text">
+             <string>1) Noise/Art.</string>
+            </property>
            </item>
-           <item row="2" column="4">
-            <layout class="QHBoxLayout" name="horizontalLayout_6">
-             <item>
-              <widget class="QLabel" name="vt_color">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: green; border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="vt_desc">
-               <property name="text">
-                <string> 5) VT</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
+           <item>
+            <property name="text">
+             <string>2) Cond. Delay</string>
+            </property>
            </item>
-           <item row="2" column="3">
-            <layout class="QHBoxLayout" name="horizontalLayout_3">
-             <item>
-              <widget class="QLabel" name="svt_color">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: blue; border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="svt_desc">
-               <property name="text">
-                <string> 4) SVT</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
+           <item>
+            <property name="text">
+             <string>3) AF</string>
+            </property>
            </item>
-           <item row="4" column="2">
-            <widget class="QPushButton" name="undo_button">
-             <property name="maximumSize">
-              <size>
-               <width>65</width>
-               <height>16777215</height>
-              </size>
-             </property>
-             <property name="text">
-              <string>Undo</string>
-             </property>
-            </widget>
+           <item>
+            <property name="text">
+             <string>4) SVT</string>
+            </property>
            </item>
-           <item row="0" column="3">
-            <widget class="QLabel" name="marking_type_label_2">
-             <property name="font">
-              <font>
-               <fontweight>DemiBold</fontweight>
-              </font>
-             </property>
-             <property name="text">
-              <string>Annotations:</string>
-             </property>
-            </widget>
+           <item>
+            <property name="text">
+             <string>5) VT</string>
+            </property>
            </item>
-           <item row="3" column="4">
-            <layout class="QHBoxLayout">
-             <item>
-              <layout class="QHBoxLayout">
-               <item>
-                <widget class="QLabel" name="pac_color">
-                 <property name="minimumSize">
-                  <size>
-                   <width>15</width>
-                   <height>10</height>
-                  </size>
-                 </property>
-                 <property name="maximumSize">
-                  <size>
-                   <width>15</width>
-                   <height>10</height>
-                  </size>
-                 </property>
-                 <property name="styleSheet">
-                  <string>background-color: rgb(255,128, 0); border-radius:3px;</string>
-                 </property>
-                </widget>
-               </item>
-               <item>
-                <widget class="QLabel" name="pac_desc">
-                 <property name="text">
-                  <string> 7) PAC</string>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </item>
-            </layout>
+           <item>
+            <property name="text">
+             <string>6) PVC</string>
+            </property>
            </item>
-           <item row="3" column="3">
-            <layout class="QHBoxLayout">
-             <item>
-              <widget class="QLabel" name="pvc_color">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: rgb(128, 255, 0); border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="pvc_desc">
-               <property name="text">
-                <string> 6) PVC</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
+           <item>
+            <property name="text">
+             <string>7) PAC</string>
+            </property>
            </item>
-           <item row="0" column="1">
-            <widget class="QLabel" name="sleep_states_label">
-             <property name="font">
-              <font>
-               <fontweight>DemiBold</fontweight>
-              </font>
-             </property>
-             <property name="text">
-              <string>Sleep States:</string>
-             </property>
-            </widget>
+           <item>
+            <property name="text">
+             <string>8) Benign Arr.</string>
+            </property>
            </item>
-           <item row="4" column="1">
-            <widget class="QPushButton" name="clearall_button">
-             <property name="maximumSize">
-              <size>
-               <width>65</width>
-               <height>16777215</height>
-              </size>
-             </property>
-             <property name="text">
-              <string>Clear</string>
-             </property>
-            </widget>
+           <item>
+            <property name="text">
+             <string>9) Sig. Arr.</string>
+            </property>
            </item>
-           <item row="0" column="4">
-            <layout class="QHBoxLayout">
-             <item>
-              <widget class="QLabel" name="noise_color">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string notr="true">background-color: rgb(255,255,0)</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="noise_desc">
-               <property name="text">
-                <string> 1) Noise/Art.</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-           <item row="1" column="2">
-            <layout class="QHBoxLayout">
-             <item>
-              <widget class="QLabel" name="n2_c">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: cyan; border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="n2_l">
-               <property name="text">
-                <string> NREM2</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-           <item row="4" column="3">
-            <layout class="QHBoxLayout">
-             <property name="spacing">
-              <number>4</number>
-             </property>
-             <item>
-              <widget class="QLabel" name="benign_color">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: rgb(255, 128, 255); border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="benign_desc">
-               <property name="text">
-                <string> 8) Benign Arr.</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-           <item row="2" column="1">
-            <layout class="QHBoxLayout">
-             <item>
-              <widget class="QLabel" name="n3_c">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: red; border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="n3_l">
-               <property name="text">
-                <string> NREM3</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-           <item row="2" column="2">
-            <layout class="QHBoxLayout">
-             <item>
-              <widget class="QLabel" name="wake_c">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: black; border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="wake_l">
-               <property name="text">
-                <string> Wake</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-           <item row="1" column="1">
-            <layout class="QHBoxLayout">
-             <item>
-              <widget class="QLabel" name="n1_c">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: blue; border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="n1_l">
-               <property name="text">
-                <string> NREM1</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-           <item row="1" column="3">
-            <layout class="QHBoxLayout">
-             <item>
-              <widget class="QLabel" name="delay_color">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="font">
-                <font>
-                 <fontweight>DemiBold</fontweight>
-                </font>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: rgb(128,0,128); border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="delay_desc">
-               <property name="text">
-                <string> 2) Cond. Delay</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-           <item row="3" column="2">
-            <widget class="QPushButton" name="finalize_button">
-             <property name="maximumSize">
-              <size>
-               <width>65</width>
-               <height>16777215</height>
-              </size>
-             </property>
-             <property name="text">
-              <string>Save</string>
-             </property>
-            </widget>
-           </item>
-           <item row="0" column="2">
-            <layout class="QHBoxLayout">
-             <item>
-              <widget class="QLabel" name="rem_c">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: green; border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="rem_l">
-               <property name="text">
-                <string> REM</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-           <item row="3" column="1">
-            <widget class="QPushButton" name="skip_button">
-             <property name="sizePolicy">
-              <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
-               <horstretch>0</horstretch>
-               <verstretch>0</verstretch>
-              </sizepolicy>
-             </property>
-             <property name="minimumSize">
-              <size>
-               <width>0</width>
-               <height>0</height>
-              </size>
-             </property>
-             <property name="maximumSize">
-              <size>
-               <width>65</width>
-               <height>16777215</height>
-              </size>
-             </property>
-             <property name="text">
-              <string>Skip</string>
-             </property>
-            </widget>
-           </item>
-           <item row="4" column="4">
-            <layout class="QHBoxLayout">
-             <item>
-              <widget class="QLabel" name="signif_color">
-               <property name="minimumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>15</width>
-                 <height>10</height>
-                </size>
-               </property>
-               <property name="styleSheet">
-                <string>background-color: rgb(0, 255, 255); border-radius:3px;</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QLabel" name="signif_desc">
-               <property name="text">
-                <string> 9) Sig. Arr.</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-           <item row="0" column="0">
-            <widget class="QLabel" name="label_2">
-             <property name="font">
-              <font>
-               <bold>false</bold>
-              </font>
-             </property>
-             <property name="text">
-              <string>Mark ECG Channel Start</string>
-             </property>
-            </widget>
-           </item>
-           <item row="1" column="0">
-            <layout class="QHBoxLayout" name="horizontalLayout_2">
-             <item>
-              <widget class="QPushButton" name="start_ecg_all">
-               <property name="maximumSize">
-                <size>
-                 <width>75</width>
-                 <height>16777215</height>
-                </size>
-               </property>
-               <property name="text">
-                <string>All ECG</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="start_ecg1_mark">
-               <property name="minimumSize">
-                <size>
-                 <width>26</width>
-                 <height>0</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>26</width>
-                 <height>16777215</height>
-                </size>
-               </property>
-               <property name="text">
-                <string>1</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="start_ecg2_mark">
-               <property name="minimumSize">
-                <size>
-                 <width>26</width>
-                 <height>0</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>26</width>
-                 <height>16777215</height>
-                </size>
-               </property>
-               <property name="text">
-                <string>2</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="start_ecg3_mark">
-               <property name="minimumSize">
-                <size>
-                 <width>26</width>
-                 <height>0</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>26</width>
-                 <height>16777215</height>
-                </size>
-               </property>
-               <property name="text">
-                <string>3</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-           <item row="2" column="0">
-            <widget class="QLabel" name="label_3">
-             <property name="font">
-              <font>
-               <bold>false</bold>
-              </font>
-             </property>
-             <property name="text">
-              <string>Mark ECG Channel Stop</string>
-             </property>
-            </widget>
-           </item>
-           <item row="3" column="0">
-            <layout class="QHBoxLayout" name="horizontalLayout_4">
-             <item>
-              <widget class="QPushButton" name="end_ecg_all">
-               <property name="minimumSize">
-                <size>
-                 <width>0</width>
-                 <height>0</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>75</width>
-                 <height>16777215</height>
-                </size>
-               </property>
-               <property name="text">
-                <string>All ECG</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="stop_ecg1_mark">
-               <property name="minimumSize">
-                <size>
-                 <width>26</width>
-                 <height>0</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>26</width>
-                 <height>16777215</height>
-                </size>
-               </property>
-               <property name="text">
-                <string>1</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="stop_ecg2_mark">
-               <property name="minimumSize">
-                <size>
-                 <width>26</width>
-                 <height>0</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>26</width>
-                 <height>16777215</height>
-                </size>
-               </property>
-               <property name="text">
-                <string>2</string>
-               </property>
-              </widget>
-             </item>
-             <item>
-              <widget class="QPushButton" name="stop_ecg3_mark">
-               <property name="minimumSize">
-                <size>
-                 <width>26</width>
-                 <height>0</height>
-                </size>
-               </property>
-               <property name="maximumSize">
-                <size>
-                 <width>26</width>
-                 <height>16777215</height>
-                </size>
-               </property>
-               <property name="text">
-                <string>3</string>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </item>
-          </layout>
+          </widget>
+         </item>
+         <item row="0" column="5">
+          <widget class="QLabel" name="marking_type_label">
+           <property name="font">
+            <font>
+             <bold>false</bold>
+            </font>
+           </property>
+           <property name="text">
+            <string>Mark Type</string>
+           </property>
+          </widget>
          </item>
         </layout>
        </item>
       </layout>
      </item>
      <item>
-      <layout class="QVBoxLayout" name="ampogram_and_sleepstates" stretch="1,1,1">
+      <layout class="QVBoxLayout" name="top_plots">
        <property name="spacing">
-        <number>0</number>
-       </property>
-       <property name="bottomMargin">
         <number>0</number>
        </property>
        <item>
@@ -1109,23 +1111,33 @@
         </widget>
        </item>
        <item>
-        <widget class="QChartView" name="hyp_accel_resp_cvp_axis" native="true">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-           <horstretch>0</horstretch>
-           <verstretch>1</verstretch>
-          </sizepolicy>
+        <layout class="QHBoxLayout" name="horizontalLayout_5" stretch="1,1">
+         <property name="spacing">
+          <number>0</number>
          </property>
-         <property name="minimumSize">
-          <size>
-           <width>0</width>
-           <height>80</height>
-          </size>
-         </property>
-         <property name="styleSheet">
-          <string notr="true"/>
-         </property>
-        </widget>
+         <item>
+          <widget class="QChartView" name="cvp_axis" native="true"/>
+         </item>
+         <item>
+          <widget class="QChartView" name="hyp_accel_resp_axis" native="true">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+             <horstretch>0</horstretch>
+             <verstretch>1</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>80</height>
+            </size>
+           </property>
+           <property name="styleSheet">
+            <string notr="true"/>
+           </property>
+          </widget>
+         </item>
+        </layout>
        </item>
       </layout>
      </item>
@@ -1150,8 +1162,8 @@
        <widget class="QCheckBox" name="ecg_1_check">
         <property name="geometry">
          <rect>
-          <x>10</x>
-          <y>0</y>
+          <x>1280</x>
+          <y>10</y>
           <width>80</width>
           <height>18</height>
          </rect>
@@ -1172,8 +1184,8 @@
        <widget class="QDoubleSpinBox" name="ecg_1_gain">
         <property name="geometry">
          <rect>
-          <x>100</x>
-          <y>0</y>
+          <x>1370</x>
+          <y>10</y>
           <width>66</width>
           <height>24</height>
          </rect>
@@ -1204,8 +1216,8 @@
        <widget class="QDoubleSpinBox" name="ecg_2_gain">
         <property name="geometry">
          <rect>
-          <x>100</x>
-          <y>0</y>
+          <x>1370</x>
+          <y>10</y>
           <width>66</width>
           <height>24</height>
          </rect>
@@ -1220,8 +1232,8 @@
        <widget class="QCheckBox" name="ecg_2_check">
         <property name="geometry">
          <rect>
-          <x>10</x>
-          <y>0</y>
+          <x>1280</x>
+          <y>10</y>
           <width>80</width>
           <height>18</height>
          </rect>
@@ -1255,8 +1267,8 @@
        <widget class="QCheckBox" name="ecg_3_check">
         <property name="geometry">
          <rect>
-          <x>10</x>
-          <y>4</y>
+          <x>1280</x>
+          <y>10</y>
           <width>80</width>
           <height>18</height>
          </rect>
@@ -1277,8 +1289,8 @@
        <widget class="QDoubleSpinBox" name="ecg_3_gain">
         <property name="geometry">
          <rect>
-          <x>100</x>
-          <y>3</y>
+          <x>1370</x>
+          <y>9</y>
           <width>66</width>
           <height>24</height>
          </rect>
@@ -1306,8 +1318,8 @@
        <widget class="QDoubleSpinBox" name="ppg_gain">
         <property name="geometry">
          <rect>
-          <x>100</x>
-          <y>3</y>
+          <x>1370</x>
+          <y>9</y>
           <width>66</width>
           <height>24</height>
          </rect>
@@ -1322,8 +1334,8 @@
        <widget class="QCheckBox" name="ppg_check">
         <property name="geometry">
          <rect>
-          <x>10</x>
-          <y>4</y>
+          <x>1280</x>
+          <y>10</y>
           <width>80</width>
           <height>18</height>
          </rect>
@@ -1357,8 +1369,8 @@
        <widget class="QDoubleSpinBox" name="abp_gain">
         <property name="geometry">
          <rect>
-          <x>100</x>
-          <y>0</y>
+          <x>1370</x>
+          <y>10</y>
           <width>66</width>
           <height>24</height>
          </rect>
@@ -1367,8 +1379,8 @@
        <widget class="QCheckBox" name="abp_check">
         <property name="geometry">
          <rect>
-          <x>10</x>
-          <y>0</y>
+          <x>1280</x>
+          <y>10</y>
           <width>80</width>
           <height>18</height>
          </rect>

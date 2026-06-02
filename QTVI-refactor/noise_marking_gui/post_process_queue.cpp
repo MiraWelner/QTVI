@@ -31,7 +31,7 @@ bool PostProcessQueue::isLocked(const std::filesystem::path& binPath) const {
     return m_locked.count(binPath.string()) > 0;
 }
 
-size_t PostProcessQueue::pendingCount() const {
+int PostProcessQueue::pendingCount() const {
     std::lock_guard<std::mutex> lk(m_mu);
     return m_locked.size();
 }

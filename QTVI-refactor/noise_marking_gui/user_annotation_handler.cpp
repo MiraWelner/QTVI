@@ -11,9 +11,9 @@
 
 annotation_handler::annotation_handler(double fs) : m_sampleRate(fs) {}
 
-void annotation_handler::reserve(size_t n) { m_segments.reserve(n); }
+void annotation_handler::reserve(int n) { m_segments.reserve(n); }
 
-void annotation_handler::addSegment(size_t start, size_t end,
+void annotation_handler::addSegment(int start, int end,
     const std::string& label,
     const std::string& marking_type) {
     AnnotationSegment seg(std::min(start, end), std::max(start, end), label);

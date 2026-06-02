@@ -99,8 +99,8 @@ int main(int argc, char* argv[])
                 if (markings) {
                     for (int i = 0; i < markings->noiseExc.size(); ++i) {
                         nm.addSegment(
-                            (size_t)(markings->noiseExc[i].first * cfg.finalSamplingRate),
-                            (size_t)(markings->noiseExc[i].second * cfg.finalSamplingRate),
+                            (int)(markings->noiseExc[i].first * cfg.finalSamplingRate),
+                            (int)(markings->noiseExc[i].second * cfg.finalSamplingRate),
                             markings->data_type[i].toStdString(),
                             markings->marking_type[i].toStdString());
                     }

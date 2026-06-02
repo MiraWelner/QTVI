@@ -3,11 +3,6 @@
  * @brief  Construction, channel routing, button state management, and
  *         miscellaneous slot handlers for the noise-marking GUI.
  *
- *         The implementation is split across four translation units:
- *           gui_handler.cpp          — this file
- *           bin_chunk_loader.cpp     — file loading / chunk I/O
- *           signal_renderer.cpp      — all chart rendering
- *           user_marking_handler.cpp — marking state machine + event filter
  */
 
 #include "annealing_to_bin/anneal_handler.hpp"
@@ -274,7 +269,9 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     const QList<QChartView*> allCharts = {
         ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
         ui->ppg_axis, ui->accel_or_abp_axis,
-        ui->ecg_ampogram_axis, ui->ppg_ampogram_axis, ui->hyp_accel_resp_cvp_axis
+        ui->ecg_ampogram_axis, ui->ppg_ampogram_axis,
+        ui->hyp_accel_resp_axis, ui->cvp_axis
+
     };
     for (auto* view : allCharts) {
         if (!view) continue;
@@ -323,7 +320,10 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     for (QChartView* v : allCharts) {
         if (!v) continue;
-        setupChartDefaults(v);
+        auto* chart = new QChart();
+        chart->legend()->hide();
+        chart->layout()->setContentsMargins(0, 0, 0, 0);
+        v->setChart(chart);
         connect(v->chart(), &QChart::plotAreaChanged, v,
             [v, this](const QRectF&) {
                 const QString sigName = v->property("signalName").toString();
@@ -363,7 +363,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     auto* hypnoChart = new QChart();
     hypnoChart->legend()->hide();
-    ui->hyp_accel_resp_cvp_axis->setChart(hypnoChart);
+    ui->hyp_accel_resp_axis->setChart(hypnoChart);
     m_hypnoCursorBar = new QLineSeries();
     m_hypnoCursorBar->setPen(QPen(Qt::black, 2));
     hypnoChart->addSeries(m_hypnoCursorBar);

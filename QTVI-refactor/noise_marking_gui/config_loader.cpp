@@ -34,9 +34,9 @@ namespace {
         }
         fields.push_back(cur);
         for (auto& f : fields) {
-            size_t first = f.find_first_not_of(" \t\r\n");
+            int first = f.find_first_not_of(" \t\r\n");
             if (first == std::string::npos) { f.clear(); continue; }
-            size_t last = f.find_last_not_of(" \t\r\n");
+            int last = f.find_last_not_of(" \t\r\n");
             f = f.substr(first, last - first + 1);
         }
         return fields;

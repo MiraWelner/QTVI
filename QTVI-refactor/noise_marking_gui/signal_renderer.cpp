@@ -27,24 +27,190 @@
 #include <algorithm>
 #include <cmath>
 
- // ============================================================================
- // Chart margin knobs (pixels) -- tune all spacing here.
- //
- //   kChartMarginRight : right-edge gap so the last x-axis label isn't
- //                       clipped. Keep small; bump if a label gets cut off.
- //   kAxisLabelHeight  : bottom strip reserved ONLY on charts that show
- //                       x-axis labels. Without it the labels draw below the
- //                       chart rect and get clipped to nothing (invisible).
- //   Charts with hidden x-axes get 0 bottom so they sit flush.
- // ============================================================================
-namespace {
-    constexpr int kChartMarginRight = 10;
-    constexpr int kAxisLabelHeight = 5;
-}
+struct markable_data_series {
+    //A series such as ECG, PPG, that can be annotated
+    const QVector<double>* data;
+    QColor color;
+    const QVector<QPointF>* rawData = nullptr;
+};
 
-// ============================================================================
-// Peak helpers
-// ============================================================================
+namespace {
+
+    QCategoryAxis* make_time_labled_xaxis(double startLocal, double duration,
+        double globalOffset, bool labelsVisible)
+    {
+        auto* xAxis = new QCategoryAxis();
+        xAxis->setRange(startLocal, startLocal + duration);
+		xAxis->append(QString::fromStdString("(HH:MM:SS)"), 0);
+        const double fracs[] = { 1.0 / 6.0, 0.5, 5.0 / 6.0 };
+        for (double f : fracs) {
+            double localVal = startLocal + f * duration;
+            xAxis->append(formatHMS(globalOffset + localVal), localVal);
+        }
+        xAxis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
+        xAxis->setTruncateLabels(false);
+        xAxis->setGridLineVisible(false);
+        xAxis->setLabelsVisible(labelsVisible);
+        if (!labelsVisible) xAxis->setVisible(false);
+        return xAxis;
+    }
+
+    std::pair<double, double> renderWindowedChart(
+        QChartView* view,
+        const QList<markable_data_series>& serieses,
+        QList<QLineSeries*>& persistentLines,
+        double currentStartTime, double windowDuration,
+        double globalOffset, double ecgSR,
+        bool labelsVisible,
+        bool useScatterMode,
+        bool forceLineForUpsampled,
+        double yScale = 1.0,
+        bool compactTime = false)
+    {
+        if (!view || !view->chart()) return { 1e9, -1e9 };
+        QChart* chart = view->chart();
+        chart->legend()->hide();
+        chart->setMargins(QMargins(0, 0, 0, 4));
+
+        QSet<QAbstractSeries*> persistentSet;
+        for (auto* ln : persistentLines) persistentSet.insert(ln);
+
+        for (auto* s : chart->series()) {
+            chart->removeSeries(s);
+            if (!persistentSet.contains(s)) delete s;
+        }
+        for (auto* a : chart->axes()) { chart->removeAxis(a); delete a; }
+
+        QCategoryAxis* xAxis = make_time_labled_xaxis(
+            currentStartTime, windowDuration, globalOffset, labelsVisible);
+        chart->addAxis(xAxis, Qt::AlignBottom);
+
+        //Create a Y axis for every plot
+        auto* yAxis = new QValueAxis();
+        yAxis->setLineVisible(true);
+        yAxis->setGridLineVisible(false);
+        yAxis->setVisible(true);
+        yAxis->setLabelsVisible(true);
+        yAxis->setLabelFormat("%.1f");
+        yAxis->setTickCount(2);
+        chart->addAxis(yAxis, Qt::AlignLeft);
+
+        double gMin = 1e9, gMax = -1e9;
+
+        struct PendingRaw { const QVector<QPointF>* rawData; QColor color; double center; };
+        QList<PendingRaw> rawsToAdd;
+
+        for (int slot = 0; slot < serieses.size(); ++slot) {
+            const auto& d = serieses[slot];
+            if (!d.data || isMissingSignal(*d.data)) continue;
+            const bool hasRaw = d.rawData && isRawUsable(*d.rawData);
+
+            auto ensurePersistentLine = [&]() -> QLineSeries* {
+                while (persistentLines.size() <= slot)
+                    persistentLines.append(nullptr);
+                if (!persistentLines[slot]) {
+                    auto* ln = new QLineSeries();
+                    ln->setUseOpenGL(true);
+                    persistentLines[slot] = ln;
+                }
+                persistentLines[slot]->setPen(QPen(d.color, 1));
+                return persistentLines[slot];
+                };
+
+            QXYSeries* plotSeries = nullptr;
+            if (forceLineForUpsampled || !useScatterMode) {
+                QLineSeries* ln = ensurePersistentLine();
+                ln->setVisible(true); chart->addSeries(ln); plotSeries = ln;
+            }
+            else if (!hasRaw) {
+                auto* sc = new QScatterSeries();
+                sc->setColor(d.color); sc->setBorderColor(Qt::transparent);
+                sc->setMarkerSize(2.0); sc->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+                sc->setUseOpenGL(true); chart->addSeries(sc); plotSeries = sc;
+            }
+            else {
+                if (slot < persistentLines.size() && persistentLines[slot])
+                    persistentLines[slot]->setVisible(false);
+            }
+
+            int startIdx = std::clamp(static_cast<int>(currentStartTime * ecgSR),
+                0, static_cast<int>(d.data->size() - 1));
+            int endIdx = std::clamp(static_cast<int>((currentStartTime + windowDuration) * ecgSR),
+                0, static_cast<int>(d.data->size()));
+
+            //for scaling, use median as the center, so the scaling is robust to noise
+            std::vector<double> winVals;
+            winVals.reserve(endIdx - startIdx);
+            for (int i = startIdx; i < endIdx; ++i)
+                winVals.push_back((*d.data)[i]);
+            for (const QPointF& p : *d.rawData) {
+                if (p.x() < currentStartTime) continue;
+                if (p.x() > currentStartTime + windowDuration) break;
+                winVals.push_back(p.y());
+                if (p.y() < gMin) gMin = p.y();
+                if (p.y() > gMax) gMax = p.y();
+            }
+            double center = 0.0;
+            if (!winVals.empty()) {
+                const auto mid = winVals.begin() + winVals.size() / 2;
+                std::nth_element(winVals.begin(), mid, winVals.end());
+                center = *mid;
+            }
+
+            QList<QPointF> pts;
+            if (plotSeries) pts.reserve(endIdx - startIdx);
+            for (int i = startIdx; i < endIdx; ++i) {
+                const double raw = (*d.data)[i];
+                if (raw < gMin) gMin = raw;
+                if (raw > gMax) gMax = raw;
+                if (plotSeries) {
+                    const double scaled = (raw - center) * yScale + center;
+                    pts.append({ static_cast<double>(i) / ecgSR, scaled });
+                }
+            }
+            if (plotSeries) {
+                plotSeries->replace(pts);
+                plotSeries->attachAxis(xAxis);
+                plotSeries->attachAxis(yAxis);
+            }
+            if (hasRaw) rawsToAdd.append({ d.rawData, d.color, center });
+        }
+
+        QList<QScatterSeries*> scattersForTopReorder;
+        for (const auto& r : rawsToAdd) {
+            auto* rawScatter = new QScatterSeries();
+            rawScatter->setColor(Qt::black);
+            rawScatter->setBorderColor(Qt::transparent);
+            rawScatter->setMarkerSize(3.0);
+            rawScatter->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+            rawScatter->setUseOpenGL(true);
+            chart->addSeries(rawScatter);
+            scattersForTopReorder.append(rawScatter);
+
+            QList<QPointF> rawPts;
+            rawPts.reserve(std::min<int>(r.rawData->size(), 4096));
+            for (const QPointF& p : *r.rawData) {
+                if (p.x() < currentStartTime) continue;
+                if (p.x() > currentStartTime + windowDuration) break;
+                rawPts.append({ p.x(), (p.y() - r.center) * yScale + r.center });
+            }
+            rawScatter->replace(rawPts);
+            rawScatter->attachAxis(xAxis);
+            rawScatter->attachAxis(yAxis);
+        }
+
+        for (auto* scatter : scattersForTopReorder) {
+            chart->removeSeries(scatter);
+            chart->addSeries(scatter);
+            scatter->attachAxis(xAxis);
+            scatter->attachAxis(yAxis);
+        }
+
+        setPaddedYRange(yAxis, gMin, gMax);
+        return { gMin, gMax };
+    }
+
+} // namespace
 
 QVector<QPointF> noise_marking_gui::peaksForWindow(const QString& label) const {
     if (!m_showPeaks) return {};
@@ -82,14 +248,10 @@ QVector<QPointF> noise_marking_gui::peaksForBpmWindow(const QString& label,
     return simple_peak_finder::findPeaks(*r.dataRaw, tStart, tVisEnd, params);
 }
 
-// ============================================================================
-// Hypnogram
-// ============================================================================
-
 void noise_marking_gui::setupHypnogram() {
     if (m_sleepSR <= 0.0 || !sleepDataPresent(m_sleepStages)) return;
 
-    auto* chart = ui->hyp_accel_resp_cvp_axis->chart();
+    auto* chart = ui->hyp_accel_resp_axis->chart();
     if (m_cvpCursorBar && m_cvpCursorBar->chart() == chart)
         chart->removeSeries(m_cvpCursorBar);
     for (auto* s : m_hypnoStageSeries) { chart->removeSeries(s); delete s; }
@@ -101,7 +263,7 @@ void noise_marking_gui::setupHypnogram() {
     };
 
     const double dt = 1.0 / m_sleepSR;
-    const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+    const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
 
     for (const auto& st : stages) {
         auto* s = new QScatterSeries();
@@ -116,15 +278,17 @@ void noise_marking_gui::setupHypnogram() {
         m_hypnoStageSeries.append(s);
     }
 
-    clearAxes(chart);
-    // Hypnogram always shows hour labels -> reserve the bottom strip.
-    chart->setMargins(QMargins(0, 0, kChartMarginRight, kAxisLabelHeight));
+    for (QAbstractAxis* axis : chart->axes()) {
+        chart->removeAxis(axis);
+    }
+
+    chart->setMargins(QMargins(0, 0, 0, 5));
     chart->setTitle("Sleep stages");
     chart->setTitleFont(Theme::chartTitleFont());
     chart->setTitleBrush(Qt::black);
 
     auto* xAxis = new QCategoryAxis();
-    xAxis->setRange(globalOffset, globalOffset + CHUNK_DURATION_SEC);
+    xAxis->setRange(globalOffset, globalOffset + seconds_in_memory_at_once);
     const int startHour = static_cast<int>(globalOffset / 3600.0);
     for (int h = 0; h <= 8; h += 2)
         xAxis->append(QString::number(startHour + h) + 'h', globalOffset + h * 3600.0);
@@ -151,12 +315,12 @@ void noise_marking_gui::setupHypnogram() {
     }
 }
 
-// ============================================================================
-// Ampogram
-// ============================================================================
-
-void noise_marking_gui::handle_ampogram_plot(double range) {
-    const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+void noise_marking_gui::ampogram(double range) {
+    /*
+        creates the ampograms on the top right, which show the difference between min and max in a given range across the current
+        8 hour period
+    */
+    const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
 
     auto calculate_amplitude = [range, globalOffset](
         const QVector<double>& data, double sr)
@@ -182,12 +346,11 @@ void noise_marking_gui::handle_ampogram_plot(double range) {
             series->setPen(QPen(color, 1));
 
             auto* chart = view->chart();
-            clearAxes(chart);
+            for (QAbstractAxis* axis : chart->axes()) {
+                chart->removeAxis(axis);
+            }
             chart->legend()->hide();
-            // Reserve the bottom strip only when this ampogram owns the
-            // hour labels; otherwise sit flush against the chart below.
-            chart->setMargins(QMargins(0, 0, kChartMarginRight,
-                showLabels ? kAxisLabelHeight : 0));
+            chart->setMargins(QMargins(0, 0, 10, 5));
             if (!title.isEmpty()) {
                 chart->setTitle(title);
                 chart->setTitleFont(Theme::chartTitleFont());
@@ -196,25 +359,23 @@ void noise_marking_gui::handle_ampogram_plot(double range) {
                 chart->setTitle(QString());
             }
 
-            auto* xAxis = new QCategoryAxis();
-            xAxis->setRange(globalOffset, globalOffset + CHUNK_DURATION_SEC);
-            const int startHour = static_cast<int>(globalOffset / 3600.0);
-            for (int h = 0; h <= 8; ++h) {
-                QString lbl = showLabels
-                    ? (QString::number(startHour + h) + 'h') : QString::number(h);
-                xAxis->append(lbl, globalOffset + h * 3600.0);
+            //add the x axis with hour lables
+            auto* x_axis = new QCategoryAxis();
+            x_axis->setRange(globalOffset, globalOffset + seconds_in_memory_at_once);
+			x_axis->append(QString::fromStdString("(h)"), globalOffset+1800);
+            const int startHour = static_cast<int>(globalOffset / 3600);
+            for (int h = 1; h <= seconds_in_memory_at_once/ 3600; ++h) {
+                x_axis->append(QString::number(startHour + h), globalOffset + h * 3600);
             }
-            xAxis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
-            xAxis->setTruncateLabels(false);
-            xAxis->setGridLineVisible(false);
-            xAxis->setLabelsFont(Theme::chartAxisFont());
-            xAxis->setLabelsVisible(showLabels);
-            if (!showLabels) xAxis->setVisible(false);
-
-            chart->addAxis(xAxis, Qt::AlignBottom);
-            series->attachAxis(xAxis);
-            if (cursor) cursor->attachAxis(xAxis);
-
+            x_axis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
+            x_axis->setTruncateLabels(false);
+            x_axis->setGridLineVisible(false);
+            x_axis->setLabelsVisible(showLabels);
+            chart->addAxis(x_axis, Qt::AlignBottom);
+            series->attachAxis(x_axis);
+            cursor->attachAxis(x_axis);
+            
+			//add the y axis with two ticks and a bit of padding
             double yMin = 0, yMax = 1.0;
             if (!pts.isEmpty()) {
                 auto [mi, ma] = std::minmax_element(pts.begin(), pts.end(),
@@ -224,7 +385,12 @@ void noise_marking_gui::handle_ampogram_plot(double range) {
             }
             auto* yAxis = new QValueAxis();
             yAxis->setRange(yMin, yMax);
-            yAxis->setVisible(false); yAxis->setGridLineVisible(false);
+            yAxis->setVisible(true);
+            yAxis->setLabelsVisible(true);
+            yAxis->setLineVisible(true);
+            yAxis->setGridLineVisible(false);
+            yAxis->setLabelFormat("%.1f");
+            yAxis->setTickCount(2);
             chart->addAxis(yAxis, Qt::AlignLeft);
             series->attachAxis(yAxis);
             if (cursor) cursor->attachAxis(yAxis);
@@ -271,202 +437,6 @@ void noise_marking_gui::handle_ampogram_plot(double range) {
 }
 
 // ============================================================================
-// Core windowed chart renderer
-// ============================================================================
-
-struct WindowedSeries {
-    const QVector<double>* data;
-    QColor                  color;
-    const QVector<QPointF>* rawData = nullptr;
-};
-
-namespace {
-
-    QCategoryAxis* makeCompactTimeAxis(double startLocal, double duration,
-        double globalOffset, bool labelsVisible)
-    {
-        auto* xAxis = new QCategoryAxis();
-        xAxis->setRange(startLocal, startLocal + duration);
-        const double fracs[] = { 1.0 / 6.0, 0.5, 5.0 / 6.0 };
-        for (double f : fracs) {
-            double localVal = startLocal + f * duration;
-            xAxis->append(formatHMS(globalOffset + localVal), localVal);
-        }
-        xAxis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
-        xAxis->setTruncateLabels(false);
-        xAxis->setGridLineVisible(false);
-        xAxis->setLabelsFont(QFont("Arial", 7));
-        xAxis->setLabelsVisible(labelsVisible);
-        if (!labelsVisible) xAxis->setVisible(false);
-        return xAxis;
-    }
-
-    std::pair<double, double> renderWindowedChart(
-        QChartView* view,
-        const QList<WindowedSeries>& serieses,
-        QList<QLineSeries*>& persistentLines,
-        double currentStartTime, double windowDuration,
-        double globalOffset, double ecgSR,
-        bool labelsVisible,
-        bool useScatterMode,
-        bool forceLineForUpsampled,
-        QColor singleRawColor,
-        bool useSingleRawColor,
-        double yScale = 1.0,
-        bool compactTime = false)
-    {
-        if (!view || !view->chart()) return { 1e9, -1e9 };
-        QChart* chart = view->chart();
-
-        // Tight margins; reserve a bottom strip only when this chart shows
-        // its x-axis labels, so they aren't clipped to nothing.
-        chart->setMargins(QMargins(0, 0, compactTime ? 0 : kChartMarginRight, labelsVisible ? kAxisLabelHeight : 0));
-
-        QSet<QAbstractSeries*> persistentSet;
-        for (auto* ln : persistentLines) persistentSet.insert(ln);
-
-        for (auto* s : chart->series()) {
-            chart->removeSeries(s);
-            if (!persistentSet.contains(s)) delete s;
-        }
-        for (auto* a : chart->axes()) { chart->removeAxis(a); delete a; }
-
-        // Wide signal charts -> shared makeWindowedTimeAxis (full labels).
-        // Narrow overview charts -> local compact axis (short, fits).
-        QCategoryAxis* xAxis = compactTime
-            ? makeCompactTimeAxis(currentStartTime, windowDuration,
-                globalOffset, labelsVisible)
-            : makeWindowedTimeAxis(currentStartTime, windowDuration,
-                globalOffset, labelsVisible);
-        chart->addAxis(xAxis, Qt::AlignBottom);
-
-        auto* yAxis = new QValueAxis();
-        yAxis->setVisible(false);
-        yAxis->setLineVisible(false);
-        chart->addAxis(yAxis, Qt::AlignLeft);
-
-        double gMin = 1e9, gMax = -1e9;
-
-        struct PendingRaw { const QVector<QPointF>* rawData; QColor color; double center; };
-        QList<PendingRaw> rawsToAdd;
-
-        for (int slot = 0; slot < serieses.size(); ++slot) {
-            const auto& d = serieses[slot];
-            if (!d.data || isMissingSignal(*d.data)) continue;
-            const bool hasRaw = d.rawData && isRawUsable(*d.rawData);
-
-            auto ensurePersistentLine = [&]() -> QLineSeries* {
-                while (persistentLines.size() <= slot)
-                    persistentLines.append(nullptr);
-                if (!persistentLines[slot]) {
-                    auto* ln = new QLineSeries();
-                    ln->setUseOpenGL(true);
-                    persistentLines[slot] = ln;
-                }
-                persistentLines[slot]->setPen(QPen(d.color, 1));
-                return persistentLines[slot];
-                };
-
-            QXYSeries* plotSeries = nullptr;
-            if (forceLineForUpsampled) {
-                QLineSeries* ln = ensurePersistentLine();
-                ln->setVisible(true); chart->addSeries(ln); plotSeries = ln;
-            }
-            else if (useScatterMode && !hasRaw) {
-                auto* sc = new QScatterSeries();
-                sc->setColor(d.color); sc->setBorderColor(Qt::transparent);
-                sc->setMarkerSize(2.0); sc->setMarkerShape(QScatterSeries::MarkerShapeCircle);
-                sc->setUseOpenGL(true); chart->addSeries(sc); plotSeries = sc;
-            }
-            else if (!useScatterMode) {
-                QLineSeries* ln = ensurePersistentLine();
-                ln->setVisible(true); chart->addSeries(ln); plotSeries = ln;
-            }
-            else {
-                if (slot < persistentLines.size() && persistentLines[slot])
-                    persistentLines[slot]->setVisible(false);
-            }
-
-            int startIdx = std::clamp(static_cast<int>(currentStartTime * ecgSR),
-                0, static_cast<int>(d.data->size() - 1));
-            int endIdx = std::clamp(static_cast<int>((currentStartTime + windowDuration) * ecgSR),
-                0, static_cast<int>(d.data->size()));
-
-			//for scaling, use median as the center, so the scaling is robust to noise
-            std::vector<double> winVals;
-            winVals.reserve(endIdx - startIdx);
-            for (int i = startIdx; i < endIdx; ++i)
-                winVals.push_back((*d.data)[i]);
-            for (const QPointF& p : *d.rawData) {
-                if (p.x() < currentStartTime) continue;
-                if (p.x() > currentStartTime + windowDuration) break;
-                winVals.push_back(p.y());
-                if (p.y() < gMin) gMin = p.y();
-                if (p.y() > gMax) gMax = p.y();
-            }
-            double center = 0.0;
-            if (!winVals.empty()) {
-                const auto mid = winVals.begin() + winVals.size() / 2;
-                std::nth_element(winVals.begin(), mid, winVals.end());
-                center = *mid;
-            }
-
-            QList<QPointF> pts;
-            if (plotSeries) pts.reserve(endIdx - startIdx);
-            for (int i = startIdx; i < endIdx; ++i) {
-                const double raw = (*d.data)[i];
-                if (raw < gMin) gMin = raw;
-                if (raw > gMax) gMax = raw;
-                if (plotSeries) {
-                    const double scaled = (raw - center) * yScale + center;
-                    pts.append({ static_cast<double>(i) / ecgSR, scaled });
-                }
-            }
-            if (plotSeries) {
-                plotSeries->replace(pts);
-                plotSeries->attachAxis(xAxis);
-                plotSeries->attachAxis(yAxis);
-            }
-            if (hasRaw) rawsToAdd.append({ d.rawData, d.color, center });
-        }
-
-        QList<QScatterSeries*> scattersForTopReorder;
-        for (const auto& r : rawsToAdd) {
-            auto* rawScatter = new QScatterSeries();
-            rawScatter->setColor(useSingleRawColor ? singleRawColor : r.color);
-            rawScatter->setBorderColor(Qt::transparent);
-            rawScatter->setMarkerSize(useSingleRawColor ? 3.0 : 3.5);
-            rawScatter->setMarkerShape(QScatterSeries::MarkerShapeCircle);
-            rawScatter->setUseOpenGL(true);
-            chart->addSeries(rawScatter);
-            scattersForTopReorder.append(rawScatter);
-
-            QList<QPointF> rawPts;
-            rawPts.reserve(std::min<int>(r.rawData->size(), 4096));
-            for (const QPointF& p : *r.rawData) {
-                if (p.x() < currentStartTime) continue;
-                if (p.x() > currentStartTime + windowDuration) break;
-                rawPts.append({ p.x(), (p.y() - r.center) * yScale + r.center });
-            }
-            rawScatter->replace(rawPts);
-            rawScatter->attachAxis(xAxis);
-            rawScatter->attachAxis(yAxis);
-        }
-
-        for (auto* scatter : scattersForTopReorder) {
-            chart->removeSeries(scatter);
-            chart->addSeries(scatter);
-            scatter->attachAxis(xAxis);
-            scatter->attachAxis(yAxis);
-        }
-
-        setPaddedYRange(yAxis, gMin, gMax);
-        return { gMin, gMax };
-    }
-
-} // namespace
-
-// ============================================================================
 // Main data plot
 // ============================================================================
 
@@ -489,9 +459,6 @@ void noise_marking_gui::handle_data_plot() {
                       ui->ppg_axis, ui->accel_or_abp_axis }) {
         if (cv && !cv->isHidden()) xLabelOwnerRight = cv;
     }
-    QChartView* xLabelOwnerLeft = nullptr;
-    if (ui->hyp_accel_resp_cvp_axis && !ui->hyp_accel_resp_cvp_axis->isHidden())
-        xLabelOwnerLeft = ui->hyp_accel_resp_cvp_axis;
 
     auto keepFor = [&](QChartView* cv) -> QList<QAbstractSeries*> {
         QList<QAbstractSeries*> keep;
@@ -517,9 +484,11 @@ void noise_marking_gui::handle_data_plot() {
             keepFor(ui->accel_or_abp_axis));
 
     const bool sleepPresent = sleepDataPresent(m_sleepStages);
-    if (!sleepPresent && ui->hyp_accel_resp_cvp_axis)
-        wipeChartContent(ui->hyp_accel_resp_cvp_axis->chart(),
-            keepFor(ui->hyp_accel_resp_cvp_axis));
+    if (!sleepPresent && ui->hyp_accel_resp_axis)
+        wipeChartContent(ui->hyp_accel_resp_axis->chart(),
+            keepFor(ui->hyp_accel_resp_axis));
+    if (ui->cvp_axis)
+        wipeChartContent(ui->cvp_axis->chart(), keepFor(ui->cvp_axis));
 
     auto plotMarkable = [&](const QString& label) {
         if (!isChannelActive(label)) return;
@@ -545,7 +514,7 @@ void noise_marking_gui::handle_data_plot() {
         r.chartView->setProperty("nativeHz", nativeHz);
         r.chartView->chart()->setTitleFont(Theme::chartTitleFont());
 
-        const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+        const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
         renderWindowedChart(
             r.chartView, { { r.data, r.color, &rawData } },
             m_persistentLines[r.chartView],
@@ -553,7 +522,6 @@ void noise_marking_gui::handle_data_plot() {
             r.chartView == xLabelOwnerRight,
             m_plotMode == PlotMode::Scatter,
             m_plotMode == PlotMode::Line,
-            COLOR_RAW_SCATTER, true,
             yScaleForSignal(label), true);
 
         double bpm = -1.0;
@@ -606,39 +574,36 @@ void noise_marking_gui::handle_data_plot() {
     if (ui->accel_or_abp_axis && !isMissingSignal(m_abp)) plotMarkable("ABP");
 
     auto plotDisplay = [&](QChartView* view, const QString& title,
-        const QList<WindowedSeries>& serieses)
+        const QList<markable_data_series>& serieses)
         {
             if (!view || !view->chart()) return;
             view->chart()->setTitle(title);
             view->chart()->setTitleFont(Theme::chartTitleFont());
-            const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
-            // Overview charts are narrow -> compactTime = true so the
-            // windowed time labels fit instead of being clipped away.
+            const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
+
             renderWindowedChart(view, serieses, m_persistentLines[view],
                 m_currentStartTime, m_windowDuration, globalOffset, m_ecgSR,
-                (view == xLabelOwnerRight) || (view == xLabelOwnerLeft),
-                m_plotMode == PlotMode::Scatter, false,
-                QColor(), false,
+                true, m_plotMode == PlotMode::Scatter, false,
                 1.0, true);
         };
 
-    if (ui->hyp_accel_resp_cvp_axis) {
+    if (ui->cvp_axis && !isMissingSignal(m_cvp)) {
+        plotDisplay(ui->cvp_axis, "CVP", { { &m_cvp, COLOR_CVP, &m_cvpRaw } });
+    }
+
+    if (ui->hyp_accel_resp_axis) {
         const bool anyAccel = !isMissingSignal(m_accelX)
             || !isMissingSignal(m_accelY) || !isMissingSignal(m_accelZ);
         if (anyAccel) {
-            plotDisplay(ui->hyp_accel_resp_cvp_axis, "ACCEL", {
+            plotDisplay(ui->hyp_accel_resp_axis, "ACCEL", {
                 { &m_accelX, COLOR_ACCEL_X, &m_accelXRaw },
                 { &m_accelY, COLOR_ACCEL_Y, &m_accelYRaw },
                 { &m_accelZ, COLOR_ACCEL_Z, &m_accelZRaw },
                 });
         }
-        else if (!sleepPresent
-            && (!isMissingSignal(m_resp) || !isMissingSignal(m_cvp))) {
-            plotDisplay(ui->hyp_accel_resp_cvp_axis,
-                "<span style='color:#16A085'>RESP</span> / "
-                "<span style='color:#2980B9'>CVP</span>",
-                { { &m_resp, COLOR_RESP, &m_respRaw },
-                 { &m_cvp,  COLOR_CVP,  &m_cvpRaw  } });
+        else if (!sleepPresent && !isMissingSignal(m_resp)) {
+            plotDisplay(ui->hyp_accel_resp_axis, "RESP",
+                { { &m_resp, COLOR_RESP, &m_respRaw } });
         }
     }
 
@@ -658,14 +623,14 @@ void noise_marking_gui::updateAmpogramCursor() {
         if (axes.isEmpty()) return;
         auto* yAxis = qobject_cast<QValueAxis*>(axes.first());
         if (!yAxis) return;
-        double x = m_currentChunkIndex * CHUNK_DURATION_SEC
+        double x = m_currentChunkIndex * seconds_in_memory_at_once
             + m_currentStartTime + m_windowDuration / 2.0;
         cursor->replace({ {x, yAxis->min()}, {x, yAxis->max()} });
         };
     draw(ui->ecg_ampogram_axis, m_ecgCursorBar);
     draw(ui->ppg_ampogram_axis, m_ppgCursorBar);
     if (sleepDataPresent(m_sleepStages))
-        draw(ui->hyp_accel_resp_cvp_axis, m_hypnoCursorBar);
+        draw(ui->hyp_accel_resp_axis, m_hypnoCursorBar);
 }
 
 void noise_marking_gui::updateNoiseHighlights() {
@@ -693,7 +658,7 @@ void noise_marking_gui::updateNoiseHighlights() {
         axesMap[lbl] = ca;
     }
 
-    const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+    const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
     const double viewStart = m_currentStartTime;
     const double viewEnd = viewStart + m_windowDuration;
 

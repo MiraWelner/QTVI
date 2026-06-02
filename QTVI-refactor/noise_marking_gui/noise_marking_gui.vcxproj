@@ -197,13 +197,13 @@
     <QtMoc Include="grid_overlay.hpp" />
     <QtMoc Include="gui_handler.h" />
     <QtMoc Include="post_process_queue.hpp" />
-    <QtMoc Include="template_generation\AlignWaves.hpp" />
+    <ClInclude Include="template_generation\AlignWaves.hpp" />
     <QtMoc Include="template_generation\build_templates.hpp" />
-    <QtMoc Include="template_generation\CombineTemplatesGraph.hpp" />
+    <ClInclude Include="template_generation\CombineTemplatesGraph.hpp" />
     <QtMoc Include="template_generation\CreateEcgTemplates.hpp" />
     <QtMoc Include="template_generation\CreatePPGTemplates.hpp" />
     <QtMoc Include="template_generation\EnsembleTemplate.hpp" />
-    <QtMoc Include="template_generation\find_foot_pulseox.hpp" />
+    <ClInclude Include="template_generation\find_foot_pulseox.hpp" />
     <QtMoc Include="template_generation\GenerateTemplates.hpp" />
     <ClInclude Include="template_generation\StatsUtils.h" />
     <QtMoc Include="template_generation\TemplateTypes.hpp" />

@@ -7,8 +7,8 @@ class QApplication;
 namespace Theme {
     void apply(QApplication& app);
 
-    QFont chartTitleFont();   // small, bold — chart titles
-    QFont chartAxisFont();    // smaller, regular — tick labels
+    QFont chartTitleFont();
+    QFont chartAxisFont();
 }
 
 namespace Theme {

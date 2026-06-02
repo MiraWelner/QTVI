@@ -16,23 +16,16 @@
 #include <QtWidgets/QGraphicsLayout>
 #include <QMap>
 
-
- // ============================================================================
- // Color constants — shared across all gui_handler_*.cpp translation units.
- // Declared inline so each .cpp that includes this header gets its own
- // copy with internal linkage (no ODR clash, no extern needed).
- // ============================================================================
-
-inline const QColor COLOR_ECG1{ 101, 67,  33 };
-inline const QColor COLOR_ECG2{ "#0000FF" };
-inline const QColor COLOR_ECG3{ "#00AA00" };
-inline const QColor COLOR_PPG{ "#BF00FF" };
-inline const QColor COLOR_ABP{ "#BF00FF" };
+inline const QColor COLOR_ECG1{ 101, 67, 33 };
+inline const QColor COLOR_ECG2{ 0,  128, 0 };
+inline const QColor COLOR_ECG3{ 0, 0, 139 };
+inline const QColor COLOR_PPG{ 48, 25, 52 };
+inline const QColor COLOR_ABP{ 52, 25, 48 };
 inline const QColor COLOR_ACCEL_X{ "#F39C12" };
 inline const QColor COLOR_ACCEL_Y{ "#27AE60" };
 inline const QColor COLOR_ACCEL_Z{ "#8E44AD" };
-inline const QColor COLOR_RESP{ "#16A085" };
-inline const QColor COLOR_CVP{ "#2980B9" };
+inline const QColor COLOR_RESP{ 0,0,0 };
+inline const QColor COLOR_CVP{ 0,0,0 };
 inline const QColor COLOR_RAW_SCATTER{ 0, 0, 0, 255 };
 
 inline const QMap<QString, QColor> MARKING_COLORS{
@@ -51,11 +44,6 @@ inline const QMap<QString, QColor> MARKING_COLORS{
 // Chart helpers
 // ---------------------------------------------------------------------------
 
-inline void clearAxes(QChart* chart) {
-    if (!chart) return;
-    for (QAbstractAxis* axis : chart->axes()) chart->removeAxis(axis);
-}
-
 inline void wipeChartContent(QChart* chart,
     const QList<QAbstractSeries*>& keep = {})
 {
@@ -68,12 +56,6 @@ inline void wipeChartContent(QChart* chart,
     for (auto* a : chart->axes()) { chart->removeAxis(a); delete a; }
 }
 
-inline void setupChartDefaults(QChartView* view) {
-    auto* chart = new QChart();
-    chart->legend()->hide();
-    chart->layout()->setContentsMargins(0, 0, 0, 0);
-    view->setChart(chart);
-}
 
 inline void setPaddedYRange(QValueAxis* yAxis, double yMin, double yMax) {
     if (yMin > yMax) { yMin = -1.0; yMax = 1.0; }
@@ -125,22 +107,4 @@ inline QString formatChartTitle(const QString& signalName,
     if (bpm >= 0.0)
         base += QString("  --  %1 bpm").arg(bpm, 0, 'f', 0);
     return base;
-}
-
-inline QCategoryAxis* makeWindowedTimeAxis(double startLocal, double duration,
-    double globalOffset, bool labelsVisible)
-{
-    auto* xAxis = new QCategoryAxis();
-    xAxis->setRange(startLocal, startLocal + duration);
-    for (int i = 0; i <= 4; ++i) {
-        double localVal = startLocal + i * duration / 4.0;
-        double globalSec = globalOffset + localVal;
-        xAxis->append(formatHMS(globalSec), localVal);
-    }
-    xAxis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
-    xAxis->setTruncateLabels(false); 
-    xAxis->setGridLineVisible(false);
-    xAxis->setLabelsVisible(labelsVisible);
-    if (!labelsVisible) xAxis->setVisible(false);
-    return xAxis;
 }

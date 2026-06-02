@@ -1,28 +1,6 @@
 ﻿   Qt/MSBuild: 3.4.1.0
    Qt: 6.10.2
-  moc BinPlotWidget.hpp
   BinPlotWidget.cpp
-  config_loader.cpp
-  TemplateViewerWindow.cpp
-  template_io.cpp
-  template_marking.cpp
-  theme.cpp
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\qtvi_template_marking\theme\theme.cpp(1,1): warning C4828: The file contains a character starting at offset 0x5c1 that is illegal in the current source character set (codepage 65001).
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\qtvi_template_marking\theme\theme.h(1,1): warning C4828: The file contains a character starting at offset 0xa1 that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'theme/theme.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\qtvi_template_marking\theme\theme.h(1,1): warning C4828: The file contains a character starting at offset 0xe3 that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'theme/theme.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\qtvi_template_marking\theme\theme.h(1,1): warning C4828: The file contains a character starting at offset 0xa1 that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'template_marking.cpp')
-  
-D:\USERS\MiraWelner\QTVI\QTVI-refactor\qtvi_template_marking\theme\theme.h(1,1): warning C4828: The file contains a character starting at offset 0xe3 that is illegal in the current source character set (codepage 65001).
-  (compiling source file 'template_marking.cpp')
-  
-  qrc_resources.cpp
-  moc_TemplateViewerWindow.cpp
-  moc_BinPlotWidget.cpp
 LINK : warning LNK4075: ignoring '/INCREMENTAL' due to '/OPT:ICF' specification
   qtvi_template_marking.vcxproj -> D:\USERS\MiraWelner\QTVI\QTVI-refactor\qtvi_template_marking\x64\Release\qtvi_template_marking.exe
   'pwsh.exe' is not recognized as an internal or external command,

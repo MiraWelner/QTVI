@@ -133,8 +133,7 @@ void gap_indicator::refresh() {
             // One dashed vertical line at the gap position.
             auto* line = new QLineSeries();
             line->setPen(QPen(COLOR_GAP_LINE, kBracketWidthPx, Qt::DotLine));
-            // OpenGL OFF: GL backend ignores dash patterns and pen alpha.
-            line->setUseOpenGL(false);
+            line->setUseOpenGL(true);
             line->append(gap.xPos, yLo);
             line->append(gap.xPos, yHi);
             chart->addSeries(line);

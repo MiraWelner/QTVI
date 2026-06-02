@@ -3,12 +3,8 @@
   "WorkspaceRootPath": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:TemplateViewerWindow.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
-    },
-    {
-      "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:BinPlotWidget.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\config_entry.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:config_entry.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
@@ -19,12 +15,16 @@
       "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:TemplateViewerWindow.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\template_marking.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:template_marking.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:TemplateViewerWindow.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\config_entry.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:config_entry.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:BinPlotWidget.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\template_marking.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|solutionrelative:template_marking.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{7DF67569-A5D7-D3BD-559B-CD422BB41D2D}|qtvi_template_marking.vcxproj|D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\config_loader.hpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
@@ -57,8 +57,8 @@
       "VerticalTabListWidth": 256,
       "DocumentGroups": [
         {
-          "DockedWidth": 200,
-          "SelectedChildIndex": 1,
+          "DockedWidth": 738,
+          "SelectedChildIndex": 7,
           "Children": [
             {
               "$type": "Bookmark",
@@ -66,28 +66,28 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 0,
-              "Title": "TemplateViewerWindow.cpp",
-              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.cpp",
-              "RelativeDocumentMoniker": "TemplateViewerWindow.cpp",
-              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.cpp",
-              "RelativeToolTip": "TemplateViewerWindow.cpp",
-              "ViewState": "AgIAAO0BAAAAAAAAAAAqwAgCAAAcAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-05-27T02:35:23.622Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 1,
               "Title": "BinPlotWidget.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.cpp",
               "RelativeDocumentMoniker": "BinPlotWidget.cpp",
               "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.cpp",
               "RelativeToolTip": "BinPlotWidget.cpp",
-              "ViewState": "AgIAAJYBAAAAAAAAAAAqwLoBAAABAAAAAAAAAA==",
+              "ViewState": "AgIAAEkBAAAAAAAAAAAhwGgBAAAkAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-05-27T20:06:54.519Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "TemplateViewerWindow.cpp",
+              "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.cpp",
+              "RelativeDocumentMoniker": "TemplateViewerWindow.cpp",
+              "ToolTip": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.cpp",
+              "RelativeToolTip": "TemplateViewerWindow.cpp",
+              "ViewState": "AgIAAO0BAAAAAAAAAAAqwA4CAAA8AAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-05-27T02:35:23.622Z",
               "EditorCaption": ""
             },
             {
@@ -96,7 +96,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 3,
+              "DocumentIndex": 2,
               "Title": "TemplateViewerWindow.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\TemplateViewerWindow.hpp",
               "RelativeDocumentMoniker": "TemplateViewerWindow.hpp",
@@ -104,7 +104,8 @@
               "RelativeToolTip": "TemplateViewerWindow.hpp",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAC4AAAAiAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-05-27T02:35:23.8Z"
+              "WhenOpened": "2026-05-27T02:35:23.8Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
@@ -132,7 +133,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 5,
+              "DocumentIndex": 0,
               "Title": "config_entry.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\config_entry.hpp",
               "RelativeDocumentMoniker": "config_entry.hpp",
@@ -140,7 +141,8 @@
               "RelativeToolTip": "config_entry.hpp",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAB4AAAACAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-05-27T20:05:08.775Z"
+              "WhenOpened": "2026-05-27T20:05:08.775Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Bookmark",
@@ -152,7 +154,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 4,
               "Title": "BinPlotWidget.hpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\BinPlotWidget.hpp",
               "RelativeDocumentMoniker": "BinPlotWidget.hpp",
@@ -160,12 +162,11 @@
               "RelativeToolTip": "BinPlotWidget.hpp",
               "ViewState": "AgIAAKkAAAAAAAAAAAAqwLAAAAAJAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2026-05-29T15:54:01.8Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-05-29T15:54:01.8Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 4,
+              "DocumentIndex": 5,
               "Title": "template_marking.cpp",
               "DocumentMoniker": "D:\\USERS\\MiraWelner\\QTVI\\QTVI-refactor\\qtvi_template_marking\\template_marking.cpp",
               "RelativeDocumentMoniker": "template_marking.cpp",
@@ -222,6 +223,16 @@
               "ViewState": "AgIAACwAAAAAAAAAAAAcwGIAAAAbAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
               "WhenOpened": "2026-05-27T02:45:18.776Z"
+            }
+          ]
+        },
+        {
+          "DockedWidth": 230,
+          "SelectedChildIndex": -1,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
             }
           ]
         }

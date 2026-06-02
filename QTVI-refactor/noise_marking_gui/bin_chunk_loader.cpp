@@ -68,8 +68,8 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
         for (int i = 0; i < m_genExc.noiseExc.size(); ++i) {
             double sr = sampleRateForSignal(m_genExc.data_type[i]);
             m_noiseManager->addSegment(
-                static_cast<size_t>(m_genExc.noiseExc[i].first * sr),
-                static_cast<size_t>(m_genExc.noiseExc[i].second * sr),
+                static_cast<int>(m_genExc.noiseExc[i].first * sr),
+                static_cast<int>(m_genExc.noiseExc[i].second * sr),
                 m_genExc.data_type[i].toStdString(),
                 m_genExc.marking_type[i].toStdString());
         }
@@ -161,7 +161,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     auto loadSignal = [&](QVector<double>& dest, int chIdx) {
         double   sr = rateForChannel(chIdx);
         uint64_t totalSamples = m_chanSizes[chIdx];
-        uint64_t perChunk = static_cast<uint64_t>(CHUNK_DURATION_SEC * sr);
+        uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * sr);
         uint64_t start = chunkIndex * perChunk;
         uint64_t count = (totalSamples > start)
             ? std::min(perChunk, totalSamples - start) : 0;
@@ -184,7 +184,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         }
         const float nativeHz = m_chanNativeRates[chIdx];
         if (nativeHz <= 0.0f) return;
-        const uint64_t perChunk = static_cast<uint64_t>(CHUNK_DURATION_SEC * (double)nativeHz);
+        const uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * (double)nativeHz);
         const uint64_t firstPair = chunkIndex * perChunk;
         if (firstPair >= totalPairs) return;
         const uint64_t count = std::min(perChunk, totalPairs - firstPair);
@@ -241,7 +241,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     rewriteRawToIndexTime(m_cvpRaw, CH_PRES);
 
     {
-        uint64_t perChunk = static_cast<uint64_t>(CHUNK_DURATION_SEC * m_sleepSR);
+        uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * m_sleepSR);
         uint64_t start = chunkIndex * perChunk;
         uint64_t count = (m_totalSleepSamples > start)
             ? std::min(perChunk, m_totalSleepSamples - start) : 0;
@@ -269,20 +269,22 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         ui->accel_or_abp_axis->setVisible(!isMissingSignal(m_abp));
     if (ui->ppg_ampogram_axis)
         ui->ppg_ampogram_axis->setVisible(!isMissingSignal(m_ppg));
-    if (ui->hyp_accel_resp_cvp_axis) {
-        ui->hyp_accel_resp_cvp_axis->setVisible(
-            sleepDataPresent(m_sleepStages) || !isMissingSignal(m_cvp)
+    if (ui->cvp_axis)
+        ui->cvp_axis->setVisible(!isMissingSignal(m_cvp));
+    if (ui->hyp_accel_resp_axis) {
+        ui->hyp_accel_resp_axis->setVisible(
+            sleepDataPresent(m_sleepStages)
             || !isMissingSignal(m_resp) || anyAccel);
     }
 
     updateAllChannelButtonStates();
-    handle_ampogram_plot();
+    ampogram();
     handle_data_plot();
     setupHypnogram();
     updateAmpogramCursor();
     restoreMarkingMarkers();
 
-    uint64_t ecgPerChunk = static_cast<uint64_t>(CHUNK_DURATION_SEC * m_ecgSR);
+    uint64_t ecgPerChunk = static_cast<uint64_t>(seconds_in_memory_at_once * m_ecgSR);
     ui->prev8hours->setEnabled(chunkIndex > 0);
     ui->next8hours->setEnabled(
         (chunkIndex * ecgPerChunk + m_ecg1.size()) < m_chanSizes[CH_ECG1]);

@@ -174,8 +174,8 @@ void user_control_handler::handle_undo_button() {
     for (int i = 0; i < exc.noiseExc.size(); ++i) {
         const double sr = m_gui->sampleRateForSignal(exc.data_type[i]);
         m_gui->m_noiseManager->addSegment(
-            static_cast<size_t>(exc.noiseExc[i].first * sr),
-            static_cast<size_t>(exc.noiseExc[i].second * sr),
+            static_cast<int>(exc.noiseExc[i].first * sr),
+            static_cast<int>(exc.noiseExc[i].second * sr),
             exc.data_type[i].toStdString(),
             exc.marking_type[i].toStdString());
     }

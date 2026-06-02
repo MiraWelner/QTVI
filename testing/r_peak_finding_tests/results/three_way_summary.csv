@@ -1,0 +1,16 @@
+Metric,Mira,Daniel,Deep
+N Subjects,13,13,13
+N Beats Total,587752,534371,575124
+Mean N Beats Per Patient,45211.692308,41105.461538,44240.307692
+Beats Diff From Mira,,53574,29185
+Beats Diff From Daniel,193,,534371
+Beats Diff From Deep,16557,0,
+Mean Rate (bpm),85.075408,76.948425,76.490279
+Median Rate (bpm),75.85335,74.812968,75.18797
+Rate IQR (bpm),"64.935065,85.959885","63.897764,82.872928","64.239829,83.916084"
+Mean Interval (ms),822.668669,838.701833,835.998861
+Median Interval (ms),791.0,802.0,798.0
+Interval IQR (ms),"698.0,924.0","724.0,939.0","715.0,934.0"
+Mean Amplitude,1.183162,,
+Median Amplitude,1.12012,,
+Amplitude IQR,"0.802257,1.516713",,

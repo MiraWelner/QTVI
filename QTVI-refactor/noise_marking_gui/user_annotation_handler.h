@@ -10,12 +10,12 @@
 #include <cstddef>
 
 struct AnnotationSegment {
-    size_t      startSample;
-    size_t      endSample;
+    int      startSample;
+    int      endSample;
     std::string label;         // "ECG1", "ECG2", "ECG3", "PPG", or "ABP"
     std::string marking_type;  // "Noise/Art.", "AF", "SVT", etc.
 
-    AnnotationSegment(size_t s, size_t e, const std::string& l)
+    AnnotationSegment(int s, int e, const std::string& l)
         : startSample(s), endSample(e), label(l) {
     }
 };
@@ -24,8 +24,8 @@ class annotation_handler {
 public:
     explicit annotation_handler(double fs);
 
-    void reserve(size_t n);
-    void addSegment(size_t start, size_t end,
+    void reserve(int n);
+    void addSegment(int start, int end,
         const std::string& label, const std::string& marking_type);
 
     void exportCSV(const std::string& filename)    const;

@@ -1,0 +1,15 @@
+Metric,Daniel,Deep
+N Subjects,1,1
+N Beats Total,40863,0
+Beats in Daniel not in Deep,40863,
+Beats in Deep not in Daniel,,0
+Mean N Beats Per Patient,40863.0,0.0
+Mean Rate (bpm),83.089485,
+Median Rate (bpm),82.417582,
+Rate IQR (bpm),"77.120823,89.153046",
+Mean Interval (ms),731.030591,
+Median Interval (ms),728.0,
+Interval IQR (ms),"673.0,778.0",
+Mean Amplitude,,
+Median Amplitude,,
+Amplitude IQR,,

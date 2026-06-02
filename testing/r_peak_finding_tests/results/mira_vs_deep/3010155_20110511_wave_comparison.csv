@@ -1,0 +1,15 @@
+Metric,Mira,Deep
+N Subjects,1,1
+N Beats Total,31677,31519
+Beats in Mira not in Deep,438,
+Beats in Deep not in Mira,,280
+Mean N Beats Per Patient,31677.0,31519.0
+Mean Rate (bpm),60.07566,59.234515
+Median Rate (bpm),58.765916,58.765916
+Rate IQR (bpm),"57.416268,60.544904","57.416268,60.483871"
+Mean Interval (ms),1020.197979,1018.545446
+Median Interval (ms),1021.0,1021.0
+Interval IQR (ms),"991.0,1045.0","992.0,1045.0"
+Mean Amplitude,0.859858,
+Median Amplitude,0.889504,
+Amplitude IQR,"0.791409,0.931853",

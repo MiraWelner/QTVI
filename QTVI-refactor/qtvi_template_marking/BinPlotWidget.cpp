@@ -40,11 +40,10 @@ namespace {
     constexpr QColor kColorEcgTrace{ 10,  20,  90 };   // dark navy blue
     constexpr QColor kColorPpgTrace{ 130,  10,  20 };   // dark red
 
-    // Gray std band -- semi-transparent so the trace line on top stays
-    // visible at every sample. Same color for ECG and PPG bands; the
-    // bands sit behind their respective traces, so the trace color
-    // disambiguates which signal each band belongs to.
-    constexpr QColor kColorStdBand{ 200, 200, 200, 110 };
+    //different colored STD bands - yellowish for ecg and gray for ppg
+    inline const QColor color_stdband_ecg{ 255, 215, 0, 110 };
+    inline const QColor color_stdband_ppg{ 200, 200, 200, 110 };
+
 
     // ECG markers (P, Q, Tb, Te) - blacks and dark blues, darkest to lightest.
     constexpr QColor kColorEcgP{ 0,   0,   0 };   // black
@@ -109,12 +108,8 @@ namespace {
     // Draw the gray ±std band at a fixed pixels-per-sample scale using
     // the supplied (lo, hi) range. The caller must use the SAME range
     // for the trace draw so the band and line agree vertically.
-    void drawStdBand(QPainter& p,
-        const std::vector<double>& v,
-        const std::vector<double>& sd,
-        double startPx, int mt, int ph,
-        double pxPerSample, int visN,
-        double lo, double hi)
+    void drawStdBand(QPainter& p, const std::vector<double>& v, const std::vector<double>& sd, double startPx, int mt, int ph,
+        double pxPerSample, int visN, double lo, double hi, QColor color)
     {
         if (visN < 2 || (int)v.size() < 2) return;
         if ((int)sd.size() < visN) return;          // empty/mismatched => no band
@@ -137,7 +132,7 @@ namespace {
         band.closeSubpath();
 
         p.setPen(Qt::NoPen);
-        p.setBrush(kColorStdBand);
+        p.setBrush(color);
         p.drawPath(band);
     }
 
@@ -317,7 +312,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         computeVisibleRange(m_ecg, m_ecgStd, m_ecgVisibleN, lo, hi);
 
         drawStdBand(p, m_ecg, m_ecgStd, kML, kMT, ph,
-            pps, m_ecgVisibleN, lo, hi);
+            pps, m_ecgVisibleN, lo, hi, color_stdband_ecg);
         drawTraceFixedScale(p, m_ecg, kML, kMT, ph,
             pps, QPen(kColorEcgTrace, 1.5),
             m_ecgVisibleN, lo, hi);
@@ -351,8 +346,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         double lo, hi;
         computeVisibleRange(ppgPadded, stdPadded, visN, lo, hi);
 
-        drawStdBand(p, ppgPadded, stdPadded, kML, kMT, ph,
-            pps, visN, lo, hi);
+        drawStdBand(p, ppgPadded, stdPadded, kML, kMT, ph,pps, visN, lo, hi, color_stdband_ppg);
         drawTraceFixedScale(p, ppgPadded, kML, kMT, ph,
             pps, QPen(kColorPpgTrace, 1.5),
             visN, lo, hi);

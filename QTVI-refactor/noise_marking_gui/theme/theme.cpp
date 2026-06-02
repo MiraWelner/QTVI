@@ -12,11 +12,11 @@ namespace Theme {
 
         QPalette p;
 
-        const QColor bg(250, 250, 249);       // warm off-white canvas
-        const QColor surface(255, 255, 255);  // cards / inputs
-        const QColor text(28, 28, 34);         // near-black, easy on the eye
-        const QColor mutedText(120, 120, 130); // secondary labels
-        const QColor accent(99, 91, 255);      // confident indigo
+        const QColor bg(250, 250, 249);
+        const QColor surface(255, 255, 255);
+        const QColor text(28, 28, 34);
+        const QColor mutedText(120, 120, 130);
+        const QColor accent(99, 91, 255);
         const QColor border(226, 226, 231);
 
         // Surfaces
@@ -42,7 +42,7 @@ namespace Theme {
         p.setColor(QPalette::ToolTipBase, text);
         p.setColor(QPalette::ToolTipText, Qt::white);
 
-        // Disabled states — keep things looking intentional, not broken
+        // Disabled states
         p.setColor(QPalette::Disabled, QPalette::Text, QColor(176, 176, 184));
         p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(176, 176, 184));
         p.setColor(QPalette::Disabled, QPalette::WindowText, QColor(176, 176, 184));

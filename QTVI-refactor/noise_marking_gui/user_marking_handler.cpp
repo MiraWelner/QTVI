@@ -22,7 +22,7 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX,
 {
     ChannelMarkingState& state = markStateFor(signalLabel);
     const double sr = sampleRateForSignal(signalLabel);
-    const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+    const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
     const double globalEnd = endX + globalOffset;
     const double globalStart = state.globalStartTime;
 
@@ -30,8 +30,8 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX,
     const double snappedE = std::round(std::max(globalStart, globalEnd) * sr) / sr;
 
     m_noiseManager->addSegment(
-        static_cast<size_t>(snappedS * sr),
-        static_cast<size_t>(snappedE * sr),
+        static_cast<int>(snappedS * sr),
+        static_cast<int>(snappedE * sr),
         signalLabel.toStdString(),
         m_currentMarkingType.toStdString());
 
@@ -159,8 +159,8 @@ void noise_marking_gui::showStartMarker(QChartView* cv, double xValue,
 }
 
 void noise_marking_gui::restoreMarkingMarkers() {
-    const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
-    const double chunkEnd = globalOffset + CHUNK_DURATION_SEC;
+    const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
+    const double chunkEnd = globalOffset + seconds_in_memory_at_once;
 
     auto restore = [&](const QString& label, ChannelMarkingState& state) {
         if (state.phase != MarkPhase::WaitingForEnd
@@ -210,7 +210,7 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
                 endX = std::clamp(endX, m_currentStartTime,
                     m_currentStartTime + m_windowDuration);
                 ChannelMarkingState& state = markStateFor(label);
-                const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+                const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
                 const double localStart = state.globalStartTime - globalOffset;
                 if (std::abs(endX - localStart) > 0.1)
                     finalizeMarking(cv, endX, label);
@@ -234,7 +234,7 @@ bool noise_marking_gui::handleMousePress(QChartView* cv, QWidget* viewport,
     const QString label = signalLabelForChartView(cv);
     if (!label.isEmpty()) {
         if (!isChannelActive(label)) return false;
-        const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+        const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
 
         if (m_markAllActive) {
             bool anyStart = false, anyEnd = false, anyStop = false;
@@ -298,11 +298,11 @@ bool noise_marking_gui::handleMousePress(QChartView* cv, QWidget* viewport,
     const bool isNavChart =
         (cv == ui->ecg_ampogram_axis)
         || (cv == ui->ppg_ampogram_axis)
-        || (cv == ui->hyp_accel_resp_cvp_axis && sleepPresent);
+        || (cv == ui->hyp_accel_resp_axis && sleepPresent);
 
     if (isNavChart) {
         const double globalClickX = cv->chart()->mapToValue(me->pos()).x();
-        const double globalOffset = m_currentChunkIndex * CHUNK_DURATION_SEC;
+        const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
         const double localTarget = globalClickX - globalOffset;
         const double maxStart = std::max(0.0, chunkDur - m_windowDuration);
         m_currentStartTime = std::clamp(

@@ -1,0 +1,15 @@
+Metric,Mira,Daniel
+N Subjects,1,1
+N Beats Total,50502,46956
+Beats in Mira not in Daniel,3546,
+Beats in Daniel not in Mira,,0
+Mean N Beats Per Patient,50502.0,46956.0
+Mean Rate (bpm),81.555598,80.363897
+Median Rate (bpm),80.321285,80.321285
+Rate IQR (bpm),"74.534161,85.106383","74.812968,84.745763"
+Mean Interval (ms),770.188505,753.814937
+Median Interval (ms),747.0,747.0
+Interval IQR (ms),"705.0,805.0","708.0,802.0"
+Mean Amplitude,2.024292,
+Median Amplitude,2.007257,
+Amplitude IQR,"1.875273,2.141181",

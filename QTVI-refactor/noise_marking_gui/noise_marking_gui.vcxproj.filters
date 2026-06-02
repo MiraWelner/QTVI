@@ -83,16 +83,10 @@
     <QtMoc Include="grid_overlay.hpp">
       <Filter>Header Files</Filter>
     </QtMoc>
-    <QtMoc Include="template_generation\AlignWaves.hpp">
-      <Filter>Header Files</Filter>
-    </QtMoc>
     <QtMoc Include="annealing_to_bin\anneal_handler.hpp">
       <Filter>Header Files</Filter>
     </QtMoc>
     <QtMoc Include="template_generation\build_templates.hpp">
-      <Filter>Header Files</Filter>
-    </QtMoc>
-    <QtMoc Include="template_generation\CombineTemplatesGraph.hpp">
       <Filter>Header Files</Filter>
     </QtMoc>
     <QtMoc Include="config_entry.hpp">
@@ -105,9 +99,6 @@
       <Filter>Header Files</Filter>
     </QtMoc>
     <QtMoc Include="template_generation\EnsembleTemplate.hpp">
-      <Filter>Header Files</Filter>
-    </QtMoc>
-    <QtMoc Include="template_generation\find_foot_pulseox.hpp">
       <Filter>Header Files</Filter>
     </QtMoc>
     <QtMoc Include="gap_indicator.hpp">
@@ -150,6 +141,15 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="theme\theme.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="template_generation\CombineTemplatesGraph.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="template_generation\AlignWaves.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="template_generation\find_foot_pulseox.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

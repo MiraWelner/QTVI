@@ -335,7 +335,7 @@ private:
 
     uint64_t m_currentChunkIndex = 0;
 
-    static constexpr double CHUNK_DURATION_SEC = 28800.0;  ///< 8 hours
+    static constexpr int seconds_in_memory_at_once = 28800; //8 hours 
 
     // --- Lookup helpers (thin wrappers over channelRefs) ---
     ChannelMarkingState& markStateFor(const QString& label);
@@ -386,7 +386,7 @@ private:
      * @brief  Redraw the 8-hour amplitude overviews and raw-signal overviews.
      * @param  sampling_length Bucket width in seconds for amplitude decimation.
      */
-    void handle_ampogram_plot(double sampling_length = 60);
+    void ampogram(double sampling_length = 60);
 
     /** @brief Redraw the black vertical cursor bar on each overview chart. */
     void updateAmpogramCursor();

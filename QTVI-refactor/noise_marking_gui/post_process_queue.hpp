@@ -37,7 +37,7 @@ public:
     bool isLocked(const std::filesystem::path& binPath) const;
 
     /// Jobs currently queued or in flight. For status display only.
-    size_t pendingCount() const;
+    int pendingCount() const;
 
     /// Block until all queued jobs finish and the worker thread exits.
     /// Called automatically by the destructor; call manually at program
