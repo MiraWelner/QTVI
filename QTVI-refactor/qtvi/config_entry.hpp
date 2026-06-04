@@ -36,7 +36,7 @@ struct config_entry {
     std::string r_peak_data_path;
     std::string template_path;
     std::string qtvi_marker_path;
-    std::string qtvi_data_path;
+    std::string snapshot_path;
 
 
 

@@ -145,7 +145,9 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
  * @param capture_raw_beats  If true, capture the surviving aligned beats
  *                           from the "raw" method into cr.kept_beats_raw[i].
  */
-static inline void process_channel(
+ // FAST methods: raw (the displayed one, with std) + unfiltered. These are
+ // everything the viewer renders. Captures the ch1 raw beats for QC.
+static inline void process_channel_fast(
     EcgChannelResult& cr,
     const vector<output_binfile_data>& bins,
     size_t i,
@@ -157,9 +159,7 @@ static inline void process_channel(
 {
     const auto& bin = bins[i];
 
-    // Method 1: raw (detection signal + raw R-peaks).
-    // This is the one the viewer renders, so it's the only method that
-    // gets per-sample std computed.
+    // Method 1: raw (detection signal + raw R-peaks). Only method with std.
     vector<vector<double>>* capture =
         (capture_raw_beats && i < cr.kept_beats_raw.size())
         ? &cr.kept_beats_raw[i] : nullptr;
@@ -170,6 +170,28 @@ static inline void process_channel(
     cr.ecgTemplates_raw_std[i] = raw_res.ecgTemplate_std;
     cr.ppg_alignment_point_raw[i] = raw_res.ppg_alignment_point;
     cr.avg_r_expand_raw[i] = raw_res.avg_r_expand;
+
+    // Method 4: unfiltered (original ECG signal + raw R-peaks). No std.
+    auto unfilt_res = build_ecg_template_for_method(
+        origSignal, ch.raw, bin.pairs, std_multiplier,
+        nullptr, /*compute_std=*/false);
+    cr.ecgTemplates_unfiltered[i] = unfilt_res.ecgTemplate;
+    cr.ppg_alignment_point_unfiltered[i] = unfilt_res.ppg_alignment_point;
+    cr.avg_r_expand_unfiltered[i] = unfilt_res.avg_r_expand;
+}
+
+// SLOW methods: squared + absval. Not displayed by the viewer; safe to
+// compute off the critical path. Writes only the squared/absval fields of
+// cr (which process_channel_fast leaves untouched).
+static inline void process_channel_slow(
+    EcgChannelResult& cr,
+    const vector<output_binfile_data>& bins,
+    size_t i,
+    const vector<double>& ecgSignal,
+    const ChannelRPeaks& ch,
+    double std_multiplier)
+{
+    const auto& bin = bins[i];
 
     // Method 2: squared (squared signal + squared R-peaks). No std.
     const auto& sq_sig = ch.squared_signal.empty() ? ecgSignal : ch.squared_signal;
@@ -188,17 +210,27 @@ static inline void process_channel(
     cr.ecgTemplates_absval[i] = abs_res.ecgTemplate;
     cr.ppg_alignment_point_absval[i] = abs_res.ppg_alignment_point;
     cr.avg_r_expand_absval[i] = abs_res.avg_r_expand;
-
-    // Method 4: unfiltered (original ECG signal + raw R-peaks). No std.
-    auto unfilt_res = build_ecg_template_for_method(
-        origSignal, ch.raw, bin.pairs, std_multiplier,
-        nullptr, /*compute_std=*/false);
-    cr.ecgTemplates_unfiltered[i] = unfilt_res.ecgTemplate;
-    cr.ppg_alignment_point_unfiltered[i] = unfilt_res.ppg_alignment_point;
-    cr.avg_r_expand_unfiltered[i] = unfilt_res.avg_r_expand;
 }
 
-inline EcgTemplateResult CreateEcgTemplates(
+// Original all-4-methods entry point, preserved by composition.
+static inline void process_channel(
+    EcgChannelResult& cr,
+    const vector<output_binfile_data>& bins,
+    size_t i,
+    const vector<double>& ecgSignal,
+    const vector<double>& origSignal,
+    const ChannelRPeaks& ch,
+    double std_multiplier,
+    bool capture_raw_beats = false)
+{
+    process_channel_fast(cr, bins, i, ecgSignal, origSignal, ch,
+        std_multiplier, capture_raw_beats);
+    process_channel_slow(cr, bins, i, ecgSignal, ch, std_multiplier);
+}
+
+// FAST pass: raw + unfiltered templates (everything the viewer needs).
+// Leaves the squared/absval vectors sized-but-empty for CreateEcgTemplatesSlow.
+inline EcgTemplateResult CreateEcgTemplatesFast(
     const vector<output_binfile_data>& bins,
     double std_multiplier)
 {
@@ -208,29 +240,48 @@ inline EcgTemplateResult CreateEcgTemplates(
     init_channel_result(res.ch2, n);
     init_channel_result(res.ch3, n);
 
-    std::atomic<int> done{ 0 };
-
     int max_threads = std::min(8, (int)n);
 #pragma omp parallel for schedule(dynamic) num_threads(max_threads)
     for (int i = 0; i < static_cast<int>(n); ++i) {
-
         const auto& bin = bins[i];
-
-        // Ch1: capture the surviving raw-method beats for QC output
-        process_channel(res.ch1, bins, i, bin.ecgSignal, bin.ecgSignal, bin.ch1,
+        process_channel_fast(res.ch1, bins, i, bin.ecgSignal, bin.ecgSignal, bin.ch1,
             std_multiplier, /*capture_raw_beats=*/true);
-
-        // Ch2: ecgSignal2 is both the detection signal and the original
         if (!bin.ecgSignal2.empty())
-            process_channel(res.ch2, bins, i, bin.ecgSignal2, bin.ecgSignal2, bin.ch2,
+            process_channel_fast(res.ch2, bins, i, bin.ecgSignal2, bin.ecgSignal2, bin.ch2,
                 std_multiplier);
-
-        // Ch3: ecgSignal3 is both the detection signal and the original
         if (!bin.ecgSignal3.empty())
-            process_channel(res.ch3, bins, i, bin.ecgSignal3, bin.ecgSignal3, bin.ch3,
+            process_channel_fast(res.ch3, bins, i, bin.ecgSignal3, bin.ecgSignal3, bin.ch3,
                 std_multiplier);
-
-        ++done;
     }
+    return res;
+}
+
+// SLOW pass: fills the squared/absval templates onto an EcgTemplateResult
+// that has already been sized (e.g. by CreateEcgTemplatesFast, or by
+// init_channel_result). Touches only squared/absval fields.
+inline void CreateEcgTemplatesSlow(
+    const vector<output_binfile_data>& bins,
+    double std_multiplier,
+    EcgTemplateResult& res)
+{
+    size_t n = bins.size();
+    int max_threads = std::min(8, (int)n);
+#pragma omp parallel for schedule(dynamic) num_threads(max_threads)
+    for (int i = 0; i < static_cast<int>(n); ++i) {
+        const auto& bin = bins[i];
+        process_channel_slow(res.ch1, bins, i, bin.ecgSignal, bin.ch1, std_multiplier);
+        if (!bin.ecgSignal2.empty())
+            process_channel_slow(res.ch2, bins, i, bin.ecgSignal2, bin.ch2, std_multiplier);
+        if (!bin.ecgSignal3.empty())
+            process_channel_slow(res.ch3, bins, i, bin.ecgSignal3, bin.ch3, std_multiplier);
+    }
+}
+
+inline EcgTemplateResult CreateEcgTemplates(
+    const vector<output_binfile_data>& bins,
+    double std_multiplier)
+{
+    EcgTemplateResult res = CreateEcgTemplatesFast(bins, std_multiplier);
+    CreateEcgTemplatesSlow(bins, std_multiplier, res);
     return res;
 }

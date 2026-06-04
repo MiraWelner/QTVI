@@ -82,19 +82,19 @@ namespace {
         /*
             All the types of output are stored in their own subfolder of output_path, which are defined in this function
         */
-        cfg.noise_data_path = cfg.output_path + "/noise_marking_output/";
+        cfg.snapshot_path = cfg.output_path + "/saved_plot_snapshots/";
         cfg.annealed_data_path = cfg.output_path + "/annealed_output/";
+        cfg.noise_data_path = cfg.output_path + "/noise_marking_output/";
         cfg.r_peak_data_path = cfg.output_path + "/r_peak_finding_output/";
-        cfg.template_path = cfg.output_path + "/template_path/";
+        cfg.template_path = cfg.output_path + "/template_outputs/";
         cfg.qtvi_marker_path = cfg.output_path + "/qtvi_marker_path/";
-        cfg.qtvi_data_path = cfg.output_path + "/qtvi_data_path/";
 
+        std::filesystem::create_directories(cfg.snapshot_path);
         std::filesystem::create_directories(cfg.noise_data_path);
         std::filesystem::create_directories(cfg.annealed_data_path);
         std::filesystem::create_directories(cfg.r_peak_data_path);
         std::filesystem::create_directories(cfg.template_path);
         std::filesystem::create_directories(cfg.qtvi_marker_path);
-        std::filesystem::create_directories(cfg.qtvi_data_path);
 
     }
 

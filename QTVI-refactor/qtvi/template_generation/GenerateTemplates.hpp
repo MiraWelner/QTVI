@@ -29,7 +29,10 @@
 #include "AlignWaves.hpp"
 #include <iostream>
 
-inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>& wave_data) {
+ // FAST: PPG templates + ECG raw/unfiltered templates. The squared/absval
+ // fields of each returned TemplateInfo are left empty for
+ // AugmentTemplatesSlow() to fill. This is everything the viewer displays.
+inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_data>& wave_data) {
     constexpr double std_multiplier = 2.5;
 
     size_t n = wave_data.size();
@@ -120,8 +123,11 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
         }
     }
 
-    // ECG templates (4 methods x 3 channels per bin)
-    EcgTemplateResult ecg_res = CreateEcgTemplates(wave_data, std_multiplier);
+    // ECG templates -- FAST methods only (raw + unfiltered). The
+    // squared/absval columns stay empty here; fill_channel copies those
+    // empty vectors through harmlessly, and AugmentTemplatesSlow fills
+    // them later.
+    EcgTemplateResult ecg_res = CreateEcgTemplatesFast(wave_data, std_multiplier);
 
     // Assemble TemplateInfo
     auto fill_channel = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {
@@ -200,4 +206,45 @@ inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&
         // which the viewer already interprets as "no PPG for this bin".
     }
     return result;
+}
+
+// SLOW: fill the squared/absval ECG templates onto an existing
+// vector<TemplateInfo> produced by GenerateTemplatesFast. Applies the same
+// bad_segment gate as the fast pass, so squared/absval stay empty on bins
+// the fast pass cleared.
+inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
+    vector<TemplateInfo>& templates)
+{
+    constexpr double std_multiplier = 2.5;
+    size_t n = wave_data.size();
+
+    EcgTemplateResult ecg_res;
+    init_channel_result(ecg_res.ch1, n);
+    init_channel_result(ecg_res.ch2, n);
+    init_channel_result(ecg_res.ch3, n);
+    CreateEcgTemplatesSlow(wave_data, std_multiplier, ecg_res);
+
+    auto fill_slow = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {
+        dst.ecgTemplate_squared = src.ecgTemplates_squared[i];
+        dst.ecgTemplate_absval = src.ecgTemplates_absval[i];
+        dst.alignment_point_squared = std::isnan(src.ppg_alignment_point_squared[i]) ? 0.0 : src.ppg_alignment_point_squared[i];
+        dst.alignment_point_absval = std::isnan(src.ppg_alignment_point_absval[i]) ? 0.0 : src.ppg_alignment_point_absval[i];
+        dst.avg_r_expand_squared = src.avg_r_expand_squared[i];
+        dst.avg_r_expand_absval = src.avg_r_expand_absval[i];
+        };
+
+    for (size_t i = 0; i < n && i < templates.size(); ++i) {
+        const bool ecg_good = (i < wave_data.size()) && !wave_data[i].bad_segment;
+        if (!ecg_good) continue;
+        fill_slow(templates[i].ch1, ecg_res.ch1, i);
+        fill_slow(templates[i].ch2, ecg_res.ch2, i);
+        fill_slow(templates[i].ch3, ecg_res.ch3, i);
+    }
+}
+
+// Original all-methods entry point, preserved by composition.
+inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>& wave_data) {
+    vector<TemplateInfo> templates = GenerateTemplatesFast(wave_data);
+    AugmentTemplatesSlow(wave_data, templates);
+    return templates;
 }

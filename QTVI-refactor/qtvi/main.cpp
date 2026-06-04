@@ -40,11 +40,14 @@
 #include <QFileInfo>
 
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
+#include <thread>
 #include <vector>
 
 #include <theme/theme.h>
@@ -189,6 +192,53 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    // Background squared/absval finalize jobs that are still running. We do
+    // NOT join a file's worker before moving to the next file -- that's what
+    // caused the stall after the template file was saved. Instead the worker
+    // is parked here, the loop advances immediately to the next file, and we
+    // reap finished workers opportunistically (and drain the rest at exit).
+    struct Outstanding {
+        std::thread th;
+        std::shared_ptr<post_process_detail::ViewerJob> job;
+        std::shared_ptr<std::atomic<bool>> done;
+    };
+    std::vector<Outstanding> outstanding;
+
+    auto finishJob = [](const std::shared_ptr<post_process_detail::ViewerJob>& job) {
+        if (!job->error.empty()) {
+            std::cerr << "  ERROR (squared/absval finalize) " << job->stem << ": "
+                << job->error << "\n";
+        }
+        // Best-effort removal of that file's provisional viewer file.
+        if (job->needsFinalize && job->provisionalPath != job->templatePath) {
+            std::error_code ec;
+            std::filesystem::remove(job->provisionalPath, ec);
+        }
+        };
+
+    // Reap completed background jobs. force==true joins everything (used at
+    // shutdown); force==false only joins workers that have already finished,
+    // so it never blocks the main thread / the next file from loading.
+    auto reap = [&](bool force) {
+        for (size_t i = 0; i < outstanding.size();) {
+            Outstanding& o = outstanding[i];
+            if (force || o.done->load(std::memory_order_acquire)) {
+                if (o.th.joinable()) o.th.join();
+                finishJob(o.job);
+                outstanding.erase(outstanding.begin() + i);
+            }
+            else {
+                ++i;
+            }
+        }
+        };
+
+    // Safety valve: if marking races far ahead of compute, cap how many
+    // background jobs (and their in-memory peak/template data) pile up by
+    // blocking on the oldest. In normal use human marking is slower than
+    // the compute, so this is rarely hit.
+    constexpr size_t kMaxOutstanding = 4;
+
     for (const std::filesystem::path& binFs : binFiles) {
         const std::string stem = binFs.stem().string();
         std::cout << "\n=== " << stem << " ===\n";
@@ -211,28 +261,66 @@ int main(int argc, char* argv[]) {
                 exportMarkings(cfg, std::filesystem::path(m.filePath.toStdString()), &m);
         }
 
-        // ---- Stage 2: process (anneal -> r-peaks -> templates) ----------
-        // Synchronous, on this thread. Was previously the background queue.
-        std::cout << "Processing (anneal / r-peaks / templates): " << stem << "\n";
-        post_process_detail::processOneFile(cfg, binFs);
+        // ---- Stage 2 (fast) + Stage 3 (marking), with the squared/absval
+        //      half of Stage 2 running in parallel --------------------------
+        // prepareViewerJob does anneal + raw R-peaks + raw/unfiltered/PPG
+        // templates and writes a provisional file for the viewer. The
+        // squared/absval R-peak detection and templating are deferred to a
+        // worker thread that runs while the user marks templates.
+        std::cout << "Processing (fast: anneal / raw r-peaks / raw templates): "
+            << stem << "\n";
+        auto jobOpt = post_process_detail::prepareViewerJob(cfg, binFs);
+        if (!jobOpt) {
+            std::cout << "  prep failed or skipped; not templating.\n";
+            continue;
+        }
+        // shared_ptr so the worker lambda safely co-owns the job; it is
+        // joined later (reaped when finished, or drained at shutdown), so the
+        // job data always outlives the worker.
+        auto job = std::make_shared<post_process_detail::ViewerJob>(std::move(*jobOpt));
 
-        // Template file name matches what processOneFile wrote:
-        //   <template_path>/<stem>_<binMinutes>_templates.bin
-        const std::filesystem::path templateFile =
-            std::filesystem::path(cfg.template_path) /
-            (stem + "_" +
-                std::to_string(static_cast<int>(cfg.bin_length_minutes)) +
-                "_templates.bin");
-
-        if (!std::filesystem::exists(templateFile)) {
+        if (!std::filesystem::exists(job->viewerTemplatePath)) {
             std::cerr << "  no template file produced for " << stem
-                << " (expected " << templateFile.filename().string()
-                << "); skipping template marking.\n";
+                << "; skipping template marking.\n";
             continue;
         }
 
-        // ---- Stage 3: template marking ----------------------------------
-        runTemplateMarking(cfg, templateFile);
+        auto done = std::make_shared<std::atomic<bool>>(false);
+        std::thread worker;
+        if (job->needsFinalize) {
+            std::cout << "  squared/absval r-peaks + templates finalizing in background\n";
+            worker = std::thread([job, done] {
+                // Pure compute + file writes to canonical paths. No Qt here.
+                post_process_detail::finalizeViewerJob(*job);
+                done->store(true, std::memory_order_release);
+                });
+        }
+
+        // ---- Stage 3: template marking (runs concurrently with worker) ----
+        runTemplateMarking(cfg, job->viewerTemplatePath);
+
+        // Do NOT join here. Park the worker and advance to the next file so
+        // the next file loads while this file's squared/absval work finishes.
+        if (worker.joinable())
+            outstanding.push_back(Outstanding{ std::move(worker), job, done });
+
+        // Clean up any background jobs that have already finished (non-blocking).
+        reap(/*force=*/false);
+
+        // Bound how many in-flight jobs may accumulate.
+        while (outstanding.size() > kMaxOutstanding) {
+            Outstanding& o = outstanding.front();
+            if (o.th.joinable()) o.th.join();
+            finishJob(o.job);
+            outstanding.erase(outstanding.begin());
+        }
+    }
+
+    // Drain remaining background jobs before exiting.
+    if (!outstanding.empty()) {
+        std::cout << "\nFinishing " << outstanding.size()
+            << " background squared/absval job(s)...\n";
+        reap(/*force=*/true);
     }
 
     std::cout << "\nAll files marked, processed, and templated.\n";

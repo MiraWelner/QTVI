@@ -1,8 +1,7 @@
 /**
  * @file   find_foot_pulseox.hpp
  * @brief  Find the foot (onset) of a pulse oximetry waveform using the
- *         intersecting-tangent / max-derivative-rotation method.
- *         Port of find_foot_pulseox.m
+ *         intersecting tangent / max derivative rotation method.
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -17,7 +16,7 @@
 #endif
 
  // Simple local-maxima finder (no min-distance constraint).
- // Only used here for derivative peaks — not the full R-peak findpeaks.
+ // Only used here for derivative peaks - not the full R-peak findpeaks.
 static inline void fp_findpeaks_simple(const vector<double>& data,
     vector<double>& pks,
     vector<size_t>& locs) {

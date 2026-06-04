@@ -85,16 +85,10 @@ void user_control_handler::handle_skip_button() { m_gui->reject(); }
 //        a fresh file rather than overwriting.
 void user_control_handler::save_current_plot()
 {
-    const QDir snapshotDir(QString::fromStdString(m_gui->m_cfg.output_path)
-        + "/saved_plot_snapshots");
-    snapshotDir.mkpath(".");
-
     const QString stem = QFileInfo(m_gui->getFilePath()).completeBaseName();
     const QString stamp = QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss");
-    const QString path = snapshotDir.filePath(stem + "_" + stamp + ".csv");
-
+    const QString path = QString::fromStdString(m_gui->m_cfg.snapshot_path) + stem + "_" + stamp + ".csv";
     QFile f(path);
-    f.open(QIODevice::WriteOnly | QIODevice::Text);
     QTextStream out(&f);
 
     const double t0 = m_gui->m_currentStartTime;

@@ -80,6 +80,56 @@ namespace template_generation_detail {
         bt.ppgTemplate_std = info.ppgTemplate_std;
     }
 
+    // FAST pack: raw + unfiltered ECG blocks + PPG. Leaves the squared and
+    // absval blocks default-empty for packBinSlow.
+    inline void packBinFast(template_io::BinTemplates& bt,
+        const TemplateInfo& info, bool bad_segment)
+    {
+        bt.bad_segment = bad_segment;
+        if (bad_segment) return;
+
+        copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw,
+            info.ch1.ecgTemplate_raw_std,
+            info.ch1.alignment_point_raw, info.ch1.avg_r_expand_raw);
+        copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, {},
+            info.ch1.alignment_point_unfiltered, info.ch1.avg_r_expand_unfiltered);
+
+        copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw,
+            info.ch2.ecgTemplate_raw_std,
+            info.ch2.alignment_point_raw, info.ch2.avg_r_expand_raw);
+        copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, {},
+            info.ch2.alignment_point_unfiltered, info.ch2.avg_r_expand_unfiltered);
+
+        copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw,
+            info.ch3.ecgTemplate_raw_std,
+            info.ch3.alignment_point_raw, info.ch3.avg_r_expand_raw);
+        copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered, {},
+            info.ch3.alignment_point_unfiltered, info.ch3.avg_r_expand_unfiltered);
+
+        bt.ppgTemplate = info.ppgTemplate;
+        bt.ppgTemplate_std = info.ppgTemplate_std;
+    }
+
+    // SLOW pack: squared + absval blocks onto an already fast-packed bin.
+    inline void packBinSlow(template_io::BinTemplates& bt,
+        const TemplateInfo& info)
+    {
+        if (bt.bad_segment) return;
+        const std::vector<double> noStd;
+        copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd,
+            info.ch1.alignment_point_squared, info.ch1.avg_r_expand_squared);
+        copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval, noStd,
+            info.ch1.alignment_point_absval, info.ch1.avg_r_expand_absval);
+        copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd,
+            info.ch2.alignment_point_squared, info.ch2.avg_r_expand_squared);
+        copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval, noStd,
+            info.ch2.alignment_point_absval, info.ch2.avg_r_expand_absval);
+        copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd,
+            info.ch3.alignment_point_squared, info.ch3.avg_r_expand_squared);
+        copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval, noStd,
+            info.ch3.alignment_point_absval, info.ch3.avg_r_expand_absval);
+    }
+
     inline template_io::AveragedTemplate
         averageOne(const std::vector<template_io::BinTemplates>& bins,
             std::vector<double>(*pick)(const template_io::BinTemplates&))
@@ -114,48 +164,84 @@ namespace template_generation_detail {
 
 }  // namespace template_generation_detail
 
-inline std::pair<template_io::TemplateFile, template_io::BeatsFile>
-buildTemplatesAndBeatsFromPeakResults(const std::vector<output_binfile_data>& peakResults)
+// Carries the in-memory state from the fast build to the slow merge.
+struct FastTemplateBuild {
+    template_io::TemplateFile tmpl;   // raw/unfiltered/ppg blocks + their SAECG
+    template_io::BeatsFile beats;     // ch1 raw kept beats (final)
+    std::vector<TemplateInfo> info;   // retained so mergeTemplatesSlow can pack squared/absval
+};
+
+// FAST build: produces a TemplateFile the viewer can open immediately
+// (raw/unfiltered/ppg + their SAECG averages) and the final beats file.
+// The squared/absval per-bin blocks and their SAECG entries stay empty
+// until mergeTemplatesSlow runs.
+inline FastTemplateBuild
+buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults)
 {
     using namespace template_generation_detail;
 
-    auto templates = GenerateTemplates(peakResults);
+    FastTemplateBuild out;
+    out.info = GenerateTemplatesFast(peakResults);
 
-    template_io::TemplateFile tmpl;
-    tmpl.bins.resize(peakResults.size());
+    out.tmpl.bins.resize(peakResults.size());
     for (size_t i = 0; i < peakResults.size(); ++i) {
         bool bad = peakResults[i].bad_segment;
-        const TemplateInfo& info = (i < templates.size()) ? templates[i] : TemplateInfo{};
-        packBin(tmpl.bins[i], info, bad);
+        const TemplateInfo& info = (i < out.info.size()) ? out.info[i] : TemplateInfo{};
+        packBinFast(out.tmpl.bins[i], info, bad);
     }
 
-    // SAECG averages -- copy the existing logic from your current
-    // buildTemplatesFromPeakResults (the 13 averageOne calls).
-    tmpl.saecg.ch1_raw = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch1_raw.ecgTemplate; });
+    // SAECG for the fast methods only.
+    out.tmpl.saecg.ch1_raw = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch1_raw.ecgTemplate; });
+    out.tmpl.saecg.ch1_unfiltered = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch1_unfiltered.ecgTemplate; });
+    out.tmpl.saecg.ch2_raw = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch2_raw.ecgTemplate; });
+    out.tmpl.saecg.ch2_unfiltered = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch2_unfiltered.ecgTemplate; });
+    out.tmpl.saecg.ch3_raw = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch3_raw.ecgTemplate; });
+    out.tmpl.saecg.ch3_unfiltered = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch3_unfiltered.ecgTemplate; });
+    out.tmpl.saecg.ppg = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ppgTemplate; });
+
+    // Beats: ch1 raw kept beats (moves them out of out.info; the slow merge
+    // doesn't read kept beats).
+    out.beats.per_bin_beats.resize(out.info.size());
+    out.beats.bad_segment.resize(out.info.size(), false);
+    for (size_t i = 0; i < out.info.size(); ++i) {
+        out.beats.bad_segment[i] = (i < peakResults.size())
+            ? peakResults[i].bad_segment : false;
+        if (!out.beats.bad_segment[i])
+            out.beats.per_bin_beats[i] = std::move(out.info[i].kept_beats_ch1_raw);
+    }
+
+    return out;
+}
+
+// SLOW merge: fills the squared/absval per-bin blocks and their SAECG
+// averages into a TemplateFile produced by buildTemplatesAndBeatsFast.
+// peakResults must carry the squared/absval R-peaks + preprocessed signals
+// (run augment_ecg_ppg_pairs_sqabs first, or load them from wave_markings).
+inline void mergeTemplatesSlow(const std::vector<output_binfile_data>& peakResults,
+    template_io::TemplateFile& tmpl,
+    std::vector<TemplateInfo>& info)
+{
+    using namespace template_generation_detail;
+
+    AugmentTemplatesSlow(peakResults, info);
+
+    for (size_t i = 0; i < tmpl.bins.size(); ++i) {
+        const TemplateInfo& bi = (i < info.size()) ? info[i] : TemplateInfo{};
+        packBinSlow(tmpl.bins[i], bi);
+    }
+
     tmpl.saecg.ch1_squared = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch1_squared.ecgTemplate; });
     tmpl.saecg.ch1_absval = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch1_absval.ecgTemplate; });
-    tmpl.saecg.ch1_unfiltered = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch1_unfiltered.ecgTemplate; });
-    tmpl.saecg.ch2_raw = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch2_raw.ecgTemplate; });
     tmpl.saecg.ch2_squared = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch2_squared.ecgTemplate; });
     tmpl.saecg.ch2_absval = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch2_absval.ecgTemplate; });
-    tmpl.saecg.ch2_unfiltered = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch2_unfiltered.ecgTemplate; });
-    tmpl.saecg.ch3_raw = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch3_raw.ecgTemplate; });
     tmpl.saecg.ch3_squared = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch3_squared.ecgTemplate; });
     tmpl.saecg.ch3_absval = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch3_absval.ecgTemplate; });
-    tmpl.saecg.ch3_unfiltered = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch3_unfiltered.ecgTemplate; });
-    tmpl.saecg.ppg = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ppgTemplate; });
+}
 
-    // Beats: ch1 raw kept beats from each TemplateInfo.
-    template_io::BeatsFile beats;
-    beats.per_bin_beats.resize(templates.size());
-    beats.bad_segment.resize(templates.size(), false);
-    for (size_t i = 0; i < templates.size(); ++i) {
-        beats.bad_segment[i] = (i < peakResults.size())
-            ? peakResults[i].bad_segment : false;
-        if (!beats.bad_segment[i]) {
-            beats.per_bin_beats[i] = std::move(templates[i].kept_beats_ch1_raw);
-        }
-    }
-
-    return { tmpl, beats };
+inline std::pair<template_io::TemplateFile, template_io::BeatsFile>
+buildTemplatesAndBeatsFromPeakResults(const std::vector<output_binfile_data>& peakResults)
+{
+    FastTemplateBuild fast = buildTemplatesAndBeatsFast(peakResults);
+    mergeTemplatesSlow(peakResults, fast.tmpl, fast.info);
+    return { std::move(fast.tmpl), std::move(fast.beats) };
 }
