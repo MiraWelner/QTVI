@@ -26,3 +26,7 @@ x64/
 *.bin
 *.edf
 *.pch
+*.filters
+*.vcxproj
+/QTVI-refactor/noise_marking_gui/.vs
+/QTVI-refactor/qtvi_template_marking/x64
