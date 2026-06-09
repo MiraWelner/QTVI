@@ -88,7 +88,7 @@ static bool runNoiseMarking(const config_entry& cfg,
     QVector<GenExcStruct>& outAll,
     std::filesystem::path& outCurrent) {
     auto gui = std::make_unique<noise_marking_gui>();
-    gui->setConfig(cfg);
+    gui->set_params_to_config_defaults(cfg);
     // NOTE: no setPostProcessQueue() -- there is no queue anymore. The GUI's
     // m_postQueue stays nullptr and every `if (m_postQueue)` branch is skipped.
 
@@ -116,12 +116,12 @@ static bool runNoiseMarking(const config_entry& cfg,
 static void exportMarkings(const config_entry& cfg,
     const std::filesystem::path& binFile,
     const GenExcStruct* markings) {
-    annotation_handler nm(cfg.finalSamplingRate);
+    annotation_handler nm(cfg.target_sampling_rate);
     if (markings) {
         for (int i = 0; i < markings->noiseExc.size(); ++i) {
             nm.addSegment(
-                static_cast<int>(markings->noiseExc[i].first * cfg.finalSamplingRate),
-                static_cast<int>(markings->noiseExc[i].second * cfg.finalSamplingRate),
+                static_cast<int>(markings->noiseExc[i].first * cfg.target_sampling_rate),
+                static_cast<int>(markings->noiseExc[i].second * cfg.target_sampling_rate),
                 markings->data_type[i].toStdString(),
                 markings->marking_type[i].toStdString());
         }
@@ -169,7 +169,7 @@ static void runTemplateMarking(const config_entry& cfg,
     viewer.show();
     viewer.loadSubject(QString::fromStdString(templateFile.string()),
         QString::fromStdString(cfg.qtvi_marker_path),
-        displayId, cfg.finalSamplingRate);
+        displayId, cfg.target_sampling_rate);
     loop.exec();
 }
 

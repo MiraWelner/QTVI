@@ -49,11 +49,11 @@ namespace {
             label in CHAOS and the ECG_1 label in Bittium. Each channel is a
             feature of the config_entry cfg, and they are assigned here.
         */
-        if (cfg.dataType == "MESA") {
+        if (cfg.dataset_type == "MESA") {
             cfg.ecg1Label = "EKG";
             cfg.ppgLabel = "Pleth";
         }
-        else if (cfg.dataType == "BITTIUM") {
+        else if (cfg.dataset_type == "BITTIUM") {
             cfg.ecg1Label = "ECG_1";
             cfg.ecg2Label = "ECG_2";
             cfg.ecg3Label = "ECG_3";
@@ -61,7 +61,7 @@ namespace {
             cfg.accelYLabel = "Accelerometer_Y";
             cfg.accelZLabel = "Accelerometer_Z";
         }
-        else if (cfg.dataType == "CHAOS") {
+        else if (cfg.dataset_type == "CHAOS") {
             cfg.ecg1Label = "NLS_NOM_ECG_ELEC_pOTL_I";
             cfg.ecg2Label = "NLS_NOM_ECG_ELEC_pOTL_II";
             cfg.ecg3Label = "NLS_NOM_ECG_ELEC_pOTL_III";
@@ -113,7 +113,7 @@ namespace {
         for (const auto& [label, fieldPtr] : fields) {
             if (!fieldPtr->empty()) continue;
 
-            QString title = QString("%1 (%2)").arg(label, QString::fromStdString(cfg.dataType));
+            QString title = QString("%1 (%2)").arg(label, QString::fromStdString(cfg.dataset_type));
             QString chosen = QFileDialog::getExistingDirectory(
                 nullptr, title, QString(),
                 QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
@@ -149,19 +149,14 @@ std::optional<config_entry> load_config(int dataType) {
 
     while (std::getline(file, line)) {
         auto row = parse_csv_row(line);
-        // 12 columns: data_type, main_ext, sleep_ext, ecg_rate, ppg_rate,
-        // cvp_rate, abp_rate, resp_rate, upsampled_rate, bin_size_minutes,
-        // original_file_path, output_folder.
-        if (row.size() < 12) continue;
-
         std::string rowType = row[0];
         std::transform(rowType.begin(), rowType.end(), rowType.begin(), ::toupper);
         if (rowType != input_file_type) continue;
         config_entry cfg;
 
-        cfg.dataType = rowType;
-        cfg.mainExt = row[1];
-        cfg.sleepExt = row[2];
+        cfg.dataset_type = rowType;
+        cfg.original_file_extention = row[1];
+        cfg.sleep_file_extention = row[2];
 
         // Some CSV cells are intentionally blank (e.g. Bittium has no PPG
         // rate). std::stod throws on empty strings, so guard.
@@ -170,20 +165,17 @@ std::optional<config_entry> load_config(int dataType) {
             try { return std::stod(s); }
             catch (...) { return 0.0; }
             };
-        cfg.ecgRate = stod_or_zero(row[3]);
-        cfg.ppgRate = stod_or_zero(row[4]);
-        cfg.cvpRate = stod_or_zero(row[5]);
-        cfg.abpRate = stod_or_zero(row[6]);
-        cfg.respRate = stod_or_zero(row[7]);
-        cfg.finalSamplingRate = stod_or_zero(row[8]);
-        cfg.bin_length_minutes = stod_or_zero(row[9]);
-        // CSV column 10 is the *source* folder used by the file_to_bin
-        // utility; the GUI doesn't load from it but we read it into
-        // cfg.input_path anyway so the same struct keeps working across
-        // both programs. The GUI gets its .bin folder via the manual
-        // file dialog in manually_select_folder() (cfg.bin_file_path).
-        cfg.input_path = row[10];
-        cfg.output_path = row[11];
+        cfg.ecg_rate = stod_or_zero(row[3]);
+        cfg.ppg_rate = stod_or_zero(row[4]);
+        cfg.central_venous_pressure_rate = stod_or_zero(row[5]);
+        cfg.arterial_blood_pressure_rate = stod_or_zero(row[6]);
+        cfg.resp_rate = stod_or_zero(row[7]);
+        cfg.target_sampling_rate = stod_or_zero(row[8]);
+        cfg.blanking_period = std::stod(row[9]);
+		cfg.height_threshold_percent = std::stod(row[10]);
+        cfg.bin_length_minutes = stod_or_zero(row[11]);
+        cfg.input_path = row[12];
+        cfg.output_path = row[13];
         deriveSubpaths(cfg);
 
         apply_dataset_specific_channel_labels(cfg);

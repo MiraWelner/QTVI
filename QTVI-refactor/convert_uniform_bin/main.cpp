@@ -68,7 +68,7 @@ int main(int argc, char* argv[]) {
     QStringList files = discoverSourceFiles(cfg);
     if (files.isEmpty()) {
         std::cerr << "No source files found in " << cfg.input_path
-            << " with extension " << cfg.mainExt << "\n";
+            << " with extension " << cfg.dataset_type << "\n";
         return 1;
     }
     std::cout << "Found " << files.size() << " source file(s).\n\n";

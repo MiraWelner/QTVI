@@ -68,7 +68,7 @@ namespace post_process_detail {
             try {
                 AnnealedData annealedData = read_input_binfile(annealedPath.string());
                 peakResults = create_ecg_ppg_pairs(
-                    std::move(annealedData.bins), 0, true, stem, cfg.finalSamplingRate, cfg.finalSamplingRate);
+                    std::move(annealedData.bins), 0, true, stem, cfg.target_sampling_rate, cfg.target_sampling_rate);
                 write_output_binfile(rPeakPath.string(), peakResults);
                 std::cerr << "  -> " << peakResults.size() << " bins -> "
                     << rPeakPath.filename() << "\n";
@@ -210,7 +210,7 @@ namespace post_process_detail {
         ViewerJob job;
         job.stem = stem;
         job.fileID = stem;
-        job.samplingRate = cfg.finalSamplingRate;
+        job.samplingRate = cfg.target_sampling_rate;
         job.rPeakPath = rPeakPath;
         job.templatePath = templatePath;
         job.beatsPath = beatsPath;
@@ -245,7 +245,7 @@ namespace post_process_detail {
                 AnnealedData annealedData = read_input_binfile(annealedPath.string());
                 job.peakResults = create_ecg_ppg_pairs_raw(
                     std::move(annealedData.bins), true, stem,
-                    cfg.finalSamplingRate, cfg.finalSamplingRate);
+                    cfg.target_sampling_rate, cfg.target_sampling_rate);
                 job.needSqabsDetection = true;
             }
 

@@ -7,25 +7,30 @@
 #include <string>
 
 struct config_entry {
-    std::string dataType;             // "MESA" / "Bittium" / "CHAOS"
-    std::string mainExt;              // ".edf" / ".dat"
-    std::string sleepExt;             // ".XML" or empty
+    //these params are always set by the config.csv, if they are not set by the config.csv, then the file will fail to load
+    std::string dataset_type;
+    std::string original_file_extention;
+    std::string sleep_file_extention;
+    double      ecg_rate;
+    double      ppg_rate;
+    double      central_venous_pressure_rate;
+    double      arterial_blood_pressure_rate;
+    double      resp_rate;
+    double      target_sampling_rate; //this rate is not defined by the input data, rather it is the rate that is upsampled to
 
-    double      ecgRate = 0.0;
-    double      ppgRate = 0.0;
-    double      finalSamplingRate = 0.0;
-
-    // Native sampling rates (Hz) for the remaining channels. Zero means
-    // "absent" -- the corresponding channel slot in the .bin gets a
-    // missing-channel placeholder.
-    // ART and ART_PULM share abpRate since they're variants on the
-    // same arterial-pressure sensor.
-    double      cvpRate = 0.0;
-    double      abpRate = 0.0;
-    double      respRate = 0.0;
-
-    std::string input_path;
+    //the output_path is never directly used, but is rather the
+    //parent folder of all the below paths. It is its own entry in the config
+    // becuase it is can be set by the user, the below folders are derived from it
+    std::string input_path;          // raw source folder (.dat / .edf input);
     std::string output_path;
+    std::string bin_file_path;
+    std::string noise_data_path;
+    std::string annealed_data_path;
+    std::string r_peak_data_path;
+    std::string template_path;
+    std::string qtvi_marker_path;
+    std::string snapshot_path;
+
 
 
     // these parameters are not in the config but rather in input_file_handler.cpp. 
@@ -48,5 +53,4 @@ struct config_entry {
     std::string artPulmLabel;
 
 
-    double bin_length_minutes;
 };

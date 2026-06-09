@@ -17,7 +17,7 @@
  /// isn't found.
 bool load_config(int dataType, config_entry& out);
 
-/// Recursively list every source file (matching cfg.mainExt) under
+/// Recursively list every source file (matching cfg.dataset_type) under
 /// cfg.originalFilePath. Result is sorted alphabetically.
 QStringList discoverSourceFiles(const config_entry& cfg);
 

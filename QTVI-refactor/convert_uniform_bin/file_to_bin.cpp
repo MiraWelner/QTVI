@@ -508,7 +508,7 @@ namespace {
         m[CH_EEG4] = find(cfg.eeg4Label);
 
         // Pressures / respiratory.
-        m[CH_PRES] = find(cfg.cvpLabel);
+        m[CH_CVP] = find(cfg.cvpLabel);
         m[CH_RESP] = find(cfg.respLabel);
         m[CH_ABP] = find(cfg.abpLabel);
         m[CH_ART] = find(cfg.artLabel);
@@ -541,7 +541,7 @@ namespace {
     {
         return std::filesystem::path(cfg.output_path) /
             (src.stem().string() + "_" +
-                std::to_string((int)cfg.finalSamplingRate) + ".bin");
+                std::to_string((int)cfg.target_sampling_rate) + ".bin");
     }
 
 
@@ -706,41 +706,31 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
     // Channel 0: synthetic timestamp (seconds from start). EDF has no monitor
     // clock, so anchor the raw block to the primary ECG channel's rate.
     {
-        double tsRate = (cfg.ecgRate > 0.0)
-            ? cfg.ecgRate
+        double tsRate = (cfg.ecg_rate > 0.0)
+            ? cfg.ecg_rate
             : edf_channel_rate(hdr.get(), sigmap[CH_ECG1]);
         double tsDur = 0.0;
         if (sigmap[CH_ECG1] >= 0 && tsRate > 0.0) {
             tsDur = (double)edf_samples(hdr.get(), sigmap[CH_ECG1]) / tsRate;
         }
-        write_synthetic_timestamp(out, tsDur, tsRate, cfg.finalSamplingRate,
+        write_synthetic_timestamp(out, tsDur, tsRate, cfg.target_sampling_rate,
             sizes_up[CH_TIMESTAMP], sizes_raw[CH_TIMESTAMP],
             native_rates[CH_TIMESTAMP]);
     }
 
-    auto writeChannel = [&](ChannelIdx ch, double rateOverride = 0.0) {
+    auto writeChannel = [&](ChannelIdx ch, double rate = 0.0) {
         int chIdx = sigmap[ch];
-        double rate;
-        if (chIdx < 0) {
-            rate = 0.0;   // doesn't matter; edf_to_bin will write_missing
-        }
-        else if (rateOverride > 0.0) {
-            rate = rateOverride;
-        }
-        else {
-            rate = edf_channel_rate(hdr.get(), chIdx);
-        }
         long long n = (chIdx < 0) ? 0 : edf_samples(hdr.get(), chIdx);
-        edf_to_bin(hdr->handle, chIdx, n, rate, cfg.finalSamplingRate, out,
+        edf_to_bin(hdr->handle, chIdx, n, rate, cfg.target_sampling_rate, out,
             sizes_up[ch], sizes_raw[ch], native_rates[ch]);
         };
 
     // Channels in fixed slot order. Unmapped slots (-1 in sigmap) become
     // missing-channel placeholders via edf_to_bin -> write_missing.
-    writeChannel(CH_ECG1, cfg.ecgRate);
-    writeChannel(CH_ECG2, cfg.ecgRate);
-    writeChannel(CH_ECG3, cfg.ecgRate);
-    writeChannel(CH_PPG, cfg.ppgRate);
+    writeChannel(CH_ECG1, cfg.ecg_rate);
+    writeChannel(CH_ECG2, cfg.ecg_rate);
+    writeChannel(CH_ECG3, cfg.ecg_rate);
+    writeChannel(CH_PPG, cfg.ppg_rate);
 
     writeChannel(CH_ACCEL_X);
     writeChannel(CH_ACCEL_Y);
@@ -758,7 +748,7 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
     writeChannel(CH_EEG3);
     writeChannel(CH_EEG4);
 
-    writeChannel(CH_PRES);
+    writeChannel(CH_CVP, cfg.central_venous_pressure_rate);
     writeChannel(CH_FLOW);
     writeChannel(CH_THOR);
     writeChannel(CH_ABDO);
@@ -779,17 +769,17 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
     writeChannel(CH_HR);
     writeChannel(CH_DHR);
 
-    writeChannel(CH_RESP);
-    writeChannel(CH_ABP);
+    writeChannel(CH_RESP, cfg.resp_rate);
+    writeChannel(CH_ABP, cfg.arterial_blood_pressure_rate);
     writeChannel(CH_ART);
     writeChannel(CH_ART_PULM);
 
     edfclose_file(hdr->handle);
 
-    auto sleep_path = findSleepXml(path, cfg.sleepExt);
+    auto sleep_path = findSleepXml(path, cfg.sleep_file_extention);
 
     std::vector<double> stages;
-    if (!cfg.sleepExt.empty() && !sleep_path.empty()
+    if (!cfg.sleep_file_extention.empty() && !sleep_path.empty()
         && std::filesystem::exists(sleep_path)) {
         pugi::xml_document doc;
         if (doc.load_file(sleep_path.string().c_str())) {
@@ -804,7 +794,7 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
     out.write(reinterpret_cast<const char*>(stages.data()),
         sleep_size * sizeof(double));
 
-    write_header_and_close(out, cfg.finalSamplingRate,
+    write_header_and_close(out, cfg.target_sampling_rate,
         sizes_up, sizes_raw, native_rates, sleep_size);
 }
 
@@ -832,7 +822,7 @@ void make_binfile_dat(const std::filesystem::path& path,
     // The .dat has one row per ECG sample, so the row rate IS the ECG
     // native rate from the config. No inference -- config is the single
     // source of truth.
-    const double row_rate = cfg.ecgRate;
+    const double row_rate = cfg.ecg_rate;
     if (row_rate <= 0.0) {
         std::cerr << "ERROR: cfg.ecgRate is 0; aborting conversion of "
             << path.filename().string() << "\n";
@@ -853,7 +843,7 @@ void make_binfile_dat(const std::filesystem::path& path,
     // samples, placed at their true times. Linear interpolation between
     // consecutive real samples. Avoids the "fake plateau" bug from treating
     // a sparse column (populated every Nth row) as a dense signal.
-    const double finalSR = cfg.finalSamplingRate;
+    const double finalSR = cfg.target_sampling_rate;
     auto resample_from_sparse = [&](const std::vector<double>& rawValues,
         const std::vector<size_t>& rawRowIdx,
         size_t totalRows) -> std::vector<double>
@@ -961,10 +951,10 @@ void make_binfile_dat(const std::filesystem::path& path,
     }
 
     // Algorithm-facing channels.
-    writeCol(cfg.ecg1Label, false, CH_ECG1, cfg.ecgRate);
-    writeCol(cfg.ecg2Label, false, CH_ECG2, cfg.ecgRate);
-    writeCol(cfg.ecg3Label, false, CH_ECG3, cfg.ecgRate);
-    writeCol(cfg.ppgLabel, false, CH_PPG, cfg.ppgRate);
+    writeCol(cfg.ecg1Label, false, CH_ECG1, cfg.ecg_rate);
+    writeCol(cfg.ecg2Label, false, CH_ECG2, cfg.ecg_rate);
+    writeCol(cfg.ecg3Label, false, CH_ECG3, cfg.ecg_rate);
+    writeCol(cfg.ppgLabel, false, CH_PPG, cfg.ppg_rate);
 
     // Accel / marker / temp / pacemaker / EOG / EMG aren't in CHAOS .dat
     // files. Emit placeholders so the 40-slot layout stays consistent.
@@ -974,13 +964,13 @@ void make_binfile_dat(const std::filesystem::path& path,
     // EEG: no rate in config.csv, so passes 0 -> writeCol emits a missing
     // placeholder. Add an eeg_rate column to config.csv + cfg.eegRate to
     // config_entry if you ever need to populate these.
-    writeCol(cfg.eeg1Label, false, CH_EEG1, 0.0);
-    writeCol(cfg.eeg2Label, false, CH_EEG2, 0.0);
-    writeCol(cfg.eeg3Label, false, CH_EEG3, 0.0);
-    writeCol(cfg.eeg4Label, false, CH_EEG4, 0.0);
+    writeMissing(CH_EEG1);
+    writeMissing(CH_EEG2);
+    writeMissing(CH_EEG3);
+    writeMissing(CH_EEG4);
 
     // Central venous pressure.
-    writeCol(cfg.cvpLabel, false, CH_PRES, cfg.cvpRate);
+    writeCol(cfg.cvpLabel, false, CH_CVP, cfg.central_venous_pressure_rate);
 
     // Sleep apnea slots and SpO2 family aren't in CHAOS .dat.
     for (int ch = CH_FLOW; ch <= CH_DHR; ++ch)
@@ -992,10 +982,10 @@ void make_binfile_dat(const std::filesystem::path& path,
     // prefix NLS_NOM_PRESS_BLD_ART and substring matching would alias them.
     // ART and ART_PULM use abpRate -- they're variants on the same
     // arterial-pressure sensor and share its native rate.
-    writeCol(cfg.respLabel, false, CH_RESP, cfg.respRate);
-    writeCol(cfg.abpLabel, true, CH_ABP, cfg.abpRate);
-    writeCol(cfg.artLabel, true, CH_ART, cfg.abpRate);
-    writeCol(cfg.artPulmLabel, true, CH_ART_PULM, cfg.abpRate);
+    writeCol(cfg.respLabel, false, CH_RESP, cfg.resp_rate);
+    writeCol(cfg.abpLabel, true, CH_ABP, cfg.arterial_blood_pressure_rate);
+    writeMissing(CH_ART);
+    writeMissing(CH_ART_PULM);
 
     double placeholder = -1.0;
     out.write(reinterpret_cast<const char*>(&placeholder), sizeof(double));
@@ -1011,7 +1001,7 @@ std::filesystem::path make_binfile(const std::filesystem::path& path, const conf
         creates output path, and calls the edf or dat specific function to write the bin file.
     */
     std::filesystem::path out = std::filesystem::path(cfg.output_path) /
-        (path.stem().string() + "_" + std::to_string((int)cfg.finalSamplingRate) + ".bin");
+        (path.stem().string() + "_" + std::to_string((int)cfg.target_sampling_rate) + ".bin");
 
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);

@@ -1141,7 +1141,7 @@
     </layout>
    </item>
    <item>
-    <layout class="QVBoxLayout" name="main_plots" stretch="1,0,1,1,1">
+    <layout class="QVBoxLayout" name="main_plots" stretch="1,0,0,1,1">
      <property name="spacing">
       <number>0</number>
      </property>
@@ -1159,7 +1159,7 @@
        <widget class="QCheckBox" name="ecg_1_check">
         <property name="geometry">
          <rect>
-          <x>1280</x>
+          <x>1290</x>
           <y>10</y>
           <width>80</width>
           <height>18</height>
@@ -1197,6 +1197,52 @@
          <bool>true</bool>
         </property>
        </widget>
+       <widget class="QLabel" name="ecg_1_threshold_label">
+        <property name="geometry">
+         <rect>
+          <x>1150</x>
+          <y>10</y>
+          <width>61</width>
+          <height>20</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>Threshold:</string>
+        </property>
+       </widget>
+       <widget class="QDoubleSpinBox" name="ecg_1_threshold">
+        <property name="geometry">
+         <rect>
+          <x>1220</x>
+          <y>10</y>
+          <width>51</width>
+          <height>22</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QDoubleSpinBox" name="ecg_1_blanking_period">
+        <property name="geometry">
+         <rect>
+          <x>1090</x>
+          <y>10</y>
+          <width>51</width>
+          <height>22</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QLabel" name="ecg_1_blanking_period_label">
+        <property name="geometry">
+         <rect>
+          <x>990</x>
+          <y>10</y>
+          <width>101</width>
+          <height>20</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>Blanking Period:</string>
+        </property>
+       </widget>
       </widget>
      </item>
      <item>
@@ -1229,7 +1275,7 @@
        <widget class="QCheckBox" name="ecg_2_check">
         <property name="geometry">
          <rect>
-          <x>1280</x>
+          <x>1290</x>
           <y>10</y>
           <width>80</width>
           <height>18</height>
@@ -1248,6 +1294,52 @@
          <string>Fix Scale</string>
         </property>
        </widget>
+       <widget class="QLabel" name="ecg_2_threshold_label">
+        <property name="geometry">
+         <rect>
+          <x>1150</x>
+          <y>10</y>
+          <width>61</width>
+          <height>20</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>Threshold:</string>
+        </property>
+       </widget>
+       <widget class="QDoubleSpinBox" name="ecg_2_threshold">
+        <property name="geometry">
+         <rect>
+          <x>1220</x>
+          <y>10</y>
+          <width>51</width>
+          <height>22</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QDoubleSpinBox" name="ecg_2_blanking_period">
+        <property name="geometry">
+         <rect>
+          <x>1090</x>
+          <y>10</y>
+          <width>51</width>
+          <height>22</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QLabel" name="ecg_2_blanking_period_label">
+        <property name="geometry">
+         <rect>
+          <x>990</x>
+          <y>10</y>
+          <width>91</width>
+          <height>21</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>Blanking Period:</string>
+        </property>
+       </widget>
       </widget>
      </item>
      <item>
@@ -1264,7 +1356,7 @@
        <widget class="QCheckBox" name="ecg_3_check">
         <property name="geometry">
          <rect>
-          <x>1280</x>
+          <x>1290</x>
           <y>10</y>
           <width>80</width>
           <height>18</height>
@@ -1299,6 +1391,52 @@
          </size>
         </property>
        </widget>
+       <widget class="QLabel" name="ecg_3_threshold_label">
+        <property name="geometry">
+         <rect>
+          <x>1150</x>
+          <y>10</y>
+          <width>61</width>
+          <height>16</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>Threshold:</string>
+        </property>
+       </widget>
+       <widget class="QDoubleSpinBox" name="ecg_3_threshold">
+        <property name="geometry">
+         <rect>
+          <x>1220</x>
+          <y>10</y>
+          <width>51</width>
+          <height>22</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QDoubleSpinBox" name="ecg_3_blanking_period">
+        <property name="geometry">
+         <rect>
+          <x>1090</x>
+          <y>10</y>
+          <width>51</width>
+          <height>22</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QLabel" name="ecg_3_blanking_period_label">
+        <property name="geometry">
+         <rect>
+          <x>990</x>
+          <y>10</y>
+          <width>101</width>
+          <height>21</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>Blanking Period:</string>
+        </property>
+       </widget>
       </widget>
      </item>
      <item>
@@ -1331,7 +1469,7 @@
        <widget class="QCheckBox" name="ppg_check">
         <property name="geometry">
          <rect>
-          <x>1280</x>
+          <x>1290</x>
           <y>10</y>
           <width>80</width>
           <height>18</height>
@@ -1348,6 +1486,52 @@
         </property>
         <property name="text">
          <string>Fix Scale</string>
+        </property>
+       </widget>
+       <widget class="QLabel" name="ppg_threshold_label">
+        <property name="geometry">
+         <rect>
+          <x>1150</x>
+          <y>10</y>
+          <width>61</width>
+          <height>20</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>Threshold:</string>
+        </property>
+       </widget>
+       <widget class="QDoubleSpinBox" name="ppg_threshold">
+        <property name="geometry">
+         <rect>
+          <x>1220</x>
+          <y>10</y>
+          <width>51</width>
+          <height>22</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QDoubleSpinBox" name="ppg_blanking_period">
+        <property name="geometry">
+         <rect>
+          <x>1090</x>
+          <y>10</y>
+          <width>51</width>
+          <height>22</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QLabel" name="ppg_blanking_period_label">
+        <property name="geometry">
+         <rect>
+          <x>990</x>
+          <y>10</y>
+          <width>101</width>
+          <height>21</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>Blanking Period:</string>
         </property>
        </widget>
       </widget>
@@ -1376,7 +1560,7 @@
        <widget class="QCheckBox" name="abp_check">
         <property name="geometry">
          <rect>
-          <x>1280</x>
+          <x>1290</x>
           <y>10</y>
           <width>80</width>
           <height>18</height>
@@ -1393,6 +1577,52 @@
         </property>
         <property name="text">
          <string>Fix Scale</string>
+        </property>
+       </widget>
+       <widget class="QLabel" name="abp_threshold_label">
+        <property name="geometry">
+         <rect>
+          <x>1150</x>
+          <y>10</y>
+          <width>61</width>
+          <height>20</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>Threshold:</string>
+        </property>
+       </widget>
+       <widget class="QDoubleSpinBox" name="abp_threshold">
+        <property name="geometry">
+         <rect>
+          <x>1220</x>
+          <y>10</y>
+          <width>51</width>
+          <height>22</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QDoubleSpinBox" name="abp_blanking_period">
+        <property name="geometry">
+         <rect>
+          <x>1090</x>
+          <y>10</y>
+          <width>51</width>
+          <height>22</height>
+         </rect>
+        </property>
+       </widget>
+       <widget class="QLabel" name="abp_blanking_period_label">
+        <property name="geometry">
+         <rect>
+          <x>990</x>
+          <y>10</y>
+          <width>101</width>
+          <height>21</height>
+         </rect>
+        </property>
+        <property name="text">
+         <string>Blanking Period:</string>
         </property>
        </widget>
       </widget>

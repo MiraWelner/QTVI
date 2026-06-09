@@ -91,9 +91,12 @@ namespace {
         yAxis->setGridLineVisible(false);
         yAxis->setVisible(true);
         yAxis->setLabelsVisible(true);
-        yAxis->setLabelFormat("%.1f");
+        yAxis->setLabelFormat("%.1e"); 
         yAxis->setTickCount(2);
         chart->addAxis(yAxis, Qt::AlignLeft);
+        const QColor axisGray = yAxis->linePenColor();
+        yAxis->setLabelsColor(axisGray);
+        xAxis->setLabelsColor(axisGray);
 
         double gMin = 1e9, gMax = -1e9;
 
@@ -212,11 +215,15 @@ namespace {
 
 } // namespace
 
-QVector<QPointF> noise_marking_gui::peaksForWindow(const QString& label) const {
+QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label) const {
+    /*
+        If the user has clicked the peak finding check box, this function shows the peaks
+    */
     if (!m_showPeaks) return {};
-    ChannelRefs r = channelRefs(label);
-    if (!r.dataRaw) return {};
-    const auto params = simple_peak_finder::paramsFor(label);
+    data_channel_features r = channelRefs(label);
+    auto params = simple_peak_finder::paramsFor(label);
+    params.threshold = r.threshold_box->value();
+    params.blanking_period = r.blanking_period_box->value();
     if (label == "PPG" || label == "ABP")
         return simple_peak_finder::findPeaksDerivative(
             *r.dataRaw, m_currentStartTime,
@@ -226,23 +233,25 @@ QVector<QPointF> noise_marking_gui::peaksForWindow(const QString& label) const {
         m_currentStartTime + m_windowDuration, params);
 }
 
-QVector<QPointF> noise_marking_gui::peaksForBpmWindow(const QString& label,
-    double& outDuration) const
+QVector<QPointF> noise_marking_gui::get_bpm(const QString& label, double& outDuration) const
 {
+    /*
+        If the user has clicked the peak finding check box, disply the beats per minute.
+        Different from display_peaks_in_window because it never takes data from a a shorter 
+        window than 10s even if the window being displayed is shorter than 10s
+    */
     outDuration = 0.0;
     if (!m_showPeaks) return {};
-    ChannelRefs r = channelRefs(label);
-    if (!r.dataRaw) return {};
-
+    data_channel_features r = channelRefs(label);
     constexpr double kMinBpmWindowSec = 10.0;
     const double tVisEnd = m_currentStartTime + m_windowDuration;
     double tStart = m_currentStartTime;
     if (m_windowDuration < kMinBpmWindowSec)
         tStart = std::max(0.0, tVisEnd - kMinBpmWindowSec);
     outDuration = tVisEnd - tStart;
-    if (outDuration <= 0.0) return {};
-
-    const auto params = simple_peak_finder::paramsFor(label);
+    auto params = simple_peak_finder::paramsFor(label);
+    params.threshold = m_cfg.height_threshold_percent;
+    params.blanking_period = m_cfg.blanking_period;
     if (label == "PPG" || label == "ABP")
         return simple_peak_finder::findPeaksDerivative(*r.dataRaw, tStart, tVisEnd, params);
     return simple_peak_finder::findPeaks(*r.dataRaw, tStart, tVisEnd, params);
@@ -389,9 +398,12 @@ void noise_marking_gui::ampogram(double range) {
             yAxis->setLabelsVisible(true);
             yAxis->setLineVisible(true);
             yAxis->setGridLineVisible(false);
-            yAxis->setLabelFormat("%.1f");
+            yAxis->setLabelFormat("%.1e");
             yAxis->setTickCount(2);
             chart->addAxis(yAxis, Qt::AlignLeft);
+            const QColor axisGray = yAxis->linePenColor();
+            yAxis->setLabelsColor(axisGray);
+            x_axis->setLabelsColor(axisGray);
             series->attachAxis(yAxis);
             if (cursor) cursor->attachAxis(yAxis);
         };
@@ -492,8 +504,8 @@ void noise_marking_gui::handle_data_plot() {
 
     auto plotMarkable = [&](const QString& label) {
         if (!isChannelActive(label)) return;
-        const ChannelRefs r = channelRefs(label);
-        if (!r.chartView || !r.data || !r.state) return;
+        const data_channel_features r = channelRefs(label);
+        if (!r.chartView || !r.upsampled_data || !r.state) return;
 
         const double sr = r.sampleRate ? *r.sampleRate : m_ecgSR;
         const QVector<QPointF> emptyRaw;
@@ -516,7 +528,7 @@ void noise_marking_gui::handle_data_plot() {
 
         const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
         renderWindowedChart(
-            r.chartView, { { r.data, r.color, &rawData } },
+            r.chartView, { { r.upsampled_data, r.color, &rawData } },
             m_persistentLines[r.chartView],
             m_currentStartTime, m_windowDuration, globalOffset, sr,
             r.chartView == xLabelOwnerRight,
@@ -527,7 +539,7 @@ void noise_marking_gui::handle_data_plot() {
         // --- pin axis to chunk-wide extremes when drift filtering is OFF ---
         if (!m_filterBaselineDrift) {
             double glo = 1e9, ghi = -1e9;
-            for (double v : *r.data) { if (v < glo) glo = v; if (v > ghi) ghi = v; }
+            for (double v : *r.upsampled_data) { if (v < glo) glo = v; if (v > ghi) ghi = v; }
             for (const QPointF& p : rawData) {
                 if (p.x() == -1.0) continue;            // skip the (-1,-1) sentinel
                 if (p.y() < glo) glo = p.y();
@@ -542,13 +554,13 @@ void noise_marking_gui::handle_data_plot() {
         double bpm = -1.0;
         if (m_showPeaks) {
             double dur = 0.0;
-            const QVector<QPointF> bpmPeaks = peaksForBpmWindow(label, dur);
+            const QVector<QPointF> bpmPeaks = get_bpm(label, dur);
             if (dur > 0.0) bpm = bpmPeaks.size() * 60.0 / dur;
         }
         r.chartView->setProperty("bpm", bpm);
         r.chartView->chart()->setTitle(formatChartTitle(label, nativeHz, pxPerSample, bpm));
 
-        const QVector<QPointF> peaks = peaksForWindow(label);
+        const QVector<QPointF> peaks = display_peaks_in_window(label);
         if (peaks.isEmpty()) return;
 
         const double yScale = yScaleForSignal(label);

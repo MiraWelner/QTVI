@@ -113,8 +113,24 @@ public:
     bool        isChannelActive(const QString& label) const;
     enum class MarkPhase { Idle, WaitingForStart, WaitingForEnd, WaitingForStop };
     enum class PlotMode { Line, Scatter };
-    void setConfig(const config_entry& cfg) {
+
+    void set_params_to_config_defaults(const config_entry& cfg) {
+		// Set the default values for the threshold and blanking period spinboxes based on the config entry.
         m_cfg = cfg;
+
+        const double thr = cfg.height_threshold_percent;
+        ui->ecg_1_threshold->setValue(thr);
+        ui->ecg_2_threshold->setValue(thr);
+        ui->ecg_3_threshold->setValue(thr);
+        ui->ppg_threshold->setValue(thr);
+        ui->abp_threshold->setValue(thr);
+
+        const double blank = cfg.blanking_period;
+        ui->ecg_1_blanking_period->setValue(blank);
+        ui->ecg_2_blanking_period->setValue(blank);
+        ui->ecg_3_blanking_period->setValue(blank);
+        ui->ppg_blanking_period->setValue(blank);
+        ui->abp_blanking_period->setValue(blank);
     }
 
 protected:
@@ -161,29 +177,22 @@ private:
     /** @brief Transition every active channel from WaitingForEnd to WaitingForStop. */
     void beginStopPhaseAll();
 
-    // ------------------------------------------------------------------------
-    //  Channel lookup table
-    //
-    //  The five markable channels (ECG1/2/3, PPG, ABP) have parallel:
-    //      * signal-data vector (upsampled)
-    //      * raw-data vector (native rate, overlaid as grayscale scatter)
-    //      * chart view
-    //      * start / stop buttons
-    //      * marking-state machine
-    //      * color
-    //
-    //  Previously these were 5 independent 5-way switches. `ChannelRefs`
-    //  collapses them into one lookup, accessed via `channelRefs(label)`.
-    // ------------------------------------------------------------------------
-    struct ChannelRefs {
+    /*
+        The data_channel_features has all the features that 
+        a single one of the markable channels might have, such as the upsampled
+        data, raw data, and R peak threshold
+    */
+    struct data_channel_features {
         QChartView* chartView = nullptr;
         QPushButton* startButton = nullptr;
         QPushButton* stopButton = nullptr;
         ChannelMarkingState* state = nullptr;
-        const QVector<double>* data = nullptr;   ///< upsampled samples (1 kHz)
+        const QVector<double>* upsampled_data = nullptr; 
         const QVector<QPointF>* dataRaw = nullptr;   ///< raw (t, v) pairs, chunk-local seconds
-        const double* sampleRate = nullptr;   ///< rate for `data`
-        QColor                    color;
+        const double* sampleRate = nullptr;  //the original sampling rate of the raw data
+        QDoubleSpinBox* threshold_box = nullptr;
+        QDoubleSpinBox* blanking_period_box = nullptr;
+        QColor  color;
     };
 
     /**
@@ -191,7 +200,7 @@ private:
      * @param  label Channel label ("ECG1", "ECG2", "ECG3", "PPG", or "ABP").
      * @return Populated ChannelRefs (default-constructed fields if label unknown).
      */
-    ChannelRefs channelRefs(const QString& label) const;
+    data_channel_features channelRefs(const QString& label) const;
 
     /// Labels of all markable channels, in display order.
     static const QStringList& markableChannelLabels();
@@ -369,7 +378,7 @@ private:
     /** @brief Run the simple peak finder on `label`'s raw data restricted
     *      to the current view window. Returns chunk-local (t, v) of
     *      detected peaks. Empty when m_showPeaks is false. */
-    QVector<QPointF> peaksForWindow(const QString& label) const;
+    QVector<QPointF> display_peaks_in_window(const QString& label) const;
 
     /** @brief Run the simple peak finder over a BPM-estimation window: the
     *      visible window, extended backwards to a minimum of 10 s when
@@ -378,14 +387,14 @@ private:
     *      via @p outDuration, the actual duration of the window used
     *      (so the caller can divide peak count by it). Empty when
     *      m_showPeaks is false. */
-    QVector<QPointF> peaksForBpmWindow(const QString& label,
+    QVector<QPointF> get_bpm(const QString& label,
         double& outDuration) const;
 
     /**
      * @brief  Redraw the 8-hour amplitude overviews and raw-signal overviews.
      * @param  sampling_length Bucket width in seconds for amplitude decimation.
      */
-    void ampogram(double sampling_length = 60);
+    void ampogram(double sampling_length = 15);
 
     /** @brief Redraw the black vertical cursor bar on each overview chart. */
     void updateAmpogramCursor();

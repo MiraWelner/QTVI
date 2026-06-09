@@ -48,11 +48,11 @@ void apply_dataset_specific_channel_labels(config_entry& cfg) {
         to the NLS_NOM_ECG_ELEC_pOTL_I label in CHAOS and the ECG_1 label in bittium. Each channel is a feature of the config_entry
         cfg, and they are assigned here.
     */
-    if (cfg.dataType == "MESA") {
+    if (cfg.dataset_type == "MESA") {
         cfg.ecg1Label = "EKG";
         cfg.ppgLabel = "Pleth";
     }
-    else if (cfg.dataType == "BITTIUM") {
+    else if (cfg.dataset_type == "BITTIUM") {
         cfg.ecg1Label = "ECG_1";
         cfg.ecg2Label = "ECG_2";
         cfg.ecg3Label = "ECG_3";
@@ -60,7 +60,7 @@ void apply_dataset_specific_channel_labels(config_entry& cfg) {
         cfg.accelYLabel = "Accelerometer_Y";
         cfg.accelZLabel = "Accelerometer_Z";
     }
-    else if (cfg.dataType == "CHAOS") {
+    else if (cfg.dataset_type == "CHAOS") {
         cfg.ecg1Label = "NLS_NOM_ECG_ELEC_POTL_I";
         cfg.ecg2Label = "NLS_NOM_ECG_ELEC_POTL_II";
         cfg.ecg3Label = "NLS_NOM_ECG_ELEC_POTL_III";
@@ -89,23 +89,14 @@ bool load_config(int dataType, config_entry& out) {
         std::cerr << "ERROR: cannot open " << CONFIG_PATH << "\n";
         return false;
     }
-
-    std::string input_file_type = (dataType == 1) ? "MESA" : (dataType == 2) ? "BITTIUM" : (dataType == 3) ? "CHAOS" : "";
-
+    std::string user_selected_dataset = (dataType == 1) ? "MESA" : (dataType == 2) ? "BITTIUM" : (dataType == 3) ? "CHAOS" : "";
     std::string line;
-
     std::getline(file, line);   // skip header
-
     while (std::getline(file, line)) {
         auto row = parse_config_row(line);
-        // 12 columns: data_type, main_ext, sleep_ext, ecg_rate, ppg_rate,
-        // cvp_rate, abp_rate, resp_rate, upsampled_rate, bin_size_minutes,
-        // original_file_path, output_folder.
-        if (row.size() < 12) continue;
-
-        std::string rowType = row[0];
-        std::transform(rowType.begin(), rowType.end(), rowType.begin(), ::toupper);
-        if (rowType != input_file_type) continue;
+        std::string rowName = row[0];
+        std::transform(rowName.begin(), rowName.end(), rowName.begin(), ::toupper);
+        if (rowName != user_selected_dataset) continue;
 
         // Some cells are intentionally blank (e.g. MESA has no cvp_rate).
         // std::stod throws on empty strings, so guard.
@@ -115,18 +106,18 @@ bool load_config(int dataType, config_entry& out) {
             catch (...) { return 0.0; }
             };
 
-        out.dataType = rowType;
-        out.mainExt = row[1];
-        out.sleepExt = row[2];
-        out.ecgRate = stod_or_zero(row[3]);
-        out.ppgRate = stod_or_zero(row[4]);
-        out.cvpRate = stod_or_zero(row[5]);
-        out.abpRate = stod_or_zero(row[6]);
-        out.respRate = stod_or_zero(row[7]);
-        out.finalSamplingRate = stod_or_zero(row[8]);
-        out.bin_length_minutes = stod_or_zero(row[9]);
-        out.input_path = row[10];
-        out.output_path = row[11];
+        out.dataset_type = user_selected_dataset;
+        out.original_file_extention = row[1];
+        std::cout << out.original_file_extention;
+        out.sleep_file_extention = row[2];
+        out.ecg_rate = stod_or_zero(row[3]);
+        out.ppg_rate = stod_or_zero(row[4]);
+        out.central_venous_pressure_rate = stod_or_zero(row[5]);
+        out.arterial_blood_pressure_rate = stod_or_zero(row[6]);
+        out.resp_rate = stod_or_zero(row[7]);
+        out.target_sampling_rate = stod_or_zero(row[8]);
+        out.input_path = row[12];
+        out.output_path = row[13];
 
         apply_dataset_specific_channel_labels(out);
         return true;
@@ -147,8 +138,7 @@ bool promptForMissingPaths(config_entry& cfg) {
     for (const auto& [label, fieldPtr] : fields) {
         if (!fieldPtr->empty()) continue;
 
-        QString title = QString("%1 (%2)")
-            .arg(label, QString::fromStdString(cfg.dataType));
+        QString title = QString("%1 (%2)").arg(label, QString::fromStdString(cfg.original_file_extention));
         QString chosen = QFileDialog::getExistingDirectory(
             nullptr, title, QString(),
             QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
@@ -162,7 +152,7 @@ QStringList discoverSourceFiles(const config_entry& cfg) {
     /*
         Take the folder full of .bin, .dat, or .edf (case insensitive) and run through it, return Qstrings of all the files in it
     */
-    std::string extention = cfg.mainExt;
+    std::string extention = cfg.original_file_extention;
     std::transform(extention.begin(), extention.end(), extention.begin(), ::toupper);
     QString extention_qstring = QString::fromStdString(extention);
 

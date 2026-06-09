@@ -7,28 +7,26 @@
 #include <string>
 
 struct config_entry {
-    std::string dataType;             // "MESA" / "Bittium" / "CHAOS"
-    std::string mainExt;              // ".edf" / ".dat"
-    std::string sleepExt;             // ".XML" or empty
+    //these params are always set by the config.csv, if they are not set by the config.csv, then the file will fail to load
+    std::string dataset_type;
+    std::string original_file_extention;
+    std::string sleep_file_extention;
+    double      ecg_rate;
+    double      ppg_rate;
+    double      central_venous_pressure_rate;
+    double      arterial_blood_pressure_rate;
+    double      resp_rate;
+    double      target_sampling_rate; //this rate is not defined by the input data, rather it is the rate that is upsampled to
+    double      bin_length_minutes;
+    double      blanking_period; // this is the percent of time after the r peak in which a new r peak cannot occur
+    double      height_threshold_percent; //threshold for r peaks - but not raw threshold, the percent of the height distribution. So 1.0 means no R peaks can ever be found, 0.5 means the threshold is the median
 
-    double      ecgRate = 0.0;          // ECG1/2/3 native rate, also = .dat row rate for CHAOS
-    double      ppgRate = 0.0;
-    double      finalSamplingRate = 1000.0;
-
-    // Native sampling rates (Hz) for the remaining channels written by
-    // file_to_bin. Zero means "absent" (channel emits a placeholder).
-    // ART and ART_PULM share abpRate since they're variants on the same
-    // arterial-pressure sensor.
-    double      cvpRate = 0.0;          // central venous pressure (CH_PRES)
-    double      abpRate = 0.0;          // also used for ART and ART_PULM
-    double      respRate = 0.0;
 
 
     //the output_path is never directly used, but is rather the
     //parent folder of all the below paths. It is its own entry in the config
     // becuase it is can be set by the user, the below folders are derived from it
     std::string input_path;          // raw source folder (.dat / .edf input);
-    // read by file_to_bin, unused by the GUI
     std::string output_path;
     std::string bin_file_path;
     std::string noise_data_path;
@@ -60,5 +58,4 @@ struct config_entry {
     std::string artPulmLabel;
 
 
-    double bin_length_minutes;
 };
