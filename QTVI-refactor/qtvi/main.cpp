@@ -30,6 +30,7 @@
 #include "noise_marking_gui\gui_handler.h"
 #include "noise_marking_gui\user_annotation_handler.h"
 #include "template_marking_gui\parse_data_from_filename.hpp"
+#include "beat_log.hpp"
 #include "template_marking_gui\TemplateViewerWindow.hpp"
 
 #include <QtWidgets/QApplication>
@@ -86,9 +87,11 @@ static std::vector<std::filesystem::path> load_binfiles(const config_entry& cfg)
 static bool runNoiseMarking(const config_entry& cfg,
     const std::filesystem::path& binFs,
     QVector<GenExcStruct>& outAll,
-    std::filesystem::path& outCurrent) {
+    std::filesystem::path& outCurrent,
+    beat_log& beatLog) {
     auto gui = std::make_unique<noise_marking_gui>();
     gui->set_params_to_config_defaults(cfg);
+    gui->setBeatLog(&beatLog);
     // NOTE: no setPostProcessQueue() -- there is no queue anymore. The GUI's
     // m_postQueue stays nullptr and every `if (m_postQueue)` branch is skipped.
 
@@ -239,18 +242,30 @@ int main(int argc, char* argv[]) {
     // the compute, so this is rarely hit.
     constexpr size_t kMaxOutstanding = 4;
 
+    std::filesystem::create_directories(cfg.output_path + "/logs");
     for (const std::filesystem::path& binFs : binFiles) {
         const std::string stem = binFs.stem().string();
         std::cout << "\n=== " << stem << " ===\n";
+
+        // ---- Per-file beat log (placeholder rows seeded with config defaults) ----
+        // The GUI fills this live while the dialog is open and flushes/writes
+        // it every 30 s; here we just seed the blanking/threshold columns.
+        beat_log beatLog;
+        beatLog.setDefaultParams(cfg.blanking_period, cfg.height_threshold_percent);
 
         // ---- Stage 1: noise marking -------------------------------------
         std::cout << "Noise marking: " << binFs.filename().string() << "\n";
         QVector<GenExcStruct> allMarkings;
         std::filesystem::path currentBinFile;
-        if (!runNoiseMarking(cfg, binFs, allMarkings, currentBinFile)) {
+        if (!runNoiseMarking(cfg, binFs, allMarkings, currentBinFile, beatLog)) {
             std::cout << "  skipped by user; not processing/templating.\n";
             continue;
         }
+
+        // Commit the final partial buffer (the last <30 s the timer didn't
+        // reach) and write the populated log out.
+        beatLog.flushPending();
+        beatLog.writeCsv(cfg.output_path + "/logs/" + stem + "_log.csv");
 
         // ---- Export markings (input to the anneal step) -----------------
         if (allMarkings.isEmpty()) {

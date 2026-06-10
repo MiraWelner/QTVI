@@ -13,6 +13,7 @@
 #include "post_process.hpp"
 #include "config_loader.hpp"
 #include "simple_peak_finder.hpp"
+#include "beat_log.hpp"
 
 #include <QCheckBox>
 #include <QDoubleSpinBox>
@@ -23,6 +24,8 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QApplication>
+#include <QFileInfo>
+#include <QTimer>
 
  // ============================================================================
  // Channel lookup
@@ -43,35 +46,30 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.stopButton = ui->stop_ecg1_mark; r.state = &self->m_markState_ecg1;
         r.upsampled_data = &m_ecg1; r.dataRaw = &m_ecg1Raw; r.sampleRate = &m_ecgSR;
         r.color = COLOR_ECG1;
-        r.threshold_box = ui->ecg_1_threshold; r.blanking_period_box = ui->ecg_1_blanking_period;
     }
     else if (label == "ECG2") {
         r.chartView = ui->ecg_axis_2; r.startButton = ui->start_ecg2_mark;
         r.stopButton = ui->stop_ecg2_mark; r.state = &self->m_markState_ecg2;
         r.upsampled_data = &m_ecg2; r.dataRaw = &m_ecg2Raw; r.sampleRate = &m_ecgSR;
         r.color = COLOR_ECG2;
-        r.threshold_box = ui->ecg_2_threshold; r.blanking_period_box = ui->ecg_2_blanking_period;
     }
     else if (label == "ECG3") {
         r.chartView = ui->ecg_axis_3; r.startButton = ui->start_ecg3_mark;
         r.stopButton = ui->stop_ecg3_mark; r.state = &self->m_markState_ecg3;
         r.upsampled_data = &m_ecg3; r.dataRaw = &m_ecg3Raw; r.sampleRate = &m_ecgSR;
         r.color = COLOR_ECG3;
-        r.threshold_box = ui->ecg_3_threshold; r.blanking_period_box = ui->ecg_3_blanking_period;
     }
     else if (label == "PPG") {
         r.chartView = ui->ppg_axis; r.startButton = ui->startNoisePPG;
         r.stopButton = ui->stopNoisePPG; r.state = &self->m_markState_ppg;
         r.upsampled_data = &m_ppg; r.dataRaw = &m_ppgRaw; r.sampleRate = &m_ppgSR;
         r.color = COLOR_PPG;
-        r.threshold_box = ui->ppg_threshold; r.blanking_period_box = ui->ppg_blanking_period;
     }
     else if (label == "ABP") {
         r.chartView = ui->accel_or_abp_axis; r.startButton = ui->startNoiseABP;
         r.stopButton = ui->stopNoiseABP; r.state = &self->m_markState_abp;
         r.upsampled_data = &m_abp; r.dataRaw = &m_abpRaw; r.sampleRate = &m_ecgSR;
         r.color = COLOR_ABP;
-        r.threshold_box = ui->abp_threshold; r.blanking_period_box = ui->abp_blanking_period;
     }
     return r;
 }
@@ -297,11 +295,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
             handle_data_plot();
         });
 
-    ui->show_peaks_check->setChecked(false);
-    ui->show_peaks_check->setFocusPolicy(Qt::NoFocus);
-    connect(ui->show_peaks_check, &QCheckBox::toggled, this, [this](bool on) {
-        m_showPeaks = on; handle_data_plot();
-        });
+    
     { QSignalBlocker block(ui->checkBox); ui->checkBox->setChecked(false); }  // default: box unchecked
     m_filterBaselineDrift = !ui->checkBox->isChecked();   // unchecked => drift hidden
     ui->checkBox->setFocusPolicy(Qt::NoFocus);
@@ -311,8 +305,8 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         });
 
     auto wire_gain = [this](QCheckBox* /*check*/, QDoubleSpinBox* gain) {
-        gain->setDecimals(2); 
-        gain->setRange(0.1, 100.0); 
+        gain->setDecimals(2);
+        gain->setRange(0.1, 100.0);
         gain->setValue(1.0);
         gain->setFocusPolicy(Qt::ClickFocus);
         connect(gain, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { handle_data_plot(); });
@@ -323,22 +317,6 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     wire_gain(ui->ecg_3_check, ui->ecg_3_gain);
     wire_gain(ui->ppg_check, ui->ppg_gain);
     wire_gain(ui->abp_check, ui->abp_gain);
-
-    auto wire_threshold = [this](QDoubleSpinBox* box) {
-        box->setDecimals(2);
-        box->setRange(0.0, 1.0);
-        box->setFocusPolicy(Qt::ClickFocus);
-        connect(box, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this](double) { handle_data_plot(); });
-        connect(box, &QDoubleSpinBox::editingFinished,
-            this, [box]() { box->clearFocus(); });
-        };
-    for (const QString& lbl : markableChannelLabels()) {
-        const auto r = channelRefs(lbl);
-        wire_threshold(r.threshold_box);
-        wire_threshold(r.blanking_period_box);
-    }
-
 
     for (QChartView* v : allCharts) {
         if (!v) continue;
@@ -405,6 +383,18 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         m_pulseOverlay->setEnabled(on);
         handle_data_plot();
         });
+
+    // Flush the beat log to disk every 30 s: merge the pending buffer into
+    // the table (same-time beats overwrite), write the CSV, and empty the
+    // buffer. The final partial interval is committed by main on close.
+    m_logFlushTimer = new QTimer(this);
+    connect(m_logFlushTimer, &QTimer::timeout, this, [this] {
+        if (!m_beatLog) return;
+        m_beatLog->flushPending();
+        const QString stem = QFileInfo(m_binFilePath).completeBaseName();
+        m_beatLog->writeCsv(m_cfg.output_path + "/logs/" + stem.toStdString() + "_log.csv");
+        });
+    m_logFlushTimer->start(30000);   // 30 s
 }
 
 noise_marking_gui::~noise_marking_gui() {

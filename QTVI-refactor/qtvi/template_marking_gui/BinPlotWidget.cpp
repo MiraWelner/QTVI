@@ -88,7 +88,7 @@ namespace {
     }
 
     // Compute the visible-range vertical bounds for a trace. If a matching
-    // std vector is supplied, expand the range to include mean±std at
+    // std vector is supplied, expand the range to include mean +- std at
     // every visible sample so the band fits inside the drawing area
     // without clipping.
     void computeVisibleRange(const std::vector<double>& v,
@@ -308,8 +308,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // Title
     p.setPen(Qt::black);
     { QFont f = p.font(); f.setPointSize(8); p.setFont(f); }
-    p.drawText(margin_left, 11,
-        QString("Bin %1  [%2]").arg(m_binIndex).arg(m_leadLabel));
+    p.drawText(margin_left, 11, QString("Bin %1  [%2]").arg(m_binIndex).arg(m_leadLabel));
 
     double yLo = 0, yHi = 0;
     computeVisibleRange(m_ecg, m_ecgStd, m_ecgVisibleN, yLo, yHi);
@@ -319,12 +318,11 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         const double xAxisY = margin_top + ph;       // == h - kMB
         const double yAxisX = margin_left;
 
-        p.setPen(QPen(QColor(120, 120, 120), 1));
+        p.setPen(QColor(150, 150, 150));
         p.drawLine(QPointF(yAxisX, margin_top), QPointF(yAxisX, xAxisY));   // y-axis
         p.drawLine(QPointF(yAxisX, xAxisY), QPointF(w - margin_right, xAxisY));  // x-axis
 
         QFont af = p.font(); af.setPointSize(7); p.setFont(af);
-        p.setPen(QColor(70, 70, 70));
 
         // X ticks: sample index across the full widget span.
         const int span = totalSampleSpan();
@@ -346,13 +344,11 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         }
 
         // Y ticks: amplitude. Top of plot = hi, bottom = lo.
-        const int ny = 2;
-        for (int t = 0; t <= ny; ++t) {
-            const double frac = (double)t / ny;
-            const double val = yHi - frac * (yHi - yLo);
-            const double y = margin_top + frac * ph;
+        for (int t = 0; t < 2; ++t) {
+            const double y = (t == 0) ? margin_top : margin_top + ph;
+            const double val = (t == 0) ? yHi : yLo;
             p.drawLine(QPointF(yAxisX - 3, y), QPointF(yAxisX, y));
-            p.drawText(QPointF(1, y + 3), QString::number(val, 'f', 0));
+            p.drawText(QPointF(1, y + 3), QString::number(val, 'e', 1));
         }
         
     }

@@ -204,6 +204,6 @@ private:
     bool  m_showPpgMarkers = true;
     int   m_dragMarker = -1;
 
-    static constexpr int margin_left = 25, margin_right = 6, margin_top = 16, margin_bottom = 16;
+    static constexpr int margin_left = 37, margin_right = 0, margin_top = 16, margin_bottom = 16;
     static constexpr int click_radius_around_marker = 12;
 };

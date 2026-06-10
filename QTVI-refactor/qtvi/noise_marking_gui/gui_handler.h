@@ -40,6 +40,7 @@
 #include <QHash>
 #include <QColor>
 #include <QPointF>
+#include <QTimer>
 #include <iostream>
 #include <memory>
 
@@ -50,20 +51,22 @@
 #include "grid_overlay.hpp"
 #include "gap_indicator.hpp"
 
-/**
- * @brief Collected annotations returned to the caller after the dialog closes.
- *
- *        All three parallel lists (noiseExc, data_type, marking_type) share
- *        the same index space -- entry `i` describes one marked segment:
- *        its [start, end] global-time range, which channel it was marked on,
- *        and what kind of marking it is.
- */
+ /**
+  * @brief Collected annotations returned to the caller after the dialog closes.
+  *
+  *        All three parallel lists (noiseExc, data_type, marking_type) share
+  *        the same index space -- entry `i` describes one marked segment:
+  *        its [start, end] global-time range, which channel it was marked on,
+  *        and what kind of marking it is.
+  */
 struct GenExcStruct {
     QString filePath;                          ///< Source file these markings belong to.
     QVector<QPair<double, double>> noiseExc;   ///< [start, end] in global seconds.
     QStringList data_type;                     ///< "ECG1", "ECG2", "ECG3", "PPG", or "ABP".
     QStringList marking_type;                  ///< "Noise/Artifact", "AF", "SVT", ...
 };
+
+class beat_log;   // defined in beat_log.hpp; only a pointer is held here
 
 class noise_marking_gui : public QDialog {
     Q_OBJECT
@@ -113,24 +116,12 @@ public:
     bool        isChannelActive(const QString& label) const;
     enum class MarkPhase { Idle, WaitingForStart, WaitingForEnd, WaitingForStop };
     enum class PlotMode { Line, Scatter };
+    void setBeatLog(beat_log* log) { m_beatLog = log; }
+
 
     void set_params_to_config_defaults(const config_entry& cfg) {
-		// Set the default values for the threshold and blanking period spinboxes based on the config entry.
+        // Set the default values for the threshold and blanking period spinboxes based on the config entry.
         m_cfg = cfg;
-
-        const double thr = cfg.height_threshold_percent;
-        ui->ecg_1_threshold->setValue(thr);
-        ui->ecg_2_threshold->setValue(thr);
-        ui->ecg_3_threshold->setValue(thr);
-        ui->ppg_threshold->setValue(thr);
-        ui->abp_threshold->setValue(thr);
-
-        const double blank = cfg.blanking_period;
-        ui->ecg_1_blanking_period->setValue(blank);
-        ui->ecg_2_blanking_period->setValue(blank);
-        ui->ecg_3_blanking_period->setValue(blank);
-        ui->ppg_blanking_period->setValue(blank);
-        ui->abp_blanking_period->setValue(blank);
     }
 
 protected:
@@ -153,6 +144,9 @@ private slots:
 
 private:
     config_entry m_cfg;
+    beat_log* m_beatLog = nullptr;
+    QTimer* m_logFlushTimer = nullptr;   // flushes the beat log to disk every 30 s
+
 
     /**
     * @brief Per-channel state for the marking state machine.
@@ -178,7 +172,7 @@ private:
     void beginStopPhaseAll();
 
     /*
-        The data_channel_features has all the features that 
+        The data_channel_features has all the features that
         a single one of the markable channels might have, such as the upsampled
         data, raw data, and R peak threshold
     */
@@ -187,11 +181,9 @@ private:
         QPushButton* startButton = nullptr;
         QPushButton* stopButton = nullptr;
         ChannelMarkingState* state = nullptr;
-        const QVector<double>* upsampled_data = nullptr; 
+        const QVector<double>* upsampled_data = nullptr;
         const QVector<QPointF>* dataRaw = nullptr;   ///< raw (t, v) pairs, chunk-local seconds
         const double* sampleRate = nullptr;  //the original sampling rate of the raw data
-        QDoubleSpinBox* threshold_box = nullptr;
-        QDoubleSpinBox* blanking_period_box = nullptr;
         QColor  color;
     };
 
@@ -270,7 +262,6 @@ private:
 
     // --- Plot style (global, applies to all signal charts) ---
     PlotMode m_plotMode = PlotMode::Line;
-    bool m_showPeaks = false;
 
     // checked = per-window autoscale (drift hidden)
     bool m_filterBaselineDrift = false;
