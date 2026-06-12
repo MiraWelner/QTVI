@@ -49,6 +49,9 @@
 
 namespace simple_peak_finder {
 
+    inline constexpr double kReferenceSeconds = 10.0;
+
+
     // True if t lies within any [start, end] span.
     inline bool inExcludedSpan(const std::vector<std::pair<double, double>>& spans, double t) {
         for (const auto& s : spans)

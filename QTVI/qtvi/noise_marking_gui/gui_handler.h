@@ -379,6 +379,9 @@ private:
     QVector<QPointF> display_peaks_in_window(const QString& label,
         std::vector<std::string>* outPostTags = nullptr) const;
 
+    QVector<QPointF> detectPeaks(const QString& label,
+        double detStart, double detEnd,
+        std::vector<std::string>* outPostTags = nullptr) const;
 
     /** @brief Run the simple peak finder over a BPM-estimation window: the
     *      visible window, extended backwards to a minimum of 10 s when

@@ -6,6 +6,8 @@
 *.vcxproj.user
 *.filters
 *.user
+*.pch
+
 
 # Build output
 *64x/
@@ -14,20 +16,17 @@ x64/
 # Data / archives
 *.dat
 *.zip
+*.bin
+*.edf
 
 # Qt
 *.pro
 
 # Project-specific
 /Deep_QTVi_MATLAB_Code_19_09_2025
-/QTVI-data-files
+/data
 /QTVI-refactor/convert_uniform_bin/convert_.B6F5429C
+/daniel_script
 /QTVI-refactor/noise_marking_gui/noise_ma.7588209C
-*.bin
-*.edf
-*.pch
-*.filters
-*.vcxproj
 /QTVI-refactor/noise_marking_gui/.vs
 /QTVI-refactor/qtvi_template_marking/x64
-*.mat

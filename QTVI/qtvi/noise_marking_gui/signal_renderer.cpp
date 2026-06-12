@@ -304,7 +304,7 @@ namespace {
 // window starts within the first 60 s of the chunk.
 std::pair<double, double>
 noise_marking_gui::statsWindow(double detStart, double detEnd) const {
-    constexpr double kStatsWindowSec = 10.0;
+    constexpr double kStatsWindowSec = simple_peak_finder::kReferenceSeconds;
     if (detStart >= kStatsWindowSec)
         return { detStart - kStatsWindowSec, detStart };          // preceding 10 s
     double end = detEnd + kStatsWindowSec;                        // following 10 s
@@ -313,13 +313,15 @@ noise_marking_gui::statsWindow(double detStart, double detEnd) const {
     return { detEnd, end };
 }
 
-QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label,
-    std::vector<std::string>* outPostTags) const {
+// Core peak detection over an explicit [detStart, detEnd] window (chunk-local
+// seconds). All annotation-aware behaviour lives here -- exclusions, per-region
+// overrides, within-annotation reference, and the post-beat two-pass -- so any
+// caller (the on-screen peaks and the BPM readout) detects identically and
+// differs only in the window it asks for.
+QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
+    double detStart, double detEnd, std::vector<std::string>* outPostTags) const {
     data_channel_features r = channelRefs(label);
     const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
-
-    const double detStart = m_currentStartTime;
-    const double detEnd = m_currentStartTime + m_windowDuration;
 
     // Marked regions on THIS channel (chunk-local s).
     //   refExcluded: ALL marking types -> excluded from reference-window stats
@@ -331,7 +333,7 @@ QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label
     //                rather than reaching back to clean pre-annotation data.
     //   postSpans:   the five post-eligible annotations (AF/SVT/VT/PVC/PAC),
     //                reduced to (end, tag) for marking the beat that follows.
-    constexpr double kRefSec = 10.0;
+    constexpr double kRefSec = simple_peak_finder::kReferenceSeconds;
     const double sr = sampleRateForSignal(label);
     std::vector<std::pair<double, double>> refExcluded, detExcluded, withinSpans;
     std::vector<PostSpan> postSpans;
@@ -426,15 +428,23 @@ QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label
     return peaks;
 }
 
+// On-screen peaks: detect over exactly the visible window.
+QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label,
+    std::vector<std::string>* outPostTags) const {
+    return detectPeaks(label, m_currentStartTime,
+        m_currentStartTime + m_windowDuration, outPostTags);
+}
+
 QVector<QPointF> noise_marking_gui::get_bpm(const QString& label, double& outDuration) const
 {
     /*
-        If the user has clicked the peak finding check box, disply the beats per minute.
-        Different from display_peaks_in_window because it never takes data from a a shorter
-        window than 10s even if the window being displayed is shorter than 10s
+        Beats-per-minute readout. Uses the SAME detection as the on-screen peaks
+        (detectPeaks -- same exclusions, per-region overrides, within-annotation
+        reference, and post-beat handling), so the rate always agrees with the
+        beats that are drawn. The only difference is the window: BPM never uses a
+        span shorter than kMinBpmWindowSec, so a rate is still stable when the
+        visible window is only a second or two wide.
     */
-    outDuration = 0.0;
-    data_channel_features r = channelRefs(label);
     constexpr double kMinBpmWindowSec = 10.0;
     const double tVisEnd = m_currentStartTime + m_windowDuration;
     double tStart = m_currentStartTime;
@@ -442,18 +452,7 @@ QVector<QPointF> noise_marking_gui::get_bpm(const QString& label, double& outDur
         tStart = std::max(0.0, tVisEnd - kMinBpmWindowSec);
     outDuration = tVisEnd - tStart;
 
-    const auto [refStart, refEnd] = statsWindow(tStart, tVisEnd);
-    const bool refPreceding = refStart < tStart;
-
-    // BPM ignores overrides -- constant config params across  the window.
-    const double thr = m_cfg.height_threshold_percent;
-    const double blk = m_cfg.blanking_period;
-    auto thrFn = [thr](double) { return thr; };
-    auto blkFn = [blk](double) { return blk; };
-
-    if (label == "PPG" || label == "ABP")
-        return simple_peak_finder::findPeaksDerivative(*r.dataRaw, tStart, tVisEnd, refStart, refEnd, thrFn, blkFn, refPreceding);
-    return simple_peak_finder::findPeaks(*r.dataRaw, tStart, tVisEnd, refStart, refEnd, thrFn, blkFn, refPreceding);
+    return detectPeaks(label, tStart, tVisEnd);
 }
 
 void noise_marking_gui::setupHypnogram() {
