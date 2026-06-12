@@ -43,6 +43,8 @@
 #include <QTimer>
 #include <iostream>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "ui_noise_marking_gui.h"
 #include "user_annotation_handler.h"
@@ -374,7 +376,9 @@ private:
     /** @brief Run the simple peak finder on `label`'s raw data restricted
     *      to the current view window. Returns chunk-local (t, v) of
     *      detected peaks. Empty when m_showPeaks is false. */
-    QVector<QPointF> display_peaks_in_window(const QString& label) const;
+    QVector<QPointF> display_peaks_in_window(const QString& label,
+        std::vector<std::string>* outPostTags = nullptr) const;
+
 
     /** @brief Run the simple peak finder over a BPM-estimation window: the
     *      visible window, extended backwards to a minimum of 10 s when

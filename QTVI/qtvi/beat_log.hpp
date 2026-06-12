@@ -8,7 +8,10 @@
  *
  *         "beat,ecg1_x,ecg1_y,ecg2_x,ecg2_y,ecg3_x,ecg3_y,ppg_x,ppg_y,abp_x,abp_y,"
  *         "blanking_ecg1,threshold_ecg1,blanking_ecg2,threshold_ecg2,"
- *         "blanking_ecg3,threshold_ecg3,blanking_ppg,threshold_ppg,blanking_abp,threshold_abp,marked_beat,post_marked_beat
+ *         "blanking_ecg1,threshold_ecg1,blanking_ecg2,threshold_ecg2,"
+ *         "blanking_ecg3,threshold_ecg3,blanking_ppg,threshold_ppg,blanking_abp,threshold_abp,"
+ *         "marked_ecg1..marked_abp (annotation type containing the beat),"
+ *         "post_ecg1..post_abp   (post_pvc/post_af/... if the beat follows an eligible arrhythmia)
  *
  *         The data is collected in a map which is keyed by the global x location of the beat, and is added to every time the user scrolls.
  *         Peaks are not duplicated because they are keyed by global x location.
@@ -40,6 +43,8 @@ public:
         double blanking = 0.0;
         double threshold = 0.0;
         std::string markType = "None";   // annotation type containing this beat, or "None"
+        std::string postType = "None";   // "post_pvc"/"post_af"/... if this beat
+        // immediately follows an eligible arrhythmia
     };
 
     // A beat = one sample per channel.
@@ -57,12 +62,12 @@ public:
             }
     }
 
-    struct pendingPeak { double y, blanking, threshold; std::string markType; };
+    struct pendingPeak { double y, blanking, threshold; std::string markType; std::string postType; };
     void logPeak(ChannelIdx ch, double x, double y, double blanking, double threshold,
-        const std::string& markType = "None") {
+        const std::string& markType = "None", const std::string& postType = "None") {
         //Record a peak for a channel in the pending buffer, keyed by global time 
         auto& m = m_pending[ch];
-        m[x] = { y, blanking, threshold, markType };
+        m[x] = { y, blanking, threshold, markType, postType };
     }
 
 
@@ -77,10 +82,10 @@ public:
             std::map<double, pendingPeak> merged;
             for (const beat& b : all_beats_in_log)
                 if (b.chan[ch].x != 0.0)
-                    merged[b.chan[ch].x] = { b.chan[ch].y, b.chan[ch].blanking, b.chan[ch].threshold, b.chan[ch].markType };
+                    merged[b.chan[ch].x] = { b.chan[ch].y, b.chan[ch].blanking, b.chan[ch].threshold, b.chan[ch].markType, b.chan[ch].postType };
             for (const auto& [t, pv] : pend) merged[t] = pv;
 
-            for (beat& b : all_beats_in_log) { b.chan[ch].x = 0.0; b.chan[ch].y = 0.0; b.chan[ch].markType = "None"; }
+            for (beat& b : all_beats_in_log) { b.chan[ch].x = 0.0; b.chan[ch].y = 0.0; b.chan[ch].markType = "None"; b.chan[ch].postType = "None"; }
             std::size_t i = 0;
             for (const auto& [t, pv] : merged) {
                 if (i >= all_beats_in_log.size()) break;
@@ -89,6 +94,7 @@ public:
                 all_beats_in_log[i].chan[ch].blanking = pv.blanking;
                 all_beats_in_log[i].chan[ch].threshold = pv.threshold;
                 all_beats_in_log[i].chan[ch].markType = pv.markType;
+                all_beats_in_log[i].chan[ch].postType = pv.postType;
                 ++i;
             }
             pend.clear();
@@ -109,7 +115,7 @@ public:
         }
         for (beat& b : all_beats_in_log) {
             sample& s = b.chan[ch];
-            if (s.x != 0.0 && s.x >= t0 && s.x <= t1) { s.x = 0.0; s.y = 0.0; s.markType = "None"; }
+            if (s.x != 0.0 && s.x >= t0 && s.x <= t1) { s.x = 0.0; s.y = 0.0; s.markType = "None"; s.postType = "None"; }
         }
     }
 
@@ -139,7 +145,8 @@ inline bool beat_log::writeCsv(const std::string& path) const {
     f << "beat,ecg1_x,ecg1_y,ecg2_x,ecg2_y,ecg3_x,ecg3_y,ppg_x,ppg_y,abp_x,abp_y,"
         "blanking_ecg1,threshold_ecg1,blanking_ecg2,threshold_ecg2,"
         "blanking_ecg3,threshold_ecg3,blanking_ppg,threshold_ppg,blanking_abp,threshold_abp,"
-        "marked_ecg1,marked_ecg2,marked_ecg3,marked_ppg,marked_abp\n";
+        "marked_ecg1,marked_ecg2,marked_ecg3,marked_ppg,marked_abp,"
+        "post_ecg1,post_ecg2,post_ecg3,post_ppg,post_abp\n";
     f << std::fixed << std::setprecision(6);
 
     for (size_t i = 0; i < all_beats_in_log.size(); ++i) {
@@ -150,6 +157,8 @@ inline bool beat_log::writeCsv(const std::string& path) const {
             f << ',' << s.blanking << ',' << s.threshold;
         for (const sample& s : all_beats_in_log[i].chan)      // 5 cols: annotation type per channel
             f << ',' << s.markType;
+        for (const sample& s : all_beats_in_log[i].chan)      // 5 cols: post-arrhythmia tag per channel
+            f << ',' << s.postType;
         f << '\n';
     }
     return true;

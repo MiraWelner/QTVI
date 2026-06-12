@@ -45,6 +45,47 @@ namespace {
         return beat_log::ABP;
     }
 
+    // The five annotation types that produce a "post" beat (the first detected
+    // R peak after the annotation ends). Other types -- noise, conduction delay,
+    // benign/significant arrhythmia -- get no post beat. Returns the post tag,
+    // or "" if the type is not eligible.
+    std::string postTagForType(const std::string& mt) {
+        if (mt == "3) AF")  return "post_af";
+        if (mt == "4) SVT") return "post_svt";
+        if (mt == "5) VT")  return "post_vt";
+        if (mt == "6) PVC") return "post_pvc";
+        if (mt == "7) PAC") return "post_pac";
+        return "";
+    }
+
+    // One eligible annotation reduced to what post-tagging needs: where it ends
+    // (chunk-local s) and the tag its following beat should carry.
+    struct PostSpan { double end; std::string tag; };
+
+    // Tag each peak that is the FIRST detected beat after an eligible
+    // annotation's end. `peaks` are this window's detected peaks, ascending in
+    // x. A peak p[k] is a post beat for span s when s.end lies strictly between
+    // the previous peak and p[k] (so no beat sits between the annotation end and
+    // p[k]) and s.end is inside the visible window (so the gap is fully on
+    // screen -- a beat whose annotation ended off the left edge isn't guessed
+    // at). When several eligible annotations qualify, the nearest one wins.
+    std::vector<std::string> tagPostBeats(const QVector<QPointF>& peaks,
+        const std::vector<PostSpan>& spans, double detStart, double detEnd) {
+        std::vector<std::string> tags(peaks.size(), "None");
+        for (int k = 0; k < peaks.size(); ++k) {
+            const double prevX = (k > 0) ? peaks[k - 1].x() : -1e300;
+            const double px = peaks[k].x();
+            double bestEnd = -1e300; std::string bestTag;
+            for (const PostSpan& s : spans) {
+                if (s.end <= prevX || s.end >= px) continue;        // a beat lies between
+                if (s.end < detStart || s.end > detEnd) continue;   // annotation end off screen
+                if (s.end > bestEnd) { bestEnd = s.end; bestTag = s.tag; }
+            }
+            if (!bestTag.empty()) tags[k] = bestTag;
+        }
+        return tags;
+    }
+
     QCategoryAxis* make_time_labled_xaxis(double startLocal, double duration,
         double globalOffset, bool labelsVisible)
     {
@@ -222,6 +263,40 @@ namespace {
         return { gMin, gMax };
     }
 
+    // Walk back from `end`, counting only UNMARKED time, until `need` seconds of
+    // it are collected (or we reach 0). Returns the resulting reference start.
+    // `spans` are this channel's marked intervals (chunk-local s); they may
+    // overlap and need not be sorted. This is how a mark gets skipped so the
+    // reference always reaches a full 10 s of clean data.
+    double reachBackUnmarked(double end, double need,
+        std::vector<std::pair<double, double>> spans) {
+        std::vector<std::pair<double, double>> m;
+        {
+            std::vector<std::pair<double, double>> c;
+            for (auto& e : spans) {
+                double a = std::max(0.0, e.first), b = std::min(end, e.second);
+                if (a < b) c.push_back({ a, b });
+            }
+            std::sort(c.begin(), c.end());
+            for (auto& s : c) {
+                if (!m.empty() && s.first <= m.back().second)
+                    m.back().second = std::max(m.back().second, s.second);
+                else m.push_back(s);
+            }
+        }
+        double pos = end;
+        int j = static_cast<int>(m.size()) - 1;
+        while (need > 0.0 && pos > 0.0) {
+            while (j >= 0 && m[j].first >= pos) --j;
+            if (j >= 0 && m[j].second >= pos) { pos = m[j].first; --j; continue; }
+            const double lo = (j >= 0) ? m[j].second : 0.0;
+            const double cleanLen = pos - lo;
+            if (cleanLen >= need) { pos -= need; need = 0.0; }
+            else { need -= cleanLen; pos = lo; }
+        }
+        return pos;
+    }
+
 } // namespace
 
 // Reference window (chunk-local seconds) for peak-finder statistics: the 60 s
@@ -238,7 +313,8 @@ noise_marking_gui::statsWindow(double detStart, double detEnd) const {
     return { detEnd, end };
 }
 
-QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label) const {
+QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label,
+    std::vector<std::string>* outPostTags) const {
     data_channel_features r = channelRefs(label);
     const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
 
@@ -250,27 +326,47 @@ QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label
     //                (threshold gate level + mean R-R for blanking).
     //   detExcluded: noise/artifact only -> no R peaks detected there; other
     //                annotation types still detect.
+    //   withinSpans: non-noise annotations longer than the reference window;
+    //                beats inside them take stats from WITHIN the annotation
+    //                rather than reaching back to clean pre-annotation data.
+    //   postSpans:   the five post-eligible annotations (AF/SVT/VT/PVC/PAC),
+    //                reduced to (end, tag) for marking the beat that follows.
+    constexpr double kRefSec = 10.0;
     const double sr = sampleRateForSignal(label);
-    std::vector<std::pair<double, double>> refExcluded, detExcluded;
+    std::vector<std::pair<double, double>> refExcluded, detExcluded, withinSpans;
+    std::vector<PostSpan> postSpans;
     if (m_noiseManager) {
         for (const auto& seg : m_noiseManager->getSegments()) {
             if (QString::fromStdString(seg.label) != label) continue;
-            const std::pair<double, double> span{
-                seg.startSample / sr - globalOffset,
-                seg.endSample / sr - globalOffset };
-            refExcluded.push_back(span);
+            const double s = seg.startSample / sr - globalOffset;
+            const double e = seg.endSample / sr - globalOffset;
+            refExcluded.push_back({ s, e });
             if (seg.marking_type == "1) Noise/Art.")   // matches MARKING_COLORS key
-                detExcluded.push_back(span);
+                detExcluded.push_back({ s, e });
+            else if (e - s > kRefSec)                  // long non-noise -> within-reference
+                withinSpans.push_back({ s, e });
+            const std::string tag = postTagForType(seg.marking_type);
+            if (!tag.empty()) postSpans.push_back({ e, tag });
         }
     }
 
-    // Reference window: the standard preceding 10 s (statsWindow). The marked
-    // spans are excluded from the *samples* inside it (refExcluded via the
-    // finder), but we do NOT reach further back -- keeping the reference local
-    // so a nearby mark only drops its own beats from the stats rather than
-    // pulling in older, possibly-mismatched data.
-    const auto [refStart, refEnd] = statsWindow(detStart, detEnd);
-    const bool refPreceding = refStart < detStart;
+    // Reference window = the previous 10 seconds of UNMARKED data: start at the
+    // window's left edge and walk back, skipping any annotated spans, until a
+    // full 10 s of clean data has been gathered. Near the chunk start (no 10 s
+    // behind us) fall back to statsWindow's following window.
+    // (refStart/refEnd are now advisory only -- the finders compute a per-beat
+    // reference internally -- but are still passed for signature compatibility.)
+    double refStart, refEnd; bool refPreceding;
+    {
+        if (detStart >= kRefSec) {
+            refEnd = detStart; refPreceding = true;
+            refStart = reachBackUnmarked(detStart, kRefSec, refExcluded);
+        }
+        else {
+            const auto [s, e] = statsWindow(detStart, detEnd);
+            refStart = s; refEnd = e; refPreceding = (s < detStart);
+        }
+    }
 
     // Per-peak parameter accessors: evaluate the override at each peak's own
     // (global) time so a regional override applies exactly to the beats inside
@@ -282,13 +378,52 @@ QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label
         return blankingAt(label, localT + globalOffset);
         };
 
-    if (label == "PPG" || label == "ABP")
-        return simple_peak_finder::findPeaksDerivative(
+    auto runFinder = [&](const std::vector<std::pair<double, double>>& refEx) {
+        if (label == "PPG" || label == "ABP")
+            return simple_peak_finder::findPeaksDerivative(
+                *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
+                refPreceding, refEx, detExcluded, withinSpans);
+        return simple_peak_finder::findPeaks(
             *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
-            refPreceding, refExcluded, detExcluded);
-    return simple_peak_finder::findPeaks(
-        *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
-        refPreceding, refExcluded, detExcluded);
+            refPreceding, refEx, detExcluded, withinSpans);
+        };
+
+    // Pass 1: detect with annotation spans excluded from the reference.
+    QVector<QPointF> peaks = runFinder(refExcluded);
+
+    // A post beat (first beat after AF/SVT/VT/PVC/PAC) must not contribute to
+    // any other beat's reference. Tag the post beats ONCE here; use the tags
+    // both to exclude those beats (a hair-wide window around each, then a
+    // re-detect so their compensatory pause / altered amplitude can't skew
+    // neighbouring gates) and to hand back to the caller for colouring and
+    // logging. The re-run only fires when a post beat is in view; the common
+    // no-arrhythmia case pays nothing.
+    std::vector<std::string> tags;
+    if (!postSpans.empty()) {
+        tags = tagPostBeats(peaks, postSpans, detStart, detEnd);
+        constexpr double kPostEps = 0.06;   // ~one QRS/systole half-width
+        std::vector<std::pair<double, double>> refEx2 = refExcluded;
+        bool any = false;
+        for (int k = 0; k < peaks.size(); ++k)
+            if (tags[k] != "None") {
+                refEx2.push_back({ peaks[k].x() - kPostEps, peaks[k].x() + kPostEps });
+                any = true;
+            }
+        if (any) {
+            QVector<QPointF> peaks2 = runFinder(refEx2);
+            // Re-tag only if excluding the post beats actually changed the peak
+            // set (rare); otherwise the pass-1 tags still line up one-to-one.
+            if (peaks2 != peaks) tags = tagPostBeats(peaks2, postSpans, detStart, detEnd);
+            peaks = std::move(peaks2);
+        }
+    }
+
+    if (outPostTags) {
+        if (tags.size() != static_cast<size_t>(peaks.size()))
+            tags.assign(peaks.size(), "None");   // no eligible annotations in view
+        *outPostTags = std::move(tags);
+    }
+    return peaks;
 }
 
 QVector<QPointF> noise_marking_gui::get_bpm(const QString& label, double& outDuration) const
@@ -623,14 +758,17 @@ void noise_marking_gui::handle_data_plot() {
         r.chartView->setProperty("bpm", bpm);
         r.chartView->chart()->setTitle(formatChartTitle(label, nativeHz, pxPerSample, bpm));
 
-        const QVector<QPointF> peaks = display_peaks_in_window(label);
+        std::vector<std::string> postTags;   // filled by display_peaks_in_window
+        const QVector<QPointF> peaks = display_peaks_in_window(label, &postTags);
         const beat_log::ChannelIdx ch = beatLogChannel(label);
-        // Log each beat with the override values used to detect it, plus the
-        // annotation type whose span contains it ("None" if unannotated). Noise
-        // spans don't reach here (detection is suppressed), so this is "None" or
-        // an arrhythmia type.
-        for (const QPointF& pk : peaks) {
-            const double gt = pk.x() + globalOffset;
+
+        // Log each beat with the override values used to detect it, the
+        // annotation type whose span contains it ("None" if unannotated), and
+        // its post tag (computed during detection: "None" unless it follows an
+        // eligible arrhythmia). Noise spans don't reach here (detection is
+        // suppressed).
+        for (int k = 0; k < peaks.size(); ++k) {
+            const double gt = peaks[k].x() + globalOffset;
             std::string markType = "None";
             if (m_noiseManager) {
                 for (const auto& seg : m_noiseManager->getSegments()) {
@@ -640,8 +778,8 @@ void noise_marking_gui::handle_data_plot() {
                     }
                 }
             }
-            m_beatLog->logPeak(ch, gt, pk.y(),
-                blankingAt(label, gt), thresholdAt(label, gt), markType);
+            m_beatLog->logPeak(ch, gt, peaks[k].y(),
+                blankingAt(label, gt), thresholdAt(label, gt), markType, postTags[k]);
         }
 
         const double yScale = yScaleForSignal(label);
@@ -668,13 +806,25 @@ void noise_marking_gui::handle_data_plot() {
             for (const QPointF& p : peaks) scaledPeaks.append(p);
         }
 
-        auto* peakSeries = new QScatterSeries();
-        peakSeries->setColor(Qt::red); peakSeries->setMarkerSize(8.0);
-        peakSeries->setMarkerShape(QScatterSeries::MarkerShapeTriangle);
-        peakSeries->setUseOpenGL(true); peakSeries->replace(scaledPeaks);
-        r.chartView->chart()->addSeries(peakSeries);
-        peakSeries->attachAxis(r.chartView->chart()->axes(Qt::Horizontal).first());
-        peakSeries->attachAxis(r.chartView->chart()->axes(Qt::Vertical).first());
+        // Normal beats render red; post-arrhythmia beats render blue. Two
+        // series so the colors don't bleed (a QScatterSeries is one color).
+        QList<QPointF> redPts, bluePts;
+        for (int k = 0; k < scaledPeaks.size(); ++k)
+            ((k < (int)postTags.size() && postTags[k] != "None") ? bluePts : redPts)
+            .append(scaledPeaks[k]);
+
+        auto addPeakSeries = [&](const QList<QPointF>& pts, const QColor& color) {
+            if (pts.isEmpty()) return;
+            auto* s = new QScatterSeries();
+            s->setColor(color); s->setMarkerSize(8.0);
+            s->setMarkerShape(QScatterSeries::MarkerShapeTriangle);
+            s->setUseOpenGL(true); s->replace(pts);
+            r.chartView->chart()->addSeries(s);
+            s->attachAxis(r.chartView->chart()->axes(Qt::Horizontal).first());
+            s->attachAxis(r.chartView->chart()->axes(Qt::Vertical).first());
+            };
+        addPeakSeries(redPts, Qt::red);
+        addPeakSeries(bluePts, Qt::blue);
         };
 
     plotMarkable("ECG1"); plotMarkable("ECG2"); plotMarkable("ECG3");
