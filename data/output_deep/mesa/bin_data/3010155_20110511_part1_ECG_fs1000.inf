@@ -1,0 +1,13 @@
+Patient = 3010155_20110511
+Description = Resampled ECG Data
+Export Date = 
+Number of Channel = 3
+Points for Each Channel = 32399000
+Data Sampling Rate = 1000 points/second
+Start Time = 05/11/2011 12:00:00 AM
+Stop Time = 
+Units: 
+Channel Number  Channel Label
+1              Lead I
+2              Lead II
+3              Lead III
