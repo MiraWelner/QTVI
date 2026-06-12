@@ -1,6 +1,8 @@
 /**
  * @file   gui_peak_finder.hpp
- * @brief  Header-only minimal peak finder for visual overlay on the
+ * @brief  A peak finder for running within the noise marking GUI. It is somewhat simpler than what is implemented in the peak_finder module, 
+ *         but it is faster and the functionality is different. Unlike the peak_finder module, there are two constants: blanking and threshold. Blanking
+ *         is the minimum allowed time between two detected peaks, and threshold is the minimum required height of a peak. Both are expressed as functions of time.
  *         noise-marking GUI. Operates on raw native-rate (t, v) pairs.
  *
  *         Reference statistics (the amplitude level for the gate, and the mean
@@ -47,7 +49,7 @@
 #include <utility>
 #include <vector>
 
-namespace simple_peak_finder {
+namespace gui_peak_finder {
 
     inline constexpr double kReferenceSeconds = 10.0;
 
@@ -481,4 +483,4 @@ namespace simple_peak_finder {
         return out;
     }
 
-}  // namespace simple_peak_finder
+}  // namespace gui_peak_finder

@@ -6,8 +6,6 @@ If at any point you think that the code here is crap, please text me at (415) 30
 
 No promises that I will be able to convince you that it is not, in fact, crap. But I'll do my best!
 
-
-
 ## annealing/
 
 **anneal_handler.cpp/.hpp**
@@ -27,6 +25,24 @@ No promises that I will be able to convince you that it is not, in fact, crap. B
 **signal_renderer.cpp**
 
 **gui_peak_finder.hpp**
+
+This is a simplified peak finder which is designed to allow the user to modify two key constants: blanking, which is the distance after a peak before another R peak can be detected, and threshold, which is the height required for a detected R peak.
+
+To calculate the blanking period, the R-R intervals of the 10 seconds prior to the beat are calculated, and the blanking value is multiplied by the average of those intervals. That distance is the blanking after a given R peak, in which a new R peak cannot be detected. So if the blanking value is 0.2, an R peak can occur right after the previous one, but if it is 0.9, then the R peak has to be far away from the previous one to be counted.
+
+The threshold is calculated by taking the difference between the max and the min of the region 10 seconds before the peak. Let the threshold value T be determined by the user. The required height for the R peak is T(max-min) + min where min is the absolute minimum of the region 10 seconds prior to the peak, and max is the median of the R peaks in the region 10 seconds prior to the R peak. 
+
+If the R peak is less than 10 seconds after the start of the signal, the min is the absolute minimum of the region 10 seconds subsequent to the peak, and the max is the ABSOLUTE maximum subsequent to the peak.
+
+Markings annotated by the user as noise/artifact are not used to calculate threshold or blanking periods, the closest 10 seconds preceding are used instead.
+
+The beat after a section marked as PVC, PAC, SVT, VT, etc. is also not used calculate the threshold, blanking periods. You should expect the few beats following PVCs, PACs, SVT, and VT to be at slightly slower heart rate than the beats preceding the initiation of episodes, but these beats should still fall within the normal range.
+
+For consecutive set of PVC or PAC beats, the subsequent beat after the last PVC or PAC is output in the log file as a post-PVC or post-PAC beat. They are useful for tracking something known as "heart rate turbulence".
+
+For AF, SVT or VT, you should expect the subsequent beats to occur at the same or a little slower than the heart rate preceding the initiation of those rhythms. They are also tracked in the log file 
+
+For beats WITHIN any section with sustained arrhythmia (e.g., SVT or VT, or alternating PACs or PVCs such as bigeminy, trigeminy, etc.), the BP/thresholds are calculated using the parameters WITHIN that section.
 
 **user_annotation_handler.cpp**
 
