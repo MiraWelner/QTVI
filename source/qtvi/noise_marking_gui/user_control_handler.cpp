@@ -60,6 +60,11 @@ void user_control_handler::setupConnections() {
     connect(ui->start_all_mark, &QPushButton::clicked, this, &user_control_handler::handle_allmarkingstart_button);
     connect(ui->stop_all_mark, &QPushButton::clicked, this, &user_control_handler::handle_allmarkingstop_button);
 
+    // "All ECG" -- arms only ECG1/2/3 (these were previously unconnected, so
+    // the buttons did nothing). Shares the mark-all state machine.
+    connect(ui->start_ecg_all, &QPushButton::clicked, this, [this] { m_gui->beginMarkingEcgAll(); });
+    connect(ui->end_ecg_all, &QPushButton::clicked, this, [this] { m_gui->beginStopPhaseEcgAll(); });
+
     // Window-length selector: combo index -> seconds. Default is index 2 (10 s).
     static constexpr double window_length_options[] = { 1, 3, 10, 30, 60, 120,300 };
     connect(ui->window_length_selector,
@@ -139,14 +144,23 @@ void user_control_handler::save_current_plot()
     out << "\n";
 
     const double sr = m_gui->m_ecgSR;
-    const double dtUp = 1.0 / sr;
-    for (double t = t0; t < t1; t += dtUp) {
-        out << QString::number(t, 'f', 6);
-        const int idx = static_cast<int>(std::round(t * sr));
-        for (const auto& c : channels) {
-            out << "," << QString::number((*c.up)[idx], 'g', 8);
+    if (sr > 0.0) {
+        const double dtUp = 1.0 / sr;
+        for (double t = t0; t < t1; t += dtUp) {
+            out << QString::number(t, 'f', 6);
+            const int idx = static_cast<int>(std::round(t * sr));
+            for (const auto& c : channels) {
+                const QVector<double>& up = *c.up;
+                // Missing channels are empty / a single sentinel, and the last
+                // window can run past the loaded samples -- both would index out
+                // of bounds. Write a blank cell instead of reading past the end.
+                if (idx >= 0 && idx < up.size())
+                    out << "," << QString::number(up[idx], 'g', 8);
+                else
+                    out << ",";
+            }
+            out << "\n";
         }
-        out << "\n";
     }
 
     // Raw block: long format (channel, time, value). Raw vectors are

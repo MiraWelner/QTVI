@@ -174,6 +174,12 @@ private:
     /** @brief Transition every active channel from WaitingForEnd to WaitingForStop. */
     void beginStopPhaseAll();
 
+    /** @brief Enter WaitingForStart on ECG1/2/3 only (the "All ECG" buttons). */
+    void beginMarkingEcgAll();
+
+    /** @brief Transition ECG1/2/3 from WaitingForEnd to WaitingForStop. */
+    void beginStopPhaseEcgAll();
+
     /*
         The data_channel_features has all the features that
         a single one of the markable channels might have, such as the upsampled

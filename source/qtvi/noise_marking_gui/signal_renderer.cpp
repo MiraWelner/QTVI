@@ -304,7 +304,7 @@ namespace {
 // window starts within the first 60 s of the chunk.
 std::pair<double, double>
 noise_marking_gui::statsWindow(double detStart, double detEnd) const {
-    constexpr double kStatsWindowSec = simple_peak_finder::kReferenceSeconds;
+    constexpr double kStatsWindowSec = gui_peak_finder::kReferenceSeconds;
     if (detStart >= kStatsWindowSec)
         return { detStart - kStatsWindowSec, detStart };          // preceding 10 s
     double end = detEnd + kStatsWindowSec;                        // following 10 s
@@ -333,7 +333,7 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     //                rather than reaching back to clean pre-annotation data.
     //   postSpans:   the five post-eligible annotations (AF/SVT/VT/PVC/PAC),
     //                reduced to (end, tag) for marking the beat that follows.
-    constexpr double kRefSec = simple_peak_finder::kReferenceSeconds;
+    constexpr double kRefSec = gui_peak_finder::kReferenceSeconds;
     const double sr = sampleRateForSignal(label);
     std::vector<std::pair<double, double>> refExcluded, detExcluded, withinSpans;
     std::vector<PostSpan> postSpans;
@@ -382,10 +382,10 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
 
     auto runFinder = [&](const std::vector<std::pair<double, double>>& refEx) {
         if (label == "PPG" || label == "ABP")
-            return simple_peak_finder::findPeaksDerivative(
+            return gui_peak_finder::findPeaksDerivative(
                 *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
                 refPreceding, refEx, detExcluded, withinSpans);
-        return simple_peak_finder::findPeaks(
+        return gui_peak_finder::findPeaks(
             *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
             refPreceding, refEx, detExcluded, withinSpans);
         };

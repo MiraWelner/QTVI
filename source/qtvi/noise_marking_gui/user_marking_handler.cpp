@@ -77,6 +77,8 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX,
             ui->start_all_mark->setStyleSheet("");
             ui->stop_all_mark->setStyleSheet("");
             ui->stop_all_mark->setEnabled(false);
+            ui->start_ecg_all->setStyleSheet("");   // shared m_markAllActive: clear
+            ui->end_ecg_all->setStyleSheet("");     // the ECG-all buttons as well
         }
     }
     // Mirror finalizeParamEdit: redraw so the removeInRange above takes visible
@@ -140,6 +142,52 @@ void noise_marking_gui::beginStopPhaseAll() {
     }
     ui->start_all_mark->setStyleSheet("");
     ui->stop_all_mark->setStyleSheet("background-color: #e74c3c; color: white;");
+}
+
+// "All ECG" start/end: same machinery as Mark-All (shares m_markAllActive, so
+// the click handler and finalizeMarking cleanup already cover it) but arms only
+// the three ECG channels, leaving PPG/ABP idle. The ecg_all buttons carry the
+// status colour instead of start_all_mark/stop_all_mark.
+void noise_marking_gui::beginMarkingEcgAll() {
+    static const QStringList kEcg{ "ECG1", "ECG2", "ECG3" };
+    if (m_markAllActive) {                       // toggle off
+        for (const QString& label : kEcg)
+            if (isChannelActive(label)) cancelMarking(label);
+        m_markAllActive = false;
+        ui->start_ecg_all->setStyleSheet("");
+        ui->end_ecg_all->setStyleSheet("");
+        return;
+    }
+    m_markAllActive = true;
+    m_currentMarkingType = ui->marking_type->currentText();
+    for (const QString& label : kEcg) {
+        if (!isChannelActive(label)) continue;
+        ChannelMarkingState& state = markStateFor(label);
+        if (state.phase != MarkPhase::Idle) cancelMarking(label);
+        state.phase = MarkPhase::WaitingForStart;
+        if (QPushButton* b = startButtonForSignal(label))
+            b->setStyleSheet("background-color: #f39c12; color: white;");
+    }
+    ui->start_ecg_all->setStyleSheet("background-color: #f39c12; color: white;");
+}
+
+void noise_marking_gui::beginStopPhaseEcgAll() {
+    static const QStringList kEcg{ "ECG1", "ECG2", "ECG3" };
+    bool any = false;
+    for (const QString& label : kEcg) {
+        if (!isChannelActive(label)) continue;
+        ChannelMarkingState& state = markStateFor(label);
+        if (state.phase != MarkPhase::WaitingForEnd) continue;
+        state.phase = MarkPhase::WaitingForStop;
+        if (QPushButton* b = stopButtonForSignal(label))
+            b->setStyleSheet("background-color: #e74c3c; color: white;");
+        if (QPushButton* b = startButtonForSignal(label)) b->setStyleSheet("");
+        any = true;
+    }
+    if (any) {
+        ui->start_ecg_all->setStyleSheet("");
+        ui->end_ecg_all->setStyleSheet("background-color: #e74c3c; color: white;");
+    }
 }
 
 void noise_marking_gui::beginStopPhase(const QString& signalLabel) {
