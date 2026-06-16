@@ -38,32 +38,21 @@ void user_control_handler::setupConnections() {
 
     // Per-channel marking start/stop. Every channel follows the same pattern
     // a dozen near-identical connect() lines.
-    struct MarkButtons {
-        QPushButton* start;
-        QPushButton* stop;
-        const char* signalName;
-    };
-    const MarkButtons markButtons[] = {
-        { ui->start_ecg1_mark, ui->stop_ecg1_mark, "ECG1" },
-        { ui->start_ecg2_mark, ui->stop_ecg2_mark, "ECG2" },
-        { ui->start_ecg3_mark, ui->stop_ecg3_mark, "ECG3" },
-        { ui->startNoisePPG,   ui->stopNoisePPG,   "PPG"  },
-        { ui->startNoiseABP,   ui->stopNoiseABP,   "ABP"  },
+    struct MarkButton { QPushButton* btn; const char* signalName; };
+    const MarkButton markButtons[] = {
+        { ui->start_ecg1_mark, "ECG1" },
+        { ui->start_ecg2_mark, "ECG2" },
+        { ui->start_ecg3_mark, "ECG3" },
+        { ui->startNoisePPG,   "PPG"  },
+        { ui->startNoiseABP,   "ABP"  },
     };
     for (const auto& mb : markButtons) {
         const QString name = QString::fromLatin1(mb.signalName);
-        connect(mb.start, &QPushButton::clicked, this, [this, name]() { m_gui->beginMarking(name); });
-        connect(mb.stop, &QPushButton::clicked, this, [this, name]() { m_gui->beginStopPhase(name); });
+        connect(mb.btn, &QPushButton::clicked, this, [this, name]() { m_gui->toggleMark(name); });
     }
 
-    // "Mark all signals"
-    connect(ui->start_all_mark, &QPushButton::clicked, this, &user_control_handler::handle_allmarkingstart_button);
-    connect(ui->stop_all_mark, &QPushButton::clicked, this, &user_control_handler::handle_allmarkingstop_button);
-
-    // "All ECG" -- arms only ECG1/2/3 (these were previously unconnected, so
-    // the buttons did nothing). Shares the mark-all state machine.
-    connect(ui->start_ecg_all, &QPushButton::clicked, this, [this] { m_gui->beginMarkingEcgAll(); });
-    connect(ui->end_ecg_all, &QPushButton::clicked, this, [this] { m_gui->beginStopPhaseEcgAll(); });
+    connect(ui->start_all_mark, &QPushButton::clicked, this, [this] { m_gui->toggleMarkAll(); });
+    connect(ui->start_ecg_all, &QPushButton::clicked, this, [this] { m_gui->toggleMarkEcgAll(); });
 
     // Window-length selector: combo index -> seconds. Default is index 2 (10 s).
     static constexpr double window_length_options[] = { 1, 3, 10, 30, 60, 120,300 };
@@ -208,7 +197,7 @@ void user_control_handler::handle_undo_button() {
             exc.data_type[i].toStdString(),
             exc.marking_type[i].toStdString());
     }
-    m_gui->updateNoiseHighlights();
+    m_gui->handle_data_plot();
 }
 
 void user_control_handler::handle_clearall_button() {
@@ -220,7 +209,7 @@ void user_control_handler::handle_clearall_button() {
     exc.data_type.clear();
     exc.marking_type.clear();
     m_gui->m_noiseManager = std::make_unique<annotation_handler>(m_gui->m_ecgSR);
-    m_gui->updateNoiseHighlights();
+    m_gui->handle_data_plot();
 }
 
 // ============================================================================

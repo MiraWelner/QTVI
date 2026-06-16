@@ -1,39 +1,13 @@
 /**
  * @file   gui_peak_finder.hpp
- * @brief  A peak finder for running within the noise marking GUI. It is somewhat simpler than what is implemented in the peak_finder module, 
- *         but it is faster and the functionality is different. Unlike the peak_finder module, there are two constants: blanking and threshold. Blanking
- *         is the minimum allowed time between two detected peaks, and threshold is the minimum required height of a peak. Both are expressed as functions of time.
- *         noise-marking GUI. Operates on raw native-rate (t, v) pairs.
+ * @brief  A peak finder for running within the noise marking GUI. Two constants:
+ *         blanking (minimum time between peaks) and threshold (minimum height),
+ *         both per-peak functions of time. Reference stats (gate level + mean
+ *         R-R) come from the 10 clean seconds preceding each beat. Inversion is
+ *         supplied per call as `sgn` (+1 upright, -1 inverted) -- the ECG charts
+ *         set it from their per-channel "Lead Reversed" checkbox.
  *
- *         Reference statistics (the amplitude level for the gate, and the mean
- *         inter-peak / R-R interval for blanking) come from a SEPARATE
- *         reference window [refStart, refEnd] -- typically the 10 s preceding
- *         the visible window -- while detection runs over the detection window
- *         [detStart, detEnd]. A wide reference window keeps the gate and
- *         refractory steady even when the visible window is a second or two
- *         wide; if the reference window is empty/too short the detection window
- *         is used as the reference instead.
- *
- *         Gate upper level: when usePeakMedian is true (the preceding-window
- *         case) the gate's top is the MEDIAN amplitude of the R peaks detected
- *         in the reference window -- robust to a lone artifact spike that would
- *         otherwise inflate the absolute max and raise the gate past the real
- *         beats. When usePeakMedian is false (the subsequent-window fallback,
- *         used when there is no preceding window) the absolute max is used.
- *
- *         The threshold and blanking are supplied as PER-PEAK accessors --
- *         functions of (chunk-local) time -- so a regional override applies to
- *         exactly the beats inside its span: each candidate is gated with the
- *         threshold at its own time, and each peak is blanked with the blanking
- *         value at its own time. Callers wanting a constant just pass a
- *         function returning a constant.
- *
- *           - threshold(t):  height gate at threshold(t) of (gateTop - vMin).
- *           - blanking(t):   multiplier on the reference mean R-R; peaks closer
- *                            than blanking(t) * meanRR to the previous kept one
- *                            are dropped.
- *
- *         findPeaks            (ECG): local-maximum detector.
+ *         findPeaks            (ECG): local-extremum detector (max, or min when inverted).
  *         findPeaksDerivative  (PPG/ABP): squared-derivative systolic detector.
  *
  * @author Mira Welner
@@ -53,7 +27,6 @@ namespace gui_peak_finder {
 
     inline constexpr double kReferenceSeconds = 10.0;
 
-
     // True if t lies within any [start, end] span.
     inline bool inExcludedSpan(const std::vector<std::pair<double, double>>& spans, double t) {
         for (const auto& s : spans)
@@ -61,10 +34,7 @@ namespace gui_peak_finder {
         return false;
     }
 
-
     // Reference amplitude [min, max], excluding samples inside marked spans.
-    // Falls back to the full window when exclusion leaves < 2 samples or a
-    // degenerate range. Callers still check vMax > vMin.
     inline std::pair<double, double> referenceRange(
         const QVector<QPointF>& rawPairs, int refFirst, int refLast,
         const std::vector<std::pair<double, double>>& refExcluded) {
@@ -96,9 +66,7 @@ namespace gui_peak_finder {
         return kept.isEmpty() ? refPeaks : kept;
     }
 
-    // Mean spacing between consecutive peaks, skipping any interval that overlaps an
-    // excluded span (so a removed beat's gap isn't miscounted as one R-R). With no
-    // spans this telescopes to the plain meanInterval().
+    // Mean spacing between consecutive peaks, skipping intervals overlapping a span.
     inline double meanIntervalExcludingSpans(const QVector<QPointF>& peaks,
         const std::vector<std::pair<double, double>>& spans) {
         double sum = 0.0; int cnt = 0;
@@ -113,12 +81,8 @@ namespace gui_peak_finder {
         return cnt > 0 ? sum / cnt : 0.0;
     }
 
-    // Per-peak parameter accessor: maps a (chunk-local) time to a parameter
-    // value (threshold fraction or blanking fraction).
     using ParamFn = std::function<double(double)>;
 
-    // [first, last] indices of rawPairs whose x falls inside [tStart, tEnd].
-    // Returns {-1, -1} when nothing falls in range. rawPairs is monotone in x.
     inline std::pair<int, int> indexRange(const QVector<QPointF>& rawPairs,
         double tStart, double tEnd) {
         int firstIdx = -1, lastIdx = -1;
@@ -132,13 +96,11 @@ namespace gui_peak_finder {
         return { firstIdx, lastIdx };
     }
 
-    // Mean spacing of a (time-sorted) peak set. 0 if fewer than 2 peaks.
     inline double meanInterval(const QVector<QPointF>& peaks) {
         if (peaks.size() < 2) return 0.0;
         return (peaks.last().x() - peaks.first().x()) / (peaks.size() - 1);
     }
 
-    // Median amplitude (y) of a peak set. 0 if empty.
     inline double medianY(const QVector<QPointF>& peaks) {
         if (peaks.isEmpty()) return 0.0;
         std::vector<double> amps;
@@ -149,9 +111,6 @@ namespace gui_peak_finder {
         return *m;
     }
 
-    // Drop peaks closer than blanking(t) * refMeanInterval to the one kept
-    // before them. refMeanInterval is the reference window's mean R-R, NOT
-    // derived from `peaks`. A non-positive interval = no blanking.
     inline QVector<QPointF> applyBlanking(const QVector<QPointF>& peaks,
         const ParamFn& blanking, double refMeanInterval) {
         if (peaks.size() < 2 || refMeanInterval <= 0.0) return peaks;
@@ -166,16 +125,12 @@ namespace gui_peak_finder {
         return out;
     }
 
-    // First index whose x >= val (rawPairs is sorted ascending in x).
     inline int lowerIdx(const QVector<QPointF>& rp, double val) {
         int lo = 0, hi = rp.size();
         while (lo < hi) { const int mid = (lo + hi) >> 1; if (rp[mid].x() < val) lo = mid + 1; else hi = mid; }
         return lo;
     }
 
-    // Walk back from anchor `t`, counting only UNMARKED time, until `need`
-    // seconds have been gathered (or we reach 0). Returns the reference start
-    // time. `spans` are this channel's marked intervals; may overlap / be unsorted.
     inline double reachBackTime(double t, double need,
         const std::vector<std::pair<double, double>>& spans) {
         std::vector<std::pair<double, double>> m;
@@ -204,10 +159,6 @@ namespace gui_peak_finder {
         return pos;
     }
 
-    // If `t` lies inside one of `spans`, return true and fill [s, e] with that
-    // span. Used for the "long annotation" reference rule: a beat inside a
-    // non-noise annotation longer than the reference window draws its stats
-    // from WITHIN the annotation rather than reaching back to clean data.
     inline bool spanContaining(const std::vector<std::pair<double, double>>& spans,
         double t, double& s, double& e) {
         for (const auto& sp : spans)
@@ -215,20 +166,16 @@ namespace gui_peak_finder {
         return false;
     }
 
-    // Reference stats for the local-max (ECG) detector, taken from the `need`
-    // clean seconds immediately BEFORE time `t` (anchored to the beat, never the
-    // viewport): the amplitude floor vMin, the gate's upper level (median
-    // reference-peak amplitude, or the window max if none), and the mean R-R.
+    // Reference stats for the local-max (ECG) detector, from the `need` clean
+    // seconds before t. `sgn` (+1 upright, -1 inverted) is supplied by the
+    // caller (per-channel checkbox); all amplitude reads run in that frame.
     struct RefStats { double vMin = 0.0, gateTop = 0.0, meanRR = 0.0; bool ok = false; };
     inline RefStats refStatsLocalMax(const QVector<QPointF>& rp, double t, double need,
         const std::vector<std::pair<double, double>>& refExcluded,
         const std::vector<std::pair<double, double>>& withinSpans,
-        const ParamFn& threshold) {
+        const ParamFn& threshold,
+        double sgn = 1.0) {
         RefStats rs;
-        // Long-annotation rule: if t is inside a non-noise annotation that is
-        // longer than the reference window, take stats from WITHIN it (the
-        // `need` seconds before t, clamped to the annotation start) and exclude
-        // nothing. Otherwise reach back to `need` clean seconds as usual.
         double aS, aE; const bool within = spanContaining(withinSpans, t, aS, aE);
         int a, b;
         if (within) { a = lowerIdx(rp, std::max(aS, t - need)); b = lowerIdx(rp, t); }
@@ -239,11 +186,11 @@ namespace gui_peak_finder {
         double vMin = 1e300, vMax = -1e300; int kept = 0;
         for (int i = a; i < b; ++i) {
             if (excluded(rp[i].x())) continue;
-            const double v = rp[i].y(); vMin = std::min(vMin, v); vMax = std::max(vMax, v); ++kept;
+            const double v = sgn * rp[i].y(); vMin = std::min(vMin, v); vMax = std::max(vMax, v); ++kept;
         }
         if (kept < 2 || vMax <= vMin) {     // exclusion left too little -> use full span
             vMin = 1e300; vMax = -1e300;
-            for (int i = a; i < b; ++i) { const double v = rp[i].y(); vMin = std::min(vMin, v); vMax = std::max(vMax, v); }
+            for (int i = a; i < b; ++i) { const double v = sgn * rp[i].y(); vMin = std::min(vMin, v); vMax = std::max(vMax, v); }
         }
         if (vMax <= vMin) return rs;
 
@@ -253,8 +200,8 @@ namespace gui_peak_finder {
             const double tt = rp[i].x();
             if (excluded(tt)) continue;
             const double gate = vMin + threshold(tt) * spn;
-            const double v = rp[i].y();
-            if (v >= gate && v >= rp[i - 1].y() && v > rp[i + 1].y()) refPeaks.append({ tt, v });
+            const double v = sgn * rp[i].y();
+            if (v >= gate && v >= sgn * rp[i - 1].y() && v > sgn * rp[i + 1].y()) refPeaks.append({ tt, v });
         }
         rs.vMin = vMin;
         rs.meanRR = within ? meanInterval(refPeaks)
@@ -270,21 +217,15 @@ namespace gui_peak_finder {
         const ParamFn& threshold,
         const ParamFn& blanking,
         bool usePeakMedian,
+        double sgn = 1.0,
         const std::vector<std::pair<double, double>>& refExcluded = {},
         const std::vector<std::pair<double, double>>& detExcluded = {},
         const std::vector<std::pair<double, double>>& withinSpans = {})
     {
         QVector<QPointF> out;
         if (rawPairs.size() < 3 || detStart >= detEnd) return out;
-        (void)refStart; (void)refEnd; (void)usePeakMedian;   // reference is now per-beat
+        (void)refStart; (void)refEnd; (void)usePeakMedian;   // reference is per-beat
 
-        // Each candidate is gated by stats from the 10 clean seconds preceding
-        // IT (refStatsLocalMax), never anything tied to the viewport -- so a
-        // given beat detects identically no matter where the window is panned.
-        // The sweep starts a little before the visible window so a beat at the
-        // left edge is blanked against its true predecessor, not treated as the
-        // first beat in view.
-        constexpr double kRefSec = 10.0;
         constexpr double kBlankMargin = 2.0;   // s; >= any plausible blank interval
         const int i0 = std::max(1, lowerIdx(rawPairs, detStart - kBlankMargin));
         const int i1 = std::min(static_cast<int>(rawPairs.size()) - 1,
@@ -293,18 +234,17 @@ namespace gui_peak_finder {
         QVector<QPointF> prelim;
         std::vector<double> prelimRR;
         for (int i = i0; i < i1; ++i) {
-            const double v = rawPairs[i].y();
-            if (!(v >= rawPairs[i - 1].y() && v > rawPairs[i + 1].y())) continue;   // local max
+            const double yv = sgn * rawPairs[i].y();   // upright-frame amplitude
+            if (!(yv >= sgn * rawPairs[i - 1].y() && yv > sgn * rawPairs[i + 1].y())) continue;  // local max upright (= min when inverted)
             const double t = rawPairs[i].x();
-            if (inExcludedSpan(detExcluded, t)) continue;        // no detection in noise spans
-            const RefStats rs = refStatsLocalMax(rawPairs, t, kRefSec, refExcluded, withinSpans, threshold);
+            if (inExcludedSpan(detExcluded, t)) continue;
+            const RefStats rs = refStatsLocalMax(rawPairs, t, kReferenceSeconds, refExcluded, withinSpans, threshold, sgn);
             if (!rs.ok) continue;
             const double gate = rs.vMin + threshold(t) * (rs.gateTop - rs.vMin);
-            if (v >= gate) { prelim.append({ t, v }); prelimRR.push_back(rs.meanRR); }
+            if (yv >= gate) { prelim.append({ t, rawPairs[i].y() }); prelimRR.push_back(rs.meanRR); }
         }
 
-        // Per-beat blanking: drop a beat within blanking(t) * meanRR(t) of the
-        // last kept one. meanRR is the beat's own reference value.
+        // Per-beat blanking: drop a beat within blanking(t) * meanRR(t) of the last kept one.
         QVector<QPointF> kept;
         double lastT = -1e300;
         for (int k = 0; k < prelim.size(); ++k) {
@@ -317,11 +257,8 @@ namespace gui_peak_finder {
         return out;
     }
 
-    // Systolic-peak collector over rp[a, b): finds squared-derivative local
-    // maxima above `upstrokeGate`, walks each forward <=200 ms to the rounded
-    // apex, and keeps it when the apex clears vMin + threshold(t)*(topLevel-vMin).
-    // Shared by the per-beat reference (topLevel = vMax) and detection
-    // (topLevel = the beat's own gateTop).
+    // Systolic-peak collector over rp[a, b): squared-derivative maxima above
+    // upstrokeGate, walked forward <=200 ms to the rounded apex.
     inline QVector<QPointF> collectSystolic(const QVector<QPointF>& rp, int a, int b,
         double upstrokeGate, double vMin, double topLevel, const ParamFn& threshold) {
         QVector<QPointF> peaks;
@@ -335,11 +272,11 @@ namespace gui_peak_finder {
             const double dkp = rp[k + 2].y() - rp[k + 1].y();
             const double d2km = dkm * dkm, d2k = dk * dk, d2kp = dkp * dkp;
             if (d2k < upstrokeGate) continue;
-            if (!(d2k >= d2km && d2k > d2kp)) continue;       // local max of d2
+            if (!(d2k >= d2km && d2k > d2kp)) continue;
             const double tUp = rp[k].x();
             int apexIdx = k; double apexVal = rp[k].y();
             for (int j = k + 1; j <= b && j < n; ++j) {
-                if (rp[j].x() - tUp > 0.2) break;             // 200 ms cap
+                if (rp[j].x() - tUp > 0.2) break;
                 const double v = rp[j].y();
                 if (v >= apexVal) { apexVal = v; apexIdx = j; }
                 else break;
@@ -350,9 +287,6 @@ namespace gui_peak_finder {
         return peaks;
     }
 
-    // Per-beat reference for the derivative finder: vMin, the adaptive upstroke
-    // gate (0.6 x 90th-pct squared derivative), the systolic gate level, and
-    // mean R-R, all from the 10 clean seconds strictly preceding time t.
     struct RefStatsD { double vMin = 0.0, gateTop = 0.0, meanRR = 0.0, upstrokeGate = 0.0; bool ok = false; };
     inline RefStatsD refStatsDeriv(const QVector<QPointF>& rp, double t, double need,
         const std::vector<std::pair<double, double>>& refExcluded,
@@ -371,26 +305,25 @@ namespace gui_peak_finder {
             if (excluded(rp[i].x())) continue;
             const double v = rp[i].y(); vMin = std::min(vMin, v); vMax = std::max(vMax, v); ++kept;
         }
-        if (kept < 2 || vMax <= vMin) {     // exclusion left too little -> use full span
+        if (kept < 2 || vMax <= vMin) {
             vMin = 1e300; vMax = -1e300;
             for (int i = a; i < b; ++i) { const double v = rp[i].y(); vMin = std::min(vMin, v); vMax = std::max(vMax, v); }
         }
         if (vMax <= vMin) return rs;
 
-        // Adaptive upstroke gate from the squared derivative of the ref window.
         std::vector<double> d2;
         d2.reserve(b - a);
         for (int i = a; i < b - 1; ++i) {
             if (excluded(rp[i].x()) || excluded(rp[i + 1].x())) continue;
             const double dv = rp[i + 1].y() - rp[i].y(); d2.push_back(dv * dv);
         }
-        if (d2.empty()) {                   // exclusion removed everything; use full window
+        if (d2.empty()) {
             for (int i = a; i < b - 1; ++i) { const double dv = rp[i + 1].y() - rp[i].y(); d2.push_back(dv * dv); }
         }
         if (d2.empty()) return rs;
         std::sort(d2.begin(), d2.end());
         const double d90 = d2[(int)(0.9 * d2.size())];
-        if (d90 <= 0.0) return rs;          // flat reference window
+        if (d90 <= 0.0) return rs;
         rs.upstrokeGate = 0.6 * d90;
 
         const QVector<QPointF> refRaw = collectSystolic(rp, a, b, rs.upstrokeGate, vMin, vMax, threshold);
@@ -403,18 +336,6 @@ namespace gui_peak_finder {
         return rs;
     }
 
-    /*
-     PPG / ABP peak finder via first-derivative method.
-
-     PPG and ABP have rounded systolic peaks that the threshold-based
-     findPeaks() handles poorly. The derivative method finds the steep
-     systolic upstroke (a sharp peak in the squared derivative) and walks
-     forward to the rounded apex. The amplitude level, the adaptive
-     squared-derivative upstroke gate, and the blanking inter-R interval are
-     taken from the reference window; the height gate and blanking are
-     evaluated per peak. Like findPeaks, the gate's upper level is the median
-     detected-peak amplitude when usePeakMedian is set, else the abs max.
-     */
     inline QVector<QPointF> findPeaksDerivative(const QVector<QPointF>& rawPairs,
         double detStart, double detEnd,
         double refStart, double refEnd,
@@ -427,25 +348,17 @@ namespace gui_peak_finder {
     {
         QVector<QPointF> out;
         if (rawPairs.size() < 4 || detStart >= detEnd) return out;
-        (void)refStart; (void)refEnd; (void)usePeakMedian;   // reference is now per-beat
+        (void)refStart; (void)refEnd; (void)usePeakMedian;
 
-        // Like findPeaks, detection is anchored to each beat, not the viewport:
-        // every systolic candidate is gated by the upstroke gate, height gate,
-        // and mean R-R from the 10 clean seconds preceding ITS apex
-        // (refStatsDeriv), so a beat detects identically no matter where the
-        // window is panned. The sweep starts a little before the visible window
-        // so a left-edge beat blanks against its true predecessor.
         constexpr double kRefSec = 10.0;
-        constexpr double kBlankMargin = 2.0;   // s; >= any plausible blank interval
+        constexpr double kBlankMargin = 2.0;
         const int n = static_cast<int>(rawPairs.size());
         const int i0 = std::max(1, lowerIdx(rawPairs, detStart - kBlankMargin));
-        const int i1 = std::min(n - 2, lowerIdx(rawPairs, detEnd) + 1);   // need k+2
+        const int i1 = std::min(n - 2, lowerIdx(rawPairs, detEnd) + 1);
 
         QVector<QPointF> prelim;
         std::vector<double> prelimRR;
         for (int k = i0; k < i1; ++k) {
-            // squared-derivative local maximum at k (gate-independent here;
-            // the per-beat upstroke gate is applied after the apex is known)
             const double dkm = rawPairs[k].y() - rawPairs[k - 1].y();
             const double dk = rawPairs[k + 1].y() - rawPairs[k].y();
             const double dkp = rawPairs[k + 2].y() - rawPairs[k + 1].y();
@@ -455,22 +368,20 @@ namespace gui_peak_finder {
             const double tUp = rawPairs[k].x();
             int apexIdx = k; double apexVal = rawPairs[k].y();
             for (int j = k + 1; j < n; ++j) {
-                if (rawPairs[j].x() - tUp > 0.2) break;          // 200 ms cap
+                if (rawPairs[j].x() - tUp > 0.2) break;
                 const double v = rawPairs[j].y();
                 if (v >= apexVal) { apexVal = v; apexIdx = j; }
                 else break;
             }
             const double t = rawPairs[apexIdx].x();
-            if (inExcludedSpan(detExcluded, t)) continue;        // no detection in noise spans
+            if (inExcludedSpan(detExcluded, t)) continue;
             const RefStatsD rs = refStatsDeriv(rawPairs, t, kRefSec, refExcluded, withinSpans, threshold);
             if (!rs.ok) continue;
-            if (d2k < rs.upstrokeGate) continue;                 // weak upstroke
+            if (d2k < rs.upstrokeGate) continue;
             const double gate = rs.vMin + threshold(t) * (rs.gateTop - rs.vMin);
             if (apexVal >= gate) { prelim.append({ t, apexVal }); prelimRR.push_back(rs.meanRR); }
         }
 
-        // Per-beat blanking against each beat's own reference R-R. Adjacent
-        // upstrokes that walk to the same apex collapse here (zero gap < blank).
         QVector<QPointF> kept;
         double lastT = -1e300;
         for (int k = 0; k < prelim.size(); ++k) {

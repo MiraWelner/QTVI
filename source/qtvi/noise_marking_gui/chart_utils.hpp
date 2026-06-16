@@ -5,6 +5,8 @@
  *         Not part of the public API -- do not include from headers.
  */
 
+#include "annotation_types.hpp"
+
 #include <QtCharts/QChart>
 #include <QtCharts/QChartView>
 #include <QtCharts/QValueAxis>
@@ -27,18 +29,6 @@ inline const QColor COLOR_ACCEL_Z{ "#8E44AD" };
 inline const QColor COLOR_RESP{ 0,0,0 };
 inline const QColor COLOR_CVP{ 0,0,0 };
 inline const QColor COLOR_RAW_SCATTER{ 0, 0, 0, 255 };
-
-inline const QMap<QString, QColor> MARKING_COLORS{
-    {"1) Noise/Art.",  QColor(255, 255, 0,   60)},
-    {"2) Cond. Delay", QColor(128, 0,   128, 60)},
-    {"3) AF",          QColor(255, 0,   0,   60)},
-    {"4) SVT",         QColor(0,   0,   255, 60)},
-    {"5) VT",          QColor(0,   255,   0, 60)},
-    {"6) PVC",         QColor(128, 255, 0,   60)},
-    {"7) PAC",         QColor(255, 128, 0,   60)},
-    {"8) Benign Arr.", QColor(255, 128, 255, 60)},
-    {"9) Sig. Arr.",   QColor(0,   255, 255, 60)},
-};
 
 // ---------------------------------------------------------------------------
 // Chart helpers

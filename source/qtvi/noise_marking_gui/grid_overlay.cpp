@@ -274,4 +274,5 @@ void pulse_overlay::refresh() {
         attach(vMinor);
         attach(vMajor);
     }
+
 }

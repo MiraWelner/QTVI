@@ -160,25 +160,19 @@ private:
         QLineSeries* startMarkerLine = nullptr;
     };
 
-    // --- Called by lower_row_buttons to enter/transition marking phases ---
-
-    /** @brief Enter WaitingForStart on `signalLabel`'s state machine. */
+	/*
+        Marking button handlers, called by user_control_handler when the user clicks a button or presses a hotkey.
+        handles the button state machine.
+    */
     void beginMarking(const QString& signalLabel);
-
-    /** @brief Transition `signalLabel` from WaitingForEnd to WaitingForStop. */
     void beginStopPhase(const QString& signalLabel);
-
-    /** @brief Enter WaitingForStart on every active markable channel. */
     void beginMarkingAll();
-
-    /** @brief Transition every active channel from WaitingForEnd to WaitingForStop. */
     void beginStopPhaseAll();
-
-    /** @brief Enter WaitingForStart on ECG1/2/3 only (the "All ECG" buttons). */
     void beginMarkingEcgAll();
-
-    /** @brief Transition ECG1/2/3 from WaitingForEnd to WaitingForStop. */
     void beginStopPhaseEcgAll();
+    void toggleMark(const QString& label);
+    void toggleMarkAll();
+    void toggleMarkEcgAll();
 
     /*
         The data_channel_features has all the features that
@@ -383,11 +377,11 @@ private:
     *      to the current view window. Returns chunk-local (t, v) of
     *      detected peaks. Empty when m_showPeaks is false. */
     QVector<QPointF> display_peaks_in_window(const QString& label,
-        std::vector<std::string>* outPostTags = nullptr) const;
+        std::vector<int>* outPostTags = nullptr) const;
 
     QVector<QPointF> detectPeaks(const QString& label,
         double detStart, double detEnd,
-        std::vector<std::string>* outPostTags = nullptr) const;
+        std::vector<int>* outPostTags = nullptr) const;
 
     /** @brief Run the simple peak finder over a BPM-estimation window: the
     *      visible window, extended backwards to a minimum of 10 s when
@@ -469,6 +463,7 @@ private:
  *          checkbox is checked, returns the spinbox value; otherwise 1.
  *          Multiplier > 1 widens the visible y range (signal looks shorter). */
     double yScaleForSignal(const QString& label) const;
+    bool   invertedForSignal(const QString& label) const;
 
     void resetUnpinnedGains();
 

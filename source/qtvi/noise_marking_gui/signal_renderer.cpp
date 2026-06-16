@@ -15,6 +15,8 @@
 #include "gui_peak_finder.hpp"
 #include "beat_log.hpp"
 #include "theme/theme.h"
+#include "annotation_types.hpp"
+
 
 #include <QtCharts/QAreaSeries>
 #include <QtCharts/QChart>
@@ -45,22 +47,9 @@ namespace {
         return beat_log::ABP;
     }
 
-    // The five annotation types that produce a "post" beat (the first detected
-    // R peak after the annotation ends). Other types -- noise, conduction delay,
-    // benign/significant arrhythmia -- get no post beat. Returns the post tag,
-    // or "" if the type is not eligible.
-    std::string postTagForType(const std::string& mt) {
-        if (mt == "3) AF")  return "post_af";
-        if (mt == "4) SVT") return "post_svt";
-        if (mt == "5) VT")  return "post_vt";
-        if (mt == "6) PVC") return "post_pvc";
-        if (mt == "7) PAC") return "post_pac";
-        return "";
-    }
-
     // One eligible annotation reduced to what post-tagging needs: where it ends
     // (chunk-local s) and the tag its following beat should carry.
-    struct PostSpan { double end; std::string tag; };
+    struct PostSpan { double end; int tag; };
 
     // Tag each peak that is the FIRST detected beat after an eligible
     // annotation's end. `peaks` are this window's detected peaks, ascending in
@@ -69,19 +58,20 @@ namespace {
     // p[k]) and s.end is inside the visible window (so the gap is fully on
     // screen -- a beat whose annotation ended off the left edge isn't guessed
     // at). When several eligible annotations qualify, the nearest one wins.
-    std::vector<std::string> tagPostBeats(const QVector<QPointF>& peaks,
+    std::vector<int> tagPostBeats(const QVector<QPointF>& peaks,
         const std::vector<PostSpan>& spans, double detStart, double detEnd) {
-        std::vector<std::string> tags(peaks.size(), "None");
+        std::vector<int> tags(peaks.size(), 0);
         for (int k = 0; k < peaks.size(); ++k) {
             const double prevX = (k > 0) ? peaks[k - 1].x() : -1e300;
             const double px = peaks[k].x();
-            double bestEnd = -1e300; std::string bestTag;
+            double bestEnd = -1e300; 
+            int bestTag = 0;
             for (const PostSpan& s : spans) {
                 if (s.end <= prevX || s.end >= px) continue;        // a beat lies between
                 if (s.end < detStart || s.end > detEnd) continue;   // annotation end off screen
                 if (s.end > bestEnd) { bestEnd = s.end; bestTag = s.tag; }
             }
-            if (!bestTag.empty()) tags[k] = bestTag;
+            if (bestTag != 0) tags[k] = bestTag;
         }
         return tags;
     }
@@ -319,7 +309,7 @@ noise_marking_gui::statsWindow(double detStart, double detEnd) const {
 // caller (the on-screen peaks and the BPM readout) detects identically and
 // differs only in the window it asks for.
 QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
-    double detStart, double detEnd, std::vector<std::string>* outPostTags) const {
+    double detStart, double detEnd, std::vector<int>* outPostTags) const {
     data_channel_features r = channelRefs(label);
     const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
 
@@ -343,12 +333,16 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
             const double s = seg.startSample / sr - globalOffset;
             const double e = seg.endSample / sr - globalOffset;
             refExcluded.push_back({ s, e });
-            if (seg.marking_type == "1) Noise/Art.")   // matches MARKING_COLORS key
+            if (annotation_types::suppressesDetection(seg.marking_type))
+            {
                 detExcluded.push_back({ s, e });
-            else if (e - s > kRefSec)                  // long non-noise -> within-reference
+            }
+            else if (e - s > kRefSec)
+            {
                 withinSpans.push_back({ s, e });
-            const std::string tag = postTagForType(seg.marking_type);
-            if (!tag.empty()) postSpans.push_back({ e, tag });
+            }
+            const int tag = annotation_types::postCode(seg.marking_type);
+            if (tag != 0) postSpans.push_back({ e, tag });
         }
     }
 
@@ -379,7 +373,7 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     auto blkFn = [this, &label, globalOffset](double localT) {
         return blankingAt(label, localT + globalOffset);
         };
-
+    const double sgn = invertedForSignal(label) ? -1.0 : 1.0;
     auto runFinder = [&](const std::vector<std::pair<double, double>>& refEx) {
         if (label == "PPG" || label == "ABP")
             return gui_peak_finder::findPeaksDerivative(
@@ -387,7 +381,7 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
                 refPreceding, refEx, detExcluded, withinSpans);
         return gui_peak_finder::findPeaks(
             *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
-            refPreceding, refEx, detExcluded, withinSpans);
+            refPreceding, sgn, refEx, detExcluded, withinSpans);
         };
 
     // Pass 1: detect with annotation spans excluded from the reference.
@@ -400,14 +394,14 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     // neighbouring gates) and to hand back to the caller for colouring and
     // logging. The re-run only fires when a post beat is in view; the common
     // no-arrhythmia case pays nothing.
-    std::vector<std::string> tags;
+    std::vector<int> tags;
     if (!postSpans.empty()) {
         tags = tagPostBeats(peaks, postSpans, detStart, detEnd);
         constexpr double kPostEps = 0.06;   // ~one QRS/systole half-width
         std::vector<std::pair<double, double>> refEx2 = refExcluded;
         bool any = false;
         for (int k = 0; k < peaks.size(); ++k)
-            if (tags[k] != "None") {
+            if (tags[k] != 0) {
                 refEx2.push_back({ peaks[k].x() - kPostEps, peaks[k].x() + kPostEps });
                 any = true;
             }
@@ -422,15 +416,14 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
 
     if (outPostTags) {
         if (tags.size() != static_cast<size_t>(peaks.size()))
-            tags.assign(peaks.size(), "None");   // no eligible annotations in view
+            tags.assign(peaks.size(), 0);   // no eligible annotations in view
         *outPostTags = std::move(tags);
     }
     return peaks;
 }
 
 // On-screen peaks: detect over exactly the visible window.
-QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label,
-    std::vector<std::string>* outPostTags) const {
+QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label, std::vector<int>* outPostTags) const {
     return detectPeaks(label, m_currentStartTime,
         m_currentStartTime + m_windowDuration, outPostTags);
 }
@@ -749,31 +742,34 @@ void noise_marking_gui::handle_data_plot() {
                     setPaddedYRange(yAxis, glo, ghi);   // reuse the same 5% padding helper
             }
         }
+        std::vector<int> postTags;
+        const QVector<QPointF> peaks = display_peaks_in_window(label, &postTags);
         double bpm = -1.0;
-        double dur = 0.0;
-        const QVector<QPointF> bpmPeaks = get_bpm(label, dur);
-        if (dur > 0.0) bpm = bpmPeaks.size() * 60.0 / dur;
-
+        if (m_windowDuration >= 10.0) {            // keep in sync with kMinBpmWindowSec in get_bpm
+            if (m_windowDuration > 0.0) bpm = peaks.size() * 60.0 / m_windowDuration;
+        }
+        else {
+            double dur = 0.0;
+            const QVector<QPointF> bpmPeaks = get_bpm(label, dur);
+            if (dur > 0.0) bpm = bpmPeaks.size() * 60.0 / dur;
+        }
         r.chartView->setProperty("bpm", bpm);
         r.chartView->chart()->setTitle(formatChartTitle(label, nativeHz, pxPerSample, bpm));
-
-        std::vector<std::string> postTags;   // filled by display_peaks_in_window
-        const QVector<QPointF> peaks = display_peaks_in_window(label, &postTags);
         const beat_log::ChannelIdx ch = beatLogChannel(label);
 
         // Log each beat with the override values used to detect it, the
-        // annotation type whose span contains it ("None" if unannotated), and
-        // its post tag (computed during detection: "None" unless it follows an
+        // annotation type whose span contains it (0 if unannotated), and
+        // its post tag (computed during detection: 0 unless it follows an
         // eligible arrhythmia). Noise spans don't reach here (detection is
         // suppressed).
         for (int k = 0; k < peaks.size(); ++k) {
             const double gt = peaks[k].x() + globalOffset;
-            std::string markType = "None";
+            int markType = 0;
             if (m_noiseManager) {
                 for (const auto& seg : m_noiseManager->getSegments()) {
                     if (QString::fromStdString(seg.label) != label) continue;
                     if (gt >= seg.startSample / sr && gt <= seg.endSample / sr) {
-                        markType = seg.marking_type; break;
+                        markType = annotation_types::markCode(seg.marking_type); break;
                     }
                 }
             }
@@ -809,7 +805,7 @@ void noise_marking_gui::handle_data_plot() {
         // series so the colors don't bleed (a QScatterSeries is one color).
         QList<QPointF> redPts, bluePts;
         for (int k = 0; k < scaledPeaks.size(); ++k)
-            ((k < (int)postTags.size() && postTags[k] != "None") ? bluePts : redPts)
+            ((k < (int)postTags.size() && postTags[k] != 0) ? bluePts : redPts)
             .append(scaledPeaks[k]);
 
         auto addPeakSeries = [&](const QList<QPointF>& pts, const QColor& color) {
@@ -929,8 +925,7 @@ void noise_marking_gui::updateNoiseHighlights() {
 
         const double ds = std::max(segStart, viewStart);
         const double de = std::min(segEnd, viewEnd);
-        const QColor color = MARKING_COLORS.value(
-            QString::fromStdString(seg.marking_type), QColor(0, 0, 0, 100));
+        const QColor color = annotation_types::colorFor(QString::fromStdString(seg.marking_type));
 
         const ChartAxes& ca = axesMap[segLabel];
         if (!ca.chart || !ca.xAxis || !ca.yAxis) continue;

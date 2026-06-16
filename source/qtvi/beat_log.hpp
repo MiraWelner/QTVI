@@ -42,8 +42,8 @@ public:
         double y = 0.0;
         double blanking = 0.0;
         double threshold = 0.0;
-        std::string markType = "None";   // annotation type containing this beat, or "None"
-        std::string postType = "None";   // "post_pvc"/"post_af"/... if this beat
+        int markType = 0;   // annotation type containing this beat, or "0"
+        int postType = 0;   // "post_pvc"/"post_af"/... if this beat
         // immediately follows an eligible arrhythmia
     };
 
@@ -62,9 +62,8 @@ public:
             }
     }
 
-    struct pendingPeak { double y, blanking, threshold; std::string markType; std::string postType; };
-    void logPeak(ChannelIdx ch, double x, double y, double blanking, double threshold,
-        const std::string& markType = "None", const std::string& postType = "None") {
+    struct pendingPeak { double y, blanking, threshold; int markType, postType; };
+    void logPeak(ChannelIdx ch, double x, double y, double blanking, double threshold, int markType = 0, int postType = 0) {
         //Record a peak for a channel in the pending buffer, keyed by global time 
         auto& m = m_pending[ch];
         m[x] = { y, blanking, threshold, markType, postType };
@@ -85,7 +84,7 @@ public:
                     merged[b.chan[ch].x] = { b.chan[ch].y, b.chan[ch].blanking, b.chan[ch].threshold, b.chan[ch].markType, b.chan[ch].postType };
             for (const auto& [t, pv] : pend) merged[t] = pv;
 
-            for (beat& b : all_beats_in_log) { b.chan[ch].x = 0.0; b.chan[ch].y = 0.0; b.chan[ch].markType = "None"; b.chan[ch].postType = "None"; }
+            for (beat& b : all_beats_in_log) { b.chan[ch].x = 0.0; b.chan[ch].y = 0.0; b.chan[ch].markType = 0; b.chan[ch].postType = 0; }
             std::size_t i = 0;
             for (const auto& [t, pv] : merged) {
                 if (i >= all_beats_in_log.size()) break;
@@ -115,7 +114,7 @@ public:
         }
         for (beat& b : all_beats_in_log) {
             sample& s = b.chan[ch];
-            if (s.x != 0.0 && s.x >= t0 && s.x <= t1) { s.x = 0.0; s.y = 0.0; s.markType = "None"; s.postType = "None"; }
+            if (s.x != 0.0 && s.x >= t0 && s.x <= t1) { s.x = 0.0; s.y = 0.0; s.markType = 0; s.postType = 0; }
         }
     }
 

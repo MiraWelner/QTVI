@@ -4,6 +4,7 @@
  *
  */
 #include "user_annotation_handler.h"
+#include "annotation_types.hpp"
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
@@ -41,12 +42,6 @@ void annotation_handler::exportBinary(const std::string& filename) const {
     static const std::unordered_map<std::string, double> labelMap = {
         {"PPG", 1.0}, {"ECG1", 2.0}, {"ECG2", 3.0}, {"ECG3", 4.0}, {"ABP", 5.0}
     };
-    static const std::unordered_map<std::string, double> typeMap = {
-        {"1) Noise/Art.", 1.0},{"2) Cond. Delay", 2.0}, {"3) AF", 3.0}, {"4) SVT", 4.0}, {"5) VT", 5.0},
-        {"6) PVC", 6.0}, {"7) PAC", 7.0},
-        {"8) Benign Arr.", 8.0}, {"9) Sig. Arr.", 9.0},
-        
-    };
 
     std::ofstream file(filename, std::ios::binary);
     if (!file.is_open()) return;
@@ -56,7 +51,6 @@ void annotation_handler::exportBinary(const std::string& filename) const {
 
     for (const auto& seg : m_segments) {
         auto labelIt = labelMap.find(seg.label);
-        auto typeIt = typeMap.find(seg.marking_type);
 
         const double row[6] = {
             static_cast<double>(seg.startSample),
@@ -64,7 +58,7 @@ void annotation_handler::exportBinary(const std::string& filename) const {
             seg.startSample / m_sampleRate,
             seg.endSample / m_sampleRate,
             (labelIt != labelMap.end()) ? labelIt->second : 0.0,
-            (typeIt != typeMap.end()) ? typeIt->second : 0.0,
+            annotation_types::codeFor(seg.marking_type),
         };
         file.write(reinterpret_cast<const char*>(row), sizeof(row));
     }
