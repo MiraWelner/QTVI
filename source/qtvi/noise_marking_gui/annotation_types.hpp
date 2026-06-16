@@ -34,7 +34,7 @@ namespace annotation_types {
         { "7) PVC",            7, 128, 255, 0,   60, false, true  },
         { "8) PAC",            8, 255, 128, 0,   60, false, true  },
         { "9) Benign Arr.",    9, 255, 128, 255, 60, false, false },
-        { "10) Sig. Arr.",     10, 0,  255, 255, 60, false, false }
+        { "Sig. Arr.",     10, 0,  255, 255, 60, false, false }
     } };
 
     inline const AnnotationType* find(const QString& label) {

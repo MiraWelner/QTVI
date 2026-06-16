@@ -60,7 +60,7 @@ void user_control_handler::setupConnections() {
         QOverload<int>::of(&QComboBox::currentIndexChanged),
         this,
         [this](int idx) { handle_window_toggle(true, window_length_options[idx]); });
-    ui->window_length_selector->setCurrentIndex(2);
+    ui->window_length_selector->setCurrentIndex(3);
 
     //threshold and blanking buttons allow you to select regions
     connect(ui->change_threshold, &QPushButton::clicked, this,

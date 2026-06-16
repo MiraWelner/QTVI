@@ -230,8 +230,8 @@ private:
 
     // --- View state ---
     double m_currentStartTime = 0.0;
-    double m_windowDuration = 10.0;
-    double m_skipInterval = 5.0;
+    double m_windowDuration = 30.0;
+    double m_skipInterval = 15.0;
 
     // --- Ampogram / hypnogram series ---
     QLineSeries* ecg1_ampogram_series = nullptr;

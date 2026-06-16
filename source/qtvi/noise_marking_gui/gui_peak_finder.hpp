@@ -25,7 +25,7 @@
 
 namespace gui_peak_finder {
 
-    inline constexpr double kReferenceSeconds = 10.0;
+    inline constexpr double kReferenceSeconds = 5.0;
 
     // True if t lies within any [start, end] span.
     inline bool inExcludedSpan(const std::vector<std::pair<double, double>>& spans, double t) {
@@ -130,33 +130,49 @@ namespace gui_peak_finder {
         while (lo < hi) { const int mid = (lo + hi) >> 1; if (rp[mid].x() < val) lo = mid + 1; else hi = mid; }
         return lo;
     }
-
-    inline double reachBackTime(double t, double need,
-        const std::vector<std::pair<double, double>>& spans) {
-        std::vector<std::pair<double, double>> m;
-        {
-            std::vector<std::pair<double, double>> c;
-            for (const auto& e : spans) {
-                const double a = std::max(0.0, e.first), b = std::min(t, e.second);
-                if (a < b) c.push_back({ a, b });
-            }
-            std::sort(c.begin(), c.end());
-            for (const auto& s : c) {
-                if (!m.empty() && s.first <= m.back().second) m.back().second = std::max(m.back().second, s.second);
-                else m.push_back(s);
-            }
+    // Merge + sort excluded spans once, clipped to [0, tMax], dropping empties.
+    // The result is what reachBackWalk consumes; computing it once per detection
+    // call instead of once per candidate beat is the optimization.
+    inline std::vector<std::pair<double, double>> mergeExcluded(
+        double tMax, const std::vector<std::pair<double, double>>& spans) {
+        std::vector<std::pair<double, double>> c;
+        c.reserve(spans.size());
+        for (const auto& e : spans) {
+            const double a = std::max(0.0, e.first), b = std::min(tMax, e.second);
+            if (a < b) c.push_back({ a, b });
         }
+        std::sort(c.begin(), c.end());
+        std::vector<std::pair<double, double>> m;
+        for (const auto& s : c) {
+            if (!m.empty() && s.first <= m.back().second)
+                m.back().second = std::max(m.back().second, s.second);
+            else m.push_back(s);
+        }
+        return m;
+    }
+
+    // Walk back from t over UNMARKED time until `need` clean seconds are
+    // gathered. `merged` MUST be the output of mergeExcluded (sorted, merged,
+    // clipped to [0, tMax] with tMax >= t). No per-call allocation or sort.
+    inline double reachBackWalk(double t, double need,
+        const std::vector<std::pair<double, double>>& merged) {
         double pos = t;
-        int j = static_cast<int>(m.size()) - 1;
+        int j = static_cast<int>(merged.size()) - 1;
         while (need > 0.0 && pos > 0.0) {
-            while (j >= 0 && m[j].first >= pos) --j;
-            if (j >= 0 && m[j].second >= pos) { pos = m[j].first; --j; continue; }
-            const double lo = (j >= 0) ? m[j].second : 0.0;
+            while (j >= 0 && merged[j].first >= pos) --j;
+            if (j >= 0 && merged[j].second >= pos) { pos = merged[j].first; --j; continue; }
+            const double lo = (j >= 0) ? merged[j].second : 0.0;
             const double cleanLen = pos - lo;
             if (cleanLen >= need) { pos -= need; need = 0.0; }
             else { need -= cleanLen; pos = lo; }
         }
         return pos;
+    }
+
+
+    inline double reachBackTime(double t, double need,
+        const std::vector<std::pair<double, double>>& spans) {
+        return reachBackWalk(t, need, mergeExcluded(t, spans));
     }
 
     inline bool spanContaining(const std::vector<std::pair<double, double>>& spans,
@@ -350,7 +366,6 @@ namespace gui_peak_finder {
         if (rawPairs.size() < 4 || detStart >= detEnd) return out;
         (void)refStart; (void)refEnd; (void)usePeakMedian;
 
-        constexpr double kRefSec = 10.0;
         constexpr double kBlankMargin = 2.0;
         const int n = static_cast<int>(rawPairs.size());
         const int i0 = std::max(1, lowerIdx(rawPairs, detStart - kBlankMargin));
@@ -375,7 +390,7 @@ namespace gui_peak_finder {
             }
             const double t = rawPairs[apexIdx].x();
             if (inExcludedSpan(detExcluded, t)) continue;
-            const RefStatsD rs = refStatsDeriv(rawPairs, t, kRefSec, refExcluded, withinSpans, threshold);
+            const RefStatsD rs = refStatsDeriv(rawPairs, t, kReferenceSeconds, refExcluded, withinSpans, threshold);
             if (!rs.ok) continue;
             if (d2k < rs.upstrokeGate) continue;
             const double gate = rs.vMin + threshold(t) * (rs.gateTop - rs.vMin);

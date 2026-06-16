@@ -356,7 +356,7 @@
          <item>
           <widget class="QLabel" name="signif_desc">
            <property name="text">
-            <string>10) Sig. Arr.</string>
+            <string>Sig. Arr.</string>
            </property>
           </widget>
          </item>
@@ -714,7 +714,7 @@
                </item>
                <item>
                 <property name="text">
-                 <string>10) Sig. Arr.</string>
+                 <string>Sig. Arr.</string>
                 </property>
                </item>
               </widget>
