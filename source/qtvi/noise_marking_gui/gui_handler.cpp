@@ -17,6 +17,7 @@
 #include "annotation_eraser.h"
 
 #include <QCheckBox>
+#include <QScrollBar>
 #include <QDoubleSpinBox>
 #include <QtCharts/QChart>
 #include <QtCharts/QChartView>
@@ -27,7 +28,11 @@
 #include <QApplication>
 #include <QFileInfo>
 #include <QTimer>
-#include <QInputDialog>
+#include <QDialog>
+#include <QFormLayout>
+#include <QLabel>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 
  // ============================================================================
  // Channel lookup
@@ -268,6 +273,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         view->setRenderHint(QPainter::Antialiasing);
         view->setFocusPolicy(Qt::NoFocus);
         view->viewport()->installEventFilter(this);
+
     }
 
     m_skipInterval = ui->skip_interval_box->text().toDouble();
@@ -277,12 +283,19 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     ui->scatter_line->setCurrentIndex(0);
     ui->scatter_line->setFocusPolicy(Qt::NoFocus);
     ui->window_length_selector->setFocusPolicy(Qt::NoFocus);
+    ui->chunk_scrollbar->setFocusPolicy(Qt::NoFocus);
 
-	//handle lineplot vs scatterplot mode change: scatter = points only; line = connect with lines
     connect(ui->scatter_line, QOverload<int>::of(&QComboBox::currentIndexChanged),
         this, [this](int index) {
             m_plotMode = (index == 1) ? PlotMode::Scatter : PlotMode::Line;
             handle_data_plot();
+        });
+
+    connect(ui->chunk_scrollbar, &QScrollBar::valueChanged, this, [this](int v) {
+        const double maxStart = std::max(0.0, totalChunkDuration() - m_windowDuration);
+        m_currentStartTime = std::clamp(static_cast<double>(v), 0.0, maxStart);
+        handle_data_plot();
+        updateAmpogramCursor();
         });
 
     //handle the checkbox that changes max and min of the scaling to the global max and min
@@ -386,6 +399,27 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     m_logFlushTimer->start(30000);   // 30 s
 }
 
+void noise_marking_gui::syncChunkScrollBar() {
+    if (!ui->chunk_scrollbar) return;
+    QScrollBar* sb = ui->chunk_scrollbar;
+
+    const double chunkDur = totalChunkDuration();
+    const int page = std::max(1, static_cast<int>(std::lround(m_windowDuration)));
+    const int maxStart = std::max(0,
+        static_cast<int>(std::lround(chunkDur)) - page);
+
+    // Programmatic update: block valueChanged so this doesn't re-enter the
+    // redraw path that called us.
+    QSignalBlocker block(sb);
+    sb->setMinimum(0);
+    sb->setMaximum(maxStart);
+    sb->setPageStep(page);
+    sb->setSingleStep(std::max(1, static_cast<int>(std::lround(m_skipInterval))));
+    sb->setValue(std::clamp(
+        static_cast<int>(std::lround(m_currentStartTime)), 0, maxStart));
+    sb->setEnabled(maxStart > 0);
+}
+
 noise_marking_gui::~noise_marking_gui() {
     for (auto& list : m_persistentLines)
         for (auto* ln : list) delete ln;
@@ -432,18 +466,17 @@ void noise_marking_gui::on_marking_type_currentTextChanged(const QString& text) 
 }
 
 // Handlers for the parameter (threshold and blanking period) changes
-void noise_marking_gui::enterParamEdit(ParamEdit which) {
-    // Toggle: clicking the already-armed button cancels that mode.
-    m_paramEditMode = (m_paramEditMode == which) ? ParamEdit::None : which;
+void noise_marking_gui::enterParamEdit() {
+    // Toggle the single param-edit mode on/off.
+    m_paramEditMode = (m_paramEditMode == ParamEdit::Active)
+        ? ParamEdit::None : ParamEdit::Active;
     updateParamButtonStyles();
 }
 
 void noise_marking_gui::updateParamButtonStyles() {
     const char* active = "background-color: #2980b9; color: white;";
-    ui->change_threshold->setStyleSheet(
-        m_paramEditMode == ParamEdit::Threshold ? active : "");
-    ui->change_blanking->setStyleSheet(
-        m_paramEditMode == ParamEdit::Blanking ? active : "");
+    ui->param_change->setStyleSheet(
+        m_paramEditMode == ParamEdit::Active ? active : "");
 }
 
 double noise_marking_gui::thresholdAt(const QString& label, double globalTime) const {
@@ -464,29 +497,53 @@ void noise_marking_gui::finalizeParamEdit(const QString& label,
     double globalStart, double globalEnd) {
     const double lo = std::min(globalStart, globalEnd);
     const double hi = std::max(globalStart, globalEnd);
-    const bool isThr = (m_paramEditMode == ParamEdit::Threshold);
-    const double cur = isThr ? m_cfg.height_threshold_percent : m_cfg.blanking_period;
 
-    bool ok = false;
-    const double val = QInputDialog::getDouble(
-        this,
-        isThr ? "Set threshold" : "Set blanking period",
-        QString("%1 for %2 over %3\u2013%4 s:")
-        .arg(isThr ? "Threshold" : "Blanking")
-        .arg(label).arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1),
-        cur, 0.0, 1.0, 2, &ok);
+    // One popup, two fields: threshold and blanking for the dragged span.
+    QDialog dlg(this);
+    dlg.setWindowTitle("Set threshold & blanking");
+    auto* form = new QFormLayout(&dlg);
 
-    if (ok) {
-        auto& vec = isThr ? m_thresholdOverrides : m_blankingOverrides;
-        vec.erase(std::remove_if(vec.begin(), vec.end(),
-            [&](const ParamOverride& o) {
-                return o.channel == label && o.start <= hi && lo <= o.end;
-            }), vec.end());
-        vec.append(ParamOverride{ label, lo, hi, val });
+    auto* lbl = new QLabel(
+        QString("%1 over %2\u2013%3 s").arg(label).arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1),
+        &dlg);
+    form->addRow(lbl);
 
-        // The override changes which peaks are detected in [lo, hi]; drop this
-        // channel's logged peaks there so removed beats don't linger. The
-        // handle_data_plot() below re-logs whatever still detects in the span.
+    auto* thrSpin = new QDoubleSpinBox(&dlg);
+    thrSpin->setRange(0.0, 1.0); thrSpin->setDecimals(2); thrSpin->setSingleStep(0.05);
+    thrSpin->setValue(m_cfg.height_threshold_percent);
+    form->addRow("Threshold:", thrSpin);
+
+    auto* blkSpin = new QDoubleSpinBox(&dlg);
+    blkSpin->setRange(0.0, 1.0); blkSpin->setDecimals(2); blkSpin->setSingleStep(0.05);
+    blkSpin->setValue(m_cfg.blanking_period);
+    form->addRow("Blanking:", blkSpin);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() == QDialog::Accepted) {
+        const double thrVal = thrSpin->value();
+        const double blkVal = blkSpin->value();
+
+        // Replace any existing override of each kind overlapping [lo, hi] on
+        // this channel, then add the new one. Both vectors get an entry for
+        // the same span -- the single gray rectangle in updateNoiseHighlights
+        // represents both.
+        auto applyTo = [&](QVector<ParamOverride>& vec, double val) {
+            vec.erase(std::remove_if(vec.begin(), vec.end(),
+                [&](const ParamOverride& o) {
+                    return o.channel == label && o.start <= hi && lo <= o.end;
+                }), vec.end());
+            vec.append(ParamOverride{ label, lo, hi, val });
+            };
+        applyTo(m_thresholdOverrides, thrVal);
+        applyTo(m_blankingOverrides, blkVal);
+
+        // Detection in [lo, hi] changes; drop this channel's logged peaks there
+        // so removed beats don't linger. handle_data_plot() re-logs survivors.
         if (m_beatLog) {
             auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {
                 if (l == "ECG1") return beat_log::ECG1;

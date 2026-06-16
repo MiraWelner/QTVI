@@ -120,7 +120,7 @@ public:
     bool        isChannelActive(const QString& label) const;
     enum class MarkPhase { Idle, WaitingForStart, WaitingForEnd, WaitingForStop };
     enum class PlotMode { Line, Scatter };
-    enum class ParamEdit { None, Threshold, Blanking };
+    enum class ParamEdit { None, Active };
     void setBeatLog(beat_log* log) { m_beatLog = log; }
 
 
@@ -407,6 +407,10 @@ private:
     /** @brief Redraw the black vertical cursor bar on each overview chart. */
     void updateAmpogramCursor();
 
+    /** @brief Sync the bottom scrollbar's range/page/value to the current
+     *         window position within the loaded 8-hour chunk. */
+    void syncChunkScrollBar();
+
     /** @brief Build / rebuild the hypnogram (sleep-stage) chart from m_sleepStages. */
     void setupHypnogram();
 
@@ -482,7 +486,7 @@ private:
     QVector<ParamOverride> m_thresholdOverrides;
     QVector<ParamOverride> m_blankingOverrides;
 
-    void   enterParamEdit(ParamEdit which);
+    void   enterParamEdit();
     void   finalizeParamEdit(const QString& label, double globalStart, double globalEnd);
     double thresholdAt(const QString& label, double globalTime) const;
     double blankingAt(const QString& label, double globalTime) const;

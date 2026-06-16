@@ -62,10 +62,8 @@ void user_control_handler::setupConnections() {
     ui->window_length_selector->setCurrentIndex(3);
 
     //threshold and blanking buttons allow you to select regions
-    connect(ui->change_threshold, &QPushButton::clicked, this,
-        [this] { m_gui->enterParamEdit(noise_marking_gui::ParamEdit::Threshold); });
-    connect(ui->change_blanking, &QPushButton::clicked, this,
-        [this] { m_gui->enterParamEdit(noise_marking_gui::ParamEdit::Blanking); });
+    connect(ui->param_change, &QPushButton::clicked, this,
+        [this] { m_gui->enterParamEdit(); });
 }
 
 // ============================================================================

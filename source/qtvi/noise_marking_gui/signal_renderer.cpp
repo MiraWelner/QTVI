@@ -863,6 +863,7 @@ void noise_marking_gui::handle_data_plot() {
     updateNoiseHighlights();
     if (m_pulseOverlay) m_pulseOverlay->refresh();
     if (m_gapIndicator)  m_gapIndicator->refresh();
+    syncChunkScrollBar();
 }
 
 // ============================================================================
@@ -968,6 +969,4 @@ void noise_marking_gui::updateNoiseHighlights() {
         };
     for (const ParamOverride& o : m_thresholdOverrides)
         drawOverride(o, QColor(200, 200, 200, 70));   // gray = threshold override
-    for (const ParamOverride& o : m_blankingOverrides)
-        drawOverride(o, QColor(80, 160, 220, 60));     // blue = blanking override
 }
