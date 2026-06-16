@@ -25,7 +25,7 @@ namespace annotation_types {
     };
 
     inline constexpr std::array<AnnotationType, 10> noise_types = { {
-        { "1) R Peak Noise",  1, 255, 255, 0,   60, true,  false },
+        { "1) R Peak Noise",   1, 255, 255, 0,   60, true,  false },
         { "2) Minor Noise",    2, 157, 60,  0,   60, false, false },
         { "3) Cond. Delay",    3, 128, 0,   128, 60, false, false },
         { "4) AF",             4, 255, 0,   0,   60, false, true  },
@@ -34,7 +34,7 @@ namespace annotation_types {
         { "7) PVC",            7, 128, 255, 0,   60, false, true  },
         { "8) PAC",            8, 255, 128, 0,   60, false, true  },
         { "9) Benign Arr.",    9, 255, 128, 255, 60, false, false },
-        { "Sig. Arr.",     10, 0,  255, 255, 60, false, false }
+        { "Sig. Arr.",         10, 0,  255, 255, 60, false, false }
     } };
 
     inline const AnnotationType* find(const QString& label) {

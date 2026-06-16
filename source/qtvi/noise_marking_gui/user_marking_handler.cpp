@@ -8,6 +8,8 @@
 #include "gui_handler.h"
 #include "chart_utils.hpp"
 #include "beat_log.hpp"
+#include "annotation_eraser.h"
+
 
 #include <QtCharts/QValueAxis>
 #include <QtCharts/QLineSeries>
@@ -255,9 +257,16 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
     auto* cv = qobject_cast<QChartView*>(viewport->parent());
     if (!cv || !cv->chart()) return QDialog::eventFilter(watched, event);
 
-    if (event->type() == QEvent::MouseButtonPress)
-        return handleMousePress(cv, viewport, static_cast<QMouseEvent*>(event))
-        ? true : QDialog::eventFilter(watched, event);
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        // Right-click deletes the annotation under the cursor; if the click
+        // wasn't inside one, fall through to normal handling.
+        if (me->button() == Qt::RightButton && m_annotationEraser
+            && m_annotationEraser->handleRightClick(cv, me->pos()))
+            return true;
+        return handleMousePress(cv, viewport, me)
+            ? true : QDialog::eventFilter(watched, event);
+    }
 
     if (event->type() == QEvent::MouseMove && m_isDragging) return true;
 

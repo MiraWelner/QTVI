@@ -30,7 +30,6 @@ void user_control_handler::setupConnections() {
     auto* ui = m_gui->ui.get();
 
     // Top-row actions
-    connect(ui->undo_button, &QPushButton::clicked, this, &user_control_handler::handle_undo_button);
     connect(ui->clearall_button, &QPushButton::clicked, this, &user_control_handler::handle_clearall_button);
     connect(ui->finalize_button, &QPushButton::clicked, this, &user_control_handler::handle_finalize_button);
     connect(ui->skip_button, &QPushButton::clicked, this, &user_control_handler::handle_skip_button);
@@ -172,35 +171,11 @@ void user_control_handler::handle_window_toggle(bool checked, double duration) {
     m_gui->handle_data_plot();
 }
 
-// ============================================================================
-// Undo / Clear
-// ============================================================================
-
-// Rebuild the NoiseManager from the surviving exception list. Undo pops the
-// last entry and reconstructs, which is simpler than tracking incremental
-// inverse operations and matches the "exception list is source of truth"
-// invariant the rest of the GUI relies on.
-void user_control_handler::handle_undo_button() {
-    auto& exc = m_gui->m_genExc;
-    if (exc.noiseExc.isEmpty()) return;
-
-    exc.noiseExc.removeLast();
-    exc.data_type.removeLast();
-    exc.marking_type.removeLast();
-
-    m_gui->m_noiseManager = std::make_unique<annotation_handler>(m_gui->m_ecgSR);
-    for (int i = 0; i < exc.noiseExc.size(); ++i) {
-        const double sr = m_gui->sampleRateForSignal(exc.data_type[i]);
-        m_gui->m_noiseManager->addSegment(
-            static_cast<int>(exc.noiseExc[i].first * sr),
-            static_cast<int>(exc.noiseExc[i].second * sr),
-            exc.data_type[i].toStdString(),
-            exc.marking_type[i].toStdString());
-    }
-    m_gui->handle_data_plot();
-}
-
 void user_control_handler::handle_clearall_button() {
+    /*
+		When you click the 'clear all' button a confirmation dialog pops up to prevent accidental clearing of markings.
+        If the user confirms, all markings are cleared from the current file and the GUI is updated to reflect this change.
+    */
     if (QMessageBox::question(m_gui, "Clear", "Clear all markings?") != QMessageBox::Yes)
         return;
 

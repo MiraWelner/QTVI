@@ -14,6 +14,7 @@
 #include "config_loader.hpp"
 #include "gui_peak_finder.hpp"
 #include "beat_log.hpp"
+#include "annotation_eraser.h"
 
 #include <QCheckBox>
 #include <QDoubleSpinBox>
@@ -270,7 +271,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     }
 
     m_skipInterval = ui->skip_interval_box->text().toDouble();
-    if (m_skipInterval <= 0.0) m_skipInterval = 5.0;
+    if (m_skipInterval <= 0.0) m_skipInterval = 15.0;
     ui->skip_interval_box->setFocusPolicy(Qt::ClickFocus);
 
     ui->scatter_line->setCurrentIndex(0);
@@ -357,6 +358,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     m_pulseOverlay = std::make_unique<pulse_overlay>(this, markableChannelLabels());
     m_gapIndicator = std::make_unique<gap_indicator>(this);
+    m_annotationEraser = std::make_unique<annotation_eraser>(this);
 
     { QSignalBlocker block(ui->show_grid_check); ui->show_grid_check->setChecked(false); }
     ui->show_grid_check->setFocusPolicy(Qt::NoFocus);

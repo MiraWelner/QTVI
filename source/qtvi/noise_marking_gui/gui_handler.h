@@ -69,11 +69,13 @@ struct GenExcStruct {
 };
 
 class beat_log;   // defined in beat_log.hpp; only a pointer is held here
+class annotation_eraser;   // defined in annotation_eraser.h; pointer held below
 
 class noise_marking_gui : public QDialog {
     Q_OBJECT
         friend class user_control_handler;
     friend class gap_indicator;
+    friend class annotation_eraser;
 
 public:
     /**
@@ -213,6 +215,7 @@ private:
     std::unique_ptr<user_control_handler>     m_buttonHandler;
     std::unique_ptr<pulse_overlay>            m_pulseOverlay;
     std::unique_ptr<gap_indicator>            m_gapIndicator;
+    std::unique_ptr<annotation_eraser>        m_annotationEraser;
 
     QSet<QString>               m_activeChannels;
     QString                     m_currentMarkingType;
@@ -229,9 +232,9 @@ private:
     // its own timestamp, so the plotter doesn't have to infer spacing.)
 
     // --- View state ---
-    double m_currentStartTime = 0.0;
-    double m_windowDuration = 30.0;
-    double m_skipInterval = 15.0;
+    double m_currentStartTime;
+    double m_windowDuration;
+    double m_skipInterval;
 
     // --- Ampogram / hypnogram series ---
     QLineSeries* ecg1_ampogram_series = nullptr;

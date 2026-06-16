@@ -405,7 +405,7 @@
             </size>
            </property>
            <property name="text">
-            <string>5.0</string>
+            <string>15.0</string>
            </property>
           </widget>
          </item>
@@ -413,13 +413,6 @@
           <widget class="QPushButton" name="change_blanking">
            <property name="text">
             <string>Blanking</string>
-           </property>
-          </widget>
-         </item>
-         <item row="3" column="2">
-          <widget class="QCheckBox" name="show_grid_check">
-           <property name="text">
-            <string>Grid</string>
            </property>
           </widget>
          </item>
@@ -794,19 +787,6 @@
              </item>
             </layout>
            </item>
-           <item row="7" column="3">
-            <widget class="QPushButton" name="undo_button">
-             <property name="maximumSize">
-              <size>
-               <width>65</width>
-               <height>16777215</height>
-              </size>
-             </property>
-             <property name="text">
-              <string>Undo</string>
-             </property>
-            </widget>
-           </item>
            <item row="6" column="3">
             <widget class="QPushButton" name="finalize_button">
              <property name="maximumSize">
@@ -1018,6 +998,13 @@
               </widget>
              </item>
             </layout>
+           </item>
+           <item row="7" column="3">
+            <widget class="QCheckBox" name="show_grid_check">
+             <property name="text">
+              <string>Grid</string>
+             </property>
+            </widget>
            </item>
           </layout>
          </item>

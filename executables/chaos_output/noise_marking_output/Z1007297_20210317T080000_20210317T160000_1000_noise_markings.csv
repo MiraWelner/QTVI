@@ -1,0 +1,5 @@
+start_sample,end_sample,start_sec,end_sec,label,marking_type
+112659,119736,112.659,119.736,ECG1,1) R Peak Noise
+120836,124892,120.836,124.892,ECG3,2) Minor Noise
+127309,133328,127.309,133.328,ECG2,3) Cond. Delay
+108020,111990,108.020,111.990,ECG2,3) Cond. Delay

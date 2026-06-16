@@ -1,6 +1,6 @@
 /**
  * @file   user_control_handler.h
- * @brief  Bottom-toolbar event handlers for the noise-marking GUI: undo,
+ * @brief  Event handlers for the noise-marking GUI,
  *         clear, finalize, skip, save, per-channel marking start/stop,
  *         mark-all, and the window-length selector.
  *
@@ -25,7 +25,6 @@ public:
 
 private:
     // --- Button Presses
-    void handle_undo_button();
     void handle_clearall_button();
     void handle_finalize_button();
     void handle_skip_button();
