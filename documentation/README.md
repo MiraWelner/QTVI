@@ -12,27 +12,25 @@ If you wish to change the rate being upsampled, it is in config.csv
 
 # The Noise Marking GUI
 
-The executable file can be found in  `executables/exe_files/qtvi_template_marking.exe`
+The executable file can be found in  the zipped folder `exe_files`. To run it, download`exe_files.zip` and unzip it. The executable is called `noise_marking_gui.exe` and you can run it by double clicking. Run the executable from within the folder, it needs the `.dll` files and such to work.
 
-To run it, download all of the contents of `exe_files` and run the executable from within the folder, it needs the `.dll` files and such to work.
+Once you run the executable, select whether you want to run MESA, BITTIUM, or CHAOS. 
 
-Double click on exe file, select whether you want to run MESA, BITTIUM, or CHAOS. For input, navigate to where you put the output from the uniform bin converter.
+If you leave the columns `original_file_path` and `output_folder` empty in the `config.csv` file, then you will be prompted to select the input and output folders. If you like, you can also put the absolute paths to the input and output folders in the appropriate cells.
 
-To switch between what you are marking, you can use the 1-9 hotkeys
+To switch between the type of annoation you are marking, you can use the 1-9 hotkeys
 
-To mark, drag across the marking row, or click the start/stop buttons if you are marking a large region
+To mark, drag and release. If you want to select a long segment that requires scrolling, you can instead use the mark button and place a start and stop line a the start and stop of the marking. To remove a marking, right click on it. 
 
-The peak identifier is not the full algorithm, so if it does badly, that doesn't mean the actual peak finder will find garbage
+The peak identifier is not the full algorithm, so if it does badly, that doesn't mean the actual peak finder will find garbage. However if you want to improve it for the log, which will help improve the algorithm, you can highlight a blanking and threshold region by clicking the blanking and threshold button. Then drag over the region and a popup will appear where you can change the blanking and thresold button between 0 and 1.
+
+Blanking is the distance after the R peak in which another R peak can NOT be found. Threshold is the height required for an R peak. Removing noise helps the algorithm because it doesn't use regions marked as noise to determine blanking and threshold.
 
 The 'grid' button will create a grid that has thick lines every 0.2 seconds, and thin lines every 0.04 seconds. It scales based on the amount of time displayed in the window.
 
-If you want to change the threshold for how high a R peak must be compared to the span between the median R peak and the minimum value the previous 10 seconds, click 'threshold' and a box will pop up. You put in the threshold value, between 0 and 1, and the highlighted region will be set to that value.
-
-If you want to change the blanking period, click the 'blanking' button and do the same.
-
 When you are done noise and feature marking, click 'save' and the processing will being automatically. Some of the processing will need to be completed, some will be done in parallel when you are doing the next step. It will still take about a minute for the processing to be done.
 
-Then, an new screen will pop up where you will mark the templates. There will be nine markers which you will use to label the templates.
+Then, a new screen will pop up where you will mark the templates. There will be nine markers which you will use to label the templates.
 
 If the 9 markers are too crowded, you can un-check the box for the ppg or ecg markers
 

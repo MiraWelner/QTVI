@@ -29,11 +29,11 @@
 #pragma once
 
 #include <QtWidgets/QDialog>
-#include <QtWidgets/QRubberBand>
 #include <QtWidgets/QPushButton>
 #include <QtCharts/QLineSeries>
 #include <QtCharts/QAreaSeries>
 #include <QtCharts/QChartView>
+#include <QtCharts/QScatterSeries>
 #include <QVector>
 #include <QSet>
 #include <QMap>
@@ -41,9 +41,7 @@
 #include <QColor>
 #include <QPointF>
 #include <QTimer>
-#include <iostream>
 #include <memory>
-#include <string>
 #include <vector>
 
 #include "ui_noise_marking_gui.h"
@@ -113,8 +111,8 @@ public:
      */
     void setFileSource(const QString& filePath);
 
-    double currentStartTime() const { return m_currentStartTime; }
-    double windowDuration()   const { return m_windowDuration; }
+    double currentStartTime() const { return current_start_time; }
+    double windowDuration()   const { return visible_window_size; }
 
     QChartView* chartViewForSignalLabel(const QString& label) const;
     bool        isChannelActive(const QString& label) const;
@@ -140,7 +138,6 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
 
 private slots:
-    void on_skip_interval_box_returnPressed();
     void on_skip_interval_box_editingFinished();
     void on_marking_type_currentTextChanged(const QString& text);
     void on_next8hours_clicked();
@@ -148,9 +145,11 @@ private slots:
     void handleBrowseFile();
 
 private:
+    double scrollStepSeconds() const;
     config_entry m_cfg;
     beat_log* m_beatLog = nullptr;
     QTimer* m_logFlushTimer = nullptr;   // flushes the beat log to disk every 30 s
+    bool single_ecg_marker_clicked = false;
 
 
     /**
@@ -175,6 +174,9 @@ private:
     void toggleMark(const QString& label);
     void toggleMarkAll();
     void toggleMarkEcgAll();
+    void toggleEcgMark();
+    void updateEcgMarkButtonStyle();
+    void exitAllMarkModes();
 
     /*
         The data_channel_features has all the features that
@@ -228,13 +230,10 @@ private:
     double m_boolSR = 0.0;   ///< 1 Hz channels
     double m_sleepSR = 0.0;   ///< sleep epochs per second (= 1 / sleep_epoch_length)
 
-    // (Native raw sample rates are no longer needed: each raw sample carries
-    // its own timestamp, so the plotter doesn't have to infer spacing.)
-
     // --- View state ---
-    double m_currentStartTime;
-    double m_windowDuration;
-    double m_skipInterval;
+    double current_start_time;
+    double visible_window_size;
+    double percent_of_window_to_shift_on_click;
 
     // --- Ampogram / hypnogram series ---
     QLineSeries* ecg1_ampogram_series = nullptr;
@@ -262,9 +261,11 @@ private:
     // freed; switching back to Line mode just toggles visibility and calls
     // replace() with the new window's data.
     QHash<QChartView*, QList<QLineSeries*>> m_persistentLines;
+    QHash<QChartView*, QList<QScatterSeries*>> m_persistentRawScatter;
 
     // --- Mark-all state ---
-    bool m_markAllActive = false;   ///< true while "Mark All Signals" mode is in effect
+    enum class MarkAllMode { None, All, Ecg };
+    MarkAllMode m_markAllMode = MarkAllMode::None;
 
     // --- Plot style (global, applies to all signal charts) ---
     PlotMode m_plotMode = PlotMode::Line;
@@ -277,6 +278,8 @@ private:
     QWidget* m_draggedViewport = nullptr;
     QPoint   m_dragStartPos;
     QString  m_dragSignalLabel;
+    QAreaSeries* m_dragPreview = nullptr;
+    QString      m_dragPreviewLabel;
 
     // --- Signal data (upsampled, 1 kHz unless otherwise noted) ---
     QVector<double> m_ecg1, m_ecg2, m_ecg3, m_ppg;
@@ -314,10 +317,10 @@ private:
     static constexpr qint64 FILE_HEADER_SIZE = 500;
     static constexpr int NUM_CHANNELS = 40;
 
-    uint32_t m_chanSizes[NUM_CHANNELS] = {};      ///< upsampled-block sizes
-    uint32_t m_chanSizesRaw[NUM_CHANNELS] = {};   ///< raw-block sizes (PAIRS)
-    float    m_chanNativeRates[NUM_CHANNELS] = {};///< native sample rate (Hz), 0 = absent
-    uint32_t m_totalSleepSamples = 0;
+    uint32_t upsampled_channel_sizes[NUM_CHANNELS] = {};
+    uint32_t raw_channel_sizes[NUM_CHANNELS] = {};
+    float    channel_native_rates[NUM_CHANNELS] = {};
+    uint32_t total_sleep_samples = 0;
 
     // Channel indices. Slot 0 is the new Timestamp channel; every other
     // channel has shifted +1 from the v1 layout. CH_RESERVED_40 is a
@@ -338,7 +341,7 @@ private:
         CH_ART, CH_ART_PULM
     };
 
-    uint64_t m_currentChunkIndex = 0;
+    uint64_t current_chunk_index = 0;
 
     static constexpr int seconds_in_memory_at_once = 28800; //8 hours 
 
@@ -354,9 +357,6 @@ private:
     // --- Per-channel button helpers ---
     QPushButton* startButtonForSignal(const QString& label) const;
     QPushButton* stopButtonForSignal(const QString& label) const;
-
-    /** @brief Refresh Start/Stop button styling for a single channel. */
-    void updateButtonStatesForChannel(const QString& label);
 
     /** @brief Refresh Start/Stop button styling for all channels + the mark-all buttons. */
     void updateAllChannelButtonStates();
@@ -446,6 +446,13 @@ private:
     /** @brief Remove the dashed start-marker line for a channel (if any). */
     void clearStartMarker(ChannelMarkingState& state);
 
+    /** @brief Create/update the live drag-preview rectangle on @p cv spanning
+     *         [x0, x1] (chunk-local seconds). Cheap: one area series, no detect. */
+    void updateDragPreview(QChartView* cv, double x0, double x1, const QColor& color);
+
+    /** @brief Remove the live drag-preview rectangle, if any. */
+    void clearDragPreview();
+
     // --- File selection ---
     /**
      * @brief  Load a .bin from disk, replacing the current view.
@@ -455,14 +462,6 @@ private:
      *         m_fileMarkings and can be retrieved with getAllMarkings().
      */
     void loadSelectedFile(const QString& filePath);
-
-    // --- Formatting ---
-    /**
-     * @param  seconds Offset from chunk start.
-     * @return "HH:MM:SS.ss"-formatted string.
-     */
-    QString formatTimeLabel(double seconds);
-
 
     bool handleMousePress(QChartView* cv, QWidget* viewport, QMouseEvent* event);
 

@@ -19,6 +19,7 @@
 
 
 #include <QtCharts/QAreaSeries>
+#include <QOpenGLWidget>
 #include <QtCharts/QChart>
 #include <QtCharts/QChartView>
 #include <QtCharts/QLineSeries>
@@ -45,6 +46,20 @@ namespace {
         if (label == "ECG3") return beat_log::ECG3;
         if (label == "PPG")  return beat_log::PPG;
         return beat_log::ABP;
+    }
+
+    int firstRawAtOrAfter(const QVector<QPointF>& raw, double target) {
+        /*
+            First index whose x >= target. rawData x is monotonic (index-time after the
+            loader's rewrite), so we can binary-search the window start instead of
+            linear-skipping every sample before it.
+        */
+        int lo = 0, hi = raw.size();
+        while (lo < hi) {
+            const int mid = (lo + hi) >> 1;
+            if (raw[mid].x() < target) lo = mid + 1; else hi = mid;
+        }
+        return lo;
     }
 
     // One eligible annotation reduced to what post-tagging needs: where it ends
@@ -85,7 +100,7 @@ namespace {
         const double fracs[] = { 1.0 / 6.0, 0.5, 5.0 / 6.0 };
         for (double f : fracs) {
             double localVal = startLocal + f * duration;
-            xAxis->append(formatHMS(globalOffset + localVal), localVal);
+            xAxis->append(get_timestamp(globalOffset + localVal), localVal);
         }
         xAxis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
         xAxis->setTruncateLabels(false);
@@ -99,6 +114,7 @@ namespace {
         QChartView* view,
         const QList<markable_data_series>& serieses,
         QList<QLineSeries*>& persistentLines,
+        QList<QScatterSeries*>& persistentRawScatter,
         double currentStartTime, double windowDuration,
         double globalOffset, double ecgSR,
         bool labelsVisible,
@@ -114,7 +130,7 @@ namespace {
 
         QSet<QAbstractSeries*> persistentSet;
         for (auto* ln : persistentLines) persistentSet.insert(ln);
-
+        for (auto* sc : persistentRawScatter) if (sc) persistentSet.insert(sc);
         for (auto* s : chart->series()) {
             chart->removeSeries(s);
             if (!persistentSet.contains(s)) delete s;
@@ -146,7 +162,7 @@ namespace {
         for (int slot = 0; slot < serieses.size(); ++slot) {
             const auto& d = serieses[slot];
             if (!d.data || isMissingSignal(*d.data)) continue;
-            const bool hasRaw = d.rawData && isRawUsable(*d.rawData);
+            const bool hasRaw = d.rawData;
 
             auto ensurePersistentLine = [&]() -> QLineSeries* {
                 while (persistentLines.size() <= slot)
@@ -186,9 +202,11 @@ namespace {
             winVals.reserve(endIdx - startIdx);
             for (int i = startIdx; i < endIdx; ++i)
                 winVals.push_back((*d.data)[i]);
-            for (const QPointF& p : *d.rawData) {
-                if (p.x() < currentStartTime) continue;
-                if (p.x() > currentStartTime + windowDuration) break;
+            const double winEnd = currentStartTime + windowDuration;
+            for (int i = firstRawAtOrAfter(*d.rawData, currentStartTime);
+                i < d.rawData->size(); ++i) {
+                const QPointF& p = (*d.rawData)[i];
+                if (p.x() > winEnd) break;
                 winVals.push_back(p.y());
                 if (p.y() < gMin) gMin = p.y();
                 if (p.y() > gMax) gMax = p.y();
@@ -219,37 +237,43 @@ namespace {
             if (hasRaw) rawsToAdd.append({ d.rawData, d.color, center });
         }
 
-        QList<QScatterSeries*> scattersForTopReorder;
-        for (const auto& r : rawsToAdd) {
-            auto* rawScatter = new QScatterSeries();
+        for (int ri = 0; ri < rawsToAdd.size(); ++ri) {
+            const auto& r = rawsToAdd[ri];
+            while (persistentRawScatter.size() <= ri) persistentRawScatter.append(nullptr);
+            QScatterSeries*& rawScatter = persistentRawScatter[ri];
+            if (!rawScatter) {
+                rawScatter = new QScatterSeries();
+                rawScatter->setBorderColor(Qt::transparent);
+                rawScatter->setMarkerSize(3.0);
+                rawScatter->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+                rawScatter->setUseOpenGL(true);
+            }
             rawScatter->setColor(Qt::black);
-            rawScatter->setBorderColor(Qt::transparent);
-            rawScatter->setMarkerSize(3.0);
-            rawScatter->setMarkerShape(QScatterSeries::MarkerShapeCircle);
-            rawScatter->setUseOpenGL(true);
-            chart->addSeries(rawScatter);
-            scattersForTopReorder.append(rawScatter);
 
             QList<QPointF> rawPts;
             rawPts.reserve(std::min<int>(r.rawData->size(), 4096));
-            for (const QPointF& p : *r.rawData) {
-                if (p.x() < currentStartTime) continue;
-                if (p.x() > currentStartTime + windowDuration) break;
+            const double winEnd = currentStartTime + windowDuration;
+            for (int i = firstRawAtOrAfter(*r.rawData, currentStartTime);
+                i < r.rawData->size(); ++i) {
+                const QPointF& p = (*r.rawData)[i];
+                if (p.x() > winEnd) break;
                 rawPts.append({ p.x(), (p.y() - r.center) * yScale + r.center });
             }
             rawScatter->replace(rawPts);
+            rawScatter->setVisible(true);
+
+            if (rawScatter->chart()) chart->removeSeries(rawScatter);
+            chart->addSeries(rawScatter);
             rawScatter->attachAxis(xAxis);
             rawScatter->attachAxis(yAxis);
         }
+        // A frame with fewer overlays than a previous one: detach the leftovers
+        // (kept alive for next time, just not shown).
+        for (int ri = rawsToAdd.size(); ri < persistentRawScatter.size(); ++ri)
+            if (persistentRawScatter[ri] && persistentRawScatter[ri]->chart())
+                chart->removeSeries(persistentRawScatter[ri]);
 
-        for (auto* scatter : scattersForTopReorder) {
-            chart->removeSeries(scatter);
-            chart->addSeries(scatter);
-            scatter->attachAxis(xAxis);
-            scatter->attachAxis(yAxis);
-        }
-
-        setPaddedYRange(yAxis, gMin, gMax);
+        set_padded_y_range(yAxis, gMin, gMax);
         return { gMin, gMax };
     }
 
@@ -294,7 +318,7 @@ namespace {
 // window starts within the first 60 s of the chunk.
 std::pair<double, double>
 noise_marking_gui::statsWindow(double detStart, double detEnd) const {
-    constexpr double kStatsWindowSec = gui_peak_finder::kReferenceSeconds;
+    constexpr double kStatsWindowSec = gui_peak_finder::previous_seconds_to_train_on;
     if (detStart >= kStatsWindowSec)
         return { detStart - kStatsWindowSec, detStart };          // preceding 10 s
     double end = detEnd + kStatsWindowSec;                        // following 10 s
@@ -311,7 +335,7 @@ noise_marking_gui::statsWindow(double detStart, double detEnd) const {
 QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     double detStart, double detEnd, std::vector<int>* outPostTags) const {
     data_channel_features r = channelRefs(label);
-    const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
+    const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
 
     // Marked regions on THIS channel (chunk-local s).
     //   refExcluded: ALL marking types -> excluded from reference-window stats
@@ -323,7 +347,7 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     //                rather than reaching back to clean pre-annotation data.
     //   postSpans:   the five post-eligible annotations (AF/SVT/VT/PVC/PAC),
     //                reduced to (end, tag) for marking the beat that follows.
-    constexpr double kRefSec = gui_peak_finder::kReferenceSeconds;
+    constexpr double kRefSec = gui_peak_finder::previous_seconds_to_train_on;
     const double sr = sampleRateForSignal(label);
     std::vector<std::pair<double, double>> refExcluded, detExcluded, withinSpans;
     std::vector<PostSpan> postSpans;
@@ -424,8 +448,8 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
 
 // On-screen peaks: detect over exactly the visible window.
 QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label, std::vector<int>* outPostTags) const {
-    return detectPeaks(label, m_currentStartTime,
-        m_currentStartTime + m_windowDuration, outPostTags);
+    return detectPeaks(label, current_start_time,
+        current_start_time + visible_window_size, outPostTags);
 }
 
 QVector<QPointF> noise_marking_gui::get_bpm(const QString& label, double& outDuration) const
@@ -439,9 +463,9 @@ QVector<QPointF> noise_marking_gui::get_bpm(const QString& label, double& outDur
         visible window is only a second or two wide.
     */
     constexpr double kMinBpmWindowSec = 10.0;
-    const double tVisEnd = m_currentStartTime + m_windowDuration;
-    double tStart = m_currentStartTime;
-    if (m_windowDuration < kMinBpmWindowSec)
+    const double tVisEnd = current_start_time + visible_window_size;
+    double tStart = current_start_time;
+    if (visible_window_size < kMinBpmWindowSec)
         tStart = std::max(0.0, tVisEnd - kMinBpmWindowSec);
     outDuration = tVisEnd - tStart;
 
@@ -463,7 +487,7 @@ void noise_marking_gui::setupHypnogram() {
     };
 
     const double dt = 1.0 / m_sleepSR;
-    const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
+    const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
 
     for (const auto& st : stages) {
         auto* s = new QScatterSeries();
@@ -520,7 +544,7 @@ void noise_marking_gui::ampogram(double range) {
         creates the ampograms on the top right, which show the difference between min and max in a given range across the current
         8 hour period
     */
-    const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
+    const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
 
     auto calculate_amplitude = [range, globalOffset](
         const QVector<double>& data, double sr)
@@ -631,7 +655,7 @@ void noise_marking_gui::ampogram(double range) {
     if (yAxis && !allPts.isEmpty()) {
         auto [mi, ma] = std::minmax_element(allPts.begin(), allPts.end(),
             [](const QPointF& a, const QPointF& b) { return a.y() < b.y(); });
-        setPaddedYRange(yAxis, mi->y(), ma->y());
+        set_padded_y_range(yAxis, mi->y(), ma->y());
     }
 
     create_plot(ui->ppg_ampogram_axis, ppg_ampogram_series,
@@ -669,6 +693,9 @@ void noise_marking_gui::handle_data_plot() {
         auto it = m_persistentLines.constFind(cv);
         if (it != m_persistentLines.constEnd())
             for (auto* ln : it.value()) if (ln) keep.append(ln);
+        auto sit = m_persistentRawScatter.constFind(cv);
+        if (sit != m_persistentRawScatter.constEnd())
+            for (auto* sc : sit.value()) if (sc) keep.append(sc);
         if (m_pulseOverlay) {
             const QString label = signalLabelForChartView(cv);
             if (!label.isEmpty())
@@ -678,20 +705,20 @@ void noise_marking_gui::handle_data_plot() {
         return keep;
         };
 
-    wipeChartContent(ui->ecg_axis_1->chart(), keepFor(ui->ecg_axis_1));
-    wipeChartContent(ui->ecg_axis_2->chart(), keepFor(ui->ecg_axis_2));
-    wipeChartContent(ui->ecg_axis_3->chart(), keepFor(ui->ecg_axis_3));
-    wipeChartContent(ui->ppg_axis->chart(), keepFor(ui->ppg_axis));
+    wipe_chart(ui->ecg_axis_1->chart(), keepFor(ui->ecg_axis_1));
+    wipe_chart(ui->ecg_axis_2->chart(), keepFor(ui->ecg_axis_2));
+    wipe_chart(ui->ecg_axis_3->chart(), keepFor(ui->ecg_axis_3));
+    wipe_chart(ui->ppg_axis->chart(), keepFor(ui->ppg_axis));
     if (ui->accel_or_abp_axis && !isMissingSignal(m_abp))
-        wipeChartContent(ui->accel_or_abp_axis->chart(),
+        wipe_chart(ui->accel_or_abp_axis->chart(),
             keepFor(ui->accel_or_abp_axis));
 
     const bool sleepPresent = sleepDataPresent(m_sleepStages);
     if (!sleepPresent && ui->hyp_accel_resp_axis)
-        wipeChartContent(ui->hyp_accel_resp_axis->chart(),
+        wipe_chart(ui->hyp_accel_resp_axis->chart(),
             keepFor(ui->hyp_accel_resp_axis));
     if (ui->cvp_axis)
-        wipeChartContent(ui->cvp_axis->chart(), keepFor(ui->cvp_axis));
+        wipe_chart(ui->cvp_axis->chart(), keepFor(ui->cvp_axis));
 
     auto plotMarkable = [&](const QString& label) {
         if (!isChannelActive(label)) return;
@@ -699,6 +726,11 @@ void noise_marking_gui::handle_data_plot() {
         if (!r.chartView || !r.upsampled_data || !r.state) return;
 
         const double sr = r.sampleRate ? *r.sampleRate : m_ecgSR;
+
+        if (label == "PPG") {
+            const int s = std::clamp(int(current_start_time * sr), 0, int(r.upsampled_data->size() - 1));
+            const int e = std::clamp(int((current_start_time + visible_window_size) * sr), 0, int(r.upsampled_data->size()));
+        }
         const QVector<QPointF> emptyRaw;
         const QVector<QPointF>& rawData = r.dataRaw ? *r.dataRaw : emptyRaw;
 
@@ -710,18 +742,19 @@ void noise_marking_gui::handle_data_plot() {
             nativeHz = (rawData.size() - 1)
             / (rawData.last().x() - rawData.first().x());
 
-        const double pxPerSec = (m_windowDuration > 0.0)
-            ? r.chartView->chart()->plotArea().width() / m_windowDuration : 0.0;
+        const double pxPerSec = (visible_window_size > 0.0)
+            ? r.chartView->chart()->plotArea().width() / visible_window_size : 0.0;
         const double pxPerSample = (nativeHz > 0.0) ? pxPerSec / nativeHz : 0.0;
         r.chartView->setProperty("signalName", label);
         r.chartView->setProperty("nativeHz", nativeHz);
         r.chartView->chart()->setTitleFont(Theme::chartTitleFont());
 
-        const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
+        const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
         renderWindowedChart(
             r.chartView, { { r.upsampled_data, r.color, &rawData } },
             m_persistentLines[r.chartView],
-            m_currentStartTime, m_windowDuration, globalOffset, sr,
+            m_persistentRawScatter[r.chartView],
+            current_start_time, visible_window_size, globalOffset, sr,
             r.chartView == xLabelOwnerRight,
             m_plotMode == PlotMode::Scatter,
             m_plotMode == PlotMode::Line,
@@ -739,14 +772,14 @@ void noise_marking_gui::handle_data_plot() {
             auto vAxes = r.chartView->chart()->axes(Qt::Vertical);
             if (!vAxes.isEmpty()) {
                 if (auto* yAxis = qobject_cast<QValueAxis*>(vAxes.first()))
-                    setPaddedYRange(yAxis, glo, ghi);   // reuse the same 5% padding helper
+                    set_padded_y_range(yAxis, glo, ghi);   // reuse the same 5% padding helper
             }
         }
         std::vector<int> postTags;
         const QVector<QPointF> peaks = display_peaks_in_window(label, &postTags);
-        double bpm = -1.0;
-        if (m_windowDuration >= 10.0) {            // keep in sync with kMinBpmWindowSec in get_bpm
-            if (m_windowDuration > 0.0) bpm = peaks.size() * 60.0 / m_windowDuration;
+        double bpm = 0.0;
+        if (visible_window_size >= 10.0) {            // keep in sync with kMinBpmWindowSec in get_bpm
+            if (visible_window_size > 0.0) bpm = peaks.size() * 60.0 / visible_window_size;
         }
         else {
             double dur = 0.0;
@@ -754,7 +787,7 @@ void noise_marking_gui::handle_data_plot() {
             if (dur > 0.0) bpm = bpmPeaks.size() * 60.0 / dur;
         }
         r.chartView->setProperty("bpm", bpm);
-        r.chartView->chart()->setTitle(formatChartTitle(label, nativeHz, pxPerSample, bpm));
+        r.chartView->chart()->setTitle(get_chart_title(label, nativeHz, pxPerSample, bpm));
         const beat_log::ChannelIdx ch = beatLogChannel(label);
 
         // Log each beat with the override values used to detect it, the
@@ -784,8 +817,8 @@ void noise_marking_gui::handle_data_plot() {
         if (std::abs(yScale - 1.0) > 1e-9) {
             std::vector<double> vals;
             for (const QPointF& p : rawData) {
-                if (p.x() < m_currentStartTime) continue;
-                if (p.x() > m_currentStartTime + m_windowDuration) break;
+                if (p.x() < current_start_time) continue;
+                if (p.x() > current_start_time + visible_window_size) break;
                 vals.push_back(p.y());
             }
             double center = 0.0;
@@ -832,10 +865,11 @@ void noise_marking_gui::handle_data_plot() {
             if (!view || !view->chart()) return;
             view->chart()->setTitle(title);
             view->chart()->setTitleFont(Theme::chartTitleFont());
-            const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
+            const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
 
             renderWindowedChart(view, serieses, m_persistentLines[view],
-                m_currentStartTime, m_windowDuration, globalOffset, m_ecgSR,
+                m_persistentRawScatter[view],
+                current_start_time, visible_window_size, globalOffset, m_ecgSR,
                 true, m_plotMode == PlotMode::Scatter, false,
                 1.0, true);
         };
@@ -864,6 +898,16 @@ void noise_marking_gui::handle_data_plot() {
     if (m_pulseOverlay) m_pulseOverlay->refresh();
     if (m_gapIndicator)  m_gapIndicator->refresh();
     syncChunkScrollBar();
+
+    // GL-accelerated series sit in a QOpenGLWidget overlaying the plot area,
+    // which otherwise swallows clicks before they reach the viewport's event
+    // filter. Let presses fall through so marking/erase land on the first click.
+    for (QChartView* cv : { ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
+                            ui->ppg_axis, ui->accel_or_abp_axis }) {
+        if (!cv) continue;
+        if (auto* gl = cv->findChild<QOpenGLWidget*>())
+            gl->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    }
 }
 
 // ============================================================================
@@ -877,8 +921,8 @@ void noise_marking_gui::updateAmpogramCursor() {
         if (axes.isEmpty()) return;
         auto* yAxis = qobject_cast<QValueAxis*>(axes.first());
         if (!yAxis) return;
-        double x = m_currentChunkIndex * seconds_in_memory_at_once
-            + m_currentStartTime + m_windowDuration / 2.0;
+        double x = current_chunk_index * seconds_in_memory_at_once
+            + current_start_time + visible_window_size / 2.0;
         cursor->replace({ {x, yAxis->min()}, {x, yAxis->max()} });
         };
     draw(ui->ecg_ampogram_axis, m_ecgCursorBar);
@@ -912,9 +956,9 @@ void noise_marking_gui::updateNoiseHighlights() {
         axesMap[lbl] = ca;
     }
 
-    const double globalOffset = m_currentChunkIndex * seconds_in_memory_at_once;
-    const double viewStart = m_currentStartTime;
-    const double viewEnd = viewStart + m_windowDuration;
+    const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
+    const double viewStart = current_start_time;
+    const double viewEnd = viewStart + visible_window_size;
 
     for (const auto& seg : m_noiseManager->getSegments()) {
         QString segLabel = QString::fromStdString(seg.label);

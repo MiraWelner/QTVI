@@ -22,7 +22,7 @@ bool annotation_eraser::handleRightClick(QChartView* cv, const QPoint& viewportP
 
     const double localX = cv->chart()->mapToValue(viewportPos).x();
     const double globalOffset =
-        m_gui->m_currentChunkIndex * noise_marking_gui::seconds_in_memory_at_once;
+        m_gui->current_chunk_index * noise_marking_gui::seconds_in_memory_at_once;
     const double gt = localX + globalOffset;
 
     auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {

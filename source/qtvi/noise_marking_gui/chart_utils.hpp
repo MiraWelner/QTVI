@@ -1,43 +1,36 @@
 #pragma once
 /**
- * @file   chart_utils.hpp
- * @brief  Internal helpers shared across gui_handler_*.cpp translation units.
- *         Not part of the public API -- do not include from headers.
- */
-
-#include "annotation_types.hpp"
+* @file   chart_utils.hpp
+* @brief  Sets the colors of all the series and contains various
+*         features required by the plotting functionality - both markable and
+*         nonmarkable
+*/
 
 #include <QtCharts/QChart>
-#include <QtCharts/QChartView>
 #include <QtCharts/QValueAxis>
-#include <QtCharts/QCategoryAxis>
-#include <QFont>
 #include <QString>
 #include <QVector>
-#include <cmath>
-#include <QtWidgets/QGraphicsLayout>
-#include <QMap>
 
 inline const QColor COLOR_ECG1{ 101, 67, 33 };
 inline const QColor COLOR_ECG2{ 0,  128, 0 };
 inline const QColor COLOR_ECG3{ 0, 0, 139 };
 inline const QColor COLOR_PPG{ 48, 25, 52 };
 inline const QColor COLOR_ABP{ 52, 25, 48 };
-inline const QColor COLOR_ACCEL_X{ "#F39C12" };
-inline const QColor COLOR_ACCEL_Y{ "#27AE60" };
-inline const QColor COLOR_ACCEL_Z{ "#8E44AD" };
-inline const QColor COLOR_RESP{ 0,0,0 };
-inline const QColor COLOR_CVP{ 0,0,0 };
-inline const QColor COLOR_RAW_SCATTER{ 0, 0, 0, 255 };
+inline const QColor COLOR_ACCEL_X{ 243, 156, 18 };
+inline const QColor COLOR_ACCEL_Y{ 39, 174, 96 };
+inline const QColor COLOR_ACCEL_Z{ 142, 68, 173 };
+inline const QColor COLOR_RESP{ 0,130,0};
+inline const QColor COLOR_CVP{ 130,0,0};
+inline const QColor COLOR_RAW_SCATTER{ 0, 0, 0};
 
-// ---------------------------------------------------------------------------
-// Chart helpers
-// ---------------------------------------------------------------------------
 
-inline void wipeChartContent(QChart* chart,
-    const QList<QAbstractSeries*>& keep = {})
-{
-    if (!chart) return;
+inline void wipe_chart(QChart* chart, const QList<QAbstractSeries*>& keep = {}){
+    /*
+        The QList 'keep' contains everything that is supposed to be persistant and
+        calculated once: the raw sample, the upsampled sample, and the red grid lines
+        (if they are there). This is for efficiency so they aren't redrawn. However
+        the annotations, etc are removed.
+    */
     for (auto* s : chart->series()) {
         if (keep.contains(s)) { chart->removeSeries(s); continue; }
         chart->removeSeries(s);
@@ -47,35 +40,40 @@ inline void wipeChartContent(QChart* chart,
 }
 
 
-inline void setPaddedYRange(QValueAxis* yAxis, double yMin, double yMax) {
-    if (yMin > yMax) { yMin = -1.0; yMax = 1.0; }
+inline void set_padded_y_range(QValueAxis* yAxis, double yMin, double yMax) {
+    /*
+        The y range isn't just the max min diff, there is a pad. It can be tuned here!
+        Handles range in event of flatline.
+    */
     double span = yMax - yMin;
-    double pad = (span > 1e-9) ? 0.05 * span : 0.5;
+    double pad = 0.05 * span;
+    if (!span) {pad = 0.05;}//flatline
     yAxis->setRange(yMin - pad, yMax + pad);
 }
 
-// ---------------------------------------------------------------------------
-// Signal helpers
-// ---------------------------------------------------------------------------
-
 inline bool isMissingSignal(const QVector<double>& data) {
+    /*
+        You can't use dataset type to determine if signal is empty because sometimes the
+        experimentor will have forgotten to put a lead on, or something.
+    */
     return data.isEmpty() || (data.size() == 1 && data[0] == -1.0);
 }
 
-inline bool isRawUsable(const QVector<QPointF>& v) {
-    return v.size() >= 2 && !(v.size() == 1 && v[0].x() == -1.0);
-}
-
 inline bool sleepDataPresent(const QVector<double>& sleepStages) {
-    return !sleepStages.isEmpty()
-        && !(sleepStages.size() == 1 && sleepStages[0] == -1.0);
+    /*
+        Currently, sleep data is only in the MESA, and in all MESA files. This is just an extra check
+        in case there is a broken MESA file.
+    */
+    return  !sleepStages.isEmpty()
+            && !(sleepStages.size() == 1 
+            && sleepStages[0] == -1.0);
 }
 
-// ---------------------------------------------------------------------------
-// Formatting
-// ---------------------------------------------------------------------------
-
-inline QString formatHMS(double seconds) {
+inline QString get_timestamp(double seconds) {
+    /*
+        The timestamps along the X axis of the charts are formatted as: HH:MM:SS
+        They are set by this function
+    */
     int t = static_cast<int>(seconds + 0.5);
     int h = t / 3600;
     int m = (t % 3600) / 60;
@@ -86,15 +84,13 @@ inline QString formatHMS(double seconds) {
         .arg(s, 2, 10, QChar('0'));
 }
 
-inline QString formatChartTitle(const QString& signalName,
-    double nativeHz, double pxPerSample,
-    double bpm = -1.0)
-{
-    QString base = QString("%1  -- Original Frequency: %2 Hz -- Pixel Resolution: %3 px/sample")
+inline QString get_chart_title(const QString& signalName, double nativeHz, double pxPerSample, double bpm){
+    //Make title for each markable chart, set sig figs in each printed value
+    QString space = QString(QChar(0x00A0)).repeated(4); //QString doesn't have tabs and doesn't respsect whitespace for some reason
+    QString base = QString("%1" + space + "Original Frequency: %2 Hz" + space + "Pixel Resolution: %3 px/sample" + space + "%4 bpm")
         .arg(signalName)
         .arg(nativeHz, 0, 'f', 1)
-        .arg(pxPerSample, 0, 'f', 3);
-    if (bpm >= 0.0)
-        base += QString("  --  %1 bpm").arg(bpm, 0, 'f', 0);
+        .arg(pxPerSample, 0, 'f', 3)
+        .arg(bpm, 0, 'f', 0);
     return base;
 }

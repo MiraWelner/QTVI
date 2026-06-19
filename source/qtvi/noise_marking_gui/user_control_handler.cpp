@@ -28,30 +28,13 @@ user_control_handler::user_control_handler(noise_marking_gui* parent)
 
 void user_control_handler::setupConnections() {
     auto* ui = m_gui->ui.get();
-
-    // Top-row actions
     connect(ui->clearall_button, &QPushButton::clicked, this, &user_control_handler::handle_clearall_button);
     connect(ui->finalize_button, &QPushButton::clicked, this, &user_control_handler::handle_finalize_button);
     connect(ui->skip_button, &QPushButton::clicked, this, &user_control_handler::handle_skip_button);
     connect(ui->save_current_plot, &QPushButton::clicked, this, &user_control_handler::save_current_plot);
-
-    // Per-channel marking start/stop. Every channel follows the same pattern
-    // a dozen near-identical connect() lines.
-    struct MarkButton { QPushButton* btn; const char* signalName; };
-    const MarkButton markButtons[] = {
-        { ui->start_ecg1_mark, "ECG1" },
-        { ui->start_ecg2_mark, "ECG2" },
-        { ui->start_ecg3_mark, "ECG3" },
-        { ui->startNoisePPG,   "PPG"  },
-        { ui->startNoiseABP,   "ABP"  },
-    };
-    for (const auto& mb : markButtons) {
-        const QString name = QString::fromLatin1(mb.signalName);
-        connect(mb.btn, &QPushButton::clicked, this, [this, name]() { m_gui->toggleMark(name); });
-    }
-
-    connect(ui->start_all_mark, &QPushButton::clicked, this, [this] { m_gui->toggleMarkAll(); });
-    connect(ui->start_ecg_all, &QPushButton::clicked, this, [this] { m_gui->toggleMarkEcgAll(); });
+    connect(ui->mark_one_chan, &QPushButton::clicked, this, [this] { m_gui->toggleEcgMark(); });
+    connect(ui->mark_all_chan, &QPushButton::clicked, this, [this] { m_gui->toggleMarkAll(); });
+    connect(ui->mark_all_ecg, &QPushButton::clicked, this, [this] { m_gui->toggleMarkEcgAll(); });
 
     // Window-length selector: combo index -> seconds. Default is index 2 (10 s).
     static constexpr double window_length_options[] = { 1, 3, 10, 30, 60, 120,300 };
@@ -86,8 +69,8 @@ void user_control_handler::save_current_plot()
     const QString stem = QFileInfo(m_gui->getFilePath()).completeBaseName();
     // In-recording position of the visible window's start, filename-safe
     // (no colons). 1 h 23 m 45 s into the recording -> "01h23m45s".
-    const double posSec = m_gui->m_currentChunkIndex * noise_marking_gui::seconds_in_memory_at_once
-        + m_gui->m_currentStartTime;
+    const double posSec = m_gui->current_chunk_index * noise_marking_gui::seconds_in_memory_at_once
+        + m_gui->current_start_time;
     const int ti = static_cast<int>(posSec + 0.5);
     const QString stamp = QString("%1h%2m%3s")
         .arg(ti / 3600, 2, 10, QChar('0'))
@@ -103,8 +86,8 @@ void user_control_handler::save_current_plot()
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
     QTextStream out(&f);
 
-    const double t0 = m_gui->m_currentStartTime;
-    const double t1 = t0 + m_gui->m_windowDuration;
+    const double t0 = m_gui->current_start_time;
+    const double t1 = t0 + m_gui->visible_window_size;
 
     struct Ch {
         const char* label;
@@ -165,7 +148,7 @@ void user_control_handler::save_current_plot()
 
 void user_control_handler::handle_window_toggle(bool checked, double duration) {
     if (!checked) return;
-    m_gui->m_windowDuration = duration;
+    m_gui->visible_window_size = duration;
     m_gui->handle_data_plot();
 }
 

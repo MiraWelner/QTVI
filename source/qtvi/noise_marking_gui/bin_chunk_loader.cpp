@@ -54,11 +54,11 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     constexpr int kSleepCountIdx = kNativeRatesBase + kNumChannels;
 
     for (int i = 0; i < kNumChannels; ++i) {
-        m_chanSizes[i] = raw32[kSizesUpBase + i];
-        m_chanSizesRaw[i] = raw32[kSizesRawBase + i];
-        std::memcpy(&m_chanNativeRates[i], &raw32[kNativeRatesBase + i], sizeof(float));
+        upsampled_channel_sizes[i] = raw32[kSizesUpBase + i];
+        raw_channel_sizes[i] = raw32[kSizesRawBase + i];
+        std::memcpy(&channel_native_rates[i], &raw32[kNativeRatesBase + i], sizeof(float));
     }
-    m_totalSleepSamples = raw32[kSleepCountIdx];
+    total_sleep_samples = raw32[kSleepCountIdx];
 
     if (m_fileMarkings.contains(filePath)) {
         m_genExc = m_fileMarkings[filePath];
@@ -78,8 +78,9 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
         m_noiseManager = std::make_unique<annotation_handler>(m_ecgSR);
     }
 
-    m_currentStartTime = 0.0;
-    m_markAllActive = false;
+    current_start_time = 0.0;
+    m_markAllMode = MarkAllMode::None;
+    single_ecg_marker_clicked = false;
     for (const QString& lbl : markableChannelLabels()) cancelMarking(lbl);
 
     setWindowTitle("Marking: " + QFileInfo(filePath).fileName());
@@ -128,13 +129,13 @@ void noise_marking_gui::handleBrowseFile() {
 bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     QFile file(m_binFilePath);
     if (!file.open(QIODevice::ReadOnly)) return false;
-    m_currentChunkIndex = chunkIndex;
+    current_chunk_index = chunkIndex;
 
     uint64_t chanUpOffset[NUM_CHANNELS], chanRawOffset[NUM_CHANNELS];
     uint64_t running = 0;
     for (int i = 0; i < NUM_CHANNELS; ++i) {
-        chanUpOffset[i] = running; running += m_chanSizes[i];
-        chanRawOffset[i] = running; running += m_chanSizesRaw[i] * 2;
+        chanUpOffset[i] = running; running += upsampled_channel_sizes[i];
+        chanRawOffset[i] = running; running += raw_channel_sizes[i] * 2;
     }
     const uint64_t sleepByteOffset = running;
 
@@ -149,7 +150,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 
     auto loadSignal = [&](QVector<double>& dest, int chIdx) {
         double   sr = rateForChannel(chIdx);
-        uint64_t totalSamples = m_chanSizes[chIdx];
+        uint64_t totalSamples = upsampled_channel_sizes[chIdx];
         uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * sr);
         uint64_t start = chunkIndex * perChunk;
         uint64_t count = (totalSamples > start)
@@ -161,7 +162,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 
     auto loadRaw = [&](QVector<QPointF>& dest, int chIdx) {
         dest.clear();
-        const uint64_t totalPairs = m_chanSizesRaw[chIdx];
+        const uint64_t totalPairs = raw_channel_sizes[chIdx];
         if (totalPairs <= 1) {
             if (totalPairs == 1) {
                 double pair[2] = { -1.0, -1.0 };
@@ -171,7 +172,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
             }
             return;
         }
-        const float nativeHz = m_chanNativeRates[chIdx];
+        const float nativeHz = channel_native_rates[chIdx];
         if (nativeHz <= 0.0f) return;
         const uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * (double)nativeHz);
         const uint64_t firstPair = chunkIndex * perChunk;
@@ -213,7 +214,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 
     auto rewriteRawToIndexTime = [&](QVector<QPointF>& raw, int chIdx) {
         if (raw.size() < 2) return;
-        const float nativeHz = m_chanNativeRates[chIdx];
+        const float nativeHz = channel_native_rates[chIdx];
         if (nativeHz <= 0.0f) return;
         const double dt = 1.0 / nativeHz;
         for (int i = 0; i < raw.size(); ++i) raw[i].setX(i * dt);
@@ -232,14 +233,14 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     {
         uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * m_sleepSR);
         uint64_t start = chunkIndex * perChunk;
-        uint64_t count = (m_totalSleepSamples > start)
-            ? std::min(perChunk, m_totalSleepSamples - start) : 0;
+        uint64_t count = (total_sleep_samples > start)
+            ? std::min(perChunk, total_sleep_samples - start) : 0;
         m_sleepStages.resize(static_cast<int>(count));
         file.seek(FILE_HEADER_SIZE + (sleepByteOffset + start) * sizeof(double));
         file.read(reinterpret_cast<char*>(m_sleepStages.data()), count * sizeof(double));
     }
     file.close();
-    m_currentStartTime = 0;
+    current_start_time = 0;
 
     m_activeChannels.clear();
     auto markActive = [this](const QString& label, const QVector<double>& data) {
@@ -276,13 +277,13 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     uint64_t ecgPerChunk = static_cast<uint64_t>(seconds_in_memory_at_once * m_ecgSR);
     ui->prev8hours->setEnabled(chunkIndex > 0);
     ui->next8hours->setEnabled(
-        (chunkIndex * ecgPerChunk + m_ecg1.size()) < m_chanSizes[CH_ECG1]);
+        (chunkIndex * ecgPerChunk + m_ecg1.size()) < upsampled_channel_sizes[CH_ECG1]);
     return true;
 }
 
 void noise_marking_gui::on_next8hours_clicked() {
-    resetUnpinnedGains(); loadChunkFromFile(m_currentChunkIndex + 1);
+    resetUnpinnedGains(); loadChunkFromFile(current_chunk_index + 1);
 }
 void noise_marking_gui::on_prev8hours_clicked() {
-    if (m_currentChunkIndex > 0) { resetUnpinnedGains(); loadChunkFromFile(m_currentChunkIndex - 1); }
+    if (current_chunk_index > 0) { resetUnpinnedGains(); loadChunkFromFile(current_chunk_index - 1); }
 }

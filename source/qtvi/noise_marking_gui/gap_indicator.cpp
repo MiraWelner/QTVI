@@ -13,34 +13,12 @@
 #include <QColor>
 #include <QFont>
 #include <QPen>
+#include "chart_utils.hpp"
 
 namespace {
-
-    // ------------------------------------------------------------------
-    // Tunables. Adjust freely.
-    // ------------------------------------------------------------------
-
-    // Any jump between consecutive raw timestamps longer than this
-    // counts as a gap. 60 s is the practical floor for "device dropped
-    // out for at least a minute" in CHAOS recordings.
-    constexpr double kGapThresholdSec = 60.0;
-
-    // Bracket-line style.
-    const QColor  COLOR_GAP_LINE = QColor(255, 20, 147, 255);
-    constexpr double kBracketWidthPx = 1.5;
-
-    // Label style.
-    const QColor  COLOR_GAP_LABEL = QColor(255, 20, 147, 255);
-    const QFont   GAP_LABEL_FONT = QFont("Arial", 9, QFont::Bold);
-
-    // True iff a raw vector contains real data (not the (-1, -1) sentinel
-    // file_to_bin writes for missing channels).
-    bool isRawUsable(const QVector<QPointF>& v) {
-        return v.size() >= 2 && !(v.size() == 1 && v[0].x() == -1.0);
-    }
-
-    // Format a gap duration as a short human-readable label.
-    QString formatGapDuration(double sec) {
+    const int min_length_for_gap = 30; //timestamp distance between the raw samples constitutes a 'gap' to be labled in the gui
+    const QColor  gap_marker_color = QColor(255, 20, 147, 255);
+    QString gap_lable_fmt(double sec) {
         if (sec < 60.0)        return QString("%1 sec gap").arg(sec, 0, 'f', 1);
         if (sec < 3600.0)      return QString("%1 min gap").arg(sec / 60.0, 0, 'f', 1);
         return                       QString("%1 hour gap").arg(sec / 3600.0, 0, 'f', 2);
@@ -68,14 +46,14 @@ void gap_indicator::rescan() {
     // other channel too, since they're all rate-aligned in real time.
     int srcCh = -1;
     const QVector<QPointF>* src = nullptr;
-    if (isRawUsable(m_gui->m_ecg1Raw)) { src = &m_gui->m_ecg1Raw; srcCh = noise_marking_gui::CH_ECG1; }
-    else if (isRawUsable(m_gui->m_ecg2Raw)) { src = &m_gui->m_ecg2Raw; srcCh = noise_marking_gui::CH_ECG2; }
-    else if (isRawUsable(m_gui->m_ecg3Raw)) { src = &m_gui->m_ecg3Raw; srcCh = noise_marking_gui::CH_ECG3; }
-    else if (isRawUsable(m_gui->m_ppgRaw)) { src = &m_gui->m_ppgRaw;  srcCh = noise_marking_gui::CH_PPG; }
-    else if (isRawUsable(m_gui->m_abpRaw)) { src = &m_gui->m_abpRaw;  srcCh = noise_marking_gui::CH_ABP; }
+    if (!isMissingSignal(m_gui->m_ecg1)) { src = &m_gui->m_ecg1Raw; srcCh = noise_marking_gui::CH_ECG1; }
+    else if (!isMissingSignal(m_gui->m_ecg2)) { src = &m_gui->m_ecg2Raw; srcCh = noise_marking_gui::CH_ECG2; }
+    else if (!isMissingSignal(m_gui->m_ecg3)) { src = &m_gui->m_ecg3Raw; srcCh = noise_marking_gui::CH_ECG3; }
+    else if (!isMissingSignal(m_gui->m_ppg)) { src = &m_gui->m_ppgRaw;  srcCh = noise_marking_gui::CH_PPG; }
+    else if (!isMissingSignal(m_gui->m_abp)) { src = &m_gui->m_abpRaw;  srcCh = noise_marking_gui::CH_ABP; }
     if (!src || srcCh < 0) return;
 
-    const float nativeHz = m_gui->m_chanNativeRates[srcCh];
+    const float nativeHz = m_gui->channel_native_rates[srcCh];
     if (nativeHz <= 0.0f) return;
     const double dt = 1.0 / nativeHz;
 
@@ -83,7 +61,7 @@ void gap_indicator::rescan() {
     // this runs BEFORE the timestamp rewrite (gui_handler.cpp does so).
     for (int i = 1; i < src->size(); ++i) {
         const double realDt = (*src)[i].x() - (*src)[i - 1].x();
-        if (realDt > kGapThresholdSec) {
+        if (realDt > min_length_for_gap) {
             // Bracket sits at the index-time position of the post-gap
             // sample. Sub-pixel-wide visually; effectively one vertical
             // line between the last pre-gap sample and the first post-
@@ -132,7 +110,7 @@ void gap_indicator::refresh() {
 
             // One dashed vertical line at the gap position.
             auto* line = new QLineSeries();
-            line->setPen(QPen(COLOR_GAP_LINE, kBracketWidthPx, Qt::DotLine));
+            line->setPen(QPen(gap_marker_color, 1, Qt::DotLine));
             line->setUseOpenGL(true);
             line->append(gap.xPos, yLo);
             line->append(gap.xPos, yHi);
@@ -150,10 +128,10 @@ void gap_indicator::refresh() {
             labelSeries->setColor(Qt::transparent);
             labelSeries->setBorderColor(Qt::transparent);
             labelSeries->setPointLabelsVisible(true);
-            labelSeries->setPointLabelsColor(COLOR_GAP_LABEL);
-            labelSeries->setPointLabelsFont(GAP_LABEL_FONT);
+            labelSeries->setPointLabelsColor(gap_marker_color);
+            labelSeries->setPointLabelsFont(cv->font());
             labelSeries->setPointLabelsClipping(false);
-            labelSeries->setPointLabelsFormat(formatGapDuration(gap.durationSec));
+            labelSeries->setPointLabelsFormat(gap_lable_fmt(gap.durationSec));
             labelSeries->append(gap.xPos, yMid);
             chart->addSeries(labelSeries);
             labelSeries->attachAxis(hAxes.first());

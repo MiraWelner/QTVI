@@ -3,9 +3,13 @@
  * @brief  A peak finder for running within the noise marking GUI. Two constants:
  *         blanking (minimum time between peaks) and threshold (minimum height),
  *         both per-peak functions of time. Reference stats (gate level + mean
- *         R-R) come from the 10 clean seconds preceding each beat. Inversion is
- *         supplied per call as `sgn` (+1 upright, -1 inverted) -- the ECG charts
- *         set it from their per-channel "Lead Reversed" checkbox.
+ *         R-R) come from a fixed-length frame: the signal is split into frames
+ *         of `previous_seconds_to_train_on` seconds anchored at the chunk start,
+ *         and a beat in frame m takes its reference from the nearest EARLIER
+ *         frame that contains no marked span (frames with noise in them are
+ *         skipped over whole; frame 0 is the floor). Inversion is supplied per
+ *         call as `sgn` (+1 upright, -1 inverted) -- the ECG charts set it from
+ *         their per-channel "Lead Reversed" checkbox.
  *
  *         findPeaks            (ECG): local-extremum detector (max, or min when inverted).
  *         findPeaksDerivative  (PPG/ABP): squared-derivative systolic detector.
@@ -25,7 +29,7 @@
 
 namespace gui_peak_finder {
 
-    inline constexpr double kReferenceSeconds = 5.0;
+    inline constexpr double previous_seconds_to_train_on = 5.0;
 
     // True if t lies within any [start, end] span.
     inline bool inExcludedSpan(const std::vector<std::pair<double, double>>& spans, double t) {
@@ -151,30 +155,6 @@ namespace gui_peak_finder {
         return m;
     }
 
-    // Walk back from t over UNMARKED time until `need` clean seconds are
-    // gathered. `merged` MUST be the output of mergeExcluded (sorted, merged,
-    // clipped to [0, tMax] with tMax >= t). No per-call allocation or sort.
-    inline double reachBackWalk(double t, double need,
-        const std::vector<std::pair<double, double>>& merged) {
-        double pos = t;
-        int j = static_cast<int>(merged.size()) - 1;
-        while (need > 0.0 && pos > 0.0) {
-            while (j >= 0 && merged[j].first >= pos) --j;
-            if (j >= 0 && merged[j].second >= pos) { pos = merged[j].first; --j; continue; }
-            const double lo = (j >= 0) ? merged[j].second : 0.0;
-            const double cleanLen = pos - lo;
-            if (cleanLen >= need) { pos -= need; need = 0.0; }
-            else { need -= cleanLen; pos = lo; }
-        }
-        return pos;
-    }
-
-
-    inline double reachBackTime(double t, double need,
-        const std::vector<std::pair<double, double>>& spans) {
-        return reachBackWalk(t, need, mergeExcluded(t, spans));
-    }
-
     inline bool spanContaining(const std::vector<std::pair<double, double>>& spans,
         double t, double& s, double& e) {
         for (const auto& sp : spans)
@@ -182,9 +162,9 @@ namespace gui_peak_finder {
         return false;
     }
 
-    // Reference stats for the local-max (ECG) detector, from the `need` clean
-    // seconds before t. `sgn` (+1 upright, -1 inverted) is supplied by the
-    // caller (per-channel checkbox); all amplitude reads run in that frame.
+    // Reference stats for the local-max (ECG) detector, from the reference
+    // FRAME for t (see file header). `sgn` (+1 upright, -1 inverted) is supplied
+    // by the caller (per-channel checkbox); all amplitude reads run in that frame.
     struct RefStats { double vMin = 0.0, gateTop = 0.0, meanRR = 0.0; bool ok = false; };
     inline RefStats refStatsLocalMax(const QVector<QPointF>& rp, double t, double need,
         const std::vector<std::pair<double, double>>& refExcluded,
@@ -195,7 +175,25 @@ namespace gui_peak_finder {
         double aS, aE; const bool within = spanContaining(withinSpans, t, aS, aE);
         int a, b;
         if (within) { a = lowerIdx(rp, std::max(aS, t - need)); b = lowerIdx(rp, t); }
-        else { a = lowerIdx(rp, reachBackTime(t, need, refExcluded)); b = lowerIdx(rp, t); }
+        else {
+            // Frame-based reference. The chunk is split into fixed `need`-second
+            // frames anchored at t = 0. A beat in frame m = floor(t / need)
+            // references the nearest EARLIER frame with no marked span in it;
+            // any frame containing noise is skipped over whole (no partial use,
+            // no reaching back for clean seconds). Frame 0 is the floor -- if
+            // nothing clean precedes the beat, frame 0 is used as-is.
+            auto frameHasNoise = [&](double lo, double hi) {
+                for (const auto& s : refExcluded)
+                    if (s.first < hi && lo < s.second) return true;
+                return false;
+                };
+            const long m = static_cast<long>(t / need);   // t >= 0 => floor(t/need)
+            long k = m - 1;
+            while (k > 0 && frameHasNoise(k * need, (k + 1) * need)) --k;
+            if (k < 0) k = 0;
+            a = lowerIdx(rp, k * need);
+            b = lowerIdx(rp, (k + 1) * need);
+        }
         if (b - a < 3) return rs;
         auto excluded = [&](double tt) { return within ? false : inExcludedSpan(refExcluded, tt); };
 
@@ -210,12 +208,22 @@ namespace gui_peak_finder {
         }
         if (vMax <= vMin) return rs;
 
+        // The threshold is piecewise-constant in time, changing only at override
+        // edges. Probe it at both ends of the reference window: if they match,
+        // no edge cuts the window, so reuse that one value for every sample (one
+        // lookup instead of one per sample). If they differ, an override starts
+        // or ends inside the window -- fall back to the exact per-sample lookup.
+        const double thrLo = threshold(rp[a].x());
+        const double thrHi = threshold(rp[b - 1].x());
+        const bool thrUniform = (thrLo == thrHi);
+
         QVector<QPointF> refPeaks;
         const double spn = vMax - vMin;
         for (int i = a + 1; i < b - 1; ++i) {
             const double tt = rp[i].x();
             if (excluded(tt)) continue;
-            const double gate = vMin + threshold(tt) * spn;
+            const double thr = thrUniform ? thrLo : threshold(tt);
+            const double gate = vMin + thr * spn;
             const double v = sgn * rp[i].y();
             if (v >= gate && v >= sgn * rp[i - 1].y() && v > sgn * rp[i + 1].y()) refPeaks.append({ tt, v });
         }
@@ -241,6 +249,8 @@ namespace gui_peak_finder {
         QVector<QPointF> out;
         if (rawPairs.size() < 3 || detStart >= detEnd) return out;
         (void)refStart; (void)refEnd; (void)usePeakMedian;   // reference is per-beat
+        const std::vector<std::pair<double, double>> refMerged = mergeExcluded(1e300, refExcluded);
+
 
         constexpr double kBlankMargin = 2.0;   // s; >= any plausible blank interval
         const int i0 = std::max(1, lowerIdx(rawPairs, detStart - kBlankMargin));
@@ -254,7 +264,7 @@ namespace gui_peak_finder {
             if (!(yv >= sgn * rawPairs[i - 1].y() && yv > sgn * rawPairs[i + 1].y())) continue;  // local max upright (= min when inverted)
             const double t = rawPairs[i].x();
             if (inExcludedSpan(detExcluded, t)) continue;
-            const RefStats rs = refStatsLocalMax(rawPairs, t, kReferenceSeconds, refExcluded, withinSpans, threshold, sgn);
+            const RefStats rs = refStatsLocalMax(rawPairs, t, previous_seconds_to_train_on, refMerged, withinSpans, threshold, sgn);
             if (!rs.ok) continue;
             const double gate = rs.vMin + threshold(t) * (rs.gateTop - rs.vMin);
             if (yv >= gate) { prelim.append({ t, rawPairs[i].y() }); prelimRR.push_back(rs.meanRR); }
@@ -282,6 +292,11 @@ namespace gui_peak_finder {
         const int n = static_cast<int>(rp.size());
         if (sp <= 0.0 || b > n - 1) b = std::min(b, n - 1);
         if (sp <= 0.0 || b - a < 3) return peaks;
+        // Same per-frame threshold hoist as refStatsLocalMax: probe both ends of
+        // the window; reuse the value unless an override edge cuts the window.
+        const double thrLo = threshold(rp[a].x());
+        const double thrHi = threshold(rp[b - 1].x());
+        const bool thrUniform = (thrLo == thrHi);
         for (int k = a + 1; k < b - 1; ++k) {
             const double dkm = rp[k].y() - rp[k - 1].y();
             const double dk = rp[k + 1].y() - rp[k].y();
@@ -298,7 +313,8 @@ namespace gui_peak_finder {
                 else break;
             }
             const double t = rp[apexIdx].x();
-            if (apexVal >= vMin + threshold(t) * sp) peaks.append({ t, apexVal });
+            const double thr = thrUniform ? thrLo : threshold(t);
+            if (apexVal >= vMin + thr * sp) peaks.append({ t, apexVal });
         }
         return peaks;
     }
@@ -312,7 +328,22 @@ namespace gui_peak_finder {
         double aS, aE; const bool within = spanContaining(withinSpans, t, aS, aE);
         int a, b;
         if (within) { a = lowerIdx(rp, std::max(aS, t - need)); b = lowerIdx(rp, t); }
-        else { a = lowerIdx(rp, reachBackTime(t, need, refExcluded)); b = lowerIdx(rp, t); }
+        else {
+            // Frame-based reference (see refStatsLocalMax for the full rationale):
+            // the nearest earlier frame with no marked span in it; noisy frames
+            // are skipped whole; frame 0 is the floor.
+            auto frameHasNoise = [&](double lo, double hi) {
+                for (const auto& s : refExcluded)
+                    if (s.first < hi && lo < s.second) return true;
+                return false;
+                };
+            const long m = static_cast<long>(t / need);   // t >= 0 => floor(t/need)
+            long k = m - 1;
+            while (k > 0 && frameHasNoise(k * need, (k + 1) * need)) --k;
+            if (k < 0) k = 0;
+            a = lowerIdx(rp, k * need);
+            b = lowerIdx(rp, (k + 1) * need);
+        }
         if (b - a < 4) return rs;
         auto excluded = [&](double tt) { return within ? false : inExcludedSpan(refExcluded, tt); };
 
@@ -390,7 +421,7 @@ namespace gui_peak_finder {
             }
             const double t = rawPairs[apexIdx].x();
             if (inExcludedSpan(detExcluded, t)) continue;
-            const RefStatsD rs = refStatsDeriv(rawPairs, t, kReferenceSeconds, refExcluded, withinSpans, threshold);
+            const RefStatsD rs = refStatsDeriv(rawPairs, t, previous_seconds_to_train_on, refExcluded, withinSpans, threshold);
             if (!rs.ok) continue;
             if (d2k < rs.upstrokeGate) continue;
             const double gate = rs.vMin + threshold(t) * (rs.gateTop - rs.vMin);

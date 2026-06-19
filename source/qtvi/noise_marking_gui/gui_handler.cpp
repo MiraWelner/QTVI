@@ -32,7 +32,8 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QDialogButtonBox>
-#include <QDoubleSpinBox>
+#include <QGraphicsLayout>
+#include <QStyle>
 
  // ============================================================================
  // Channel lookup
@@ -49,31 +50,31 @@ noise_marking_gui::channelRefs(const QString& label) const {
     data_channel_features r;
 
     if (label == "ECG1") {
-        r.chartView = ui->ecg_axis_1; r.startButton = ui->start_ecg1_mark;
+        r.chartView = ui->ecg_axis_1; r.startButton = ui->mark_one_chan;
         r.state = &self->m_markState_ecg1;
         r.upsampled_data = &m_ecg1; r.dataRaw = &m_ecg1Raw; r.sampleRate = &m_ecgSR;
         r.color = COLOR_ECG1;
     }
     else if (label == "ECG2") {
-        r.chartView = ui->ecg_axis_2; r.startButton = ui->start_ecg2_mark;
+        r.chartView = ui->ecg_axis_2; r.startButton = ui->mark_one_chan;
         r.state = &self->m_markState_ecg2;
         r.upsampled_data = &m_ecg2; r.dataRaw = &m_ecg2Raw; r.sampleRate = &m_ecgSR;
         r.color = COLOR_ECG2;
     }
     else if (label == "ECG3") {
-        r.chartView = ui->ecg_axis_3; r.startButton = ui->start_ecg3_mark;
+        r.chartView = ui->ecg_axis_3; r.startButton = ui->mark_one_chan;
         r.state = &self->m_markState_ecg3;
         r.upsampled_data = &m_ecg3; r.dataRaw = &m_ecg3Raw; r.sampleRate = &m_ecgSR;
         r.color = COLOR_ECG3;
     }
     else if (label == "PPG") {
-        r.chartView = ui->ppg_axis; r.startButton = ui->startNoisePPG;
+        r.chartView = ui->ppg_axis; r.startButton = ui->mark_one_chan;
         r.state = &self->m_markState_ppg;
         r.upsampled_data = &m_ppg; r.dataRaw = &m_ppgRaw; r.sampleRate = &m_ppgSR;
         r.color = COLOR_PPG;
     }
     else if (label == "ABP") {
-        r.chartView = ui->accel_or_abp_axis; r.startButton = ui->startNoiseABP;
+        r.chartView = ui->accel_or_abp_axis; r.startButton = ui->mark_one_chan;
         r.state = &self->m_markState_abp;
         r.upsampled_data = &m_abp; r.dataRaw = &m_abpRaw; r.sampleRate = &m_ecgSR;
         r.color = COLOR_ABP;
@@ -146,55 +147,42 @@ bool noise_marking_gui::invertedForSignal(const QString& label) const {
 // Button helpers
 // ============================================================================
 
+
+void applyMarkStyle(QPushButton* btn, const char* phase) {
+    if (!btn) return;
+    btn->setProperty("markphase", (phase && *phase) ? QVariant(phase) : QVariant());
+    btn->style()->unpolish(btn);
+    btn->style()->polish(btn);
+    btn->update();
+}
+
 QPushButton* noise_marking_gui::startButtonForSignal(const QString& label) const {
     return channelRefs(label).startButton;
 }
 QPushButton* noise_marking_gui::stopButtonForSignal(const QString& label) const {
     return channelRefs(label).stopButton;
 }
-
-void noise_marking_gui::updateButtonStatesForChannel(const QString& label) {
-    QPushButton* btn = startButtonForSignal(label);
-    if (!btn) return;
-
-    if (!isChannelActive(label)) {
-        btn->setEnabled(false);
-        btn->setStyleSheet("color: gray;");
-        return;
-    }
-    btn->setEnabled(true);
-    switch (markStateFor(label).phase) {
-    case MarkPhase::WaitingForStart:   // armed, waiting for the start click
-    case MarkPhase::WaitingForEnd:     // start placed; click again to arm the end
-        btn->setStyleSheet("background-color: #f39c12; color: white;");
-        break;
-    case MarkPhase::WaitingForStop:    // armed for the end click
-        btn->setStyleSheet("background-color: #e74c3c; color: white;");
-        break;
-    default:                           // Idle
-        btn->setStyleSheet("");
-        break;
-    }
-}
 void noise_marking_gui::updateAllChannelButtonStates() {
     for (const QString& label : markableChannelLabels())
-        updateButtonStatesForChannel(label);
+        updateEcgMarkButtonStyle();
 
     const bool anyActive = !m_activeChannels.isEmpty();
-    ui->start_all_mark->setEnabled(anyActive);
+    const bool anyEcgActive = isChannelActive("ECG1") || isChannelActive("ECG2") || isChannelActive("ECG3");
+    ui->mark_all_chan->setEnabled(anyActive);
+    ui->mark_all_ecg->setEnabled(anyEcgActive);
 
-    if (!anyActive || !m_markAllActive) {
-        ui->start_all_mark->setStyleSheet(anyActive ? "" : "color: gray;");
-        return;
-    }
-    bool anyWaitingStop = false;
-    for (const QString& lbl : markableChannelLabels())
-        if (isChannelActive(lbl) && markStateFor(lbl).phase == MarkPhase::WaitingForStop)
-            anyWaitingStop = true;
-
-    ui->start_all_mark->setStyleSheet(anyWaitingStop
-        ? "background-color: #e74c3c; color: white;"
-        : "background-color: #f39c12; color: white;");
+    // Each group button reflects ONLY its own mode.
+    auto groupStyle = [&](QPushButton* btn, MarkAllMode mode, const QStringList& chans) {
+        if (m_markAllMode != mode) { applyMarkStyle(btn, ""); return; }
+        bool anyWaitingStop = false;
+        for (const QString& lbl : chans)
+            if (isChannelActive(lbl) && markStateFor(lbl).phase == MarkPhase::WaitingForStop)
+                anyWaitingStop = true;
+        applyMarkStyle(btn, anyWaitingStop ? "waiting" : "armed");
+        };
+    static const QStringList kEcg{ "ECG1", "ECG2", "ECG3" };
+    groupStyle(ui->mark_all_chan, MarkAllMode::All, markableChannelLabels());
+    groupStyle(ui->mark_all_ecg, MarkAllMode::Ecg, kEcg);
 }
 // ============================================================================
 // Misc helpers
@@ -229,8 +217,45 @@ double noise_marking_gui::totalChunkDuration() const {
     return 0.0;
 }
 
-QString noise_marking_gui::formatTimeLabel(double seconds) {
-    return formatHMS(seconds);
+double noise_marking_gui::scrollStepSeconds() const {
+    //convert the percent of window size set by user to raw seconds
+    return percent_of_window_to_shift_on_click / 100.0 * visible_window_size;
+}
+
+void noise_marking_gui::exitAllMarkModes() {
+    for (const QString& label : markableChannelLabels())
+        if (markStateFor(label).phase != MarkPhase::Idle) cancelMarking(label);
+    m_markAllMode = MarkAllMode::None;
+    single_ecg_marker_clicked = false;
+}
+
+void noise_marking_gui::toggleEcgMark() {
+    if (single_ecg_marker_clicked) {
+        single_ecg_marker_clicked = false;     // toggle off
+    }
+    else {
+        exitAllMarkModes();                     // clear other modes first
+        m_currentMarkingType = ui->marking_type->currentText();
+        single_ecg_marker_clicked = true;
+    }
+    updateAllChannelButtonStates();
+}
+
+void noise_marking_gui::updateEcgMarkButtonStyle() {
+    QPushButton* btn = ui->mark_one_chan;
+    if (m_activeChannels.isEmpty()) { btn->setEnabled(false); applyMarkStyle(btn, ""); return; }
+    btn->setEnabled(true);
+
+    // Single-marker flow only; stay neutral while a group mode owns the channels.
+    if (m_markAllMode != MarkAllMode::None) { applyMarkStyle(btn, ""); return; }
+
+    bool waitingStop = false;
+    for (const QString& l : markableChannelLabels())
+        if (markStateFor(l).phase == MarkPhase::WaitingForStop) { waitingStop = true; break; }
+
+    if (waitingStop)                    applyMarkStyle(btn, "waiting");
+    else if (single_ecg_marker_clicked) applyMarkStyle(btn, "armed");
+    else                                applyMarkStyle(btn, "");
 }
 
 // ============================================================================
@@ -250,12 +275,12 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         btn->setFocusPolicy(Qt::NoFocus);
 
     new QShortcut(QKeySequence(Qt::Key_Left), this, [this]() {
-        m_currentStartTime = std::max(0.0, m_currentStartTime - m_skipInterval);
+        current_start_time = std::max(0.0, current_start_time - scrollStepSeconds());
         resetUnpinnedGains(); handle_data_plot(); updateAmpogramCursor();
         });
     new QShortcut(QKeySequence(Qt::Key_Right), this, [this]() {
-        double maxStart = std::max(0.0, totalChunkDuration() - m_windowDuration);
-        m_currentStartTime = std::min(m_currentStartTime + m_skipInterval, maxStart);
+        double maxStart = std::max(0.0, totalChunkDuration() - visible_window_size);
+        current_start_time = std::min(current_start_time + scrollStepSeconds(), maxStart);
         resetUnpinnedGains(); handle_data_plot(); updateAmpogramCursor();
         });
 
@@ -276,8 +301,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     }
 
-    m_skipInterval = ui->skip_interval_box->text().toDouble();
-    if (m_skipInterval <= 0.0) m_skipInterval = 15.0;
+    percent_of_window_to_shift_on_click = ui->skip_interval_box->text().toDouble();
     ui->skip_interval_box->setFocusPolicy(Qt::ClickFocus);
 
     ui->scatter_line->setCurrentIndex(0);
@@ -292,8 +316,8 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         });
 
     connect(ui->chunk_scrollbar, &QScrollBar::valueChanged, this, [this](int v) {
-        const double maxStart = std::max(0.0, totalChunkDuration() - m_windowDuration);
-        m_currentStartTime = std::clamp(static_cast<double>(v), 0.0, maxStart);
+        const double maxStart = std::max(0.0, totalChunkDuration() - visible_window_size);
+        current_start_time = std::clamp(static_cast<double>(v), 0.0, maxStart);
         handle_data_plot();
         updateAmpogramCursor();
         });
@@ -332,12 +356,12 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
                 const QString sigName = v->property("signalName").toString();
                 if (sigName.isEmpty()) return;
                 const double nativeHz = v->property("nativeHz").toDouble();
-                const double pxPerSec = (m_windowDuration > 0.0)
-                    ? v->chart()->plotArea().width() / m_windowDuration : 0.0;
+                const double pxPerSec = (visible_window_size > 0.0)
+                    ? v->chart()->plotArea().width() / visible_window_size : 0.0;
                 const double pxPerSample = (nativeHz > 0.0) ? pxPerSec / nativeHz : 0.0;
                 const double bpm = v->property("bpm").isValid()
-                    ? v->property("bpm").toDouble() : -1.0;
-                v->chart()->setTitle(formatChartTitle(sigName, nativeHz, pxPerSample, bpm));
+                    ? v->property("bpm").toDouble() : 0.0;
+                v->chart()->setTitle(get_chart_title(sigName, nativeHz, pxPerSample, bpm));
             });
     }
 
@@ -404,7 +428,7 @@ void noise_marking_gui::syncChunkScrollBar() {
     QScrollBar* sb = ui->chunk_scrollbar;
 
     const double chunkDur = totalChunkDuration();
-    const int page = std::max(1, static_cast<int>(std::lround(m_windowDuration)));
+    const int page = std::max(1, static_cast<int>(std::lround(visible_window_size)));
     const int maxStart = std::max(0,
         static_cast<int>(std::lround(chunkDur)) - page);
 
@@ -414,9 +438,9 @@ void noise_marking_gui::syncChunkScrollBar() {
     sb->setMinimum(0);
     sb->setMaximum(maxStart);
     sb->setPageStep(page);
-    sb->setSingleStep(std::max(1, static_cast<int>(std::lround(m_skipInterval))));
+    sb->setSingleStep(0.1);
     sb->setValue(std::clamp(
-        static_cast<int>(std::lround(m_currentStartTime)), 0, maxStart));
+        static_cast<int>(std::lround(current_start_time)), 0, maxStart));
     sb->setEnabled(maxStart > 0);
 }
 
@@ -424,6 +448,9 @@ noise_marking_gui::~noise_marking_gui() {
     for (auto& list : m_persistentLines)
         for (auto* ln : list) delete ln;
     m_persistentLines.clear();
+    for (auto& list : m_persistentRawScatter)
+        for (auto* sc : list) delete sc;
+    m_persistentRawScatter.clear();
 }
 
 // ============================================================================
@@ -452,13 +479,11 @@ QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
 // ============================================================================
 
 void noise_marking_gui::on_skip_interval_box_editingFinished() {
-    m_skipInterval = ui->skip_interval_box->text().toDouble();
-    ui->skip_interval_box->setText(QString::number(m_skipInterval, 'f', 1));
+    percent_of_window_to_shift_on_click = ui->skip_interval_box->text().toInt();
+    if (percent_of_window_to_shift_on_click <= 0) percent_of_window_to_shift_on_click = 50;
+    ui->skip_interval_box->setText(
+        QString::number(static_cast<int>(percent_of_window_to_shift_on_click)));
     ui->skip_interval_box->clearFocus();
-}
-
-void noise_marking_gui::on_skip_interval_box_returnPressed() {
-    on_skip_interval_box_editingFinished();
 }
 
 void noise_marking_gui::on_marking_type_currentTextChanged(const QString& text) {
@@ -557,5 +582,6 @@ void noise_marking_gui::finalizeParamEdit(const QString& label,
     }
     m_paramEditMode = ParamEdit::None;
     updateParamButtonStyles();
+    clearDragPreview();
     handle_data_plot();
 }
