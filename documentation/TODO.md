@@ -18,6 +18,8 @@
 
 1. Blanking thresholding not always working, sometimes very low peaks like t wave peaks selected  - i think range is huge or infinite due to specific bug?
 
-2. Fix scaling is not intuitively designed
+2. The logs ensure that a file that is previously worked on will not be automatically reloaded. However it doesn't allow you to come back to a file that you had previously been working on and were partway through.
 
-3. Since the max of threshold is determined by median of previous segment, changing thresholding can actually screw things up in later areas
+3. Fix scaling is not intuitively designed
+
+4. Since the max of threshold is determined by median of previous segment, changing thresholding can actually screw things up in later areas

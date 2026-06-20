@@ -30,6 +30,10 @@
 #include <QSet>
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <tuple>
+#include <unordered_map>
+#include <vector>
 
 struct markable_data_series {
     //A series such as ECG, PPG, that can be annotated
@@ -79,7 +83,7 @@ namespace {
         for (int k = 0; k < peaks.size(); ++k) {
             const double prevX = (k > 0) ? peaks[k - 1].x() : -1e300;
             const double px = peaks[k].x();
-            double bestEnd = -1e300; 
+            double bestEnd = -1e300;
             int bestTag = 0;
             for (const PostSpan& s : spans) {
                 if (s.end <= prevX || s.end >= px) continue;        // a beat lies between
@@ -351,9 +355,10 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     const double sr = sampleRateForSignal(label);
     std::vector<std::pair<double, double>> refExcluded, detExcluded, withinSpans;
     std::vector<PostSpan> postSpans;
+    const std::string labelStd = label.toStdString();   // convert once, not per segment
     if (m_noiseManager) {
         for (const auto& seg : m_noiseManager->getSegments()) {
-            if (QString::fromStdString(seg.label) != label) continue;
+            if (seg.label != labelStd) continue;        // std::string compare, no per-seg QString alloc
             const double s = seg.startSample / sr - globalOffset;
             const double e = seg.endSample / sr - globalOffset;
             refExcluded.push_back({ s, e });
@@ -388,15 +393,25 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
         }
     }
 
-    // Per-peak parameter accessors: evaluate the override at each peak's own
-    // (global) time so a regional override applies exactly to the beats inside
-    // it -- not just when its span happens to bracket the window midpoint.
-    auto thrFn = [this, &label, globalOffset](double localT) {
-        return thresholdAt(label, localT + globalOffset);
-        };
-    auto blkFn = [this, &label, globalOffset](double localT) {
-        return blankingAt(label, localT + globalOffset);
-        };
+    // Per-peak parameter accessors, backed by an O(log n) piecewise-constant
+    // index built once from THIS channel's overrides (in chunk-local seconds).
+    // Replaces the old per-call linear scan of the full override vectors, so a
+    // window with no nearby overrides no longer pays for overrides elsewhere in
+    // the chunk.
+    gui_peak_finder::ParamIndex thrIdx, blkIdx;
+    {
+        std::vector<std::tuple<double, double, double>> tSeg, bSeg;
+        for (const ParamOverride& o : m_thresholdOverrides)
+            if (o.channel == label)
+                tSeg.push_back({ o.start - globalOffset, o.end - globalOffset, o.value });
+        for (const ParamOverride& o : m_blankingOverrides)
+            if (o.channel == label)
+                bSeg.push_back({ o.start - globalOffset, o.end - globalOffset, o.value });
+        thrIdx = gui_peak_finder::ParamIndex::build(m_cfg.height_threshold_percent, std::move(tSeg));
+        blkIdx = gui_peak_finder::ParamIndex::build(m_cfg.blanking_period, std::move(bSeg));
+    }
+    auto thrFn = [thrIdx](double localT) { return thrIdx.at(localT); };
+    auto blkFn = [blkIdx](double localT) { return blkIdx.at(localT); };
     const double sgn = invertedForSignal(label) ? -1.0 : 1.0;
     auto runFinder = [&](const std::vector<std::pair<double, double>>& refEx) {
         if (label == "PPG" || label == "ABP")
@@ -446,10 +461,42 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     return peaks;
 }
 
-// On-screen peaks: detect over exactly the visible window.
+// Padding (seconds) added on each side of the requested window before
+// detection, then cropped away. The reference/gate is already window-
+// independent (it reads fixed chunk-anchored frames), so the only window-
+// sensitive parts are short-range -- the local-max neighbour, the blanking
+// run-up, and the post-beat tag distance, all under ~2 s. Detecting this far
+// past each edge makes every *visible* beat interior to the detection range,
+// so its detection and red/blue classification no longer depend on where the
+// window edge fell. 5 s is comfortably above all those reaches.
+static constexpr double kDetectMargin = 5.0;
+
+// On-screen peaks: detect over a padded interval, then crop to the visible
+// window. Cropping (not a narrower detection) is what makes the result
+// reproducible regardless of scroll position.
 QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label, std::vector<int>* outPostTags) const {
-    return detectPeaks(label, current_start_time,
-        current_start_time + visible_window_size, outPostTags);
+    const double winStart = current_start_time;
+    const double winEnd = current_start_time + visible_window_size;
+    const double chunkDur = totalChunkDuration();
+    const double detStart = std::max(0.0, winStart - kDetectMargin);
+    const double detEnd = (chunkDur > 0.0) ? std::min(chunkDur, winEnd + kDetectMargin)
+        : winEnd + kDetectMargin;
+
+    std::vector<int> allTags;
+    const QVector<QPointF> all = detectPeaks(label, detStart, detEnd,
+        outPostTags ? &allTags : nullptr);
+
+    QVector<QPointF> out;
+    out.reserve(all.size());
+    std::vector<int> tags;
+    if (outPostTags) tags.reserve(all.size());
+    for (int i = 0; i < all.size(); ++i) {
+        if (all[i].x() < winStart || all[i].x() > winEnd) continue;   // drop the padding
+        out.append(all[i]);
+        if (outPostTags) tags.push_back(i < static_cast<int>(allTags.size()) ? allTags[i] : 0);
+    }
+    if (outPostTags) *outPostTags = std::move(tags);
+    return out;
 }
 
 QVector<QPointF> noise_marking_gui::get_bpm(const QString& label, double& outDuration) const
@@ -469,7 +516,19 @@ QVector<QPointF> noise_marking_gui::get_bpm(const QString& label, double& outDur
         tStart = std::max(0.0, tVisEnd - kMinBpmWindowSec);
     outDuration = tVisEnd - tStart;
 
-    return detectPeaks(label, tStart, tVisEnd);
+    // Same padded-detect-then-crop as display_peaks_in_window, so the rate
+    // agrees with the drawn beats and doesn't shift with scroll position.
+    const double chunkDur = totalChunkDuration();
+    const double detStart = std::max(0.0, tStart - kDetectMargin);
+    const double detEnd = (chunkDur > 0.0) ? std::min(chunkDur, tVisEnd + kDetectMargin)
+        : tVisEnd + kDetectMargin;
+
+    const QVector<QPointF> all = detectPeaks(label, detStart, detEnd);
+    QVector<QPointF> out;
+    out.reserve(all.size());
+    for (const QPointF& p : all)
+        if (p.x() >= tStart && p.x() <= tVisEnd) out.append(p);
+    return out;
 }
 
 void noise_marking_gui::setupHypnogram() {
@@ -795,17 +854,46 @@ void noise_marking_gui::handle_data_plot() {
         // its post tag (computed during detection: 0 unless it follows an
         // eligible arrhythmia). Noise spans don't reach here (detection is
         // suppressed).
+        //
+        // markType lookup: build this channel's spans once (sorted by start,
+        // with a prefix-max of their end times) so each beat is an O(log n)
+        // lookup. The common case -- a beat inside no annotation -- rejects in
+        // O(log n) via the prefix-max guard without scanning, and there is no
+        // per-segment QString allocation (the old loop allocated one QString
+        // per segment per beat, which dominated at high marking counts).
+        const std::string logLabelStd = label.toStdString();
+        struct LogSpan { double s, e; int code; };
+        std::vector<LogSpan> chanSpans;
+        std::vector<double>  prefMaxEnd;
+        if (m_noiseManager) {
+            for (const auto& seg : m_noiseManager->getSegments()) {
+                if (seg.label != logLabelStd) continue;
+                chanSpans.push_back({ seg.startSample / sr, seg.endSample / sr,
+                                      annotation_types::markCode(seg.marking_type) });
+            }
+            std::sort(chanSpans.begin(), chanSpans.end(),
+                [](const LogSpan& a, const LogSpan& b) { return a.s < b.s; });
+            prefMaxEnd.resize(chanSpans.size());
+            double running = -1e300;
+            for (size_t i = 0; i < chanSpans.size(); ++i) {
+                running = std::max(running, chanSpans[i].e);
+                prefMaxEnd[i] = running;
+            }
+        }
+        auto markTypeAt = [&](double gt) -> int {
+            int lo = 0, hi = static_cast<int>(chanSpans.size());
+            while (lo < hi) { const int mid = (lo + hi) >> 1; if (chanSpans[mid].s <= gt) lo = mid + 1; else hi = mid; }
+            if (lo == 0 || prefMaxEnd[lo - 1] < gt) return 0;   // nothing starting <= gt reaches gt (common case)
+            for (int j = lo - 1; j >= 0; --j) {                 // only runs when the beat is inside a mark
+                if (chanSpans[j].e >= gt) return chanSpans[j].code;
+                if (prefMaxEnd[j] < gt) break;
+            }
+            return 0;
+            };
+
         for (int k = 0; k < peaks.size(); ++k) {
             const double gt = peaks[k].x() + globalOffset;
-            int markType = 0;
-            if (m_noiseManager) {
-                for (const auto& seg : m_noiseManager->getSegments()) {
-                    if (QString::fromStdString(seg.label) != label) continue;
-                    if (gt >= seg.startSample / sr && gt <= seg.endSample / sr) {
-                        markType = annotation_types::markCode(seg.marking_type); break;
-                    }
-                }
-            }
+            const int markType = markTypeAt(gt);
             m_beatLog->logPeak(ch, gt, peaks[k].y(),
                 blankingAt(label, gt), thresholdAt(label, gt), markType, postTags[k]);
         }
@@ -960,13 +1048,23 @@ void noise_marking_gui::updateNoiseHighlights() {
     const double viewStart = current_start_time;
     const double viewEnd = viewStart + visible_window_size;
 
+    // Per-channel sample rate keyed by std::string so off-screen segments
+    // (the vast majority at high marking counts) are filtered with no
+    // per-segment QString allocation; the QString is built only for segments
+    // that actually fall in the visible window.
+    std::unordered_map<std::string, double> srByLabel;
+    for (const QString& lbl : markableChannelLabels())
+        if (isChannelActive(lbl))
+            srByLabel.emplace(lbl.toStdString(), sampleRateForSignal(lbl));
+
     for (const auto& seg : m_noiseManager->getSegments()) {
-        QString segLabel = QString::fromStdString(seg.label);
-        if (!axesMap.contains(segLabel)) continue;
-        const double sr = sampleRateForSignal(segLabel);
+        auto srIt = srByLabel.find(seg.label);
+        if (srIt == srByLabel.end()) continue;          // not an active channel; no alloc
+        const double sr = srIt->second;
         const double segStart = seg.startSample / sr - globalOffset;
         const double segEnd = seg.endSample / sr - globalOffset;
-        if (segEnd < viewStart || segStart > viewEnd) continue;
+        if (segEnd < viewStart || segStart > viewEnd) continue;   // off-screen; no alloc
+        const QString segLabel = QString::fromStdString(seg.label);   // visible segments only
 
         const double ds = std::max(segStart, viewStart);
         const double de = std::min(segEnd, viewEnd);

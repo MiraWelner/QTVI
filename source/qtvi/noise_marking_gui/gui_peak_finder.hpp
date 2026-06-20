@@ -14,6 +14,16 @@
  *         findPeaks            (ECG): local-extremum detector (max, or min when inverted).
  *         findPeaksDerivative  (PPG/ABP): squared-derivative systolic detector.
  *
+ *         PERFORMANCE NOTE: the exclusion-span checks (inside the per-sample
+ *         reference loop) and the per-peak threshold/blanking lookups used to
+ *         scan the *entire* marking / override list linearly, so a clean
+ *         present window still paid O(total_marks) per sample because every
+ *         historical mark sat in the same list. Both are now backed by
+ *         SpanIndex (sorted, merged intervals, O(log n) overlap test) and
+ *         ParamIndex (sorted disjoint piecewise-constant lookup, O(log n)),
+ *         so a window with no nearby marks/overrides costs ~nothing regardless
+ *         of how many exist elsewhere in the chunk.
+ *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
  */
@@ -24,14 +34,104 @@
 #include <QString>
 #include <algorithm>
 #include <functional>
+#include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace gui_peak_finder {
 
-    inline constexpr double previous_seconds_to_train_on = 5.0;
+    inline constexpr double previous_seconds_to_train_on = 10.0;
 
-    // True if t lies within any [start, end] span.
+    // ------------------------------------------------------------------------
+    // SpanIndex: sorted, merged, non-overlapping intervals with O(log n)
+    // membership / overlap queries. Built once per detection call from an
+    // arbitrary (possibly unsorted / overlapping) span list. Because the spans
+    // are merged, ends are monotonically increasing, which is what lets the
+    // overlap test look at a single candidate after the binary search.
+    // ------------------------------------------------------------------------
+    struct SpanIndex {
+        std::vector<std::pair<double, double>> spans;   // sorted by .first, disjoint
+
+        static SpanIndex build(const std::vector<std::pair<double, double>>& in) {
+            SpanIndex idx;
+            std::vector<std::pair<double, double>> c;
+            c.reserve(in.size());
+            for (const auto& e : in)
+                if (e.first < e.second) c.push_back(e);
+            std::sort(c.begin(), c.end());
+            idx.spans.reserve(c.size());
+            for (const auto& s : c) {
+                if (!idx.spans.empty() && s.first <= idx.spans.back().second)
+                    idx.spans.back().second = std::max(idx.spans.back().second, s.second);
+                else
+                    idx.spans.push_back(s);
+            }
+            return idx;
+        }
+
+        bool empty() const { return spans.empty(); }
+
+        // Is t inside any span? Find the last span whose start <= t; it's the
+        // only candidate that can contain t.
+        bool covers(double t) const {
+            if (spans.empty()) return false;
+            int lo = 0, hi = static_cast<int>(spans.size());
+            while (lo < hi) { const int mid = (lo + hi) >> 1; if (spans[mid].first <= t) lo = mid + 1; else hi = mid; }
+            return lo > 0 && t <= spans[lo - 1].second;
+        }
+
+        // Does any span overlap [a, b]? The last span with start <= b is the
+        // only one that can reach back into [a, b] (ends are increasing), so a
+        // single end-vs-a check after the search suffices.
+        bool anyOverlap(double a, double b) const {
+            if (spans.empty() || a > b) return false;
+            int lo = 0, hi = static_cast<int>(spans.size());
+            while (lo < hi) { const int mid = (lo + hi) >> 1; if (spans[mid].first <= b) lo = mid + 1; else hi = mid; }
+            return lo > 0 && spans[lo - 1].second >= a;
+        }
+    };
+
+    // ------------------------------------------------------------------------
+    // ParamIndex: piecewise-constant threshold / blanking lookup with a default
+    // value outside any override region. The GUI keeps per-channel overrides
+    // disjoint (finalizeParamEdit erases overlaps before appending), so a plain
+    // sort + binary search reproduces the old "last match wins" result while
+    // returning the config default in O(1) for a clean window.
+    // ------------------------------------------------------------------------
+    struct ParamIndex {
+        double defaultVal = 0.0;
+        std::vector<double> starts, ends, vals;   // sorted by start, disjoint
+
+        // seg entries are (start, end, value) in local seconds.
+        static ParamIndex build(double def,
+            std::vector<std::tuple<double, double, double>> seg) {
+            ParamIndex p;
+            p.defaultVal = def;
+            std::sort(seg.begin(), seg.end(),
+                [](const auto& a, const auto& b) { return std::get<0>(a) < std::get<0>(b); });
+            p.starts.reserve(seg.size());
+            p.ends.reserve(seg.size());
+            p.vals.reserve(seg.size());
+            for (const auto& s : seg) {
+                p.starts.push_back(std::get<0>(s));
+                p.ends.push_back(std::get<1>(s));
+                p.vals.push_back(std::get<2>(s));
+            }
+            return p;
+        }
+
+        double at(double t) const {
+            if (starts.empty()) return defaultVal;
+            int lo = 0, hi = static_cast<int>(starts.size());
+            while (lo < hi) { const int mid = (lo + hi) >> 1; if (starts[mid] <= t) lo = mid + 1; else hi = mid; }
+            if (lo > 0 && t <= ends[lo - 1]) return vals[lo - 1];
+            return defaultVal;
+        }
+    };
+
+    // True if t lies within any [start, end] span. (Linear; retained for the
+    // small `withinSpans` list and any legacy callers. Hot paths use SpanIndex.)
     inline bool inExcludedSpan(const std::vector<std::pair<double, double>>& spans, double t) {
         for (const auto& s : spans)
             if (t >= s.first && t <= s.second) return true;
@@ -61,25 +161,22 @@ namespace gui_peak_finder {
 
     // Drop reference peaks inside marked spans, unless that empties the set.
     inline QVector<QPointF> cleanReferencePeaks(QVector<QPointF> refPeaks,
-        const std::vector<std::pair<double, double>>& refExcluded) {
+        const SpanIndex& refExcluded) {
         if (refExcluded.empty()) return refPeaks;
         QVector<QPointF> kept;
         kept.reserve(refPeaks.size());
         for (const QPointF& p : refPeaks)
-            if (!inExcludedSpan(refExcluded, p.x())) kept.append(p);
+            if (!refExcluded.covers(p.x())) kept.append(p);
         return kept.isEmpty() ? refPeaks : kept;
     }
 
     // Mean spacing between consecutive peaks, skipping intervals overlapping a span.
     inline double meanIntervalExcludingSpans(const QVector<QPointF>& peaks,
-        const std::vector<std::pair<double, double>>& spans) {
+        const SpanIndex& spans) {
         double sum = 0.0; int cnt = 0;
         for (int i = 1; i < peaks.size(); ++i) {
             const double a = peaks[i - 1].x(), b = peaks[i].x();
-            bool straddles = false;
-            for (const auto& s : spans)
-                if (s.first <= b && a <= s.second) { straddles = true; break; }
-            if (straddles) continue;
+            if (spans.anyOverlap(a, b)) continue;
             sum += b - a; ++cnt;
         }
         return cnt > 0 ? sum / cnt : 0.0;
@@ -134,9 +231,9 @@ namespace gui_peak_finder {
         while (lo < hi) { const int mid = (lo + hi) >> 1; if (rp[mid].x() < val) lo = mid + 1; else hi = mid; }
         return lo;
     }
+
     // Merge + sort excluded spans once, clipped to [0, tMax], dropping empties.
-    // The result is what reachBackWalk consumes; computing it once per detection
-    // call instead of once per candidate beat is the optimization.
+    // (Retained for compatibility; SpanIndex::build now does the equivalent.)
     inline std::vector<std::pair<double, double>> mergeExcluded(
         double tMax, const std::vector<std::pair<double, double>>& spans) {
         std::vector<std::pair<double, double>> c;
@@ -167,12 +264,28 @@ namespace gui_peak_finder {
     // by the caller (per-channel checkbox); all amplitude reads run in that frame.
     struct RefStats { double vMin = 0.0, gateTop = 0.0, meanRR = 0.0; bool ok = false; };
     inline RefStats refStatsLocalMax(const QVector<QPointF>& rp, double t, double need,
-        const std::vector<std::pair<double, double>>& refExcluded,
+        const SpanIndex& refExcluded,
         const std::vector<std::pair<double, double>>& withinSpans,
         const ParamFn& threshold,
-        double sgn = 1.0) {
+        double sgn = 1.0,
+        std::unordered_map<long, RefStats>* frameCache = nullptr) {
         RefStats rs;
         double aS, aE; const bool within = spanContaining(withinSpans, t, aS, aE);
+
+        // Every candidate beat in the same reference frame produces an identical
+        // RefStats, so compute it once per frame and reuse. `within` beats use a
+        // bespoke (non-frame) reference, so they bypass the cache. Keyed by the
+        // chosen clean frame k (deterministic from the beat's frame and the
+        // walk-back), which also dedupes beats whose frames skip back to the
+        // same clean one. The cache belongs to one findPeaks call -- the second
+        // (post-beat) pass excludes different spans, so it gets its own.
+        long cacheKey = -1;
+        bool cacheable = false;
+        auto ret = [&](const RefStats& r) -> RefStats {
+            if (cacheable && frameCache) (*frameCache)[cacheKey] = r;
+            return r;
+            };
+
         int a, b;
         if (within) { a = lowerIdx(rp, std::max(aS, t - need)); b = lowerIdx(rp, t); }
         else {
@@ -182,20 +295,20 @@ namespace gui_peak_finder {
             // any frame containing noise is skipped over whole (no partial use,
             // no reaching back for clean seconds). Frame 0 is the floor -- if
             // nothing clean precedes the beat, frame 0 is used as-is.
-            auto frameHasNoise = [&](double lo, double hi) {
-                for (const auto& s : refExcluded)
-                    if (s.first < hi && lo < s.second) return true;
-                return false;
-                };
             const long m = static_cast<long>(t / need);   // t >= 0 => floor(t/need)
             long k = m - 1;
-            while (k > 0 && frameHasNoise(k * need, (k + 1) * need)) --k;
+            while (k > 0 && refExcluded.anyOverlap(k * need, (k + 1) * need)) --k;
             if (k < 0) k = 0;
+            cacheable = true; cacheKey = k;
+            if (frameCache) {
+                auto it = frameCache->find(k);
+                if (it != frameCache->end()) return it->second;   // already computed this frame
+            }
             a = lowerIdx(rp, k * need);
             b = lowerIdx(rp, (k + 1) * need);
         }
-        if (b - a < 3) return rs;
-        auto excluded = [&](double tt) { return within ? false : inExcludedSpan(refExcluded, tt); };
+        if (b - a < 3) return ret(rs);
+        auto excluded = [&](double tt) { return within ? false : refExcluded.covers(tt); };
 
         double vMin = 1e300, vMax = -1e300; int kept = 0;
         for (int i = a; i < b; ++i) {
@@ -206,7 +319,7 @@ namespace gui_peak_finder {
             vMin = 1e300; vMax = -1e300;
             for (int i = a; i < b; ++i) { const double v = sgn * rp[i].y(); vMin = std::min(vMin, v); vMax = std::max(vMax, v); }
         }
-        if (vMax <= vMin) return rs;
+        if (vMax <= vMin) return ret(rs);
 
         // The threshold is piecewise-constant in time, changing only at override
         // edges. Probe it at both ends of the reference window: if they match,
@@ -232,7 +345,7 @@ namespace gui_peak_finder {
             : meanIntervalExcludingSpans(refPeaks, refExcluded);
         rs.gateTop = refPeaks.isEmpty() ? vMax : medianY(refPeaks);
         rs.ok = true;
-        return rs;
+        return ret(rs);
     }
 
     inline QVector<QPointF> findPeaks(const QVector<QPointF>& rawPairs,
@@ -249,8 +362,11 @@ namespace gui_peak_finder {
         QVector<QPointF> out;
         if (rawPairs.size() < 3 || detStart >= detEnd) return out;
         (void)refStart; (void)refEnd; (void)usePeakMedian;   // reference is per-beat
-        const std::vector<std::pair<double, double>> refMerged = mergeExcluded(1e300, refExcluded);
 
+        // Build the O(log n) indices ONCE for this detection call. These replace
+        // the old per-sample linear scans of the full (history-inclusive) lists.
+        const SpanIndex refIdx = SpanIndex::build(refExcluded);
+        const SpanIndex detIdx = SpanIndex::build(detExcluded);
 
         constexpr double kBlankMargin = 2.0;   // s; >= any plausible blank interval
         const int i0 = std::max(1, lowerIdx(rawPairs, detStart - kBlankMargin));
@@ -259,12 +375,13 @@ namespace gui_peak_finder {
 
         QVector<QPointF> prelim;
         std::vector<double> prelimRR;
+        std::unordered_map<long, RefStats> frameCache;   // one reference per frame, this pass only
         for (int i = i0; i < i1; ++i) {
             const double yv = sgn * rawPairs[i].y();   // upright-frame amplitude
             if (!(yv >= sgn * rawPairs[i - 1].y() && yv > sgn * rawPairs[i + 1].y())) continue;  // local max upright (= min when inverted)
             const double t = rawPairs[i].x();
-            if (inExcludedSpan(detExcluded, t)) continue;
-            const RefStats rs = refStatsLocalMax(rawPairs, t, previous_seconds_to_train_on, refMerged, withinSpans, threshold, sgn);
+            if (detIdx.covers(t)) continue;
+            const RefStats rs = refStatsLocalMax(rawPairs, t, previous_seconds_to_train_on, refIdx, withinSpans, threshold, sgn, &frameCache);
             if (!rs.ok) continue;
             const double gate = rs.vMin + threshold(t) * (rs.gateTop - rs.vMin);
             if (yv >= gate) { prelim.append({ t, rawPairs[i].y() }); prelimRR.push_back(rs.meanRR); }
@@ -321,31 +438,42 @@ namespace gui_peak_finder {
 
     struct RefStatsD { double vMin = 0.0, gateTop = 0.0, meanRR = 0.0, upstrokeGate = 0.0; bool ok = false; };
     inline RefStatsD refStatsDeriv(const QVector<QPointF>& rp, double t, double need,
-        const std::vector<std::pair<double, double>>& refExcluded,
+        const SpanIndex& refExcluded,
         const std::vector<std::pair<double, double>>& withinSpans,
-        const ParamFn& threshold) {
+        const ParamFn& threshold,
+        std::unordered_map<long, RefStatsD>* frameCache = nullptr) {
         RefStatsD rs;
         double aS, aE; const bool within = spanContaining(withinSpans, t, aS, aE);
+
+        // Per-frame reference cache (see refStatsLocalMax). `within` beats bypass
+        // it; frame beats key on the chosen clean frame k. One cache per pass.
+        long cacheKey = -1;
+        bool cacheable = false;
+        auto ret = [&](const RefStatsD& r) -> RefStatsD {
+            if (cacheable && frameCache) (*frameCache)[cacheKey] = r;
+            return r;
+            };
+
         int a, b;
         if (within) { a = lowerIdx(rp, std::max(aS, t - need)); b = lowerIdx(rp, t); }
         else {
             // Frame-based reference (see refStatsLocalMax for the full rationale):
             // the nearest earlier frame with no marked span in it; noisy frames
             // are skipped whole; frame 0 is the floor.
-            auto frameHasNoise = [&](double lo, double hi) {
-                for (const auto& s : refExcluded)
-                    if (s.first < hi && lo < s.second) return true;
-                return false;
-                };
             const long m = static_cast<long>(t / need);   // t >= 0 => floor(t/need)
             long k = m - 1;
-            while (k > 0 && frameHasNoise(k * need, (k + 1) * need)) --k;
+            while (k > 0 && refExcluded.anyOverlap(k * need, (k + 1) * need)) --k;
             if (k < 0) k = 0;
+            cacheable = true; cacheKey = k;
+            if (frameCache) {
+                auto it = frameCache->find(k);
+                if (it != frameCache->end()) return it->second;
+            }
             a = lowerIdx(rp, k * need);
             b = lowerIdx(rp, (k + 1) * need);
         }
-        if (b - a < 4) return rs;
-        auto excluded = [&](double tt) { return within ? false : inExcludedSpan(refExcluded, tt); };
+        if (b - a < 4) return ret(rs);
+        auto excluded = [&](double tt) { return within ? false : refExcluded.covers(tt); };
 
         double vMin = 1e300, vMax = -1e300; int kept = 0;
         for (int i = a; i < b; ++i) {
@@ -356,7 +484,7 @@ namespace gui_peak_finder {
             vMin = 1e300; vMax = -1e300;
             for (int i = a; i < b; ++i) { const double v = rp[i].y(); vMin = std::min(vMin, v); vMax = std::max(vMax, v); }
         }
-        if (vMax <= vMin) return rs;
+        if (vMax <= vMin) return ret(rs);
 
         std::vector<double> d2;
         d2.reserve(b - a);
@@ -367,10 +495,10 @@ namespace gui_peak_finder {
         if (d2.empty()) {
             for (int i = a; i < b - 1; ++i) { const double dv = rp[i + 1].y() - rp[i].y(); d2.push_back(dv * dv); }
         }
-        if (d2.empty()) return rs;
+        if (d2.empty()) return ret(rs);
         std::sort(d2.begin(), d2.end());
         const double d90 = d2[(int)(0.9 * d2.size())];
-        if (d90 <= 0.0) return rs;
+        if (d90 <= 0.0) return ret(rs);
         rs.upstrokeGate = 0.6 * d90;
 
         const QVector<QPointF> refRaw = collectSystolic(rp, a, b, rs.upstrokeGate, vMin, vMax, threshold);
@@ -380,7 +508,7 @@ namespace gui_peak_finder {
             : meanIntervalExcludingSpans(refPeaks, refExcluded);
         rs.gateTop = refPeaks.isEmpty() ? vMax : medianY(refPeaks);
         rs.ok = true;
-        return rs;
+        return ret(rs);
     }
 
     inline QVector<QPointF> findPeaksDerivative(const QVector<QPointF>& rawPairs,
@@ -397,6 +525,9 @@ namespace gui_peak_finder {
         if (rawPairs.size() < 4 || detStart >= detEnd) return out;
         (void)refStart; (void)refEnd; (void)usePeakMedian;
 
+        const SpanIndex refIdx = SpanIndex::build(refExcluded);
+        const SpanIndex detIdx = SpanIndex::build(detExcluded);
+
         constexpr double kBlankMargin = 2.0;
         const int n = static_cast<int>(rawPairs.size());
         const int i0 = std::max(1, lowerIdx(rawPairs, detStart - kBlankMargin));
@@ -404,6 +535,7 @@ namespace gui_peak_finder {
 
         QVector<QPointF> prelim;
         std::vector<double> prelimRR;
+        std::unordered_map<long, RefStatsD> frameCache;   // one reference per frame, this pass only
         for (int k = i0; k < i1; ++k) {
             const double dkm = rawPairs[k].y() - rawPairs[k - 1].y();
             const double dk = rawPairs[k + 1].y() - rawPairs[k].y();
@@ -420,8 +552,8 @@ namespace gui_peak_finder {
                 else break;
             }
             const double t = rawPairs[apexIdx].x();
-            if (inExcludedSpan(detExcluded, t)) continue;
-            const RefStatsD rs = refStatsDeriv(rawPairs, t, previous_seconds_to_train_on, refExcluded, withinSpans, threshold);
+            if (detIdx.covers(t)) continue;
+            const RefStatsD rs = refStatsDeriv(rawPairs, t, previous_seconds_to_train_on, refIdx, withinSpans, threshold, &frameCache);
             if (!rs.ok) continue;
             if (d2k < rs.upstrokeGate) continue;
             const double gate = rs.vMin + threshold(t) * (rs.gateTop - rs.vMin);
