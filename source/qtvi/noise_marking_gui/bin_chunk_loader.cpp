@@ -33,22 +33,24 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) return;
 
+    // Header layout (must match file_to_bin's write_header_and_close):
+    //   3 scalars (signal/upsample rate, low/bool rate, sleep epoch length)
+    //   + 40 upsampled sizes + 40 raw sizes + 40 native rates + 1 sleep count.
     constexpr int kNumChannels = NUM_CHANNELS;
-    constexpr int kNumFields = 4 + 3 * kNumChannels + 1;
+    constexpr int kNumFields = 3 + 3 * kNumChannels + 1;
     static_assert(FILE_HEADER_SIZE == kNumFields * 4,
-        "FILE_HEADER_SIZE must match 4 + 3*N + 1 slot count");
+        "FILE_HEADER_SIZE must match 3 + 3*N + 1 slot count");
 
     uint32_t raw32[kNumFields] = {};
     file.read(reinterpret_cast<char*>(raw32), sizeof(raw32));
     file.close();
 
-    m_ecgSR = static_cast<double>(raw32[0]);
-    m_boolSR = static_cast<double>(raw32[1]);
-    m_ppgSR = m_ecgSR;
-    double sleepEpoch = static_cast<double>(raw32[3]);
+    m_ecgSR = static_cast<double>(raw32[0]);   // common upsampled grid rate
+    m_boolSR = static_cast<double>(raw32[1]);  // low/bool rate (<=1 Hz channels)
+    double sleepEpoch = static_cast<double>(raw32[2]);   // sleep epoch length (s)
     m_sleepSR = (sleepEpoch > 0) ? (1.0 / sleepEpoch) : 0;
 
-    constexpr int kSizesUpBase = 4;
+    constexpr int kSizesUpBase = 3;
     constexpr int kSizesRawBase = kSizesUpBase + kNumChannels;
     constexpr int kNativeRatesBase = kSizesRawBase + kNumChannels;
     constexpr int kSleepCountIdx = kNativeRatesBase + kNumChannels;
@@ -139,17 +141,9 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     }
     const uint64_t sleepByteOffset = running;
 
-    auto rateForChannel = [this](int chIdx) -> double {
-        if (chIdx == CH_MARKER || chIdx == CH_TEMP || chIdx == CH_PACEMAKER)
-            return m_boolSR;
-        if (chIdx >= CH_EKG_OFF && chIdx <= CH_EEG3_OFF) return m_boolSR;
-        if (chIdx == CH_OXSTATUS || chIdx == CH_SPO2 || chIdx == CH_HR)
-            return m_boolSR;
-        return m_ecgSR;
-        };
 
     auto loadSignal = [&](QVector<double>& dest, int chIdx) {
-        double   sr = rateForChannel(chIdx);
+        double sr = upsampledRateFor(chIdx);
         uint64_t totalSamples = upsampled_channel_sizes[chIdx];
         uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * sr);
         uint64_t start = chunkIndex * perChunk;
@@ -201,14 +195,18 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     loadSignal(m_ecg1, CH_ECG1);   loadSignal(m_ecg2, CH_ECG2);
     loadSignal(m_ecg3, CH_ECG3);   loadSignal(m_ppg, CH_PPG);
     loadSignal(m_accelX, CH_ACCEL_X); loadSignal(m_accelY, CH_ACCEL_Y);
-    loadSignal(m_accelZ, CH_ACCEL_Z); loadSignal(m_cvp, CH_PRES);
+    loadSignal(m_accelZ, CH_ACCEL_Z); loadSignal(m_cvp, CH_CVP);
     loadSignal(m_resp, CH_RESP);    loadSignal(m_abp, CH_ABP);
+    loadSignal(m_temp, CH_TEMP);    loadSignal(m_marker, CH_MARKER);
+    loadSignal(m_pacemaker, CH_PACEMAKER);
 
     loadRaw(m_ecg1Raw, CH_ECG1);   loadRaw(m_ecg2Raw, CH_ECG2);
     loadRaw(m_ecg3Raw, CH_ECG3);   loadRaw(m_ppgRaw, CH_PPG);
     loadRaw(m_abpRaw, CH_ABP);    loadRaw(m_accelXRaw, CH_ACCEL_X);
     loadRaw(m_accelYRaw, CH_ACCEL_Y); loadRaw(m_accelZRaw, CH_ACCEL_Z);
-    loadRaw(m_respRaw, CH_RESP);   loadRaw(m_cvpRaw, CH_PRES);
+    loadRaw(m_respRaw, CH_RESP);   loadRaw(m_cvpRaw, CH_CVP);
+    loadRaw(m_tempRaw, CH_TEMP);   loadRaw(m_markerRaw, CH_MARKER);
+    loadRaw(m_pacemakerRaw, CH_PACEMAKER);
 
     if (m_gapIndicator) m_gapIndicator->rescan();
 
@@ -224,11 +222,14 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     rewriteRawToIndexTime(m_ecg3Raw, CH_ECG3);
     rewriteRawToIndexTime(m_ppgRaw, CH_PPG);
     rewriteRawToIndexTime(m_abpRaw, CH_ABP);
+    rewriteRawToIndexTime(m_tempRaw, CH_TEMP);
+    rewriteRawToIndexTime(m_markerRaw, CH_MARKER);
     rewriteRawToIndexTime(m_accelXRaw, CH_ACCEL_X);
     rewriteRawToIndexTime(m_accelYRaw, CH_ACCEL_Y);
     rewriteRawToIndexTime(m_accelZRaw, CH_ACCEL_Z);
     rewriteRawToIndexTime(m_respRaw, CH_RESP);
-    rewriteRawToIndexTime(m_cvpRaw, CH_PRES);
+    rewriteRawToIndexTime(m_cvpRaw, CH_CVP);
+    rewriteRawToIndexTime(m_pacemakerRaw, CH_PACEMAKER);
 
     {
         uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * m_sleepSR);
@@ -244,27 +245,44 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 
     m_activeChannels.clear();
     auto markActive = [this](const QString& label, const QVector<double>& data) {
-        bool missing = isMissingSignal(data);
+        bool missing = is_missing_signal(data);
         if (auto* cv = chartViewForSignalLabel(label)) cv->setVisible(!missing);
         if (!missing) m_activeChannels.insert(label);
         };
-    markActive("ECG1", m_ecg1); markActive("ECG2", m_ecg2);
-    markActive("ECG3", m_ecg3); markActive("PPG", m_ppg);
+    const bool bittium = (m_cfg.dataset_type == "BITTIUM");
 
-    bool anyAccel = !isMissingSignal(m_accelX)
-        || !isMissingSignal(m_accelY) || !isMissingSignal(m_accelZ);
-    if (!anyAccel) markActive("ABP", m_abp);
+    markActive("ECG1", m_ecg1); markActive("ECG2", m_ecg2);
+    markActive("ECG3", m_ecg3);
+
+    bool anyAccel = !is_missing_signal(m_accelX)
+        || !is_missing_signal(m_accelY) || !is_missing_signal(m_accelZ);
 
     if (ui->accel_or_abp_axis)
-        ui->accel_or_abp_axis->setVisible(!isMissingSignal(m_abp));
+        ui->accel_or_abp_axis->setVisible(!bittium && !is_missing_signal(m_abp));
     if (ui->ppg_ampogram_axis)
-        ui->ppg_ampogram_axis->setVisible(!isMissingSignal(m_ppg));
-    if (ui->cvp_axis)
-        ui->cvp_axis->setVisible(!isMissingSignal(m_cvp));
-    if (ui->hyp_accel_resp_axis) {
-        ui->hyp_accel_resp_axis->setVisible(
-            sleepDataPresent(m_sleepStages)
-            || !isMissingSignal(m_resp) || anyAccel);
+        ui->ppg_ampogram_axis->setVisible(!is_missing_signal(m_ppg));
+
+    if (bittium) {
+        markActive("PPG_ACCEL", m_accelX);
+        if (ui->cvp_axis)
+            ui->cvp_axis->setVisible(!is_missing_signal(m_temp));
+        if (ui->hyp_resp_axis)
+            ui->hyp_resp_axis->setVisible(!is_missing_signal(m_marker));
+        if (ui->pacemaker_axis)
+            ui->pacemaker_axis->setVisible(!is_missing_signal(m_pacemaker));
+    }
+    else {
+        markActive("PPG_ACCEL", m_ppg);
+        if (!anyAccel) markActive("ABP", m_abp);
+        if (ui->pacemaker_axis)
+            ui->pacemaker_axis->setVisible(false);   // BITTIUM-only chart
+        if (ui->cvp_axis)
+            ui->cvp_axis->setVisible(m_cvpRaw.size() >= 2);
+        if (ui->hyp_resp_axis) {
+            ui->hyp_resp_axis->setVisible(
+                sleep_data_present(m_sleepStages)
+                || !is_missing_signal(m_resp) || anyAccel);
+        }
     }
 
     updateAllChannelButtonStates();

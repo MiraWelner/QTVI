@@ -12,6 +12,8 @@
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QFileDialog>
+#include <unordered_map>
+
 
 #include <algorithm>
 #include <cctype>
@@ -44,37 +46,24 @@ namespace {
 
     void apply_dataset_specific_channel_labels(config_entry& cfg) {
         /*
-            Each dataset uses different names for the same channel. For example,
-            the EKG channel in MESA is equivalent to the NLS_NOM_ECG_ELEC_POTL_I
-            label in CHAOS and the ECG_1 label in Bittium. Each channel is a
-            feature of the config_entry cfg, and they are assigned here.
+            The ECG and PPG channels exist in different datasets, but their names are
+            different so they are set here.
         */
         if (cfg.dataset_type == "MESA") {
-            cfg.ecg1Label = "EKG";
-            cfg.ppgLabel = "Pleth";
+            cfg.ecg_1_label = "EKG";
+            cfg.ppg_label = "Pleth";
         }
         else if (cfg.dataset_type == "BITTIUM") {
-            cfg.ecg1Label = "ECG_1";
-            cfg.ecg2Label = "ECG_2";
-            cfg.ecg3Label = "ECG_3";
-            cfg.accelXLabel = "Accelerometer_X";
-            cfg.accelYLabel = "Accelerometer_Y";
-            cfg.accelZLabel = "Accelerometer_Z";
+            cfg.ecg_1_label = "ECG_1";
+            cfg.ecg_2_label = "ECG_2";
+            cfg.ecg_3_label = "ECG_3";
         }
+
         else if (cfg.dataset_type == "CHAOS") {
-            cfg.ecg1Label = "NLS_NOM_ECG_ELEC_pOTL_I";
-            cfg.ecg2Label = "NLS_NOM_ECG_ELEC_pOTL_II";
-            cfg.ecg3Label = "NLS_NOM_ECG_ELEC_pOTL_III";
-            cfg.ppgLabel = "NLS_NOM_PULS_OXIM_PLETH";
-            cfg.eeg1Label = "NLS_EEG_NAMES_EEG_CHAN1";
-            cfg.eeg2Label = "NLS_EEG_NAMES_EEG_CHAN2";
-            cfg.eeg3Label = "NLS_EEG_NAMES_EEG_CHAN3";
-            cfg.eeg4Label = "NLS_EEG_NAMES_EEG_CHAN4";
-            cfg.cvpLabel = "NLS_NOM_PRESS_BLD_VEN_CENT";
-            cfg.respLabel = "NLS_NOM_RESP";
-            cfg.abpLabel = "NLS_NOM_PRESS_BLD_ART_ABP";
-            cfg.artLabel = "NLS_NOM_PRESS_BLD_ART";
-            cfg.artPulmLabel = "NLS_NOM_PRESS_BLD_ART_PULM";
+            cfg.ecg_1_label = "NLS_NOM_ECG_ELEC_POTL_I";
+            cfg.ecg_2_label = "NLS_NOM_ECG_ELEC_POTL_II";
+            cfg.ecg_3_label = "NLS_NOM_ECG_ELEC_POTL_III";
+            cfg.ppg_label = "NLS_NOM_PULS_OXIM_PLETH";
         }
     }
 
@@ -82,6 +71,7 @@ namespace {
         /*
             All the types of output are stored in their own subfolder of output_path, which are defined in this function
         */
+
         cfg.snapshot_path = cfg.output_path + "/saved_plot_snapshots/";
         cfg.annealed_data_path = cfg.output_path + "/annealed_output/";
         cfg.noise_data_path = cfg.output_path + "/noise_marking_output/";
@@ -146,38 +136,52 @@ std::optional<config_entry> load_config(int dataType) {
         : (dataType == 2) ? "BITTIUM"
         : (dataType == 3) ? "CHAOS" : "";
 
-    std::string line;
-    std::getline(file, line);   // skip header
+    // Column-name -> index from the header (survives reordering / new columns).
+    std::string header;
+    if (!std::getline(file, header)) return std::nullopt;
+    std::vector<std::string> headerFields = parse_csv_row(header);
+    std::unordered_map<std::string, int> col;
+    for (int i = 0; i < (int)headerFields.size(); ++i) {
+        std::string h = headerFields[i];
+        std::transform(h.begin(), h.end(), h.begin(), ::tolower);
+        col[h] = i;
+    }
 
+    std::string line;
     while (std::getline(file, line)) {
-        auto row = parse_csv_row(line);
-        std::string rowType = row[0];
+        std::vector<std::string> row = parse_csv_row(line);
+
+        auto cell = [&](const std::string& name) -> std::string {
+            auto it = col.find(name);
+            if (it == col.end() || it->second >= (int)row.size()) return {};
+            return row[it->second];
+            };
+
+        std::string rowType = cell("data_type");
         std::transform(rowType.begin(), rowType.end(), rowType.begin(), ::toupper);
         if (rowType != input_file_type) continue;
-        config_entry cfg;
 
-        cfg.dataset_type = rowType;
-        cfg.original_file_extention = row[1];
-        cfg.sleep_file_extention = row[2];
-
-        // Some CSV cells are intentionally blank (e.g. Bittium has no PPG
-        // rate). std::stod throws on empty strings, so guard.
         auto stod_or_zero = [](const std::string& s) -> double {
             if (s.empty()) return 0.0;
             try { return std::stod(s); }
             catch (...) { return 0.0; }
             };
-        cfg.ecg_rate = stod_or_zero(row[3]);
-        cfg.ppg_rate = stod_or_zero(row[4]);
-        cfg.central_venous_pressure_rate = stod_or_zero(row[5]);
-        cfg.arterial_blood_pressure_rate = stod_or_zero(row[6]);
-        cfg.resp_rate = stod_or_zero(row[7]);
-        cfg.target_sampling_rate = stod_or_zero(row[8]);
-        cfg.blanking_period = std::stod(row[9]);
-		cfg.height_threshold_percent = std::stod(row[10]);
-        cfg.bin_length_minutes = stod_or_zero(row[11]);
-        cfg.input_path = row[12];
-        cfg.output_path = row[13];
+
+        config_entry cfg;
+        cfg.dataset_type = rowType;
+        cfg.original_file_extention = cell("main_file_extention");
+        cfg.sleep_file_extention = cell("sleep_file_extention");
+        cfg.ecg_rate = stod_or_zero(cell("ecg_rate"));
+        cfg.ppg_rate = stod_or_zero(cell("ppg_rate"));
+        cfg.central_venous_pressure_rate = stod_or_zero(cell("cvp_rate"));
+        cfg.arterial_blood_pressure_rate = stod_or_zero(cell("abp_rate"));
+        cfg.resp_rate = stod_or_zero(cell("resp_rate"));
+        cfg.target_sampling_rate = stod_or_zero(cell("upsampled_rate"));
+        cfg.blanking_period = stod_or_zero(cell("blanking_period"));
+        cfg.height_threshold_percent = stod_or_zero(cell("threshold"));
+        cfg.bin_length_minutes = stod_or_zero(cell("bin_size_minutes"));
+        cfg.input_path = cell("original_file_path");
+        cfg.output_path = cell("output_folder");
         deriveSubpaths(cfg);
 
         apply_dataset_specific_channel_labels(cfg);

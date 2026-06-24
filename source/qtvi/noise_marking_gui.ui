@@ -975,8 +975,8 @@
        <item>
         <widget class="QChartView" name="ecg_ampogram_axis" native="true">
          <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-           <horstretch>0</horstretch>
+          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+           <horstretch>1</horstretch>
            <verstretch>1</verstretch>
           </sizepolicy>
          </property>
@@ -994,8 +994,8 @@
        <item>
         <widget class="QChartView" name="ppg_ampogram_axis" native="true">
          <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-           <horstretch>0</horstretch>
+          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+           <horstretch>1</horstretch>
            <verstretch>1</verstretch>
           </sizepolicy>
          </property>
@@ -1011,18 +1011,15 @@
         </widget>
        </item>
        <item>
-        <layout class="QHBoxLayout" name="horizontalLayout_5" stretch="1,1">
+        <layout class="QHBoxLayout" name="horizontalLayout_5" stretch="1,1,1">
          <property name="spacing">
           <number>0</number>
          </property>
          <item>
-          <widget class="QChartView" name="cvp_axis" native="true"/>
-         </item>
-         <item>
-          <widget class="QChartView" name="hyp_accel_resp_axis" native="true">
+          <widget class="QChartView" name="pacemaker_axis" native="true">
            <property name="sizePolicy">
-            <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-             <horstretch>0</horstretch>
+            <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+             <horstretch>1</horstretch>
              <verstretch>1</verstretch>
             </sizepolicy>
            </property>
@@ -1032,8 +1029,37 @@
              <height>80</height>
             </size>
            </property>
-           <property name="styleSheet">
-            <string notr="true"/>
+          </widget>
+         </item>
+         <item>
+          <widget class="QChartView" name="cvp_axis" native="true">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+             <horstretch>1</horstretch>
+             <verstretch>1</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>80</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QChartView" name="hyp_resp_axis" native="true">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+             <horstretch>1</horstretch>
+             <verstretch>1</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>80</height>
+            </size>
            </property>
           </widget>
          </item>
@@ -1328,7 +1354,7 @@
       </widget>
      </item>
      <item>
-      <widget class="QChartView" name="ppg_axis" native="true">
+      <widget class="QChartView" name="ppg_accel_axis" native="true">
        <property name="sizePolicy">
         <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
          <horstretch>1</horstretch>
@@ -1505,7 +1531,7 @@
   <customwidget>
    <class>QChartView</class>
    <extends>QWidget</extends>
-   <header>QtCharts/qchartview.h</header>
+   <header location="global">QtCharts/qchartview.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

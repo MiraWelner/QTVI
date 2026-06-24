@@ -4,25 +4,6 @@
  *          arrhythmias, and artifacts. Loads data in 8-hour chunks from a
  *          binary file produced by file_to_bin.
  *
- * @details Expects the paired-channel .bin format (512-byte header):
- *            - 4 rate fields (signal, boolean, pacemaker, sleep-epoch-length)
- *            - 40 upsampled-block sizes
- *            - 40 raw-block sizes (each counts (timestamp, value) PAIRS,
- *              so the on-disk byte length is 2 * size * sizeof(double))
- *            - 40 native sampling rates (float32; 0 = absent)
- *            - 1 sleep-sample count
- *          Channel 0 is a Timestamp channel (seconds from recording start).
- *          It's loaded alongside the rest but not plotted -- the GUI only
- *          plots channels it already plotted, and the timestamp slot is
- *          treated like any other unplotted channel.
- *          For each of the 40 channels, the upsampled block is written
- *          first, followed by the raw block of (t, v) pairs in seconds
- *          from start of recording. For markable channels (ECG1/2/3, PPG,
- *          ABP) the raw block is overlaid on the plot as a grayscale
- *          scatter at the true sample timestamps. Storing timestamps
- *          (instead of assuming uniform spacing) lets irregular and
- *          gap-filled data (CHAOS .dat) render correctly.
- *
  * @author  Mira Welner
  * @email   MEW386@pitt.edu
  */
@@ -69,9 +50,16 @@ struct GenExcStruct {
 class beat_log;   // defined in beat_log.hpp; only a pointer is held here
 class annotation_eraser;   // defined in annotation_eraser.h; pointer held below
 
+
+struct markable_data_series {
+    const QVector<double>* data;
+    QColor color;
+    const QVector<QPointF>* rawData;
+};
+
 class noise_marking_gui : public QDialog {
     Q_OBJECT
-        friend class user_control_handler;
+    friend class user_control_handler;
     friend class gap_indicator;
     friend class annotation_eraser;
 
@@ -81,60 +69,26 @@ public:
      */
     explicit noise_marking_gui(QWidget* parent = nullptr);
     ~noise_marking_gui() override;
-
-    /**
-     * @brief  Markings recorded for the *currently loaded* file only.
-     *         For cross-file markings use getAllMarkings().
-     * @return GenExcStruct populated with this file's markings (filePath set).
-     */
     GenExcStruct getMarkings() const;
-
-    /**
-     * @brief  Markings for every file touched during this dialog session.
-     * @return One GenExcStruct per file that has at least one marking;
-     *         stashed markings from previously-viewed files are included
-     *         alongside the currently-loaded file's live markings.
-     */
     QVector<GenExcStruct> getAllMarkings() const;
-
-    /**
-     * @return Path of the .bin currently loaded (empty if none).
-     */
     QString getFilePath() const { return m_binFilePath; }
-
-    /**
-     * @brief  Load a .bin file produced by file_to_bin.
-     * @param  filePath Absolute or relative path to the .bin.
-     *
-     * @note   Safe to call more than once; markings for the previous file
-     *         are stashed and can be retrieved via getAllMarkings().
-     */
     void setFileSource(const QString& filePath);
-
     double currentStartTime() const { return current_start_time; }
     double windowDuration()   const { return visible_window_size; }
-
     QChartView* chartViewForSignalLabel(const QString& label) const;
     bool        isChannelActive(const QString& label) const;
     enum class MarkPhase { Idle, WaitingForStart, WaitingForEnd, WaitingForStop };
     enum class PlotMode { Line, Scatter };
     enum class ParamEdit { None, Active };
     void setBeatLog(beat_log* log) { m_beatLog = log; }
-
-
     void set_params_to_config_defaults(const config_entry& cfg) {
         // Set the default values for the threshold and blanking period spinboxes based on the config entry.
         m_cfg = cfg;
     }
 
 protected:
+    //these override native QT event handlers which is why they are protected
     bool eventFilter(QObject* watched, QEvent* event) override;
-
-    // Clicking anywhere on the dialog (outside a focused spinbox) steals
-    // focus from that spinbox so its editingFinished fires and the
-    // clearFocus lambda runs. Without this, ClickFocus-policy spinboxes
-    // keep focus indefinitely because clicking on a chart -- which has
-    // NoFocus policy -- doesn't transfer focus.
     void mousePressEvent(QMouseEvent* event) override;
 
 private slots:
@@ -151,20 +105,30 @@ private:
     QTimer* m_logFlushTimer = nullptr;   // flushes the beat log to disk every 30 s
     bool single_ecg_marker_clicked = false;
 
-
-    /**
-    * @brief Per-channel state for the marking state machine.
-    */
     struct ChannelMarkingState {
         MarkPhase    phase = MarkPhase::Idle;
         double       globalStartTime = 0.0;   ///< Always in global seconds (not chunk-local).
         QLineSeries* startMarkerLine = nullptr;
     };
 
-	/*
-        Marking button handlers, called by user_control_handler when the user clicks a button or presses a hotkey.
-        handles the button state machine.
-    */
+    struct data_channel_features {
+        QChartView* chartView = nullptr;
+        QPushButton* startButton = nullptr;
+        QPushButton* stopButton = nullptr;
+        ChannelMarkingState* state = nullptr;
+        const QVector<double>* upsampled_data = nullptr;
+        const QVector<QPointF>* dataRaw = nullptr;   ///< raw (t, v) pairs, chunk-local seconds
+        const double* sampleRate = nullptr;  //the original sampling rate of the raw data
+        QColor  color;
+    };
+    struct ParamOverride {
+        QString channel;
+        double  start = 0.0;
+        double  end = 0.0;
+        double  value = 0.0;
+    };
+
+
     void beginMarking(const QString& signalLabel);
     void beginStopPhase(const QString& signalLabel);
     void beginMarkingAll();
@@ -178,30 +142,9 @@ private:
     void updateEcgMarkButtonStyle();
     void exitAllMarkModes();
 
-    /*
-        The data_channel_features has all the features that
-        a single one of the markable channels might have, such as the upsampled
-        data, raw data, and R peak threshold
-    */
-    struct data_channel_features {
-        QChartView* chartView = nullptr;
-        QPushButton* startButton = nullptr;
-        QPushButton* stopButton = nullptr;
-        ChannelMarkingState* state = nullptr;
-        const QVector<double>* upsampled_data = nullptr;
-        const QVector<QPointF>* dataRaw = nullptr;   ///< raw (t, v) pairs, chunk-local seconds
-        const double* sampleRate = nullptr;  //the original sampling rate of the raw data
-        QColor  color;
-    };
 
-    /**
-     * @brief  Lookup bundle of all per-channel references.
-     * @param  label Channel label ("ECG1", "ECG2", "ECG3", "PPG", or "ABP").
-     * @return Populated ChannelRefs (default-constructed fields if label unknown).
-     */
+
     data_channel_features channelRefs(const QString& label) const;
-
-    /// Labels of all markable channels, in display order.
     static const QStringList& markableChannelLabels();
 
     // --- Per-channel marking state ---
@@ -211,9 +154,8 @@ private:
     ChannelMarkingState  m_markState_ppg;
     ChannelMarkingState  m_markState_abp;
 
-    // --- Core components ---
     std::unique_ptr<Ui::noise_marking_gui> ui;
-    std::unique_ptr<annotation_handler>          m_noiseManager;
+    std::unique_ptr<annotation_handler>       m_noiseManager;
     std::unique_ptr<user_control_handler>     m_buttonHandler;
     std::unique_ptr<pulse_overlay>            m_pulseOverlay;
     std::unique_ptr<gap_indicator>            m_gapIndicator;
@@ -224,12 +166,17 @@ private:
     GenExcStruct                m_genExc;
     QMap<QString, GenExcStruct> m_fileMarkings;  ///< stashed markings per file path
 
-    // --- Sampling rates (upsampled signals) ---
-    double m_ecgSR = 0.0;   ///< TARGET_RATE for upsampled ECG/PPG/ABP (1 kHz per file_to_bin)
-    double m_ppgSR = 0.0;
-    double m_boolSR = 0.0;   ///< 1 Hz channels
+    // --- Sampling rates ---
+    double m_ecgSR = 0.0;     ///< common upsampled grid rate (raw32[0], e.g. 1000 Hz)
+    double m_boolSR = 0.0;    ///< low/bool rate for <=1 Hz channels (raw32[1])
     double m_sleepSR = 0.0;   ///< sleep epochs per second (= 1 / sleep_epoch_length)
 
+    // Channel rate helpers -- the single place that maps a channel to its rate.
+    static constexpr double kBoolRateThreshold = 1.0;
+    double nativeRateFor(int ch) const { return channel_native_rates[ch]; }
+    double upsampledRateFor(int ch) const {
+        return (channel_native_rates[ch] <= kBoolRateThreshold) ? m_boolSR : m_ecgSR;
+    }
     // --- View state ---
     double current_start_time;
     double visible_window_size;
@@ -247,19 +194,6 @@ private:
     QLineSeries* m_hypnoCursorBar = nullptr;
     QList<QAreaSeries*>     m_highlights;
     QList<QAbstractSeries*> m_hypnoStageSeries;
-
-    // --- Persistent line series, keyed by chart view ---
-    //
-    // Each chart has one QLineSeries per logical series slot, allocated
-    // lazily on first render and kept alive for the lifetime of the dialog.
-    // renderWindowedChart() reuses these instead of allocating+deleting per
-    // frame -- the OpenGL teardown in ~QLineSeries was costing tens of
-    // seconds on a Line->Scatter mode switch, because every chart had a
-    // dense GL-backed line that had to release GPU buffers.
-    //
-    // In Scatter mode the lines are hidden via setVisible(false) but not
-    // freed; switching back to Line mode just toggles visibility and calls
-    // replace() with the new window's data.
     QHash<QChartView*, QList<QLineSeries*>> m_persistentLines;
     QHash<QChartView*, QList<QScatterSeries*>> m_persistentRawScatter;
 
@@ -282,39 +216,14 @@ private:
     QString      m_dragPreviewLabel;
 
     // --- Signal data (upsampled, 1 kHz unless otherwise noted) ---
-    QVector<double> m_ecg1, m_ecg2, m_ecg3, m_ppg;
-    QVector<double> m_accelX, m_accelY, m_accelZ;
-    QVector<double> m_resp;        ///< respiration (slot 34)
-    QVector<double> m_cvp;         ///< central venous pressure (slot 16, Bittium)
-    QVector<double> m_abp;         ///< arterial blood pressure (slot 35, Bittium)
-    QVector<double> m_sleepStages;
+    QVector<double> m_ecg1, m_ecg2, m_ecg3, m_ppg, m_accelX, m_accelY, m_accelZ, m_resp;
+    QVector<double> m_cvp, m_abp, m_temp, m_marker,  m_pacemaker,  m_sleepStages;
 
-    // --- Raw data, plotted as scatter overlay on markable signals
-    //     (ECG/PPG/ABP) and on the accel chart. Each element is (t, v)
-    //     where t is chunk-local seconds. The loader filters the on-disk
-    //     pair stream to this chunk. ---
     QVector<QPointF> m_ecg1Raw, m_ecg2Raw, m_ecg3Raw, m_ppgRaw, m_abpRaw;
     QVector<QPointF> m_accelXRaw, m_accelYRaw, m_accelZRaw, m_respRaw, m_cvpRaw;
-
-    // ------------------------------------------------------------------------
-    //  File layout (v2):
-    //    512-byte header (128 x uint32-sized fields) =
-    //      4 rates + 40 upsampled-sizes + 40 raw-sizes + 40 native-rate
-    //      floats + 1 sleep-size
-    //    Then, for each of the 40 channels, in order:
-    //      upsampled block (m_chanSizes[i] doubles)
-    //      raw block       (m_chanSizesRaw[i] * 2 doubles, interleaved (t, v))
-    //    Then sleep stages (m_totalSleepSamples doubles).
-    //
-    //    m_chanSizesRaw[i] counts PAIRS, not individual doubles -- so the
-    //    raw block's byte length is m_chanSizesRaw[i] * 2 * sizeof(double).
-    //    m_chanNativeRates[i] holds the channel's original sampling rate
-    //    in Hz, or 0.0 if the channel is absent. The GUI doesn't consume
-    //    these (all plotting uses m_ecgSR/m_ppgSR/m_boolSR); they're just
-    //    parsed so the member stays in sync with the file format.
-    // ------------------------------------------------------------------------
+    QVector<QPointF> m_tempRaw, m_markerRaw,m_pacemakerRaw;
     QString m_binFilePath;
-    static constexpr qint64 FILE_HEADER_SIZE = 500;
+    static constexpr qint64 FILE_HEADER_SIZE = 496;
     static constexpr int NUM_CHANNELS = 40;
 
     uint32_t upsampled_channel_sizes[NUM_CHANNELS] = {};
@@ -332,7 +241,7 @@ private:
         CH_MARKER, CH_TEMP, CH_PACEMAKER,
         CH_EOG_L, CH_EOG_R, CH_EMG,
         CH_EEG1, CH_EEG2, CH_EEG3, CH_EEG4,
-        CH_PRES, CH_FLOW, CH_THOR, CH_ABDO,
+        CH_CVP, CH_FLOW, CH_THOR, CH_ABDO,
         CH_LEG, CH_THERM, CH_POS,
         CH_EKG_OFF, CH_EOG_L_OFF, CH_EOG_R_OFF, CH_EMG_OFF,
         CH_EEG1_OFF, CH_EEG2_OFF, CH_EEG3_OFF,
@@ -344,6 +253,7 @@ private:
     uint64_t current_chunk_index = 0;
 
     static constexpr int seconds_in_memory_at_once = 28800; //8 hours 
+
 
     // --- Lookup helpers (thin wrappers over channelRefs) ---
     ChannelMarkingState& markStateFor(const QString& label);
@@ -357,42 +267,18 @@ private:
     // --- Per-channel button helpers ---
     QPushButton* startButtonForSignal(const QString& label) const;
     QPushButton* stopButtonForSignal(const QString& label) const;
-
-    /** @brief Refresh Start/Stop button styling for all channels + the mark-all buttons. */
     void updateAllChannelButtonStates();
-
-    /** @brief Highlight whichever parameter-edit button (threshold/blanking) is
- *         currently armed; clear both when no edit mode is active. */
     void updateParamButtonStyles();
-
-    // --- Plotting ---
-    /**
-     * @brief  Load the requested 8-hour chunk into the per-channel vectors.
-     * @param  chunkIndex 0-based chunk index (0 = hours 0-8, 1 = hours 8-16, ...).
-     * @return true on success, false if the file could not be opened.
-     */
     bool loadChunkFromFile(uint64_t chunkIndex);
-
-    /** @brief Redraw the 10-second signal plots for the current view window. */
     void handle_data_plot();
-
-    /** @brief Run the simple peak finder on `label`'s raw data restricted
-    *      to the current view window. Returns chunk-local (t, v) of
-    *      detected peaks. Empty when m_showPeaks is false. */
-    QVector<QPointF> display_peaks_in_window(const QString& label,
-        std::vector<int>* outPostTags = nullptr) const;
+	void determine_which_nonmarkable_charts_to_plot();
+    void plot_nonmarkable(QChartView* view, const QString& title, const QList<markable_data_series>& serieses, double sampling_rate);
+    QVector<QPointF> display_peaks_in_window(const QString& label, std::vector<int>* outPostTags = nullptr) const;
 
     QVector<QPointF> detectPeaks(const QString& label,
         double detStart, double detEnd,
         std::vector<int>* outPostTags = nullptr) const;
 
-    /** @brief Run the simple peak finder over a BPM-estimation window: the
-    *      visible window, extended backwards to a minimum of 10 s when
-    *      the visible window is shorter than that. Clamped to the start
-    *      of the chunk. Returns chunk-local (t, v) of detected peaks and,
-    *      via @p outDuration, the actual duration of the window used
-    *      (so the caller can divide peak count by it). Empty when
-    *      m_showPeaks is false. */
     QVector<QPointF> get_bpm(const QString& label,
         double& outDuration) const;
 
@@ -416,58 +302,16 @@ private:
 
     /** @brief Overlay translucent colored rectangles for recorded marking segments. */
     void updateNoiseHighlights();
-
-    // --- Marking ---
-    /**
-     * @brief  Commit a marking that is currently in WaitingForStop.
-     * @param  cv         Chart view the marking was placed on.
-     * @param  endX       Chunk-local x (seconds) of the end click.
-     * @param  signalLabel Channel the marking is for.
-     */
     void finalizeMarking(QChartView* cv, double endX, const QString& signalLabel);
-
-    /** @brief Abort an in-progress marking and clear its visual state. */
     void cancelMarking(const QString& signalLabel);
-
-    /** @brief Restore the dashed start markers after a chunk/file change. */
     void restoreMarkingMarkers();
-
-    /**
-     * @brief Draw the dashed vertical start-marker line on a chart.
-     * @param cv      Target chart view.
-     * @param xValue  Chunk-local x (seconds).
-     * @param state   Per-channel marking state to update.
-     * @param color   Line color (matches the channel's signal color).
-     * @param stopBtn Stop button to enable once the marker is shown.
-     */
-    void showStartMarker(QChartView* cv, double xValue, ChannelMarkingState& state,
-        const QColor& color, QPushButton* stopBtn);
-
-    /** @brief Remove the dashed start-marker line for a channel (if any). */
+    void showStartMarker(QChartView* cv, double xValue, ChannelMarkingState& state, const QColor& color, QPushButton* stopBtn);
     void clearStartMarker(ChannelMarkingState& state);
-
-    /** @brief Create/update the live drag-preview rectangle on @p cv spanning
-     *         [x0, x1] (chunk-local seconds). Cheap: one area series, no detect. */
     void updateDragPreview(QChartView* cv, double x0, double x1, const QColor& color);
-
-    /** @brief Remove the live drag-preview rectangle, if any. */
     void clearDragPreview();
-
-    // --- File selection ---
-    /**
-     * @brief  Load a .bin from disk, replacing the current view.
-     * @param  filePath Path to the .bin.
-     *
-     * @note   Any in-progress markings on the previous file are stashed in
-     *         m_fileMarkings and can be retrieved with getAllMarkings().
-     */
     void loadSelectedFile(const QString& filePath);
 
     bool handleMousePress(QChartView* cv, QWidget* viewport, QMouseEvent* event);
-
-    /** @return Y-axis multiplier for a signal: when the chart's "Fix Scale"
- *          checkbox is checked, returns the spinbox value; otherwise 1.
- *          Multiplier > 1 widens the visible y range (signal looks shorter). */
     double yScaleForSignal(const QString& label) const;
     bool   invertedForSignal(const QString& label) const;
 
@@ -475,13 +319,6 @@ private:
 
     ParamEdit m_paramEditMode = ParamEdit::None;
     double    m_paramDragStartGlobal = 0.0;
-
-    struct ParamOverride {
-        QString channel;          // "ECG1".."ABP"
-        double  start = 0.0;      // global seconds
-        double  end = 0.0;
-        double  value = 0.0;
-    };
     QVector<ParamOverride> m_thresholdOverrides;
     QVector<ParamOverride> m_blankingOverrides;
 

@@ -31,6 +31,7 @@
 #include <vector>
 
 class beat_log {
+
 public:
     // Channels in column order. Keep in sync with the CSV header.
     enum ChannelIdx { ECG1 = 0, ECG2, ECG3, PPG, ABP, NUM_CHANNELS };
@@ -132,6 +133,9 @@ private:
     // Rolling buffer of detected peaks per channel (global time -> amplitude),
     // flushed into all_beats_in_log and cleared every 30 s by the GUI.
     std::array<std::map<double, pendingPeak>, NUM_CHANNELS> m_pending;
+    std::map<double, std::array<double, 3>> m_accel;
+    void logAccel(double x, double ax, double ay, double az) { m_accel[x] = { ax, ay, az }; }
+
 };
 
 inline bool beat_log::writeCsv(const std::string& path) const {
@@ -144,20 +148,35 @@ inline bool beat_log::writeCsv(const std::string& path) const {
     f << "beat,ecg1_x,ecg1_y,ecg2_x,ecg2_y,ecg3_x,ecg3_y,ppg_x,ppg_y,abp_x,abp_y,"
         "blanking_ecg1,threshold_ecg1,blanking_ecg2,threshold_ecg2,"
         "blanking_ecg3,threshold_ecg3,blanking_ppg,threshold_ppg,blanking_abp,threshold_abp,"
-        "marked_ecg1,marked_ecg2,marked_ecg3,marked_ppg,marked_abp,"
+        "marked_ecg1,marked_ecg2,marked_ecg3,marked_ppg,marked_abp,marked_accel,accelx_val, accely_val, accelz_val,"
         "post_ecg1,post_ecg2,post_ecg3,post_ppg,post_abp\n";
+
+
     f << std::fixed << std::setprecision(6);
 
     for (size_t i = 0; i < all_beats_in_log.size(); ++i) {
         f << i;
-        for (const sample& s : all_beats_in_log[i].chan)      // 10 cols: x,y per channel
+        for (const sample& s : all_beats_in_log[i].chan)      // x,y
             f << ',' << s.x << ',' << s.y;
-        for (const sample& s : all_beats_in_log[i].chan)      // 10 cols: blanking,threshold per channel
+        for (const sample& s : all_beats_in_log[i].chan)      // blanking,threshold
             f << ',' << s.blanking << ',' << s.threshold;
-        for (const sample& s : all_beats_in_log[i].chan)      // 5 cols: annotation type per channel
+        for (const sample& s : all_beats_in_log[i].chan)      // markType
             f << ',' << s.markType;
-        for (const sample& s : all_beats_in_log[i].chan)      // 5 cols: post-arrhythmia tag per channel
+        for (const sample& s : all_beats_in_log[i].chan)      // postType  <-- this loop
             f << ',' << s.postType;
+        for (const sample& s : all_beats_in_log[i].chan)      // marked_ecg1..marked_abp
+            f << ',' << s.markType;
+
+        // marked_accelx/y/z: accel at this row's ECG1 x, zeros if none
+        const double ex = all_beats_in_log[i].chan[ECG1].x;
+        std::array<double, 3> a{ 0.0, 0.0, 0.0 };
+        auto it = (ex != 0.0) ? m_accel.find(ex) : m_accel.end();
+        if (it != m_accel.end()) a = it->second;
+        f << ',' << a[0] << ',' << a[1] << ',' << a[2];
+
+        for (const sample& s : all_beats_in_log[i].chan)      // post_ecg1..post_abp
+            f << ',' << s.postType;
+
         f << '\n';
     }
     return true;

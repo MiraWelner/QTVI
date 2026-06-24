@@ -40,22 +40,25 @@ struct config_entry {
 
     // these parameters are not in the config but rather in input_file_handler.cpp. 
     // different filetypes have different labels for the same type of signal - for example, ECG_1 vs EKG is talking about the same thing
-    std::string ecg1Label;
-    std::string ecg2Label;
-    std::string ecg3Label;
-    std::string ppgLabel;
-    std::string accelXLabel;
-    std::string accelYLabel;
-    std::string accelZLabel;
-    std::string cvpLabel;
-    std::string respLabel;
-    std::string eeg1Label;
-    std::string eeg2Label;
-    std::string eeg3Label;
-    std::string eeg4Label;
-    std::string abpLabel;
-    std::string artLabel;
-    std::string artPulmLabel;
+    std::string ecg_1_label;
+    std::string ecg_2_label;
+    std::string ecg_3_label;
+    std::string ppg_label;
+    std::string accel_x_label = "Accelerometer_X";
+    std::string accel_y_label = "Accelerometer_Y";
+    std::string accel_z_label = "Accelerometer_Z";
+    std::string cvp_label = "NLS_NOM_PRESS_BLD_VEN_CENT";
+    std::string resp_label = "NLS_NOM_RESP";
+    std::string temp_label = "DEV_Temperature";
+    std::string marker_label = "Marker";
+    std::string pacemaker_label = "Pacemaker_events";
+    std::string eeg_1_label = "NLS_EEG_NAMES_EEG_CHAN1";
+    std::string eeg_2_label = "NLS_EEG_NAMES_EEG_CHAN2";
+    std::string eeg_3_label = "NLS_EEG_NAMES_EEG_CHAN3";
+    std::string eeg_4_label = "NLS_EEG_NAMES_EEG_CHAN4";
+    std::string abp_label = "NLS_NOM_PRESS_BLD_ART_ABP";
+    std::string art_label = "NLS_NOM_PRESS_BLD_ART";
+    std::string art_pulm_label = "NLS_NOM_PRESS_BLD_ART_PULM";
 
 
 };

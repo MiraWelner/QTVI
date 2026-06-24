@@ -3,19 +3,20 @@
  * @file   file_to_bin.hpp
  * @brief  Uses polyphase upsampling with a filter bank for speed and efficiency to convert an .edf or  .dat file to a 
  *         .bin file with the following structure:
+ * 
+ *   496-byte header (124 x 32-bit fields):
  *
- *   500-byte header (125 x 32-bit fields):
+ *     Offset   0: signal_rate    (uint32)  common upsampled rate (high_upsample_rate, 1000 Hz)
+ *     Offset   4: boolean_rate   (uint32)  shared rate for <=1 Hz channels (low_sample_rate, 1 Hz)
+ *     Offset   8: sleep_state_len (uint32)  sleep-stage epoch length in seconds (30 s)
  *
- *     Offset   0: signal_rate           (uint32)  common upsampled rate (1000 Hz)
- *     Offset   4: boolean_rate          (uint32)  shared rate for <=1 Hz channels (1 Hz)
- *     Offset   8: pacemaker_event_rate  (uint32)  pacemaker epoch rate (8 Hz)
- *     Offset  12: sleep_state_rate      (uint32)  sleep-stage epoch length in seconds (30 s)
- *
- *     Offset  16: upsampled sizes       40 x uint32  (size_<chan>)
- *     Offset 176: raw-pair sizes        40 x uint32  (size_<chan>_raw, counts PAIRS)
- *     Offset 336: native sampling rates 40 x float32 (Hz)
+ *     Offset  12: upsampled sizes       40 x uint32  (size_<chan>)
+ *     Offset 172: raw-pair sizes        40 x uint32  (size_<chan>_raw, counts PAIRS)
+ *     Offset 332: native sampling rates 40 x float32 (Hz)
  *                 0.0 = channel absent; negative values never used.
- *     Offset 496: size_sleep            (uint32)
+ *     Offset 492: size_sleep            (uint32)
+ *
+ *   Header size check: 3 + 40 + 40 + 40 + 1 = 124 fields x 4 bytes = 496 bytes
  *
  *   Channel index order (40 slots, identical across upsampled/raw/native-rate blocks):
  *      0: seconds from start of recording           1: ecg_1
@@ -43,7 +44,7 @@
  *
  * @author Mira Welner
  * @email MEW386@pitt.edu
- * @date   2026-05-15
+ * @date   2026-06-24
  */
 
 #include <filesystem>
@@ -53,11 +54,8 @@
  // Public constants
  // ============================================================================
 inline constexpr int          NUM_CHANNELS = 40;
-inline constexpr int          NUM_HEADER_FIELDS = 4 + 3 * NUM_CHANNELS + 1;  // = 125
-inline constexpr std::streamoff HEADER_SIZE = NUM_HEADER_FIELDS * 4;     // = 500
-inline constexpr double       SLEEP_STATE_LENGTH = 30.0;
-inline constexpr double       BOOLEAN_RATE = 1.0;   // <=1 Hz channels are not upsampled
-inline constexpr uint32_t     PACEMAKER_RATE = 8;
+inline constexpr int NUM_HEADER_FIELDS = 3 + 3 * NUM_CHANNELS + 1;  // = 124
+inline constexpr std::streamoff HEADER_SIZE = NUM_HEADER_FIELDS * 4; // = 496
 
 // Channel indices (one source of truth, used throughout file_to_bin and
 // any consumer that needs to address channels by name).
@@ -65,7 +63,7 @@ enum ChannelIdx {
     CH_TIMESTAMP = 0,
     CH_ECG1, CH_ECG2, CH_ECG3, CH_PPG,
     CH_ACCEL_X, CH_ACCEL_Y, CH_ACCEL_Z,
-    CH_MARKER, CH_TEMP, CH_PACEMAKER,
+    CH_MARKER, CH_TEMP, CH_PACEMAKER_EVENT,
     CH_EOG_L, CH_EOG_R, CH_EMG,
     CH_EEG1, CH_EEG2, CH_EEG3, CH_EEG4,
     CH_CVP, CH_FLOW, CH_THOR, CH_ABDO,

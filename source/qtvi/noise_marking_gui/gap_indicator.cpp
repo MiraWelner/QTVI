@@ -46,11 +46,11 @@ void gap_indicator::rescan() {
     // other channel too, since they're all rate-aligned in real time.
     int srcCh = -1;
     const QVector<QPointF>* src = nullptr;
-    if (!isMissingSignal(m_gui->m_ecg1)) { src = &m_gui->m_ecg1Raw; srcCh = noise_marking_gui::CH_ECG1; }
-    else if (!isMissingSignal(m_gui->m_ecg2)) { src = &m_gui->m_ecg2Raw; srcCh = noise_marking_gui::CH_ECG2; }
-    else if (!isMissingSignal(m_gui->m_ecg3)) { src = &m_gui->m_ecg3Raw; srcCh = noise_marking_gui::CH_ECG3; }
-    else if (!isMissingSignal(m_gui->m_ppg)) { src = &m_gui->m_ppgRaw;  srcCh = noise_marking_gui::CH_PPG; }
-    else if (!isMissingSignal(m_gui->m_abp)) { src = &m_gui->m_abpRaw;  srcCh = noise_marking_gui::CH_ABP; }
+    if (!is_missing_signal(m_gui->m_ecg1)) { src = &m_gui->m_ecg1Raw; srcCh = noise_marking_gui::CH_ECG1; }
+    else if (!is_missing_signal(m_gui->m_ecg2)) { src = &m_gui->m_ecg2Raw; srcCh = noise_marking_gui::CH_ECG2; }
+    else if (!is_missing_signal(m_gui->m_ecg3)) { src = &m_gui->m_ecg3Raw; srcCh = noise_marking_gui::CH_ECG3; }
+    else if (!is_missing_signal(m_gui->m_ppg)) { src = &m_gui->m_ppgRaw;  srcCh = noise_marking_gui::CH_PPG; }
+    else if (!is_missing_signal(m_gui->m_abp)) { src = &m_gui->m_abpRaw;  srcCh = noise_marking_gui::CH_ABP; }
     if (!src || srcCh < 0) return;
 
     const float nativeHz = m_gui->channel_native_rates[srcCh];

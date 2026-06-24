@@ -61,6 +61,38 @@ namespace {
         return a;
     }
 
+    // Linear-interpolation resample for discrete/event channels (pacemaker,
+// marker). Connects consecutive input samples with straight segments instead
+// of the sinc bank in upsample(), which rings on non-bandlimited event data
+// and invents a smooth oscillation. Same P/Q + ceil(inLen*P/Q) length as
+// polyphase_resample, so the chunk loader/renderer treat it like any channel.
+    std::vector<double> resample_linear(const std::vector<double>& input,
+        double sourceRate, double targetRate) {
+        if (input.empty()) return {};
+        if (sourceRate == targetRate) return input;
+
+        int gcd = greatest_common_divisor((int)targetRate, (int)sourceRate);
+        int P = (int)targetRate / gcd;
+        int Q = (int)sourceRate / gcd;
+
+        const long long inLen = static_cast<long long>(input.size());
+        const long long outLen = static_cast<long long>(
+            std::ceil(static_cast<double>(inLen) * P / Q));
+        std::vector<double> output(outLen);
+
+        for (long long m = 0; m < outLen; ++m) {
+            // Position in input-sample space: m output samples back to input rate.
+            const double srcPos = static_cast<double>(m) * Q / P;
+            long long k = static_cast<long long>(srcPos);     // left neighbor
+            const double f = srcPos - static_cast<double>(k); // fraction toward k+1
+            if (k + 1 < inLen)
+                output[m] = input[k] * (1.0 - f) + input[k + 1] * f;
+            else
+                output[m] = input[inLen - 1];                 // clamp tail
+        }
+        return output;
+    }
+
     std::vector<std::vector<double>> buildPolyphaseBank(int P, int Q, int halfLobes) {
         int maxPQ = std::max(P, Q);
         int numTaps = 2 * halfLobes * maxPQ + 1;
@@ -384,7 +416,8 @@ namespace {
         double old_rate, double finalSamplingRate,
         std::ofstream& out,
         uint32_t& sizeUpOut, uint32_t& sizeRawOut,
-        float& nativeRateOut)
+        float& nativeRateOut, bool discreteChannel = false)
+
     {
         if (idx < 0 || n <= 0) {
             write_missing(out, sizeUpOut, sizeRawOut, nativeRateOut);
@@ -394,16 +427,12 @@ namespace {
         std::vector<double> raw(n);
         edfread_physical_samples(handle, idx, (int)n, raw.data());
 
-        const bool skip_resample = (old_rate <= BOOLEAN_RATE);
-        if (skip_resample) {
-            out.write(reinterpret_cast<const char*>(raw.data()), raw.size() * 8);
-            sizeUpOut = (uint32_t)raw.size();
-        }
-        else {
-            std::vector<double> up = upsample(raw, old_rate, finalSamplingRate);
-            out.write(reinterpret_cast<const char*>(up.data()), up.size() * 8);
-            sizeUpOut = (uint32_t)up.size();
-        }
+        std::vector<double> up = discreteChannel
+            ? resample_linear(raw, old_rate, finalSamplingRate)
+            : upsample(raw, old_rate, finalSamplingRate);
+
+        out.write(reinterpret_cast<const char*>(up.data()), up.size() * 8);
+        sizeUpOut = (uint32_t)up.size();
 
         const double dt = (old_rate > 0.0) ? (1.0 / old_rate) : 0.0;
         for (size_t k = 0; k < raw.size(); ++k) {
@@ -444,18 +473,17 @@ namespace {
     }
 
     void write_header_and_close(std::ofstream& out,
-        double finalSamplingRate,
+        config_entry cfg,
         const uint32_t sizes_up[NUM_CHANNELS],
         const uint32_t sizes_raw[NUM_CHANNELS],
         const float    native_rates[NUM_CHANNELS],
         uint32_t sleep_size)
     {
         out.seekp(0);
-        uint32_t scalars[4] = {
-            (uint32_t)finalSamplingRate,
-            (uint32_t)BOOLEAN_RATE,
-            PACEMAKER_RATE,
-            (uint32_t)SLEEP_STATE_LENGTH
+        uint32_t scalars[3] = {
+            (uint32_t)cfg.high_upsample_rate,
+            (uint32_t)cfg.low_sample_rate,
+            (uint32_t)cfg.sleep_state_length
         };
         out.write(reinterpret_cast<const char*>(scalars), sizeof(scalars));
         out.write(reinterpret_cast<const char*>(sizes_up), NUM_CHANNELS * 4);
@@ -490,39 +518,26 @@ namespace {
             return -1;
             };
 
-        // Algorithm-facing channels.
-        m[CH_ECG1] = find(cfg.ecg1Label);
-        m[CH_ECG2] = find(cfg.ecg2Label);
-        m[CH_ECG3] = find(cfg.ecg3Label);
-        m[CH_PPG] = find(cfg.ppgLabel);
-
-        // Accelerometer.
-        m[CH_ACCEL_X] = find(cfg.accelXLabel);
-        m[CH_ACCEL_Y] = find(cfg.accelYLabel);
-        m[CH_ACCEL_Z] = find(cfg.accelZLabel);
-
-        // EEG.
-        m[CH_EEG1] = find(cfg.eeg1Label);
-        m[CH_EEG2] = find(cfg.eeg2Label);
-        m[CH_EEG3] = find(cfg.eeg3Label);
-        m[CH_EEG4] = find(cfg.eeg4Label);
-
-        // Pressures / respiratory.
-        m[CH_CVP] = find(cfg.cvpLabel);
-        m[CH_RESP] = find(cfg.respLabel);
-        m[CH_ABP] = find(cfg.abpLabel);
-        m[CH_ART] = find(cfg.artLabel);
-        m[CH_ART_PULM] = find(cfg.artPulmLabel);
-
-        // Slots not yet promoted to config fields stay -1 and get
-        // write_missing automatically:
-        //   CH_MARKER, CH_TEMP, CH_PACEMAKER,
-        //   CH_EOG_L, CH_EOG_R, CH_EMG,
-        //   CH_FLOW, CH_THOR, CH_ABDO, CH_LEG, CH_THERM, CH_POS,
-        //   CH_EKG_OFF, CH_EOG_L_OFF, CH_EOG_R_OFF, CH_EMG_OFF,
-        //   CH_EEG1_OFF, CH_EEG2_OFF, CH_EEG3_OFF,
-        //   CH_OXSTATUS, CH_SPO2, CH_HR, CH_DHR
-
+       
+        m[CH_ECG1] = find(cfg.ecg_1_label);
+        m[CH_ECG2] = find(cfg.ecg_2_label);
+        m[CH_ECG3] = find(cfg.ecg_3_label);
+        m[CH_PPG] = find(cfg.ppg_label);
+        m[CH_ACCEL_X] = find(cfg.accel_x_label);
+        m[CH_ACCEL_Y] = find(cfg.accel_y_label);
+        m[CH_ACCEL_Z] = find(cfg.accel_z_label);
+        m[CH_EEG1] = find(cfg.eeg_1_label);
+        m[CH_EEG2] = find(cfg.eeg_2_label);
+        m[CH_EEG3] = find(cfg.eeg_3_label);
+        m[CH_EEG4] = find(cfg.eeg_4_label);
+        m[CH_CVP] = find(cfg.cvp_label);
+        m[CH_RESP] = find(cfg.resp_label);
+        m[CH_MARKER] = find(cfg.marker_label);
+        m[CH_PACEMAKER_EVENT] = find(cfg.pacemaker_label);
+        m[CH_TEMP] = find(cfg.temp_label);
+        m[CH_ABP] = find(cfg.abp_label);
+        m[CH_ART] = find(cfg.art_label);
+        m[CH_ART_PULM] = find(cfg.art_pulm_label);
         return m;
     }
 
@@ -541,7 +556,7 @@ namespace {
     {
         return std::filesystem::path(cfg.output_path) /
             (src.stem().string() + "_" +
-                std::to_string((int)cfg.target_sampling_rate) + ".bin");
+                std::to_string((int)cfg.high_upsample_rate) + ".bin");
     }
 
 
@@ -713,16 +728,18 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
         if (sigmap[CH_ECG1] >= 0 && tsRate > 0.0) {
             tsDur = (double)edf_samples(hdr.get(), sigmap[CH_ECG1]) / tsRate;
         }
-        write_synthetic_timestamp(out, tsDur, tsRate, cfg.target_sampling_rate,
+        write_synthetic_timestamp(out, tsDur, tsRate, cfg.high_upsample_rate,
             sizes_up[CH_TIMESTAMP], sizes_raw[CH_TIMESTAMP],
             native_rates[CH_TIMESTAMP]);
     }
 
-    auto writeChannel = [&](ChannelIdx ch, double rate = 0.0) {
+    auto writeChannel = [&](ChannelIdx ch, double rate = 0.0, bool discrete = false) {
         int chIdx = sigmap[ch];
         long long n = (chIdx < 0) ? 0 : edf_samples(hdr.get(), chIdx);
-        edf_to_bin(hdr->handle, chIdx, n, rate, cfg.target_sampling_rate, out,
-            sizes_up[ch], sizes_raw[ch], native_rates[ch]);
+        const double finalRate = (rate > 0.0 && rate <= 1.0)
+            ? cfg.low_sample_rate : cfg.high_upsample_rate;
+        edf_to_bin(hdr->handle, chIdx, n, rate, finalRate, out,
+            sizes_up[ch], sizes_raw[ch], native_rates[ch], discrete);
         };
 
     // Channels in fixed slot order. Unmapped slots (-1 in sigmap) become
@@ -732,13 +749,12 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
     writeChannel(CH_ECG3, cfg.ecg_rate);
     writeChannel(CH_PPG, cfg.ppg_rate);
 
-    writeChannel(CH_ACCEL_X);
-    writeChannel(CH_ACCEL_Y);
-    writeChannel(CH_ACCEL_Z);
-
-    writeChannel(CH_MARKER);
-    writeChannel(CH_TEMP);
-    writeChannel(CH_PACEMAKER);
+    writeChannel(CH_ACCEL_X, cfg.accel_rate);
+    writeChannel(CH_ACCEL_Y, cfg.accel_rate);
+    writeChannel(CH_ACCEL_Z, cfg.accel_rate);
+    writeChannel(CH_MARKER, cfg.marker_rate,  /*discrete=*/true);
+    writeChannel(CH_TEMP, cfg.temp_rate,  /*discrete=*/true);
+    writeChannel(CH_PACEMAKER_EVENT, cfg.pacemaker_event_rate, /*discrete=*/true);
 
     writeChannel(CH_EOG_L);
     writeChannel(CH_EOG_R);
@@ -794,8 +810,7 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
     out.write(reinterpret_cast<const char*>(stages.data()),
         sleep_size * sizeof(double));
 
-    write_header_and_close(out, cfg.target_sampling_rate,
-        sizes_up, sizes_raw, native_rates, sleep_size);
+    write_header_and_close(out, cfg, sizes_up, sizes_raw, native_rates, sleep_size);
 }
 
 void make_binfile_dat(const std::filesystem::path& path,
@@ -843,7 +858,6 @@ void make_binfile_dat(const std::filesystem::path& path,
     // samples, placed at their true times. Linear interpolation between
     // consecutive real samples. Avoids the "fake plateau" bug from treating
     // a sparse column (populated every Nth row) as a dense signal.
-    const double finalSR = cfg.target_sampling_rate;
     auto resample_from_sparse = [&](const std::vector<double>& rawValues,
         const std::vector<size_t>& rawRowIdx,
         size_t totalRows) -> std::vector<double>
@@ -851,7 +865,7 @@ void make_binfile_dat(const std::filesystem::path& path,
             if (rawValues.size() < 2 || row_rate <= 0.0) return {};
 
             const double totalDur = (double)totalRows / row_rate;
-            const size_t outLen = (size_t)std::ceil(totalDur * finalSR);
+            const size_t outLen = (size_t)std::ceil(totalDur * cfg.high_upsample_rate);
             if (outLen == 0) return {};
 
             std::vector<double> result(outLen);
@@ -860,7 +874,7 @@ void make_binfile_dat(const std::filesystem::path& path,
 
             size_t k = 0;
             for (size_t m = 0; m < outLen; ++m) {
-                const double t = (double)m / finalSR;
+                const double t = (double)m / cfg.high_upsample_rate;
                 while (k + 1 < N &&
                     (double)rawRowIdx[k + 1] * inv_row_rate <= t) {
                     ++k;
@@ -945,16 +959,16 @@ void make_binfile_dat(const std::filesystem::path& path,
     {
         const double durationSec = (row_rate > 0.0)
             ? (double)prescan.totalRows / row_rate : 0.0;
-        write_synthetic_timestamp(out, durationSec, row_rate, finalSR,
+        write_synthetic_timestamp(out, durationSec, row_rate, cfg.high_upsample_rate,
             sizes_up[CH_TIMESTAMP], sizes_raw[CH_TIMESTAMP],
             native_rates[CH_TIMESTAMP]);
     }
 
     // Algorithm-facing channels.
-    writeCol(cfg.ecg1Label, false, CH_ECG1, cfg.ecg_rate);
-    writeCol(cfg.ecg2Label, false, CH_ECG2, cfg.ecg_rate);
-    writeCol(cfg.ecg3Label, false, CH_ECG3, cfg.ecg_rate);
-    writeCol(cfg.ppgLabel, false, CH_PPG, cfg.ppg_rate);
+    writeCol(cfg.ecg_1_label, false, CH_ECG1, cfg.ecg_rate);
+    writeCol(cfg.ecg_2_label, false, CH_ECG2, cfg.ecg_rate);
+    writeCol(cfg.ecg_3_label, false, CH_ECG3, cfg.ecg_rate);
+    writeCol(cfg.ppg_label, false, CH_PPG, cfg.ppg_rate);
 
     // Accel / marker / temp / pacemaker / EOG / EMG aren't in CHAOS .dat
     // files. Emit placeholders so the 40-slot layout stays consistent.
@@ -970,7 +984,7 @@ void make_binfile_dat(const std::filesystem::path& path,
     writeMissing(CH_EEG4);
 
     // Central venous pressure.
-    writeCol(cfg.cvpLabel, false, CH_CVP, cfg.central_venous_pressure_rate);
+    writeCol(cfg.cvp_label, false, CH_CVP, cfg.central_venous_pressure_rate);
 
     // Sleep apnea slots and SpO2 family aren't in CHAOS .dat.
     for (int ch = CH_FLOW; ch <= CH_DHR; ++ch)
@@ -982,8 +996,8 @@ void make_binfile_dat(const std::filesystem::path& path,
     // prefix NLS_NOM_PRESS_BLD_ART and substring matching would alias them.
     // ART and ART_PULM use abpRate -- they're variants on the same
     // arterial-pressure sensor and share its native rate.
-    writeCol(cfg.respLabel, false, CH_RESP, cfg.resp_rate);
-    writeCol(cfg.abpLabel, true, CH_ABP, cfg.arterial_blood_pressure_rate);
+    writeCol(cfg.resp_label, false, CH_RESP, cfg.resp_rate);
+    writeCol(cfg.abp_label, true, CH_ABP, cfg.arterial_blood_pressure_rate);
     writeMissing(CH_ART);
     writeMissing(CH_ART_PULM);
 
@@ -991,8 +1005,7 @@ void make_binfile_dat(const std::filesystem::path& path,
     out.write(reinterpret_cast<const char*>(&placeholder), sizeof(double));
     uint32_t sleep_size = 1;
 
-    write_header_and_close(out, finalSR,
-        sizes_up, sizes_raw, native_rates, sleep_size);
+    write_header_and_close(out, cfg, sizes_up, sizes_raw, native_rates, sleep_size);
 }
 
 std::filesystem::path make_binfile(const std::filesystem::path& path, const config_entry& cfg)
@@ -1001,7 +1014,7 @@ std::filesystem::path make_binfile(const std::filesystem::path& path, const conf
         creates output path, and calls the edf or dat specific function to write the bin file.
     */
     std::filesystem::path out = std::filesystem::path(cfg.output_path) /
-        (path.stem().string() + "_" + std::to_string((int)cfg.target_sampling_rate) + ".bin");
+        (path.stem().string() + "_" + std::to_string((int)cfg.high_upsample_rate) + ".bin");
 
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);

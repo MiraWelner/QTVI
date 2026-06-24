@@ -1,6 +1,6 @@
 /**
  * @file   config_loader.cpp
- * @brief  Loads the config.csv and extracts the feilds that are useful for creating the bin file
+ * @brief  Loads the config.csv and extracts the fields that are useful for creating the bin file
  */
 
 #include "config_loader.hpp"
@@ -44,62 +44,66 @@ std::vector<std::string> parse_config_row(const std::string& line) {
 
 void apply_dataset_specific_channel_labels(config_entry& cfg) {
     /*
-        Each dataset uses different names for the same channel. For example, the EKG channel in mesa is equivalent
-        to the NLS_NOM_ECG_ELEC_pOTL_I label in CHAOS and the ECG_1 label in bittium. Each channel is a feature of the config_entry
-        cfg, and they are assigned here.
+        The ECG and PPG channels exist in different datasets, but their names are 
+        different so they are set here.
     */
     if (cfg.dataset_type == "MESA") {
-        cfg.ecg1Label = "EKG";
-        cfg.ppgLabel = "Pleth";
+        cfg.ecg_1_label = "EKG";
+        cfg.ppg_label = "Pleth";
     }
     else if (cfg.dataset_type == "BITTIUM") {
-        cfg.ecg1Label = "ECG_1";
-        cfg.ecg2Label = "ECG_2";
-        cfg.ecg3Label = "ECG_3";
-        cfg.accelXLabel = "Accelerometer_X";
-        cfg.accelYLabel = "Accelerometer_Y";
-        cfg.accelZLabel = "Accelerometer_Z";
+        cfg.ecg_1_label = "ECG_1";
+        cfg.ecg_2_label = "ECG_2";
+        cfg.ecg_3_label = "ECG_3";
     }
+
     else if (cfg.dataset_type == "CHAOS") {
-        cfg.ecg1Label = "NLS_NOM_ECG_ELEC_POTL_I";
-        cfg.ecg2Label = "NLS_NOM_ECG_ELEC_POTL_II";
-        cfg.ecg3Label = "NLS_NOM_ECG_ELEC_POTL_III";
-        cfg.ppgLabel = "NLS_NOM_PULS_OXIM_PLETH";
-        cfg.eeg1Label = "NLS_EEG_NAMES_EEG_CHAN1";
-        cfg.eeg2Label = "NLS_EEG_NAMES_EEG_CHAN2";
-        cfg.eeg3Label = "NLS_EEG_NAMES_EEG_CHAN3";
-        cfg.eeg4Label = "NLS_EEG_NAMES_EEG_CHAN4";
-        cfg.cvpLabel = "NLS_NOM_PRESS_BLD_VEN_CENT";
-        cfg.respLabel = "NLS_NOM_RESP";
-        cfg.abpLabel = "NLS_NOM_PRESS_BLD_ART_ABP";
-        cfg.artLabel = "NLS_NOM_PRESS_BLD_ART";
-        cfg.artPulmLabel = "NLS_NOM_PRESS_BLD_ART_PULM";
+        cfg.ecg_1_label = "NLS_NOM_ECG_ELEC_POTL_I";
+        cfg.ecg_2_label = "NLS_NOM_ECG_ELEC_POTL_II";
+        cfg.ecg_3_label = "NLS_NOM_ECG_ELEC_POTL_III";
+        cfg.ppg_label = "NLS_NOM_PULS_OXIM_PLETH";
     }
 }
 
 
 bool load_config(int dataType, config_entry& out) {
-    /*
-    * Loads the config.csv (or whatever is in CONFIG_PATH) and fills up a config_entry
-    * struct with all the data. Note that this particular function does NOT load the
-    * file paths, because those may be empty. Those are handled in build_derived_paths
-    */
     std::ifstream file(CONFIG_PATH);
     if (!file.is_open()) {
         std::cerr << "ERROR: cannot open " << CONFIG_PATH << "\n";
         return false;
     }
-    std::string user_selected_dataset = (dataType == 1) ? "MESA" : (dataType == 2) ? "BITTIUM" : (dataType == 3) ? "CHAOS" : "";
+
+    std::string user_selected_dataset = (dataType == 1) ? "MESA"
+        : (dataType == 2) ? "BITTIUM"
+        : (dataType == 3) ? "CHAOS" : "";
+
+    // Build column-name -> index from the header so reordered / added columns
+    // in config.csv don't break parsing. Matched case-insensitively.
+    std::string header;
+    if (!std::getline(file, header)) return false;
+    std::vector<std::string> headerFields = parse_config_row(header);
+    std::unordered_map<std::string, int> col;
+    for (int i = 0; i < (int)headerFields.size(); ++i) {
+        std::string h = headerFields[i];
+        std::transform(h.begin(), h.end(), h.begin(), ::tolower);
+        col[h] = i;
+    }
+
     std::string line;
-    std::getline(file, line);   // skip header
     while (std::getline(file, line)) {
-        auto row = parse_config_row(line);
-        std::string rowName = row[0];
+        std::vector<std::string> row = parse_config_row(line);
+
+        // Cell by column name; "" if the column is missing or the row is short.
+        auto cell = [&](const std::string& name) -> std::string {
+            auto it = col.find(name);
+            if (it == col.end() || it->second >= (int)row.size()) return {};
+            return row[it->second];
+            };
+
+        std::string rowName = cell("data_type");
         std::transform(rowName.begin(), rowName.end(), rowName.begin(), ::toupper);
         if (rowName != user_selected_dataset) continue;
 
-        // Some cells are intentionally blank (e.g. MESA has no cvp_rate).
-        // std::stod throws on empty strings, so guard.
         auto stod_or_zero = [](const std::string& s) -> double {
             if (s.empty()) return 0.0;
             try { return std::stod(s); }
@@ -107,24 +111,28 @@ bool load_config(int dataType, config_entry& out) {
             };
 
         out.dataset_type = user_selected_dataset;
-        out.original_file_extention = row[1];
-        std::cout << out.original_file_extention;
-        out.sleep_file_extention = row[2];
-        out.ecg_rate = stod_or_zero(row[3]);
-        out.ppg_rate = stod_or_zero(row[4]);
-        out.central_venous_pressure_rate = stod_or_zero(row[5]);
-        out.arterial_blood_pressure_rate = stod_or_zero(row[6]);
-        out.resp_rate = stod_or_zero(row[7]);
-        out.target_sampling_rate = stod_or_zero(row[8]);
-        out.input_path = row[12];
-        out.output_path = row[13];
+        out.original_file_extention = cell("main_file_extention");
+        out.sleep_file_extention = cell("sleep_file_extention");
+        out.ecg_rate = stod_or_zero(cell("ecg_rate"));
+        out.ppg_rate = stod_or_zero(cell("ppg_rate"));
+        out.central_venous_pressure_rate = stod_or_zero(cell("cvp_rate"));
+        out.arterial_blood_pressure_rate = stod_or_zero(cell("abp_rate"));
+        out.accel_rate = stod_or_zero(cell("accel_rate"));
+        out.temp_rate = stod_or_zero(cell("temp_rate"));
+        out.marker_rate = stod_or_zero(cell("marker_rate"));
+        out.resp_rate = stod_or_zero(cell("resp_rate"));
+		out.pacemaker_event_rate = stod_or_zero(cell("pacemaker_event_rate"));
+        out.high_upsample_rate = stod_or_zero(cell("high_upsampled_rate"));
+        out.low_sample_rate = stod_or_zero(cell("low_upsampling_rate"));
+        out.sleep_state_length = stod_or_zero(cell("sleepstate_length"));
+        out.input_path = cell("original_file_path");
+        out.output_path = cell("output_folder");
 
         apply_dataset_specific_channel_labels(out);
         return true;
     }
     return false;
 }
-
 bool promptForMissingPaths(config_entry& cfg) {
     /*
             If the path sections of the config file are empty, prompt the user

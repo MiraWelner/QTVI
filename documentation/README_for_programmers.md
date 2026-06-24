@@ -12,6 +12,22 @@ I based the core of the algorithm off Daniel's MATLAB. Since I don't know MATLAB
 
 **chart_utils.hpp**
 
+Sets the colors of all the series and contains various features required both markable and nonmarkable plots.
+
+* **wipe_chart**: Only ever called in handle_data_plot in signal_renderer. It is to remove things from charts when the signal is changed. The QList 'keep' contains everything that is supposed to be persistent and calculated once: the raw sample, the upsampled sample, and the red grid lines (if they are there). This is for efficiency so they aren't redrawn. However the annotations, etc are removed.
+
+* **set_padded_y_range:**  The y range of a plot isn't just the max min diff, there is a pad. It can be tuned here! Handles range in event of flatline.
+
+* **is_missing_signal:** Returns true if the file doesn't have a the signal. Either the dataset doesn't have this type of data, or the experimenter forgot to attach the lead.
+
+* **sleep_data_present:** Currently, sleep data is only in the MESA, and in all MESA files. This is just an extra check in case there is a broken MESA file.
+
+* **get_timestamp:** The timestamps along the X axis of the charts are formatted as: HH:MM:SS, they are set by this function.
+
+* **get_chart_title:**  Make title for each markable chart, set sig figs in each printed value.
+
+* 
+
 **gap_indicator.cpp/hpp**
 
 **grid_overlay.cpp/hpp**

@@ -29,7 +29,7 @@ bool annotation_eraser::handleRightClick(QChartView* cv, const QPoint& viewportP
         if (l == "ECG1") return beat_log::ECG1;
         if (l == "ECG2") return beat_log::ECG2;
         if (l == "ECG3") return beat_log::ECG3;
-        if (l == "PPG")  return beat_log::PPG;
+        if (l == "PPG_ACCEL")  return beat_log::PPG;
         return beat_log::ABP;
         };
 

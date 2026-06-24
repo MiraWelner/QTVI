@@ -35,20 +35,13 @@
 #include <unordered_map>
 #include <vector>
 
-struct markable_data_series {
-    //A series such as ECG, PPG, that can be annotated
-    const QVector<double>* data;
-    QColor color;
-    const QVector<QPointF>* rawData = nullptr;
-};
-
 namespace {
 
     beat_log::ChannelIdx beatLogChannel(const QString& label) {
         if (label == "ECG1") return beat_log::ECG1;
         if (label == "ECG2") return beat_log::ECG2;
         if (label == "ECG3") return beat_log::ECG3;
-        if (label == "PPG")  return beat_log::PPG;
+        if (label == "PPG_ACCEL")  return beat_log::PPG;
         return beat_log::ABP;
     }
 
@@ -101,16 +94,19 @@ namespace {
         auto* xAxis = new QCategoryAxis();
         xAxis->setRange(startLocal, startLocal + duration);
         xAxis->append(QString::fromStdString("(HH:MM:SS)"), 0);
-        const double fracs[] = { 1.0 / 6.0, 0.5, 5.0 / 6.0 };
+
+        // Ticks at 1/4, 1/2, 3/4 of the window. get_timestamp shows tenths,
+        // so labels stay distinct at every width (including the 1 s view).
+        const double fracs[] = { 0.25, 0.5, 0.75 };
         for (double f : fracs) {
-            double localVal = startLocal + f * duration;
-            xAxis->append(get_timestamp(globalOffset + localVal), localVal);
+            const double t = startLocal + f * duration;
+            xAxis->append(get_timestamp(globalOffset + t), t);
         }
+
         xAxis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
         xAxis->setTruncateLabels(false);
         xAxis->setGridLineVisible(false);
         xAxis->setLabelsVisible(labelsVisible);
-        if (!labelsVisible) xAxis->setVisible(false);
         return xAxis;
     }
 
@@ -165,7 +161,7 @@ namespace {
 
         for (int slot = 0; slot < serieses.size(); ++slot) {
             const auto& d = serieses[slot];
-            if (!d.data || isMissingSignal(*d.data)) continue;
+            if (!d.data || is_missing_signal(*d.data)) continue;
             const bool hasRaw = d.rawData;
 
             auto ensurePersistentLine = [&]() -> QLineSeries* {
@@ -198,7 +194,8 @@ namespace {
 
             int startIdx = std::clamp(static_cast<int>(currentStartTime * ecgSR),
                 0, static_cast<int>(d.data->size() - 1));
-            int endIdx = std::clamp(static_cast<int>((currentStartTime + windowDuration) * ecgSR),
+            int endIdx = std::clamp(
+                static_cast<int>((currentStartTime + windowDuration) * ecgSR) + 1,
                 0, static_cast<int>(d.data->size()));
 
             //for scaling, use median as the center, so the scaling is robust to noise
@@ -414,7 +411,7 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     auto blkFn = [blkIdx](double localT) { return blkIdx.at(localT); };
     const double sgn = invertedForSignal(label) ? -1.0 : 1.0;
     auto runFinder = [&](const std::vector<std::pair<double, double>>& refEx) {
-        if (label == "PPG" || label == "ABP")
+        if (label == "PPG_ACCEL" || label == "ABP")
             return gui_peak_finder::findPeaksDerivative(
                 *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
                 refPreceding, refEx, detExcluded, withinSpans);
@@ -532,9 +529,9 @@ QVector<QPointF> noise_marking_gui::get_bpm(const QString& label, double& outDur
 }
 
 void noise_marking_gui::setupHypnogram() {
-    if (m_sleepSR <= 0.0 || !sleepDataPresent(m_sleepStages)) return;
+    if (m_sleepSR <= 0.0 || !sleep_data_present(m_sleepStages)) return;
 
-    auto* chart = ui->hyp_accel_resp_axis->chart();
+    auto* chart = ui->hyp_resp_axis->chart();
     if (m_cvpCursorBar && m_cvpCursorBar->chart() == chart)
         chart->removeSeries(m_cvpCursorBar);
     for (auto* s : m_hypnoStageSeries) { chart->removeSeries(s); delete s; }
@@ -686,7 +683,7 @@ void noise_marking_gui::ampogram(double range) {
     auto ecg2Pts = calculate_amplitude(m_ecg2, m_ecgSR);
     auto ecg3Pts = calculate_amplitude(m_ecg3, m_ecgSR);
 
-    const bool sleepPresent = sleepDataPresent(m_sleepStages);
+    const bool sleepPresent = sleep_data_present(m_sleepStages);
     const bool ppgAmpHasLabels = !sleepPresent
         && ui->ppg_ampogram_axis && !ui->ppg_ampogram_axis->isHidden();
     const bool ecgAmpHasLabels = !sleepPresent && !ppgAmpHasLabels;
@@ -718,13 +715,47 @@ void noise_marking_gui::ampogram(double range) {
     }
 
     create_plot(ui->ppg_ampogram_axis, ppg_ampogram_series,
-        calculate_amplitude(m_ppg, m_ppgSR),
+        calculate_amplitude(m_ppg, m_ecgSR),
         m_ppgCursorBar, COLOR_PPG, "PPG Amp-O-Gram", ppgAmpHasLabels);
 }
 
-// ============================================================================
-// Main data plot
-// ============================================================================
+void noise_marking_gui::plot_nonmarkable(QChartView* view, const QString& title, const QList<markable_data_series>& serieses, double sampling_rate)
+{
+    if (!view || !view->chart()) return;
+    view->chart()->setTitle(title);
+    view->chart()->setTitleFont(Theme::chartTitleFont());
+    const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
+    renderWindowedChart(view, serieses, m_persistentLines[view],
+        m_persistentRawScatter[view],
+        current_start_time, visible_window_size, globalOffset, sampling_rate,
+        true, m_plotMode == PlotMode::Scatter,
+        m_plotMode == PlotMode::Line, 1.0);
+}
+
+void noise_marking_gui::determine_which_nonmarkable_charts_to_plot() {
+    /**
+    * @brief Plot non-markable signals (CVP, RESP, PACEMAKER) based on dataset type.
+    */
+    if (m_cfg.dataset_type == "BITTIUM") {
+        if (ui->cvp_axis && !is_missing_signal(m_temp))
+            plot_nonmarkable(ui->cvp_axis, "Temperature",
+                { { &m_temp, COLOR_TEMP, &m_tempRaw } }, upsampledRateFor(CH_TEMP));
+        if (ui->hyp_resp_axis && !is_missing_signal(m_marker))
+            plot_nonmarkable(ui->hyp_resp_axis, "Marker",
+                { { &m_marker, COLOR_MARKER, &m_markerRaw } }, upsampledRateFor(CH_MARKER));
+        if (ui->pacemaker_axis && !is_missing_signal(m_pacemaker))
+            plot_nonmarkable(ui->pacemaker_axis, "Pacemaker Events",
+                { { &m_pacemaker, COLOR_MARKER, &m_pacemakerRaw } }, upsampledRateFor(CH_PACEMAKER));
+    }
+    if (m_cfg.dataset_type == "CHAOS") {
+        if (ui->cvp_axis && m_cvpRaw.size() >= 2)
+            plot_nonmarkable(ui->cvp_axis, "CVP",
+                { { &m_cvp, COLOR_CVP, &m_cvpRaw } }, upsampledRateFor(CH_CVP));
+        if (ui->hyp_resp_axis && !is_missing_signal(m_resp))
+            plot_nonmarkable(ui->hyp_resp_axis, "RESP",
+                { { &m_resp, COLOR_RESP, &m_respRaw } }, upsampledRateFor(CH_RESP));
+    }
+}
 
 void noise_marking_gui::handle_data_plot() {
     for (auto* area : m_highlights) {
@@ -742,7 +773,7 @@ void noise_marking_gui::handle_data_plot() {
 
     QChartView* xLabelOwnerRight = nullptr;
     for (auto* cv : { ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
-                      ui->ppg_axis, ui->accel_or_abp_axis }) {
+                      ui->ppg_accel_axis, ui->accel_or_abp_axis }) {
         if (cv && !cv->isHidden()) xLabelOwnerRight = cv;
     }
 
@@ -767,15 +798,15 @@ void noise_marking_gui::handle_data_plot() {
     wipe_chart(ui->ecg_axis_1->chart(), keepFor(ui->ecg_axis_1));
     wipe_chart(ui->ecg_axis_2->chart(), keepFor(ui->ecg_axis_2));
     wipe_chart(ui->ecg_axis_3->chart(), keepFor(ui->ecg_axis_3));
-    wipe_chart(ui->ppg_axis->chart(), keepFor(ui->ppg_axis));
-    if (ui->accel_or_abp_axis && !isMissingSignal(m_abp))
+    wipe_chart(ui->ppg_accel_axis->chart(), keepFor(ui->ppg_accel_axis));
+    if (ui->accel_or_abp_axis && !is_missing_signal(m_abp))
         wipe_chart(ui->accel_or_abp_axis->chart(),
             keepFor(ui->accel_or_abp_axis));
 
-    const bool sleepPresent = sleepDataPresent(m_sleepStages);
-    if (!sleepPresent && ui->hyp_accel_resp_axis)
-        wipe_chart(ui->hyp_accel_resp_axis->chart(),
-            keepFor(ui->hyp_accel_resp_axis));
+    const bool sleepPresent = sleep_data_present(m_sleepStages);
+    if (!sleepPresent && ui->hyp_resp_axis)
+        wipe_chart(ui->hyp_resp_axis->chart(),
+            keepFor(ui->hyp_resp_axis));
     if (ui->cvp_axis)
         wipe_chart(ui->cvp_axis->chart(), keepFor(ui->cvp_axis));
 
@@ -786,12 +817,29 @@ void noise_marking_gui::handle_data_plot() {
 
         const double sr = r.sampleRate ? *r.sampleRate : m_ecgSR;
 
-        if (label == "PPG") {
+        if (label == "PPG_ACCEL") {
             const int s = std::clamp(int(current_start_time * sr), 0, int(r.upsampled_data->size() - 1));
             const int e = std::clamp(int((current_start_time + visible_window_size) * sr), 0, int(r.upsampled_data->size()));
         }
         const QVector<QPointF> emptyRaw;
         const QVector<QPointF>& rawData = r.dataRaw ? *r.dataRaw : emptyRaw;
+
+        // Bittium: PPG_ACCEL chart carries the 3 accel channels; other datasets
+        // render the single channel.
+        const bool bittiumAccelPpg =
+            (label == "PPG_ACCEL") && (m_cfg.dataset_type == "BITTIUM");
+        QList<markable_data_series> serieses;
+        if (bittiumAccelPpg) {
+            serieses = {
+                { &m_accelX, COLOR_ACCEL_X, &m_accelXRaw },
+                { &m_accelY, COLOR_ACCEL_Y, &m_accelYRaw },
+                { &m_accelZ, COLOR_ACCEL_Z, &m_accelZRaw },
+            };
+        }
+        else {
+            serieses = { { r.upsampled_data, r.color, &rawData } };
+        }
+        const QString titleLabel = bittiumAccelPpg ? QStringLiteral("Accel") : label;
 
         double nativeHz = sr;
         const bool hasRealRaw = rawData.size() >= 2
@@ -804,29 +852,33 @@ void noise_marking_gui::handle_data_plot() {
         const double pxPerSec = (visible_window_size > 0.0)
             ? r.chartView->chart()->plotArea().width() / visible_window_size : 0.0;
         const double pxPerSample = (nativeHz > 0.0) ? pxPerSec / nativeHz : 0.0;
-        r.chartView->setProperty("signalName", label);
+        r.chartView->setProperty("signalName", titleLabel);
         r.chartView->setProperty("nativeHz", nativeHz);
         r.chartView->chart()->setTitleFont(Theme::chartTitleFont());
 
         const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
         renderWindowedChart(
-            r.chartView, { { r.upsampled_data, r.color, &rawData } },
+            r.chartView, serieses,
             m_persistentLines[r.chartView],
             m_persistentRawScatter[r.chartView],
             current_start_time, visible_window_size, globalOffset, sr,
             r.chartView == xLabelOwnerRight,
             m_plotMode == PlotMode::Scatter,
             m_plotMode == PlotMode::Line,
-            yScaleForSignal(label), true);
+            yScaleForSignal(label));
 
         // --- pin axis to chunk-wide extremes when drift filtering is OFF ---
         if (!m_filterBaselineDrift) {
             double glo = 1e9, ghi = -1e9;
-            for (double v : *r.upsampled_data) { if (v < glo) glo = v; if (v > ghi) ghi = v; }
-            for (const QPointF& p : rawData) {
-                if (p.x() == -1.0) continue;            // skip the (-1,-1) sentinel
-                if (p.y() < glo) glo = p.y();
-                if (p.y() > ghi) ghi = p.y();
+            for (const markable_data_series& s : serieses) {
+                if (s.data)
+                    for (double v : *s.data) { if (v < glo) glo = v; if (v > ghi) ghi = v; }
+                if (s.rawData)
+                    for (const QPointF& p : *s.rawData) {
+                        if (p.x() == -1.0) continue;    // skip the (-1,-1) sentinel
+                        if (p.y() < glo) glo = p.y();
+                        if (p.y() > ghi) ghi = p.y();
+                    }
             }
             auto vAxes = r.chartView->chart()->axes(Qt::Vertical);
             if (!vAxes.isEmpty()) {
@@ -835,6 +887,30 @@ void noise_marking_gui::handle_data_plot() {
             }
         }
         std::vector<int> postTags;
+
+        // Bittium: accel has no meaningful R-peaks, so detect/draw nothing.
+        // Instead sample the accel trace at each ECG1 beat time and log those
+        // (time, accel-value) pairs into the accel column -- same timestamps as
+        // ECG1, so rows line up. (CSV column headed "accel"; see beat_log.)
+        if (bittiumAccelPpg) {
+            r.chartView->setProperty("bpm", 0.0);
+            r.chartView->chart()->setTitle(
+                get_chart_title(titleLabel, nativeHz, pxPerSample, 0.0));
+            if (m_beatLog) {
+                const QVector<QPointF> ecgPeaks = display_peaks_in_window("ECG1");
+                for (const QPointF& p : ecgPeaks) {
+                    const double gt = p.x() + globalOffset;
+                    double accelY = 0.0;
+                    const int idx = static_cast<int>(std::round(p.x() * sr));
+                    if (idx >= 0 && idx < m_accelX.size()) accelY = m_accelX[idx];
+                    m_beatLog->logPeak(beat_log::PPG, gt, accelY,
+                        blankingAt(label, gt), thresholdAt(label, gt), 0, 0);
+                }
+            }
+            return;   // accel chart drawn above; no detection/markers
+        }
+
+
         const QVector<QPointF> peaks = display_peaks_in_window(label, &postTags);
         double bpm = 0.0;
         if (visible_window_size >= 10.0) {            // keep in sync with kMinBpmWindowSec in get_bpm
@@ -849,18 +925,6 @@ void noise_marking_gui::handle_data_plot() {
         r.chartView->chart()->setTitle(get_chart_title(label, nativeHz, pxPerSample, bpm));
         const beat_log::ChannelIdx ch = beatLogChannel(label);
 
-        // Log each beat with the override values used to detect it, the
-        // annotation type whose span contains it (0 if unannotated), and
-        // its post tag (computed during detection: 0 unless it follows an
-        // eligible arrhythmia). Noise spans don't reach here (detection is
-        // suppressed).
-        //
-        // markType lookup: build this channel's spans once (sorted by start,
-        // with a prefix-max of their end times) so each beat is an O(log n)
-        // lookup. The common case -- a beat inside no annotation -- rejects in
-        // O(log n) via the prefix-max guard without scanning, and there is no
-        // per-segment QString allocation (the old loop allocated one QString
-        // per segment per beat, which dominated at high marking counts).
         const std::string logLabelStd = label.toStdString();
         struct LogSpan { double s, e; int code; };
         std::vector<LogSpan> chanSpans;
@@ -943,45 +1007,9 @@ void noise_marking_gui::handle_data_plot() {
         addPeakSeries(bluePts, Qt::blue);
         };
 
-    plotMarkable("ECG1"); plotMarkable("ECG2"); plotMarkable("ECG3");
-    plotMarkable("PPG");
-    if (ui->accel_or_abp_axis && !isMissingSignal(m_abp)) plotMarkable("ABP");
-
-    auto plotDisplay = [&](QChartView* view, const QString& title,
-        const QList<markable_data_series>& serieses)
-        {
-            if (!view || !view->chart()) return;
-            view->chart()->setTitle(title);
-            view->chart()->setTitleFont(Theme::chartTitleFont());
-            const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
-
-            renderWindowedChart(view, serieses, m_persistentLines[view],
-                m_persistentRawScatter[view],
-                current_start_time, visible_window_size, globalOffset, m_ecgSR,
-                true, m_plotMode == PlotMode::Scatter, false,
-                1.0, true);
-        };
-
-    if (ui->cvp_axis && !isMissingSignal(m_cvp)) {
-        plotDisplay(ui->cvp_axis, "CVP", { { &m_cvp, COLOR_CVP, &m_cvpRaw } });
-    }
-
-    if (ui->hyp_accel_resp_axis) {
-        const bool anyAccel = !isMissingSignal(m_accelX)
-            || !isMissingSignal(m_accelY) || !isMissingSignal(m_accelZ);
-        if (anyAccel) {
-            plotDisplay(ui->hyp_accel_resp_axis, "ACCEL", {
-                { &m_accelX, COLOR_ACCEL_X, &m_accelXRaw },
-                { &m_accelY, COLOR_ACCEL_Y, &m_accelYRaw },
-                { &m_accelZ, COLOR_ACCEL_Z, &m_accelZRaw },
-                });
-        }
-        else if (!sleepPresent && !isMissingSignal(m_resp)) {
-            plotDisplay(ui->hyp_accel_resp_axis, "RESP",
-                { { &m_resp, COLOR_RESP, &m_respRaw } });
-        }
-    }
-
+    plotMarkable("ECG1"); plotMarkable("ECG2"); plotMarkable("ECG3"); plotMarkable("PPG_ACCEL");
+    if (ui->accel_or_abp_axis && !is_missing_signal(m_abp)) plotMarkable("ABP");
+    determine_which_nonmarkable_charts_to_plot();
     updateNoiseHighlights();
     if (m_pulseOverlay) m_pulseOverlay->refresh();
     if (m_gapIndicator)  m_gapIndicator->refresh();
@@ -991,7 +1019,7 @@ void noise_marking_gui::handle_data_plot() {
     // which otherwise swallows clicks before they reach the viewport's event
     // filter. Let presses fall through so marking/erase land on the first click.
     for (QChartView* cv : { ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
-                            ui->ppg_axis, ui->accel_or_abp_axis }) {
+                            ui->ppg_accel_axis, ui->accel_or_abp_axis }) {
         if (!cv) continue;
         if (auto* gl = cv->findChild<QOpenGLWidget*>())
             gl->setAttribute(Qt::WA_TransparentForMouseEvents, true);
@@ -1015,8 +1043,8 @@ void noise_marking_gui::updateAmpogramCursor() {
         };
     draw(ui->ecg_ampogram_axis, m_ecgCursorBar);
     draw(ui->ppg_ampogram_axis, m_ppgCursorBar);
-    if (sleepDataPresent(m_sleepStages))
-        draw(ui->hyp_accel_resp_axis, m_hypnoCursorBar);
+    if (sleep_data_present(m_sleepStages))
+        draw(ui->hyp_resp_axis, m_hypnoCursorBar);
 }
 
 void noise_marking_gui::updateNoiseHighlights() {

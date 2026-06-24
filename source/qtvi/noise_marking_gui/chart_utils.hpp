@@ -1,9 +1,7 @@
 #pragma once
 /**
 * @file   chart_utils.hpp
-* @brief  Sets the colors of all the series and contains various
-*         features required by the plotting functionality - both markable and
-*         nonmarkable
+* @brief  Sets the colors of all the series and contains various features required both markable and nonmarkable plots.
 */
 
 #include <QtCharts/QChart>
@@ -11,25 +9,28 @@
 #include <QString>
 #include <QVector>
 
-inline const QColor COLOR_ECG1{ 101, 67, 33 };
-inline const QColor COLOR_ECG2{ 0,  128, 0 };
-inline const QColor COLOR_ECG3{ 0, 0, 139 };
-inline const QColor COLOR_PPG{ 48, 25, 52 };
-inline const QColor COLOR_ABP{ 52, 25, 48 };
-inline const QColor COLOR_ACCEL_X{ 243, 156, 18 };
-inline const QColor COLOR_ACCEL_Y{ 39, 174, 96 };
-inline const QColor COLOR_ACCEL_Z{ 142, 68, 173 };
-inline const QColor COLOR_RESP{ 0,130,0};
-inline const QColor COLOR_CVP{ 130,0,0};
-inline const QColor COLOR_RAW_SCATTER{ 0, 0, 0};
+inline const QColor COLOR_ECG1{ 101, 67, 33 };      // dark brown
+inline const QColor COLOR_ECG2{ 0, 110, 0 };        // dark green
+inline const QColor COLOR_ECG3{ 0, 0, 139 };        // navy blue
+inline const QColor COLOR_PPG{ 120, 20, 110 };      // dark magenta
+inline const QColor COLOR_ABP{ 0, 95, 105 };        // dark teal
+inline const QColor COLOR_ACCEL_X{ 170, 90, 0 };    // dark orange
+inline const QColor COLOR_ACCEL_Y{ 0, 105, 80 };    // dark sea green
+inline const QColor COLOR_ACCEL_Z{ 80, 20, 140 };   // dark violet
+inline const QColor COLOR_RESP{ 90, 100, 0 };       // dark olive
+inline const QColor COLOR_CVP{ 140, 0, 0 };         // dark red / maroon
+inline const QColor COLOR_TEMP{ 140, 50, 20 };      // dark sienna
+inline const QColor COLOR_MARKER{ 80, 80, 80 };     // dark gray
+inline const QColor COLOR_RAW_SCATTER{ 0, 0, 0 };   // black
 
 
 inline void wipe_chart(QChart* chart, const QList<QAbstractSeries*>& keep = {}){
     /*
-        The QList 'keep' contains everything that is supposed to be persistant and
-        calculated once: the raw sample, the upsampled sample, and the red grid lines
-        (if they are there). This is for efficiency so they aren't redrawn. However
-        the annotations, etc are removed.
+    * Only ever called in handle_data_plot in signal_renderer. It is to remove things from charts when the signal is changed.
+    * The QList 'keep' contains everything that is supposed to be persistent and
+    * calculated once: the raw sample, the upsampled sample, and the red grid lines
+    * (if they are there). This is for efficiency so they aren't redrawn. However
+    * the annotations, etc are removed.
     */
     for (auto* s : chart->series()) {
         if (keep.contains(s)) { chart->removeSeries(s); continue; }
@@ -42,8 +43,8 @@ inline void wipe_chart(QChart* chart, const QList<QAbstractSeries*>& keep = {}){
 
 inline void set_padded_y_range(QValueAxis* yAxis, double yMin, double yMax) {
     /*
-        The y range isn't just the max min diff, there is a pad. It can be tuned here!
-        Handles range in event of flatline.
+    * The y range of a plot isn't just the max min diff, there is a pad. It can be tuned here!
+    * Handles range in event of flatline.
     */
     double span = yMax - yMin;
     double pad = 0.05 * span;
@@ -51,41 +52,44 @@ inline void set_padded_y_range(QValueAxis* yAxis, double yMin, double yMax) {
     yAxis->setRange(yMin - pad, yMax + pad);
 }
 
-inline bool isMissingSignal(const QVector<double>& data) {
+inline bool is_missing_signal(const QVector<double>& data) {
     /*
-        You can't use dataset type to determine if signal is empty because sometimes the
-        experimentor will have forgotten to put a lead on, or something.
+    * Returns true if the file doesn't have a the signal. Either the dataset doesn't have this type of data,
+    * or the experimenter forgot to attach the lead.
     */
     return data.isEmpty() || (data.size() == 1 && data[0] == -1.0);
 }
 
-inline bool sleepDataPresent(const QVector<double>& sleepStages) {
+inline bool sleep_data_present(const QVector<double>& sleepStages) {
     /*
-        Currently, sleep data is only in the MESA, and in all MESA files. This is just an extra check
-        in case there is a broken MESA file.
+    * Currently, sleep data is only in the MESA, and in all MESA files. This is just an extra check
+    * in case there is a broken MESA file.
     */
-    return  !sleepStages.isEmpty()
-            && !(sleepStages.size() == 1 
-            && sleepStages[0] == -1.0);
+    return  !sleepStages.isEmpty() && !(sleepStages.size() == 1 && sleepStages[0] == -1.0);
 }
 
 inline QString get_timestamp(double seconds) {
     /*
-        The timestamps along the X axis of the charts are formatted as: HH:MM:SS
-        They are set by this function
+    * The timestamps along the X axis of the charts are formatted as: HH:MM:SS.t, the tenth is
+    * because if you don't, the display is weird for 1 second windows
     */
-    int t = static_cast<int>(seconds + 0.5);
-    int h = t / 3600;
-    int m = (t % 3600) / 60;
-    int s = t % 60;
-    return QString("%1:%2:%3")
+    if (seconds < 0.0) seconds = 0.0;
+    int tenths = static_cast<int>(seconds * 10.0 + 0.5);   // round to 0.1 s
+    int h = tenths / 36000;
+    int m = (tenths % 36000) / 600;
+    int s = (tenths % 600) / 10;
+    int d = tenths % 10;
+    return QString("%1:%2:%3.%4")
         .arg(h, 2, 10, QChar('0'))
         .arg(m, 2, 10, QChar('0'))
-        .arg(s, 2, 10, QChar('0'));
+        .arg(s, 2, 10, QChar('0'))
+        .arg(d);
 }
 
 inline QString get_chart_title(const QString& signalName, double nativeHz, double pxPerSample, double bpm){
-    //Make title for each markable chart, set sig figs in each printed value
+    /*
+    * Make title for each markable chart, set sig figs in each printed value.
+    */
     QString space = QString(QChar(0x00A0)).repeated(4); //QString doesn't have tabs and doesn't respsect whitespace for some reason
     QString base = QString("%1" + space + "Original Frequency: %2 Hz" + space + "Pixel Resolution: %3 px/sample" + space + "%4 bpm")
         .arg(signalName)

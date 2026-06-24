@@ -53,7 +53,7 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX, const Q
             if (l == "ECG1") return beat_log::ECG1;
             if (l == "ECG2") return beat_log::ECG2;
             if (l == "ECG3") return beat_log::ECG3;
-            if (l == "PPG")  return beat_log::PPG;
+            if (l == "PPG_ACCEL")  return beat_log::PPG;
             return beat_log::ABP;
             };
         m_beatLog->removeInRange(beatCh(signalLabel), snappedS, snappedE);
@@ -274,7 +274,7 @@ void noise_marking_gui::restoreMarkingMarkers() {
         }
         };
     restore("ECG1", m_markState_ecg1); restore("ECG2", m_markState_ecg2);
-    restore("ECG3", m_markState_ecg3); restore("PPG", m_markState_ppg);
+    restore("ECG3", m_markState_ecg3); restore("PPG_ACCEL", m_markState_ppg);
     restore("ABP", m_markState_abp);
 }
 
@@ -454,11 +454,11 @@ bool noise_marking_gui::handleMousePress(QChartView* cv, QWidget* viewport, QMou
         }
     }
 
-    const bool sleepPresent = sleepDataPresent(m_sleepStages);
+    const bool sleepPresent = sleep_data_present(m_sleepStages);
     const bool isNavChart =
         (cv == ui->ecg_ampogram_axis)
         || (cv == ui->ppg_ampogram_axis)
-        || (cv == ui->hyp_accel_resp_axis && sleepPresent);
+        || (cv == ui->hyp_resp_axis && sleepPresent);
 
     if (isNavChart) {
         const double globalClickX = cv->chart()->mapToValue(me->pos()).x();
