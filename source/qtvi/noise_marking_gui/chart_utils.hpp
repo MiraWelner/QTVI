@@ -86,15 +86,23 @@ inline QString get_timestamp(double seconds) {
         .arg(d);
 }
 
-inline QString get_chart_title(const QString& signalName, double nativeHz, double pxPerSample, double bpm){
+inline QString get_chart_title(const QString& signalName, double nativeHz, double pxPerSample, double bpm = -1.0) {
     /*
-    * Make title for each markable chart, set sig figs in each printed value.
+    * Make title for each markable chart, set sig figs in each printed value. If you don't pass it bpm (for example in accel charts
+    * it just doesn't include it.
     */
-    QString space = QString(QChar(0x00A0)).repeated(4); //QString doesn't have tabs and doesn't respsect whitespace for some reason
-    QString base = QString("%1" + space + "Original Frequency: %2 Hz" + space + "Pixel Resolution: %3 px/sample" + space + "%4 bpm")
-        .arg(signalName)
-        .arg(nativeHz, 0, 'f', 1)
-        .arg(pxPerSample, 0, 'f', 3)
-        .arg(bpm, 0, 'f', 0);
+    QString space = QString(QChar(0x00A0)).repeated(4);
+    QString base;
+    if (bpm < 0.0) {
+        base = QString("%1" + space + "Original Frequency: %2 Hz" + space
+            + "Pixel Resolution: %3 px/sample")
+            .arg(signalName).arg(nativeHz, 0, 'f', 1).arg(pxPerSample, 0, 'f', 3);
+    }
+    else {
+        base = QString("%1" + space + "Original Frequency: %2 Hz" + space
+            + "Pixel Resolution: %3 px/sample" + space + "%4 bpm")
+            .arg(signalName).arg(nativeHz, 0, 'f', 1)
+            .arg(pxPerSample, 0, 'f', 3).arg(bpm, 0, 'f', 0);
+    }
     return base;
 }

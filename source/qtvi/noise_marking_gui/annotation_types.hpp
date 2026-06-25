@@ -26,18 +26,18 @@ namespace annotation_types {
 
     inline constexpr std::array<AnnotationType, 12> noise_types = { {
             //  label               code  r    g    b    a   suppress  post   param
-            { "1) R Peak Noise",   1,  255, 255, 0,   60, true,  false, false },
-            { "2) Minor Noise",    2,  157, 60,  0,   60, false, false, false },
-            { "3) Blank.+Thresh.", 3,  100, 100, 100, 60, false, false, true  },
-            { "4) Cond. Delay",    4,  128, 0,   128, 60, false, false, false },
-            { "5) AF",             5,  255, 0,   0,   60, false, true,  false },
-            { "6) SVT",            6,  0,   0,   255, 60, false, true,  false },
-            { "7) VT",             7,  0,   255, 0,   60, false, true,  false },
-            { "8) PVC",            8,  128, 255, 0,   60, false, true,  false },
-            { "9) PAC",            9,  255, 128, 0,   60, false, true,  false },
-            { "Benign Arr.",       10, 255, 128, 255, 60, false, false, false },
-            { "Sig. Arr.",         11, 0,   255, 255, 60, false, false, false },
-            { "Other",             12, 255, 200, 255, 60, false, false, false }
+        { "1) R Peak Noise",   1,  235, 220, 0,   60, true,  false, false },  // yellow
+        { "2) Minor Noise",    2,  150, 80,  30,  60, false, false, false },  // brown
+        { "3) Blank.+Thresh.", 3,  128, 128, 128, 60, false, false, true  },  // gray
+        { "4) Cond. Delay",    4,  70,  60,  200, 60, false, false, false },  // indigo
+        { "5) AF",             5,  230, 25,  25,  60, false, true,  false },  // red
+        { "6) SVT",            6,  0,   160, 160, 60, false, true,  false },  // teal
+        { "7) VT",             7,  30,  170, 70,  60, false, true,  false },  // green
+        { "8) PVC",            8,  130, 190, 30,  60, false, true,  false },  // lime
+        { "9) PAC",            9,  245, 130, 0,   60, false, true,  false },  // orange
+        { "Benign Arr.",       10, 200, 40,  170, 60, false, false, false },  // magenta
+        { "Sig. Arr.",         11, 0,   120, 210, 60, false, false, false },  // blue
+        { "Other",             12, 110, 120, 140, 60, false, false, false }   // slate
         } };
 
     inline const AnnotationType* find(const QString& label) {

@@ -24,7 +24,7 @@ Sets the colors of all the series and contains various features required both ma
 
 * **get_timestamp:** The timestamps along the X axis of the charts are formatted as: HH:MM:SS, they are set by this function.
 
-* **get_chart_title:**  Make title for each markable chart, set sig figs in each printed value.
+* **get_chart_title:**  Make title for each markable chart, set sig figs in each printed value. If you don't pass it bpm (for example in accel charts) it just doesn't include it.
 
 * 
 

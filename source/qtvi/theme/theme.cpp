@@ -65,7 +65,7 @@ namespace Theme {
     }
 
     QFont Theme::chartAxisFont() {
-        return QFont("Inter", 7);
+        return QFont("Inter", 6);
     }
 
 }

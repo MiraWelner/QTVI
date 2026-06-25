@@ -17,6 +17,7 @@
 #include <QTextStream>
 #include <QPixmap>
 #include <cmath>
+#include <QRadioButton>
 
 user_control_handler::user_control_handler(noise_marking_gui* parent)
     : QObject(parent), m_gui(parent) {
@@ -32,9 +33,14 @@ void user_control_handler::setupConnections() {
     connect(ui->finalize_button, &QPushButton::clicked, this, &user_control_handler::handle_finalize_button);
     connect(ui->skip_button, &QPushButton::clicked, this, &user_control_handler::handle_skip_button);
     connect(ui->save_current_plot, &QPushButton::clicked, this, &user_control_handler::save_current_plot);
-    connect(ui->mark_one_chan, &QPushButton::clicked, this, [this] { m_gui->toggleEcgMark(); });
-    connect(ui->mark_all_chan, &QPushButton::clicked, this, [this] { m_gui->toggleMarkAll(); });
-    connect(ui->mark_all_ecg, &QPushButton::clicked, this, [this] { m_gui->toggleMarkEcgAll(); });
+    connect(ui->mark_one_chan, &QRadioButton::toggled, this,
+        [this](bool on) { if (on) m_gui->setMarkScope(noise_marking_gui::MarkScope::One); });
+    connect(ui->mark_ecg, &QRadioButton::toggled, this,
+        [this](bool on) { if (on) m_gui->setMarkScope(noise_marking_gui::MarkScope::Ecg); });
+    connect(ui->mark_all_chan, &QRadioButton::toggled, this,
+        [this](bool on) { if (on) m_gui->setMarkScope(noise_marking_gui::MarkScope::All); });
+    connect(ui->make_annotation, &QPushButton::clicked, this,
+        [this] { m_gui->toggleAnnotationArm(); });
 
     // Window-length selector: combo index -> seconds. Default is index 2 (10 s).
     static constexpr double window_length_options[] = { 1, 3, 10, 30, 60, 120,300 };
@@ -163,10 +169,3 @@ void user_control_handler::handle_clearall_button() {
     m_gui->m_noiseManager = std::make_unique<annotation_handler>(m_gui->m_ecgSR);
     m_gui->handle_data_plot();
 }
-
-// ============================================================================
-// Mark-all passthroughs
-// ============================================================================
-
-void user_control_handler::handle_allmarkingstart_button() { m_gui->beginMarkingAll(); }
-void user_control_handler::handle_allmarkingstop_button() { m_gui->beginStopPhaseAll(); }

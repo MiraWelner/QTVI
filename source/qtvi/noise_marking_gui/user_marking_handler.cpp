@@ -19,7 +19,6 @@
  // ============================================================================
  // Marking operations
  // ============================================================================
-
 void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX, const QString& signalLabel)
 {
     clearDragPreview();
@@ -29,42 +28,16 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX, const Q
     const double globalEnd = endX + globalOffset;
     const double globalStart = state.globalStartTime;
 
-    if (annotation_types::isParamEdit(m_currentMarkingType)) {
-        state.phase = MarkPhase::Idle;
-        clearStartMarker(state);
-        updateEcgMarkButtonStyle();
-        if (m_markAllMode != MarkAllMode::None) {
-            bool allIdle = true;
-            for (const QString& lbl : markableChannelLabels())
-                if (isChannelActive(lbl) && markStateFor(lbl).phase != MarkPhase::Idle) {
-                    allIdle = false;
-                    break;
-                }
-            if (allIdle) { m_markAllMode = MarkAllMode::None; updateAllChannelButtonStates(); }
-        }
-        finalizeParamEdit(signalLabel, globalStart, globalEnd);
-        return;
-    }
-
     const double snappedS = std::round(std::min(globalStart, globalEnd) * sr) / sr;
     const double snappedE = std::round(std::max(globalStart, globalEnd) * sr) / sr;
 
     m_noiseManager->addSegment(
-        static_cast<int>(snappedS * sr),
-        static_cast<int>(snappedE * sr),
-        signalLabel.toStdString(),
-        m_currentMarkingType.toStdString());
-
+        static_cast<int>(snappedS * sr), static_cast<int>(snappedE * sr),
+        signalLabel.toStdString(), m_currentMarkingType.toStdString());
     m_genExc.noiseExc.append({ snappedS, snappedE });
     m_genExc.data_type.append(signalLabel);
     m_genExc.marking_type.append(m_currentMarkingType);
 
-    // Any mark may change this channel's beats in the span: noise suppresses
-    // detection, and any annotation makes the beats re-detect against an
-    // annotation-free reference and re-tag with the new marking_type. The log
-    // is append-only, so drop the stale rows here; the handle_data_plot() below
-    // re-logs whatever still detects (nothing in a noise span) with the right
-    // tag. Without this, beats logged before the mark linger as "None".
     if (m_beatLog) {
         auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {
             if (l == "ECG1") return beat_log::ECG1;
@@ -78,127 +51,39 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX, const Q
 
     state.phase = MarkPhase::Idle;
     clearStartMarker(state);
-    updateEcgMarkButtonStyle();
+}
+void noise_marking_gui::commitMarkingSpan(const QString& clickedLabel,
+    double globalStart, double globalEnd)
+{
+    const QStringList chans = scopeChannels(clickedLabel);
+    if (chans.isEmpty()) { clearDragPreview(); return; }
 
+    if (annotation_types::isParamEdit(m_currentMarkingType)) {
+        for (const QString& ch : chans) {            // clear any click-click start markers
+            ChannelMarkingState& st = markStateFor(ch);
+            st.phase = MarkPhase::Idle;
+            clearStartMarker(st);
+        }
+        finalizeParamEdit(chans, globalStart, globalEnd);   // one dialog, all channels, redraws
+        return;
+    }
 
-    if (m_markAllMode != MarkAllMode::None) {
-        bool allIdle = true;
-        for (const QString& lbl : markableChannelLabels())
-            if (isChannelActive(lbl) && markStateFor(lbl).phase != MarkPhase::Idle) {
-                allIdle = false; 
-                break;
-            }
-        if (allIdle) { m_markAllMode = MarkAllMode::None; updateAllChannelButtonStates(); }
+    const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
+    for (const QString& ch : chans) {
+        markStateFor(ch).globalStartTime = globalStart;     // same span on every scope channel
+        finalizeMarking(chartViewForSignalLabel(ch), globalEnd - globalOffset, ch);
     }
     handle_data_plot();
 }
-
 void noise_marking_gui::cancelMarking(const QString& signalLabel) {
     clearDragPreview();
     ChannelMarkingState& state = markStateFor(signalLabel);
     state.phase = MarkPhase::Idle;
     clearStartMarker(state);
-    updateEcgMarkButtonStyle();
-}
-
-void noise_marking_gui::beginMarking(const QString& signalLabel) {
-    ChannelMarkingState& state = markStateFor(signalLabel);
-    if (state.phase != MarkPhase::Idle) { cancelMarking(signalLabel); return; }
-    m_currentMarkingType = ui->marking_type->currentText();
-    state.phase = MarkPhase::WaitingForStart;
-    updateEcgMarkButtonStyle();
-}
-
-void noise_marking_gui::beginStopPhase(const QString& signalLabel) {
-    ChannelMarkingState& state = markStateFor(signalLabel);
-    if (state.phase != MarkPhase::WaitingForEnd) return;
-    state.phase = MarkPhase::WaitingForStop;
-    updateEcgMarkButtonStyle();
-}
-
-void noise_marking_gui::beginMarkingAll() {
-    if (m_markAllMode == MarkAllMode::All) { 
-        exitAllMarkModes(); 
-        updateAllChannelButtonStates(); 
-        return; 
-    }
-    exitAllMarkModes();
-    m_markAllMode = MarkAllMode::All;
-    m_currentMarkingType = ui->marking_type->currentText();
-    for (const QString& label : markableChannelLabels()) {
-        if (!isChannelActive(label)) continue;
-        markStateFor(label).phase = MarkPhase::WaitingForStart;
-    }
-    updateAllChannelButtonStates();
+    updateMarkingButtons();
 }
 
 
-void noise_marking_gui::beginStopPhaseAll() {
-    for (const QString& label : markableChannelLabels()) {
-        if (!isChannelActive(label)) continue;
-        ChannelMarkingState& state = markStateFor(label);
-        if (state.phase != MarkPhase::WaitingForEnd) continue;
-        state.phase = MarkPhase::WaitingForStop;
-    }
-    updateAllChannelButtonStates();
-}
-
-void noise_marking_gui::beginMarkingEcgAll() {
-    static const QStringList kEcg{ "ECG1", "ECG2", "ECG3" };
-    if (m_markAllMode == MarkAllMode::Ecg) { 
-        exitAllMarkModes(); 
-        updateAllChannelButtonStates();
-        return;
-    }
-    exitAllMarkModes();
-    m_markAllMode = MarkAllMode::Ecg;
-    m_currentMarkingType = ui->marking_type->currentText();
-    for (const QString& label : kEcg) {
-        if (!isChannelActive(label)) continue;
-        markStateFor(label).phase = MarkPhase::WaitingForStart;
-    }
-    updateAllChannelButtonStates();
-}
-
-void noise_marking_gui::beginStopPhaseEcgAll() {
-    static const QStringList kEcg{ "ECG1", "ECG2", "ECG3" };
-    for (const QString& label : kEcg) {
-        if (!isChannelActive(label)) continue;
-        ChannelMarkingState& state = markStateFor(label);
-        if (state.phase != MarkPhase::WaitingForEnd) continue;
-        state.phase = MarkPhase::WaitingForStop;
-    }
-    updateAllChannelButtonStates();
-}
-
-void noise_marking_gui::toggleMark(const QString& signalLabel) {
-    switch (markStateFor(signalLabel).phase) {
-    case MarkPhase::Idle:            beginMarking(signalLabel);   break;
-    case MarkPhase::WaitingForStart: cancelMarking(signalLabel);  break;  // un-arm
-    case MarkPhase::WaitingForEnd:   beginStopPhase(signalLabel); break;  // arm the end click
-    case MarkPhase::WaitingForStop:  cancelMarking(signalLabel);  break;  // un-arm
-    }
-}
-
-void noise_marking_gui::toggleMarkAll() {
-    if (m_markAllMode != MarkAllMode::All) { beginMarkingAll(); return; }
-    bool anyWaitingEnd = false;
-    for (const QString& lbl : markableChannelLabels())
-        if (isChannelActive(lbl) && markStateFor(lbl).phase == MarkPhase::WaitingForEnd) { anyWaitingEnd = true; break; }
-    if (anyWaitingEnd) beginStopPhaseAll();
-    else               beginMarkingAll();
-}
-
-
-void noise_marking_gui::toggleMarkEcgAll() {
-    static const QStringList kEcg{ "ECG1", "ECG2", "ECG3" };
-    if (m_markAllMode != MarkAllMode::Ecg) { beginMarkingEcgAll(); return; }
-    bool anyWaitingEnd = false;
-    for (const QString& lbl : kEcg)
-        if (isChannelActive(lbl) && markStateFor(lbl).phase == MarkPhase::WaitingForEnd) { anyWaitingEnd = true; break; }
-    if (anyWaitingEnd) beginStopPhaseEcgAll();
-    else               beginMarkingEcgAll();
-}
 
 // ============================================================================
 // Marker line helpers
@@ -239,39 +124,32 @@ void noise_marking_gui::updateDragPreview(QChartView* cv, double x0, double x1,
     auto* yAxis = qobject_cast<QValueAxis*>(vAxes.first());
     if (!yAxis) return;
 
-    const double lo = std::min(x0, x1);
-    const double hi = std::max(x0, x1);
-    const double yTop = yAxis->max();
-    const double yBot = yAxis->min();
+    const double lo = std::min(x0, x1), hi = std::max(x0, x1);
+    const double yTop = yAxis->max(), yBot = yAxis->min();
 
-    // Lazily create the rectangle on the first move of this drag; afterwards
-    // just move its two edges. Translucent fill so it reads as a preview.
-    if (!m_dragPreview) {
-        auto* upper = new QLineSeries();
-        auto* lower = new QLineSeries();
+    QAreaSeries*& prev = m_dragPreviews[cv];   // inserts nullptr if this chart has none yet
+    if (!prev) {
+        auto* upper = new QLineSeries(); auto* lower = new QLineSeries();
         upper->append(lo, yTop); upper->append(hi, yTop);
         lower->append(lo, yBot); lower->append(hi, yBot);
-        m_dragPreview = new QAreaSeries(upper, lower);
-        QColor fill = color;
-        m_dragPreview->setBrush(fill);
-        m_dragPreview->setPen(Qt::NoPen);
-        cv->chart()->addSeries(m_dragPreview);
-        m_dragPreview->attachAxis(hAxes.first());
-        m_dragPreview->attachAxis(yAxis);
+        prev = new QAreaSeries(upper, lower);
+        prev->setBrush(color); prev->setPen(Qt::NoPen);
+        cv->chart()->addSeries(prev);
+        prev->attachAxis(hAxes.first()); prev->attachAxis(yAxis);
     }
     else {
-        m_dragPreview->upperSeries()->replace({ {lo, yTop}, {hi, yTop} });
-        m_dragPreview->lowerSeries()->replace({ {lo, yBot}, {hi, yBot} });
+        prev->upperSeries()->replace({ {lo, yTop}, {hi, yTop} });
+        prev->lowerSeries()->replace({ {lo, yBot}, {hi, yBot} });
     }
 }
 
 void noise_marking_gui::clearDragPreview() {
-    if (!m_dragPreview) return;
-    if (m_dragPreview->chart()) m_dragPreview->chart()->removeSeries(m_dragPreview);
-    // QAreaSeries owns its upper/lower line series, so deleting it frees them.
-    delete m_dragPreview;
-    m_dragPreview = nullptr;
-    m_dragPreviewLabel.clear();
+    for (auto* p : m_dragPreviews) {
+        if (!p) continue;
+        if (p->chart()) p->chart()->removeSeries(p);
+        delete p;   // QAreaSeries owns its upper/lower line series
+    }
+    m_dragPreviews.clear();
 }
 
 void noise_marking_gui::restoreMarkingMarkers() {
@@ -326,9 +204,10 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
             const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
             const double startLocal =
                 markStateFor(m_dragSignalLabel).globalStartTime - globalOffset;
-            m_dragPreviewLabel = m_dragSignalLabel;
-            updateDragPreview(cv, startLocal, curX,
-                annotation_types::colorFor(m_currentMarkingType));
+            const QColor col = annotation_types::colorFor(m_currentMarkingType);
+            for (const QString& ch : scopeChannels(m_dragSignalLabel))
+                if (QChartView* ccv = chartViewForSignalLabel(ch))
+                    updateDragPreview(ccv, startLocal, curX, col);
         }
         return true;
     }
@@ -347,13 +226,26 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
                 double endX = cv->chart()->mapToValue(me->pos()).x();
                 endX = std::clamp(endX, current_start_time, current_start_time + visible_window_size);
                 const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
+                const double startLocal =
+                    markStateFor(m_dragSignalLabel).globalStartTime - globalOffset;
 
-                ChannelMarkingState& state = markStateFor(label);
-                const double localStart = state.globalStartTime - globalOffset;
-                if (std::abs(endX - localStart) > 0.1)
-                    finalizeMarking(cv, endX, label);   // clears preview itself (line 25)
-                else
-                    clearDragPreview();   // too short to commit -> drop preview
+                if (std::abs(endX - startLocal) > 0.1) {              // moved -> drag commit
+                    commitMarkingSpan(label,
+                        markStateFor(label).globalStartTime, endX + globalOffset);
+                }
+                else if (m_markArmed) {                               // click-click: first click
+                    clearDragPreview();
+                    for (const QString& ch : scopeChannels(label)) {
+                        ChannelMarkingState& st = markStateFor(ch);
+                        st.phase = MarkPhase::WaitingForStop;
+                        if (QChartView* ccv = chartViewForSignalLabel(ch))
+                            showStartMarker(ccv, st.globalStartTime - globalOffset, st,
+                                colorForSignal(ch), nullptr);
+                    }
+                }
+                else {
+                    clearDragPreview();
+                }
             }
             else {
                 clearDragPreview();           // released elsewhere -> drop preview
@@ -364,7 +256,7 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
 }
 
 bool noise_marking_gui::handleMousePress(QChartView* cv, QWidget* viewport, QMouseEvent* me)
-{
+{;
     if (me->button() != Qt::LeftButton) return false;
 
     double clickedX = cv->chart()->mapToValue(me->pos()).x();
@@ -373,76 +265,25 @@ bool noise_marking_gui::handleMousePress(QChartView* cv, QWidget* viewport, QMou
 
     const QString label = signalLabelForChartView(cv);
     if (!label.isEmpty()) {
-        if (!isChannelActive(label)) return false;
+        if (!isChannelActive(label)) return false;       // drag needs no arming
         const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
 
-        if (single_ecg_marker_clicked) {
-            ChannelMarkingState& st = markStateFor(label);
-            st.globalStartTime = clickedX + globalOffset;
-            showStartMarker(cv, clickedX, st, colorForSignal(label), stopButtonForSignal(label));
-            st.phase = MarkPhase::WaitingForStop;
-            single_ecg_marker_clicked = false;
-            updateEcgMarkButtonStyle();
+        // Second click of an armed click-click: commit start..here across scope.
+        if (m_markArmed && markStateFor(label).phase == MarkPhase::WaitingForStop) {
+            commitMarkingSpan(label,
+                markStateFor(label).globalStartTime, clickedX + globalOffset);
             return true;
         }
 
-        if(m_markAllMode != MarkAllMode::None){
-            bool anyStart = false, anyEnd = false, anyStop = false;
-            for (const QString& lbl : markableChannelLabels()) {
-                if (!isChannelActive(lbl)) continue;
-                MarkPhase p = markStateFor(lbl).phase;
-                if (p == MarkPhase::WaitingForStart) anyStart = true;
-                if (p == MarkPhase::WaitingForEnd)   anyEnd = true;
-                if (p == MarkPhase::WaitingForStop)  anyStop = true;
-            }
-            if (anyStop) {
-                for (const QString& lbl : markableChannelLabels()) {
-                    if (!isChannelActive(lbl)) continue;
-                    if (markStateFor(lbl).phase != MarkPhase::WaitingForStop) continue;
-                    finalizeMarking(chartViewForSignalLabel(lbl), clickedX, lbl);
-                }
-                return true;
-            }
-            if (anyStart || anyEnd) {
-                for (const QString& lbl : markableChannelLabels()) {
-                    if (!isChannelActive(lbl)) continue;
-                    ChannelMarkingState& st = markStateFor(lbl);
-                    if (st.phase != MarkPhase::WaitingForStart
-                        && st.phase != MarkPhase::WaitingForEnd) continue;
-                    st.globalStartTime = clickedX + globalOffset;
-                    showStartMarker(chartViewForSignalLabel(lbl), clickedX, st,
-                        colorForSignal(lbl), stopButtonForSignal(lbl));
-                    st.phase = MarkPhase::WaitingForStop;
-                }
-                updateAllChannelButtonStates();
-                return true;
-            }
-        }
-
-        ChannelMarkingState& state = markStateFor(label);
-        switch (state.phase) {
-        case MarkPhase::WaitingForStart:
-        case MarkPhase::WaitingForEnd:
-            state.globalStartTime = clickedX + globalOffset;
-            showStartMarker(cv, clickedX, state, colorForSignal(label),
-                stopButtonForSignal(label));
-            state.phase = MarkPhase::WaitingForStop;
-            updateEcgMarkButtonStyle();
-            return true;
-        case MarkPhase::WaitingForStop:
-            finalizeMarking(cv, clickedX, label);
-            return true;
-        case MarkPhase::Idle:
-            m_isDragging = true;
-            m_dragStartPos = me->pos();
-            m_dragSignalLabel = label;
-            state.globalStartTime = clickedX + globalOffset;
-            if (!m_draggedViewport) {
-                m_draggedViewport = viewport;
-                m_draggedViewport->grabMouse();
-            }
-            return true;
-        }
+        // Otherwise begin a potential drag / first click: record the start on
+        // every scope channel; the release decides drag-commit vs first click.
+        for (const QString& ch : scopeChannels(label))
+            markStateFor(ch).globalStartTime = clickedX + globalOffset;
+        m_isDragging = true;
+        m_dragStartPos = me->pos();
+        m_dragSignalLabel = label;
+        if (!m_draggedViewport) { m_draggedViewport = viewport; m_draggedViewport->grabMouse(); }
+        return true;
     }
 
     const bool sleepPresent = sleep_data_present(m_sleepStages);

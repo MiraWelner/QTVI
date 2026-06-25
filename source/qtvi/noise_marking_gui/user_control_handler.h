@@ -30,10 +30,6 @@ private:
     void handle_skip_button();
     void save_current_plot();
 
-    // --- "Mark all signals" --------------------------------------------------
-    void handle_allmarkingstart_button();
-    void handle_allmarkingstop_button();
-
     // --- Window-length selector ---------------------------------------------
     void handle_window_toggle(bool checked, double duration);
 

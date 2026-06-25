@@ -69,6 +69,7 @@ public:
     QChartView* chartViewForSignalLabel(const QString& label) const;
     bool        isChannelActive(const QString& label) const;
     enum class MarkPhase { Idle, WaitingForStart, WaitingForEnd, WaitingForStop };
+    enum class MarkScope { One, Ecg, All };
     enum class PlotMode { Line, Scatter };
     void setBeatLog(beat_log* log) { m_beatLog = log; }
     void set_params_to_config_defaults(const config_entry& cfg) {
@@ -93,7 +94,6 @@ private:
     config_entry m_cfg;
     beat_log* m_beatLog = nullptr;
     QTimer* m_logFlushTimer = nullptr;   // flushes the beat log to disk every 30 s
-    bool single_ecg_marker_clicked = false;
 
     struct ChannelMarkingState {
         MarkPhase    phase = MarkPhase::Idle;
@@ -118,21 +118,10 @@ private:
         double  value = 0.0;
     };
 
-
-    void beginMarking(const QString& signalLabel);
-    void beginStopPhase(const QString& signalLabel);
-    void beginMarkingAll();
-    void beginStopPhaseAll();
-    void beginMarkingEcgAll();
-    void beginStopPhaseEcgAll();
-    void toggleMark(const QString& label);
-    void toggleMarkAll();
-    void toggleMarkEcgAll();
-    void toggleEcgMark();
-    void updateEcgMarkButtonStyle();
-    void exitAllMarkModes();
-
-
+    void setMarkScope(MarkScope scope);
+    void toggleAnnotationArm();
+    void updateMarkingButtons();
+    QStringList scopeChannels(const QString& clickedLabel) const;
 
     data_channel_features channelRefs(const QString& label) const;
     static const QStringList& markableChannelLabels();
@@ -186,10 +175,8 @@ private:
     QList<QAbstractSeries*> m_hypnoStageSeries;
     QHash<QChartView*, QList<QLineSeries*>> m_persistentLines;
     QHash<QChartView*, QList<QScatterSeries*>> m_persistentRawScatter;
-
-    // --- Mark-all state ---
-    enum class MarkAllMode { None, All, Ecg };
-    MarkAllMode m_markAllMode = MarkAllMode::None;
+    MarkScope m_markScope = MarkScope::One;
+    bool      m_markArmed = false;;
 
     // --- Plot style (global, applies to all signal charts) ---
     PlotMode m_plotMode = PlotMode::Line;
@@ -202,8 +189,7 @@ private:
     QWidget* m_draggedViewport = nullptr;
     QPoint   m_dragStartPos;
     QString  m_dragSignalLabel;
-    QAreaSeries* m_dragPreview = nullptr;
-    QString      m_dragPreviewLabel;
+    QMap<QChartView*, QAreaSeries*> m_dragPreviews;
 
     // --- Signal data (upsampled, 1 kHz unless otherwise noted) ---
     QVector<double> m_ecg1, m_ecg2, m_ecg3, m_ppg, m_accelX, m_accelY, m_accelZ, m_resp;
@@ -257,7 +243,6 @@ private:
     // --- Per-channel button helpers ---
     QPushButton* startButtonForSignal(const QString& label) const;
     QPushButton* stopButtonForSignal(const QString& label) const;
-    void updateAllChannelButtonStates();
     bool loadChunkFromFile(uint64_t chunkIndex);
     void handle_data_plot();
 	void determine_which_nonmarkable_charts_to_plot();
@@ -294,7 +279,8 @@ private:
     QVector<ParamOverride> m_thresholdOverrides;
     QVector<ParamOverride> m_blankingOverrides;
 
-    void   finalizeParamEdit(const QString& label, double globalStart, double globalEnd);
+    void   finalizeParamEdit(const QStringList& channels, double globalStart, double globalEnd);
+    void   commitMarkingSpan(const QString& clickedLabel, double globalStart, double globalEnd);
     double thresholdAt(const QString& label, double globalTime) const;
     double blankingAt(const QString& label, double globalTime) const;
 };

@@ -39,6 +39,7 @@
 #include <QPixmap>
 #include <QPainter>
 #include <QIcon>
+#include <QRadioButton>
 
  // ============================================================================
  // Channel lookup
@@ -55,39 +56,51 @@ noise_marking_gui::channelRefs(const QString& label) const {
     data_channel_features r;
 
     if (label == "ECG1") {
-        r.chartView = ui->ecg_axis_1; r.startButton = ui->mark_one_chan;
+        r.chartView = ui->ecg_axis_1;
         r.state = &self->m_markState_ecg1;
-        r.upsampled_data = &m_ecg1; r.dataRaw = &m_ecg1Raw; r.sampleRate = &m_ecgSR;
+        r.upsampled_data = &m_ecg1; 
+        r.dataRaw = &m_ecg1Raw;
+        r.sampleRate = &m_ecgSR;
         r.color = COLOR_ECG1;
     }
     else if (label == "ECG2") {
-        r.chartView = ui->ecg_axis_2; r.startButton = ui->mark_one_chan;
+        r.chartView = ui->ecg_axis_2;
         r.state = &self->m_markState_ecg2;
-        r.upsampled_data = &m_ecg2; r.dataRaw = &m_ecg2Raw; r.sampleRate = &m_ecgSR;
+        r.upsampled_data = &m_ecg2; 
+        r.dataRaw = &m_ecg2Raw; 
+        r.sampleRate = &m_ecgSR;
         r.color = COLOR_ECG2;
     }
     else if (label == "ECG3") {
-        r.chartView = ui->ecg_axis_3; r.startButton = ui->mark_one_chan;
+        r.chartView = ui->ecg_axis_3;
         r.state = &self->m_markState_ecg3;
-        r.upsampled_data = &m_ecg3; r.dataRaw = &m_ecg3Raw; r.sampleRate = &m_ecgSR;
+        r.upsampled_data = &m_ecg3;
+        r.dataRaw = &m_ecg3Raw;
+        r.sampleRate = &m_ecgSR;
         r.color = COLOR_ECG3;
     }
     else if (label == "PPG_ACCEL") {
-        r.chartView = ui->ppg_accel_axis; r.startButton = ui->mark_one_chan;
+        r.chartView = ui->ppg_accel_axis;
         r.state = &self->m_markState_ppg;
         if (m_cfg.dataset_type == "BITTIUM") {
-            r.upsampled_data = &m_accelX; r.dataRaw = &m_accelXRaw;
-            r.sampleRate = &m_ecgSR; r.color = COLOR_ACCEL_X;
+            r.upsampled_data = &m_accelX; 
+            r.dataRaw = &m_accelXRaw;
+            r.sampleRate = &m_ecgSR; 
+            r.color = COLOR_ACCEL_X;
         }
         else {
-            r.upsampled_data = &m_ppg; r.dataRaw = &m_ppgRaw;
-            r.sampleRate = &m_ecgSR; r.color = COLOR_PPG;
+            r.upsampled_data = &m_ppg;
+            r.dataRaw = &m_ppgRaw;
+            r.sampleRate = &m_ecgSR; 
+            r.color = COLOR_PPG;
         }
     }
     else if (label == "ABP") {
-        r.chartView = ui->accel_or_abp_axis; r.startButton = ui->mark_one_chan;
+        r.chartView = ui->accel_or_abp_axis;
         r.state = &self->m_markState_abp;
-        r.upsampled_data = &m_abp; r.dataRaw = &m_abpRaw; r.sampleRate = &m_ecgSR;
+        r.upsampled_data = &m_abp; 
+        r.dataRaw = &m_abpRaw;
+        r.sampleRate = &m_ecgSR;
         r.color = COLOR_ABP;
     }
     return r;
@@ -170,63 +183,55 @@ QPushButton* noise_marking_gui::stopButtonForSignal(const QString& label) const 
     return channelRefs(label).stopButton;
 }
 
-void noise_marking_gui::updateAllChannelButtonStates() {
-    for (const QString& label : markableChannelLabels())
-        updateEcgMarkButtonStyle();
-
-    const bool anyActive = !m_activeChannels.isEmpty();
-    const bool anyEcgActive = isChannelActive("ECG1") || isChannelActive("ECG2") || isChannelActive("ECG3");
-    ui->mark_all_chan->setEnabled(anyActive);
-    ui->mark_all_ecg->setEnabled(anyEcgActive);
-
-    // Each group button reflects ONLY its own mode.
-    auto groupStyle = [&](QPushButton* btn, MarkAllMode mode, const QStringList& chans) {
-        if (m_markAllMode != mode) { applyMarkStyle(btn, ""); return; }
-        bool anyWaitingStop = false;
-        for (const QString& lbl : chans)
-            if (isChannelActive(lbl) && markStateFor(lbl).phase == MarkPhase::WaitingForStop)
-                anyWaitingStop = true;
-        applyMarkStyle(btn, anyWaitingStop ? "waiting" : "armed");
-        };
-    static const QStringList kEcg{ "ECG1", "ECG2", "ECG3" };
-    groupStyle(ui->mark_all_chan, MarkAllMode::All, markableChannelLabels());
-    groupStyle(ui->mark_all_ecg, MarkAllMode::Ecg, kEcg);
+void noise_marking_gui::setMarkScope(MarkScope scope) {
+    m_markScope = scope;
 }
 
-void noise_marking_gui::updateEcgMarkButtonStyle() {
-    QPushButton* btn = ui->mark_one_chan;
-    if (m_activeChannels.isEmpty()) { btn->setEnabled(false); applyMarkStyle(btn, ""); return; }
-    btn->setEnabled(true);
-
-    // Single-marker flow only; stay neutral while a group mode owns the channels.
-    if (m_markAllMode != MarkAllMode::None) { applyMarkStyle(btn, ""); return; }
-
-    bool waitingStop = false;
-    for (const QString& l : markableChannelLabels())
-        if (markStateFor(l).phase == MarkPhase::WaitingForStop) { waitingStop = true; break; }
-
-    if (waitingStop)                    applyMarkStyle(btn, "waiting");
-    else if (single_ecg_marker_clicked) applyMarkStyle(btn, "armed");
-    else                                applyMarkStyle(btn, "");
-}
-
-void noise_marking_gui::exitAllMarkModes() {
-    for (const QString& label : markableChannelLabels())
-        if (markStateFor(label).phase != MarkPhase::Idle) cancelMarking(label);
-    m_markAllMode = MarkAllMode::None;
-    single_ecg_marker_clicked = false;
-}
-
-void noise_marking_gui::toggleEcgMark() {
-    if (single_ecg_marker_clicked) {
-        single_ecg_marker_clicked = false;     // toggle off
+void noise_marking_gui::toggleAnnotationArm() {
+    m_markArmed = !m_markArmed;
+    if (m_markArmed) {
+        m_currentMarkingType = ui->marking_type->currentText();
     }
     else {
-        exitAllMarkModes();                     // clear other modes first
-        m_currentMarkingType = ui->marking_type->currentText();
-        single_ecg_marker_clicked = true;
+        if (m_isDragging) {
+            if (m_draggedViewport) { m_draggedViewport->releaseMouse(); m_draggedViewport = nullptr; }
+            m_isDragging = false;
+        }
+        clearDragPreview();
+        for (const QString& lbl : markableChannelLabels()) cancelMarking(lbl);
     }
-    updateAllChannelButtonStates();
+    updateMarkingButtons();
+}
+
+void noise_marking_gui::updateMarkingButtons() {
+    const bool anyActive = !m_activeChannels.isEmpty();
+    const bool anyEcg = isChannelActive("ECG1") || isChannelActive("ECG2") || isChannelActive("ECG3");
+    if (!anyActive) m_markArmed = false;
+
+    ui->make_annotation->setEnabled(anyActive);
+    ui->mark_one_chan->setEnabled(anyActive);
+    ui->mark_all_chan->setEnabled(anyActive);
+    ui->mark_ecg->setEnabled(anyEcg);
+
+    applyMarkStyle(ui->make_annotation, m_markArmed ? "armed" : "");
+}
+
+QStringList noise_marking_gui::scopeChannels(const QString& clickedLabel) const {
+    QStringList out;
+    switch (m_markScope) {
+    case MarkScope::One:
+        if (isChannelActive(clickedLabel)) out << clickedLabel;
+        break;
+    case MarkScope::Ecg:
+        for (const char* l : { "ECG1", "ECG2", "ECG3" })
+            if (isChannelActive(l)) out << l;
+        break;
+    case MarkScope::All:
+        for (const QString& l : markableChannelLabels())
+            if (isChannelActive(l)) out << l;
+        break;
+    }
+    return out;
 }
 
 // ============================================================================
@@ -300,6 +305,9 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 {
     ui->setupUi(this);
     m_buttonHandler->setupConnections();
+    for (QRadioButton* r : { ui->mark_one_chan, ui->mark_ecg, ui->mark_all_chan })
+        r->setFocusPolicy(Qt::NoFocus);
+    ui->mark_one_chan->setChecked(true);
 
     for (auto* btn : findChildren<QPushButton*>())
         btn->setFocusPolicy(Qt::NoFocus);
@@ -389,9 +397,11 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
                 const double pxPerSec = (visible_window_size > 0.0)
                     ? v->chart()->plotArea().width() / visible_window_size : 0.0;
                 const double pxPerSample = (nativeHz > 0.0) ? pxPerSec / nativeHz : 0.0;
-                const double bpm = v->property("bpm").isValid()
-                    ? v->property("bpm").toDouble() : 0.0;
-                v->chart()->setTitle(get_chart_title(sigName, nativeHz, pxPerSample, bpm));
+                if (v->property("bpm").isValid())
+                    v->chart()->setTitle(get_chart_title(sigName, nativeHz, pxPerSample,
+                        v->property("bpm").toDouble()));
+                else
+                    v->chart()->setTitle(get_chart_title(sigName, nativeHz, pxPerSample));
             });
     }
 
@@ -406,7 +416,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     auto addCursor = [](QChartView* view, QLineSeries*& series) {
         series = new QLineSeries();
-        series->setPen(QPen(QColor(255, 140, 0), 2));   // bright orange
+        series->setPen(QPen(QColor(255, 140, 0), 2));
         view->chart()->addSeries(series);
         };
     addCursor(ui->ecg_ampogram_axis, m_ecgCursorBar);
@@ -414,9 +424,10 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     auto* hypnoChart = new QChart();
     hypnoChart->legend()->hide();
+    hypnoChart->layout()->setContentsMargins(0, 0, 0, 0);
     ui->hyp_resp_axis->setChart(hypnoChart);
     m_hypnoCursorBar = new QLineSeries();
-    m_hypnoCursorBar->setPen(QPen(Qt::black, 2));
+    m_hypnoCursorBar->setPen(QPen(QColor(255, 140, 0), 2));
     hypnoChart->addSeries(m_hypnoCursorBar);
 
     for (int i = 0; i < ui->marking_type->count(); ++i)
@@ -526,20 +537,20 @@ double noise_marking_gui::blankingAt(const QString& label, double globalTime) co
     return v;
 }
 
-void noise_marking_gui::finalizeParamEdit(const QString& label,
+void noise_marking_gui::finalizeParamEdit(const QStringList& channels,
     double globalStart, double globalEnd) {
+    clearDragPreview();
+    if (channels.isEmpty()) return;
+
     const double lo = std::min(globalStart, globalEnd);
     const double hi = std::max(globalStart, globalEnd);
 
-    // One popup, two fields: threshold and blanking for the dragged span.
     QDialog dlg(this);
     dlg.setWindowTitle("Set threshold & blanking");
     auto* form = new QFormLayout(&dlg);
-
-    auto* lbl = new QLabel(
-        QString("%1 over %2\u2013%3 s").arg(label).arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1),
-        &dlg);
-    form->addRow(lbl);
+    form->addRow(new QLabel(
+        QString("%1 over %2\u2013%3 s")
+        .arg(channels.join(", ")).arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1), &dlg));
 
     auto* thrSpin = new QDoubleSpinBox(&dlg);
     thrSpin->setRange(0.0, 1.0); thrSpin->setDecimals(2); thrSpin->setSingleStep(0.05);
@@ -560,34 +571,25 @@ void noise_marking_gui::finalizeParamEdit(const QString& label,
     if (dlg.exec() == QDialog::Accepted) {
         const double thrVal = thrSpin->value();
         const double blkVal = blkSpin->value();
-
-        // Replace any existing override of each kind overlapping [lo, hi] on
-        // this channel, then add the new one. Both vectors get an entry for
-        // the same span -- the single gray rectangle in updateNoiseHighlights
-        // represents both.
-        auto applyTo = [&](QVector<ParamOverride>& vec, double val) {
-            vec.erase(std::remove_if(vec.begin(), vec.end(),
-                [&](const ParamOverride& o) {
-                    return o.channel == label && o.start <= hi && lo <= o.end;
-                }), vec.end());
-            vec.append(ParamOverride{ label, lo, hi, val });
+        auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {
+            if (l == "ECG1") return beat_log::ECG1;
+            if (l == "ECG2") return beat_log::ECG2;
+            if (l == "ECG3") return beat_log::ECG3;
+            if (l == "PPG_ACCEL")  return beat_log::PPG;
+            return beat_log::ABP;
             };
-        applyTo(m_thresholdOverrides, thrVal);
-        applyTo(m_blankingOverrides, blkVal);
-
-        // Detection in [lo, hi] changes; drop this channel's logged peaks there
-        // so removed beats don't linger. handle_data_plot() re-logs survivors.
-        if (m_beatLog) {
-            auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {
-                if (l == "ECG1") return beat_log::ECG1;
-                if (l == "ECG2") return beat_log::ECG2;
-                if (l == "ECG3") return beat_log::ECG3;
-                if (l == "PPG_ACCEL")  return beat_log::PPG;
-                return beat_log::ABP;
+        for (const QString& label : channels) {
+            auto applyTo = [&](QVector<ParamOverride>& vec, double val) {
+                vec.erase(std::remove_if(vec.begin(), vec.end(),
+                    [&](const ParamOverride& o) {
+                        return o.channel == label && o.start <= hi && lo <= o.end;
+                    }), vec.end());
+                vec.append(ParamOverride{ label, lo, hi, val });
                 };
-            m_beatLog->removeInRange(beatCh(label), lo, hi);
+            applyTo(m_thresholdOverrides, thrVal);
+            applyTo(m_blankingOverrides, blkVal);
+            if (m_beatLog) m_beatLog->removeInRange(beatCh(label), lo, hi);
         }
     }
-    clearDragPreview();
     handle_data_plot();
 }

@@ -537,9 +537,13 @@ void noise_marking_gui::setupHypnogram() {
     for (auto* s : m_hypnoStageSeries) { chart->removeSeries(s); delete s; }
     m_hypnoStageSeries.clear();
 
-    struct Stage { int value; QColor color; };
+    struct Stage { int value; QColor color; const char* name; };
     const QList<Stage> stages = {
-        {0, Qt::black}, {1, Qt::darkGreen}, {2, Qt::blue}, {3, Qt::cyan}, {4, Qt::red}
+        {0, Qt::black,     "Wake" },
+        {1, Qt::darkGreen, "NREM1"},
+        {2, Qt::blue,      "NREM2"},
+        {3, Qt::cyan,      "NREM3"},
+        {4, Qt::red,       "REM"  }
     };
 
     const double dt = 1.0 / m_sleepSR;
@@ -550,7 +554,7 @@ void noise_marking_gui::setupHypnogram() {
         s->setColor(st.color); s->setMarkerSize(3.0);
         s->setPen(Qt::NoPen);
         s->setMarkerShape(QScatterSeries::MarkerShapeRectangle);
-        for (int i = 0; i < m_sleepStages.size(); ++i) {
+        for (int i = 0; i < m_sleepStages.size(); ++i){
             if (static_cast<int>(m_sleepStages[i]) == st.value)
                 s->append(globalOffset + i * dt + dt / 2.0, st.value);
         }
@@ -562,7 +566,7 @@ void noise_marking_gui::setupHypnogram() {
         chart->removeAxis(axis);
     }
 
-    chart->setMargins(QMargins(0, 0, 0, 5));
+    chart->setMargins(QMargins(0, 0, 12, 5));
     chart->setTitle("Sleep stages");
     chart->setTitleFont(Theme::chartTitleFont());
     chart->setTitleBrush(Qt::black);
@@ -579,14 +583,23 @@ void noise_marking_gui::setupHypnogram() {
     xAxis->setLabelsVisible(true);
 
     auto* yAxis = new QCategoryAxis();
-    for (const auto& st : stages) yAxis->append("", st.value + 0.4);
-    yAxis->setRange(-0.5, 4.5); yAxis->setReverse(true);
-    yAxis->setVisible(false); yAxis->setGridLineVisible(false);
+    yAxis->setLabelsPosition(QCategoryAxis::AxisLabelsPositionOnValue);
+    for (const auto& st : stages)
+        yAxis->append(st.name, st.value);     // label drawn exactly at the row value
+    yAxis->setRange(-0.5, 4.5);
+    yAxis->setStartValue(-0.5);
+    yAxis->setReverse(true);
+    yAxis->setTruncateLabels(false);
+    yAxis->setVisible(true);
+    yAxis->setGridLineVisible(false);
+    yAxis->setLabelsFont(Theme::chartAxisFont());
 
     chart->addAxis(xAxis, Qt::AlignBottom);
     chart->addAxis(yAxis, Qt::AlignLeft);
     for (auto* s : chart->series()) { s->attachAxis(xAxis); s->attachAxis(yAxis); }
-
+    const QColor axisGray = yAxis->linePenColor();
+    xAxis->setLabelsColor(axisGray);
+    yAxis->setLabelsColor(axisGray);
     if (m_hypnoCursorBar) {
         chart->removeSeries(m_hypnoCursorBar);
         chart->addSeries(m_hypnoCursorBar);
@@ -893,9 +906,8 @@ void noise_marking_gui::handle_data_plot() {
         // (time, accel-value) pairs into the accel column -- same timestamps as
         // ECG1, so rows line up. (CSV column headed "accel"; see beat_log.)
         if (bittiumAccelPpg) {
-            r.chartView->setProperty("bpm", 0.0);
-            r.chartView->chart()->setTitle(
-                get_chart_title(titleLabel, nativeHz, pxPerSample, 0.0));
+            r.chartView->setProperty("bpm", QVariant());
+            r.chartView->chart()->setTitle(get_chart_title(titleLabel, nativeHz, pxPerSample));
             if (m_beatLog) {
                 const QVector<QPointF> ecgPeaks = display_peaks_in_window("ECG1");
                 for (const QPointF& p : ecgPeaks) {
