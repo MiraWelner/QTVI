@@ -239,6 +239,12 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         m_sleepStages.resize(static_cast<int>(count));
         file.seek(FILE_HEADER_SIZE + (sleepByteOffset + start) * sizeof(double));
         file.read(reinterpret_cast<char*>(m_sleepStages.data()), count * sizeof(double));
+
+        qDebug() << "MESA sleep:" << m_cfg.dataset_type
+            << "sleepSR" << m_sleepSR
+            << "epochField(raw32[2])" << "see header"
+            << "total_sleep_samples" << total_sleep_samples
+            << "count" << m_sleepStages.size();
     }
     file.close();
     current_start_time = 0;

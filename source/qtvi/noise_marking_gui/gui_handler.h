@@ -32,14 +32,6 @@
 #include "grid_overlay.hpp"
 #include "gap_indicator.hpp"
 
- /**
-  * @brief Collected annotations returned to the caller after the dialog closes.
-  *
-  *        All three parallel lists (noiseExc, data_type, marking_type) share
-  *        the same index space -- entry `i` describes one marked segment:
-  *        its [start, end] global-time range, which channel it was marked on,
-  *        and what kind of marking it is.
-  */
 struct GenExcStruct {
     QString filePath;                          ///< Source file these markings belong to.
     QVector<QPair<double, double>> noiseExc;   ///< [start, end] in global seconds.
@@ -47,15 +39,14 @@ struct GenExcStruct {
     QStringList marking_type;                  ///< "Noise/Artifact", "AF", "SVT", ...
 };
 
-class beat_log;   // defined in beat_log.hpp; only a pointer is held here
-class annotation_eraser;   // defined in annotation_eraser.h; pointer held below
-
-
 struct markable_data_series {
     const QVector<double>* data;
     QColor color;
     const QVector<QPointF>* rawData;
 };
+
+class beat_log;   // defined in beat_log.hpp; only a pointer is held here
+class annotation_eraser;   // defined in annotation_eraser.h; pointer held below
 
 class noise_marking_gui : public QDialog {
     Q_OBJECT
@@ -79,7 +70,6 @@ public:
     bool        isChannelActive(const QString& label) const;
     enum class MarkPhase { Idle, WaitingForStart, WaitingForEnd, WaitingForStop };
     enum class PlotMode { Line, Scatter };
-    enum class ParamEdit { None, Active };
     void setBeatLog(beat_log* log) { m_beatLog = log; }
     void set_params_to_config_defaults(const config_entry& cfg) {
         // Set the default values for the threshold and blanking period spinboxes based on the config entry.
@@ -268,7 +258,6 @@ private:
     QPushButton* startButtonForSignal(const QString& label) const;
     QPushButton* stopButtonForSignal(const QString& label) const;
     void updateAllChannelButtonStates();
-    void updateParamButtonStyles();
     bool loadChunkFromFile(uint64_t chunkIndex);
     void handle_data_plot();
 	void determine_which_nonmarkable_charts_to_plot();
@@ -279,28 +268,13 @@ private:
         double detStart, double detEnd,
         std::vector<int>* outPostTags = nullptr) const;
 
-    QVector<QPointF> get_bpm(const QString& label,
-        double& outDuration) const;
+    QVector<QPointF> get_bpm(const QString& label, double& outDuration) const;
 
     std::pair<double, double> statsWindow(double detStart, double detEnd) const;
-
-    /**
-     * @brief  Redraw the 8-hour amplitude overviews and raw-signal overviews.
-     * @param  sampling_length Bucket width in seconds for amplitude decimation.
-     */
     void ampogram(double sampling_length = 15);
-
-    /** @brief Redraw the black vertical cursor bar on each overview chart. */
     void updateAmpogramCursor();
-
-    /** @brief Sync the bottom scrollbar's range/page/value to the current
-     *         window position within the loaded 8-hour chunk. */
     void syncChunkScrollBar();
-
-    /** @brief Build / rebuild the hypnogram (sleep-stage) chart from m_sleepStages. */
     void setupHypnogram();
-
-    /** @brief Overlay translucent colored rectangles for recorded marking segments. */
     void updateNoiseHighlights();
     void finalizeMarking(QChartView* cv, double endX, const QString& signalLabel);
     void cancelMarking(const QString& signalLabel);
@@ -317,12 +291,9 @@ private:
 
     void resetUnpinnedGains();
 
-    ParamEdit m_paramEditMode = ParamEdit::None;
-    double    m_paramDragStartGlobal = 0.0;
     QVector<ParamOverride> m_thresholdOverrides;
     QVector<ParamOverride> m_blankingOverrides;
 
-    void   enterParamEdit();
     void   finalizeParamEdit(const QString& label, double globalStart, double globalEnd);
     double thresholdAt(const QString& label, double globalTime) const;
     double blankingAt(const QString& label, double globalTime) const;

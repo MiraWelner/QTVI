@@ -15,6 +15,8 @@
 #include "gui_peak_finder.hpp"
 #include "beat_log.hpp"
 #include "annotation_eraser.h"
+#include "annotation_types.hpp"
+
 
 #include <QCheckBox>
 #include <QScrollBar>
@@ -34,6 +36,9 @@
 #include <QDialogButtonBox>
 #include <QGraphicsLayout>
 #include <QStyle>
+#include <QPixmap>
+#include <QPainter>
+#include <QIcon>
 
  // ============================================================================
  // Channel lookup
@@ -414,8 +419,17 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     m_hypnoCursorBar->setPen(QPen(Qt::black, 2));
     hypnoChart->addSeries(m_hypnoCursorBar);
 
-    m_currentMarkingType = ui->marking_type->currentText();
+    for (int i = 0; i < ui->marking_type->count(); ++i)
+        if (const auto* t = annotation_types::find(ui->marking_type->itemText(i))) {
+            QPixmap pm(12, 12); pm.fill(Qt::transparent);
+            QPainter p(&pm);
+            p.setPen(QPen(Qt::black, 1)); p.setBrush(QColor(t->r, t->g, t->b));
+            p.drawRect(0, 0, 11, 11); p.end();
+            ui->marking_type->setItemIcon(i, QIcon(pm));
+        }
+    ui->marking_type->setIconSize(QSize(12, 12));
 
+    m_currentMarkingType = ui->marking_type->currentText();
     connect(ui->browse_file_button, &QPushButton::clicked, this, &noise_marking_gui::handleBrowseFile);
 
     m_pulseOverlay = std::make_unique<pulse_overlay>(this, markableChannelLabels());
@@ -498,19 +512,6 @@ void noise_marking_gui::on_marking_type_currentTextChanged(const QString& text) 
 // Parameter (threshold / blanking) editing
 // ============================================================================
 
-void noise_marking_gui::enterParamEdit() {
-    // Toggle the single param-edit mode on/off.
-    m_paramEditMode = (m_paramEditMode == ParamEdit::Active)
-        ? ParamEdit::None : ParamEdit::Active;
-    updateParamButtonStyles();
-}
-
-void noise_marking_gui::updateParamButtonStyles() {
-    const char* active = "background-color: #2980b9; color: white;";
-    ui->param_change->setStyleSheet(
-        m_paramEditMode == ParamEdit::Active ? active : "");
-}
-
 double noise_marking_gui::thresholdAt(const QString& label, double globalTime) const {
     double v = m_cfg.height_threshold_percent;
     for (const ParamOverride& o : m_thresholdOverrides)            // last match wins
@@ -587,8 +588,6 @@ void noise_marking_gui::finalizeParamEdit(const QString& label,
             m_beatLog->removeInRange(beatCh(label), lo, hi);
         }
     }
-    m_paramEditMode = ParamEdit::None;
-    updateParamButtonStyles();
     clearDragPreview();
     handle_data_plot();
 }

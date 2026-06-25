@@ -29,6 +29,23 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX, const Q
     const double globalEnd = endX + globalOffset;
     const double globalStart = state.globalStartTime;
 
+    if (annotation_types::isParamEdit(m_currentMarkingType)) {
+        state.phase = MarkPhase::Idle;
+        clearStartMarker(state);
+        updateEcgMarkButtonStyle();
+        if (m_markAllMode != MarkAllMode::None) {
+            bool allIdle = true;
+            for (const QString& lbl : markableChannelLabels())
+                if (isChannelActive(lbl) && markStateFor(lbl).phase != MarkPhase::Idle) {
+                    allIdle = false;
+                    break;
+                }
+            if (allIdle) { m_markAllMode = MarkAllMode::None; updateAllChannelButtonStates(); }
+        }
+        finalizeParamEdit(signalLabel, globalStart, globalEnd);
+        return;
+    }
+
     const double snappedS = std::round(std::min(globalStart, globalEnd) * sr) / sr;
     const double snappedE = std::round(std::max(globalStart, globalEnd) * sr) / sr;
 
@@ -307,22 +324,11 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
             curX = std::clamp(curX, current_start_time,
                 current_start_time + visible_window_size);
             const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
-
-            if (m_paramEditMode != ParamEdit::None) {
-                // Param-edit drag: preview the gray override region. Its start
-                // is m_paramDragStartGlobal (set on press), not a mark state.
-                const double startLocal = m_paramDragStartGlobal - globalOffset;
-                m_dragPreviewLabel = m_dragSignalLabel;
-                updateDragPreview(cv, startLocal, curX, QColor(200, 200, 200, 70));
-            }
-            else {
-                // Marking drag: preview in the selected annotation-type color.
-                const double startLocal =
-                    markStateFor(m_dragSignalLabel).globalStartTime - globalOffset;
-                m_dragPreviewLabel = m_dragSignalLabel;
-                updateDragPreview(cv, startLocal, curX,
-                    annotation_types::colorFor(m_currentMarkingType));
-            }
+            const double startLocal =
+                markStateFor(m_dragSignalLabel).globalStartTime - globalOffset;
+            m_dragPreviewLabel = m_dragSignalLabel;
+            updateDragPreview(cv, startLocal, curX,
+                annotation_types::colorFor(m_currentMarkingType));
         }
         return true;
     }
@@ -342,18 +348,12 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
                 endX = std::clamp(endX, current_start_time, current_start_time + visible_window_size);
                 const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
 
-                if (m_paramEditMode != ParamEdit::None) {
-                    finalizeParamEdit(label, m_paramDragStartGlobal, endX + globalOffset);
-                    // preview cleared inside finalizeParamEdit, after its popup
-                }
-                else {
-                    ChannelMarkingState& state = markStateFor(label);
-                    const double localStart = state.globalStartTime - globalOffset;
-                    if (std::abs(endX - localStart) > 0.1)
-                        finalizeMarking(cv, endX, label);   // clears preview itself (line 25)
-                    else
-                        clearDragPreview();   // too short to commit -> drop preview
-                }
+                ChannelMarkingState& state = markStateFor(label);
+                const double localStart = state.globalStartTime - globalOffset;
+                if (std::abs(endX - localStart) > 0.1)
+                    finalizeMarking(cv, endX, label);   // clears preview itself (line 25)
+                else
+                    clearDragPreview();   // too short to commit -> drop preview
             }
             else {
                 clearDragPreview();           // released elsewhere -> drop preview
@@ -375,15 +375,6 @@ bool noise_marking_gui::handleMousePress(QChartView* cv, QWidget* viewport, QMou
     if (!label.isEmpty()) {
         if (!isChannelActive(label)) return false;
         const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
-
-        if (m_paramEditMode != ParamEdit::None) {
-            m_isDragging = true;
-            m_dragStartPos = me->pos();
-            m_dragSignalLabel = label;
-            m_paramDragStartGlobal = clickedX + globalOffset;
-            if (!m_draggedViewport) { m_draggedViewport = viewport; m_draggedViewport->grabMouse(); }
-            return true;
-        }
 
         if (single_ecg_marker_clicked) {
             ChannelMarkingState& st = markStateFor(label);

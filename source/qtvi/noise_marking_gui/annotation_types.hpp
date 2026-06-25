@@ -21,21 +21,24 @@ namespace annotation_types {
         int r, g, b, a;               // highlight color (RGBA, a = alpha)
         bool        suppressesDetection;  // true => no R peaks detected in the span
         bool        postEligible;     // beat AFTER one of these gets this code in the post column
-
+        bool        paramEdit;        // true => dragging this type edits threshold/blanking, not a stored annotation
     };
 
-    inline constexpr std::array<AnnotationType, 10> noise_types = { {
-        { "1) R Peak Noise",   1, 255, 255, 0,   60, true,  false },
-        { "2) Minor Noise",    2, 157, 60,  0,   60, false, false },
-        { "3) Cond. Delay",    3, 128, 0,   128, 60, false, false },
-        { "4) AF",             4, 255, 0,   0,   60, false, true  },
-        { "5) SVT",            5, 0,   0,   255, 60, false, true  },
-        { "6) VT",             6, 0,   255, 0,   60, false, true  },
-        { "7) PVC",            7, 128, 255, 0,   60, false, true  },
-        { "8) PAC",            8, 255, 128, 0,   60, false, true  },
-        { "9) Benign Arr.",    9, 255, 128, 255, 60, false, false },
-        { "Sig. Arr.",         10, 0,  255, 255, 60, false, false }
-    } };
+    inline constexpr std::array<AnnotationType, 12> noise_types = { {
+            //  label               code  r    g    b    a   suppress  post   param
+            { "1) R Peak Noise",   1,  255, 255, 0,   60, true,  false, false },
+            { "2) Minor Noise",    2,  157, 60,  0,   60, false, false, false },
+            { "3) Blank.+Thresh.", 3,  100, 100, 100, 60, false, false, true  },
+            { "4) Cond. Delay",    4,  128, 0,   128, 60, false, false, false },
+            { "5) AF",             5,  255, 0,   0,   60, false, true,  false },
+            { "6) SVT",            6,  0,   0,   255, 60, false, true,  false },
+            { "7) VT",             7,  0,   255, 0,   60, false, true,  false },
+            { "8) PVC",            8,  128, 255, 0,   60, false, true,  false },
+            { "9) PAC",            9,  255, 128, 0,   60, false, true,  false },
+            { "Benign Arr.",       10, 255, 128, 255, 60, false, false, false },
+            { "Sig. Arr.",         11, 0,   255, 255, 60, false, false, false },
+            { "Other",             12, 255, 200, 255, 60, false, false, false }
+        } };
 
     inline const AnnotationType* find(const QString& label) {
         for (const auto& t : noise_types)
@@ -71,6 +74,11 @@ namespace annotation_types {
     inline bool suppressesDetection(const std::string& label) {
         const auto* t = find(label);
         return t && t->suppressesDetection;
+    }
+
+    inline bool isParamEdit(const QString& label) {
+        const auto* t = find(label);
+        return t && t->paramEdit;
     }
 
 }  // namespace annotation_types
