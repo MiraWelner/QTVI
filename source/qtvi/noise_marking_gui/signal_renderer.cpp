@@ -93,7 +93,7 @@ namespace {
     {
         auto* xAxis = new QCategoryAxis();
         xAxis->setRange(startLocal, startLocal + duration);
-        xAxis->append(QString::fromStdString("(HH:MM:SS)"), 0);
+        xAxis->append(QString::fromStdString("(HH:MM:SS)"), startLocal);
 
         // Ticks at 1/4, 1/2, 3/4 of the window. get_timestamp shows tenths,
         // so labels stay distinct at every width (including the 1 s view).
@@ -822,6 +822,8 @@ void noise_marking_gui::handle_data_plot() {
             keepFor(ui->hyp_resp_axis));
     if (ui->cvp_axis)
         wipe_chart(ui->cvp_axis->chart(), keepFor(ui->cvp_axis));
+    if (ui->pacemaker_axis)
+        wipe_chart(ui->pacemaker_axis->chart(), keepFor(ui->pacemaker_axis));
 
     auto plotMarkable = [&](const QString& label) {
         if (!isChannelActive(label)) return;

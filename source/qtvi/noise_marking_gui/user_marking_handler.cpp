@@ -229,7 +229,7 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
                 const double startLocal =
                     markStateFor(m_dragSignalLabel).globalStartTime - globalOffset;
 
-                if (std::abs(endX - startLocal) > 0.1) {              // moved -> drag commit
+                if (endX != startLocal) {              // moved -> drag commit
                     commitMarkingSpan(label,
                         markStateFor(label).globalStartTime, endX + globalOffset);
                 }
