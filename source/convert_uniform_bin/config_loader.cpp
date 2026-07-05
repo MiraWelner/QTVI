@@ -16,6 +16,7 @@
 #include <fstream>
 #include <iostream>
 #include <format>
+#include <unordered_map>
 #include <vector>
 
 static const std::string CONFIG_PATH = "config.csv";
@@ -44,12 +45,15 @@ std::vector<std::string> parse_config_row(const std::string& line) {
 
 void apply_dataset_specific_channel_labels(config_entry& cfg) {
     /*
-        The ECG and PPG channels exist in different datasets, but their names are 
+        The ECG and PPG channels exist in different datasets, but their names are
         different so they are set here.
     */
     if (cfg.dataset_type == "MESA") {
         cfg.ecg_1_label = "EKG";
         cfg.ppg_label = "Pleth";
+        cfg.eeg_1_label = "EEG1";
+        cfg.eeg_2_label = "EEG2";
+        cfg.eeg_3_label = "EEG3 ";
     }
     else if (cfg.dataset_type == "BITTIUM") {
         cfg.ecg_1_label = "ECG_1";
@@ -62,25 +66,33 @@ void apply_dataset_specific_channel_labels(config_entry& cfg) {
         cfg.ecg_2_label = "NLS_NOM_ECG_ELEC_POTL_II";
         cfg.ecg_3_label = "NLS_NOM_ECG_ELEC_POTL_III";
         cfg.ppg_label = "NLS_NOM_PULS_OXIM_PLETH";
+        cfg.eeg_1_label = "NLS_EEG_NAMES_EEG_CHAN1";
+        cfg.eeg_2_label = "NLS_EEG_NAMES_EEG_CHAN2";
+        cfg.eeg_3_label = "NLS_EEG_NAMES_EEG_CHAN3";
     }
 }
 
 
 bool load_config(int dataType, config_entry& out) {
+    /*
+        Take a pointer to a config_entry and fill it with the values from the config.csv file. The return
+        bool indicates if it happened correctly, the dataType is an int that indicates which dataset to load (1 = MESA, 2 = BITTIUM, 3 = CHAOS)
+    */
     std::ifstream file(CONFIG_PATH);
     if (!file.is_open()) {
         std::cerr << "ERROR: cannot open " << CONFIG_PATH << "\n";
         return false;
     }
-
     std::string user_selected_dataset = (dataType == 1) ? "MESA"
         : (dataType == 2) ? "BITTIUM"
         : (dataType == 3) ? "CHAOS" : "";
 
-    // Build column-name -> index from the header so reordered / added columns
-    // in config.csv don't break parsing. Matched case-insensitively.
+    // Read the header row so column names can be mapped to indices.
     std::string header;
-    if (!std::getline(file, header)) return false;
+    if (!std::getline(file, header)) {
+        std::cerr << "ERROR: " << CONFIG_PATH << " is empty\n";
+        return false;
+    }
     std::vector<std::string> headerFields = parse_config_row(header);
     std::unordered_map<std::string, int> col;
     for (int i = 0; i < (int)headerFields.size(); ++i) {
@@ -88,18 +100,14 @@ bool load_config(int dataType, config_entry& out) {
         std::transform(h.begin(), h.end(), h.begin(), ::tolower);
         col[h] = i;
     }
-
     std::string line;
     while (std::getline(file, line)) {
         std::vector<std::string> row = parse_config_row(line);
-
-        // Cell by column name; "" if the column is missing or the row is short.
         auto cell = [&](const std::string& name) -> std::string {
             auto it = col.find(name);
             if (it == col.end() || it->second >= (int)row.size()) return {};
             return row[it->second];
             };
-
         std::string rowName = cell("data_type");
         std::transform(rowName.begin(), rowName.end(), rowName.begin(), ::toupper);
         if (rowName != user_selected_dataset) continue;
@@ -111,20 +119,69 @@ bool load_config(int dataType, config_entry& out) {
             };
 
         out.dataset_type = user_selected_dataset;
-        out.original_file_extention = cell("main_file_extention");
+        out.main_file_extention = cell("main_file_extention");
         out.sleep_file_extention = cell("sleep_file_extention");
-        out.ecg_rate = stod_or_zero(cell("ecg_rate"));
-        out.ppg_rate = stod_or_zero(cell("ppg_rate"));
-        out.central_venous_pressure_rate = stod_or_zero(cell("cvp_rate"));
-        out.arterial_blood_pressure_rate = stod_or_zero(cell("abp_rate"));
-        out.accel_rate = stod_or_zero(cell("accel_rate"));
-        out.temp_rate = stod_or_zero(cell("temp_rate"));
-        out.marker_rate = stod_or_zero(cell("marker_rate"));
-        out.resp_rate = stod_or_zero(cell("resp_rate"));
-		out.pacemaker_event_rate = stod_or_zero(cell("pacemaker_event_rate"));
-        out.high_upsample_rate = stod_or_zero(cell("high_upsampled_rate"));
-        out.low_sample_rate = stod_or_zero(cell("low_upsampling_rate"));
-        out.sleep_state_length = stod_or_zero(cell("sleepstate_length"));
+
+        out.ecg_raw_rate = stod_or_zero(cell("ecg_raw_rate"));
+        out.ecg_upsample_rate = stod_or_zero(cell("ecg_upsampled_rate"));
+        out.ppg_raw_rate = stod_or_zero(cell("ppg_raw_rate"));
+        out.ppg_upsample_rate = stod_or_zero(cell("ppg_upsampled_rate"));
+        out.cvp_raw_rate = stod_or_zero(cell("cvp_raw_rate"));
+        out.cvp_upsample_rate = stod_or_zero(cell("cvp_upsampled_rate"));
+        out.pres_raw_rate = stod_or_zero(cell("pres_raw_rate"));
+        out.pres_upsample_rate = stod_or_zero(cell("pres_upsampled_rate"));
+        out.abp_raw_rate = stod_or_zero(cell("abp_raw_rate"));
+        out.abp_upsample_rate = stod_or_zero(cell("abp_upsampled_rate"));
+        out.art_raw_rate = stod_or_zero(cell("art_raw_rate"));
+        out.art_upsample_rate = stod_or_zero(cell("art_upsampled_rate"));
+        out.art_pulm_raw_rate = stod_or_zero(cell("art_pulm_raw_rate"));
+        out.art_pulm_upsample_rate = stod_or_zero(cell("art_pulm_upsampled_rate"));
+        out.accel_raw_rate = stod_or_zero(cell("accel_raw_rate"));
+        out.accel_upsample_rate = stod_or_zero(cell("accel_upsampled_rate"));
+        out.temp_raw_rate = stod_or_zero(cell("temp_raw_rate"));
+        out.temp_upsample_rate = stod_or_zero(cell("temp_upsampled_rate"));
+        out.marker_raw_rate = stod_or_zero(cell("marker_raw_rate"));
+        out.marker_upsample_rate = stod_or_zero(cell("marker_upsampled_rate"));
+        out.resp_raw_rate = stod_or_zero(cell("resp_raw_rate"));
+        out.resp_upsample_rate = stod_or_zero(cell("resp_upsampled_rate"));
+        out.pacemaker_raw_rate = stod_or_zero(cell("pacemaker_event_raw_rate"));
+        out.pacemaker_upsample_rate = stod_or_zero(cell("pacemaker_event_upsampled_rate"));
+        out.eeg_raw_rate = stod_or_zero(cell("eeg_raw_rate"));
+        out.eeg_upsample_rate = stod_or_zero(cell("eeg_upsampled_rate"));
+        out.eog_l_raw_rate = stod_or_zero(cell("eogl_raw_rate"));
+        out.eog_l_upsample_rate = stod_or_zero(cell("eogl_upsampled_rate"));
+        out.eog_r_raw_rate = stod_or_zero(cell("eogr_raw_rate"));
+        out.eog_r_upsample_rate = stod_or_zero(cell("eogr_upsampled_rate"));
+        out.emg_raw_rate = stod_or_zero(cell("emg_raw_rate"));
+        out.emg_upsample_rate = stod_or_zero(cell("emg_upsampled_rate"));
+        out.flow_raw_rate = stod_or_zero(cell("flow_raw_rate"));
+        out.flow_upsample_rate = stod_or_zero(cell("flow_upsampled_rate"));
+        out.snore_raw_rate = stod_or_zero(cell("snore_raw_rate"));
+        out.snore_upsample_rate = stod_or_zero(cell("snore_upsampled_rate"));
+        out.thor_raw_rate = stod_or_zero(cell("thor_raw_rate"));
+        out.thor_upsample_rate = stod_or_zero(cell("thor_upsampled_rate"));
+        out.abdo_raw_rate = stod_or_zero(cell("abdo_raw_rate"));
+        out.abdo_upsample_rate = stod_or_zero(cell("abdo_upsampled_rate"));
+        out.leg_raw_rate = stod_or_zero(cell("leg_raw_rate"));
+        out.leg_upsample_rate = stod_or_zero(cell("leg_upsampled_rate"));
+        out.auxac_raw_rate = stod_or_zero(cell("auxac_raw_rate"));
+        out.auxac_upsample_rate = stod_or_zero(cell("auxac_upsampled_rate"));
+        out.therm_raw_rate = stod_or_zero(cell("therm_raw_rate"));
+        out.therm_upsample_rate = stod_or_zero(cell("therm_upsampled_rate"));
+        out.pos_raw_rate = stod_or_zero(cell("pos_raw_rate"));
+        out.pos_upsample_rate = stod_or_zero(cell("pos_upsampled_rate"));
+        out.oxstatus_raw_rate = stod_or_zero(cell("oxstatus_raw_rate"));
+        out.oxstatus_upsample_rate = stod_or_zero(cell("oxstatus_upsampled_rate"));
+        out.spo2_raw_rate = stod_or_zero(cell("spo2_raw_rate"));
+        out.spo2_upsample_rate = stod_or_zero(cell("spo2_upsampled_rate"));
+        out.hr_raw_rate = stod_or_zero(cell("hr_raw_rate"));
+        out.hr_upsample_rate = stod_or_zero(cell("hr_upsampled_rate"));
+        out.dhr_raw_rate = stod_or_zero(cell("dhr_raw_rate"));
+        out.dhr_upsample_rate = stod_or_zero(cell("dhr_upsampled_rate"));
+        out.sleepstate_length = stod_or_zero(cell("sleepstate_length"));
+        out.blanking_period = stod_or_zero(cell("blanking_period"));
+        out.threshold = stod_or_zero(cell("threshold"));
+        out.bin_size_minutes = stod_or_zero(cell("bin_size_minutes"));
         out.input_path = cell("original_file_path");
         out.output_path = cell("output_folder");
 
@@ -133,6 +190,7 @@ bool load_config(int dataType, config_entry& out) {
     }
     return false;
 }
+
 bool promptForMissingPaths(config_entry& cfg) {
     /*
             If the path sections of the config file are empty, prompt the user
@@ -146,7 +204,7 @@ bool promptForMissingPaths(config_entry& cfg) {
     for (const auto& [label, fieldPtr] : fields) {
         if (!fieldPtr->empty()) continue;
 
-        QString title = QString("%1 (%2)").arg(label, QString::fromStdString(cfg.original_file_extention));
+        QString title = QString("%1 (%2)").arg(label, QString::fromStdString(cfg.main_file_extention));
         QString chosen = QFileDialog::getExistingDirectory(
             nullptr, title, QString(),
             QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
@@ -160,7 +218,7 @@ QStringList discoverSourceFiles(const config_entry& cfg) {
     /*
         Take the folder full of .bin, .dat, or .edf (case insensitive) and run through it, return Qstrings of all the files in it
     */
-    std::string extention = cfg.original_file_extention;
+    std::string extention = cfg.main_file_extention;
     std::transform(extention.begin(), extention.end(), extention.begin(), ::toupper);
     QString extention_qstring = QString::fromStdString(extention);
 

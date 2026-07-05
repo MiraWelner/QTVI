@@ -46,7 +46,7 @@
  // ============================================================================
 
 const QStringList& noise_marking_gui::markableChannelLabels() {
-    static const QStringList lables{ "ECG1", "ECG2", "ECG3", "PPG_ACCEL", "ABP" };
+    static const QStringList lables{ "ECG1","ECG2","ECG3","PPG_ACCEL","ABP","ART","ART_PULM" };
     return lables;
 }
 
@@ -60,7 +60,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.state = &self->m_markState_ecg1;
         r.upsampled_data = &m_ecg1; 
         r.dataRaw = &m_ecg1Raw;
-        r.sampleRate = &m_ecgSR;
+        r.sampleRate = channel_upsampled_rates[CH_ECG1];
         r.color = COLOR_ECG1;
     }
     else if (label == "ECG2") {
@@ -68,7 +68,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.state = &self->m_markState_ecg2;
         r.upsampled_data = &m_ecg2; 
         r.dataRaw = &m_ecg2Raw; 
-        r.sampleRate = &m_ecgSR;
+        r.sampleRate = channel_upsampled_rates[CH_ECG2];
         r.color = COLOR_ECG2;
     }
     else if (label == "ECG3") {
@@ -76,7 +76,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.state = &self->m_markState_ecg3;
         r.upsampled_data = &m_ecg3;
         r.dataRaw = &m_ecg3Raw;
-        r.sampleRate = &m_ecgSR;
+        r.sampleRate = channel_upsampled_rates[CH_ECG3];
         r.color = COLOR_ECG3;
     }
     else if (label == "PPG_ACCEL") {
@@ -85,13 +85,13 @@ noise_marking_gui::channelRefs(const QString& label) const {
         if (m_cfg.dataset_type == "BITTIUM") {
             r.upsampled_data = &m_accelX; 
             r.dataRaw = &m_accelXRaw;
-            r.sampleRate = &m_ecgSR; 
+            r.sampleRate = channel_upsampled_rates[CH_ACCEL_X];
             r.color = COLOR_ACCEL_X;
         }
         else {
             r.upsampled_data = &m_ppg;
             r.dataRaw = &m_ppgRaw;
-            r.sampleRate = &m_ecgSR; 
+            r.sampleRate = channel_upsampled_rates[CH_PPG];
             r.color = COLOR_PPG;
         }
     }
@@ -100,8 +100,24 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.state = &self->m_markState_abp;
         r.upsampled_data = &m_abp; 
         r.dataRaw = &m_abpRaw;
-        r.sampleRate = &m_ecgSR;
+        r.sampleRate = channel_upsampled_rates[CH_ABP];
         r.color = COLOR_ABP;
+    }
+    else if (label == "ART") {
+        r.chartView = ui->art_axis;
+        r.state = &self->m_markState_art;
+        r.upsampled_data = &m_art;
+        r.dataRaw = &m_artRaw;
+        r.sampleRate = channel_upsampled_rates[CH_ART];
+        r.color = COLOR_ART;
+    }
+    else if (label == "ART_PULM") {
+        r.chartView = ui->art_pulm_axis;
+        r.state = &self->m_markState_art_pulm;
+        r.upsampled_data = &m_artPulm;
+        r.dataRaw = &m_artPulmRaw;
+        r.sampleRate = channel_upsampled_rates[CH_ART_PULM];
+        r.color = COLOR_ART_PULM;
     }
     return r;
 }
@@ -122,6 +138,8 @@ QString noise_marking_gui::signalLabelForChartView(QChartView* cv) const {
             || !is_missing_signal(m_accelY) || !is_missing_signal(m_accelZ);
         if (!anyAccel && !is_missing_signal(m_abp)) return "ABP";
     }
+    if (cv == ui->art_axis) return "ART";
+    if (cv == ui->art_pulm_axis) return "ART_PULM";
     return {};
 }
 
@@ -130,8 +148,7 @@ QChartView* noise_marking_gui::chartViewForSignalLabel(const QString& label) con
 }
 
 double noise_marking_gui::sampleRateForSignal(const QString& label) const {
-    data_channel_features r = channelRefs(label);
-    return r.sampleRate ? *r.sampleRate : m_ecgSR;
+    return channelRefs(label).sampleRate;
 }
 
 QColor noise_marking_gui::colorForSignal(const QString& label) const {
@@ -151,6 +168,8 @@ double noise_marking_gui::yScaleForSignal(const QString& label) const {
     else if (label == "ECG3") { check = ui->ecg_3_check; gain = ui->ecg_3_gain; }
     else if (label == "PPG_ACCEL") { check = ui->ppg_check;   gain = ui->ppg_gain; }
     else if (label == "ABP") { check = ui->abp_check; gain = ui->abp_gain; }
+    else if (label == "ART") { check = ui->art_check; gain = ui->art_gain; }
+    else if (label == "ART_PULM") { check = ui->art_pulm_check; gain = ui->art_pulm_gain; }
     if (!gain) return 1.0;
     double v = gain->value();
     return (v > 0.0) ? v : 1.0;
@@ -249,11 +268,15 @@ void noise_marking_gui::resetUnpinnedGains() {
     reset(ui->ecg_3_check, ui->ecg_3_gain);
     reset(ui->ppg_check, ui->ppg_gain);
     reset(ui->abp_check, ui->abp_gain);
+    reset(ui->art_check, ui->art_gain);
+    reset(ui->art_pulm_check, ui->art_pulm_gain);
 }
 
 double noise_marking_gui::totalChunkDuration() const {
-    if (m_ecg1.size() > 1 && m_ecgSR > 0) return m_ecg1.size() / m_ecgSR;
-    if (m_ppg.size() > 1 && m_ecgSR > 0) return m_ppg.size() / m_ecgSR;
+    if (m_ecg1.size() > 1 && channel_upsampled_rates[CH_ECG1] > 0)
+        return m_ecg1.size() / channel_upsampled_rates[CH_ECG1];
+    if (m_ppg.size() > 1 && channel_upsampled_rates[CH_PPG] > 0)
+        return m_ppg.size() / channel_upsampled_rates[CH_PPG];
     return 0.0;
 }
 
@@ -300,7 +323,7 @@ void noise_marking_gui::mousePressEvent(QMouseEvent* event) {
 noise_marking_gui::noise_marking_gui(QWidget* parent)
     : QDialog(parent)
     , ui(std::make_unique<Ui::noise_marking_gui>())
-    , m_noiseManager(std::make_unique<annotation_handler>(256.0))
+    , m_noiseManager(std::make_unique<annotation_handler>())
     , m_buttonHandler(std::make_unique<user_control_handler>(this))
 {
     ui->setupUi(this);
@@ -326,7 +349,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
        ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
        ui->ppg_accel_axis, ui->accel_or_abp_axis,
        ui->ecg_ampogram_axis, ui->ppg_ampogram_axis,
-       ui->hyp_resp_axis, ui->cvp_axis, ui->pacemaker_axis
+       ui->hyp_resp_axis, ui->cvp_eeg_axis, ui->pacemaker_axis
     };
 
     for (auto* view : allCharts) {
@@ -382,6 +405,8 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     wire_gain(ui->ecg_3_check, ui->ecg_3_gain);
     wire_gain(ui->ppg_check, ui->ppg_gain);
     wire_gain(ui->abp_check, ui->abp_gain);
+    wire_gain(ui->art_check, ui->art_gain);
+    wire_gain(ui->art_pulm_check, ui->art_pulm_gain);
 
     for (QChartView* v : allCharts) {
         if (!v) continue;
@@ -524,7 +549,7 @@ void noise_marking_gui::on_marking_type_currentTextChanged(const QString& text) 
 // ============================================================================
 
 double noise_marking_gui::thresholdAt(const QString& label, double globalTime) const {
-    double v = m_cfg.height_threshold_percent;
+    double v = m_cfg.threshold;
     for (const ParamOverride& o : m_thresholdOverrides)            // last match wins
         if (o.channel == label && globalTime >= o.start && globalTime <= o.end) v = o.value;
     return v;
@@ -537,6 +562,62 @@ double noise_marking_gui::blankingAt(const QString& label, double globalTime) co
     return v;
 }
 
+bool noise_marking_gui::promptThresholdBlanking(const QString& header,
+    double& thr, double& blk) {
+    QDialog dlg(this);
+    dlg.setWindowTitle("Set threshold & blanking");
+    auto* form = new QFormLayout(&dlg);
+    form->addRow(new QLabel(header, &dlg));
+
+    auto* thrSpin = new QDoubleSpinBox(&dlg);
+    thrSpin->setRange(0.0, 1.0); thrSpin->setDecimals(2); thrSpin->setSingleStep(0.05);
+    thrSpin->setValue(thr);
+    form->addRow("Threshold:", thrSpin);
+
+    auto* blkSpin = new QDoubleSpinBox(&dlg);
+    blkSpin->setRange(0.0, 2000.0); blkSpin->setDecimals(0); blkSpin->setSingleStep(10.0);
+    qDebug() << "blk =" << blk << " cfg.blanking_period =" << m_cfg.blanking_period;\
+    blkSpin->setValue(blk);
+    form->addRow("Blanking (ms):", blkSpin);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() != QDialog::Accepted) return false;
+    thr = thrSpin->value();
+    blk = blkSpin->value();
+    return true;
+}
+
+void noise_marking_gui::applyParamOverrides(const QStringList& channels,
+    double lo, double hi, double thrVal, double blkVal) {
+    auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {
+        if (l == "ECG1") return beat_log::ECG1;
+        if (l == "ECG2") return beat_log::ECG2;
+        if (l == "ECG3") return beat_log::ECG3;
+        if (l == "PPG_ACCEL") return beat_log::PPG;
+        if (l == "ART")       return beat_log::ART;
+        if (l == "ART_PULM")  return beat_log::ART_PULM;
+        return beat_log::ABP;
+        };
+    for (const QString& label : channels) {
+        auto applyTo = [&](QVector<ParamOverride>& vec, double val) {
+            vec.erase(std::remove_if(vec.begin(), vec.end(),
+                [&](const ParamOverride& o) {
+                    return o.channel == label && o.start <= hi && lo <= o.end;
+                }), vec.end());
+            vec.append(ParamOverride{ label, lo, hi, val });
+            };
+        applyTo(m_thresholdOverrides, thrVal);
+        applyTo(m_blankingOverrides, blkVal);
+        if (m_beatLog) m_beatLog->removeInRange(beatCh(label), lo, hi);
+    }
+    handle_data_plot();
+}
+
 void noise_marking_gui::finalizeParamEdit(const QStringList& channels,
     double globalStart, double globalEnd) {
     clearDragPreview();
@@ -545,51 +626,66 @@ void noise_marking_gui::finalizeParamEdit(const QStringList& channels,
     const double lo = std::min(globalStart, globalEnd);
     const double hi = std::max(globalStart, globalEnd);
 
-    QDialog dlg(this);
-    dlg.setWindowTitle("Set threshold & blanking");
-    auto* form = new QFormLayout(&dlg);
-    form->addRow(new QLabel(
-        QString("%1 over %2\u2013%3 s")
-        .arg(channels.join(", ")).arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1), &dlg));
+    double thr = m_cfg.threshold;
+    double blk = m_cfg.blanking_period;
+    const QString hdr = QString("%1 over %2\u2013%3 s")
+        .arg(channels.join(", ")).arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1);
 
-    auto* thrSpin = new QDoubleSpinBox(&dlg);
-    thrSpin->setRange(0.0, 1.0); thrSpin->setDecimals(2); thrSpin->setSingleStep(0.05);
-    thrSpin->setValue(m_cfg.height_threshold_percent);
-    form->addRow("Threshold:", thrSpin);
+    if (promptThresholdBlanking(hdr, thr, blk))
+        applyParamOverrides(channels, lo, hi, thr, blk);
+    else
+        handle_data_plot();
+}
 
-    auto* blkSpin = new QDoubleSpinBox(&dlg);
-    blkSpin->setRange(0.0, 1.0); blkSpin->setDecimals(2); blkSpin->setSingleStep(0.05);
-    blkSpin->setValue(m_cfg.blanking_period);
-    form->addRow("Blanking:", blkSpin);
+bool noise_marking_gui::editParamOverrideAt(QChartView* cv, const QPoint& pos) {
+    if (!cv || !cv->chart()) return false;
+    const QString clicked = signalLabelForChartView(cv);
+    if (clicked.isEmpty()) return false;
 
-    auto* buttons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    form->addRow(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
+    const double t = cv->chart()->mapToValue(pos).x() + globalOffset;
 
-    if (dlg.exec() == QDialog::Accepted) {
-        const double thrVal = thrSpin->value();
-        const double blkVal = blkSpin->value();
-        auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {
-            if (l == "ECG1") return beat_log::ECG1;
-            if (l == "ECG2") return beat_log::ECG2;
-            if (l == "ECG3") return beat_log::ECG3;
-            if (l == "PPG_ACCEL")  return beat_log::PPG;
-            return beat_log::ABP;
-            };
-        for (const QString& label : channels) {
-            auto applyTo = [&](QVector<ParamOverride>& vec, double val) {
-                vec.erase(std::remove_if(vec.begin(), vec.end(),
-                    [&](const ParamOverride& o) {
-                        return o.channel == label && o.start <= hi && lo <= o.end;
-                    }), vec.end());
-                vec.append(ParamOverride{ label, lo, hi, val });
-                };
-            applyTo(m_thresholdOverrides, thrVal);
-            applyTo(m_blankingOverrides, blkVal);
-            if (m_beatLog) m_beatLog->removeInRange(beatCh(label), lo, hi);
-        }
+    auto findAt = [&](const QVector<ParamOverride>& v) -> int {
+        for (int i = v.size() - 1; i >= 0; --i)          // last match wins (matches lookup order)
+            if (v[i].channel == clicked && v[i].start <= t && t <= v[i].end) return i;
+        return -1;
+        };
+    const int ti = findAt(m_thresholdOverrides);
+    const int bi = findAt(m_blankingOverrides);
+    if (ti < 0 && bi < 0) return false;                  // not on a blank+thresh mark
+
+    const double lo = (ti >= 0) ? m_thresholdOverrides[ti].start : m_blankingOverrides[bi].start;
+    const double hi = (ti >= 0) ? m_thresholdOverrides[ti].end : m_blankingOverrides[bi].end;
+    double thr = (ti >= 0) ? m_thresholdOverrides[ti].value : m_cfg.threshold;
+    double blk = (bi >= 0) ? m_blankingOverrides[bi].value : m_cfg.blanking_period;
+
+    // The first click of the double-click may have started a drag / click-click;
+    // undo that state before opening the editor.
+    if (m_draggedViewport) { m_draggedViewport->releaseMouse(); m_draggedViewport = nullptr; }
+    m_isDragging = false;
+    clearDragPreview();
+    for (const QString& ch : scopeChannels(clicked)) {
+        ChannelMarkingState& st = markStateFor(ch);
+        st.phase = MarkPhase::Idle;
+        clearStartMarker(st);
     }
-    handle_data_plot();
+
+    // Edit every channel sharing this exact span (mirrors how the mark was created).
+    QStringList channels;
+    auto gather = [&](const QVector<ParamOverride>& v) {
+        for (const ParamOverride& o : v)
+            if (o.start == lo && o.end == hi && !channels.contains(o.channel))
+                channels << o.channel;
+        };
+    gather(m_thresholdOverrides);
+    gather(m_blankingOverrides);
+    if (channels.isEmpty()) channels << clicked;
+
+    const QString hdr = QString("Edit %1 over %2\u2013%3 s")
+        .arg(channels.join(", ")).arg(lo, 0, 'f', 1).arg(hi, 0, 'f', 1);
+    if (promptThresholdBlanking(hdr, thr, blk))
+        applyParamOverrides(channels, lo, hi, thr, blk);
+    else
+        handle_data_plot();
+    return true;
 }

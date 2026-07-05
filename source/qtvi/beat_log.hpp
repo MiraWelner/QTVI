@@ -4,21 +4,23 @@
  *         attributes pertaining to arrhythmia, of each beat as it is observed. If a beat is skipped over and not ever
  *         shown in the window, it will not be included in the log. One row per beat.
  *
- *         The output log is stored in the output folder in a subfolder log_initials. The header is:
+ *         The output log is stored in the output folder in a subfolder log_initials. The columns are, in order:
  *
- *         "beat,ecg1_x,ecg1_y,ecg2_x,ecg2_y,ecg3_x,ecg3_y,ppg_x,ppg_y,abp_x,abp_y,"
- *         "blanking_ecg1,threshold_ecg1,blanking_ecg2,threshold_ecg2,"
- *         "blanking_ecg1,threshold_ecg1,blanking_ecg2,threshold_ecg2,"
- *         "blanking_ecg3,threshold_ecg3,blanking_ppg,threshold_ppg,blanking_abp,threshold_abp,"
- *         "marked_ecg1..marked_abp (annotation type containing the beat),"
- *         "post_ecg1..post_abp   (post_pvc/post_af/... if the beat follows an eligible arrhythmia)
+ *           beat
+ *           <chan>_x, <chan>_y                       for ecg1, ecg2, ecg3, ppg, abp, art, art_pulm
+ *           blanking_<chan>, threshold_<chan>        for the same channels
+ *           marked_<chan>                            annotation type containing the beat (0 if none)
+ *           marked_accel, accelx_val, accely_val, accelz_val
+ *           post_<chan>                              post_pvc/post_af/... if the beat follows an eligible arrhythmia
  *
  *         The data is collected in a map which is keyed by the global x location of the beat, and is added to every time the user scrolls.
  *         Peaks are not duplicated because they are keyed by global x location.
  *
  *         The map is flushed into the log every 30 seconds. This empties the map.
  *
- *
+ *         NOTE: marked_accel is currently written as a 0 placeholder. Accel is drawn on the shared PPG_ACCEL chart and
+ *               is not yet its own markable channel, so no accel annotation type is recorded. Once PPG and accel are
+ *               split into separate charts, accel becomes a normal ChannelIdx and this column fills itself.
  */
 #pragma once
 
@@ -34,7 +36,7 @@ class beat_log {
 
 public:
     // Channels in column order. Keep in sync with the CSV header.
-    enum ChannelIdx { ECG1 = 0, ECG2, ECG3, PPG, ABP, NUM_CHANNELS };
+    enum ChannelIdx { ECG1 = 0, ECG2, ECG3, PPG, ABP, ART, ART_PULM, NUM_CHANNELS };
 
     // One channel's reading for a beat: time (x), amplitude (y), and the
     // blanking / threshold in effect when it was detected.
@@ -146,35 +148,35 @@ inline bool beat_log::writeCsv(const std::string& path) const {
     if (!f.is_open()) return false;
 
     f << "beat,ecg1_x,ecg1_y,ecg2_x,ecg2_y,ecg3_x,ecg3_y,ppg_x,ppg_y,abp_x,abp_y,"
+        "art_x,art_y,art_pulm_x,art_pulm_y,"
         "blanking_ecg1,threshold_ecg1,blanking_ecg2,threshold_ecg2,"
         "blanking_ecg3,threshold_ecg3,blanking_ppg,threshold_ppg,blanking_abp,threshold_abp,"
-        "marked_ecg1,marked_ecg2,marked_ecg3,marked_ppg,marked_abp,marked_accel,accelx_val, accely_val, accelz_val,"
-        "post_ecg1,post_ecg2,post_ecg3,post_ppg,post_abp\n";
+        "blanking_art,threshold_art,blanking_art_pulm,threshold_art_pulm,"
+        "marked_ecg1,marked_ecg2,marked_ecg3,marked_ppg,marked_abp,marked_art,marked_art_pulm,"
+        "marked_accel,accelx_val,accely_val,accelz_val,"
+        "post_ecg1,post_ecg2,post_ecg3,post_ppg,post_abp,post_art,post_art_pulm\n";
 
 
     f << std::fixed << std::setprecision(6);
 
     for (size_t i = 0; i < all_beats_in_log.size(); ++i) {
         f << i;
-        for (const sample& s : all_beats_in_log[i].chan)      // x,y
+        for (const sample& s : all_beats_in_log[i].chan)      // <chan>_x, <chan>_y
             f << ',' << s.x << ',' << s.y;
-        for (const sample& s : all_beats_in_log[i].chan)      // blanking,threshold
+        for (const sample& s : all_beats_in_log[i].chan)      // blanking_<chan>, threshold_<chan>
             f << ',' << s.blanking << ',' << s.threshold;
-        for (const sample& s : all_beats_in_log[i].chan)      // markType
-            f << ',' << s.markType;
-        for (const sample& s : all_beats_in_log[i].chan)      // postType  <-- this loop
-            f << ',' << s.postType;
-        for (const sample& s : all_beats_in_log[i].chan)      // marked_ecg1..marked_abp
+        for (const sample& s : all_beats_in_log[i].chan)      // marked_<chan> (annotation type)
             f << ',' << s.markType;
 
-        // marked_accelx/y/z: accel at this row's ECG1 x, zeros if none
+        // marked_accel + accelx/y/z: accel value at this row's ECG1 x, zeros if none.
+        // marked_accel is a placeholder 0 until accel becomes its own markable channel.
         const double ex = all_beats_in_log[i].chan[ECG1].x;
         std::array<double, 3> a{ 0.0, 0.0, 0.0 };
         auto it = (ex != 0.0) ? m_accel.find(ex) : m_accel.end();
         if (it != m_accel.end()) a = it->second;
-        f << ',' << a[0] << ',' << a[1] << ',' << a[2];
+        f << ',' << 0 << ',' << a[0] << ',' << a[1] << ',' << a[2];
 
-        for (const sample& s : all_beats_in_log[i].chan)      // post_ecg1..post_abp
+        for (const sample& s : all_beats_in_log[i].chan)      // post_<chan>
             f << ',' << s.postType;
 
         f << '\n';

@@ -214,12 +214,12 @@ namespace gui_peak_finder {
 
     inline QVector<QPointF> applyBlanking(const QVector<QPointF>& peaks,
         const ParamFn& blanking, double refMeanInterval) {
-        if (peaks.size() < 2 || refMeanInterval <= 0.0) return peaks;
+        if (peaks.size() < 2) return peaks;
         QVector<QPointF> out;
         double lastT = -1e300;
         for (const QPointF& c : peaks) {
-            const double blank = blanking(c.x()) * refMeanInterval;
-            if (blank > 0.0 && c.x() - lastT < blank) continue;
+            const double blank = blanking(c.x()) / 1000.0;
+            if (c.x() - lastT < blank) continue;
             out.append(c);
             lastT = c.x();
         }
@@ -391,7 +391,7 @@ namespace gui_peak_finder {
         QVector<QPointF> kept;
         double lastT = -1e300;
         for (int k = 0; k < prelim.size(); ++k) {
-            const double blank = blanking(prelim[k].x()) * prelimRR[k];
+            const double blank = blanking(prelim[k].x()) / 1000.0;
             if (blank > 0.0 && prelim[k].x() - lastT < blank) continue;
             kept.append(prelim[k]); lastT = prelim[k].x();
         }
@@ -563,8 +563,8 @@ namespace gui_peak_finder {
         QVector<QPointF> kept;
         double lastT = -1e300;
         for (int k = 0; k < prelim.size(); ++k) {
-            const double blank = blanking(prelim[k].x()) * prelimRR[k];
-            if (blank > 0.0 && prelim[k].x() - lastT < blank) continue;
+            const double blank = blanking(prelim[k].x()) / 1000.0;
+            if (prelim[k].x() - lastT < blank) continue;
             kept.append(prelim[k]); lastT = prelim[k].x();
         }
         for (const QPointF& p : kept)

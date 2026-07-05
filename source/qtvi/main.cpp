@@ -1,28 +1,6 @@
 ﻿/**
- * @file   noise_marking_gui.cpp
- * @brief  Combined entry point for the (formerly two) GUIs.
- *
- *         For every .bin in the dataset's bin folder, this runs the full
- *         pipeline LINEARLY on the main thread, one file at a time:
- *
- *           1. Noise marking      (noise_marking_gui dialog)
- *           2. Processing         (post_process_detail::processOneFile:
- *                                   anneal -> r-peaks -> templates)
- *           3. Template marking   (TemplateViewerWindow)
- *
- *         The old background PostProcessQueue is gone -- step 2 is now a
- *         direct synchronous call between the two dialogs, so a file is
- *         fully finished (marked, processed, templated) before the next
- *         one is opened.
- *
- *         This file replaces BOTH former mains:
- *           - the old noise_marking_gui.cpp main (queue-based), and
- *           - template_marking.cpp main (separate program).
- *         template_marking.cpp should be removed from the build.
- *
- *         The merged target uses the noise-marking config_entry.hpp /
- *         config_loader.* (the superset); the template-marking copies of
- *         those two files are dropped.
+ * @file   main.cpp
+ * @brief  Entry point for the noise marking and template marking pipeline. Handles user input for dataset selection, initials, and file processing.
  */
 
 #include "post_process.hpp"
@@ -131,14 +109,21 @@ static bool runNoiseMarking(const config_entry& cfg,
 static void exportMarkings(const config_entry& cfg,
     const std::filesystem::path& binFile,
     const GenExcStruct* markings) {
-    annotation_handler nm(cfg.target_sampling_rate);
+    annotation_handler nm;
+    auto rateForLabel = [&](const QString& label) -> double {
+        if (label == "PPG" || label == "PPG_ACCEL") return cfg.ppg_upsample_rate;
+        if (label == "ABP")                          return cfg.abp_upsample_rate;
+        return cfg.ecg_upsample_rate; 
+        };
+
     if (markings) {
         for (int i = 0; i < markings->noiseExc.size(); ++i) {
+            const double sr = rateForLabel(markings->data_type[i]);
             nm.addSegment(
-                static_cast<int>(markings->noiseExc[i].first * cfg.target_sampling_rate),
-                static_cast<int>(markings->noiseExc[i].second * cfg.target_sampling_rate),
+                static_cast<int>(markings->noiseExc[i].first * sr),
+                static_cast<int>(markings->noiseExc[i].second * sr),
                 markings->data_type[i].toStdString(),
-                markings->marking_type[i].toStdString());
+                markings->marking_type[i].toStdString(), sr);
         }
     }
     const std::filesystem::path base =
@@ -184,7 +169,7 @@ static void runTemplateMarking(const config_entry& cfg,
     viewer.show();
     viewer.loadSubject(QString::fromStdString(templateFile.string()),
         QString::fromStdString(cfg.qtvi_marker_path),
-        displayId, cfg.target_sampling_rate);
+        displayId, cfg.ecg_upsample_rate);
     loop.exec();
 }
 
@@ -192,15 +177,12 @@ static void runTemplateMarking(const config_entry& cfg,
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     Theme::apply(app);
-
     const int dataset_choice = get_dataset_choice();
-    auto cfgOpt = load_config(dataset_choice);
-    if (!cfgOpt) {
+    config_entry cfg;
+    if (!load_config(dataset_choice, cfg)) {
         std::cerr << "Error Loading config.csv\n";
         return 1;
     }
-    config_entry cfg = std::move(*cfgOpt);          // was: const config_entry& cfg = *cfgOpt;
-
     // Per-reviewer log folder. Each reviewer only skips files THEY logged.
     const std::string initials = get_initials();
     cfg.log_path = cfg.output_path + "/log_" + initials;
@@ -276,7 +258,7 @@ int main(int argc, char* argv[]) {
         // The GUI fills this live while the dialog is open and flushes/writes
         // it every 30 s; here we just seed the blanking/threshold columns.
         beat_log beatLog;
-        beatLog.setDefaultParams(cfg.blanking_period, cfg.height_threshold_percent);
+        beatLog.setDefaultParams(cfg.blanking_period, cfg.threshold);
 
         // ---- Stage 1: noise marking -------------------------------------
         std::cout << "Noise marking: " << binFs.filename().string() << "\n";

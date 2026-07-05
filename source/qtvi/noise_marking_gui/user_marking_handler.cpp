@@ -33,7 +33,7 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX, const Q
 
     m_noiseManager->addSegment(
         static_cast<int>(snappedS * sr), static_cast<int>(snappedE * sr),
-        signalLabel.toStdString(), m_currentMarkingType.toStdString());
+        signalLabel.toStdString(), m_currentMarkingType.toStdString(), sr);
     m_genExc.noiseExc.append({ snappedS, snappedE });
     m_genExc.data_type.append(signalLabel);
     m_genExc.marking_type.append(m_currentMarkingType);
@@ -170,7 +170,8 @@ void noise_marking_gui::restoreMarkingMarkers() {
         };
     restore("ECG1", m_markState_ecg1); restore("ECG2", m_markState_ecg2);
     restore("ECG3", m_markState_ecg3); restore("PPG_ACCEL", m_markState_ppg);
-    restore("ABP", m_markState_abp);
+    restore("ABP", m_markState_abp); restore("ART", m_markState_art);
+    restore("ART_PULM", m_markState_art_pulm);
 }
 
 // ============================================================================
@@ -183,10 +184,15 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
     auto* cv = qobject_cast<QChartView*>(viewport->parent());
     if (!cv || !cv->chart()) return QDialog::eventFilter(watched, event);
 
+    if (event->type() == QEvent::MouseButtonDblClick) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton && editParamOverrideAt(cv, me->pos()))
+            return true;
+        return QDialog::eventFilter(watched, event);
+    }
+
     if (event->type() == QEvent::MouseButtonPress) {
         auto* me = static_cast<QMouseEvent*>(event);
-        // Right-click deletes the annotation under the cursor; if the click
-        // wasn't inside one, fall through to normal handling.
         if (me->button() == Qt::RightButton && m_annotationEraser
             && m_annotationEraser->handleRightClick(cv, me->pos()))
             return true;

@@ -22,7 +22,8 @@ inline const QColor COLOR_CVP{ 140, 0, 0 };         // dark red / maroon
 inline const QColor COLOR_TEMP{ 140, 50, 20 };      // dark sienna
 inline const QColor COLOR_MARKER{ 80, 80, 80 };     // dark gray
 inline const QColor COLOR_RAW_SCATTER{ 0, 0, 0 };   // black
-
+inline const QColor COLOR_ART{ 150, 40, 40 };       // dark red
+inline const QColor COLOR_ART_PULM{ 40, 60, 150 };  // dark blue
 
 inline void wipe_chart(QChart* chart, const QList<QAbstractSeries*>& keep = {}){
     /*

@@ -10,14 +10,11 @@
 #include <iomanip>
 #include <unordered_map>
 
-annotation_handler::annotation_handler(double fs) : m_sampleRate(fs) {}
-
 void annotation_handler::reserve(int n) { m_segments.reserve(n); }
 
 void annotation_handler::addSegment(int start, int end,
-    const std::string& label,
-    const std::string& marking_type) {
-    AnnotationSegment seg(std::min(start, end), std::max(start, end), label);
+    const std::string& label, const std::string& marking_type, double sampleRate) {
+    AnnotationSegment seg(std::min(start, end), std::max(start, end), label, sampleRate);
     seg.marking_type = marking_type;
     m_segments.push_back(seg);
 }
@@ -31,8 +28,8 @@ void annotation_handler::exportCSV(const std::string& filename) const {
         file << seg.startSample << ","
             << seg.endSample << ","
             << std::fixed << std::setprecision(3)
-            << (seg.startSample / m_sampleRate) << ","
-            << (seg.endSample / m_sampleRate) << ","
+            << (seg.startSample / seg.sampleRate) << ","
+            << (seg.endSample / seg.sampleRate) << ","
             << seg.label << ","
             << seg.marking_type << "\n";
     }
@@ -55,8 +52,8 @@ void annotation_handler::exportBinary(const std::string& filename) const {
         const double row[6] = {
             static_cast<double>(seg.startSample),
             static_cast<double>(seg.endSample),
-            seg.startSample / m_sampleRate,
-            seg.endSample / m_sampleRate,
+            seg.startSample / seg.sampleRate,
+            seg.endSample / seg.sampleRate,
             (labelIt != labelMap.end()) ? labelIt->second : 0.0,
             annotation_types::codeFor(seg.marking_type),
         };

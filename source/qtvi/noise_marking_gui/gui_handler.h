@@ -108,7 +108,7 @@ private:
         ChannelMarkingState* state = nullptr;
         const QVector<double>* upsampled_data = nullptr;
         const QVector<QPointF>* dataRaw = nullptr;   ///< raw (t, v) pairs, chunk-local seconds
-        const double* sampleRate = nullptr;  //the original sampling rate of the raw data
+        double sampleRate = 0.0;
         QColor  color;
     };
     struct ParamOverride {
@@ -132,6 +132,8 @@ private:
     ChannelMarkingState  m_markState_ecg3;
     ChannelMarkingState  m_markState_ppg;
     ChannelMarkingState  m_markState_abp;
+    ChannelMarkingState  m_markState_art;
+    ChannelMarkingState  m_markState_art_pulm;
 
     std::unique_ptr<Ui::noise_marking_gui> ui;
     std::unique_ptr<annotation_handler>       m_noiseManager;
@@ -146,16 +148,8 @@ private:
     QMap<QString, GenExcStruct> m_fileMarkings;  ///< stashed markings per file path
 
     // --- Sampling rates ---
-    double m_ecgSR = 0.0;     ///< common upsampled grid rate (raw32[0], e.g. 1000 Hz)
-    double m_boolSR = 0.0;    ///< low/bool rate for <=1 Hz channels (raw32[1])
     double m_sleepSR = 0.0;   ///< sleep epochs per second (= 1 / sleep_epoch_length)
 
-    // Channel rate helpers -- the single place that maps a channel to its rate.
-    static constexpr double kBoolRateThreshold = 1.0;
-    double nativeRateFor(int ch) const { return channel_native_rates[ch]; }
-    double upsampledRateFor(int ch) const {
-        return (channel_native_rates[ch] <= kBoolRateThreshold) ? m_boolSR : m_ecgSR;
-    }
     // --- View state ---
     double current_start_time;
     double visible_window_size;
@@ -193,18 +187,21 @@ private:
 
     // --- Signal data (upsampled, 1 kHz unless otherwise noted) ---
     QVector<double> m_ecg1, m_ecg2, m_ecg3, m_ppg, m_accelX, m_accelY, m_accelZ, m_resp;
-    QVector<double> m_cvp, m_abp, m_temp, m_marker,  m_pacemaker,  m_sleepStages;
+    QVector<double> m_cvp, m_abp, m_temp, m_marker,  m_pacemaker,  m_sleepStages, m_art, m_artPulm;
+
 
     QVector<QPointF> m_ecg1Raw, m_ecg2Raw, m_ecg3Raw, m_ppgRaw, m_abpRaw;
     QVector<QPointF> m_accelXRaw, m_accelYRaw, m_accelZRaw, m_respRaw, m_cvpRaw;
-    QVector<QPointF> m_tempRaw, m_markerRaw,m_pacemakerRaw;
+    QVector<QPointF> m_tempRaw, m_markerRaw,m_pacemakerRaw, m_artRaw, m_artPulmRaw;
     QString m_binFilePath;
-    static constexpr qint64 FILE_HEADER_SIZE = 496;
-    static constexpr int NUM_CHANNELS = 40;
+
+    static constexpr qint64 FILE_HEADER_SIZE = 584;
+    static constexpr int NUM_CHANNELS = 36;
 
     uint32_t upsampled_channel_sizes[NUM_CHANNELS] = {};
     uint32_t raw_channel_sizes[NUM_CHANNELS] = {};
     float    channel_native_rates[NUM_CHANNELS] = {};
+    float channel_upsampled_rates[NUM_CHANNELS] = {};
     uint32_t total_sleep_samples = 0;
 
     // Channel indices. Slot 0 is the new Timestamp channel; every other
@@ -214,13 +211,11 @@ private:
         CH_TIMESTAMP = 0,
         CH_ECG1, CH_ECG2, CH_ECG3, CH_PPG,
         CH_ACCEL_X, CH_ACCEL_Y, CH_ACCEL_Z,
-        CH_MARKER, CH_TEMP, CH_PACEMAKER,
+        CH_MARKER, CH_TEMP, CH_PACEMAKER_EVENT,
         CH_EOG_L, CH_EOG_R, CH_EMG,
         CH_EEG1, CH_EEG2, CH_EEG3, CH_EEG4,
-        CH_CVP, CH_FLOW, CH_THOR, CH_ABDO,
-        CH_LEG, CH_THERM, CH_POS,
-        CH_EKG_OFF, CH_EOG_L_OFF, CH_EOG_R_OFF, CH_EMG_OFF,
-        CH_EEG1_OFF, CH_EEG2_OFF, CH_EEG3_OFF,
+        CH_CVP, CH_PRES, CH_FLOW, CH_SNORE, CH_THOR, CH_ABDO,
+        CH_LEG, CH_AUXAC, CH_THERM, CH_POS,
         CH_OXSTATUS, CH_SPO2, CH_HR, CH_DHR,
         CH_RESP, CH_ABP,
         CH_ART, CH_ART_PULM
@@ -280,6 +275,9 @@ private:
     QVector<ParamOverride> m_blankingOverrides;
 
     void   finalizeParamEdit(const QStringList& channels, double globalStart, double globalEnd);
+    bool   editParamOverrideAt(QChartView* cv, const QPoint& pos);
+    bool   promptThresholdBlanking(const QString& header, double& thr, double& blk);
+    void   applyParamOverrides(const QStringList& channels, double lo, double hi,double thrVal, double blkVal);
     void   commitMarkingSpan(const QString& clickedLabel, double globalStart, double globalEnd);
     double thresholdAt(const QString& label, double globalTime) const;
     double blankingAt(const QString& label, double globalTime) const;

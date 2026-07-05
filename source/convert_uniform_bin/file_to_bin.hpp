@@ -1,61 +1,62 @@
 #pragma once
 /**
  * @file   file_to_bin.hpp
- * @brief  Uses polyphase upsampling with a filter bank for speed and efficiency to convert an .edf or  .dat file to a 
- *         .bin file with the following structure:
- * 
- *   496-byte header (124 x 32-bit fields):
+ * @brief  Uses polyphase upsampling with a filter bank for speed and efficiency to convert an .edf or .dat file to a
+ *         .bin file. Every channel is upsampled to its OWN target rate,
+ *         taken from the per-channel *_upsampled_rate columns of
+ *         config.csv (there is no longer a single global rate or a <=1 Hz
+ *         boolean tier). The per-channel target rates are recorded in the
+ *         header so a consumer can reconstruct each channel's upsampled
+ *         time axis.
  *
- *     Offset   0: signal_rate    (uint32)  common upsampled rate (high_upsample_rate, 1000 Hz)
- *     Offset   4: boolean_rate   (uint32)  shared rate for <=1 Hz channels (low_sample_rate, 1 Hz)
- *     Offset   8: sleep_state_len (uint32)  sleep-stage epoch length in seconds (30 s)
+ *   568-byte header (142 x 32-bit fields):
  *
- *     Offset  12: upsampled sizes       40 x uint32  (size_<chan>)
- *     Offset 172: raw-pair sizes        40 x uint32  (size_<chan>_raw, counts PAIRS)
- *     Offset 332: native sampling rates 40 x float32 (Hz)
+ *     Offset   0: sleep_state_len (uint32)  sleep-stage epoch length in seconds (e.g. 30 s)
+ *
+ *     Offset   4: upsampled sizes       35 x uint32  (size_<chan>)
+ *     Offset 144: raw-pair sizes        35 x uint32  (size_<chan>_raw, counts PAIRS)
+ *     Offset 284: native sampling rates 35 x float32 (Hz)
  *                 0.0 = channel absent; negative values never used.
- *     Offset 492: size_sleep            (uint32)
+ *     Offset 424: upsampled rates       35 x float32 (Hz)
+ *                 0.0 = channel absent (matches a missing-channel placeholder).
+ *     Offset 564: size_sleep            (uint32)
  *
- *   Header size check: 3 + 40 + 40 + 40 + 1 = 124 fields x 4 bytes = 496 bytes
+ *   Header size check: 1 + 35 + 35 + 35 + 35 + 1 = 142 fields x 4 bytes = 568 bytes
  *
- *   Channel index order (40 slots, identical across upsampled/raw/native-rate blocks):
+ *   Channel index order (35 slots, identical across upsampled/raw/native-rate/upsample-rate blocks):
  *      0: seconds from start of recording           1: ecg_1
  *      2: ecg_2                                     3: ecg_3
  *      4: ppg                                       5: accel_x
  *      6: accel_y                                   7: accel_z
  *      8: marker                                    9: temp
- *     10: pacemaker                                11: eog_l
+ *     10: pacemaker_event                          11: eog_l
  *     12: eog_r                                    13: emg
  *     14: eeg_1                                    15: eeg_2
  *     16: eeg_3                                    17: eeg_4
- *     18: pres                                     19: flow
- *     20: thor                                     21: abdo
- *     22: leg                                      23: therm
- *     24: pos                                      25: ekg_off
- *     26: eog_l_off                                27: eog_r_off
- *     28: emg_off                                  29: eeg1_off
- *     30: eeg2_off                                 31: eeg3_off
- *     32: oxstatus                                 33: spo2
- *     34: HR                                       35: DHR
- *     36: resp                                     37: aBP
- *     38: art                                      39: art_pulm
- *
- *   Header size check: 4 + 40 + 40 + 40 + 1 = 125 fields x 4 bytes = 500 bytes
+ *     18: cvp                                      19: pres
+ *     20: flow                                     21: snore
+ *     22: thor                                     23: abdo
+ *     24: leg                                      25: auxac
+ *     26: therm                                    27: pos
+ *     28: oxstatus                                 29: spo2
+ *     30: HR                                       31: DHR
+ *     32: resp                                     33: aBP
+ *     34: art                                      35: art_pulm
  *
  * @author Mira Welner
  * @email MEW386@pitt.edu
- * @date   2026-06-24
+ * @date   2026-07-02
  */
 
 #include <filesystem>
-#include "config_entry.hpp"   // ConfigEntry
+#include "config_entry.hpp"   // config_entry
 
  // ============================================================================
  // Public constants
  // ============================================================================
-inline constexpr int          NUM_CHANNELS = 40;
-inline constexpr int NUM_HEADER_FIELDS = 3 + 3 * NUM_CHANNELS + 1;  // = 124
-inline constexpr std::streamoff HEADER_SIZE = NUM_HEADER_FIELDS * 4; // = 496
+inline constexpr int          NUM_CHANNELS = 36;
+inline constexpr int          NUM_HEADER_FIELDS = 1 + 4 * NUM_CHANNELS + 1; // = 142
+inline constexpr std::streamoff HEADER_SIZE = NUM_HEADER_FIELDS * 4;        // = 568
 
 // Channel indices (one source of truth, used throughout file_to_bin and
 // any consumer that needs to address channels by name).
@@ -66,10 +67,8 @@ enum ChannelIdx {
     CH_MARKER, CH_TEMP, CH_PACEMAKER_EVENT,
     CH_EOG_L, CH_EOG_R, CH_EMG,
     CH_EEG1, CH_EEG2, CH_EEG3, CH_EEG4,
-    CH_CVP, CH_FLOW, CH_THOR, CH_ABDO,
-    CH_LEG, CH_THERM, CH_POS,
-    CH_EKG_OFF, CH_EOG_L_OFF, CH_EOG_R_OFF, CH_EMG_OFF,
-    CH_EEG1_OFF, CH_EEG2_OFF, CH_EEG3_OFF,
+    CH_CVP, CH_PRES, CH_FLOW, CH_SNORE, CH_THOR, CH_ABDO,
+    CH_LEG, CH_AUXAC, CH_THERM, CH_POS,
     CH_OXSTATUS, CH_SPO2, CH_HR, CH_DHR,
     CH_RESP, CH_ABP,
     CH_ART, CH_ART_PULM
@@ -81,7 +80,7 @@ enum ChannelIdx {
 
 /**
  * @brief Convert one EDF recording (with optional sleep-stage XML sidecar)
- *        into a 40-channel .bin file at cfg.binFilePath.
+ *        into a 35-channel .bin file in cfg.output_path.
  *
  * @param path     Path to the source .edf
  * @param cfg      Dataset config (paths, rates, channel labels)
@@ -89,8 +88,8 @@ enum ChannelIdx {
 void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg);
 
 /**
- * @brief Convert one CHAOS / Bittium .dat recording into a 40-channel
- *        .bin file at cfg.binFilePath. See make_binfile_edf for details.
+ * @brief Convert one CHAOS / Bittium .dat recording into a 35-channel
+ *        .bin file in cfg.output_path. See make_binfile_edf for details.
  */
 void make_binfile_dat(const std::filesystem::path& path, const config_entry& cfg);
 

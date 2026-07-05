@@ -33,51 +33,47 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) return;
 
-    // Header layout (must match file_to_bin's write_header_and_close):
-    //   3 scalars (signal/upsample rate, low/bool rate, sleep epoch length)
-    //   + 40 upsampled sizes + 40 raw sizes + 40 native rates + 1 sleep count.
-    constexpr int kNumChannels = NUM_CHANNELS;
-    constexpr int kNumFields = 3 + 3 * kNumChannels + 1;
-    static_assert(FILE_HEADER_SIZE == kNumFields * 4,
-        "FILE_HEADER_SIZE must match 3 + 3*N + 1 slot count");
+    // Header layout: 1 scalar (sleep epoch length) + 36 upsampled sizes + 36 raw sizes + 36 native rates + 36 upsampled rates + 1 sleep count.
+    constexpr int n_fields = 1 + 4 * NUM_CHANNELS + 1;
+    static_assert(FILE_HEADER_SIZE == n_fields * 4, "FILE_HEADER_SIZE must match 1 + 4*N + 1 slot count");
 
-    uint32_t raw32[kNumFields] = {};
+    uint32_t raw32[n_fields] = {};
     file.read(reinterpret_cast<char*>(raw32), sizeof(raw32));
     file.close();
 
-    m_ecgSR = static_cast<double>(raw32[0]);   // common upsampled grid rate
-    m_boolSR = static_cast<double>(raw32[1]);  // low/bool rate (<=1 Hz channels)
-    double sleepEpoch = static_cast<double>(raw32[2]);   // sleep epoch length (s)
+    double sleepEpoch = static_cast<double>(raw32[0]);
     m_sleepSR = (sleepEpoch > 0) ? (1.0 / sleepEpoch) : 0;
 
-    constexpr int kSizesUpBase = 3;
-    constexpr int kSizesRawBase = kSizesUpBase + kNumChannels;
-    constexpr int kNativeRatesBase = kSizesRawBase + kNumChannels;
-    constexpr int kSleepCountIdx = kNativeRatesBase + kNumChannels;
+    constexpr int kSizesRawBase = 1 + NUM_CHANNELS;
+    constexpr int kNativeRatesBase = kSizesRawBase + NUM_CHANNELS;
+    constexpr int kUpRatesBase = kNativeRatesBase + NUM_CHANNELS;
+    constexpr int kSleepCountIdx = kUpRatesBase + NUM_CHANNELS;
 
-    for (int i = 0; i < kNumChannels; ++i) {
-        upsampled_channel_sizes[i] = raw32[kSizesUpBase + i];
+    for (int i = 0; i < NUM_CHANNELS; ++i) {
+        upsampled_channel_sizes[i] = raw32[1 + i];
         raw_channel_sizes[i] = raw32[kSizesRawBase + i];
         std::memcpy(&channel_native_rates[i], &raw32[kNativeRatesBase + i], sizeof(float));
+        std::memcpy(&channel_upsampled_rates[i], &raw32[kUpRatesBase + i], sizeof(float));
     }
     total_sleep_samples = raw32[kSleepCountIdx];
 
     if (m_fileMarkings.contains(filePath)) {
         m_genExc = m_fileMarkings[filePath];
-        m_noiseManager = std::make_unique<annotation_handler>(m_ecgSR);
+        m_noiseManager = std::make_unique<annotation_handler>();
         for (int i = 0; i < m_genExc.noiseExc.size(); ++i) {
             double sr = sampleRateForSignal(m_genExc.data_type[i]);
             m_noiseManager->addSegment(
                 static_cast<int>(m_genExc.noiseExc[i].first * sr),
                 static_cast<int>(m_genExc.noiseExc[i].second * sr),
                 m_genExc.data_type[i].toStdString(),
-                m_genExc.marking_type[i].toStdString());
+                m_genExc.marking_type[i].toStdString(),
+                sr);
         }
     }
     else {
         m_genExc = GenExcStruct();
         m_genExc.filePath = filePath;
-        m_noiseManager = std::make_unique<annotation_handler>(m_ecgSR);
+        m_noiseManager = std::make_unique<annotation_handler>();
     }
 
     current_start_time = 0.0;
@@ -142,9 +138,9 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 
 
     auto loadSignal = [&](QVector<double>& dest, int chIdx) {
-        double sr = upsampledRateFor(chIdx);
+        const double rate = channel_upsampled_rates[chIdx];
         uint64_t totalSamples = upsampled_channel_sizes[chIdx];
-        uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * sr);
+        uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * rate);
         uint64_t start = chunkIndex * perChunk;
         uint64_t count = (totalSamples > start)
             ? std::min(perChunk, totalSamples - start) : 0;
@@ -196,16 +192,18 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     loadSignal(m_accelX, CH_ACCEL_X); loadSignal(m_accelY, CH_ACCEL_Y);
     loadSignal(m_accelZ, CH_ACCEL_Z); loadSignal(m_cvp, CH_CVP);
     loadSignal(m_resp, CH_RESP);    loadSignal(m_abp, CH_ABP);
+    loadSignal(m_art, CH_ART); loadSignal(m_artPulm, CH_ART_PULM);
     loadSignal(m_temp, CH_TEMP);    loadSignal(m_marker, CH_MARKER);
-    loadSignal(m_pacemaker, CH_PACEMAKER);
+    loadSignal(m_pacemaker, CH_PACEMAKER_EVENT);
 
     loadRaw(m_ecg1Raw, CH_ECG1);   loadRaw(m_ecg2Raw, CH_ECG2);
     loadRaw(m_ecg3Raw, CH_ECG3);   loadRaw(m_ppgRaw, CH_PPG);
     loadRaw(m_abpRaw, CH_ABP);    loadRaw(m_accelXRaw, CH_ACCEL_X);
     loadRaw(m_accelYRaw, CH_ACCEL_Y); loadRaw(m_accelZRaw, CH_ACCEL_Z);
     loadRaw(m_respRaw, CH_RESP);   loadRaw(m_cvpRaw, CH_CVP);
+    loadRaw(m_artRaw, CH_ART); loadRaw(m_artPulmRaw, CH_ART_PULM);
     loadRaw(m_tempRaw, CH_TEMP);   loadRaw(m_markerRaw, CH_MARKER);
-    loadRaw(m_pacemakerRaw, CH_PACEMAKER);
+    loadRaw(m_pacemakerRaw, CH_PACEMAKER_EVENT);
 
     if (m_gapIndicator) m_gapIndicator->rescan();
 
@@ -228,7 +226,9 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     rewriteRawToIndexTime(m_accelZRaw, CH_ACCEL_Z);
     rewriteRawToIndexTime(m_respRaw, CH_RESP);
     rewriteRawToIndexTime(m_cvpRaw, CH_CVP);
-    rewriteRawToIndexTime(m_pacemakerRaw, CH_PACEMAKER);
+    rewriteRawToIndexTime(m_pacemakerRaw, CH_PACEMAKER_EVENT);
+    rewriteRawToIndexTime(m_artRaw, CH_ART);
+    rewriteRawToIndexTime(m_artPulmRaw, CH_ART_PULM);
 
     {
         uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * m_sleepSR);
@@ -263,8 +263,8 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 
     if (bittium) {
         markActive("PPG_ACCEL", m_accelX);
-        if (ui->cvp_axis)
-            ui->cvp_axis->setVisible(!is_missing_signal(m_temp));
+        if (ui->cvp_eeg_axis)
+            ui->cvp_eeg_axis->setVisible(!is_missing_signal(m_temp));
         if (ui->hyp_resp_axis)
             ui->hyp_resp_axis->setVisible(!is_missing_signal(m_marker));
         if (ui->pacemaker_axis)
@@ -275,14 +275,16 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         if (!anyAccel) markActive("ABP", m_abp);
         if (ui->pacemaker_axis)
             ui->pacemaker_axis->setVisible(false);   // BITTIUM-only chart
-        if (ui->cvp_axis)
-            ui->cvp_axis->setVisible(m_cvpRaw.size() >= 2);
+        if (ui->cvp_eeg_axis)
+            ui->cvp_eeg_axis->setVisible(m_cvpRaw.size() >= 2);
         if (ui->hyp_resp_axis) {
             ui->hyp_resp_axis->setVisible(
                 sleep_data_present(m_sleepStages)
                 || !is_missing_signal(m_resp) || anyAccel);
         }
     }
+    markActive("ART", m_art);
+    markActive("ART_PULM", m_artPulm);
 
     updateMarkingButtons();
     ampogram();
@@ -291,7 +293,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     updateAmpogramCursor();
     restoreMarkingMarkers();
 
-    uint64_t ecgPerChunk = static_cast<uint64_t>(seconds_in_memory_at_once * m_ecgSR);
+    uint64_t ecgPerChunk = static_cast<uint64_t>(seconds_in_memory_at_once * channel_upsampled_rates[CH_ECG1]);
     ui->prev8hours->setEnabled(chunkIndex > 0);
     ui->next8hours->setEnabled(
         (chunkIndex * ecgPerChunk + m_ecg1.size()) < upsampled_channel_sizes[CH_ECG1]);

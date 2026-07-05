@@ -48,14 +48,15 @@ bool annotation_eraser::handleRightClick(QChartView* cv, const QPoint& viewportP
         exc.data_type.removeAt(hit);
         exc.marking_type.removeAt(hit);
 
-        m_gui->m_noiseManager = std::make_unique<annotation_handler>(m_gui->m_ecgSR);
+        m_gui->m_noiseManager = std::make_unique<annotation_handler>();
         for (int i = 0; i < exc.noiseExc.size(); ++i) {
             const double sr = m_gui->sampleRateForSignal(exc.data_type[i]);
             m_gui->m_noiseManager->addSegment(
                 static_cast<int>(exc.noiseExc[i].first * sr),
                 static_cast<int>(exc.noiseExc[i].second * sr),
                 exc.data_type[i].toStdString(),
-                exc.marking_type[i].toStdString());
+                exc.marking_type[i].toStdString(),
+                sr);
         }
         if (m_gui->m_beatLog) m_gui->m_beatLog->removeInRange(beatCh(label), remStart, remEnd);
         m_gui->handle_data_plot();

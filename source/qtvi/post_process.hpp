@@ -30,7 +30,7 @@ namespace post_process_detail {
             std::filesystem::path(cfg.r_peak_data_path) / (stem + "_wave_markings.bin");
         const std::filesystem::path templatePath =
             std::filesystem::path(cfg.template_path) /
-            (stem + "_" + std::to_string(static_cast<int>(cfg.bin_length_minutes)) +
+            (stem + "_" + std::to_string(static_cast<int>(cfg.bin_size_minutes)) +
                 "_templates.bin");
 
         // ---- Step 1: Anneal ----
@@ -46,7 +46,7 @@ namespace post_process_detail {
         }
         else {
             std::cerr << "  Annealing: " << stem << "\n";
-            if (!annealOneFile(binPath, noisePath, annealedPath, cfg.bin_length_minutes)) {
+            if (!annealOneFile(binPath, noisePath, annealedPath, cfg.bin_size_minutes)) {
                 std::cerr << "  Skipping rest of pipeline for " << stem << "\n";
                 return false;
             }
@@ -67,11 +67,8 @@ namespace post_process_detail {
             std::cerr << "  R-peaks: " << stem << "\n";
             try {
                 AnnealedData annealedData = read_input_binfile(annealedPath.string());
-                peakResults = create_ecg_ppg_pairs(
-                    std::move(annealedData.bins), 0, true, stem, cfg.target_sampling_rate, cfg.target_sampling_rate);
+                peakResults = create_ecg_ppg_pairs(std::move(annealedData.bins), 0, true, stem, cfg.ecg_upsample_rate, cfg.ppg_upsample_rate);
                 write_output_binfile(rPeakPath.string(), peakResults);
-                std::cerr << "  -> " << peakResults.size() << " bins -> "
-                    << rPeakPath.filename() << "\n";
                 peakResultsInMemory = true;
             }
             catch (const std::exception& e) {
@@ -179,13 +176,13 @@ namespace post_process_detail {
             std::filesystem::path(cfg.r_peak_data_path) / (stem + "_wave_markings.bin");
         const std::filesystem::path templatePath =
             std::filesystem::path(cfg.template_path) /
-            (stem + "_" + std::to_string(static_cast<int>(cfg.bin_length_minutes)) +
+            (stem + "_" + std::to_string(static_cast<int>(cfg.bin_size_minutes)) +
                 "_templates.bin");
         const std::filesystem::path beatsPath =
             std::filesystem::path(cfg.template_path) / (stem + "_beats.bin");
         const std::filesystem::path provisionalPath =
             std::filesystem::path(cfg.template_path) /
-            (stem + "_" + std::to_string(static_cast<int>(cfg.bin_length_minutes)) +
+            (stem + "_" + std::to_string(static_cast<int>(cfg.bin_size_minutes)) +
                 "_templates.partial.bin");
 
         // ---- Step 1: Anneal (same freshness logic as processOneFile) ----
@@ -198,7 +195,7 @@ namespace post_process_detail {
         }
         if (!annealedFresh) {
             std::cerr << "  Annealing: " << stem << "\n";
-            if (!annealOneFile(binPath, noisePath, annealedPath, cfg.bin_length_minutes)) {
+            if (!annealOneFile(binPath, noisePath, annealedPath, cfg.bin_size_minutes)) {
                 std::cerr << "  Skipping rest of pipeline for " << stem << "\n";
                 return std::nullopt;
             }
@@ -210,7 +207,7 @@ namespace post_process_detail {
         ViewerJob job;
         job.stem = stem;
         job.fileID = stem;
-        job.samplingRate = cfg.target_sampling_rate;
+        job.samplingRate = cfg.ecg_upsample_rate;
         job.rPeakPath = rPeakPath;
         job.templatePath = templatePath;
         job.beatsPath = beatsPath;
@@ -245,7 +242,7 @@ namespace post_process_detail {
                 AnnealedData annealedData = read_input_binfile(annealedPath.string());
                 job.peakResults = create_ecg_ppg_pairs_raw(
                     std::move(annealedData.bins), true, stem,
-                    cfg.target_sampling_rate, cfg.target_sampling_rate);
+                    cfg.ecg_upsample_rate, cfg.ppg_upsample_rate);
                 job.needSqabsDetection = true;
             }
 

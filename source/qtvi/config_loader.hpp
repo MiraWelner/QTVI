@@ -14,11 +14,4 @@
 
 #include "config_entry.hpp"
 
- /*
- * @brief Load a single dataset row from config.csv. If any path fields
- *        in the matched row are blank, prompts the user to pick them.
- * 
- * @return Populated config_entry on success; std::nullopt if no row
- *         matches the dataType or the user cancels a folder prompt.
- */
-std::optional<config_entry> load_config(int dataType);
+bool load_config(int dataType, config_entry& out);
