@@ -5,18 +5,13 @@
  *
  */
 
-#include "annealing/anneal_handler.hpp"
-#include "peak_finding/run_find_r_peaks.hpp"
 #include "gui_handler.h"
 #include "chart_utils.hpp"
 #include "grid_overlay.hpp"
-#include "post_process.hpp"
 #include "config_loader.hpp"
-#include "gui_peak_finder.hpp"
 #include "beat_log.hpp"
 #include "annotation_eraser.h"
 #include "annotation_types.hpp"
-
 
 #include <QCheckBox>
 #include <QScrollBar>
@@ -46,7 +41,7 @@
  // ============================================================================
 
 const QStringList& noise_marking_gui::markableChannelLabels() {
-    static const QStringList lables{ "ECG1","ECG2","ECG3","PPG_ACCEL","ABP","ART","ART_PULM" };
+    static const QStringList lables{ "ECG1","ECG2","ECG3","PPG","ACCEL","ABP","ART","ART_PULM" };
     return lables;
 }
 
@@ -57,7 +52,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
 
     if (label == "ECG1") {
         r.chartView = ui->ecg_axis_1;
-        r.state = &self->m_markState_ecg1;
+        r.state = &self->mark_state_ecg1;
         r.upsampled_data = &m_ecg1; 
         r.dataRaw = &m_ecg1Raw;
         r.sampleRate = channel_upsampled_rates[CH_ECG1];
@@ -65,7 +60,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
     }
     else if (label == "ECG2") {
         r.chartView = ui->ecg_axis_2;
-        r.state = &self->m_markState_ecg2;
+        r.state = &self->mark_state_ecg2;
         r.upsampled_data = &m_ecg2; 
         r.dataRaw = &m_ecg2Raw; 
         r.sampleRate = channel_upsampled_rates[CH_ECG2];
@@ -73,31 +68,31 @@ noise_marking_gui::channelRefs(const QString& label) const {
     }
     else if (label == "ECG3") {
         r.chartView = ui->ecg_axis_3;
-        r.state = &self->m_markState_ecg3;
+        r.state = &self->mark_state_ecg3;
         r.upsampled_data = &m_ecg3;
         r.dataRaw = &m_ecg3Raw;
         r.sampleRate = channel_upsampled_rates[CH_ECG3];
         r.color = COLOR_ECG3;
     }
-    else if (label == "PPG_ACCEL") {
-        r.chartView = ui->ppg_accel_axis;
-        r.state = &self->m_markState_ppg;
-        if (m_cfg.dataset_type == "BITTIUM") {
-            r.upsampled_data = &m_accelX; 
-            r.dataRaw = &m_accelXRaw;
-            r.sampleRate = channel_upsampled_rates[CH_ACCEL_X];
-            r.color = COLOR_ACCEL_X;
-        }
-        else {
-            r.upsampled_data = &m_ppg;
-            r.dataRaw = &m_ppgRaw;
-            r.sampleRate = channel_upsampled_rates[CH_PPG];
-            r.color = COLOR_PPG;
-        }
+    else if (label == "PPG") {
+        r.chartView = ui->ppg_axis;
+        r.state = &self->mark_state_ppg;
+        r.upsampled_data = &m_ppg;
+        r.dataRaw = &m_ppgRaw;
+        r.sampleRate = channel_upsampled_rates[CH_PPG];
+        r.color = COLOR_PPG;
+    }
+    else if (label == "ACCEL") {
+        r.chartView = ui->accel_axis;
+        r.state = &self->mark_state_accel;
+        r.upsampled_data = &m_accelX;
+        r.dataRaw = &m_accelXRaw;
+        r.sampleRate = channel_upsampled_rates[CH_ACCEL_X];
+        r.color = COLOR_ACCEL_X;
     }
     else if (label == "ABP") {
-        r.chartView = ui->accel_or_abp_axis;
-        r.state = &self->m_markState_abp;
+        r.chartView = ui->abp_axis;
+        r.state = &self->mark_state_abp;
         r.upsampled_data = &m_abp; 
         r.dataRaw = &m_abpRaw;
         r.sampleRate = channel_upsampled_rates[CH_ABP];
@@ -105,7 +100,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
     }
     else if (label == "ART") {
         r.chartView = ui->art_axis;
-        r.state = &self->m_markState_art;
+        r.state = &self->mark_state_art;
         r.upsampled_data = &m_art;
         r.dataRaw = &m_artRaw;
         r.sampleRate = channel_upsampled_rates[CH_ART];
@@ -113,7 +108,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
     }
     else if (label == "ART_PULM") {
         r.chartView = ui->art_pulm_axis;
-        r.state = &self->m_markState_art_pulm;
+        r.state = &self->mark_state_art_pulm;
         r.upsampled_data = &m_artPulm;
         r.dataRaw = &m_artPulmRaw;
         r.sampleRate = channel_upsampled_rates[CH_ART_PULM];
@@ -125,15 +120,16 @@ noise_marking_gui::channelRefs(const QString& label) const {
 noise_marking_gui::ChannelMarkingState&
 noise_marking_gui::markStateFor(const QString& label) {
     data_channel_features r = channelRefs(label);
-    return r.state ? *r.state : m_markState_ppg;
+    return r.state ? *r.state : mark_state_ppg;
 }
 
 QString noise_marking_gui::signalLabelForChartView(QChartView* cv) const {
     if (cv == ui->ecg_axis_1) return "ECG1";
     if (cv == ui->ecg_axis_2) return "ECG2";
     if (cv == ui->ecg_axis_3) return "ECG3";
-    if (cv == ui->ppg_accel_axis)   return "PPG_ACCEL";
-    if (cv == ui->accel_or_abp_axis) {
+    if (cv == ui->ppg_axis)   return "PPG";
+    if (cv == ui->accel_axis) return "ACCEL";
+    if (cv == ui->abp_axis) {
         bool anyAccel = !is_missing_signal(m_accelX)
             || !is_missing_signal(m_accelY) || !is_missing_signal(m_accelZ);
         if (!anyAccel && !is_missing_signal(m_abp)) return "ABP";
@@ -166,7 +162,8 @@ double noise_marking_gui::yScaleForSignal(const QString& label) const {
     if (label == "ECG1") { check = ui->ecg_1_check; gain = ui->ecg_1_gain; }
     else if (label == "ECG2") { check = ui->ecg_2_check; gain = ui->ecg_2_gain; }
     else if (label == "ECG3") { check = ui->ecg_3_check; gain = ui->ecg_3_gain; }
-    else if (label == "PPG_ACCEL") { check = ui->ppg_check;   gain = ui->ppg_gain; }
+    else if (label == "PPG") { check = ui->ppg_check;   gain = ui->ppg_gain; }
+    else if (label == "ACCEL") { check = ui->accel_check; gain = ui->accel_gain; }
     else if (label == "ABP") { check = ui->abp_check; gain = ui->abp_gain; }
     else if (label == "ART") { check = ui->art_check; gain = ui->art_gain; }
     else if (label == "ART_PULM") { check = ui->art_pulm_check; gain = ui->art_pulm_gain; }
@@ -174,6 +171,22 @@ double noise_marking_gui::yScaleForSignal(const QString& label) const {
     double v = gain->value();
     return (v > 0.0) ? v : 1.0;
 }
+void noise_marking_gui::onFixScaleToggled(const QString& label, bool on) {
+    /*Called when a channel's "Fix Scale" box toggles. On check: capture the
+    axis's current range so it can be frozen. On uncheck: drop it so the
+    channel autoscales again.
+    */
+    if (!on) { m_fixedYRange.remove(label); handle_data_plot(); return; }
+    QChartView* cv = chartViewForSignalLabel(label);
+    if (cv && cv->chart()) {
+        auto vAxes = cv->chart()->axes(Qt::Vertical);
+        if (!vAxes.isEmpty())
+            if (auto* y = qobject_cast<QValueAxis*>(vAxes.first()))
+                m_fixedYRange[label] = { y->min(), y->max() };
+    }
+    handle_data_plot();
+}
+
 
 bool noise_marking_gui::invertedForSignal(const QString& label) const {
     QCheckBox* c = nullptr;
@@ -267,6 +280,7 @@ void noise_marking_gui::resetUnpinnedGains() {
     reset(ui->ecg_2_check, ui->ecg_2_gain);
     reset(ui->ecg_3_check, ui->ecg_3_gain);
     reset(ui->ppg_check, ui->ppg_gain);
+    reset(ui->accel_check, ui->accel_gain);
     reset(ui->abp_check, ui->abp_gain);
     reset(ui->art_check, ui->art_gain);
     reset(ui->art_pulm_check, ui->art_pulm_gain);
@@ -347,7 +361,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     const QList<QChartView*> allCharts = {
        ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
-       ui->ppg_accel_axis, ui->accel_or_abp_axis,
+       ui->ppg_axis, ui->accel_axis, ui->abp_axis,
        ui->ecg_ampogram_axis, ui->ppg_ampogram_axis,
        ui->hyp_resp_axis, ui->cvp_eeg_axis, ui->pacemaker_axis
     };
@@ -404,9 +418,23 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     wire_gain(ui->ecg_2_check, ui->ecg_2_gain);
     wire_gain(ui->ecg_3_check, ui->ecg_3_gain);
     wire_gain(ui->ppg_check, ui->ppg_gain);
+    wire_gain(ui->accel_check, ui->accel_gain);
     wire_gain(ui->abp_check, ui->abp_gain);
     wire_gain(ui->art_check, ui->art_gain);
     wire_gain(ui->art_pulm_check, ui->art_pulm_gain);
+
+    auto wire_fix = [this](QCheckBox* check, const QString& label) {
+        connect(check, &QCheckBox::toggled, this,
+            [this, label](bool on) { onFixScaleToggled(label, on); });
+        };
+    wire_fix(ui->ecg_1_check, "ECG1");
+    wire_fix(ui->ecg_2_check, "ECG2");
+    wire_fix(ui->ecg_3_check, "ECG3");
+    wire_fix(ui->ppg_check, "PPG");
+    wire_fix(ui->accel_check, "ACCEL");
+    wire_fix(ui->abp_check, "ABP");
+    wire_fix(ui->art_check, "ART");
+    wire_fix(ui->art_pulm_check, "ART_PULM");
 
     for (QChartView* v : allCharts) {
         if (!v) continue;
@@ -596,15 +624,6 @@ bool noise_marking_gui::promptThresholdBlanking(const QString& header,
 
 void noise_marking_gui::applyParamOverrides(const QStringList& channels,
     double lo, double hi, double thrVal, double blkVal) {
-    auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {
-        if (l == "ECG1") return beat_log::ECG1;
-        if (l == "ECG2") return beat_log::ECG2;
-        if (l == "ECG3") return beat_log::ECG3;
-        if (l == "PPG_ACCEL") return beat_log::PPG;
-        if (l == "ART")       return beat_log::ART;
-        if (l == "ART_PULM")  return beat_log::ART_PULM;
-        return beat_log::ABP;
-        };
     for (const QString& label : channels) {
         auto applyTo = [&](QVector<ParamOverride>& vec, double val) {
             vec.erase(std::remove_if(vec.begin(), vec.end(),
@@ -615,7 +634,7 @@ void noise_marking_gui::applyParamOverrides(const QStringList& channels,
             };
         applyTo(m_thresholdOverrides, thrVal);
         applyTo(m_blankingOverrides, blkVal);
-        if (m_beatLog) m_beatLog->removeInRange(beatCh(label), lo, hi);
+        if (m_beatLog) m_beatLog->removeInRange(beat_log::channelForLabel(label), lo, hi);
     }
     handle_data_plot();
 }
@@ -706,18 +725,9 @@ void noise_marking_gui::applyInvertOverride(const QStringList& channels,
     double globalStart, double globalEnd) {
     const double lo = std::min(globalStart, globalEnd);
     const double hi = std::max(globalStart, globalEnd);
-    auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {
-        if (l == "ECG1") return beat_log::ECG1;
-        if (l == "ECG2") return beat_log::ECG2;
-        if (l == "ECG3") return beat_log::ECG3;
-        if (l == "PPG_ACCEL") return beat_log::PPG;
-        if (l == "ART")       return beat_log::ART;
-        if (l == "ART_PULM")  return beat_log::ART_PULM;
-        return beat_log::ABP;
-        };
     for (const QString& label : channels) {
         m_invertOverrides.append(ParamOverride{ label, lo, hi, 1.0 });
-        if (m_beatLog) m_beatLog->removeInRange(beatCh(label), lo, hi);   // re-detect/re-log in span
+        if (m_beatLog) m_beatLog->removeInRange(beat_log::channelForLabel(label), lo, hi);   // re-detect/re-log in span
     }
     handle_data_plot();
 }

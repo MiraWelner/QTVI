@@ -540,7 +540,7 @@
     </layout>
    </item>
    <item>
-    <layout class="QVBoxLayout" name="main_plots" stretch="1,1,1,1,1,1,0,0">
+    <layout class="QVBoxLayout" name="main_plots" stretch="1,1,1,1,1,1,1,1,0">
      <property name="spacing">
       <number>0</number>
      </property>
@@ -574,6 +574,32 @@
         <property name="verticalSpacing">
          <number>0</number>
         </property>
+        <item row="0" column="3">
+         <widget class="QDoubleSpinBox" name="ecg_1_gain">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>10</height>
+           </size>
+          </property>
+          <property name="frame">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <spacer name="verticalSpacer">
+          <property name="orientation">
+           <enum>Qt::Orientation::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>20</width>
+            <height>160</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
         <item row="0" column="2">
          <widget class="QCheckBox" name="ecg_1_check">
           <property name="minimumSize">
@@ -590,16 +616,10 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="3">
-         <widget class="QDoubleSpinBox" name="ecg_1_gain">
-          <property name="minimumSize">
-           <size>
-            <width>0</width>
-            <height>10</height>
-           </size>
-          </property>
-          <property name="frame">
-           <bool>true</bool>
+        <item row="0" column="1">
+         <widget class="QCheckBox" name="ecg_1_reverse">
+          <property name="text">
+           <string>Inverted Lead?</string>
           </property>
          </widget>
         </item>
@@ -615,26 +635,6 @@
            </size>
           </property>
          </spacer>
-        </item>
-        <item row="1" column="1">
-         <spacer name="verticalSpacer">
-          <property name="orientation">
-           <enum>Qt::Orientation::Vertical</enum>
-          </property>
-          <property name="sizeHint" stdset="0">
-           <size>
-            <width>20</width>
-            <height>160</height>
-           </size>
-          </property>
-         </spacer>
-        </item>
-        <item row="0" column="1">
-         <widget class="QCheckBox" name="ecg_1_reverse">
-          <property name="text">
-           <string>Inverted Lead?</string>
-          </property>
-         </widget>
         </item>
        </layout>
       </widget>
@@ -669,6 +669,13 @@
         <property name="verticalSpacing">
          <number>0</number>
         </property>
+        <item row="0" column="1">
+         <widget class="QCheckBox" name="ecg_2_reverse">
+          <property name="text">
+           <string>Inverted Lead?</string>
+          </property>
+         </widget>
+        </item>
         <item row="1" column="1">
          <spacer name="verticalSpacer_2">
           <property name="orientation">
@@ -692,22 +699,6 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="2">
-         <widget class="QCheckBox" name="ecg_2_check">
-          <property name="minimumSize">
-           <size>
-            <width>80</width>
-            <height>10</height>
-           </size>
-          </property>
-          <property name="focusPolicy">
-           <enum>Qt::FocusPolicy::NoFocus</enum>
-          </property>
-          <property name="text">
-           <string>Fix Scale</string>
-          </property>
-         </widget>
-        </item>
         <item row="0" column="0">
          <spacer name="horizontalSpacer_2">
           <property name="orientation">
@@ -721,10 +712,19 @@
           </property>
          </spacer>
         </item>
-        <item row="0" column="1">
-         <widget class="QCheckBox" name="ecg_2_reverse">
+        <item row="0" column="2">
+         <widget class="QCheckBox" name="ecg_2_check">
+          <property name="minimumSize">
+           <size>
+            <width>80</width>
+            <height>10</height>
+           </size>
+          </property>
+          <property name="focusPolicy">
+           <enum>Qt::FocusPolicy::NoFocus</enum>
+          </property>
           <property name="text">
-           <string>Inverted Lead?</string>
+           <string>Fix Scale</string>
           </property>
          </widget>
         </item>
@@ -761,6 +761,16 @@
         <property name="verticalSpacing">
          <number>0</number>
         </property>
+        <item row="0" column="4">
+         <widget class="QDoubleSpinBox" name="ecg_3_gain">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>10</height>
+           </size>
+          </property>
+         </widget>
+        </item>
         <item row="0" column="0">
          <spacer name="horizontalSpacer_3">
           <property name="orientation">
@@ -774,14 +784,27 @@
           </property>
          </spacer>
         </item>
-        <item row="0" column="1">
+        <item row="1" column="2">
+         <spacer name="verticalSpacer_3">
+          <property name="orientation">
+           <enum>Qt::Orientation::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>20</width>
+            <height>159</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item row="0" column="2">
          <widget class="QCheckBox" name="ecg_3_reverse">
           <property name="text">
            <string>Inverted Lead?</string>
           </property>
          </widget>
         </item>
-        <item row="0" column="2">
+        <item row="0" column="3">
          <widget class="QCheckBox" name="ecg_3_check">
           <property name="minimumSize">
            <size>
@@ -797,34 +820,11 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="3">
-         <widget class="QDoubleSpinBox" name="ecg_3_gain">
-          <property name="minimumSize">
-           <size>
-            <width>0</width>
-            <height>10</height>
-           </size>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="1">
-         <spacer name="verticalSpacer_3">
-          <property name="orientation">
-           <enum>Qt::Orientation::Vertical</enum>
-          </property>
-          <property name="sizeHint" stdset="0">
-           <size>
-            <width>20</width>
-            <height>159</height>
-           </size>
-          </property>
-         </spacer>
-        </item>
        </layout>
       </widget>
      </item>
      <item>
-      <widget class="QChartView" name="ppg_accel_axis" native="true">
+      <widget class="QChartView" name="ppg_axis" native="true">
        <property name="sizePolicy">
         <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
          <horstretch>1</horstretch>
@@ -853,7 +853,17 @@
         <property name="verticalSpacing">
          <number>0</number>
         </property>
-        <item row="0" column="0">
+        <item row="2" column="2">
+         <widget class="QDoubleSpinBox" name="ppg_gain">
+          <property name="minimumSize">
+           <size>
+            <width>0</width>
+            <height>10</height>
+           </size>
+          </property>
+         </widget>
+        </item>
+        <item row="2" column="0">
          <spacer name="horizontalSpacer_4">
           <property name="orientation">
            <enum>Qt::Orientation::Horizontal</enum>
@@ -866,7 +876,7 @@
           </property>
          </spacer>
         </item>
-        <item row="0" column="1">
+        <item row="2" column="1">
          <widget class="QCheckBox" name="ppg_check">
           <property name="minimumSize">
            <size>
@@ -882,17 +892,7 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="2">
-         <widget class="QDoubleSpinBox" name="ppg_gain">
-          <property name="minimumSize">
-           <size>
-            <width>0</width>
-            <height>10</height>
-           </size>
-          </property>
-         </widget>
-        </item>
-        <item row="1" column="1">
+        <item row="3" column="1">
          <spacer name="verticalSpacer_4">
           <property name="orientation">
            <enum>Qt::Orientation::Vertical</enum>
@@ -909,7 +909,7 @@
       </widget>
      </item>
      <item>
-      <widget class="QChartView" name="accel_or_abp_axis" native="true">
+      <widget class="QChartView" name="abp_axis" native="true">
        <property name="sizePolicy">
         <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
          <horstretch>1</horstretch>
@@ -938,18 +938,8 @@
         <property name="verticalSpacing">
          <number>0</number>
         </property>
-        <item row="0" column="0">
-         <spacer name="horizontalSpacer_5">
-          <property name="orientation">
-           <enum>Qt::Orientation::Horizontal</enum>
-          </property>
-          <property name="sizeHint" stdset="0">
-           <size>
-            <width>1305</width>
-            <height>20</height>
-           </size>
-          </property>
-         </spacer>
+        <item row="0" column="2">
+         <widget class="QDoubleSpinBox" name="abp_gain"/>
         </item>
         <item row="0" column="1">
          <widget class="QCheckBox" name="abp_check">
@@ -967,8 +957,18 @@
           </property>
          </widget>
         </item>
-        <item row="0" column="2">
-         <widget class="QDoubleSpinBox" name="abp_gain"/>
+        <item row="0" column="0">
+         <spacer name="horizontalSpacer_5">
+          <property name="orientation">
+           <enum>Qt::Orientation::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>1305</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
         </item>
         <item row="1" column="1" colspan="2">
          <spacer name="verticalSpacer_5">
@@ -1013,6 +1013,9 @@
         <property name="verticalSpacing">
          <number>0</number>
         </property>
+        <item row="0" column="4">
+         <widget class="QDoubleSpinBox" name="art_gain"/>
+        </item>
         <item row="0" column="0" rowspan="2">
          <spacer name="horizontalSpacer_6">
           <property name="orientation">
@@ -1026,6 +1029,13 @@
           </property>
          </spacer>
         </item>
+        <item row="0" column="2" rowspan="2" colspan="2">
+         <widget class="QCheckBox" name="art_check">
+          <property name="text">
+           <string>Fix Scale</string>
+          </property>
+         </widget>
+        </item>
         <item row="2" column="3">
          <spacer name="verticalSpacer_6">
           <property name="orientation">
@@ -1038,16 +1048,6 @@
            </size>
           </property>
          </spacer>
-        </item>
-        <item row="0" column="4">
-         <widget class="QDoubleSpinBox" name="art_gain"/>
-        </item>
-        <item row="0" column="2" rowspan="2" colspan="2">
-         <widget class="QCheckBox" name="art_check">
-          <property name="text">
-           <string>Fix Scale</string>
-          </property>
-         </widget>
         </item>
        </layout>
       </widget>
@@ -1073,7 +1073,14 @@
         <property name="verticalSpacing">
          <number>0</number>
         </property>
-        <item row="0" column="0" rowspan="3">
+        <item row="0" column="1">
+         <widget class="QCheckBox" name="art_pulm_check">
+          <property name="text">
+           <string>Fix Scale</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="0">
          <spacer name="horizontalSpacer_7">
           <property name="orientation">
            <enum>Qt::Orientation::Horizontal</enum>
@@ -1086,18 +1093,71 @@
           </property>
          </spacer>
         </item>
-        <item row="0" column="2" rowspan="3">
+        <item row="0" column="3">
          <widget class="QDoubleSpinBox" name="art_pulm_gain"/>
         </item>
-        <item row="0" column="1">
-         <widget class="QCheckBox" name="art_pulm_check">
+        <item row="1" column="1">
+         <spacer name="verticalSpacer_7">
+          <property name="orientation">
+           <enum>Qt::Orientation::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>20</width>
+            <height>40</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
+     </item>
+     <item>
+      <widget class="QChartView" name="accel_axis" native="true">
+       <layout class="QGridLayout" name="gridLayout_8">
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>1</number>
+        </property>
+        <property name="rightMargin">
+         <number>1</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+        <property name="horizontalSpacing">
+         <number>3</number>
+        </property>
+        <property name="verticalSpacing">
+         <number>0</number>
+        </property>
+        <item row="1" column="0">
+         <spacer name="horizontalSpacer_8">
+          <property name="orientation">
+           <enum>Qt::Orientation::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>1148</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item row="0" column="2" rowspan="2">
+         <widget class="QDoubleSpinBox" name="accel_gain"/>
+        </item>
+        <item row="1" column="1">
+         <widget class="QCheckBox" name="accel_check">
           <property name="text">
            <string>Fix Scale</string>
           </property>
          </widget>
         </item>
-        <item row="3" column="2">
-         <spacer name="verticalSpacer_7">
+        <item row="2" column="1">
+         <spacer name="verticalSpacer_8">
           <property name="orientation">
            <enum>Qt::Orientation::Vertical</enum>
           </property>

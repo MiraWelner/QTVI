@@ -111,9 +111,12 @@ static void exportMarkings(const config_entry& cfg,
     const GenExcStruct* markings) {
     annotation_handler nm;
     auto rateForLabel = [&](const QString& label) -> double {
-        if (label == "PPG" || label == "PPG_ACCEL") return cfg.ppg_upsample_rate;
-        if (label == "ABP")                          return cfg.abp_upsample_rate;
-        return cfg.ecg_upsample_rate; 
+        if (label == "PPG")      return cfg.ppg_upsample_rate;
+        if (label == "ABP")      return cfg.abp_upsample_rate;
+        if (label == "ACCEL")    return cfg.accel_upsample_rate;
+        if (label == "ART")      return cfg.art_upsample_rate;
+        if (label == "ART_PULM") return cfg.art_pulm_upsample_rate;
+        return cfg.ecg_upsample_rate;   // ECG1/ECG2/ECG3
         };
 
     if (markings) {

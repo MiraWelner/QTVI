@@ -250,19 +250,23 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         };
     const bool bittium = (m_cfg.dataset_type == "BITTIUM");
 
-    markActive("ECG1", m_ecg1); markActive("ECG2", m_ecg2);
+    markActive("ECG1", m_ecg1);
+    markActive("ECG2", m_ecg2);
     markActive("ECG3", m_ecg3);
+    markActive("PPG", m_ppg);
+    markActive("ACCEL", m_accelX);
+    markActive("ART", m_art);
+    markActive("ART_PULM", m_artPulm);
 
-    bool anyAccel = !is_missing_signal(m_accelX)
-        || !is_missing_signal(m_accelY) || !is_missing_signal(m_accelZ);
 
-    if (ui->accel_or_abp_axis)
-        ui->accel_or_abp_axis->setVisible(!bittium && !is_missing_signal(m_abp));
+    bool anyAccel = !is_missing_signal(m_accelX) || !is_missing_signal(m_accelY) || !is_missing_signal(m_accelZ);
+
+    if (ui->abp_axis)
+        ui->abp_axis->setVisible(!bittium && !is_missing_signal(m_abp));
     if (ui->ppg_ampogram_axis)
         ui->ppg_ampogram_axis->setVisible(!is_missing_signal(m_ppg));
 
     if (bittium) {
-        markActive("PPG_ACCEL", m_accelX);
         if (ui->cvp_eeg_axis)
             ui->cvp_eeg_axis->setVisible(!is_missing_signal(m_temp));
         if (ui->hyp_resp_axis)
@@ -271,7 +275,6 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
             ui->pacemaker_axis->setVisible(!is_missing_signal(m_pacemaker));
     }
     else {
-        markActive("PPG_ACCEL", m_ppg);
         if (!anyAccel) markActive("ABP", m_abp);
         if (ui->pacemaker_axis)
             ui->pacemaker_axis->setVisible(false);   // BITTIUM-only chart
@@ -283,8 +286,6 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
                 || !is_missing_signal(m_resp) || anyAccel);
         }
     }
-    markActive("ART", m_art);
-    markActive("ART_PULM", m_artPulm);
 
     updateMarkingButtons();
     ampogram();

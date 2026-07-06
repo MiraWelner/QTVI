@@ -39,14 +39,8 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX, const Q
     m_genExc.marking_type.append(m_currentMarkingType);
 
     if (m_beatLog) {
-        auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {
-            if (l == "ECG1") return beat_log::ECG1;
-            if (l == "ECG2") return beat_log::ECG2;
-            if (l == "ECG3") return beat_log::ECG3;
-            if (l == "PPG_ACCEL")  return beat_log::PPG;
-            return beat_log::ABP;
-            };
-        m_beatLog->removeInRange(beatCh(signalLabel), snappedS, snappedE);
+        
+        m_beatLog->removeInRange(beat_log::channelForLabel(signalLabel), snappedS, snappedE);
     }
 
     state.phase = MarkPhase::Idle;
@@ -188,10 +182,12 @@ void noise_marking_gui::restoreMarkingMarkers() {
                 colorForSignal(label), stopButtonForSignal(label));
         }
         };
-    restore("ECG1", m_markState_ecg1); restore("ECG2", m_markState_ecg2);
-    restore("ECG3", m_markState_ecg3); restore("PPG_ACCEL", m_markState_ppg);
-    restore("ABP", m_markState_abp); restore("ART", m_markState_art);
-    restore("ART_PULM", m_markState_art_pulm);
+    restore("ECG1", mark_state_ecg1); restore("ECG2", mark_state_ecg2);
+    restore("ECG3", mark_state_ecg3); 
+	restore("PPG", mark_state_ppg);
+    restore("ACCEL", mark_state_accel);
+    restore("ABP", mark_state_abp); restore("ART", mark_state_art);
+    restore("ART_PULM", mark_state_art_pulm);
 }
 
 // ============================================================================

@@ -1,13 +1,13 @@
 /**
  * @file   signal_renderer.cpp
  * @brief  Signal chart rendering for the noise-marking GUI:
- *           - setupHypnogram        (sleep-stage overview)
- *           - handle_ampogram_plot  (amplitude variability overview)
- *           - renderWindowedChart   (core windowed signal renderer)
- *           - handle_data_plot      (main per-window redraw)
+ *           - setupHypnogram          (sleep-stage overview)
+ *           - ampogram                (amplitude-variability overview)
+ *           - renderWindowedChart     (core windowed signal renderer)
+ *           - detectPeaks / display_peaks_in_window / get_bpm
+ *           - handle_data_plot        (main per-window redraw)
  *           - updateAmpogramCursor
  *           - updateNoiseHighlights
- *           - peaksForWindow / peaksForBpmWindow
  */
 
 #include "gui_handler.h"
@@ -26,7 +26,6 @@
 #include <QtCharts/QScatterSeries>
 #include <QtCharts/QValueAxis>
 #include <QtCharts/QCategoryAxis>
-#include <QElapsedTimer>
 #include <QFont>
 #include <QSet>
 #include <algorithm>
@@ -37,14 +36,6 @@
 #include <vector>
 
 namespace {
-
-    beat_log::ChannelIdx beatLogChannel(const QString& label) {
-        if (label == "ECG1") return beat_log::ECG1;
-        if (label == "ECG2") return beat_log::ECG2;
-        if (label == "ECG3") return beat_log::ECG3;
-        if (label == "PPG_ACCEL")  return beat_log::PPG;
-        return beat_log::ABP;
-    }
 
     int firstRawAtOrAfter(const QVector<QPointF>& raw, double target) {
         /*
@@ -89,6 +80,53 @@ namespace {
         return tags;
     }
 
+    // Per-channel annotation spans reduced to (start, end, markCode), in GLOBAL
+    // seconds, sorted by start, with a prefix-max of ends. codeAt(gt) answers
+    // "which annotation covers the beat at global time gt" in O(log n): binary-
+    // search the last span starting at/<= gt, then walk back only while a span
+    // could still reach gt (the prefix-max short-circuits the common no-mark
+    // case). Built once per channel per redraw.
+    //
+    // This replaces the chanSpans / prefMaxEnd / markTypeAt block that used to be
+    // pasted into both the normal and accel logging paths -- keeping one copy is
+    // what stops the two from drifting apart.
+    struct MarkSpanIndex {
+        struct Span { double s, e; int code; };
+        std::vector<Span>   spans;
+        std::vector<double> prefMaxEnd;
+
+        int codeAt(double gt) const {
+            int lo = 0, hi = static_cast<int>(spans.size());
+            while (lo < hi) { const int mid = (lo + hi) >> 1; if (spans[mid].s <= gt) lo = mid + 1; else hi = mid; }
+            if (lo == 0 || prefMaxEnd[lo - 1] < gt) return 0;   // nothing starting <= gt reaches gt
+            for (int j = lo - 1; j >= 0; --j) {                 // only runs when the beat is inside a mark
+                if (spans[j].e >= gt) return spans[j].code;
+                if (prefMaxEnd[j] < gt) break;
+            }
+            return 0;
+        }
+    };
+
+    MarkSpanIndex buildMarkSpanIndex(const annotation_handler* mgr,
+        const std::string& label, double sr) {
+        MarkSpanIndex idx;
+        if (!mgr) return idx;
+        for (const auto& seg : mgr->getSegments()) {
+            if (seg.label != label) continue;
+            idx.spans.push_back({ seg.startSample / sr, seg.endSample / sr,
+                                  annotation_types::markCode(seg.marking_type) });
+        }
+        std::sort(idx.spans.begin(), idx.spans.end(),
+            [](const MarkSpanIndex::Span& a, const MarkSpanIndex::Span& b) { return a.s < b.s; });
+        idx.prefMaxEnd.resize(idx.spans.size());
+        double running = -1e300;
+        for (size_t i = 0; i < idx.spans.size(); ++i) {
+            running = std::max(running, idx.spans[i].e);
+            idx.prefMaxEnd[i] = running;
+        }
+        return idx;
+    }
+
     QCategoryAxis* make_time_labled_xaxis(double startLocal, double duration,
         double globalOffset, bool labelsVisible)
     {
@@ -121,8 +159,7 @@ namespace {
         bool labelsVisible,
         bool useScatterMode,
         bool forceLineForUpsampled,
-        double yScale = 1.0,
-        bool compactTime = false)
+        double yScale = 1.0)
     {
         if (!view || !view->chart()) return { 1e9, -1e9 };
         QChart* chart = view->chart();
@@ -433,7 +470,10 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
         return inv ? -1.0 : 1.0;
         };
     auto runFinder = [&](const std::vector<std::pair<double, double>>& refEx) {
-        if (label == "PPG_ACCEL" || label == "ABP")
+        // Pressure/pulse waveforms (PPG, ABP, ART, ART_PULM) are systolic
+        // upstroke + rounded apex -> derivative detector. Only the three ECG
+        // leads use the local-max detector (and thus the per-sample sign fn).
+        if (label == "PPG" || label == "ABP" || label == "ART" || label == "ART_PULM")
             return gui_peak_finder::findPeaksDerivative(
                 *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
                 refPreceding, refEx, detExcluded, withinSpans);
@@ -577,7 +617,7 @@ void noise_marking_gui::setupHypnogram() {
         s->setColor(st.color); s->setMarkerSize(3.0);
         s->setPen(Qt::NoPen);
         s->setMarkerShape(QScatterSeries::MarkerShapeRectangle);
-        for (int i = 0; i < m_sleepStages.size(); ++i){
+        for (int i = 0; i < m_sleepStages.size(); ++i) {
             if (static_cast<int>(m_sleepStages[i]) == st.value)
                 s->append(globalOffset + i * dt + dt / 2.0, st.value);
         }
@@ -794,8 +834,6 @@ void noise_marking_gui::determine_which_nonmarkable_charts_to_plot() {
 }
 
 void noise_marking_gui::handle_data_plot() {
-    static int n = 0;
-    QElapsedTimer t; t.start();
     clearDragPreview();
     for (auto* area : m_highlights) {
         if (area->chart()) area->chart()->removeSeries(area);
@@ -804,17 +842,18 @@ void noise_marking_gui::handle_data_plot() {
     m_highlights.clear();
     if (m_gapIndicator) m_gapIndicator->clearSeries();
 
-    m_markState_ecg1.startMarkerLine = nullptr;
-    m_markState_ecg2.startMarkerLine = nullptr;
-    m_markState_ecg3.startMarkerLine = nullptr;
-    m_markState_ppg.startMarkerLine = nullptr;
-    m_markState_art.startMarkerLine = nullptr;
-    m_markState_art_pulm.startMarkerLine = nullptr;
-    m_markState_abp.startMarkerLine = nullptr;
+    mark_state_ecg1.startMarkerLine = nullptr;
+    mark_state_ecg2.startMarkerLine = nullptr;
+    mark_state_ecg3.startMarkerLine = nullptr;
+    mark_state_ppg.startMarkerLine = nullptr;
+    mark_state_accel.startMarkerLine = nullptr;
+    mark_state_art.startMarkerLine = nullptr;
+    mark_state_art_pulm.startMarkerLine = nullptr;
+    mark_state_abp.startMarkerLine = nullptr;
 
     QChartView* xLabelOwnerRight = nullptr;
     for (auto* cv : { ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
-                      ui->ppg_accel_axis, ui->accel_or_abp_axis }) {
+                      ui->ppg_axis, ui->accel_axis, ui->abp_axis }) {
         if (cv && !cv->isHidden()) xLabelOwnerRight = cv;
     }
 
@@ -839,10 +878,12 @@ void noise_marking_gui::handle_data_plot() {
     wipe_chart(ui->ecg_axis_1->chart(), keepFor(ui->ecg_axis_1));
     wipe_chart(ui->ecg_axis_2->chart(), keepFor(ui->ecg_axis_2));
     wipe_chart(ui->ecg_axis_3->chart(), keepFor(ui->ecg_axis_3));
-    wipe_chart(ui->ppg_accel_axis->chart(), keepFor(ui->ppg_accel_axis));
-    if (ui->accel_or_abp_axis && !is_missing_signal(m_abp))
-        wipe_chart(ui->accel_or_abp_axis->chart(),
-            keepFor(ui->accel_or_abp_axis));
+    wipe_chart(ui->ppg_axis->chart(), keepFor(ui->ppg_axis));
+    if (ui->accel_axis && !is_missing_signal(m_accelX))
+        wipe_chart(ui->accel_axis->chart(), keepFor(ui->accel_axis));
+    if (ui->abp_axis && !is_missing_signal(m_abp))
+        wipe_chart(ui->abp_axis->chart(),
+            keepFor(ui->abp_axis));
     if (ui->art_axis && !is_missing_signal(m_art))
         wipe_chart(ui->art_axis->chart(), keepFor(ui->art_axis));
     if (ui->art_pulm_axis && !is_missing_signal(m_artPulm))
@@ -862,30 +903,9 @@ void noise_marking_gui::handle_data_plot() {
         data_channel_features r = channelRefs(label);
         if (!r.chartView || !r.upsampled_data || !r.state) return;
 
-        if (label == "PPG_ACCEL") {
-            const int s = std::clamp(int(current_start_time * r.sampleRate), 0, int(r.upsampled_data->size() - 1));
-            const int e = std::clamp(int((current_start_time + visible_window_size) * r.sampleRate), 0, int(r.upsampled_data->size()));
-        }
         const QVector<QPointF> emptyRaw;
         const QVector<QPointF>& rawData = r.dataRaw ? *r.dataRaw : emptyRaw;
-
-        // Bittium: PPG_ACCEL chart carries the 3 accel channels; other datasets
-        // render the single channel.
-        const bool bittiumAccelPpg =
-            (label == "PPG_ACCEL") && (m_cfg.dataset_type == "BITTIUM");
-        QList<markable_data_series> serieses;
-        if (bittiumAccelPpg) {
-            serieses = {
-                { &m_accelX, COLOR_ACCEL_X, &m_accelXRaw },
-                { &m_accelY, COLOR_ACCEL_Y, &m_accelYRaw },
-                { &m_accelZ, COLOR_ACCEL_Z, &m_accelZRaw },
-            };
-        }
-        else {
-            serieses = { { r.upsampled_data, r.color, &rawData } };
-        }
-        const QString titleLabel = bittiumAccelPpg ? QStringLiteral("Accel")
-            : (label == "PPG_ACCEL" ? QStringLiteral("PPG") : label);
+        const QList<markable_data_series> serieses = { { r.upsampled_data, r.color, &rawData } };
 
         double nativeHz = r.sampleRate;   // fallback if no real raw
         const bool hasRealRaw = rawData.size() >= 2
@@ -897,7 +917,7 @@ void noise_marking_gui::handle_data_plot() {
         const double pxPerSec = (visible_window_size > 0.0)
             ? r.chartView->chart()->plotArea().width() / visible_window_size : 0.0;
         const double pxPerSample = pxPerSec / nativeHz;
-        r.chartView->setProperty("signalName", titleLabel);
+        r.chartView->setProperty("signalName", label);
         r.chartView->setProperty("nativeHz", nativeHz);
 
         const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
@@ -911,8 +931,17 @@ void noise_marking_gui::handle_data_plot() {
             m_plotMode == PlotMode::Line,
             yScaleForSignal(label));
 
-        // --- pin axis to chunk-wide extremes when drift filtering is OFF ---
-        if (!m_filterBaselineDrift) {
+        // --- y-range: frozen (Fix Scale) wins; else chunk-wide pin when
+        //     drift filtering is off; else the per-window autoscale that
+        //     renderWindowedChart already applied. ---
+        auto fixedIt = m_fixedYRange.constFind(label);
+        if (fixedIt != m_fixedYRange.constEnd()) {
+            auto vAxes = r.chartView->chart()->axes(Qt::Vertical);
+            if (!vAxes.isEmpty())
+                if (auto* yAxis = qobject_cast<QValueAxis*>(vAxes.first()))
+                    yAxis->setRange(fixedIt->first, fixedIt->second);   // no re-pad; use captured range as-is
+        }
+        else if (!m_filterBaselineDrift) {
             double glo = 1e9, ghi = -1e9;
             for (const markable_data_series& s : serieses) {
                 if (s.data)
@@ -930,29 +959,34 @@ void noise_marking_gui::handle_data_plot() {
                     set_padded_y_range(yAxis, glo, ghi);   // reuse the same 5% padding helper
             }
         }
-        std::vector<int> postTags;
 
-        // Bittium: accel has no meaningful R-peaks, so detect/draw nothing.
-        // Instead sample the accel trace at each ECG1 beat time and log those
-        // (time, accel-value) pairs into the accel column -- same timestamps as
-        // ECG1, so rows line up. (CSV column headed "accel"; see beat_log.)
-        if (bittiumAccelPpg) {
+        // ACCEL has no R-peaks: render the trace (done above), then log the accel
+        // value at each ECG1 beat time into its own beat_log column, markType
+        // taken from ACCEL's own annotations. No detection, no red/blue markers,
+        // no bpm.
+        if (label == "ACCEL") {
             r.chartView->setProperty("bpm", QVariant());
-            r.chartView->chart()->setTitle(get_chart_title(titleLabel, nativeHz, pxPerSample));
+            r.chartView->chart()->setTitle(get_chart_title(label, nativeHz, pxPerSample));
+
             if (m_beatLog) {
+                const MarkSpanIndex markIdx =
+                    buildMarkSpanIndex(m_noiseManager.get(), label.toStdString(), r.sampleRate);
+                // Anchor rows to ECG1 beat times (accel produces no beats of its own).
                 const QVector<QPointF> ecgPeaks = display_peaks_in_window("ECG1");
                 for (const QPointF& p : ecgPeaks) {
                     const double gt = p.x() + globalOffset;
                     double accelY = 0.0;
                     const int idx = static_cast<int>(std::round(p.x() * r.sampleRate));
                     if (idx >= 0 && idx < m_accelX.size()) accelY = m_accelX[idx];
-                    m_beatLog->logPeak(beat_log::PPG, gt, accelY, blankingAt(label, gt), thresholdAt(label, gt), 0, 0, 0);
+                    m_beatLog->logPeak(beat_log::ACCEL, gt, accelY,
+                        blankingAt(label, gt), thresholdAt(label, gt),
+                        markIdx.codeAt(gt), 0, 0);
                 }
             }
             return;   // accel chart drawn above; no detection/markers
         }
 
-
+        std::vector<int> postTags;
         const QVector<QPointF> peaks = display_peaks_in_window(label, &postTags);
         double bpm = 0.0;
         if (visible_window_size >= 10.0) {            // keep in sync with kMinBpmWindowSec in get_bpm
@@ -964,45 +998,22 @@ void noise_marking_gui::handle_data_plot() {
             if (dur > 0.0) bpm = bpmPeaks.size() * 60.0 / dur;
         }
         r.chartView->setProperty("bpm", bpm);
-        r.chartView->chart()->setTitle(get_chart_title(titleLabel, nativeHz, pxPerSample, bpm));
-        const beat_log::ChannelIdx ch = beatLogChannel(label);
+        r.chartView->chart()->setTitle(get_chart_title(label, nativeHz, pxPerSample, bpm));
 
-        const std::string logLabelStd = label.toStdString();
-        struct LogSpan { double s, e; int code; };
-        std::vector<LogSpan> chanSpans;
-        std::vector<double>  prefMaxEnd;
-        if (m_noiseManager) {
-            const double sr = r.sampleRate;
-            for (const auto& seg : m_noiseManager->getSegments()) {
-                if (seg.label != logLabelStd) continue;
-                chanSpans.push_back({ seg.startSample / sr, seg.endSample / sr,
-                                      annotation_types::markCode(seg.marking_type) });
+        // Log every detected beat: value, the blanking/threshold in effect,
+        // which annotation (if any) covers it, its post-arrhythmia tag, and
+        // whether the channel is inverted there.
+        if (m_beatLog) {
+            const beat_log::ChannelIdx ch = beat_log::channelForLabel(label);
+            const MarkSpanIndex markIdx =
+                buildMarkSpanIndex(m_noiseManager.get(), label.toStdString(), r.sampleRate);
+            for (int k = 0; k < peaks.size(); ++k) {
+                const double gt = peaks[k].x() + globalOffset;
+                m_beatLog->logPeak(ch, gt, peaks[k].y(),
+                    blankingAt(label, gt), thresholdAt(label, gt),
+                    markIdx.codeAt(gt), postTags[k],
+                    invertedAt(label, gt) ? 1 : 0);
             }
-            std::sort(chanSpans.begin(), chanSpans.end(),
-                [](const LogSpan& a, const LogSpan& b) { return a.s < b.s; });
-            prefMaxEnd.resize(chanSpans.size());
-            double running = -1e300;
-            for (size_t i = 0; i < chanSpans.size(); ++i) {
-                running = std::max(running, chanSpans[i].e);
-                prefMaxEnd[i] = running;
-            }
-        }
-        auto markTypeAt = [&](double gt) -> int {
-            int lo = 0, hi = static_cast<int>(chanSpans.size());
-            while (lo < hi) { const int mid = (lo + hi) >> 1; if (chanSpans[mid].s <= gt) lo = mid + 1; else hi = mid; }
-            if (lo == 0 || prefMaxEnd[lo - 1] < gt) return 0;   // nothing starting <= gt reaches gt (common case)
-            for (int j = lo - 1; j >= 0; --j) {                 // only runs when the beat is inside a mark
-                if (chanSpans[j].e >= gt) return chanSpans[j].code;
-                if (prefMaxEnd[j] < gt) break;
-            }
-            return 0;
-            };
-        for (int k = 0; k < peaks.size(); ++k) {
-            const double gt = peaks[k].x() + globalOffset;
-            const int markType = markTypeAt(gt);
-            m_beatLog->logPeak(ch, gt, peaks[k].y(),
-                blankingAt(label, gt), thresholdAt(label, gt), markType, postTags[k],
-                invertedAt(label, gt) ? 1 : 0);
         }
 
         const double yScale = yScaleForSignal(label);
@@ -1050,12 +1061,11 @@ void noise_marking_gui::handle_data_plot() {
         addPeakSeries(bluePts, Qt::blue);
         };
 
-    plotMarkable("ECG1"); plotMarkable("ECG2"); plotMarkable("ECG3"); plotMarkable("PPG_ACCEL");
-    if (ui->accel_or_abp_axis && !is_missing_signal(m_abp)) plotMarkable("ABP");
+    plotMarkable("ECG1"); plotMarkable("ECG2"); plotMarkable("ECG3");
+    plotMarkable("PPG");  plotMarkable("ACCEL");
+    if (ui->abp_axis && !is_missing_signal(m_abp)) plotMarkable("ABP");
     if (ui->art_axis && !is_missing_signal(m_art)) plotMarkable("ART");
     if (ui->art_pulm_axis && !is_missing_signal(m_artPulm)) plotMarkable("ART_PULM");
-
-    qDebug() << "detect+build" << ++n << t.restart() << "ms";
 
     determine_which_nonmarkable_charts_to_plot();
     updateNoiseHighlights();
@@ -1067,13 +1077,11 @@ void noise_marking_gui::handle_data_plot() {
     // which otherwise swallows clicks before they reach the viewport's event
     // filter. Let presses fall through so marking/erase land on the first click.
     for (QChartView* cv : { ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
-                            ui->ppg_accel_axis, ui->accel_or_abp_axis }) {
+                            ui->ppg_axis, ui->accel_axis, ui->abp_axis }) {
         if (!cv) continue;
         if (auto* gl = cv->findChild<QOpenGLWidget*>())
             gl->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     }
-    qDebug() << "highlights+overlay+render" << t.elapsed() << "ms";
-
 }
 
 // ============================================================================

@@ -90,10 +90,12 @@ private slots:
     void handleBrowseFile();
 
 private:
+    void onFixScaleToggled(const QString& label, bool on);
     double scrollStepSeconds() const;
     config_entry m_cfg;
     beat_log* m_beatLog = nullptr;
     QTimer* m_logFlushTimer = nullptr;   // flushes the beat log to disk every 30 s
+    QHash<QString, QPair<double, double>> m_fixedYRange; // fixed y range for scaling
 
     struct ChannelMarkingState {
         MarkPhase    phase = MarkPhase::Idle;
@@ -127,13 +129,14 @@ private:
     static const QStringList& markableChannelLabels();
 
     // --- Per-channel marking state ---
-    ChannelMarkingState  m_markState_ecg1;
-    ChannelMarkingState  m_markState_ecg2;
-    ChannelMarkingState  m_markState_ecg3;
-    ChannelMarkingState  m_markState_ppg;
-    ChannelMarkingState  m_markState_abp;
-    ChannelMarkingState  m_markState_art;
-    ChannelMarkingState  m_markState_art_pulm;
+    ChannelMarkingState  mark_state_ecg1;
+    ChannelMarkingState  mark_state_ecg2;
+    ChannelMarkingState  mark_state_ecg3;
+    ChannelMarkingState  mark_state_ppg;
+    ChannelMarkingState  mark_state_abp;
+    ChannelMarkingState  mark_state_accel;
+    ChannelMarkingState  mark_state_art;
+    ChannelMarkingState  mark_state_art_pulm;
 
     std::unique_ptr<Ui::noise_marking_gui> ui;
     std::unique_ptr<annotation_handler>       m_noiseManager;

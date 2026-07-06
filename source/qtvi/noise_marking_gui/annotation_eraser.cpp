@@ -25,14 +25,6 @@ bool annotation_eraser::handleRightClick(QChartView* cv, const QPoint& viewportP
         m_gui->current_chunk_index * noise_marking_gui::seconds_in_memory_at_once;
     const double gt = localX + globalOffset;
 
-    auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {
-        if (l == "ECG1") return beat_log::ECG1;
-        if (l == "ECG2") return beat_log::ECG2;
-        if (l == "ECG3") return beat_log::ECG3;
-        if (l == "PPG_ACCEL")  return beat_log::PPG;
-        return beat_log::ABP;
-        };
-
     // 1) Annotations first (the primary highlight).
     GenExcStruct& exc = m_gui->m_genExc;
     int hit = -1;
@@ -58,7 +50,7 @@ bool annotation_eraser::handleRightClick(QChartView* cv, const QPoint& viewportP
                 exc.marking_type[i].toStdString(),
                 sr);
         }
-        if (m_gui->m_beatLog) m_gui->m_beatLog->removeInRange(beatCh(label), remStart, remEnd);
+        if (m_gui->m_beatLog) m_gui->m_beatLog->removeInRange(beat_log::channelForLabel(label), remStart, remEnd);
         m_gui->handle_data_plot();
         return true;
     }
@@ -72,7 +64,7 @@ bool annotation_eraser::handleRightClick(QChartView* cv, const QPoint& viewportP
             if (gt >= v[i].start && gt <= v[i].end) {
                 const double s = v[i].start, e = v[i].end;
                 v.removeAt(i);
-                if (m_gui->m_beatLog) m_gui->m_beatLog->removeInRange(beatCh(label), s, e);
+                if (m_gui->m_beatLog) m_gui->m_beatLog->removeInRange(beat_log::channelForLabel(label), s, e);
                 return true;
             }
         }
