@@ -250,6 +250,11 @@
          </item>
          <item>
           <property name="text">
+           <string>Invert/Noninvert</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
            <string>Benign Arr.</string>
           </property>
          </item>

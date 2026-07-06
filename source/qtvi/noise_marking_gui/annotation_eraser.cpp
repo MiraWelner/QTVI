@@ -78,11 +78,9 @@ bool annotation_eraser::handleRightClick(QChartView* cv, const QPoint& viewportP
         }
         return false;
         };
-    if (eraseOverride(m_gui->m_thresholdOverrides)
-        || eraseOverride(m_gui->m_blankingOverrides)) {
+    if (eraseOverride(m_gui->m_thresholdOverrides) || eraseOverride(m_gui->m_blankingOverrides)|| eraseOverride(m_gui->m_invertOverrides)) {
         m_gui->handle_data_plot();
         return true;
     }
-
     return false;
 }

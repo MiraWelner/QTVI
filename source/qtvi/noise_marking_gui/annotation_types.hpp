@@ -21,11 +21,12 @@ namespace annotation_types {
         int r, g, b, a;               // highlight color (RGBA, a = alpha)
         bool        suppressesDetection;  // true => no R peaks detected in the span
         bool        postEligible;     // beat AFTER one of these gets this code in the post column
-        bool        paramEdit;        // true => dragging this type edits threshold/blanking, not a stored annotation
+        bool        paramEdit;        // true => dragging edits threshold/blanking, not a stored annotation
+        bool        invertEdit;       // true => dragging flips inversion in the span, not a stored annotation
     };
 
-    inline constexpr std::array<AnnotationType, 12> noise_types = { {
-            //  label               code  r    g    b    a   suppress  post   param
+    inline constexpr std::array<AnnotationType, 13> noise_types = { {
+            //  label               code  r    g    b    a   suppress  post   param  invert
         { "1) R Peak Noise",   1,  235, 220, 0,   60, true,  false, false },  // yellow
         { "2) Minor Noise",    2,  150, 80,  30,  60, false, false, false },  // brown
         { "3) Blank.+Thresh.", 3,  128, 128, 128, 60, false, false, true  },  // gray
@@ -37,7 +38,8 @@ namespace annotation_types {
         { "9) PAC",            9,  245, 130, 0,   60, false, true,  false },  // orange
         { "Benign Arr.",       10, 200, 40,  170, 60, false, false, false },  // magenta
         { "Sig. Arr.",         11, 0,   120, 210, 60, false, false, false },  // blue
-        { "Other",             12, 110, 120, 140, 60, false, false, false }   // slate
+        { "Other",             12, 110, 120, 140, 60, false, false, false },  // slate
+        { "Invert/Noninvert",  13, 180, 100, 0,   60, false, false, false, true }  // orange; override, not stored
         } };
 
     inline const AnnotationType* find(const QString& label) {
@@ -79,6 +81,11 @@ namespace annotation_types {
     inline bool isParamEdit(const QString& label) {
         const auto* t = find(label);
         return t && t->paramEdit;
+    }
+
+    inline bool isInvertEdit(const QString& label) {
+        const auto* t = find(label);
+        return t && t->invertEdit;
     }
 
 }  // namespace annotation_types

@@ -26,6 +26,7 @@
 #include <QtCharts/QScatterSeries>
 #include <QtCharts/QValueAxis>
 #include <QtCharts/QCategoryAxis>
+#include <QElapsedTimer>
 #include <QFont>
 #include <QSet>
 #include <algorithm>
@@ -252,12 +253,22 @@ namespace {
             rawScatter->setColor(Qt::black);
 
             QList<QPointF> rawPts;
-            rawPts.reserve(std::min<int>(r.rawData->size(), 4096));
+            const int firstIdx = firstRawAtOrAfter(*r.rawData, currentStartTime);
             const double winEnd = currentStartTime + windowDuration;
-            for (int i = firstRawAtOrAfter(*r.rawData, currentStartTime);
-                i < r.rawData->size(); ++i) {
+
+            // Count what's in the window, then stride so we draw at most kMaxDots
+            // markers. Scatter markers are the dominant paint cost; past a few
+            // thousand they can't be visually resolved and just stall the GPU.
+            int lastIdx = firstIdx;
+            while (lastIdx < r.rawData->size() && (*r.rawData)[lastIdx].x() <= winEnd)
+                ++lastIdx;
+            const int inWindow = lastIdx - firstIdx;
+            constexpr int kMaxDots = 3000;
+            const int stride = std::max(1, inWindow / kMaxDots);
+
+            rawPts.reserve(std::min(inWindow, kMaxDots) + 1);
+            for (int i = firstIdx; i < lastIdx; i += stride) {
                 const QPointF& p = (*r.rawData)[i];
-                if (p.x() > winEnd) break;
                 rawPts.append({ p.x(), (p.y() - r.center) * yScale + r.center });
             }
             rawScatter->replace(rawPts);
@@ -409,7 +420,18 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     }
     auto thrFn = [thrIdx](double localT) { return thrIdx.at(localT); };
     auto blkFn = [blkIdx](double localT) { return blkIdx.at(localT); };
-    const double sgn = invertedForSignal(label) ? -1.0 : 1.0;
+
+    const bool baseInverted = invertedForSignal(label);
+    std::vector<std::pair<double, double>> invSpans;                // chunk-local
+    for (const ParamOverride& o : m_invertOverrides)
+        if (o.channel == label)
+            invSpans.push_back({ o.start - globalOffset, o.end - globalOffset });
+    auto sgnFn = [baseInverted, invSpans](double localT) -> double {
+        bool inv = baseInverted;
+        for (const auto& s : invSpans)
+            if (localT >= s.first && localT <= s.second) { inv = !inv; break; }
+        return inv ? -1.0 : 1.0;
+        };
     auto runFinder = [&](const std::vector<std::pair<double, double>>& refEx) {
         if (label == "PPG_ACCEL" || label == "ABP")
             return gui_peak_finder::findPeaksDerivative(
@@ -417,8 +439,9 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
                 refPreceding, refEx, detExcluded, withinSpans);
         return gui_peak_finder::findPeaks(
             *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
-            refPreceding, sgn, refEx, detExcluded, withinSpans);
+            refPreceding, sgnFn, refEx, detExcluded, withinSpans);   // sgnFn, not scalar
         };
+
 
     // Pass 1: detect with annotation spans excluded from the reference.
     QVector<QPointF> peaks = runFinder(refExcluded);
@@ -771,6 +794,9 @@ void noise_marking_gui::determine_which_nonmarkable_charts_to_plot() {
 }
 
 void noise_marking_gui::handle_data_plot() {
+    static int n = 0;
+    QElapsedTimer t; t.start();
+    clearDragPreview();
     for (auto* area : m_highlights) {
         if (area->chart()) area->chart()->removeSeries(area);
         delete area;
@@ -912,7 +938,7 @@ void noise_marking_gui::handle_data_plot() {
         // ECG1, so rows line up. (CSV column headed "accel"; see beat_log.)
         if (bittiumAccelPpg) {
             r.chartView->setProperty("bpm", QVariant());
-            r.chartView->chart()->setTitle(get_chart_title(titleLabel, r.sampleRate, pxPerSample));
+            r.chartView->chart()->setTitle(get_chart_title(titleLabel, nativeHz, pxPerSample));
             if (m_beatLog) {
                 const QVector<QPointF> ecgPeaks = display_peaks_in_window("ECG1");
                 for (const QPointF& p : ecgPeaks) {
@@ -920,8 +946,7 @@ void noise_marking_gui::handle_data_plot() {
                     double accelY = 0.0;
                     const int idx = static_cast<int>(std::round(p.x() * r.sampleRate));
                     if (idx >= 0 && idx < m_accelX.size()) accelY = m_accelX[idx];
-                    m_beatLog->logPeak(beat_log::PPG, gt, accelY,
-                        blankingAt(label, gt), thresholdAt(label, gt), 0, 0);
+                    m_beatLog->logPeak(beat_log::PPG, gt, accelY, blankingAt(label, gt), thresholdAt(label, gt), 0, 0, 0);
                 }
             }
             return;   // accel chart drawn above; no detection/markers
@@ -939,7 +964,7 @@ void noise_marking_gui::handle_data_plot() {
             if (dur > 0.0) bpm = bpmPeaks.size() * 60.0 / dur;
         }
         r.chartView->setProperty("bpm", bpm);
-        r.chartView->chart()->setTitle(get_chart_title(titleLabel, r.sampleRate, pxPerSample, bpm));
+        r.chartView->chart()->setTitle(get_chart_title(titleLabel, nativeHz, pxPerSample, bpm));
         const beat_log::ChannelIdx ch = beatLogChannel(label);
 
         const std::string logLabelStd = label.toStdString();
@@ -972,12 +997,12 @@ void noise_marking_gui::handle_data_plot() {
             }
             return 0;
             };
-
         for (int k = 0; k < peaks.size(); ++k) {
             const double gt = peaks[k].x() + globalOffset;
             const int markType = markTypeAt(gt);
             m_beatLog->logPeak(ch, gt, peaks[k].y(),
-                blankingAt(label, gt), thresholdAt(label, gt), markType, postTags[k]);
+                blankingAt(label, gt), thresholdAt(label, gt), markType, postTags[k],
+                invertedAt(label, gt) ? 1 : 0);
         }
 
         const double yScale = yScaleForSignal(label);
@@ -1029,6 +1054,9 @@ void noise_marking_gui::handle_data_plot() {
     if (ui->accel_or_abp_axis && !is_missing_signal(m_abp)) plotMarkable("ABP");
     if (ui->art_axis && !is_missing_signal(m_art)) plotMarkable("ART");
     if (ui->art_pulm_axis && !is_missing_signal(m_artPulm)) plotMarkable("ART_PULM");
+
+    qDebug() << "detect+build" << ++n << t.restart() << "ms";
+
     determine_which_nonmarkable_charts_to_plot();
     updateNoiseHighlights();
     if (m_pulseOverlay) m_pulseOverlay->refresh();
@@ -1044,6 +1072,8 @@ void noise_marking_gui::handle_data_plot() {
         if (auto* gl = cv->findChild<QOpenGLWidget*>())
             gl->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     }
+    qDebug() << "highlights+overlay+render" << t.elapsed() << "ms";
+
 }
 
 // ============================================================================
@@ -1159,4 +1189,6 @@ void noise_marking_gui::updateNoiseHighlights() {
         };
     for (const ParamOverride& o : m_thresholdOverrides)
         drawOverride(o, QColor(200, 200, 200, 70));   // gray = threshold override
+    for (const ParamOverride& o : m_invertOverrides)
+        drawOverride(o, QColor(180, 100, 0, 70));   // orange = inversion region
 }

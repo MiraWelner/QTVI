@@ -289,20 +289,15 @@ namespace gui_peak_finder {
         int a, b;
         if (within) { a = lowerIdx(rp, std::max(aS, t - need)); b = lowerIdx(rp, t); }
         else {
-            // Frame-based reference. The chunk is split into fixed `need`-second
-            // frames anchored at t = 0. A beat in frame m = floor(t / need)
-            // references the nearest EARLIER frame with no marked span in it;
-            // any frame containing noise is skipped over whole (no partial use,
-            // no reaching back for clean seconds). Frame 0 is the floor -- if
-            // nothing clean precedes the beat, frame 0 is used as-is.
-            const long m = static_cast<long>(t / need);   // t >= 0 => floor(t/need)
+            const long m = static_cast<long>(t / need);
             long k = m - 1;
             while (k > 0 && refExcluded.anyOverlap(k * need, (k + 1) * need)) --k;
             if (k < 0) k = 0;
-            cacheable = true; cacheKey = k;
+            cacheable = true;
+            cacheKey = k * 2 + (sgn < 0.0 ? 1 : 0);        // sign-aware key
             if (frameCache) {
-                auto it = frameCache->find(k);
-                if (it != frameCache->end()) return it->second;   // already computed this frame
+                auto it = frameCache->find(cacheKey);      // look up the SAME key you store
+                if (it != frameCache->end()) return it->second;
             }
             a = lowerIdx(rp, k * need);
             b = lowerIdx(rp, (k + 1) * need);
@@ -354,7 +349,7 @@ namespace gui_peak_finder {
         const ParamFn& threshold,
         const ParamFn& blanking,
         bool usePeakMedian,
-        double sgn = 1.0,
+        const ParamFn& sgn,
         const std::vector<std::pair<double, double>>& refExcluded = {},
         const std::vector<std::pair<double, double>>& detExcluded = {},
         const std::vector<std::pair<double, double>>& withinSpans = {})
@@ -377,11 +372,13 @@ namespace gui_peak_finder {
         std::vector<double> prelimRR;
         std::unordered_map<long, RefStats> frameCache;   // one reference per frame, this pass only
         for (int i = i0; i < i1; ++i) {
-            const double yv = sgn * rawPairs[i].y();   // upright-frame amplitude
-            if (!(yv >= sgn * rawPairs[i - 1].y() && yv > sgn * rawPairs[i + 1].y())) continue;  // local max upright (= min when inverted)
             const double t = rawPairs[i].x();
+            const double s = sgn(t);                       // this beat's sign, ±1
+            const double yv = s * rawPairs[i].y();
+            if (!(yv >= s * rawPairs[i - 1].y() && yv > s * rawPairs[i + 1].y())) continue;
             if (detIdx.covers(t)) continue;
-            const RefStats rs = refStatsLocalMax(rawPairs, t, previous_seconds_to_train_on, refIdx, withinSpans, threshold, sgn, &frameCache);
+            const RefStats rs = refStatsLocalMax(rawPairs, t, previous_seconds_to_train_on,
+                refIdx, withinSpans, threshold, s, &frameCache);
             if (!rs.ok) continue;
             const double gate = rs.vMin + threshold(t) * (rs.gateTop - rs.vMin);
             if (yv >= gate) { prelim.append({ t, rawPairs[i].y() }); prelimRR.push_back(rs.meanRR); }

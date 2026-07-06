@@ -67,7 +67,21 @@ void noise_marking_gui::commitMarkingSpan(const QString& clickedLabel,
         finalizeParamEdit(chans, globalStart, globalEnd);   // one dialog, all channels, redraws
         return;
     }
-
+    if (annotation_types::isInvertEdit(m_currentMarkingType)) {
+        QStringList ecgOnly;
+        for (const QString& ch : chans)
+            if (ch == "ECG1" || ch == "ECG2" || ch == "ECG3") ecgOnly << ch;
+        for (const QString& ch : chans) {          // clear the click-click markers on all scope channels
+            ChannelMarkingState& st = markStateFor(ch);
+            st.phase = MarkPhase::Idle;
+            clearStartMarker(st);
+        }
+        if (!ecgOnly.isEmpty())
+            applyInvertOverride(ecgOnly, globalStart, globalEnd);
+        else
+            handle_data_plot();                    // nothing to do, just clean up the preview
+        return;
+    }
     const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
     for (const QString& ch : chans) {
         markStateFor(ch).globalStartTime = globalStart;     // same span on every scope channel
@@ -127,7 +141,9 @@ void noise_marking_gui::updateDragPreview(QChartView* cv, double x0, double x1,
     const double lo = std::min(x0, x1), hi = std::max(x0, x1);
     const double yTop = yAxis->max(), yBot = yAxis->min();
 
-    QAreaSeries*& prev = m_dragPreviews[cv];   // inserts nullptr if this chart has none yet
+    QAreaSeries*& prev = m_dragPreviews[cv];
+    if (prev && !cv->chart()->series().contains(prev))
+        prev = nullptr;                 // stale: the chart wiped/deleted it; rebuild below
     if (!prev) {
         auto* upper = new QLineSeries(); auto* lower = new QLineSeries();
         upper->append(lo, yTop); upper->append(hi, yTop);
@@ -144,10 +160,14 @@ void noise_marking_gui::updateDragPreview(QChartView* cv, double x0, double x1,
 }
 
 void noise_marking_gui::clearDragPreview() {
-    for (auto* p : m_dragPreviews) {
+    for (auto it = m_dragPreviews.begin(); it != m_dragPreviews.end(); ++it) {
+        QChartView* cv = it.key();
+        QAreaSeries* p = it.value();
         if (!p) continue;
-        if (p->chart()) p->chart()->removeSeries(p);
-        delete p;   // QAreaSeries owns its upper/lower line series
+        if (cv && cv->chart() && cv->chart()->series().contains(p)) {
+            cv->chart()->removeSeries(p);   // still live and owned -> safe to remove
+            delete p;                        // and safe to delete
+        }
     }
     m_dragPreviews.clear();
 }

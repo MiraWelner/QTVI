@@ -455,14 +455,16 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     m_hypnoCursorBar->setPen(QPen(QColor(255, 140, 0), 2));
     hypnoChart->addSeries(m_hypnoCursorBar);
 
-    for (int i = 0; i < ui->marking_type->count(); ++i)
-        if (const auto* t = annotation_types::find(ui->marking_type->itemText(i))) {
-            QPixmap pm(12, 12); pm.fill(Qt::transparent);
-            QPainter p(&pm);
-            p.setPen(QPen(Qt::black, 1)); p.setBrush(QColor(t->r, t->g, t->b));
-            p.drawRect(0, 0, 11, 11); p.end();
-            ui->marking_type->setItemIcon(i, QIcon(pm));
-        }
+    for (int i = 0; i < ui->marking_type->count(); ++i) {
+        const QString itemText = ui->marking_type->itemText(i);
+        const auto* t = annotation_types::find(itemText);
+        if (!t) continue;
+        QPixmap pm(12, 12); pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setPen(QPen(Qt::black, 1)); p.setBrush(QColor(t->r, t->g, t->b));
+        p.drawRect(0, 0, 11, 11); p.end();
+        ui->marking_type->setItemIcon(i, QIcon(pm));
+    }
     ui->marking_type->setIconSize(QSize(12, 12));
 
     m_currentMarkingType = ui->marking_type->currentText();
@@ -688,4 +690,34 @@ bool noise_marking_gui::editParamOverrideAt(QChartView* cv, const QPoint& pos) {
     else
         handle_data_plot();
     return true;
+}
+
+bool noise_marking_gui::invertedAt(const QString& label, double globalTime) const {
+    // Only ECG channels have an invert checkbox; PPG/ABP/ART/ART_PULM can't invert.
+    if (!(label == "ECG1" || label == "ECG2" || label == "ECG3"))
+        return false;
+    bool inv = invertedForSignal(label);
+    for (const ParamOverride& o : m_invertOverrides)
+        if (o.channel == label && globalTime >= o.start && globalTime <= o.end) { inv = !inv; break; }
+    return inv;
+}
+
+void noise_marking_gui::applyInvertOverride(const QStringList& channels,
+    double globalStart, double globalEnd) {
+    const double lo = std::min(globalStart, globalEnd);
+    const double hi = std::max(globalStart, globalEnd);
+    auto beatCh = [](const QString& l) -> beat_log::ChannelIdx {
+        if (l == "ECG1") return beat_log::ECG1;
+        if (l == "ECG2") return beat_log::ECG2;
+        if (l == "ECG3") return beat_log::ECG3;
+        if (l == "PPG_ACCEL") return beat_log::PPG;
+        if (l == "ART")       return beat_log::ART;
+        if (l == "ART_PULM")  return beat_log::ART_PULM;
+        return beat_log::ABP;
+        };
+    for (const QString& label : channels) {
+        m_invertOverrides.append(ParamOverride{ label, lo, hi, 1.0 });
+        if (m_beatLog) m_beatLog->removeInRange(beatCh(label), lo, hi);   // re-detect/re-log in span
+    }
+    handle_data_plot();
 }

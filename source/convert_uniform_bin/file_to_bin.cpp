@@ -479,6 +479,18 @@ namespace {
 
         auto find = [&](const std::string& label) -> int {
             if (label.empty()) return -1;
+            // Exact (case-insensitive) match first: channel names in this family
+            // share prefixes (NLS_NOM_PRESS_BLD_ART vs ..._ART_PULM vs ..._ART_ABP),
+            // so a substring test would let the shorter name steal the longer
+            // column. equals_ci pins it to the exact column.
+            for (int i = 0; i < hdr->edfsignals; ++i) {
+                if (!used.count(i) && equals_ci(hdr->signalparam[i].label, label)) {
+                    used.insert(i);
+                    return i;
+                }
+            }
+            // Fall back to substring for datasets whose labels aren't exact
+            // (e.g. trailing units/whitespace in EDF labels).
             for (int i = 0; i < hdr->edfsignals; ++i) {
                 if (!used.count(i) && contains(hdr->signalparam[i].label, label)) {
                     used.insert(i);
@@ -487,7 +499,6 @@ namespace {
             }
             return -1;
             };
-
 
         m[CH_ECG1] = find(cfg.ecg_1_label);
         m[CH_ECG2] = find(cfg.ecg_2_label);
@@ -988,8 +999,8 @@ void make_binfile_dat(const std::filesystem::path& path,
     // columns.
     writeCol(cfg.resp_label, false, CH_RESP, cfg.resp_raw_rate, cfg.resp_upsample_rate);
     writeCol(cfg.abp_label, true, CH_ABP, cfg.abp_raw_rate, cfg.abp_upsample_rate);
-    writeMissing(CH_ART);
-    writeMissing(CH_ART_PULM);
+    writeCol(cfg.art_label, true, CH_ART, cfg.art_raw_rate, cfg.art_upsample_rate);
+    writeCol(cfg.art_pulm_label, true, CH_ART_PULM, cfg.art_pulm_raw_rate, cfg.art_pulm_upsample_rate);
 
     double placeholder = -1.0;
     out.write(reinterpret_cast<const char*>(&placeholder), sizeof(double));

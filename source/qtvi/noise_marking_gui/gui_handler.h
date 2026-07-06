@@ -273,7 +273,10 @@ private:
 
     QVector<ParamOverride> m_thresholdOverrides;
     QVector<ParamOverride> m_blankingOverrides;
+    QVector<ParamOverride> m_invertOverrides;
 
+    bool invertedAt(const QString& label, double globalTime) const;
+    void applyInvertOverride(const QStringList& channels, double globalStart, double globalEnd);
     void   finalizeParamEdit(const QStringList& channels, double globalStart, double globalEnd);
     bool   editParamOverrideAt(QChartView* cv, const QPoint& pos);
     bool   promptThresholdBlanking(const QString& header, double& thr, double& blk);
