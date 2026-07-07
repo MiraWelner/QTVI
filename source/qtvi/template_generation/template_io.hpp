@@ -92,6 +92,8 @@ namespace template_io {
     };
 
     void write_template_binfile(const std::string& path, const TemplateFile& data);
+    void write_saecg_csvfile(const std::string& path, const TemplateFile& data);
+
     TemplateFile read_template_binfile(const std::string& path);
 
     void write_beats_binfile(const std::string& path, const BeatsFile& data);

@@ -8,6 +8,8 @@
 #include <cmath>
 #include <fstream>
 #include <stdexcept>
+#include <iomanip>
+#include <algorithm> 
 
 namespace template_io {
 
@@ -94,6 +96,8 @@ namespace template_io {
         writeAveraged(f, data.saecg.ppg);
     }
 
+
+
     TemplateFile read_template_binfile(const std::string& path) {
         std::ifstream f(path, std::ios::binary);
         if (!f) throw std::runtime_error("cannot open: " + path);
@@ -133,6 +137,51 @@ namespace template_io {
             throw std::runtime_error("template file missing SAECG tail: " + path);
 
         return out;
+    }
+
+    void write_saecg_csvfile(const std::string& path, const TemplateFile& data) {
+        std::ofstream f(path);
+        if (!f) throw std::runtime_error("cannot create: " + path);
+
+        // Column order matches the per-bin method order and the SAECG struct.
+        struct Col { const char* name; const AveragedTemplate* avg; };
+        const SAECG& s = data.saecg;
+        const Col cols[] = {
+            {"ch1_raw", &s.ch1_raw}, {"ch1_squared", &s.ch1_squared},
+            {"ch1_absval", &s.ch1_absval}, {"ch1_unfiltered", &s.ch1_unfiltered},
+            {"ch2_raw", &s.ch2_raw}, {"ch2_squared", &s.ch2_squared},
+            {"ch2_absval", &s.ch2_absval}, {"ch2_unfiltered", &s.ch2_unfiltered},
+            {"ch3_raw", &s.ch3_raw}, {"ch3_squared", &s.ch3_squared},
+            {"ch3_absval", &s.ch3_absval}, {"ch3_unfiltered", &s.ch3_unfiltered},
+            {"ppg", &s.ppg},
+        };
+
+        // Header.
+        f << "sample_index";
+        for (const auto& c : cols) f << ',' << c.name;
+        f << '\n';
+
+        // How many bins contributed to each average (0 => empty waveform).
+        // Written as a labelled row so the count travels with the samples;
+        // a strict typed parser can skip this one row.
+        f << "n_contributing";
+        for (const auto& c : cols) f << ',' << c.avg->n_contributing;
+        f << '\n';
+
+        // Longest waveform sets the row count; shorter columns get empty cells.
+        size_t maxLen = 0;
+        for (const auto& c : cols) maxLen = std::max(maxLen, c.avg->waveform.size());
+
+        f << std::setprecision(9);
+        for (size_t i = 0; i < maxLen; ++i) {
+            f << i;
+            for (const auto& c : cols) {
+                f << ',';
+                const auto& w = c.avg->waveform;
+                if (i < w.size() && !std::isnan(w[i])) f << w[i];   // NaN / out-of-range -> empty
+            }
+            f << '\n';
+        }
     }
 
     void write_beats_binfile(const std::string& path, const BeatsFile& data) {

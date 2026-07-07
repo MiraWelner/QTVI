@@ -23,7 +23,7 @@ signals:
 
 public slots:
     // Wired in Designer via <connections>
-    void onFinish();
+    void save_bin_and_csv();
     void onNextPage();
     void onPrevPage();
 

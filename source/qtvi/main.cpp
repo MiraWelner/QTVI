@@ -188,9 +188,17 @@ int main(int argc, char* argv[]) {
     }
     // Per-reviewer log folder. Each reviewer only skips files THEY logged.
     const std::string initials = get_initials();
+
     cfg.log_path = cfg.output_path + "/log_" + initials;
     std::filesystem::create_directories(cfg.log_path);
     std::cout << "Logging to: " << cfg.log_path << "\n";
+
+    std::filesystem::create_directories(cfg.annealed_data_path);
+    std::filesystem::create_directories(cfg.r_peak_data_path);
+    std::filesystem::create_directories(cfg.noise_data_path);
+    std::filesystem::create_directories(cfg.template_path);
+    std::filesystem::create_directories(cfg.qtvi_marker_path);
+
 
     const std::vector<std::filesystem::path> binFiles = load_binfiles(cfg);
     if (binFiles.empty()) {

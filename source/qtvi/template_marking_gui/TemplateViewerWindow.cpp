@@ -76,8 +76,17 @@ void TemplateViewerWindow::updatePageControls() {
 void TemplateViewerWindow::onNextPage() {
     if (m_currentPage < m_totalPages - 1) {
         ++m_currentPage;
-        computeMarkingsForPage();
-        showPage();
+        try {
+            computeMarkingsForPage();
+            showPage();
+        }
+        catch (const std::exception& e) {
+            QMessageBox::critical(this, "Viewer error",
+                QString("Failed to prepare page for %1:\n\n%2")
+                .arg(m_subjectId, e.what()));
+            emit finished();
+            return;
+        }
     }
 }
 
@@ -92,8 +101,8 @@ void TemplateViewerWindow::onPrevPage() {
 // Load subject
 // ========================================================================
 
-void TemplateViewerWindow::loadSubject(const QString& templatePath,
-    const QString& markingPath, const QString& subjectId, double sampleRateHz) {
+void TemplateViewerWindow::loadSubject(const QString& templatePath, const QString& markingPath, const QString& subjectId, double sampleRateHz){
+
     m_markingPath = markingPath;
     m_subjectId = subjectId;
     m_sampleRate = sampleRateHz;
@@ -101,8 +110,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath,
     ui->subjectLabel->setText(subjectId);
 
     try {
-        m_bins = readTemplateInfoBin(templatePath.toStdString());
-    }
+        m_bins = readTemplateInfoBin(templatePath.toStdString());    }
     catch (const std::exception& e) {
         QMessageBox::critical(this, "Read error",
             QString("Failed to read %1:\n\n%2").arg(templatePath, e.what()));
@@ -122,7 +130,6 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath,
         int nl = (int)leadsForBin(b).size();
         if (nl > m_maxLeads) m_maxLeads = nl;
     }
-
     m_binsPerPage = (m_maxLeads <= 1) ? 16 : 4;
 
     m_currentPage = 0;
@@ -515,18 +522,20 @@ void TemplateViewerWindow::onBadPPGToggled(int binIdx, bool bad) {
     }
 }
 
-// ========================================================================
-// Finish
-// ========================================================================
-
-void TemplateViewerWindow::onFinish() {
+void TemplateViewerWindow::save_bin_and_csv() {
+    /*
+        
+    */
     for (auto& b : m_bins) {
         seedBinMarkers(b);
     }
-
     QString outPath = m_markingPath + "/" + m_subjectId + "_template_markings.bin";
     writeTemplateMarkingsBin(outPath.toStdString(), m_bins);
     std::cout << "Saved: " << outPath.toStdString() << "\n";
+
+    QString csvPath = m_markingPath + "/" + m_subjectId + "_template_markings.csv";
+    writeTemplateMarkingsCsv(csvPath.toStdString(), m_bins, m_sampleRate);
+    std::cout << "Saved: " << csvPath.toStdString() << "\n";
     std::cout.flush();
     emit finished();
 }

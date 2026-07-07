@@ -34,6 +34,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
+#include <QtCharts/QLegendMarker>
 
 namespace {
 
@@ -308,6 +309,7 @@ namespace {
                 const QPointF& p = (*r.rawData)[i];
                 rawPts.append({ p.x(), (p.y() - r.center) * yScale + r.center });
             }
+
             rawScatter->replace(rawPts);
             rawScatter->setVisible(true);
 
@@ -315,6 +317,13 @@ namespace {
             chart->addSeries(rawScatter);
             rawScatter->attachAxis(xAxis);
             rawScatter->attachAxis(yAxis);
+
+            // Raw-sample dots are a data-authenticity overlay, not a distinct series
+            // the reader should think of by name -- keep them out of the legend so
+            // only the trace lines show up there.
+            for (auto* marker : chart->legend()->markers(rawScatter))
+                marker->setVisible(false);
+
         }
         // A frame with fewer overlays than a previous one: detach the leftovers
         // (kept alive for next time, just not shown).
@@ -905,7 +914,21 @@ void noise_marking_gui::handle_data_plot() {
 
         const QVector<QPointF> emptyRaw;
         const QVector<QPointF>& rawData = r.dataRaw ? *r.dataRaw : emptyRaw;
-        const QList<markable_data_series> serieses = { { r.upsampled_data, r.color, &rawData } };
+        QList<markable_data_series> serieses;
+        if (label == "ACCEL") {
+            const QVector<QPointF>& yRaw = m_accelYRaw.isEmpty() ? emptyRaw : m_accelYRaw;
+            const QVector<QPointF>& zRaw = m_accelZRaw.isEmpty() ? emptyRaw : m_accelZRaw;
+            if (!is_missing_signal(m_accelX))
+                serieses.append({ &m_accelX, COLOR_ACCEL_X, &rawData });   // X's raw via channelRefs
+            if (!is_missing_signal(m_accelY))
+                serieses.append({ &m_accelY, COLOR_ACCEL_Y, &yRaw });
+            if (!is_missing_signal(m_accelZ))
+                serieses.append({ &m_accelZ, COLOR_ACCEL_Z, &zRaw });
+            if (serieses.isEmpty()) return;
+        }
+        else {
+            serieses.append({ r.upsampled_data, r.color, &rawData });
+        }
 
         double nativeHz = r.sampleRate;   // fallback if no real raw
         const bool hasRealRaw = rawData.size() >= 2
@@ -965,8 +988,21 @@ void noise_marking_gui::handle_data_plot() {
         // taken from ACCEL's own annotations. No detection, no red/blue markers,
         // no bpm.
         if (label == "ACCEL") {
+
             r.chartView->setProperty("bpm", QVariant());
             r.chartView->chart()->setTitle(get_chart_title(label, nativeHz, pxPerSample));
+
+            {
+                const char* names[] = { "X", "Y", "Z" };
+                int nameIdx = 0;
+                for (auto* s : r.chartView->chart()->series()) {
+                    if (auto* ln = qobject_cast<QLineSeries*>(s)) {
+                        if (nameIdx < 3) ln->setName(names[nameIdx++]);
+                    }
+                }
+                r.chartView->chart()->legend()->setVisible(true);
+                r.chartView->chart()->legend()->setAlignment(Qt::AlignRight);
+            }
 
             if (m_beatLog) {
                 const MarkSpanIndex markIdx =

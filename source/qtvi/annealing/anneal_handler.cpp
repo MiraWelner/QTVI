@@ -421,9 +421,14 @@ namespace {
     {
         using namespace anneal;
 
-        const bool hasPpg = data.ppg.size() > 1;
-        const bool hasEcg = data.ecg1.size() > 1;
-        if (!hasPpg && !hasEcg) return {};
+        const bool hasPpg = data.ppg.size() > 1 && data.ppgSR > 0.0;
+        const bool hasEcg = data.ecg1.size() > 1 && data.ecgSR > 0.0;
+        if (!hasPpg && !hasEcg) {
+            std::cerr << "  AnnealSegments empty: no usable channel (ppg n="
+                << data.ppg.size() << " sr=" << data.ppgSR
+                << ", ecg n=" << data.ecg1.size() << " sr=" << data.ecgSR << ")\n";
+            return {};
+        }
 
         const bool ecgOnly = !hasPpg && hasEcg;
         const auto& primarySignal = ecgOnly ? data.ecg1 : data.ppg;
@@ -436,7 +441,12 @@ namespace {
 
         // 1. Bin geometry
         auto bbc = getBinBreaksAndCount(total_len, bin_size, primarySR, min_mins);
-        if (bbc.bin_count <= 0) return {};
+        if (bbc.bin_count <= 0) {
+            std::cerr << "  AnnealSegments empty: zero bins (total_len=" << total_len
+                << ", bin_size=" << bin_size << ", primarySR=" << primarySR
+                << ", min_mins=" << min_mins << ")\n";
+            return {};
+        }
         const int bin_count = bbc.bin_count;
         const auto& breaks = bbc.bin_breaks;
 
@@ -619,13 +629,7 @@ namespace {
     // File I/O
     // ============================================================================
 
-    // Side-channel data carried alongside RawData.
-    //
-    // AnnealSegments only reads RawData (PPG/ECG/sleep + their rates).
-    // Everything else needed to round-trip the .bin -- header scalars, all
-    // 40 upsampled blocks, all 40 raw (t,v) blocks, native rates -- goes in
-    // Extras so the writer can re-emit them.
-    constexpr int NUM_CHANNELS = 40;
+    constexpr int NUM_CHANNELS = 36;
 
     struct Extras {
         // NB: parenthesis-init via assignment to invoke the count constructor.
@@ -673,12 +677,15 @@ namespace {
         return m;
     }
 
-    // Data reader
-    //
-    // Reads the v2 data .bin produced by file_to_bin. The header layout MUST
-    // match file_to_bin's writer: 4 uint32 scalars + 40 upsampled-sizes + 40
-    // raw-sizes + 40 native-rate floats + 1 sleep-size = 125 fields = 500
-    // bytes. (NUM_HEADER_FIELDS in file_to_bin.hpp.)
+    // Header layout MUST match write_header_and_close() in file_to_bin.cpp:
+     //   [uint32 sleep_state_len]
+     //   [NUM_CH x uint32 sizes_up]
+     //   [NUM_CH x uint32 sizes_raw]
+     //   [NUM_CH x float32 native_rates]
+     //   [NUM_CH x float32 up_rates]
+     //   [uint32 sleep_size]
+     // NUM_CH = 36 (file_to_bin NUM_CHANNELS). Channel slots per file_to_bin
+     // ChannelIdx: 0=timestamp, 1=ECG1, 2=ECG2, 3=ECG3, 4=PPG, ...
     void read_data_bin(const std::filesystem::path& path,
         RawData& data, Extras& extras)
     {
@@ -689,34 +696,36 @@ namespace {
         const uint64_t fileSize = static_cast<uint64_t>(f.tellg());
         f.seekg(0, std::ios::beg);
 
-        constexpr size_t NHF = 4 + 3 * NUM_CHANNELS + 1;   // = 125 fields
-        constexpr size_t HDR = NHF * 4;                    // = 500 bytes
+        constexpr int    NCH = 36;                       // file_to_bin NUM_CHANNELS
+        constexpr size_t NHF = 1 + 4 * NCH + 1;          // = 146 fields
+        constexpr size_t HDR = NHF * 4;                  // = 584 bytes
         if (fileSize < HDR)
-            throw std::runtime_error("bin too small: " + path.string());
+            throw std::runtime_error("bin too small (need " + std::to_string(HDR)
+                + "-byte header): " + path.string());
 
-        uint32_t hdr[NHF] = {};
-        f.read(reinterpret_cast<char*>(hdr), HDR);
+        uint32_t sleep_state_len = 0, sleep_size = 0;
+        std::vector<uint32_t> sizes_up(NCH), sizes_raw(NCH);
+        std::vector<float>    native_rates(NCH), up_rates(NCH);
 
-        extras.signal_rate = hdr[0];
-        extras.boolean_rate = hdr[1];
-        extras.pacemaker_rate = hdr[2];
-        extras.sleep_rate = hdr[3];
+        f.read(reinterpret_cast<char*>(&sleep_state_len), 4);
+        f.read(reinterpret_cast<char*>(sizes_up.data()), NCH * 4);
+        f.read(reinterpret_cast<char*>(sizes_raw.data()), NCH * 4);
+        f.read(reinterpret_cast<char*>(native_rates.data()), NCH * 4);
+        f.read(reinterpret_cast<char*>(up_rates.data()), NCH * 4);
+        f.read(reinterpret_cast<char*>(&sleep_size), 4);
 
-        std::vector<uint32_t> sizes_up(NUM_CHANNELS), sizes_raw(NUM_CHANNELS);
-        for (int i = 0; i < NUM_CHANNELS; ++i) {
-            sizes_up[i] = hdr[4 + i];
-            sizes_raw[i] = hdr[4 + NUM_CHANNELS + i];
-            std::memcpy(&extras.nativeRates[i], &hdr[4 + 2 * NUM_CHANNELS + i], 4);
-        }
-        const uint32_t sleep_count = hdr[4 + 3 * NUM_CHANNELS];
+        // Per-channel upsample rates: the anneal consumes the UPSAMPLED
+        // blocks, so use up_rates (not native_rates). ECG1 = slot 1, PPG = slot 4.
+        constexpr int SLOT_ECG1 = 1, SLOT_ECG2 = 2, SLOT_ECG3 = 3, SLOT_PPG = 4;
+        data.ecgSR = static_cast<double>(up_rates[SLOT_ECG1]);
+        data.ppgSR = static_cast<double>(up_rates[SLOT_PPG]);
+        data.scoringEpochSec = static_cast<double>(sleep_state_len);
 
-        data.ecgSR = static_cast<double>(extras.signal_rate);
-        data.ppgSR = static_cast<double>(extras.signal_rate);
-        data.scoringEpochSec = static_cast<double>(extras.sleep_rate);
+        if (data.ecgSR <= 0.0 && data.ppgSR <= 0.0)
+            throw std::runtime_error("input .bin has zero ECG and PPG upsample rate: "
+                + path.string());
 
-        // Sequential read: header is followed by 40 x {upsampled, raw} blocks,
-        // then sleep stages. safeReadDoubles clamps to whatever's left in the
-        // file so a truncated bin doesn't throw.
+        // Body: NCH x { upsampled block, raw (t,v) block }, then sleep stages.
         auto safeReadDoubles = [&](std::vector<double>& dest, uint64_t count) {
             const uint64_t pos = static_cast<uint64_t>(f.tellg());
             const uint64_t avail = (fileSize > pos) ? (fileSize - pos) / 8 : 0;
@@ -726,17 +735,22 @@ namespace {
                 f.read(reinterpret_cast<char*>(dest.data()),
                     static_cast<std::streamsize>(actual * 8));
             };
-        for (int i = 0; i < NUM_CHANNELS; ++i) {
+
+        // Keep Extras sized to NCH so the writer half stays consistent.
+        extras.upsampled.assign(NCH, {});
+        extras.rawFlat.assign(NCH, {});
+        extras.nativeRates.assign(NCH, 0.0f);
+        for (int i = 0; i < NCH; ++i) {
             safeReadDoubles(extras.upsampled[i], sizes_up[i]);
             safeReadDoubles(extras.rawFlat[i], static_cast<uint64_t>(sizes_raw[i]) * 2);
+            extras.nativeRates[i] = native_rates[i];
         }
-        safeReadDoubles(data.sleepStages, sleep_count);
+        safeReadDoubles(data.sleepStages, sleep_size);
 
-        // Mirror algorithm-facing channels into RawData (slots 1..4).
-        data.ecg1 = extras.upsampled[1];
-        data.ecg2 = extras.upsampled[2];
-        data.ecg3 = extras.upsampled[3];
-        data.ppg = extras.upsampled[4];
+        data.ecg1 = extras.upsampled[SLOT_ECG1];
+        data.ecg2 = extras.upsampled[SLOT_ECG2];
+        data.ecg3 = extras.upsampled[SLOT_ECG3];
+        data.ppg = extras.upsampled[SLOT_PPG];
     }
 
     // Output writer

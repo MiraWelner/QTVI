@@ -358,6 +358,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     drawTraceFixedScale(p, m_ecg, margin_left, margin_top, ph, pps, QPen(kColorEcgTrace, 1.5), m_ecgVisibleN, yLo, yHi);
 
     // -------- PPG --------
+    if (m_hasPPG && !m_ppg.empty() && m_ppgVisibleN > 0) {
         const int pad = static_cast<int>(std::round(m_rPeakSample));
         const int visN = pad + m_ppgVisibleN;
 
@@ -381,6 +382,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         drawStdBand(p, ppgPadded, stdPadded, margin_left, margin_top, ph, pps, visN, lo, hi, color_stdband_ppg);
         drawTraceFixedScale(p, ppgPadded, margin_left, margin_top, ph,
             pps, QPen(kColorPpgTrace, 1.5), visN, lo, hi);
+    }
     
 
     QFont smallF = p.font(); smallF.setPointSize(7); p.setFont(smallF);
