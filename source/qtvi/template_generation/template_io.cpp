@@ -144,4 +144,60 @@ namespace template_io {
         }
     }
 
+    void write_template_csvfile(const std::string& path, const TemplateFile& data,
+        const std::string& fileID, double /*sampleRateHz*/) {
+        std::ofstream f(path);
+        if (!f) throw std::runtime_error("cannot create: " + path);
+
+        // One row per sample. Templates within a bin can differ in length,
+        // so each column is filled up to its own length and blank beyond it.
+        // Only raw and ppg carry a _std column (the other methods never
+        // compute std).
+        f << "file_id,bin_num,"
+            "ch1_raw_mv,ch1_raw_std,ch1_squared_mv,ch1_absval_mv,"
+            "ch2_raw_mv,ch2_raw_std,ch2_squared_mv,ch2_absval_mv,"
+            "ch3_raw_mv,ch3_raw_std,ch3_squared_mv,ch3_absval_mv,"
+            "ppg_mv,ppg_std\n";
+
+        f << std::setprecision(10);
+
+        // Write v[i] if present and finite, else leave the cell blank.
+        auto cell = [&](const std::vector<double>& v, size_t i) {
+            if (i < v.size() && !std::isnan(v[i])) f << v[i];
+            };
+
+        for (size_t bi = 0; bi < data.bins.size(); ++bi) {
+            const BinTemplates& b = data.bins[bi];
+
+            struct Col { const std::vector<double>* mv; const std::vector<double>* sd; };
+            const Col cols[] = {
+                {&b.ch1_raw.ecgTemplate,     &b.ch1_raw.ecgTemplate_std},
+                {&b.ch1_squared.ecgTemplate, nullptr},
+                {&b.ch1_absval.ecgTemplate,  nullptr},
+                {&b.ch2_raw.ecgTemplate,     &b.ch2_raw.ecgTemplate_std},
+                {&b.ch2_squared.ecgTemplate, nullptr},
+                {&b.ch2_absval.ecgTemplate,  nullptr},
+                {&b.ch3_raw.ecgTemplate,     &b.ch3_raw.ecgTemplate_std},
+                {&b.ch3_squared.ecgTemplate, nullptr},
+                {&b.ch3_absval.ecgTemplate,  nullptr},
+                {&b.ppgTemplate,             &b.ppgTemplate_std},
+            };
+
+            size_t maxLen = 0;
+            for (const Col& c : cols) {
+                maxLen = std::max(maxLen, c.mv->size());
+                if (c.sd) maxLen = std::max(maxLen, c.sd->size());
+            }
+
+            for (size_t i = 0; i < maxLen; ++i) {
+                f << fileID << ',' << bi;
+                for (const Col& c : cols) {
+                    f << ',';
+                    cell(*c.mv, i);
+                    if (c.sd) { f << ','; cell(*c.sd, i); }
+                }
+                f << '\n';
+            }
+        }
+    }
 }  // namespace template_io

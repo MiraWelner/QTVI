@@ -57,26 +57,15 @@ namespace post_process_detail {
         std::string error;                          // set by finalizeViewerJob on failure
     };
 
-    inline std::optional<ViewerJob> prepareViewerJob(const config_entry& cfg,
-        const std::filesystem::path& binPath)
+    inline std::optional<ViewerJob> prepareViewerJob(const config_entry& cfg, const std::filesystem::path& binPath)
     {
         const std::string stem = binPath.stem().string();
-        const std::filesystem::path noisePath =
-            std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
-        const std::filesystem::path annealedPath =
-            std::filesystem::path(cfg.annealed_data_path) / (stem + ".bin");
-        const std::filesystem::path rPeakPath =
-            std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
-        const std::filesystem::path templatePath =
-            std::filesystem::path(cfg.template_path) /
-            (stem + "_" + std::to_string(static_cast<int>(cfg.bin_size_minutes)) +
-                "_templates.bin");
-        const std::filesystem::path beatsPath =
-            std::filesystem::path(cfg.template_path) / (stem + "_beats.bin");
-        const std::filesystem::path provisionalPath =
-            std::filesystem::path(cfg.template_path) /
-            (stem + "_" + std::to_string(static_cast<int>(cfg.bin_size_minutes)) +
-                "_templates.partial.bin");
+        const std::filesystem::path noisePath = std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
+        const std::filesystem::path annealedPath = std::filesystem::path(cfg.annealed_data_path) / (stem + ".bin");
+        const std::filesystem::path rPeakPath = std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
+        const std::filesystem::path templatePath = std::filesystem::path(cfg.template_path) / (stem + "_" + std::to_string(static_cast<int>(cfg.bin_size_minutes)) + "_templates.bin");
+        const std::filesystem::path beatsPath = std::filesystem::path(cfg.template_path) / (stem + "_beats.bin");
+        const std::filesystem::path provisionalPath = std::filesystem::path(cfg.template_path) /  (stem + "_" + std::to_string(static_cast<int>(cfg.bin_size_minutes)) + "_templates.partial.bin");
 
         // ---- Step 1: Anneal (same freshness logic as processOneFile) ----
         bool annealedFresh = std::filesystem::exists(annealedPath) &&
@@ -180,6 +169,9 @@ namespace post_process_detail {
             }
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info);
             template_io::write_template_binfile(job.templatePath.string(), job.tmpl);
+            std::filesystem::path templateCsv = job.templatePath;
+            templateCsv.replace_extension(".csv");
+            template_io::write_template_csvfile(templateCsv.string(), job.tmpl, job.fileID, job.samplingRate);
             template_io::write_beats_binfile(job.beatsPath.string(), job.beats);
         }
         catch (const std::exception& e) {
