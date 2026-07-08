@@ -206,6 +206,7 @@ namespace {
                 b.bad_r_ch[c] = true;
                 b.p_begin_ch[c] = -1;
                 b.q_begin_ch[c] = -1;
+                b.s_end_ch[c] = -1;
                 b.t_begin_ch[c] = -1;
                 b.t_end_ch[c] = -1;
                 continue;
@@ -230,6 +231,9 @@ namespace {
             if (b.q_begin_ch[c] < 0)
                 b.q_begin_ch[c] = clampToVisible(
                     ecg_markers::detect_q_begin(ecg), visN);
+            if (b.s_end_ch[c] < 0)
+                b.s_end_ch[c] = clampToVisible(
+                    ecg_markers::detect_s_end(ecg), visN);
             if (b.t_begin_ch[c] < 0)
                 b.t_begin_ch[c] = clampToVisible(
                     ecg_markers::detect_t_begin(ecg), visN);
@@ -327,7 +331,7 @@ void TemplateViewerWindow::showPage() {
             const auto& ppgStd = hasPPG ? b.ppgTemplate_std : empty;
 
             pw->setData(ppg, ppgStd, ecg, ecgStd,
-                b.p_begin_ch[c], b.q_begin_ch[c],
+                b.p_begin_ch[c], b.q_begin_ch[c], b.s_end_ch[c],
                 b.t_begin_ch[c], b.t_end_ch[c],
                 b.ppg_onset, b.ppg_peak,
                 b.ppg_dicrotic, b.ppg_50, b.ppg_end,
@@ -400,6 +404,7 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
             int c = pw->leadIndex();
             pw->setMarker(BinPlotWidget::EcgP, b.p_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgQBegin, b.q_begin_ch[c]);
+            pw->setMarker(BinPlotWidget::EcgSEnd, b.s_end_ch[c]);
             pw->setMarker(BinPlotWidget::EcgTBegin, b.t_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgTEnd, b.t_end_ch[c]);
             pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
@@ -423,6 +428,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         switch (marker) {
         case BinPlotWidget::EcgP:      b.p_begin_ch[leadIdx] = newIdx; break;
         case BinPlotWidget::EcgQBegin: b.q_begin_ch[leadIdx] = newIdx; break;
+        case BinPlotWidget::EcgSEnd:   b.s_end_ch[leadIdx] = newIdx; break;
         case BinPlotWidget::EcgTBegin: b.t_begin_ch[leadIdx] = newIdx; break;
         case BinPlotWidget::EcgTEnd:   b.t_end_ch[leadIdx] = newIdx; break;
         }
@@ -442,6 +448,8 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                     m_bins[i].p_begin_ch[leadIdx] = newIdx; break;
                 case BinPlotWidget::EcgQBegin:
                     m_bins[i].q_begin_ch[leadIdx] = newIdx; break;
+                case BinPlotWidget::EcgSEnd:
+                    m_bins[i].s_end_ch[leadIdx] = newIdx; break;
                 case BinPlotWidget::EcgTBegin:
                     m_bins[i].t_begin_ch[leadIdx] = newIdx; break;
                 case BinPlotWidget::EcgTEnd:
@@ -523,19 +531,27 @@ void TemplateViewerWindow::onBadPPGToggled(int binIdx, bool bad) {
 }
 
 void TemplateViewerWindow::save_bin_and_csv() {
-    /*
-        
-    */
-    for (auto& b : m_bins) {
+    for (auto& b : m_bins)
         seedBinMarkers(b);
-    }
-    QString outPath = m_markingPath + "/" + m_subjectId + "_template_markings.bin";
-    writeTemplateMarkingsBin(outPath.toStdString(), m_bins);
-    std::cout << "Saved: " << outPath.toStdString() << "\n";
 
-    QString csvPath = m_markingPath + "/" + m_subjectId + "_template_markings.csv";
-    writeTemplateMarkingsCsv(csvPath.toStdString(), m_bins, m_sampleRate);
-    std::cout << "Saved: " << csvPath.toStdString() << "\n";
-    std::cout.flush();
+    try {
+        QString outPath = m_markingPath + "/" + m_subjectId + "_template_markings.bin";
+        writeTemplateMarkingsBin(outPath.toStdString(), m_bins);
+        std::cout << "Saved: " << outPath.toStdString() << "\n";
+
+        QString csvPath = m_markingPath + "/" + m_subjectId + "_template_markings.csv";
+        writeTemplateMarkingsCsv(csvPath.toStdString(), m_bins,
+            m_subjectId.toStdString(), m_sampleRate);
+        std::cout << "Saved: " << csvPath.toStdString() << "\n";
+        std::cout.flush();
+    }
+    catch (const std::exception& e) {
+        QMessageBox::critical(this, "Save failed",
+            QString("Could not write markings for %1:\n\n%2\n\n"
+                "If the CSV is open in Excel, close it and try again.")
+            .arg(m_subjectId, e.what()));
+        return;   // don't emit finished(); let the user retry
+    }
+
     emit finished();
 }

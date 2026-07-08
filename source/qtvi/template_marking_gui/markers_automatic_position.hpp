@@ -201,8 +201,75 @@ namespace ecg_markers {
         for (int i = t_begin + 1; i < N; ++i) {
             if (upright[i] <= baseline + tol) return i;
         }
+        if (t_begin >= N - 1) return N - 1;
         const int fallback = static_cast<int>(t_begin * 1.5);
         return std::clamp(fallback, t_begin + 1, N - 1);
+    }
+    // S-wave trough: walk forward from R while the beat keeps falling, stop
+    // at the first turn back up (the QRS offset / J point). Falls back to
+    // just after R when there's no clear trough.
+    inline int detect_s(const std::vector<double>& ecg_signal) {
+        const int N = static_cast<int>(ecg_signal.size());
+        auto [r_idx, is_positive] = r_peak(ecg_signal);
+        if (r_idx < 0 || r_idx >= N - 1)
+            return std::clamp(r_idx + 1, 0, std::max(0, N - 1));
+
+        std::vector<double> upright = ecg_signal;
+        if (!is_positive) for (auto& x : upright) x = -x;
+
+        const int hi = std::min(r_idx + 60, N);
+        int s_idx = r_idx;
+        for (int i = r_idx + 1; i < hi; ++i) {
+            if (upright[i] <= upright[s_idx]) s_idx = i;   // still descending
+            else if (i > s_idx + 1) break;                 // risen past the trough
+        }
+        if (s_idx <= r_idx) return std::min(r_idx + 1, N - 1);
+        return s_idx;
+    }
+
+
+    // S-wave end (J point / QRS offset): from the S trough, walk forward
+    // until the upstroke recovers most of the way back to the ST baseline.
+    // Falls back to a fixed offset past S when there's no clear return.
+    inline int detect_s_end(const std::vector<double>& ecg_signal) {
+        const int N = static_cast<int>(ecg_signal.size());
+        auto [r_idx, is_positive] = r_peak(ecg_signal);
+        if (r_idx < 0 || r_idx >= N - 1)
+            return std::clamp(r_idx + 1, 0, std::max(0, N - 1));
+
+        std::vector<double> upright = ecg_signal;
+        if (!is_positive) for (auto& x : upright) x = -x;
+
+        const int s_idx = detect_s(ecg_signal);   // S-wave trough
+        if (s_idx < 0 || s_idx >= N - 1)
+            return std::min(std::max(0, r_idx + 1), N - 1);
+
+        // ST baseline: median of the window after the QRS, same as the
+        // T-wave detectors use.
+        const int st_lo = std::min(r_idx + 50, N - 1);
+        const int st_hi = std::min(r_idx + 100, N);
+        double baseline = upright[s_idx];          // degenerate default
+        if (st_hi - st_lo >= 5) {
+            std::vector<double> w(upright.begin() + st_lo, upright.begin() + st_hi);
+            std::nth_element(w.begin(), w.begin() + w.size() / 2, w.end());
+            baseline = w[w.size() / 2];
+        }
+
+        const double s_val = upright[s_idx];
+        const double depth = baseline - s_val;
+
+        // If the trough isn't actually below baseline (flat / odd morphology),
+        // just step a fixed amount past S.
+        if (depth <= 0.0)
+            return std::clamp(s_idx + 15, 0, N - 1);
+
+        // Recovery target: 90% of the way from the S trough back to baseline.
+        const double target = s_val + 0.90 * depth;
+        const int hi = std::min(s_idx + 60, N);
+        for (int i = s_idx + 1; i < hi; ++i) {
+            if (upright[i] >= target) return i;
+        }
+        return std::clamp(s_idx + 15, 0, N - 1);
     }
 
 

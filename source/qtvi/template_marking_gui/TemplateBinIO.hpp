@@ -63,6 +63,7 @@ struct TemplateBin {
     // ECG: per-channel sample indices into the channel's ecgTemplate_raw.
     int p_begin_ch[3] = { -1, -1, -1 };
     int q_begin_ch[3] = { -1, -1, -1 };
+    int s_end_ch[3] = { -1, -1, -1 };
     int t_begin_ch[3] = { -1, -1, -1 };
     int t_end_ch[3] = { -1, -1, -1 };
 
@@ -147,6 +148,7 @@ inline void writeTemplateMarkingsBin(const std::string& path,
 
         for (int c = 0; c < 3; ++c) w32(b.p_begin_ch[c]);
         for (int c = 0; c < 3; ++c) w32(b.q_begin_ch[c]);
+        for (int c = 0; c < 3; ++c) w32(b.s_end_ch[c]);
         for (int c = 0; c < 3; ++c) w32(b.t_begin_ch[c]);
         for (int c = 0; c < 3; ++c) w32(b.t_end_ch[c]);
 
@@ -158,60 +160,40 @@ inline void writeTemplateMarkingsBin(const std::string& path,
     }
 }
 
-// CSV mirror of writeTemplateMarkingsBin: one row per bin, same fields in the
-// same order. Marker sample indices are written as-is; the -1 sentinel
-// (unmarked / n/a) becomes an empty cell. If sampleRateHz > 0, a matching
-// *_sec column is appended for every marker (sample / rate).
-//
-// NOTE on _sec: this uses ONE rate for both ECG and PPG markers, matching how
-// the viewer itself labels both traces (BinPlotWidget::m_sampleRate). If ECG
-// and PPG ever run at different rates, the PPG _sec columns would be off --
-// leave sampleRateHz at 0 in that case and work in sample indices.
 inline void writeTemplateMarkingsCsv(const std::string& path,
     const std::vector<TemplateBin>& bins,
-    double sampleRateHz = 0.0)
+    const std::string& fileID,
+    double sampleRateHz)
 {
     std::ofstream f(path);
     if (!f.is_open())
         throw std::runtime_error("cannot open for write: " + path);
 
-    const bool secs = sampleRateHz > 0.0;
-
-    f << "bin_index,bad_r_ch1,bad_r_ch2,bad_r_ch3,ppg_issue,ppg_issue_text,"
+    f << "file_id,bin_index,bad_r_ch1,bad_r_ch2,bad_r_ch3,ppg_issue,"
         "p_begin_ch1,p_begin_ch2,p_begin_ch3,"
         "q_begin_ch1,q_begin_ch2,q_begin_ch3,"
+        "s_end_ch1,s_end_ch2,s_end_ch3,"
         "t_begin_ch1,t_begin_ch2,t_begin_ch3,"
         "t_end_ch1,t_end_ch2,t_end_ch3,"
-        "ppg_onset,ppg_peak,ppg_dicrotic,ppg_50,ppg_end";
-    if (secs)
-        f << ",p_begin_ch1_sec,p_begin_ch2_sec,p_begin_ch3_sec,"
-        "q_begin_ch1_sec,q_begin_ch2_sec,q_begin_ch3_sec,"
-        "t_begin_ch1_sec,t_begin_ch2_sec,t_begin_ch3_sec,"
-        "t_end_ch1_sec,t_end_ch2_sec,t_end_ch3_sec,"
-        "ppg_onset_sec,ppg_peak_sec,ppg_dicrotic_sec,ppg_50_sec,ppg_end_sec";
-    f << '\n';
-
-    auto issueText = [](uint8_t v) -> const char* {
-        switch (v) { case 0: return "ok"; case 1: return "bad"; case 2: return "no_ppg"; default: return "unknown"; }
-        };
+        "ppg_onset,ppg_peak,ppg_dicrotic,ppg_50_upsl,ppg_end\n";
 
     for (const auto& b : bins) {
-        f << b.index << ','
+        f << fileID << ','
+            << b.index << ','
             << (b.bad_r_ch[0] ? 1 : 0) << ','
             << (b.bad_r_ch[1] ? 1 : 0) << ','
             << (b.bad_r_ch[2] ? 1 : 0) << ','
-            << static_cast<int>(b.ppg_issue) << ','
-            << issueText(b.ppg_issue);
+            << static_cast<int>(b.ppg_issue);
 
         const int marks[] = {
             b.p_begin_ch[0], b.p_begin_ch[1], b.p_begin_ch[2],
             b.q_begin_ch[0], b.q_begin_ch[1], b.q_begin_ch[2],
+            b.s_end_ch[0],   b.s_end_ch[1],   b.s_end_ch[2],
             b.t_begin_ch[0], b.t_begin_ch[1], b.t_begin_ch[2],
             b.t_end_ch[0],   b.t_end_ch[1],   b.t_end_ch[2],
             b.ppg_onset, b.ppg_peak, b.ppg_dicrotic, b.ppg_50, b.ppg_end
         };
-        for (int m : marks) { f << ','; if (m >= 0) f << m; }          // -1 -> empty
-        if (secs) for (int m : marks) { f << ','; if (m >= 0) f << (m / sampleRateHz); }
+        for (int m : marks) { f << ','; if (m >= 0) f << (m / sampleRateHz); }   // -1 -> empty
         f << '\n';
     }
 }
@@ -243,6 +225,7 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
 
         for (int c = 0; c < 3; ++c) b.p_begin_ch[c] = r32();
         for (int c = 0; c < 3; ++c) b.q_begin_ch[c] = r32();
+        for (int c = 0; c < 3; ++c) b.s_end_ch[c] = r32();
         for (int c = 0; c < 3; ++c) b.t_begin_ch[c] = r32();
         for (int c = 0; c < 3; ++c) b.t_end_ch[c] = r32();
 

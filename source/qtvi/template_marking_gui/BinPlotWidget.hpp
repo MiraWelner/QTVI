@@ -43,16 +43,17 @@ public:
         // --- ECG markers (contiguous, starting at 0) ---
         EcgP = 0,   // P-wave onset
         EcgQBegin = 1,
-        EcgTBegin = 2,
-        EcgTEnd = 3,
+		EcgSEnd = 2,   // QRS end (S-wave)
+        EcgTBegin = 3,
+        EcgTEnd = 4,
         // --- PPG markers (contiguous, immediately after ECG) ---
-        PpgOnset = 4,
-        PpgPeak = 5,
-        PpgDicrotic = 6,   // dicrotic notch
-        Ppg50 = 7,   // 50% point
-        PpgEnd = 8,   // end-of-pulse / trough after descent
+        PpgOnset = 5,
+        PpgPeak = 6,
+        PpgDicrotic = 7,   // dicrotic notch
+        Ppg50 = 8,   // 50% point
+        PpgEnd = 9,   // end-of-pulse / trough after descent
         // --- size sentinel ---
-        MarkerCount = 9
+        MarkerCount = 10
     };
 
     // Range-based predicates. Update these bounds if you add more
@@ -124,7 +125,7 @@ public:
         const std::vector<double>& ppgStd,
         const std::vector<double>& ecg,
         const std::vector<double>& ecgStd,
-        int ecgP, int qBegin, int tBegin, int tEnd,
+        int ecgP, int qBegin, int sEnd, int tBegin, int tEnd,
         int ppgOnset, int ppgPeak,
         int ppgDicrotic, int ppg50, int ppgEnd,
         double rPeakSample);
@@ -196,7 +197,7 @@ private:
 
     // Storage sized by MarkerCount so it grows automatically if you add
     // more entries to the enum. All marker slots start hidden (-1).
-    int m_markers[MarkerCount] = { -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+    int m_markers[MarkerCount] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
 
     State m_state = State::Good;
     bool  m_hasPPG = false;

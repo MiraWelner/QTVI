@@ -48,6 +48,7 @@ namespace {
     // ECG markers (P, Q, Tb, Te) - blacks and dark blues, darkest to lightest.
     constexpr QColor kColorEcgP{ 0,   0,   0 };   // black
     constexpr QColor kColorEcgQBegin{ 20,  20,  60 };   // very dark navy
+    constexpr QColor kColorEcgS{ 30, 35, 85 };   // dark navy, between Q and Tb
     constexpr QColor kColorEcgTBegin{ 40,  50, 110 };   // dark navy
     constexpr QColor kColorEcgTEnd{ 70,  90, 160 };   // medium navy
 
@@ -62,6 +63,7 @@ namespace {
         switch (m) {
         case BinPlotWidget::EcgP:        return kColorEcgP;
         case BinPlotWidget::EcgQBegin:   return kColorEcgQBegin;
+        case BinPlotWidget::EcgSEnd:     return kColorEcgS;
         case BinPlotWidget::EcgTBegin:   return kColorEcgTBegin;
         case BinPlotWidget::EcgTEnd:     return kColorEcgTEnd;
         case BinPlotWidget::PpgOnset:    return kColorPpgOnset;
@@ -74,15 +76,16 @@ namespace {
     }
     const char* markerShortLabel(int m) {
         switch (m) {
-        case BinPlotWidget::EcgP:        return "P";
-        case BinPlotWidget::EcgQBegin:   return "Q";
-        case BinPlotWidget::EcgTBegin:   return "Tb";
-        case BinPlotWidget::EcgTEnd:     return "Te";
-        case BinPlotWidget::PpgOnset:    return "On";
-        case BinPlotWidget::PpgPeak:     return "Pk";
-        case BinPlotWidget::PpgDicrotic: return "Dc";
-        case BinPlotWidget::Ppg50:       return "50";
-        case BinPlotWidget::PpgEnd:      return "En";
+        case BinPlotWidget::EcgP:        return "P peak";
+        case BinPlotWidget::EcgQBegin:   return "Q beg";
+        case BinPlotWidget::EcgSEnd:     return "S end";
+        case BinPlotWidget::EcgTBegin:   return "T beg";
+        case BinPlotWidget::EcgTEnd:     return "T end";
+        case BinPlotWidget::PpgOnset:    return "PPG On";
+        case BinPlotWidget::PpgPeak:     return "PPG Peak";
+        case BinPlotWidget::PpgDicrotic: return "DN";
+        case BinPlotWidget::Ppg50:       return "PPG 50% Upsl";
+        case BinPlotWidget::PpgEnd:      return "PPG End";
         }
         return "?";
     }
@@ -175,7 +178,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     const std::vector<double>& ppgStd,
     const std::vector<double>& ecg,
     const std::vector<double>& ecgStd,
-    int ecgP, int qBegin, int tBegin, int tEnd,
+    int ecgP, int qBegin, int sEnd, int tBegin, int tEnd,
     int ppgOnset, int ppgPeak,
     int ppgDicrotic, int ppg50, int ppgEnd,
     double rPeakSample)
@@ -186,6 +189,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_ecgStd = ecgStd;
     m_markers[EcgP] = ecgP;
     m_markers[EcgQBegin] = qBegin;
+    m_markers[EcgSEnd] = sEnd;
     m_markers[EcgTBegin] = tBegin;
     m_markers[EcgTEnd] = tEnd;
     m_markers[PpgOnset] = ppgOnset;
