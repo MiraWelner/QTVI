@@ -66,7 +66,7 @@ namespace post_process_detail {
         const std::filesystem::path annealedPath =
             std::filesystem::path(cfg.annealed_data_path) / (stem + ".bin");
         const std::filesystem::path rPeakPath =
-            std::filesystem::path(cfg.r_peak_data_path) / (stem + "_wave_markings.bin");
+            std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
         const std::filesystem::path templatePath =
             std::filesystem::path(cfg.template_path) /
             (stem + "_" + std::to_string(static_cast<int>(cfg.bin_size_minutes)) +
@@ -169,6 +169,14 @@ namespace post_process_detail {
             if (job.needSqabsDetection) {
                 augment_ecg_ppg_pairs_sqabs(job.peakResults, true, job.fileID, job.samplingRate);
                 write_output_binfile(job.rPeakPath.string(), job.peakResults);
+
+                // CSV mirror of wave_markings.bin: one row per (bin, channel,
+                // method, peak) with sample index and time in seconds. Written
+                // next to the .bin, same stem.
+                std::filesystem::path rPeakCsv = job.rPeakPath;
+                rPeakCsv.replace_extension(".csv");
+                write_output_csvfile(rPeakCsv.string(), job.peakResults,
+                    job.fileID, job.samplingRate);
             }
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info);
             template_io::write_template_binfile(job.templatePath.string(), job.tmpl);

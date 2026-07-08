@@ -47,10 +47,7 @@ struct AnnealedSegment {
     // Pass-through: full set of input channels carried alongside the
     // algorithm-facing signals above. The peakfinding algorithm doesn't
     // touch these -- they're just routed from the annealed input through
-    // (formerly into the wave_markings output, now dropped from there
-    // since they're already on disk in the annealed .bin). Indexed by the
-    // same 41-slot layout as step 3's annealed bin (slot 0 = timestamp,
-    // 1 = ECG1, ..., 4 = PPG, 5..40 = other channels).
+    // since they're already on disk in the annealed .bin). 
     std::vector<std::vector<double>> all_upsampled;          // per-slot upsampled samples
     std::vector<std::vector<double>> all_raw_pairs_flat;     // per-slot interleaved (t, v, t, v, ...)
 };

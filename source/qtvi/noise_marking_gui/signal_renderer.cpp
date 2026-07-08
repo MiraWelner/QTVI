@@ -35,6 +35,7 @@
 #include <unordered_map>
 #include <vector>
 #include <QtCharts/QLegendMarker>
+#include <iostream>
 
 namespace {
 

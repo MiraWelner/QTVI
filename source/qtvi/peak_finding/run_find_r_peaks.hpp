@@ -32,6 +32,7 @@
 #include <stdexcept>
 #include <cstdint>
 #include <cmath>
+#include <array>
 
 #include "peakfinding_io.hpp"
 #include "create_ecg_ppg_pairs.hpp"
@@ -276,6 +277,168 @@ inline void write_output_binfile(const std::string& path, const std::vector<outp
                 pairBuf[i * 2 + 1] = (std::isnan(p[1]) || p[1] < -0.1) ? -1 : static_cast<int64_t>(std::round(p[1])) + 1;
             }
             file.write(reinterpret_cast<const char*>(pairBuf.data()), numPairs * 16);
+        }
+    }
+}
+
+inline void write_output_csvfile(const std::string& path,
+    const std::vector<output_binfile_data>& bins,
+    const std::string& fileID,
+    double sampleRateHz = 0.0)
+{
+    std::ofstream f(path);
+    if (!f.is_open())
+        throw std::runtime_error("cannot open for write: " + path);
+
+    constexpr std::size_t COLS_PER_ROW = 11;
+    const bool haveRate = sampleRateHz > 0.0;
+    const double secPerSample = haveRate ? (1.0 / sampleRateHz) : 0.0;
+
+    // Local PR-segment baseline: median of samples [peak-100, peak-40)
+    // (~40-100 ms before the peak at 1000 Hz -- the flat PR interval).
+    constexpr std::size_t kBaselineLo = 100;
+    constexpr std::size_t kBaselineHi = 40;
+    auto localBaseline = [](const std::vector<double>& sig, std::size_t peak) -> double {
+        if (sig.empty()) return 0.0;
+        const std::size_t lo = (peak > kBaselineLo) ? (peak - kBaselineLo) : 0;
+        const std::size_t hi = (peak > kBaselineHi) ? (peak - kBaselineHi) : 0;
+        if (hi <= lo) return sig[peak];
+        std::vector<double> w(sig.begin() + lo, sig.begin() + hi);
+        std::nth_element(w.begin(), w.begin() + w.size() / 2, w.end());
+        return w[w.size() / 2];
+        };
+
+    // Most recent PPG foot before a given peak sample.
+    auto precedingFoot = [](const std::vector<std::size_t>& mins,
+        std::size_t peakSample) -> long long {
+            long long best = -1;
+            for (std::size_t m : mins) {
+                if (m < peakSample) best = static_cast<long long>(m);
+                else break;
+            }
+            return best;
+        };
+
+    static const char* const kColSuffix[COLS_PER_ROW] = {
+        "ch1_r", "ch1_squared_r", "ch1_absval_r",
+        "ch2_r", "ch2_squared_r", "ch2_absval_r",
+        "ch3_r", "ch3_squared_r", "ch3_absval_r",
+        "ppg_min", "ppg_max"
+    };
+
+    // Header: file_id, bin, then 6 cells per column.
+    f << "file_id,bin";
+    for (std::size_t c = 0; c < COLS_PER_ROW; ++c) {
+        f << ',' << kColSuffix[c] << "_sec_from_bin_start"
+            << ',' << kColSuffix[c] << "_ms_from_bin_start"
+            << ',' << kColSuffix[c] << "_sec_from_file_start"
+            << ',' << kColSuffix[c] << "_ms_from_file_start"
+            << ',' << kColSuffix[c] << "_peak_height_mv"
+            << ',' << kColSuffix[c] << "rinterval_ms";
+    }
+    f << '\n';
+
+    struct ColBundle {
+        const std::vector<std::size_t>* peaks;
+        const std::vector<double>* signal;
+    };
+
+    // Running "seconds elapsed in prior bins" -- the start time of the
+    // current bin relative to the whole recording. Advances at the end of
+    // each bin by that bin's ECG length in seconds.
+    double binStartSec = 0.0;
+
+    for (std::size_t b = 0; b < bins.size(); ++b) {
+        const auto& bin = bins[b];
+
+        std::array<ColBundle, COLS_PER_ROW> cols = { {
+            {&bin.ch1.raw,     &bin.ecgSignal},
+            {&bin.ch1.squared, &bin.ecgSignal},
+            {&bin.ch1.absval,  &bin.ecgSignal},
+            {&bin.ch2.raw,     &bin.ecgSignal2},
+            {&bin.ch2.squared, &bin.ecgSignal2},
+            {&bin.ch2.absval,  &bin.ecgSignal2},
+            {&bin.ch3.raw,     &bin.ecgSignal3},
+            {&bin.ch3.squared, &bin.ecgSignal3},
+            {&bin.ch3.absval,  &bin.ecgSignal3},
+            {&bin.ppgMinAmps,  &bin.ppgSignal},
+            {&bin.ppgMaxAmps,  &bin.ppgSignal}
+        } };
+
+        std::size_t maxLen = 0;
+        for (const auto& c : cols)
+            if (c.peaks->size() > maxLen) maxLen = c.peaks->size();
+
+        for (std::size_t r = 0; r < maxLen; ++r) {
+            f << fileID << ',' << b;
+
+            for (std::size_t c = 0; c < COLS_PER_ROW; ++c) {
+                const auto& bundle = cols[c];
+                const auto& peaks = *bundle.peaks;
+                const bool has = r < peaks.size();
+                const std::size_t idx0 = has ? peaks[r] : 0;
+
+                const double binSec = has ? (idx0 * secPerSample) : 0.0;
+                const double totalSec = binStartSec + binSec;
+
+                // bin_time_sec
+                f << ',';
+                if (has && haveRate) f << binSec;
+
+                // bin_time_ms
+                f << ',';
+                if (has && haveRate) f << (binSec * 1000.0);
+
+                // total_time_sec
+                f << ',';
+                if (has && haveRate) f << totalSec;
+
+                // total_time_ms
+                f << ',';
+                if (has && haveRate) f << (totalSec * 1000.0);
+
+                // peak_height
+                //   ECG columns: signal[peak] minus local PR-segment baseline.
+                //   ppg_max:     ppgSignal[peak] - ppgSignal[preceding_foot].
+                //   ppg_min:     empty (a foot alone isn't a pulse amplitude).
+                f << ',';
+                if (has && bundle.signal && idx0 < bundle.signal->size()) {
+                    if (c == 9) {
+                        // ppg_min -- no natural height
+                    }
+                    else if (c == 10) {
+                        const long long foot = precedingFoot(bin.ppgMinAmps, idx0);
+                        if (foot >= 0 &&
+                            static_cast<std::size_t>(foot) < bundle.signal->size()) {
+                            f << ((*bundle.signal)[idx0]
+                                - (*bundle.signal)[static_cast<std::size_t>(foot)]);
+                        }
+                    }
+                    else {
+                        const double baseline = localBaseline(*bundle.signal, idx0);
+                        f << ((*bundle.signal)[idx0] - baseline);
+                    }
+                }
+
+                // rinterval_ms: this peak minus previous in same column, in ms.
+                f << ',';
+                if (has && haveRate && r > 0) {
+                    const std::size_t prev0 = peaks[r - 1];
+                    f << ((static_cast<double>(idx0) - static_cast<double>(prev0))
+                        * secPerSample * 1000.0);
+                }
+            }
+            f << '\n';
+        }
+
+        // Advance the running total for the next bin. Use the deepest of
+        // the three ECG channels so a missing ch1 doesn't zero the step.
+        if (haveRate) {
+            const std::size_t nSamples = std::max({
+                bin.ecgSignal.size(),
+                bin.ecgSignal2.size(),
+                bin.ecgSignal3.size() });
+            binStartSec += static_cast<double>(nSamples) * secPerSample;
         }
     }
 }
