@@ -181,11 +181,6 @@ namespace post_process_detail {
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info);
             template_io::write_template_binfile(job.templatePath.string(), job.tmpl);
             template_io::write_beats_binfile(job.beatsPath.string(), job.beats);
-
-            std::filesystem::path saecgCsv = job.templatePath;
-            saecgCsv.replace_extension("");
-            saecgCsv += "_saecg.csv";
-            template_io::write_saecg_csvfile(saecgCsv.string(), job.tmpl);
         }
         catch (const std::exception& e) {
             job.error = e.what();

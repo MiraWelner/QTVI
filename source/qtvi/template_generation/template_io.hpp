@@ -74,16 +74,8 @@ namespace template_io {
         uint64_t            n_contributing = 0;
     };
 
-    struct SAECG {
-        AveragedTemplate ch1_raw, ch1_squared, ch1_absval, ch1_unfiltered;
-        AveragedTemplate ch2_raw, ch2_squared, ch2_absval, ch2_unfiltered;
-        AveragedTemplate ch3_raw, ch3_squared, ch3_absval, ch3_unfiltered;
-        AveragedTemplate ppg;
-    };
-
     struct TemplateFile {
         std::vector<BinTemplates> bins;
-        SAECG                     saecg;
     };
 
     struct BeatsFile {
@@ -92,7 +84,6 @@ namespace template_io {
     };
 
     void write_template_binfile(const std::string& path, const TemplateFile& data);
-    void write_saecg_csvfile(const std::string& path, const TemplateFile& data);
 
     TemplateFile read_template_binfile(const std::string& path);
 

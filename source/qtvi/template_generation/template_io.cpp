@@ -80,20 +80,6 @@ namespace template_io {
             uint8_t bad = b.bad_segment ? 1 : 0;
             f.write(reinterpret_cast<const char*>(&bad), 1);
         }
-
-        writeAveraged(f, data.saecg.ch1_raw);
-        writeAveraged(f, data.saecg.ch1_squared);
-        writeAveraged(f, data.saecg.ch1_absval);
-        writeAveraged(f, data.saecg.ch1_unfiltered);
-        writeAveraged(f, data.saecg.ch2_raw);
-        writeAveraged(f, data.saecg.ch2_squared);
-        writeAveraged(f, data.saecg.ch2_absval);
-        writeAveraged(f, data.saecg.ch2_unfiltered);
-        writeAveraged(f, data.saecg.ch3_raw);
-        writeAveraged(f, data.saecg.ch3_squared);
-        writeAveraged(f, data.saecg.ch3_absval);
-        writeAveraged(f, data.saecg.ch3_unfiltered);
-        writeAveraged(f, data.saecg.ppg);
     }
 
 
@@ -127,61 +113,7 @@ namespace template_io {
             b.bad_segment = (bad != 0);
         }
 
-        if (!readAveraged(f, out.saecg.ch1_raw) || !readAveraged(f, out.saecg.ch1_squared) ||
-            !readAveraged(f, out.saecg.ch1_absval) || !readAveraged(f, out.saecg.ch1_unfiltered) ||
-            !readAveraged(f, out.saecg.ch2_raw) || !readAveraged(f, out.saecg.ch2_squared) ||
-            !readAveraged(f, out.saecg.ch2_absval) || !readAveraged(f, out.saecg.ch2_unfiltered) ||
-            !readAveraged(f, out.saecg.ch3_raw) || !readAveraged(f, out.saecg.ch3_squared) ||
-            !readAveraged(f, out.saecg.ch3_absval) || !readAveraged(f, out.saecg.ch3_unfiltered) ||
-            !readAveraged(f, out.saecg.ppg))
-            throw std::runtime_error("template file missing SAECG tail: " + path);
-
         return out;
-    }
-
-    void write_saecg_csvfile(const std::string& path, const TemplateFile& data) {
-        std::ofstream f(path);
-        if (!f) throw std::runtime_error("cannot create: " + path);
-
-        // Column order matches the per-bin method order and the SAECG struct.
-        struct Col { const char* name; const AveragedTemplate* avg; };
-        const SAECG& s = data.saecg;
-        const Col cols[] = {
-            {"ch1_raw", &s.ch1_raw}, {"ch1_squared", &s.ch1_squared},
-            {"ch1_absval", &s.ch1_absval}, {"ch1_unfiltered", &s.ch1_unfiltered},
-            {"ch2_raw", &s.ch2_raw}, {"ch2_squared", &s.ch2_squared},
-            {"ch2_absval", &s.ch2_absval}, {"ch2_unfiltered", &s.ch2_unfiltered},
-            {"ch3_raw", &s.ch3_raw}, {"ch3_squared", &s.ch3_squared},
-            {"ch3_absval", &s.ch3_absval}, {"ch3_unfiltered", &s.ch3_unfiltered},
-            {"ppg", &s.ppg},
-        };
-
-        // Header.
-        f << "sample_index";
-        for (const auto& c : cols) f << ',' << c.name;
-        f << '\n';
-
-        // How many bins contributed to each average (0 => empty waveform).
-        // Written as a labelled row so the count travels with the samples;
-        // a strict typed parser can skip this one row.
-        f << "n_contributing";
-        for (const auto& c : cols) f << ',' << c.avg->n_contributing;
-        f << '\n';
-
-        // Longest waveform sets the row count; shorter columns get empty cells.
-        size_t maxLen = 0;
-        for (const auto& c : cols) maxLen = std::max(maxLen, c.avg->waveform.size());
-
-        f << std::setprecision(9);
-        for (size_t i = 0; i < maxLen; ++i) {
-            f << i;
-            for (const auto& c : cols) {
-                f << ',';
-                const auto& w = c.avg->waveform;
-                if (i < w.size() && !std::isnan(w[i])) f << w[i];   // NaN / out-of-range -> empty
-            }
-            f << '\n';
-        }
     }
 
     void write_beats_binfile(const std::string& path, const BeatsFile& data) {

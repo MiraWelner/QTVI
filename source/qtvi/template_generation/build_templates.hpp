@@ -130,38 +130,6 @@ namespace template_generation_detail {
             info.ch3.alignment_point_absval, info.ch3.avg_r_expand_absval);
     }
 
-    inline template_io::AveragedTemplate
-        averageOne(const std::vector<template_io::BinTemplates>& bins,
-            std::vector<double>(*pick)(const template_io::BinTemplates&))
-    {
-        std::vector<std::vector<double>> bucket;
-        for (const auto& b : bins) {
-            if (b.bad_segment) continue;
-            std::vector<double> t = pick(b);
-            if (!t.empty()) bucket.push_back(std::move(t));
-        }
-
-        template_io::AveragedTemplate avg;
-        if (bucket.empty()) return avg;
-
-        size_t maxLen = 0;
-        for (const auto& t : bucket) maxLen = std::max(maxLen, t.size());
-        avg.waveform.assign(maxLen, 0.0);
-        std::vector<uint64_t> counts(maxLen, 0);
-        for (const auto& t : bucket) {
-            for (size_t j = 0; j < t.size(); ++j) {
-                if (!std::isnan(t[j])) { avg.waveform[j] += t[j]; ++counts[j]; }
-            }
-        }
-        for (size_t j = 0; j < maxLen; ++j) {
-            avg.waveform[j] = counts[j] > 0
-                ? avg.waveform[j] / counts[j]
-                : std::numeric_limits<double>::quiet_NaN();
-        }
-        avg.n_contributing = static_cast<uint64_t>(bucket.size());
-        return avg;
-    }
-
 }  // namespace template_generation_detail
 
 // Carries the in-memory state from the fast build to the slow merge.
@@ -189,15 +157,6 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults)
         const TemplateInfo& info = (i < out.info.size()) ? out.info[i] : TemplateInfo{};
         packBinFast(out.tmpl.bins[i], info, bad);
     }
-
-    // SAECG for the fast methods only.
-    out.tmpl.saecg.ch1_raw = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch1_raw.ecgTemplate; });
-    out.tmpl.saecg.ch1_unfiltered = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch1_unfiltered.ecgTemplate; });
-    out.tmpl.saecg.ch2_raw = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch2_raw.ecgTemplate; });
-    out.tmpl.saecg.ch2_unfiltered = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch2_unfiltered.ecgTemplate; });
-    out.tmpl.saecg.ch3_raw = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch3_raw.ecgTemplate; });
-    out.tmpl.saecg.ch3_unfiltered = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch3_unfiltered.ecgTemplate; });
-    out.tmpl.saecg.ppg = averageOne(out.tmpl.bins, [](const template_io::BinTemplates& b) { return b.ppgTemplate; });
 
     // Beats: ch1 raw kept beats (moves them out of out.info; the slow merge
     // doesn't read kept beats).
@@ -229,13 +188,6 @@ inline void mergeTemplatesSlow(const std::vector<output_binfile_data>& peakResul
         const TemplateInfo& bi = (i < info.size()) ? info[i] : TemplateInfo{};
         packBinSlow(tmpl.bins[i], bi);
     }
-
-    tmpl.saecg.ch1_squared = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch1_squared.ecgTemplate; });
-    tmpl.saecg.ch1_absval = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch1_absval.ecgTemplate; });
-    tmpl.saecg.ch2_squared = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch2_squared.ecgTemplate; });
-    tmpl.saecg.ch2_absval = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch2_absval.ecgTemplate; });
-    tmpl.saecg.ch3_squared = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch3_squared.ecgTemplate; });
-    tmpl.saecg.ch3_absval = averageOne(tmpl.bins, [](const template_io::BinTemplates& b) { return b.ch3_absval.ecgTemplate; });
 }
 
 inline std::pair<template_io::TemplateFile, template_io::BeatsFile>
