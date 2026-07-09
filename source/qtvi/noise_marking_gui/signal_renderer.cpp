@@ -861,10 +861,16 @@ void noise_marking_gui::handle_data_plot() {
     mark_state_art_pulm.startMarkerLine = nullptr;
     mark_state_abp.startMarkerLine = nullptr;
 
+    // The timestamp x-axis belongs to the bottom-most ACTIVE markable chart.
+     // Walk markableChannelLabels() (top-to-bottom order) and keep the last
+     // active one, so the labeled axis rides down to ART / ART_PULM when they
+     // are present and falls back to PPG/ABP otherwise. The old list omitted
+     // art_axis / art_pulm_axis, stranding the axis above them.
     QChartView* xLabelOwnerRight = nullptr;
-    for (auto* cv : { ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
-                      ui->ppg_axis, ui->accel_axis, ui->abp_axis }) {
-        if (cv && !cv->isHidden()) xLabelOwnerRight = cv;
+    for (const QString& lbl : markableChannelLabels()) {
+        if (!isChannelActive(lbl)) continue;
+        if (QChartView* cv = chartViewForSignalLabel(lbl))
+            xLabelOwnerRight = cv;   // last active wins
     }
 
     auto keepFor = [&](QChartView* cv) -> QList<QAbstractSeries*> {

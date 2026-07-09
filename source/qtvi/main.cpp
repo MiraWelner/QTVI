@@ -141,24 +141,9 @@ static void exportMarkings(const config_entry& cfg,
 // Stage 3: template marking. Opens TemplateViewerWindow on the templates file
 // produced by Stage 2 and blocks (local event loop) until the viewer finishes.
 // ---------------------------------------------------------------------------
-static void runTemplateMarking(const config_entry& cfg,
-    const std::filesystem::path& templateFile) {
-    // Build the same display id template_marking.cpp used, so the saved
-    // "<id>_template_markings.bin" name is unchanged. Fall back to the raw
-    // stem when the filename doesn't parse (e.g. unexpected token layout).
-    QString nameStem = QString::fromStdString(templateFile.stem().string());
-    const int suffixPos = nameStem.indexOf("_templates");
-    if (suffixPos >= 0) nameStem = nameStem.left(suffixPos);
-
-    QString displayId = nameStem;
-    if (auto parsed = parseTemplateFileName(nameStem)) {
-        displayId = parsed->date.isEmpty()
-            ? parsed->subjectId
-            : parsed->subjectId + "_" + parsed->date;
-    }
-
+static void runTemplateMarking(const config_entry& cfg, const std::filesystem::path& templateFile, const QString& fileId) {
+    const QString displayId = fileId;
     std::cout << "Template marking: " << displayId.toStdString() << "\n";
-
     TemplateViewerWindow viewer;
 
     QEventLoop loop;
@@ -330,7 +315,7 @@ int main(int argc, char* argv[]) {
         }
 
         // ---- Stage 3: template marking (runs concurrently with worker) ----
-        runTemplateMarking(cfg, job->viewerTemplatePath);
+        runTemplateMarking(cfg, job->viewerTemplatePath, QString::fromStdString(job->stem));
 
         // Do NOT join here. Park the worker and advance to the next file so
         // the next file loads while this file's squared/absval work finishes.

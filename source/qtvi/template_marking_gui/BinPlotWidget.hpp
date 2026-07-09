@@ -62,6 +62,8 @@ public:
     static bool markerIsPpg(int m) { return m >= PpgOnset && m <= PpgEnd; }
     double m_rPeakSample = 0.0;   // R-peak sample index within the ECG template
     double m_sampleRate = 0.0;   // Hz; 0 => label x-axis in samples
+    double m_ppgDelay = 0.0;    // R->foot transit delay (samples); shifts PPG right
+    int    m_ppgFootIdx = 0;    // foot's column in the foot-aligned PPG template
 
     // ----------------------------------------------------------------------
     // Visible-range rules.
@@ -92,27 +94,6 @@ public:
         return std::max(nFull, 2);
     }
 
-
-    static int computeEcgVisibleN(const std::vector<double>& ecg, int tEnd) {
-        const int N = static_cast<int>(ecg.size());
-        if (N < 4) return std::max(N, 2);
-        const int half = N / 2;
-
-        // Find the next-beat R as the largest deviation from the back-half mean.
-        double mean = 0.0;
-        for (int i = half; i < N; ++i) mean += ecg[i];
-        mean /= (N - half);
-
-        int nextR = half;
-        double bestDev = std::abs(ecg[half] - mean);
-        for (int i = half + 1; i < N; ++i) {
-            const double d = std::abs(ecg[i] - mean);
-            if (d > bestDev) { bestDev = d; nextR = i; }
-        }
-
-        return std::clamp(nextR, half, N);
-    }
-
     explicit BinPlotWidget(int binIndex, int leadIndex,
         const QString& leadLabel, QWidget* parent = nullptr);
 
@@ -128,7 +109,7 @@ public:
         int ecgP, int qBegin, int sEnd, int tBegin, int tEnd,
         int ppgOnset, int ppgPeak,
         int ppgDicrotic, int ppg50, int ppgEnd,
-        double rPeakSample);
+        double rPeakSample, double ppgDelay);
 
     void setHasPPG(bool has);
     bool hasPPG() const { return m_hasPPG; }
@@ -183,6 +164,7 @@ private:
     // pixels-per-sample that makes that extent fill the drawable width.
     int    totalSampleSpan() const;
     double pxPerSample() const;
+    double ppgStartSample() const;
 
     int m_binIndex;
     int m_leadIndex;

@@ -359,6 +359,25 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         resetUnpinnedGains(); handle_data_plot(); updateAmpogramCursor();
         });
 
+    //asdf for DK
+    // Letter-key mirrors: a = Left, d = Right (same window scroll);
+    // w = forward 8 h, s = back 8 h (same as the next/prev-8-hours buttons).
+    new QShortcut(QKeySequence(Qt::Key_D), this, [this]() {
+        double maxStart = std::max(0.0, totalChunkDuration() - visible_window_size);
+        current_start_time = std::min(current_start_time + scrollStepSeconds(), maxStart);
+        resetUnpinnedGains(); handle_data_plot(); updateAmpogramCursor();
+        });
+    new QShortcut(QKeySequence(Qt::Key_A), this, [this]() {
+        current_start_time = std::max(0.0, current_start_time - scrollStepSeconds());
+        resetUnpinnedGains(); handle_data_plot(); updateAmpogramCursor();
+        });
+    new QShortcut(QKeySequence(Qt::Key_W), this, [this]() {
+        on_next8hours_clicked();
+        });
+    new QShortcut(QKeySequence(Qt::Key_S), this, [this]() {
+        on_prev8hours_clicked();
+        });
+
     const QList<QChartView*> allCharts = {
        ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
        ui->ppg_axis, ui->accel_axis, ui->abp_axis,

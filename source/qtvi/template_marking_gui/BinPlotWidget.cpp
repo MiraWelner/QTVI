@@ -7,6 +7,14 @@
 // the same on-screen length; the full PPG tail stays visible and shares
 // the ECG's time axis within the widget.
 //
+// ECG/PPG alignment:
+//   The ECG template is R-anchored (R sits at m_rPeakSample). The PPG
+//   template is foot-anchored (its own average). To overlay them at the
+//   true simultaneous instant, the PPG is shifted right so its foot lands
+//   at R + m_ppgDelay, where m_ppgDelay is the measured R->foot transit
+//   delay (in samples). ppgStartSample() encodes that origin; the PPG is
+//   drawn from its real samples (no fabricated pad).
+//
 // Std band: when a per-sample std vector is available for the trace
 // (covering at least the visible samples), the widget paints a
 // translucent gray polygon between mean-std and mean+std underneath
@@ -40,9 +48,9 @@ namespace {
     constexpr QColor kColorEcgTrace{ 10,  20,  90 };   // dark navy blue
     constexpr QColor kColorPpgTrace{ 130,  10,  20 };   // dark red
 
-    //different colored STD bands - yellowish for ecg and gray for ppg
-    inline const QColor color_stdband_ecg{ 255, 215, 0, 110 };
-    inline const QColor color_stdband_ppg{ 200, 200, 200, 110 };
+    //different colored STD bands - bluish for ecg and reddish for ppg
+    inline const QColor color_stdband_ecg{ 90, 130, 220, 110 };   // light navy/blue
+    inline const QColor color_stdband_ppg{ 220, 120, 130, 110 };  // soft red/pink
 
 
     // ECG markers (P, Q, Tb, Te) - blacks and dark blues, darkest to lightest.
@@ -181,7 +189,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     int ecgP, int qBegin, int sEnd, int tBegin, int tEnd,
     int ppgOnset, int ppgPeak,
     int ppgDicrotic, int ppg50, int ppgEnd,
-    double rPeakSample)
+    double rPeakSample, double ppgDelay)
 {
     m_ppg = ppg;
     m_ppgStd = ppgStd;
@@ -198,10 +206,15 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_markers[Ppg50] = ppg50;
     m_markers[PpgEnd] = ppgEnd;
     m_rPeakSample = rPeakSample;
+    // R->foot transit delay and the foot's column in the foot-aligned PPG
+    // template. Captured here (not read live from the marker) so dragging the
+    // onset marker doesn't reposition the whole PPG trace.
+    m_ppgDelay = ppgDelay;
+    m_ppgFootIdx = (ppgOnset > 0) ? ppgOnset : 0;
     m_hasPPG = !ppg.empty();
     // Cache the per-trace visible counts so paint, hit-test, and
     // drag-clamp all see the same numbers.
-    m_ecgVisibleN = computeEcgVisibleN(m_ecg, tEnd);
+    m_ecgVisibleN = std::max(static_cast<int>(m_ecg.size()), 2);
     m_ppgVisibleN = visiblePpgCount(static_cast<int>(m_ppg.size()));
 
     // sizeHint depends on visible counts; notify layout.
@@ -238,20 +251,28 @@ int BinPlotWidget::visibleN(bool isEcg) const {
     return isEcg ? m_ecgVisibleN : m_ppgVisibleN;
 }
 
+double BinPlotWidget::ppgStartSample() const {
+    // PPG sample 0 sits at (R column + transit delay - foot column) so the
+    // foot lands at R + delay. Clamped >= 0 to avoid drawing left of the axis.
+    double s = m_rPeakSample + m_ppgDelay - static_cast<double>(m_ppgFootIdx);
+    return (s > 0.0) ? s : 0.0;
+}
+
 int BinPlotWidget::totalSampleSpan() const {
     // ECG runs over samples [0, m_ecgVisibleN). The PPG is drawn shifted
-    // right by the R-peak offset, so it runs over [0, rPeak + ppgVisibleN).
-    // The widest of the two is what has to fit in the drawable width.
-    const int pad = static_cast<int>(std::round(m_rPeakSample));
+    // right so its foot lands at R + delay, so it runs over
+    // [0, ppgStartSample() + ppgVisibleN). The widest of the two is what
+    // has to fit in the drawable width.
+    const int pad = static_cast<int>(std::round(ppgStartSample()));
     const int ppgSpan = (m_ppgVisibleN > 0) ? pad + m_ppgVisibleN : 0;
     return std::max(std::max(m_ecgVisibleN, ppgSpan), 2);
 }
 
 double BinPlotWidget::pxPerSample() const {
-     // Scale so the widest trace exactly fills the drawable width. ECG and
-    // PPG share this one value, so they stay aligned within this widget;
-    // different bins use different values, which is what makes every bin
-    // window come out the same on-screen length.
+    // Scale so the widest trace exactly fills the drawable width. ECG and
+   // PPG share this one value, so they stay aligned within this widget;
+   // different bins use different values, which is what makes every bin
+   // window come out the same on-screen length.
     const int span = totalSampleSpan();
     const double drawW = std::max(1, width() - margin_left - margin_right);
     return (span > 1) ? (drawW / static_cast<double>(span - 1)) : 1.0;
@@ -263,8 +284,8 @@ int BinPlotWidget::sampleFromX(double x, bool isEcg) const {
         return static_cast<int>(std::round((x - margin_left) / pps));
     }
     else {
-        const double rPeakPx = margin_left + m_rPeakSample * pps;
-        return static_cast<int>(std::round((x - rPeakPx) / pps));
+        const double ppgPx = margin_left + ppgStartSample() * pps;
+        return static_cast<int>(std::round((x - ppgPx) / pps));
     }
 }
 
@@ -274,8 +295,8 @@ double BinPlotWidget::xFromSample(int s, bool isEcg) const {
         return margin_left + s * pps;
     }
     else {
-        const double rPeakPx = margin_left + m_rPeakSample * pps;
-        return rPeakPx + s * pps;
+        const double ppgPx = margin_left + ppgStartSample() * pps;
+        return ppgPx + s * pps;
     }
 }
 
@@ -354,7 +375,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             p.drawLine(QPointF(yAxisX - 3, y), QPointF(yAxisX, y));
             p.drawText(QPointF(1, y + 3), QString::number(val, 'e', 1));
         }
-        
+
     }
 
     // -------- ECG --------
@@ -363,31 +384,25 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
     // -------- PPG --------
     if (m_hasPPG && !m_ppg.empty() && m_ppgVisibleN > 0) {
-        const int pad = static_cast<int>(std::round(m_rPeakSample));
-        const int visN = pad + m_ppgVisibleN;
+        // Real PPG, positioned so its foot sits at R + transit delay. No
+        // fabricated lead-in: the trace begins at ppgStartSample() and
+        // nothing is drawn to its left.
+        const double startPx = margin_left + ppgStartSample() * pps;
 
-        std::vector<double> ppgPadded;
-        ppgPadded.reserve(visN);
-        ppgPadded.insert(ppgPadded.end(), pad, m_ppg[0]);
-        ppgPadded.insert(ppgPadded.end(), m_ppg.begin(),
-            m_ppg.begin() + m_ppgVisibleN);
-
-        std::vector<double> stdPadded;
-        if ((int)m_ppgStd.size() >= m_ppgVisibleN) {
-            stdPadded.reserve(visN);
-            stdPadded.insert(stdPadded.end(), pad, 0.0);
-            stdPadded.insert(stdPadded.end(), m_ppgStd.begin(),
+        std::vector<double> ppgStdReal;
+        if (static_cast<int>(m_ppgStd.size()) >= m_ppgVisibleN)
+            ppgStdReal.assign(m_ppgStd.begin(),
                 m_ppgStd.begin() + m_ppgVisibleN);
-        }
 
         double lo, hi;
-        computeVisibleRange(ppgPadded, stdPadded, visN, lo, hi);
+        computeVisibleRange(m_ppg, ppgStdReal, m_ppgVisibleN, lo, hi);
 
-        drawStdBand(p, ppgPadded, stdPadded, margin_left, margin_top, ph, pps, visN, lo, hi, color_stdband_ppg);
-        drawTraceFixedScale(p, ppgPadded, margin_left, margin_top, ph,
-            pps, QPen(kColorPpgTrace, 1.5), visN, lo, hi);
+        drawStdBand(p, m_ppg, ppgStdReal, startPx, margin_top, ph, pps,
+            m_ppgVisibleN, lo, hi, color_stdband_ppg);
+        drawTraceFixedScale(p, m_ppg, startPx, margin_top, ph,
+            pps, QPen(kColorPpgTrace, 1.5), m_ppgVisibleN, lo, hi);
     }
-    
+
 
     QFont smallF = p.font(); smallF.setPointSize(7); p.setFont(smallF);
     for (int m = 0; m < MarkerCount; ++m) {

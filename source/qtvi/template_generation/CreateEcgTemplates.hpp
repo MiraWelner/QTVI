@@ -73,21 +73,27 @@ static inline SingleMethodResult build_ecg_template_for_method(
 
     vector<size_t> lens;
     lens.reserve(r.size() - 1);
-    for (size_t j = 0; j + 1 < r.size(); ++j)
+    for (size_t j = 0; j + 1 < r.size(); ++j) {
         lens.push_back(static_cast<size_t>((r[j + 1] - r[j]) / 5));
-
-    {
-        vector<double> ld(lens.begin(), lens.end());
-        res.avg_r_expand = median(ld);
     }
+    res.avg_r_expand = median(vector<double>(lens.begin(), lens.end()));
+
+
+    // Snip P-to-P instead of R-to-R. Cutting at each R put the *next* beat's
+    // P at the tail; shifting every boundary back by ~1.5*avg_r_expand (about
+    // one PR interval + P width) starts each window just before its own P, so
+    // the averaged beat reads P,QRS,T with the P at the front. Boundaries now
+    // sit before P and after T, so the old symmetric `lens` expansion (which
+    // existed to keep R-to-R from clipping) is dropped.
+    const size_t preP = static_cast<size_t>(std::llround(1.5 * res.avg_r_expand));
+    vector<size_t> seg(r.size());
+    for (size_t j = 0; j < r.size(); ++j)
+        seg[j] = (r[j] > preP) ? r[j] - preP : 0;
 
     try {
-        // Pass &res.ecgTemplate_std only when caller wants it -- saves
-        // one column-wise pass through the beat matrix for methods we
-        // never display.
         vector<double>* std_out = compute_std ? &res.ecgTemplate_std : nullptr;
         res.ecgTemplate = EnsembleTemplate(
-            ecg_reduced, r, std_multiplier, "ecg", lens,
+            ecg_reduced, seg, std_multiplier, "ecg", {},   // P-to-P cut, no expand
             out_kept_beats, std_out);
     }
     catch (...) {
@@ -100,8 +106,10 @@ static inline SingleMethodResult build_ecg_template_for_method(
     if (!pairs.empty()) {
         vector<double> diffs;
         for (const auto& p : pairs) {
-            if (p.size() >= 2 && p[0] >= 0 && p[1] >= 0)
-                diffs.push_back(p[0] - p[1]);
+            // p[0]=PPG foot, p[1]=R. Skip unpaired (<0) and step-8 fallback
+            // rows (foot==R), which would inject spurious zero delays.
+            if (p.size() >= 2 && p[0] >= 0 && p[1] >= 0 && p[0] != p[1])
+                diffs.push_back(p[0] - p[1]);   // foot - R = transit delay (samples)
         }
         if (!diffs.empty()) res.ppg_alignment_point = median(diffs);
     }

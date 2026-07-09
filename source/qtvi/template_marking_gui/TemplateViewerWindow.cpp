@@ -4,6 +4,7 @@
 #include <QMessageBox>
 #include <cmath>
 #include <algorithm>
+#include <algorithm>
 #include <iostream>
 
 // ========================================================================
@@ -146,9 +147,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
 // Markers detected: ECG (per channel) P-begin, Q-begin, T-begin, T-end;
 // PPG Onset, Peak, Dicrotic notch, 50% recovery, End. Detectors return a
 // sample index or -1 ("no marker"). Detected indices are clamped into
-// the visible portion of their trace -- for ECG, that's the per-trace
-// cutoff computed by BinPlotWidget::computeEcgVisibleN (cuts off before
-// the next beat's P-wave).
+// the visible portion of their trace
 // ========================================================================
 
 namespace {
@@ -220,7 +219,7 @@ namespace {
                 b.t_end_ch[c] = ecg_markers::detect_t_end(ecg);
 
             // Now compute the visible cutoff using T-end.
-            const int visN = BinPlotWidget::computeEcgVisibleN(ecg, b.t_end_ch[c]);
+            const int visN = std::max(static_cast<int>(ecg.size()), 2);
 
             // Clamp T-end into the visible range now that we know visN.
             b.t_end_ch[c] = clampToVisible(b.t_end_ch[c], visN);
@@ -316,11 +315,16 @@ void TemplateViewerWindow::showPage() {
             const auto& ppg = hasPPG ? b.ppgTemplate : empty;
 
             int c = leads[li].channelIndex;
-            // avg_r_expand_raw = median(RR/5) = R-peak position within the
-            // ECG template. Used to start PPG at the correct pixel offset.
-            const double rPeak = (c == 0) ? b.ch1.avg_r_expand_raw
-                : (c == 1) ? b.ch2.avg_r_expand_raw
-                : b.ch3.avg_r_expand_raw;
+            // Pin the PPG onset under the ECG R-peak. Find R in the template
+            // being drawn rather than assuming its column, so this can't drift
+            // from however build_ecg_template_for_method phases the beat.
+            const double rPeak = (ecg.empty())
+                ? 0.0
+                : static_cast<double>(ecg_markers::r_peak(ecg).first);
+
+            const double ppgDelay = (c == 0) ? b.ch1.alignment_point_raw
+                : (c == 1) ? b.ch2.alignment_point_raw
+                : b.ch3.alignment_point_raw;
 
             // std vectors for this channel + PPG. Empty if the templater
             // didn't compute them for this bin -- the widget treats empty
@@ -334,8 +338,7 @@ void TemplateViewerWindow::showPage() {
                 b.p_begin_ch[c], b.q_begin_ch[c], b.s_end_ch[c],
                 b.t_begin_ch[c], b.t_end_ch[c],
                 b.ppg_onset, b.ppg_peak,
-                b.ppg_dicrotic, b.ppg_50, b.ppg_end,
-                rPeak);
+                b.ppg_dicrotic, b.ppg_50, b.ppg_end, rPeak, ppgDelay);
             pw->setHasPPG(hasPPG);
 
             if (b.ppg_issue == 1)
