@@ -163,28 +163,69 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         }
         const float nativeHz = channel_native_rates[chIdx];
         if (nativeHz <= 0.0f) return;
-        const uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * (double)nativeHz);
-        const uint64_t firstPair = chunkIndex * perChunk;
-        if (firstPair >= totalPairs) return;
-        const uint64_t count = std::min(perChunk, totalPairs - firstPair);
-        if (count == 0) return;
+
+        // Slice the raw block by TIME, not by a pair count. The raw pairs are
+        // stored with x = row-index time (row index / grid rate) and are
+        // monotonic in x, but they are NOT uniformly dense at nativeHz -- gaps
+        // and 2x-packing corrections mean a chunk holds fewer pairs than
+        // 8h * nativeHz. The old "firstPair = chunkIndex * 8h * nativeHz"
+        // slicing assumed density and so overshot on every chunk after the
+        // first (landing past the real chunk data -> no scatter). Instead,
+        // load exactly the pairs whose stored time falls in this chunk's
+        // [chunkStart, chunkStart + 8h) window. This matches loadSignal's
+        // time-based chunking so raw and upsampled always cover the same span.
+        const double chunkStartT =
+            static_cast<double>(chunkIndex) * seconds_in_memory_at_once;
+        const double chunkEndT = chunkStartT + seconds_in_memory_at_once;
 
         const qint64 baseBytes = FILE_HEADER_SIZE
             + static_cast<qint64>(chanRawOffset[chIdx]) * sizeof(double);
-        if (!file.seek(baseBytes + static_cast<qint64>(firstPair) * 16)) return;
 
+        // Binary-search the first pair with t >= chunkStartT. Pairs are (t, v)
+        // doubles, 16 bytes each, monotonic in t.
+        auto pairTimeAt = [&](uint64_t idx) -> double {
+            double t = 0.0;
+            file.seek(baseBytes + static_cast<qint64>(idx) * 16);
+            file.read(reinterpret_cast<char*>(&t), sizeof(double));
+            return t;
+            };
+        uint64_t lo = 0, hi = totalPairs;
+        while (lo < hi) {
+            const uint64_t mid = (lo + hi) / 2;
+            if (pairTimeAt(mid) < chunkStartT) lo = mid + 1; else hi = mid;
+        }
+        const uint64_t firstPair = lo;
+        if (firstPair >= totalPairs) return;
+
+        // Read forward in a bounded block, keeping pairs until t >= chunkEndT.
+        // Cap the read so a huge chunk doesn't allocate unboundedly; loop if
+        // the window spans more than one block.
+        if (!file.seek(baseBytes + static_cast<qint64>(firstPair) * 16)) return;
+        constexpr uint64_t kBlockPairs = 1u << 20;   // 1M pairs = 16 MB per read
+        uint64_t remaining = totalPairs - firstPair;
+        bool done = false;
+        dest.reserve(static_cast<int>(std::min<uint64_t>(remaining,
+            static_cast<uint64_t>(std::numeric_limits<int>::max()))));
         std::vector<double> buf;
-        try { buf.resize(count * 2); }
-        catch (const std::bad_alloc&) { return; }
-        const qint64 got = file.read(reinterpret_cast<char*>(buf.data()),
-            static_cast<qint64>(count) * 16);
-        if (got <= 0) return;
-        const uint64_t gotPairs = static_cast<uint64_t>(got) / 16;
-        dest.reserve(static_cast<int>(
-            std::min<uint64_t>(gotPairs,
-                static_cast<uint64_t>(std::numeric_limits<int>::max()))));
-        for (uint64_t k = 0; k < gotPairs; ++k)
-            dest.append(QPointF(buf[k * 2], buf[k * 2 + 1]));
+        while (remaining > 0 && !done) {
+            const uint64_t thisBlock = std::min(kBlockPairs, remaining);
+            try { buf.resize(thisBlock * 2); }
+            catch (const std::bad_alloc&) { return; }
+            const qint64 got = file.read(reinterpret_cast<char*>(buf.data()),
+                static_cast<qint64>(thisBlock) * 16);
+            if (got <= 0) break;
+            const uint64_t gotPairs = static_cast<uint64_t>(got) / 16;
+            for (uint64_t k = 0; k < gotPairs; ++k) {
+                const double t = buf[k * 2];
+                if (t >= chunkEndT) { done = true; break; }
+                // Store chunk-local x (subtract chunk start), matching the
+                // upsampled block, which the renderer plots at index/rate =
+                // chunk-local seconds. current_start_time resets to 0 per chunk.
+                dest.append(QPointF(t - chunkStartT, buf[k * 2 + 1]));
+            }
+            remaining -= gotPairs;
+            if (gotPairs < thisBlock) break;   // short read = EOF
+        }
         };
 
     loadSignal(m_ecg1, CH_ECG1);   loadSignal(m_ecg2, CH_ECG2);
@@ -205,30 +246,12 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     loadRaw(m_tempRaw, CH_TEMP);   loadRaw(m_markerRaw, CH_MARKER);
     loadRaw(m_pacemakerRaw, CH_PACEMAKER_EVENT);
 
-    if (m_gapIndicator) m_gapIndicator->rescan();
-
-    auto rewriteRawToIndexTime = [&](QVector<QPointF>& raw, int chIdx) {
-        if (raw.size() < 2) return;
-        const float nativeHz = channel_native_rates[chIdx];
-        if (nativeHz <= 0.0f) return;
-        const double dt = 1.0 / nativeHz;
-        for (int i = 0; i < raw.size(); ++i) raw[i].setX(i * dt);
-        };
-    rewriteRawToIndexTime(m_ecg1Raw, CH_ECG1);
-    rewriteRawToIndexTime(m_ecg2Raw, CH_ECG2);
-    rewriteRawToIndexTime(m_ecg3Raw, CH_ECG3);
-    rewriteRawToIndexTime(m_ppgRaw, CH_PPG);
-    rewriteRawToIndexTime(m_abpRaw, CH_ABP);
-    rewriteRawToIndexTime(m_tempRaw, CH_TEMP);
-    rewriteRawToIndexTime(m_markerRaw, CH_MARKER);
-    rewriteRawToIndexTime(m_accelXRaw, CH_ACCEL_X);
-    rewriteRawToIndexTime(m_accelYRaw, CH_ACCEL_Y);
-    rewriteRawToIndexTime(m_accelZRaw, CH_ACCEL_Z);
-    rewriteRawToIndexTime(m_respRaw, CH_RESP);
-    rewriteRawToIndexTime(m_cvpRaw, CH_CVP);
-    rewriteRawToIndexTime(m_pacemakerRaw, CH_PACEMAKER_EVENT);
-    rewriteRawToIndexTime(m_artRaw, CH_ART);
-    rewriteRawToIndexTime(m_artPulmRaw, CH_ART_PULM);
+    // The raw (t, v) block is stored with x = row-index time (row index /
+    // grid rate), the same clock the upsampled block uses, so the raw scatter
+    // already lands exactly on the upsampled trace -- no re-timing needed. (The
+    // old code rewrote x to per-channel ordinal time here, which desynced the
+    // two blocks at every gap; that rewrite, and the gap_indicator it fed, have
+    // been removed.)
 
     {
         uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * m_sleepSR);
@@ -302,8 +325,18 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 }
 
 void noise_marking_gui::on_next8hours_clicked() {
-    resetUnpinnedGains(); loadChunkFromFile(current_chunk_index + 1);
+    /*
+        If the 'w' key or the next 8 hours button is clicked, see if there is another 8 hour chunk of data to load, if so, load it.
+        If there is additional data less than 8 hours, that data is loaded.
+    */
+    const uint64_t ecgPerChunk = static_cast<uint64_t>(seconds_in_memory_at_once * channel_upsampled_rates[CH_ECG1]);
+    const uint64_t nextStart = (current_chunk_index + 1) * ecgPerChunk;
+    if (nextStart >= upsampled_channel_sizes[CH_ECG1]) return;   // no data ahead
+    resetUnpinnedGains();
+    loadChunkFromFile(current_chunk_index + 1);
 }
 void noise_marking_gui::on_prev8hours_clicked() {
-    if (current_chunk_index > 0) { resetUnpinnedGains(); loadChunkFromFile(current_chunk_index - 1); }
+    if (current_chunk_index > 0) {
+        resetUnpinnedGains(); loadChunkFromFile(current_chunk_index - 1);
+    }
 }

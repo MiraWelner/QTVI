@@ -80,12 +80,17 @@ static inline SingleMethodResult build_ecg_template_for_method(
 
 
     // Snip P-to-P instead of R-to-R. Cutting at each R put the *next* beat's
-    // P at the tail; shifting every boundary back by ~1.5*avg_r_expand (about
-    // one PR interval + P width) starts each window just before its own P, so
-    // the averaged beat reads P,QRS,T with the P at the front. Boundaries now
-    // sit before P and after T, so the old symmetric `lens` expansion (which
-    // existed to keep R-to-R from clipping) is dropped.
-    const size_t preP = static_cast<size_t>(std::llround(1.5 * res.avg_r_expand));
+    // P at the tail; shifting every boundary back by kEcgPrePFrac*avg_r_expand
+    // starts each window before its own P, so the averaged beat reads
+    // P,QRS,T with the P at the front. Increased from 1.5 to 2.0 so slower
+    // heart rates / longer PR intervals don't clip the P off the front.
+    //
+    // R therefore sits at index preP within the template. The viewer anchors
+    // the PPG to R using this same fraction (see kEcgRAnchorFrac in
+    // TemplateViewerWindow.cpp) -- the two MUST stay equal so ECG and PPG
+    // remain time-aligned.
+    constexpr double kEcgPrePFrac = 2.0;
+    const size_t preP = static_cast<size_t>(std::llround(kEcgPrePFrac * res.avg_r_expand));
     vector<size_t> seg(r.size());
     for (size_t j = 0; j < r.size(); ++j)
         seg[j] = (r[j] > preP) ? r[j] - preP : 0;

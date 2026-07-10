@@ -416,12 +416,18 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
             if (seg.label != labelStd) continue;        // std::string compare, no per-seg QString alloc
             const double s = seg.startSample / sr - globalOffset;
             const double e = seg.endSample / sr - globalOffset;
-            refExcluded.push_back({ s, e });
+            // Most markings are excluded from the reference-window stats
+            // (threshold gate + mean R-R). Types flagged includeInThreshold
+            // (e.g. Minor Noise) are kept in those stats, so they have no
+            // effect on detection or on where the following R peaks land.
+            const bool inclThr = annotation_types::includeInThreshold(seg.marking_type);
+            if (!inclThr)
+                refExcluded.push_back({ s, e });
             if (annotation_types::suppressesDetection(seg.marking_type))
             {
                 detExcluded.push_back({ s, e });
             }
-            else if (e - s > kRefSec)
+            else if (!inclThr && e - s > kRefSec)
             {
                 withinSpans.push_back({ s, e });
             }
@@ -850,7 +856,6 @@ void noise_marking_gui::handle_data_plot() {
         delete area;
     }
     m_highlights.clear();
-    if (m_gapIndicator) m_gapIndicator->clearSeries();
 
     mark_state_ecg1.startMarkerLine = nullptr;
     mark_state_ecg2.startMarkerLine = nullptr;
@@ -1113,7 +1118,6 @@ void noise_marking_gui::handle_data_plot() {
     determine_which_nonmarkable_charts_to_plot();
     updateNoiseHighlights();
     if (m_pulseOverlay) m_pulseOverlay->refresh();
-    if (m_gapIndicator)  m_gapIndicator->refresh();
     syncChunkScrollBar();
 
     // GL-accelerated series sit in a QOpenGLWidget overlaying the plot area,

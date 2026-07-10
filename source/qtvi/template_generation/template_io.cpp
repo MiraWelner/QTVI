@@ -77,6 +77,12 @@ namespace template_io {
             writeMethod(f, b.ch3_absval); writeMethod(f, b.ch3_unfiltered);
             writeVecD(f, b.ppgTemplate);
             writeVecD(f, b.ppgTemplate_std);
+            writeVecD(f, b.abpTemplate);
+            writeVecD(f, b.abpTemplate_std);
+            writeVecD(f, b.artTemplate);
+            writeVecD(f, b.artTemplate_std);
+            writeVecD(f, b.artPulmTemplate);
+            writeVecD(f, b.artPulmTemplate_std);
             uint8_t bad = b.bad_segment ? 1 : 0;
             f.write(reinterpret_cast<const char*>(&bad), 1);
         }
@@ -106,7 +112,13 @@ namespace template_io {
                 !readMethod(f, b.ch3_raw) || !readMethod(f, b.ch3_squared) ||
                 !readMethod(f, b.ch3_absval) || !readMethod(f, b.ch3_unfiltered) ||
                 !readVecD(f, b.ppgTemplate) ||
-                !readVecD(f, b.ppgTemplate_std))
+                !readVecD(f, b.ppgTemplate_std) ||
+                !readVecD(f, b.abpTemplate) ||
+                !readVecD(f, b.abpTemplate_std) ||
+                !readVecD(f, b.artTemplate) ||
+                !readVecD(f, b.artTemplate_std) ||
+                !readVecD(f, b.artPulmTemplate) ||
+                !readVecD(f, b.artPulmTemplate_std))
                 throw std::runtime_error("template file truncated mid-bin: " + path);
             uint8_t bad = 0;
             f.read(reinterpret_cast<char*>(&bad), 1);

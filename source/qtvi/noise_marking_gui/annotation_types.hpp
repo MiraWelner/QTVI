@@ -23,12 +23,18 @@ namespace annotation_types {
         bool        postEligible;     // beat AFTER one of these gets this code in the post column
         bool        paramEdit;        // true => dragging edits threshold/blanking, not a stored annotation
         bool        invertEdit;       // true => dragging flips inversion in the span, not a stored annotation
+        bool        includeInThreshold; // true => this span's signal IS kept in the
+        //   reference-window threshold / mean-R-R stats
+        //   (i.e. NOT excluded), so it has no effect on
+        //   detection or the placement of following R
+        //   peaks. false => excluded from those stats
+        //   (the historical behaviour for every type).
     };
 
     inline constexpr std::array<AnnotationType, 13> noise_types = { {
-            //  label               code  r    g    b    a   suppress  post   param  invert
+            //  label               code  r    g    b    a   suppress  post   param  invert inclThr
         { "1) R Peak Noise",   1,  235, 220, 0,   60, true,  false, false },  // yellow
-        { "2) Minor Noise",    2,  150, 80,  30,  60, false, false, false },  // brown
+        { "2) Minor Noise",    2,  150, 80,  30,  60, false, false, false, false, true },  // brown; no effect on detection/thresholds
         { "3) Blank.+Thresh.", 3,  128, 128, 128, 60, false, false, true  },  // gray
         { "4) Cond. Delay",    4,  70,  60,  200, 60, false, false, false },  // indigo
         { "5) AF",             5,  230, 25,  25,  60, false, true,  false },  // red
@@ -86,6 +92,20 @@ namespace annotation_types {
     inline bool isInvertEdit(const QString& label) {
         const auto* t = find(label);
         return t && t->invertEdit;
+    }
+
+    // Whether this span's signal is KEPT in the reference-window threshold /
+    // mean-R-R statistics. When true, the span has no effect on detection or
+    // on the placement of following R peaks (e.g. "Minor Noise"). When false
+    // (the default for every other type), the span is excluded from those
+    // stats, as it historically always was.
+    inline bool includeInThreshold(const std::string& label) {
+        const auto* t = find(label);
+        return t && t->includeInThreshold;
+    }
+    inline bool includeInThreshold(const QString& label) {
+        const auto* t = find(label);
+        return t && t->includeInThreshold;
     }
 
 }  // namespace annotation_types

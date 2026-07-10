@@ -325,6 +325,8 @@ namespace gui_peak_finder {
         const double thrHi = threshold(rp[b - 1].x());
         const bool thrUniform = (thrLo == thrHi);
 
+
+        //the R peak threshold is n% between the baseline (calculated by signal median) and peak (calculated by median peak of prev signal)
         QVector<QPointF> refPeaks;
         const double spn = vMax - vMin;
         for (int i = a + 1; i < b - 1; ++i) {
@@ -335,8 +337,9 @@ namespace gui_peak_finder {
             const double v = sgn * rp[i].y();
             if (v >= gate && v >= sgn * rp[i - 1].y() && v > sgn * rp[i + 1].y()) refPeaks.append({ tt, v });
         }
-        rs.vMin = vMin;
-        rs.meanRR = within ? meanInterval(refPeaks)
+        QVector<double> amps; for (int i = a; i < b; ++i) amps.append(sgn * rp[i].y());
+        std::sort(amps.begin(), amps.end());
+        rs.vMin = amps[amps.size() / 2];        rs.meanRR = within ? meanInterval(refPeaks)
             : meanIntervalExcludingSpans(refPeaks, refExcluded);
         rs.gateTop = refPeaks.isEmpty() ? vMax : medianY(refPeaks);
         rs.ok = true;
@@ -497,11 +500,15 @@ namespace gui_peak_finder {
         const double d90 = d2[(int)(0.9 * d2.size())];
         if (d90 <= 0.0) return ret(rs);
         rs.upstrokeGate = 0.6 * d90;
+        
+
+        //the ppg peak threshold is n% between the baseline (calculated by signal median) and peak (calculated by median peak of prev signal)
 
         const QVector<QPointF> refRaw = collectSystolic(rp, a, b, rs.upstrokeGate, vMin, vMax, threshold);
         const QVector<QPointF> refPeaks = within ? refRaw : cleanReferencePeaks(refRaw, refExcluded);
-        rs.vMin = vMin;
-        rs.meanRR = within ? meanInterval(refPeaks)
+        QVector<double> amps; for (int i = a; i < b; ++i) amps.append(rp[i].y());
+        std::sort(amps.begin(), amps.end());
+        rs.vMin = amps[amps.size() / 2];        rs.meanRR = within ? meanInterval(refPeaks)
             : meanIntervalExcludingSpans(refPeaks, refExcluded);
         rs.gateTop = refPeaks.isEmpty() ? vMax : medianY(refPeaks);
         rs.ok = true;

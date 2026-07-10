@@ -33,6 +33,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <cmath>
+#include <QDebug>
 
 
 struct AnnealedSegment {
@@ -85,6 +86,14 @@ struct output_binfile_data {
     std::vector<double> ecgSignal2;
     std::vector<double> ecgSignal3;
     std::vector<double> ppgSignal;
+
+    // Raw arterial signals, for display as faint background-context traces
+    // in the template viewer. Present only when the dataset carried them;
+    // re-hydrated from the annealed .bin's pass-through slots by the
+    // two-arg read_output_binfile below. Empty otherwise.
+    std::vector<double> abpSignal;
+    std::vector<double> artSignal;
+    std::vector<double> artPulmSignal;
 
     // Per-channel R-peaks + preprocessed signals from 3 methods. The
     // R-peak indices, noise flags, and preprocessed (squared/absval)
@@ -243,9 +252,7 @@ inline AnnealedData read_input_binfile(const std::string& path);
  * @param  wavePath       Path to the wave_markings .bin.
  * @param  annealedPath   Path to the matching annealed .bin.
  */
-inline std::vector<output_binfile_data> read_output_binfile(
-    const std::string& wavePath,
-    const std::string& annealedPath)
+inline std::vector<output_binfile_data> read_output_binfile(const std::string& wavePath,const std::string& annealedPath)
 {
     std::vector<output_binfile_data> bins = read_output_binfile(wavePath);
     AnnealedData ann = read_input_binfile(annealedPath);
@@ -268,6 +275,25 @@ inline std::vector<output_binfile_data> read_output_binfile(
 
         b.ppg_bin_indexs = std::move(a.ppg_bin_indexs);
         b.ecg_bin_indexs = std::move(a.ecg_bin_indexs);
+
+        // Arterial pass-through channels, pulled from the annealed slot set
+        // for use as background-context traces in the template viewer. Slot
+        // indices match the file_to_bin / gui_handler channel layout:
+        //   CH_ABP = 33, CH_ART = 34, CH_ART_PULM = 35.
+        // A missing/short slot yields an empty vector (=> not drawn).
+        auto slot = [&](std::size_t ch) -> std::vector<double> {
+            return (ch < a.all_upsampled.size())
+                ? std::move(a.all_upsampled[ch]) : std::vector<double>{};
+            };
+        b.abpSignal = slot(33);
+        b.artSignal = slot(34);
+        b.artPulmSignal = slot(35);
+
+        if (i < 3) qDebug() << "[REHYDRATE] bin" << i
+            << "all_upsampled.size" << a.all_upsampled.size()
+            << "abp(33)" << b.abpSignal.size()
+            << "art(34)" << b.artSignal.size()
+            << "artPulm(35)" << b.artPulmSignal.size();
 
         // Pass-through channels stay empty: template generation does not
         // read them (the previous reader was already seeking past them).

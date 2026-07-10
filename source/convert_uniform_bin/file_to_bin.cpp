@@ -679,6 +679,66 @@ namespace {
         return times;
     }
 
+    // Correct "double-rate then blank" anomalies in a sparse .dat channel.
+    //
+    // Some recordings contain runs where a channel was sampled at ~2x its
+    // configured rate (e.g. PPG populated every 2 rows instead of every 4 on a
+    // 500 Hz grid), each run immediately followed by a blank of equal length
+    // where that channel has no samples while ECG / the row grid continue. The
+    // per-sample timestamps in these files are unreliable, so detection is
+    // purely on row-index stride: a run whose spacing is below the channel's
+    // normal stride is the 2x region. Re-spacing those samples back onto the
+    // normal stride spreads them across the trailing blank and closes it, so
+    // both the upsampled and raw blocks (which share the row-index clock) see
+    // one continuous stream.
+    //
+    // Operates on row indices only (values untouched). Handles many runs per
+    // channel. No-op for grid-rate channels (ECG, normalStride <= 1).
+    //
+    // Two guards prevent a tail-shift: a run is only re-spaced if it has a
+    // trailing anchor (a normal sample after it -- otherwise there is no blank
+    // to fill and nothing to bound the expansion, so it would run past the real
+    // end of data), and if it is at least kMinRun samples long (a one- or
+    // two-sample short delta is sensor jitter, not a 2x region, and re-spacing
+    // it would permanently offset every later sample). A genuine gap -- normal
+    // stride before it, no 2x compression -- never triggers and stays open.
+    void fix_double_rate_regions(std::vector<size_t>& rawRowIdx,
+        double rowRate, double nativeHz)
+    {
+        if (rawRowIdx.size() < 2 || rowRate <= 0.0 || nativeHz <= 0.0) return;
+
+        const double normalStride = rowRate / nativeHz;        // PPG: 500/125 = 4
+        if (normalStride <= 1.0) return;                       // ECG: grid rate
+        const double compressedThresh = normalStride * 0.75;   // delta below => 2x
+        constexpr size_t kMinRun = 4;                          // ignore short blips
+
+        const size_t n = rawRowIdx.size();
+        size_t i = 0;
+        while (i + 1 < n) {
+            size_t j = i;
+            while (j + 1 < n &&
+                (double)(rawRowIdx[j + 1] - rawRowIdx[j]) < compressedThresh) {
+                ++j;
+            }
+            const size_t runLen = j - i + 1;
+            if (j > i && runLen >= kMinRun && j + 1 < n) {
+                const size_t anchor = rawRowIdx[i];
+                const size_t nextRow = rawRowIdx[j + 1];
+                for (size_t m = 1; m <= j - i; ++m) {
+                    size_t newIdx = anchor +
+                        (size_t)std::llround((double)m * normalStride);
+                    if (newIdx <= rawRowIdx[i + m - 1]) newIdx = rawRowIdx[i + m - 1] + 1;
+                    if (newIdx >= nextRow)              newIdx = nextRow - 1;
+                    rawRowIdx[i + m] = newIdx;
+                }
+                i = j;
+            }
+            else {
+                ++i;
+            }
+        }
+    }
+
 }   // anonymous namespace
 
 // ============================================================================
@@ -841,15 +901,6 @@ void make_binfile_dat(const std::filesystem::path& path,
     }
     PrescannedDat prescan = prescan_dat_columns(path);
 
-    // Real per-row wall-clock timestamps (seconds since first row's
-    // System TimeStamp UTC). Used by writeCol() to put each raw (t, v)
-    // pair at its true time -- otherwise gaps in the source recording
-    // get silently filled by the row_idx/row_rate timeline below.
-    std::vector<double> rowTimestamps = parse_dat_timestamps(path, prescan.totalRows);
-    const bool haveRealTimestamps = !rowTimestamps.empty()
-        && std::any_of(rowTimestamps.begin(), rowTimestamps.end(),
-            [](double t) { return t > 0.0; });
-
     // Resample a channel to its target rate using ONLY its real populated
     // samples, placed at their true times. Linear interpolation between
     // consecutive real samples. Avoids the "fake plateau" bug from treating
@@ -913,6 +964,10 @@ void make_binfile_dat(const std::filesystem::path& path,
                 return;
             }
 
+            // Correct "double-rate then blank" packing artifacts before either
+            // block is built, so the upsampled and raw blocks share one clock.
+            fix_double_rate_regions(rawRowIdx, row_rate, nativeHz);
+
             std::vector<double> up =
                 resample_from_sparse(rawValues, rawRowIdx, prescan.totalRows, upHz);
 
@@ -926,21 +981,15 @@ void make_binfile_dat(const std::filesystem::path& path,
                 sizes_up[ch] = (uint32_t)up.size();
             }
 
-            // Raw block: real wall-clock timestamps when we have them, so
-            // gaps in the source recording survive into the .bin and the
-            // gap_indicator can find them. Falls back to row_idx*dt only for
-            // rows whose timestamp didn't parse.
+            // Raw block x = corrected row-index time (row index / grid rate) --
+            // the SAME clock resample_from_sparse uses for the upsampled block.
+            // The .dat's own timestamps are unreliable, and fix_double_rate_regions
+            // has already corrected rawRowIdx for 2x packing while leaving genuine
+            // gaps open, so row index is the single source of truth: the raw
+            // scatter now lands exactly on the upsampled trace everywhere.
             const double dt = (row_rate > 0.0) ? (1.0 / row_rate) : 0.0;
             for (size_t k = 0; k < rawValues.size(); ++k) {
-                const size_t rIdx = rawRowIdx[k];
-                double t;
-                if (haveRealTimestamps && rIdx < rowTimestamps.size()
-                    && rowTimestamps[rIdx] >= 0.0) {
-                    t = rowTimestamps[rIdx];
-                }
-                else {
-                    t = (double)rIdx * dt;
-                }
+                const double t = (double)rawRowIdx[k] * dt;
                 double pair[2] = { t, rawValues[k] };
                 out.write(reinterpret_cast<const char*>(pair), 16);
             }

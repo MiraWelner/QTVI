@@ -165,7 +165,7 @@
           </size>
          </property>
          <property name="text">
-          <string>Create Annotation</string>
+          <string>Set Mark</string>
          </property>
         </widget>
        </item>
@@ -220,32 +220,32 @@
          </item>
          <item>
           <property name="text">
-           <string>4) Cond. Delay</string>
+           <string>4) PVC</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>5) AF</string>
+           <string>5) PAC</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>6) SVT</string>
+           <string>6) Cond. Delay</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>7) VT</string>
+           <string>7) AF</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>8) PVC</string>
+           <string>8) SVT</string>
           </property>
          </item>
          <item>
           <property name="text">
-           <string>9) PAC</string>
+           <string>9) VT</string>
           </property>
          </item>
          <item>

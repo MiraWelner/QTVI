@@ -281,10 +281,7 @@ inline void write_output_binfile(const std::string& path, const std::vector<outp
     }
 }
 
-inline void write_output_csvfile(const std::string& path,
-    const std::vector<output_binfile_data>& bins,
-    const std::string& fileID,
-    double sampleRateHz = 0.0)
+inline void write_output_csvfile(const std::string& path, const std::vector<output_binfile_data>& bins, const std::string& fileID, double sampleRateHz = 0.0)
 {
     std::ofstream f(path);
     if (!f.is_open())
@@ -319,22 +316,27 @@ inline void write_output_csvfile(const std::string& path,
             return best;
         };
 
-    static const char* const kColSuffix[COLS_PER_ROW] = {
+    static const char* const column_suffix[COLS_PER_ROW] = {
         "ch1_r", "ch1_squared_r", "ch1_absval_r",
         "ch2_r", "ch2_squared_r", "ch2_absval_r",
         "ch3_r", "ch3_squared_r", "ch3_absval_r",
         "ppg_min", "ppg_max"
     };
-
+    static const char* const interval_column_name[COLS_PER_ROW] = {
+        "ch1_rr_interval_ms", "ch1_squared_rr_interval_ms", "ch1_absval_rr_interval_ms",
+        "ch2_rr_interval_ms", "ch2_squared_rr_interval_ms", "ch2_absval_rr_interval_ms",
+        "ch3_rr_interval_ms", "ch3_squared_rr_interval_ms", "ch3_absval_rr_interval_ms",
+        "ppg_trough_interval_ms", "ppg_peak_interval_ms"
+    };
     // Header: file_id, bin, then 6 cells per column.
     f << "file_id,bin";
     for (std::size_t c = 0; c < COLS_PER_ROW; ++c) {
-        f << ',' << kColSuffix[c] << "_sec_from_bin_start"
-            << ',' << kColSuffix[c] << "_ms_from_bin_start"
-            << ',' << kColSuffix[c] << "_sec_from_file_start"
-            << ',' << kColSuffix[c] << "_ms_from_file_start"
-            << ',' << kColSuffix[c] << "_peak_height_mv"
-            << ',' << kColSuffix[c] << "rinterval_ms";
+        f << ',' << column_suffix[c] << "_sec_from_bin_start"
+            << ',' << column_suffix[c] << "_ms_from_bin_start"
+            << ',' << column_suffix[c] << "_sec_from_file_start"
+            << ',' << column_suffix[c] << "_ms_from_file_start"
+            << ',' << column_suffix[c] << "_peak_height_mv"
+            << ',' << interval_column_name[c];
     }
     f << '\n';
 

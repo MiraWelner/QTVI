@@ -25,15 +25,14 @@
  *         [uint64 sz][sz x double ppgTemplate]
  *         [uint64 sz][sz x double ppgTemplate_std]
  *
+ *       Then arterial background templates (foot-anchored, no std):
+ *         [uint64 sz][sz x double abpTemplate]
+ *         [uint64 sz][sz x double artTemplate]
+ *         [uint64 sz][sz x double artPulmTemplate]
+ *       (each sz=0 when that channel was absent in the dataset)
+ *
  *       Then bad-segment flag:
  *         [uint8 bad_segment]
- *
- *     SAECG tail (recording-wide averages, written once):
- *       13 averaged waveforms in the same order as per-bin blocks
- *       (12 ECG methods + PPG). Each:
- *         [uint64 sz][sz x double avg]
- *         [uint64 n_contributing_bins]
- *       (No std on SAECG -- the viewer doesn't currently display it.)
  *
  *   Only the ECG "raw" method writes a populated std vector; the other
  *   three methods (squared, absval, unfiltered) write an empty vector
@@ -66,6 +65,17 @@ namespace template_io {
         // Per-sample std for the PPG template, same length as ppgTemplate
         // (or empty if no PPG / not computed).
         std::vector<double>   ppgTemplate_std;
+        // Foot-anchored averaged arterial templates (ABP / ART / ART_PULM),
+        // shown as faint background-context traces in the viewer. Empty when
+        // the channel wasn't present in the dataset. No std (background only).
+        std::vector<double>   abpTemplate;
+        std::vector<double>   artTemplate;
+        std::vector<double>   artPulmTemplate;
+        // Per-sample std for each arterial template (same length when
+        // present, or empty). Written right after each template vector.
+        std::vector<double>   abpTemplate_std;
+        std::vector<double>   artTemplate_std;
+        std::vector<double>   artPulmTemplate_std;
         bool                  bad_segment = false;
     };
 

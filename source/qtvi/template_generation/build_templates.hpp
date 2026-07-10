@@ -17,6 +17,7 @@
 #include "template_io.hpp"
 #include "GenerateTemplates.hpp"
 #include "TemplateTypes.hpp"
+#include "template_generation/CreateArterialTemplates.hpp"
 #include "peak_finding/peakfinding_io.hpp"
 
 namespace template_generation_detail {
@@ -156,6 +157,35 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults)
         bool bad = peakResults[i].bad_segment;
         const TemplateInfo& info = (i < out.info.size()) ? out.info[i] : TemplateInfo{};
         packBinFast(out.tmpl.bins[i], info, bad);
+    }
+
+    // Arterial background-context templates (ABP / ART / ART_PULM),
+    // foot-anchored on the PPG feet, present-only. Built directly from the
+    // peak results (which carry the raw arterial signals + ppgMinAmps) and
+    // stored into each good bin. They survive mergeTemplatesSlow untouched.
+    {
+        constexpr double kArtStdMult = 2.5;
+        auto abp = CreateArterialTemplates(
+            peakResults, &output_binfile_data::abpSignal, kArtStdMult);
+        auto art = CreateArterialTemplates(
+            peakResults, &output_binfile_data::artSignal, kArtStdMult);
+        auto artp = CreateArterialTemplates(
+            peakResults, &output_binfile_data::artPulmSignal, kArtStdMult);
+        for (size_t i = 0; i < out.tmpl.bins.size(); ++i) {
+            if (out.tmpl.bins[i].bad_segment) continue;
+            if (i < abp.templates.size()) {
+                out.tmpl.bins[i].abpTemplate = std::move(abp.templates[i]);
+                out.tmpl.bins[i].abpTemplate_std = std::move(abp.stds[i]);
+            }
+            if (i < art.templates.size()) {
+                out.tmpl.bins[i].artTemplate = std::move(art.templates[i]);
+                out.tmpl.bins[i].artTemplate_std = std::move(art.stds[i]);
+            }
+            if (i < artp.templates.size()) {
+                out.tmpl.bins[i].artPulmTemplate = std::move(artp.templates[i]);
+                out.tmpl.bins[i].artPulmTemplate_std = std::move(artp.stds[i]);
+            }
+        }
     }
 
     // Beats: ch1 raw kept beats (moves them out of out.info; the slow merge

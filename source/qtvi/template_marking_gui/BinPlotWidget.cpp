@@ -67,6 +67,15 @@ namespace {
     constexpr QColor kColorPpg50{ 235, 100, 100 };  // light red
     constexpr QColor kColorPpgEnd{ 200,  60,  90 };  // dark pink-red
 
+    // Arterial markers (ABP green, ART purple, ART_PULM orange),
+    // darkest-to-lightest within a group.
+    constexpr QColor kColorAbp[5] = {
+        {0,80,30},{0,115,45},{30,150,75},{80,185,120},{130,210,160} };
+    constexpr QColor kColorArt[5] = {
+        {75,20,110},{105,35,150},{140,75,185},{170,120,210},{195,160,225} };
+    constexpr QColor kColorArtPulm[5] = {
+        {150,70,0},{190,100,15},{215,135,45},{230,165,90},{240,195,140} };
+
     QColor markerColor(int m) {
         switch (m) {
         case BinPlotWidget::EcgP:        return kColorEcgP;
@@ -80,6 +89,9 @@ namespace {
         case BinPlotWidget::Ppg50:       return kColorPpg50;
         case BinPlotWidget::PpgEnd:      return kColorPpgEnd;
         }
+        if (BinPlotWidget::markerIsAbp(m))     return kColorAbp[m - BinPlotWidget::AbpOnset];
+        if (BinPlotWidget::markerIsArt(m))     return kColorArt[m - BinPlotWidget::ArtOnset];
+        if (BinPlotWidget::markerIsArtPulm(m)) return kColorArtPulm[m - BinPlotWidget::ArtPulmOnset];
         return Qt::black;
     }
     const char* markerShortLabel(int m) {
@@ -94,6 +106,15 @@ namespace {
         case BinPlotWidget::PpgDicrotic: return "DN";
         case BinPlotWidget::Ppg50:       return "PPG 50% Upsl";
         case BinPlotWidget::PpgEnd:      return "PPG End";
+        case BinPlotWidget::AbpOnset: return "aBP On";  case BinPlotWidget::AbpPeak: return "aBP Pk";
+        case BinPlotWidget::AbpDicrotic: return "aBP DN"; case BinPlotWidget::Abp50: return "aBP 50%";
+        case BinPlotWidget::AbpEnd: return "aBP End";
+        case BinPlotWidget::ArtOnset: return "ART On";  case BinPlotWidget::ArtPeak: return "ART Pk";
+        case BinPlotWidget::ArtDicrotic: return "ART DN"; case BinPlotWidget::Art50: return "ART 50%";
+        case BinPlotWidget::ArtEnd: return "ART End";
+        case BinPlotWidget::ArtPulmOnset: return "APul On"; case BinPlotWidget::ArtPulmPeak: return "APul Pk";
+        case BinPlotWidget::ArtPulmDicrotic: return "APul DN"; case BinPlotWidget::ArtPulm50: return "APul 50%";
+        case BinPlotWidget::ArtPulmEnd: return "APul End";
         }
         return "?";
     }
@@ -101,16 +122,20 @@ namespace {
     // Compute the visible-range vertical bounds for a trace. If a matching
     // std vector is supplied, expand the range to include mean +- std at
     // every visible sample so the band fits inside the drawing area
-    // without clipping.
+    // without clipping. visN is clamped to the vector length so a caller
+    // asking for more samples than exist (e.g. a stunted template from a
+    // very short recording) can't seek past the end.
     void computeVisibleRange(const std::vector<double>& v,
         const std::vector<double>& sd,
         int visN,
         double& lo, double& hi)
     {
-        lo = *std::min_element(v.begin(), v.begin() + visN);
-        hi = *std::max_element(v.begin(), v.begin() + visN);
-        if ((int)sd.size() < visN) return;
-        for (int i = 0; i < visN; ++i) {
+        const int n = std::min(visN, static_cast<int>(v.size()));
+        if (n < 1) { lo = 0.0; hi = 1.0; return; }   // nothing to range over
+        lo = *std::min_element(v.begin(), v.begin() + n);
+        hi = *std::max_element(v.begin(), v.begin() + n);
+        if ((int)sd.size() < n) return;
+        for (int i = 0; i < n; ++i) {
             lo = std::min(lo, v[i] - sd[i]);
             hi = std::max(hi, v[i] + sd[i]);
         }
@@ -242,8 +267,65 @@ void BinPlotWidget::setShowPpgMarkers(bool show) {
     update();
 }
 
+void BinPlotWidget::setShowAbpMarkers(bool show) {
+    if (m_showAbpMarkers == show) return;
+    m_showAbpMarkers = show; update();
+}
+void BinPlotWidget::setShowArtMarkers(bool show) {
+    if (m_showArtMarkers == show) return;
+    m_showArtMarkers = show; update();
+}
+void BinPlotWidget::setShowArtPulmMarkers(bool show) {
+    if (m_showArtPulmMarkers == show) return;
+    m_showArtPulmMarkers = show; update();
+}
+
+void BinPlotWidget::setShowEcgTrace(bool show) {
+    if (m_showEcgTrace == show) return;
+    m_showEcgTrace = show; update();
+}
+void BinPlotWidget::setShowPpgTrace(bool show) {
+    if (m_showPpgTrace == show) return;
+    m_showPpgTrace = show; update();
+}
+void BinPlotWidget::setShowAbpTrace(bool show) {
+    if (m_showAbpTrace == show) return;
+    m_showAbpTrace = show; update();
+}
+void BinPlotWidget::setShowArtTrace(bool show) {
+    if (m_showArtTrace == show) return;
+    m_showArtTrace = show; update();
+}
+void BinPlotWidget::setShowArtPulmTrace(bool show) {
+    if (m_showArtPulmTrace == show) return;
+    m_showArtPulmTrace = show; update();
+}
+
+void BinPlotWidget::setArterialTraces(const std::vector<double>& abp,
+    const std::vector<double>& art,
+    const std::vector<double>& artPulm,
+    const std::vector<double>& abpStd,
+    const std::vector<double>& artStd,
+    const std::vector<double>& artPulmStd)
+{
+    m_abp = abp;
+    m_art = art;
+    m_artPulm = artPulm;
+    m_abpStd = abpStd;
+    m_artStd = artStd;
+    m_artPulmStd = artPulmStd;
+    update();
+}
+
 void BinPlotWidget::setMarker(Marker m, int idx) {
     m_markers[m] = idx;
+    update();
+}
+
+void BinPlotWidget::setBackgroundTraces(
+    const std::vector<std::pair<std::vector<double>, QColor>>& traces)
+{
+    m_bgTraces = traces;
     update();
 }
 
@@ -300,18 +382,59 @@ double BinPlotWidget::xFromSample(int s, bool isEcg) const {
     }
 }
 
+// For a given marker, resolve which trace vector bounds it, whether its
+// group is currently visible, and whether it uses ECG x-geometry, plus the
+// visible-sample count that bounds its markers. ECG uses its own visible
+// window; PPG and all arterial channels are foot-anchored and use the same
+// visiblePpgCount() rule (the whole trace), so arterial markers behave
+// identically to PPG markers. Returns false if the trace is empty/absent.
+bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
+    bool& isEcg, bool& visible, int& visN) const
+{
+    if (markerIsEcg(m)) {
+        vec = &m_ecg; isEcg = true; visible = m_showEcgMarkers;
+        visN = m_ecgVisibleN;
+        return !m_ecg.empty();
+    }
+    isEcg = false;   // PPG and all arterial groups ride the foot-anchored geometry
+    if (markerIsPpg(m)) {
+        vec = &m_ppg; visible = m_showPpgMarkers;
+        visN = visiblePpgCount(static_cast<int>(m_ppg.size()));
+        return m_hasPPG && !m_ppg.empty();
+    }
+    if (markerIsAbp(m)) {
+        vec = &m_abp; visible = m_showAbpMarkers;
+        visN = visiblePpgCount(static_cast<int>(m_abp.size()));
+        return !m_abp.empty();
+    }
+    if (markerIsArt(m)) {
+        vec = &m_art; visible = m_showArtMarkers;
+        visN = visiblePpgCount(static_cast<int>(m_art.size()));
+        return !m_art.empty();
+    }
+    if (markerIsArtPulm(m)) {
+        vec = &m_artPulm; visible = m_showArtPulmMarkers;
+        visN = visiblePpgCount(static_cast<int>(m_artPulm.size()));
+        return !m_artPulm.empty();
+    }
+    return false;
+}
+
 int BinPlotWidget::markerAtX(double x) const {
     int best = -1;
     double bestDist = click_radius_around_marker + 1.0;
     for (int m = 0; m < MarkerCount; ++m) {
         int idx = m_markers[m];
         if (idx < 0) continue;
-        const bool isEcg = markerIsEcg(m);
-        if (isEcg ? !m_showEcgMarkers : !m_showPpgMarkers) continue;
-        const auto& vec = isEcg ? m_ecg : m_ppg;
-        if (vec.empty() || idx >= (int)vec.size()) continue;
-        if (!isEcg && !m_hasPPG) continue;
-        if (idx >= visibleN(isEcg)) continue;
+        const std::vector<double>* vec = nullptr;
+        bool isEcg = false, visible = false;
+        int visN = 0;
+        if (!markerTrace(m, vec, isEcg, visible, visN)) continue;
+        if (!visible) continue;
+        if (idx >= (int)vec->size()) continue;
+        // Every marker clamps to its trace's visible window (same rule for
+        // ECG, PPG, and all arterial channels).
+        if (idx >= visN) continue;
         const double mx = xFromSample(idx, isEcg);
         const double d = std::abs(x - mx);
         if (d < bestDist) { bestDist = d; best = m; }
@@ -378,12 +501,57 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
     }
 
+    // -------- Arterial traces (ABP/ART/ART_PULM) --------
+    // Foot-anchored like the PPG (shared ppgStartSample()). Each autoscaled
+    // to its own range and gated by its own trace-visibility flag. A
+    // translucent std band is drawn under the line when a matching std
+    // vector is present (same treatment as ECG/PPG).
+    {
+        const double startPx = margin_left + ppgStartSample() * pps;
+        struct ArtTrace {
+            const std::vector<double>* v;
+            const std::vector<double>* sd;
+            QColor line;
+            QColor band;
+            bool show;
+        };
+        const ArtTrace arts[] = {
+            { &m_abp,     &m_abpStd,     QColor(0, 115, 45),   QColor(80, 185, 120, 110),  m_showAbpTrace },     // green
+            { &m_art,     &m_artStd,     QColor(140, 75, 185), QColor(180, 130, 215, 110), m_showArtTrace },     // purple
+            { &m_artPulm, &m_artPulmStd, QColor(215, 135, 45), QColor(235, 175, 100, 110), m_showArtPulmTrace }, // orange
+        };
+        for (const auto& a : arts) {
+            if (!a.show) continue;
+            const std::vector<double>& v = *a.v;
+            const int visN = static_cast<int>(v.size());
+            if (visN < 2) continue;
+            double lo = *std::min_element(v.begin(), v.end());
+            double hi = *std::max_element(v.begin(), v.end());
+            // Expand the vertical range to fit the std band (mean +/- std)
+            // so it doesn't clip, mirroring computeVisibleRange for PPG.
+            const std::vector<double>& sd = *a.sd;
+            const bool haveStd = static_cast<int>(sd.size()) >= visN;
+            if (haveStd) {
+                for (int i = 0; i < visN; ++i) {
+                    lo = std::min(lo, v[i] - sd[i]);
+                    hi = std::max(hi, v[i] + sd[i]);
+                }
+            }
+            if (haveStd)
+                drawStdBand(p, v, sd, startPx, margin_top, ph, pps, visN, lo, hi, a.band);
+            drawTraceFixedScale(p, v, startPx, margin_top, ph, pps,
+                QPen(a.line, 1.3), visN, lo, hi);
+        }
+    }
+
     // -------- ECG --------
-    drawStdBand(p, m_ecg, m_ecgStd, margin_left, margin_top, ph, pps, m_ecgVisibleN, yLo, yHi, color_stdband_ecg);
-    drawTraceFixedScale(p, m_ecg, margin_left, margin_top, ph, pps, QPen(kColorEcgTrace, 1.5), m_ecgVisibleN, yLo, yHi);
+    if (m_showEcgTrace) {
+        drawStdBand(p, m_ecg, m_ecgStd, margin_left, margin_top, ph, pps, m_ecgVisibleN, yLo, yHi, color_stdband_ecg);
+        drawTraceFixedScale(p, m_ecg, margin_left, margin_top, ph, pps, QPen(kColorEcgTrace, 1.5), m_ecgVisibleN, yLo, yHi);
+    }
 
     // -------- PPG --------
-    if (m_hasPPG && !m_ppg.empty() && m_ppgVisibleN > 0) {
+    if (m_showPpgTrace && m_hasPPG && !m_ppg.empty() && m_ppgVisibleN > 0) {
         // Real PPG, positioned so its foot sits at R + transit delay. No
         // fabricated lead-in: the trace begins at ppgStartSample() and
         // nothing is drawn to its left.
@@ -408,12 +576,13 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     for (int m = 0; m < MarkerCount; ++m) {
         int idx = m_markers[m];
         if (idx < 0) continue;
-        bool isEcg = markerIsEcg(m);
-        if (isEcg ? !m_showEcgMarkers : !m_showPpgMarkers) continue;
-        const auto& vec = isEcg ? m_ecg : m_ppg;
-        if (vec.empty() || idx >= (int)vec.size()) continue;
-        if (!isEcg && !m_hasPPG) continue;
-        if (idx >= visibleN(isEcg)) continue;
+        const std::vector<double>* vec = nullptr;
+        bool isEcg = false, visible = false;
+        int visN = 0;
+        if (!markerTrace(m, vec, isEcg, visible, visN)) continue;
+        if (!visible) continue;
+        if (idx >= (int)vec->size()) continue;
+        if (idx >= visN) continue;
         double mx = xFromSample(idx, isEcg);
         QPen pen(markerColor(m), 2);
         p.setPen(pen);
@@ -474,11 +643,15 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
 
 void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     if (m_dragMarker < 0) return;
-    const bool isEcg = markerIsEcg(m_dragMarker);
-    const auto& vec = isEcg ? m_ecg : m_ppg;
-    if (vec.empty()) return;
+    const std::vector<double>* vec = nullptr;
+    bool isEcg = false, visible = false;
+    int visN = 0;
+    if (!markerTrace(m_dragMarker, vec, isEcg, visible, visN)) return;
+    if (vec->empty()) return;
     int s = sampleFromX(e->position().x(), isEcg);
-    s = std::clamp(s, 0, visibleN(isEcg) - 1);
+    // Every marker clamps to its trace's visible window (one rule for
+    // ECG, PPG, and all arterial channels).
+    s = std::clamp(s, 0, std::max(0, visN - 1));
     m_markers[m_dragMarker] = s;
     emit markerMoved(m_binIndex, m_leadIndex, m_dragMarker, s);
     update();

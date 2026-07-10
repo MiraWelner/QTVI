@@ -1,5 +1,5 @@
 ﻿// ============================================================================
-// BinPlotWidget.h - One ECG lead + optional PPG overlay + draggable markers
+// BinPlotWidget.hpp - One ECG lead + optional PPG overlay + draggable markers
 //
 // Markers:
 //   ECG (per channel):  P-onset, Q-begin, T-begin, T-end
@@ -27,8 +27,10 @@
 #pragma once
 #include <QWidget>
 #include <QString>
+#include <QColor>
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 class BinPlotWidget : public QWidget {
@@ -43,7 +45,7 @@ public:
         // --- ECG markers (contiguous, starting at 0) ---
         EcgP = 0,   // P-wave onset
         EcgQBegin = 1,
-		EcgSEnd = 2,   // QRS end (S-wave)
+        EcgSEnd = 2,   // QRS end (S-wave)
         EcgTBegin = 3,
         EcgTEnd = 4,
         // --- PPG markers (contiguous, immediately after ECG) ---
@@ -52,14 +54,27 @@ public:
         PpgDicrotic = 7,   // dicrotic notch
         Ppg50 = 8,   // 50% point
         PpgEnd = 9,   // end-of-pulse / trough after descent
+        // --- Arterial markers: same 5-marker set as PPG, one group per
+        //     channel (ABP, ART, ART_PULM), each contiguous. They ride the
+        //     PPG x-geometry (foot-anchored at ppgStartSample()) but index
+        //     into their own background trace vector. ---
+        AbpOnset = 10, AbpPeak = 11, AbpDicrotic = 12, Abp50 = 13, AbpEnd = 14,
+        ArtOnset = 15, ArtPeak = 16, ArtDicrotic = 17, Art50 = 18, ArtEnd = 19,
+        ArtPulmOnset = 20, ArtPulmPeak = 21, ArtPulmDicrotic = 22,
+        ArtPulm50 = 23, ArtPulmEnd = 24,
         // --- size sentinel ---
-        MarkerCount = 10
+        MarkerCount = 25
     };
 
     // Range-based predicates. Update these bounds if you add more
     // markers to either group.
     static bool markerIsEcg(int m) { return m >= EcgP && m <= EcgTEnd; }
     static bool markerIsPpg(int m) { return m >= PpgOnset && m <= PpgEnd; }
+    static bool markerIsAbp(int m) { return m >= AbpOnset && m <= AbpEnd; }
+    static bool markerIsArt(int m) { return m >= ArtOnset && m <= ArtEnd; }
+    static bool markerIsArtPulm(int m) { return m >= ArtPulmOnset && m <= ArtPulmEnd; }
+    // Any arterial marker (ABP/ART/ART_PULM) rides the PPG x-geometry.
+    static bool markerIsArterial(int m) { return m >= AbpOnset && m <= ArtPulmEnd; }
     double m_rPeakSample = 0.0;   // R-peak sample index within the ECG template
     double m_sampleRate = 0.0;   // Hz; 0 => label x-axis in samples
     double m_ppgDelay = 0.0;    // R->foot transit delay (samples); shifts PPG right
@@ -128,6 +143,29 @@ public:
     // Both default to true.
     void setShowEcgMarkers(bool show);
     void setShowPpgMarkers(bool show);
+    void setShowAbpMarkers(bool show);
+    void setShowArtMarkers(bool show);
+    void setShowArtPulmMarkers(bool show);
+    // Per-trace waveform visibility (independent of the markers on that
+    // trace). When false, the trace line/band is not drawn, but its
+    // markers may still show if their marker-visibility flag is on. All
+    // default to true.
+    void setShowEcgTrace(bool show);
+    void setShowPpgTrace(bool show);
+    void setShowAbpTrace(bool show);
+    void setShowArtTrace(bool show);
+    void setShowArtPulmTrace(bool show);
+    // Provide the arterial trace vectors (for marker bounds/geometry). Any
+    // may be empty when that channel is absent. Markers on an empty trace
+    // are never drawn or hit-tested. Call before setting arterial markers.
+    void setArterialTraces(const std::vector<double>& abp,
+        const std::vector<double>& art,
+        const std::vector<double>& artPulm,
+        const std::vector<double>& abpStd = {},
+        const std::vector<double>& artStd = {},
+        const std::vector<double>& artPulmStd = {});
+    void setBackgroundTraces(const std::vector<std::pair<std::vector<double>, QColor>>& traces);
+    std::vector<std::pair<std::vector<double>, QColor>> m_bgTraces;
 
     int  binIndex()  const { return m_binIndex; }
     int  leadIndex() const { return m_leadIndex; }
@@ -159,6 +197,11 @@ private:
     double xFromSample(int s, bool isEcg) const;
     int    markerAtX(double x) const;
     int    visibleN(bool isEcg) const;
+    // Resolve a marker's trace vector, geometry, current visibility, and
+    // visible-sample bound. ECG, PPG, and all arterial channels resolve
+    // through one path so they behave identically.
+    bool   markerTrace(int m, const std::vector<double>*& vec,
+        bool& isEcg, bool& visible, int& visN) const;
 
     // Widest sample extent any trace needs (in samples), and the
     // pixels-per-sample that makes that extent fill the drawable width.
@@ -174,17 +217,42 @@ private:
     std::vector<double> m_ecg;
     std::vector<double> m_ecgStd;
 
+
     int m_ecgVisibleN = 0;
     int m_ppgVisibleN = 0;
 
     // Storage sized by MarkerCount so it grows automatically if you add
     // more entries to the enum. All marker slots start hidden (-1).
-    int m_markers[MarkerCount] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+    int m_markers[MarkerCount] = {
+        -1, -1, -1, -1, -1,   // ECG
+        -1, -1, -1, -1, -1,   // PPG
+        -1, -1, -1, -1, -1,   // ABP
+        -1, -1, -1, -1, -1,   // ART
+        -1, -1, -1, -1, -1    // ART_PULM
+    };
+
+    // Arterial trace vectors (own sample space; drawn foot-anchored at the
+    // PPG origin). Empty when the channel is absent.
+    std::vector<double> m_abp;
+    std::vector<double> m_art;
+    std::vector<double> m_artPulm;
+    // Per-sample std for each arterial trace (empty => no band drawn).
+    std::vector<double> m_abpStd;
+    std::vector<double> m_artStd;
+    std::vector<double> m_artPulmStd;
 
     State m_state = State::Good;
     bool  m_hasPPG = false;
     bool  m_showEcgMarkers = true;
     bool  m_showPpgMarkers = true;
+    bool  m_showAbpMarkers = true;
+    bool  m_showArtMarkers = true;
+    bool  m_showArtPulmMarkers = true;
+    bool  m_showEcgTrace = true;
+    bool  m_showPpgTrace = true;
+    bool  m_showAbpTrace = true;
+    bool  m_showArtTrace = true;
+    bool  m_showArtPulmTrace = true;
     int   m_dragMarker = -1;
 
     static constexpr int margin_left = 37, margin_right = 0, margin_top = 16, margin_bottom = 16;

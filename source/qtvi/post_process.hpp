@@ -122,10 +122,30 @@ namespace post_process_detail {
             else {
                 std::cerr << "  R-peaks (raw, fast): " << stem << "\n";
                 AnnealedData annealedData = read_input_binfile(annealedPath.string());
+
+                // Grab arterial pass-through slots BEFORE the move consumes the bins.
+                // Slots match file_to_bin / gui_handler: CH_ABP=33, CH_ART=34, CH_ART_PULM=35.
+                const size_t nAnnealed = annealedData.bins.size();
+                std::vector<std::vector<double>> abpSlots(nAnnealed), artSlots(nAnnealed), artpSlots(nAnnealed);
+                for (size_t i = 0; i < nAnnealed; ++i) {
+                    auto& up = annealedData.bins[i].all_upsampled;
+                    if (33 < up.size()) abpSlots[i] = up[33];
+                    if (34 < up.size()) artSlots[i] = up[34];
+                    if (35 < up.size()) artpSlots[i] = up[35];
+                }
+
                 job.peakResults = create_ecg_ppg_pairs_raw(
                     std::move(annealedData.bins), true, stem,
                     cfg.ecg_upsample_rate, cfg.ppg_upsample_rate);
                 job.needSqabsDetection = true;
+
+                // create_ecg_ppg_pairs_raw doesn't carry the arterial pass-through
+                // channels, so attach them here (parallel by bin index).
+                for (size_t i = 0; i < job.peakResults.size() && i < nAnnealed; ++i) {
+                    job.peakResults[i].abpSignal = std::move(abpSlots[i]);
+                    job.peakResults[i].artSignal = std::move(artSlots[i]);
+                    job.peakResults[i].artPulmSignal = std::move(artpSlots[i]);
+                }
             }
 
             std::cerr << "  Templates (raw/unfiltered/ppg, fast): " << stem << "\n";
@@ -164,8 +184,7 @@ namespace post_process_detail {
                 // next to the .bin, same stem.
                 std::filesystem::path rPeakCsv = job.rPeakPath;
                 rPeakCsv.replace_extension(".csv");
-                write_output_csvfile(rPeakCsv.string(), job.peakResults,
-                    job.fileID, job.samplingRate);
+                write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
             }
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info);
             template_io::write_template_binfile(job.templatePath.string(), job.tmpl);

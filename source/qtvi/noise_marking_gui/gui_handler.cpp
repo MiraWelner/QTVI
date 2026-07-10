@@ -53,7 +53,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
     if (label == "ECG1") {
         r.chartView = ui->ecg_axis_1;
         r.state = &self->mark_state_ecg1;
-        r.upsampled_data = &m_ecg1; 
+        r.upsampled_data = &m_ecg1;
         r.dataRaw = &m_ecg1Raw;
         r.sampleRate = channel_upsampled_rates[CH_ECG1];
         r.color = COLOR_ECG1;
@@ -61,8 +61,8 @@ noise_marking_gui::channelRefs(const QString& label) const {
     else if (label == "ECG2") {
         r.chartView = ui->ecg_axis_2;
         r.state = &self->mark_state_ecg2;
-        r.upsampled_data = &m_ecg2; 
-        r.dataRaw = &m_ecg2Raw; 
+        r.upsampled_data = &m_ecg2;
+        r.dataRaw = &m_ecg2Raw;
         r.sampleRate = channel_upsampled_rates[CH_ECG2];
         r.color = COLOR_ECG2;
     }
@@ -93,7 +93,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
     else if (label == "ABP") {
         r.chartView = ui->abp_axis;
         r.state = &self->mark_state_abp;
-        r.upsampled_data = &m_abp; 
+        r.upsampled_data = &m_abp;
         r.dataRaw = &m_abpRaw;
         r.sampleRate = channel_upsampled_rates[CH_ABP];
         r.color = COLOR_ABP;
@@ -361,7 +361,6 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
 
     //asdf for DK
     // Letter-key mirrors: a = Left, d = Right (same window scroll);
-    // w = forward 8 h, s = back 8 h (same as the next/prev-8-hours buttons).
     new QShortcut(QKeySequence(Qt::Key_D), this, [this]() {
         double maxStart = std::max(0.0, totalChunkDuration() - visible_window_size);
         current_start_time = std::min(current_start_time + scrollStepSeconds(), maxStart);
@@ -371,16 +370,11 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         current_start_time = std::max(0.0, current_start_time - scrollStepSeconds());
         resetUnpinnedGains(); handle_data_plot(); updateAmpogramCursor();
         });
-    new QShortcut(QKeySequence(Qt::Key_W), this, [this]() {
-        on_next8hours_clicked();
-        });
-    new QShortcut(QKeySequence(Qt::Key_S), this, [this]() {
-        on_prev8hours_clicked();
-        });
 
     const QList<QChartView*> allCharts = {
        ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
        ui->ppg_axis, ui->accel_axis, ui->abp_axis,
+       ui->art_axis, ui->art_pulm_axis,
        ui->ecg_ampogram_axis, ui->ppg_ampogram_axis,
        ui->hyp_resp_axis, ui->cvp_eeg_axis, ui->pacemaker_axis
     };
@@ -518,7 +512,6 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     connect(ui->browse_file_button, &QPushButton::clicked, this, &noise_marking_gui::handleBrowseFile);
 
     m_pulseOverlay = std::make_unique<pulse_overlay>(this, markableChannelLabels());
-    m_gapIndicator = std::make_unique<gap_indicator>(this);
     m_annotationEraser = std::make_unique<annotation_eraser>(this);
 
     { QSignalBlocker block(ui->show_grid_check); ui->show_grid_check->setChecked(false); }
@@ -625,8 +618,8 @@ bool noise_marking_gui::promptThresholdBlanking(const QString& header,
 
     auto* blkSpin = new QDoubleSpinBox(&dlg);
     blkSpin->setRange(0.0, 2000.0); blkSpin->setDecimals(0); blkSpin->setSingleStep(10.0);
-    qDebug() << "blk =" << blk << " cfg.blanking_period =" << m_cfg.blanking_period;\
-    blkSpin->setValue(blk);
+    qDebug() << "blk =" << blk << " cfg.blanking_period =" << m_cfg.blanking_period; \
+        blkSpin->setValue(blk);
     form->addRow("Blanking (ms):", blkSpin);
 
     auto* buttons = new QDialogButtonBox(

@@ -30,7 +30,6 @@
 #include "user_control_handler.h"
 #include "config_entry.hpp"
 #include "grid_overlay.hpp"
-#include "gap_indicator.hpp"
 
 struct GenExcStruct {
     QString filePath;                          ///< Source file these markings belong to.
@@ -50,8 +49,7 @@ class annotation_eraser;   // defined in annotation_eraser.h; pointer held below
 
 class noise_marking_gui : public QDialog {
     Q_OBJECT
-    friend class user_control_handler;
-    friend class gap_indicator;
+        friend class user_control_handler;
     friend class annotation_eraser;
 
 public:
@@ -142,7 +140,6 @@ private:
     std::unique_ptr<annotation_handler>       m_noiseManager;
     std::unique_ptr<user_control_handler>     m_buttonHandler;
     std::unique_ptr<pulse_overlay>            m_pulseOverlay;
-    std::unique_ptr<gap_indicator>            m_gapIndicator;
     std::unique_ptr<annotation_eraser>        m_annotationEraser;
 
     QSet<QString>               m_activeChannels;
@@ -190,12 +187,12 @@ private:
 
     // --- Signal data (upsampled, 1 kHz unless otherwise noted) ---
     QVector<double> m_ecg1, m_ecg2, m_ecg3, m_ppg, m_accelX, m_accelY, m_accelZ, m_resp;
-    QVector<double> m_cvp, m_abp, m_temp, m_marker,  m_pacemaker,  m_sleepStages, m_art, m_artPulm;
+    QVector<double> m_cvp, m_abp, m_temp, m_marker, m_pacemaker, m_sleepStages, m_art, m_artPulm;
 
 
     QVector<QPointF> m_ecg1Raw, m_ecg2Raw, m_ecg3Raw, m_ppgRaw, m_abpRaw;
     QVector<QPointF> m_accelXRaw, m_accelYRaw, m_accelZRaw, m_respRaw, m_cvpRaw;
-    QVector<QPointF> m_tempRaw, m_markerRaw,m_pacemakerRaw, m_artRaw, m_artPulmRaw;
+    QVector<QPointF> m_tempRaw, m_markerRaw, m_pacemakerRaw, m_artRaw, m_artPulmRaw;
     QString m_binFilePath;
 
     static constexpr qint64 FILE_HEADER_SIZE = 584;
@@ -243,7 +240,7 @@ private:
     QPushButton* stopButtonForSignal(const QString& label) const;
     bool loadChunkFromFile(uint64_t chunkIndex);
     void handle_data_plot();
-	void determine_which_nonmarkable_charts_to_plot();
+    void determine_which_nonmarkable_charts_to_plot();
     void plot_nonmarkable(QChartView* view, const QString& title, const QList<markable_data_series>& serieses, double sampling_rate);
     QVector<QPointF> display_peaks_in_window(const QString& label, std::vector<int>* outPostTags = nullptr) const;
 
@@ -283,7 +280,7 @@ private:
     void   finalizeParamEdit(const QStringList& channels, double globalStart, double globalEnd);
     bool   editParamOverrideAt(QChartView* cv, const QPoint& pos);
     bool   promptThresholdBlanking(const QString& header, double& thr, double& blk);
-    void   applyParamOverrides(const QStringList& channels, double lo, double hi,double thrVal, double blkVal);
+    void   applyParamOverrides(const QStringList& channels, double lo, double hi, double thrVal, double blkVal);
     void   commitMarkingSpan(const QString& clickedLabel, double globalStart, double globalEnd);
     double thresholdAt(const QString& label, double globalTime) const;
     double blankingAt(const QString& label, double globalTime) const;

@@ -2,6 +2,7 @@
 
 #include <QMainWindow>
 #include <vector>
+#include <set>
 #include <QString>
 #include "TemplateBinIO.hpp"
 #include "BinPlotWidget.hpp"
@@ -44,6 +45,11 @@ private:
 
     void showPage();
     void clearPlots();
+    // Save a PNG of the CURRENT page (markers are hidden by default) into the
+    // folder holding templates.bin/.csv. Called from showPage(), so each page
+    // is captured once, when the user first scrolls to it. No flicker: the
+    // page is already on screen and painted.
+    void captureCurrentPage();
     void computeMarkingsForPage();
     void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
@@ -56,6 +62,8 @@ private:
 
     std::vector<TemplateBin> m_bins;
     QString m_markingPath;
+    QString m_templateDir;   // folder containing templates.bin/.csv (screenshot target)
+    std::set<int> m_capturedPages;   // pages already screenshotted this subject
     QString m_subjectId;
     double  m_sampleRate = 0.0;
 
@@ -70,8 +78,16 @@ private:
     int m_totalPages = 1;
 
     bool m_moveSubsequent = true;
-    bool m_showEcgMarkers = true;
-    bool m_showPpgMarkers = true;
+    bool m_showEcgMarkers = false;
+    bool m_showPpgMarkers = false;
+    bool m_showAbpMarkers = false;
+    bool m_showArtMarkers = false;
+    bool m_showArtPulmMarkers = false;
+    bool m_showEcgTrace = true;
+    bool m_showPpgTrace = true;
+    bool m_showAbpTrace = true;
+    bool m_showArtTrace = true;
+    bool m_showArtPulmTrace = true;
 
     // Push m_showEcgMarkers / m_showPpgMarkers into every visible plot.
     void applyMarkerVisibility();
