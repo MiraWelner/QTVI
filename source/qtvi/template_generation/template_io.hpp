@@ -96,8 +96,4 @@ namespace template_io {
     void write_template_binfile(const std::string& path, const TemplateFile& data);
 
     TemplateFile read_template_binfile(const std::string& path);
-
-    void write_beats_binfile(const std::string& path, const BeatsFile& data);
-    void write_template_csvfile(const std::string& path, const TemplateFile& data, const std::string& fileID, double sampleRateHz = 0.0);
-
 }  // namespace template_io

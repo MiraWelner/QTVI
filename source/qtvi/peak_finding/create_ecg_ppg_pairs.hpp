@@ -155,15 +155,13 @@ static inline std::vector<std::vector<double>> build_unpaired(
  *         R-peaks with PPG valleys.
  *
  * @param[in] annealedSegments  Per-segment ECG/PPG data (consumed via move).
- * @param[in] dbg_plot          Debug plotting flag (reserved, currently unused).
  * @param[in] use_R_algorithm   When false, R-peak detection is skipped entirely.
  * @param[in] fileID            Study identifier forwarded to sub-algorithms.
+ * @param[in] ecgRate           ECG sample rate in Hz.
+ * @param[in] ppgRate           PPG sample rate in Hz.
  * @return    One output_binfile_data per segment.
  */
-inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(
-    std::vector<AnnealedSegment> annealedSegments, bool use_R_algorithm,
-    std::string fileID, double ecgRate, double ppgRate)
-{
+inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw( std::vector<AnnealedSegment> annealedSegments, bool use_R_algorithm, std::string fileID, double ecgRate, double ppgRate){
     std::vector<output_binfile_data> data(annealedSegments.size());
 
 #pragma omp parallel for schedule(dynamic)

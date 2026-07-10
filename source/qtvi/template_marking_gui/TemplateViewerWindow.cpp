@@ -11,7 +11,8 @@
 #include <QLayout>
 #include <cmath>
 #include <algorithm>
-#include <algorithm>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 
 // ========================================================================
@@ -193,6 +194,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     computeMarkingsForPage();
     m_capturedPages.clear();   // new subject: nothing saved yet
     showPage();
+    writeAlignedTemplateCsv();  // dump templates.csv matching the displayed alignment
 }
 
 // ========================================================================
@@ -525,21 +527,7 @@ void TemplateViewerWindow::showPage() {
 void TemplateViewerWindow::captureCurrentPage() {
     if (m_bins.empty()) { fprintf(stderr, "[capture] skip: no bins\n"); return; }
     if (m_capturedPages.count(m_currentPage)) return;   // already saved this page
-
-    // Output folder: the same directory that holds this subject's
-    // templates.bin / templates.csv. Created if it somehow doesn't exist.
-    fprintf(stderr, "[capture] page %d, templateDir='%s'\n",
-        m_currentPage, m_templateDir.toStdString().c_str());
     QDir outDir(m_templateDir);
-    if (!outDir.exists()) {
-        const bool made = outDir.mkpath(".");
-        fprintf(stderr, "[capture] dir did not exist, mkpath -> %d\n", made);
-    }
-
-    // The page is already on screen and painted (markers are off by default,
-    // so there are no marking lines to hide). Grab it after the current event
-    // cycle so the just-built widgets have finished their first paint. No
-    // paging, no off-screen render -> nothing flickers.
     const int page = m_currentPage;
     QTimer::singleShot(60, this, [this, page, outDir]() {
         if (page >= m_totalPages) { fprintf(stderr, "[capture] skip: page>=total\n"); return; }
@@ -551,10 +539,106 @@ void TemplateViewerWindow::captureCurrentPage() {
             .arg(m_subjectId)
             .arg(page + 1, 2, 10, QChar('0')));
         const bool ok = shot.save(fn, "PNG");
-        fprintf(stderr, "[capture] grab %dx%d, save '%s' -> %d\n",
-            shot.width(), shot.height(), fn.toStdString().c_str(), ok);
         if (ok) m_capturedPages.insert(page);
         });
+}
+
+void TemplateViewerWindow::writeAlignedTemplateCsv() {
+    if (m_bins.empty()) return;
+
+    QDir outDir(m_templateDir);
+    if (!outDir.exists()) outDir.mkpath(".");
+    const QString path = outDir.filePath(m_subjectId + "_templates.csv");
+
+    std::ofstream f(path.toStdString());
+    if (!f) { fprintf(stderr, "[tmplcsv] cannot open %s\n", path.toStdString().c_str()); return; }
+
+    const double toMs = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 1.0;
+    constexpr double kEcgRAnchorFrac = 2.0;   // == kEcgPrePFrac / display
+
+    // Column order: shared x, then value + own-peak x for each signal.
+    f << "file_id,bin_num,x_ms,"
+        "ch1_mv,ch1_x_peak_ms,ch2_mv,ch2_x_peak_ms,ch3_mv,ch3_x_peak_ms,"
+        "ppg_mv,ppg_x_peak_ms,abp_mv,abp_x_peak_ms,"
+        "art_mv,art_x_peak_ms,art_pulm_mv,art_pulm_x_peak_ms\n";
+    f << std::setprecision(10);
+
+    auto argmax = [](const std::vector<double>& v) -> int {
+        if (v.empty()) return 0;
+        return static_cast<int>(std::max_element(v.begin(), v.end()) - v.begin());
+        };
+
+    for (size_t bi = 0; bi < m_bins.size(); ++bi) {
+        const TemplateBin& b = m_bins[bi];
+
+        // Reference: ch1 R position on the shared axis (row of R). Everything
+        // is placed so reading across a row = same real time as displayed.
+        const double rPeak1 = kEcgRAnchorFrac * b.ch1.avg_r_expand_raw;
+        const double ppgDelay = b.ch1.alignment_point_raw;   // R->foot (samples)
+        const int ppgFoot = (b.ppg_onset > 0) ? b.ppg_onset : 0;
+
+        // One signal = its template, its shared-axis start offset (sample 0 of
+        // the template lands on this row), and its own peak index.
+        struct Sig {
+            const std::vector<double>* v;
+            double start;   // shared-axis row where sample 0 sits
+            int    peak;    // index of this signal's peak within its template
+        };
+
+        // ECG channels sit at their natural position (start at row 0). No
+        // cross-channel R alignment -- the per-signal *_x_peak_ms column
+        // re-centers each on its own peak; the shared x_ms just carries the
+        // raw timeline / offset.
+        const ChannelTemplateData* ch[3] = { &b.ch1, &b.ch2, &b.ch3 };
+        // Pulse signals share the displayed PPG anchor. Matches
+        // ppgStartSample(): start = rPeak + delay - foot, clamped >= 0 so PPG
+        // is never drawn left of (before) the ECG -- exactly as displayed.
+        double pulseStart = rPeak1 + ppgDelay - ppgFoot;
+        if (pulseStart < 0.0) pulseStart = 0.0;
+
+        std::vector<Sig> sigs;
+        for (int c = 0; c < 3; ++c) {
+            const double rN = kEcgRAnchorFrac * ch[c]->avg_r_expand_raw;
+            sigs.push_back({ &ch[c]->ecgTemplate_raw, 0.0,
+                static_cast<int>(std::llround(rN)) });   // peak = R, start at row 0
+        }
+        sigs.push_back({ &b.ppgTemplate,     pulseStart, argmax(b.ppgTemplate) });
+        sigs.push_back({ &b.abpTemplate,     pulseStart, argmax(b.abpTemplate) });
+        sigs.push_back({ &b.artTemplate,     pulseStart, argmax(b.artTemplate) });
+        sigs.push_back({ &b.artPulmTemplate, pulseStart, argmax(b.artPulmTemplate) });
+
+        // Row span on the shared axis.
+        double loD = 1e300, hiD = -1e300;
+        for (const Sig& s : sigs) {
+            if (s.v->empty()) continue;
+            loD = std::min(loD, s.start);
+            hiD = std::max(hiD, s.start + static_cast<double>(s.v->size()));
+        }
+        if (loD > hiD) continue;   // nothing in this bin
+        const int loRow = static_cast<int>(std::floor(loD));
+        const int hiRow = static_cast<int>(std::ceil(hiD));
+
+        for (int row = loRow; row < hiRow; ++row) {
+            // Shared x: raw timeline, 0 at the top of the ECG templates. The
+            // vertical offset between ECG and PPG/arterial data here is the
+            // real alignment (they start on later rows, exactly as displayed).
+            f << m_subjectId.toStdString() << ',' << bi << ','
+                << (row * toMs);
+            for (const Sig& s : sigs) {
+                // local index of this signal at this shared-axis row
+                const int j = row - static_cast<int>(std::llround(s.start));
+                f << ',';
+                if (j >= 0 && j < static_cast<int>(s.v->size())
+                    && !std::isnan((*s.v)[j]))
+                    f << (*s.v)[j];
+                f << ',';
+                if (j >= 0 && j < static_cast<int>(s.v->size()))
+                    f << ((j - s.peak) * toMs);   // 0 at this signal's peak
+            }
+            f << '\n';
+        }
+    }
+    fprintf(stderr, "[tmplcsv] wrote %s\n", path.toStdString().c_str());
 }
 
 void TemplateViewerWindow::applyMarkerVisibility() {

@@ -50,6 +50,12 @@ private:
     // is captured once, when the user first scrolls to it. No flicker: the
     // page is already on screen and painted.
     void captureCurrentPage();
+    // Write templates.csv from the viewer at load time, using the SAME
+    // per-bin anchoring the widgets use to draw (rPeak, ppgDelay, ppg_onset),
+    // so PPG/arterial rows are shifted relative to ECG exactly as displayed.
+    // One shared x_ms column (0 at ch1 R) plus a per-signal *_x_peak_ms column
+    // (0 at that signal's own peak). Written once per subject.
+    void writeAlignedTemplateCsv();
     void computeMarkingsForPage();
     void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
