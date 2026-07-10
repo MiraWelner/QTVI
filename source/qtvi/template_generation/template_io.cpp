@@ -169,7 +169,8 @@ namespace template_io {
             "ch1_raw_mv,ch1_raw_std,ch1_squared_mv,ch1_absval_mv,"
             "ch2_raw_mv,ch2_raw_std,ch2_squared_mv,ch2_absval_mv,"
             "ch3_raw_mv,ch3_raw_std,ch3_squared_mv,ch3_absval_mv,"
-            "ppg_mv,ppg_std\n";
+            "ppg_mv,ppg_std,"
+            "abp_mv,abp_std,art_mv,art_std,art_pulm_mv,art_pulm_std\n";
 
         f << std::setprecision(10);
 
@@ -193,6 +194,9 @@ namespace template_io {
                 {&b.ch3_squared.ecgTemplate, nullptr},
                 {&b.ch3_absval.ecgTemplate,  nullptr},
                 {&b.ppgTemplate,             &b.ppgTemplate_std},
+                {&b.abpTemplate,             &b.abpTemplate_std},
+                {&b.artTemplate,             &b.artTemplate_std},
+                {&b.artPulmTemplate,         &b.artPulmTemplate_std},
             };
 
             size_t maxLen = 0;

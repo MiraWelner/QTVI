@@ -18,6 +18,7 @@
 
 #include <vector>
 #include <string>
+#include <cstdio>
 #include <cstdint>
 #include <cmath>
 #include <utility>
@@ -281,10 +282,10 @@ static const EcgColSpec ecgCols[] = {
     {"t_peak",  false, false}, {"t_end",   true,  false},
     {"qrs",     false, true},  {"qt",      false, true},
 };
-static const char* ppgCols[] = { "ppg_onset","ppg_peak","ppg_dicrotic","ppg_50","ppg_end" };
-static const char* abpCols[] = { "abp_onset","abp_peak","abp_dicrotic","abp_50","abp_end" };
-static const char* artCols[] = { "art_onset","art_peak","art_dicrotic","art_50","art_end" };
-static const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak","art_pulm_dicrotic","art_pulm_50","art_pulm_end" };
+inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_peak","ppg_dicrotic","ppg_50","ppg_end" };
+inline constexpr const char* abpCols[] = { "abp_onset","abp_peak","abp_dicrotic","abp_50","abp_end" };
+inline constexpr const char* artCols[] = { "art_onset","art_peak","art_dicrotic","art_50","art_end" };
+inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak","art_pulm_dicrotic","art_pulm_50","art_pulm_end" };
 
 inline void writeTemplateMarkingsCsv(const std::string& path,
     const std::vector<TemplateBin>& bins,

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file   template_io.hpp
  * @brief  Data structures and I/O for the template-generation output
  *         file. Independent of peak_finding's binfile_handling.hpp:
