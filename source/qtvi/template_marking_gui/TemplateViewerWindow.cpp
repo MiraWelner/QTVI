@@ -302,6 +302,7 @@ namespace {
         if (b.ppgTemplate.empty()) {
             b.ppg_issue = 2;
             b.ppg_onset = -1;
+            b.ppg_p50 = -1;
             b.ppg_peak = -1;
             b.ppg_dicrotic = -1;
             b.ppg_peak2 = -1;
@@ -309,6 +310,7 @@ namespace {
         }
         else if (b.ppg_issue == 1) {
             b.ppg_onset = -1;
+            b.ppg_p50 = -1;
             b.ppg_peak = -1;
             b.ppg_dicrotic = -1;
             b.ppg_peak2 = -1;
@@ -399,6 +401,28 @@ namespace {
             }
             b.ppg_dicrotic = dic;
 
+            // p50: sample nearest 50% amplitude on the foot->peak upslope.
+            // Value-based (not temporal midpoint) since the upslope isn't
+            // linear in time. Falls back to temporal midpoint if the trace
+            // doesn't span the target within a sensible band.
+            int p50 = -1;
+            if (foot >= 0 && peak > foot &&
+                !std::isnan(v[foot]) && !std::isnan(v[peak])) {
+                const double target = 0.5 * (v[foot] + v[peak]);
+                double bestDiff = std::numeric_limits<double>::infinity();
+                for (int i = foot; i <= peak; ++i) {
+                    if (std::isnan(v[i])) continue;
+                    const double d = std::abs(v[i] - target);
+                    if (d < bestDiff) { bestDiff = d; p50 = i; }
+                }
+                const double band = 0.25 * std::abs(v[peak] - v[foot]);
+                if (bestDiff > band) p50 = (foot + peak) / 2;
+            }
+            else if (foot >= 0 && peak > foot) {
+                p50 = (foot + peak) / 2;
+            }
+            b.ppg_p50 = p50;
+
             // peak2: user-placed. Default 90% foot->end.
             if (foot >= 0 && end > foot)
                 b.ppg_peak2 = foot + (9 * (end - foot)) / 10;
@@ -406,8 +430,8 @@ namespace {
                 b.ppg_peak2 = std::max(0, N - 1);
 
             fprintf(stderr,
-                "[seed] N=%d foot=%d peak=%d end=%d dic=%d peak2=%d\n",
-                N, foot, peak, end, dic, b.ppg_peak2);
+                "[seed] N=%d foot=%d p50=%d peak=%d end=%d dic=%d peak2=%d\n",
+                N, foot, p50, peak, end, dic, b.ppg_peak2);
         }
 
         // ---- ECG (per channel) -----------------------------------------
@@ -663,7 +687,7 @@ void TemplateViewerWindow::showPage() {
             pw->setData(ppgN, ppgStd, ecgN, ecgStd,
                 b.p_begin_ch[c], b.q_begin_ch[c], b.s_end_ch[c],
                 b.t_begin_ch[c], b.t_end_ch[c],
-                b.ppg_onset, b.ppg_peak,
+                b.ppg_onset, b.ppg_p50, b.ppg_peak,
                 b.ppg_dicrotic, b.ppg_peak2, b.ppg_end,
                 rPeak,
                 static_cast<int>(nEcgBeats),
@@ -905,6 +929,7 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
             pw->setMarker(BinPlotWidget::EcgTBegin, b.t_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgTEnd, b.t_end_ch[c]);
             pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
+            pw->setMarker(BinPlotWidget::PpgP50, b.ppg_p50);
             pw->setMarker(BinPlotWidget::PpgPeak, b.ppg_peak);
             pw->setMarker(BinPlotWidget::PpgDicrotic, b.ppg_dicrotic);
             pw->setMarker(BinPlotWidget::PpgPeak2, b.ppg_peak2);
@@ -980,6 +1005,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
     if (BinPlotWidget::markerIsPpg(marker)) {
         switch (marker) {
         case BinPlotWidget::PpgOnset:    b.ppg_onset = newIdx; break;
+        case BinPlotWidget::PpgP50:      b.ppg_p50 = newIdx; break;
         case BinPlotWidget::PpgPeak:     b.ppg_peak = newIdx; break;
         case BinPlotWidget::PpgDicrotic: b.ppg_dicrotic = newIdx; break;
         case BinPlotWidget::PpgPeak2:       b.ppg_peak2 = newIdx; break;
@@ -994,6 +1020,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
 
                 switch (marker) {
                 case BinPlotWidget::PpgOnset:    m_bins[i].ppg_onset = newIdx; break;
+                case BinPlotWidget::PpgP50:      m_bins[i].ppg_p50 = newIdx; break;
                 case BinPlotWidget::PpgPeak:     m_bins[i].ppg_peak = newIdx; break;
                 case BinPlotWidget::PpgDicrotic: m_bins[i].ppg_dicrotic = newIdx; break;
                 case BinPlotWidget::PpgPeak2:       m_bins[i].ppg_peak2 = newIdx; break;

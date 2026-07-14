@@ -34,11 +34,14 @@ namespace ecg_markers {
 
     inline std::pair<int, bool> r_peak(const std::vector<double>& v) {
         /*
-            Get the R peak, and if its negative (which means lead inverted)
-            you only select in the first half because sometimes the templates contain
-            a second R peak - if this gets fixed upstream you can remove it
+            R peak = argmax of the first half of the PRIMARY beat.
+            Under the new alignment the template is 1.25*RR wide (0.25*RR
+            before R + 1.0*RR of primary beat + tail). "First half of the
+            primary beat" == first 0.5*RR of the template == 0.4*N.
+            Keeps the search clear of the T-wave (which can otherwise
+            outsize R on inverted or tall-T templates).
         */
-        const int half = static_cast<int>(v.size()) / 2;
+        const int half = static_cast<int>(v.size()) * 2 / 5;
         if (half < 1) return { 0, true };
         // Use deviation from the mean — DC offset shouldn't decide polarity.
         double mean = 0.0;
@@ -160,8 +163,11 @@ namespace ecg_markers {
             st_window.end());
         const double st_baseline = st_window[st_window.size() / 2];
 
+        // Primary beat ends at 4*N/5 (= 1.0*RR of the 1.25*RR template);
+        // don't let T-search leak into the next-beat tail.
+        const int primary_end = (4 * N) / 5;
         const int t_lo = r_idx + 100;
-        const int t_hi = std::min(static_cast<int>(0.55 * N), N);
+        const int t_hi = std::min(static_cast<int>(0.55 * primary_end), primary_end);
         if (t_hi - t_lo < 10) return std::min(N - 1, r_idx + 150);
 
         int t_peak = t_lo;
@@ -188,9 +194,12 @@ namespace ecg_markers {
         std::vector<double> upright = ecg_signal;
         if (!is_positive) for (auto& x : upright) x = -x;
 
+        // T-end lives inside the primary beat (before next-beat P).
+        const int primary_end = (4 * N) / 5;
+
         const int st_lo = r_idx + 50;
-        const int st_hi = std::min(r_idx + 100, N);
-        if (st_hi - st_lo < 5) return std::max(0, N - 5);
+        const int st_hi = std::min(r_idx + 100, primary_end);
+        if (st_hi - st_lo < 5) return std::max(0, primary_end - 5);
 
         std::vector<double> w(upright.begin() + st_lo, upright.begin() + st_hi);
         std::nth_element(w.begin(), w.begin() + w.size() / 2, w.end());
@@ -203,17 +212,17 @@ namespace ecg_markers {
         const double tol = 2.0 * st_noise;
 
         int t_begin = -1;
-        for (int i = st_hi; i < N; ++i) {
+        for (int i = st_hi; i < primary_end; ++i) {
             if (upright[i] > baseline + tol) { t_begin = i; break; }
         }
-        if (t_begin < 0) return std::max(0, N - 5);
+        if (t_begin < 0) return std::max(0, primary_end - 5);
 
-        for (int i = t_begin + 1; i < N; ++i) {
+        for (int i = t_begin + 1; i < primary_end; ++i) {
             if (upright[i] <= baseline + tol) return i;
         }
-        if (t_begin >= N - 1) return N - 1;
+        if (t_begin >= primary_end - 1) return primary_end - 1;
         const int fallback = static_cast<int>(t_begin * 1.5);
-        return std::clamp(fallback, t_begin + 1, N - 1);
+        return std::clamp(fallback, t_begin + 1, primary_end - 1);
     }
     // S-wave trough: walk forward from R while the beat keeps falling, stop
     // at the first turn back up (the QRS offset / J point). Falls back to

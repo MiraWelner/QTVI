@@ -52,20 +52,21 @@ public:
         EcgTEnd = 4,
         // --- PPG markers (contiguous, immediately after ECG) ---
         PpgOnset = 5,
-        PpgPeak = 6,
-        PpgDicrotic = 7,   // dicrotic notch
-        PpgPeak2 = 8,   // 2nd (diastolic) peak, after dicrotic notch
-        PpgEnd = 9,   // end-of-pulse / trough after descent
+        PpgP50 = 6,   // 50% up the upslope, foot -> systolic peak
+        PpgPeak = 7,
+        PpgDicrotic = 8,   // dicrotic notch
+        PpgPeak2 = 9,   // 2nd (diastolic) peak, after dicrotic notch
+        PpgEnd = 10,   // end-of-pulse / trough after descent
         // --- Arterial markers: same 5-marker set as PPG, one group per
         //     channel (ABP, ART, ART_PULM), each contiguous. They ride the
         //     PPG x-geometry (foot-anchored at ppgStartSample()) but index
         //     into their own background trace vector. ---
-        AbpOnset = 10, AbpPeak = 11, AbpDicrotic = 12, AbpPeak2 = 13, AbpEnd = 14,
-        ArtOnset = 15, ArtPeak = 16, ArtDicrotic = 17, ArtPeak2 = 18, ArtEnd = 19,
-        ArtPulmOnset = 20, ArtPulmPeak = 21, ArtPulmDicrotic = 22,
-        ArtPulmPeak2 = 23, ArtPulmEnd = 24,
+        AbpOnset = 11, AbpPeak = 12, AbpDicrotic = 13, AbpPeak2 = 14, AbpEnd = 15,
+        ArtOnset = 16, ArtPeak = 17, ArtDicrotic = 18, ArtPeak2 = 19, ArtEnd = 20,
+        ArtPulmOnset = 21, ArtPulmPeak = 22, ArtPulmDicrotic = 23,
+        ArtPulmPeak2 = 24, ArtPulmEnd = 25,
         // --- size sentinel ---
-        MarkerCount = 25
+        MarkerCount = 26
     };
 
     // Range-based predicates. Update these bounds if you add more
@@ -124,7 +125,7 @@ public:
         const std::vector<double>& ecg,
         const std::vector<double>& ecgStd,
         int ecgP, int qBegin, int sEnd, int tBegin, int tEnd,
-        int ppgOnset, int ppgPeak,
+        int ppgOnset, int ppgP50, int ppgPeak,
         int ppgDicrotic, int ppgPeak2, int ppgEnd,
         double rPeakSample,
         int nEcgBeats = 0,
@@ -236,11 +237,11 @@ private:
     // Storage sized by MarkerCount so it grows automatically if you add
     // more entries to the enum. All marker slots start hidden (-1).
     int m_markers[MarkerCount] = {
-        -1, -1, -1, -1, -1,   // ECG
-        -1, -1, -1, -1, -1,   // PPG
-        -1, -1, -1, -1, -1,   // ABP
-        -1, -1, -1, -1, -1,   // ART
-        -1, -1, -1, -1, -1    // ART_PULM
+        -1, -1, -1, -1, -1,       // ECG (5)
+        -1, -1, -1, -1, -1, -1,   // PPG (6: onset, P50, peak, dic, peak2, end)
+        -1, -1, -1, -1, -1,       // ABP
+        -1, -1, -1, -1, -1,       // ART
+        -1, -1, -1, -1, -1        // ART_PULM
     };
 
     struct GlyphSnapshot {
@@ -250,7 +251,12 @@ private:
         // instead. Q, S end, T end come straight from movable markers and
         // don't have fallbacks.
         int ecgPOFallback = -1, ecgROFallback = -1, ecgTOFallback = -1;
-        int ppgFoot = -1, ppgP1 = -1, ppgDic = -1, ppgP2 = -1;
+        int ppgFoot = -1, ppgP50 = -1, ppgP1 = -1, ppgDic = -1, ppgP2 = -1;
+        // Fallback midpoints for landmarks that can be "expected but not
+        // found". X drawn at the real index; O drawn at the fallback.
+        int ppgP50OFallback = -1;
+        int ppgP1OFallback = -1;
+        int ppgP2OFallback = -1;
         bool ppgNotch = false;     // true => real notch found; false => draw 'o'
         int  ppgNoNotchO = -1;     // 'o' position (midpoint of [peak, end]) when no notch
         bool valid = false;

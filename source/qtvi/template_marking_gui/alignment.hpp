@@ -8,7 +8,7 @@
 // -- the beat length that occurs most often (exact integer equality,
 // no tolerance).
 //
-// Step 1
+// Step 1 (this file, so far):
 //   * Slice every beat as [R_i - 0.25 * RR, R_i + 0.75 * RR], where
 //     RR = R_{i+1} - R_i. Length = 1.0 * RR by construction. R sits at
 //     column 0.25 * RR inside the snip.
@@ -16,7 +16,14 @@
 //   * Count how many beats share each integer length. The most common
 //     length is the "mode length"; its count is printed to stderr as
 //     a debug statement.
-
+//
+// Later steps (not yet implemented) will use the mode as the reference
+// for vertical + horizontal alignment across beats.
+//
+// Usage:
+//   auto res = alignment::extract_beats_and_mode(ecgSignal, rPeaks);
+//   // res.beats[i] is one beat snip; res.mode_length / res.mode_count
+//   // give the mode.
 //
 
 #include <algorithm>
@@ -107,7 +114,7 @@ namespace alignment {
             if (rr <= 3) continue;                             // degenerate only
 
             const int64_t before = rr / 4;                    // 0.25 RR
-            const int64_t after = rr;                         // 1.0 RR: extend to next R
+            const int64_t after = rr * 1.2;                         // 1.0 RR: extend to next R
             const int64_t len = before + after;               // 1.25 RR total
             const int64_t start = r0 - before;
             const int64_t end = r0 + after;                   // exclusive, at next R
@@ -215,7 +222,7 @@ namespace alignment {
             if (L > max_mode_len) max_mode_len = L;
         if (max_mode_len > 0) {
             const int R_anchor = max_mode_len / 4;              // 0.25 * max_RR
-            const int shared_w = R_anchor + max_mode_len;       // 1.25 * max_RR
+            const int shared_w = R_anchor + max_mode_len + max_mode_len / 10;   // 1.35 * max_RR
 
             std::vector<std::vector<double>> aligned;
             aligned.reserve(out.beats.size());
@@ -342,6 +349,14 @@ namespace alignment {
                 out.r_aligned_col = R_anchor + max_prepend;
             }
         }
+
+        fprintf(stderr,
+            "[align] beats=%zu unique_lengths=%zu mode_length=%d mode_count=%zu "
+            "mode_group_size=%zu rms_tol=%.4f R_col=%d Q_col=%d\n",
+            out.total_beats, hist.size(), out.mode_length, out.mode_count,
+            out.mode_group_size, out.mode_group_rms_tol,
+            out.r_aligned_col, out.q_aligned_col);
+
         return out;
     }
 

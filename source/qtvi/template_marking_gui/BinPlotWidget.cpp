@@ -70,8 +70,9 @@ namespace {
     constexpr QColor kColorEcgTBegin{ 40,  50, 110 };   // dark navy
     constexpr QColor kColorEcgTEnd{ 70,  90, 160 };   // medium navy
 
-    // PPG markers (On, Pk, Dc, 50, En) - shades of red, darkest to lightest.
+    // PPG markers (On, P50, Pk, Dc, 2, En) - shades of red, darkest to lightest.
     constexpr QColor kColorPpgOnset{ 110,   0,   0 };  // dark red
+    constexpr QColor kColorPpgP50{ 150,  20,  20 };  // dark red variant
     constexpr QColor kColorPpgPeak{ 180,   0,   0 };  // red
     constexpr QColor kColorPpgDicrotic{ 220,  50,  50 };  // medium red
     constexpr QColor kColorPpgPeak2{ 235, 100, 100 };  // light red (2nd/diastolic peak)
@@ -94,6 +95,7 @@ namespace {
         case BinPlotWidget::EcgTBegin:   return kColorEcgTBegin;
         case BinPlotWidget::EcgTEnd:     return kColorEcgTEnd;
         case BinPlotWidget::PpgOnset:    return kColorPpgOnset;
+        case BinPlotWidget::PpgP50:      return kColorPpgP50;
         case BinPlotWidget::PpgPeak:     return kColorPpgPeak;
         case BinPlotWidget::PpgDicrotic: return kColorPpgDicrotic;
         case BinPlotWidget::PpgPeak2:    return kColorPpgPeak2;
@@ -112,6 +114,7 @@ namespace {
         case BinPlotWidget::EcgTBegin:   return "T beg";
         case BinPlotWidget::EcgTEnd:     return "T end";
         case BinPlotWidget::PpgOnset:    return "PPG On";
+        case BinPlotWidget::PpgP50:      return "PPG 50%";
         case BinPlotWidget::PpgPeak:     return "PPG Peak";
         case BinPlotWidget::PpgDicrotic: return "DN";
         case BinPlotWidget::PpgPeak2:    return "PPG Peak2";
@@ -242,7 +245,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     const std::vector<double>& ecg,
     const std::vector<double>& ecgStd,
     int ecgP, int qBegin, int sEnd, int tBegin, int tEnd,
-    int ppgOnset, int ppgPeak,
+    int ppgOnset, int ppgP50, int ppgPeak,
     int ppgDicrotic, int ppgPeak2, int ppgEnd,
     double rPeakSample,
     int nEcgBeats,
@@ -260,6 +263,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_markers[EcgTBegin] = tBegin;
     m_markers[EcgTEnd] = tEnd;
     m_markers[PpgOnset] = ppgOnset;
+    m_markers[PpgP50] = ppgP50;
     m_markers[PpgPeak] = ppgPeak;
     m_markers[PpgDicrotic] = ppgDicrotic;
     m_markers[PpgPeak2] = ppgPeak2;
@@ -374,12 +378,19 @@ double BinPlotWidget::ppgStartSample() const {
 }
 
 int BinPlotWidget::totalSampleSpan() const {
+    // Frame width is the ECG's visible extent. Pulse traces (PPG, ABP,
+    // ART, ART_PULM) that extend past this are visually clipped by the
+    // painter's clipRect. Their markers get their own visibility bound
+    // via markerTrace()->pulseClipN() so no marker can land in the
+    // clipped tail.
     return std::max(m_ecgVisibleN, 2);
 }
 
-// Number of pulse-trace samples that fit before the ECG's right edge, at the
-// shared scale. Pulse sample i sits at shared position ppgStartSample()+i;
-// keep those with (ppgStartSample()+i) <= m_ecgVisibleN.
+// Number of pulse-trace samples that fit before the ECG's right edge, at
+// the shared scale. Pulse sample i sits at shared position ppgStartSample()+i;
+// keep those with (ppgStartSample()+i) <= m_ecgVisibleN. Also serves as the
+// marker-visibility bound for pulse channels: markers past this can't be
+// drawn or dragged (see markerTrace).
 int BinPlotWidget::pulseClipN() const {
     const int clip = m_ecgVisibleN - static_cast<int>(std::llround(ppgStartSample()));
     return std::max(0, clip);
@@ -419,9 +430,12 @@ double BinPlotWidget::xFromSample(int s, bool isEcg) const {
 // For a given marker, resolve which trace vector bounds it, whether its
 // group is currently visible, and whether it uses ECG x-geometry, plus the
 // visible-sample count that bounds its markers. ECG uses its own visible
-// window; PPG and all arterial channels are foot-anchored and use the same
-// visiblePpgCount() rule (the whole trace), so arterial markers behave
-// identically to PPG markers. Returns false if the trace is empty/absent.
+// window; PPG and all arterial channels are foot-anchored. Pulse markers
+// are further capped at pulseClipN() so a marker sitting in the PPG (or
+// arterial) tail past the ECG's right edge is neither drawn nor draggable
+// -- the tail is visually clipped, and we don't want invisible markers
+// out there that the user can't see or reach. Returns false if the trace
+// is empty/absent.
 bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
     bool& isEcg, bool& visible, int& visN) const
 {
@@ -431,24 +445,25 @@ bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
         return !m_ecg.empty();
     }
     isEcg = false;   // PPG and all arterial groups ride the foot-anchored geometry
+    const int pulseCap = pulseClipN();
     if (markerIsPpg(m)) {
         vec = &m_ppg; visible = m_showPpgMarkers;
-        visN = visiblePpgCount(static_cast<int>(m_ppg.size()));
+        visN = std::min(visiblePpgCount(static_cast<int>(m_ppg.size())), pulseCap);
         return m_hasPPG && !m_ppg.empty();
     }
     if (markerIsAbp(m)) {
         vec = &m_abp; visible = m_showAbpMarkers;
-        visN = visiblePpgCount(static_cast<int>(m_abp.size()));
+        visN = std::min(visiblePpgCount(static_cast<int>(m_abp.size())), pulseCap);
         return !m_abp.empty();
     }
     if (markerIsArt(m)) {
         vec = &m_art; visible = m_showArtMarkers;
-        visN = visiblePpgCount(static_cast<int>(m_art.size()));
+        visN = std::min(visiblePpgCount(static_cast<int>(m_art.size())), pulseCap);
         return !m_art.empty();
     }
     if (markerIsArtPulm(m)) {
         vec = &m_artPulm; visible = m_showArtPulmMarkers;
-        visN = visiblePpgCount(static_cast<int>(m_artPulm.size()));
+        visN = std::min(visiblePpgCount(static_cast<int>(m_artPulm.size())), pulseCap);
         return !m_artPulm.empty();
     }
     return false;
@@ -697,6 +712,13 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     p.restore();
 
 
+    // Clip marker bars, labels, and fiducial glyphs to the plot area so
+    // nothing (including the ~4px X/O glyphs at edge samples) draws past
+    // the frame boundary.
+    p.save();
+    p.setClipRect(QRectF(margin_left, margin_top,
+        w - margin_left - margin_right, ph));
+
     QFont smallF = p.font(); smallF.setPointSize(7); p.setFont(smallF);
     for (int m = 0; m < MarkerCount; ++m) {
         int idx = m_markers[m];
@@ -716,6 +738,8 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     }
 
     drawFeatureGlyphs(p, yLo, yHi, pLo, pHi, ph);
+
+    p.restore();
 
 
     if (m_state == State::BadPPG) {

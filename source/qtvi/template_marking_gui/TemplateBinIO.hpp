@@ -88,6 +88,7 @@ struct TemplateBin {
 
     // PPG: sample indices into ppgTemplate. Shared across channels.
     int ppg_onset = -1;
+    int ppg_p50 = -1;   // 50% up the upslope, foot -> systolic peak
     int ppg_peak = -1;
     int ppg_dicrotic = -1;
     int ppg_peak2 = -1;
@@ -173,7 +174,7 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
 // All int32 fields use -1 as the "unmarked / not applicable" sentinel.
 // ---------------------------------------------------------------------------
 static constexpr uint64_t kTemplateMarkingsV2Sentinel = ~uint64_t(0);
-static constexpr uint32_t kTemplateMarkingsVersion = 2;
+static constexpr uint32_t kTemplateMarkingsVersion = 3;   // v3 adds ppg_p50
 
 inline void writeTemplateMarkingsBin(const std::string& path,
     const std::vector<TemplateBin>& bins) {
@@ -209,6 +210,7 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         for (int c = 0; c < 3; ++c) w32(b.t_end_ch[c]);
 
         w32(b.ppg_onset);
+        w32(b.ppg_p50);
         w32(b.ppg_peak);
         w32(b.ppg_dicrotic);
         w32(b.ppg_peak2);
@@ -294,7 +296,7 @@ static const EcgColSpec ecgCols[] = {
     {"t_peak",  false, false}, {"t_end",   true,  false},
     {"qrs",     false, true},  {"qt",      false, true},
 };
-inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_peak","ppg_dicrotic","ppg_peak2","ppg_end" };
+inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_p50","ppg_peak","ppg_dicrotic","ppg_peak2","ppg_end" };
 inline constexpr const char* abpCols[] = { "abp_onset","abp_peak","abp_dicrotic","abp_peak2","abp_end" };
 inline constexpr const char* artCols[] = { "art_onset","art_peak","art_dicrotic","art_peak2","art_end" };
 inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak","art_pulm_dicrotic","art_pulm_peak2","art_pulm_end" };
@@ -318,21 +320,69 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             f << ',' << col.name << "_ch" << c << "_y_mv" << u;
         }
     }
+    // Per pulse marker: x location, raw (pre-normalization) sample value,
+    // and PI-normalized value (100*(v-foot)/foot / global_ref).
     for (const char* n : ppgCols)
-        f << ',' << n << "_x_ms_user" << ',' << n << "_y_mv_user";
-    // Arterial issue flags + marker columns (same shape as PPG).
+        f << ',' << n << "_x_ms_user"
+        << ',' << n << "_y_mv_user"
+        << ',' << n << "_y_norm_user";
     f << ",abp_issue";
     for (const char* n : abpCols)
-        f << ',' << n << "_x_ms_user" << ',' << n << "_y_mv_user";
+        f << ',' << n << "_x_ms_user"
+        << ',' << n << "_y_mv_user"
+        << ',' << n << "_y_norm_user";
     f << ",art_issue";
     for (const char* n : artCols)
-        f << ',' << n << "_x_ms_user" << ',' << n << "_y_mv_user";
+        f << ',' << n << "_x_ms_user"
+        << ',' << n << "_y_mv_user"
+        << ',' << n << "_y_norm_user";
     f << ",art_pulm_issue";
     for (const char* n : artPulmCols)
-        f << ',' << n << "_x_ms_user" << ',' << n << "_y_mv_user";
+        f << ',' << n << "_x_ms_user"
+        << ',' << n << "_y_mv_user"
+        << ',' << n << "_y_norm_user";
     f << '\n';
 
     const double toMs = 1000.0 / sampleRateHz;
+
+    // Per-channel PI global reference = median across bins of
+    //   100 * (peak_y - foot_y) / foot_y
+    // Skips bad/absent bins for each channel. Matches the formula in
+    // NormalizeFeatures.hpp exactly.
+    auto medianFinite = [](std::vector<double> v) -> double {
+        v.erase(std::remove_if(v.begin(), v.end(),
+            [](double x) { return !std::isfinite(x); }), v.end());
+        if (v.empty()) return std::nan("");
+        const size_t mid = v.size() / 2;
+        std::nth_element(v.begin(), v.begin() + mid, v.end());
+        return v[mid];
+        };
+    auto computeRef = [&](const std::vector<double> TemplateBin::* trace,
+        const int TemplateBin::* footIdx, const int TemplateBin::* peakIdx,
+        bool includePpgIssue) -> double
+        {
+            std::vector<double> vals;
+            for (const auto& b : bins) {
+                if (b.bad_segment) continue;
+                if (includePpgIssue && b.ppg_issue != 0) continue;
+                const auto& v = b.*trace;
+                const int fi = b.*footIdx;
+                const int pi = b.*peakIdx;
+                if (fi < 0 || pi < 0 || fi >= (int)v.size() || pi >= (int)v.size()) continue;
+                const double fy = v[fi], py = v[pi];
+                if (std::isnan(fy) || std::isnan(py) || std::abs(fy) < 1e-12) continue;
+                vals.push_back(100.0 * (py - fy) / fy);
+            }
+            return medianFinite(std::move(vals));
+        };
+    const double refPpg = computeRef(&TemplateBin::ppgTemplate,
+        &TemplateBin::ppg_onset, &TemplateBin::ppg_peak, true);
+    const double refAbp = computeRef(&TemplateBin::abpTemplate,
+        &TemplateBin::abp_onset, &TemplateBin::abp_peak, false);
+    const double refArt = computeRef(&TemplateBin::artTemplate,
+        &TemplateBin::art_onset, &TemplateBin::art_peak, false);
+    const double refArtPulm = computeRef(&TemplateBin::artPulmTemplate,
+        &TemplateBin::art_pulm_onset, &TemplateBin::art_pulm_peak, false);
 
     for (const auto& b : bins) {
         f << fileID << ',' << b.index << ','
@@ -347,6 +397,22 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             f << ','; if (ok) f << (idx * toMs);
             f << ','; if (ok && !std::isnan(v[idx])) f << v[idx];
             };
+        // emit x_ms, y_mv (pre-norm), y_norm for one pulse marker.
+        // footIdx is the same "onset" index the channel uses; ref is the
+        // channel's global PI median. Any missing piece leaves y_norm blank.
+        auto xyn = [&](const std::vector<double>& v, int idx, int footIdx, double ref) {
+            const bool ok = (idx >= 0 && idx < (int)v.size());
+            f << ','; if (ok) f << (idx * toMs);
+            f << ','; if (ok && !std::isnan(v[idx])) f << v[idx];
+            f << ',';
+            if (!ok || footIdx < 0 || footIdx >= (int)v.size()) return;
+            const double fy = v[footIdx];
+            if (std::isnan(fy) || std::abs(fy) < 1e-12) return;
+            if (!std::isfinite(ref) || ref == 0.0) return;
+            if (std::isnan(v[idx])) return;
+            const double local = 100.0 * (v[idx] - fy) / fy;
+            f << (local / ref);
+            };
         auto ms1 = [&](double v) { f << ','; if (!std::isnan(v)) f << v; };
 
         const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
@@ -355,7 +421,6 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             EcgFeatures ft = computeEcgFeatures(ecg,
                 b.p_begin_ch[c], b.q_begin_ch[c], b.s_end_ch[c],
                 b.t_begin_ch[c], b.t_end_ch[c], sampleRateHz);
-            // order MUST match the point entries of ecgCols
             const int pts[] = {
                 b.p_begin_ch[c], b.q_begin_ch[c], ft.q_idx, ft.r_idx, ft.s_idx,
                 b.s_end_ch[c],   b.t_begin_ch[c], ft.t_idx, b.t_end_ch[c]
@@ -364,28 +429,34 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             ms1(ft.qrs_ms);
             ms1(ft.qt_ms);
         }
-        xy(b.ppgTemplate, b.ppg_onset);
-        xy(b.ppgTemplate, b.ppg_peak);
-        xy(b.ppgTemplate, b.ppg_dicrotic);
-        xy(b.ppgTemplate, b.ppg_peak2);
-        xy(b.ppgTemplate, b.ppg_end);
+        // PPG: onset, P50, peak, dicrotic, peak2, end — matches ppgCols order.
+        xyn(b.ppgTemplate, b.ppg_onset, b.ppg_onset, refPpg);
+        xyn(b.ppgTemplate, b.ppg_p50, b.ppg_onset, refPpg);
+        xyn(b.ppgTemplate, b.ppg_peak, b.ppg_onset, refPpg);
+        xyn(b.ppgTemplate, b.ppg_dicrotic, b.ppg_onset, refPpg);
+        xyn(b.ppgTemplate, b.ppg_peak2, b.ppg_onset, refPpg);
+        xyn(b.ppgTemplate, b.ppg_end, b.ppg_onset, refPpg);
 
-        // Arterial channels: issue flag then the five markers, indexing into
-        // the matching background template vector.
         f << ',' << static_cast<int>(b.abp_issue);
-        xy(b.abpTemplate, b.abp_onset);   xy(b.abpTemplate, b.abp_peak);
-        xy(b.abpTemplate, b.abp_dicrotic); xy(b.abpTemplate, b.abp_peak2);
-        xy(b.abpTemplate, b.abp_end);
+        xyn(b.abpTemplate, b.abp_onset, b.abp_onset, refAbp);
+        xyn(b.abpTemplate, b.abp_peak, b.abp_onset, refAbp);
+        xyn(b.abpTemplate, b.abp_dicrotic, b.abp_onset, refAbp);
+        xyn(b.abpTemplate, b.abp_peak2, b.abp_onset, refAbp);
+        xyn(b.abpTemplate, b.abp_end, b.abp_onset, refAbp);
 
         f << ',' << static_cast<int>(b.art_issue);
-        xy(b.artTemplate, b.art_onset);   xy(b.artTemplate, b.art_peak);
-        xy(b.artTemplate, b.art_dicrotic); xy(b.artTemplate, b.art_peak2);
-        xy(b.artTemplate, b.art_end);
+        xyn(b.artTemplate, b.art_onset, b.art_onset, refArt);
+        xyn(b.artTemplate, b.art_peak, b.art_onset, refArt);
+        xyn(b.artTemplate, b.art_dicrotic, b.art_onset, refArt);
+        xyn(b.artTemplate, b.art_peak2, b.art_onset, refArt);
+        xyn(b.artTemplate, b.art_end, b.art_onset, refArt);
 
         f << ',' << static_cast<int>(b.art_pulm_issue);
-        xy(b.artPulmTemplate, b.art_pulm_onset);   xy(b.artPulmTemplate, b.art_pulm_peak);
-        xy(b.artPulmTemplate, b.art_pulm_dicrotic); xy(b.artPulmTemplate, b.art_pulm_peak2);
-        xy(b.artPulmTemplate, b.art_pulm_end);
+        xyn(b.artPulmTemplate, b.art_pulm_onset, b.art_pulm_onset, refArtPulm);
+        xyn(b.artPulmTemplate, b.art_pulm_peak, b.art_pulm_onset, refArtPulm);
+        xyn(b.artPulmTemplate, b.art_pulm_dicrotic, b.art_pulm_onset, refArtPulm);
+        xyn(b.artPulmTemplate, b.art_pulm_peak2, b.art_pulm_onset, refArtPulm);
+        xyn(b.artPulmTemplate, b.art_pulm_end, b.art_pulm_onset, refArtPulm);
         f << '\n';
     }
 }
@@ -402,22 +473,22 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         int32_t v = 0; f.read(reinterpret_cast<char*>(&v), 4); return v;
         };
 
-    // Peek the first 8 bytes. v2 begins with the sentinel; anything else is a
-    // v1 file whose first 8 bytes are the real bin count.
+    // Peek the first 8 bytes. v2+ begin with the sentinel; anything else
+    // is a v1 file whose first 8 bytes are the real bin count.
     uint64_t first = 0;
     f.read(reinterpret_cast<char*>(&first), 8);
 
-    bool v2 = false;
+    uint32_t version = 1;
     uint64_t n = 0;
     if (first == kTemplateMarkingsV2Sentinel) {
-        v2 = true;
-        uint32_t ver = 0;
-        f.read(reinterpret_cast<char*>(&ver), 4);   // version (currently 2)
+        f.read(reinterpret_cast<char*>(&version), 4);   // 2 or 3
         f.read(reinterpret_cast<char*>(&n), 8);
     }
     else {
         n = first;   // v1: first field WAS the bin count
     }
+    const bool has_arterial = (version >= 2);
+    const bool has_p50 = (version >= 3);
 
     std::vector<TemplateBin> bins(n);
     for (uint64_t i = 0; i < n; ++i) {
@@ -436,12 +507,13 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         for (int c = 0; c < 3; ++c) b.t_end_ch[c] = r32();
 
         b.ppg_onset = r32();
+        if (has_p50) b.ppg_p50 = r32();
         b.ppg_peak = r32();
         b.ppg_dicrotic = r32();
         b.ppg_peak2 = r32();
         b.ppg_end = r32();
 
-        if (v2) {
+        if (has_arterial) {
             b.abp_issue = r8();
             b.abp_onset = r32(); b.abp_peak = r32(); b.abp_dicrotic = r32();
             b.abp_peak2 = r32(); b.abp_end = r32();

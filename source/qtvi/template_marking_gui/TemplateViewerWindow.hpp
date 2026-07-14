@@ -105,7 +105,7 @@ private:
     void computeGlobalRefs();
     // Normalize a copy of `raw` according to the rules in normalize_features.hpp.
     // ECG: sample / globalRef.
-    // Pulse: ((sample - footY) / |footY| * 100) / globalRef.
+    // Pulse: 100*(sample - footY) / footY / globalRef.
     // If globalRef or footY is not usable, returns raw unchanged.
     std::vector<double> normalizeEcgTrace(const std::vector<double>& raw, int ch) const;
     std::vector<double> normalizePulseTrace(const std::vector<double>& raw,
