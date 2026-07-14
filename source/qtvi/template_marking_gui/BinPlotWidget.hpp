@@ -45,33 +45,32 @@ public:
     // markerIsEcg / markerIsPpg can use range checks.
     enum Marker : int {
         // --- ECG markers (contiguous, starting at 0) ---
-        EcgP = 0,   // P-wave onset
+        // Six draggable ECG landmarks in temporal order:
+        //   P peak, Q onset, R peak, S end, T peak, T end.
+        // Every one is both draggable (as a movable bar) and displayed
+        // with an X glyph at its current position.
+        EcgPPeak = 0,
         EcgQBegin = 1,
-        EcgSEnd = 2,   // QRS end (S-wave)
-        EcgTBegin = 3,
-        EcgTEnd = 4,
+        EcgRPeak = 2,
+        EcgSEnd = 3,
+        EcgTPeak = 4,
+        EcgTEnd = 5,
         // --- PPG markers (contiguous, immediately after ECG) ---
-        PpgOnset = 5,
-        PpgP50 = 6,   // 50% up the upslope, foot -> systolic peak
-        PpgPeak = 7,
-        PpgDicrotic = 8,   // dicrotic notch
-        PpgPeak2 = 9,   // 2nd (diastolic) peak, after dicrotic notch
-        PpgEnd = 10,   // end-of-pulse / trough after descent
-        // --- Arterial markers: same 5-marker set as PPG, one group per
-        //     channel (ABP, ART, ART_PULM), each contiguous. They ride the
-        //     PPG x-geometry (foot-anchored at ppgStartSample()) but index
-        //     into their own background trace vector. ---
-        AbpOnset = 11, AbpPeak = 12, AbpDicrotic = 13, AbpPeak2 = 14, AbpEnd = 15,
-        ArtOnset = 16, ArtPeak = 17, ArtDicrotic = 18, ArtPeak2 = 19, ArtEnd = 20,
-        ArtPulmOnset = 21, ArtPulmPeak = 22, ArtPulmDicrotic = 23,
-        ArtPulmPeak2 = 24, ArtPulmEnd = 25,
-        // --- size sentinel ---
-        MarkerCount = 26
+        PpgOnset = 6,
+        PpgP50 = 7,
+        PpgPeak = 8,
+        PpgDicrotic = 9,
+        PpgPeak2 = 10,
+        PpgEnd = 11,
+        // --- Arterial markers ---
+        AbpOnset = 12, AbpPeak = 13, AbpDicrotic = 14, AbpPeak2 = 15, AbpEnd = 16,
+        ArtOnset = 17, ArtPeak = 18, ArtDicrotic = 19, ArtPeak2 = 20, ArtEnd = 21,
+        ArtPulmOnset = 22, ArtPulmPeak = 23, ArtPulmDicrotic = 24,
+        ArtPulmPeak2 = 25, ArtPulmEnd = 26,
+        MarkerCount = 27
     };
 
-    // Range-based predicates. Update these bounds if you add more
-    // markers to either group.
-    static bool markerIsEcg(int m) { return m >= EcgP && m <= EcgTEnd; }
+    static bool markerIsEcg(int m) { return m >= EcgPPeak && m <= EcgTEnd; }
     static bool markerIsPpg(int m) { return m >= PpgOnset && m <= PpgEnd; }
     static bool markerIsAbp(int m) { return m >= AbpOnset && m <= AbpEnd; }
     static bool markerIsArt(int m) { return m >= ArtOnset && m <= ArtEnd; }
@@ -124,7 +123,7 @@ public:
         const std::vector<double>& ppgStd,
         const std::vector<double>& ecg,
         const std::vector<double>& ecgStd,
-        int ecgP, int qBegin, int sEnd, int tBegin, int tEnd,
+        int pPeak, int qBegin, int rPeak, int sEnd, int tPeak, int tEnd,
         int ppgOnset, int ppgP50, int ppgPeak,
         int ppgDicrotic, int ppgPeak2, int ppgEnd,
         double rPeakSample,
@@ -237,28 +236,27 @@ private:
     // Storage sized by MarkerCount so it grows automatically if you add
     // more entries to the enum. All marker slots start hidden (-1).
     int m_markers[MarkerCount] = {
-        -1, -1, -1, -1, -1,       // ECG (5)
-        -1, -1, -1, -1, -1, -1,   // PPG (6: onset, P50, peak, dic, peak2, end)
+        -1, -1, -1, -1, -1, -1,   // ECG (6: p_peak, q_begin, r_peak, s_end, t_peak, t_end)
+        -1, -1, -1, -1, -1, -1,   // PPG (6)
         -1, -1, -1, -1, -1,       // ABP
         -1, -1, -1, -1, -1,       // ART
         -1, -1, -1, -1, -1        // ART_PULM
     };
 
     struct GlyphSnapshot {
-        int ecgP = -1, ecgR = -1, ecgT = -1, ecgQ = -1, ecgS = -1, ecgTend = -1;
-        // O-fallback positions for P/R/T peaks: -1 => landmark found (draw X
-        // at the ecgP/ecgR/ecgT index); >=0 => landmark absent, draw O here
-        // instead. Q, S end, T end come straight from movable markers and
-        // don't have fallbacks.
-        int ecgPOFallback = -1, ecgROFallback = -1, ecgTOFallback = -1;
+        // All ECG glyphs read straight from the movable markers now
+        // (P peak, Q onset, R peak, S end, T peak, T end). Each draws an
+        // X at its marker's position; no O fallbacks (a marker is always
+        // set, or the field stays -1 and the draw is skipped).
+        int ecgPPeak = -1, ecgQ = -1, ecgRPeak = -1, ecgS = -1, ecgTPeak = -1, ecgTend = -1;
         int ppgFoot = -1, ppgP50 = -1, ppgP1 = -1, ppgDic = -1, ppgP2 = -1, ppgEnd = -1;
         // Fallback midpoints for landmarks that can be "expected but not
         // found". X drawn at the real index; O drawn at the fallback.
         int ppgP50OFallback = -1;
         int ppgP1OFallback = -1;
         int ppgP2OFallback = -1;
-        bool ppgNotch = false;     // true => real notch found; false => draw 'o'
-        int  ppgNoNotchO = -1;     // 'o' position (midpoint of [peak, end]) when no notch
+        bool ppgNotch = false;
+        int  ppgNoNotchO = -1;
         bool valid = false;
     };
 

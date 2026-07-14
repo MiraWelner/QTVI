@@ -301,49 +301,25 @@ namespace {
         // ---- PPG --------------------------------------------------------
         if (b.ppgTemplate.empty()) {
             b.ppg_issue = 2;
-            b.ppg_onset = -1;
-            b.ppg_p50 = -1;
-            b.ppg_peak = -1;
-            b.ppg_dicrotic = -1;
-            b.ppg_peak2 = -1;
-            b.ppg_end = -1;
+            b.ppg_onset = b.ppg_p50 = b.ppg_peak = -1;
+            b.ppg_dicrotic = b.ppg_peak2 = b.ppg_end = -1;
+            b.ppg_onset_auto = b.ppg_p50_auto = b.ppg_peak_auto = -1;
+            b.ppg_dicrotic_auto = b.ppg_peak2_auto = b.ppg_end_auto = -1;
         }
         else if (b.ppg_issue == 1) {
-            b.ppg_onset = -1;
-            b.ppg_p50 = -1;
-            b.ppg_peak = -1;
-            b.ppg_dicrotic = -1;
-            b.ppg_peak2 = -1;
-            b.ppg_end = -1;
+            b.ppg_onset = b.ppg_p50 = b.ppg_peak = -1;
+            b.ppg_dicrotic = b.ppg_peak2 = b.ppg_end = -1;
+            // Leave *_auto alone -- they're the original auto positions.
         }
         else {
-            // Simple, un-clever rules -- no window bounds, no "first half"
-            // heuristics. Each landmark is defined by argmin/argmax over
-            // the entire post-anchor trace.
-            //
-            //   foot     = argmin over [rFirst, N)
-            //   peak     = argmax over (foot, N)
-            //   end      = argmin over (peak, N)
-            //   dicrotic = FIRST interior local min over (peak, end)
-            //   peak2    = user-placed; default 90% foot->end
             const std::vector<double>& v = b.ppgTemplate;
             const int N = static_cast<int>(v.size());
 
-            // Foot search starts 0.3 s after t=0 -- a fixed offset in this
-            // channel's own sample frame. Using a rate-derived constant
-            // keeps foot placement decoupled from anything ECG-side.
             const int rFirst = (sampleRate > 0.0)
                 ? static_cast<int>(std::llround(0.3 * sampleRate)) : 0;
-
-            // Physiological search bounds. Foot follows R by a short
-            // transit delay (up to ~350ms). Peak follows foot within
-            // roughly one cardiac cycle. End follows peak within another
-            // cycle. Without bounds, argmin/argmax over the whole trace
-            // can drift into the decaying tail past the anchor pulse and
-            // cluster every marker at the right edge.
             const int footWin = (sampleRate > 0.0)
                 ? static_cast<int>(std::llround(0.35 * sampleRate)) : N / 2;
-            const int cycleGuess = std::max(1, N - rFirst);  // ~1 RR in PPG samples
+            const int cycleGuess = std::max(1, N - rFirst);
 
             // foot: argmin in [rFirst, rFirst + footWin)
             int foot = -1;
@@ -354,7 +330,6 @@ namespace {
                 for (int i = lo; i < hi; ++i)
                     if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; foot = i; }
             }
-            b.ppg_onset = foot;
 
             // peak: argmax in [foot+1, foot+cycleGuess)
             int peak = -1;
@@ -364,7 +339,6 @@ namespace {
                 for (int i = foot + 1; i < hi; ++i)
                     if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; peak = i; }
             }
-            b.ppg_peak = peak;
 
             // end: argmin in [peak+1, peak+cycleGuess)
             int end = -1;
@@ -374,14 +348,8 @@ namespace {
                 for (int i = peak + 1; i < hi; ++i)
                     if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; end = i; }
             }
-            b.ppg_end = end;
 
-            // Dicrotic notch (movable marker): least-negative slope in the
-            // MIDDLE 50% of the downslope. Downslope = [firstMinAfterPeak,
-            // end]. If the least-negative slope actually goes non-negative
-            // in that middle window, a real inflection exists -- place the
-            // marker there. Otherwise place it at the center of the down-
-            // slope so the user has a movable bar visible for correction.
+            // dicrotic: least-negative slope in middle 50% of downslope
             int dic = -1;
             if (peak >= 0 && end > peak + 4) {
                 int firstMin = -1;
@@ -401,23 +369,12 @@ namespace {
                         const double slope = 0.5 * (v[i + 1] - v[i - 1]);
                         if (slope > bestSlope) { bestSlope = slope; bestIdx = i; }
                     }
-                    if (bestIdx >= 0 && bestSlope >= 0.0) {
-                        // Real notch (slope turned non-negative).
-                        dic = bestIdx;
-                    }
-                    else {
-                        // Subtle / absent notch -- default the movable bar
-                        // to the middle of the downslope.
-                        dic = (slopeStart + end) / 2;
-                    }
+                    if (bestIdx >= 0 && bestSlope >= 0.0) dic = bestIdx;
+                    else                                  dic = (slopeStart + end) / 2;
                 }
             }
-            b.ppg_dicrotic = dic;
 
-            // p50: sample nearest 50% amplitude on the foot->peak upslope.
-            // Value-based (not temporal midpoint) since the upslope isn't
-            // linear in time. Falls back to temporal midpoint if the trace
-            // doesn't span the target within a sensible band.
+            // p50: nearest 50% amplitude on foot->peak upslope
             int p50 = -1;
             if (foot >= 0 && peak > foot &&
                 !std::isnan(v[foot]) && !std::isnan(v[peak])) {
@@ -434,17 +391,30 @@ namespace {
             else if (foot >= 0 && peak > foot) {
                 p50 = (foot + peak) / 2;
             }
-            b.ppg_p50 = p50;
 
-            // peak2: user-placed. Default 90% foot->end.
-            if (foot >= 0 && end > foot)
-                b.ppg_peak2 = foot + (9 * (end - foot)) / 10;
-            else
-                b.ppg_peak2 = std::max(0, N - 1);
+            // peak2: default 90% foot->end
+            int peak2 = (foot >= 0 && end > foot)
+                ? foot + (9 * (end - foot)) / 10
+                : std::max(0, N - 1);
+
+            // ALWAYS populate auto fields (fresh every loadSubject).
+            b.ppg_onset_auto = foot;
+            b.ppg_peak_auto = peak;
+            b.ppg_end_auto = end;
+            b.ppg_dicrotic_auto = dic;
+            b.ppg_p50_auto = p50;
+            b.ppg_peak2_auto = peak2;
+            // User fields: only seed when unset (respect prior edits).
+            if (b.ppg_onset < 0) b.ppg_onset = foot;
+            if (b.ppg_peak < 0) b.ppg_peak = peak;
+            if (b.ppg_end < 0) b.ppg_end = end;
+            if (b.ppg_dicrotic < 0) b.ppg_dicrotic = dic;
+            if (b.ppg_p50 < 0) b.ppg_p50 = p50;
+            if (b.ppg_peak2 < 0) b.ppg_peak2 = peak2;
 
             fprintf(stderr,
                 "[seed] N=%d foot=%d p50=%d peak=%d end=%d dic=%d peak2=%d\n",
-                N, foot, p50, peak, end, dic, b.ppg_peak2);
+                N, foot, p50, peak, end, dic, peak2);
         }
 
         // ---- ECG (per channel) -----------------------------------------
@@ -453,77 +423,86 @@ namespace {
             const auto& ecg = chs[c]->ecgTemplate_raw;
             if (ecg.empty()) {
                 b.bad_r_ch[c] = true;
-                b.p_begin_ch[c] = -1;
-                b.q_begin_ch[c] = -1;
-                b.s_end_ch[c] = -1;
-                b.t_begin_ch[c] = -1;
-                b.t_end_ch[c] = -1;
+                b.p_peak_ch[c] = b.q_begin_ch[c] = b.r_peak_ch[c] = -1;
+                b.s_end_ch[c] = b.t_peak_ch[c] = b.t_end_ch[c] = -1;
+                b.p_peak_auto_ch[c] = b.q_begin_auto_ch[c] = b.r_peak_auto_ch[c] = -1;
+                b.s_end_auto_ch[c] = b.t_peak_auto_ch[c] = b.t_end_auto_ch[c] = -1;
                 continue;
             }
-            const int rHint = static_cast<int>(std::round(
-                chs[c]->avg_r_expand_raw));
 
-            // T-end first — its detector doesn't need visN, and we need T-end
-            // to compute the visible cutoff.
-            if (b.t_end_ch[c] < 0)
-                b.t_end_ch[c] = ecg_markers::detect_t_end(ecg);
-
-            // Now compute the visible cutoff using T-end.
             const int visN = std::max(static_cast<int>(ecg.size()), 2);
 
-            // Clamp T-end into the visible range now that we know visN.
-            b.t_end_ch[c] = clampToVisible(b.t_end_ch[c], visN);
+            // Compute the six auto positions ONCE (clamped to visible).
+            const int p_auto = clampToVisible(ecg_markers::detect_p_peak(ecg), visN);
+            const int q_auto = clampToVisible(ecg_markers::detect_q_begin(ecg), visN);
+            const int r_auto = clampToVisible(ecg_markers::detect_r_peak(ecg), visN);
+            const int s_auto = clampToVisible(ecg_markers::detect_s_end(ecg), visN);
+            const int tp_auto = clampToVisible(ecg_markers::detect_t_peak(ecg), visN);
+            const int te_auto = clampToVisible(ecg_markers::detect_t_end(ecg), visN);
 
-            if (b.p_begin_ch[c] < 0)
-                b.p_begin_ch[c] = clampToVisible(
-                    ecg_markers::detect_p_begin(ecg), visN);
-            if (b.q_begin_ch[c] < 0)
-                b.q_begin_ch[c] = clampToVisible(
-                    ecg_markers::detect_q_begin(ecg), visN);
-            if (b.s_end_ch[c] < 0)
-                b.s_end_ch[c] = clampToVisible(
-                    ecg_markers::detect_s_end(ecg), visN);
-            if (b.t_begin_ch[c] < 0)
-                b.t_begin_ch[c] = clampToVisible(
-                    ecg_markers::detect_t_begin(ecg), visN);
+            // Auto fields ALWAYS updated.
+            b.p_peak_auto_ch[c] = p_auto;
+            b.q_begin_auto_ch[c] = q_auto;
+            b.r_peak_auto_ch[c] = r_auto;
+            b.s_end_auto_ch[c] = s_auto;
+            b.t_peak_auto_ch[c] = tp_auto;
+            b.t_end_auto_ch[c] = te_auto;
+
+            // User fields: only seed when unset.
+            if (b.p_peak_ch[c] < 0) b.p_peak_ch[c] = p_auto;
+            if (b.q_begin_ch[c] < 0) b.q_begin_ch[c] = q_auto;
+            if (b.r_peak_ch[c] < 0) b.r_peak_ch[c] = r_auto;
+            if (b.s_end_ch[c] < 0) b.s_end_ch[c] = s_auto;
+            if (b.t_peak_ch[c] < 0) b.t_peak_ch[c] = tp_auto;
+            if (b.t_end_ch[c] < 0) b.t_end_ch[c] = te_auto;
         }
 
         // ---- Arterial channels (ABP / ART / ART_PULM) -------------------
-        // Same 5-marker set as PPG. Under Patch B, arterial channels are
-        // sliced the same way as PPG (R-anchored, driven by ch1.raw), so
-        // rFirstArt / rSecondArt land at the same columns in the arterial
-        // frame as they do in the PPG frame (assumes same rate; see PPG
-        // caveat above). issue==2 => absent, issue==1 => flagged bad
-        // (markers cleared), else auto-seed if unset.
-        // Arterial R-window offsets: same 0.3 s / 1.5 s rules as PPG,
-        // using this channel's sample rate. Decoupled from avg_r_expand.
         const int rFirstArt = (sampleRate > 0.0)
             ? static_cast<int>(std::llround(0.3 * sampleRate)) : 0;
         const int rSecondArt = rFirstArt + ((sampleRate > 0.0)
             ? static_cast<int>(std::llround(0.75 * sampleRate)) : 0);
 
         auto seedArterial = [&](const std::vector<double>& trace, uint8_t& issue,
-            int& onset, int& peak, int& dicrotic, int& p50, int& end)
+            int& onset, int& peak, int& dicrotic, int& peak2, int& end,
+            int& onset_auto, int& peak_auto, int& dic_auto, int& p2_auto, int& end_auto)
             {
                 if (trace.empty()) {
                     issue = 2;
-                    onset = peak = dicrotic = p50 = end = -1;
+                    onset = peak = dicrotic = peak2 = end = -1;
+                    onset_auto = peak_auto = dic_auto = p2_auto = end_auto = -1;
                     return;
                 }
                 if (issue == 1) {
-                    onset = peak = dicrotic = p50 = end = -1;
+                    onset = peak = dicrotic = peak2 = end = -1;
+                    // Leave *_auto alone.
                     return;
                 }
-                seedPulse(trace, rFirstArt, rSecondArt,
-                    onset, peak, dicrotic, p50, end);
+                // Compute auto values into locals via seedPulse, then split.
+                int aOn = -1, aPk = -1, aDic = -1, aP2 = -1, aEnd = -1;
+                seedPulse(trace, rFirstArt, rSecondArt, aOn, aPk, aDic, aP2, aEnd);
+                onset_auto = aOn; peak_auto = aPk; dic_auto = aDic;
+                p2_auto = aP2;    end_auto = aEnd;
+                if (onset < 0) onset = aOn;
+                if (peak < 0) peak = aPk;
+                if (dicrotic < 0) dicrotic = aDic;
+                if (peak2 < 0) peak2 = aP2;
+                if (end < 0) end = aEnd;
             };
+
         seedArterial(b.abpTemplate, b.abp_issue,
-            b.abp_onset, b.abp_peak, b.abp_dicrotic, b.abp_peak2, b.abp_end);
+            b.abp_onset, b.abp_peak, b.abp_dicrotic, b.abp_peak2, b.abp_end,
+            b.abp_onset_auto, b.abp_peak_auto, b.abp_dicrotic_auto,
+            b.abp_peak2_auto, b.abp_end_auto);
         seedArterial(b.artTemplate, b.art_issue,
-            b.art_onset, b.art_peak, b.art_dicrotic, b.art_peak2, b.art_end);
+            b.art_onset, b.art_peak, b.art_dicrotic, b.art_peak2, b.art_end,
+            b.art_onset_auto, b.art_peak_auto, b.art_dicrotic_auto,
+            b.art_peak2_auto, b.art_end_auto);
         seedArterial(b.artPulmTemplate, b.art_pulm_issue,
             b.art_pulm_onset, b.art_pulm_peak, b.art_pulm_dicrotic,
-            b.art_pulm_peak2, b.art_pulm_end);
+            b.art_pulm_peak2, b.art_pulm_end,
+            b.art_pulm_onset_auto, b.art_pulm_peak_auto, b.art_pulm_dicrotic_auto,
+            b.art_pulm_peak2_auto, b.art_pulm_end_auto);
     }
 }
 
@@ -698,8 +677,8 @@ void TemplateViewerWindow::showPage() {
                 : b.artPulmTemplate;
 
             pw->setData(ppgN, ppgStd, ecgN, ecgStd,
-                b.p_begin_ch[c], b.q_begin_ch[c], b.s_end_ch[c],
-                b.t_begin_ch[c], b.t_end_ch[c],
+                b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
+                b.s_end_ch[c], b.t_peak_ch[c], b.t_end_ch[c],
                 b.ppg_onset, b.ppg_p50, b.ppg_peak,
                 b.ppg_dicrotic, b.ppg_peak2, b.ppg_end,
                 rPeak,
@@ -936,10 +915,11 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
         const TemplateBin& b = m_bins[binIdx];
         for (auto* pw : m_binPlots[li]) {
             int c = pw->leadIndex();
-            pw->setMarker(BinPlotWidget::EcgP, b.p_begin_ch[c]);
+            pw->setMarker(BinPlotWidget::EcgPPeak, b.p_peak_ch[c]);
             pw->setMarker(BinPlotWidget::EcgQBegin, b.q_begin_ch[c]);
+            pw->setMarker(BinPlotWidget::EcgRPeak, b.r_peak_ch[c]);
             pw->setMarker(BinPlotWidget::EcgSEnd, b.s_end_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgTBegin, b.t_begin_ch[c]);
+            pw->setMarker(BinPlotWidget::EcgTPeak, b.t_peak_ch[c]);
             pw->setMarker(BinPlotWidget::EcgTEnd, b.t_end_ch[c]);
             pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
             pw->setMarker(BinPlotWidget::PpgP50, b.ppg_p50);
@@ -976,10 +956,11 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
     if (BinPlotWidget::markerIsEcg(marker)) {
         if (leadIdx < 0 || leadIdx > 2) return;
         switch (marker) {
-        case BinPlotWidget::EcgP:      b.p_begin_ch[leadIdx] = newIdx; break;
+        case BinPlotWidget::EcgPPeak:  b.p_peak_ch[leadIdx] = newIdx; break;
         case BinPlotWidget::EcgQBegin: b.q_begin_ch[leadIdx] = newIdx; break;
+        case BinPlotWidget::EcgRPeak:  b.r_peak_ch[leadIdx] = newIdx; break;
         case BinPlotWidget::EcgSEnd:   b.s_end_ch[leadIdx] = newIdx; break;
-        case BinPlotWidget::EcgTBegin: b.t_begin_ch[leadIdx] = newIdx; break;
+        case BinPlotWidget::EcgTPeak:  b.t_peak_ch[leadIdx] = newIdx; break;
         case BinPlotWidget::EcgTEnd:   b.t_end_ch[leadIdx] = newIdx; break;
         }
 
@@ -994,14 +975,16 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 if (newIdx >= (int)chs[leadIdx]->ecgTemplate_raw.size()) continue;
 
                 switch (marker) {
-                case BinPlotWidget::EcgP:
-                    m_bins[i].p_begin_ch[leadIdx] = newIdx; break;
+                case BinPlotWidget::EcgPPeak:
+                    m_bins[i].p_peak_ch[leadIdx] = newIdx; break;
                 case BinPlotWidget::EcgQBegin:
                     m_bins[i].q_begin_ch[leadIdx] = newIdx; break;
+                case BinPlotWidget::EcgRPeak:
+                    m_bins[i].r_peak_ch[leadIdx] = newIdx; break;
                 case BinPlotWidget::EcgSEnd:
                     m_bins[i].s_end_ch[leadIdx] = newIdx; break;
-                case BinPlotWidget::EcgTBegin:
-                    m_bins[i].t_begin_ch[leadIdx] = newIdx; break;
+                case BinPlotWidget::EcgTPeak:
+                    m_bins[i].t_peak_ch[leadIdx] = newIdx; break;
                 case BinPlotWidget::EcgTEnd:
                     m_bins[i].t_end_ch[leadIdx] = newIdx; break;
                 }
@@ -1135,23 +1118,31 @@ void TemplateViewerWindow::onBadPPGToggled(int binIdx, bool bad) {
 }
 
 void TemplateViewerWindow::save_bin_and_csv() {
-    for (auto& b : m_bins)
-        seedBinMarkers(b, m_sampleRate);
+    // Do NOT re-seed here. Markers were seeded once at loadSubject and
+    // then updated by user drags via onMarkerMoved. Re-seeding now would
+    // wipe every user edit (the PPG/arterial seed paths recompute
+    // unconditionally). Save should persist current state, not regenerate.
+
+    // All analysis outputs (templates.csv, template_markings.*,
+    // template_markings_normalized.csv) share ONE folder:
+    // <templateDir>/../csv_for_analysis. m_markingPath (config's
+    // qtvi_marker_path) is ignored here so the user only has to look
+    // in one place.
+    QDir outDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
+    if (!outDir.exists()) outDir.mkpath(".");
+    const QString base = outDir.absolutePath() + "/" + m_subjectId;
 
     try {
-        QString outPath = m_markingPath + "/" + m_subjectId + "_template_markings.bin";
+        QString outPath = base + "_template_markings.bin";
         writeTemplateMarkingsBin(outPath.toStdString(), m_bins);
         std::cout << "Saved: " << outPath.toStdString() << "\n";
 
-        QString csvPath = m_markingPath + "/" + m_subjectId + "_template_markings.csv";
+        QString csvPath = base + "_template_markings.csv";
         writeTemplateMarkingsCsv(csvPath.toStdString(), m_bins,
             m_subjectId.toStdString(), m_sampleRate);
         std::cout << "Saved: " << csvPath.toStdString() << "\n";
 
-        // Per-subject amplitude normalization: ECG divided by median(|R|+|S|),
-        // pulse channels (PPG + arterial) divided by median PI. See
-        // normalize_features.hpp for the full formulas.
-        QString normPath = m_markingPath + "/" + m_subjectId + "_template_markings_normalized.csv";
+        QString normPath = base + "_template_markings_normalized.csv";
         normalize_features::writeNormalizedCsv(normPath.toStdString(),
             m_bins, m_subjectId.toStdString(), m_sampleRate);
         std::cout << "Saved: " << normPath.toStdString() << "\n";

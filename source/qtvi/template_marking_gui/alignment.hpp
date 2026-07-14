@@ -114,7 +114,7 @@ namespace alignment {
             if (rr <= 3) continue;                             // degenerate only
 
             const int64_t before = rr / 4;                    // 0.25 RR
-            const int64_t after = rr * 1.2;                         // 1.0 RR: extend to next R
+            const int64_t after = rr + rr / 10;                // 1.1 RR: extend past next R
             const int64_t len = before + after;               // 1.25 RR total
             const int64_t start = r0 - before;
             const int64_t end = r0 + after;                   // exclusive, at next R
@@ -222,7 +222,7 @@ namespace alignment {
             if (L > max_mode_len) max_mode_len = L;
         if (max_mode_len > 0) {
             const int R_anchor = max_mode_len / 4;              // 0.25 * max_RR
-            const int shared_w = R_anchor + max_mode_len + max_mode_len / 10;   // 1.35 * max_RR
+            const int shared_w = R_anchor + max_mode_len + max_mode_len / 10;  // 1.35 * max_RR
 
             std::vector<std::vector<double>> aligned;
             aligned.reserve(out.beats.size());
@@ -347,6 +347,70 @@ namespace alignment {
                 out.beats = std::move(q_aligned);
                 out.q_aligned_col = Q_mode + max_prepend;
                 out.r_aligned_col = R_anchor + max_prepend;
+
+                // ============================================================
+                // Pass 3: PR-baseline vertical alignment.
+                //
+                // Every Q-aligned beat has its Q at the same column
+                // (out.q_aligned_col). Pick a PR-baseline window ending just
+                // before Q on that shared axis: width = max_mode_len / 20
+                // (~5% of RR), ending max_mode_len / 50 (~2% of RR) before Q.
+                // Both scale with sample rate.
+                //
+                // Compute the mode beat's PR-baseline mean = target level.
+                // For every other beat: compute its own PR baseline over the
+                // SAME column range, then subtract (beat_baseline - target)
+                // from every non-NaN sample. Beats without a Q shift (q_cols
+                // < 0), or whose PR window has too few valid samples, are
+                // left untouched (still R-aligned, just no vertical shift).
+                // ============================================================
+                if (out.mode_beat_index >= 0
+                    && out.mode_beat_index < static_cast<int>(out.beats.size())) {
+                    const int Qc = out.q_aligned_col;
+                    const int pr_w = std::max(3, max_mode_len / 20);
+                    const int pr_gap = std::max(1, max_mode_len / 50);
+                    const int pr_lo = std::max(0, Qc - pr_gap - pr_w);
+                    const int pr_hi = std::max(pr_lo, Qc - pr_gap);   // exclusive
+
+                    auto pr_baseline = [&](const std::vector<double>& beat) {
+                        double sum = 0.0; int n = 0;
+                        for (int k = pr_lo; k < pr_hi && k < static_cast<int>(beat.size()); ++k) {
+                            const double v = beat[k];
+                            if (!std::isnan(v)) { sum += v; ++n; }
+                        }
+                        return (n >= 3) ? std::make_pair(sum / n, n)
+                            : std::make_pair(std::numeric_limits<double>::quiet_NaN(), n);
+                        };
+
+                    const auto [target, target_n] =
+                        pr_baseline(out.beats[out.mode_beat_index]);
+
+                    if (std::isnan(target)) {
+                        fprintf(stderr, "[align] pass3: mode beat has no PR baseline "
+                            "(window=[%d,%d) valid=%d) -- skipping DC shift\n",
+                            pr_lo, pr_hi, target_n);
+                    }
+                    else {
+                        size_t shifted = 0, skipped = 0;
+                        for (size_t i = 0; i < out.beats.size(); ++i) {
+                            // Beats that weren't Q-shifted (Q undetected or shift
+                            // capped) don't have their PR region on the shared
+                            // Q-axis, so the window doesn't correspond to their
+                            // real PR interval -- skip them.
+                            if (out.q_cols[i] < 0) { ++skipped; continue; }
+                            const auto [b_base, b_n] = pr_baseline(out.beats[i]);
+                            if (std::isnan(b_base)) { ++skipped; continue; }
+                            const double d = b_base - target;
+                            if (d == 0.0) { ++shifted; continue; }
+                            for (double& v : out.beats[i])
+                                if (!std::isnan(v)) v -= d;
+                            ++shifted;
+                        }
+                        fprintf(stderr, "[align] pass3: PR-baseline vertical align "
+                            "window=[%d,%d) target=%.4g shifted=%zu skipped=%zu\n",
+                            pr_lo, pr_hi, target, shifted, skipped);
+                    }
+                }
             }
         }
 

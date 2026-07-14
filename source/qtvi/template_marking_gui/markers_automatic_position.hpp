@@ -292,6 +292,71 @@ namespace ecg_markers {
     }
 
 
+    // ---- Peak detectors (P peak, R peak, T peak) -----------------------
+    // Direct peak-finding on the ECG template. Each returns a non-negative
+    // sample index -- a fallback position when no clear extremum is found,
+    // so the movable bar always has a place to sit.
+
+    // R peak: argmax of first half of primary beat, respecting polarity.
+    // Delegates to r_peak() above so the auto-detection rule stays in
+    // exactly one place.
+    inline int detect_r_peak(const std::vector<double>& ecg_signal) {
+        return r_peak(ecg_signal).first;
+    }
+
+    // P peak: interior local extremum (matching R polarity) BEFORE Q onset.
+    // Q is auto-estimated via detect_q_begin so the seed doesn't depend on
+    // any external ordering.
+    inline int detect_p_peak(const std::vector<double>& ecg_signal) {
+        const int N = static_cast<int>(ecg_signal.size());
+        if (N < 3) return 0;
+
+        auto [r_idx, is_positive] = r_peak(ecg_signal);
+        std::vector<double> upright = ecg_signal;
+        if (!is_positive) for (auto& x : upright) x = -x;
+
+        const int q_est = detect_q_begin(ecg_signal);
+        const int hi = std::max(2, std::min(q_est, N - 1));
+
+        // LAST interior local max in [1, hi) matching R polarity (upright).
+        int best = -1;
+        for (int i = 1; i < hi - 1; ++i) {
+            if (std::isnan(upright[i - 1]) || std::isnan(upright[i]) || std::isnan(upright[i + 1])) continue;
+            if (upright[i] >= upright[i - 1] && upright[i] >= upright[i + 1]) best = i;
+        }
+        if (best >= 0) return best;
+        return std::max(0, hi / 2);
+    }
+
+    // T peak: interior local extremum (matching R polarity) AFTER the QRS,
+    // in the T-wave region. Search from ~50 samples past R out to the end
+    // of the primary beat (4*N/5 under the 1.25*RR template shape).
+    inline int detect_t_peak(const std::vector<double>& ecg_signal) {
+        const int N = static_cast<int>(ecg_signal.size());
+        if (N < 3) return 0;
+
+        auto [r_idx, is_positive] = r_peak(ecg_signal);
+        std::vector<double> upright = ecg_signal;
+        if (!is_positive) for (auto& x : upright) x = -x;
+
+        const int primary_end = (4 * N) / 5;
+        const int lo = std::min(N - 2, r_idx + 50);
+        const int hi = std::max(lo + 5, std::min(N - 1, primary_end));
+        if (hi - lo < 5) return std::min(N - 1, r_idx + 150);
+
+        int best = -1;
+        double bestVal = -std::numeric_limits<double>::infinity();
+        for (int i = lo + 1; i < hi; ++i) {
+            if (std::isnan(upright[i - 1]) || std::isnan(upright[i]) || std::isnan(upright[i + 1])) continue;
+            if (upright[i] >= upright[i - 1] && upright[i] >= upright[i + 1]) {
+                if (upright[i] > bestVal) { bestVal = upright[i]; best = i; }
+            }
+        }
+        if (best >= 0) return best;
+        return std::clamp(r_idx + 150, 0, N - 1);
+    }
+
+
     // ---- PPG detectors --------------------------------------------------
     // `pulse` is one PPG template waveform (one cardiac cycle, onset to
     // end). No R-peak hint -- PPG features are found directly from the

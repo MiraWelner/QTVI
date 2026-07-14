@@ -63,12 +63,13 @@ namespace {
     inline QColor withTraceAlpha(QColor c) { c.setAlpha(kTraceAlpha); return c; }
 
 
-    // ECG markers (P, Q, Tb, Te) - blacks and dark blues, darkest to lightest.
-    constexpr QColor kColorEcgP{ 0,   0,   0 };   // black
-    constexpr QColor kColorEcgQBegin{ 20,  20,  60 };   // very dark navy
-    constexpr QColor kColorEcgS{ 30, 35, 85 };   // dark navy, between Q and Tb
-    constexpr QColor kColorEcgTBegin{ 40,  50, 110 };   // dark navy
-    constexpr QColor kColorEcgTEnd{ 70,  90, 160 };   // medium navy
+    // ECG markers (P peak, Q begin, R peak, S end, T peak, T end).
+    constexpr QColor kColorEcgPPeak{ 0,   0,   0 };
+    constexpr QColor kColorEcgQBegin{ 20,  20,  60 };
+    constexpr QColor kColorEcgRPeak{ 15,  15,  40 };
+    constexpr QColor kColorEcgS{ 30, 35, 85 };
+    constexpr QColor kColorEcgTPeak{ 50,  60, 130 };
+    constexpr QColor kColorEcgTEnd{ 70,  90, 160 };
 
     // PPG markers (On, P50, Pk, Dc, 2, En) - shades of red, darkest to lightest.
     constexpr QColor kColorPpgOnset{ 110,   0,   0 };  // dark red
@@ -89,10 +90,11 @@ namespace {
 
     QColor markerColor(int m) {
         switch (m) {
-        case BinPlotWidget::EcgP:        return kColorEcgP;
+        case BinPlotWidget::EcgPPeak:    return kColorEcgPPeak;
         case BinPlotWidget::EcgQBegin:   return kColorEcgQBegin;
+        case BinPlotWidget::EcgRPeak:    return kColorEcgRPeak;
         case BinPlotWidget::EcgSEnd:     return kColorEcgS;
-        case BinPlotWidget::EcgTBegin:   return kColorEcgTBegin;
+        case BinPlotWidget::EcgTPeak:    return kColorEcgTPeak;
         case BinPlotWidget::EcgTEnd:     return kColorEcgTEnd;
         case BinPlotWidget::PpgOnset:    return kColorPpgOnset;
         case BinPlotWidget::PpgP50:      return kColorPpgP50;
@@ -108,10 +110,11 @@ namespace {
     }
     const char* markerShortLabel(int m) {
         switch (m) {
-        case BinPlotWidget::EcgP:        return "P onset";
+        case BinPlotWidget::EcgPPeak:    return "P peak";
         case BinPlotWidget::EcgQBegin:   return "Q beg";
+        case BinPlotWidget::EcgRPeak:    return "R peak";
         case BinPlotWidget::EcgSEnd:     return "S end";
-        case BinPlotWidget::EcgTBegin:   return "T beg";
+        case BinPlotWidget::EcgTPeak:    return "T peak";
         case BinPlotWidget::EcgTEnd:     return "T end";
         case BinPlotWidget::PpgOnset:    return "PPG On";
         case BinPlotWidget::PpgP50:      return "PPG 50%";
@@ -244,7 +247,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     const std::vector<double>& ppgStd,
     const std::vector<double>& ecg,
     const std::vector<double>& ecgStd,
-    int ecgP, int qBegin, int sEnd, int tBegin, int tEnd,
+    int pPeak, int qBegin, int rPeak, int sEnd, int tPeak, int tEnd,
     int ppgOnset, int ppgP50, int ppgPeak,
     int ppgDicrotic, int ppgPeak2, int ppgEnd,
     double rPeakSample,
@@ -257,10 +260,11 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_ppgStd = ppgStd;
     m_ecg = ecg;
     m_ecgStd = ecgStd;
-    m_markers[EcgP] = ecgP;
+    m_markers[EcgPPeak] = pPeak;
     m_markers[EcgQBegin] = qBegin;
+    m_markers[EcgRPeak] = rPeak;
     m_markers[EcgSEnd] = sEnd;
-    m_markers[EcgTBegin] = tBegin;
+    m_markers[EcgTPeak] = tPeak;
     m_markers[EcgTEnd] = tEnd;
     m_markers[PpgOnset] = ppgOnset;
     m_markers[PpgP50] = ppgP50;

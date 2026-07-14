@@ -79,8 +79,8 @@ namespace normalize_features {
             if (ecg.empty()) continue;
 
             EcgFeatures f = computeEcgFeatures(ecg,
-                b.p_begin_ch[ch], b.q_begin_ch[ch], b.s_end_ch[ch],
-                b.t_begin_ch[ch], b.t_end_ch[ch], sampleRateHz);
+                b.p_peak_ch[ch], b.q_begin_ch[ch], b.r_peak_ch[ch],
+                b.s_end_ch[ch], b.t_peak_ch[ch], b.t_end_ch[ch], sampleRateHz);
             const double ry = sample_y(ecg, f.r_idx);
             const double sy = sample_y(ecg, f.s_idx);
             if (std::isnan(ry) || std::isnan(sy)) continue;
@@ -140,9 +140,9 @@ namespace normalize_features {
     // Columns per bin:
     //   file_id, bin_index,
     //   -- ECG (per channel, using RS-median normalization) --
-    //   p_begin_ch{N}_y_norm_abs, q_begin_ch{N}_y_norm_abs, q_peak_ch{N}_y_norm_abs,
+    //   p_peak_ch{N}_y_norm_abs, q_begin_ch{N}_y_norm_abs, q_peak_ch{N}_y_norm_abs,
     //   r_peak_ch{N}_y_norm_abs, s_peak_ch{N}_y_norm_abs, s_end_ch{N}_y_norm_abs,
-    //   t_begin_ch{N}_y_norm_abs, t_peak_ch{N}_y_norm_abs, t_end_ch{N}_y_norm_abs
+    //   t_peak_ch{N}_y_norm_abs, t_end_ch{N}_y_norm_abs
     //   -- pulse (PI-based) --
     //   {chan}_onset_y_norm_abs, {chan}_peak_y_norm_abs,
     //   {chan}_dicrotic_y_norm_abs, {chan}_peak2_y_norm_abs, {chan}_end_y_norm_abs
@@ -167,9 +167,11 @@ namespace normalize_features {
 
         // Header.
         f << "file_id,bin_index";
+        // 8 ECG columns per channel: p_peak, q_begin, q_peak (computed),
+        // r_peak, s_peak (computed), s_end, t_peak, t_end.
         const char* ecgNames[] = {
-            "p_begin","q_begin","q_peak","r_peak","s_peak",
-            "s_end","t_begin","t_peak","t_end"
+            "p_peak","q_begin","q_peak","r_peak","s_peak",
+            "s_end","t_peak","t_end"
         };
         for (int c = 1; c <= 3; ++c)
             for (const char* n : ecgNames)
@@ -194,25 +196,24 @@ namespace normalize_features {
                 const bool usable = !b.bad_segment && !b.bad_r_ch[c]
                     && !ecg.empty() && std::isfinite(ref) && ref > 0.0;
 
-                double vals[9] = {
-                    std::nan(""), std::nan(""), std::nan(""),
-                    std::nan(""), std::nan(""), std::nan(""),
-                    std::nan(""), std::nan(""), std::nan("")
+                double vals[8] = {
+                    std::nan(""), std::nan(""), std::nan(""), std::nan(""),
+                    std::nan(""), std::nan(""), std::nan(""), std::nan("")
                 };
                 if (usable) {
                     EcgFeatures ft = computeEcgFeatures(ecg,
-                        b.p_begin_ch[c], b.q_begin_ch[c], b.s_end_ch[c],
-                        b.t_begin_ch[c], b.t_end_ch[c], sampleRateHz);
-                    const int idxs[9] = {
-                        b.p_begin_ch[c], b.q_begin_ch[c], ft.q_idx, ft.r_idx, ft.s_idx,
-                        b.s_end_ch[c],   b.t_begin_ch[c], ft.t_idx, b.t_end_ch[c]
+                        b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
+                        b.s_end_ch[c], b.t_peak_ch[c], b.t_end_ch[c], sampleRateHz);
+                    const int idxs[8] = {
+                        b.p_peak_ch[c], b.q_begin_ch[c], ft.q_idx, b.r_peak_ch[c], ft.s_idx,
+                        b.s_end_ch[c],  b.t_peak_ch[c], b.t_end_ch[c]
                     };
-                    for (int k = 0; k < 9; ++k) {
+                    for (int k = 0; k < 8; ++k) {
                         const double y = sample_y(ecg, idxs[k]);
                         if (std::isfinite(y)) vals[k] = y / ref;
                     }
                 }
-                for (int k = 0; k < 9; ++k) emit_csv_value(f, vals[k]);
+                for (int k = 0; k < 8; ++k) emit_csv_value(f, vals[k]);
             }
 
             // Pulse channels (PPG, ABP, ART, ART_PULM).
