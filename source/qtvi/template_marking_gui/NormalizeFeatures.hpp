@@ -64,9 +64,7 @@ namespace normalize_features {
     }
 
     // ------------------------------------------------------------------
-    // ECG per-channel Global_Ref (median of |R| + |S|).
-    // Uses computeEcgFeatures to locate R and S peaks on each channel's
-    // raw template, then samples the y-values.
+    //This finds Global_Ref_person# = median [abs(R_peak) + abs(S_peak)]
     // ------------------------------------------------------------------
     inline double compute_ecg_global_ref(const std::vector<TemplateBin>& bins,
         int ch, double sampleRateHz)

@@ -29,6 +29,7 @@ private:
     void handle_finalize_button();
     void handle_skip_button();
     void save_current_plot();
+    void save_current_csv();
 
     // --- Window-length selector ---------------------------------------------
     void handle_window_toggle(bool checked, double duration);

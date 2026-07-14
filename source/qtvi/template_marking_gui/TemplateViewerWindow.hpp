@@ -20,19 +20,12 @@ public:
     void loadSubject(const QString& templatePath, const QString& markingPath,
         const QString& subjectId, double sampleRateHz);
 
-    // Directory where "Save current CSV" and "Save current plot" write.
-    // Typically cfg.snapshot_path from the caller. Set once before showing
-    // the viewer.
-    void setSnapshotPath(const QString& p) { m_snapshotPath = p; }
-
 signals:
     void finished();
 
 public slots:
     // Wired in Designer via <connections>
     void save_bin_and_csv();
-    void save_current_csv();      // dump visible page's trace samples to CSV
-    void save_current_plot();     // PNG of the plot grid area
     void onNextPage();
     void onPrevPage();
 
@@ -77,7 +70,6 @@ private:
     std::vector<TemplateBin> m_bins;
     QString m_markingPath;
     QString m_templateDir;   // folder containing templates.bin/.csv (screenshot target)
-    QString m_snapshotPath;  // folder for "save current" CSV / PNG output
     std::set<int> m_capturedPages;   // pages already screenshotted this subject
     QString m_subjectId;
     double  m_sampleRate = 0.0;

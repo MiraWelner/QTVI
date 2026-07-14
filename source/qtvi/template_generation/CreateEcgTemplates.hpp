@@ -24,6 +24,7 @@
 
 #include "TemplateTypes.hpp"
 #include "EnsembleTemplate.hpp"
+#include "template_marking_gui\alignment.hpp"
 #include <atomic>
 
 #ifdef _OPENMP
@@ -79,60 +80,36 @@ static inline SingleMethodResult build_ecg_template_for_method(
 
     if (rpeaks.size() < 2 || ecgSignal.empty() || ecgRate <= 0.0) return res;
 
-    const int padSamples = static_cast<int>(std::llround(0.3 * ecgRate));   // 0.3 s front pad
-    const int signalN = static_cast<int>(ecgSignal.size());
+    // Alignment (see alignment.hpp): slice each beat as
+    // [R_i - 0.25*RR_i, R_i + 0.75*RR_i], then do TWO in-place NaN-padded
+    // shifts on a shared axis:
+    //   Pass 1: R-align -- every beat's R lands at r_aligned_col
+    //   Pass 2: Q-align -- every beat's Q lands at q_aligned_col
+    // The returned beats are all the SAME WIDTH; NaN cells outside each
+    // beat's real range don't participate in the column-wise median or std.
+    const alignment::BeatSet aligned =
+        alignment::extract_beats_and_mode(ecgSignal, rpeaks);
+    if (aligned.beats.empty() || aligned.mode_length <= 0) return res;
 
-    // Collect per-beat slices. Each slice runs [R_i - padSamples, R_{i+1})
-    // -- 0.3s of P-wave lead-in before the first R, then straight to the
-    // next R with no trailing pad. R_first sits at column `padSamples`;
-    // R_second lands at column padSamples + (R_{i+1} - R_i), i.e. right at
-    // the slice's end. No shrinking-pool zone past R_{i+1}, so the median
-    // doesn't get ragged after the second R.
-    // Length = (R_{i+1} - R_i) + padSamples.
-    struct Slice { std::vector<double> data; };
-    std::vector<Slice> slices;
-    slices.reserve(rpeaks.size() > 0 ? rpeaks.size() - 1 : 0);
+    const size_t maxLen = aligned.beats.front().size();   // shared-axis width
+    res.n_beats = aligned.beats.size();
 
-    size_t maxLen = 0;
-    for (size_t i = 0; i + 1 < rpeaks.size(); ++i) {
-        const int r0 = static_cast<int>(rpeaks[i]);
-        const int r1 = static_cast<int>(rpeaks[i + 1]);
-        if (r1 <= r0) continue;
+    // avg_r_expand: back to a rate-derived constant (0.15 * ecgRate =
+    // samples per fifth of a nominal RR cycle at the ECG rate). This is
+    // used by downstream code that assumes a stable per-subject value --
+    // PPG marker seeder, arterial seeder, etc. -- so it must NOT depend on
+    // per-bin alignment output. Alignment's own R column lives on the
+    // BeatSet (r_aligned_col); code that needs the aligned R column reads
+    // that directly.
+    res.avg_r_expand = 0.15 * ecgRate;
 
-        const int startSig = r0 - padSamples;
-        const int endSig = r1;                     // no trailing pad
-        const int len = endSig - startSig;
-        if (len < 3) continue;
-
-        std::vector<double> s(static_cast<size_t>(len), NaN);
-        // Copy the overlap of [startSig, endSig) with [0, signalN).
-        const int copyStart = std::max(0, startSig);
-        const int copyEnd = std::min(signalN, endSig);
-        for (int k = copyStart; k < copyEnd; ++k)
-            s[static_cast<size_t>(k - startSig)] = ecgSignal[k];
-
-        if (static_cast<size_t>(len) > maxLen) maxLen = static_cast<size_t>(len);
-        slices.push_back({ std::move(s) });
-    }
-    if (slices.empty()) return res;
-    res.n_beats = slices.size();
-
-    // Pad every slice out to maxLen with NaN so column indexing is uniform.
-    for (auto& sl : slices) sl.data.resize(maxLen, NaN);
-
-    // avg_r_expand: keep the "samples per fifth of a cycle" semantic that
-    // downstream code (viewer's rPeak = 2*avg_r_expand, PPG lead-in
-    // cycleLen = 5*avg_r_expand) expects. Under Patch B/C we place R at
-    // column `padSamples` (0.3 s in), so 2*avg_r_expand must equal padSamples.
-    res.avg_r_expand = 0.15 * ecgRate;   // == padSamples / 2 for front pad=0.3s
-
-    // Column-wise NaN-skipping median => the template.
+    // Column-wise NaN-skipping median over the aligned beats => template.
     res.ecgTemplate.assign(maxLen, NaN);
     for (size_t c = 0; c < maxLen; ++c) {
         std::vector<double> col;
-        col.reserve(slices.size());
-        for (const auto& sl : slices) {
-            const double v = sl.data[c];
+        col.reserve(aligned.beats.size());
+        for (const auto& sl : aligned.beats) {
+            const double v = sl[c];
             if (!std::isnan(v)) col.push_back(v);
         }
         if (col.empty()) continue;
@@ -143,21 +120,21 @@ static inline SingleMethodResult build_ecg_template_for_method(
             : col[nc / 2];
     }
 
-    // Optional per-sample std over the same slice matrix (sample std, NaN
-    // skip, ddof=1). Used to draw the gray band under the raw template.
+    // Optional per-sample std over the same aligned-beat matrix (sample std,
+    // NaN skip, ddof=1). Used to draw the gray band under the raw template.
     if (compute_std) {
         res.ecgTemplate_std.assign(maxLen, 0.0);
         for (size_t c = 0; c < maxLen; ++c) {
             double sum = 0.0;
             size_t n = 0;
-            for (const auto& sl : slices)
-                if (!std::isnan(sl.data[c])) { sum += sl.data[c]; ++n; }
+            for (const auto& sl : aligned.beats)
+                if (!std::isnan(sl[c])) { sum += sl[c]; ++n; }
             if (n < 2) continue;
             const double mean = sum / static_cast<double>(n);
             double ss = 0.0;
-            for (const auto& sl : slices)
-                if (!std::isnan(sl.data[c])) {
-                    const double d = sl.data[c] - mean;
+            for (const auto& sl : aligned.beats)
+                if (!std::isnan(sl[c])) {
+                    const double d = sl[c] - mean;
                     ss += d * d;
                 }
             res.ecgTemplate_std[c] = std::sqrt(ss / static_cast<double>(n - 1));
@@ -167,8 +144,8 @@ static inline SingleMethodResult build_ecg_template_for_method(
     // Retain the aligned per-beat slices for the snips CSV.
     if (out_kept_beats) {
         out_kept_beats->clear();
-        out_kept_beats->reserve(slices.size());
-        for (auto& sl : slices) out_kept_beats->push_back(std::move(sl.data));
+        out_kept_beats->reserve(aligned.beats.size());
+        for (const auto& sl : aligned.beats) out_kept_beats->push_back(sl);
     }
 
     // PPG transit delay (median foot - R across paired beats), unchanged.

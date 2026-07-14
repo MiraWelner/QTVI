@@ -517,8 +517,14 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     mergePulse(m_art, m_artStd, static_cast<int>(m_art.size()));
     mergePulse(m_artPulm, m_artPulmStd, static_cast<int>(m_artPulm.size()));
     if (pLo > pHi) { pLo = 0.0; pHi = 1.0; }
-    pHi = 1.0;
+    // pHi = 1.0;   // TEMP DIAGNOSTIC: let pulse axis autoscale in raw units
     if (pLo > 0.0) pLo = 0.0;
+
+    // Each axis keeps its own y-min (autoscaled from the DATA it displays,
+    // clipped at 0). The pulse axis already only considers samples up to
+    // pulseClipN() = m_ecgVisibleN via the mergePulse lambda above, so the
+    // pulse range reflects only what's visible on-screen inside the ECG
+    // plot's right edge. Anything past the ECG width is ignored.
 
     // ---- Axes: frame + ticks + dual labeled Y-axes ----
     {
@@ -575,7 +581,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             };
             for (const Tick& t : ticks) {
                 p.drawLine(QPointF(yAxisL - 3, t.y), QPointF(yAxisL, t.y));
-                p.drawText(QPointF(4, t.y + 3), QString::number(t.val, 'f', 1));
+                p.drawText(QPointF(8, t.y + 3), QString::number(t.val, 'f', 1));
             }
         }
 
@@ -593,7 +599,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             };
             for (const Tick& t : ticks) {
                 p.drawLine(QPointF(yAxisR, t.y), QPointF(yAxisR + 3, t.y));
-                p.drawText(QPointF(yAxisR + 8, t.y + 3), QString::number(t.val, 'f', 1));
+                p.drawText(QPointF(yAxisR + 5, t.y + 3), QString::number(t.val, 'f', 1));
             }
         }
 
@@ -602,7 +608,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         p.setFont(tf);
         p.save();
         p.setPen(kColorEcgTrace);
-        p.translate(9, margin_top + ph / 2.0);
+        p.translate(3, margin_top + ph / 2.0);
         p.rotate(-90);
         p.drawText(QRectF(-ph / 2.0, -9, ph, 12), Qt::AlignCenter, "ECG (norm)");
         p.restore();

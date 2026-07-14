@@ -131,13 +131,7 @@ int main(int argc, char* argv[]) {
     // viewer so the first save doesn't fail on a missing directory.
     QDir().mkpath(markingPath);
 
-    // Snapshot path for the "Save current CSV/plot" buttons. Created lazily
-    // by the slots themselves; setting it here means every subject in the
-    // loop uses the same directory.
-    const QString snapshotPath = QString::fromStdString(cfg.snapshot_path);
-
     TemplateViewerWindow viewer;
-    viewer.setSnapshotPath(snapshotPath);
     viewer.show();
 
     const int total = static_cast<int>(subjects.size());
