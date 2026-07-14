@@ -9,12 +9,12 @@
 //     F_norm_abs(bin, ch) = F(bin, ch) / Global_Ref_ecg(ch)
 //
 // PPG / arterial (ABP / ART / ART_PULM) -- same shape, PI-based:
-//   PI(bin, chan) = (systolic_peak_y - onset_y) / |onset_y| * 100
+//   PI(bin, chan) = 100 * (systolic_peak_y - onset_y) / onset_y
 //     where onset_y is the foot (the "diastolic trough" of the anchor pulse).
 //   Global_Ref_pulse(chan) = median over bins of PI(bin, chan).
 //   For every pulse amplitude feature F on that channel:
-//     Feature_Local_Ratio(bin, chan) = (F(bin, chan) - onset_y(bin, chan))
-//                                    / |onset_y(bin, chan)| * 100
+//     Feature_Local_Ratio(bin, chan) = 100 * (F(bin, chan) - onset_y(bin, chan))
+//                                    / onset_y(bin, chan)
 //     F_norm_abs(bin, chan) = Feature_Local_Ratio(bin, chan) / Global_Ref_pulse(chan)
 //
 // Bins are excluded from the median AND from the output whenever they
@@ -124,7 +124,7 @@ namespace normalize_features {
             const double peak_y = sample_y(*pc.trace, pc.peak_idx);
             if (std::isnan(foot_y) || std::isnan(peak_y)) continue;
             if (std::abs(foot_y) < 1e-12) continue;   // divide-by-zero guard
-            vals.push_back((peak_y - foot_y) / std::abs(foot_y) * 100.0);
+            vals.push_back(100.0 * (peak_y - foot_y) / foot_y);
         }
         return median_finite(std::move(vals));
     }
@@ -247,7 +247,7 @@ namespace normalize_features {
                             const double y = sample_y(*p.trace, idxs[k]);
                             if (!std::isfinite(y)) continue;
                             const double local_ratio =
-                                (y - foot_y) / std::abs(foot_y) * 100.0;
+                                100.0 * (y - foot_y) / foot_y;
                             vals[k] = local_ratio / ref;
                         }
                     }

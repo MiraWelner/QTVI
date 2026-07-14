@@ -8,7 +8,7 @@
 // -- the beat length that occurs most often (exact integer equality,
 // no tolerance).
 //
-// Step 1 (this file, so far):
+// Step 1
 //   * Slice every beat as [R_i - 0.25 * RR, R_i + 0.75 * RR], where
 //     RR = R_{i+1} - R_i. Length = 1.0 * RR by construction. R sits at
 //     column 0.25 * RR inside the snip.
@@ -16,14 +16,7 @@
 //   * Count how many beats share each integer length. The most common
 //     length is the "mode length"; its count is printed to stderr as
 //     a debug statement.
-//
-// Later steps (not yet implemented) will use the mode as the reference
-// for vertical + horizontal alignment across beats.
-//
-// Usage:
-//   auto res = alignment::extract_beats_and_mode(ecgSignal, rPeaks);
-//   // res.beats[i] is one beat snip; res.mode_length / res.mode_count
-//   // give the mode.
+
 //
 
 #include <algorithm>
@@ -46,6 +39,12 @@ namespace alignment {
         // The R-peak sample-index (in the ORIGINAL signal frame) that each
         // beat is centered on. Same length as `beats`.
         std::vector<size_t> r_indices;
+
+        // Per-beat 1.0*RR value — the "mode-relevant length". Beat vectors
+        // are 1.25*RR long (they include the tail up to the next R), so
+        // beat.size() alone can't drive the mode calc. Same length as
+        // `beats`.
+        std::vector<int> mode_lens;
 
         // Length statistics.
         int    mode_length = -1;   // most common beat length, samples (-1 if empty)
@@ -101,65 +100,39 @@ namespace alignment {
             return out;
         }
 
-        // First pass: gather RRs so we can reject outliers before slicing.
-        // A single missed R-peak makes one RR huge (~2x median or worse); a
-        // spurious R inserted between real ones makes RRs tiny. Both wreck
-        // the shared axis width. Median +/- 2x is a permissive but robust
-        // gate.
-        std::vector<int64_t> rrs;
-        rrs.reserve(rPeaks.size());
-        for (size_t i = 0; i + 1 < rPeaks.size(); ++i) {
-            const int64_t rr = static_cast<int64_t>(rPeaks[i + 1])
-                - static_cast<int64_t>(rPeaks[i]);
-            if (rr > 3) rrs.push_back(rr);
-        }
-        double rr_median = 0.0;
-        if (!rrs.empty()) {
-            std::vector<int64_t> tmp = rrs;
-            std::nth_element(tmp.begin(), tmp.begin() + tmp.size() / 2, tmp.end());
-            rr_median = static_cast<double>(tmp[tmp.size() / 2]);
-        }
-        const int64_t rr_min = static_cast<int64_t>(rr_median * 0.5);
-        const int64_t rr_max = static_cast<int64_t>(rr_median * 2.0);
-
-        size_t rejected_rr = 0;
         for (size_t i = 0; i + 1 < rPeaks.size(); ++i) {
             const int64_t r0 = static_cast<int64_t>(rPeaks[i]);
             const int64_t r1 = static_cast<int64_t>(rPeaks[i + 1]);
             const int64_t rr = r1 - r0;
-            if (rr <= 3) continue;                             // degenerate
-            if (rr_median > 0 && (rr < rr_min || rr > rr_max)) {
-                ++rejected_rr; continue;                       // RR outlier
-            }
+            if (rr <= 3) continue;                             // degenerate only
 
             const int64_t before = rr / 4;                    // 0.25 RR
-            const int64_t after = rr - before;                // 0.75 RR
-            const int64_t len = before + after;               // 1.0 RR (== rr, integer safe)
+            const int64_t after = rr;                         // 1.0 RR: extend to next R
+            const int64_t len = before + after;               // 1.25 RR total
             const int64_t start = r0 - before;
-            const int64_t end = r0 + after;                   // exclusive
+            const int64_t end = r0 + after;                   // exclusive, at next R
 
-            if (start < 0 || end > N) continue;               // partial beat -> drop
-
-            std::vector<double> beat(static_cast<size_t>(len));
-            std::memcpy(beat.data(), signal.data() + start,
-                static_cast<size_t>(len) * sizeof(double));
+            // Slice from signal; anything outside [0, N) is NaN.
+            std::vector<double> beat(static_cast<size_t>(len),
+                std::numeric_limits<double>::quiet_NaN());
+            const int64_t copyStart = std::max<int64_t>(0, start);
+            const int64_t copyEnd = std::min<int64_t>(N, end);
+            for (int64_t k = copyStart; k < copyEnd; ++k) {
+                beat[static_cast<size_t>(k - start)] = signal[static_cast<size_t>(k)];
+            }
 
             out.beats.push_back(std::move(beat));
             out.r_indices.push_back(rPeaks[i]);
+            out.mode_lens.push_back(static_cast<int>(rr));    // 1.0*RR for mode calc
         }
         out.total_beats = out.beats.size();
-        if (rejected_rr > 0) {
-            fprintf(stderr, "[align] rejected %zu RR-outlier beats "
-                "(median=%.0f, keep range=[%lld, %lld])\n",
-                rejected_rr, rr_median, static_cast<long long>(rr_min),
-                static_cast<long long>(rr_max));
-        }
 
-        // Mode length: integer equality, no tolerance.
+        // Mode length: integer equality on the 1.0*RR value (mode_lens),
+        // NOT on beat.size() which is 1.25*RR and would let the tail
+        // influence the histogram.
         std::unordered_map<int, size_t> hist;
         hist.reserve(out.beats.size() * 2);
-        for (const auto& b : out.beats)
-            hist[static_cast<int>(b.size())]++;
+        for (int L : out.mode_lens) hist[L]++;
 
         for (const auto& kv : hist) {
             if (kv.second > out.mode_count
@@ -174,11 +147,12 @@ namespace alignment {
         // group is the largest cluster.
         out.mode_group_rms_tol = rms_tol;
         if (out.mode_length > 0 && out.mode_count > 0) {
-            // Gather the indices of beats with the mode length.
+            // Gather the indices of beats with the mode length (using
+            // the 1.0*RR value in mode_lens, not beat.size()).
             std::vector<size_t> modeIdx;
             modeIdx.reserve(out.mode_count);
             for (size_t i = 0; i < out.beats.size(); ++i)
-                if (static_cast<int>(out.beats[i].size()) == out.mode_length)
+                if (out.mode_lens[i] == out.mode_length)
                     modeIdx.push_back(i);
 
             // First-member cluster assignment. Each cluster stores the
@@ -229,29 +203,33 @@ namespace alignment {
 
         // ================================================================
         // Pass 1: R alignment (in place, NaN-pad prepend, replace beats).
-        // Anchor R at column A = 0.25 * max(RR) on a shared axis of width
-        // max(RR). Each beat's R sits at column 0.25 * RR_i within its own
-        // vector; prepending (A - 0.25*RR_i) NaN samples slides it to A.
-        // Then append NaN so every beat has the same total width.
+        // Anchor R at column A = 0.25 * max(mode_lens) on a shared axis of
+        // width 1.25 * max(mode_lens). Each beat's R sits at column
+        // 0.25 * RR_i within its own vector (which is 1.25*RR_i long);
+        // prepending (A - 0.25*RR_i) NaN samples slides R to A. Beats
+        // whose 1.0*RR is smaller than the max still fit inside the
+        // shared axis with NaN tail.
         // ================================================================
-        int max_len = 0;
-        for (const auto& b : out.beats)
-            if (static_cast<int>(b.size()) > max_len) max_len = static_cast<int>(b.size());
-        if (max_len > 0) {
-            const int R_anchor = max_len / 4;                 // 0.25 * max_RR
-            const int shared_w = max_len;                     // R at A, data ends at A + 0.75*RR_i <= max_RR
+        int max_mode_len = 0;
+        for (int L : out.mode_lens)
+            if (L > max_mode_len) max_mode_len = L;
+        if (max_mode_len > 0) {
+            const int R_anchor = max_mode_len / 4;              // 0.25 * max_RR
+            const int shared_w = R_anchor + max_mode_len;       // 1.25 * max_RR
 
             std::vector<std::vector<double>> aligned;
             aligned.reserve(out.beats.size());
             const double NaND = std::numeric_limits<double>::quiet_NaN();
-            for (const auto& b : out.beats) {
-                const int L = static_cast<int>(b.size());
-                const int r_in_beat = L / 4;                  // 0.25 * L
-                const int prepend = R_anchor - r_in_beat;     // shift right by prepend
+            for (size_t i = 0; i < out.beats.size(); ++i) {
+                const auto& b = out.beats[i];
+                const int L = static_cast<int>(b.size());       // 1.25 * RR_i
+                const int r_in_beat = out.mode_lens[i] / 4;     // 0.25 * RR_i
+                const int prepend = R_anchor - r_in_beat;       // shift right by prepend
                 std::vector<double> a(shared_w, NaND);
-                // Place b[0..L) into a[prepend..prepend+L). Both bounds
-                // stay inside [0, shared_w) by construction.
-                for (int k = 0; k < L; ++k) a[prepend + k] = b[k];
+                for (int k = 0; k < L; ++k) {
+                    const int dst = prepend + k;
+                    if (dst >= 0 && dst < shared_w) a[dst] = b[k];
+                }
                 aligned.push_back(std::move(a));
             }
             out.beats = std::move(aligned);
@@ -308,11 +286,11 @@ namespace alignment {
             // Q-align: shift each beat so its Q lands at Q_mode. Beats with
             // no Q detected (q_cols[i] < 0), or whose required shift exceeds
             // the sanity cap, are left as-is (R-aligned, no Q shift). Cap
-            // is 1/8 of max_len (~roughly 100 ms at typical HR). Q-detection
+            // is 1/8 of max_mode_len (~roughly 100 ms at typical HR). Q-detection
             // failures on noisy beats used to blow up the shared width by
             // dragging one beat's data far out; the cap absorbs those.
             if (Q_mode >= 0) {
-                const int q_shift_cap = std::max(3, max_len / 8);
+                const int q_shift_cap = std::max(3, max_mode_len / 8);
                 size_t rejected_q = 0;
                 // Compute the new shared width from max prepend + longest data.
                 int max_prepend = 0;
@@ -364,14 +342,6 @@ namespace alignment {
                 out.r_aligned_col = R_anchor + max_prepend;
             }
         }
-
-        fprintf(stderr,
-            "[align] beats=%zu unique_lengths=%zu mode_length=%d mode_count=%zu "
-            "mode_group_size=%zu rms_tol=%.4f R_col=%d Q_col=%d\n",
-            out.total_beats, hist.size(), out.mode_length, out.mode_count,
-            out.mode_group_size, out.mode_group_rms_tol,
-            out.r_aligned_col, out.q_aligned_col);
-
         return out;
     }
 

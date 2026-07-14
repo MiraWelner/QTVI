@@ -158,7 +158,7 @@ void TemplateViewerWindow::onPrevPage() {
 // Forward-declare: seedBinMarkers lives in an anonymous namespace lower in
 // this file (right above the ECG per-channel seed section). loadSubject
 // calls it before that namespace appears, so we need the declaration here.
-namespace { void seedBinMarkers(TemplateBin& b); }
+namespace { void seedBinMarkers(TemplateBin& b, double sampleRate); }
 
 void TemplateViewerWindow::loadSubject(const QString& templatePath, const QString& markingPath, const QString& subjectId, double sampleRateHz) {
 
@@ -200,7 +200,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     // Seed markers for every bin so per-subject global refs (which need
     // R/S and foot/peak positions across all bins) can be computed once
     // and stay stable across paging.
-    for (auto& b : m_bins) seedBinMarkers(b);
+    for (auto& b : m_bins) seedBinMarkers(b, m_sampleRate);
     computeGlobalRefs();
 
     m_capturedPages.clear();   // new subject: nothing saved yet
@@ -296,7 +296,7 @@ namespace {
         return std::clamp(idx, 0, visN - 1);
     }
 
-    void seedBinMarkers(TemplateBin& b) {
+    void seedBinMarkers(TemplateBin& b, double sampleRate) {
 
         // ---- PPG --------------------------------------------------------
         if (b.ppgTemplate.empty()) {
@@ -327,13 +327,11 @@ namespace {
             const std::vector<double>& v = b.ppgTemplate;
             const int N = static_cast<int>(v.size());
 
-            // R sits at column padSamples = 2*avg_r_expand in the PPG frame.
-            // avg_r_expand is the rate-derived constant (0.15 * ecgRate) --
-            // stable across bins, unaffected by per-bin alignment output.
-            double rExp = b.ch1.avg_r_expand_raw;
-            if (rExp <= 0) rExp = b.ch2.avg_r_expand_raw;
-            if (rExp <= 0) rExp = b.ch3.avg_r_expand_raw;
-            const int rFirst = (rExp > 0) ? (int)std::llround(2.0 * rExp) : 0;
+            // Foot search starts 0.3 s after t=0 -- a fixed offset in this
+            // channel's own sample frame. Using a rate-derived constant
+            // keeps foot placement decoupled from anything ECG-side.
+            const int rFirst = (sampleRate > 0.0)
+                ? static_cast<int>(std::llround(0.3 * sampleRate)) : 0;
 
             // foot
             int foot = -1;
@@ -460,12 +458,12 @@ namespace {
         // frame as they do in the PPG frame (assumes same rate; see PPG
         // caveat above). issue==2 => absent, issue==1 => flagged bad
         // (markers cleared), else auto-seed if unset.
-        double rExpArt = b.ch1.avg_r_expand_raw;
-        if (rExpArt <= 0) rExpArt = b.ch2.avg_r_expand_raw;
-        if (rExpArt <= 0) rExpArt = b.ch3.avg_r_expand_raw;
-        const int rFirstArt = (rExpArt > 0) ? (int)std::llround(2.0 * rExpArt) : 0;
-        const int rSecondArt = rFirstArt + ((rExpArt > 0)
-            ? (int)std::llround(5.0 * rExpArt) : 0);
+        // Arterial R-window offsets: same 0.3 s / 1.5 s rules as PPG,
+        // using this channel's sample rate. Decoupled from avg_r_expand.
+        const int rFirstArt = (sampleRate > 0.0)
+            ? static_cast<int>(std::llround(0.3 * sampleRate)) : 0;
+        const int rSecondArt = rFirstArt + ((sampleRate > 0.0)
+            ? static_cast<int>(std::llround(0.75 * sampleRate)) : 0);
 
         auto seedArterial = [&](const std::vector<double>& trace, uint8_t& issue,
             int& onset, int& peak, int& dicrotic, int& p50, int& end)
@@ -496,7 +494,7 @@ void TemplateViewerWindow::computeMarkingsForPage() {
     int start = m_currentPage * m_binsPerPage;
     int end = std::min(start + m_binsPerPage, static_cast<int>(m_bins.size()));
     for (int i = start; i < end; ++i) {
-        seedBinMarkers(m_bins[i]);
+        seedBinMarkers(m_bins[i], m_sampleRate);
     }
 }
 
@@ -538,11 +536,10 @@ TemplateViewerWindow::normalizePulseTrace(const std::vector<double>& raw,
     if (footIdx < 0 || footIdx >= static_cast<int>(raw.size())) return raw;
     const double footY = raw[footIdx];
     if (std::isnan(footY) || std::abs(footY) < 1e-12) return raw;
-    const double absFoot = std::abs(footY);
     std::vector<double> out(raw.size());
     for (size_t i = 0; i < raw.size(); ++i) {
         if (std::isnan(raw[i])) { out[i] = raw[i]; continue; }
-        const double localRatio = (raw[i] - footY) / absFoot * 100.0;
+        const double localRatio = 100.0 * (raw[i] - footY) / footY;
         out[i] = localRatio / ref;
     }
     return out;
@@ -650,13 +647,6 @@ void TemplateViewerWindow::showPage() {
             // If the ref or foot is unusable, the helpers pass the raw
             // trace through unchanged.
             const std::vector<double> ecgN = normalizeEcgTrace(ecg, c);
-            // TEMP DIAGNOSTIC: bypass pulse normalization to test whether
-            // the raw PPG/arterial templates are correct.
-            const std::vector<double>& ppgN = hasPPG ? b.ppgTemplate : empty;
-            const std::vector<double>& abpN = b.abpTemplate;
-            const std::vector<double>& artN = b.artTemplate;
-            const std::vector<double>& artPN = b.artPulmTemplate;
-            /*
             const std::vector<double> ppgN = hasPPG
                 ? normalizePulseTrace(b.ppgTemplate, b.ppg_onset, 0)
                 : empty;
@@ -669,7 +659,6 @@ void TemplateViewerWindow::showPage() {
             const std::vector<double> artPN = !b.artPulmTemplate.empty()
                 ? normalizePulseTrace(b.artPulmTemplate, b.art_pulm_onset, 3)
                 : b.artPulmTemplate;
-            */
 
             pw->setData(ppgN, ppgStd, ecgN, ecgStd,
                 b.p_begin_ch[c], b.q_begin_ch[c], b.s_end_ch[c],
@@ -1107,7 +1096,7 @@ void TemplateViewerWindow::onBadPPGToggled(int binIdx, bool bad) {
 
 void TemplateViewerWindow::save_bin_and_csv() {
     for (auto& b : m_bins)
-        seedBinMarkers(b);
+        seedBinMarkers(b, m_sampleRate);
 
     try {
         QString outPath = m_markingPath + "/" + m_subjectId + "_template_markings.bin";

@@ -141,14 +141,23 @@ namespace {
         double& lo, double& hi)
     {
         const int n = std::min(visN, static_cast<int>(v.size()));
-        if (n < 1) { lo = 0.0; hi = 1.0; return; }   // nothing to range over
-        lo = *std::min_element(v.begin(), v.begin() + n);
-        hi = *std::max_element(v.begin(), v.begin() + n);
-        if ((int)sd.size() < n) return;
+        // NaN-skip range: alignment introduces NaN-padded columns. min/max
+        // over a vector with NaN via *_element gives undefined results (any
+        // NaN comparison is false), which propagates NaN into yLo/yHi and
+        // then into every pixel coordinate. Manual loop, skip NaN.
+        lo = 0.0; hi = 1.0;
+        bool have = false;
+        const bool haveSd = (int)sd.size() >= n;
         for (int i = 0; i < n; ++i) {
-            lo = std::min(lo, v[i] - sd[i]);
-            hi = std::max(hi, v[i] + sd[i]);
+            const double m = v[i];
+            if (std::isnan(m)) continue;
+            const double s = haveSd ? sd[i] : 0.0;
+            const double a = std::isnan(s) ? m : (m - s);
+            const double b = std::isnan(s) ? m : (m + s);
+            if (!have) { lo = a; hi = b; have = true; }
+            else { lo = std::min(lo, a); hi = std::max(hi, b); }
         }
+        if (!have) { lo = 0.0; hi = 1.0; }
     }
 
     // Draw the gray ±std band at a fixed pixels-per-sample scale using
@@ -161,25 +170,32 @@ namespace {
         if ((int)sd.size() < visN) return;          // empty/mismatched => no band
         const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
 
-        QPainterPath band;
-        // Top edge: mean + std, left to right.
-        for (int i = 0; i < visN; ++i) {
-            double x = startPx + (double)i * pxPerSample;
-            double y = mt + ph - ((v[i] + sd[i]) - lo) / r * ph;
-            if (i == 0) band.moveTo(x, y);
-            else        band.lineTo(x, y);
-        }
-        // Bottom edge: mean - std, right to left, to close the polygon.
-        for (int i = visN - 1; i >= 0; --i) {
-            double x = startPx + (double)i * pxPerSample;
-            double y = mt + ph - ((v[i] - sd[i]) - lo) / r * ph;
-            band.lineTo(x, y);
-        }
-        band.closeSubpath();
-
+        // One filled polygon per contiguous non-NaN run; NaN gaps break the
+        // band. Prevents QPainter NaN-arcTo warnings from padded regions.
         p.setPen(Qt::NoPen);
         p.setBrush(color);
-        p.drawPath(band);
+        int i = 0;
+        while (i < visN) {
+            while (i < visN && (std::isnan(v[i]) || std::isnan(sd[i]))) ++i;
+            const int runStart = i;
+            while (i < visN && !std::isnan(v[i]) && !std::isnan(sd[i])) ++i;
+            const int runEnd = i;   // exclusive
+            if (runEnd - runStart < 2) continue;
+
+            QPainterPath band;
+            for (int k = runStart; k < runEnd; ++k) {
+                const double x = startPx + (double)k * pxPerSample;
+                const double y = mt + ph - ((v[k] + sd[k]) - lo) / r * ph;
+                if (k == runStart) band.moveTo(x, y); else band.lineTo(x, y);
+            }
+            for (int k = runEnd - 1; k >= runStart; --k) {
+                const double x = startPx + (double)k * pxPerSample;
+                const double y = mt + ph - ((v[k] - sd[k]) - lo) / r * ph;
+                band.lineTo(x, y);
+            }
+            band.closeSubpath();
+            p.drawPath(band);
+        }
     }
 
     // Draw a trace at a fixed pixels-per-sample scale using the supplied
@@ -193,16 +209,20 @@ namespace {
         if (visN < 2 || (int)v.size() < 2) return;
         const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
 
-        QPainterPath path;
-        for (int i = 0; i < visN; ++i) {
-            double x = startPx + (double)i * pxPerSample;
-            double y = mt + ph - (v[i] - lo) / r * ph;
-            if (i == 0) path.moveTo(x, y);
-            else        path.lineTo(x, y);
-        }
-
         p.setPen(pen);
         p.setBrush(Qt::NoBrush);
+
+        // NaN breaks the subpath: on the next real sample, restart with
+        // moveTo. Prevents lineTo-to-NaN from producing arcTo NaN warnings.
+        QPainterPath path;
+        bool pending_move = true;
+        for (int i = 0; i < visN; ++i) {
+            if (std::isnan(v[i])) { pending_move = true; continue; }
+            const double x = startPx + (double)i * pxPerSample;
+            const double y = mt + ph - (v[i] - lo) / r * ph;
+            if (pending_move) { path.moveTo(x, y); pending_move = false; }
+            else { path.lineTo(x, y); }
+        }
         p.drawPath(path);
     }
 }
@@ -497,7 +517,6 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // Left axis (ECG) and right axis (pulse) each follow this rule.
     double yLo = 0, yHi = 0;
     computeVisibleRange(m_ecg, m_ecgStd, m_ecgVisibleN, yLo, yHi);
-    yHi = 1.0;
     if (yLo > 0.0) yLo = 0.0;
 
     // Right axis range: shared by ALL pulse traces (PPG + arterial), so they
@@ -517,7 +536,6 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     mergePulse(m_art, m_artStd, static_cast<int>(m_art.size()));
     mergePulse(m_artPulm, m_artPulmStd, static_cast<int>(m_artPulm.size()));
     if (pLo > pHi) { pLo = 0.0; pHi = 1.0; }
-    // pHi = 1.0;   // TEMP DIAGNOSTIC: let pulse axis autoscale in raw units
     if (pLo > 0.0) pLo = 0.0;
 
     // Each axis keeps its own y-min (autoscaled from the DATA it displays,
