@@ -235,6 +235,7 @@ void BinPlotWidget::captureGlyphSnapshot() {
         m_glyphs.ppgP1 = p1;    m_glyphs.ppgP1OFallback = p1O;
         m_glyphs.ppgDic = notchIdx;
         m_glyphs.ppgP2 = p2;    m_glyphs.ppgP2OFallback = p2O;
+        m_glyphs.ppgEnd = end;
         m_glyphs.ppgNotch = (notchIdx >= 0);
         m_glyphs.ppgNoNotchO = notchOIdx;
     }
@@ -319,9 +320,9 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             p.setPen(QPen(Qt::black, 1.8));
             p.drawEllipse(QPointF(x, y), 4.0, 4.0);
             };
-        // Five glyphs: foot, P50 (X/O), P1 (X/O), dicrotic (X/O), P2 (X/O).
-        // Foot always draws as X at the seeded onset. Everything else falls
-        // back to O at a sensible midpoint when no true feature is found.
+        // Five glyphs: foot, P50 (X/O), P1 (X/O), dicrotic (X/O), P2 (X/O),
+        // end (X). Foot and end always draw as X at the seeded positions.
+        // Everything else falls back to O at a sensible midpoint.
         g(m_glyphs.ppgFoot);
         if (m_glyphs.ppgP50 >= 0) g(m_glyphs.ppgP50);
         else                      circ(m_glyphs.ppgP50OFallback);
@@ -331,5 +332,6 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         else                      circ(m_glyphs.ppgNoNotchO);
         if (m_glyphs.ppgP2 >= 0)  g(m_glyphs.ppgP2);
         else                      circ(m_glyphs.ppgP2OFallback);
+        g(m_glyphs.ppgEnd);
     }
 }

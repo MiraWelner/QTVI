@@ -335,30 +335,43 @@ namespace {
             const int rFirst = (sampleRate > 0.0)
                 ? static_cast<int>(std::llround(0.3 * sampleRate)) : 0;
 
-            // foot
+            // Physiological search bounds. Foot follows R by a short
+            // transit delay (up to ~350ms). Peak follows foot within
+            // roughly one cardiac cycle. End follows peak within another
+            // cycle. Without bounds, argmin/argmax over the whole trace
+            // can drift into the decaying tail past the anchor pulse and
+            // cluster every marker at the right edge.
+            const int footWin = (sampleRate > 0.0)
+                ? static_cast<int>(std::llround(0.35 * sampleRate)) : N / 2;
+            const int cycleGuess = std::max(1, N - rFirst);  // ~1 RR in PPG samples
+
+            // foot: argmin in [rFirst, rFirst + footWin)
             int foot = -1;
             {
                 double best = std::numeric_limits<double>::infinity();
                 const int lo = std::clamp(rFirst, 0, N - 1);
-                for (int i = lo; i < N; ++i)
+                const int hi = std::min(N, lo + footWin);
+                for (int i = lo; i < hi; ++i)
                     if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; foot = i; }
             }
             b.ppg_onset = foot;
 
-            // peak
+            // peak: argmax in [foot+1, foot+cycleGuess)
             int peak = -1;
             if (foot >= 0) {
                 double best = -std::numeric_limits<double>::infinity();
-                for (int i = foot + 1; i < N; ++i)
+                const int hi = std::min(N, foot + cycleGuess);
+                for (int i = foot + 1; i < hi; ++i)
                     if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; peak = i; }
             }
             b.ppg_peak = peak;
 
-            // end
+            // end: argmin in [peak+1, peak+cycleGuess)
             int end = -1;
             if (peak >= 0) {
                 double best = std::numeric_limits<double>::infinity();
-                for (int i = peak + 1; i < N; ++i)
+                const int hi = std::min(N, peak + cycleGuess);
+                for (int i = peak + 1; i < hi; ++i)
                     if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; end = i; }
             }
             b.ppg_end = end;

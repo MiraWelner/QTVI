@@ -251,7 +251,7 @@ private:
         // instead. Q, S end, T end come straight from movable markers and
         // don't have fallbacks.
         int ecgPOFallback = -1, ecgROFallback = -1, ecgTOFallback = -1;
-        int ppgFoot = -1, ppgP50 = -1, ppgP1 = -1, ppgDic = -1, ppgP2 = -1;
+        int ppgFoot = -1, ppgP50 = -1, ppgP1 = -1, ppgDic = -1, ppgP2 = -1, ppgEnd = -1;
         // Fallback midpoints for landmarks that can be "expected but not
         // found". X drawn at the real index; O drawn at the fallback.
         int ppgP50OFallback = -1;
