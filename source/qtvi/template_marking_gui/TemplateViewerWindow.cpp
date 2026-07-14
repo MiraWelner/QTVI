@@ -1,6 +1,7 @@
 ﻿#include "TemplateViewerWindow.hpp"
 #include "ui_TemplateViewerWindow.h"
 #include "markers_automatic_position.hpp"
+#include "NormalizeFeatures.hpp"
 #include <QMessageBox>
 #include <QColor>
 #include <QTimer>
@@ -154,6 +155,11 @@ void TemplateViewerWindow::onPrevPage() {
 // Load subject
 // ========================================================================
 
+// Forward-declare: seedBinMarkers lives in an anonymous namespace lower in
+// this file (right above the ECG per-channel seed section). loadSubject
+// calls it before that namespace appears, so we need the declaration here.
+namespace { void seedBinMarkers(TemplateBin& b); }
+
 void TemplateViewerWindow::loadSubject(const QString& templatePath, const QString& markingPath, const QString& subjectId, double sampleRateHz) {
 
     m_markingPath = markingPath;
@@ -191,7 +197,12 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     m_totalPages = std::max(1, static_cast<int>(
         std::ceil(static_cast<double>(m_bins.size()) / m_binsPerPage)));
 
-    computeMarkingsForPage();
+    // Seed markers for every bin so per-subject global refs (which need
+    // R/S and foot/peak positions across all bins) can be computed once
+    // and stay stable across paging.
+    for (auto& b : m_bins) seedBinMarkers(b);
+    computeGlobalRefs();
+
     m_capturedPages.clear();   // new subject: nothing saved yet
     showPage();
     // Defer the analysis CSV write until after the widget page has painted.
@@ -487,6 +498,54 @@ void TemplateViewerWindow::computeMarkingsForPage() {
     }
 }
 
+// Compute per-subject Global_Ref for every ECG channel + every pulse
+// channel. Called at loadSubject after every bin has been seeded, so
+// R/S positions and pulse foot/peak positions are already set. Results
+// go into m_ecgGlobalRef and m_pulseGlobalRef and stay stable across
+// pages. See normalize_features.hpp for the definitions.
+void TemplateViewerWindow::computeGlobalRefs() {
+    for (int c = 0; c < 3; ++c)
+        m_ecgGlobalRef[c] = normalize_features::compute_ecg_global_ref(
+            m_bins, c, m_sampleRate);
+    for (int c = 0; c < 4; ++c)
+        m_pulseGlobalRef[c] = normalize_features::compute_pulse_global_ref(
+            m_bins, c);
+    fprintf(stderr,
+        "[refs] ecg=[%.4g,%.4g,%.4g] pulse=[%.4g,%.4g,%.4g,%.4g]\n",
+        m_ecgGlobalRef[0], m_ecgGlobalRef[1], m_ecgGlobalRef[2],
+        m_pulseGlobalRef[0], m_pulseGlobalRef[1],
+        m_pulseGlobalRef[2], m_pulseGlobalRef[3]);
+}
+
+std::vector<double>
+TemplateViewerWindow::normalizeEcgTrace(const std::vector<double>& raw, int ch) const {
+    const double ref = (ch >= 0 && ch < 3) ? m_ecgGlobalRef[ch] : std::nan("");
+    if (!std::isfinite(ref) || ref == 0.0) return raw;   // untransformed
+    std::vector<double> out(raw.size());
+    for (size_t i = 0; i < raw.size(); ++i)
+        out[i] = std::isnan(raw[i]) ? raw[i] : raw[i] / ref;
+    return out;
+}
+
+std::vector<double>
+TemplateViewerWindow::normalizePulseTrace(const std::vector<double>& raw,
+    int footIdx, int pulseChan) const {
+    const double ref = (pulseChan >= 0 && pulseChan < 4)
+        ? m_pulseGlobalRef[pulseChan] : std::nan("");
+    if (!std::isfinite(ref) || ref == 0.0) return raw;
+    if (footIdx < 0 || footIdx >= static_cast<int>(raw.size())) return raw;
+    const double footY = raw[footIdx];
+    if (std::isnan(footY) || std::abs(footY) < 1e-12) return raw;
+    const double absFoot = std::abs(footY);
+    std::vector<double> out(raw.size());
+    for (size_t i = 0; i < raw.size(); ++i) {
+        if (std::isnan(raw[i])) { out[i] = raw[i]; continue; }
+        const double localRatio = (raw[i] - footY) / absFoot * 100.0;
+        out[i] = localRatio / ref;
+    }
+    return out;
+}
+
 // ========================================================================
 // Build / clear plots
 // ========================================================================
@@ -579,7 +638,26 @@ void TemplateViewerWindow::showPage() {
                 : (c == 1) ? b.ch2_n_beats_raw
                 : b.ch3_n_beats_raw;
 
-            pw->setData(ppg, ppgStd, ecg, ecgStd,
+            // Per-subject normalized traces for on-screen display.
+            // ECG:   sample / Global_Ref_ecg(ch)
+            // Pulse: ((sample - foot_y) / |foot_y| * 100) / Global_Ref_pulse(chan)
+            // If the ref or foot is unusable, the helpers pass the raw
+            // trace through unchanged.
+            const std::vector<double> ecgN = normalizeEcgTrace(ecg, c);
+            const std::vector<double> ppgN = hasPPG
+                ? normalizePulseTrace(b.ppgTemplate, b.ppg_onset, 0)
+                : empty;
+            const std::vector<double> abpN = !b.abpTemplate.empty()
+                ? normalizePulseTrace(b.abpTemplate, b.abp_onset, 1)
+                : b.abpTemplate;
+            const std::vector<double> artN = !b.artTemplate.empty()
+                ? normalizePulseTrace(b.artTemplate, b.art_onset, 2)
+                : b.artTemplate;
+            const std::vector<double> artPN = !b.artPulmTemplate.empty()
+                ? normalizePulseTrace(b.artPulmTemplate, b.art_pulm_onset, 3)
+                : b.artPulmTemplate;
+
+            pw->setData(ppgN, ppgStd, ecgN, ecgStd,
                 b.p_begin_ch[c], b.q_begin_ch[c], b.s_end_ch[c],
                 b.t_begin_ch[c], b.t_end_ch[c],
                 b.ppg_onset, b.ppg_peak,
@@ -594,18 +672,18 @@ void TemplateViewerWindow::showPage() {
             // ABP teal, ART dark red, ART_PULM dark blue.
             {
                 std::vector<std::pair<std::vector<double>, QColor>> bg;
-                if (!b.abpTemplate.empty())
-                    bg.push_back({ b.abpTemplate,     QColor(0, 95, 105) });
-                if (!b.artTemplate.empty())
-                    bg.push_back({ b.artTemplate,     QColor(150, 40, 40) });
-                if (!b.artPulmTemplate.empty())
-                    bg.push_back({ b.artPulmTemplate, QColor(40, 60, 150) });
+                if (!abpN.empty())
+                    bg.push_back({ abpN,  QColor(0, 95, 105) });
+                if (!artN.empty())
+                    bg.push_back({ artN,  QColor(150, 40, 40) });
+                if (!artPN.empty())
+                    bg.push_back({ artPN, QColor(40, 60, 150) });
                 pw->setBackgroundTraces(bg);
             }
 
             // Arterial traces for marker geometry/bounds, plus the markers
             // themselves (shared across leads, like PPG).
-            pw->setArterialTraces(b.abpTemplate, b.artTemplate, b.artPulmTemplate,
+            pw->setArterialTraces(abpN, artN, artPN,
                 b.abpTemplate_std, b.artTemplate_std, b.artPulmTemplate_std);
             pw->setMarker(BinPlotWidget::AbpOnset, b.abp_onset);
             pw->setMarker(BinPlotWidget::AbpPeak, b.abp_peak);
@@ -707,11 +785,14 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     const double toMs = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 1.0;
     constexpr double kEcgRAnchorFrac = 2.0;   // == kEcgPrePFrac / display
 
-    // Column order: shared x, then value + own-peak x for each signal.
+    // Column order: shared x, then normalized value + own-peak x for each
+    // signal. Values are per-subject normalized (ECG by median(|R|+|S|);
+    // pulse by median PI via the local-ratio conversion). Matches the
+    // on-screen display.
     f << "file_id,bin_num,x_ms,"
-        "ch1_mv,ch1_x_peak_ms,ch2_mv,ch2_x_peak_ms,ch3_mv,ch3_x_peak_ms,"
-        "ppg_mv,ppg_x_peak_ms,abp_mv,abp_x_peak_ms,"
-        "art_mv,art_x_peak_ms,art_pulm_mv,art_pulm_x_peak_ms\n";
+        "ch1_norm,ch1_x_peak_ms,ch2_norm,ch2_x_peak_ms,ch3_norm,ch3_x_peak_ms,"
+        "ppg_norm,ppg_x_peak_ms,abp_norm,abp_x_peak_ms,"
+        "art_norm,art_x_peak_ms,art_pulm_norm,art_pulm_x_peak_ms\n";
     f << std::setprecision(10);
 
     auto argmax = [](const std::vector<double>& v) -> int {
@@ -722,38 +803,39 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     for (size_t bi = 0; bi < m_bins.size(); ++bi) {
         const TemplateBin& b = m_bins[bi];
 
-        // One signal = its template, its shared-axis start offset (sample 0 of
-        // the template lands on this row), and its own peak index.
+        // Per-bin normalized traces, matching what's drawn on screen.
+        // ECG normalized by that channel's Global_Ref_ecg;
+        // pulse normalized by ((sample - foot_y) / |foot_y| * 100) / Global_Ref_pulse.
+        // If any ref is unusable the helper returns the raw trace unchanged.
+        std::vector<double> ch1N = normalizeEcgTrace(b.ch1.ecgTemplate_raw, 0);
+        std::vector<double> ch2N = normalizeEcgTrace(b.ch2.ecgTemplate_raw, 1);
+        std::vector<double> ch3N = normalizeEcgTrace(b.ch3.ecgTemplate_raw, 2);
+        std::vector<double> ppgN = normalizePulseTrace(b.ppgTemplate, b.ppg_onset, 0);
+        std::vector<double> abpN = normalizePulseTrace(b.abpTemplate, b.abp_onset, 1);
+        std::vector<double> artN = normalizePulseTrace(b.artTemplate, b.art_onset, 2);
+        std::vector<double> artPN = normalizePulseTrace(b.artPulmTemplate, b.art_pulm_onset, 3);
+
+        // One signal = its (normalized) template, its shared-axis start offset,
+        // and its own peak index.
         struct Sig {
             const std::vector<double>* v;
-            double start;   // shared-axis row where sample 0 sits
-            int    peak;    // index of this signal's peak within its template
+            double start;
+            int    peak;
         };
 
-        // Under Patch B, every channel is sliced in the same real-time frame:
-        // sample 0 of ECG, PPG, and every arterial channel corresponds to the
-        // same real-time instant (pad seconds before the first R). So every
-        // signal starts at row 0 on the shared axis.
-        //
-        // Caveat: this shared axis treats one row = one ECG sample. If PPG /
-        // arterial rates differ from ECG rate, the row-to-time mapping is
-        // strictly correct only for the ECG channels; pulse rows are read at
-        // whatever their own sample rate is. For the datasets in use this
-        // matches within rounding (all channels are upsampled to ~1000 Hz);
-        // if cross-rate becomes real, thread per-channel rates into the
-        // viewer and index each Sig by (row * ecgRate / channelRate).
         const ChannelTemplateData* ch[3] = { &b.ch1, &b.ch2, &b.ch3 };
+        const std::vector<double>* chNorm[3] = { &ch1N, &ch2N, &ch3N };
 
         std::vector<Sig> sigs;
         for (int c = 0; c < 3; ++c) {
             const double rN = kEcgRAnchorFrac * ch[c]->avg_r_expand_raw;
-            sigs.push_back({ &ch[c]->ecgTemplate_raw, 0.0,
+            sigs.push_back({ chNorm[c], 0.0,
                 static_cast<int>(std::llround(rN)) });   // peak = R, start at row 0
         }
-        sigs.push_back({ &b.ppgTemplate,     0.0, argmax(b.ppgTemplate) });
-        sigs.push_back({ &b.abpTemplate,     0.0, argmax(b.abpTemplate) });
-        sigs.push_back({ &b.artTemplate,     0.0, argmax(b.artTemplate) });
-        sigs.push_back({ &b.artPulmTemplate, 0.0, argmax(b.artPulmTemplate) });
+        sigs.push_back({ &ppgN,  0.0, argmax(ppgN) });
+        sigs.push_back({ &abpN,  0.0, argmax(abpN) });
+        sigs.push_back({ &artN,  0.0, argmax(artN) });
+        sigs.push_back({ &artPN, 0.0, argmax(artPN) });
 
         // Row span on the shared axis.
         double loD = 1e300, hiD = -1e300;
@@ -767,13 +849,10 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         const int hiRow = static_cast<int>(std::ceil(hiD));
 
         for (int row = loRow; row < hiRow; ++row) {
-            // Shared x: raw timeline, 0 at the top of the ECG templates. The
-            // vertical offset between ECG and PPG/arterial data here is the
-            // real alignment (they start on later rows, exactly as displayed).
+            // Shared x: raw timeline, 0 at the top of the ECG templates.
             f << m_subjectId.toStdString() << ',' << bi << ','
                 << (row * toMs);
             for (const Sig& s : sigs) {
-                // local index of this signal at this shared-axis row
                 const int j = row - static_cast<int>(std::llround(s.start));
                 f << ',';
                 if (j >= 0 && j < static_cast<int>(s.v->size())
@@ -1022,6 +1101,14 @@ void TemplateViewerWindow::save_bin_and_csv() {
         writeTemplateMarkingsCsv(csvPath.toStdString(), m_bins,
             m_subjectId.toStdString(), m_sampleRate);
         std::cout << "Saved: " << csvPath.toStdString() << "\n";
+
+        // Per-subject amplitude normalization: ECG divided by median(|R|+|S|),
+        // pulse channels (PPG + arterial) divided by median PI. See
+        // normalize_features.hpp for the full formulas.
+        QString normPath = m_markingPath + "/" + m_subjectId + "_template_markings_normalized.csv";
+        normalize_features::writeNormalizedCsv(normPath.toStdString(),
+            m_bins, m_subjectId.toStdString(), m_sampleRate);
+        std::cout << "Saved: " << normPath.toStdString() << "\n";
         std::cout.flush();
     }
     catch (const std::exception& e) {
@@ -1033,4 +1120,119 @@ void TemplateViewerWindow::save_bin_and_csv() {
     }
 
     emit finished();
+}
+
+// ========================================================================
+// Snapshot buttons: save the CURRENTLY VISIBLE page's trace samples to
+// CSV, and its plot area as a PNG. Both go to cfg.snapshot_path (set
+// via setSnapshotPath() before the viewer runs).
+// ========================================================================
+
+void TemplateViewerWindow::save_current_plot() {
+    if (m_snapshotPath.isEmpty()) {
+        QMessageBox::warning(this, "Save plot",
+            "Snapshot path is not set; nothing saved.");
+        return;
+    }
+    QDir().mkpath(m_snapshotPath);
+
+    const QPixmap shot = ui->scrollContents->grab();
+    const QString fn = QDir(m_snapshotPath).filePath(
+        QString("%1_page%2_snapshot.png")
+        .arg(m_subjectId)
+        .arg(m_currentPage + 1, 2, 10, QChar('0')));
+    if (!shot.save(fn, "PNG")) {
+        QMessageBox::warning(this, "Save plot",
+            "Could not write " + fn);
+        return;
+    }
+    std::cout << "Saved: " << fn.toStdString() << "\n";
+    std::cout.flush();
+}
+
+void TemplateViewerWindow::save_current_csv() {
+    if (m_snapshotPath.isEmpty()) {
+        QMessageBox::warning(this, "Save CSV",
+            "Snapshot path is not set; nothing saved.");
+        return;
+    }
+    if (m_bins.empty()) return;
+    QDir().mkpath(m_snapshotPath);
+
+    const QString path = QDir(m_snapshotPath).filePath(
+        QString("%1_page%2_snapshot.csv")
+        .arg(m_subjectId)
+        .arg(m_currentPage + 1, 2, 10, QChar('0')));
+
+    std::ofstream f(path.toStdString());
+    if (!f) {
+        QMessageBox::warning(this, "Save CSV", "Could not open " + path);
+        return;
+    }
+    f << std::setprecision(10);
+
+    const double toMs = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 1.0;
+
+    // Per-signal three-view row: normalized (what's on screen), unnormalized
+    // (template samples in native units), raw (same as unnormalized for now
+    // -- pre-upsampled samples aren't available to the viewer here, so we
+    // print the unnormalized template again labeled "raw" as a placeholder).
+    // Column order matches the on-screen layout: ch1/ch2/ch3 ECG, then
+    // PPG, ABP, ART, ART_PULM.
+    f << "file_id,bin_num,sample_idx,x_ms";
+    const char* sigNames[] = { "ch1","ch2","ch3","ppg","abp","art","art_pulm" };
+    for (const char* s : sigNames)
+        f << ',' << s << "_normalized," << s << "_unnormalized," << s << "_raw";
+    f << '\n';
+
+    const int start = m_currentPage * m_binsPerPage;
+    const int endBin = std::min(start + m_binsPerPage,
+        static_cast<int>(m_bins.size()));
+
+    for (int bi = start; bi < endBin; ++bi) {
+        const TemplateBin& b = m_bins[bi];
+
+        // Seven signals, per-bin, in their native template form.
+        const std::vector<double>* un[7] = {
+            &b.ch1.ecgTemplate_raw, &b.ch2.ecgTemplate_raw, &b.ch3.ecgTemplate_raw,
+            &b.ppgTemplate, &b.abpTemplate, &b.artTemplate, &b.artPulmTemplate
+        };
+        // Corresponding normalized copies.
+        const std::vector<double> ch1N = normalizeEcgTrace(*un[0], 0);
+        const std::vector<double> ch2N = normalizeEcgTrace(*un[1], 1);
+        const std::vector<double> ch3N = normalizeEcgTrace(*un[2], 2);
+        const std::vector<double> ppgN = normalizePulseTrace(*un[3], b.ppg_onset, 0);
+        const std::vector<double> abpN = normalizePulseTrace(*un[4], b.abp_onset, 1);
+        const std::vector<double> artN = normalizePulseTrace(*un[5], b.art_onset, 2);
+        const std::vector<double> artPN = normalizePulseTrace(*un[6], b.art_pulm_onset, 3);
+        const std::vector<double>* norms[7] = { &ch1N, &ch2N, &ch3N, &ppgN, &abpN, &artN, &artPN };
+
+        // Row count = longest signal length across the seven.
+        size_t maxLen = 0;
+        for (const auto* v : un) if (v->size() > maxLen) maxLen = v->size();
+        if (maxLen == 0) continue;
+
+        for (size_t i = 0; i < maxLen; ++i) {
+            f << m_subjectId.toStdString() << ',' << bi << ',' << i
+                << ',' << (static_cast<double>(i) * toMs);
+            for (int s = 0; s < 7; ++s) {
+                const auto& n = *norms[s];
+                const auto& u = *un[s];
+                // normalized
+                f << ',';
+                if (i < n.size() && !std::isnan(n[i])) f << n[i];
+                // unnormalized
+                f << ',';
+                if (i < u.size() && !std::isnan(u[i])) f << u[i];
+                // raw (== unnormalized for now; placeholder column)
+                f << ',';
+                if (i < u.size() && !std::isnan(u[i])) f << u[i];
+            }
+            f << '\n';
+        }
+    }
+
+    f.close();
+    std::cout << "Saved: " << path.toStdString() << "\n";
+    std::cout.flush();
 }

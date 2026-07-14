@@ -211,10 +211,6 @@ void BinPlotWidget::captureGlyphSnapshot() {
         m_glyphs.ppgP2 = p2;
         m_glyphs.ppgNotch = (notchIdx >= 0);
         m_glyphs.ppgNoNotchO = notchOIdx;
-
-        fprintf(stderr,
-            "[glyph] N=%d foot=%d p1=%d dic=%d p2=%d noNotchO=%d end=%d\n",
-            N, foot, p1, notchIdx, p2, m_glyphs.ppgNoNotchO, end);
     }
 
     m_glyphs.valid = true;

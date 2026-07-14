@@ -89,6 +89,8 @@ namespace {
         cfg.r_peak_data_path = cfg.output_path + "/r_peak_finding_output/";
         cfg.template_path = cfg.output_path + "/template_outputs/";
         cfg.qtvi_marker_path = cfg.output_path + "/qtvi_marker_path/";
+        cfg.snapshot_path = cfg.output_path + "/snapshot_path/";
+
     }
 
     bool manually_select_folder(config_entry& cfg) {

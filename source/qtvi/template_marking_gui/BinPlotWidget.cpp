@@ -489,14 +489,20 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             QString("Bin %1  [%2]%3")
             .arg(m_binIndex).arg(m_leadLabel).arg(beatSuffix));
 
-    // Left axis range: ECG only, autoscaled.
+    // Y-axis rules for the normalized traces:
+    //   Y-max is FIXED at 1.0 (one decimal) for every panel so bins share
+    //   a common upper reference.
+    //   Y-min is autoscaled from the data, but always clipped at <=0.0 so
+    //   the 0.0 major tick is always inside the frame.
+    // Left axis (ECG) and right axis (pulse) each follow this rule.
     double yLo = 0, yHi = 0;
     computeVisibleRange(m_ecg, m_ecgStd, m_ecgVisibleN, yLo, yHi);
+    yHi = 1.0;
+    if (yLo > 0.0) yLo = 0.0;
 
     // Right axis range: shared by ALL pulse traces (PPG + arterial), so they
-    // sit on one common mV scale shown on the right. Range only over the
-    // RETAINED samples (clipped at the ECG's right edge) so the cut-off tail
-    // doesn't skew autoscale.
+    // sit on one common normalized scale shown on the right. Range only over
+    // the RETAINED samples (clipped at the ECG's right edge).
     const int pulseClip = pulseClipN();
     double pLo = 1e300, pHi = -1e300;
     auto mergePulse = [&](const std::vector<double>& v,
@@ -511,6 +517,8 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     mergePulse(m_art, m_artStd, static_cast<int>(m_art.size()));
     mergePulse(m_artPulm, m_artPulmStd, static_cast<int>(m_artPulm.size()));
     if (pLo > pHi) { pLo = 0.0; pHi = 1.0; }
+    pHi = 1.0;
+    if (pLo > 0.0) pLo = 0.0;
 
     // ---- Axes: frame + ticks + dual labeled Y-axes ----
     {
@@ -546,23 +554,47 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             p.drawText(QPointF(x - 3.0 * lbl.size(), xAxisY + 12), lbl);
         }
 
-        // LEFT y-axis: ECG (mV), colored to match the ECG trace. Top = hi,
-        // bottom = lo. No scientific notation.
+        // Helper: y-pixel for a given data value on a given (lo, hi) scale.
+        auto yPix = [&](double val, double lo, double hi) {
+            const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
+            return margin_top + ph - (val - lo) / r * ph;
+            };
+
+        // LEFT y-axis: ECG (normalized). Top = yHi, bottom = yLo, plus a
+        // major tick at 0.0. Fixed 1-decimal format, no scientific notation.
         p.setPen(kColorEcgTrace);
-        for (int t = 0; t < 2; ++t) {
-            const double y = (t == 0) ? margin_top : margin_top + ph;
-            const double val = (t == 0) ? yHi : yLo;
-            p.drawLine(QPointF(yAxisL - 3, y), QPointF(yAxisL, y));
-            p.drawText(QPointF(1, y + 3), QString::number(val, 'f', 2));
+        {
+            const double yTop = yPix(yHi, yLo, yHi);
+            const double yBot = yPix(yLo, yLo, yHi);
+            const double yZero = yPix(0.0, yLo, yHi);
+            struct Tick { double val; double y; };
+            const Tick ticks[] = {
+                { yHi, yTop  },
+                { 0.0, yZero },
+                { yLo, yBot  }
+            };
+            for (const Tick& t : ticks) {
+                p.drawLine(QPointF(yAxisL - 3, t.y), QPointF(yAxisL, t.y));
+                p.drawText(QPointF(4, t.y + 3), QString::number(t.val, 'f', 1));
+            }
         }
 
-        // RIGHT y-axis: PPG / pulse (mV), colored to match the PPG trace.
+        // RIGHT y-axis: PPG / pulse (normalized). Same rules as left.
         p.setPen(kColorPpgTrace);
-        for (int t = 0; t < 2; ++t) {
-            const double y = (t == 0) ? margin_top : margin_top + ph;
-            const double val = (t == 0) ? pHi : pLo;
-            p.drawLine(QPointF(yAxisR, y), QPointF(yAxisR + 3, y));
-            p.drawText(QPointF(yAxisR + 5, y + 3), QString::number(val, 'f', 2));
+        {
+            const double yTop = yPix(pHi, pLo, pHi);
+            const double yBot = yPix(pLo, pLo, pHi);
+            const double yZero = yPix(0.0, pLo, pHi);
+            struct Tick { double val; double y; };
+            const Tick ticks[] = {
+                { pHi, yTop  },
+                { 0.0, yZero },
+                { pLo, yBot  }
+            };
+            for (const Tick& t : ticks) {
+                p.drawLine(QPointF(yAxisR, t.y), QPointF(yAxisR + 3, t.y));
+                p.drawText(QPointF(yAxisR + 8, t.y + 3), QString::number(t.val, 'f', 1));
+            }
         }
 
         // Rotated axis titles naming the tracing on each side.
@@ -572,13 +604,13 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         p.setPen(kColorEcgTrace);
         p.translate(9, margin_top + ph / 2.0);
         p.rotate(-90);
-        p.drawText(QRectF(-ph / 2.0, -9, ph, 12), Qt::AlignCenter, "ECG (mV)");
+        p.drawText(QRectF(-ph / 2.0, -9, ph, 12), Qt::AlignCenter, "ECG (norm)");
         p.restore();
         p.save();
         p.setPen(kColorPpgTrace);
         p.translate(w - 2, margin_top + ph / 2.0);
         p.rotate(-90);
-        p.drawText(QRectF(-ph / 2.0, -9, ph, 12), Qt::AlignCenter, "PPG (mV)");
+        p.drawText(QRectF(-ph / 2.0, -9, ph, 12), Qt::AlignCenter, "PPG (norm)");
         p.restore();
     }
     p.save();
