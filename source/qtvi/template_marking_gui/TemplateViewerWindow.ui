@@ -14,16 +14,7 @@
    <string>Template Marking Viewer</string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <widget class="QWidget" name="layoutWidget">
-    <property name="geometry">
-     <rect>
-      <x>4</x>
-      <y>5</y>
-      <width>1491</width>
-      <height>991</height>
-     </rect>
-    </property>
-    <layout class="QHBoxLayout" name="horizontalLayout" stretch="0,1">
+   <layout class="QHBoxLayout" name="horizontalLayout" stretch="0,1">
      <item>
       <layout class="QVBoxLayout" name="verticalLayout_2">
        <item>
@@ -312,7 +303,6 @@
       </widget>
      </item>
     </layout>
-   </widget>
   </widget>
   <action name="actionMoveSubsequent">
    <property name="checkable">

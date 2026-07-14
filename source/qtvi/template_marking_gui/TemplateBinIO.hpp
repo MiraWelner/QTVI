@@ -49,6 +49,14 @@ struct TemplateBin {
     std::vector<std::pair<uint64_t, uint64_t>> ppg_bin_indexs;
     std::vector<std::pair<uint64_t, uint64_t>> ecg_bin_indexs;
     bool bad_segment = false;
+    // Slice counts (post drop-rules) that fed each channel's raw-method
+    // median, plus PPG. All driven by ch1.raw R-pairs under Patch B, so
+    // they normally read equal; per-channel storage lets a future filter
+    // drop them per-channel. 0 = channel absent / no beats.
+    uint64_t ch1_n_beats_raw = 0;
+    uint64_t ch2_n_beats_raw = 0;
+    uint64_t ch3_n_beats_raw = 0;
+    uint64_t ppg_n_beats = 0;
 
     ChannelTemplateData ch1, ch2, ch3;
     std::vector<double> ppgTemplate;
@@ -82,7 +90,7 @@ struct TemplateBin {
     int ppg_onset = -1;
     int ppg_peak = -1;
     int ppg_dicrotic = -1;
-    int ppg_50 = -1;
+    int ppg_peak2 = -1;
     int ppg_end = -1;
 
     // Arterial channels (ABP / ART / ART_PULM): same marker set as PPG
@@ -90,14 +98,14 @@ struct TemplateBin {
     // (0 = ok, 1 = bad, 2 = channel absent). Indices are into the matching
     // *Template vector above; -1 = unmarked / not applicable.
     uint8_t abp_issue = 0;
-    int abp_onset = -1, abp_peak = -1, abp_dicrotic = -1, abp_50 = -1, abp_end = -1;
+    int abp_onset = -1, abp_peak = -1, abp_dicrotic = -1, abp_peak2 = -1, abp_end = -1;
 
     uint8_t art_issue = 0;
-    int art_onset = -1, art_peak = -1, art_dicrotic = -1, art_50 = -1, art_end = -1;
+    int art_onset = -1, art_peak = -1, art_dicrotic = -1, art_peak2 = -1, art_end = -1;
 
     uint8_t art_pulm_issue = 0;
     int art_pulm_onset = -1, art_pulm_peak = -1, art_pulm_dicrotic = -1,
-        art_pulm_50 = -1, art_pulm_end = -1;
+        art_pulm_peak2 = -1, art_pulm_end = -1;
 };
 
 // ---------------------------------------------------------------------------
@@ -113,6 +121,10 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
 
         dst.index = static_cast<uint64_t>(i);
         dst.bad_segment = src.bad_segment;
+        dst.ch1_n_beats_raw = src.ch1_n_beats_raw;
+        dst.ch2_n_beats_raw = src.ch2_n_beats_raw;
+        dst.ch3_n_beats_raw = src.ch3_n_beats_raw;
+        dst.ppg_n_beats = src.ppg_n_beats;
         dst.ppgTemplate = src.ppgTemplate;
         dst.ppgTemplate_std = src.ppgTemplate_std;
         dst.abpTemplate = src.abpTemplate;
@@ -153,7 +165,7 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
 //     uint8   bad_r_ch1, bad_r_ch2, bad_r_ch3
 //     uint8   ppg_issue          (0 = ok, 1 = bad, 2 = no ppg)
 //     int32   p_begin_ch1..3, q_begin_ch1..3, t_begin_ch1..3, t_end_ch1..3
-//     int32   ppg_onset, ppg_peak, ppg_dicrotic, ppg_50, ppg_end
+//     int32   ppg_onset, ppg_peak, ppg_dicrotic, ppg_peak2, ppg_end
 //     -- v2 only, one block each for ABP, ART, ART_PULM: --
 //     uint8   <chan>_issue
 //     int32   <chan>_onset, _peak, _dicrotic, _50, _end
@@ -199,17 +211,17 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         w32(b.ppg_onset);
         w32(b.ppg_peak);
         w32(b.ppg_dicrotic);
-        w32(b.ppg_50);
+        w32(b.ppg_peak2);
         w32(b.ppg_end);
 
         // v2 arterial block: ABP, ART, ART_PULM (issue + 5 indices each).
         w8(b.abp_issue);
-        w32(b.abp_onset); w32(b.abp_peak); w32(b.abp_dicrotic); w32(b.abp_50); w32(b.abp_end);
+        w32(b.abp_onset); w32(b.abp_peak); w32(b.abp_dicrotic); w32(b.abp_peak2); w32(b.abp_end);
         w8(b.art_issue);
-        w32(b.art_onset); w32(b.art_peak); w32(b.art_dicrotic); w32(b.art_50); w32(b.art_end);
+        w32(b.art_onset); w32(b.art_peak); w32(b.art_dicrotic); w32(b.art_peak2); w32(b.art_end);
         w8(b.art_pulm_issue);
         w32(b.art_pulm_onset); w32(b.art_pulm_peak); w32(b.art_pulm_dicrotic);
-        w32(b.art_pulm_50); w32(b.art_pulm_end);
+        w32(b.art_pulm_peak2); w32(b.art_pulm_end);
     }
 }
 
@@ -282,10 +294,10 @@ static const EcgColSpec ecgCols[] = {
     {"t_peak",  false, false}, {"t_end",   true,  false},
     {"qrs",     false, true},  {"qt",      false, true},
 };
-inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_peak","ppg_dicrotic","ppg_50","ppg_end" };
-inline constexpr const char* abpCols[] = { "abp_onset","abp_peak","abp_dicrotic","abp_50","abp_end" };
-inline constexpr const char* artCols[] = { "art_onset","art_peak","art_dicrotic","art_50","art_end" };
-inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak","art_pulm_dicrotic","art_pulm_50","art_pulm_end" };
+inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_peak","ppg_dicrotic","ppg_peak2","ppg_end" };
+inline constexpr const char* abpCols[] = { "abp_onset","abp_peak","abp_dicrotic","abp_peak2","abp_end" };
+inline constexpr const char* artCols[] = { "art_onset","art_peak","art_dicrotic","art_peak2","art_end" };
+inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak","art_pulm_dicrotic","art_pulm_peak2","art_pulm_end" };
 
 inline void writeTemplateMarkingsCsv(const std::string& path,
     const std::vector<TemplateBin>& bins,
@@ -355,24 +367,24 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
         xy(b.ppgTemplate, b.ppg_onset);
         xy(b.ppgTemplate, b.ppg_peak);
         xy(b.ppgTemplate, b.ppg_dicrotic);
-        xy(b.ppgTemplate, b.ppg_50);
+        xy(b.ppgTemplate, b.ppg_peak2);
         xy(b.ppgTemplate, b.ppg_end);
 
         // Arterial channels: issue flag then the five markers, indexing into
         // the matching background template vector.
         f << ',' << static_cast<int>(b.abp_issue);
         xy(b.abpTemplate, b.abp_onset);   xy(b.abpTemplate, b.abp_peak);
-        xy(b.abpTemplate, b.abp_dicrotic); xy(b.abpTemplate, b.abp_50);
+        xy(b.abpTemplate, b.abp_dicrotic); xy(b.abpTemplate, b.abp_peak2);
         xy(b.abpTemplate, b.abp_end);
 
         f << ',' << static_cast<int>(b.art_issue);
         xy(b.artTemplate, b.art_onset);   xy(b.artTemplate, b.art_peak);
-        xy(b.artTemplate, b.art_dicrotic); xy(b.artTemplate, b.art_50);
+        xy(b.artTemplate, b.art_dicrotic); xy(b.artTemplate, b.art_peak2);
         xy(b.artTemplate, b.art_end);
 
         f << ',' << static_cast<int>(b.art_pulm_issue);
         xy(b.artPulmTemplate, b.art_pulm_onset);   xy(b.artPulmTemplate, b.art_pulm_peak);
-        xy(b.artPulmTemplate, b.art_pulm_dicrotic); xy(b.artPulmTemplate, b.art_pulm_50);
+        xy(b.artPulmTemplate, b.art_pulm_dicrotic); xy(b.artPulmTemplate, b.art_pulm_peak2);
         xy(b.artPulmTemplate, b.art_pulm_end);
         f << '\n';
     }
@@ -426,19 +438,19 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         b.ppg_onset = r32();
         b.ppg_peak = r32();
         b.ppg_dicrotic = r32();
-        b.ppg_50 = r32();
+        b.ppg_peak2 = r32();
         b.ppg_end = r32();
 
         if (v2) {
             b.abp_issue = r8();
             b.abp_onset = r32(); b.abp_peak = r32(); b.abp_dicrotic = r32();
-            b.abp_50 = r32(); b.abp_end = r32();
+            b.abp_peak2 = r32(); b.abp_end = r32();
             b.art_issue = r8();
             b.art_onset = r32(); b.art_peak = r32(); b.art_dicrotic = r32();
-            b.art_50 = r32(); b.art_end = r32();
+            b.art_peak2 = r32(); b.art_end = r32();
             b.art_pulm_issue = r8();
             b.art_pulm_onset = r32(); b.art_pulm_peak = r32(); b.art_pulm_dicrotic = r32();
-            b.art_pulm_50 = r32(); b.art_pulm_end = r32();
+            b.art_pulm_peak2 = r32(); b.art_pulm_end = r32();
         }
         // v1: arterial fields keep their default (-1 / issue 0).
     }

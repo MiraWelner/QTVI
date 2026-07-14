@@ -130,6 +130,16 @@ namespace ecg_markers {
         return qTrough;
     }
 
+    // Systolic peak of the ANCHOR pulse. With a lead-in cycle prepended, the
+// template holds ~3 cycles, so a global/first-half argmax can land on the
+// wrong cycle. Search only [onset, onset + oneCycle], which is the anchor
+// pulse -- i.e. the cycle whose foot sits under R+delay.
+    inline int detect_ppg_peak(const std::vector<double>& pulse, int onset = -1) {
+        if (pulse.empty()) return 0;
+        auto it = std::max_element(pulse.begin(), pulse.end());
+        return static_cast<int>(it - pulse.begin());
+    }
+
     inline int detect_t_begin(const std::vector<double>& ecg_signal) {
         const int N = static_cast<int>(ecg_signal.size());
         auto [r_idx, is_positive] = r_peak(ecg_signal);
@@ -281,35 +291,43 @@ namespace ecg_markers {
     inline int detect_ppg_onset(const std::vector<double>& pulse) {
         const int N = static_cast<int>(pulse.size());
         if (N < 2) return 0;
-        const int half = std::max(2, N / 2);
 
+        // Peak first: global max over the pulse (systolic peak). The foot is the
+        // trough immediately before it, so we don't need a foot hint to find it.
+        int peak = 0;
+        double pv = pulse[0];
+        for (int i = 1; i < N; ++i)
+            if (pulse[i] > pv) { pv = pulse[i]; peak = i; }
+
+        // Foot = argmin over [0, peak]: the lowest point before the systolic peak.
         int idx = 0;
         double v = pulse[0];
-        for (int i = 1; i < half; ++i) {
+        for (int i = 1; i <= peak; ++i)
             if (pulse[i] < v) { v = pulse[i]; idx = i; }
-        }
+
         // If the min is at sample 0, prefer a slightly inside position.
         if (idx == 0) return std::min(5, N - 1);
         return idx;
     }
 
-    inline int detect_ppg_peak(const std::vector<double>& pulse) {
-        if (pulse.empty()) return 0;
-        auto it = std::max_element(pulse.begin(), pulse.end());
-        return static_cast<int>(it - pulse.begin());
-    }
-
     inline int detect_ppg_end(const std::vector<double>& pulse) {
         const int N = static_cast<int>(pulse.size());
         if (N < 4) return std::max(0, N - 1);
-        const int peak = detect_ppg_peak(pulse);
-        if (peak < 0 || peak >= N - 2) return std::max(0, N - 1);
 
+        // Peak first: global max (systolic peak). The end is the trough after it,
+        // so no foot/peak hint needed.
+        int peak = 0;
+        double pv = pulse[0];
+        for (int i = 1; i < N; ++i)
+            if (pulse[i] > pv) { pv = pulse[i]; peak = i; }
+
+        if (peak >= N - 2) return std::max(0, N - 1);   // peak too close to the end
+
+        // End = argmin over [peak, N): the lowest point after the systolic peak.
         int end = peak + 1;
-        double endVal = pulse[end];
-        for (int i = peak + 2; i < N; ++i) {
-            if (pulse[i] < endVal) { endVal = pulse[i]; end = i; }
-        }
+        double v = pulse[end];
+        for (int i = peak + 2; i < N; ++i)
+            if (pulse[i] < v) { v = pulse[i]; end = i; }
         return end;
     }
 
@@ -317,7 +335,9 @@ namespace ecg_markers {
     // systolic peak and the end of the pulse.
     inline int detect_ppg_dicrotic(const std::vector<double>& pulse) {
         const int N = static_cast<int>(pulse.size());
-        const int peak = detect_ppg_peak(pulse);
+        // in each of the three, replace `detect_ppg_peak(pulse)` with:
+        const int onset = detect_ppg_onset(pulse);
+        const int peak = detect_ppg_peak(pulse, onset);
         const int end = detect_ppg_end(pulse);
         if (peak < 0 || end < 0 || end - peak < 10)
             return std::clamp((peak + end) / 2, 0, N - 1);
@@ -339,19 +359,91 @@ namespace ecg_markers {
         return best;
     }
 
-    // 50% point on the upstroke: between PPG onset (foot) and peak.
-    inline int detect_ppg_50(const std::vector<double>& pulse) {
-        const int N = static_cast<int>(pulse.size());
-        const int onset = detect_ppg_onset(pulse);
-        const int peak = detect_ppg_peak(pulse);
-        if (onset < 0 || peak < 0 || peak <= onset)
-            return std::clamp((onset + peak) / 2, 0, N - 1);
+    // (detect_ppg_peak2 removed: peak2 is a user-placed marker only, no
+    // auto-detect. The viewer seeds it to a fixed default position -- 90%
+    // of the way from foot to end -- and the user drags it into place.)
 
-        const double halfVal = 0.5 * (pulse[onset] + pulse[peak]);
-        for (int i = onset + 1; i <= peak; ++i) {
-            if (pulse[i] >= halfVal) return i;
+
+    // ---- Combined PPG landmark detector -------------------------------------
+    // Contract: pass the visible PPG template plus the two ECG R peaks already
+    // mapped into PPG-frame sample indices (rFirstPpg / rSecondPpg). The
+    // caller owns that mapping since it has delay + RR at hand.
+    //
+    // Rule:
+    //   peak       = first local maximum in ppg[rFirstPpg .. rSecondPpg]
+    //                (falls back to argmax over the same window).
+    //   firstTrough = argmin of ppg[0 .. peak]  (deepest low before the peak).
+    //   onset      = argmax of ppg[j+1] - ppg[j] over [firstTrough, peak].
+    //                This is the point of maximum first-derivative on the
+    //                upstroke -- the same criterion EnsembleTemplate uses to
+    //                foot-align PPG beats before averaging, so the marker
+    //                sits exactly where the template's own alignment point
+    //                is. Geometrically ~50% of amplitude on the rising edge.
+    //   end        = argmin of ppg[peak .. N-1]  (min after the peak).
+    //   dicrotic / p50 left at -1 (add later if you want).
+    //
+    // NaN-safe: skips NaN samples in every scan.
+    struct PpgLandmarks {
+        int onset = -1;
+        int peak = -1;
+        int dicrotic = -1;
+        int p50 = -1;
+        int end = -1;
+    };
+
+    inline PpgLandmarks detect_ppg_landmarks(
+        const std::vector<double>& ppg, int rFirstPpg, int rSecondPpg)
+    {
+        PpgLandmarks r;
+        const int N = static_cast<int>(ppg.size());
+        if (N < 3) return r;
+
+        // Clamp the R window. If it collapses (arterial: no ECG), fall back
+        // to the whole trace so we still return something usable.
+        int lo = std::clamp(rFirstPpg, 0, N - 1);
+        int hi = std::clamp(rSecondPpg, 0, N - 1);
+        if (hi - lo < 3) { lo = 0; hi = N - 1; }
+
+        // 1. Peak = first local max in [lo, hi] (NaN-skipping). Fall back to
+        //    argmax over the same window if no clean local max exists.
+        int peak = -1;
+        for (int i = std::max(1, lo); i <= std::min(hi, N - 2); ++i) {
+            if (std::isnan(ppg[i]) || std::isnan(ppg[i - 1]) || std::isnan(ppg[i + 1])) continue;
+            if (ppg[i] > ppg[i - 1] && ppg[i] >= ppg[i + 1]) { peak = i; break; }
         }
-        return std::clamp((onset + peak) / 2, 0, N - 1);
+        if (peak < 0) {
+            double pv = -std::numeric_limits<double>::infinity();
+            for (int i = lo; i <= hi; ++i)
+                if (!std::isnan(ppg[i]) && ppg[i] > pv) { pv = ppg[i]; peak = i; }
+        }
+        if (peak < 0) return r;   // window all NaN; give up
+        r.peak = peak;
+
+        // 3. onset = local minimum AFTER R (the trough right before the
+        //    anchor pulse's rise). Search [rFirst, peak]: from the first R
+        //    down to the anchor systolic peak. This is the pulse foot for
+        //    the anchor beat, matching how PpgOnset markers are consumed
+        //    downstream (the "PPG foot" glyph).
+        int onset = -1;
+        {
+            double fv = std::numeric_limits<double>::infinity();
+            const int oLo = std::clamp(rFirstPpg, 0, peak);
+            for (int i = oLo; i <= peak; ++i)
+                if (!std::isnan(ppg[i]) && ppg[i] < fv) { fv = ppg[i]; onset = i; }
+        }
+        if (onset < 0) onset = std::max(0, peak - 1);   // degenerate fallback
+        r.onset = onset;
+
+        // 4. end = argmin of ppg[peak .. N-1], NaN-skipping.
+        int end = -1;
+        {
+            double ev = std::numeric_limits<double>::infinity();
+            for (int i = peak + 1; i < N; ++i)
+                if (!std::isnan(ppg[i]) && ppg[i] < ev) { ev = ppg[i]; end = i; }
+        }
+        r.end = (end >= 0) ? end : std::min(N - 1, peak + 1);
+
+        return r;
     }
 
 } // namespace ecg_markers

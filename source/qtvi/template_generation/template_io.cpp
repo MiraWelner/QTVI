@@ -83,6 +83,10 @@ namespace template_io {
             writeVecD(f, b.artTemplate_std);
             writeVecD(f, b.artPulmTemplate);
             writeVecD(f, b.artPulmTemplate_std);
+            f.write(reinterpret_cast<const char*>(&b.ch1_n_beats_raw), 8);
+            f.write(reinterpret_cast<const char*>(&b.ch2_n_beats_raw), 8);
+            f.write(reinterpret_cast<const char*>(&b.ch3_n_beats_raw), 8);
+            f.write(reinterpret_cast<const char*>(&b.ppg_n_beats), 8);
             uint8_t bad = b.bad_segment ? 1 : 0;
             f.write(reinterpret_cast<const char*>(&bad), 1);
         }
@@ -120,11 +124,58 @@ namespace template_io {
                 !readVecD(f, b.artPulmTemplate) ||
                 !readVecD(f, b.artPulmTemplate_std))
                 throw std::runtime_error("template file truncated mid-bin: " + path);
+            if (!f.read(reinterpret_cast<char*>(&b.ch1_n_beats_raw), 8) ||
+                !f.read(reinterpret_cast<char*>(&b.ch2_n_beats_raw), 8) ||
+                !f.read(reinterpret_cast<char*>(&b.ch3_n_beats_raw), 8) ||
+                !f.read(reinterpret_cast<char*>(&b.ppg_n_beats), 8))
+                throw std::runtime_error("template file truncated (missing n_beats fields): " + path);
             uint8_t bad = 0;
             f.read(reinterpret_cast<char*>(&bad), 1);
             b.bad_segment = (bad != 0);
         }
 
         return out;
+    }
+
+    // Long/tidy snips CSV: for each channel, two columns -- the snip id
+    // (0,1,2,... across all retained beats of that channel, repeated once per
+    // sample) and the sample value. Bad-segment bins are skipped; NaN tails
+    // are dropped. Channels with fewer total samples are blank-padded.
+    void write_snips_csv(const std::string& path, const BeatsFile& beats) {
+        std::ofstream f(path);
+        if (!f) throw std::runtime_error("cannot create: " + path);
+        f << std::setprecision(4);
+
+        static const char* ORDER[] = { "CH1","CH2","CH3","PPG","ABP","ART","ART_PULM" };
+
+        // One column per snip: header "{CHAN}_{n}", rows = sample index.
+        struct Col { std::string name; const std::vector<double>* v; };
+        std::vector<Col> cols;
+        size_t maxLen = 0;
+        for (const char* ch : ORDER) {
+            auto it = beats.per_channel_beats.find(ch);
+            if (it == beats.per_channel_beats.end()) continue;
+            int snip = 0;
+            for (size_t b = 0; b < it->second.size(); ++b) {
+                if (b < beats.bad_segment.size() && beats.bad_segment[b]) continue;
+                for (const auto& beat : it->second[b]) {
+                    cols.push_back({ std::string(ch) + "_" + std::to_string(snip), &beat });
+                    if (beat.size() > maxLen) maxLen = beat.size();
+                    ++snip;
+                }
+            }
+        }
+
+        for (size_t c = 0; c < cols.size(); ++c) { if (c) f << ','; f << cols[c].name; }
+        f << '\n';
+
+        for (size_t s = 0; s < maxLen; ++s) {
+            for (size_t c = 0; c < cols.size(); ++c) {
+                if (c) f << ',';
+                const std::vector<double>& v = *cols[c].v;
+                if (s < v.size() && !std::isnan(v[s])) f << v[s];
+            }
+            f << '\n';
+        }
     }
 }  // namespace template_io

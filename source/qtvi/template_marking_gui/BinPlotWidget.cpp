@@ -7,13 +7,14 @@
 // the same on-screen length; the full PPG tail stays visible and shares
 // the ECG's time axis within the widget.
 //
-// ECG/PPG alignment:
-//   The ECG template is R-anchored (R sits at m_rPeakSample). The PPG
-//   template is foot-anchored (its own average). To overlay them at the
-//   true simultaneous instant, the PPG is shifted right so its foot lands
-//   at R + m_ppgDelay, where m_ppgDelay is the measured R->foot transit
-//   delay (in samples). ppgStartSample() encodes that origin; the PPG is
-//   drawn from its real samples (no fabricated pad).
+// ECG/PPG alignment (Patch B/C):
+//   Every channel's template is sliced from the SAME real-time window --
+//   [t_R_i - pad, t_R_{i+1} + pad], driven by ch1.raw -- at that channel's
+//   own sample rate. Sample 0 of the ECG, PPG, and every arterial channel
+//   all correspond to the same real-time instant (pad seconds before the
+//   first R). So they overlay by construction: ppgStartSample() = 0, no
+//   R->foot delay adjustment needed. R sits at column pad*channelRate in
+//   every template.
 //
 // Std band: when a per-sample std vector is available for the trace
 // (covering at least the visible samples), the widget paints a
@@ -26,6 +27,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
+#include <QStringList>
 #include <algorithm>
 #include <cmath>
 
@@ -48,9 +50,17 @@ namespace {
     constexpr QColor kColorEcgTrace{ 10,  20,  90 };   // dark navy blue
     constexpr QColor kColorPpgTrace{ 130,  10,  20 };   // dark red
 
-    //different colored STD bands - bluish for ecg and reddish for ppg
-    inline const QColor color_stdband_ecg{ 90, 130, 220, 110 };   // light navy/blue
-    inline const QColor color_stdband_ppg{ 220, 120, 130, 110 };  // soft red/pink
+    // Average-trace opacity: a little transparent so overlapping traces
+    // (up to ECG + PPG + 3 arterial) reveal where they cross. ~60% opaque.
+    constexpr int kTraceAlpha = 150;
+
+    // Std bands: very light -- barely noticeable at a glance, visible on a
+    // close look. Low alpha does that.
+    inline const QColor color_stdband_ecg{ 90, 130, 220, 38 };   // light navy/blue
+    inline const QColor color_stdband_ppg{ 220, 120, 130, 38 };  // soft red/pink
+
+    // Apply kTraceAlpha to a base trace color.
+    inline QColor withTraceAlpha(QColor c) { c.setAlpha(kTraceAlpha); return c; }
 
 
     // ECG markers (P, Q, Tb, Te) - blacks and dark blues, darkest to lightest.
@@ -64,7 +74,7 @@ namespace {
     constexpr QColor kColorPpgOnset{ 110,   0,   0 };  // dark red
     constexpr QColor kColorPpgPeak{ 180,   0,   0 };  // red
     constexpr QColor kColorPpgDicrotic{ 220,  50,  50 };  // medium red
-    constexpr QColor kColorPpg50{ 235, 100, 100 };  // light red
+    constexpr QColor kColorPpgPeak2{ 235, 100, 100 };  // light red (2nd/diastolic peak)
     constexpr QColor kColorPpgEnd{ 200,  60,  90 };  // dark pink-red
 
     // Arterial markers (ABP green, ART purple, ART_PULM orange),
@@ -86,7 +96,7 @@ namespace {
         case BinPlotWidget::PpgOnset:    return kColorPpgOnset;
         case BinPlotWidget::PpgPeak:     return kColorPpgPeak;
         case BinPlotWidget::PpgDicrotic: return kColorPpgDicrotic;
-        case BinPlotWidget::Ppg50:       return kColorPpg50;
+        case BinPlotWidget::PpgPeak2:    return kColorPpgPeak2;
         case BinPlotWidget::PpgEnd:      return kColorPpgEnd;
         }
         if (BinPlotWidget::markerIsAbp(m))     return kColorAbp[m - BinPlotWidget::AbpOnset];
@@ -96,7 +106,7 @@ namespace {
     }
     const char* markerShortLabel(int m) {
         switch (m) {
-        case BinPlotWidget::EcgP:        return "P peak";
+        case BinPlotWidget::EcgP:        return "P onset";
         case BinPlotWidget::EcgQBegin:   return "Q beg";
         case BinPlotWidget::EcgSEnd:     return "S end";
         case BinPlotWidget::EcgTBegin:   return "T beg";
@@ -104,16 +114,16 @@ namespace {
         case BinPlotWidget::PpgOnset:    return "PPG On";
         case BinPlotWidget::PpgPeak:     return "PPG Peak";
         case BinPlotWidget::PpgDicrotic: return "DN";
-        case BinPlotWidget::Ppg50:       return "PPG 50% Upsl";
+        case BinPlotWidget::PpgPeak2:    return "PPG Peak2";
         case BinPlotWidget::PpgEnd:      return "PPG End";
         case BinPlotWidget::AbpOnset: return "aBP On";  case BinPlotWidget::AbpPeak: return "aBP Pk";
-        case BinPlotWidget::AbpDicrotic: return "aBP DN"; case BinPlotWidget::Abp50: return "aBP 50%";
+        case BinPlotWidget::AbpDicrotic: return "aBP DN"; case BinPlotWidget::AbpPeak2: return "aBP Pk2";
         case BinPlotWidget::AbpEnd: return "aBP End";
         case BinPlotWidget::ArtOnset: return "ART On";  case BinPlotWidget::ArtPeak: return "ART Pk";
-        case BinPlotWidget::ArtDicrotic: return "ART DN"; case BinPlotWidget::Art50: return "ART 50%";
+        case BinPlotWidget::ArtDicrotic: return "ART DN"; case BinPlotWidget::ArtPeak2: return "ART Pk2";
         case BinPlotWidget::ArtEnd: return "ART End";
         case BinPlotWidget::ArtPulmOnset: return "APul On"; case BinPlotWidget::ArtPulmPeak: return "APul Pk";
-        case BinPlotWidget::ArtPulmDicrotic: return "APul DN"; case BinPlotWidget::ArtPulm50: return "APul 50%";
+        case BinPlotWidget::ArtPulmDicrotic: return "APul DN"; case BinPlotWidget::ArtPulmPeak2: return "APul Pk2";
         case BinPlotWidget::ArtPulmEnd: return "APul End";
         }
         return "?";
@@ -213,9 +223,13 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     const std::vector<double>& ecgStd,
     int ecgP, int qBegin, int sEnd, int tBegin, int tEnd,
     int ppgOnset, int ppgPeak,
-    int ppgDicrotic, int ppg50, int ppgEnd,
-    double rPeakSample, double ppgDelay)
+    int ppgDicrotic, int ppgPeak2, int ppgEnd,
+    double rPeakSample,
+    int nEcgBeats,
+    int nPpgBeats)
 {
+    m_nEcgBeats = nEcgBeats;
+    m_nPpgBeats = nPpgBeats;
     m_ppg = ppg;
     m_ppgStd = ppgStd;
     m_ecg = ecg;
@@ -228,21 +242,20 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_markers[PpgOnset] = ppgOnset;
     m_markers[PpgPeak] = ppgPeak;
     m_markers[PpgDicrotic] = ppgDicrotic;
-    m_markers[Ppg50] = ppg50;
+    m_markers[PpgPeak2] = ppgPeak2;
     m_markers[PpgEnd] = ppgEnd;
     m_rPeakSample = rPeakSample;
-    // R->foot transit delay and the foot's column in the foot-aligned PPG
-    // template. Captured here (not read live from the marker) so dragging the
-    // onset marker doesn't reposition the whole PPG trace.
-    m_ppgDelay = ppgDelay;
-    m_ppgFootIdx = (ppgOnset > 0) ? ppgOnset : 0;
+    // Under Patch B, PPG (and all arterial channels) share the ECG's real-
+    // time frame: sample 0 of the PPG template already corresponds to
+    // sample 0 of the ECG template. No more R->foot delay math -- the
+    // slicer put every channel on the same axis. ppgStartSample() is 0.
     m_hasPPG = !ppg.empty();
     // Cache the per-trace visible counts so paint, hit-test, and
     // drag-clamp all see the same numbers.
     m_ecgVisibleN = std::max(static_cast<int>(m_ecg.size()), 2);
     m_ppgVisibleN = visiblePpgCount(static_cast<int>(m_ppg.size()));
+    captureGlyphSnapshot();   // freeze glyph landmarks at the initial markers
 
-    // sizeHint depends on visible counts; notify layout.
     updateGeometry();
     update();
 }
@@ -334,27 +347,28 @@ int BinPlotWidget::visibleN(bool isEcg) const {
 }
 
 double BinPlotWidget::ppgStartSample() const {
-    // PPG sample 0 sits at (R column + transit delay - foot column) so the
-    // foot lands at R + delay. Clamped >= 0 to avoid drawing left of the axis.
-    double s = m_rPeakSample + m_ppgDelay - static_cast<double>(m_ppgFootIdx);
-    return (s > 0.0) ? s : 0.0;
+    // Under Patch B, every channel is real-time-aligned by construction:
+    // PPG and all arterial channels share sample 0 with the ECG template.
+    // No shift needed.
+    return 0.0;
 }
 
 int BinPlotWidget::totalSampleSpan() const {
-    // ECG runs over samples [0, m_ecgVisibleN). The PPG is drawn shifted
-    // right so its foot lands at R + delay, so it runs over
-    // [0, ppgStartSample() + ppgVisibleN). The widest of the two is what
-    // has to fit in the drawable width.
-    const int pad = static_cast<int>(std::round(ppgStartSample()));
-    const int ppgSpan = (m_ppgVisibleN > 0) ? pad + m_ppgVisibleN : 0;
-    return std::max(std::max(m_ecgVisibleN, ppgSpan), 2);
+    return std::max(m_ecgVisibleN, 2);
+}
+
+// Number of pulse-trace samples that fit before the ECG's right edge, at the
+// shared scale. Pulse sample i sits at shared position ppgStartSample()+i;
+// keep those with (ppgStartSample()+i) <= m_ecgVisibleN.
+int BinPlotWidget::pulseClipN() const {
+    const int clip = m_ecgVisibleN - static_cast<int>(std::llround(ppgStartSample()));
+    return std::max(0, clip);
 }
 
 double BinPlotWidget::pxPerSample() const {
-    // Scale so the widest trace exactly fills the drawable width. ECG and
-   // PPG share this one value, so they stay aligned within this widget;
-   // different bins use different values, which is what makes every bin
-   // window come out the same on-screen length.
+    // ONE scale shared by ECG and all pulse traces, so the R->foot offset is
+    // a true horizontal distance. The frame spans the widest trace; every
+    // trace is drawn at this same pps.
     const int span = totalSampleSpan();
     const double drawW = std::max(1, width() - margin_left - margin_right);
     return (span > 1) ? (drawW / static_cast<double>(span - 1)) : 1.0;
@@ -449,41 +463,82 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     const int h = height();
     const int w = width();
     const int ph = h - margin_top - margin_bottom;
-    const double pps = pxPerSample();   // one scale for both traces this paint
-
+    const double pps = pxPerSample();
     p.fillRect(rect(), Qt::white);
 
-    // Title
+    // Title. The top-left panel (Bin 0) also notes the x-axis units.
+    // Beat count is appended when known. ECG count is the count for THIS
+    // widget's channel; PPG count is the bin's PPG count. Under Patch B
+    // they're normally equal but stored separately so per-channel drops
+    // (if any future filter adds them) can diverge.
     p.setPen(Qt::black);
     { QFont f = p.font(); f.setPointSize(8); p.setFont(f); }
-    p.drawText(margin_left, 11, QString("Bin %1  [%2]").arg(m_binIndex).arg(m_leadLabel));
+    QString beatSuffix;
+    if (m_nEcgBeats > 0 || m_nPpgBeats > 0) {
+        QStringList parts;
+        if (m_nEcgBeats > 0) parts << QString("%1 ECG beats").arg(m_nEcgBeats);
+        if (m_nPpgBeats > 0) parts << QString("%1 PPG beats").arg(m_nPpgBeats);
+        beatSuffix = "  " + parts.join(", ");
+    }
+    if (m_binIndex == 0)
+        p.drawText(margin_left, 11,
+            QString("Bin %1  [%2 over time in seconds]%3")
+            .arg(m_binIndex).arg(m_leadLabel).arg(beatSuffix));
+    else
+        p.drawText(margin_left, 11,
+            QString("Bin %1  [%2]%3")
+            .arg(m_binIndex).arg(m_leadLabel).arg(beatSuffix));
 
+    // Left axis range: ECG only, autoscaled.
     double yLo = 0, yHi = 0;
     computeVisibleRange(m_ecg, m_ecgStd, m_ecgVisibleN, yLo, yHi);
 
-    // ---- Axes: frame + ticks + labels ----
+    // Right axis range: shared by ALL pulse traces (PPG + arterial), so they
+    // sit on one common mV scale shown on the right. Range only over the
+    // RETAINED samples (clipped at the ECG's right edge) so the cut-off tail
+    // doesn't skew autoscale.
+    const int pulseClip = pulseClipN();
+    double pLo = 1e300, pHi = -1e300;
+    auto mergePulse = [&](const std::vector<double>& v,
+        const std::vector<double>& sd, int visN) {
+            const int n = std::min(visN, pulseClip);
+            if (n < 1) return;
+            double lo, hi; computeVisibleRange(v, sd, n, lo, hi);
+            pLo = std::min(pLo, lo); pHi = std::max(pHi, hi);
+        };
+    if (m_hasPPG && !m_ppg.empty()) mergePulse(m_ppg, m_ppgStd, m_ppgVisibleN);
+    mergePulse(m_abp, m_abpStd, static_cast<int>(m_abp.size()));
+    mergePulse(m_art, m_artStd, static_cast<int>(m_art.size()));
+    mergePulse(m_artPulm, m_artPulmStd, static_cast<int>(m_artPulm.size()));
+    if (pLo > pHi) { pLo = 0.0; pHi = 1.0; }
+
+    // ---- Axes: frame + ticks + dual labeled Y-axes ----
     {
         const double xAxisY = margin_top + ph;       // == h - kMB
-        const double yAxisX = margin_left;
+        const double yAxisL = margin_left;            // left  (ECG)
+        const double yAxisR = w - margin_right;       // right (PPG/pulse)
 
         p.setPen(QColor(150, 150, 150));
-        p.drawLine(QPointF(yAxisX, margin_top), QPointF(yAxisX, xAxisY));   // y-axis
-        p.drawLine(QPointF(yAxisX, xAxisY), QPointF(w - margin_right, xAxisY));  // x-axis
+        p.drawLine(QPointF(yAxisL, margin_top), QPointF(yAxisL, xAxisY));   // left  y-axis
+        p.drawLine(QPointF(yAxisR, margin_top), QPointF(yAxisR, xAxisY));   // right y-axis
+        p.drawLine(QPointF(yAxisL, xAxisY), QPointF(yAxisR, xAxisY));       // x-axis
 
         QFont af = p.font(); af.setPointSize(7); p.setFont(af);
 
-        // X ticks: sample index across the full widget span.
+        // X ticks: time across the full frame, at the shared scale.
         const int span = totalSampleSpan();
+        const double eps = pps;
         const int nx = 4;
+        p.setPen(QColor(150, 150, 150));
         for (int t = 0; t <= nx; ++t) {
             const int s = static_cast<int>(std::round((double)span * t / nx));
-            double x = margin_left + s * pps;
-            if (x > w - margin_right) x = w - margin_right;
+            double x = margin_left + s * eps;
+            if (x > yAxisR) x = yAxisR;
             p.drawLine(QPointF(x, xAxisY), QPointF(x, xAxisY + 3));
             QString lbl;
             if (m_sampleRate > 0.0) {
                 lbl = QString::number(s / m_sampleRate, 'f', 2);
-                if (t == nx) lbl += " s";   // unit on the last tick only
+                if (t == nx) lbl += " s";
             }
             else {
                 lbl = QString::number(s);
@@ -491,21 +546,48 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             p.drawText(QPointF(x - 3.0 * lbl.size(), xAxisY + 12), lbl);
         }
 
-        // Y ticks: amplitude. Top of plot = hi, bottom = lo.
+        // LEFT y-axis: ECG (mV), colored to match the ECG trace. Top = hi,
+        // bottom = lo. No scientific notation.
+        p.setPen(kColorEcgTrace);
         for (int t = 0; t < 2; ++t) {
             const double y = (t == 0) ? margin_top : margin_top + ph;
             const double val = (t == 0) ? yHi : yLo;
-            p.drawLine(QPointF(yAxisX - 3, y), QPointF(yAxisX, y));
-            p.drawText(QPointF(1, y + 3), QString::number(val, 'e', 1));
+            p.drawLine(QPointF(yAxisL - 3, y), QPointF(yAxisL, y));
+            p.drawText(QPointF(1, y + 3), QString::number(val, 'f', 2));
         }
 
+        // RIGHT y-axis: PPG / pulse (mV), colored to match the PPG trace.
+        p.setPen(kColorPpgTrace);
+        for (int t = 0; t < 2; ++t) {
+            const double y = (t == 0) ? margin_top : margin_top + ph;
+            const double val = (t == 0) ? pHi : pLo;
+            p.drawLine(QPointF(yAxisR, y), QPointF(yAxisR + 3, y));
+            p.drawText(QPointF(yAxisR + 5, y + 3), QString::number(val, 'f', 2));
+        }
+
+        // Rotated axis titles naming the tracing on each side.
+        QFont tf = p.font(); tf.setPointSize(7);
+        p.setFont(tf);
+        p.save();
+        p.setPen(kColorEcgTrace);
+        p.translate(9, margin_top + ph / 2.0);
+        p.rotate(-90);
+        p.drawText(QRectF(-ph / 2.0, -9, ph, 12), Qt::AlignCenter, "ECG (mV)");
+        p.restore();
+        p.save();
+        p.setPen(kColorPpgTrace);
+        p.translate(w - 2, margin_top + ph / 2.0);
+        p.rotate(-90);
+        p.drawText(QRectF(-ph / 2.0, -9, ph, 12), Qt::AlignCenter, "PPG (mV)");
+        p.restore();
     }
+    p.save();
+    p.setClipRect(QRectF(margin_left, margin_top,
+        w - margin_left - margin_right, ph));
 
     // -------- Arterial traces (ABP/ART/ART_PULM) --------
-    // Foot-anchored like the PPG (shared ppgStartSample()). Each autoscaled
-    // to its own range and gated by its own trace-visibility flag. A
-    // translucent std band is drawn under the line when a matching std
-    // vector is present (same treatment as ECG/PPG).
+    // Foot-anchored like the PPG, drawn on the SHARED right-axis range
+    // (pLo,pHi) so all pulse tracings sit on one mV scale.
     {
         const double startPx = margin_left + ppgStartSample() * pps;
         struct ArtTrace {
@@ -516,66 +598,53 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             bool show;
         };
         const ArtTrace arts[] = {
-            { &m_abp,     &m_abpStd,     QColor(0, 115, 45),   QColor(80, 185, 120, 110),  m_showAbpTrace },     // green
-            { &m_art,     &m_artStd,     QColor(140, 75, 185), QColor(180, 130, 215, 110), m_showArtTrace },     // purple
-            { &m_artPulm, &m_artPulmStd, QColor(215, 135, 45), QColor(235, 175, 100, 110), m_showArtPulmTrace }, // orange
+            { &m_abp,     &m_abpStd,     QColor(0, 115, 45),   QColor(80, 185, 120, 38),  m_showAbpTrace },     // green
+            { &m_art,     &m_artStd,     QColor(140, 75, 185), QColor(180, 130, 215, 38), m_showArtTrace },     // purple
+            { &m_artPulm, &m_artPulmStd, QColor(215, 135, 45), QColor(235, 175, 100, 38), m_showArtPulmTrace }, // orange
         };
         for (const auto& a : arts) {
             if (!a.show) continue;
             const std::vector<double>& v = *a.v;
-            const int visN = static_cast<int>(v.size());
+            const int visN = std::min(static_cast<int>(v.size()), pulseClip);
             if (visN < 2) continue;
-            double lo = *std::min_element(v.begin(), v.end());
-            double hi = *std::max_element(v.begin(), v.end());
-            // Expand the vertical range to fit the std band (mean +/- std)
-            // so it doesn't clip, mirroring computeVisibleRange for PPG.
             const std::vector<double>& sd = *a.sd;
             const bool haveStd = static_cast<int>(sd.size()) >= visN;
-            if (haveStd) {
-                for (int i = 0; i < visN; ++i) {
-                    lo = std::min(lo, v[i] - sd[i]);
-                    hi = std::max(hi, v[i] + sd[i]);
-                }
-            }
             if (haveStd)
-                drawStdBand(p, v, sd, startPx, margin_top, ph, pps, visN, lo, hi, a.band);
+                drawStdBand(p, v, sd, startPx, margin_top, ph, pps, visN, pLo, pHi, a.band);
             drawTraceFixedScale(p, v, startPx, margin_top, ph, pps,
-                QPen(a.line, 1.3), visN, lo, hi);
+                QPen(withTraceAlpha(a.line), 1.3), visN, pLo, pHi);
         }
     }
 
-    // -------- ECG --------
+    // -------- ECG (left axis) --------
     if (m_showEcgTrace) {
         drawStdBand(p, m_ecg, m_ecgStd, margin_left, margin_top, ph, pps, m_ecgVisibleN, yLo, yHi, color_stdband_ecg);
-        drawTraceFixedScale(p, m_ecg, margin_left, margin_top, ph, pps, QPen(kColorEcgTrace, 1.5), m_ecgVisibleN, yLo, yHi);
+        drawTraceFixedScale(p, m_ecg, margin_left, margin_top, ph, pps,
+            QPen(withTraceAlpha(kColorEcgTrace), 1.5), m_ecgVisibleN, yLo, yHi);
     }
 
-    // -------- PPG --------
+    // -------- PPG (right/shared axis) --------
     if (m_showPpgTrace && m_hasPPG && !m_ppg.empty() && m_ppgVisibleN > 0) {
-        // Real PPG, positioned so its foot sits at R + transit delay. No
-        // fabricated lead-in: the trace begins at ppgStartSample() and
-        // nothing is drawn to its left.
         const double startPx = margin_left + ppgStartSample() * pps;
-
+        const int ppgN = std::min(m_ppgVisibleN, pulseClipN());
         std::vector<double> ppgStdReal;
-        if (static_cast<int>(m_ppgStd.size()) >= m_ppgVisibleN)
-            ppgStdReal.assign(m_ppgStd.begin(),
-                m_ppgStd.begin() + m_ppgVisibleN);
+        if (static_cast<int>(m_ppgStd.size()) >= ppgN)
+            ppgStdReal.assign(m_ppgStd.begin(), m_ppgStd.begin() + ppgN);
 
-        double lo, hi;
-        computeVisibleRange(m_ppg, ppgStdReal, m_ppgVisibleN, lo, hi);
-
-        drawStdBand(p, m_ppg, ppgStdReal, startPx, margin_top, ph, pps,
-            m_ppgVisibleN, lo, hi, color_stdband_ppg);
-        drawTraceFixedScale(p, m_ppg, startPx, margin_top, ph,
-            pps, QPen(kColorPpgTrace, 1.5), m_ppgVisibleN, lo, hi);
+        if (ppgN >= 2) {
+            drawStdBand(p, m_ppg, ppgStdReal, startPx, margin_top, ph, pps,
+                ppgN, pLo, pHi, color_stdband_ppg);
+            drawTraceFixedScale(p, m_ppg, startPx, margin_top, ph,
+                pps, QPen(withTraceAlpha(kColorPpgTrace), 1.5), ppgN, pLo, pHi);
+        }
     }
+    p.restore();
 
 
     QFont smallF = p.font(); smallF.setPointSize(7); p.setFont(smallF);
     for (int m = 0; m < MarkerCount; ++m) {
         int idx = m_markers[m];
-        if (idx < 0) continue;
+        if (idx < 0 || m == PpgPeak || m == AbpPeak || m == ArtPeak || m == ArtPulmPeak) continue;
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;
@@ -589,6 +658,9 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         p.drawLine(QPointF(mx, margin_top), QPointF(mx, h - margin_bottom));
         p.drawText(QPointF(mx + 2, margin_top + 8), markerShortLabel(m));
     }
+
+    drawFeatureGlyphs(p, yLo, yHi, pLo, pHi, ph);
+
 
     if (m_state == State::BadPPG) {
         p.setPen(QPen(Qt::red, 4));

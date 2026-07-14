@@ -52,26 +52,5 @@ inline AlignWavesResult AlignWaves(const vector<vector<double>>& waves,
             res.alignedWaves[i][dst_start + j] = waves[i][j];
         }
     }
-
-    // Align peaks vertically
-    double avg_peak = 0.0;
-    size_t cnt = 0;
-    for (size_t i = 0; i < wave_count; ++i) {
-        if (max_left < total_cols && !std::isnan(res.alignedWaves[i][max_left])) {
-            avg_peak += res.alignedWaves[i][max_left];
-            ++cnt;
-        }
-    }
-    if (cnt > 0) avg_peak /= cnt;
-
-    for (size_t i = 0; i < wave_count; ++i) {
-        if (max_left < total_cols && !std::isnan(res.alignedWaves[i][max_left])) {
-            double shift = res.alignedWaves[i][max_left] - avg_peak;
-            for (auto& v : res.alignedWaves[i]) {
-                if (!std::isnan(v)) v -= shift;
-            }
-        }
-    }
-
     return res;
 }

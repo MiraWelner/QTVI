@@ -13,6 +13,7 @@
  * @date   2026-03-26
  */
 #pragma once
+#include <map>
 #include "template_io.hpp"
 #include <vector>
 #include <string>
@@ -24,7 +25,19 @@
 #include <omp.h>
 #endif
 
- // Per-channel, per-method ECG template results
+ // Per-channel sample rates (Hz), threaded through the template-generation
+ // pipeline. Each channel is at its own rate; the slicer converts between
+ // them via the ratio channelRate / ecgRate. A rate of 0 means the channel
+ // is absent from this dataset (skip it).
+struct SignalRates {
+    double ecg = 0.0;
+    double ppg = 0.0;
+    double abp = 0.0;
+    double art = 0.0;
+    double artPulm = 0.0;
+};
+
+// Per-channel, per-method ECG template results
 struct ChannelTemplates {
     vector<double> ecgTemplate_raw;
     vector<double> ecgTemplate_raw_std;       // per-sample std of the beats
@@ -42,6 +55,9 @@ struct ChannelTemplates {
     double avg_r_expand_squared = 0.0;
     double avg_r_expand_absval = 0.0;
     double avg_r_expand_unfiltered = 0.0;
+    // Slice count fed to the raw-method median for this bin/channel.
+    // Only tracked for the raw method since that's what the viewer shows.
+    size_t n_beats_raw = 0;
 };
 
 struct TemplateInfo {
@@ -52,11 +68,16 @@ struct TemplateInfo {
     std::vector<double> ppgTemplate_std;      // per-sample std of the beats
     // contributing to ppgTemplate
     // (post AlignWaves shift).
-// Surviving beats from ch1 raw method (each entry is one beat's
-// samples, all of equal length, possibly with NaN tails). Only
-// populated when capture_beats was requested for ch1 in
-// CreateEcgTemplates.
+    // Slice count that fed the PPG median (post drop rules).
+    size_t ppg_n_beats = 0;
+    // Surviving beats from ch1 raw method (each entry is one beat's
+    // samples, all of equal length, possibly with NaN tails). Only
+    // populated when capture_beats was requested for ch1 in
+    // CreateEcgTemplates.
     std::vector<std::vector<double>> kept_beats_ch1_raw;
+    // Retained per-channel beats for the snips CSV. Key is the channel label
+    // ("CH1"/"CH2"/"CH3"/"PPG"); value is [beat][sample] for this bin.
+    std::map<std::string, std::vector<std::vector<double>>> kept_beats_by_channel;
 };
 
 struct AlignWavesResult {
@@ -91,6 +112,10 @@ struct EcgChannelResult {
     vector<double> avg_r_expand_squared;
     vector<double> avg_r_expand_absval;
     vector<double> avg_r_expand_unfiltered;
+
+    // Per-bin slice count that fed the raw-method median (post drop rules).
+    // Only tracked for the raw method since that's what the viewer displays.
+    vector<size_t> n_beats_raw;
 
     // Per-bin captured surviving beats from the "raw" method.
     // Only populated when the caller asks for it (currently: ch1 only).

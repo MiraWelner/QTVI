@@ -194,7 +194,12 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     computeMarkingsForPage();
     m_capturedPages.clear();   // new subject: nothing saved yet
     showPage();
-    writeAlignedTemplateCsv();  // dump templates.csv matching the displayed alignment
+    // Defer the analysis CSV write until after the widget page has painted.
+    // Writing it inline blocks the UI thread for ~15s on large templates
+    // (7 signals x ~1300 samples x ~800 bins = ~7M formatted writes), which
+    // looks like the viewer is frozen at load time. QTimer::singleShot(0)
+    // schedules it on the next event-loop cycle so the page shows first.
+    QTimer::singleShot(0, this, [this]() { writeAlignedTemplateCsv(); });
 }
 
 // ========================================================================
@@ -209,50 +214,128 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
 // ========================================================================
 
 namespace {
+    // Seed a pulse's markers from the window BETWEEN THE TWO R PEAKS
+    // (one cardiac cycle) in the pulse's own sample space. The chain:
+    //   peak  = argmax over [rFirst, rSecond]   (systolic peak between the R's)
+    //   foot  = min before the peak (anywhere in the template)
+    //   end   = min after  the peak (anywhere in the template)
+    //   dicrotic / 50% = detected on the [foot, end] single-cycle span.
+    //
+    // rFirst/rSecond are the two R peaks in this template's sample space.
+    // Under Patch B every pulse channel is R-anchored: rFirst = padSamples,
+    // rSecond = padSamples + medianRR. Callers with no R window available
+    // (arterial channels when ch1.raw is absent) pass rFirst=rSecond=0 and
+    // this falls back to the whole trace. No cycleLen / lead-in assumption.
+    inline void seedPulse(const std::vector<double>& v, int rFirst, int rSecond,
+        int& onset, int& peak, int& dicrotic, int& peak2, int& end) {
+        const int n = static_cast<int>(v.size());
+        if (n < 1) return;
+        auto cl = [&](int x) { return std::clamp(x, 0, n - 1); };
+
+        int lo = cl(rFirst), hi = cl(rSecond);
+        if (hi - lo < 3) { lo = 0; hi = n - 1; }   // no R window => whole trace
+
+        // Peak = argmax between the two R peaks (the ONLY R-bounded landmark).
+        // Skip NaN and start from -inf so the first real sample wins.
+        if (peak < 0) {
+            int p = -1; double pv = -std::numeric_limits<double>::infinity();
+            for (int i = lo; i <= hi; ++i)
+                if (!std::isnan(v[i]) && v[i] > pv) { pv = v[i]; p = i; }
+            if (p < 0) return;   // all NaN in window; can't seed
+            peak = p;
+        }
+
+        // Foot = lowest point before the peak, ANYWHERE in the template.
+        // The foot doesn't have to sit inside the R window -- only the peak
+        // does. Skip NaN; start from +inf so a real sample always beats it.
+        if (onset < 0) {
+            int f = -1; double fv = std::numeric_limits<double>::infinity();
+            for (int i = 0; i <= peak; ++i)
+                if (!std::isnan(v[i]) && v[i] < fv) { fv = v[i]; f = i; }
+            if (f < 0) f = std::max(0, peak - 1);
+            onset = f;
+        }
+
+        // End = lowest point after the peak, ANYWHERE in the template.
+        // Same NaN-skipping rule. If everything after the peak is NaN
+        // (short template, peak near the tail), fall back to peak+1.
+        if (end < 0) {
+            int e = -1; double ev = std::numeric_limits<double>::infinity();
+            for (int i = peak + 1; i < n; ++i)
+                if (!std::isnan(v[i]) && v[i] < ev) { ev = v[i]; e = i; }
+            if (e < 0) e = std::min(n - 1, peak + 1);
+            end = e;
+        }
+
+        // Dicrotic auto-detected on the real single-cycle [foot, end] span.
+        if (dicrotic < 0 && cl(end) > cl(onset) + 2) {
+            const int base = cl(onset);
+            std::vector<double> cyc(v.begin() + base, v.begin() + cl(end) + 1);
+            dicrotic = cl(base + ecg_markers::detect_ppg_dicrotic(cyc));
+        }
+        // peak2 is user-placed. Default: 90% of the way from onset to end
+        // so the bar starts near the right of the anchor pulse. User drags.
+        if (peak2 < 0 && end > onset) {
+            peak2 = cl(onset + (9 * (end - onset)) / 10);
+        }
+    }
+
+
     inline int clampToVisible(int idx, int visN) {
         return std::clamp(idx, 0, visN - 1);
     }
 
     void seedBinMarkers(TemplateBin& b) {
+
         // ---- PPG --------------------------------------------------------
         if (b.ppgTemplate.empty()) {
             b.ppg_issue = 2;
             b.ppg_onset = -1;
             b.ppg_peak = -1;
             b.ppg_dicrotic = -1;
-            b.ppg_50 = -1;
+            b.ppg_peak2 = -1;
             b.ppg_end = -1;
         }
         else if (b.ppg_issue == 1) {
             b.ppg_onset = -1;
             b.ppg_peak = -1;
             b.ppg_dicrotic = -1;
-            b.ppg_50 = -1;
+            b.ppg_peak2 = -1;
             b.ppg_end = -1;
         }
         else {
-            const int visN = BinPlotWidget::visiblePpgCount(
-                static_cast<int>(b.ppgTemplate.size()));
-            if (b.ppg_onset < 0) {
-                int raw = ecg_markers::detect_ppg_onset(b.ppgTemplate);
-                b.ppg_onset = clampToVisible(raw, visN);
-            }
-            if (b.ppg_peak < 0) {
-                int raw = ecg_markers::detect_ppg_peak(b.ppgTemplate);
-                b.ppg_peak = clampToVisible(raw, visN);
-            }
-            if (b.ppg_dicrotic < 0) {
-                int raw = ecg_markers::detect_ppg_dicrotic(b.ppgTemplate);
-                b.ppg_dicrotic = clampToVisible(raw, visN);
-            }
-            if (b.ppg_50 < 0) {
-                int raw = ecg_markers::detect_ppg_50(b.ppgTemplate);
-                b.ppg_50 = clampToVisible(raw, visN);
-            }
-            if (b.ppg_end < 0) {
-                int raw = ecg_markers::detect_ppg_end(b.ppgTemplate);
-                b.ppg_end = clampToVisible(raw, visN);
-            }
+            // Under Patch B, PPG is sliced [t_R_i - pad, t_R_{i+1} + pad] in
+            // its own sample space, matching the ECG. So:
+            //   R_first  sits at column padSamples  = 2 * avg_r_expand
+            //   R_second sits at column padSamples + medianRR
+            // where medianRR ~ 5 * avg_r_expand (the "samples per fifth of a
+            // cycle" semantic). Assumes same rate; if PPG rate differs from
+            // ECG rate, scale by ppgRate/ecgRate (not currently threaded).
+            double rExp = b.ch1.avg_r_expand_raw;
+            if (rExp <= 0) rExp = b.ch2.avg_r_expand_raw;
+            if (rExp <= 0) rExp = b.ch3.avg_r_expand_raw;
+
+            const int rFirstPpg = (rExp > 0) ? (int)std::llround(2.0 * rExp) : 0;
+            const int rSecondPpg = rFirstPpg + ((rExp > 0)
+                ? (int)std::llround(5.0 * rExp) : 0);
+
+            const auto lm = ecg_markers::detect_ppg_landmarks(
+                b.ppgTemplate, rFirstPpg, rSecondPpg);
+            b.ppg_onset = lm.onset;
+            b.ppg_peak = lm.peak;
+            b.ppg_end = lm.end;
+            // detect_ppg_landmarks doesn't fill dicrotic / p50; run the
+            // standalone detectors here. They read onset/peak/end from the
+            // trace, so seed them after the landmarks above.
+            b.ppg_dicrotic = ecg_markers::detect_ppg_dicrotic(b.ppgTemplate);
+            // ppg_peak2 is user-placed. Default position: 90% of the way
+            // from foot to end, so the bar starts visible near the right
+            // of the anchor pulse where the diastolic peak typically lives.
+            // User drags it to the actual location.
+            if (b.ppg_onset >= 0 && b.ppg_end > b.ppg_onset)
+                b.ppg_peak2 = b.ppg_onset + (9 * (b.ppg_end - b.ppg_onset)) / 10;
+            else
+                b.ppg_peak2 = std::max(0, static_cast<int>(b.ppgTemplate.size()) - 1);
         }
 
         // ---- ECG (per channel) -----------------------------------------
@@ -297,10 +380,20 @@ namespace {
         }
 
         // ---- Arterial channels (ABP / ART / ART_PULM) -------------------
-        // Same 5-marker set as PPG, seeded with the same pulse detectors run
-        // on each channel's own foot-anchored template. issue==2 => absent,
-        // issue==1 => flagged bad (markers cleared), else auto-seed if unset.
-        auto seedArterial = [](const std::vector<double>& trace, uint8_t& issue,
+        // Same 5-marker set as PPG. Under Patch B, arterial channels are
+        // sliced the same way as PPG (R-anchored, driven by ch1.raw), so
+        // rFirstArt / rSecondArt land at the same columns in the arterial
+        // frame as they do in the PPG frame (assumes same rate; see PPG
+        // caveat above). issue==2 => absent, issue==1 => flagged bad
+        // (markers cleared), else auto-seed if unset.
+        double rExpArt = b.ch1.avg_r_expand_raw;
+        if (rExpArt <= 0) rExpArt = b.ch2.avg_r_expand_raw;
+        if (rExpArt <= 0) rExpArt = b.ch3.avg_r_expand_raw;
+        const int rFirstArt = (rExpArt > 0) ? (int)std::llround(2.0 * rExpArt) : 0;
+        const int rSecondArt = rFirstArt + ((rExpArt > 0)
+            ? (int)std::llround(5.0 * rExpArt) : 0);
+
+        auto seedArterial = [&](const std::vector<double>& trace, uint8_t& issue,
             int& onset, int& peak, int& dicrotic, int& p50, int& end)
             {
                 if (trace.empty()) {
@@ -312,21 +405,16 @@ namespace {
                     onset = peak = dicrotic = p50 = end = -1;
                     return;
                 }
-                const int n = static_cast<int>(trace.size());
-                auto clamp = [&](int v) { return std::clamp(v, 0, std::max(0, n - 1)); };
-                if (onset < 0)    onset = clamp(ecg_markers::detect_ppg_onset(trace));
-                if (peak < 0)     peak = clamp(ecg_markers::detect_ppg_peak(trace));
-                if (dicrotic < 0) dicrotic = clamp(ecg_markers::detect_ppg_dicrotic(trace));
-                if (p50 < 0)      p50 = clamp(ecg_markers::detect_ppg_50(trace));
-                if (end < 0)      end = clamp(ecg_markers::detect_ppg_end(trace));
+                seedPulse(trace, rFirstArt, rSecondArt,
+                    onset, peak, dicrotic, p50, end);
             };
         seedArterial(b.abpTemplate, b.abp_issue,
-            b.abp_onset, b.abp_peak, b.abp_dicrotic, b.abp_50, b.abp_end);
+            b.abp_onset, b.abp_peak, b.abp_dicrotic, b.abp_peak2, b.abp_end);
         seedArterial(b.artTemplate, b.art_issue,
-            b.art_onset, b.art_peak, b.art_dicrotic, b.art_50, b.art_end);
+            b.art_onset, b.art_peak, b.art_dicrotic, b.art_peak2, b.art_end);
         seedArterial(b.artPulmTemplate, b.art_pulm_issue,
             b.art_pulm_onset, b.art_pulm_peak, b.art_pulm_dicrotic,
-            b.art_pulm_50, b.art_pulm_end);
+            b.art_pulm_peak2, b.art_pulm_end);
     }
 }
 
@@ -405,23 +493,15 @@ void TemplateViewerWindow::showPage() {
             const auto& ppg = hasPPG ? b.ppgTemplate : empty;
 
             int c = leads[li].channelIndex;
-            // R sits at preP = kEcgRAnchorFrac * avg_r_expand within the ECG
-            // template (see kEcgPrePFrac in CreateEcgTemplates.hpp -- these
-            // MUST match, or ECG and PPG drift apart). avg_r_expand_raw alone
-            // (the old value here) under-anchored R by half, causing a small
-            // ECG/PPG offset; multiplying by the same fraction corrects it.
-            constexpr double kEcgRAnchorFrac = 2.0;   // == kEcgPrePFrac
+            // R sits at column padSamples = 2 * avg_r_expand within the ECG
+            // template. Under Patch B, PPG and arterial channels are sliced
+            // in the same real-time frame so they share sample 0 with the
+            // ECG -- no R->foot delay math needed here anymore.
+            constexpr double kEcgRAnchorFrac = 2.0;
             const double rExpand = (c == 0) ? b.ch1.avg_r_expand_raw
                 : (c == 1) ? b.ch2.avg_r_expand_raw
                 : b.ch3.avg_r_expand_raw;
             const double rPeak = kEcgRAnchorFrac * rExpand;
-
-            // R->foot transit delay for this channel (samples). Shifts the
-            // PPG (and arterial background traces) right so the foot lands
-            // at R + delay.
-            const double ppgDelay = (c == 0) ? b.ch1.alignment_point_raw
-                : (c == 1) ? b.ch2.alignment_point_raw
-                : b.ch3.alignment_point_raw;
 
             // std vectors for this channel + PPG. Empty if the templater
             // didn't compute them for this bin -- the widget treats empty
@@ -431,12 +511,21 @@ void TemplateViewerWindow::showPage() {
                 : b.ch3.ecgTemplate_raw_std;
             const auto& ppgStd = hasPPG ? b.ppgTemplate_std : empty;
 
+            // Per-channel beat count for this widget's lead + the bin's
+            // PPG count. Both are 0 when the channel is absent, which
+            // suppresses that half of the title suffix.
+            const uint64_t nEcgBeats = (c == 0) ? b.ch1_n_beats_raw
+                : (c == 1) ? b.ch2_n_beats_raw
+                : b.ch3_n_beats_raw;
+
             pw->setData(ppg, ppgStd, ecg, ecgStd,
                 b.p_begin_ch[c], b.q_begin_ch[c], b.s_end_ch[c],
                 b.t_begin_ch[c], b.t_end_ch[c],
                 b.ppg_onset, b.ppg_peak,
-                b.ppg_dicrotic, b.ppg_50, b.ppg_end,
-                rPeak, ppgDelay);
+                b.ppg_dicrotic, b.ppg_peak2, b.ppg_end,
+                rPeak,
+                static_cast<int>(nEcgBeats),
+                static_cast<int>(b.ppg_n_beats));
             pw->setHasPPG(hasPPG);
 
             // Faint arterial background-context traces (present-only),
@@ -460,17 +549,17 @@ void TemplateViewerWindow::showPage() {
             pw->setMarker(BinPlotWidget::AbpOnset, b.abp_onset);
             pw->setMarker(BinPlotWidget::AbpPeak, b.abp_peak);
             pw->setMarker(BinPlotWidget::AbpDicrotic, b.abp_dicrotic);
-            pw->setMarker(BinPlotWidget::Abp50, b.abp_50);
+            pw->setMarker(BinPlotWidget::AbpPeak2, b.abp_peak2);
             pw->setMarker(BinPlotWidget::AbpEnd, b.abp_end);
             pw->setMarker(BinPlotWidget::ArtOnset, b.art_onset);
             pw->setMarker(BinPlotWidget::ArtPeak, b.art_peak);
             pw->setMarker(BinPlotWidget::ArtDicrotic, b.art_dicrotic);
-            pw->setMarker(BinPlotWidget::Art50, b.art_50);
+            pw->setMarker(BinPlotWidget::ArtPeak2, b.art_peak2);
             pw->setMarker(BinPlotWidget::ArtEnd, b.art_end);
             pw->setMarker(BinPlotWidget::ArtPulmOnset, b.art_pulm_onset);
             pw->setMarker(BinPlotWidget::ArtPulmPeak, b.art_pulm_peak);
             pw->setMarker(BinPlotWidget::ArtPulmDicrotic, b.art_pulm_dicrotic);
-            pw->setMarker(BinPlotWidget::ArtPulm50, b.art_pulm_50);
+            pw->setMarker(BinPlotWidget::ArtPulmPeak2, b.art_pulm_peak2);
             pw->setMarker(BinPlotWidget::ArtPulmEnd, b.art_pulm_end);
 
             if (b.ppg_issue == 1)
@@ -546,7 +635,8 @@ void TemplateViewerWindow::captureCurrentPage() {
 void TemplateViewerWindow::writeAlignedTemplateCsv() {
     if (m_bins.empty()) return;
 
-    QDir outDir(m_templateDir);
+    // All analysis CSVs share one folder: <templateDir>/../csv_for_analysis.
+    QDir outDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
     if (!outDir.exists()) outDir.mkpath(".");
     const QString path = outDir.filePath(m_subjectId + "_templates.csv");
 
@@ -571,12 +661,6 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     for (size_t bi = 0; bi < m_bins.size(); ++bi) {
         const TemplateBin& b = m_bins[bi];
 
-        // Reference: ch1 R position on the shared axis (row of R). Everything
-        // is placed so reading across a row = same real time as displayed.
-        const double rPeak1 = kEcgRAnchorFrac * b.ch1.avg_r_expand_raw;
-        const double ppgDelay = b.ch1.alignment_point_raw;   // R->foot (samples)
-        const int ppgFoot = (b.ppg_onset > 0) ? b.ppg_onset : 0;
-
         // One signal = its template, its shared-axis start offset (sample 0 of
         // the template lands on this row), and its own peak index.
         struct Sig {
@@ -585,16 +669,19 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             int    peak;    // index of this signal's peak within its template
         };
 
-        // ECG channels sit at their natural position (start at row 0). No
-        // cross-channel R alignment -- the per-signal *_x_peak_ms column
-        // re-centers each on its own peak; the shared x_ms just carries the
-        // raw timeline / offset.
+        // Under Patch B, every channel is sliced in the same real-time frame:
+        // sample 0 of ECG, PPG, and every arterial channel corresponds to the
+        // same real-time instant (pad seconds before the first R). So every
+        // signal starts at row 0 on the shared axis.
+        //
+        // Caveat: this shared axis treats one row = one ECG sample. If PPG /
+        // arterial rates differ from ECG rate, the row-to-time mapping is
+        // strictly correct only for the ECG channels; pulse rows are read at
+        // whatever their own sample rate is. For the datasets in use this
+        // matches within rounding (all channels are upsampled to ~1000 Hz);
+        // if cross-rate becomes real, thread per-channel rates into the
+        // viewer and index each Sig by (row * ecgRate / channelRate).
         const ChannelTemplateData* ch[3] = { &b.ch1, &b.ch2, &b.ch3 };
-        // Pulse signals share the displayed PPG anchor. Matches
-        // ppgStartSample(): start = rPeak + delay - foot, clamped >= 0 so PPG
-        // is never drawn left of (before) the ECG -- exactly as displayed.
-        double pulseStart = rPeak1 + ppgDelay - ppgFoot;
-        if (pulseStart < 0.0) pulseStart = 0.0;
 
         std::vector<Sig> sigs;
         for (int c = 0; c < 3; ++c) {
@@ -602,10 +689,10 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             sigs.push_back({ &ch[c]->ecgTemplate_raw, 0.0,
                 static_cast<int>(std::llround(rN)) });   // peak = R, start at row 0
         }
-        sigs.push_back({ &b.ppgTemplate,     pulseStart, argmax(b.ppgTemplate) });
-        sigs.push_back({ &b.abpTemplate,     pulseStart, argmax(b.abpTemplate) });
-        sigs.push_back({ &b.artTemplate,     pulseStart, argmax(b.artTemplate) });
-        sigs.push_back({ &b.artPulmTemplate, pulseStart, argmax(b.artPulmTemplate) });
+        sigs.push_back({ &b.ppgTemplate,     0.0, argmax(b.ppgTemplate) });
+        sigs.push_back({ &b.abpTemplate,     0.0, argmax(b.abpTemplate) });
+        sigs.push_back({ &b.artTemplate,     0.0, argmax(b.artTemplate) });
+        sigs.push_back({ &b.artPulmTemplate, 0.0, argmax(b.artPulmTemplate) });
 
         // Row span on the shared axis.
         double loD = 1e300, hiD = -1e300;
@@ -674,22 +761,22 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
             pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
             pw->setMarker(BinPlotWidget::PpgPeak, b.ppg_peak);
             pw->setMarker(BinPlotWidget::PpgDicrotic, b.ppg_dicrotic);
-            pw->setMarker(BinPlotWidget::Ppg50, b.ppg_50);
+            pw->setMarker(BinPlotWidget::PpgPeak2, b.ppg_peak2);
             pw->setMarker(BinPlotWidget::PpgEnd, b.ppg_end);
             pw->setMarker(BinPlotWidget::AbpOnset, b.abp_onset);
             pw->setMarker(BinPlotWidget::AbpPeak, b.abp_peak);
             pw->setMarker(BinPlotWidget::AbpDicrotic, b.abp_dicrotic);
-            pw->setMarker(BinPlotWidget::Abp50, b.abp_50);
+            pw->setMarker(BinPlotWidget::AbpPeak2, b.abp_peak2);
             pw->setMarker(BinPlotWidget::AbpEnd, b.abp_end);
             pw->setMarker(BinPlotWidget::ArtOnset, b.art_onset);
             pw->setMarker(BinPlotWidget::ArtPeak, b.art_peak);
             pw->setMarker(BinPlotWidget::ArtDicrotic, b.art_dicrotic);
-            pw->setMarker(BinPlotWidget::Art50, b.art_50);
+            pw->setMarker(BinPlotWidget::ArtPeak2, b.art_peak2);
             pw->setMarker(BinPlotWidget::ArtEnd, b.art_end);
             pw->setMarker(BinPlotWidget::ArtPulmOnset, b.art_pulm_onset);
             pw->setMarker(BinPlotWidget::ArtPulmPeak, b.art_pulm_peak);
             pw->setMarker(BinPlotWidget::ArtPulmDicrotic, b.art_pulm_dicrotic);
-            pw->setMarker(BinPlotWidget::ArtPulm50, b.art_pulm_50);
+            pw->setMarker(BinPlotWidget::ArtPulmPeak2, b.art_pulm_peak2);
             pw->setMarker(BinPlotWidget::ArtPulmEnd, b.art_pulm_end);
         }
         break;
@@ -749,7 +836,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         case BinPlotWidget::PpgOnset:    b.ppg_onset = newIdx; break;
         case BinPlotWidget::PpgPeak:     b.ppg_peak = newIdx; break;
         case BinPlotWidget::PpgDicrotic: b.ppg_dicrotic = newIdx; break;
-        case BinPlotWidget::Ppg50:       b.ppg_50 = newIdx; break;
+        case BinPlotWidget::PpgPeak2:       b.ppg_peak2 = newIdx; break;
         case BinPlotWidget::PpgEnd:      b.ppg_end = newIdx; break;
         }
         refreshBinMarkers(binIdx);
@@ -763,7 +850,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 case BinPlotWidget::PpgOnset:    m_bins[i].ppg_onset = newIdx; break;
                 case BinPlotWidget::PpgPeak:     m_bins[i].ppg_peak = newIdx; break;
                 case BinPlotWidget::PpgDicrotic: m_bins[i].ppg_dicrotic = newIdx; break;
-                case BinPlotWidget::Ppg50:       m_bins[i].ppg_50 = newIdx; break;
+                case BinPlotWidget::PpgPeak2:       m_bins[i].ppg_peak2 = newIdx; break;
                 case BinPlotWidget::PpgEnd:      m_bins[i].ppg_end = newIdx; break;
                 }
             }
@@ -787,17 +874,17 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             case BinPlotWidget::AbpOnset:    tb.abp_onset = val; break;
             case BinPlotWidget::AbpPeak:     tb.abp_peak = val; break;
             case BinPlotWidget::AbpDicrotic: tb.abp_dicrotic = val; break;
-            case BinPlotWidget::Abp50:       tb.abp_50 = val; break;
+            case BinPlotWidget::AbpPeak2:       tb.abp_peak2 = val; break;
             case BinPlotWidget::AbpEnd:      tb.abp_end = val; break;
             case BinPlotWidget::ArtOnset:    tb.art_onset = val; break;
             case BinPlotWidget::ArtPeak:     tb.art_peak = val; break;
             case BinPlotWidget::ArtDicrotic: tb.art_dicrotic = val; break;
-            case BinPlotWidget::Art50:       tb.art_50 = val; break;
+            case BinPlotWidget::ArtPeak2:       tb.art_peak2 = val; break;
             case BinPlotWidget::ArtEnd:      tb.art_end = val; break;
             case BinPlotWidget::ArtPulmOnset:    tb.art_pulm_onset = val; break;
             case BinPlotWidget::ArtPulmPeak:     tb.art_pulm_peak = val; break;
             case BinPlotWidget::ArtPulmDicrotic: tb.art_pulm_dicrotic = val; break;
-            case BinPlotWidget::ArtPulm50:       tb.art_pulm_50 = val; break;
+            case BinPlotWidget::ArtPulmPeak2:       tb.art_pulm_peak2 = val; break;
             case BinPlotWidget::ArtPulmEnd:      tb.art_pulm_end = val; break;
             }
             };

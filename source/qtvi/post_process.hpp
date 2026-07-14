@@ -45,7 +45,8 @@ namespace post_process_detail {
         // Carried fast -> slow (only meaningful when needsFinalize):
         std::string stem;
         std::string fileID;
-        double samplingRate = 0.0;
+        double samplingRate = 0.0;   // ECG rate (used by non-template callers below)
+        SignalRates rates;           // full per-channel rate set for template pipeline
         std::filesystem::path rPeakPath, templatePath, beatsPath, provisionalPath;
         bool needSqabsDetection = false;            // false when wave_markings already had them
 
@@ -57,6 +58,13 @@ namespace post_process_detail {
         std::string error;                          // set by finalizeViewerJob on failure
     };
 
+    // All analysis CSVs land in ONE shared folder, a sibling of the template
+    // output directory: <template_path>/../csv_for_analysis. Change this one
+    // function (or point it at a config field) to relocate every CSV at once.
+    inline std::filesystem::path analysisCsvDir(const std::filesystem::path& templatePath) {
+        return templatePath.parent_path().parent_path() / "csv_for_analysis";
+    }
+
     inline std::optional<ViewerJob> prepareViewerJob(const config_entry& cfg, const std::filesystem::path& binPath)
     {
         const std::string stem = binPath.stem().string();
@@ -64,7 +72,7 @@ namespace post_process_detail {
         const std::filesystem::path annealedPath = std::filesystem::path(cfg.annealed_data_path) / (stem + "annealed.bin");
         const std::filesystem::path rPeakPath = std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
         const std::filesystem::path templatePath = std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
-        const std::filesystem::path provisionalPath = std::filesystem::path(cfg.template_path) /  (stem + "_templates.partial.bin");
+        const std::filesystem::path provisionalPath = std::filesystem::path(cfg.template_path) / (stem + "_templates.partial.bin");
 
         // ---- Step 1: Anneal (same freshness logic as processOneFile) ----
         bool annealedFresh = std::filesystem::exists(annealedPath) &&
@@ -89,6 +97,16 @@ namespace post_process_detail {
         job.stem = stem;
         job.fileID = stem;
         job.samplingRate = cfg.ecg_upsample_rate;
+        // Per-channel rates, forwarded to the template-generation pipeline.
+        // A rate of 0 means the channel is absent for this dataset (the
+        // slicer skips it silently).
+        job.rates = SignalRates{
+            cfg.ecg_upsample_rate,
+            cfg.ppg_upsample_rate,
+            cfg.abp_upsample_rate,
+            cfg.art_upsample_rate,
+            cfg.art_pulm_upsample_rate
+        };
         job.rPeakPath = rPeakPath;
         job.templatePath = templatePath;
         job.provisionalPath = provisionalPath;
@@ -147,7 +165,7 @@ namespace post_process_detail {
             }
 
             std::cerr << "  Templates (raw/unfiltered/ppg, fast): " << stem << "\n";
-            FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults);
+            FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
             if (fast.tmpl.bins.empty()) {
                 std::cerr << "  no bins for " << stem
                     << " (recording shorter than one bin?); skipping.\n";
@@ -180,14 +198,22 @@ namespace post_process_detail {
                 // CSV mirror of wave_markings.bin: one row per (bin, channel,
                 // method, peak) with sample index and time in seconds. Written
                 // next to the .bin, same stem.
-                std::filesystem::path rPeakCsv = job.rPeakPath;
-                rPeakCsv.replace_extension(".csv");
+                const std::filesystem::path csvDir = analysisCsvDir(job.templatePath);
+                std::filesystem::create_directories(csvDir);
+                const std::filesystem::path rPeakCsv =
+                    csvDir / (job.stem + "_peak_locations_all_beats.csv");
                 write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
             }
-            mergeTemplatesSlow(job.peakResults, job.tmpl, job.info);
+            mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
             template_io::write_template_binfile(job.templatePath.string(), job.tmpl);
-            std::filesystem::path templateCsv = job.templatePath;
-            templateCsv.replace_extension(".csv");
+            std::filesystem::remove(job.provisionalPath);
+
+            // Individual retained beats ("snips"): one column per snip.
+            const std::filesystem::path csvDir2 = analysisCsvDir(job.templatePath);
+            std::filesystem::create_directories(csvDir2);
+            const std::filesystem::path snipsCsv =
+                csvDir2 / (job.stem + "_template_snips.csv");
+            template_io::write_snips_csv(snipsCsv.string(), job.beats);
         }
         catch (const std::exception& e) {
             job.error = e.what();

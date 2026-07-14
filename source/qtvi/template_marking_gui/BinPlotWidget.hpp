@@ -33,6 +33,8 @@
 #include <utility>
 #include <vector>
 
+class QPainter;
+
 class BinPlotWidget : public QWidget {
     Q_OBJECT
 public:
@@ -52,16 +54,16 @@ public:
         PpgOnset = 5,
         PpgPeak = 6,
         PpgDicrotic = 7,   // dicrotic notch
-        Ppg50 = 8,   // 50% point
+        PpgPeak2 = 8,   // 2nd (diastolic) peak, after dicrotic notch
         PpgEnd = 9,   // end-of-pulse / trough after descent
         // --- Arterial markers: same 5-marker set as PPG, one group per
         //     channel (ABP, ART, ART_PULM), each contiguous. They ride the
         //     PPG x-geometry (foot-anchored at ppgStartSample()) but index
         //     into their own background trace vector. ---
-        AbpOnset = 10, AbpPeak = 11, AbpDicrotic = 12, Abp50 = 13, AbpEnd = 14,
-        ArtOnset = 15, ArtPeak = 16, ArtDicrotic = 17, Art50 = 18, ArtEnd = 19,
+        AbpOnset = 10, AbpPeak = 11, AbpDicrotic = 12, AbpPeak2 = 13, AbpEnd = 14,
+        ArtOnset = 15, ArtPeak = 16, ArtDicrotic = 17, ArtPeak2 = 18, ArtEnd = 19,
         ArtPulmOnset = 20, ArtPulmPeak = 21, ArtPulmDicrotic = 22,
-        ArtPulm50 = 23, ArtPulmEnd = 24,
+        ArtPulmPeak2 = 23, ArtPulmEnd = 24,
         // --- size sentinel ---
         MarkerCount = 25
     };
@@ -77,8 +79,8 @@ public:
     static bool markerIsArterial(int m) { return m >= AbpOnset && m <= ArtPulmEnd; }
     double m_rPeakSample = 0.0;   // R-peak sample index within the ECG template
     double m_sampleRate = 0.0;   // Hz; 0 => label x-axis in samples
-    double m_ppgDelay = 0.0;    // R->foot transit delay (samples); shifts PPG right
-    int    m_ppgFootIdx = 0;    // foot's column in the foot-aligned PPG template
+    // (m_ppgDelay / m_ppgFootIdx retired in Patch C: every channel is
+    // real-time-aligned by construction under Patch B slicing.)
 
     // ----------------------------------------------------------------------
     // Visible-range rules.
@@ -123,8 +125,10 @@ public:
         const std::vector<double>& ecgStd,
         int ecgP, int qBegin, int sEnd, int tBegin, int tEnd,
         int ppgOnset, int ppgPeak,
-        int ppgDicrotic, int ppg50, int ppgEnd,
-        double rPeakSample, double ppgDelay);
+        int ppgDicrotic, int ppgPeak2, int ppgEnd,
+        double rPeakSample,
+        int nEcgBeats = 0,
+        int nPpgBeats = 0);
 
     void setHasPPG(bool has);
     bool hasPPG() const { return m_hasPPG; }
@@ -208,6 +212,14 @@ private:
     int    totalSampleSpan() const;
     double pxPerSample() const;
     double ppgStartSample() const;
+    // Pulse-trace samples that fit before the ECG's right edge (clip point).
+    int    pulseClipN() const;
+
+    // Feature-glyph QC marks (the black X's). Defined in BinPlotGlyphs.cpp.
+    // Reads trace/marker state directly (member); takes the paint-local
+    // axis ranges + plot height the glyphs need.
+    void   drawFeatureGlyphs(QPainter& p,
+        double yLo, double yHi, double pLo, double pHi, int ph) const;
 
     int m_binIndex;
     int m_leadIndex;
@@ -230,6 +242,24 @@ private:
         -1, -1, -1, -1, -1,   // ART
         -1, -1, -1, -1, -1    // ART_PULM
     };
+
+    struct GlyphSnapshot {
+        int ecgP = -1, ecgR = -1, ecgT = -1, ecgQ = -1, ecgS = -1, ecgTend = -1;
+        // O-fallback positions for P/R/T peaks: -1 => landmark found (draw X
+        // at the ecgP/ecgR/ecgT index); >=0 => landmark absent, draw O here
+        // instead. Q, S end, T end come straight from movable markers and
+        // don't have fallbacks.
+        int ecgPOFallback = -1, ecgROFallback = -1, ecgTOFallback = -1;
+        int ppgFoot = -1, ppgP1 = -1, ppgDic = -1, ppgP2 = -1;
+        bool ppgNotch = false;     // true => real notch found; false => draw 'o'
+        int  ppgNoNotchO = -1;     // 'o' position (midpoint of [peak, end]) when no notch
+        bool valid = false;
+    };
+
+    GlyphSnapshot m_glyphs;
+
+    // Compute the glyph snapshot from current trace + marker state.
+    void captureGlyphSnapshot();
 
     // Arterial trace vectors (own sample space; drawn foot-anchored at the
     // PPG origin). Empty when the channel is absent.
@@ -254,7 +284,11 @@ private:
     bool  m_showArtTrace = true;
     bool  m_showArtPulmTrace = true;
     int   m_dragMarker = -1;
+    // Slice counts (post drop-rules) fed to the median for this widget's
+    // ECG channel and the PPG. Displayed in the title when non-zero.
+    int   m_nEcgBeats = 0;
+    int   m_nPpgBeats = 0;
 
-    static constexpr int margin_left = 37, margin_right = 0, margin_top = 16, margin_bottom = 16;
+    static constexpr int margin_left = 32, margin_right = 34, margin_top = 16, margin_bottom = 16;
     static constexpr int click_radius_around_marker = 12;
 };

@@ -79,6 +79,12 @@ namespace template_generation_detail {
 
         bt.ppgTemplate = info.ppgTemplate;
         bt.ppgTemplate_std = info.ppgTemplate_std;
+
+        // Per-channel + PPG slice counts (post drop-rules).
+        bt.ch1_n_beats_raw = info.ch1.n_beats_raw;
+        bt.ch2_n_beats_raw = info.ch2.n_beats_raw;
+        bt.ch3_n_beats_raw = info.ch3.n_beats_raw;
+        bt.ppg_n_beats = info.ppg_n_beats;
     }
 
     // FAST pack: raw + unfiltered ECG blocks + PPG. Leaves the squared and
@@ -109,6 +115,12 @@ namespace template_generation_detail {
 
         bt.ppgTemplate = info.ppgTemplate;
         bt.ppgTemplate_std = info.ppgTemplate_std;
+
+        // Per-channel + PPG slice counts (post drop-rules).
+        bt.ch1_n_beats_raw = info.ch1.n_beats_raw;
+        bt.ch2_n_beats_raw = info.ch2.n_beats_raw;
+        bt.ch3_n_beats_raw = info.ch3.n_beats_raw;
+        bt.ppg_n_beats = info.ppg_n_beats;
     }
 
     // SLOW pack: squared + absval blocks onto an already fast-packed bin.
@@ -145,32 +157,35 @@ struct FastTemplateBuild {
 // The squared/absval per-bin blocks and their SAECG entries stay empty
 // until mergeTemplatesSlow runs.
 inline FastTemplateBuild
-buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults)
+buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
+    const SignalRates& rates)
 {
     using namespace template_generation_detail;
 
     FastTemplateBuild out;
-    out.info = GenerateTemplatesFast(peakResults);
+    out.info = GenerateTemplatesFast(peakResults, rates);
 
     out.tmpl.bins.resize(peakResults.size());
     for (size_t i = 0; i < peakResults.size(); ++i) {
         bool bad = peakResults[i].bad_segment;
         const TemplateInfo& info = (i < out.info.size()) ? out.info[i] : TemplateInfo{};
         packBinFast(out.tmpl.bins[i], info, bad);
+        // (Per-channel n_beats fields are populated inside packBinFast from
+        // the TemplateInfo's own counts -- no fallback needed here.)
     }
 
     // Arterial background-context templates (ABP / ART / ART_PULM),
-    // foot-anchored on the PPG feet, present-only. Built directly from the
-    // peak results (which carry the raw arterial signals + ppgMinAmps) and
-    // stored into each good bin. They survive mergeTemplatesSlow untouched.
+    // R-anchored under Patch B (same [R_i-pad, R_{i+1}+pad] slicing as
+    // ECG and PPG, driven by ch1.raw). Present-only; a channel with
+    // rate=0 in SignalRates yields an empty result and is silently
+    // skipped when packed into the bins.
     {
-        constexpr double kArtStdMult = 2.5;
         auto abp = CreateArterialTemplates(
-            peakResults, &output_binfile_data::abpSignal, kArtStdMult);
+            peakResults, &output_binfile_data::abpSignal, rates.ecg, rates.abp);
         auto art = CreateArterialTemplates(
-            peakResults, &output_binfile_data::artSignal, kArtStdMult);
+            peakResults, &output_binfile_data::artSignal, rates.ecg, rates.art);
         auto artp = CreateArterialTemplates(
-            peakResults, &output_binfile_data::artPulmSignal, kArtStdMult);
+            peakResults, &output_binfile_data::artPulmSignal, rates.ecg, rates.artPulm);
         for (size_t i = 0; i < out.tmpl.bins.size(); ++i) {
             if (out.tmpl.bins[i].bad_segment) continue;
             if (i < abp.templates.size()) {
@@ -186,17 +201,37 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults)
                 out.tmpl.bins[i].artPulmTemplate_std = std::move(artp.stds[i]);
             }
         }
+
+        // Retain each arterial channel's snips into per_channel_beats.
+        auto stashArt = [&](const char* name, ArterialTemplatesResult& r) {
+            auto& dst = out.beats.per_channel_beats[name];
+            if (dst.size() < r.kept.size()) dst.resize(r.kept.size());
+            for (size_t i = 0; i < r.kept.size(); ++i)
+                if (i >= out.tmpl.bins.size() || !out.tmpl.bins[i].bad_segment)
+                    dst[i] = std::move(r.kept[i]);
+            };
+        stashArt("ABP", abp);
+        stashArt("ART", art);
+        stashArt("ART_PULM", artp);
     }
 
-    // Beats: ch1 raw kept beats (moves them out of out.info; the slow merge
-    // doesn't read kept beats).
-    out.beats.per_bin_beats.resize(out.info.size());
-    out.beats.bad_segment.resize(out.info.size(), false);
-    for (size_t i = 0; i < out.info.size(); ++i) {
+    // Beats: assemble per-channel retained snips (CH1/CH2/CH3/PPG from the
+    // TemplateInfo map; arterial channels already stashed above) so every
+    // channel reaches write_snips_csv.
+    const size_t nb = out.info.size();
+    out.beats.bad_segment.resize(nb, false);
+    auto ensureBins = [&](const std::string& ch)
+        -> std::vector<std::vector<std::vector<double>>>&{
+        auto& v = out.beats.per_channel_beats[ch];
+        if (v.size() < nb) v.resize(nb);
+        return v;
+        };
+    for (size_t i = 0; i < nb; ++i) {
         out.beats.bad_segment[i] = (i < peakResults.size())
             ? peakResults[i].bad_segment : false;
-        if (!out.beats.bad_segment[i])
-            out.beats.per_bin_beats[i] = std::move(out.info[i].kept_beats_ch1_raw);
+        if (out.beats.bad_segment[i]) continue;
+        for (auto& kv : out.info[i].kept_beats_by_channel)
+            ensureBins(kv.first)[i] = std::move(kv.second);
     }
 
     return out;
@@ -208,11 +243,12 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults)
 // (run augment_ecg_ppg_pairs_sqabs first, or load them from wave_markings).
 inline void mergeTemplatesSlow(const std::vector<output_binfile_data>& peakResults,
     template_io::TemplateFile& tmpl,
-    std::vector<TemplateInfo>& info)
+    std::vector<TemplateInfo>& info,
+    const SignalRates& rates)
 {
     using namespace template_generation_detail;
 
-    AugmentTemplatesSlow(peakResults, info);
+    AugmentTemplatesSlow(peakResults, info, rates);
 
     for (size_t i = 0; i < tmpl.bins.size(); ++i) {
         const TemplateInfo& bi = (i < info.size()) ? info[i] : TemplateInfo{};
@@ -221,9 +257,10 @@ inline void mergeTemplatesSlow(const std::vector<output_binfile_data>& peakResul
 }
 
 inline std::pair<template_io::TemplateFile, template_io::BeatsFile>
-buildTemplatesAndBeatsFromPeakResults(const std::vector<output_binfile_data>& peakResults)
+buildTemplatesAndBeatsFromPeakResults(const std::vector<output_binfile_data>& peakResults,
+    const SignalRates& rates)
 {
-    FastTemplateBuild fast = buildTemplatesAndBeatsFast(peakResults);
-    mergeTemplatesSlow(peakResults, fast.tmpl, fast.info);
+    FastTemplateBuild fast = buildTemplatesAndBeatsFast(peakResults, rates);
+    mergeTemplatesSlow(peakResults, fast.tmpl, fast.info, rates);
     return { std::move(fast.tmpl), std::move(fast.beats) };
 }

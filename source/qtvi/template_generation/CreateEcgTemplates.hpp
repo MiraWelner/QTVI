@@ -35,86 +35,148 @@ struct SingleMethodResult {
     vector<double> ecgTemplate_std;   // empty for methods that don't compute std
     double ppg_alignment_point;
     double avg_r_expand;
+    // Number of slices that survived the drop rules (r1<=r0, len<3) and
+    // were fed to the column-wise median. Under Patch B this is nearly
+    // always n_rpeaks - 1, but any future length/amplitude filter would
+    // drop it lower; the widget shows this so bins with poor signal are
+    // visible at a glance.
+    size_t n_beats = 0;
 };
 
 static inline SingleMethodResult build_ecg_template_for_method(
     const vector<double>& ecgSignal,
     const vector<size_t>& rpeaks,
     const vector<vector<double>>& pairs,
-    double std_multiplier,
+    double /*std_multiplier*/,
+    double ecgRate,
     vector<vector<double>>* out_kept_beats = nullptr,
     bool compute_std = false)
 {
+    // NEW SLICING (Phase A of the pair-window refactor):
+    //   For every consecutive R-peak pair (R_i, R_{i+1}) in `rpeaks`,
+    //   slice ecgSignal at [R_i - 1s, R_{i+1} + 1s] and stack the slices.
+    //   All slices start 1s before R_first, so R_first sits at column
+    //   `ecgRate` (== 1s worth of samples) in every slice, and therefore
+    //   in the column-wise-median template.
+    //
+    //   Slices have variable length (RR varies beat-to-beat). Shorter
+    //   slices contribute NaN past their real end; the NaN-skipping
+    //   column median downweights those columns automatically.
+    //
+    //   The old machinery (10% bin reduction, preP snipping via
+    //   kEcgPrePFrac, EnsembleTemplate's foot alignment for PPG) is
+    //   gone. The whole template is now deterministically R-anchored.
+    //
+    //   avg_r_expand is written as ecgRate / 2 so the viewer's
+    //   preP = 2 * avg_r_expand math still points R at column
+    //   `ecgRate` -- keeps Patch A compatible with the old viewer
+    //   until Patch C simplifies it.
     SingleMethodResult res;
     res.ecgTemplate = {};
     res.ecgTemplate_std = {};
     res.ppg_alignment_point = NaN;
     res.avg_r_expand = 0.0;
 
-    if (rpeaks.size() < 2 || ecgSignal.empty()) return res;
+    if (rpeaks.size() < 2 || ecgSignal.empty() || ecgRate <= 0.0) return res;
 
-    // MATLAB Daniel: reduce ECG to the first 10% of the bin and drop
-    // R-peaks at/after (reduced_size - 1). The trailing -1 is a 1-sample
-    // safety margin so the very last beat's window can't run off the end.
-    const size_t reduced_size =
-        static_cast<size_t>(std::round(static_cast<double>(ecgSignal.size()) / 10.0));
-    if (reduced_size < 2) return res;
+    const int padSamples = static_cast<int>(std::llround(0.3 * ecgRate));   // 0.3 s front pad
+    const int signalN = static_cast<int>(ecgSignal.size());
 
-    vector<double> ecg_reduced(ecgSignal.begin(),
-        ecgSignal.begin() + reduced_size);
+    // Collect per-beat slices. Each slice runs [R_i - padSamples, R_{i+1})
+    // -- 0.3s of P-wave lead-in before the first R, then straight to the
+    // next R with no trailing pad. R_first sits at column `padSamples`;
+    // R_second lands at column padSamples + (R_{i+1} - R_i), i.e. right at
+    // the slice's end. No shrinking-pool zone past R_{i+1}, so the median
+    // doesn't get ragged after the second R.
+    // Length = (R_{i+1} - R_i) + padSamples.
+    struct Slice { std::vector<double> data; };
+    std::vector<Slice> slices;
+    slices.reserve(rpeaks.size() > 0 ? rpeaks.size() - 1 : 0);
 
-    vector<size_t> r;
-    r.reserve(rpeaks.size());
-    for (auto idx : rpeaks) {
-        // MATLAB: r = ecgRIndex(ecgRIndex < reduced_size - 1)
-        if (idx + 1 < reduced_size) r.push_back(idx);
+    size_t maxLen = 0;
+    for (size_t i = 0; i + 1 < rpeaks.size(); ++i) {
+        const int r0 = static_cast<int>(rpeaks[i]);
+        const int r1 = static_cast<int>(rpeaks[i + 1]);
+        if (r1 <= r0) continue;
+
+        const int startSig = r0 - padSamples;
+        const int endSig = r1;                     // no trailing pad
+        const int len = endSig - startSig;
+        if (len < 3) continue;
+
+        std::vector<double> s(static_cast<size_t>(len), NaN);
+        // Copy the overlap of [startSig, endSig) with [0, signalN).
+        const int copyStart = std::max(0, startSig);
+        const int copyEnd = std::min(signalN, endSig);
+        for (int k = copyStart; k < copyEnd; ++k)
+            s[static_cast<size_t>(k - startSig)] = ecgSignal[k];
+
+        if (static_cast<size_t>(len) > maxLen) maxLen = static_cast<size_t>(len);
+        slices.push_back({ std::move(s) });
     }
-    if (r.size() < 2) return res;
+    if (slices.empty()) return res;
+    res.n_beats = slices.size();
 
-    vector<size_t> lens;
-    lens.reserve(r.size() - 1);
-    for (size_t j = 0; j + 1 < r.size(); ++j) {
-        lens.push_back(static_cast<size_t>((r[j + 1] - r[j]) / 5));
-    }
-    res.avg_r_expand = median(vector<double>(lens.begin(), lens.end()));
+    // Pad every slice out to maxLen with NaN so column indexing is uniform.
+    for (auto& sl : slices) sl.data.resize(maxLen, NaN);
 
+    // avg_r_expand: keep the "samples per fifth of a cycle" semantic that
+    // downstream code (viewer's rPeak = 2*avg_r_expand, PPG lead-in
+    // cycleLen = 5*avg_r_expand) expects. Under Patch B/C we place R at
+    // column `padSamples` (0.3 s in), so 2*avg_r_expand must equal padSamples.
+    res.avg_r_expand = 0.15 * ecgRate;   // == padSamples / 2 for front pad=0.3s
 
-    // Snip P-to-P instead of R-to-R. Cutting at each R put the *next* beat's
-    // P at the tail; shifting every boundary back by kEcgPrePFrac*avg_r_expand
-    // starts each window before its own P, so the averaged beat reads
-    // P,QRS,T with the P at the front. Increased from 1.5 to 2.0 so slower
-    // heart rates / longer PR intervals don't clip the P off the front.
-    //
-    // R therefore sits at index preP within the template. The viewer anchors
-    // the PPG to R using this same fraction (see kEcgRAnchorFrac in
-    // TemplateViewerWindow.cpp) -- the two MUST stay equal so ECG and PPG
-    // remain time-aligned.
-    constexpr double kEcgPrePFrac = 2.0;
-    const size_t preP = static_cast<size_t>(std::llround(kEcgPrePFrac * res.avg_r_expand));
-    vector<size_t> seg(r.size());
-    for (size_t j = 0; j < r.size(); ++j)
-        seg[j] = (r[j] > preP) ? r[j] - preP : 0;
-
-    try {
-        vector<double>* std_out = compute_std ? &res.ecgTemplate_std : nullptr;
-        res.ecgTemplate = EnsembleTemplate(
-            ecg_reduced, seg, std_multiplier, "ecg", {},   // P-to-P cut, no expand
-            out_kept_beats, std_out);
-    }
-    catch (...) {
-        res.ecgTemplate = {};
-        res.ecgTemplate_std = {};
-        if (out_kept_beats) out_kept_beats->clear();
-        return res;
+    // Column-wise NaN-skipping median => the template.
+    res.ecgTemplate.assign(maxLen, NaN);
+    for (size_t c = 0; c < maxLen; ++c) {
+        std::vector<double> col;
+        col.reserve(slices.size());
+        for (const auto& sl : slices) {
+            const double v = sl.data[c];
+            if (!std::isnan(v)) col.push_back(v);
+        }
+        if (col.empty()) continue;
+        std::sort(col.begin(), col.end());
+        const size_t nc = col.size();
+        res.ecgTemplate[c] = (nc % 2 == 0)
+            ? 0.5 * (col[nc / 2 - 1] + col[nc / 2])
+            : col[nc / 2];
     }
 
+    // Optional per-sample std over the same slice matrix (sample std, NaN
+    // skip, ddof=1). Used to draw the gray band under the raw template.
+    if (compute_std) {
+        res.ecgTemplate_std.assign(maxLen, 0.0);
+        for (size_t c = 0; c < maxLen; ++c) {
+            double sum = 0.0;
+            size_t n = 0;
+            for (const auto& sl : slices)
+                if (!std::isnan(sl.data[c])) { sum += sl.data[c]; ++n; }
+            if (n < 2) continue;
+            const double mean = sum / static_cast<double>(n);
+            double ss = 0.0;
+            for (const auto& sl : slices)
+                if (!std::isnan(sl.data[c])) {
+                    const double d = sl.data[c] - mean;
+                    ss += d * d;
+                }
+            res.ecgTemplate_std[c] = std::sqrt(ss / static_cast<double>(n - 1));
+        }
+    }
+
+    // Retain the aligned per-beat slices for the snips CSV.
+    if (out_kept_beats) {
+        out_kept_beats->clear();
+        out_kept_beats->reserve(slices.size());
+        for (auto& sl : slices) out_kept_beats->push_back(std::move(sl.data));
+    }
+
+    // PPG transit delay (median foot - R across paired beats), unchanged.
     if (!pairs.empty()) {
-        vector<double> diffs;
+        std::vector<double> diffs;
         for (const auto& p : pairs) {
-            // p[0]=PPG foot, p[1]=R. Skip unpaired (<0) and step-8 fallback
-            // rows (foot==R), which would inject spurious zero delays.
             if (p.size() >= 2 && p[0] >= 0 && p[1] >= 0 && p[0] != p[1])
-                diffs.push_back(p[0] - p[1]);   // foot - R = transit delay (samples)
+                diffs.push_back(p[0] - p[1]);
         }
         if (!diffs.empty()) res.ppg_alignment_point = median(diffs);
     }
@@ -138,6 +200,8 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
     cr.avg_r_expand_absval.resize(n, 0.0);
     cr.avg_r_expand_unfiltered.resize(n, 0.0);
 
+    cr.n_beats_raw.resize(n, 0);
+
     cr.kept_beats_raw.resize(n);
 }
 
@@ -159,34 +223,40 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
  *                           from the "raw" method into cr.kept_beats_raw[i].
  */
  // FAST methods: raw (the displayed one, with std) + unfiltered. These are
- // everything the viewer renders. Captures the ch1 raw beats for QC.
+// everything the viewer renders. Captures the ch1 raw beats for QC.
+//
+// Patch A change: ecgRate is threaded in for pair-window slicing, and
+// `masterPeaks` (== bin.ch1.raw) drives the slicing for every channel so
+// every channel's template covers the same real-time window.
 static inline void process_channel_fast(
     EcgChannelResult& cr,
     const vector<output_binfile_data>& bins,
     size_t i,
     const vector<double>& ecgSignal,
     const vector<double>& origSignal,
-    const ChannelRPeaks& ch,
+    const vector<size_t>& masterPeaks,
     double std_multiplier,
+    double ecgRate,
     bool capture_raw_beats = false)
 {
     const auto& bin = bins[i];
 
-    // Method 1: raw (detection signal + raw R-peaks). Only method with std.
+    // Method 1: raw (detection signal + master R-peaks). Only method with std.
     vector<vector<double>>* capture =
         (capture_raw_beats && i < cr.kept_beats_raw.size())
         ? &cr.kept_beats_raw[i] : nullptr;
     auto raw_res = build_ecg_template_for_method(
-        ecgSignal, ch.raw, bin.pairs, std_multiplier,
+        ecgSignal, masterPeaks, bin.pairs, std_multiplier, ecgRate,
         capture, /*compute_std=*/true);
     cr.ecgTemplates_raw[i] = raw_res.ecgTemplate;
     cr.ecgTemplates_raw_std[i] = raw_res.ecgTemplate_std;
     cr.ppg_alignment_point_raw[i] = raw_res.ppg_alignment_point;
     cr.avg_r_expand_raw[i] = raw_res.avg_r_expand;
+    cr.n_beats_raw[i] = raw_res.n_beats;
 
-    // Method 4: unfiltered (original ECG signal + raw R-peaks). No std.
+    // Method 4: unfiltered (original ECG signal + master R-peaks). No std.
     auto unfilt_res = build_ecg_template_for_method(
-        origSignal, ch.raw, bin.pairs, std_multiplier,
+        origSignal, masterPeaks, bin.pairs, std_multiplier, ecgRate,
         nullptr, /*compute_std=*/false);
     cr.ecgTemplates_unfiltered[i] = unfilt_res.ecgTemplate;
     cr.ppg_alignment_point_unfiltered[i] = unfilt_res.ppg_alignment_point;
@@ -196,29 +266,36 @@ static inline void process_channel_fast(
 // SLOW methods: squared + absval. Not displayed by the viewer; safe to
 // compute off the critical path. Writes only the squared/absval fields of
 // cr (which process_channel_fast leaves untouched).
+//
+// Patch A change: same as fast pass, master ch1 peaks drive slicing. The
+// per-channel preprocessed signals are still used (squared/absval variants
+// have different amplitudes), but they're indexed at the master R-peak
+// positions since R sample indices map 1:1 across ECG preprocessing.
 static inline void process_channel_slow(
     EcgChannelResult& cr,
     const vector<output_binfile_data>& bins,
     size_t i,
     const vector<double>& ecgSignal,
     const ChannelRPeaks& ch,
-    double std_multiplier)
+    const vector<size_t>& masterPeaks,
+    double std_multiplier,
+    double ecgRate)
 {
     const auto& bin = bins[i];
 
-    // Method 2: squared (squared signal + squared R-peaks). No std.
+    // Method 2: squared (squared signal + master R-peaks). No std.
     const auto& sq_sig = ch.squared_signal.empty() ? ecgSignal : ch.squared_signal;
     auto sq_res = build_ecg_template_for_method(
-        sq_sig, ch.squared, bin.pairs, std_multiplier,
+        sq_sig, masterPeaks, bin.pairs, std_multiplier, ecgRate,
         nullptr, /*compute_std=*/false);
     cr.ecgTemplates_squared[i] = sq_res.ecgTemplate;
     cr.ppg_alignment_point_squared[i] = sq_res.ppg_alignment_point;
     cr.avg_r_expand_squared[i] = sq_res.avg_r_expand;
 
-    // Method 3: absval (abs-value signal + absval R-peaks). No std.
+    // Method 3: absval (abs-value signal + master R-peaks). No std.
     const auto& abs_sig = ch.absval_signal.empty() ? ecgSignal : ch.absval_signal;
     auto abs_res = build_ecg_template_for_method(
-        abs_sig, ch.absval, bin.pairs, std_multiplier,
+        abs_sig, masterPeaks, bin.pairs, std_multiplier, ecgRate,
         nullptr, /*compute_std=*/false);
     cr.ecgTemplates_absval[i] = abs_res.ecgTemplate;
     cr.ppg_alignment_point_absval[i] = abs_res.ppg_alignment_point;
@@ -233,19 +310,23 @@ static inline void process_channel(
     const vector<double>& ecgSignal,
     const vector<double>& origSignal,
     const ChannelRPeaks& ch,
+    const vector<size_t>& masterPeaks,
     double std_multiplier,
+    double ecgRate,
     bool capture_raw_beats = false)
 {
-    process_channel_fast(cr, bins, i, ecgSignal, origSignal, ch,
-        std_multiplier, capture_raw_beats);
-    process_channel_slow(cr, bins, i, ecgSignal, ch, std_multiplier);
+    process_channel_fast(cr, bins, i, ecgSignal, origSignal, masterPeaks,
+        std_multiplier, ecgRate, capture_raw_beats);
+    process_channel_slow(cr, bins, i, ecgSignal, ch, masterPeaks,
+        std_multiplier, ecgRate);
 }
 
 // FAST pass: raw + unfiltered templates (everything the viewer needs).
 // Leaves the squared/absval vectors sized-but-empty for CreateEcgTemplatesSlow.
 inline EcgTemplateResult CreateEcgTemplatesFast(
     const vector<output_binfile_data>& bins,
-    double std_multiplier)
+    double std_multiplier,
+    double ecgRate)
 {
     size_t n = bins.size();
     EcgTemplateResult res;
@@ -257,14 +338,23 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
 #pragma omp parallel for schedule(dynamic) num_threads(max_threads)
     for (int i = 0; i < static_cast<int>(n); ++i) {
         const auto& bin = bins[i];
-        process_channel_fast(res.ch1, bins, i, bin.ecgSignal, bin.ecgSignal, bin.ch1,
-            std_multiplier, /*capture_raw_beats=*/true);
-        if (!bin.ecgSignal2.empty())
-            process_channel_fast(res.ch2, bins, i, bin.ecgSignal2, bin.ecgSignal2, bin.ch2,
-                std_multiplier);
-        if (!bin.ecgSignal3.empty())
-            process_channel_fast(res.ch3, bins, i, bin.ecgSignal3, bin.ecgSignal3, bin.ch3,
-                std_multiplier);
+        const auto& master = bin.ch1.raw;   // ch1.raw drives every channel's slicing
+        process_channel_fast(res.ch1, bins, i, bin.ecgSignal, bin.ecgSignal,
+            master, std_multiplier, ecgRate, /*capture_raw_beats=*/true);
+        // Only build ch2/ch3 templates when the channel is REAL: both the
+        // signal is present AND R-peak detection actually found something.
+        // file_to_bin fills absent channels with placeholder vectors (see
+        // "0.0 = channel absent" in file_to_bin.hpp), so `.empty()` alone
+        // isn't a reliable "channel exists" signal -- but a truly absent
+        // channel will never produce R-peaks (zero-variance placeholder
+        // trips run_rpeak_detection's std_dev==0 noisy flag). Requiring
+        // bin.ch2.raw non-empty catches those.
+        if (!bin.ecgSignal2.empty() && !bin.ch2.raw.empty())
+            process_channel_fast(res.ch2, bins, i, bin.ecgSignal2, bin.ecgSignal2,
+                master, std_multiplier, ecgRate, /*capture_raw_beats=*/true);
+        if (!bin.ecgSignal3.empty() && !bin.ch3.raw.empty())
+            process_channel_fast(res.ch3, bins, i, bin.ecgSignal3, bin.ecgSignal3,
+                master, std_multiplier, ecgRate, /*capture_raw_beats=*/true);
     }
     return res;
 }
@@ -275,6 +365,7 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
 inline void CreateEcgTemplatesSlow(
     const vector<output_binfile_data>& bins,
     double std_multiplier,
+    double ecgRate,
     EcgTemplateResult& res)
 {
     size_t n = bins.size();
@@ -282,19 +373,25 @@ inline void CreateEcgTemplatesSlow(
 #pragma omp parallel for schedule(dynamic) num_threads(max_threads)
     for (int i = 0; i < static_cast<int>(n); ++i) {
         const auto& bin = bins[i];
-        process_channel_slow(res.ch1, bins, i, bin.ecgSignal, bin.ch1, std_multiplier);
-        if (!bin.ecgSignal2.empty())
-            process_channel_slow(res.ch2, bins, i, bin.ecgSignal2, bin.ch2, std_multiplier);
-        if (!bin.ecgSignal3.empty())
-            process_channel_slow(res.ch3, bins, i, bin.ecgSignal3, bin.ch3, std_multiplier);
+        const auto& master = bin.ch1.raw;
+        process_channel_slow(res.ch1, bins, i, bin.ecgSignal, bin.ch1, master,
+            std_multiplier, ecgRate);
+        // Same "real channel" gate as the fast pass (see comment there).
+        if (!bin.ecgSignal2.empty() && !bin.ch2.raw.empty())
+            process_channel_slow(res.ch2, bins, i, bin.ecgSignal2, bin.ch2, master,
+                std_multiplier, ecgRate);
+        if (!bin.ecgSignal3.empty() && !bin.ch3.raw.empty())
+            process_channel_slow(res.ch3, bins, i, bin.ecgSignal3, bin.ch3, master,
+                std_multiplier, ecgRate);
     }
 }
 
 inline EcgTemplateResult CreateEcgTemplates(
     const vector<output_binfile_data>& bins,
-    double std_multiplier)
+    double std_multiplier,
+    double ecgRate)
 {
-    EcgTemplateResult res = CreateEcgTemplatesFast(bins, std_multiplier);
-    CreateEcgTemplatesSlow(bins, std_multiplier, res);
+    EcgTemplateResult res = CreateEcgTemplatesFast(bins, std_multiplier, ecgRate);
+    CreateEcgTemplatesSlow(bins, std_multiplier, ecgRate, res);
     return res;
 }

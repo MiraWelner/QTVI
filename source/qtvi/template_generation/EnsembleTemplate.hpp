@@ -185,14 +185,22 @@ inline vector<double> EnsembleTemplate(
     vector<vector<double>>* out_kept_beats = nullptr,
     vector<double>* out_std = nullptr)
 {
-    if (segment_idxs.size() < 2) return {};
-
-    size_t n_segs = segment_idxs.size() - 1;
+    if (segment_idxs.size() < 1) return {};
+    // PPG spans foot-to-foot-after-next (stride 2). ECG now also uses stride
+    // 2 so each window runs from this beat's pre-P point to the beat-after-
+    // next's pre-P point -- i.e. it contains P, R, T of beat i plus the next
+    // beat's P and R (two R peaks). The front of the window (pre-P of beat i)
+    // is unchanged, so R still sits at the same alignment_point and the
+    // ECG/PPG anchoring is unaffected; only the right end extends by one more
+    // beat. Falls back to stride 1 when there are too few beats.
+    size_t stride = (type == "ppg" || type == "ecg") ? 2 : 1;
+    if (segment_idxs.size() <= stride) stride = 1;   // too few beats for 2x
+    size_t n_segs = segment_idxs.size() - stride;
     vector<std::pair<size_t, size_t>> ranges(n_segs);
 
     for (size_t i = 0; i < n_segs; ++i) {
         size_t s = segment_idxs[i];
-        size_t e = segment_idxs[i + 1];
+        size_t e = segment_idxs[i + stride];
         if (!expand.empty() && i < expand.size()) {
             s = (s > expand[i]) ? s - expand[i] : 0;
             e = std::min(e + expand[i], wave.size() - 1);
@@ -395,13 +403,6 @@ inline vector<double> EnsembleTemplate(
     size_t endpos = alignment_point +
         static_cast<size_t>(std::round(med_len_minus_align));
     if (endpos >= total_cols) endpos = total_cols - 1;
-
-    if (type == "ppg" && total_cols > 0) {
-        constexpr size_t kLeftPad = 50;   // tight pre-foot
-        constexpr size_t kRightPad = 50;   // generous post-trough
-        beginpos = (beginpos > kLeftPad) ? beginpos - kLeftPad : 0;
-        endpos = std::min(endpos + kRightPad, total_cols - 1);
-    }
 
     if (beginpos > endpos) return {};
 

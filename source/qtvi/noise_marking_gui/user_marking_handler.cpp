@@ -242,26 +242,27 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
                 m_draggedViewport = nullptr;
             }
             m_isDragging = false;
-
             const QString label = signalLabelForChartView(cv);
             if (!label.isEmpty() && label == m_dragSignalLabel) {
                 double endX = cv->chart()->mapToValue(me->pos()).x();
                 endX = std::clamp(endX, current_start_time, current_start_time + visible_window_size);
                 const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
-                const double startLocal =
-                    markStateFor(m_dragSignalLabel).globalStartTime - globalOffset;
 
-                if (endX != startLocal) {              // moved -> drag commit
+                const bool moved =
+                    (me->pos() - m_dragStartPos).manhattanLength() > 3;   // ~3 px slop
+
+                if (moved) {                                   // drag commit
                     commitMarkingSpan(label,
                         markStateFor(label).globalStartTime, endX + globalOffset);
                 }
-                else if (m_markArmed) {                               // click-click: first click
+                else if (m_markArmed) {                        // click-click: first click
                     clearDragPreview();
+                    const double globalOffset2 = globalOffset;
                     for (const QString& ch : scopeChannels(label)) {
                         ChannelMarkingState& st = markStateFor(ch);
                         st.phase = MarkPhase::WaitingForStop;
                         if (QChartView* ccv = chartViewForSignalLabel(ch))
-                            showStartMarker(ccv, st.globalStartTime - globalOffset, st,
+                            showStartMarker(ccv, st.globalStartTime - globalOffset2, st,
                                 colorForSignal(ch), nullptr);
                     }
                 }

@@ -31,6 +31,15 @@
  *         [uint64 sz][sz x double artPulmTemplate]
  *       (each sz=0 when that channel was absent in the dataset)
  *
+ *       Then per-channel beat counts (slices that survived drop rules and
+ *       fed each raw-method median). All driven by ch1.raw R-pairs under
+ *       Patch B, so they normally read equal; per-channel storage lets a
+ *       future filter drop them per-channel:
+ *         [uint64 ch1_n_beats_raw]
+ *         [uint64 ch2_n_beats_raw]
+ *         [uint64 ch3_n_beats_raw]
+ *         [uint64 ppg_n_beats]
+ *
  *       Then bad-segment flag:
  *         [uint8 bad_segment]
  *
@@ -43,6 +52,7 @@
 
 #include <cstdint>
 #include <string>
+#include <map>
 #include <vector>
 namespace template_io {
 
@@ -76,6 +86,14 @@ namespace template_io {
         std::vector<double>   abpTemplate_std;
         std::vector<double>   artTemplate_std;
         std::vector<double>   artPulmTemplate_std;
+        // Per-channel slice counts (post drop-rules) fed to each raw-method
+        // median. Under Patch B they're driven by ch1.raw R-pairs, so they
+        // normally read equal, but any per-channel drop (short slice, bad
+        // signal) would diverge. 0 = unknown (channel absent or bad).
+        uint64_t              ch1_n_beats_raw = 0;
+        uint64_t              ch2_n_beats_raw = 0;
+        uint64_t              ch3_n_beats_raw = 0;
+        uint64_t              ppg_n_beats = 0;
         bool                  bad_segment = false;
     };
 
@@ -91,9 +109,11 @@ namespace template_io {
     struct BeatsFile {
         std::vector<std::vector<std::vector<double>>> per_bin_beats;
         std::vector<bool> bad_segment;
+        std::map<std::string, std::vector<std::vector<std::vector<double>>>> per_channel_beats;
     };
 
     void write_template_binfile(const std::string& path, const TemplateFile& data);
+    void write_snips_csv(const std::string& path, const BeatsFile& beats);
 
     TemplateFile read_template_binfile(const std::string& path);
 }  // namespace template_io
