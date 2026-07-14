@@ -411,10 +411,6 @@ namespace {
             if (b.ppg_dicrotic < 0) b.ppg_dicrotic = dic;
             if (b.ppg_p50 < 0) b.ppg_p50 = p50;
             if (b.ppg_peak2 < 0) b.ppg_peak2 = peak2;
-
-            fprintf(stderr,
-                "[seed] N=%d foot=%d p50=%d peak=%d end=%d dic=%d peak2=%d\n",
-                N, foot, p50, peak, end, dic, peak2);
         }
 
         // ---- ECG (per channel) -----------------------------------------
@@ -772,12 +768,10 @@ void TemplateViewerWindow::showPage() {
 }
 
 void TemplateViewerWindow::captureCurrentPage() {
-    if (m_bins.empty()) { fprintf(stderr, "[capture] skip: no bins\n"); return; }
     if (m_capturedPages.count(m_currentPage)) return;   // already saved this page
     QDir outDir(m_templateDir);
     const int page = m_currentPage;
     QTimer::singleShot(60, this, [this, page, outDir]() {
-        if (page >= m_totalPages) { fprintf(stderr, "[capture] skip: page>=total\n"); return; }
         if (m_capturedPages.count(page)) return;
 
         const QPixmap shot = ui->scrollContents->grab();
@@ -793,7 +787,6 @@ void TemplateViewerWindow::captureCurrentPage() {
 void TemplateViewerWindow::writeAlignedTemplateCsv() {
     if (m_bins.empty()) return;
 
-    // All analysis CSVs share one folder: <templateDir>/../csv_for_analysis.
     QDir outDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
     if (!outDir.exists()) outDir.mkpath(".");
     const QString path = outDir.filePath(m_subjectId + "_templates.csv");
@@ -802,88 +795,237 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     if (!f) { fprintf(stderr, "[tmplcsv] cannot open %s\n", path.toStdString().c_str()); return; }
 
     const double toMs = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 1.0;
-    constexpr double kEcgRAnchorFrac = 2.0;   // == kEcgPrePFrac / display
 
-    // Column order: shared x, then normalized value + own-peak x for each
-    // signal. Values are per-subject normalized (ECG by median(|R|+|S|);
-    // pulse by median PI via the local-ratio conversion). Matches the
-    // on-screen display.
-    f << "file_id,bin_num,x_ms,"
-        "ch1_norm,ch1_x_peak_ms,ch2_norm,ch2_x_peak_ms,ch3_norm,ch3_x_peak_ms,"
-        "ppg_norm,ppg_x_peak_ms,abp_norm,abp_x_peak_ms,"
-        "art_norm,art_x_peak_ms,art_pulm_norm,art_pulm_x_peak_ms\n";
+    // ---- Header ------------------------------------------------------------
+    // Per channel: raw_mv, Normalized_mv, raw_std, normalized_std.
+    static const char* CHANS[] = {
+        "ch1", "ch2", "ch3", "ppg", "abp", "art", "art_pulm"
+    };
+    f << "file_id,bin_num,x_ms";
+    for (const char* n : CHANS) {
+        f << ',' << n << "_raw_mv"
+            << ',' << n << "_Normalized_mv"
+            << ',' << n << "_raw_std"
+            << ',' << n << "_normalized_std";
+    }
+
+    // Marker-location columns. For each marker: two columns (autodetect,
+    // user). A row has "1" in the column iff its row index equals that
+    // marker's sample index for the current bin; blank otherwise.
+    //
+    // ECG markers per channel (8 each x 3 channels x 2 auto/user = 48):
+    //   p_peak, q_begin, q_peak (computed), r_peak, s_peak (computed),
+    //   s_end, t_peak, t_end.
+    static const char* ECG_MARKERS[] = {
+        "p_peak", "q_begin", "q_peak", "r_peak", "s_peak",
+        "s_end",  "t_peak",  "t_end"
+    };
+    for (int c = 1; c <= 3; ++c) {
+        for (const char* m : ECG_MARKERS) {
+            f << ',' << m << "_ch" << c << "_location_autodetect"
+                << ',' << m << "_ch" << c << "_location_user";
+        }
+    }
+    // Pulse markers (PPG has 6 with p50, arterial has 5).
+    static const char* PPG_MARKERS[] = {
+        "ppg_onset", "ppg_p50", "ppg_peak",
+        "ppg_dicrotic", "ppg_peak2", "ppg_end"
+    };
+    static const char* ABP_MARKERS[] = {
+        "abp_onset", "abp_peak", "abp_dicrotic", "abp_peak2", "abp_end"
+    };
+    static const char* ART_MARKERS[] = {
+        "art_onset", "art_peak", "art_dicrotic", "art_peak2", "art_end"
+    };
+    static const char* ARTP_MARKERS[] = {
+        "art_pulm_onset", "art_pulm_peak", "art_pulm_dicrotic",
+        "art_pulm_peak2", "art_pulm_end"
+    };
+    auto emitPulseHeaderGroup = [&](auto const& group) {
+        for (const char* m : group) {
+            f << ',' << m << "_location_autodetect"
+                << ',' << m << "_location_user";
+        }
+        };
+    emitPulseHeaderGroup(PPG_MARKERS);
+    emitPulseHeaderGroup(ABP_MARKERS);
+    emitPulseHeaderGroup(ART_MARKERS);
+    emitPulseHeaderGroup(ARTP_MARKERS);
+    f << '\n';
     f << std::setprecision(10);
 
-    auto argmax = [](const std::vector<double>& v) -> int {
-        int best_i = 0;
-        double best_v = -std::numeric_limits<double>::infinity();
-        for (int i = 0; i < static_cast<int>(v.size()); ++i) {
-            if (!std::isnan(v[i]) && v[i] > best_v) { best_v = v[i]; best_i = i; }
-        }
-        return best_i;
+    // Scale a per-sample std trace by the same linear factor the mean
+    // transform applies (see the pulse / ECG normalization rules).
+    auto scaleEcgStd = [&](const std::vector<double>& raw_std, int chan) {
+        std::vector<double> out = raw_std;
+        const double ref = (chan >= 0 && chan < 3) ? m_ecgGlobalRef[chan] : 0.0;
+        if (!std::isfinite(ref) || ref == 0.0) return out;
+        for (double& s : out) if (!std::isnan(s)) s /= ref;
+        return out;
+        };
+    auto scalePulseStd = [&](const std::vector<double>& raw_std,
+        int footIdx, const std::vector<double>& mean_trace, int pulseChan)
+        {
+            std::vector<double> out = raw_std;
+            const double ref = (pulseChan >= 0 && pulseChan < 4) ? m_pulseGlobalRef[pulseChan] : 0.0;
+            if (!std::isfinite(ref) || ref == 0.0) return out;
+            if (footIdx < 0 || footIdx >= (int)mean_trace.size()) return out;
+            const double fy = mean_trace[footIdx];
+            if (std::isnan(fy) || std::abs(fy) < 1e-12) return out;
+            const double k = 100.0 / std::abs(fy) / std::abs(ref);
+            for (double& s : out) if (!std::isnan(s)) s *= k;
+            return out;
         };
 
+    // ---- Row loop ----------------------------------------------------------
     for (size_t bi = 0; bi < m_bins.size(); ++bi) {
         const TemplateBin& b = m_bins[bi];
 
-        // Per-bin normalized traces, matching what's drawn on screen.
-        // ECG normalized by that channel's Global_Ref_ecg;
-        // pulse normalized by ((sample - foot_y) / |foot_y| * 100) / Global_Ref_pulse.
-        // If any ref is unusable the helper returns the raw trace unchanged.
-        std::vector<double> ch1N = normalizeEcgTrace(b.ch1.ecgTemplate_raw, 0);
-        std::vector<double> ch2N = normalizeEcgTrace(b.ch2.ecgTemplate_raw, 1);
-        std::vector<double> ch3N = normalizeEcgTrace(b.ch3.ecgTemplate_raw, 2);
-        std::vector<double> ppgN = normalizePulseTrace(b.ppgTemplate, b.ppg_onset, 0);
-        std::vector<double> abpN = normalizePulseTrace(b.abpTemplate, b.abp_onset, 1);
-        std::vector<double> artN = normalizePulseTrace(b.artTemplate, b.art_onset, 2);
-        std::vector<double> artPN = normalizePulseTrace(b.artPulmTemplate, b.art_pulm_onset, 3);
+        // Raw + std traces per channel.
+        const std::vector<double>& ch1R = b.ch1.ecgTemplate_raw;
+        const std::vector<double>& ch2R = b.ch2.ecgTemplate_raw;
+        const std::vector<double>& ch3R = b.ch3.ecgTemplate_raw;
+        const std::vector<double>& ppgR = b.ppgTemplate;
+        const std::vector<double>& abpR = b.abpTemplate;
+        const std::vector<double>& artR = b.artTemplate;
+        const std::vector<double>& artPR = b.artPulmTemplate;
 
-        // One signal = its (normalized) template, its shared-axis start offset,
-        // and its own peak index.
-        struct Sig {
-            const std::vector<double>* v;
-            double start;
-            int    peak;
+        const std::vector<double>& ch1S = b.ch1.ecgTemplate_raw_std;
+        const std::vector<double>& ch2S = b.ch2.ecgTemplate_raw_std;
+        const std::vector<double>& ch3S = b.ch3.ecgTemplate_raw_std;
+        const std::vector<double>& ppgS = b.ppgTemplate_std;
+        const std::vector<double>& abpS = b.abpTemplate_std;
+        const std::vector<double>& artS = b.artTemplate_std;
+        const std::vector<double>& artPS = b.artPulmTemplate_std;
+
+        // Normalized mean traces (screen-matching).
+        std::vector<double> ch1N = normalizeEcgTrace(ch1R, 0);
+        std::vector<double> ch2N = normalizeEcgTrace(ch2R, 1);
+        std::vector<double> ch3N = normalizeEcgTrace(ch3R, 2);
+        std::vector<double> ppgN = normalizePulseTrace(ppgR, b.ppg_onset, 0);
+        std::vector<double> abpN = normalizePulseTrace(abpR, b.abp_onset, 1);
+        std::vector<double> artN = normalizePulseTrace(artR, b.art_onset, 2);
+        std::vector<double> artPN = normalizePulseTrace(artPR, b.art_pulm_onset, 3);
+
+        // Normalized std traces.
+        std::vector<double> ch1NS = scaleEcgStd(ch1S, 0);
+        std::vector<double> ch2NS = scaleEcgStd(ch2S, 1);
+        std::vector<double> ch3NS = scaleEcgStd(ch3S, 2);
+        std::vector<double> ppgNS = scalePulseStd(ppgS, b.ppg_onset, ppgR, 0);
+        std::vector<double> abpNS = scalePulseStd(abpS, b.abp_onset, abpR, 1);
+        std::vector<double> artNS = scalePulseStd(artS, b.art_onset, artR, 2);
+        std::vector<double> artPNS = scalePulseStd(artPS, b.art_pulm_onset, artPR, 3);
+
+        // Computed Q/S peaks (both variants) per ECG channel.
+        const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
+        EcgFeatures ftAuto[3], ftUser[3];
+        for (int c = 0; c < 3; ++c) {
+            const auto& ecg = chs[c]->ecgTemplate_raw;
+            ftAuto[c] = computeEcgFeatures(ecg,
+                b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
+                b.s_end_auto_ch[c], b.t_peak_auto_ch[c], b.t_end_auto_ch[c],
+                m_sampleRate);
+            ftUser[c] = computeEcgFeatures(ecg,
+                b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
+                b.s_end_ch[c], b.t_peak_ch[c], b.t_end_ch[c],
+                m_sampleRate);
+        }
+
+        // ECG marker positions per channel, aligned with ECG_MARKERS order:
+        //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
+        //   s_end,  t_peak, t_end.
+        int ecgAuto[3][8], ecgUser[3][8];
+        for (int c = 0; c < 3; ++c) {
+            ecgAuto[c][0] = b.p_peak_auto_ch[c];
+            ecgAuto[c][1] = b.q_begin_auto_ch[c];
+            ecgAuto[c][2] = ftAuto[c].q_idx;
+            ecgAuto[c][3] = b.r_peak_auto_ch[c];
+            ecgAuto[c][4] = ftAuto[c].s_idx;
+            ecgAuto[c][5] = b.s_end_auto_ch[c];
+            ecgAuto[c][6] = b.t_peak_auto_ch[c];
+            ecgAuto[c][7] = b.t_end_auto_ch[c];
+            ecgUser[c][0] = b.p_peak_ch[c];
+            ecgUser[c][1] = b.q_begin_ch[c];
+            ecgUser[c][2] = ftUser[c].q_idx;
+            ecgUser[c][3] = b.r_peak_ch[c];
+            ecgUser[c][4] = ftUser[c].s_idx;
+            ecgUser[c][5] = b.s_end_ch[c];
+            ecgUser[c][6] = b.t_peak_ch[c];
+            ecgUser[c][7] = b.t_end_ch[c];
+        }
+
+        // Pulse marker positions, order matching PPG_MARKERS / ABP_MARKERS etc.
+        const int ppgAuto[6] = { b.ppg_onset_auto, b.ppg_p50_auto, b.ppg_peak_auto,
+                                 b.ppg_dicrotic_auto, b.ppg_peak2_auto, b.ppg_end_auto };
+        const int ppgUser[6] = { b.ppg_onset, b.ppg_p50, b.ppg_peak,
+                                 b.ppg_dicrotic, b.ppg_peak2, b.ppg_end };
+        const int abpAuto[5] = { b.abp_onset_auto, b.abp_peak_auto,
+                                 b.abp_dicrotic_auto, b.abp_peak2_auto, b.abp_end_auto };
+        const int abpUser[5] = { b.abp_onset, b.abp_peak,
+                                 b.abp_dicrotic, b.abp_peak2, b.abp_end };
+        const int artAuto[5] = { b.art_onset_auto, b.art_peak_auto,
+                                 b.art_dicrotic_auto, b.art_peak2_auto, b.art_end_auto };
+        const int artUser[5] = { b.art_onset, b.art_peak,
+                                 b.art_dicrotic, b.art_peak2, b.art_end };
+        const int artpAuto[5] = { b.art_pulm_onset_auto, b.art_pulm_peak_auto,
+                                  b.art_pulm_dicrotic_auto, b.art_pulm_peak2_auto,
+                                  b.art_pulm_end_auto };
+        const int artpUser[5] = { b.art_pulm_onset, b.art_pulm_peak,
+                                  b.art_pulm_dicrotic, b.art_pulm_peak2, b.art_pulm_end };
+
+        // Row span = longest trace (all start at row 0).
+        auto Nof = [](const std::vector<double>& v) { return (int)v.size(); };
+        const int hiRow = std::max({ Nof(ch1R), Nof(ch2R), Nof(ch3R),
+            Nof(ppgR), Nof(abpR), Nof(artR), Nof(artPR) });
+        if (hiRow <= 0) continue;
+
+        struct Col {
+            const std::vector<double>* raw;
+            const std::vector<double>* norm;
+            const std::vector<double>* raw_std;
+            const std::vector<double>* norm_std;
+        };
+        const Col cols[] = {
+            { &ch1R,  &ch1N,  &ch1S,  &ch1NS  },
+            { &ch2R,  &ch2N,  &ch2S,  &ch2NS  },
+            { &ch3R,  &ch3N,  &ch3S,  &ch3NS  },
+            { &ppgR,  &ppgN,  &ppgS,  &ppgNS  },
+            { &abpR,  &abpN,  &abpS,  &abpNS  },
+            { &artR,  &artN,  &artS,  &artNS  },
+            { &artPR, &artPN, &artPS, &artPNS },
         };
 
-        const ChannelTemplateData* ch[3] = { &b.ch1, &b.ch2, &b.ch3 };
-        const std::vector<double>* chNorm[3] = { &ch1N, &ch2N, &ch3N };
+        auto emitVal = [&](const std::vector<double>& v, int j) {
+            f << ',';
+            if (j >= 0 && j < (int)v.size() && !std::isnan(v[j])) f << v[j];
+            };
+        // Emit ",1" if row equals marker index, ",<blank>" otherwise.
+        auto emitLoc = [&](int markerIdx, int row) {
+            f << ',';
+            if (markerIdx >= 0 && markerIdx == row) f << '1';
+            };
 
-        std::vector<Sig> sigs;
-        for (int c = 0; c < 3; ++c) {
-            // ECG R column = argmax of that channel's template. Self-locating.
-            sigs.push_back({ chNorm[c], 0.0, argmax(*chNorm[c]) });
-        }
-        sigs.push_back({ &ppgN,  0.0, argmax(ppgN) });
-        sigs.push_back({ &abpN,  0.0, argmax(abpN) });
-        sigs.push_back({ &artN,  0.0, argmax(artN) });
-        sigs.push_back({ &artPN, 0.0, argmax(artPN) });
-
-        // Row span on the shared axis.
-        double loD = 1e300, hiD = -1e300;
-        for (const Sig& s : sigs) {
-            if (s.v->empty()) continue;
-            loD = std::min(loD, s.start);
-            hiD = std::max(hiD, s.start + static_cast<double>(s.v->size()));
-        }
-        if (loD > hiD) continue;   // nothing in this bin
-        const int loRow = static_cast<int>(std::floor(loD));
-        const int hiRow = static_cast<int>(std::ceil(hiD));
-
-        for (int row = loRow; row < hiRow; ++row) {
-            // Shared x: raw timeline, 0 at the top of the ECG templates.
+        for (int row = 0; row < hiRow; ++row) {
             f << m_subjectId.toStdString() << ',' << bi << ','
                 << (row * toMs);
-            for (const Sig& s : sigs) {
-                const int j = row - static_cast<int>(std::llround(s.start));
-                f << ',';
-                if (j >= 0 && j < static_cast<int>(s.v->size())
-                    && !std::isnan((*s.v)[j]))
-                    f << (*s.v)[j];
-                f << ',';
-                if (j >= 0 && j < static_cast<int>(s.v->size()))
-                    f << ((j - s.peak) * toMs);   // 0 at this signal's peak
+            for (const Col& c : cols) {
+                emitVal(*c.raw, row);
+                emitVal(*c.norm, row);
+                emitVal(*c.raw_std, row);
+                emitVal(*c.norm_std, row);
             }
+            // ECG location columns (per channel, per marker: auto then user).
+            for (int c = 0; c < 3; ++c) {
+                for (int k = 0; k < 8; ++k) {
+                    emitLoc(ecgAuto[c][k], row);
+                    emitLoc(ecgUser[c][k], row);
+                }
+            }
+            // PPG (6), ABP/ART/ART_PULM (5 each).
+            for (int k = 0; k < 6; ++k) { emitLoc(ppgAuto[k], row);  emitLoc(ppgUser[k], row); }
+            for (int k = 0; k < 5; ++k) { emitLoc(abpAuto[k], row);  emitLoc(abpUser[k], row); }
+            for (int k = 0; k < 5; ++k) { emitLoc(artAuto[k], row);  emitLoc(artUser[k], row); }
+            for (int k = 0; k < 5; ++k) { emitLoc(artpAuto[k], row); emitLoc(artpUser[k], row); }
             f << '\n';
         }
     }
@@ -1119,33 +1261,27 @@ void TemplateViewerWindow::onBadPPGToggled(int binIdx, bool bad) {
 
 void TemplateViewerWindow::save_bin_and_csv() {
     // Do NOT re-seed here. Markers were seeded once at loadSubject and
-    // then updated by user drags via onMarkerMoved. Re-seeding now would
-    // wipe every user edit (the PPG/arterial seed paths recompute
-    // unconditionally). Save should persist current state, not regenerate.
+    // updated by user drags via onMarkerMoved. Re-seeding now would wipe
+    // every user edit.
 
-    // All analysis outputs (templates.csv, template_markings.*,
-    // template_markings_normalized.csv) share ONE folder:
-    // <templateDir>/../csv_for_analysis. m_markingPath (config's
-    // qtvi_marker_path) is ignored here so the user only has to look
-    // in one place.
-    QDir outDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
-    if (!outDir.exists()) outDir.mkpath(".");
-    const QString base = outDir.absolutePath() + "/" + m_subjectId;
+    // .bin goes to markingPath (qtvi folder, config's qtvi_marker_path)
+    // -- that's where the viewer LOADS state from on subsequent runs.
+    // .csv goes to csv_for_analysis alongside <subject>_templates.csv.
+    QDir csvDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
+    if (!csvDir.exists()) csvDir.mkpath(".");
+    QDir binDir(m_markingPath);
+    if (!binDir.exists()) binDir.mkpath(".");
 
     try {
-        QString outPath = base + "_template_markings.bin";
+        QString outPath = m_markingPath + "/" + m_subjectId + "_template_markings.bin";
         writeTemplateMarkingsBin(outPath.toStdString(), m_bins);
         std::cout << "Saved: " << outPath.toStdString() << "\n";
 
-        QString csvPath = base + "_template_markings.csv";
+        QString csvPath = csvDir.absolutePath() + "/" +
+            m_subjectId + "_template_markings.csv";
         writeTemplateMarkingsCsv(csvPath.toStdString(), m_bins,
             m_subjectId.toStdString(), m_sampleRate);
         std::cout << "Saved: " << csvPath.toStdString() << "\n";
-
-        QString normPath = base + "_template_markings_normalized.csv";
-        normalize_features::writeNormalizedCsv(normPath.toStdString(),
-            m_bins, m_subjectId.toStdString(), m_sampleRate);
-        std::cout << "Saved: " << normPath.toStdString() << "\n";
         std::cout.flush();
     }
     catch (const std::exception& e) {

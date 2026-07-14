@@ -325,9 +325,6 @@ namespace alignment {
                     if (-newStart > max_prepend) max_prepend = -newStart;
                     if (newEnd > max_end) max_end = newEnd;
                 }
-                if (rejected_q > 0)
-                    fprintf(stderr, "[align] rejected %zu Q-shifts > cap=%d\n",
-                        rejected_q, q_shift_cap);
                 if (max_prepend < 0) max_prepend = 0;
                 const int new_width = max_prepend + max_end + 1;
 
@@ -406,21 +403,10 @@ namespace alignment {
                                 if (!std::isnan(v)) v -= d;
                             ++shifted;
                         }
-                        fprintf(stderr, "[align] pass3: PR-baseline vertical align "
-                            "window=[%d,%d) target=%.4g shifted=%zu skipped=%zu\n",
-                            pr_lo, pr_hi, target, shifted, skipped);
                     }
                 }
             }
         }
-
-        fprintf(stderr,
-            "[align] beats=%zu unique_lengths=%zu mode_length=%d mode_count=%zu "
-            "mode_group_size=%zu rms_tol=%.4f R_col=%d Q_col=%d\n",
-            out.total_beats, hist.size(), out.mode_length, out.mode_count,
-            out.mode_group_size, out.mode_group_rms_tol,
-            out.r_aligned_col, out.q_aligned_col);
-
         return out;
     }
 
