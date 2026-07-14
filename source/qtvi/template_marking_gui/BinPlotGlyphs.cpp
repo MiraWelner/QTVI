@@ -117,39 +117,88 @@ void BinPlotWidget::captureGlyphSnapshot() {
         m_glyphs.ecgQ = qOn;    m_glyphs.ecgS = sEn;   m_glyphs.ecgTend = tEn;
     }
 
-    // ---- PPG landmarks (all driven by the anchor-pulse markers set by
-    // seedBinMarkers, which restrict search to the R-window; the global
-    // argmax used previously would land on the SECOND pulse under Patch B
-    // slicing, then cascade every other landmark off the anchor pulse). ----
+    // ---- PPG landmarks ---------------------------------------------------
+    //   foot     = the PpgOnset marker (already seeded to argmin after R)
+    //   P1       = argmax over (foot, N)
+    //   end      = argmin over (P1, N)
+    //   dicrotic = FIRST interior local min over (P1, end); X if found,
+    //              O at midpoint of (P1, end) if not
+    //   P2       = local max over (dicrotic, end); no glyph if none
     if (m_hasPPG && (int)m_ppg.size() >= 3) {
         const std::vector<double>& v = m_ppg;
         const int N = (int)v.size();
-        const int foot = m_markers[PpgOnset];      // anchor foot
-        const int p1 = m_markers[PpgPeak];       // anchor systolic peak
-        const int end = m_markers[PpgEnd];        // anchor end (trough after)
+        const int foot = m_markers[PpgOnset];
 
-        // Notch test: any interior local minimum on the downstroke [p1, end].
-        bool hasNotch = false;
-        int  notchIdx = -1;
-        if (p1 >= 0 && end > p1) {
-            const int lo = std::max(0, p1 + 1), hi = std::min(N - 1, end);
+        int p1 = -1;
+        if (foot >= 0) {
+            double best = -1e300;
+            for (int i = foot + 1; i < N; ++i)
+                if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; p1 = i; }
+        }
+
+        int end = -1;
+        if (p1 >= 0) {
             double best = 1e300;
-            for (int i = lo; i < hi; ++i) {
+            for (int i = p1 + 1; i < N; ++i)
+                if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; end = i; }
+        }
+
+        // Dicrotic notch detection (rule ii: least-negative slope).
+        //
+        //   1. firstMin = first local min after P1 (the "shoulder" that
+        //      starts the downslope proper). If none, use P1 itself.
+        //   2. downslope = [firstMin, end]
+        //   3. Search the MIDDLE 50% of the downslope for the point where
+        //      the first derivative is closest to zero (least-negative
+        //      slope). On a healthy PPG this is where the dicrotic notch's
+        //      subtle upward kink lives, even when no full local min forms.
+        //   4. If the least-negative slope is genuinely non-negative there
+        //      -> X on that point (real notch).
+        //   5. If the slope stays negative through the whole middle 50%
+        //      -> O at the middle of the downslope (visual "notch would be
+        //      here" placeholder).
+        int notchIdx = -1;
+        int notchOIdx = -1;
+        if (p1 >= 0 && end > p1 + 4) {
+            // Step 1: first local min after p1.
+            int firstMin = -1;
+            for (int i = p1 + 1; i < end && i < N - 1; ++i) {
                 if (std::isnan(v[i]) || std::isnan(v[i - 1]) || std::isnan(v[i + 1])) continue;
-                if (v[i] <= v[i - 1] && v[i] <= v[i + 1] && v[i] < best) {
-                    best = v[i]; notchIdx = i; hasNotch = true;
+                if (v[i] <= v[i - 1] && v[i] <= v[i + 1]) { firstMin = i; break; }
+            }
+            const int slopeStart = (firstMin > 0) ? firstMin : p1;
+
+            // Step 2/3: middle 50% of [slopeStart, end].
+            const int span = end - slopeStart;
+            if (span >= 4) {
+                const int mid_lo = slopeStart + span / 4;
+                const int mid_hi = slopeStart + (3 * span) / 4;
+
+                int bestIdx = -1;
+                double bestSlope = -1e300;   // want least-negative (highest)
+                for (int i = std::max(1, mid_lo); i <= std::min(N - 2, mid_hi); ++i) {
+                    if (std::isnan(v[i - 1]) || std::isnan(v[i + 1])) continue;
+                    const double slope = 0.5 * (v[i + 1] - v[i - 1]);   // central diff
+                    if (slope > bestSlope) { bestSlope = slope; bestIdx = i; }
+                }
+
+                if (bestIdx >= 0 && bestSlope >= 0.0) {
+                    // Genuine notch (slope actually turned non-negative here).
+                    notchIdx = bestIdx;
+                }
+                else {
+                    // No real inflection -- placeholder O at the middle of
+                    // the downslope.
+                    notchOIdx = (slopeStart + end) / 2;
                 }
             }
         }
 
-        // Diastolic peak: local max between the notch and the end. Only if
-        // a real local max exists; no fallback (see previous edit).
         int p2 = -1;
-        if (hasNotch && end > notchIdx) {
-            const int lo = std::max(0, notchIdx + 1), hi = std::min(N - 1, end);
+        if (notchIdx >= 0 && end > notchIdx + 1) {
             double best = -1e300;
-            for (int i = lo + 1; i < hi; ++i) {
-                if (std::isnan(v[i])) continue;
+            for (int i = notchIdx + 1; i < end; ++i) {
+                if (std::isnan(v[i]) || std::isnan(v[i - 1]) || std::isnan(v[i + 1])) continue;
                 if (v[i] >= v[i - 1] && v[i] >= v[i + 1] && v[i] > best) {
                     best = v[i]; p2 = i;
                 }
@@ -158,17 +207,14 @@ void BinPlotWidget::captureGlyphSnapshot() {
 
         m_glyphs.ppgFoot = foot;
         m_glyphs.ppgP1 = p1;
-        m_glyphs.ppgDic = notchIdx;        // -1 if none; draw branch handles that
+        m_glyphs.ppgDic = notchIdx;
         m_glyphs.ppgP2 = p2;
-        m_glyphs.ppgNotch = hasNotch;
-        m_glyphs.ppgNoNotchO = (!hasNotch && p1 >= 0 && end > p1)
-            ? (p1 + end) / 2 : -1;
+        m_glyphs.ppgNotch = (notchIdx >= 0);
+        m_glyphs.ppgNoNotchO = notchOIdx;
 
         fprintf(stderr,
-            "[glyph] ppg: N=%d foot=%d p1=%d end=%d hasNotch=%d notch=%d "
-            "p2=%d noNotchO=%d\n",
-            N, foot, p1, end, (int)hasNotch, notchIdx, p2,
-            m_glyphs.ppgNoNotchO);
+            "[glyph] N=%d foot=%d p1=%d dic=%d p2=%d noNotchO=%d end=%d\n",
+            N, foot, p1, notchIdx, p2, m_glyphs.ppgNoNotchO, end);
     }
 
     m_glyphs.valid = true;
@@ -233,14 +279,17 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
     if (m_showPpgTrace && m_hasPPG && (int)m_ppg.size() >= 3) {
         const std::vector<double>& v = m_ppg;
         const int N = (int)v.size();
-        const int ppgClip = pulseClipN();
+        // Clip PPG glyphs against the PPG's own visible extent, not the
+        // ECG length. Marker lines already draw against the PPG length --
+        // matching that here avoids "marker line visible but no glyph"
+        // when ECG and PPG templates aren't exactly the same length.
         auto g = [&](int idx) {
-            if (idx < 0 || idx >= N || idx >= ppgClip) return;
+            if (idx < 0 || idx >= N) return;
             const double val = std::isnan(v[idx]) ? pLo : v[idx];
             glyph(xFromSample(idx, /*isEcg=*/false), plotY(val, pLo, pHi));
             };
         auto circ = [&](int idx) {
-            if (idx < 0 || idx >= N || idx >= ppgClip) return;
+            if (idx < 0 || idx >= N) return;
             const double val = std::isnan(v[idx]) ? pLo : v[idx];
             const double x = xFromSample(idx, /*isEcg=*/false);
             const double y = plotY(val, pLo, pHi);
@@ -248,6 +297,8 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             p.setPen(QPen(Qt::black, 1.8));
             p.drawEllipse(QPointF(x, y), 4.0, 4.0);
             };
+        // Four glyphs: foot, P1, dicrotic (X if found, O at descent midpoint
+        // if not), P2. Each only when its own value is available (idx >= 0).
         g(m_glyphs.ppgFoot);
         g(m_glyphs.ppgP1);
         if (m_glyphs.ppgNotch) g(m_glyphs.ppgDic);

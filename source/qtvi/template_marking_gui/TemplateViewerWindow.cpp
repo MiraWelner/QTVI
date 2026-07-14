@@ -304,38 +304,99 @@ namespace {
             b.ppg_end = -1;
         }
         else {
-            // Under Patch B, PPG is sliced [t_R_i - pad, t_R_{i+1} + pad] in
-            // its own sample space, matching the ECG. So:
-            //   R_first  sits at column padSamples  = 2 * avg_r_expand
-            //   R_second sits at column padSamples + medianRR
-            // where medianRR ~ 5 * avg_r_expand (the "samples per fifth of a
-            // cycle" semantic). Assumes same rate; if PPG rate differs from
-            // ECG rate, scale by ppgRate/ecgRate (not currently threaded).
+            // Simple, un-clever rules -- no window bounds, no "first half"
+            // heuristics. Each landmark is defined by argmin/argmax over
+            // the entire post-anchor trace.
+            //
+            //   foot     = argmin over [rFirst, N)
+            //   peak     = argmax over (foot, N)
+            //   end      = argmin over (peak, N)
+            //   dicrotic = FIRST interior local min over (peak, end)
+            //   peak2    = user-placed; default 90% foot->end
+            const std::vector<double>& v = b.ppgTemplate;
+            const int N = static_cast<int>(v.size());
+
+            // R sits at column padSamples = 2*avg_r_expand in the PPG frame.
             double rExp = b.ch1.avg_r_expand_raw;
             if (rExp <= 0) rExp = b.ch2.avg_r_expand_raw;
             if (rExp <= 0) rExp = b.ch3.avg_r_expand_raw;
+            const int rFirst = (rExp > 0) ? (int)std::llround(2.0 * rExp) : 0;
 
-            const int rFirstPpg = (rExp > 0) ? (int)std::llround(2.0 * rExp) : 0;
-            const int rSecondPpg = rFirstPpg + ((rExp > 0)
-                ? (int)std::llround(5.0 * rExp) : 0);
+            // foot
+            int foot = -1;
+            {
+                double best = std::numeric_limits<double>::infinity();
+                const int lo = std::clamp(rFirst, 0, N - 1);
+                for (int i = lo; i < N; ++i)
+                    if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; foot = i; }
+            }
+            b.ppg_onset = foot;
 
-            const auto lm = ecg_markers::detect_ppg_landmarks(
-                b.ppgTemplate, rFirstPpg, rSecondPpg);
-            b.ppg_onset = lm.onset;
-            b.ppg_peak = lm.peak;
-            b.ppg_end = lm.end;
-            // detect_ppg_landmarks doesn't fill dicrotic / p50; run the
-            // standalone detectors here. They read onset/peak/end from the
-            // trace, so seed them after the landmarks above.
-            b.ppg_dicrotic = ecg_markers::detect_ppg_dicrotic(b.ppgTemplate);
-            // ppg_peak2 is user-placed. Default position: 90% of the way
-            // from foot to end, so the bar starts visible near the right
-            // of the anchor pulse where the diastolic peak typically lives.
-            // User drags it to the actual location.
-            if (b.ppg_onset >= 0 && b.ppg_end > b.ppg_onset)
-                b.ppg_peak2 = b.ppg_onset + (9 * (b.ppg_end - b.ppg_onset)) / 10;
+            // peak
+            int peak = -1;
+            if (foot >= 0) {
+                double best = -std::numeric_limits<double>::infinity();
+                for (int i = foot + 1; i < N; ++i)
+                    if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; peak = i; }
+            }
+            b.ppg_peak = peak;
+
+            // end
+            int end = -1;
+            if (peak >= 0) {
+                double best = std::numeric_limits<double>::infinity();
+                for (int i = peak + 1; i < N; ++i)
+                    if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; end = i; }
+            }
+            b.ppg_end = end;
+
+            // Dicrotic notch (movable marker): least-negative slope in the
+            // MIDDLE 50% of the downslope. Downslope = [firstMinAfterPeak,
+            // end]. If the least-negative slope actually goes non-negative
+            // in that middle window, a real inflection exists -- place the
+            // marker there. Otherwise place it at the center of the down-
+            // slope so the user has a movable bar visible for correction.
+            int dic = -1;
+            if (peak >= 0 && end > peak + 4) {
+                int firstMin = -1;
+                for (int i = peak + 1; i < end && i < N - 1; ++i) {
+                    if (std::isnan(v[i]) || std::isnan(v[i - 1]) || std::isnan(v[i + 1])) continue;
+                    if (v[i] <= v[i - 1] && v[i] <= v[i + 1]) { firstMin = i; break; }
+                }
+                const int slopeStart = (firstMin > 0) ? firstMin : peak;
+                const int span = end - slopeStart;
+                if (span >= 4) {
+                    const int mid_lo = slopeStart + span / 4;
+                    const int mid_hi = slopeStart + (3 * span) / 4;
+                    int bestIdx = -1;
+                    double bestSlope = -std::numeric_limits<double>::infinity();
+                    for (int i = std::max(1, mid_lo); i <= std::min(N - 2, mid_hi); ++i) {
+                        if (std::isnan(v[i - 1]) || std::isnan(v[i + 1])) continue;
+                        const double slope = 0.5 * (v[i + 1] - v[i - 1]);
+                        if (slope > bestSlope) { bestSlope = slope; bestIdx = i; }
+                    }
+                    if (bestIdx >= 0 && bestSlope >= 0.0) {
+                        // Real notch (slope turned non-negative).
+                        dic = bestIdx;
+                    }
+                    else {
+                        // Subtle / absent notch -- default the movable bar
+                        // to the middle of the downslope.
+                        dic = (slopeStart + end) / 2;
+                    }
+                }
+            }
+            b.ppg_dicrotic = dic;
+
+            // peak2: user-placed. Default 90% foot->end.
+            if (foot >= 0 && end > foot)
+                b.ppg_peak2 = foot + (9 * (end - foot)) / 10;
             else
-                b.ppg_peak2 = std::max(0, static_cast<int>(b.ppgTemplate.size()) - 1);
+                b.ppg_peak2 = std::max(0, N - 1);
+
+            fprintf(stderr,
+                "[seed] N=%d foot=%d peak=%d end=%d dic=%d peak2=%d\n",
+                N, foot, peak, end, dic, b.ppg_peak2);
         }
 
         // ---- ECG (per channel) -----------------------------------------

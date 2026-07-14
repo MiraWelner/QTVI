@@ -644,7 +644,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     QFont smallF = p.font(); smallF.setPointSize(7); p.setFont(smallF);
     for (int m = 0; m < MarkerCount; ++m) {
         int idx = m_markers[m];
-        if (idx < 0 || m == PpgPeak || m == AbpPeak || m == ArtPeak || m == ArtPulmPeak) continue;
+        if (idx < 0) continue;
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;

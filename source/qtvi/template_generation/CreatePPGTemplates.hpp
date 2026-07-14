@@ -192,15 +192,5 @@ inline PPGTemplatesResult CreatePPGTemplates(
         }
     }
 
-    // Pad templates to a common length with NaN, as before. Pad stds with 0
-    // so the band collapses to the line in padded regions (no gray bulge at
-    // the tail).
-    size_t max_len = 0;
-    for (const auto& t : out.templates)
-        if (t.size() > max_len) max_len = t.size();
-
-    for (auto& t : out.templates) t.resize(max_len, NaN);
-    for (auto& s : out.stds)      s.resize(max_len, 0.0);
-
     return out;
 }
