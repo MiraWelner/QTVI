@@ -34,7 +34,8 @@
 #include <vector>
 namespace alignment {
     constexpr double percent_interval_preceeding_rpeak = 0.3; //how far before the R peak the snip goes, in terms of percent of the RR interval length
-    constexpr double percent_interval_following_rpeak = 1.3;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
+    constexpr double percent_interval_following_rpeak = 1.4;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
+	constexpr double mode_error = 0.05; // RMS tolerance for mode beat clustering (5% of the mode beat's amplitude)
 
     // Sample counts for a given RR (integer-truncated).
     inline int64_t rr_before_samples(int64_t rr) {
@@ -102,7 +103,7 @@ namespace alignment {
 
     inline BeatSet extract_beats_and_mode(const std::vector<double>& signal,
         const std::vector<size_t>& rPeaks,
-        double rms_tol = 0.05)
+        double rms_tol = mode_error)
     {
         BeatSet out;
         const int64_t N = static_cast<int64_t>(signal.size());

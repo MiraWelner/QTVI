@@ -109,6 +109,7 @@ struct TemplateBin {
     // PPG: sample indices into ppgTemplate. Shared across channels.
     int ppg_onset = -1;
     int ppg_p50 = -1;   // 50% up the upslope, foot -> systolic peak
+    int ppg_tac80 = -1; // 80% up the upslope, foot -> systolic peak
     int ppg_peak = -1;
     int ppg_dicrotic = -1;
     int ppg_peak2 = -1;
@@ -133,6 +134,7 @@ struct TemplateBin {
     // the original auto positions so the CSV can emit both variants.
     int ppg_onset_auto = -1, ppg_p50_auto = -1, ppg_peak_auto = -1,
         ppg_dicrotic_auto = -1, ppg_peak2_auto = -1, ppg_end_auto = -1;
+    int ppg_tac80_auto = -1;
     int abp_onset_auto = -1, abp_peak_auto = -1, abp_dicrotic_auto = -1,
         abp_peak2_auto = -1, abp_end_auto = -1;
     int art_onset_auto = -1, art_peak_auto = -1, art_dicrotic_auto = -1,
@@ -207,7 +209,7 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
 // All int32 fields use -1 as the "unmarked / not applicable" sentinel.
 // ---------------------------------------------------------------------------
 static constexpr uint64_t kTemplateMarkingsV2Sentinel = ~uint64_t(0);
-static constexpr uint32_t kTemplateMarkingsVersion = 4;   // v4 renames ECG markers to peaks and adds t_peak_ch
+static constexpr uint32_t kTemplateMarkingsVersion = 5;   // v5 adds ppg_tac80 (P80)
 
 inline void writeTemplateMarkingsBin(const std::string& path,
     const std::vector<TemplateBin>& bins) {
@@ -250,6 +252,7 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         w32(b.ppg_dicrotic);
         w32(b.ppg_peak2);
         w32(b.ppg_end);
+        w32(b.ppg_tac80);   // v5: P80
 
         // v2 arterial block: ABP, ART, ART_PULM (issue + 5 indices each).
         w8(b.abp_issue);
@@ -299,7 +302,7 @@ static const EcgColSpec ecgCols[] = {
     {"s_end",   true,  false}, {"t_peak",  true,  false}, {"t_end",  true,  false},
     {"qrs",     false, true},  {"qt",      false, true},
 };
-inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_p50","ppg_peak","ppg_dicrotic","ppg_peak2","ppg_end" };
+inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_p50","ppg_peak","ppg_dicrotic","ppg_peak2","ppg_p80","ppg_end" };
 inline constexpr const char* abpCols[] = { "abp_onset","abp_peak","abp_dicrotic","abp_peak2","abp_end" };
 inline constexpr const char* artCols[] = { "art_onset","art_peak","art_dicrotic","art_peak2","art_end" };
 inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak","art_pulm_dicrotic","art_pulm_peak2","art_pulm_end" };
@@ -442,6 +445,21 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     for (const char* n : artCols)     emitPulsePointHeader(n);
     f << ",art_pulm_issue";
     for (const char* n : artPulmCols) emitPulsePointHeader(n);
+    // Computed glyph positions (derived from the USER markers).
+    auto emitGlyphHeader = [&](const char* name) {
+        f << ',' << name << "_x_ms" << ',' << name << "_y_mv_raw";
+        };
+    for (int c = 1; c <= 3; ++c) {
+        char b[64];
+        for (const char* g : { "p_wave_glyph", "q_onset_glyph", "r_wave_glyph",
+                               "s_end_glyph", "t_peak_glyph" }) {
+            std::snprintf(b, sizeof b, "%s_ch%d", g, c);
+            emitGlyphHeader(b);
+        }
+    }
+    for (const char* g : { "ppg_foot_glyph", "ppg_p1_glyph",
+                           "ppg_dic_glyph", "ppg_p2_glyph" })
+        emitGlyphHeader(g);
     f << '\n';
 
     // ---- row loop ----------------------------------------------------------
@@ -563,6 +581,8 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             b.ppg_onset_auto, b.ppg_onset, refPpg);
         emitPulsePoint(b.ppgTemplate, b.ppg_peak2_auto, b.ppg_peak2,
             b.ppg_onset_auto, b.ppg_onset, refPpg);
+        emitPulsePoint(b.ppgTemplate, b.ppg_tac80_auto, b.ppg_tac80,
+            b.ppg_onset_auto, b.ppg_onset, refPpg);
         emitPulsePoint(b.ppgTemplate, b.ppg_end_auto, b.ppg_end,
             b.ppg_onset_auto, b.ppg_onset, refPpg);
 
@@ -601,6 +621,31 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
         emitPulsePoint(b.artPulmTemplate, b.art_pulm_end_auto, b.art_pulm_end,
             b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
+
+        // ---- Computed glyph positions (from the USER markers) -------------
+        auto emitGlyphPt = [&](const std::vector<double>& sig, int idx) {
+            f << ',';   if (idx >= 0) f << (idx * toMs);
+            f << ',';   if (idx >= 0 && idx < (int)sig.size() && !std::isnan(sig[idx])) f << sig[idx];
+            };
+        for (int c = 0; c < 3; ++c) {
+            const auto& ecg = chs[c]->ecgTemplate_raw;
+            const FeatureMarks::EcgGlyphs gl = FeatureMarks::compute_ecg_glyphs(
+                ecg, b.p_peak_ch[c], b.q_begin_ch[c], b.s_end_ch[c],
+                b.t_peak_ch[c], b.t_end_ch[c], sampleRateHz);
+            emitGlyphPt(ecg, gl.p_wave);
+            emitGlyphPt(ecg, gl.q_onset);
+            emitGlyphPt(ecg, gl.r_wave);
+            emitGlyphPt(ecg, gl.s_end);
+            emitGlyphPt(ecg, gl.t_peak);
+        }
+        {
+            const FeatureMarks::PpgGlyphs pgl = FeatureMarks::compute_ppg_glyphs(
+                b.ppgTemplate, b.ppg_onset, b.ppg_dicrotic, b.ppg_peak2);
+            emitGlyphPt(b.ppgTemplate, pgl.foot);
+            emitGlyphPt(b.ppgTemplate, pgl.p1);
+            emitGlyphPt(b.ppgTemplate, pgl.dic);
+            emitGlyphPt(b.ppgTemplate, pgl.p2);
+        }
         f << '\n';
     }
 }
@@ -634,6 +679,7 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
     const bool has_arterial = (version >= 2);
     const bool has_p50 = (version >= 3);
     const bool has_ecg_peaks = (version >= 4);   // v4: six groups (peaks), not five
+    const bool has_tac80 = (version >= 5);   // v5: ppg_tac80 (P80)
 
     std::vector<TemplateBin> bins(n);
     for (uint64_t i = 0; i < n; ++i) {
@@ -673,6 +719,7 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         b.ppg_dicrotic = r32();
         b.ppg_peak2 = r32();
         b.ppg_end = r32();
+        if (has_tac80) b.ppg_tac80 = r32();
 
         if (has_arterial) {
             b.abp_issue = r8();

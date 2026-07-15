@@ -51,14 +51,26 @@ public:
     static int compute_s_peak(const std::vector<double>& ecg,
         int r_peak, int s_end);
 
-    // Whole-beat reactive bundles for the GUI's glyph overlay.
+    // Whole-beat reactive bundle for the GUI's glyph overlay. Each field is
+    // auto-computed but tracks the user's movable markers live (see the
+    // compute_* functions below).
     struct EcgGlyphs {
-        int p_peak = -1, q_begin = -1, q_peak = -1, r_peak = -1;
-        int s_peak = -1, s_end = -1, t_peak = -1, t_end = -1;
+        int p_wave = -1;    // max within +/-0.05s of user P peak
+        int q_onset = -1;   // cubic-fit knee within +/-0.05s of user Q begin
+        int r_wave = -1;    // argmax|v-baseline| over [q_begin, s_end]
+        int s_end = -1;     // recovery dropoff/knee within +/-0.05s of user S end
+        int t_peak = -1;    // max value between user T begin and T end
     };
     static EcgGlyphs compute_ecg_glyphs(const std::vector<double>& ecg,
-        int p_peak, int q_begin, int r_peak,
-        int s_end, int t_peak, int t_end);
+        int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs);
+
+    // Individual reactive computes (all track user markers live).
+    static int compute_p_wave(const std::vector<double>& ecg, int pUser, double fs);
+    static int compute_t_wave(const std::vector<double>& ecg, int tBegin, int tEnd);
+    static int compute_r_wave(const std::vector<double>& ecg, int qBegin, int sEnd);
+    static int compute_s_end(const std::vector<double>& ecg, int sUser, double fs);
+    static int compute_q_onset(const std::vector<double>& ecg, int qUser, double fs);
+    static int compute_t_end(const std::vector<double>& ecg, int tEndUser, double fs);
 
     struct PpgGlyphs {
         int foot = -1;
@@ -70,7 +82,7 @@ public:
         bool notch_found = false;
     };
     static PpgGlyphs compute_ppg_glyphs(
-        const std::vector<double>& ppg, int foot);
+        const std::vector<double>& ppg, int foot, int dic, int peak2);
 
     // =================================================================
     // Movable (auto-detected seeds)
@@ -80,11 +92,13 @@ public:
     static int detect_p_peak(const std::vector<double>& ecg_signal);
     static int detect_q_begin(const std::vector<double>& ecg_signal);
     static int detect_s_end(const std::vector<double>& ecg_signal);
+    static int detect_t_begin(const std::vector<double>& ecg_signal);
     static int detect_t_peak(const std::vector<double>& ecg_signal);
     static int detect_t_end(const std::vector<double>& ecg_signal);
 
     // PPG landmarks.
     static int detect_ppg_onset(const std::vector<double>& pulse);
+    static int detect_ppg_tac80(const std::vector<double>& pulse);
     static int detect_ppg_peak(const std::vector<double>& pulse);
     static int detect_ppg_dicrotic(const std::vector<double>& pulse);
     static int detect_ppg_end(const std::vector<double>& pulse);

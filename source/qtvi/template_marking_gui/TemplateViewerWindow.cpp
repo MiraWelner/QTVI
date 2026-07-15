@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <cstdio>
 
 // ========================================================================
 // Construction
@@ -362,7 +363,7 @@ void TemplateViewerWindow::showPage() {
                 b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
                 b.s_end_ch[c], b.t_peak_ch[c], b.t_end_ch[c],
                 b.ppg_onset, b.ppg_p50, b.ppg_peak,
-                b.ppg_dicrotic, b.ppg_peak2, b.ppg_end,
+                b.ppg_dicrotic, b.ppg_peak2, b.ppg_tac80, b.ppg_end,
                 rPeak,
                 static_cast<int>(nEcgBeats),
                 static_cast<int>(b.ppg_n_beats));
@@ -517,7 +518,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     // Pulse markers (PPG has 6 with p50, arterial has 5).
     static const char* PPG_MARKERS[] = {
         "ppg_onset", "ppg_p50", "ppg_peak",
-        "ppg_dicrotic", "ppg_peak2", "ppg_end"
+        "ppg_dicrotic", "ppg_peak2", "ppg_p80", "ppg_end"
     };
     static const char* ABP_MARKERS[] = {
         "abp_onset", "abp_peak", "abp_dicrotic", "abp_peak2", "abp_end"
@@ -539,6 +540,17 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     emitPulseHeaderGroup(ABP_MARKERS);
     emitPulseHeaderGroup(ART_MARKERS);
     emitPulseHeaderGroup(ARTP_MARKERS);
+    // Computed glyph locations (derived from the USER markers).
+    auto emitGlyphLocHeader = [&](const char* n) { f << ',' << n << "_glyph_location"; };
+    for (int gc = 1; gc <= 3; ++gc) {
+        char gb[64];
+        for (const char* g : { "p_wave", "q_onset", "r_wave", "s_end", "t_peak" }) {
+            std::snprintf(gb, sizeof gb, "%s_ch%d", g, gc);
+            emitGlyphLocHeader(gb);
+        }
+    }
+    for (const char* g : { "ppg_foot", "ppg_p1", "ppg_dic", "ppg_p2" })
+        emitGlyphLocHeader(g);
     f << '\n';
     f << std::setprecision(10);
 
@@ -643,10 +655,19 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         }
 
         // Pulse marker positions, order matching PPG_MARKERS / ABP_MARKERS etc.
-        const int ppgAuto[6] = { b.ppg_onset_auto, b.ppg_p50_auto, b.ppg_peak_auto,
-                                 b.ppg_dicrotic_auto, b.ppg_peak2_auto, b.ppg_end_auto };
-        const int ppgUser[6] = { b.ppg_onset, b.ppg_p50, b.ppg_peak,
-                                 b.ppg_dicrotic, b.ppg_peak2, b.ppg_end };
+        const int ppgAuto[7] = { b.ppg_onset_auto, b.ppg_p50_auto, b.ppg_peak_auto,
+                                 b.ppg_dicrotic_auto, b.ppg_peak2_auto, b.ppg_tac80_auto, b.ppg_end_auto };
+        const int ppgUser[7] = { b.ppg_onset, b.ppg_p50, b.ppg_peak,
+                                 b.ppg_dicrotic, b.ppg_peak2, b.ppg_tac80, b.ppg_end };
+        // Computed glyph indices (from USER markers).
+        const ChannelTemplateData* gchs[3] = { &b.ch1, &b.ch2, &b.ch3 };
+        FeatureMarks::EcgGlyphs egl[3];
+        for (int gc = 0; gc < 3; ++gc)
+            egl[gc] = FeatureMarks::compute_ecg_glyphs(
+                gchs[gc]->ecgTemplate_raw, b.p_peak_ch[gc], b.q_begin_ch[gc],
+                b.s_end_ch[gc], b.t_peak_ch[gc], b.t_end_ch[gc], m_sampleRate);
+        const FeatureMarks::PpgGlyphs pgl = FeatureMarks::compute_ppg_glyphs(
+            b.ppgTemplate, b.ppg_onset, b.ppg_dicrotic, b.ppg_peak2);
         const int abpAuto[5] = { b.abp_onset_auto, b.abp_peak_auto,
                                  b.abp_dicrotic_auto, b.abp_peak2_auto, b.abp_end_auto };
         const int abpUser[5] = { b.abp_onset, b.abp_peak,
@@ -710,10 +731,17 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
                 }
             }
             // PPG (6), ABP/ART/ART_PULM (5 each).
-            for (int k = 0; k < 6; ++k) { emitLoc(ppgAuto[k], row);  emitLoc(ppgUser[k], row); }
+            for (int k = 0; k < 7; ++k) { emitLoc(ppgAuto[k], row);  emitLoc(ppgUser[k], row); }
             for (int k = 0; k < 5; ++k) { emitLoc(abpAuto[k], row);  emitLoc(abpUser[k], row); }
             for (int k = 0; k < 5; ++k) { emitLoc(artAuto[k], row);  emitLoc(artUser[k], row); }
             for (int k = 0; k < 5; ++k) { emitLoc(artpAuto[k], row); emitLoc(artpUser[k], row); }
+            for (int gc = 0; gc < 3; ++gc) {
+                emitLoc(egl[gc].p_wave, row); emitLoc(egl[gc].q_onset, row);
+                emitLoc(egl[gc].r_wave, row); emitLoc(egl[gc].s_end, row);
+                emitLoc(egl[gc].t_peak, row);
+            }
+            emitLoc(pgl.foot, row); emitLoc(pgl.p1, row);
+            emitLoc(pgl.dic, row);  emitLoc(pgl.p2, row);
             f << '\n';
         }
     }
@@ -756,6 +784,7 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
             pw->setMarker(BinPlotWidget::PpgPeak, b.ppg_peak);
             pw->setMarker(BinPlotWidget::PpgDicrotic, b.ppg_dicrotic);
             pw->setMarker(BinPlotWidget::PpgPeak2, b.ppg_peak2);
+            pw->setMarker(BinPlotWidget::PpgP80, b.ppg_tac80);
             pw->setMarker(BinPlotWidget::PpgEnd, b.ppg_end);
             pw->setMarker(BinPlotWidget::AbpOnset, b.abp_onset);
             pw->setMarker(BinPlotWidget::AbpPeak, b.abp_peak);
@@ -772,6 +801,7 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
             pw->setMarker(BinPlotWidget::ArtPulmDicrotic, b.art_pulm_dicrotic);
             pw->setMarker(BinPlotWidget::ArtPulmPeak2, b.art_pulm_peak2);
             pw->setMarker(BinPlotWidget::ArtPulmEnd, b.art_pulm_end);
+            pw->refreshGlyphs();   // one recapture per widget, after all markers set
         }
         break;
     }
@@ -785,39 +815,44 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
 
     if (BinPlotWidget::markerIsEcg(marker)) {
         if (leadIdx < 0 || leadIdx > 2) return;
-        switch (marker) {
-        case BinPlotWidget::EcgPPeak:  b.p_peak_ch[leadIdx] = newIdx; break;
-        case BinPlotWidget::EcgQBegin: b.q_begin_ch[leadIdx] = newIdx; break;
-        case BinPlotWidget::EcgRPeak:  b.r_peak_ch[leadIdx] = newIdx; break;
-        case BinPlotWidget::EcgSEnd:   b.s_end_ch[leadIdx] = newIdx; break;
-        case BinPlotWidget::EcgTPeak:  b.t_peak_ch[leadIdx] = newIdx; break;
-        case BinPlotWidget::EcgTEnd:   b.t_end_ch[leadIdx] = newIdx; break;
-        }
+        auto ecgGet = [&](TemplateBin& tb) -> int {
+            switch (marker) {
+            case BinPlotWidget::EcgPPeak:  return tb.p_peak_ch[leadIdx];
+            case BinPlotWidget::EcgQBegin: return tb.q_begin_ch[leadIdx];
+            case BinPlotWidget::EcgRPeak:  return tb.r_peak_ch[leadIdx];
+            case BinPlotWidget::EcgSEnd:   return tb.s_end_ch[leadIdx];
+            case BinPlotWidget::EcgTPeak:  return tb.t_peak_ch[leadIdx];
+            case BinPlotWidget::EcgTEnd:   return tb.t_end_ch[leadIdx];
+            }
+            return -1;
+            };
+        auto ecgSet = [&](TemplateBin& tb, int v) {
+            switch (marker) {
+            case BinPlotWidget::EcgPPeak:  tb.p_peak_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgQBegin: tb.q_begin_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgRPeak:  tb.r_peak_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgSEnd:   tb.s_end_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgTPeak:  tb.t_peak_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgTEnd:   tb.t_end_ch[leadIdx] = v; break;
+            }
+            };
 
-        if (m_moveSubsequent) {
+        const int oldIdx = ecgGet(b);
+        ecgSet(b, newIdx);
+        const int delta = newIdx - oldIdx;
+
+        if (m_moveSubsequent && oldIdx >= 0) {
+            // Shift subsequent bins by the SAME AMOUNT (not to the same time).
             for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
-                // Skip bins where this channel has no ECG or is flagged bad.
                 ChannelTemplateData* chs[3] = {
                     &m_bins[i].ch1, &m_bins[i].ch2, &m_bins[i].ch3
                 };
                 if (chs[leadIdx]->ecgTemplate_raw.empty()) continue;
                 if (m_bins[i].bad_r_ch[leadIdx]) continue;
-                if (newIdx >= (int)chs[leadIdx]->ecgTemplate_raw.size()) continue;
-
-                switch (marker) {
-                case BinPlotWidget::EcgPPeak:
-                    m_bins[i].p_peak_ch[leadIdx] = newIdx; break;
-                case BinPlotWidget::EcgQBegin:
-                    m_bins[i].q_begin_ch[leadIdx] = newIdx; break;
-                case BinPlotWidget::EcgRPeak:
-                    m_bins[i].r_peak_ch[leadIdx] = newIdx; break;
-                case BinPlotWidget::EcgSEnd:
-                    m_bins[i].s_end_ch[leadIdx] = newIdx; break;
-                case BinPlotWidget::EcgTPeak:
-                    m_bins[i].t_peak_ch[leadIdx] = newIdx; break;
-                case BinPlotWidget::EcgTEnd:
-                    m_bins[i].t_end_ch[leadIdx] = newIdx; break;
-                }
+                const int cur = ecgGet(m_bins[i]);
+                if (cur < 0) continue;
+                const int n = (int)chs[leadIdx]->ecgTemplate_raw.size();
+                ecgSet(m_bins[i], std::clamp(cur + delta, 0, n - 1));
             }
             // Push updated markers to any subsequent bins on screen.
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
@@ -829,29 +864,42 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
     }
 
     if (BinPlotWidget::markerIsPpg(marker)) {
-        switch (marker) {
-        case BinPlotWidget::PpgOnset:    b.ppg_onset = newIdx; break;
-        case BinPlotWidget::PpgP50:      b.ppg_p50 = newIdx; break;
-        case BinPlotWidget::PpgPeak:     b.ppg_peak = newIdx; break;
-        case BinPlotWidget::PpgDicrotic: b.ppg_dicrotic = newIdx; break;
-        case BinPlotWidget::PpgPeak2:       b.ppg_peak2 = newIdx; break;
-        case BinPlotWidget::PpgEnd:      b.ppg_end = newIdx; break;
-        }
-        refreshBinMarkers(binIdx);
+        auto ppgGet = [&](TemplateBin& tb) -> int {
+            switch (marker) {
+            case BinPlotWidget::PpgOnset:    return tb.ppg_onset;
+            case BinPlotWidget::PpgP50:      return tb.ppg_p50;
+            case BinPlotWidget::PpgPeak:     return tb.ppg_peak;
+            case BinPlotWidget::PpgDicrotic: return tb.ppg_dicrotic;
+            case BinPlotWidget::PpgPeak2:    return tb.ppg_peak2;
+            case BinPlotWidget::PpgP80:      return tb.ppg_tac80;
+            case BinPlotWidget::PpgEnd:      return tb.ppg_end;
+            }
+            return -1;
+            };
+        auto ppgSet = [&](TemplateBin& tb, int v) {
+            switch (marker) {
+            case BinPlotWidget::PpgOnset:    tb.ppg_onset = v; break;
+            case BinPlotWidget::PpgP50:      tb.ppg_p50 = v; break;
+            case BinPlotWidget::PpgPeak:     tb.ppg_peak = v; break;
+            case BinPlotWidget::PpgDicrotic: tb.ppg_dicrotic = v; break;
+            case BinPlotWidget::PpgPeak2:    tb.ppg_peak2 = v; break;
+            case BinPlotWidget::PpgP80:      tb.ppg_tac80 = v; break;
+            case BinPlotWidget::PpgEnd:      tb.ppg_end = v; break;
+            }
+            };
 
-        if (m_moveSubsequent) {
+        const int oldIdx = ppgGet(b);
+        ppgSet(b, newIdx);
+        refreshBinMarkers(binIdx);
+        const int delta = newIdx - oldIdx;
+
+        if (m_moveSubsequent && oldIdx >= 0) {
             for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
                 if (m_bins[i].ppg_issue != 0) continue;
-                if (newIdx >= (int)m_bins[i].ppgTemplate.size()) continue;
-
-                switch (marker) {
-                case BinPlotWidget::PpgOnset:    m_bins[i].ppg_onset = newIdx; break;
-                case BinPlotWidget::PpgP50:      m_bins[i].ppg_p50 = newIdx; break;
-                case BinPlotWidget::PpgPeak:     m_bins[i].ppg_peak = newIdx; break;
-                case BinPlotWidget::PpgDicrotic: m_bins[i].ppg_dicrotic = newIdx; break;
-                case BinPlotWidget::PpgPeak2:       m_bins[i].ppg_peak2 = newIdx; break;
-                case BinPlotWidget::PpgEnd:      m_bins[i].ppg_end = newIdx; break;
-                }
+                const int cur = ppgGet(m_bins[i]);
+                if (cur < 0) continue;
+                const int n = (int)m_bins[i].ppgTemplate.size();
+                ppgSet(m_bins[i], std::clamp(cur + delta, 0, n - 1));
             }
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
                 int gi = m_pageGlobalIdx[li];
@@ -887,7 +935,26 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             case BinPlotWidget::ArtPulmEnd:      tb.art_pulm_end = val; break;
             }
             };
-        // Which trace + issue this marker's channel uses (for bounds/skip).
+        auto artGet = [&](TemplateBin& tb, int mk) -> int {
+            switch (mk) {
+            case BinPlotWidget::AbpOnset:    return tb.abp_onset;
+            case BinPlotWidget::AbpPeak:     return tb.abp_peak;
+            case BinPlotWidget::AbpDicrotic: return tb.abp_dicrotic;
+            case BinPlotWidget::AbpPeak2:    return tb.abp_peak2;
+            case BinPlotWidget::AbpEnd:      return tb.abp_end;
+            case BinPlotWidget::ArtOnset:    return tb.art_onset;
+            case BinPlotWidget::ArtPeak:     return tb.art_peak;
+            case BinPlotWidget::ArtDicrotic: return tb.art_dicrotic;
+            case BinPlotWidget::ArtPeak2:    return tb.art_peak2;
+            case BinPlotWidget::ArtEnd:      return tb.art_end;
+            case BinPlotWidget::ArtPulmOnset:    return tb.art_pulm_onset;
+            case BinPlotWidget::ArtPulmPeak:     return tb.art_pulm_peak;
+            case BinPlotWidget::ArtPulmDicrotic: return tb.art_pulm_dicrotic;
+            case BinPlotWidget::ArtPulmPeak2:    return tb.art_pulm_peak2;
+            case BinPlotWidget::ArtPulmEnd:      return tb.art_pulm_end;
+            }
+            return -1;
+            };
         auto channelTrace = [&](TemplateBin& tb, int mk,
             const std::vector<double>*& tr, uint8_t*& iss) {
                 if (BinPlotWidget::markerIsAbp(mk)) { tr = &tb.abpTemplate; iss = &tb.abp_issue; }
@@ -895,16 +962,20 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 else { tr = &tb.artPulmTemplate; iss = &tb.art_pulm_issue; }
             };
 
+        const int oldIdx = artGet(b, marker);
         assign(b, marker, newIdx);
         refreshBinMarkers(binIdx);
+        const int delta = newIdx - oldIdx;
 
-        if (m_moveSubsequent) {
+        if (m_moveSubsequent && oldIdx >= 0) {
             for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
                 const std::vector<double>* tr = nullptr; uint8_t* iss = nullptr;
                 channelTrace(m_bins[i], marker, tr, iss);
                 if (!iss || *iss != 0) continue;           // absent/bad channel
-                if (!tr || newIdx >= (int)tr->size()) continue;
-                assign(m_bins[i], marker, newIdx);
+                if (!tr) continue;
+                const int cur = artGet(m_bins[i], marker);
+                if (cur < 0) continue;
+                assign(m_bins[i], marker, std::clamp(cur + delta, 0, (int)tr->size() - 1));
             }
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
                 int gi = m_pageGlobalIdx[li];

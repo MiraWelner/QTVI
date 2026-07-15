@@ -78,6 +78,7 @@ namespace {
     constexpr QColor kColorPpgPeak{ 180,   0,   0 };  // red
     constexpr QColor kColorPpgDicrotic{ 220,  50,  50 };  // medium red
     constexpr QColor kColorPpgPeak2{ 235, 100, 100 };  // light red (2nd/diastolic peak)
+    constexpr QColor kColorPpgP80{ 210,  30,  70 };  // pink-red (80% upslope)
     constexpr QColor kColorPpgEnd{ 200,  60,  90 };  // dark pink-red
 
     // Arterial markers (ABP green, ART purple, ART_PULM orange),
@@ -102,6 +103,7 @@ namespace {
         case BinPlotWidget::PpgPeak:     return kColorPpgPeak;
         case BinPlotWidget::PpgDicrotic: return kColorPpgDicrotic;
         case BinPlotWidget::PpgPeak2:    return kColorPpgPeak2;
+        case BinPlotWidget::PpgP80:      return kColorPpgP80;
         case BinPlotWidget::PpgEnd:      return kColorPpgEnd;
         }
         if (BinPlotWidget::markerIsAbp(m))     return kColorAbp[m - BinPlotWidget::AbpOnset];
@@ -115,13 +117,14 @@ namespace {
         case BinPlotWidget::EcgQBegin:   return "Q beg";
         case BinPlotWidget::EcgRPeak:    return "R peak";
         case BinPlotWidget::EcgSEnd:     return "S end";
-        case BinPlotWidget::EcgTPeak:    return "T peak";
+        case BinPlotWidget::EcgTPeak:    return "T begin";
         case BinPlotWidget::EcgTEnd:     return "T end";
         case BinPlotWidget::PpgOnset:    return "PPG On";
         case BinPlotWidget::PpgP50:      return "PPG 50%";
         case BinPlotWidget::PpgPeak:     return "PPG Peak";
         case BinPlotWidget::PpgDicrotic: return "DN";
         case BinPlotWidget::PpgPeak2:    return "PPG Peak2";
+        case BinPlotWidget::PpgP80:      return "P80";
         case BinPlotWidget::PpgEnd:      return "PPG End";
         case BinPlotWidget::AbpOnset: return "aBP On";  case BinPlotWidget::AbpPeak: return "aBP Pk";
         case BinPlotWidget::AbpDicrotic: return "aBP DN"; case BinPlotWidget::AbpPeak2: return "aBP Pk2";
@@ -136,7 +139,7 @@ namespace {
         return "?";
     }
 
-    void computeVisibleRange(const std::vector<double>& v, const std::vector<double>& /*sd*/, int visN, double& lo, double& hi){
+    void computeVisibleRange(const std::vector<double>& v, const std::vector<double>& /*sd*/, int visN, double& lo, double& hi) {
         /* Compute the visible range of the average template plot, ignoring the std band. 5% padding is added to accout for x marks
         */
         const int n = std::min(visN, static_cast<int>(v.size()));
@@ -236,7 +239,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     const std::vector<double>& ecgStd,
     int pPeak, int qBegin, int rPeak, int sEnd, int tPeak, int tEnd,
     int ppgOnset, int ppgP50, int ppgPeak,
-    int ppgDicrotic, int ppgPeak2, int ppgEnd,
+    int ppgDicrotic, int ppgPeak2, int ppgP80, int ppgEnd,
     double rPeakSample,
     int nEcgBeats,
     int nPpgBeats)
@@ -258,6 +261,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_markers[PpgPeak] = ppgPeak;
     m_markers[PpgDicrotic] = ppgDicrotic;
     m_markers[PpgPeak2] = ppgPeak2;
+    m_markers[PpgP80] = ppgP80;
     m_markers[PpgEnd] = ppgEnd;
     m_rPeakSample = rPeakSample;
     // Under Patch B, PPG (and all arterial channels) share the ECG's real-
@@ -466,6 +470,8 @@ int BinPlotWidget::markerAtX(double x) const {
     for (int m = 0; m < MarkerCount; ++m) {
         int idx = m_markers[m];
         if (idx < 0) continue;
+        if (m == EcgRPeak) continue;   // R is auto-only: no draggable bar
+        if (m == PpgPeak) continue;    // systolic peak is auto-only (shown as X)
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;
@@ -714,6 +720,8 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     for (int m = 0; m < MarkerCount; ++m) {
         int idx = m_markers[m];
         if (idx < 0) continue;
+        if (m == EcgRPeak) continue;   // R is auto-only: no draggable bar
+        if (m == PpgPeak) continue;    // systolic peak is auto-only (shown as X)
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;
@@ -723,6 +731,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         if (idx >= visN) continue;
         double mx = xFromSample(idx, isEcg);
         QPen pen(markerColor(m), 2);
+        pen.setStyle(markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine);
         p.setPen(pen);
         p.drawLine(QPointF(mx, margin_top), QPointF(mx, h - margin_bottom));
         p.drawText(QPointF(mx + 2, margin_top + 8), markerShortLabel(m));
@@ -797,6 +806,7 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     s = std::clamp(s, 0, std::max(0, visN - 1));
     m_markers[m_dragMarker] = s;
     emit markerMoved(m_binIndex, m_leadIndex, m_dragMarker, s);
+    captureGlyphSnapshot();   // recompute reactive glyphs so X's track live
     update();
 }
 
@@ -825,27 +835,29 @@ void BinPlotWidget::captureGlyphSnapshot() {
 
     if ((int)m_ecg.size() >= 3) {
         auto e = FeatureMarks::compute_ecg_glyphs(m_ecg,
-            m_markers[EcgPPeak], m_markers[EcgQBegin], m_markers[EcgRPeak],
-            m_markers[EcgSEnd], m_markers[EcgTPeak], m_markers[EcgTEnd]);
-        m_glyphs.ecgPPeak = e.p_peak;
-        m_glyphs.ecgQ = e.q_begin;
-        m_glyphs.ecgQPeak = e.q_peak;
-        m_glyphs.ecgRPeak = e.r_peak;
-        m_glyphs.ecgSPeak = e.s_peak;
+            m_markers[EcgPPeak], m_markers[EcgQBegin],
+            m_markers[EcgSEnd], m_markers[EcgTPeak] /*= T begin*/, m_markers[EcgTEnd],
+            m_sampleRate);
+        m_glyphs.ecgPPeak = e.p_wave;
+        m_glyphs.ecgQ = e.q_onset;
+        m_glyphs.ecgRPeak = e.r_wave;
         m_glyphs.ecgS = e.s_end;
-        m_glyphs.ecgTPeak = e.t_peak;
-        m_glyphs.ecgTend = e.t_end;
+        m_glyphs.ecgTPeak = e.t_peak;   // computed T peak (max between T begin/end)
+        m_glyphs.ecgTend = -1;          // T end is a user bar, not a computed X
+        m_glyphs.ecgQPeak = -1;
+        m_glyphs.ecgSPeak = -1;
     }
 
     if (m_hasPPG && (int)m_ppg.size() >= 3) {
-        auto pg = FeatureMarks::compute_ppg_glyphs(m_ppg, m_markers[PpgOnset]);
+        auto pg = FeatureMarks::compute_ppg_glyphs(
+            m_ppg, m_markers[PpgOnset], m_markers[PpgDicrotic], m_markers[PpgPeak2]);
         m_glyphs.ppgFoot = pg.foot;
         m_glyphs.ppgP1 = pg.p1;    m_glyphs.ppgP1OFallback = pg.p1_fallback;
         m_glyphs.ppgP50 = pg.p50;   m_glyphs.ppgP50OFallback = pg.p50_fallback;
         m_glyphs.ppgDic = pg.dic;
         m_glyphs.ppgNoNotchO = pg.dic_fallback;
         m_glyphs.ppgP2 = pg.p2;    m_glyphs.ppgP2OFallback = pg.p2_fallback;
-        m_glyphs.ppgEnd = pg.end;
+        m_glyphs.ppgEnd = -1;       // End has a bar, no computed X
         m_glyphs.ppgNotch = pg.notch_found;
     }
 
@@ -884,14 +896,11 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             const double val = std::isnan(v[idx]) ? baseline : v[idx];
             glyph(xFromSample(idx, /*isEcg=*/true), plotY(val, yLo, yHi));
             };
-        g(m_glyphs.ecgPPeak);
-        g(m_glyphs.ecgQ);
-        g(m_glyphs.ecgQPeak);
-        g(m_glyphs.ecgRPeak);
-        g(m_glyphs.ecgSPeak);
-        g(m_glyphs.ecgS);
-        g(m_glyphs.ecgTPeak);
-        g(m_glyphs.ecgTend);
+        g(m_glyphs.ecgPPeak);   // P wave
+        g(m_glyphs.ecgQ);       // Q onset
+        g(m_glyphs.ecgRPeak);   // R wave
+        g(m_glyphs.ecgS);       // S end
+        g(m_glyphs.ecgTPeak);   // T peak (between T begin/end)
     }
 
     if (m_showPpgTrace && m_hasPPG && (int)m_ppg.size() >= 3) {
@@ -912,14 +921,11 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             p.drawEllipse(QPointF(x, y), 4.0, 4.0);
             };
         g(m_glyphs.ppgFoot);
-        if (m_glyphs.ppgP50 >= 0) g(m_glyphs.ppgP50);
-        else                      circ(m_glyphs.ppgP50OFallback);
         if (m_glyphs.ppgP1 >= 0)  g(m_glyphs.ppgP1);
         else                      circ(m_glyphs.ppgP1OFallback);
         if (m_glyphs.ppgNotch)    g(m_glyphs.ppgDic);
         else                      circ(m_glyphs.ppgNoNotchO);
         if (m_glyphs.ppgP2 >= 0)  g(m_glyphs.ppgP2);
         else                      circ(m_glyphs.ppgP2OFallback);
-        g(m_glyphs.ppgEnd);
     }
 }

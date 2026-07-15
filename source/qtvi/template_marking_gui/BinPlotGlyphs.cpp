@@ -35,18 +35,22 @@ void BinPlotWidget::captureGlyphSnapshot() {
         };
 
     // ---- ECG landmarks ---------------------------------------------------
-    // All six ECG landmarks are movable markers. Their glyphs are just X's
-    // at the current marker position; no computation, no O fallbacks. If a
-    // marker slot is unset (-1) it draws nothing.
+    // Six reactive X glyphs, auto-computed but tracking the movable markers
+    // live: P wave, Q onset, R wave, S end, T peak, T end. Q-peak / S-peak
+    // are no longer part of the set.
     if ((int)m_ecg.size() >= 3) {
-        m_glyphs.ecgPPeak = m_markers[EcgPPeak];
-        m_glyphs.ecgQ = m_markers[EcgQBegin];
-        m_glyphs.ecgRPeak = m_markers[EcgRPeak];
-        m_glyphs.ecgS = m_markers[EcgSEnd];
-        m_glyphs.ecgTPeak = m_markers[EcgTPeak];
-        m_glyphs.ecgTend = m_markers[EcgTEnd];
-        m_glyphs.ecgQPeak = FeatureMarks::compute_q_peak(m_ecg,  m_markers[EcgQBegin], m_markers[EcgRPeak]);
-        m_glyphs.ecgSPeak = FeatureMarks::compute_s_peak(m_ecg, m_markers[EcgRPeak], m_markers[EcgSEnd]);
+        auto e = FeatureMarks::compute_ecg_glyphs(m_ecg,
+            m_markers[EcgPPeak], m_markers[EcgQBegin],
+            m_markers[EcgSEnd], m_markers[EcgTPeak], m_markers[EcgTEnd],
+            m_sampleRate);
+        m_glyphs.ecgPPeak = e.p_wave;
+        m_glyphs.ecgQ = e.q_onset;
+        m_glyphs.ecgRPeak = e.r_wave;
+        m_glyphs.ecgS = e.s_end;
+        m_glyphs.ecgTPeak = e.t_peak;
+        m_glyphs.ecgTend = e.t_end;
+        m_glyphs.ecgQPeak = -1;   // dropped from the reactive set
+        m_glyphs.ecgSPeak = -1;
     }
 
     // ---- PPG landmarks ---------------------------------------------------
@@ -207,15 +211,13 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             const double val = std::isnan(v[idx]) ? baseline : v[idx];
             glyph(xFromSample(idx, /*isEcg=*/true), plotY(val, yLo, yHi));
             };
-        // Six ECG X glyphs, all straight from the movable markers.
-        g(m_glyphs.ecgPPeak);
-        g(m_glyphs.ecgQ);
-        g(m_glyphs.ecgQPeak);
-        g(m_glyphs.ecgRPeak);
-        g(m_glyphs.ecgSPeak);
-        g(m_glyphs.ecgS);
-        g(m_glyphs.ecgTPeak);
-        g(m_glyphs.ecgTend);
+        // Six ECG X glyphs, from the reactive computes.
+        g(m_glyphs.ecgPPeak);   // P wave
+        g(m_glyphs.ecgQ);       // Q onset
+        g(m_glyphs.ecgRPeak);   // R wave
+        g(m_glyphs.ecgS);       // S end
+        g(m_glyphs.ecgTPeak);   // T peak
+        g(m_glyphs.ecgTend);    // T end
     }
 
     if (m_showPpgTrace && m_hasPPG && (int)m_ppg.size() >= 3) {

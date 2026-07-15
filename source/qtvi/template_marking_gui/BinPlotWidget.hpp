@@ -61,13 +61,14 @@ public:
         PpgPeak = 8,
         PpgDicrotic = 9,
         PpgPeak2 = 10,
-        PpgEnd = 11,
+        PpgP80 = 11,
+        PpgEnd = 12,
         // --- Arterial markers ---
-        AbpOnset = 12, AbpPeak = 13, AbpDicrotic = 14, AbpPeak2 = 15, AbpEnd = 16,
-        ArtOnset = 17, ArtPeak = 18, ArtDicrotic = 19, ArtPeak2 = 20, ArtEnd = 21,
-        ArtPulmOnset = 22, ArtPulmPeak = 23, ArtPulmDicrotic = 24,
-        ArtPulmPeak2 = 25, ArtPulmEnd = 26,
-        MarkerCount = 27
+        AbpOnset = 13, AbpPeak = 14, AbpDicrotic = 15, AbpPeak2 = 16, AbpEnd = 17,
+        ArtOnset = 18, ArtPeak = 19, ArtDicrotic = 20, ArtPeak2 = 21, ArtEnd = 22,
+        ArtPulmOnset = 23, ArtPulmPeak = 24, ArtPulmDicrotic = 25,
+        ArtPulmPeak2 = 26, ArtPulmEnd = 27,
+        MarkerCount = 28
     };
 
     static bool markerIsEcg(int m) { return m >= EcgPPeak && m <= EcgTEnd; }
@@ -77,6 +78,13 @@ public:
     static bool markerIsArtPulm(int m) { return m >= ArtPulmOnset && m <= ArtPulmEnd; }
     // Any arterial marker (ABP/ART/ART_PULM) rides the PPG x-geometry.
     static bool markerIsArterial(int m) { return m >= AbpOnset && m <= ArtPulmEnd; }
+
+    // "Begin"/onset markers are drawn dashed; everything else (incl. "end")
+    // solid.
+    static bool markerIsBegin(int m) {
+        return m == EcgQBegin || m == EcgTPeak /* T begin */
+            || m == PpgOnset || m == AbpOnset || m == ArtOnset || m == ArtPulmOnset;
+    }
     double m_rPeakSample = 0.0;   // R-peak sample index within the ECG template
     double m_sampleRate = 0.0;   // Hz; 0 => label x-axis in samples
     // (m_ppgDelay / m_ppgFootIdx retired in Patch C: every channel is
@@ -125,7 +133,7 @@ public:
         const std::vector<double>& ecgStd,
         int pPeak, int qBegin, int rPeak, int sEnd, int tPeak, int tEnd,
         int ppgOnset, int ppgP50, int ppgPeak,
-        int ppgDicrotic, int ppgPeak2, int ppgEnd,
+        int ppgDicrotic, int ppgPeak2, int ppgP80, int ppgEnd,
         double rPeakSample,
         int nEcgBeats = 0,
         int nPpgBeats = 0);
@@ -141,6 +149,11 @@ public:
 
     void setMarker(Marker m, int idx);
     int  marker(Marker m) const { return m_markers[m]; }
+
+    // Recompute the reactive feature glyphs from the current markers and
+    // repaint. Call once after programmatically setting markers (e.g. from
+    // refreshBinMarkers) so the X glyphs track the markers live.
+    void refreshGlyphs() { captureGlyphSnapshot(); update(); }
 
     // Per-trace marker visibility. When false, that group's markers
     // are neither drawn nor hit-testable (drag-pick ignores them).
@@ -237,7 +250,7 @@ private:
     // more entries to the enum. All marker slots start hidden (-1).
     int m_markers[MarkerCount] = {
         -1, -1, -1, -1, -1, -1,   // ECG (6: p_peak, q_begin, r_peak, s_end, t_peak, t_end)
-        -1, -1, -1, -1, -1, -1,   // PPG (6)
+        -1, -1, -1, -1, -1, -1, -1,   // PPG (7: onset, p50, peak, dicrotic, peak2, p80, end)
         -1, -1, -1, -1, -1,       // ABP
         -1, -1, -1, -1, -1,       // ART
         -1, -1, -1, -1, -1        // ART_PULM
