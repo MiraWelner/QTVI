@@ -23,7 +23,6 @@
 #pragma once
 
 #include "TemplateTypes.hpp"
-#include "EnsembleTemplate.hpp"
 #include "template_marking_gui\alignment.hpp"
 #include <atomic>
 

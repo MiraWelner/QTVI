@@ -248,7 +248,7 @@ private:
         // (P peak, Q onset, R peak, S end, T peak, T end). Each draws an
         // X at its marker's position; no O fallbacks (a marker is always
         // set, or the field stays -1 and the draw is skipped).
-        int ecgPPeak = -1, ecgQ = -1, ecgRPeak = -1, ecgS = -1, ecgTPeak = -1, ecgTend = -1;
+        int ecgPPeak = -1, ecgQ = -1, ecgQPeak = -1, ecgRPeak = -1, ecgSPeak = -1, ecgS = -1, ecgTPeak = -1, ecgTend = -1;
         int ppgFoot = -1, ppgP50 = -1, ppgP1 = -1, ppgDic = -1, ppgP2 = -1, ppgEnd = -1;
         // Fallback midpoints for landmarks that can be "expected but not
         // found". X drawn at the real index; O drawn at the fallback.

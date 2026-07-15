@@ -24,8 +24,12 @@
 #include <utility>
 #include <fstream>
 #include <stdexcept>
+#include <algorithm> 
+#include <cstring>
 
 #include "template_generation\template_io.hpp"
+#include "template_marking_gui\feature_marks.hpp"
+
 
 // ---------------------------------------------------------------------------
 // In-memory model used by the viewer.
@@ -264,12 +268,7 @@ struct EcgFeatures {
     double qrs_ms = NAN, qt_ms = NAN;
 };
 
-// Compute derived ECG features from the six user-placed markers.
-// R peak, T peak, and P peak now come straight from the caller (they're
-// draggable). Q peak and S peak are computed as argmin/max inside the
-// QRS complex bounded by q_begin and s_end.
-inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg,
-    int p_peak, int q_begin, int r_peak, int s_end, int t_peak, int t_end, double rateHz)
+inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, int p_peak, int q_begin, int r_peak, int s_end, int t_peak, int t_end, double rateHz)
 {
     EcgFeatures f;
     const int N = static_cast<int>(ecg.size());
@@ -278,42 +277,11 @@ inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg,
 
     if (q_begin >= 0 && s_end >= q_begin) f.qrs_ms = (s_end - q_begin) * msPerSamp;
     if (q_begin >= 0 && t_end >= q_begin) f.qt_ms = (t_end - q_begin) * msPerSamp;
-    if (N == 0) return f;
 
-    // R peak straight from the user's marker.
     if (inRange(r_peak)) f.r_idx = r_peak;
-
-    // isoelectric baseline for polarity decision on Q/S trough-vs-peak.
-    double baseline = 0.0;
-    {
-        int hi = std::min(p_peak > 0 ? p_peak : q_begin, N);
-        if (hi > 0) {
-            std::vector<double> w(ecg.begin(), ecg.begin() + hi);
-            std::nth_element(w.begin(), w.begin() + w.size() / 2, w.end());
-            baseline = w[w.size() / 2];
-        }
-    }
-
-    // Q peak, S peak (computed inside QRS around R). Polarity = sign of
-    // R's deviation from baseline; up-going R => Q/S are troughs, and
-    // vice versa.
-    if (q_begin >= 0 && s_end > q_begin && inRange(q_begin) && inRange(s_end) && inRange(r_peak)) {
-        const bool up = (ecg[r_peak] - baseline) >= 0.0;
-
-        int q = q_begin;
-        for (int i = q_begin; i <= r_peak; ++i)
-            if (up ? ecg[i] < ecg[q] : ecg[i] > ecg[q]) q = i;
-        f.q_idx = q;
-
-        int s = r_peak;
-        for (int i = r_peak; i <= s_end; ++i)
-            if (up ? ecg[i] < ecg[s] : ecg[i] > ecg[s]) s = i;
-        f.s_idx = s;
-    }
-
-    // T peak straight from the user's marker.
     if (inRange(t_peak)) f.t_idx = t_peak;
-
+    f.q_idx = FeatureMarks::compute_q_peak(ecg, q_begin, r_peak);
+    f.s_idx = FeatureMarks::compute_s_peak(ecg, r_peak, s_end);
     return f;
 }
 
@@ -441,12 +409,13 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     static const char* ecgIntervalNames[] = { "qrs", "qt" };
 
     auto emitEcgPointHeader = [&](const char* name, int c) {
-        f << ',' << name << "_ch" << c << "_y_mv_normalized_autodetect"
-            << ',' << name << "_ch" << c << "_y_mv_normalized_user"
-            << ',' << name << "_ch" << c << "_y_mv_raw_autodetect"
-            << ',' << name << "_ch" << c << "_y_mv_raw_user"
-            << ',' << name << "_ch" << c << "_x_ms_autodetect"
-            << ',' << name << "_ch" << c << "_x_ms_user";
+        const bool userToo = (std::strcmp(name, "r_peak") != 0);
+        f << ',' << name << "_ch" << c << "_y_mv_normalized_autodetect";
+        if (userToo) f << ',' << name << "_ch" << c << "_y_mv_normalized_user";
+        f << ',' << name << "_ch" << c << "_y_mv_raw_autodetect";
+        if (userToo) f << ',' << name << "_ch" << c << "_y_mv_raw_user";
+        f << ',' << name << "_ch" << c << "_x_ms_autodetect";
+        if (userToo) f << ',' << name << "_ch" << c << "_x_ms_user";
         };
     auto emitIntervalHeader = [&](const char* name, int c) {
         f << ',' << name << "_ch" << c << "_ms_autodetect"
@@ -481,7 +450,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     // Emit one 6-column ECG point group: normalized (auto/user), raw
     // (auto/user), x_ms (auto/user). Any missing piece leaves that field blank.
     auto emitEcgPoint = [&](const std::vector<double>& ecg,
-        int idx_auto, int idx_user, double ref)
+        int idx_auto, int idx_user, double ref, bool userToo)
         {
             auto y_of = [&](int idx) -> double {
                 if (idx < 0 || idx >= (int)ecg.size()) return std::nan("");
@@ -492,18 +461,12 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             const double y_u = y_of(idx_user);
             const bool refOk = std::isfinite(ref) && ref != 0.0;
 
-            f << ',';   // normalized_autodetect
-            if (std::isfinite(y_a) && refOk) f << (y_a / ref);
-            f << ',';   // normalized_user
-            if (std::isfinite(y_u) && refOk) f << (y_u / ref);
-            f << ',';   // raw_autodetect
-            if (std::isfinite(y_a)) f << y_a;
-            f << ',';   // raw_user
-            if (std::isfinite(y_u)) f << y_u;
-            f << ',';   // x_ms_autodetect
-            if (idx_auto >= 0) f << (idx_auto * toMs);
-            f << ',';   // x_ms_user
-            if (idx_user >= 0) f << (idx_user * toMs);
+            f << ',';   if (std::isfinite(y_a) && refOk) f << (y_a / ref);
+            if (userToo) { f << ','; if (std::isfinite(y_u) && refOk) f << (y_u / ref); }
+            f << ',';   if (std::isfinite(y_a)) f << y_a;
+            if (userToo) { f << ','; if (std::isfinite(y_u)) f << y_u; }
+            f << ',';   if (idx_auto >= 0) f << (idx_auto * toMs);
+            if (userToo) { f << ','; if (idx_user >= 0) f << (idx_user * toMs); }
         };
 
     // Emit one 6-column pulse point group. footIdx_auto / footIdx_user are
@@ -580,8 +543,10 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 { b.t_peak_auto_ch[c],  b.t_peak_ch[c]  },
                 { b.t_end_auto_ch[c],   b.t_end_ch[c]   }
             };
-            for (const P& p : pts) emitEcgPoint(ecg, p.a, p.u, ref);
-
+            for (int k = 0; k < 8; ++k) {
+                const bool userToo = (k != 3);   // ecgPointNames[3] == "r_peak"
+                emitEcgPoint(ecg, pts[k].a, pts[k].u, ref, userToo);
+            }
             // Intervals: qrs, qt (order matches ecgIntervalNames).
             emitIntervalPair(ftAuto.qrs_ms, ftUser.qrs_ms);
             emitIntervalPair(ftAuto.qt_ms, ftUser.qt_ms);

@@ -111,16 +111,48 @@ void user_control_handler::save_current_csv() {
     const double t0 = m_gui->current_start_time;
     const double t1 = t0 + m_gui->visible_window_size;
 
-    // Build per-channel/view (t_ms, y_mv) sequences for the visible window.
+    // Build per-channel/view (t_ms, y_mv, r_peak) sequences for the visible
+    // window. r_peak is 1 at samples that coincide with a detected R peak
+    // for that channel, blank otherwise. Only ECG channels ever get 1s;
+    // non-ECG channels emit the column but every cell stays blank.
     struct Series {
         QString colName;
         std::vector<double> t_ms;
         std::vector<double> y_mv;
+        std::vector<int>    r_peak;   // 0 = not-a-peak, 1 = at an R peak
     };
     std::vector<Series> series;
 
     for (const QString& label : noise_marking_gui::markableChannelLabels()) {
         auto ref = m_gui->channelRefs(label);
+        const bool isEcg = label.startsWith("ECG");
+
+        // Peaks (only for ECG). Each element is (time_sec, amplitude).
+        QVector<QPointF> peaks;
+        if (isEcg) peaks = m_gui->display_peaks_in_window(label);
+        std::vector<double> peakT_ms;
+        peakT_ms.reserve(peaks.size());
+        for (const QPointF& p : peaks) peakT_ms.push_back(p.x() * 1000.0);
+
+        // Given a series' t_ms vector, set r_peak=1 at the nearest sample
+        // to each peak time (once per peak, no duplicates).
+        auto markPeaks = [&](Series& s) {
+            s.r_peak.assign(s.t_ms.size(), 0);
+            if (s.t_ms.empty() || peakT_ms.empty()) return;
+            for (double pt : peakT_ms) {
+                // Binary search for the first t_ms >= pt.
+                auto it = std::lower_bound(s.t_ms.begin(), s.t_ms.end(), pt);
+                int idx;
+                if (it == s.t_ms.begin())          idx = 0;
+                else if (it == s.t_ms.end())       idx = (int)s.t_ms.size() - 1;
+                else {
+                    const int j = (int)(it - s.t_ms.begin());
+                    idx = (std::abs(s.t_ms[j] - pt) < std::abs(s.t_ms[j - 1] - pt))
+                        ? j : (j - 1);
+                }
+                if (idx >= 0 && idx < (int)s.r_peak.size()) s.r_peak[idx] = 1;
+            }
+            };
 
         // Upsampled: index i -> t = i / sampleRate (seconds, chunk-local).
         if (ref.upsampled_data && ref.sampleRate > 0.0) {
@@ -136,6 +168,7 @@ void user_control_handler::save_current_csv() {
                 s.t_ms.push_back((static_cast<double>(i) / ref.sampleRate) * 1000.0);
                 s.y_mv.push_back(v[i]);
             }
+            markPeaks(s);
             series.push_back(std::move(s));
         }
 
@@ -150,15 +183,17 @@ void user_control_handler::save_current_csv() {
                 s.t_ms.push_back(tc * 1000.0);
                 s.y_mv.push_back(p.y());
             }
+            markPeaks(s);
             series.push_back(std::move(s));
         }
     }
 
-    // Header row: two columns per series, "<name>_t_ms" and "<name>_mv".
+    // Header row: three columns per series -- t_ms, mv, r_peak.
     for (size_t k = 0; k < series.size(); ++k) {
         if (k) f << ',';
         f << series[k].colName.toStdString() << "_t_ms,"
-            << series[k].colName.toStdString() << "_mv";
+            << series[k].colName.toStdString() << "_mv,"
+            << series[k].colName.toStdString() << "_r_peak";
     }
     f << '\n';
 
@@ -171,10 +206,11 @@ void user_control_handler::save_current_csv() {
             if (k) f << ',';
             const Series& s = series[k];
             if (row < s.t_ms.size()) {
-                f << s.t_ms[row] << ',' << s.y_mv[row];
+                f << s.t_ms[row] << ',' << s.y_mv[row] << ',';
+                if (s.r_peak[row]) f << '1';
             }
             else {
-                f << ',';   // blank t_ms, blank y_mv
+                f << ",,";   // blank t_ms, mv, r_peak
             }
         }
         f << '\n';

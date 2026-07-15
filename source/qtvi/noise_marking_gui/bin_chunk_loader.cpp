@@ -6,6 +6,7 @@
 
 #include "gui_handler.h"
 #include "chart_utils.hpp"
+#include "gui_handler.h"
 
 #include <QFile>
 #include <QFileDialog>
@@ -315,7 +316,6 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     handle_data_plot();
     setupHypnogram();
     updateAmpogramCursor();
-    restoreMarkingMarkers();
 
     uint64_t ecgPerChunk = static_cast<uint64_t>(seconds_in_memory_at_once * channel_upsampled_rates[CH_ECG1]);
     ui->prev8hours->setEnabled(chunkIndex > 0);

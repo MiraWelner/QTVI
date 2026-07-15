@@ -62,7 +62,7 @@ def process_file(path):
 
 def main():
     import os
-    base = r"D:\USERS\MiraWelner\QTVI\data\mesa_raw_files\bl_dmu"
+    base = r"D:\USERS\MiraWelner\QTVI\data\mesa_raw_files\bl_mi"
     ids = [
         folder.removesuffix("_EDF")
         for folder in os.listdir(base)

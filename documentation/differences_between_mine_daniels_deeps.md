@@ -12,14 +12,8 @@ This does not describe cosmetic differences in the GUI, just algorithmic differe
 
 - In Daniel's code, the templates are negative. You cannot see this because he doesn't display the y axis in his marking GUI. This is because of a bug (I think) where he shifts them, he accidentally shifts by the average peak, so the peaks are vertically aligned at -average peak. I removed this bug so they are aligned at the correct positive location (if average peak is positive - if for some reason it is negative then it'll be aligned at a negative y location)
 
-- In `EnsembleTemplate.cpp` there is the line: `if (segment_idxs.size() < 3) return {};`. If I were perfectly mimicking Daniel's code that would be a 2 rather than a 3. The idea being, after horizontal alignment, each beat gets a per‑sample deviation score vs the column mean/std:
-  
-  > 2.5·std at a sample → +1
-  > 3.0·std → +3
-  > 4.0·std → +9
-  
-  Daniel had it so that everything with a score above 3 was removed, I set it to 4.
+- For throwing away data that does not align with the 'normal' morphology (in this case Daniel and I both used) Daniel used a Gaussian approach (mean ± N·σ) while I use Tukey ([Q1 − 1.5·IQR, Q3 + 1.5·IQR]). We both remove length, amplitude, and peak position.
 
 - For a reason I don't understand, Daniel arbitrarily threw away all but the first 10% of the bin for ECG, but not PPG? I don't do this.
 
-- I do not align vertically
+- 

@@ -258,7 +258,7 @@ private:
     void updateNoiseHighlights();
     void finalizeMarking(QChartView* cv, double endX, const QString& signalLabel);
     void cancelMarking(const QString& signalLabel);
-    void restoreMarkingMarkers();
+    void restoreMarkingFeatureMarkers();
     void showStartMarker(QChartView* cv, double xValue, ChannelMarkingState& state, const QColor& color, QPushButton* stopBtn);
     void clearStartMarker(ChannelMarkingState& state);
     void updateDragPreview(QChartView* cv, double x0, double x1, const QColor& color);

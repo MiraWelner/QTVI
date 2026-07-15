@@ -57,8 +57,7 @@ private:
     // One shared x_ms column (0 at ch1 R) plus a per-signal *_x_peak_ms column
     // (0 at that signal's own peak). Written once per subject.
     void writeAlignedTemplateCsv();
-    void computeMarkingsForPage();
-    void updatePageControls();
+     void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
 
     // Pushes the current bin's markings into every plot showing it.

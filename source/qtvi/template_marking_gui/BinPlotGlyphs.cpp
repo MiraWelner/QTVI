@@ -15,6 +15,8 @@
 // use the shared right-axis (pLo,pHi) scale + foot-anchored x-geometry.
 // ============================================================================
 #include "BinPlotWidget.hpp"
+#include "template_marking_gui\feature_marks.hpp"
+#include "feature_marks.hpp"
 #include <QPainter>
 #include <algorithm>
 #include <cmath>
@@ -43,6 +45,8 @@ void BinPlotWidget::captureGlyphSnapshot() {
         m_glyphs.ecgS = m_markers[EcgSEnd];
         m_glyphs.ecgTPeak = m_markers[EcgTPeak];
         m_glyphs.ecgTend = m_markers[EcgTEnd];
+        m_glyphs.ecgQPeak = FeatureMarks::compute_q_peak(m_ecg,  m_markers[EcgQBegin], m_markers[EcgRPeak]);
+        m_glyphs.ecgSPeak = FeatureMarks::compute_s_peak(m_ecg, m_markers[EcgRPeak], m_markers[EcgSEnd]);
     }
 
     // ---- PPG landmarks ---------------------------------------------------
@@ -206,7 +210,9 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         // Six ECG X glyphs, all straight from the movable markers.
         g(m_glyphs.ecgPPeak);
         g(m_glyphs.ecgQ);
+        g(m_glyphs.ecgQPeak);
         g(m_glyphs.ecgRPeak);
+        g(m_glyphs.ecgSPeak);
         g(m_glyphs.ecgS);
         g(m_glyphs.ecgTPeak);
         g(m_glyphs.ecgTend);

@@ -1,6 +1,6 @@
 ﻿#include "TemplateViewerWindow.hpp"
 #include "ui_TemplateViewerWindow.h"
-#include "markers_automatic_position.hpp"
+#include "feature_marks.hpp"
 #include "NormalizeFeatures.hpp"
 #include <QMessageBox>
 #include <QColor>
@@ -8,8 +8,6 @@
 #include <QPixmap>
 #include <QDir>
 #include <QFileInfo>
-#include <QApplication>
-#include <QLayout>
 #include <cmath>
 #include <algorithm>
 #include <fstream>
@@ -130,17 +128,7 @@ void TemplateViewerWindow::updatePageControls() {
 void TemplateViewerWindow::onNextPage() {
     if (m_currentPage < m_totalPages - 1) {
         ++m_currentPage;
-        try {
-            computeMarkingsForPage();
-            showPage();
-        }
-        catch (const std::exception& e) {
-            QMessageBox::critical(this, "Viewer error",
-                QString("Failed to prepare page for %1:\n\n%2")
-                .arg(m_subjectId, e.what()));
-            emit finished();
-            return;
-        }
+        showPage();
     }
 }
 
@@ -154,11 +142,6 @@ void TemplateViewerWindow::onPrevPage() {
 // ========================================================================
 // Load subject
 // ========================================================================
-
-// Forward-declare: seedBinMarkers lives in an anonymous namespace lower in
-// this file (right above the ECG per-channel seed section). loadSubject
-// calls it before that namespace appears, so we need the declaration here.
-namespace { void seedBinMarkers(TemplateBin& b, double sampleRate); }
 
 void TemplateViewerWindow::loadSubject(const QString& templatePath, const QString& markingPath, const QString& subjectId, double sampleRateHz) {
 
@@ -200,7 +183,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     // Seed markers for every bin so per-subject global refs (which need
     // R/S and foot/peak positions across all bins) can be computed once
     // and stay stable across paging.
-    for (auto& b : m_bins) seedBinMarkers(b, m_sampleRate);
+    for (auto& b : m_bins) FeatureMarks::seed_all(b, m_sampleRate);
     computeGlobalRefs();
 
     m_capturedPages.clear();   // new subject: nothing saved yet
@@ -211,303 +194,6 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     // looks like the viewer is frozen at load time. QTimer::singleShot(0)
     // schedules it on the next event-loop cycle so the page shows first.
     QTimer::singleShot(0, this, [this]() { writeAlignedTemplateCsv(); });
-}
-
-// ========================================================================
-// Per-bin marker seeding.
-//
-// Markers detected: ECG (per channel) P-begin, Q-begin, T-begin, T-end;
-// PPG Onset, Peak, Dicrotic notch, 50% recovery, End. Detectors return a
-// sample index or -1 ("no marker"). Detected indices are clamped into
-// the visible portion of their trace -- for ECG, that's the per-trace
-// cutoff computed by BinPlotWidget::computeEcgVisibleN (cuts off before
-// the next beat's P-wave).
-// ========================================================================
-
-namespace {
-    // Seed a pulse's markers from the window BETWEEN THE TWO R PEAKS
-    // (one cardiac cycle) in the pulse's own sample space. The chain:
-    //   peak  = argmax over [rFirst, rSecond]   (systolic peak between the R's)
-    //   foot  = min before the peak (anywhere in the template)
-    //   end   = min after  the peak (anywhere in the template)
-    //   dicrotic / 50% = detected on the [foot, end] single-cycle span.
-    //
-    // rFirst/rSecond are the two R peaks in this template's sample space.
-    // Under Patch B every pulse channel is R-anchored: rFirst = padSamples,
-    // rSecond = padSamples + medianRR. Callers with no R window available
-    // (arterial channels when ch1.raw is absent) pass rFirst=rSecond=0 and
-    // this falls back to the whole trace. No cycleLen / lead-in assumption.
-    inline void seedPulse(const std::vector<double>& v, int rFirst, int rSecond,
-        int& onset, int& peak, int& dicrotic, int& peak2, int& end) {
-        const int n = static_cast<int>(v.size());
-        if (n < 1) return;
-        auto cl = [&](int x) { return std::clamp(x, 0, n - 1); };
-
-        int lo = cl(rFirst), hi = cl(rSecond);
-        if (hi - lo < 3) { lo = 0; hi = n - 1; }   // no R window => whole trace
-
-        // Peak = argmax between the two R peaks (the ONLY R-bounded landmark).
-        // Skip NaN and start from -inf so the first real sample wins.
-        if (peak < 0) {
-            int p = -1; double pv = -std::numeric_limits<double>::infinity();
-            for (int i = lo; i <= hi; ++i)
-                if (!std::isnan(v[i]) && v[i] > pv) { pv = v[i]; p = i; }
-            if (p < 0) return;   // all NaN in window; can't seed
-            peak = p;
-        }
-
-        // Foot = lowest point before the peak, ANYWHERE in the template.
-        // The foot doesn't have to sit inside the R window -- only the peak
-        // does. Skip NaN; start from +inf so a real sample always beats it.
-        if (onset < 0) {
-            int f = -1; double fv = std::numeric_limits<double>::infinity();
-            for (int i = 0; i <= peak; ++i)
-                if (!std::isnan(v[i]) && v[i] < fv) { fv = v[i]; f = i; }
-            if (f < 0) f = std::max(0, peak - 1);
-            onset = f;
-        }
-
-        // End = lowest point after the peak, ANYWHERE in the template.
-        // Same NaN-skipping rule. If everything after the peak is NaN
-        // (short template, peak near the tail), fall back to peak+1.
-        if (end < 0) {
-            int e = -1; double ev = std::numeric_limits<double>::infinity();
-            for (int i = peak + 1; i < n; ++i)
-                if (!std::isnan(v[i]) && v[i] < ev) { ev = v[i]; e = i; }
-            if (e < 0) e = std::min(n - 1, peak + 1);
-            end = e;
-        }
-
-        // Dicrotic auto-detected on the real single-cycle [foot, end] span.
-        if (dicrotic < 0 && cl(end) > cl(onset) + 2) {
-            const int base = cl(onset);
-            std::vector<double> cyc(v.begin() + base, v.begin() + cl(end) + 1);
-            dicrotic = cl(base + ecg_markers::detect_ppg_dicrotic(cyc));
-        }
-        // peak2 is user-placed. Default: 90% of the way from onset to end
-        // so the bar starts near the right of the anchor pulse. User drags.
-        if (peak2 < 0 && end > onset) {
-            peak2 = cl(onset + (9 * (end - onset)) / 10);
-        }
-    }
-
-
-    inline int clampToVisible(int idx, int visN) {
-        return std::clamp(idx, 0, visN - 1);
-    }
-
-    void seedBinMarkers(TemplateBin& b, double sampleRate) {
-
-        // ---- PPG --------------------------------------------------------
-        if (b.ppgTemplate.empty()) {
-            b.ppg_issue = 2;
-            b.ppg_onset = b.ppg_p50 = b.ppg_peak = -1;
-            b.ppg_dicrotic = b.ppg_peak2 = b.ppg_end = -1;
-            b.ppg_onset_auto = b.ppg_p50_auto = b.ppg_peak_auto = -1;
-            b.ppg_dicrotic_auto = b.ppg_peak2_auto = b.ppg_end_auto = -1;
-        }
-        else if (b.ppg_issue == 1) {
-            b.ppg_onset = b.ppg_p50 = b.ppg_peak = -1;
-            b.ppg_dicrotic = b.ppg_peak2 = b.ppg_end = -1;
-            // Leave *_auto alone -- they're the original auto positions.
-        }
-        else {
-            const std::vector<double>& v = b.ppgTemplate;
-            const int N = static_cast<int>(v.size());
-
-            const int rFirst = (sampleRate > 0.0)
-                ? static_cast<int>(std::llround(0.3 * sampleRate)) : 0;
-            const int footWin = (sampleRate > 0.0)
-                ? static_cast<int>(std::llround(0.35 * sampleRate)) : N / 2;
-            const int cycleGuess = std::max(1, N - rFirst);
-
-            // foot: argmin in [rFirst, rFirst + footWin)
-            int foot = -1;
-            {
-                double best = std::numeric_limits<double>::infinity();
-                const int lo = std::clamp(rFirst, 0, N - 1);
-                const int hi = std::min(N, lo + footWin);
-                for (int i = lo; i < hi; ++i)
-                    if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; foot = i; }
-            }
-
-            // peak: argmax in [foot+1, foot+cycleGuess)
-            int peak = -1;
-            if (foot >= 0) {
-                double best = -std::numeric_limits<double>::infinity();
-                const int hi = std::min(N, foot + cycleGuess);
-                for (int i = foot + 1; i < hi; ++i)
-                    if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; peak = i; }
-            }
-
-            // end: argmin in [peak+1, peak+cycleGuess)
-            int end = -1;
-            if (peak >= 0) {
-                double best = std::numeric_limits<double>::infinity();
-                const int hi = std::min(N, peak + cycleGuess);
-                for (int i = peak + 1; i < hi; ++i)
-                    if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; end = i; }
-            }
-
-            // dicrotic: least-negative slope in middle 50% of downslope
-            int dic = -1;
-            if (peak >= 0 && end > peak + 4) {
-                int firstMin = -1;
-                for (int i = peak + 1; i < end && i < N - 1; ++i) {
-                    if (std::isnan(v[i]) || std::isnan(v[i - 1]) || std::isnan(v[i + 1])) continue;
-                    if (v[i] <= v[i - 1] && v[i] <= v[i + 1]) { firstMin = i; break; }
-                }
-                const int slopeStart = (firstMin > 0) ? firstMin : peak;
-                const int span = end - slopeStart;
-                if (span >= 4) {
-                    const int mid_lo = slopeStart + span / 4;
-                    const int mid_hi = slopeStart + (3 * span) / 4;
-                    int bestIdx = -1;
-                    double bestSlope = -std::numeric_limits<double>::infinity();
-                    for (int i = std::max(1, mid_lo); i <= std::min(N - 2, mid_hi); ++i) {
-                        if (std::isnan(v[i - 1]) || std::isnan(v[i + 1])) continue;
-                        const double slope = 0.5 * (v[i + 1] - v[i - 1]);
-                        if (slope > bestSlope) { bestSlope = slope; bestIdx = i; }
-                    }
-                    if (bestIdx >= 0 && bestSlope >= 0.0) dic = bestIdx;
-                    else                                  dic = (slopeStart + end) / 2;
-                }
-            }
-
-            // p50: nearest 50% amplitude on foot->peak upslope
-            int p50 = -1;
-            if (foot >= 0 && peak > foot &&
-                !std::isnan(v[foot]) && !std::isnan(v[peak])) {
-                const double target = 0.5 * (v[foot] + v[peak]);
-                double bestDiff = std::numeric_limits<double>::infinity();
-                for (int i = foot; i <= peak; ++i) {
-                    if (std::isnan(v[i])) continue;
-                    const double d = std::abs(v[i] - target);
-                    if (d < bestDiff) { bestDiff = d; p50 = i; }
-                }
-                const double band = 0.25 * std::abs(v[peak] - v[foot]);
-                if (bestDiff > band) p50 = (foot + peak) / 2;
-            }
-            else if (foot >= 0 && peak > foot) {
-                p50 = (foot + peak) / 2;
-            }
-
-            // peak2: default 90% foot->end
-            int peak2 = (foot >= 0 && end > foot)
-                ? foot + (9 * (end - foot)) / 10
-                : std::max(0, N - 1);
-
-            // ALWAYS populate auto fields (fresh every loadSubject).
-            b.ppg_onset_auto = foot;
-            b.ppg_peak_auto = peak;
-            b.ppg_end_auto = end;
-            b.ppg_dicrotic_auto = dic;
-            b.ppg_p50_auto = p50;
-            b.ppg_peak2_auto = peak2;
-            // User fields: only seed when unset (respect prior edits).
-            if (b.ppg_onset < 0) b.ppg_onset = foot;
-            if (b.ppg_peak < 0) b.ppg_peak = peak;
-            if (b.ppg_end < 0) b.ppg_end = end;
-            if (b.ppg_dicrotic < 0) b.ppg_dicrotic = dic;
-            if (b.ppg_p50 < 0) b.ppg_p50 = p50;
-            if (b.ppg_peak2 < 0) b.ppg_peak2 = peak2;
-        }
-
-        // ---- ECG (per channel) -----------------------------------------
-        ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-        for (int c = 0; c < 3; ++c) {
-            const auto& ecg = chs[c]->ecgTemplate_raw;
-            if (ecg.empty()) {
-                b.bad_r_ch[c] = true;
-                b.p_peak_ch[c] = b.q_begin_ch[c] = b.r_peak_ch[c] = -1;
-                b.s_end_ch[c] = b.t_peak_ch[c] = b.t_end_ch[c] = -1;
-                b.p_peak_auto_ch[c] = b.q_begin_auto_ch[c] = b.r_peak_auto_ch[c] = -1;
-                b.s_end_auto_ch[c] = b.t_peak_auto_ch[c] = b.t_end_auto_ch[c] = -1;
-                continue;
-            }
-
-            const int visN = std::max(static_cast<int>(ecg.size()), 2);
-
-            // Compute the six auto positions ONCE (clamped to visible).
-            const int p_auto = clampToVisible(ecg_markers::detect_p_peak(ecg), visN);
-            const int q_auto = clampToVisible(ecg_markers::detect_q_begin(ecg), visN);
-            const int r_auto = clampToVisible(ecg_markers::detect_r_peak(ecg), visN);
-            const int s_auto = clampToVisible(ecg_markers::detect_s_end(ecg), visN);
-            const int tp_auto = clampToVisible(ecg_markers::detect_t_peak(ecg), visN);
-            const int te_auto = clampToVisible(ecg_markers::detect_t_end(ecg), visN);
-
-            // Auto fields ALWAYS updated.
-            b.p_peak_auto_ch[c] = p_auto;
-            b.q_begin_auto_ch[c] = q_auto;
-            b.r_peak_auto_ch[c] = r_auto;
-            b.s_end_auto_ch[c] = s_auto;
-            b.t_peak_auto_ch[c] = tp_auto;
-            b.t_end_auto_ch[c] = te_auto;
-
-            // User fields: only seed when unset.
-            if (b.p_peak_ch[c] < 0) b.p_peak_ch[c] = p_auto;
-            if (b.q_begin_ch[c] < 0) b.q_begin_ch[c] = q_auto;
-            if (b.r_peak_ch[c] < 0) b.r_peak_ch[c] = r_auto;
-            if (b.s_end_ch[c] < 0) b.s_end_ch[c] = s_auto;
-            if (b.t_peak_ch[c] < 0) b.t_peak_ch[c] = tp_auto;
-            if (b.t_end_ch[c] < 0) b.t_end_ch[c] = te_auto;
-        }
-
-        // ---- Arterial channels (ABP / ART / ART_PULM) -------------------
-        const int rFirstArt = (sampleRate > 0.0)
-            ? static_cast<int>(std::llround(0.3 * sampleRate)) : 0;
-        const int rSecondArt = rFirstArt + ((sampleRate > 0.0)
-            ? static_cast<int>(std::llround(0.75 * sampleRate)) : 0);
-
-        auto seedArterial = [&](const std::vector<double>& trace, uint8_t& issue,
-            int& onset, int& peak, int& dicrotic, int& peak2, int& end,
-            int& onset_auto, int& peak_auto, int& dic_auto, int& p2_auto, int& end_auto)
-            {
-                if (trace.empty()) {
-                    issue = 2;
-                    onset = peak = dicrotic = peak2 = end = -1;
-                    onset_auto = peak_auto = dic_auto = p2_auto = end_auto = -1;
-                    return;
-                }
-                if (issue == 1) {
-                    onset = peak = dicrotic = peak2 = end = -1;
-                    // Leave *_auto alone.
-                    return;
-                }
-                // Compute auto values into locals via seedPulse, then split.
-                int aOn = -1, aPk = -1, aDic = -1, aP2 = -1, aEnd = -1;
-                seedPulse(trace, rFirstArt, rSecondArt, aOn, aPk, aDic, aP2, aEnd);
-                onset_auto = aOn; peak_auto = aPk; dic_auto = aDic;
-                p2_auto = aP2;    end_auto = aEnd;
-                if (onset < 0) onset = aOn;
-                if (peak < 0) peak = aPk;
-                if (dicrotic < 0) dicrotic = aDic;
-                if (peak2 < 0) peak2 = aP2;
-                if (end < 0) end = aEnd;
-            };
-
-        seedArterial(b.abpTemplate, b.abp_issue,
-            b.abp_onset, b.abp_peak, b.abp_dicrotic, b.abp_peak2, b.abp_end,
-            b.abp_onset_auto, b.abp_peak_auto, b.abp_dicrotic_auto,
-            b.abp_peak2_auto, b.abp_end_auto);
-        seedArterial(b.artTemplate, b.art_issue,
-            b.art_onset, b.art_peak, b.art_dicrotic, b.art_peak2, b.art_end,
-            b.art_onset_auto, b.art_peak_auto, b.art_dicrotic_auto,
-            b.art_peak2_auto, b.art_end_auto);
-        seedArterial(b.artPulmTemplate, b.art_pulm_issue,
-            b.art_pulm_onset, b.art_pulm_peak, b.art_pulm_dicrotic,
-            b.art_pulm_peak2, b.art_pulm_end,
-            b.art_pulm_onset_auto, b.art_pulm_peak_auto, b.art_pulm_dicrotic_auto,
-            b.art_pulm_peak2_auto, b.art_pulm_end_auto);
-    }
-}
-
-void TemplateViewerWindow::computeMarkingsForPage() {
-    int start = m_currentPage * m_binsPerPage;
-    int end = std::min(start + m_binsPerPage, static_cast<int>(m_bins.size()));
-    for (int i = start; i < end; ++i) {
-        seedBinMarkers(m_bins[i], m_sampleRate);
-    }
 }
 
 // Compute per-subject Global_Ref for every ECG channel + every pulse
@@ -821,9 +507,11 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         "s_end",  "t_peak",  "t_end"
     };
     for (int c = 1; c <= 3; ++c) {
-        for (const char* m : ECG_MARKERS) {
-            f << ',' << m << "_ch" << c << "_location_autodetect"
-                << ',' << m << "_ch" << c << "_location_user";
+        for (int k = 0; k < 8; ++k) {
+            const char* mname = ECG_MARKERS[k];
+            const bool userToo = (k != 3);   // r_peak = auto-only
+            f << ',' << mname << "_ch" << c << "_location_autodetect";
+            if (userToo) f << ',' << mname << "_ch" << c << "_location_user";
         }
     }
     // Pulse markers (PPG has 6 with p50, arterial has 5).
@@ -1018,7 +706,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             for (int c = 0; c < 3; ++c) {
                 for (int k = 0; k < 8; ++k) {
                     emitLoc(ecgAuto[c][k], row);
-                    emitLoc(ecgUser[c][k], row);
+                    if (k != 3) emitLoc(ecgUser[c][k], row);
                 }
             }
             // PPG (6), ABP/ART/ART_PULM (5 each).

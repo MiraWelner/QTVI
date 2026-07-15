@@ -24,6 +24,7 @@
 // just the line.
 // ============================================================================
 #include "BinPlotWidget.hpp"
+#include "feature_marks.hpp"
 #include <QPainter>
 #include <QPainterPath>
 #include <QMouseEvent>
@@ -135,35 +136,21 @@ namespace {
         return "?";
     }
 
-    // Compute the visible-range vertical bounds for a trace. If a matching
-    // std vector is supplied, expand the range to include mean +- std at
-    // every visible sample so the band fits inside the drawing area
-    // without clipping. visN is clamped to the vector length so a caller
-    // asking for more samples than exist (e.g. a stunted template from a
-    // very short recording) can't seek past the end.
-    void computeVisibleRange(const std::vector<double>& v,
-        const std::vector<double>& sd,
-        int visN,
-        double& lo, double& hi)
-    {
+    void computeVisibleRange(const std::vector<double>& v, const std::vector<double>& /*sd*/, int visN, double& lo, double& hi){
+        /* Compute the visible range of the average template plot, ignoring the std band. 5% padding is added to accout for x marks
+        */
         const int n = std::min(visN, static_cast<int>(v.size()));
-        // NaN-skip range: alignment introduces NaN-padded columns. min/max
-        // over a vector with NaN via *_element gives undefined results (any
-        // NaN comparison is false), which propagates NaN into yLo/yHi and
-        // then into every pixel coordinate. Manual loop, skip NaN.
         lo = 0.0; hi = 1.0;
         bool have = false;
-        const bool haveSd = (int)sd.size() >= n;
         for (int i = 0; i < n; ++i) {
             const double m = v[i];
             if (std::isnan(m)) continue;
-            const double s = haveSd ? sd[i] : 0.0;
-            const double a = std::isnan(s) ? m : (m - s);
-            const double b = std::isnan(s) ? m : (m + s);
-            if (!have) { lo = a; hi = b; have = true; }
-            else { lo = std::min(lo, a); hi = std::max(hi, b); }
+            if (!have) { lo = m; hi = m; have = true; }
+            else { lo = std::min(lo, m); hi = std::max(hi, m); }
         }
-        if (!have) { lo = 0.0; hi = 1.0; }
+        if (!have) { lo = 0.0; hi = 1.0; return; }
+        lo -= 0.1; //account for X size
+        hi += 0.1;
     }
 
     // Draw the gray ±std band at a fixed pixels-per-sample scale using
@@ -815,4 +802,124 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
 
 void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
     m_dragMarker = -1;
+}
+// ============================================================================
+// Feature-glyph QC layer (formerly BinPlotGlyphs.cpp)
+//
+// Landmark positions are captured ONCE at setData() (captureGlyphSnapshot)
+// from the current markers and frozen -- they do NOT follow subsequent
+// drags. drawFeatureGlyphs() just renders the stored snapshot.
+//
+// Marks:
+//   ECG - P peak, Q begin, Q peak (reactive), R peak, S peak (reactive),
+//         S end, T peak, T end. All drawn as X.
+//   PPG - foot, P1, P50, dicrotic notch, P2, end. Each of P1/P50/dic/P2
+//         falls back to an O glyph at a sensible midpoint if the shape
+//         detection didn't find a real landmark.
+// ECG glyphs use the left-axis (yLo,yHi) scale + ECG x-geometry; PPG
+// glyphs use the shared right-axis (pLo,pHi) scale + foot-anchored x.
+// ============================================================================
+
+void BinPlotWidget::captureGlyphSnapshot() {
+    m_glyphs = GlyphSnapshot{};   // reset to all -1 / false
+
+    if ((int)m_ecg.size() >= 3) {
+        auto e = FeatureMarks::compute_ecg_glyphs(m_ecg,
+            m_markers[EcgPPeak], m_markers[EcgQBegin], m_markers[EcgRPeak],
+            m_markers[EcgSEnd], m_markers[EcgTPeak], m_markers[EcgTEnd]);
+        m_glyphs.ecgPPeak = e.p_peak;
+        m_glyphs.ecgQ = e.q_begin;
+        m_glyphs.ecgQPeak = e.q_peak;
+        m_glyphs.ecgRPeak = e.r_peak;
+        m_glyphs.ecgSPeak = e.s_peak;
+        m_glyphs.ecgS = e.s_end;
+        m_glyphs.ecgTPeak = e.t_peak;
+        m_glyphs.ecgTend = e.t_end;
+    }
+
+    if (m_hasPPG && (int)m_ppg.size() >= 3) {
+        auto pg = FeatureMarks::compute_ppg_glyphs(m_ppg, m_markers[PpgOnset]);
+        m_glyphs.ppgFoot = pg.foot;
+        m_glyphs.ppgP1 = pg.p1;    m_glyphs.ppgP1OFallback = pg.p1_fallback;
+        m_glyphs.ppgP50 = pg.p50;   m_glyphs.ppgP50OFallback = pg.p50_fallback;
+        m_glyphs.ppgDic = pg.dic;
+        m_glyphs.ppgNoNotchO = pg.dic_fallback;
+        m_glyphs.ppgP2 = pg.p2;    m_glyphs.ppgP2OFallback = pg.p2_fallback;
+        m_glyphs.ppgEnd = pg.end;
+        m_glyphs.ppgNotch = pg.notch_found;
+    }
+
+    m_glyphs.valid = true;
+}
+
+void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
+    double yLo, double yHi, double pLo, double pHi, int ph) const
+{
+    if (!m_glyphs.valid) return;
+
+    auto plotY = [&](double val, double lo, double hi) {
+        const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
+        return margin_top + ph - (val - lo) / r * ph;
+        };
+    auto glyph = [&](double x, double y) {   // opaque black "X"
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(Qt::black, 1.8));
+        const double s = 4.0;
+        p.drawLine(QPointF(x - s, y - s), QPointF(x + s, y + s));
+        p.drawLine(QPointF(x - s, y + s), QPointF(x + s, y - s));
+        };
+
+    if (m_showEcgTrace && (int)m_ecg.size() >= 3) {
+        const std::vector<double>& v = m_ecg;
+        const int N = (int)v.size();
+        double baseline = 0.0;
+        {
+            const int bhi = std::min(10, N);
+            std::vector<double> bw;
+            for (int i = 0; i < bhi; ++i) if (!std::isnan(v[i])) bw.push_back(v[i]);
+            if (!bw.empty()) { std::sort(bw.begin(), bw.end()); baseline = bw[bw.size() / 2]; }
+        }
+        auto g = [&](int idx) {
+            if (idx < 0 || idx >= N) return;
+            const double val = std::isnan(v[idx]) ? baseline : v[idx];
+            glyph(xFromSample(idx, /*isEcg=*/true), plotY(val, yLo, yHi));
+            };
+        g(m_glyphs.ecgPPeak);
+        g(m_glyphs.ecgQ);
+        g(m_glyphs.ecgQPeak);
+        g(m_glyphs.ecgRPeak);
+        g(m_glyphs.ecgSPeak);
+        g(m_glyphs.ecgS);
+        g(m_glyphs.ecgTPeak);
+        g(m_glyphs.ecgTend);
+    }
+
+    if (m_showPpgTrace && m_hasPPG && (int)m_ppg.size() >= 3) {
+        const std::vector<double>& v = m_ppg;
+        const int N = (int)v.size();
+        auto g = [&](int idx) {
+            if (idx < 0 || idx >= N) return;
+            const double val = std::isnan(v[idx]) ? pLo : v[idx];
+            glyph(xFromSample(idx, /*isEcg=*/false), plotY(val, pLo, pHi));
+            };
+        auto circ = [&](int idx) {
+            if (idx < 0 || idx >= N) return;
+            const double val = std::isnan(v[idx]) ? pLo : v[idx];
+            const double x = xFromSample(idx, /*isEcg=*/false);
+            const double y = plotY(val, pLo, pHi);
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(Qt::black, 1.8));
+            p.drawEllipse(QPointF(x, y), 4.0, 4.0);
+            };
+        g(m_glyphs.ppgFoot);
+        if (m_glyphs.ppgP50 >= 0) g(m_glyphs.ppgP50);
+        else                      circ(m_glyphs.ppgP50OFallback);
+        if (m_glyphs.ppgP1 >= 0)  g(m_glyphs.ppgP1);
+        else                      circ(m_glyphs.ppgP1OFallback);
+        if (m_glyphs.ppgNotch)    g(m_glyphs.ppgDic);
+        else                      circ(m_glyphs.ppgNoNotchO);
+        if (m_glyphs.ppgP2 >= 0)  g(m_glyphs.ppgP2);
+        else                      circ(m_glyphs.ppgP2OFallback);
+        g(m_glyphs.ppgEnd);
+    }
 }

@@ -28,7 +28,7 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
-
+#include "template_marking_gui/alignment.hpp"
 #include "TemplateTypes.hpp"
 
 struct PPGTemplatesResult {
@@ -74,50 +74,27 @@ static inline void build_pulse_template_pair_windowed(
         channelRate <= 0.0 || ecgRate <= 0.0) return;
 
     const double scale = channelRate / ecgRate;
-    const int padCh = static_cast<int>(std::llround(padSeconds * channelRate));
-    const int signalN = static_cast<int>(signal.size());
 
-    // Convert ch1.raw R-peaks from ECG samples to THIS channel's samples.
-    std::vector<int> peaksCh;
+    // Convert ch1.raw R-peaks from ECG samples to this channel's samples.
+    std::vector<size_t> peaksCh;
     peaksCh.reserve(masterPeaksEcg.size());
     for (size_t r : masterPeaksEcg)
-        peaksCh.push_back(static_cast<int>(std::llround(static_cast<double>(r) * scale)));
+        peaksCh.push_back(static_cast<size_t>(std::llround(
+            static_cast<double>(r) * scale)));
 
-    struct Slice { std::vector<double> data; };
-    std::vector<Slice> slices;
-    slices.reserve(peaksCh.size() > 0 ? peaksCh.size() - 1 : 0);
-    size_t maxLen = 0;
+    // Per-bin peak-aligned + foot-vertical-aligned beat matrix.
+    const auto aligned = alignment::extract_ppg_beats_and_align(signal, peaksCh);
+    if (aligned.beats.empty()) return;
 
-    for (size_t i = 0; i + 1 < peaksCh.size(); ++i) {
-        const int r0 = peaksCh[i];
-        const int r1 = peaksCh[i + 1];
-        if (r1 <= r0) continue;
+    const size_t maxLen = aligned.beats.front().size();
 
-        const int startSig = r0 - padCh;
-        const int endSig = r1;                 // no trailing pad -- matches ECG slicer
-        const int len = endSig - startSig;
-        if (len < 3) continue;
-
-        std::vector<double> s(static_cast<size_t>(len), NaN);
-        const int copyStart = std::max(0, startSig);
-        const int copyEnd = std::min(signalN, endSig);
-        for (int k = copyStart; k < copyEnd; ++k)
-            s[static_cast<size_t>(k - startSig)] = signal[k];
-
-        if (static_cast<size_t>(len) > maxLen) maxLen = static_cast<size_t>(len);
-        slices.push_back({ std::move(s) });
-    }
-    if (slices.empty()) return;
-
-    for (auto& sl : slices) sl.data.resize(maxLen, NaN);
-
-    // Column-wise NaN-skipping median.
+    // Column-wise NaN-skipping median => template.
     outTemplate.assign(maxLen, NaN);
     for (size_t c = 0; c < maxLen; ++c) {
         std::vector<double> col;
-        col.reserve(slices.size());
-        for (const auto& sl : slices) {
-            const double v = sl.data[c];
+        col.reserve(aligned.beats.size());
+        for (const auto& sl : aligned.beats) {
+            const double v = sl[c];
             if (!std::isnan(v)) col.push_back(v);
         }
         if (col.empty()) continue;
@@ -128,27 +105,31 @@ static inline void build_pulse_template_pair_windowed(
             : col[nc / 2];
     }
 
-    // Per-sample std (ddof=1, NaN-skip). Empty columns => 0.
+    // Per-sample std (sample std, NaN skip, ddof=1).
     outStd.assign(maxLen, 0.0);
     for (size_t c = 0; c < maxLen; ++c) {
         double sum = 0.0;
         size_t n = 0;
-        for (const auto& sl : slices)
-            if (!std::isnan(sl.data[c])) { sum += sl.data[c]; ++n; }
+        for (const auto& sl : aligned.beats)
+            if (!std::isnan(sl[c])) { sum += sl[c]; ++n; }
         if (n < 2) continue;
         const double mean = sum / static_cast<double>(n);
         double ss = 0.0;
-        for (const auto& sl : slices)
-            if (!std::isnan(sl.data[c])) {
-                const double d = sl.data[c] - mean;
+        for (const auto& sl : aligned.beats)
+            if (!std::isnan(sl[c])) {
+                const double d = sl[c] - mean;
                 ss += d * d;
             }
         outStd[c] = std::sqrt(ss / static_cast<double>(n - 1));
     }
 
-    // Retain aligned per-beat slices.
-    outKeptBeats.reserve(slices.size());
-    for (auto& sl : slices) outKeptBeats.push_back(std::move(sl.data));
+    // Retain aligned per-beat slices for downstream (snips CSV, etc).
+    outKeptBeats.reserve(aligned.beats.size());
+    for (const auto& sl : aligned.beats) outKeptBeats.push_back(sl);
+
+    // Silence unused warnings — the alignment function computes its own
+    // slicing pad from RR intervals, so padSeconds isn't used here.
+    (void)padSeconds; (void)channelRate; (void)ecgRate;
 }
 
 /**

@@ -166,30 +166,6 @@ void noise_marking_gui::clearDragPreview() {
     m_dragPreviews.clear();
 }
 
-void noise_marking_gui::restoreMarkingMarkers() {
-    const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
-    const double chunkEnd = globalOffset + seconds_in_memory_at_once;
-
-    auto restore = [&](const QString& label, ChannelMarkingState& state) {
-        if (state.phase != MarkPhase::WaitingForEnd
-            && state.phase != MarkPhase::WaitingForStop) return;
-        state.startMarkerLine = nullptr;
-        QChartView* cv = chartViewForSignalLabel(label);
-        if (!cv || !isChannelActive(label)) return;
-        if (state.globalStartTime >= globalOffset
-            && state.globalStartTime <= chunkEnd) {
-            showStartMarker(cv, state.globalStartTime - globalOffset, state,
-                colorForSignal(label), stopButtonForSignal(label));
-        }
-        };
-    restore("ECG1", mark_state_ecg1); restore("ECG2", mark_state_ecg2);
-    restore("ECG3", mark_state_ecg3); 
-	restore("PPG", mark_state_ppg);
-    restore("ACCEL", mark_state_accel);
-    restore("ABP", mark_state_abp); restore("ART", mark_state_art);
-    restore("ART_PULM", mark_state_art_pulm);
-}
-
 // ============================================================================
 // Event filter
 // ============================================================================
