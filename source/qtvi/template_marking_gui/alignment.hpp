@@ -12,16 +12,16 @@
 //      and fiducial-position (3.0, PPG only) using [Q1-k*IQR, Q3+k*IQR].
 //   3) Horizontal align onto a shared axis (integer shift + NaN pad, no
 //      resampling):
-//        - ECG: anchor R at percent_interval_preceeding_rpeak * max_mode_len.
+//        - ECG: anchor R at percent_interval_preceeding_rpeak * max_rr_len.
 //        - PPG: anchor the 50%-upslope (half-height) point at the largest
 //               such column among survivors. The half-height point sits on
 //               the steep systolic upstroke, so it is well-localized (like
 //               ECG's R) and pinning it does NOT create an apex cusp; peaks
 //               scatter and the apex averages honestly.
 //   4) Vertical DC shift:
-//        - ECG: match each beat's PR-baseline mean to the mode beat's.
+//        - ECG: match each beat's PR-baseline mean to the reference beat's.
 //        - PPG: match each beat's foot-baseline mean (a small window around
-//               its own foot column) to the mode beat's.
+//               its own foot column) to the reference beat's.
 //
 
 #include <algorithm>
@@ -29,13 +29,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 namespace alignment {
     constexpr double percent_interval_preceeding_rpeak = 0.3; //how far before the R peak the snip goes, in terms of percent of the RR interval length
-    constexpr double percent_interval_following_rpeak = 1.4;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
-	constexpr double mode_error = 0.05; // RMS tolerance for mode beat clustering (5% of the mode beat's amplitude)
+    constexpr double percent_interval_following_rpeak = 1.5;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
 
     // Sample counts for a given RR (integer-truncated).
     inline int64_t rr_before_samples(int64_t rr) {
@@ -87,23 +85,18 @@ namespace alignment {
     struct BeatSet {
         std::vector<std::vector<double>> beats;   // NaN-padded, R-aligned
         std::vector<size_t> r_indices;
-        std::vector<int>    mode_lens;
+        std::vector<int>    rr_lens;
 
-        int    mode_length = -1;
-        size_t mode_count = 0;
+        int    median_length = -1;
+        size_t median_count = 0;
         size_t total_beats = 0;
 
-        size_t mode_group_size = 0;
-        std::vector<size_t> mode_group_indices;
-        double mode_group_rms_tol = 0.0;
-
         int r_aligned_col = -1;
-        int mode_beat_index = -1;
+        int ref_beat_index = -1;
     };
 
-    inline BeatSet extract_beats_and_mode(const std::vector<double>& signal,
-        const std::vector<size_t>& rPeaks,
-        double rms_tol = mode_error)
+    inline BeatSet extract_beats_and_align(const std::vector<double>& signal,
+        const std::vector<size_t>& rPeaks)
     {
         BeatSet out;
         const int64_t N = static_cast<int64_t>(signal.size());
@@ -113,7 +106,7 @@ namespace alignment {
             return out;
         }
 
-        // Compact the parallel (beats, r_indices, mode_lens) vectors, keeping
+        // Compact the parallel (beats, r_indices, rr_lens) vectors, keeping
         // only entries where keep[i] is true.
         auto apply_mask = [&](const std::vector<bool>& keep) {
             std::vector<std::vector<double>> kb;
@@ -123,11 +116,11 @@ namespace alignment {
                 if (!keep[i]) continue;
                 kb.push_back(std::move(out.beats[i]));
                 kr.push_back(out.r_indices[i]);
-                km.push_back(out.mode_lens[i]);
+                km.push_back(out.rr_lens[i]);
             }
             out.beats = std::move(kb);
             out.r_indices = std::move(kr);
-            out.mode_lens = std::move(km);
+            out.rr_lens = std::move(km);
             };
 
         // ---- slice every beat ------------------------------------------
@@ -151,26 +144,26 @@ namespace alignment {
 
             out.beats.push_back(std::move(beat));
             out.r_indices.push_back(rPeaks[i]);
-            out.mode_lens.push_back(static_cast<int>(rr));
+            out.rr_lens.push_back(static_cast<int>(rr));
         }
         if (out.beats.empty()) return out;
 
         // ---- Tukey rejection: length (1.5*IQR) --------------------------
         {
-            std::vector<double> lens_d(out.mode_lens.begin(), out.mode_lens.end());
+            std::vector<double> lens_d(out.rr_lens.begin(), out.rr_lens.end());
             apply_mask(keep_within_tukey(lens_d, 1.5));
         }
         if (out.beats.empty()) return out;
 
         // ---- Tukey rejection: R amplitude (1.5*IQR) ---------------------
         // Position pass is skipped for ECG: R sits at column
-        // rr_before_samples(mode_lens[i]) in every beat by construction, so
+        // rr_before_samples(rr_lens[i]) in every beat by construction, so
         // intra-beat position is fixed.
         {
             std::vector<double> amps;
             amps.reserve(out.beats.size());
             for (size_t i = 0; i < out.beats.size(); ++i) {
-                const int r_col = static_cast<int>(rr_before_samples(out.mode_lens[i]));
+                const int r_col = static_cast<int>(rr_before_samples(out.rr_lens[i]));
                 amps.push_back(
                     (r_col < (int)out.beats[i].size() && !std::isnan(out.beats[i][r_col]))
                     ? out.beats[i][r_col]
@@ -184,80 +177,37 @@ namespace alignment {
         out.total_beats = out.beats.size();
         if (out.beats.empty()) return out;
 
-        // ---- mode length -----------------------------------------------
-        std::unordered_map<int, size_t> hist;
-        hist.reserve(out.beats.size() * 2);
-        for (int L : out.mode_lens) hist[L]++;
-        for (const auto& kv : hist) {
-            if (kv.second > out.mode_count
-                || (kv.second == out.mode_count && kv.first > out.mode_length)) {
-                out.mode_length = kv.first;
-                out.mode_count = kv.second;
-            }
+        // ---- representative (median) length ----------------------------
+        // Use the MEDIAN RR length as the representative beat length (not the
+        // modal one). Take the middle element of the sorted lengths so the
+        // value is guaranteed to be a length that some beat actually has,
+        // which keeps the exact-match shape clustering below non-empty.
+        {
+            std::vector<int> lens = out.rr_lens;
+            std::sort(lens.begin(), lens.end());
+            out.median_length = lens[lens.size() / 2];
+            out.median_count = 0;
+            for (int L : out.rr_lens)
+                if (L == out.median_length) ++out.median_count;
         }
 
-        // ---- shape cluster among mode-length beats ---------------------
-        out.mode_group_rms_tol = rms_tol;
-        if (out.mode_length > 0 && out.mode_count > 0) {
-            std::vector<size_t> modeIdx;
-            modeIdx.reserve(out.mode_count);
-            for (size_t i = 0; i < out.beats.size(); ++i)
-                if (out.mode_lens[i] == out.mode_length)
-                    modeIdx.push_back(i);
-
-            struct Cluster { size_t seed; std::vector<size_t> members; };
-            std::vector<Cluster> clusters;
-
-            const int L = out.mode_length;
-            const double L_inv = 1.0 / static_cast<double>(L);
-            auto rms_diff = [&](const std::vector<double>& a,
-                const std::vector<double>& b) {
-                    double ss = 0.0;
-                    for (int k = 0; k < L; ++k) {
-                        const double d = a[k] - b[k];
-                        ss += d * d;
-                    }
-                    return std::sqrt(ss * L_inv);
-                };
-
-            for (size_t idx : modeIdx) {
-                const auto& beat = out.beats[idx];
-                bool placed = false;
-                for (auto& c : clusters) {
-                    if (rms_diff(beat, out.beats[c.seed]) <= rms_tol) {
-                        c.members.push_back(idx);
-                        placed = true;
-                        break;
-                    }
-                }
-                if (!placed) {
-                    Cluster c;
-                    c.seed = idx;
-                    c.members.push_back(idx);
-                    clusters.push_back(std::move(c));
-                }
+        // ---- reference beat = first median-length beat -----------------
+        // Used only as the PR-baseline DC-alignment reference. No RMS shape
+        // clustering: the final template is the column-wise median.
+        for (size_t i = 0; i < out.beats.size(); ++i)
+            if (out.rr_lens[i] == out.median_length) {
+                out.ref_beat_index = static_cast<int>(i);
+                break;
             }
-
-            for (const auto& c : clusters) {
-                if (c.members.size() > out.mode_group_size) {
-                    out.mode_group_size = c.members.size();
-                    out.mode_group_indices = c.members;
-                }
-            }
-            if (!out.mode_group_indices.empty()) {
-                out.mode_beat_index =
-                    static_cast<int>(out.mode_group_indices.front());
-            }
-        }
 
         // ---- Pass 1: R-align on shared axis ----------------------------
-        int max_mode_len = 0;
-        for (int L : out.mode_lens)
-            if (L > max_mode_len) max_mode_len = L;
-        if (max_mode_len <= 0) return out;
+        int max_rr_len = 0;
+        for (int L : out.rr_lens)
+            if (L > max_rr_len) max_rr_len = L;
+        if (max_rr_len <= 0) return out;
 
-        const int R_anchor = static_cast<int>(rr_before_samples(max_mode_len));
-        const int shared_w = R_anchor + static_cast<int>(rr_after_samples(max_mode_len));
+        const int R_anchor = static_cast<int>(rr_before_samples(max_rr_len));
+        const int shared_w = R_anchor + static_cast<int>(rr_after_samples(max_rr_len));
 
         const double NaND = std::numeric_limits<double>::quiet_NaN();
         std::vector<std::vector<double>> aligned;
@@ -265,7 +215,7 @@ namespace alignment {
         for (size_t i = 0; i < out.beats.size(); ++i) {
             const auto& b = out.beats[i];
             const int L = static_cast<int>(b.size());
-            const int r_in_beat = static_cast<int>(rr_before_samples(out.mode_lens[i]));
+            const int r_in_beat = static_cast<int>(rr_before_samples(out.rr_lens[i]));
             const int prepend = R_anchor - r_in_beat;
             std::vector<double> a(shared_w, NaND);
             for (int k = 0; k < L; ++k) {
@@ -278,11 +228,11 @@ namespace alignment {
         out.r_aligned_col = R_anchor;
 
         // ---- Pass 3: PR-baseline vertical DC alignment -----------------
-        if (out.mode_beat_index >= 0
-            && out.mode_beat_index < static_cast<int>(out.beats.size()))
+        if (out.ref_beat_index >= 0
+            && out.ref_beat_index < static_cast<int>(out.beats.size()))
         {
-            const int pr_w = std::max(3, out.mode_length / 20);
-            const int pr_gap = std::max(1, out.mode_length / 50);
+            const int pr_w = std::max(3, out.median_length / 20);
+            const int pr_gap = std::max(1, out.median_length / 50);
             const int pr_lo = std::max(0, R_anchor - pr_gap - pr_w);
             const int pr_hi = std::max(pr_lo, R_anchor - pr_gap);
 
@@ -301,7 +251,7 @@ namespace alignment {
                 };
 
             const auto [target, target_n] =
-                pr_baseline(out.beats[out.mode_beat_index]);
+                pr_baseline(out.beats[out.ref_beat_index]);
 
             if (!std::isnan(target)) {
                 for (auto& beat : out.beats) {
@@ -325,13 +275,13 @@ namespace alignment {
         std::vector<std::vector<double>> beats;   // NaN-padded, 50%-upslope-aligned
         std::vector<int> peak_cols;               // per-beat systolic peak column (varies)
         std::vector<int> foot_cols;               // per-beat foot column (varies)
-        int    mode_length = -1;
-        size_t mode_count = 0;
+        int    median_length = -1;
+        size_t median_count = 0;
         size_t total_beats = 0;
         int    up50_aligned_col = -1;             // shared column all half-height points land on
         int    foot_aligned_col = -1;             // feet scatter (per-beat); not a shared column
         int    peak_aligned_col = -1;             // peaks scatter (per-beat); not a shared column
-        int    mode_beat_index = -1;
+        int    ref_beat_index = -1;
     };
 
     inline PpgBeatSet extract_ppg_beats_and_align(
@@ -344,10 +294,10 @@ namespace alignment {
 
         struct Raw { std::vector<double> data; int peak; int foot; int up50; };
         std::vector<Raw> raw;
-        std::vector<int> mode_lens;
+        std::vector<int> rr_lens;
         raw.reserve(rPeaks.size());
 
-        // Compact the parallel (raw, mode_lens) vectors, keeping only entries
+        // Compact the parallel (raw, rr_lens) vectors, keeping only entries
         // where keep[i] is true.
         auto apply_mask = [&](const std::vector<bool>& keep) {
             std::vector<Raw> filt;
@@ -357,10 +307,10 @@ namespace alignment {
             for (size_t i = 0; i < raw.size(); ++i)
                 if (keep[i]) {
                     filt.push_back(std::move(raw[i]));
-                    filt_lens.push_back(mode_lens[i]);
+                    filt_lens.push_back(rr_lens[i]);
                 }
             raw.swap(filt);
-            mode_lens.swap(filt_lens);
+            rr_lens.swap(filt_lens);
             };
 
         // ---- slice + per-beat peak/foot --------------------------------
@@ -414,13 +364,13 @@ namespace alignment {
             if (up50 < 0) continue;   // no clean upslope crossing; drop beat
 
             raw.push_back({ std::move(beat), peak, foot, up50 });
-            mode_lens.push_back(static_cast<int>(rr));
+            rr_lens.push_back(static_cast<int>(rr));
         }
         if (raw.empty()) return out;
 
         // ---- Tukey rejection: length (1.5*IQR) --------------------------
         {
-            std::vector<double> lens_d(mode_lens.begin(), mode_lens.end());
+            std::vector<double> lens_d(rr_lens.begin(), rr_lens.end());
             apply_mask(keep_within_tukey(lens_d, 1.5));
         }
         if (raw.empty()) return out;
@@ -446,19 +396,18 @@ namespace alignment {
         out.total_beats = raw.size();
         if (raw.empty()) return out;
 
-        // ---- mode length -----------------------------------------------
-        std::unordered_map<int, size_t> hist;
-        for (int L : mode_lens) hist[L]++;
-        for (const auto& kv : hist) {
-            if (kv.second > out.mode_count
-                || (kv.second == out.mode_count && kv.first > out.mode_length)) {
-                out.mode_length = kv.first;
-                out.mode_count = kv.second;
-            }
+        // ---- representative (median) length ----------------------------
+        // Middle element of the sorted lengths (a length some beat has).
+        {
+            std::vector<int> lens = rr_lens;
+            std::sort(lens.begin(), lens.end());
+            out.median_length = lens[lens.size() / 2];
+            out.median_count = 0;
+            for (int L : rr_lens) if (L == out.median_length) ++out.median_count;
         }
         for (size_t i = 0; i < raw.size(); ++i) {
-            if (mode_lens[i] == out.mode_length) {
-                out.mode_beat_index = static_cast<int>(i);
+            if (rr_lens[i] == out.median_length) {
+                out.ref_beat_index = static_cast<int>(i);
                 break;
             }
         }
@@ -499,15 +448,15 @@ namespace alignment {
 
         // ---- Pass 2: foot-baseline vertical DC match (mirrors ECG) ------
         // Match each beat's mean over a small window around its OWN foot column
-        // to the mode beat's. Feet no longer share a column (we aligned on the
+        // to the reference beat's. Feet no longer share a column (we aligned on the
         // upslope), so the window is centered per beat at foot_cols[i]. A
         // windowed mean, rather than the single argmin sample, avoids an
         // order-statistic bias at the foot. A constant vertical shift moves no
         // column, so it cannot affect the (cusp-free) horizontal alignment.
-        if (out.mode_beat_index >= 0
-            && out.mode_beat_index < static_cast<int>(out.beats.size()))
+        if (out.ref_beat_index >= 0
+            && out.ref_beat_index < static_cast<int>(out.beats.size()))
         {
-            const int fb_w = std::max(1, out.mode_length / 50);
+            const int fb_w = std::max(1, out.median_length / 50);
             auto foot_baseline = [&](size_t i) -> double {
                 const int fc = out.foot_cols[i];
                 const int lo = std::max(0, fc - fb_w);
@@ -521,7 +470,7 @@ namespace alignment {
                     : std::numeric_limits<double>::quiet_NaN();
                 };
 
-            const double target = foot_baseline(static_cast<size_t>(out.mode_beat_index));
+            const double target = foot_baseline(static_cast<size_t>(out.ref_beat_index));
             if (!std::isnan(target)) {
                 for (size_t i = 0; i < out.beats.size(); ++i) {
                     const double b_base = foot_baseline(i);

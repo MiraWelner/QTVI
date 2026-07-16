@@ -329,8 +329,10 @@ FeatureMarks::EcgGlyphs FeatureMarks::compute_ecg_glyphs(
     g.p_wave = compute_p_wave(ecg, p_peak, fs);
     g.q_onset = compute_q_onset(ecg, q_begin, fs);
     g.r_wave = compute_r_wave(ecg, q_begin, s_end);   // window = user q_begin..s_end
-    g.s_end = compute_s_end(ecg, s_end, fs);
+    const int N = static_cast<int>(ecg.size());
+    g.s_end = (s_end >= 0 && s_end < N) ? s_end : -1;  // S = the user's marker (no math)
     g.t_peak = compute_t_wave(ecg, t_begin, t_end);   // max between user T begin/end
+    g.t_end = (t_end >= 0 && t_end < N) ? t_end : -1;  // T end = the user's marker
     return g;
 }
 

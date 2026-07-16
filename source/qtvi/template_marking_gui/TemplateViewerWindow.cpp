@@ -544,7 +544,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     auto emitGlyphLocHeader = [&](const char* n) { f << ',' << n << "_glyph_location"; };
     for (int gc = 1; gc <= 3; ++gc) {
         char gb[64];
-        for (const char* g : { "p_wave", "q_onset", "r_wave", "s_end", "t_peak" }) {
+        for (const char* g : { "p_wave", "q_onset", "r_wave", "s_end", "t_peak", "t_end" }) {
             std::snprintf(gb, sizeof gb, "%s_ch%d", g, gc);
             emitGlyphLocHeader(gb);
         }
@@ -738,7 +738,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             for (int gc = 0; gc < 3; ++gc) {
                 emitLoc(egl[gc].p_wave, row); emitLoc(egl[gc].q_onset, row);
                 emitLoc(egl[gc].r_wave, row); emitLoc(egl[gc].s_end, row);
-                emitLoc(egl[gc].t_peak, row);
+                emitLoc(egl[gc].t_peak, row); emitLoc(egl[gc].t_end, row);
             }
             emitLoc(pgl.foot, row); emitLoc(pgl.p1, row);
             emitLoc(pgl.dic, row);  emitLoc(pgl.p2, row);

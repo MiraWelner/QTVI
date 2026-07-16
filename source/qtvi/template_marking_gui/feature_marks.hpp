@@ -60,6 +60,7 @@ public:
         int r_wave = -1;    // argmax|v-baseline| over [q_begin, s_end]
         int s_end = -1;     // recovery dropoff/knee within +/-0.05s of user S end
         int t_peak = -1;    // max value between user T begin and T end
+        int t_end = -1;     // = the user's T-end marker (passthrough)
     };
     static EcgGlyphs compute_ecg_glyphs(const std::vector<double>& ecg,
         int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs);

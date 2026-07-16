@@ -87,8 +87,8 @@ static inline SingleMethodResult build_ecg_template_for_method(
     // The returned beats are all the SAME WIDTH; NaN cells outside each
     // beat's real range don't participate in the column-wise median or std.
     const alignment::BeatSet aligned =
-        alignment::extract_beats_and_mode(ecgSignal, rpeaks);
-    if (aligned.beats.empty() || aligned.mode_length <= 0) return res;
+        alignment::extract_beats_and_align(ecgSignal, rpeaks);
+    if (aligned.beats.empty() || aligned.median_length <= 0) return res;
 
     const size_t maxLen = aligned.beats.front().size();   // shared-axis width
     res.n_beats = aligned.beats.size();

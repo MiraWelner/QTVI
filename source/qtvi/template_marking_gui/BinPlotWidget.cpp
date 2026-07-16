@@ -843,7 +843,7 @@ void BinPlotWidget::captureGlyphSnapshot() {
         m_glyphs.ecgRPeak = e.r_wave;
         m_glyphs.ecgS = e.s_end;
         m_glyphs.ecgTPeak = e.t_peak;   // computed T peak (max between T begin/end)
-        m_glyphs.ecgTend = -1;          // T end is a user bar, not a computed X
+        m_glyphs.ecgTend = e.t_end;     // T end glyph = the user's T-end marker
         m_glyphs.ecgQPeak = -1;
         m_glyphs.ecgSPeak = -1;
     }
@@ -901,6 +901,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         g(m_glyphs.ecgRPeak);   // R wave
         g(m_glyphs.ecgS);       // S end
         g(m_glyphs.ecgTPeak);   // T peak (between T begin/end)
+        g(m_glyphs.ecgTend);    // T end (= marker)
     }
 
     if (m_showPpgTrace && m_hasPPG && (int)m_ppg.size() >= 3) {

@@ -452,7 +452,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     for (int c = 1; c <= 3; ++c) {
         char b[64];
         for (const char* g : { "p_wave_glyph", "q_onset_glyph", "r_wave_glyph",
-                               "s_end_glyph", "t_peak_glyph" }) {
+                               "s_end_glyph", "t_peak_glyph", "t_end_glyph" }) {
             std::snprintf(b, sizeof b, "%s_ch%d", g, c);
             emitGlyphHeader(b);
         }
@@ -637,6 +637,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             emitGlyphPt(ecg, gl.r_wave);
             emitGlyphPt(ecg, gl.s_end);
             emitGlyphPt(ecg, gl.t_peak);
+            emitGlyphPt(ecg, gl.t_end);
         }
         {
             const FeatureMarks::PpgGlyphs pgl = FeatureMarks::compute_ppg_glyphs(
