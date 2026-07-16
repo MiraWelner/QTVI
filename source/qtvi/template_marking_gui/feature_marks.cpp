@@ -804,8 +804,8 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         const int q_auto = cl(pct(0.10));            // Q begin 10% in
         const int r_auto = cl(detect_r_peak(ecg));   // R stays auto-detected
         const int s_auto = cl(pct(0.25));            // S end   25% in
-        const int tp_auto = cl(pct(0.35));            // T begin 35% in (t_peak_ch field)
-        const int te_auto = cl(pct(0.45));            // T end   45% in
+        const int tp_auto = cl(detect_t_begin(ecg));  // T begin: left foot of the T wave (auto)
+        const int te_auto = cl(detect_t_end(ecg));    // T end:   right foot of the T wave (auto)
 
         // Auto fields always updated.
         b.p_peak_auto_ch[c] = p_auto;
