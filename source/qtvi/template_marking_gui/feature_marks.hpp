@@ -94,12 +94,11 @@ public:
     static int detect_q_begin(const std::vector<double>& ecg_signal);
     static int detect_s_end(const std::vector<double>& ecg_signal);
     static int detect_t_begin(const std::vector<double>& ecg_signal);
-    static int detect_t_peak(const std::vector<double>& ecg_signal);
     static int detect_t_end(const std::vector<double>& ecg_signal);
 
     // PPG landmarks.
     static int detect_ppg_onset(const std::vector<double>& pulse);
-    static int detect_ppg_tac80(const std::vector<double>& pulse);
+    static int detect_ppg_t80(const std::vector<double>& pulse);
     static int detect_ppg_peak(const std::vector<double>& pulse);
     static int detect_ppg_dicrotic(const std::vector<double>& pulse);
     static int detect_ppg_end(const std::vector<double>& pulse);

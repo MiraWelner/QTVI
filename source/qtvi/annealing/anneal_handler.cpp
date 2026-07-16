@@ -67,10 +67,8 @@ namespace {
     /// ECG noise is only excluded when all 3 channels overlap.
     /// PPG noise is excluded independently.
     struct NoiseMarkings {
-        std::vector<std::pair<double, double>> ecg1;
-        std::vector<std::pair<double, double>> ecg2;
-        std::vector<std::pair<double, double>> ecg3;
-        std::vector<std::pair<double, double>> ppg;
+        std::vector<std::pair<double, double>> ecg1, ecg2, ecg3, ppg;
+        std::vector<std::pair<double, double>> accel, abp, art, art_pulm;
     };
 
     struct Exclusion {
@@ -172,49 +170,38 @@ namespace {
             return m;
         }
 
-        /*
-        Noise exclusion logic:
-
-        Take the intersection over only the channels that
-        were actually marked. An empty channel means "user did not review
-        this lead" and so it does not constrain. If the user marks every
-        ECG channel, the intersection-of-three behaviour is recovered.
-        If the user marks none, ECG exclusion is empty.
-        */
+    
         std::vector<std::pair<double, double>> computeExclusions(const NoiseMarkings& nm)
         {
+
+            // Intersect over the channels the user actually marked. An empty list =
+            // "not present / not reviewed" and does NOT constrain -- so datasets that
+            // don't have (or don't mark) ABP/ART/ART_PULM, i.e. MESA and BITTIUM, are
+            // completely unaffected. A region is excised only where every MARKED
+            // channel agrees it is noisy.
             auto e1 = nm.ecg1, e2 = nm.ecg2, e3 = nm.ecg3, pp = nm.ppg;
-            mergeOverlapping(e1);
-            mergeOverlapping(e2);
-            mergeOverlapping(e3);
-            mergeOverlapping(pp);
+            auto ab = nm.abp, ar = nm.art, ap = nm.art_pulm;
+            for (auto* v : { &e1, &e2, &e3, &pp, &ab, &ar, &ap })
+                mergeOverlapping(*v);
+            std::vector<std::vector<std::pair<double, double>>*> present;
+            for (auto* v : { &e1, &e2, &e3, &pp, &ab, &ar, &ap })
+                if (!v->empty()) present.push_back(v);
 
-            std::vector<std::vector<std::pair<double, double>>*> populated;
-            if (!e1.empty()) populated.push_back(&e1);
-            if (!e2.empty()) populated.push_back(&e2);
-            if (!e3.empty()) populated.push_back(&e3);
+            if (present.empty()) return {};
 
-            std::vector<std::pair<double, double>> ecg;
-            if (!populated.empty()) {
-                ecg = *populated[0];
-                for (size_t i = 1; i < populated.size(); ++i)
-                    ecg = intersectIntervals(ecg, *populated[i]);
-            }
-
-            std::vector<std::pair<double, double>> combined;
-            combined.insert(combined.end(), ecg.begin(), ecg.end());
-            combined.insert(combined.end(), pp.begin(), pp.end());
-            mergeOverlapping(combined);
-            return combined;
+            std::vector<std::pair<double, double>> common = *present[0];
+            for (size_t i = 1; i < present.size(); ++i)
+                common = intersectIntervals(common, *present[i]);
+            mergeOverlapping(common);
+            return common;
         }
 
         // ------------------------------------------------------------------------
         // Bin geometry
         // ------------------------------------------------------------------------
 
-        /// Compute 1-based bin break positions and total bin count.
-        BinBreaksResult getBinBreaksAndCount(
-            uint64_t total_len, uint64_t bin_size, double sr, double min_mins)
+        // Compute 1-based bin break positions and total bin count.
+        BinBreaksResult getBinBreaksAndCount(uint64_t total_len, uint64_t bin_size, double sr, double min_mins)
         {
             BinBreaksResult r;
             double remainder_mins = (double)(total_len % bin_size) / sr / 60.0;
@@ -664,13 +651,14 @@ namespace {
             f.read(reinterpret_cast<char*>(row), 48);
             std::pair<double, double> iv = { row[2], row[3] };
             switch (static_cast<int>(row[4])) {
-            case 1: m.ppg.push_back(iv);  break;
-            case 2: m.ecg1.push_back(iv); break;
-            case 3: m.ecg2.push_back(iv); break;
-            case 4: m.ecg3.push_back(iv); break;
-                // labelId 5 (ABP) is silently dropped -- AnnealSegments only
-                // operates on PPG/ECG. If you start excluding ABP in the future,
-                // add a branch here and a field to NoiseMarkings.
+            case 1: m.ppg.push_back(iv);      break;
+            case 2: m.ecg1.push_back(iv);     break;
+            case 3: m.ecg2.push_back(iv);     break;
+            case 4: m.ecg3.push_back(iv);     break;
+            case 5: m.abp.push_back(iv);      break;
+            case 7: m.art.push_back(iv);      break;
+            case 8: m.art_pulm.push_back(iv); break;
+                // case 6 (ACCEL) intentionally excluded from annealing
             default: break;
             }
         }
@@ -757,12 +745,12 @@ namespace {
     //
     // Layout:
     //   Header: [uint64 nSegments][double ppgSR][double ecgSR][double epochSec]
-    //           [uint32 nChannels=40][40 x float32 nativeRates]
+    //           [uint32 nChannels=36][36 x float32 nativeRates]
     //   Per segment:
     //     ppg_bin_indexs, ecg_bin_indexs, ppg, ecg1, ecg2, ecg3, sleep,
-    //     then 40 x {upsampled_slice, raw_slice}.
+    //     then 36 x {upsampled_slice, raw_slice}.
     //
-    // The 40 trailing per-channel slices preserve every input channel sliced
+    // The 36 trailing per-channel slices preserve every input channel sliced
     // to the segment's time window:
     //   - Upsampled slice: indices proportional to ecg_bin_indexs. ECG-index
     //     i in an N-sample ECG block maps to channel-X-index ceil(i*M/N) in

@@ -69,7 +69,7 @@ namespace {
     constexpr QColor kColorEcgQBegin{ 20,  20,  60 };
     constexpr QColor kColorEcgRPeak{ 15,  15,  40 };
     constexpr QColor kColorEcgS{ 30, 35, 85 };
-    constexpr QColor kColorEcgTPeak{ 50,  60, 130 };
+    constexpr QColor kColorEcgTBegin{ 50,  60, 130 };
     constexpr QColor kColorEcgTEnd{ 70,  90, 160 };
 
     // PPG markers (On, P50, Pk, Dc, 2, En) - shades of red, darkest to lightest.
@@ -78,7 +78,7 @@ namespace {
     constexpr QColor kColorPpgPeak{ 180,   0,   0 };  // red
     constexpr QColor kColorPpgDicrotic{ 220,  50,  50 };  // medium red
     constexpr QColor kColorPpgPeak2{ 235, 100, 100 };  // light red (2nd/diastolic peak)
-    constexpr QColor kColorPpgP80{ 210,  30,  70 };  // pink-red (80% upslope)
+    constexpr QColor kColorPpgT80{ 210,  30,  70 };  // pink-red (80% upslope)
     constexpr QColor kColorPpgEnd{ 200,  60,  90 };  // dark pink-red
 
     // Arterial markers (ABP green, ART purple, ART_PULM orange),
@@ -96,14 +96,14 @@ namespace {
         case BinPlotWidget::EcgQBegin:   return kColorEcgQBegin;
         case BinPlotWidget::EcgRPeak:    return kColorEcgRPeak;
         case BinPlotWidget::EcgSEnd:     return kColorEcgS;
-        case BinPlotWidget::EcgTPeak:    return kColorEcgTPeak;
+        case BinPlotWidget::EcgTBegin:    return kColorEcgTBegin;
         case BinPlotWidget::EcgTEnd:     return kColorEcgTEnd;
         case BinPlotWidget::PpgOnset:    return kColorPpgOnset;
         case BinPlotWidget::PpgP50:      return kColorPpgP50;
         case BinPlotWidget::PpgPeak:     return kColorPpgPeak;
         case BinPlotWidget::PpgDicrotic: return kColorPpgDicrotic;
         case BinPlotWidget::PpgPeak2:    return kColorPpgPeak2;
-        case BinPlotWidget::PpgP80:      return kColorPpgP80;
+        case BinPlotWidget::PpgT80:      return kColorPpgT80;
         case BinPlotWidget::PpgEnd:      return kColorPpgEnd;
         }
         if (BinPlotWidget::markerIsAbp(m))     return kColorAbp[m - BinPlotWidget::AbpOnset];
@@ -117,14 +117,14 @@ namespace {
         case BinPlotWidget::EcgQBegin:   return "Q beg";
         case BinPlotWidget::EcgRPeak:    return "R peak";
         case BinPlotWidget::EcgSEnd:     return "S end";
-        case BinPlotWidget::EcgTPeak:    return "T begin";
+        case BinPlotWidget::EcgTBegin:    return "T begin";
         case BinPlotWidget::EcgTEnd:     return "T end";
         case BinPlotWidget::PpgOnset:    return "PPG On";
         case BinPlotWidget::PpgP50:      return "PPG 50%";
         case BinPlotWidget::PpgPeak:     return "PPG Peak";
         case BinPlotWidget::PpgDicrotic: return "DN";
         case BinPlotWidget::PpgPeak2:    return "PPG Peak2";
-        case BinPlotWidget::PpgP80:      return "P80";
+        case BinPlotWidget::PpgT80:      return "T80";
         case BinPlotWidget::PpgEnd:      return "PPG End";
         case BinPlotWidget::AbpOnset: return "aBP On";  case BinPlotWidget::AbpPeak: return "aBP Pk";
         case BinPlotWidget::AbpDicrotic: return "aBP DN"; case BinPlotWidget::AbpPeak2: return "aBP Pk2";
@@ -239,7 +239,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     const std::vector<double>& ecgStd,
     int pPeak, int qBegin, int rPeak, int sEnd, int tPeak, int tEnd,
     int ppgOnset, int ppgP50, int ppgPeak,
-    int ppgDicrotic, int ppgPeak2, int ppgP80, int ppgEnd,
+    int ppgDicrotic, int ppgPeak2, int ppgT80, int ppgEnd,
     double rPeakSample,
     int nEcgBeats,
     int nPpgBeats)
@@ -254,14 +254,14 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_markers[EcgQBegin] = qBegin;
     m_markers[EcgRPeak] = rPeak;
     m_markers[EcgSEnd] = sEnd;
-    m_markers[EcgTPeak] = tPeak;
+    m_markers[EcgTBegin] = tPeak;
     m_markers[EcgTEnd] = tEnd;
     m_markers[PpgOnset] = ppgOnset;
     m_markers[PpgP50] = ppgP50;
     m_markers[PpgPeak] = ppgPeak;
     m_markers[PpgDicrotic] = ppgDicrotic;
     m_markers[PpgPeak2] = ppgPeak2;
-    m_markers[PpgP80] = ppgP80;
+    m_markers[PpgT80] = ppgT80;
     m_markers[PpgEnd] = ppgEnd;
     m_rPeakSample = rPeakSample;
     // Under Patch B, PPG (and all arterial channels) share the ECG's real-
@@ -836,7 +836,7 @@ void BinPlotWidget::captureGlyphSnapshot() {
     if ((int)m_ecg.size() >= 3) {
         auto e = FeatureMarks::compute_ecg_glyphs(m_ecg,
             m_markers[EcgPPeak], m_markers[EcgQBegin],
-            m_markers[EcgSEnd], m_markers[EcgTPeak] /*= T begin*/, m_markers[EcgTEnd],
+            m_markers[EcgSEnd], m_markers[EcgTBegin] /*= T begin*/, m_markers[EcgTEnd],
             m_sampleRate);
         m_glyphs.ecgPPeak = e.p_wave;
         m_glyphs.ecgQ = e.q_onset;

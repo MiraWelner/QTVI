@@ -11,6 +11,8 @@
 #include <cmath>
 #include <algorithm>
 #include <fstream>
+#include <sstream>
+#include <QFile>
 #include <iomanip>
 #include <iostream>
 #include <cstdio>
@@ -365,9 +367,9 @@ void TemplateViewerWindow::showPage() {
 
             pw->setData(ppgN, ppgStd, ecgN, ecgStd,
                 b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
-                b.s_end_ch[c], b.t_peak_ch[c], b.t_end_ch[c],
+                b.s_end_ch[c], b.t_begin_ch[c], b.t_end_ch[c],
                 b.ppg_onset, b.ppg_p50, b.ppg_peak,
-                b.ppg_dicrotic, b.ppg_peak2, b.ppg_tac80, b.ppg_end,
+                b.ppg_dicrotic, b.ppg_peak2, b.ppg_t80, b.ppg_end,
                 rPeak,
                 static_cast<int>(nEcgBeats),
                 static_cast<int>(b.ppg_n_beats));
@@ -475,6 +477,56 @@ void TemplateViewerWindow::captureCurrentPage() {
         });
 }
 
+// Merge the r_align and q_align aligned-template CSVs into one wide CSV.
+// Shared keys (file_id,bin_num,x_ms) appear once; every other column is
+// emitted as a pair <name>_r,<name>_q. Rows are paired by line index (both
+// passes share bin order and per-bin template length); any length mismatch
+// is blank-padded. Returns true on success.
+namespace {
+    bool mergeAlignedPassCsvs(const std::string& rPath, const std::string& qPath,
+        const std::string& outPath) {
+        std::ifstream rf(rPath), qf(qPath);
+        if (!rf || !qf) return false;
+        auto readAll = [](std::ifstream& in) {
+            std::vector<std::string> lines; std::string ln;
+            while (std::getline(in, ln)) {
+                if (!ln.empty() && ln.back() == '\r') ln.pop_back();
+                lines.push_back(ln);
+            }
+            return lines;
+            };
+        const std::vector<std::string> R = readAll(rf), Q = readAll(qf);
+        if (R.empty() || Q.empty()) return false;
+        auto split = [](const std::string& s) {
+            std::vector<std::string> c; std::string cell; std::stringstream ss(s);
+            while (std::getline(ss, cell, ',')) c.push_back(cell);
+            return c;
+            };
+        std::ofstream out(outPath);
+        if (!out) return false;
+        const std::vector<std::string> qh = split(Q[0]);
+        const size_t ncol = qh.size();
+        out << "file_id,bin_num,x_ms";
+        for (size_t i = 3; i < ncol; ++i) out << ',' << qh[i] << "_r_align" << ',' << qh[i] << "_q_align";
+        out << '\n';
+        const size_t n = std::max(R.size(), Q.size());
+        for (size_t li = 1; li < n; ++li) {
+            const std::vector<std::string> rc = (li < R.size()) ? split(R[li]) : std::vector<std::string>();
+            const std::vector<std::string> qc = (li < Q.size()) ? split(Q[li]) : std::vector<std::string>();
+            const std::vector<std::string>& key = !qc.empty() ? qc : rc;
+            out << (key.size() > 0 ? key[0] : "") << ','
+                << (key.size() > 1 ? key[1] : "") << ','
+                << (key.size() > 2 ? key[2] : "");
+            for (size_t i = 3; i < ncol; ++i) {
+                out << ',' << (i < rc.size() ? rc[i] : "")
+                    << ',' << (i < qc.size() ? qc[i] : "");
+            }
+            out << '\n';
+        }
+        return true;
+    }
+}   // namespace
+
 void TemplateViewerWindow::writeAlignedTemplateCsv() {
     if (m_bins.empty()) return;
 
@@ -496,7 +548,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     f << "file_id,bin_num,x_ms";
     for (const char* n : CHANS) {
         f << ',' << n << "_raw_mv"
-            << ',' << n << "_Normalized_mv"
+            << ',' << n << "_Normalized"
             << ',' << n << "_raw_std"
             << ',' << n << "_normalized_std";
     }
@@ -510,7 +562,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     //   s_end, t_peak, t_end.
     static const char* ECG_MARKERS[] = {
         "p_peak", "q_begin", "q_peak", "r_peak", "s_peak",
-        "s_end",  "t_peak",  "t_end"
+        "s_end",  "t_begin",  "t_end"
     };
     for (int c = 1; c <= 3; ++c) {
         for (int k = 0; k < 8; ++k) {
@@ -523,7 +575,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     // Pulse markers (PPG has 6 with p50, arterial has 5).
     static const char* PPG_MARKERS[] = {
         "ppg_onset", "ppg_p50", "ppg_peak",
-        "ppg_dicrotic", "ppg_peak2", "ppg_p80", "ppg_end"
+        "ppg_dicrotic", "ppg_peak2", "ppg_t80", "ppg_end"
     };
     static const char* ABP_MARKERS[] = {
         "abp_onset", "abp_peak", "abp_dicrotic", "abp_peak2", "abp_end"
@@ -545,17 +597,17 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     emitPulseHeaderGroup(ABP_MARKERS);
     emitPulseHeaderGroup(ART_MARKERS);
     emitPulseHeaderGroup(ARTP_MARKERS);
-    // Computed glyph locations (derived from the USER markers).
-    auto emitGlyphLocHeader = [&](const char* n) { f << ',' << n << "_glyph_location"; };
+    // Autodetected computed feature locations (no user bar; from AUTODETECT markers).
+    auto emitAutoFeatLocHeader = [&](const char* n) { f << ',' << n << "_autodetect_location"; };
     for (int gc = 1; gc <= 3; ++gc) {
         char gb[64];
-        for (const char* g : { "p_wave", "q_onset", "r_wave", "s_end", "t_peak", "t_end" }) {
+        for (const char* g : { "p_wave", "q_onset", "r_wave", "t_peak" }) {
             std::snprintf(gb, sizeof gb, "%s_ch%d", g, gc);
-            emitGlyphLocHeader(gb);
+            emitAutoFeatLocHeader(gb);
         }
     }
-    for (const char* g : { "ppg_foot", "ppg_p1", "ppg_dic", "ppg_p2" })
-        emitGlyphLocHeader(g);
+    for (const char* g : { "ppg_foot", "ppg_p1" })
+        emitAutoFeatLocHeader(g);
     f << '\n';
     f << std::setprecision(10);
 
@@ -628,11 +680,11 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             const auto& ecg = chs[c]->ecgTemplate_raw;
             ftAuto[c] = computeEcgFeatures(ecg,
                 b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
-                b.s_end_auto_ch[c], b.t_peak_auto_ch[c], b.t_end_auto_ch[c],
+                b.s_end_auto_ch[c], b.t_begin_auto_ch[c], b.t_end_auto_ch[c],
                 m_sampleRate);
             ftUser[c] = computeEcgFeatures(ecg,
                 b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
-                b.s_end_ch[c], b.t_peak_ch[c], b.t_end_ch[c],
+                b.s_end_ch[c], b.t_begin_ch[c], b.t_end_ch[c],
                 m_sampleRate);
         }
 
@@ -647,7 +699,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             ecgAuto[c][3] = b.r_peak_auto_ch[c];
             ecgAuto[c][4] = ftAuto[c].s_idx;
             ecgAuto[c][5] = b.s_end_auto_ch[c];
-            ecgAuto[c][6] = b.t_peak_auto_ch[c];
+            ecgAuto[c][6] = b.t_begin_auto_ch[c];
             ecgAuto[c][7] = b.t_end_auto_ch[c];
             ecgUser[c][0] = b.p_peak_ch[c];
             ecgUser[c][1] = b.q_begin_ch[c];
@@ -655,24 +707,15 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             ecgUser[c][3] = b.r_peak_ch[c];
             ecgUser[c][4] = ftUser[c].s_idx;
             ecgUser[c][5] = b.s_end_ch[c];
-            ecgUser[c][6] = b.t_peak_ch[c];
+            ecgUser[c][6] = b.t_begin_ch[c];
             ecgUser[c][7] = b.t_end_ch[c];
         }
 
         // Pulse marker positions, order matching PPG_MARKERS / ABP_MARKERS etc.
         const int ppgAuto[7] = { b.ppg_onset_auto, b.ppg_p50_auto, b.ppg_peak_auto,
-                                 b.ppg_dicrotic_auto, b.ppg_peak2_auto, b.ppg_tac80_auto, b.ppg_end_auto };
+                                 b.ppg_dicrotic_auto, b.ppg_peak2_auto, b.ppg_t80_auto, b.ppg_end_auto };
         const int ppgUser[7] = { b.ppg_onset, b.ppg_p50, b.ppg_peak,
-                                 b.ppg_dicrotic, b.ppg_peak2, b.ppg_tac80, b.ppg_end };
-        // Computed glyph indices (from USER markers).
-        const ChannelTemplateData* gchs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-        FeatureMarks::EcgGlyphs egl[3];
-        for (int gc = 0; gc < 3; ++gc)
-            egl[gc] = FeatureMarks::compute_ecg_glyphs(
-                gchs[gc]->ecgTemplate_raw, b.p_peak_ch[gc], b.q_begin_ch[gc],
-                b.s_end_ch[gc], b.t_peak_ch[gc], b.t_end_ch[gc], m_sampleRate);
-        const FeatureMarks::PpgGlyphs pgl = FeatureMarks::compute_ppg_glyphs(
-            b.ppgTemplate, b.ppg_onset, b.ppg_dicrotic, b.ppg_peak2);
+                                 b.ppg_dicrotic, b.ppg_peak2, b.ppg_t80, b.ppg_end };
         const int abpAuto[5] = { b.abp_onset_auto, b.abp_peak_auto,
                                  b.abp_dicrotic_auto, b.abp_peak2_auto, b.abp_end_auto };
         const int abpUser[5] = { b.abp_onset, b.abp_peak,
@@ -714,6 +757,15 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             if (j >= 0 && j < (int)v.size() && !std::isnan(v[j])) f << v[j];
             };
         // Emit ",1" if row equals marker index, ",<blank>" otherwise.
+        // Autodetected computed feature indices (no user bar; from AUTODETECT markers).
+        const ChannelTemplateData* gchs[3] = { &b.ch1, &b.ch2, &b.ch3 };
+        FeatureMarks::EcgGlyphs egl[3];
+        for (int gc = 0; gc < 3; ++gc)
+            egl[gc] = FeatureMarks::compute_ecg_glyphs(
+                gchs[gc]->ecgTemplate_raw, b.p_peak_auto_ch[gc], b.q_begin_auto_ch[gc],
+                b.s_end_auto_ch[gc], b.t_begin_auto_ch[gc], b.t_end_auto_ch[gc], m_sampleRate);
+        const FeatureMarks::PpgGlyphs pgl = FeatureMarks::compute_ppg_glyphs(
+            b.ppgTemplate, b.ppg_onset_auto, b.ppg_dicrotic_auto, b.ppg_peak2_auto);
         auto emitLoc = [&](int markerIdx, int row) {
             f << ',';
             if (markerIdx >= 0 && markerIdx == row) f << '1';
@@ -742,15 +794,28 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             for (int k = 0; k < 5; ++k) { emitLoc(artpAuto[k], row); emitLoc(artpUser[k], row); }
             for (int gc = 0; gc < 3; ++gc) {
                 emitLoc(egl[gc].p_wave, row); emitLoc(egl[gc].q_onset, row);
-                emitLoc(egl[gc].r_wave, row); emitLoc(egl[gc].s_end, row);
-                emitLoc(egl[gc].t_peak, row); emitLoc(egl[gc].t_end, row);
+                emitLoc(egl[gc].r_wave, row); emitLoc(egl[gc].t_peak, row);
             }
             emitLoc(pgl.foot, row); emitLoc(pgl.p1, row);
-            emitLoc(pgl.dic, row);  emitLoc(pgl.p2, row);
             f << '\n';
         }
     }
     fprintf(stderr, "[tmplcsv] wrote %s\n", path.toStdString().c_str());
+    f.close();
+
+    // On the final (q_align) pass, merge the r_align + q_align passes into
+    // one wide CSV (columns suffixed _r / _q) and drop the per-pass files.
+    if (m_qAlignPass) {
+        const QString rPath = outDir.filePath(m_subjectId + "_template_r_align.csv");
+        const QString qPath = outDir.filePath(m_subjectId + "_template_q_align.csv");
+        const QString mPath = outDir.filePath(m_subjectId + "_template.csv");
+        if (mergeAlignedPassCsvs(rPath.toStdString(), qPath.toStdString(),
+            mPath.toStdString())) {
+            QFile::remove(rPath);
+            QFile::remove(qPath);
+            fprintf(stderr, "[tmplcsv] merged -> %s\n", mPath.toStdString().c_str());
+        }
+    }
 }
 
 void TemplateViewerWindow::applyMarkerVisibility() {
@@ -782,14 +847,14 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
             pw->setMarker(BinPlotWidget::EcgQBegin, b.q_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgRPeak, b.r_peak_ch[c]);
             pw->setMarker(BinPlotWidget::EcgSEnd, b.s_end_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgTPeak, b.t_peak_ch[c]);
+            pw->setMarker(BinPlotWidget::EcgTBegin, b.t_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgTEnd, b.t_end_ch[c]);
             pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
             pw->setMarker(BinPlotWidget::PpgP50, b.ppg_p50);
             pw->setMarker(BinPlotWidget::PpgPeak, b.ppg_peak);
             pw->setMarker(BinPlotWidget::PpgDicrotic, b.ppg_dicrotic);
             pw->setMarker(BinPlotWidget::PpgPeak2, b.ppg_peak2);
-            pw->setMarker(BinPlotWidget::PpgP80, b.ppg_tac80);
+            pw->setMarker(BinPlotWidget::PpgT80, b.ppg_t80);
             pw->setMarker(BinPlotWidget::PpgEnd, b.ppg_end);
             pw->setMarker(BinPlotWidget::AbpOnset, b.abp_onset);
             pw->setMarker(BinPlotWidget::AbpPeak, b.abp_peak);
@@ -826,7 +891,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             case BinPlotWidget::EcgQBegin: return tb.q_begin_ch[leadIdx];
             case BinPlotWidget::EcgRPeak:  return tb.r_peak_ch[leadIdx];
             case BinPlotWidget::EcgSEnd:   return tb.s_end_ch[leadIdx];
-            case BinPlotWidget::EcgTPeak:  return tb.t_peak_ch[leadIdx];
+            case BinPlotWidget::EcgTBegin:  return tb.t_begin_ch[leadIdx];
             case BinPlotWidget::EcgTEnd:   return tb.t_end_ch[leadIdx];
             }
             return -1;
@@ -837,7 +902,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             case BinPlotWidget::EcgQBegin: tb.q_begin_ch[leadIdx] = v; break;
             case BinPlotWidget::EcgRPeak:  tb.r_peak_ch[leadIdx] = v; break;
             case BinPlotWidget::EcgSEnd:   tb.s_end_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgTPeak:  tb.t_peak_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgTBegin:  tb.t_begin_ch[leadIdx] = v; break;
             case BinPlotWidget::EcgTEnd:   tb.t_end_ch[leadIdx] = v; break;
             }
             };
@@ -876,7 +941,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             case BinPlotWidget::PpgPeak:     return tb.ppg_peak;
             case BinPlotWidget::PpgDicrotic: return tb.ppg_dicrotic;
             case BinPlotWidget::PpgPeak2:    return tb.ppg_peak2;
-            case BinPlotWidget::PpgP80:      return tb.ppg_tac80;
+            case BinPlotWidget::PpgT80:      return tb.ppg_t80;
             case BinPlotWidget::PpgEnd:      return tb.ppg_end;
             }
             return -1;
@@ -888,7 +953,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             case BinPlotWidget::PpgPeak:     tb.ppg_peak = v; break;
             case BinPlotWidget::PpgDicrotic: tb.ppg_dicrotic = v; break;
             case BinPlotWidget::PpgPeak2:    tb.ppg_peak2 = v; break;
-            case BinPlotWidget::PpgP80:      tb.ppg_tac80 = v; break;
+            case BinPlotWidget::PpgT80:      tb.ppg_t80 = v; break;
             case BinPlotWidget::PpgEnd:      tb.ppg_end = v; break;
             }
             };
@@ -1065,6 +1130,20 @@ void TemplateViewerWindow::save_bin_and_csv() {
         ui->finishButton->setText("Finish");
         emit requestQAlignReload();
         return;
+    }
+
+    // Final (q_align) pass: merge the r_align + q_align markings CSVs into one
+    // wide CSV (columns suffixed _r / _q) and drop the per-pass CSVs. The
+    // per-pass .bin files are kept (used to restore state on reload).
+    {
+        const QString rCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_mark_r_align.csv";
+        const QString qCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_mark_q_align.csv";
+        const QString mCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_mark.csv";
+        if (mergeAlignedPassCsvs(rCsv.toStdString(), qCsv.toStdString(), mCsv.toStdString())) {
+            QFile::remove(rCsv);
+            QFile::remove(qCsv);
+            std::cout << "Merged: " << mCsv.toStdString() << "\n";
+        }
     }
 
     emit finished();

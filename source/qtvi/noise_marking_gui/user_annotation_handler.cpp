@@ -37,7 +37,7 @@ void annotation_handler::exportCSV(const std::string& filename) const {
 
 void annotation_handler::exportBinary(const std::string& filename) const {
     static const std::unordered_map<std::string, double> labelMap = {
-        {"PPG", 1.0}, {"ECG1", 2.0}, {"ECG2", 3.0}, {"ECG3", 4.0}, {"ABP", 5.0}
+        {"PPG", 1.0}, {"ECG1", 2.0}, {"ECG2", 3.0}, {"ECG3", 4.0}, {"ABP", 5.0}, {"ACCEL", 6.0}, {"ART", 7.0}, {"ART_PULM", 8.0}
     };
 
     std::ofstream file(filename, std::ios::binary);

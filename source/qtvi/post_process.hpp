@@ -72,7 +72,7 @@ namespace post_process_detail {
         alignment::g_q_align = false;   // each subject starts on the R-only pass
         const std::string stem = binPath.stem().string();
         const std::filesystem::path noisePath = std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
-        const std::filesystem::path annealedPath = std::filesystem::path(cfg.annealed_data_path) / (stem + "annealed.bin");
+        const std::filesystem::path annealedPath = std::filesystem::path(cfg.annealed_data_path) / (stem + "_annealed.bin");
         const std::filesystem::path rPeakPath = std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
         const std::filesystem::path templatePath = std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
         const std::filesystem::path provisionalPath = std::filesystem::path(cfg.template_path) / (stem + "_templates.partial.bin");

@@ -235,7 +235,7 @@ int FeatureMarks::compute_r_wave(const std::vector<double>& v, int qBegin, int s
     if (qBegin < 0 || sEnd < 0 || qBegin >= N || sEnd >= N || qBegin >= sEnd)
         return -1;
     double base = 0.0; int n = 0;
-    for (int i = qBegin; i <= sEnd; ++i)
+    for (int i = 0; i < N; ++i)
         if (!std::isnan(v[i])) { base += v[i]; ++n; }
     if (n == 0) return -1;
     base /= n;
@@ -440,11 +440,14 @@ int FeatureMarks::detect_t_begin(const std::vector<double>& ecg_signal) {
     const int hi = std::min(N - 1, (2 * N) / 3);       // first 2/3 only
 
     int tPeak = -1;
+    double tBest = -std::numeric_limits<double>::infinity();
     for (int i = lo; i < hi; ++i) {
         if (std::isnan(upright[i - 1]) || std::isnan(upright[i]) || std::isnan(upright[i + 1])) continue;
-        if (upright[i] > upright[i - 1] && upright[i] >= upright[i + 1]) { tPeak = i; break; }
+        if (upright[i] > upright[i - 1] && upright[i] >= upright[i + 1]) {
+            if (upright[i] > tBest) { tBest = upright[i]; tPeak = i; }   // tallest = the T wave, not the first ST bump
+        }
     }
-    if (tPeak < 0) return std::clamp(s_end + 1, 0, N - 1);
+    if (tPeak < 0) return std::clamp(s_end + (int)std::lround(0.1 * N), 0, N - 1);
 
     int i = tPeak;   // left foot
     while (i - 1 > s_end && !std::isnan(upright[i - 1]) && upright[i - 1] < upright[i]) --i;
@@ -486,31 +489,6 @@ int FeatureMarks::detect_s_end(const std::vector<double>& ecg_signal) {
     return std::clamp(s_idx + 15, 0, N - 1);
 }
 
-int FeatureMarks::detect_t_peak(const std::vector<double>& ecg_signal) {
-    const int N = static_cast<int>(ecg_signal.size());
-    if (N < 3) return 0;
-
-    auto [r_idx, is_positive] = r_peak(ecg_signal);
-    std::vector<double> upright = ecg_signal;
-    if (!is_positive) for (auto& x : upright) x = -x;
-
-    const int primary_end = (4 * N) / 5;
-    const int lo = std::min(N - 2, r_idx + 50);
-    const int hi = std::max(lo + 5, std::min(N - 1, primary_end));
-    if (hi - lo < 5) return std::min(N - 1, r_idx + 150);
-
-    int best = -1;
-    double bestVal = -std::numeric_limits<double>::infinity();
-    for (int i = lo + 1; i < hi; ++i) {
-        if (std::isnan(upright[i - 1]) || std::isnan(upright[i]) || std::isnan(upright[i + 1])) continue;
-        if (upright[i] >= upright[i - 1] && upright[i] >= upright[i + 1]) {
-            if (upright[i] > bestVal) { bestVal = upright[i]; best = i; }
-        }
-    }
-    if (best >= 0) return best;
-    return std::clamp(r_idx + 150, 0, N - 1);
-}
-
 int FeatureMarks::detect_t_end(const std::vector<double>& ecg_signal) {
     // First local maximum right of S end, then walk right to its foot.
     const int N = static_cast<int>(ecg_signal.size());
@@ -525,15 +503,18 @@ int FeatureMarks::detect_t_end(const std::vector<double>& ecg_signal) {
     const int hi = std::min(N - 1, (2 * N) / 3);       // first 2/3 only
 
     int tPeak = -1;
+    double tBest = -std::numeric_limits<double>::infinity();
     for (int i = lo; i < hi; ++i) {
         if (std::isnan(upright[i - 1]) || std::isnan(upright[i]) || std::isnan(upright[i + 1])) continue;
-        if (upright[i] > upright[i - 1] && upright[i] >= upright[i + 1]) { tPeak = i; break; }
+        if (upright[i] > upright[i - 1] && upright[i] >= upright[i + 1]) {
+            if (upright[i] > tBest) { tBest = upright[i]; tPeak = i; }   // tallest = the T wave, not the first ST bump
+        }
     }
-    if (tPeak < 0) return std::clamp(s_end + 2, 0, N - 1);
+    if (tPeak < 0) return std::clamp(s_end + (int)std::lround(0.1 * N), 0, N - 1);
 
     int i = tPeak;   // right foot
     while (i + 1 < hi && !std::isnan(upright[i + 1]) && upright[i + 1] < upright[i]) ++i;
-    return i;
+    return std::clamp(std::max(i, s_end + 1), 0, N - 1);   // T end must sit right of S-end
 }
 
 // -------------------------------------------------------------------------
@@ -558,7 +539,7 @@ int FeatureMarks::detect_ppg_onset(const std::vector<double>& pulse) {
     return idx;
 }
 
-int FeatureMarks::detect_ppg_tac80(const std::vector<double>& pulse) {
+int FeatureMarks::detect_ppg_t80(const std::vector<double>& pulse) {
     const int N = static_cast<int>(pulse.size());
     const int foot = detect_ppg_onset(pulse);
     const int peak = detect_ppg_peak(pulse);
@@ -686,13 +667,13 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
     // ---- PPG ------------------------------------------------------------
     if (b.ppgTemplate.empty()) {
         b.ppg_issue = 2;
-        b.ppg_onset = b.ppg_p50 = b.ppg_tac80 = b.ppg_peak = -1;
+        b.ppg_onset = b.ppg_p50 = b.ppg_t80 = b.ppg_peak = -1;
         b.ppg_dicrotic = b.ppg_peak2 = b.ppg_end = -1;
-        b.ppg_onset_auto = b.ppg_p50_auto = b.ppg_tac80_auto = b.ppg_peak_auto = -1;
+        b.ppg_onset_auto = b.ppg_p50_auto = b.ppg_t80_auto = b.ppg_peak_auto = -1;
         b.ppg_dicrotic_auto = b.ppg_peak2_auto = b.ppg_end_auto = -1;
     }
     else if (b.ppg_issue == 1) {
-        b.ppg_onset = b.ppg_p50 = b.ppg_tac80 = b.ppg_peak = -1;
+        b.ppg_onset = b.ppg_p50 = b.ppg_t80 = b.ppg_peak = -1;
         b.ppg_dicrotic = b.ppg_peak2 = b.ppg_end = -1;
         // Leave *_auto alone -- they're the original auto positions.
     }
@@ -724,7 +705,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
 
         // Systolic peak = argmax over the visible window; Foot = the minimum
         // BEFORE that peak (seeds the foot bar in the trough); End = the
-        // minimum between the peak and the end of the visible window; P80 =
+        // minimum between the peak and the end of the visible window; T80 =
         // 80% of the way DOWN from peak toward end; p50 = temporal midpoint
         // foot..peak.
         int peak = 0;
@@ -747,14 +728,14 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
                 if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; end = i; }
         }
 
-        int tac80 = std::clamp((peak + end) / 2, 0, W - 1);
+        int t80 = std::clamp((peak + end) / 2, 0, W - 1);
         if (end > peak && !std::isnan(v[peak]) && !std::isnan(v[end])) {
             const double target = v[peak] + 0.80 * (v[end] - v[peak]);  // 80% down
             double bestDiff = std::numeric_limits<double>::infinity();
             for (int i = peak; i <= end; ++i) {
                 if (std::isnan(v[i])) continue;
                 const double d = std::abs(v[i] - target);
-                if (d < bestDiff) { bestDiff = d; tac80 = i; }
+                if (d < bestDiff) { bestDiff = d; t80 = i; }
             }
         }
 
@@ -767,14 +748,14 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         b.ppg_end_auto = end;
         b.ppg_dicrotic_auto = dic;
         b.ppg_p50_auto = p50;
-        b.ppg_tac80_auto = tac80;
+        b.ppg_t80_auto = t80;
         b.ppg_peak2_auto = peak2;
 
         // Movable markers: seed only when unset (respect prior edits).
         if (b.ppg_onset < 0)    b.ppg_onset = foot;
         if (b.ppg_dicrotic < 0) b.ppg_dicrotic = dic;
         if (b.ppg_peak2 < 0)    b.ppg_peak2 = peak2;
-        if (b.ppg_tac80 < 0)    b.ppg_tac80 = tac80;
+        if (b.ppg_t80 < 0)    b.ppg_t80 = t80;
         if (b.ppg_end < 0)      b.ppg_end = end;
         // Auto-only markers: always refresh.
         b.ppg_peak = peak;
@@ -790,9 +771,9 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         if (ecg.empty()) {
             b.bad_r_ch[c] = true;
             b.p_peak_ch[c] = b.q_begin_ch[c] = b.r_peak_ch[c] = -1;
-            b.s_end_ch[c] = b.t_peak_ch[c] = b.t_end_ch[c] = -1;
+            b.s_end_ch[c] = b.t_begin_ch[c] = b.t_end_ch[c] = -1;
             b.p_peak_auto_ch[c] = b.q_begin_auto_ch[c] = b.r_peak_auto_ch[c] = -1;
-            b.s_end_auto_ch[c] = b.t_peak_auto_ch[c] = b.t_end_auto_ch[c] = -1;
+            b.s_end_auto_ch[c] = b.t_begin_auto_ch[c] = b.t_end_auto_ch[c] = -1;
             continue;
         }
 
@@ -804,7 +785,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         const int q_auto = cl(pct(0.10));            // Q begin 10% in
         const int r_auto = cl(detect_r_peak(ecg));   // R stays auto-detected
         const int s_auto = cl(pct(0.25));            // S end   25% in
-        const int tp_auto = cl(detect_t_begin(ecg));  // T begin: left foot of the T wave (auto)
+        const int tp_auto = cl(detect_t_begin(ecg));  // T begin bar: left foot of the T wave (auto)
         const int te_auto = cl(detect_t_end(ecg));    // T end:   right foot of the T wave (auto)
 
         // Auto fields always updated.
@@ -812,7 +793,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         b.q_begin_auto_ch[c] = q_auto;
         b.r_peak_auto_ch[c] = r_auto;
         b.s_end_auto_ch[c] = s_auto;
-        b.t_peak_auto_ch[c] = tp_auto;
+        b.t_begin_auto_ch[c] = tp_auto;
         b.t_end_auto_ch[c] = te_auto;
 
         // User fields: only seed when unset. R peak is auto-only so its user
@@ -821,7 +802,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         if (b.q_begin_ch[c] < 0) b.q_begin_ch[c] = q_auto;
         b.r_peak_ch[c] = r_auto;
         if (b.s_end_ch[c] < 0) b.s_end_ch[c] = s_auto;
-        if (b.t_peak_ch[c] < 0) b.t_peak_ch[c] = tp_auto;
+        if (b.t_begin_ch[c] < 0) b.t_begin_ch[c] = tp_auto;
         if (b.t_end_ch[c] < 0) b.t_end_ch[c] = te_auto;
     }
 

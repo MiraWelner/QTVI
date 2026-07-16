@@ -14,28 +14,6 @@ using std::pair;
 inline constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 inline constexpr double Inf = std::numeric_limits<double>::infinity();
 
-inline void detrend(std::vector<double>& x) {
-    size_t n = x.size();
-    if (n < 2) return;
-
-    double sum_x = 0, sum_y = 0, sum_xy = 0, sum_xx = 0;
-    for (size_t i = 0; i < n; ++i) {
-        sum_x += (double)i;
-        sum_y += x[i];
-        sum_xy += (double)i * x[i];
-        sum_xx += (double)i * (double)i;
-    }
-
-    double denom = (n * sum_xx - sum_x * sum_x);
-    if (denom == 0) return;
-
-    double slope = (n * sum_xy - sum_x * sum_y) / denom;
-    double intercept = (sum_y - slope * sum_x) / (double)n;
-
-    for (size_t i = 0; i < n; ++i)
-        x[i] -= (slope * (double)i + intercept);
-}
-
 inline double mean(const vector<double>& x) {
     if (x.empty()) return 0.0;
     double sum = 0.0;

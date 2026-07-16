@@ -53,7 +53,7 @@ public:
         EcgQBegin = 1,
         EcgRPeak = 2,
         EcgSEnd = 3,
-        EcgTPeak = 4,
+        EcgTBegin = 4,
         EcgTEnd = 5,
         // --- PPG markers (contiguous, immediately after ECG) ---
         PpgOnset = 6,
@@ -61,7 +61,7 @@ public:
         PpgPeak = 8,
         PpgDicrotic = 9,
         PpgPeak2 = 10,
-        PpgP80 = 11,
+        PpgT80 = 11,
         PpgEnd = 12,
         // --- Arterial markers ---
         AbpOnset = 13, AbpPeak = 14, AbpDicrotic = 15, AbpPeak2 = 16, AbpEnd = 17,
@@ -82,7 +82,7 @@ public:
     // "Begin"/onset markers are drawn dashed; everything else (incl. "end")
     // solid.
     static bool markerIsBegin(int m) {
-        return m == EcgQBegin || m == EcgTPeak /* T begin */
+        return m == EcgQBegin || m == EcgTBegin /* T begin */
             || m == PpgOnset || m == AbpOnset || m == ArtOnset || m == ArtPulmOnset;
     }
     double m_rPeakSample = 0.0;   // R-peak sample index within the ECG template
@@ -133,7 +133,7 @@ public:
         const std::vector<double>& ecgStd,
         int pPeak, int qBegin, int rPeak, int sEnd, int tPeak, int tEnd,
         int ppgOnset, int ppgP50, int ppgPeak,
-        int ppgDicrotic, int ppgPeak2, int ppgP80, int ppgEnd,
+        int ppgDicrotic, int ppgPeak2, int ppgT80, int ppgEnd,
         double rPeakSample,
         int nEcgBeats = 0,
         int nPpgBeats = 0);
@@ -250,7 +250,7 @@ private:
     // more entries to the enum. All marker slots start hidden (-1).
     int m_markers[MarkerCount] = {
         -1, -1, -1, -1, -1, -1,   // ECG (6: p_peak, q_begin, r_peak, s_end, t_peak, t_end)
-        -1, -1, -1, -1, -1, -1, -1,   // PPG (7: onset, p50, peak, dicrotic, peak2, p80, end)
+        -1, -1, -1, -1, -1, -1, -1,   // PPG (7: onset, p50, peak, dicrotic, peak2, t80, end)
         -1, -1, -1, -1, -1,       // ABP
         -1, -1, -1, -1, -1,       // ART
         -1, -1, -1, -1, -1        // ART_PULM
