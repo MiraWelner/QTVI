@@ -152,6 +152,10 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     m_sampleRate = sampleRateHz;
     setWindowTitle(QString("Template Marking - %1").arg(subjectId));
     ui->subjectLabel->setText(subjectId);
+    // First pass shows "Finish and Next"; after the Q-align reload it reads
+    // "Finish" (m_qAlignPass is set in save_bin_and_csv and preserved across
+    // the reload).
+    ui->finishButton->setText(m_qAlignPass ? "Finish" : "Finish and Next");
 
     try {
         m_bins = readTemplateInfoBin(templatePath.toStdString());
@@ -476,7 +480,8 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
 
     QDir outDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
     if (!outDir.exists()) outDir.mkpath(".");
-    const QString path = outDir.filePath(m_subjectId + "_templates.csv");
+    const QString pass = m_qAlignPass ? "q_align" : "r_align";
+    const QString path = outDir.filePath(m_subjectId + "_template_" + pass + ".csv");
 
     std::ofstream f(path.toStdString());
     if (!f) { fprintf(stderr, "[tmplcsv] cannot open %s\n", path.toStdString().c_str()); return; }
@@ -1032,12 +1037,13 @@ void TemplateViewerWindow::save_bin_and_csv() {
     if (!binDir.exists()) binDir.mkpath(".");
 
     try {
-        QString outPath = m_markingPath + "/" + m_subjectId + "_template_markings.bin";
+        const QString pass = m_qAlignPass ? "q_align" : "r_align";
+        QString outPath = m_markingPath + "/" + m_subjectId + "_template_mark_" + pass + ".bin";
         writeTemplateMarkingsBin(outPath.toStdString(), m_bins);
         std::cout << "Saved: " << outPath.toStdString() << "\n";
 
         QString csvPath = csvDir.absolutePath() + "/" +
-            m_subjectId + "_template_markings.csv";
+            m_subjectId + "_template_mark_" + pass + ".csv";
         writeTemplateMarkingsCsv(csvPath.toStdString(), m_bins,
             m_subjectId.toStdString(), m_sampleRate);
         std::cout << "Saved: " << csvPath.toStdString() << "\n";
@@ -1049,6 +1055,16 @@ void TemplateViewerWindow::save_bin_and_csv() {
                 "If the CSV is open in Excel, close it and try again.")
             .arg(m_subjectId, e.what()));
         return;   // don't emit finished(); let the user retry
+    }
+
+    if (!m_qAlignPass) {
+        // First (R-aligned) pass just saved. Switch to the Q-aligned pass:
+        // ask the controller to regenerate with Q-alignment and reload, and
+        // relabel the button. Do NOT emit finished() yet.
+        m_qAlignPass = true;
+        ui->finishButton->setText("Finish");
+        emit requestQAlignReload();
+        return;
     }
 
     emit finished();

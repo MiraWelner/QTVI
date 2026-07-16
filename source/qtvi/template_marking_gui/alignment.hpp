@@ -35,6 +35,13 @@ namespace alignment {
     constexpr double percent_interval_preceeding_rpeak = 0.3; //how far before the R peak the snip goes, in terms of percent of the RR interval length
     constexpr double percent_interval_following_rpeak = 1.5;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
 
+    // Global switch for the second (Q-aligned) template pass. The generation
+    // pipeline calls extract_beats_and_align once per method per channel via
+    // build_ecg_template_for_method; rather than thread a flag through every
+    // layer, the controller sets this before regenerating. Reset to false at
+    // the start of each subject (see prepareViewerJob).
+    inline bool g_q_align = false;
+
     // Sample counts for a given RR (integer-truncated).
     inline int64_t rr_before_samples(int64_t rr) {
         return static_cast<int64_t>(percent_interval_preceeding_rpeak * rr);
@@ -92,11 +99,13 @@ namespace alignment {
         size_t total_beats = 0;
 
         int r_aligned_col = -1;
+        int q_aligned_col = -1;
         int ref_beat_index = -1;
     };
 
     inline BeatSet extract_beats_and_align(const std::vector<double>& signal,
-        const std::vector<size_t>& rPeaks)
+        const std::vector<size_t>& rPeaks,
+        bool q_align = false, double fs = 0.0)
     {
         BeatSet out;
         const int64_t N = static_cast<int64_t>(signal.size());
@@ -265,11 +274,74 @@ namespace alignment {
             }
         }
 
+        // ---- Optional Pass 4: Q-align --------------------------------------
+        // Second-stage alignment (enabled only on the "next" pass): after the
+        // R-align above, shift each beat so its Q lands on a common column.
+        // Q is found from the 1st/2nd derivatives in the 20 ms before the
+        // R-upstroke onset; if none is found, Q falls back to 10% of the
+        // median RR before that onset.
+        out.q_aligned_col = out.r_aligned_col;
+        if (q_align && fs > 0.0 && !out.beats.empty()) {
+            const int Wsh = static_cast<int>(out.beats.front().size());
+            const int w20 = std::max(2, static_cast<int>(std::lround(0.020 * fs)));
+            const int fb = std::max(1, static_cast<int>(std::lround(0.10 * out.median_length)));
+
+            auto find_q = [&](const std::vector<double>& b) -> int {
+                // R-upstroke onset: steepest rising slope up to R, then walk
+                // left until the slope drops below 20% of that maximum.
+                double maxSlope = 0.0; int steep = R_anchor;
+                for (int k = std::max(1, R_anchor - 3 * w20); k < R_anchor && k + 1 < Wsh; ++k) {
+                    if (std::isnan(b[k]) || std::isnan(b[k + 1])) continue;
+                    const double s = b[k + 1] - b[k];
+                    if (s > maxSlope) { maxSlope = s; steep = k; }
+                }
+                int onset = steep;
+                if (maxSlope > 0.0) {
+                    for (int k = steep; k > std::max(1, R_anchor - 4 * w20); --k) {
+                        if (std::isnan(b[k]) || std::isnan(b[k - 1])) break;
+                        onset = k;
+                        if ((b[k] - b[k - 1]) < 0.2 * maxSlope) break;
+                    }
+                }
+                // Q = the trough before the onset: walk left from the onset to
+                // the first local minimum (1st-derivative sign change - -> +),
+                // searching within ~20 ms (extended a little for jitter).
+                const int lo = std::max(1, onset - 2 * w20);
+                int qmin = -1;
+                for (int k = onset - 1; k > lo; --k) {
+                    if (std::isnan(b[k - 1]) || std::isnan(b[k]) || std::isnan(b[k + 1])) continue;
+                    if (b[k] <= b[k - 1] && b[k] <= b[k + 1]) { qmin = k; break; }
+                }
+                if (qmin >= 0) return qmin;
+                const int q = onset - fb;                  // fallback: 10% RR before onset
+                return (q >= 0 && q < Wsh) ? q : -1;
+                };
+
+            std::vector<int> qcol(out.beats.size(), -1);
+            int q_target = -1;
+            for (size_t i = 0; i < out.beats.size(); ++i) {
+                qcol[i] = find_q(out.beats[i]);
+                if (qcol[i] > q_target) q_target = qcol[i];
+            }
+            if (q_target >= 0) {
+                const double NaNv = std::numeric_limits<double>::quiet_NaN();
+                for (size_t i = 0; i < out.beats.size(); ++i) {
+                    if (qcol[i] < 0) continue;
+                    const int shift = q_target - qcol[i];   // >= 0
+                    if (shift == 0) continue;
+                    std::vector<double> a(Wsh, NaNv);
+                    for (int k = 0; k < Wsh; ++k) {
+                        const int dst = k + shift;
+                        if (dst >= 0 && dst < Wsh) a[dst] = out.beats[i][k];
+                    }
+                    out.beats[i] = std::move(a);
+                }
+                out.q_aligned_col = q_target;
+            }
+        }
+
         return out;
     }
-
-    // =========================================================================
-    // PPG
     // =========================================================================
     struct PpgBeatSet {
         std::vector<std::vector<double>> beats;   // NaN-padded, 50%-upslope-aligned

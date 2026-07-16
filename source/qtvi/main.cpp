@@ -27,6 +27,9 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <functional>
+#include <QtWidgets/QMessageBox>
+#include <QtWidgets/QProgressDialog>
 #include <vector>
 
 #include <theme/theme.h>
@@ -141,24 +144,78 @@ static void exportMarkings(const config_entry& cfg,
 // Stage 3: template marking. Opens TemplateViewerWindow on the templates file
 // produced by Stage 2 and blocks (local event loop) until the viewer finishes.
 // ---------------------------------------------------------------------------
-static void runTemplateMarking(const config_entry& cfg, const std::filesystem::path& templateFile, const QString& fileId) {
+static void runTemplateMarking(const config_entry& cfg,
+    std::shared_ptr<post_process_detail::ViewerJob> job,
+    const QString& fileId,
+    std::function<void()> ensureWorkerDone) {
     const QString displayId = fileId;
     std::cout << "Template marking: " << displayId.toStdString() << "\n";
-    TemplateViewerWindow viewer;
 
-    QEventLoop loop;
-    // Queued connection so that even if loadSubject() emits finished()
-    // synchronously (its read-error / empty-bins path), the quit is still
-    // delivered once exec() starts -- avoids the hang the standalone
-    // template_marking.cpp had in that edge case.
-    QObject::connect(&viewer, &TemplateViewerWindow::finished,
-        &loop, &QEventLoop::quit, Qt::QueuedConnection);
+    // Two passes at most: pass 0 = R-aligned, pass 1 = Q-aligned. On "Finish
+    // and Next" the viewer emits requestQAlignReload(); we tear the window
+    // down, rebuild the templates with Q-alignment (worker joined first so the
+    // peakResults read can't race it), and open a fresh viewer on the result.
+    for (int pass = 0; pass < 2; ++pass) {
+        TemplateViewerWindow viewer;
+        if (pass >= 1) viewer.setQAlignPass(true);
 
-    viewer.show();
-    viewer.loadSubject(QString::fromStdString(templateFile.string()),
-        QString::fromStdString(cfg.qtvi_marker_path),
-        displayId, cfg.ecg_upsample_rate);
-    loop.exec();
+        QEventLoop loop;
+        bool reloadRequested = false;
+
+        // Queued connection so that even if loadSubject() emits finished()
+        // synchronously (its read-error / empty-bins path), the quit is still
+        // delivered once exec() starts.
+        QObject::connect(&viewer, &TemplateViewerWindow::finished,
+            &loop, &QEventLoop::quit, Qt::QueuedConnection);
+        // First finish: request the Q-aligned pass. Just close this window;
+        // the rebuild + reopen happens after the event loop returns, so the
+        // user never stares at a frozen window during the rebuild.
+        QObject::connect(&viewer, &TemplateViewerWindow::requestQAlignReload,
+            &loop, [&loop, &reloadRequested]() {
+                reloadRequested = true;
+                loop.quit();
+            }, Qt::QueuedConnection);
+
+        viewer.show();
+        viewer.loadSubject(QString::fromStdString(job->viewerTemplatePath.string()),
+            QString::fromStdString(cfg.qtvi_marker_path),
+            displayId, cfg.ecg_upsample_rate);
+        loop.exec();
+        // viewer is destroyed here (window closes) before we rebuild.
+
+        if (!reloadRequested) break;   // user clicked the final "Finish"
+
+        // Rebuild the Q-aligned templates OFF the GUI thread so the app does
+        // not freeze. The finalize worker is joined inside the same thread
+        // (keeps the peakResults read race-free), and a modal busy dialog
+        // keeps the UI responsive until the rebuild finishes.
+        QProgressDialog busy(QStringLiteral("Building Q-aligned templates\xE2\x80\xA6"),
+            QString(), 0, 0, nullptr);
+        busy.setWindowModality(Qt::ApplicationModal);
+        busy.setCancelButton(nullptr);
+        busy.setMinimumDuration(0);
+        busy.show();
+
+        bool ok = false;
+        QEventLoop waitLoop;
+        std::thread rebuild([&ok, job, &waitLoop, ensureWorkerDone]() {
+            if (ensureWorkerDone) ensureWorkerDone();   // join finalize off the GUI thread
+            ok = post_process_detail::regenerateWithQAlign(*job);
+            QMetaObject::invokeMethod(&waitLoop, &QEventLoop::quit,
+                Qt::QueuedConnection);
+            });
+        waitLoop.exec();     // GUI stays alive; dialog animates
+        rebuild.join();
+        busy.close();
+
+        if (!ok) {
+            QMessageBox::warning(nullptr, "Q-align",
+                QString("Could not build Q-aligned templates:\n%1")
+                .arg(QString::fromStdString(job->error)));
+            break;
+        }
+        // loop: reopen a fresh viewer on job->viewerTemplatePath (now qalign).
+    }
 }
 
 
@@ -212,6 +269,10 @@ int main(int argc, char* argv[]) {
         if (job->needsFinalize && job->provisionalPath != job->templatePath) {
             std::error_code ec;
             std::filesystem::remove(job->provisionalPath, ec);
+        }
+        if (!job->qAlignPath.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(job->qAlignPath, ec);
         }
         };
 
@@ -315,12 +376,17 @@ int main(int argc, char* argv[]) {
         }
 
         // ---- Stage 3: template marking (runs concurrently with worker) ----
-        runTemplateMarking(cfg, job->viewerTemplatePath, QString::fromStdString(job->stem));
+        // Q-align reload (first "Finish and Next") needs the finalize worker
+        // joined so its peakResults mutation can't race the rebuild.
+        auto ensureWorkerDone = [&worker]() { if (worker.joinable()) worker.join(); };
+        runTemplateMarking(cfg, job, QString::fromStdString(job->stem), ensureWorkerDone);
 
         // Do NOT join here. Park the worker and advance to the next file so
         // the next file loads while this file's squared/absval work finishes.
         if (worker.joinable())
             outstanding.push_back(Outstanding{ std::move(worker), job, done });
+        else if (job->needsFinalize)
+            finishJob(job);   // worker was joined early by the Q-align reload
 
         // Clean up any background jobs that have already finished (non-blocking).
         reap(/*force=*/false);

@@ -48,6 +48,8 @@ namespace post_process_detail {
         double samplingRate = 0.0;   // ECG rate (used by non-template callers below)
         SignalRates rates;           // full per-channel rate set for template pipeline
         std::filesystem::path rPeakPath, templatePath, beatsPath, provisionalPath;
+        std::filesystem::path annealedPath;   // for reloading peakResults on the Q-align pass
+        std::filesystem::path qAlignPath;      // Q-aligned provisional file (2nd pass)
         bool needSqabsDetection = false;            // false when wave_markings already had them
 
         std::vector<output_binfile_data> peakResults;
@@ -67,6 +69,7 @@ namespace post_process_detail {
 
     inline std::optional<ViewerJob> prepareViewerJob(const config_entry& cfg, const std::filesystem::path& binPath)
     {
+        alignment::g_q_align = false;   // each subject starts on the R-only pass
         const std::string stem = binPath.stem().string();
         const std::filesystem::path noisePath = std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
         const std::filesystem::path annealedPath = std::filesystem::path(cfg.annealed_data_path) / (stem + "annealed.bin");
@@ -110,6 +113,7 @@ namespace post_process_detail {
         job.rPeakPath = rPeakPath;
         job.templatePath = templatePath;
         job.provisionalPath = provisionalPath;
+        job.annealedPath = annealedPath;
 
         bool waveFresh = std::filesystem::exists(rPeakPath) &&
             std::filesystem::last_write_time(rPeakPath) >=
@@ -191,20 +195,24 @@ namespace post_process_detail {
     inline void finalizeViewerJob(ViewerJob& job)
     {
         try {
+            // Squared/absval are unused by the viewer, so we ignore them
+            // entirely: no augment_ecg_ppg_pairs_sqabs (detection) and no
+            // mergeTemplatesSlow (squared/absval templating). This keeps this
+            // step to plain file writes -- it no longer runs the template
+            // generator, so it can't race the Q-align rebuild on the shared
+            // alignment::g_q_align flag, and the rebuild never waits on heavy
+            // squared/absval work.
             if (job.needSqabsDetection) {
-                augment_ecg_ppg_pairs_sqabs(job.peakResults, true, job.fileID, job.samplingRate);
+                // Fresh raw detection: persist the canonical (raw) r-peaks + CSV.
                 write_output_binfile(job.rPeakPath.string(), job.peakResults);
 
-                // CSV mirror of wave_markings.bin: one row per (bin, channel,
-                // method, peak) with sample index and time in seconds. Written
-                // next to the .bin, same stem.
                 const std::filesystem::path csvDir = analysisCsvDir(job.templatePath);
                 std::filesystem::create_directories(csvDir);
                 const std::filesystem::path rPeakCsv =
                     csvDir / (job.stem + "_peak_locations_all_beats.csv");
                 write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
             }
-            mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
+            // Canonical templates = the fast (raw/unfilt/ppg) build as-is.
             template_io::write_template_binfile(job.templatePath.string(), job.tmpl);
             std::filesystem::remove(job.provisionalPath);
 
@@ -220,6 +228,48 @@ namespace post_process_detail {
         }
         catch (...) {
             job.error = "unknown exception in finalizeViewerJob";
+        }
+    }
+
+    // Called by the controller when the viewer emits requestQAlignReload()
+    // (first "Finish and Next"). Re-runs the FAST template build with
+    // Q-alignment enabled and writes it to a SEPARATE provisional file, then
+    // points the job's viewer path at it. Builds into locals and does NOT
+    // mutate job.tmpl / job.beats / job.info / job.peakResults, so it is safe
+    // to call while the background finalize worker (which owns those) is still
+    // running -- it only READS job.peakResults. Returns false if nothing could
+    // be built.
+    //
+    // NOTE: since finalizeViewerJob no longer runs the slow merge or sqabs
+    // detection (abs/square are ignored), the background worker is just file
+    // writes -- it neither mutates peakResults nor touches alignment::g_q_align,
+    // so this rebuild no longer contends with it. Joining the worker first is
+    // now only belt-and-suspenders.
+    inline bool regenerateWithQAlign(ViewerJob& job)
+    {
+        alignment::g_q_align = true;
+        try {
+            if (job.peakResults.empty()) {
+                if (job.rPeakPath.empty() || job.annealedPath.empty()) return false;
+                job.peakResults = read_output_binfile(
+                    job.rPeakPath.string(), job.annealedPath.string());
+            }
+            FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
+            if (fast.tmpl.bins.empty()) return false;
+
+            // Distinct path so the R-only provisional/canonical files are
+            // untouched (no collision with the worker or the first pass).
+            const std::filesystem::path qPath =
+                job.provisionalPath.parent_path() /
+                (job.stem + "_templates.qalign.partial.bin");
+            template_io::write_template_binfile(qPath.string(), fast.tmpl);
+            job.qAlignPath = qPath;
+            job.viewerTemplatePath = qPath;
+            return true;
+        }
+        catch (const std::exception& e) {
+            job.error = e.what();
+            return false;
         }
     }
 

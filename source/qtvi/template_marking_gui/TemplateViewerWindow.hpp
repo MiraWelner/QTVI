@@ -20,8 +20,18 @@ public:
     void loadSubject(const QString& templatePath, const QString& markingPath,
         const QString& subjectId, double sampleRateHz);
 
+    // Marks this viewer instance as the second (Q-aligned) pass, so the button
+    // reads "Finish" and outputs use the _q_align suffix. Call before
+    // loadSubject on the reopened window.
+    void setQAlignPass(bool q) { m_qAlignPass = q; }
+
 signals:
     void finished();
+    // Emitted after the FIRST finish (R-aligned pass). The controller should
+    // re-run template generation with Q-alignment enabled and reload the
+    // viewer; the button then reads "Finish" and the next click emits
+    // finished().
+    void requestQAlignReload();
 
 public slots:
     // Wired in Designer via <connections>
@@ -57,7 +67,7 @@ private:
     // One shared x_ms column (0 at ch1 R) plus a per-signal *_x_peak_ms column
     // (0 at that signal's own peak). Written once per subject.
     void writeAlignedTemplateCsv();
-     void updatePageControls();
+    void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
 
     // Pushes the current bin's markings into every plot showing it.
@@ -84,6 +94,9 @@ private:
     int m_totalPages = 1;
 
     bool m_moveSubsequent = true;
+    // false = first (R-aligned) pass, button reads "Finish and Next";
+    // true  = second (Q-aligned) pass, button reads "Finish".
+    bool m_qAlignPass = false;
     bool m_showEcgMarkers = false;
     bool m_showPpgMarkers = false;
     bool m_showAbpMarkers = false;
