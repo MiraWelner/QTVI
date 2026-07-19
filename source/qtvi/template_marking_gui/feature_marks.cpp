@@ -700,15 +700,16 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         const int dic = pct(0.60);   // Dicrotic notch  60%
         const int peak2 = pct(0.65);   // Peak #2         65%
 
-        // Systolic peak = argmax over the visible window; Foot = the minimum
-        // BEFORE that peak (seeds the foot bar in the trough); End = the
-        // minimum between the peak and the end of the visible window; T80 =
-        // 80% of the way DOWN from peak toward end; p50 = temporal midpoint
-        // foot..peak.
+        // Systolic peak = argmax within the FIRST pulse only. The window W spans
+        // several beats, so a global argmax can grab a later, taller pulse and
+        // leave foot/peak on different beats (collapsing the PI amplitude). Cap
+        // the search at ~1.2 s after the start so it stays within the first pulse.
         int peak = 0;
         {
+            const int firstPulseEnd = std::min(W,
+                std::max(2, static_cast<int>(std::lround(1.2 * sampleRate))));
             double best = -std::numeric_limits<double>::infinity();
-            for (int i = 0; i < W; ++i)
+            for (int i = 0; i < firstPulseEnd; ++i)
                 if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; peak = i; }
         }
         int foot = 0;
@@ -780,7 +781,9 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
 
         const int p_auto = cl(pct(0.05));            // P       5% in
         const int q_auto = cl(pct(0.10));            // Q begin 10% in
-        const int r_auto = cl(detect_r_peak(ecg));   // R stays auto-detected
+        const ChannelTemplateData* chd[3] = { &b.ch1, &b.ch2, &b.ch3 };
+        int r_auto = static_cast<int>(std::lround(chd[c]->alignment_point_raw));
+        r_auto = cl(r_auto);
         const int s_auto = cl(pct(0.25));            // S end   25% in
         const int tp_auto = cl(detect_t_begin(ecg));  // T begin bar: left foot of the T wave (auto)
         const int te_auto = cl(detect_t_end(ecg));    // T end:   right foot of the T wave (auto)
