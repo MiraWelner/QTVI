@@ -264,17 +264,10 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_markers[PpgT80] = ppgT80;
     m_markers[PpgEnd] = ppgEnd;
     m_rPeakSample = rPeakSample;
-    // Under Patch B, PPG (and all arterial channels) share the ECG's real-
-    // time frame: sample 0 of the PPG template already corresponds to
-    // sample 0 of the ECG template. No more R->foot delay math -- the
-    // slicer put every channel on the same axis. ppgStartSample() is 0.
     m_hasPPG = !ppg.empty();
-    // Cache the per-trace visible counts so paint, hit-test, and
-    // drag-clamp all see the same numbers.
     m_ecgVisibleN = std::max(static_cast<int>(m_ecg.size()), 2);
     m_ppgVisibleN = visiblePpgCount(static_cast<int>(m_ppg.size()));
     captureGlyphSnapshot();   // freeze glyph landmarks at the initial markers
-
     updateGeometry();
     update();
 }
@@ -498,12 +491,8 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     const double pps = pxPerSample();
     p.fillRect(rect(), Qt::white);
 
-    // Title. The top-left panel (Bin 0) also notes the x-axis units.
-    // Beat count is appended when known. ECG count is the count for THIS
-    // widget's channel; PPG count is the bin's PPG count. Under Patch B
-    // they're normally equal but stored separately so per-channel drops
-    // (if any future filter adds them) can diverge.
-    p.setPen(Qt::black);
+	//title: channel, bin number, and number of beats in the bin
+    p.setPen(QColor(150, 150, 150));
     { QFont f = p.font(); f.setPointSize(8); p.setFont(f); }
     QString beatSuffix;
     if (m_nEcgBeats > 0 || m_nPpgBeats > 0) {
@@ -513,12 +502,13 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         beatSuffix = "  " + parts.join(", ");
     }
     if (m_binIndex == 0)
-        p.drawText(margin_left, 11,
-            QString("Bin %1  [%2 over time in seconds]%3")
+        p.drawText(QRectF(margin_left, 0, w - margin_left, 2.0 * margin_top),
+            Qt::AlignBottom | Qt::AlignLeft,
+            QString("  Bin %1  [%2 over time in seconds]\n%3")
             .arg(m_binIndex).arg(m_leadLabel).arg(beatSuffix));
     else
         p.drawText(margin_left, 11,
-            QString("Bin %1  [%2]%3")
+            QString("  Bin %1  [%2]%3")
             .arg(m_binIndex).arg(m_leadLabel).arg(beatSuffix));
 
     // Y-axis rules for the normalized traces:
@@ -571,23 +561,19 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
         // X ticks: time across the full frame, at the shared scale.
         const int span = totalSampleSpan();
-        const double eps = pps;
-        const int nx = 4;
         p.setPen(QColor(150, 150, 150));
-        for (int t = 0; t <= nx; ++t) {
-            const int s = static_cast<int>(std::round((double)span * t / nx));
-            double x = margin_left + s * eps;
+        for (int t = 0; t <= 4; ++t) {
+            const int s = static_cast<int>(std::round((double)span * t / 4));
+            double x = margin_left + s * pps;
             if (x > yAxisR) x = yAxisR;
             p.drawLine(QPointF(x, xAxisY), QPointF(x, xAxisY + 3));
-            QString lbl;
-            if (m_sampleRate > 0.0) {
-                lbl = QString::number(s / m_sampleRate, 'f', 2);
-                if (t == nx) lbl += " s";
-            }
-            else {
-                lbl = QString::number(s);
-            }
+            QString lbl = QString::number(s / m_sampleRate, 'f', 2);
             p.drawText(QPointF(x - 3.0 * lbl.size(), xAxisY + 12), lbl);
+            // X-axis caption, centered under the tick numbers.
+            if (m_binIndex == 0) {
+                p.drawText(QRectF(yAxisL, xAxisY + 13.0, yAxisR - yAxisL, 11.0),
+                    Qt::AlignHCenter | Qt::AlignTop, "time (s)");
+            }
         }
 
         // Helper: y-pixel for a given data value on a given (lo, hi) scale.
@@ -598,7 +584,9 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
         // LEFT y-axis: ECG (normalized). Top = yHi, bottom = yLo, plus a
         // major tick at 0.0. Fixed 1-decimal format, no scientific notation.
-        p.setPen(kColorEcgTrace);
+        // Gray to match the x-axis ticks; labels right-aligned snug to the axis
+        // (right edge stops just short of the tick marks so they don't overlap).
+        p.setPen(QColor(150, 150, 150));
         {
             const double yTop = yPix(yHi, yLo, yHi);
             const double yBot = yPix(yLo, yLo, yHi);
@@ -611,12 +599,17 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             };
             for (const Tick& t : ticks) {
                 p.drawLine(QPointF(yAxisL - 3, t.y), QPointF(yAxisL, t.y));
-                p.drawText(QPointF(8, t.y + 3), QString::number(t.val, 'f', 1));
+                const QString s = QString::number(t.val, 'f', 1);
+                const double tw = p.fontMetrics().horizontalAdvance(s);
+                p.drawText(QPointF(std::max(1.0, yAxisL - 4.0 - tw), t.y + 3.0), s);
+                const double lx = std::max(0.0, yAxisL - 4.0 - tw);
+                p.drawText(QPointF(lx, t.y + 3.0), s);
             }
         }
 
-        // RIGHT y-axis: PPG / pulse (normalized). Same rules as left.
-        p.setPen(kColorPpgTrace);
+        // RIGHT y-axis: PPG / pulse (normalized). Same rules; gray, labels
+        // left-aligned snug to the right of the tick marks.
+        p.setPen(QColor(150, 150, 150));
         {
             const double yTop = yPix(pHi, pLo, pHi);
             const double yBot = yPix(pLo, pLo, pHi);
@@ -629,22 +622,27 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             };
             for (const Tick& t : ticks) {
                 p.drawLine(QPointF(yAxisR, t.y), QPointF(yAxisR + 3, t.y));
-                p.drawText(QPointF(yAxisR + 5, t.y + 3), QString::number(t.val, 'f', 1));
+                const QString rs = QString::number(t.val, 'f', 1);
+                const double rtw = p.fontMetrics().horizontalAdvance(rs);
+                double rx = yAxisR + 5.0;
+                if (rx + rtw > w - 1.0) rx = w - 1.0 - rtw;
+                p.drawText(QPointF(rx, t.y + 3.0), rs);
             }
         }
 
-        // Rotated axis titles naming the tracing on each side.
+        // Rotated axis titles naming the tracing on each side. Gray to match
+        // the ticks; kept at the outer edge, just past the number labels.
         QFont tf = p.font(); tf.setPointSize(7);
         p.setFont(tf);
         p.save();
-        p.setPen(kColorEcgTrace);
-        p.translate(3, margin_top + ph / 2.0);
+        p.setPen(QColor(150, 150, 150));
+        p.translate(9, margin_top + ph / 2.0);
         p.rotate(-90);
         p.drawText(QRectF(-ph / 2.0, -9, ph, 12), Qt::AlignCenter, "ECG (norm)");
         p.restore();
         p.save();
-        p.setPen(kColorPpgTrace);
-        p.translate(w - 2, margin_top + ph / 2.0);
+        p.setPen(QColor(150, 150, 150));
+        p.translate(w - 9, margin_top + ph / 2.0);
         p.rotate(-90);
         p.drawText(QRectF(-ph / 2.0, -9, ph, 12), Qt::AlignCenter, "PPG (norm)");
         p.restore();

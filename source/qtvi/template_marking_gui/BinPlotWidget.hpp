@@ -306,6 +306,6 @@ private:
     int   m_nEcgBeats = 0;
     int   m_nPpgBeats = 0;
 
-    static constexpr int margin_left = 40, margin_right = 40, margin_top = 16, margin_bottom = 16;
+    static constexpr int margin_left = 26, margin_right = 26, margin_top = 20, margin_bottom = 26;
     static constexpr int click_radius_around_marker = 12;
 };

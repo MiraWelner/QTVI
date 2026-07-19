@@ -29,10 +29,16 @@ bin templates are the two ALIGNMENT steps, ported here exactly:
 
 Here each "beat" is one bin template and "length" is that bin's non-NaN sample
 count. R column comes from the r_peak_ch<c>_location_autodetect_r one-hot flag
-(PPG anchors on ppg_onset ... _r, i.e. the foot, matching the PPG path's
-foot/upslope alignment intent).
+(PPG anchors on the 50%-upslope crossing between the first-pulse foot and its
+systolic peak, matching the PPG path's upslope alignment intent).
 
 Edit the constants below, then run:  python align_templates_r.py
+
+OUTPUT (normalized only):
+  perpatient_ecg_ppg_normalized.png        -- one subplot per patient
+  group_overlay_<folder>_normalized.png    -- all bins in a folder, per folder
+  combined_overlay_normalized.png          -- both folders overlaid on one axis
+                                              (untreated red, healthy/treated green)
 """
 
 import sys
@@ -55,6 +61,10 @@ ECG_CHANNELS = ["ch1"]
 PULSE_CHANNELS = ["ppg"]
 VALUE_SUFFIX = "_Normalized_r"          # what we align/plot
 BIN_COL = "bin_num"
+
+# Normalized y-axis window shared by every plot.
+Y_LIM = (-0.5, 2.0)
+
 
 # Anchor flag columns (R-pass, autodetect).
 def ecg_anchor_col(chan):   # chan = "ch1" -> "1"
@@ -169,8 +179,8 @@ def _tukey_keep(beats, key, k):
 
 def align_r(beats):
     """alignment.hpp Pass 1 (horizontal anchor) + Pass 3 (vertical DC baseline).
-    Horizontal: anchor every beat's R (ECG) / foot (PPG) column at the max
-    anchor column, integer-shift + NaN-pad. Vertical: match each beat's
+    Horizontal: anchor every beat's R (ECG) / 50%-upslope (PPG) column at the
+    max anchor column, integer-shift + NaN-pad. Vertical: match each beat's
     pre-anchor baseline mean (PR segment for ECG, pre-foot for PPG) to the
     reference (median-length) beat's, via a constant vertical shift. Keeps the
     Tukey rejection + upright-flip from collect_beats.
@@ -257,36 +267,6 @@ def align_r(beats):
     return mat, anchor
 
 
-def plot_group(chan, mat, R_anchor, folder_name, out_dir, is_ecg):
-    if mat is None:
-        return None
-    x = np.arange(mat.shape[1]) - R_anchor   # samples relative to anchor
-    m = (x >= -100) & (x <= 500)
-    x, mat = x[m], mat[:, m]
-    fig, ax = plt.subplots(figsize=(10, 4))
-    # Higher alpha + thin lines so individual sharp beats stay visible rather
-    # than washing into a smooth-looking band at low alpha.
-    n = mat.shape[0]
-    a = max(0.15, min(0.6, 30.0 / max(1, n)))
-    for i in range(n):
-        ax.plot(x, mat[i], color="tab:blue", alpha=a, linewidth=0.5)
-    with np.errstate(all="ignore"):
-        med = np.nanmedian(mat, axis=0)
-    ax.plot(x, med, color="tab:red", linewidth=2.0,
-            label=f"median (n={mat.shape[0]})")
-    ax.axvline(0, color="k", linewidth=0.7, linestyle="--", alpha=0.5)
-    anchor = "R" if is_ecg else "foot"
-    ax.set_title(f"{chan}: {folder_name} -- aligned (H+V), anchor={anchor}")
-    ax.set_xlabel(f"samples relative to {anchor}")
-    ax.set_ylabel("normalized")
-    ax.legend(loc="best", fontsize=8)
-    fig.tight_layout()
-    out_path = out_dir / f"aligned_r_{chan}_{folder_name}.png"
-    fig.savefig(out_path, dpi=140)
-    plt.close(fig)
-    return out_path
-
-
 def beats_for_file(df, chan, is_ecg, value_suffix):
     """All bins from one file except the final 5, flipped upright. Returns the
     beat list ready for align_r. For PPG, also records the foot column so the
@@ -321,11 +301,18 @@ def beats_for_file(df, chan, is_ecg, value_suffix):
     return beats
 
 
+def _windowed(mat, anchor):
+    if mat is None:
+        return None, None
+    x = np.arange(mat.shape[1]) - anchor
+    msk = (x >= -100) & (x <= 500)
+    return x[msk], mat[:, msk]
+
+
 def run_suffix(value_suffix, tag):
-    """Build per-patient plots for one value column suffix (e.g. '_Normalized_r'
-    or '_raw_mv_r'). Each patient gets ONE subplot with ch1 (ECG, left axis,
-    aligned on R) and ppg (right axis, aligned on foot) overlaid. Writes
-    perpatient_ecg_ppg_<tag>.png."""
+    """Per-patient plots. Each patient gets ONE subplot with ch1 (ECG, left
+    axis, aligned on R) and ppg (right axis, aligned on 50%-upslope) overlaid.
+    Writes perpatient_ecg_ppg_<tag>.png. Normalized y clamped to Y_LIM."""
     out_root = Path(".")
     group_color = {}
     palette = ["tab:green", "tab:red", "tab:blue", "tab:purple"]
@@ -366,13 +353,6 @@ def run_suffix(value_suffix, tag):
 
     patients.sort(key=lambda e: (list(group_color).index(e[0]), e[1]))
 
-    def windowed(mat, anchor):
-        if mat is None:
-            return None, None
-        x = np.arange(mat.shape[1]) - anchor
-        msk = (x >= -100) & (x <= 500)
-        return x[msk], mat[:, msk]
-
     n = len(patients)
     ncols = min(5, n)
     nrows = (n + ncols - 1) // ncols
@@ -388,7 +368,7 @@ def run_suffix(value_suffix, tag):
         gcolor = group_color[group]
 
         # ECG on the left axis (group color).
-        xe, me = windowed(ecg_mat, ecg_anchor)
+        xe, me = _windowed(ecg_mat, ecg_anchor)
         if me is not None:
             ae = max(0.12, min(0.5, 25.0 / max(1, me.shape[0])))
             for row in me:
@@ -400,7 +380,7 @@ def run_suffix(value_suffix, tag):
 
         # PPG on a twin right axis, same group color as ECG (distinguished by
         # being on the right axis + dashed median).
-        xp, mp = windowed(ppg_mat, ppg_anchor)
+        xp, mp = _windowed(ppg_mat, ppg_anchor)
         if mp is not None:
             ax2 = ax.twinx()
             ap = max(0.12, min(0.5, 25.0 / max(1, mp.shape[0])))
@@ -411,14 +391,16 @@ def run_suffix(value_suffix, tag):
                          linewidth=1.4, linestyle="--")
             ax2.set_ylabel("ppg", color=gcolor, fontsize=6)
             ax2.tick_params(axis="y", labelcolor=gcolor, labelsize=6)
+            ax2.set_ylim(*Y_LIM)
 
         ax.axvline(0, color="k", linewidth=0.5, linestyle="--", alpha=0.4)
         ax.set_title(f"{group}\n{label}", fontsize=6)
-        ax.tick_params(axis="x", labelsize=6)
+        # X ticks labeled on EVERY subplot (sharex keeps the ranges aligned).
+        ax.tick_params(axis="x", labelbottom=True, labelsize=6)
+        ax.set_ylim(*Y_LIM)
 
-    unit = "normalized" if "Normalized" in value_suffix else "raw mV"
-    fig.suptitle(f"per-patient ECG (solid, anchor=R) + PPG (dashed, anchor=50%-upslope) "
-                 f"[{tag}, {unit}] -- {', '.join(group_color)}", fontsize=11)
+    fig.suptitle("per-patient ECG (solid, anchor=R) + PPG (dashed, anchor=50%-upslope) "
+                 f"[normalized] -- {', '.join(group_color)}", fontsize=11)
     fig.supxlabel("samples relative to anchor", fontsize=9)
     fig.tight_layout(rect=(0, 0.02, 1, 0.95))
 
@@ -431,7 +413,7 @@ def run_suffix(value_suffix, tag):
 def run_group_overlay(folder, value_suffix, tag):
     """Overlay ALL bins from ALL files in one folder into a single figure
     (ECG solid on left axis, PPG dashed on right axis, both aligned). Writes
-    group_overlay_<folder>_<tag>.png."""
+    group_overlay_<folder>_<tag>.png. Normalized y clamped to Y_LIM."""
     if not folder.is_dir():
         print(f"[skip] {folder} is not a directory", file=sys.stderr)
         return
@@ -458,17 +440,10 @@ def run_group_overlay(folder, value_suffix, tag):
         print(f"[skip] {folder.name} [{tag}]: no data")
         return
 
-    def windowed(mat, anchor):
-        if mat is None:
-            return None, None
-        x = np.arange(mat.shape[1]) - anchor
-        msk = (x >= -100) & (x <= 500)
-        return x[msk], mat[:, msk]
-
     color = "tab:green" if "healthy" in folder.name.lower() else "tab:red"
     fig, ax = plt.subplots(figsize=(10, 5))
 
-    xe, me = windowed(ecg_mat, ecg_anchor)
+    xe, me = _windowed(ecg_mat, ecg_anchor)
     if me is not None:
         ae = max(0.05, min(0.4, 15.0 / max(1, me.shape[0])))
         for row in me:
@@ -478,8 +453,9 @@ def run_group_overlay(folder, value_suffix, tag):
                     label=f"ECG median (n={me.shape[0]})")
     ax.set_ylabel("ecg", color=color)
     ax.tick_params(axis="y", labelcolor=color)
+    ax.set_ylim(*Y_LIM)
 
-    xp, mp = windowed(ppg_mat, ppg_anchor)
+    xp, mp = _windowed(ppg_mat, ppg_anchor)
     if mp is not None:
         ax2 = ax.twinx()
         ap = max(0.05, min(0.4, 15.0 / max(1, mp.shape[0])))
@@ -490,11 +466,11 @@ def run_group_overlay(folder, value_suffix, tag):
                      linestyle="--", label=f"PPG median (n={mp.shape[0]})")
         ax2.set_ylabel("ppg", color=color)
         ax2.tick_params(axis="y", labelcolor=color)
+        ax2.set_ylim(*Y_LIM)
 
     ax.axvline(0, color="k", linewidth=0.6, linestyle="--", alpha=0.4)
-    unit = "normalized" if "Normalized" in value_suffix else "raw mV"
     ax.set_title(f"{folder.name}: all bins overlaid -- ECG (solid, anchor=R) + "
-                 f"PPG (dashed, anchor=50%-upslope) [{unit}]")
+                 "PPG (dashed, anchor=50%-upslope) [normalized]")
     ax.set_xlabel("samples relative to anchor")
     fig.tight_layout()
 
@@ -504,13 +480,85 @@ def run_group_overlay(folder, value_suffix, tag):
     print(f"[ok] group overlay {folder.name} [{tag}] -> {out_path.name}")
 
 
+def run_combined_overlay(value_suffix, tag):
+    """One figure: every bin from every file in BOTH folders, overlaid on
+    shared axes. Untreated = red, healthy/treated = green. ECG solid (left
+    axis), PPG dashed (right axis). Normalized y clamped to Y_LIM."""
+    fig, ax = plt.subplots(figsize=(11, 6))
+    ax2 = ax.twinx()
+
+    def color_for(name):
+        return "tab:green" if "healthy" in name.lower() else "tab:red"
+
+    any_data = False
+    for folder in FOLDERS:
+        if not folder.is_dir():
+            continue
+        files = sorted(p for p in folder.glob("*_template.csv")
+                       if "_template_mark" not in p.name and "_template_snips" not in p.name)
+        if not files:
+            continue
+        ecg_beats, ppg_beats = [], []
+        for path in files:
+            try:
+                df = pd.read_csv(path)
+            except Exception as e:
+                print(f"  [error] {path.name}: {e}")
+                continue
+            ecg_beats.extend(beats_for_file(df, "ch1", True, value_suffix))
+            ppg_beats.extend(beats_for_file(df, "ppg", False, value_suffix))
+        ecg_mat, ecg_anchor = align_r(ecg_beats) if ecg_beats else (None, None)
+        ppg_mat, ppg_anchor = align_r(ppg_beats) if ppg_beats else (None, None)
+        color = color_for(folder.name)
+
+        xe, me = _windowed(ecg_mat, ecg_anchor)
+        if me is not None:
+            any_data = True
+            ae = max(0.03, min(0.3, 10.0 / max(1, me.shape[0])))
+            for row in me:
+                ax.plot(xe, row, color=color, alpha=ae, linewidth=0.3)
+            with np.errstate(all="ignore"):
+                ax.plot(xe, np.nanmedian(me, axis=0), color=color, linewidth=2.2,
+                        label=f"{folder.name} ECG (n={me.shape[0]})")
+
+        xp, mp = _windowed(ppg_mat, ppg_anchor)
+        if mp is not None:
+            any_data = True
+            ap = max(0.03, min(0.3, 10.0 / max(1, mp.shape[0])))
+            for row in mp:
+                ax2.plot(xp, row, color=color, alpha=ap, linewidth=0.3)
+            with np.errstate(all="ignore"):
+                ax2.plot(xp, np.nanmedian(mp, axis=0), color=color, linewidth=2.0,
+                         linestyle="--", label=f"{folder.name} PPG (n={mp.shape[0]})")
+
+    if not any_data:
+        plt.close(fig)
+        print(f"[skip] combined [{tag}]: no data")
+        return
+
+    ax.set_ylim(*Y_LIM)
+    ax2.set_ylim(*Y_LIM)
+    ax.axvline(0, color="k", linewidth=0.6, linestyle="--", alpha=0.4)
+    ax.set_xlabel("samples relative to anchor")
+    ax.set_ylabel("ecg (normalized)")
+    ax2.set_ylabel("ppg (normalized)")
+    ax.set_title("Normalized ECG and PPG from 20 untreated diabetic and 18 healthy patients")
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    ax.legend(h1 + h2, l1 + l2, loc="best", fontsize=8)
+    fig.tight_layout()
+    out_path = Path(".") / "combined_overlay_normalized.png"
+    fig.savefig(out_path, dpi=140)
+    plt.close(fig)
+    print(f"[ok] combined overlay [{tag}] -> {out_path.name}")
+
+
 def main():
+    # Normalized only.
     run_suffix("_Normalized_r", "normalized")
-    run_suffix("_raw_mv_r", "raw")
-    # Four group-overlay PNGs: {each folder} x {normalized, raw}.
     for folder in FOLDERS:
         run_group_overlay(folder, "_Normalized_r", "normalized")
-        run_group_overlay(folder, "_raw_mv_r", "raw")
+    run_combined_overlay("_Normalized_r", "normalized")
 
 
 if __name__ == "__main__":
