@@ -26,7 +26,7 @@ namespace template_io {
             // Empty for methods that don't compute std (sz=0, no payload).
             writeVecD(f, m.ecgTemplate_std);
             f.write(reinterpret_cast<const char*>(&m.alignment_point), 8);
-            f.write(reinterpret_cast<const char*>(&m.avg_r_expand), 8);
+            f.write(reinterpret_cast<const char*>(&m.r_col), 4);
         }
 
         void writeAveraged(std::ofstream& f, const AveragedTemplate& a) {
@@ -46,7 +46,7 @@ namespace template_io {
             if (!readVecD(f, m.ecgTemplate)) return false;
             if (!readVecD(f, m.ecgTemplate_std)) return false;
             if (!f.read(reinterpret_cast<char*>(&m.alignment_point), 8)) return false;
-            if (!f.read(reinterpret_cast<char*>(&m.avg_r_expand), 8)) return false;
+            if (!f.read(reinterpret_cast<char*>(&m.r_col), 4)) return false;
             return true;
         }
 
@@ -87,6 +87,8 @@ namespace template_io {
             f.write(reinterpret_cast<const char*>(&b.ch2_n_beats_raw), 8);
             f.write(reinterpret_cast<const char*>(&b.ch3_n_beats_raw), 8);
             f.write(reinterpret_cast<const char*>(&b.ppg_n_beats), 8);
+            f.write(reinterpret_cast<const char*>(&b.ppg_peak_col), 4);
+            f.write(reinterpret_cast<const char*>(&b.ppg_onset_col), 4);
             uint8_t bad = b.bad_segment ? 1 : 0;
             f.write(reinterpret_cast<const char*>(&bad), 1);
         }
@@ -129,6 +131,9 @@ namespace template_io {
                 !f.read(reinterpret_cast<char*>(&b.ch3_n_beats_raw), 8) ||
                 !f.read(reinterpret_cast<char*>(&b.ppg_n_beats), 8))
                 throw std::runtime_error("template file truncated (missing n_beats fields): " + path);
+            if (!f.read(reinterpret_cast<char*>(&b.ppg_peak_col), 4) ||
+                !f.read(reinterpret_cast<char*>(&b.ppg_onset_col), 4))
+                throw std::runtime_error("template file truncated (missing ppg fiducials): " + path);
             uint8_t bad = 0;
             f.read(reinterpret_cast<char*>(&bad), 1);
             b.bad_segment = (bad != 0);

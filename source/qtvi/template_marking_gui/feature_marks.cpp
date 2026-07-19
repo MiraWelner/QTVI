@@ -700,24 +700,37 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         const int dic = pct(0.60);   // Dicrotic notch  60%
         const int peak2 = pct(0.65);   // Peak #2         65%
 
-        // Systolic peak = argmax within the FIRST pulse only. The window W spans
-        // several beats, so a global argmax can grab a later, taller pulse and
-        // leave foot/peak on different beats (collapsing the PI amplitude). Cap
-        // the search at ~1.2 s after the start so it stays within the first pulse.
-        int peak = 0;
-        {
-            const int firstPulseEnd = std::min(W,
-                std::max(2, static_cast<int>(std::lround(1.2 * sampleRate))));
-            double best = -std::numeric_limits<double>::infinity();
-            for (int i = 0; i < firstPulseEnd; ++i)
-                if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; peak = i; }
+        // Systolic peak = argmax over the visible window; Foot = the minimum
+        // BEFORE that peak (seeds the foot bar in the trough); End = the
+        // minimum between the peak and the end of the visible window; T80 =
+        // 80% of the way DOWN from peak toward end; p50 = temporal midpoint
+        // Systolic peak + foot: use the construction-time fiducials computed
+        // from the real R-pair interval (peak = max in [R1,R2], foot = min in
+        // [R1,peak]). These are exact -- one pulse, no risk of grabbing a later
+        // pulse. Fall back to a first-pulse-bounded search only for templates
+        // built before these were stored.
+        int peak, foot;
+        if (b.ppg_peak_construct >= 0 && b.ppg_peak_construct < W) {
+            peak = b.ppg_peak_construct;
+            foot = (b.ppg_onset_construct >= 0 && b.ppg_onset_construct <= peak)
+                ? b.ppg_onset_construct : 0;
         }
-        int foot = 0;
-        {
-            const int lo = std::min(pct(0.10), peak);   // ignore the first 10%
-            double best = std::numeric_limits<double>::infinity();
-            for (int i = lo; i <= peak; ++i)
-                if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; foot = i; }
+        else {
+            // Fallback: bound the argmax to the first ~40% of W (one pulse).
+            peak = 0;
+            {
+                const int firstPulseEnd = std::max(2, pct(0.40));
+                double best = -std::numeric_limits<double>::infinity();
+                for (int i = 0; i < firstPulseEnd && i < W; ++i)
+                    if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; peak = i; }
+            }
+            foot = 0;
+            {
+                const int lo = std::min(pct(0.10), peak);
+                double best = std::numeric_limits<double>::infinity();
+                for (int i = lo; i <= peak; ++i)
+                    if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; foot = i; }
+            }
         }
         int end = std::min(W - 1, peak + 1);
         {
@@ -779,11 +792,24 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         auto cl = [&](int x) { return clampToVisible(x, visN); };
         auto pct = [&](double f) { return static_cast<int>(std::lround(f * ecg.size())); };
 
+        // R is NOT re-detected and needs no rate math. The template stores the
+        // true R column (r_col_raw) straight from alignment -- the detected-R
+        // fiducial the template was built around. Use it directly. This fixes
+        // the 20-50 sample R-marker error that corrupted the normalization
+        // reference and every other consumer of r_peak_ch, with zero dependence
+        // on sample rate or any positioning constant.
+        int r_anchor = (chs[c]->r_col_raw >= 0)
+            ? chs[c]->r_col_raw
+            : detect_r_peak(ecg);        // fallback only if unavailable
+        const int r_auto = cl(r_anchor);
+
+        // S = minimum of the ECG template in the 0.1 s AFTER R (deterministic,
+        // replaces the fragile compute_s_peak search from a wrong R). s_end
+        // marker still spawns at 25% for the user; the S used for normalization
+        // is computed from r_auto downstream (computeEcgFeatures/compute_s_peak
+        // now start from the correct R).
         const int p_auto = cl(pct(0.05));            // P       5% in
         const int q_auto = cl(pct(0.10));            // Q begin 10% in
-        const ChannelTemplateData* chd[3] = { &b.ch1, &b.ch2, &b.ch3 };
-        int r_auto = static_cast<int>(std::lround(chd[c]->alignment_point_raw));
-        r_auto = cl(r_auto);
         const int s_auto = cl(pct(0.25));            // S end   25% in
         const int tp_auto = cl(detect_t_begin(ecg));  // T begin bar: left foot of the T wave (auto)
         const int te_auto = cl(detect_t_end(ecg));    // T end:   right foot of the T wave (auto)

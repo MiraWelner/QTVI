@@ -51,10 +51,13 @@ struct ChannelTemplates {
     double alignment_point_squared = 0.0;
     double alignment_point_absval = 0.0;
     double alignment_point_unfiltered = 0.0;
-    double avg_r_expand_raw = 0.0;
-    double avg_r_expand_squared = 0.0;
-    double avg_r_expand_absval = 0.0;
-    double avg_r_expand_unfiltered = 0.0;
+    // True R column in the template (from alignment's r_aligned_col). This is
+    // the detected-R fiducial the template was built around -- used directly
+    // as the R marker, replacing the old avg_r_expand positioning constant.
+    int r_col_raw = -1;
+    int r_col_squared = -1;
+    int r_col_absval = -1;
+    int r_col_unfiltered = -1;
     // Slice count fed to the raw-method median for this bin/channel.
     // Only tracked for the raw method since that's what the viewer shows.
     size_t n_beats_raw = 0;
@@ -70,6 +73,11 @@ struct TemplateInfo {
     // (post AlignWaves shift).
     // Slice count that fed the PPG median (post drop rules).
     size_t ppg_n_beats = 0;
+    // Deterministic PPG fiducials computed at construction from the real
+    // R-pair interval: peak = max in [R1,R2], foot = min in [R1,peak].
+    // -1 when no PPG for this bin.
+    int ppg_peak_col = -1;
+    int ppg_onset_col = -1;
     // Surviving beats from ch1 raw method (each entry is one beat's
     // samples, all of equal length, possibly with NaN tails). Only
     // populated when capture_beats was requested for ch1 in
@@ -108,18 +116,13 @@ struct EcgChannelResult {
     vector<double> ppg_alignment_point_absval;
     vector<double> ppg_alignment_point_unfiltered;
 
-    vector<double> avg_r_expand_raw;
-    vector<double> avg_r_expand_squared;
-    vector<double> avg_r_expand_absval;
-    vector<double> avg_r_expand_unfiltered;
+    vector<int> r_col_raw;
+    vector<int> r_col_squared;
+    vector<int> r_col_absval;
+    vector<int> r_col_unfiltered;
 
-    // Per-bin slice count that fed the raw-method median (post drop rules).
-    // Only tracked for the raw method since that's what the viewer displays.
-    vector<size_t> n_beats_raw;
+    vector<size_t> n_beats_raw;//the viewer displays the number of beats contributing to template for each channel
 
-    // Per-bin captured surviving beats from the "raw" method.
-    // Only populated when the caller asks for it (currently: ch1 only).
-    // [bin][beat][sample]
     vector<vector<vector<double>>> kept_beats_raw;
 };
 

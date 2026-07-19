@@ -29,12 +29,12 @@ namespace template_generation_detail {
     inline void copyMethod(template_io::ChannelMethodTemplate& dst,
         const std::vector<double>& tmpl,
         const std::vector<double>& tmpl_std,
-        double alignment, double rExpand)
+        double alignment, int rCol)
     {
         dst.ecgTemplate = tmpl;
         dst.ecgTemplate_std = tmpl_std;
         dst.alignment_point = std::isnan(alignment) ? 0.0 : alignment;
-        dst.avg_r_expand = rExpand;
+        dst.r_col = rCol;
     }
 
     inline void packBin(template_io::BinTemplates& bt,
@@ -49,33 +49,33 @@ namespace template_generation_detail {
 
         copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw,
             info.ch1.ecgTemplate_raw_std,
-            info.ch1.alignment_point_raw, info.ch1.avg_r_expand_raw);
+            info.ch1.alignment_point_raw, info.ch1.r_col_raw);
         copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd,
-            info.ch1.alignment_point_squared, info.ch1.avg_r_expand_squared);
+            info.ch1.alignment_point_squared, info.ch1.r_col_squared);
         copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval, noStd,
-            info.ch1.alignment_point_absval, info.ch1.avg_r_expand_absval);
+            info.ch1.alignment_point_absval, info.ch1.r_col_absval);
         copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, noStd,
-            info.ch1.alignment_point_unfiltered, info.ch1.avg_r_expand_unfiltered);
+            info.ch1.alignment_point_unfiltered, info.ch1.r_col_unfiltered);
 
         copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw,
             info.ch2.ecgTemplate_raw_std,
-            info.ch2.alignment_point_raw, info.ch2.avg_r_expand_raw);
+            info.ch2.alignment_point_raw, info.ch2.r_col_raw);
         copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd,
-            info.ch2.alignment_point_squared, info.ch2.avg_r_expand_squared);
+            info.ch2.alignment_point_squared, info.ch2.r_col_squared);
         copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval, noStd,
-            info.ch2.alignment_point_absval, info.ch2.avg_r_expand_absval);
+            info.ch2.alignment_point_absval, info.ch2.r_col_absval);
         copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, noStd,
-            info.ch2.alignment_point_unfiltered, info.ch2.avg_r_expand_unfiltered);
+            info.ch2.alignment_point_unfiltered, info.ch2.r_col_unfiltered);
 
         copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw,
             info.ch3.ecgTemplate_raw_std,
-            info.ch3.alignment_point_raw, info.ch3.avg_r_expand_raw);
+            info.ch3.alignment_point_raw, info.ch3.r_col_raw);
         copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd,
-            info.ch3.alignment_point_squared, info.ch3.avg_r_expand_squared);
+            info.ch3.alignment_point_squared, info.ch3.r_col_squared);
         copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval, noStd,
-            info.ch3.alignment_point_absval, info.ch3.avg_r_expand_absval);
+            info.ch3.alignment_point_absval, info.ch3.r_col_absval);
         copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered, noStd,
-            info.ch3.alignment_point_unfiltered, info.ch3.avg_r_expand_unfiltered);
+            info.ch3.alignment_point_unfiltered, info.ch3.r_col_unfiltered);
 
         bt.ppgTemplate = info.ppgTemplate;
         bt.ppgTemplate_std = info.ppgTemplate_std;
@@ -85,6 +85,8 @@ namespace template_generation_detail {
         bt.ch2_n_beats_raw = info.ch2.n_beats_raw;
         bt.ch3_n_beats_raw = info.ch3.n_beats_raw;
         bt.ppg_n_beats = info.ppg_n_beats;
+        bt.ppg_peak_col = info.ppg_peak_col;
+        bt.ppg_onset_col = info.ppg_onset_col;
     }
 
     // FAST pack: raw + unfiltered ECG blocks + PPG. Leaves the squared and
@@ -97,21 +99,21 @@ namespace template_generation_detail {
 
         copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw,
             info.ch1.ecgTemplate_raw_std,
-            info.ch1.alignment_point_raw, info.ch1.avg_r_expand_raw);
+            info.ch1.alignment_point_raw, info.ch1.r_col_raw);
         copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, {},
-            info.ch1.alignment_point_unfiltered, info.ch1.avg_r_expand_unfiltered);
+            info.ch1.alignment_point_unfiltered, info.ch1.r_col_unfiltered);
 
         copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw,
             info.ch2.ecgTemplate_raw_std,
-            info.ch2.alignment_point_raw, info.ch2.avg_r_expand_raw);
+            info.ch2.alignment_point_raw, info.ch2.r_col_raw);
         copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, {},
-            info.ch2.alignment_point_unfiltered, info.ch2.avg_r_expand_unfiltered);
+            info.ch2.alignment_point_unfiltered, info.ch2.r_col_unfiltered);
 
         copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw,
             info.ch3.ecgTemplate_raw_std,
-            info.ch3.alignment_point_raw, info.ch3.avg_r_expand_raw);
+            info.ch3.alignment_point_raw, info.ch3.r_col_raw);
         copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered, {},
-            info.ch3.alignment_point_unfiltered, info.ch3.avg_r_expand_unfiltered);
+            info.ch3.alignment_point_unfiltered, info.ch3.r_col_unfiltered);
 
         bt.ppgTemplate = info.ppgTemplate;
         bt.ppgTemplate_std = info.ppgTemplate_std;
@@ -121,6 +123,8 @@ namespace template_generation_detail {
         bt.ch2_n_beats_raw = info.ch2.n_beats_raw;
         bt.ch3_n_beats_raw = info.ch3.n_beats_raw;
         bt.ppg_n_beats = info.ppg_n_beats;
+        bt.ppg_peak_col = info.ppg_peak_col;
+        bt.ppg_onset_col = info.ppg_onset_col;
     }
 
     // SLOW pack: squared + absval blocks onto an already fast-packed bin.
@@ -130,17 +134,17 @@ namespace template_generation_detail {
         if (bt.bad_segment) return;
         const std::vector<double> noStd;
         copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd,
-            info.ch1.alignment_point_squared, info.ch1.avg_r_expand_squared);
+            info.ch1.alignment_point_squared, info.ch1.r_col_squared);
         copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval, noStd,
-            info.ch1.alignment_point_absval, info.ch1.avg_r_expand_absval);
+            info.ch1.alignment_point_absval, info.ch1.r_col_absval);
         copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd,
-            info.ch2.alignment_point_squared, info.ch2.avg_r_expand_squared);
+            info.ch2.alignment_point_squared, info.ch2.r_col_squared);
         copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval, noStd,
-            info.ch2.alignment_point_absval, info.ch2.avg_r_expand_absval);
+            info.ch2.alignment_point_absval, info.ch2.r_col_absval);
         copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd,
-            info.ch3.alignment_point_squared, info.ch3.avg_r_expand_squared);
+            info.ch3.alignment_point_squared, info.ch3.r_col_squared);
         copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval, noStd,
-            info.ch3.alignment_point_absval, info.ch3.avg_r_expand_absval);
+            info.ch3.alignment_point_absval, info.ch3.r_col_absval);
     }
 
 }  // namespace template_generation_detail

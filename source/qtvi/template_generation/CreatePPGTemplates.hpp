@@ -35,6 +35,8 @@ struct PPGTemplatesResult {
     vector<vector<double>> templates;   // [bin][sample]
     vector<vector<double>> stds;        // [bin][sample], same shape as templates
     vector<vector<vector<double>>> kept; // [bin][beat][sample] retained snips
+    vector<int> peakCol;                // [bin] systolic peak column (R1..R2)
+    vector<int> footCol;                // [bin] foot column (R1..peak)
 };
 
 /**
@@ -64,11 +66,15 @@ static inline void build_pulse_template_pair_windowed(
     double padSeconds,
     std::vector<double>& outTemplate,
     std::vector<double>& outStd,
-    std::vector<std::vector<double>>& outKeptBeats)
+    std::vector<std::vector<double>>& outKeptBeats,
+    int& outPeakCol,
+    int& outFootCol)
 {
     outTemplate.clear();
     outStd.clear();
     outKeptBeats.clear();
+    outPeakCol = -1;
+    outFootCol = -1;
 
     if (signal.empty() || masterPeaksEcg.size() < 2 ||
         channelRate <= 0.0 || ecgRate <= 0.0) return;
@@ -127,8 +133,46 @@ static inline void build_pulse_template_pair_windowed(
     outKeptBeats.reserve(aligned.beats.size());
     for (const auto& sl : aligned.beats) outKeptBeats.push_back(sl);
 
-    // Silence unused warnings — the alignment function computes its own
-    // slicing pad from RR intervals, so padSeconds isn't used here.
+    // ---- Deterministic PPG fiducials from the real R-peaks -------------
+    // The template is R-anchored: R1 lands at column padSeconds*channelRate
+    // (0.25 s in) by construction. R2 = R1 + one RR interval. We compute the
+    // systolic peak as the max in [R1, R2] (exactly one pulse -> no risk of
+    // grabbing a later pulse) and the foot as the min in [R1, peak]. Using the
+    // true R-pair interval (not a fixed window) makes these exact.
+    {
+        const int N = static_cast<int>(outTemplate.size());
+        const int r1 = std::clamp(
+            static_cast<int>(std::llround(padSeconds * channelRate)), 0,
+            std::max(0, N - 1));
+        // Median RR in ECG samples -> channel samples.
+        std::vector<double> gaps;
+        gaps.reserve(masterPeaksEcg.size());
+        for (size_t k = 1; k < masterPeaksEcg.size(); ++k)
+            gaps.push_back(static_cast<double>(masterPeaksEcg[k] - masterPeaksEcg[k - 1]));
+        int rrCh = 0;
+        if (!gaps.empty()) {
+            std::sort(gaps.begin(), gaps.end());
+            const double medGapEcg = gaps[gaps.size() / 2];
+            rrCh = static_cast<int>(std::llround(medGapEcg * scale));
+        }
+        const int r2 = (rrCh > 0) ? std::min(N - 1, r1 + rrCh) : (N - 1);
+
+        if (N > 0 && r2 > r1) {
+            int pk = r1; double pmax = -std::numeric_limits<double>::infinity();
+            for (int i = r1; i <= r2; ++i)
+                if (!std::isnan(outTemplate[i]) && outTemplate[i] > pmax) {
+                    pmax = outTemplate[i]; pk = i;
+                }
+            int ft = r1; double fmin = std::numeric_limits<double>::infinity();
+            for (int i = r1; i <= pk; ++i)
+                if (!std::isnan(outTemplate[i]) && outTemplate[i] < fmin) {
+                    fmin = outTemplate[i]; ft = i;
+                }
+            outPeakCol = pk;
+            outFootCol = ft;
+        }
+    }
+
     (void)padSeconds; (void)channelRate; (void)ecgRate;
 }
 
@@ -152,6 +196,8 @@ inline PPGTemplatesResult CreatePPGTemplates(
     out.templates.assign(n, {});
     out.stds.assign(n, {});
     out.kept.assign(n, {});
+    out.peakCol.assign(n, -1);
+    out.footCol.assign(n, -1);
 
     int ppg_threads = std::min(8, static_cast<int>(n > 0 ? n : 1));
 #pragma omp parallel for schedule(dynamic) num_threads(ppg_threads)
@@ -164,12 +210,15 @@ inline PPGTemplatesResult CreatePPGTemplates(
                 b.ppgSignal, ppgRate,
                 b.ch1.raw, ecgRate,
                 padSeconds,
-                out.templates[i], out.stds[i], out.kept[i]);
+                out.templates[i], out.stds[i], out.kept[i],
+                out.peakCol[i], out.footCol[i]);
         }
         catch (...) {
             out.templates[i] = {};
             out.stds[i] = {};
             out.kept[i] = {};
+            out.peakCol[i] = -1;
+            out.footCol[i] = -1;
         }
     }
 

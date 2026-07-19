@@ -69,11 +69,16 @@ inline ArterialTemplatesResult CreateArterialTemplates(
             continue;   // out.templates[i]/stds[i]/kept[i] stay empty
 
         try {
+            // Arterial channels don't use the systolic peak/foot fiducials
+            // (no PI normalization anchored on them), so discard the two
+            // out-params the shared PPG builder now produces.
+            int arterialPeakCol = -1, arterialFootCol = -1;
             build_pulse_template_pair_windowed(
                 sig, channelRate,
                 b.ch1.raw, ecgRate,
                 padSeconds,
-                out.templates[i], out.stds[i], out.kept[i]);
+                out.templates[i], out.stds[i], out.kept[i],
+                arterialPeakCol, arterialFootCol);
         }
         catch (...) {
             out.templates[i].clear();

@@ -43,9 +43,11 @@ struct ChannelTemplateData {
     double alignment_point_raw = 0;
     double alignment_point_squared = 0;
     double alignment_point_absval = 0;
-    double avg_r_expand_raw = 0;
-    double avg_r_expand_squared = 0;
-    double avg_r_expand_absval = 0;
+    // True R column in the template (from alignment). Used directly as the R
+    // fiducial; replaces the old avg_r_expand positioning constant.
+    int r_col_raw = -1;
+    int r_col_squared = -1;
+    int r_col_absval = -1;
 };
 
 struct TemplateBin {
@@ -115,6 +117,13 @@ struct TemplateBin {
     int ppg_peak2 = -1;
     int ppg_end = -1;
 
+    // Construction-time PPG fiducials (peak = max in [R1,R2], foot = min in
+    // [R1,peak]), computed from the real R-pair interval at template build and
+    // carried through the template file. seed_all uses these directly instead
+    // of re-detecting the peak on the multi-pulse template. -1 if unavailable.
+    int ppg_peak_construct = -1;
+    int ppg_onset_construct = -1;
+
     // Arterial channels (ABP / ART / ART_PULM): same marker set as PPG
     // (onset, peak, dicrotic, 50%, end) and same issue flag semantics
     // (0 = ok, 1 = bad, 2 = channel absent). Indices are into the matching
@@ -160,6 +169,8 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
         dst.ch2_n_beats_raw = src.ch2_n_beats_raw;
         dst.ch3_n_beats_raw = src.ch3_n_beats_raw;
         dst.ppg_n_beats = src.ppg_n_beats;
+        dst.ppg_peak_construct = src.ppg_peak_col;
+        dst.ppg_onset_construct = src.ppg_onset_col;
         dst.ppgTemplate = src.ppgTemplate;
         dst.ppgTemplate_std = src.ppgTemplate_std;
         dst.abpTemplate = src.abpTemplate;
@@ -172,17 +183,17 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
         dst.ch1.ecgTemplate_raw = src.ch1_raw.ecgTemplate;
         dst.ch1.ecgTemplate_raw_std = src.ch1_raw.ecgTemplate_std;
         dst.ch1.alignment_point_raw = src.ch1_raw.alignment_point;
-        dst.ch1.avg_r_expand_raw = src.ch1_raw.avg_r_expand;
+        dst.ch1.r_col_raw = src.ch1_raw.r_col;
 
         dst.ch2.ecgTemplate_raw = src.ch2_raw.ecgTemplate;
         dst.ch2.ecgTemplate_raw_std = src.ch2_raw.ecgTemplate_std;
         dst.ch2.alignment_point_raw = src.ch2_raw.alignment_point;
-        dst.ch2.avg_r_expand_raw = src.ch2_raw.avg_r_expand;
+        dst.ch2.r_col_raw = src.ch2_raw.r_col;
 
         dst.ch3.ecgTemplate_raw = src.ch3_raw.ecgTemplate;
         dst.ch3.ecgTemplate_raw_std = src.ch3_raw.ecgTemplate_std;
         dst.ch3.alignment_point_raw = src.ch3_raw.alignment_point;
-        dst.ch3.avg_r_expand_raw = src.ch3_raw.avg_r_expand;
+        dst.ch3.r_col_raw = src.ch3_raw.r_col;
     }
     return bins;
 }
@@ -192,24 +203,24 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
 //
 //   VERSIONING: v1 files begin directly with uint64 numBins. v2 files begin
 //   with a sentinel (uint64 = 0xFFFFFFFFFFFFFFFF, an impossible bin count)
-//   followed by uint32 version (=2), then uint64 numBins. readTemplateMarkingsBin
-//   detects which by peeking the first 8 bytes, so old files still load.
+//   followed by uint32 version, then uint64 numBins. Only the current format
+//   is read; legacy files are rejected.
 //
-//   per bin (v4 layout; v1..v3 handled as legacy reads):
+//   per bin:
 //     uint64  index
 //     uint8   bad_r_ch1, bad_r_ch2, bad_r_ch3
 //     uint8   ppg_issue          (0 = ok, 1 = bad, 2 = no ppg)
 //     int32   p_peak_ch1..3, q_begin_ch1..3, r_peak_ch1..3,
 //             s_end_ch1..3, t_begin_ch1..3, t_end_ch1..3
-//     int32   ppg_onset, ppg_p50, ppg_peak, ppg_dicrotic, ppg_peak2, ppg_end
-//     -- arterial (v2+), one block each for ABP, ART, ART_PULM: --
+//     int32   ppg_onset, ppg_p50, ppg_peak, ppg_dicrotic, ppg_peak2, ppg_end, ppg_t80
+//     -- arterial, one block each for ABP, ART, ART_PULM: --
 //     uint8   <chan>_issue
 //     int32   <chan>_onset, _peak, _dicrotic, _peak2, _end
 //
 // All int32 fields use -1 as the "unmarked / not applicable" sentinel.
 // ---------------------------------------------------------------------------
 static constexpr uint64_t kTemplateMarkingsV2Sentinel = ~uint64_t(0);
-static constexpr uint32_t kTemplateMarkingsVersion = 5;   // v5 adds ppg_t80 (T80)
+static constexpr uint32_t kTemplateMarkingsVersion = 5;
 
 inline void writeTemplateMarkingsBin(const std::string& path,
     const std::vector<TemplateBin>& bins) {
@@ -217,7 +228,7 @@ inline void writeTemplateMarkingsBin(const std::string& path,
     if (!f.is_open())
         throw std::runtime_error("cannot open for write: " + path);
 
-    // v2 header: sentinel + version, then the real bin count.
+    // Header: sentinel + version + bin count.
     uint64_t sentinel = kTemplateMarkingsV2Sentinel;
     f.write(reinterpret_cast<const char*>(&sentinel), 8);
     uint32_t ver = kTemplateMarkingsVersion;
@@ -238,7 +249,7 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         w8(b.bad_r_ch[2] ? 1 : 0);
         w8(b.ppg_issue);
 
-        // v4 ECG markers: six per channel in temporal order.
+        // ECG markers: six per channel in temporal order.
         for (int c = 0; c < 3; ++c) w32(b.p_peak_ch[c]);
         for (int c = 0; c < 3; ++c) w32(b.q_begin_ch[c]);
         for (int c = 0; c < 3; ++c) w32(b.r_peak_ch[c]);
@@ -252,9 +263,9 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         w32(b.ppg_dicrotic);
         w32(b.ppg_peak2);
         w32(b.ppg_end);
-        w32(b.ppg_t80);   // v5: T80
+        w32(b.ppg_t80);
 
-        // v2 arterial block: ABP, ART, ART_PULM (issue + 5 indices each).
+        // Arterial block: ABP, ART, ART_PULM (issue + 5 indices each).
         w8(b.abp_issue);
         w32(b.abp_onset); w32(b.abp_peak); w32(b.abp_dicrotic); w32(b.abp_peak2); w32(b.abp_end);
         w8(b.art_issue);
@@ -271,7 +282,7 @@ struct EcgFeatures {
     double qrs_ms = NAN, qt_ms = NAN;
 };
 
-inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, int p_peak, int q_begin, int r_peak, int s_end, int t_end, double rateHz) 
+inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, int p_peak, int q_begin, int r_peak, int s_end, int t_end, double rateHz)
 {
     EcgFeatures f;
     const int N = static_cast<int>(ecg.size());
@@ -658,24 +669,17 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         int32_t v = 0; f.read(reinterpret_cast<char*>(&v), 4); return v;
         };
 
-    // Peek the first 8 bytes. v2+ begin with the sentinel; anything else
-    // is a v1 file whose first 8 bytes are the real bin count.
+    // Current format only: sentinel + version + bin count. Legacy v1-v4
+    // files are no longer supported (regenerate markings if needed).
     uint64_t first = 0;
     f.read(reinterpret_cast<char*>(&first), 8);
+    if (first != kTemplateMarkingsV2Sentinel)
+        throw std::runtime_error("unsupported (legacy) markings format: " + path);
 
-    uint32_t version = 1;
+    uint32_t version = 0;
     uint64_t n = 0;
-    if (first == kTemplateMarkingsV2Sentinel) {
-        f.read(reinterpret_cast<char*>(&version), 4);   // 2 or 3
-        f.read(reinterpret_cast<char*>(&n), 8);
-    }
-    else {
-        n = first;   // v1: first field WAS the bin count
-    }
-    const bool has_arterial = (version >= 2);
-    const bool has_p50 = (version >= 3);
-    const bool has_ecg_peaks = (version >= 4);   // v4: six groups (peaks), not five
-    const bool has_t80 = (version >= 5);   // v5: ppg_t80 (T80)
+    f.read(reinterpret_cast<char*>(&version), 4);
+    f.read(reinterpret_cast<char*>(&n), 8);
 
     std::vector<TemplateBin> bins(n);
     for (uint64_t i = 0; i < n; ++i) {
@@ -687,48 +691,31 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         b.bad_r_ch[2] = (r8() != 0);
         b.ppg_issue = r8();
 
-        if (has_ecg_peaks) {
-            // v4: P peak, Q begin, R peak, S end, T peak, T end.
-            for (int c = 0; c < 3; ++c) b.p_peak_ch[c] = r32();
-            for (int c = 0; c < 3; ++c) b.q_begin_ch[c] = r32();
-            for (int c = 0; c < 3; ++c) b.r_peak_ch[c] = r32();
-            for (int c = 0; c < 3; ++c) b.s_end_ch[c] = r32();
-            for (int c = 0; c < 3; ++c) b.t_begin_ch[c] = r32();
-            for (int c = 0; c < 3; ++c) b.t_end_ch[c] = r32();
-        }
-        else {
-            // v1-v3 legacy: P onset, Q begin, S end, T begin, T end. We
-            // drop P onset and T begin (they don't map to any current
-            // marker) and leave the new peak fields at -1 for re-seeding.
-            int scratch[3];
-            for (int c = 0; c < 3; ++c) scratch[c] = r32();   // was p_begin
-            for (int c = 0; c < 3; ++c) b.q_begin_ch[c] = r32();
-            for (int c = 0; c < 3; ++c) b.s_end_ch[c] = r32();
-            for (int c = 0; c < 3; ++c) scratch[c] = r32();   // was t_begin
-            for (int c = 0; c < 3; ++c) b.t_end_ch[c] = r32();
-            (void)scratch;
-        }
+        // ECG: P peak, Q begin, R peak, S end, T begin, T end.
+        for (int c = 0; c < 3; ++c) b.p_peak_ch[c] = r32();
+        for (int c = 0; c < 3; ++c) b.q_begin_ch[c] = r32();
+        for (int c = 0; c < 3; ++c) b.r_peak_ch[c] = r32();
+        for (int c = 0; c < 3; ++c) b.s_end_ch[c] = r32();
+        for (int c = 0; c < 3; ++c) b.t_begin_ch[c] = r32();
+        for (int c = 0; c < 3; ++c) b.t_end_ch[c] = r32();
 
         b.ppg_onset = r32();
-        if (has_p50) b.ppg_p50 = r32();
+        b.ppg_p50 = r32();
         b.ppg_peak = r32();
         b.ppg_dicrotic = r32();
         b.ppg_peak2 = r32();
         b.ppg_end = r32();
-        if (has_t80) b.ppg_t80 = r32();
+        b.ppg_t80 = r32();
 
-        if (has_arterial) {
-            b.abp_issue = r8();
-            b.abp_onset = r32(); b.abp_peak = r32(); b.abp_dicrotic = r32();
-            b.abp_peak2 = r32(); b.abp_end = r32();
-            b.art_issue = r8();
-            b.art_onset = r32(); b.art_peak = r32(); b.art_dicrotic = r32();
-            b.art_peak2 = r32(); b.art_end = r32();
-            b.art_pulm_issue = r8();
-            b.art_pulm_onset = r32(); b.art_pulm_peak = r32(); b.art_pulm_dicrotic = r32();
-            b.art_pulm_peak2 = r32(); b.art_pulm_end = r32();
-        }
-        // v1: arterial fields keep their default (-1 / issue 0).
+        b.abp_issue = r8();
+        b.abp_onset = r32(); b.abp_peak = r32(); b.abp_dicrotic = r32();
+        b.abp_peak2 = r32(); b.abp_end = r32();
+        b.art_issue = r8();
+        b.art_onset = r32(); b.art_peak = r32(); b.art_dicrotic = r32();
+        b.art_peak2 = r32(); b.art_end = r32();
+        b.art_pulm_issue = r8();
+        b.art_pulm_onset = r32(); b.art_pulm_peak = r32(); b.art_pulm_dicrotic = r32();
+        b.art_pulm_peak2 = r32(); b.art_pulm_end = r32();
     }
     return bins;
 }

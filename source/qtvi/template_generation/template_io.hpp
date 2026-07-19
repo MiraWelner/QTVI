@@ -19,16 +19,19 @@
  *         [uint64 sz][sz x double ecgTemplate]
  *         [uint64 sz][sz x double ecgTemplate_std]   (sz=0 for non-raw methods)
  *         [double alignment_point]
- *         [double avg_r_expand]
+ *         [int32  r_col]
  *
  *       Then PPG template + its std:
  *         [uint64 sz][sz x double ppgTemplate]
  *         [uint64 sz][sz x double ppgTemplate_std]
  *
- *       Then arterial background templates (foot-anchored, no std):
+ *       Then arterial background templates, each with its std:
  *         [uint64 sz][sz x double abpTemplate]
+ *         [uint64 sz][sz x double abpTemplate_std]
  *         [uint64 sz][sz x double artTemplate]
+ *         [uint64 sz][sz x double artTemplate_std]
  *         [uint64 sz][sz x double artPulmTemplate]
+ *         [uint64 sz][sz x double artPulmTemplate_std]
  *       (each sz=0 when that channel was absent in the dataset)
  *
  *       Then per-channel beat counts (slices that survived drop rules and
@@ -39,6 +42,7 @@
  *         [uint64 ch2_n_beats_raw]
  *         [uint64 ch3_n_beats_raw]
  *         [uint64 ppg_n_beats]
+ *         [int32  ppg_peak_col][int32 ppg_onset_col]
  *
  *       Then bad-segment flag:
  *         [uint8 bad_segment]
@@ -64,7 +68,7 @@ namespace template_io {
         // viewer doesn't display).
         std::vector<double> ecgTemplate_std;
         double alignment_point = 0.0;
-        double avg_r_expand = 0.0;
+        int    r_col = -1;   // true R column in the template (was avg_r_expand)
     };
 
     struct BinTemplates {
@@ -94,6 +98,8 @@ namespace template_io {
         uint64_t              ch2_n_beats_raw = 0;
         uint64_t              ch3_n_beats_raw = 0;
         uint64_t              ppg_n_beats = 0;
+        int                   ppg_peak_col = -1;   // construction-time fiducials
+        int                   ppg_onset_col = -1;
         bool                  bad_segment = false;
     };
 
