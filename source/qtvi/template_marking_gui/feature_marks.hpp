@@ -55,12 +55,12 @@ public:
     // auto-computed but tracks the user's movable markers live (see the
     // compute_* functions below).
     struct EcgGlyphs {
-        int p_wave = -1;    // max within +/-0.05s of user P peak
-        int q_onset = -1;   // cubic-fit knee within +/-0.05s of user Q begin
-        int r_wave = -1;    // argmax|v-baseline| over [q_begin, s_end]
-        int s_end = -1;     // recovery dropoff/knee within +/-0.05s of user S end
-        int t_peak = -1;    // max value between user T begin and T end
-        int t_end = -1;     // = the user's T-end marker (passthrough)
+        int p_peak_glyph = -1;    // max within +/-0.05s of user P peak
+        int q_begin_glyph = -1;   // cubic-fit knee within +/-0.05s of user Q begin
+        int r_peak_glyph = -1;    // argmax|v-baseline| over [q_begin, s_end]
+        int s_end_glyph = -1;     // recovery dropoff/knee within +/-0.05s of user S end
+        int t_peak_glyph = -1;    // max value between user T begin and T end
+        int t_end_glyph = -1;     // = the user's T-end marker (passthrough)
     };
     static EcgGlyphs compute_ecg_glyphs(const std::vector<double>& ecg,
         int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs);

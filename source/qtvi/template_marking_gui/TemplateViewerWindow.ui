@@ -128,26 +128,42 @@
        </widget>
       </item>
       <item>
-       <widget class="QRadioButton" name="MoveSubsequent">
-        <property name="text">
-         <string>Move Subsequent</string>
+       <widget class="QGroupBox" name="groupBox">
+        <property name="title">
+         <string/>
         </property>
-        <property name="checked">
-         <bool>true</bool>
-        </property>
-        <attribute name="buttonGroup">
-         <string notr="true">buttonGroup</string>
-        </attribute>
-       </widget>
-      </item>
-      <item>
-       <widget class="QRadioButton" name="MoveIndividual">
-        <property name="text">
-         <string>Move Individual</string>
-        </property>
-        <attribute name="buttonGroup">
-         <string notr="true">buttonGroup</string>
-        </attribute>
+        <layout class="QVBoxLayout" name="verticalLayout">
+         <item>
+          <widget class="QRadioButton" name="move_subsequent_delta">
+           <property name="text">
+            <string>Move Subsequent - Delta</string>
+           </property>
+           <property name="checked">
+            <bool>true</bool>
+           </property>
+           <attribute name="buttonGroup">
+            <string notr="true">buttonGroup</string>
+           </attribute>
+          </widget>
+         </item>
+         <item>
+          <widget class="QRadioButton" name="move_subsequent_raw">
+           <property name="text">
+            <string>Move Subsequent - Time</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QRadioButton" name="move_individual">
+           <property name="text">
+            <string>Move Individual</string>
+           </property>
+           <attribute name="buttonGroup">
+            <string notr="true">buttonGroup</string>
+           </attribute>
+          </widget>
+         </item>
+        </layout>
        </widget>
       </item>
       <item>

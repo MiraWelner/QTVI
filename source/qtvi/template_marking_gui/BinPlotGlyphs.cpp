@@ -36,19 +36,19 @@ void BinPlotWidget::captureGlyphSnapshot() {
 
     // ---- ECG landmarks ---------------------------------------------------
     // Six reactive X glyphs, auto-computed but tracking the movable markers
-    // live: P wave, Q onset, R wave, S end, T peak, T end. Q-peak / S-peak
+    // live: P peak, Q begin, R peak, S end, T peak, T end. Q-peak / S-peak
     // are no longer part of the set.
     if ((int)m_ecg.size() >= 3) {
         auto e = FeatureMarks::compute_ecg_glyphs(m_ecg,
             m_markers[EcgPPeak], m_markers[EcgQBegin],
             m_markers[EcgSEnd], m_markers[EcgTPeak], m_markers[EcgTEnd],
             m_sampleRate);
-        m_glyphs.ecgPPeak = e.p_wave;
-        m_glyphs.ecgQ = e.q_onset;
-        m_glyphs.ecgRPeak = e.r_wave;
-        m_glyphs.ecgS = e.s_end;
-        m_glyphs.ecgTPeak = e.t_peak;
-        m_glyphs.ecgTend = e.t_end;
+        m_glyphs.ecgPPeak = e.p_peak_glyph;
+        m_glyphs.ecgQ = e.q_begin_glyph;
+        m_glyphs.ecgRPeak = e.r_peak_glyph;
+        m_glyphs.ecgS = e.s_end_glyph;
+        m_glyphs.ecgTPeak = e.t_peak_glyph;
+        m_glyphs.ecgTend = e.t_end_glyph;
         m_glyphs.ecgQPeak = -1;   // dropped from the reactive set
         m_glyphs.ecgSPeak = -1;
     }

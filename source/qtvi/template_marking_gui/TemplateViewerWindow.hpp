@@ -93,7 +93,8 @@ private:
     int m_currentPage = 0;
     int m_totalPages = 1;
 
-    bool m_moveSubsequent = true;
+    enum class MoveMode { Individual, SubsequentDelta, SubsequentRaw };
+    MoveMode m_moveMode = MoveMode::SubsequentDelta;
     // false = first (R-aligned) pass, button reads "Finish and Next";
     // true  = second (Q-aligned) pass, button reads "Finish".
     bool m_qAlignPass = false;
@@ -120,7 +121,7 @@ private:
     // Pulse: 100*(sample - footY) / footY / globalRef.
     // If globalRef or footY is not usable, returns raw unchanged.
     std::vector<double> normalizeEcgTrace(const std::vector<double>& raw, int ch) const;
-    std::vector<double> normalizePulseTrace(const std::vector<double>& raw,
+    std::vector<double> normalize_ppg_or_similar(const std::vector<double>& raw,
         int footIdx, int pulseChan) const;
 
     // Push m_showEcgMarkers / m_showPpgMarkers into every visible plot.

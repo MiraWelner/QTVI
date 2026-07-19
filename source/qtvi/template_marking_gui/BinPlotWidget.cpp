@@ -838,12 +838,12 @@ void BinPlotWidget::captureGlyphSnapshot() {
             m_markers[EcgPPeak], m_markers[EcgQBegin],
             m_markers[EcgSEnd], m_markers[EcgTBegin] /*= T begin*/, m_markers[EcgTEnd],
             m_sampleRate);
-        m_glyphs.ecgPPeak = e.p_wave;
-        m_glyphs.ecgQ = e.q_onset;
-        m_glyphs.ecgRPeak = e.r_wave;
-        m_glyphs.ecgS = e.s_end;
-        m_glyphs.ecgTPeak = e.t_peak;   // computed T peak (max between T begin/end)
-        m_glyphs.ecgTend = e.t_end;     // T end glyph = the user's T-end marker
+        m_glyphs.ecgPPeak = e.p_peak_glyph;
+        m_glyphs.ecgQ = e.q_begin_glyph;
+        m_glyphs.ecgRPeak = e.r_peak_glyph;
+        m_glyphs.ecgS = e.s_end_glyph;
+        m_glyphs.ecgTPeak = e.t_peak_glyph;   // computed T peak (max between T begin/end)
+        m_glyphs.ecgTend = e.t_end_glyph;     // T end glyph = the user's T-end marker
         m_glyphs.ecgQPeak = -1;
         m_glyphs.ecgSPeak = -1;
     }

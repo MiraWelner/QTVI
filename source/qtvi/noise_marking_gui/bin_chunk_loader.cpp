@@ -6,6 +6,7 @@
 
 #include "gui_handler.h"
 #include "chart_utils.hpp"
+#include "annotation_types.hpp"
 #include "gui_handler.h"
 
 #include <QFile>
@@ -17,12 +18,52 @@
 #include <QEventLoop>
 #include <algorithm>
 #include <cstring>
+#include <cstdint>
+#include <fstream>
+#include <filesystem>
 #include <limits>
 #include <vector>
 
 void noise_marking_gui::setFileSource(const QString& filePath) {
     loadSelectedFile(filePath);
 }
+
+namespace {
+    // Rebuild a GenExcStruct from a saved noise-markings .bin (count + 6 doubles/
+    // row: start/end sample, start/end sec, channel code, annotation code).
+    // Numeric codes are reverse-mapped to channel label + marking-type string.
+    GenExcStruct readNoiseMarkingsBin(const std::filesystem::path& path,
+        const QString& filePath) {
+        GenExcStruct g;
+        g.filePath = filePath;
+        std::ifstream f(path, std::ios::binary);
+        if (!f.is_open()) return g;
+        uint64_t count = 0;
+        f.read(reinterpret_cast<char*>(&count), 8);
+        auto channelLabel = [](int code) -> QString {
+            switch (code) {
+            case 1: return "PPG";  case 2: return "ECG1"; case 3: return "ECG2";
+            case 4: return "ECG3"; case 5: return "ABP";  case 6: return "ACCEL";
+            case 7: return "ART";  case 8: return "ART_PULM"; default: return QString();
+            }
+            };
+        for (uint64_t i = 0; i < count; ++i) {
+            double row[6];
+            f.read(reinterpret_cast<char*>(row), sizeof(row));
+            if (!f) break;
+            const QString label = channelLabel(static_cast<int>(row[4]));
+            if (label.isEmpty()) continue;                 // unknown channel code
+            QString type;
+            for (const auto& t : annotation_types::noise_types)
+                if (t.code == static_cast<int>(row[5])) { type = QString::fromLatin1(t.label); break; }
+            if (type.isEmpty()) continue;                   // unknown annotation code
+            g.noiseExc.append({ row[2], row[3] });          // start_sec, end_sec
+            g.data_type.append(label);
+            g.marking_type.append(type);
+        }
+        return g;
+    }
+}   // namespace
 
 void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     if (!m_binFilePath.isEmpty()) {
@@ -57,6 +98,19 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
         std::memcpy(&channel_upsampled_rates[i], &raw32[kUpRatesBase + i], sizeof(float));
     }
     total_sleep_samples = raw32[kSleepCountIdx];
+
+    // First time we see this file this session: if a saved noise-markings
+    // .bin exists on disk, load it so prior markings are restored. In-session
+    // edits (already in m_fileMarkings) take precedence and are not clobbered.
+    if (!m_fileMarkings.contains(filePath) && !m_cfg.noise_data_path.empty()) {
+        const std::filesystem::path nb =
+            std::filesystem::path(m_cfg.noise_data_path)
+            / (QFileInfo(filePath).completeBaseName().toStdString() + "_noise_markings.bin");
+        if (std::filesystem::exists(nb)) {
+            GenExcStruct g = readNoiseMarkingsBin(nb, filePath);
+            if (!g.noiseExc.isEmpty()) m_fileMarkings[filePath] = g;
+        }
+    }
 
     if (m_fileMarkings.contains(filePath)) {
         m_genExc = m_fileMarkings[filePath];

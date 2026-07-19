@@ -559,7 +559,7 @@
     </layout>
    </item>
    <item>
-    <layout class="QVBoxLayout" name="main_plots" stretch="1,1,1,1,1,1,1,1,0">
+    <layout class="QVBoxLayout" name="main_plots" stretch="1,1,1,1,1,1,1,1">
      <property name="spacing">
       <number>0</number>
      </property>
@@ -1188,14 +1188,14 @@
           </property>
          </spacer>
         </item>
+        <item row="2" column="0">
+         <widget class="QScrollBar" name="chunk_scrollbar">
+          <property name="orientation">
+           <enum>Qt::Orientation::Horizontal</enum>
+          </property>
+         </widget>
+        </item>
        </layout>
-      </widget>
-     </item>
-     <item>
-      <widget class="QScrollBar" name="chunk_scrollbar">
-       <property name="orientation">
-        <enum>Qt::Orientation::Horizontal</enum>
-       </property>
       </widget>
      </item>
     </layout>

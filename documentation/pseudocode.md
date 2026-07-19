@@ -107,8 +107,6 @@ CHAOS
 
 The markings that the user can make are, ordered by the number that represents them in the log and output files, are:
 
-
-
 1. R Peak Noise — noise so significant that R peaks are not detected in the marked range. Nothing is labled as R peak noise in the output log because the log is beat by beat and R peak noise has no beats.
 
 2. Minor noise — Indicitive of noise, but does not alter R peak detection in any way
@@ -134,8 +132,6 @@ The markings that the user can make are, ordered by the number that represents t
 12. Sig. Arr.
 
 13. Other
-
-
 
 ### Output bin file
 
@@ -177,8 +173,6 @@ row:     one row per user created annotation
 
 6. If there is a too-small bin which should be merged with the previous bin on the start of the signal, or one which should be merged with the subsequent bin on the end of the signal, it is discarded.
 
-
-
 The bin looks like:
 
 ```
@@ -216,20 +210,10 @@ This will be found in `ouput_folder/\annealed_output/[ID]_annealed.bin`
 Notes
 
 - PPG being first is an artifact of the code being based off Daniel's code which cared a lot about PPG
-
-
-
 * Index pairs are **1-based, inclusive** `[first, second]` sample ranges on the
   channel's own grid; a segment may hold several pairs (redistributed fragments).
-  
-  
 - The upsampled slices are stored as series, split by raw temporal location not taking into account the upsampling rate.
-  
-  
-
 * The raw signal is stored as  `(t,v)` pairs whose `t` falls in the segment's ECG time window, timestamps in absolute seconds-from-recording-start. This is an artifact of when I was trying to mark timeskips, but I removed that functionality when I learned that CHAOS .dat files sometimes have issues where the signal is 2xsampling rate for a bit and absent for a bit, so it may be unnecessary now.
-  
-  
 - Missing channels use sentinels (upsampled `[-1.0]`; raw `[(-1.0,-1.0)]`) so the
   schema stays uniform across all 36 slots.
 
@@ -241,328 +225,278 @@ R-peak detection is conducted via weighted multi-algorithm consensus.
 
 1. The signal is linearly detrended via subtracting the mean of each segment from every sample in the segment
 
-2. There 3 passes of a Hamilton/Tompkins-style detector at sensitivity levels 0.1,0.2 and 0.4
+2. The six algorithms used are:
+   
+   1. 3 passes of a Hamilton/Tompkins-style detector at sensitivity levels 0.1,0.2 and 0.4
+      
+      1. Bandpass filter (order-2 zero-phase `filtfilt`, ~0.05–100 Hz)
+      
+      2. Differentiate
+         3- Each pass then thresholds that integrated signal at a **fraction of `max_h`** — **0.2**, **0.1**, and **0.4** — and localizes the accepted peaks back on the band-passed trace.
+         4- The fraction is the sensitivity knob: **0.1** = most sensitive (more detections, more false positives), **0.4** = strictest (fewer, higher-confidence), **0.2** = middle.
+      
+      3. Square
+      
+      4. Moving sum integration (window ~7 samples, scaled by sample rate
+      
+      5. Median filter
+      
+      6. Remove filter/integration delay
+      
+      7. Estimate the peak level of integrated signal, 
+      
+      8. Each pass then thresholds that integrated signal at a fraction of the estimated peak level:  **0.2**, **0.1**, and **0.4** — and localizes the accepted peaks back on the band-passed trace.
+   
+   2. One pass of a Pan-Tompkins detector
+      
+      1. Bandpass 5–15 Hz
+      
+      2. derivative
+      
+      3. square → **moving-window integration of 150 ms**.
+      
+      4. Dual adaptive thresholds on the integrated and filtered signals (running signal/noise estimates, adaptation factor 0.125), with a **200 ms** minimum peak distance (refractory).
+      
+      5. T-wave discrimination**: when an RR interval is shorter than **360 ms**, it compares the candidate's slope (over a 75 ms window) to the previous QRS; if the slope ratio is below **0.5**, it's rejected as a T-wave rather than a beat.
+      
+      6. **Search-back**: if too long passes with no detection, it re-scans with a lowered threshold (200 ms margin; fast/slow recovery factors 0.25/0.75) to recover missed beats.
+   
+   3. One pass of a LMS/moving-integration detector
+      
+      1. Mean-subtract Butterworth bandpass (`filtfilt`) 
+      
+      2. Square the differenced signal → moving-window integration of ~175 ms.
+      
+      3. Adaptive threshold as a fraction of the running MWI maximum: fraction 0.25 with a forgetting/decay factor of 0.80.
+      
+      4- 250 ms refractory between accepted peaks.
+   
+   4. One pass of a squared-signal threshold detector.
+      
+      1. Square the raw ECG (no bandpass/integration).
+      
+      2. Static threshold** = mean + **2·standard deviation** of the squared signal.
+      
+      3. Runs `findpeaks` with a **minimum peak spacing ≈ half the median inter-beat interval**, then keeps only peaks above the threshold.
+         5- The pan tompkins, LMS, and squared-signal detector are run through a peak-snapping algorithm
+      
+      4. Take the consecutive gaps between that detector's detections, `d[i] = idx[i] − idx[i−1]`, and compute their medians
+      
+      5. Create a window set to 1/6th of the median between-detection gaps
+      
+      3- Snap that detection to the location of that maximum, i.e. move `idx[i]` to the local peak apex; the original index is kept if nothing in the window is larger.
+      
+      4- Return the refined index list.
+      
+      5. In each of these windows — centered on a detection and spanning `[idx[i] − half_win, idx[i] + half_win]`, clamped to the signal bounds — find the sample with the maximum ECG amplitude.
 
-3. One pass of a Pan-Tompkins detector
+3. After this, each sample that is selected by one of the algorithms as a 'peak' is weighted via the following:
+   
+   1. Hamilton/Tompkins algorithm with 0.2 threshold: **0.75**
+   
+   2. Hamilton/Tompkins algorithm with 0.1 threshold: **0.25**
+   
+   3. Hamilton/Tompkins algorithm with 0.4 threshold: **0.25**
+   
+   4. Pan-Tompkin: **0.25**
+   
+   5. LMS: **1.5**
+   
+   6. Squared-signal: **0.75**
 
-4. three passes of a Hamilton/Tompkins-style detector (`rpeakdetect`) at progressively different sensitivity thresholds (0.2, 0.1, 0.4 of a reference amplitude),
+4. A candidate is accepted as a true R-peak only if its summed weight reaches a consensus threshold of **2.4**
 
-5. a Pan–Tompkins detector,
+5. The same process above is run for the square of the signal and the absolute value of the signal
 
-6. an LMS/moving-integration detector, and
+### Outputs
 
-7. a squared-signal threshold detector.
+The binary file can be found at: `output_path\r_peak_finding_output\4011465_20110822_peak_locations_all_beats.bin`
 
-Each detector contributes candidate peak locations with a fixed reliability weight (0.75, 0.25, 0.25, 1.25, 1.5, 0.75 respectively), so more trusted algorithms count more heavily. Detections from the last three detectors are first refined by snapping each to the local ECG maximum within a window of ±(median RR)/6 samples, correcting small localization differences between algorithms. All candidate peaks are then pooled; detections from different algorithms falling within 8 samples of one another are treated as the same beat, coalesced to the sharper (higher-amplitude) sample, and their weights summed. A candidate is accepted as a true R-peak only if its summed weight reaches a consensus threshold of **2.4** — i.e. it must be supported by several independently-weighted detectors, not just one. This suppresses the idiosyncratic false positives of any single method while retaining beats that most methods agree on.
+```
+*Header**
+- `uint64 numBins`
 
-The individual detectors follow the standard QRS-enhancement pipeline — band-pass filtering to isolate the QRS frequency band, differentiation, squaring/rectification, and moving-window integration — differing in band edges, integration length, and thresholding. Representative parameters: Pan–Tompkins uses a 5–15 Hz band, 150 ms integration, adaptive dual signal/noise thresholds, a 200 ms refractory period, T-wave discrimination by slope for RR < 360 ms, and missed-beat search-back; `rpeakdetect` band-passes 0.05–100 Hz, integrates over ~7·fs/256 samples, and thresholds relative to the maximum integrated amplitude over the central 50% of the segment. In all cases the final peak position is refined on a cleaner version of the signal (the band-passed or raw trace) rather than on the squared/integrated envelope, so reported R-peak times coincide with the true QRS apex.
+**Per bin** (in this exact order):
 
-Detection runs per channel and per method; the pipeline additionally computes squared and absolute-value variants of the signal and detects on those, and pairs each ECG R-peak with the corresponding PPG pulse for cross-modal analysis. Detected peaks, their amplitudes (measured against a local PR-segment baseline), and the resulting RR intervals are exported per beat.
+1. **R-peak index arrays — 9** (3 ECG channels × 3 preprocessing methods).
+   Each: `uint64 count` + `count × uint64` indices. Order:
+   - `ch1.raw`, `ch1.squared`, `ch1.absval`
+   - `ch2.raw`, `ch2.squared`, `ch2.absval`
+   - `ch3.raw`, `ch3.squared`, `ch3.absval`
+
+2. **PPG event index arrays — 2** (same `count + uint64[]` layout):
+   - `ppgMaxAmps`, then `ppgMinAmps`
+
+3. **Preprocessed signal traces — 6** (each `uint64 count` + `count × double`):
+   - `ch1.squared`, `ch1.absval`, `ch2.squared`, `ch2.absval`, `ch3.squared`, `ch3.absval`
+   - (kept on disk so template rebuilds don't recompute them)
+
+4. **Noise flags — `uint8 flags[9]`** (9 raw bytes), one per channel×method,
+   same order as the index arrays (ch1 raw/squared/absval, ch2 …, ch3 …);
+   each is the `*_noisy` boolean.
+
+5. **ECG–PPG pairs** — `uint64 numPairs`, then `numPairs × (int64 ppg, int64 ecg)` interleaved.
+```
+
+Notes:
+
+All indices are 1-based on disk (writer adds 1 to every R-peak index,
+
+In the pairs, an unpaired side (NaN / negative sentinel) is written as **`-1`** (not `+1`-shifted).
+
+The CSV output can be found at: `csv_for_analysis/<stem>_peak_locations_all_beats.csv`
+
+| Column             | Meaning                                             |
+| ------------------ | --------------------------------------------------- |
+| `beat`             | Row/beat index                                      |
+| `<chan>_x`         | Time of detected peak, per channel                  |
+| `<chan>_y`         | Amplitude of detected peak, per channel             |
+| `blanking_<chan>`  | Blanking period active at detection                 |
+| `threshold_<chan>` | Detection threshold active at detection             |
+| `marked_<chan>`    | Annotation type code on that beat (0 = none)        |
+| `post_<chan>`      | Post-arrhythmia tag (e.g. post-PVC), else 0         |
+| `inverted_<chan>`  | 1 if channel polarity inverted at that beat, else 0 |
 
 ---
 
-Two honest caveats for a paper:
-
-- **"Consensus threshold 2.4" is a tuned constant**, not a probabilistic quantity — with the given weights it roughly means "agreement from the equivalent of the strong detectors, or several weaker ones." If you report it, state the weights alongside so the 2.4 is interpretable, and ideally note how it was tuned/validated.
-- The **T-wave discrimination, refractory, and search-back parameters** (360/200 ms, RR bounds) are Pan–Tompkins-internal defaults; if your ECG sampling rate or population differs materially from the assumptions, those are the parameters a reviewer will ask whether you re-validated.
-
----
-
-## 6. Templates — `<stem>_templates.bin` (+ `.partial.bin`) & snips `.csv`
-
-Written by `template_io::write_template_binfile` / `write_snips_csv`. The **`.partial.bin`** is the provisional fast build the viewer opens; the canonical `.bin` is (re)written by `finalizeViewerJob`, then the partial is deleted.
-
-### 6a. `.bin`
-
-```
-uint64  n_bins
-repeat per bin:
-    # 12 ECG method blocks, fixed order:
-    #   ch1_raw, ch1_squared, ch1_absval, ch1_unfiltered,
-    #   ch2_raw, ch2_squared, ch2_absval, ch2_unfiltered,
-    #   ch3_raw, ch3_squared, ch3_absval, ch3_unfiltered
-    for each block:
-        uint64 sz;  double ecgTemplate[sz]
-        uint64 sz;  double ecgTemplate_std[sz]      # sz=0 for non-raw methods
-        double alignment_point
-        double avg_r_expand
-
-    # PPG template + std:
-    uint64 sz;  double ppgTemplate[sz]
-    uint64 sz;  double ppgTemplate_std[sz]
-
-    # arterial background templates (foot-anchored, no std), sz=0 if absent:
-    uint64 sz;  double abpTemplate[sz]
-    uint64 sz;  double artTemplate[sz]
-    uint64 sz;  double artPulmTemplate[sz]
-
-    # per-channel surviving beat counts:
-    uint64  ch1_n_beats_raw
-    uint64  ch2_n_beats_raw
-    uint64  ch3_n_beats_raw
-    uint64  ppg_n_beats
-
-    uint8   bad_segment
-```
-
-Only the ECG **raw** method writes a populated `std` vector; squared/absval/
-unfiltered write `sz=0`. (Note: the header comment lists arterial std vectors;
-the authoritative field order is the writer above — treat arterial std as
-present-only-when-nonempty and verify against `write_template_binfile` if you
-extend it.)
-
-### 6b. snips `.csv` (`<stem>_template_snips.csv`, in `csv_for_analysis/`)
-
-One **column per retained beat** ("snip"); rows are sample indices.
-
-```
-header:  {CHAN}_{n}, ...          # CHAN order: CH1,CH2,CH3,PPG,ABP,ART,ART_PULM; n = 0-based snip index
-row s:   value at sample s for each snip column (blank if s >= that snip's length or NaN)
-```
-
-Bad segments (`bad_segment[b]`) are skipped. Column count = total non-bad snips
-across all bins/channels; row count = longest snip.
-
----
-
-## 7. Beat log — `<stem>_log.csv` (`beat_log.hpp`)
-
-One row per beat index; 8 channels per group
-(ecg1, ecg2, ecg3, ppg, abp, art, art_pulm, accel).
-
-```
-header:
-  beat,
-  ecg1_x,ecg1_y, ecg2_x,ecg2_y, ecg3_x,ecg3_y, ppg_x,ppg_y,
-  abp_x,abp_y, art_x,art_y, art_pulm_x,art_pulm_y, accel_x,accel_y,
-  blanking_ecg1,threshold_ecg1, ... blanking_accel,threshold_accel,
-  marked_ecg1..marked_accel,        # annotation code covering this beat (per channel)
-  post_ecg1..post_accel,            # code of the PREVIOUS eligible arrhythmia (post-beat)
-  inverted_ecg1..inverted_accel     # inversion flag per channel
-row: beat index, then the above fields (x = sample, y = amplitude)
-```
+## 4. Templating
+
+### ECG templating algorithm (R-aligned and Q-aligned)
+
+- Pass 0 = R-aligned (`g_q_align = false`)
+- Pass 1 = Q-aligned (`g_q_align = true`), built on top of the R-aligned result
 
-`marked_*` / `post_*` use the annotation `code` field (§8). Fully-empty rows
-(no beat on any channel) are skipped.
+**Shared steps (both passes)**
 
----
+- Slice per beat: for each consecutive R-peak pair, cut `[R_i - 0.3*RR, R_i + 1.5*RR]` (RR = interval to the next R peak); beat length varies with RR
+- Tukey outlier rejection (`[Q1 - k*IQR, Q3 + k*IQR]`, k = 1.5): drop beats whose length is an outlier, or whose R-column amplitude is an outlier
+- Horizontal R-alignment: find the longest surviving RR, size the shared axis from it, right-shift every beat (NaN-padded) so its own R lands on a common anchor column
+- Reference beat = the first beat whose length equals the median RR length
+- Vertical DC alignment: measure each beat's PR-segment baseline (small window just before R), shift each beat vertically to match the reference beat's baseline
+- Template = column-wise, NaN-skipping median across all aligned beats (NaN cells past a beat's real extent don't participate); per-sample std computed the same way (ddof = 1), only for the "raw" method
 
-## 8. Annotation codes (`annotation_types.hpp`, `noise_types[13]`)
+**Q-aligned pass -- extra step**
 
-`codeFor(label)` returns the `code` field below; used by the noise `.bin`/`.csv` (§3) and the beat log's `marked_*`/`post_*` columns (§7).
-
-```
-label               code  suppressesDetection  postEligible
-1) R Peak Noise      1    true
-2) Minor Noise       2                          (kept in threshold stats)
-3) Blank.+Thresh.    3    (param edit: drag sets blanking/threshold)
-4) PVC               4*   -                     true
-5) PAC               5*   -                     true
-6) Cond. Delay       4                          -
-7) AF                5                           true
-8) SVT               6                           true
-9) VT                7                           true
-Benign Arr.          10
-Sig. Arr.            11
-Other                12
-Invert/Noninvert     13   (invert edit: drag flips inversion)
-```
+- Starting from the already R-aligned beats, find each beat's Q point: locate the steepest rising slope on the R-upstroke, walk left until slope drops below 20% of that max -> Q
+  - Fallback: 10% of median RR before the upstroke onset, if no Q found
+- Take the largest Q column across beats as the common target column
+- Shift each beat right by `target - its_own_Q_column` (NaN-padded) so every beat's Q lands on the same column
+- Template = column-wise median of these Q-shifted beats
 
-`*` PVC/PAC set to 4/5 per the latest edit — note this collides with Cond.Delay(4)
-and AF(5); renumber those if the export needs all codes distinct.
+### PPG / arterial channels (unaffected by the R/Q-align flag)
 
----
+- Slicing driven by the same ECG R-peak pairs (`ch1.raw`), converted to each channel's own sample rate, with a fixed real-time pad (0.25-0.3s) so the first R always lands at a fixed column
+- Within that window: find systolic peak (max) and foot (min before peak), then locate the 50%-upslope (half-height) crossing between them -- this is the horizontal alignment fiducial (well-localized on the steep upstroke, unlike the peak or foot)
+- Vertical alignment matches each beat's foot-baseline to the reference beat's
+- Template = column-wise, NaN-skipping median, same as ECG
 
-## 9. Fast/slow split & the two template passes (`post_process.hpp`)
+## 5. Template Marking
 
-```
-prepareViewerJob(cfg, binFs):                 # FAST — everything to open the viewer
-    reset alignment::g_q_align = false        # each subject starts R-aligned only
-    anneal if stale -> <stem>annealed.bin
-    if wave+templates fresh: return job(canonical, needsFinalize=false)
-    peakResults = raw R-peaks (create_ecg_ppg_pairs_raw) OR load from disk
-    fast        = buildTemplatesAndBeatsFast(peakResults, rates)   # raw/unfilt/PPG only
-    write_template_binfile(<stem>_templates.partial.bin, fast.tmpl)
-    return job(provisional, needsFinalize=true)
+The templates are loaded and the autodetection works as follows:
 
-finalizeViewerJob(job):                       # SLOW — background thread, file writes only
-    if needSqabsDetection: write_output_binfile + write_output_csvfile   # §5
-    write_template_binfile(<stem>_templates.bin, job.tmpl)              # §6a canonical
-    remove(<stem>_templates.partial.bin)
-    write_snips_csv(<stem>_template_snips.csv, job.beats)              # §6b
-    # NOTE: squared/absval detection + slow merge are skipped (abs/square ignored).
+### Autodetection algorithms (FeatureMarks)
 
-regenerateWithQAlign(job):                    # on the viewer's first "Finish and Next"
-    alignment::g_q_align = true
-    fast = buildTemplatesAndBeatsFast(job.peakResults, rates)   # now R- then Q-aligned
-    write_template_binfile(<stem>_templates.qalign.partial.bin, fast.tmpl)
-    job.viewerTemplatePath = that path         # viewer reopens on it
-```
+**R peak (fixed, auto-only)**
 
-Template alignment itself (R-align, optional Q-align, column-wise **median** across beats) lives in the template-generation headers
-(`build_templates` → `CreateEcgTemplates` → `alignment`), which are separate from
-this backend snapshot.
-
----
+- `r_peak()`: finds argmax|v - baseline| over the first 3/4 of the beat window; baseline is the mean of that same window. Returns the index and whether the deflection is positive or negative, so downstream detectors can flip the trace to a consistent "upright" orientation
+- `detect_r_peak()` wraps this for seeding
 
-# 10. Mathematical Algorithms
+**ECG Human Placed Markers can be dragged, but they are automatically seeded to land somewhere in the plot**
 
-Notation: `x[n]` input sample; `fs` sample rate (Hz); all indices 0-based unless a `.bin` field is noted 1-based.
+- **Q begin**: finds the lowest point (trough) before R, then walks left from that trough until the first derivative goes non-negative (the trough's upslope onset)
+- **P peak**: max value in the region before Q begin
+- **S end**: finds the S trough after R, takes a baseline from a short window ~50-100 samples past R, then walks right from S until the signal recovers to 90% of the S-to-baseline depth
+- **T begin**: first local max right after S end (restricted to the first 2/3 of the beat, picking the tallest candidate so an early ST bump isn't mistaken for the T wave), then walks left to its foot
+- **T end**: same T-wave peak search, then walks right from the peak to its foot (must stay right of S end)
 
-## 10.1 Filtering (`bandpass.hpp`)
+**ECG X markers**
 
-**Butterworth biquad design (bilinear transform).** For cutoff `fc`, pre-warp `wc = tan(π·fc/fs)`. Pole angles `θk = π(2k+order+1)/(2·order)`. Each conjugate
-pole pair becomes one second-order section; with `A=1, B=−2cos(θ)·wc, C=wc²` and `a0=A+B+C`:
+- **P wave** = max within ±0.05s of the P marker
+- **T end** = passthrough of the user's T-end marker
+- **S end** = recovery knee within ±0.05s of the S marker
+- **T peak** = max between T begin/T end
+- **Q onset** = curvature knee of a cubic fit within ±0.05s of the Q marker
+- **R wave** = argmax|v-baseline| over [Q begin, S end]
 
-```
-lowpass  section:  b = [C, 2C, C]/a0
-highpass section:  b = [A, −2A, A]/a0
-both:              a = [1, (−2A+2C)/a0, (A−B+C)/a0]
-```
+**PPG movable markers** (all operate on the pulse waveform)
 
-Odd order adds one first-order section.
+- **Onset (foot)**: minimum before the systolic peak
+- **Peak**: global max of the trace
+- **End**: minimum after the peak
+- **Dicrotic notch**: first interior local minimum between peak and end (falls back to 1/3 of the way from peak to end if none found)
+- **T80**: point between foot and peak closest to 80% of the amplitude rise
 
-**Biquad application** — Direct Form II Transposed:
+Two bin files are output:
 
-```
-y[n]  = b0·x[n] + z1
-z1    = b1·x[n] − a1·y[n] + z2
-z2    = b2·x[n] − a2·y[n]
-```
-
-**`filtfilt` (zero-phase).** Reflect-pad both ends by `pad = 3·(#sections)` using `2·x[0] − x[pad−i]` (and mirror at the tail), filter forward through the SOS
-cascade, reverse, filter again, reverse, then strip the padding. Net phase = 0,
-magnitude squared.
-
-**`bandpass_filtfilt(order, lo, hi, fs, x)`** = `filtfilt(LP_hi, filtfilt(HP_lo, x))`.
-
-## 10.2 Derivatives & smoothing
-
-**`diff2` (smoothed derivative).** Weighted blend of four first differences:
-
-```
-d[i] = (2·(x[i+1]−x[i]) + 2·(x[i]−x[i−1]) + (x[i−1]−x[i−2]) + (x[i+2]−x[i+1])) / 6
-```
-
-Savitzky–Golay-flavored; apply `nd` times for higher orders.
-
-**`nanfastsmooth` (NaN-aware moving average).** Running sum `s[k]` and running
-valid-count `np[k]` over a width-`w` window (even windows half-weight the two
-boundary samples to stay centered); output `s[k]/np[k]`, set to NaN where `np[k] < w·(1−tol)`. `type∈{1,2,3}` applies 1/2/3 passes (rectangular →
-triangular → ~Gaussian).
-
-## 10.3 Outlier rejection
-
-**`stdoutlier`.** On the first difference `d = diff(x)`, moving mean `μ[i] = movmean(d, W)` and global `σ = std(d)`. Flag `d[i]` if it leaves `[μ[i] − k·σ, μ[i] + k·σ]` (direction = lower/upper/both); both endpoints of a
-flagged difference are marked.
-
-**Tukey (template beat rejection, in the alignment layer).** Keep values inside `[Q1 − 1.5·IQR, Q3 + 1.5·IQR]`; applied to beat *length* and to R *amplitude* (and to PPG fiducial position at 3.0·IQR).
-
-## 10.4 Generic peak finder (`PeakFinder.hpp` / `findpeaks`)
-
-1. Collect local maxima (plateau → center index).
-2. Sort tallest-first (ties → earlier index) — matches MATLAB `findpeaks`.
-3. Greedy min-distance elimination: accept a candidate only if no already-accepted
-   peak lies at distance `< minPeakDistance` (O(N log N) via a sorted set of
-   accepted positions).
-4. Return survivors in temporal order.
-
-## 10.5 Single-detector R-peak paths
-
-**`rpeakdetect` (Hamilton-style).** Prep (threshold-independent):
-detrend → `bandpass_filtfilt(2, 0.05, 100 Hz)` → `diff` → square →
-moving-sum integrate (kernel length `≈7·fs/256`) → `medfilt1(·,10)` → remove
-filter delay `⌈win/2⌉`. Reference `max_h` = max of the integrated signal over the
-middle 50% of the record. Apply (per threshold `t`): mark regions where
-integrated `> t·max_h`; within each region the R-peak is the max of the *band-passed* signal. `JoinedRR` runs this at `t = 0.2, 0.1, 0.4`.
-
-**`pan_tompkin` (Pan–Tompkins).** Bandpass 5–15 Hz (dedicated coeffs at 256 Hz,
-else `butter(3,·)`), normalize by max|·|; derivative; square; moving-window
-integrate over `0.150 s`. Dual **adaptive thresholds** updated as `THR ← α·peak + (1−α)·THR` with signal/noise running estimates
-(`ADAPT_FAST=0.125`, `SEARCHBACK` reweights 0.25/0.75); refractory `0.200 s`; **T-wave discrimination** at RR `< 0.360 s` by comparing max slope in a `0.075 s` window (ratio `0.5`); missed-beat **search-back** when a gap exceeds `1.66·RR_average`, with RR bounds `[0.92, 1.16]·RR_average`.
-
-**`ecgLms`.** Baseline removal (subtract mean); moving-window integration width `175 ms`; threshold fraction `0.25` of an adaptively-forgotten peak
-(`ff = 0.80`); refractory `250 ms`. (Called from the ensemble with a scalar `filtfilt(5,12,·)` = constant gain `(5/12)²`.)
-
-**`RRsimpleSquared`.** Square the signal; threshold `mean + 2·std`; `findpeaks` with `minDist`; keep peaks above threshold.
-
-## 10.6 Ensemble R-peak detection (`JoinedRR`) — the production detector
-
-```
-detrend(ecg)
-run 6 detectors, weights w = [0.75, 0.25, 0.25, 1.25, 1.5, 0.75]:
-   0..2  rpeakdetect @ thresh 0.2 / 0.1 / 0.4   (shared prep)
-   3     pan_tompkin
-   4     ecgLms
-   5     RRsimpleSquared(minDist = median_of_detector_median_RR / 2)
-refine detectors 3..5: snap each detection to the local max within
-                       ± median(RR)/6 samples  (RPeakfromRWave)
-pool all detections as (position, weight)
-merge neighbours within diff_range = 8 samples -> keep the taller sample,
-      reassign the loser's weight to the winner
-sum weights per surviving position
-ACCEPT positions whose summed weight >= 2.4      # i.e. agreement across detectors
-```
-
-So a peak is kept when enough independently-weighted detectors agree on it.
-
-## 10.7 PPG fiducials
-
-**Foot / onset (`find_foot_pulseox`, intersecting-tangent).** Shift the pulse so `d = row − max(row)`; the foot is located by the max-derivative "rotation"
-(intersecting-tangent) method — the point maximizing the perpendicular distance
-from the chord after rotating the pulse onto its rising tangent. Robust to
-baseline offset (only relative shape matters).
-
-**Segmentation (`SegmentPPG`).** Smooth (`nanfastsmooth`); build an
-above/below-baseline mask; `RunLength` gives contiguous runs; each `0`-run
-contributes its **min** (valley), each `1`-run its **max** (peak). Valleys flagged
-as outliers are recomputed as the min between the two adjacent non-outlier peaks.
-
-## 10.8 Template construction (`build_templates` / `CreateEcgTemplates` + alignment layer)
-
-1. **Slice** each beat as `[R_i − 0.3·RR_i, R_i + 1.5·RR_i]` (fractions `percent_interval_preceeding/following_rpeak`).
-2. **Reject** with Tukey (§10.3) on length, then on R amplitude.
-3. **Representative length** = **median** RR (middle of the sorted lengths — a
-   length some beat actually has), used to pick the DC-alignment reference beat
-   and window sizes.
-4. **Pass 1 — R-align:** place every beat on a shared axis with R at the common
-   column `R_anchor` (NaN-pad the rest).
-5. **Pass 3 — PR-baseline DC align:** subtract each beat's PR-segment mean so
-   baselines match the reference beat.
-6. **Optional Pass 4 — Q-align** (2nd template pass): per beat find the R-upstroke
-   onset (steepest rising slope walked back to 20% of its max), then Q = first
-   local minimum within ~20 ms before that onset (fallback = 10% of median RR
-   before the onset); shift each beat so all Qs land on a common column.
-7. **Average = column-wise NaN-skipping MEDIAN** across aligned beats: `T[c] = median{ beat[c] : not NaN }`.
-8. **Per-sample std** (optional, gray band): sample std with `ddof = 1`, `σ[c] = sqrt( Σ(beat[c]−mean)² / (n−1) )`, NaN-skipped.
-
-## 10.9 Annealing (`anneal_handler`)
-
-Split the recording into fixed-length bins; **excise** noisy regions (an ECG span
-is excluded only when *every* ECG channel the user marked agrees it is noisy —
-un-marked channels don't constrain; PPG is handled independently); then **redistribute** leftover clean fragments into neighbouring bins where they fit,
-so each emitted bin is ~one bin-length of clean signal. All 40 pass-through
-channels are preserved into the annealed `.bin` (§4).
-
-## 10.10 Constants quick-reference
-
-| quantity                        | value                          | where              |
-| ------------------------------- | ------------------------------ | ------------------ |
-| beat window before/after R      | 0.3 / 1.5 × RR                 | alignment          |
-| ensemble detector weights       | 0.75,0.25,0.25,1.25,1.5,0.75   | JoinedRR           |
-| ensemble accept threshold       | ≥ 2.4                          | JoinedRR           |
-| ensemble merge distance         | 8 samples                      | JoinedRR           |
-| rpeakdetect thresholds          | 0.2 / 0.1 / 0.4 × max_h        | JoinedRR           |
-| Pan–Tompkins band               | 5–15 Hz                        | pan_tompkin        |
-| Pan–Tompkins integration        | 150 ms                         | pan_tompkin        |
-| Pan–Tompkins refractory         | 200 ms                         | pan_tompkin        |
-| T-wave refractory / slope win   | 360 ms / 75 ms                 | pan_tompkin        |
-| ecgLms integration / refractory | 175 ms / 250 ms                | ecgLms             |
-| RRsimpleSquared threshold       | mean + 2·std                   | RRsimpleSquared    |
-| Tukey fence                     | 1.5·IQR (3.0 for PPG position) | alignment          |
-| template average                | column-wise median             | CreateEcgTemplates |
-
-> The alignment layer (`alignment.hpp`, R/Q-align + Tukey) and the template-marking
-> GUI (viewer, glyph auto-detectors) are **not in this project snapshot**; §10.8's
-> alignment steps are described from the template-generation contract. The
-> column-wise median average itself lives in `CreateEcgTemplates.hpp` (shown in §10.8).
+This can be found in `outputs_folder/template_outputs/[ID]_templates.bin`
+
+| Field                                               | Meaning                                                                                                        |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `n_bins` (file header)                              | Total number of bins in the file                                                                               |
+| `ch{1-3}_raw`                                       | ECG template (waveform + std + alignment point + avg_r_expand) built from the raw/filtered signal, per channel |
+| `ch{1-3}_squared`                                   | Same, built from the squared signal (no std stored)                                                            |
+| `ch{1-3}_absval`                                    | Same, built from the absolute-value signal (no std stored)                                                     |
+| `ch{1-3}_unfiltered`                                | Same, built from the original unfiltered signal (no std stored)                                                |
+| `ppgTemplate`, `ppgTemplate_std`                    | PPG template waveform and its per-sample std                                                                   |
+| `abpTemplate`, `abpTemplate_std`                    | ABP background template and per-sample std (empty if channel absent)                                           |
+| `artTemplate`, `artTemplate_std`                    | ART background template and per-sample std (empty if channel absent)                                           |
+| `artPulmTemplate`, `artPulmTemplate_std`            | ART_PULM background template and per-sample std (empty if channel absent)                                      |
+| `ch1_n_beats_raw, ch2_n_beats_raw, ch3_n_beats_raw` | Number of beat slices that survived drop rules and fed each channel's raw-method median                        |
+| `ppg_n_beats`                                       | Number of beat slices that fed the PPG median                                                                  |
+| `bad_segment`                                       | 1 if the whole bin is flagged unusable, else 0                                                                 |
+
+This can be found in `outputs_folder/qtvi_marker_path/[ID]_template_mark.bin``
+
+It starts out as `outputs_folder/qtvi_marker_path/[ID]_template_mark_r_align.bin`` but when the q align overwrites it it just becomes template_mark.
+
+| Field                                                                                | Meaning                                                      |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `index`                                                                              | Bin number                                                   |
+| `bad_r_ch1/2/3`                                                                      | Whether R-detection is flagged bad on that ECG channel       |
+| `ppg_issue`                                                                          | 0 = ok, 1 = bad, 2 = no PPG                                  |
+| `p_peak_ch1-3, q_begin_ch1-3, r_peak_ch1-3, s_end_ch1-3, t_begin_ch1-3, t_end_ch1-3` | Sample index of each ECG marker, per channel (-1 = unmarked) |
+| `ppg_onset, ppg_p50, ppg_peak, ppg_dicrotic, ppg_peak2, ppg_t80, ppg_end`            | Sample index of each PPG marker                              |
+| `abp_issue`                                                                          | 0 = ok, 1 = bad, 2 = absent                                  |
+| `abp_onset, abp_peak, abp_dicrotic, abp_peak2, abp_end`                              | Sample index of each ABP marker                              |
+| `art_issue`                                                                          | 0 = ok, 1 = bad, 2 = absent                                  |
+| `art_onset, art_peak, art_dicrotic, art_peak2, art_end`                              | Sample index of each ART marker                              |
+| `art_pulm_issue`                                                                     | 0 = ok, 1 = bad, 2 = absent                                  |
+| `art_pulm_onset, art_pulm_peak, art_pulm_dicrotic, art_pulm_peak2, art_pulm_end`     | Sample index of each ART_PULM marker                         |
+
+And the CSV outputs are:
+
+For every `<chan>` in:
+
+- `ch1` — ECG channel 1
+
+- `ch2` — ECG channel 2
+
+- `ch3` — ECG channel 3
+
+- `art_pulm` — Pulmonary artery
+
+- `abp` — Arterial blood pressure
+
+- `art` — Arterial line
+
+- `ppg` — PPG
+
+- 
+
+`output_folder/csv_for_analysis/template.csv`
+
+| Column pattern                                                                          | Meaning                                                                                     |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `file_id`                                                                               | ID of subject                                                                               |
+| `bin_num`                                                                               |                                                                                             |
+| `x_ms`                                                                                  | Time in miliseconds                                                                         |
+| `<chan>_raw_mv_{r/q}`                                                                   | Raw amplitude at this sample, per channel (ch1, ch2, ch3, ppg, abp, art, art_pulm)          |
+| `<chan>_Normalized_{r/q}`                                                               | Normalized amplitude at this sample, per channel                                            |
+| `<chan>_raw_std_{r/q}`                                                                  | Per-sample std of raw amplitude, per channel                                                |
+| `<chan>_normalized_std_{r/q}`                                                           | Per-sample std of normalized amplitude, per channel                                         |
+| `<pt>_ch{1-3}_location_{autodetect/user}_{r/q}`                                         | 1 if this row's sample index is that marker's position, else blank (per ECG marker/channel) |
+| `<marker>_location_{autodetect/user}_{r/q}` (ppg/abp/art/art_pulm)                      | Same one-hot marker flag for pulse-channel markers                                          |
+| `p_wave_ch{1-3}, q_onset_ch{1-3}, r_wave_ch{1-3}, t_peak_ch{1-3}` (auto only, `_{r/q}`) | One-hot flags for the autodetected computed ECG glyphs                                      |
+| `ppg foot, p1` (auto only, `_{r/q}`)                                                    | One-hot flags for the autodetected computed PPG glyphs                                      |
+
+# 

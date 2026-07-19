@@ -267,11 +267,11 @@ inline void writeTemplateMarkingsBin(const std::string& path,
 
 
 struct EcgFeatures {
-    int q_idx = -1, r_idx = -1, s_idx = -1, t_idx = -1;   // peak sample positions
+    int q_idx = -1, r_idx = -1, s_idx = -1;   // peak sample positions
     double qrs_ms = NAN, qt_ms = NAN;
 };
 
-inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, int p_peak, int q_begin, int r_peak, int s_end, int t_peak, int t_end, double rateHz)
+inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, int p_peak, int q_begin, int r_peak, int s_end, int t_end, double rateHz) 
 {
     EcgFeatures f;
     const int N = static_cast<int>(ecg.size());
@@ -282,7 +282,6 @@ inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, int p_peak
     if (q_begin >= 0 && t_end >= q_begin) f.qt_ms = (t_end - q_begin) * msPerSamp;
 
     if (inRange(r_peak)) f.r_idx = r_peak;
-    if (inRange(t_peak)) f.t_idx = t_peak;
     f.q_idx = FeatureMarks::compute_q_peak(ecg, q_begin, r_peak);
     f.s_idx = FeatureMarks::compute_s_peak(ecg, r_peak, s_end);
     return f;
@@ -362,7 +361,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             if (ecg.empty()) continue;
             EcgFeatures ft = computeEcgFeatures(ecg,
                 b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
-                b.s_end_auto_ch[c], b.t_begin_auto_ch[c], b.t_end_auto_ch[c],
+                b.s_end_auto_ch[c], b.t_end_auto_ch[c],
                 sampleRateHz);
             if (ft.r_idx < 0 || ft.s_idx < 0) continue;
             if (ft.r_idx >= (int)ecg.size() || ft.s_idx >= (int)ecg.size()) continue;
@@ -539,11 +538,11 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
 
             EcgFeatures ftAuto = computeEcgFeatures(ecg,
                 b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
-                b.s_end_auto_ch[c], b.t_begin_auto_ch[c], b.t_end_auto_ch[c],
+                b.s_end_auto_ch[c], b.t_end_auto_ch[c],
                 sampleRateHz);
             EcgFeatures ftUser = computeEcgFeatures(ecg,
                 b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
-                b.s_end_ch[c], b.t_begin_ch[c], b.t_end_ch[c],
+                b.s_end_ch[c], b.t_end_ch[c],
                 sampleRateHz);
 
             // Order MUST match ecgPointNames:
@@ -631,10 +630,10 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             const FeatureMarks::EcgGlyphs gl = FeatureMarks::compute_ecg_glyphs(
                 ecg, b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.s_end_auto_ch[c],
                 b.t_begin_auto_ch[c], b.t_end_auto_ch[c], sampleRateHz);
-            emitAutoFeatPt(ecg, gl.p_wave);
-            emitAutoFeatPt(ecg, gl.q_onset);
-            emitAutoFeatPt(ecg, gl.r_wave);
-            emitAutoFeatPt(ecg, gl.t_peak);
+            emitAutoFeatPt(ecg, gl.p_peak_glyph);
+            emitAutoFeatPt(ecg, gl.q_begin_glyph);
+            emitAutoFeatPt(ecg, gl.r_peak_glyph);
+            emitAutoFeatPt(ecg, gl.t_peak_glyph);
         }
         {
             const FeatureMarks::PpgGlyphs pgl = FeatureMarks::compute_ppg_glyphs(

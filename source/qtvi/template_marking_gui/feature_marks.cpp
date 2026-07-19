@@ -285,10 +285,10 @@ int FeatureMarks::compute_q_onset(const std::vector<double>& v, int qUser, doubl
     std::vector<double> u = v;
     if (!is_positive) for (auto& x : u) x = -x;
 
-    // Q trough nearest the user's mark.
-    const int a = std::max(0, qUser - w), b = std::min(N - 1, qUser + w);
+    // Q trough: search only left of the user's mark, never past it.
+    const int a = std::max(0, qUser - w);
     int qmin = a;
-    for (int i = a; i <= b; ++i)
+    for (int i = a; i <= qUser; ++i)
         if (!std::isnan(u[i]) && u[i] < u[qmin]) qmin = i;
 
     auto d1 = [&](int i) {
@@ -297,14 +297,11 @@ int FeatureMarks::compute_q_onset(const std::vector<double>& v, int qUser, doubl
         return 0.5 * (u[i + 1] - u[i - 1]);
         };
 
-    // Onset = walk left from the trough until the descent flattens. "Flattened"
-    // is judged relative to the steepest descent slope, so a gentle P-wave
-    // downslope before Q is not mistaken for the descent into Q (a plain
-    // slope >= 0 test overshoots to the P peak when the PR segment isn't flat).
+    // Onset = walk left from the trough until the descent flattens.
     double steep = 0.0;
     for (int i = qmin; i > std::max(0, qmin - 2 * w); --i)
         steep = std::min(steep, d1(i));
-    const double thr = 0.10 * steep;                 // steep <= 0, so thr <= 0
+    const double thr = 0.10 * steep;
     const int stop = std::max(0, qmin - 4 * w);
     for (int i = qmin - 1; i >= stop; --i)
         if (d1(i) >= thr) return i;
@@ -326,13 +323,13 @@ FeatureMarks::EcgGlyphs FeatureMarks::compute_ecg_glyphs(
     int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs)
 {
     EcgGlyphs g;
-    g.p_wave = compute_p_wave(ecg, p_peak, fs);
-    g.q_onset = compute_q_onset(ecg, q_begin, fs);
-    g.r_wave = compute_r_wave(ecg, q_begin, s_end);   // window = user q_begin..s_end
+    g.p_peak_glyph = compute_p_wave(ecg, p_peak, fs);
+    g.q_begin_glyph = compute_q_onset(ecg, q_begin, fs);
+    g.r_peak_glyph = compute_r_wave(ecg, q_begin, s_end);   // window = user q_begin..s_end
     const int N = static_cast<int>(ecg.size());
-    g.s_end = (s_end >= 0 && s_end < N) ? s_end : -1;  // S = the user's marker (no math)
-    g.t_peak = compute_t_wave(ecg, t_begin, t_end);   // max between user T begin/end
-    g.t_end = (t_end >= 0 && t_end < N) ? t_end : -1;  // T end = the user's marker
+    g.s_end_glyph = (s_end >= 0 && s_end < N) ? s_end : -1;  // S = the user's marker (no math)
+    g.t_peak_glyph = compute_t_wave(ecg, t_begin, t_end);   // max between user T begin/end
+    g.t_end_glyph = (t_end >= 0 && t_end < N) ? t_end : -1;  // T end = the user's marker
     return g;
 }
 
@@ -437,7 +434,7 @@ int FeatureMarks::detect_t_begin(const std::vector<double>& ecg_signal) {
 
     const int s_end = detect_s_end(ecg_signal);
     const int lo = std::clamp(s_end + 1, 1, N - 2);
-    const int hi = std::min(N - 1, (2 * N) / 3);       // first 2/3 only
+    const int hi = std::min(N - 1, N / 2);              // first half only
 
     int tPeak = -1;
     double tBest = -std::numeric_limits<double>::infinity();
@@ -447,7 +444,7 @@ int FeatureMarks::detect_t_begin(const std::vector<double>& ecg_signal) {
             if (upright[i] > tBest) { tBest = upright[i]; tPeak = i; }   // tallest = the T wave, not the first ST bump
         }
     }
-    if (tPeak < 0) return std::clamp(s_end + (int)std::lround(0.1 * N), 0, N - 1);
+    if (tPeak < 0) return std::clamp(s_end + (int)std::lround(0.1 * N), 0, hi);
 
     int i = tPeak;   // left foot
     while (i - 1 > s_end && !std::isnan(upright[i - 1]) && upright[i - 1] < upright[i]) --i;
@@ -500,7 +497,7 @@ int FeatureMarks::detect_t_end(const std::vector<double>& ecg_signal) {
 
     const int s_end = detect_s_end(ecg_signal);
     const int lo = std::clamp(s_end + 1, 1, N - 2);
-    const int hi = std::min(N - 1, (2 * N) / 3);       // first 2/3 only
+    const int hi = std::min(N - 1, N / 2);
 
     int tPeak = -1;
     double tBest = -std::numeric_limits<double>::infinity();

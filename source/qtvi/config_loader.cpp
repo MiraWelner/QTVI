@@ -236,7 +236,11 @@ bool load_config(int dataType, config_entry& out) {
         out.output_path = cell("output_folder");
 
         apply_dataset_specific_channel_labels(out);
-        return manually_select_folder(out);
+
+        bool ok = manually_select_folder(out);
+        if (ok) deriveSubpaths(out);   // always derive, whether paths came from
+        // the config or the manual prompt
+        return ok;
     }
     return false;
 }

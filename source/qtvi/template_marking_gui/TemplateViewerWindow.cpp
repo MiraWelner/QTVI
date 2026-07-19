@@ -26,16 +26,27 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
 {
     ui->setupUi(this);
 
+	//when you are moving a marker, do you move just that marker, or all subsequent markers by the same delta, or all subsequent markers to the same raw index?
     auto* moveGroup = new QButtonGroup(this);
-    moveGroup->addButton(ui->MoveIndividual);
-    moveGroup->addButton(ui->MoveSubsequent);
+    moveGroup->addButton(ui->move_individual);
+    moveGroup->addButton(ui->move_subsequent_delta);
+    moveGroup->addButton(ui->move_subsequent_raw);
     moveGroup->setExclusive(true);
 
-    connect(ui->MoveSubsequent, &QRadioButton::toggled, this,
-        [this](bool on) { m_moveSubsequent = on; });
+    connect(ui->move_individual, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) m_moveMode = MoveMode::Individual;
+        });
+    connect(ui->move_subsequent_delta, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) m_moveMode = MoveMode::SubsequentDelta;
+        });
+    connect(ui->move_subsequent_raw, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) m_moveMode = MoveMode::SubsequentRaw;
+        });
 
-
-    m_moveSubsequent = ui->MoveSubsequent->isChecked();
+    // Sync m_moveMode to whichever button Designer has checked by default.
+    if (ui->move_individual->isChecked())      m_moveMode = MoveMode::Individual;
+    else if (ui->move_subsequent_delta->isChecked()) m_moveMode = MoveMode::SubsequentDelta;
+    else if (ui->move_subsequent_raw->isChecked())   m_moveMode = MoveMode::SubsequentRaw;
 
     // Startup defaults, enforced in code (independent of the .ui's checked
     // attributes): all markers OFF, all waveform traces ON. setChecked here
@@ -102,6 +113,19 @@ TemplateViewerWindow::~TemplateViewerWindow() { delete ui; }
 // Helpers
 // ========================================================================
 
+
+// Prevents PPG from going over the ECG window when dragged
+static int ecgClipLenFor(const TemplateBin& tb) {
+    const ChannelTemplateData* chs[3] = { &tb.ch1, &tb.ch2, &tb.ch3 };
+    int mn = -1;
+    for (const auto* ch : chs) {
+        const int l = static_cast<int>(ch->ecgTemplate_raw.size());
+        if (l > 0) mn = (mn < 0) ? l : std::min(mn, l);
+    }
+    return mn;
+}
+
+
 std::vector<TemplateViewerWindow::Lead>
 TemplateViewerWindow::leadsForBin(const TemplateBin& b) const {
     std::vector<Lead> out;
@@ -130,6 +154,7 @@ void TemplateViewerWindow::updatePageControls() {
 
 void TemplateViewerWindow::onNextPage() {
     if (m_currentPage < m_totalPages - 1) {
+        captureCurrentPage();   // snapshot the page we are leaving
         ++m_currentPage;
         showPage();
     }
@@ -137,6 +162,7 @@ void TemplateViewerWindow::onNextPage() {
 
 void TemplateViewerWindow::onPrevPage() {
     if (m_currentPage > 0) {
+        captureCurrentPage();   // snapshot the page we are leaving
         --m_currentPage;
         showPage();
     }
@@ -195,12 +221,6 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
 
     m_capturedPages.clear();   // new subject: nothing saved yet
     showPage();
-    // Defer the analysis CSV write until after the widget page has painted.
-    // Writing it inline blocks the UI thread for ~15s on large templates
-    // (7 signals x ~1300 samples x ~800 bins = ~7M formatted writes), which
-    // looks like the viewer is frozen at load time. QTimer::singleShot(0)
-    // schedules it on the next event-loop cycle so the page shows first.
-    QTimer::singleShot(0, this, [this]() { writeAlignedTemplateCsv(); });
 }
 
 // Compute per-subject Global_Ref for every ECG channel + every pulse
@@ -222,34 +242,24 @@ void TemplateViewerWindow::computeGlobalRefs() {
         m_pulseGlobalRef[2], m_pulseGlobalRef[3]);
 }
 
-std::vector<double>
-TemplateViewerWindow::normalizeEcgTrace(const std::vector<double>& raw, int ch) const {
+std::vector<double> TemplateViewerWindow::normalizeEcgTrace(const std::vector<double>& raw, int ch) const {
     const double ref = (ch >= 0 && ch < 3) ? m_ecgGlobalRef[ch] : std::nan("");
     if (!std::isfinite(ref) || ref == 0.0) return raw;   // untransformed
     std::vector<double> out(raw.size());
     for (size_t i = 0; i < raw.size(); ++i)
-        out[i] = std::isnan(raw[i]) ? raw[i] : raw[i] / ref;
+        out[i] = normalize_features::ecg_norm(raw[i], ref);
     return out;
 }
 
-std::vector<double>
-TemplateViewerWindow::normalizePulseTrace(const std::vector<double>& raw,
-    int footIdx, int pulseChan) const {
-    const double ref = (pulseChan >= 0 && pulseChan < 4)
-        ? m_pulseGlobalRef[pulseChan] : std::nan("");
-    if (!std::isfinite(ref) || ref == 0.0) return raw;
-    if (footIdx < 0 || footIdx >= static_cast<int>(raw.size())) return raw;
-    const double footY = raw[footIdx];
-    if (std::isnan(footY) || std::abs(footY) < 1e-12) return raw;
+std::vector<double> TemplateViewerWindow::normalize_ppg_or_similar(const std::vector<double>& raw, int footIdx, int pulseChan) const {
+    //if a PPG, ART,etc is to be normalized, use the pulse_norm function 
+    const double ref = (pulseChan >= 0 && pulseChan < 4) ? m_pulseGlobalRef[pulseChan] : std::nan("");
+    const double footY = (footIdx >= 0 && footIdx < static_cast<int>(raw.size())) ? raw[footIdx] : std::nan("");
     std::vector<double> out(raw.size());
-    for (size_t i = 0; i < raw.size(); ++i) {
-        if (std::isnan(raw[i])) { out[i] = raw[i]; continue; }
-        const double localRatio = 100.0 * (raw[i] - footY) / footY;
-        out[i] = localRatio / ref;
-    }
+    for (size_t i = 0; i < raw.size(); ++i)
+        out[i] = normalize_features::pulse_norm(raw[i], footY, ref);
     return out;
 }
-
 // ========================================================================
 // Build / clear plots
 // ========================================================================
@@ -353,16 +363,16 @@ void TemplateViewerWindow::showPage() {
             // trace through unchanged.
             const std::vector<double> ecgN = normalizeEcgTrace(ecg, c);
             const std::vector<double> ppgN = hasPPG
-                ? normalizePulseTrace(b.ppgTemplate, b.ppg_onset, 0)
+                ? normalize_ppg_or_similar(b.ppgTemplate, b.ppg_onset, 0)
                 : empty;
             const std::vector<double> abpN = !b.abpTemplate.empty()
-                ? normalizePulseTrace(b.abpTemplate, b.abp_onset, 1)
+                ? normalize_ppg_or_similar(b.abpTemplate, b.abp_onset, 1)
                 : b.abpTemplate;
             const std::vector<double> artN = !b.artTemplate.empty()
-                ? normalizePulseTrace(b.artTemplate, b.art_onset, 2)
+                ? normalize_ppg_or_similar(b.artTemplate, b.art_onset, 2)
                 : b.artTemplate;
             const std::vector<double> artPN = !b.artPulmTemplate.empty()
-                ? normalizePulseTrace(b.artPulmTemplate, b.art_pulm_onset, 3)
+                ? normalize_ppg_or_similar(b.artPulmTemplate, b.art_pulm_onset, 3)
                 : b.artPulmTemplate;
 
             pw->setData(ppgN, ppgStd, ecgN, ecgStd,
@@ -455,26 +465,23 @@ void TemplateViewerWindow::showPage() {
     applyMarkerVisibility();
     updatePageControls();
 
-    // Save a screenshot of this page (once) now that it's on screen. Fires on
-    // initial load (page 1) and whenever the user scrolls to a new page.
-    captureCurrentPage();
 }
 
 void TemplateViewerWindow::captureCurrentPage() {
-    if (m_capturedPages.count(m_currentPage)) return;   // already saved this page
+    // Snapshot the page the user is LEAVING (captures its final edited state).
+    // Grabbed synchronously so we snap the page still on screen, not the next
+    // one; re-captures on each leave so the latest state wins.
     QDir outDir(m_templateDir);
     const int page = m_currentPage;
-    QTimer::singleShot(60, this, [this, page, outDir]() {
-        if (m_capturedPages.count(page)) return;
-
-        const QPixmap shot = ui->scrollContents->grab();
-        const QString fn = outDir.filePath(
-            QString("%1_templates_page%2.png")
-            .arg(m_subjectId)
-            .arg(page + 1, 2, 10, QChar('0')));
-        const bool ok = shot.save(fn, "PNG");
-        if (ok) m_capturedPages.insert(page);
-        });
+    const QPixmap shot = ui->scrollContents->grab();
+    const QString pass = m_qAlignPass ? "_q" : "_r";   // R-aligned vs Q-aligned pass
+    const QString fn = outDir.filePath(
+        QString("%1_templates_page%2%3.png")
+        .arg(m_subjectId)
+        .arg(page + 1, 2, 10, QChar('0'))
+        .arg(pass));
+    shot.save(fn, "PNG");
+    m_capturedPages.insert(page);
 }
 
 // Merge the r_align and q_align aligned-template CSVs into one wide CSV.
@@ -507,7 +514,7 @@ namespace {
         const std::vector<std::string> qh = split(Q[0]);
         const size_t ncol = qh.size();
         out << "file_id,bin_num,x_ms";
-        for (size_t i = 3; i < ncol; ++i) out << ',' << qh[i] << "_r_align" << ',' << qh[i] << "_q_align";
+        for (size_t i = 3; i < ncol; ++i) out << ',' << qh[i] << "_r" << ',' << qh[i] << "_q";
         out << '\n';
         const size_t n = std::max(R.size(), Q.size());
         for (size_t li = 1; li < n; ++li) {
@@ -659,10 +666,10 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         std::vector<double> ch1N = normalizeEcgTrace(ch1R, 0);
         std::vector<double> ch2N = normalizeEcgTrace(ch2R, 1);
         std::vector<double> ch3N = normalizeEcgTrace(ch3R, 2);
-        std::vector<double> ppgN = normalizePulseTrace(ppgR, b.ppg_onset, 0);
-        std::vector<double> abpN = normalizePulseTrace(abpR, b.abp_onset, 1);
-        std::vector<double> artN = normalizePulseTrace(artR, b.art_onset, 2);
-        std::vector<double> artPN = normalizePulseTrace(artPR, b.art_pulm_onset, 3);
+        std::vector<double> ppgN = normalize_ppg_or_similar(ppgR, b.ppg_onset, 0);
+        std::vector<double> abpN = normalize_ppg_or_similar(abpR, b.abp_onset, 1);
+        std::vector<double> artN = normalize_ppg_or_similar(artR, b.art_onset, 2);
+        std::vector<double> artPN = normalize_ppg_or_similar(artPR, b.art_pulm_onset, 3);
 
         // Normalized std traces.
         std::vector<double> ch1NS = scaleEcgStd(ch1S, 0);
@@ -680,11 +687,11 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             const auto& ecg = chs[c]->ecgTemplate_raw;
             ftAuto[c] = computeEcgFeatures(ecg,
                 b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
-                b.s_end_auto_ch[c], b.t_begin_auto_ch[c], b.t_end_auto_ch[c],
+                b.s_end_auto_ch[c], b.t_end_auto_ch[c],
                 m_sampleRate);
             ftUser[c] = computeEcgFeatures(ecg,
                 b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
-                b.s_end_ch[c], b.t_begin_ch[c], b.t_end_ch[c],
+                b.s_end_ch[c], b.t_end_ch[c],
                 m_sampleRate);
         }
 
@@ -793,8 +800,8 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             for (int k = 0; k < 5; ++k) { emitLoc(artAuto[k], row);  emitLoc(artUser[k], row); }
             for (int k = 0; k < 5; ++k) { emitLoc(artpAuto[k], row); emitLoc(artpUser[k], row); }
             for (int gc = 0; gc < 3; ++gc) {
-                emitLoc(egl[gc].p_wave, row); emitLoc(egl[gc].q_onset, row);
-                emitLoc(egl[gc].r_wave, row); emitLoc(egl[gc].t_peak, row);
+                emitLoc(egl[gc].p_peak_glyph, row); emitLoc(egl[gc].q_begin_glyph, row);
+                emitLoc(egl[gc].r_peak_glyph, row); emitLoc(egl[gc].t_peak_glyph, row);
             }
             emitLoc(pgl.foot, row); emitLoc(pgl.p1, row);
             f << '\n';
@@ -911,8 +918,11 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         ecgSet(b, newIdx);
         const int delta = newIdx - oldIdx;
 
-        if (m_moveSubsequent && oldIdx >= 0) {
-            // Shift subsequent bins by the SAME AMOUNT (not to the same time).
+        if (m_moveMode != MoveMode::Individual && oldIdx >= 0) {
+            ChannelTemplateData* bchs[3] = { &b.ch1, &b.ch2, &b.ch3 };
+            const int nDragged = (int)bchs[leadIdx]->ecgTemplate_raw.size();
+            const double pct = (nDragged > 1) ? double(newIdx) / (nDragged - 1) : 0.0;
+
             for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
                 ChannelTemplateData* chs[3] = {
                     &m_bins[i].ch1, &m_bins[i].ch2, &m_bins[i].ch3
@@ -922,9 +932,12 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 const int cur = ecgGet(m_bins[i]);
                 if (cur < 0) continue;
                 const int n = (int)chs[leadIdx]->ecgTemplate_raw.size();
-                ecgSet(m_bins[i], std::clamp(cur + delta, 0, n - 1));
+
+                const int target = (m_moveMode == MoveMode::SubsequentDelta)
+                    ? cur + delta
+                    : (n > 1 ? (int)std::lround(pct * (n - 1)) : 0);
+                ecgSet(m_bins[i], std::clamp(target, 0, n - 1));
             }
-            // Push updated markers to any subsequent bins on screen.
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
                 int gi = m_pageGlobalIdx[li];
                 if (gi > binIdx) refreshBinMarkers(gi);
@@ -963,19 +976,28 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         refreshBinMarkers(binIdx);
         const int delta = newIdx - oldIdx;
 
-        if (m_moveSubsequent && oldIdx >= 0) {
+        if (m_moveMode != MoveMode::Individual && oldIdx >= 0) {
+            const int nDragged = (int)b.ppgTemplate.size();
+            const double pct = (nDragged > 1) ? double(newIdx) / (nDragged - 1) : 0.0;
+
             for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
                 if (m_bins[i].ppg_issue != 0) continue;
                 const int cur = ppgGet(m_bins[i]);
                 if (cur < 0) continue;
-                const int n = (int)m_bins[i].ppgTemplate.size();
-                ppgSet(m_bins[i], std::clamp(cur + delta, 0, n - 1));
+
+                const int rawLen = (int)m_bins[i].ppgTemplate.size();
+                const int ecgClip = ecgClipLenFor(m_bins[i]);
+                const int n = (ecgClip > 0) ? std::min(rawLen, ecgClip) : rawLen;
+                if (n <= 0) continue;
+
+                const int target = (m_moveMode == MoveMode::SubsequentDelta)
+                    ? cur + delta
+                    : (n > 1 ? (int)std::lround(pct * (n - 1)) : 0);
+                ppgSet(m_bins[i], std::clamp(target, 0, n - 1));
             }
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
                 int gi = m_pageGlobalIdx[li];
-                if (gi > binIdx && m_bins[gi].ppg_issue == 0) {
-                    refreshBinMarkers(gi);
-                }
+                if (gi > binIdx && m_bins[gi].ppg_issue == 0) refreshBinMarkers(gi);
             }
         }
         return;
@@ -1037,15 +1059,29 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         refreshBinMarkers(binIdx);
         const int delta = newIdx - oldIdx;
 
-        if (m_moveSubsequent && oldIdx >= 0) {
+        if (m_moveMode != MoveMode::Individual && oldIdx >= 0) {
+            const std::vector<double>* trDragged = nullptr; uint8_t* issDragged = nullptr;
+            channelTrace(b, marker, trDragged, issDragged);
+            const int nDragged = trDragged ? (int)trDragged->size() : 0;
+            const double pct = (nDragged > 1) ? double(newIdx) / (nDragged - 1) : 0.0;
+
             for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
                 const std::vector<double>* tr = nullptr; uint8_t* iss = nullptr;
                 channelTrace(m_bins[i], marker, tr, iss);
-                if (!iss || *iss != 0) continue;           // absent/bad channel
+                if (!iss || *iss != 0) continue;
                 if (!tr) continue;
                 const int cur = artGet(m_bins[i], marker);
                 if (cur < 0) continue;
-                assign(m_bins[i], marker, std::clamp(cur + delta, 0, (int)tr->size() - 1));
+
+                const int rawLen = (int)tr->size();
+                const int ecgClip = ecgClipLenFor(m_bins[i]);
+                const int n = (ecgClip > 0) ? std::min(rawLen, ecgClip) : rawLen;
+                if (n <= 0) continue;
+
+                const int target = (m_moveMode == MoveMode::SubsequentDelta)
+                    ? cur + delta
+                    : (n > 1 ? (int)std::lround(pct * (n - 1)) : 0);
+                assign(m_bins[i], marker, std::clamp(target, 0, n - 1));
             }
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
                 int gi = m_pageGlobalIdx[li];
@@ -1089,6 +1125,8 @@ void TemplateViewerWindow::onBadPPGToggled(int binIdx, bool bad) {
 }
 
 void TemplateViewerWindow::save_bin_and_csv() {
+    captureCurrentPage();   // snapshot the page being left on Finish
+
     // Do NOT re-seed here. Markers were seeded once at loadSubject and
     // updated by user drags via onMarkerMoved. Re-seeding now would wipe
     // every user edit.
@@ -1103,12 +1141,12 @@ void TemplateViewerWindow::save_bin_and_csv() {
 
     try {
         const QString pass = m_qAlignPass ? "q_align" : "r_align";
-        QString outPath = m_markingPath + "/" + m_subjectId + "_template_mark_" + pass + ".bin";
+        QString outPath = m_markingPath + "/" + m_subjectId + "_template_markings_" + pass + ".bin";
         writeTemplateMarkingsBin(outPath.toStdString(), m_bins);
         std::cout << "Saved: " << outPath.toStdString() << "\n";
 
         QString csvPath = csvDir.absolutePath() + "/" +
-            m_subjectId + "_template_mark_" + pass + ".csv";
+            m_subjectId + "_template_markings_" + pass + ".csv";
         writeTemplateMarkingsCsv(csvPath.toStdString(), m_bins,
             m_subjectId.toStdString(), m_sampleRate);
         std::cout << "Saved: " << csvPath.toStdString() << "\n";
@@ -1121,6 +1159,10 @@ void TemplateViewerWindow::save_bin_and_csv() {
             .arg(m_subjectId, e.what()));
         return;   // don't emit finished(); let the user retry
     }
+
+    // Aligned-template CSV reflecting the FINAL marker edits (on the q pass
+    // this also merges the two passes into <id>_template.csv).
+    writeAlignedTemplateCsv();
 
     if (!m_qAlignPass) {
         // First (R-aligned) pass just saved. Switch to the Q-aligned pass:
@@ -1136,9 +1178,9 @@ void TemplateViewerWindow::save_bin_and_csv() {
     // wide CSV (columns suffixed _r / _q) and drop the per-pass CSVs. The
     // per-pass .bin files are kept (used to restore state on reload).
     {
-        const QString rCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_mark_r_align.csv";
-        const QString qCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_mark_q_align.csv";
-        const QString mCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_mark.csv";
+        const QString rCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings_r_align.csv";
+        const QString qCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings_q_align.csv";
+        const QString mCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings.csv";
         if (mergeAlignedPassCsvs(rCsv.toStdString(), qCsv.toStdString(), mCsv.toStdString())) {
             QFile::remove(rCsv);
             QFile::remove(qCsv);
