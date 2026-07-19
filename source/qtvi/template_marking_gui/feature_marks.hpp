@@ -30,12 +30,9 @@ public:
     // Fixed
     // =================================================================
 
-    // R peak = argmax of |v - baseline| across the first 3/4 of `v`.
-    // Baseline is the mean of that same window (DC-tolerant).
-    // Returns { index, isPositive }. isPositive tells callers whether
-    // the R spike goes UP or DOWN relative to baseline.
-    static std::pair<int, bool> r_peak(const std::vector<double>& v);
-    static int detect_r_peak(const std::vector<double>& ecg_signal);
+    // (r_peak()/detect_r_peak() removed: R is the deterministic anchor column
+    //  r_col_raw carried on the template; QRS polarity is derived from the
+    //  known R inside each detector.)
 
     // =================================================================
     // Reactive
@@ -47,9 +44,10 @@ public:
     static int compute_q_peak(const std::vector<double>& ecg,
         int q_begin, int r_peak);
 
-    // S peak = extreme (opposite R polarity) inside [r_peak, s_end].
-    static int compute_s_peak(const std::vector<double>& ecg,
-        int r_peak, int s_end);
+    // S = first opposite-polarity trough after R (rate-aware window). The
+    // single S-trough source, used for s_end detection and QRS-height
+    // normalization; needs no s_end bound.
+    static int compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
 
     // Whole-beat reactive bundle for the GUI's glyph overlay. Each field is
     // auto-computed but tracks the user's movable markers live (see the
@@ -70,7 +68,7 @@ public:
     static int compute_t_wave(const std::vector<double>& ecg, int tBegin, int tEnd);
     static int compute_r_wave(const std::vector<double>& ecg, int qBegin, int sEnd);
     static int compute_s_end(const std::vector<double>& ecg, int sUser, double fs);
-    static int compute_q_onset(const std::vector<double>& ecg, int qUser, double fs);
+    static int compute_q_onset(const std::vector<double>& ecg, int qUser, double fs, int r_idx);
     static int compute_t_end(const std::vector<double>& ecg, int tEndUser, double fs);
 
     struct PpgGlyphs {
@@ -90,11 +88,11 @@ public:
     // =================================================================
 
     // ECG landmarks.
-    static int detect_p_peak(const std::vector<double>& ecg_signal);
-    static int detect_q_begin(const std::vector<double>& ecg_signal);
-    static int detect_s_end(const std::vector<double>& ecg_signal);
-    static int detect_t_begin(const std::vector<double>& ecg_signal);
-    static int detect_t_end(const std::vector<double>& ecg_signal);
+    static int detect_p_peak(const std::vector<double>& ecg_signal, int r_idx);
+    static int detect_q_begin(const std::vector<double>& ecg_signal, int r_idx);
+    static int detect_s_end(const std::vector<double>& ecg_signal, int r_idx, double fs);
+    static int detect_t_begin(const std::vector<double>& ecg_signal, int r_idx, double fs);
+    static int detect_t_end(const std::vector<double>& ecg_signal, int r_idx, double fs);
 
     // PPG landmarks.
     static int detect_ppg_onset(const std::vector<double>& pulse);
@@ -103,18 +101,9 @@ public:
     static int detect_ppg_dicrotic(const std::vector<double>& pulse);
     static int detect_ppg_end(const std::vector<double>& pulse);
 
-    // =================================================================
-    // Bin-level seed
-    // =================================================================
-    // Run every auto-detector for one TemplateBin (all three ECG
-    // channels + PPG + arterial). Populates every *_auto_ch field
-    // fresh and seeds unset user-facing fields with the same values.
-    // R peak's user field is always overwritten with the fresh auto
-    // value (R is auto-only in the GUI).
     static void seed_all(TemplateBin& bin, double sampleRate);
 
 private:
     // Internal helpers.
     static std::vector<double> first_derivative(const std::vector<double>& v);
-    static int detect_s(const std::vector<double>& ecg_signal);   // for detect_s_end
 };

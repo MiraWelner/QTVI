@@ -18,6 +18,7 @@
 #include "GenerateTemplates.hpp"
 #include "TemplateTypes.hpp"
 #include "template_generation/CreateArterialTemplates.hpp"
+#include "template_marking_gui/alignment.hpp"   // find_q_column (Q-align)
 #include "peak_finding/peakfinding_io.hpp"
 
 namespace template_generation_detail {
@@ -239,6 +240,61 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
     }
 
     return out;
+}
+
+// =====================================================================
+// Q-ALIGN PASS: reuse PPG/arterial as-is; rebuild each ECG raw template by
+// Q-aligning its cached snippets (align every snippet's Q to the median
+// snippet's Q, then re-median). Reuses the R-pass beats -- no re-slicing or
+// re-detection. Because the alignment anchor is the median snippet, the
+// median snippet doesn't move, so R stays on its column and the template
+// stays centred in the window (no far-from-the-wall drift).
+inline void qAlignTemplatesFromCache(template_io::TemplateFile& tmpl,
+    const template_io::BeatsFile& beats,
+    const SignalRates& rates)
+{
+    const double fs = rates.ecg;
+
+    using MethodPtr =
+        template_io::ChannelMethodTemplate template_io::BinTemplates::*;
+    const std::pair<const char*, MethodPtr> channels[] = {
+        { "CH1", &template_io::BinTemplates::ch1_raw },
+        { "CH2", &template_io::BinTemplates::ch2_raw },
+        { "CH3", &template_io::BinTemplates::ch3_raw },
+    };
+
+    for (const auto& [key, methodPtr] : channels) {
+        auto it = beats.per_channel_beats.find(key);
+        if (it == beats.per_channel_beats.end()) continue;
+        const auto& perBin = it->second;   // [bin][beat][sample]
+
+        for (size_t i = 0; i < tmpl.bins.size(); ++i) {
+            template_io::BinTemplates& bin = tmpl.bins[i];
+            if (bin.bad_segment) continue;
+            if (i >= perBin.size() || perBin[i].empty()) continue;
+
+            template_io::ChannelMethodTemplate& blk = bin.*methodPtr;
+            if (blk.r_col < 0 || blk.ecgTemplate.empty()) continue;
+
+            // The R template (blk.ecgTemplate) is the column-wise median of the
+            // R-aligned beats -- the reference the Q marker is found on.
+            alignment::QAlignResult q =
+                alignment::q_align_beat_matrix(perBin[i], blk.r_col, fs,
+                    /*compute_std=*/true, /*refMedian=*/blk.ecgTemplate);
+            if (q.tmpl.empty()) continue;
+
+            blk.ecgTemplate = std::move(q.tmpl);
+            blk.ecgTemplate_std = std::move(q.std);
+            if (q.r_col >= 0) blk.r_col = q.r_col;   // R re-detected on the Q template
+        }
+    }
+}
+
+// Convenience overload for the in-memory R-pass build.
+inline void qAlignTemplatesFromCache(FastTemplateBuild& build,
+    const SignalRates& rates)
+{
+    qAlignTemplatesFromCache(build.tmpl, build.beats, rates);
 }
 
 // SLOW merge: fills the squared/absval per-bin blocks and their SAECG

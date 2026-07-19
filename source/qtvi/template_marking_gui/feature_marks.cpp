@@ -110,50 +110,19 @@ std::vector<double> FeatureMarks::first_derivative(const std::vector<double>& v)
     return d1;
 }
 
-int FeatureMarks::detect_s(const std::vector<double>& ecg_signal) {
-    const int N = static_cast<int>(ecg_signal.size());
-    auto [r_idx, is_positive] = r_peak(ecg_signal);
-    if (r_idx < 0 || r_idx >= N - 1)
-        return std::clamp(r_idx + 1, 0, std::max(0, N - 1));
-
-    std::vector<double> upright = ecg_signal;
-    if (!is_positive) for (auto& x : upright) x = -x;
-
-    const int hi = std::min(r_idx + 60, N);
-    int s_idx = r_idx;
-    for (int i = r_idx + 1; i < hi; ++i) {
-        if (upright[i] <= upright[s_idx]) s_idx = i;
-        else if (i > s_idx + 1) break;
-    }
-    if (s_idx <= r_idx) return std::min(r_idx + 1, N - 1);
-    return s_idx;
-}
-
-// =========================================================================
-// Fixed
-// =========================================================================
-
-std::pair<int, bool> FeatureMarks::r_peak(const std::vector<double>& v) {
+// QRS polarity from the KNOWN R column: positive if the R sample sits above
+// the trace baseline (median), negative otherwise. Replaces the old r_peak()
+// geometric guesser -- callers now pass the true R column (r_col).
+static bool qrs_positive_at(const std::vector<double>& v, int r_idx) {
     const int N = static_cast<int>(v.size());
-    if (N == 0) return { 0, true };
-
-    // R is the first deflection after 0.176 of the window (its expected column
-    // by snip geometry): scan forward and return the first local extremum.
-    // A local max => upright R (positive); a local min => inverted R (negative).
-    const int lo = std::clamp(static_cast<int>(std::lround(0.176 * N)), 1, N - 1);
-    const int hi = std::clamp(static_cast<int>(std::lround(0.30 * N)), lo, N - 1);
-    for (int i = lo; i < hi; ++i) {
-        if (std::isnan(v[i - 1]) || std::isnan(v[i]) || std::isnan(v[i + 1])) continue;
-        const bool isMax = v[i] >= v[i - 1] && v[i] >= v[i + 1];
-        const bool isMin = v[i] <= v[i - 1] && v[i] <= v[i + 1];
-        if (isMax && !isMin) return { i, true };    // first upward deflection
-        if (isMin && !isMax) return { i, false };   // first downward deflection
-    }
-    return { lo, true };
-}
-
-int FeatureMarks::detect_r_peak(const std::vector<double>& ecg_signal) {
-    return r_peak(ecg_signal).first;
+    if (N == 0 || r_idx < 0 || r_idx >= N || std::isnan(v[r_idx])) return true;
+    std::vector<double> f;
+    f.reserve(N);
+    for (double x : v) if (!std::isnan(x)) f.push_back(x);
+    if (f.empty()) return true;
+    std::nth_element(f.begin(), f.begin() + f.size() / 2, f.end());
+    const double baseline = f[f.size() / 2];
+    return (v[r_idx] - baseline) >= 0.0;
 }
 
 // =========================================================================
@@ -168,9 +137,7 @@ int FeatureMarks::compute_q_peak(const std::vector<double>& ecg,
         || q_begin >= N || r_peak_idx >= N || q_begin > r_peak_idx)
         return -1;
 
-    auto [ridx, is_positive] = r_peak(ecg);
-    (void)ridx;
-    const bool up = is_positive;
+    const bool up = qrs_positive_at(ecg, r_peak_idx);
 
     int q = q_begin;
     for (int i = q_begin; i <= r_peak_idx; ++i) {
@@ -180,23 +147,32 @@ int FeatureMarks::compute_q_peak(const std::vector<double>& ecg,
     return q;
 }
 
-int FeatureMarks::compute_s_peak(const std::vector<double>& ecg,
-    int r_peak_idx, int s_end)
+// S = the first opposite-polarity trough after R: walk right from R tracking
+// the opposite-polarity extreme (minimum if the QRS is upright, maximum if
+// inverted) and stop once the trace has clearly turned back. Rate-aware search
+// window (~0.12 s), so it needs no s_end bound -- the single S-trough source,
+// used for the s_end detection and for |R|+|S| normalization.
+int FeatureMarks::compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs)
 {
     const int N = static_cast<int>(ecg.size());
-    if (N == 0 || r_peak_idx < 0 || s_end < 0
-        || r_peak_idx >= N || s_end >= N || r_peak_idx > s_end)
-        return -1;
+    if (r_idx < 0 || r_idx >= N - 1)
+        return std::clamp(r_idx + 1, 0, std::max(0, N - 1));
 
-    auto [ridx, is_positive] = r_peak(ecg);
-    (void)ridx;
-    const bool up = is_positive;
+    const bool up = qrs_positive_at(ecg, r_idx);
+    const int w = (fs > 0.0)
+        ? std::max(4, static_cast<int>(std::lround(0.12 * fs)))
+        : 60;
+    const int hi = std::min(r_idx + w, N);
 
-    int s = r_peak_idx;
-    for (int i = r_peak_idx; i <= s_end; ++i) {
-        if (std::isnan(ecg[i]) || std::isnan(ecg[s])) continue;
-        if (up ? ecg[i] < ecg[s] : ecg[i] > ecg[s]) s = i;
+    int s = r_idx;
+    for (int i = r_idx + 1; i < hi; ++i) {
+        if (std::isnan(ecg[i])) continue;
+        if (std::isnan(ecg[s])) { s = i; continue; }
+        const bool moreExtreme = up ? (ecg[i] < ecg[s]) : (ecg[i] > ecg[s]);
+        if (moreExtreme) s = i;
+        else if (i > s + 1) break;   // turned back after the trough -> done
     }
+    if (s <= r_idx) return std::min(r_idx + 1, N - 1);
     return s;
 }
 
@@ -275,13 +251,13 @@ int FeatureMarks::compute_s_end(const std::vector<double>& v, int sUser, double 
 
 // Q onset = knee (max |curvature|) of a cubic fit within +/-0.05 s of the
 // user's Q-begin marker.
-int FeatureMarks::compute_q_onset(const std::vector<double>& v, int qUser, double fs) {
+int FeatureMarks::compute_q_onset(const std::vector<double>& v, int qUser, double fs, int r_idx) {
     const int N = static_cast<int>(v.size());
     if (qUser < 0 || N < 4) return qUser;
     const int w = win_005s(fs);
 
     // Orient so Q is a downward dip.
-    auto [r_idx, is_positive] = r_peak(v); (void)r_idx;
+    const bool is_positive = qrs_positive_at(v, r_idx);
     std::vector<double> u = v;
     if (!is_positive) for (auto& x : u) x = -x;
 
@@ -323,8 +299,23 @@ FeatureMarks::EcgGlyphs FeatureMarks::compute_ecg_glyphs(
     int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs)
 {
     EcgGlyphs g;
+    // R column within the user QRS window (max deviation from baseline),
+    // used to orient the Q-onset search polarity.
+    int r_local = q_begin;
+    {
+        const int N = static_cast<int>(ecg.size());
+        int lo = std::max(0, q_begin), hi = std::min(N - 1, s_end);
+        double base = 0.0; int cnt = 0;
+        for (double x : ecg) if (!std::isnan(x)) { base += x; ++cnt; }
+        if (cnt) base /= cnt;
+        double best = -1.0;
+        for (int i = lo; i <= hi; ++i)
+            if (!std::isnan(ecg[i]) && std::abs(ecg[i] - base) > best) {
+                best = std::abs(ecg[i] - base); r_local = i;
+            }
+    }
     g.p_peak_glyph = compute_p_wave(ecg, p_peak, fs);
-    g.q_begin_glyph = compute_q_onset(ecg, q_begin, fs);
+    g.q_begin_glyph = compute_q_onset(ecg, q_begin, fs, r_local);
     g.r_peak_glyph = compute_r_wave(ecg, q_begin, s_end);   // window = user q_begin..s_end
     const int N = static_cast<int>(ecg.size());
     g.s_end_glyph = (s_end >= 0 && s_end < N) ? s_end : -1;  // S = the user's marker (no math)
@@ -382,9 +373,9 @@ FeatureMarks::PpgGlyphs FeatureMarks::compute_ppg_glyphs(
 // Movable (auto-detected seeds)
 // =========================================================================
 
-int FeatureMarks::detect_q_begin(const std::vector<double>& ecg_signal) {
+int FeatureMarks::detect_q_begin(const std::vector<double>& ecg_signal, int r_idx) {
     const int N = static_cast<int>(ecg_signal.size());
-    auto [r_idx, is_positive] = r_peak(ecg_signal);
+    const bool is_positive = qrs_positive_at(ecg_signal, r_idx);
 
     std::vector<double> upright_signal = ecg_signal;
     if (!is_positive) for (auto& x : upright_signal) x = -x;
@@ -405,16 +396,16 @@ int FeatureMarks::detect_q_begin(const std::vector<double>& ecg_signal) {
     return qTrough;
 }
 
-int FeatureMarks::detect_p_peak(const std::vector<double>& ecg_signal) {
+int FeatureMarks::detect_p_peak(const std::vector<double>& ecg_signal, int r_idx) {
     const int N = static_cast<int>(ecg_signal.size());
     if (N < 3) return 0;
 
-    auto [r_idx, is_positive] = r_peak(ecg_signal);
+    const bool is_positive = qrs_positive_at(ecg_signal, r_idx);
     std::vector<double> upright = ecg_signal;
     if (!is_positive) for (auto& x : upright) x = -x;
 
     // Max value before Q begin.
-    const int q_est = detect_q_begin(ecg_signal);
+    const int q_est = detect_q_begin(ecg_signal, r_idx);
     const int hi = std::max(1, std::min(q_est, N));
     int best = -1; double bv = -std::numeric_limits<double>::infinity();
     for (int i = 0; i < hi; ++i)
@@ -422,17 +413,16 @@ int FeatureMarks::detect_p_peak(const std::vector<double>& ecg_signal) {
     return (best >= 0) ? best : 0;
 }
 
-int FeatureMarks::detect_t_begin(const std::vector<double>& ecg_signal) {
+int FeatureMarks::detect_t_begin(const std::vector<double>& ecg_signal, int r_idx, double fs) {
     // First local maximum right of S end (the T wave), then walk left to its
     // foot. begin/end bracket that peak.
     const int N = static_cast<int>(ecg_signal.size());
     if (N < 3) return 0;
-    auto [r_idx, is_positive] = r_peak(ecg_signal);
-    (void)r_idx;
+    const bool is_positive = qrs_positive_at(ecg_signal, r_idx);
     std::vector<double> upright = ecg_signal;
     if (!is_positive) for (auto& x : upright) x = -x;
 
-    const int s_end = detect_s_end(ecg_signal);
+    const int s_end = detect_s_end(ecg_signal, r_idx, fs);
     const int lo = std::clamp(s_end + 1, 1, N - 2);
     const int hi = std::min(N - 1, N / 2);              // first half only
 
@@ -451,16 +441,16 @@ int FeatureMarks::detect_t_begin(const std::vector<double>& ecg_signal) {
     return i;
 }
 
-int FeatureMarks::detect_s_end(const std::vector<double>& ecg_signal) {
+int FeatureMarks::detect_s_end(const std::vector<double>& ecg_signal, int r_idx, double fs) {
     const int N = static_cast<int>(ecg_signal.size());
-    auto [r_idx, is_positive] = r_peak(ecg_signal);
+    const bool is_positive = qrs_positive_at(ecg_signal, r_idx);
     if (r_idx < 0 || r_idx >= N - 1)
         return std::clamp(r_idx + 1, 0, std::max(0, N - 1));
 
     std::vector<double> upright = ecg_signal;
     if (!is_positive) for (auto& x : upright) x = -x;
 
-    const int s_idx = detect_s(ecg_signal);
+    const int s_idx = compute_s_peak(ecg_signal, r_idx, fs);   // single trough source
     if (s_idx < 0 || s_idx >= N - 1)
         return std::min(std::max(0, r_idx + 1), N - 1);
 
@@ -486,16 +476,15 @@ int FeatureMarks::detect_s_end(const std::vector<double>& ecg_signal) {
     return std::clamp(s_idx + 15, 0, N - 1);
 }
 
-int FeatureMarks::detect_t_end(const std::vector<double>& ecg_signal) {
+int FeatureMarks::detect_t_end(const std::vector<double>& ecg_signal, int r_idx, double fs) {
     // First local maximum right of S end, then walk right to its foot.
     const int N = static_cast<int>(ecg_signal.size());
     if (N < 3) return std::max(0, N - 1);
-    auto [r_idx, is_positive] = r_peak(ecg_signal);
-    (void)r_idx;
+    const bool is_positive = qrs_positive_at(ecg_signal, r_idx);
     std::vector<double> upright = ecg_signal;
     if (!is_positive) for (auto& x : upright) x = -x;
 
-    const int s_end = detect_s_end(ecg_signal);
+    const int s_end = detect_s_end(ecg_signal, r_idx, fs);
     const int lo = std::clamp(s_end + 1, 1, N - 2);
     const int hi = std::min(N - 1, N / 2);
 
@@ -697,80 +686,67 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
 
         // Movable-marker spawn points.
         // Seeds only; the user drags from here.
-        const int dic = pct(0.60);   // Dicrotic notch  60%
-        const int peak2 = pct(0.65);   // Peak #2         65%
 
-        // Systolic peak = argmax over the visible window; Foot = the minimum
-        // BEFORE that peak (seeds the foot bar in the trough); End = the
-        // minimum between the peak and the end of the visible window; T80 =
-        // 80% of the way DOWN from peak toward end; p50 = temporal midpoint
-        // Systolic peak + foot: use the construction-time fiducials computed
-        // from the real R-pair interval (peak = max in [R1,R2], foot = min in
-        // [R1,peak]). These are exact -- one pulse, no risk of grabbing a later
-        // pulse. Fall back to a first-pulse-bounded search only for templates
-        // built before these were stored.
-        int peak, foot;
+        // ---- PPG autodetect positions (all set here) -----------------------
+        // Systolic peak + foot: prefer the construction-time fiducials (exact,
+        // one pulse); else a first-pulse-bounded search.
         if (b.ppg_peak_construct >= 0 && b.ppg_peak_construct < W) {
-            peak = b.ppg_peak_construct;
-            foot = (b.ppg_onset_construct >= 0 && b.ppg_onset_construct <= peak)
+            b.ppg_peak_auto = b.ppg_peak_construct;
+            b.ppg_onset_auto = (b.ppg_onset_construct >= 0 &&
+                b.ppg_onset_construct <= b.ppg_peak_auto)
                 ? b.ppg_onset_construct : 0;
         }
         else {
-            // Fallback: bound the argmax to the first ~40% of W (one pulse).
-            peak = 0;
-            {
-                const int firstPulseEnd = std::max(2, pct(0.40));
-                double best = -std::numeric_limits<double>::infinity();
-                for (int i = 0; i < firstPulseEnd && i < W; ++i)
-                    if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; peak = i; }
-            }
-            foot = 0;
-            {
-                const int lo = std::min(pct(0.10), peak);
-                double best = std::numeric_limits<double>::infinity();
-                for (int i = lo; i <= peak; ++i)
-                    if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; foot = i; }
-            }
+            int pk = 0; double best = -std::numeric_limits<double>::infinity();
+            const int firstPulseEnd = std::max(2, pct(0.40));
+            for (int i = 0; i < firstPulseEnd && i < W; ++i)
+                if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; pk = i; }
+            b.ppg_peak_auto = pk;
+            int ft = 0; best = std::numeric_limits<double>::infinity();
+            for (int i = std::min(pct(0.10), pk); i <= pk; ++i)
+                if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; ft = i; }
+            b.ppg_onset_auto = ft;
         }
-        int end = std::min(W - 1, peak + 1);
+
+        // End = minimum between the peak and the end of the visible window.
+        b.ppg_end_auto = std::min(W - 1, b.ppg_peak_auto + 1);
         {
             double best = std::numeric_limits<double>::infinity();
-            for (int i = peak + 1; i < W; ++i)   // min between peak and end of screen
-                if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; end = i; }
+            for (int i = b.ppg_peak_auto + 1; i < W; ++i)
+                if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; b.ppg_end_auto = i; }
         }
 
-        int t80 = std::clamp((peak + end) / 2, 0, W - 1);
-        if (end > peak && !std::isnan(v[peak]) && !std::isnan(v[end])) {
-            const double target = v[peak] + 0.80 * (v[end] - v[peak]);  // 80% down
+        // T80 = 80% of the way down from peak to end.
+        b.ppg_t80_auto = std::clamp((b.ppg_peak_auto + b.ppg_end_auto) / 2, 0, W - 1);
+        if (b.ppg_end_auto > b.ppg_peak_auto &&
+            !std::isnan(v[b.ppg_peak_auto]) && !std::isnan(v[b.ppg_end_auto])) {
+            const double target = v[b.ppg_peak_auto]
+                + 0.80 * (v[b.ppg_end_auto] - v[b.ppg_peak_auto]);
             double bestDiff = std::numeric_limits<double>::infinity();
-            for (int i = peak; i <= end; ++i) {
+            for (int i = b.ppg_peak_auto; i <= b.ppg_end_auto; ++i) {
                 if (std::isnan(v[i])) continue;
                 const double d = std::abs(v[i] - target);
-                if (d < bestDiff) { bestDiff = d; t80 = i; }
+                if (d < bestDiff) { bestDiff = d; b.ppg_t80_auto = i; }
             }
         }
 
-        // P50: temporal midpoint between onset (foot) and systolic peak.
-        int p50 = (foot + peak) / 2;
+        // Dicrotic notch = 1/3 from systolic peak to end. P50 = onset..peak
+        // midpoint. Peak #2 = 65% of the window.
+        b.ppg_dicrotic_auto = (b.ppg_end_auto > b.ppg_peak_auto)
+            ? b.ppg_peak_auto + (b.ppg_end_auto - b.ppg_peak_auto) / 3
+            : pct(0.60);
+        b.ppg_p50_auto = (b.ppg_onset_auto + b.ppg_peak_auto) / 2;
+        b.ppg_peak2_auto = pct(0.65);
 
-        // Auto fields always updated.
-        b.ppg_onset_auto = foot;
-        b.ppg_peak_auto = peak;
-        b.ppg_end_auto = end;
-        b.ppg_dicrotic_auto = dic;
-        b.ppg_p50_auto = p50;
-        b.ppg_t80_auto = t80;
-        b.ppg_peak2_auto = peak2;
-
-        // Movable markers: seed only when unset (respect prior edits).
-        if (b.ppg_onset < 0)    b.ppg_onset = foot;
-        if (b.ppg_dicrotic < 0) b.ppg_dicrotic = dic;
-        if (b.ppg_peak2 < 0)    b.ppg_peak2 = peak2;
-        if (b.ppg_t80 < 0)    b.ppg_t80 = t80;
-        if (b.ppg_end < 0)      b.ppg_end = end;
-        // Auto-only markers: always refresh.
-        b.ppg_peak = peak;
-        b.ppg_p50 = p50;
+        // ---- seed the movable bars once (only when unset) ------------------
+        if (b.ppg_onset < 0) b.ppg_onset = b.ppg_onset_auto;
+        if (b.ppg_dicrotic < 0) b.ppg_dicrotic = b.ppg_dicrotic_auto;
+        if (b.ppg_peak2 < 0) b.ppg_peak2 = b.ppg_peak2_auto;
+        if (b.ppg_t80 < 0) b.ppg_t80 = b.ppg_t80_auto;
+        if (b.ppg_end < 0) b.ppg_end = b.ppg_end_auto;
+        // Auto-only bars: always refreshed.
+        b.ppg_peak = b.ppg_peak_auto;
+        b.ppg_p50 = b.ppg_p50_auto;
     }
 
     // ---- ECG (per channel) ---------------------------------------------
@@ -792,27 +768,19 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         auto cl = [&](int x) { return clampToVisible(x, visN); };
         auto pct = [&](double f) { return static_cast<int>(std::lround(f * ecg.size())); };
 
-        // R is NOT re-detected and needs no rate math. The template stores the
-        // true R column (r_col_raw) straight from alignment -- the detected-R
-        // fiducial the template was built around. Use it directly. This fixes
-        // the 20-50 sample R-marker error that corrupted the normalization
-        // reference and every other consumer of r_peak_ch, with zero dependence
-        // on sample rate or any positioning constant.
-        int r_anchor = (chs[c]->r_col_raw >= 0)
-            ? chs[c]->r_col_raw
-            : detect_r_peak(ecg);        // fallback only if unavailable
-        const int r_auto = cl(r_anchor);
+        // R is the deterministic anchor column (r_col_raw) carried on the
+        // template straight from alignment. Used directly -- no re-detection,
+        // no rate math, no positioning constant.
+        const int r_auto = cl(chs[c]->r_col_raw);
 
-        // S = minimum of the ECG template in the 0.1 s AFTER R (deterministic,
-        // replaces the fragile compute_s_peak search from a wrong R). s_end
-        // marker still spawns at 25% for the user; the S used for normalization
-        // is computed from r_auto downstream (computeEcgFeatures/compute_s_peak
-        // now start from the correct R).
+        // S-end: end of the S wave (detect_s_end walks from the S trough to
+        // its recovery). The trough it uses comes from compute_s_peak -- the
+        // single S-trough source, shared with the |R|+|S| normalization.
         const int p_auto = cl(pct(0.05));            // P       5% in
         const int q_auto = cl(pct(0.10));            // Q begin 10% in
-        const int s_auto = cl(pct(0.25));            // S end   25% in
-        const int tp_auto = cl(detect_t_begin(ecg));  // T begin bar: left foot of the T wave (auto)
-        const int te_auto = cl(detect_t_end(ecg));    // T end:   right foot of the T wave (auto)
+        const int s_auto = cl(detect_s_end(ecg, r_auto, sampleRate));   // S end
+        const int tp_auto = cl(detect_t_begin(ecg, r_auto, sampleRate));  // T begin bar: left foot of the T wave (auto)
+        const int te_auto = cl(detect_t_end(ecg, r_auto, sampleRate));    // T end:   right foot of the T wave (auto)
 
         // Auto fields always updated.
         b.p_peak_auto_ch[c] = p_auto;

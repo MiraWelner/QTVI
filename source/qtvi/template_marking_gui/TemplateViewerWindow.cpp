@@ -26,7 +26,7 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
 {
     ui->setupUi(this);
 
-	//when you are moving a marker, do you move just that marker, or all subsequent markers by the same delta, or all subsequent markers to the same raw index?
+    //when you are moving a marker, do you move just that marker, or all subsequent markers by the same delta, or all subsequent markers to the same raw index?
     auto* moveGroup = new QButtonGroup(this);
     moveGroup->addButton(ui->move_individual);
     moveGroup->addButton(ui->move_subsequent_delta);
@@ -217,6 +217,65 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     // R/S and foot/peak positions across all bins) can be computed once
     // and stay stable across paging.
     for (auto& b : m_bins) FeatureMarks::seed_all(b, m_sampleRate);
+
+    // On the Q-aligned pass, reuse the markers the user placed in the R
+    // pass. Q-align is "R-align plus one ECG-only Q-shift": the PPG (and
+    // arterial) traces are byte-identical across passes, so their markers
+    // carry over exactly. ECG markers are copied as-is; the small Q-shift
+    // may nudge them slightly and the user adjusts from there. This replaces
+    // the fresh auto-seed above wherever the R pass has real values.
+    if (m_qAlignPass) {
+        const std::string rBin =
+            (m_markingPath + "/" + m_subjectId + "_template_markings_r_align.bin")
+            .toStdString();
+        try {
+            std::vector<TemplateBin> rMarks = readTemplateMarkingsBin(rBin);
+            if (rMarks.size() == m_bins.size()) {
+                for (size_t i = 0; i < m_bins.size(); ++i) {
+                    TemplateBin& d = m_bins[i];
+                    const TemplateBin& s = rMarks[i];
+                    // ECG per-channel user markers (copied raw). R is NOT
+                    // copied: it's an auto-only anchor and must come from the
+                    // Q template's own r_col (seeded above), so the R marker
+                    // reflects the Q-aligned template, not the R pass.
+                    for (int c = 0; c < 3; ++c) {
+                        d.p_peak_ch[c] = s.p_peak_ch[c];
+                        d.q_begin_ch[c] = s.q_begin_ch[c];
+                        d.s_end_ch[c] = s.s_end_ch[c];
+                        d.t_begin_ch[c] = s.t_begin_ch[c];
+                        d.t_end_ch[c] = s.t_end_ch[c];
+                        d.bad_r_ch[c] = s.bad_r_ch[c];
+                    }
+                    // PPG markers carry over exactly (PPG is unchanged by Q-align).
+                    d.ppg_issue = s.ppg_issue;
+                    d.ppg_onset = s.ppg_onset;
+                    d.ppg_p50 = s.ppg_p50;
+                    d.ppg_t80 = s.ppg_t80;
+                    d.ppg_peak = s.ppg_peak;
+                    d.ppg_dicrotic = s.ppg_dicrotic;
+                    d.ppg_peak2 = s.ppg_peak2;
+                    d.ppg_end = s.ppg_end;
+                    // Arterial markers likewise unchanged by Q-align.
+                    d.abp_issue = s.abp_issue;
+                    d.abp_onset = s.abp_onset; d.abp_peak = s.abp_peak;
+                    d.abp_dicrotic = s.abp_dicrotic; d.abp_peak2 = s.abp_peak2;
+                    d.abp_end = s.abp_end;
+                    d.art_issue = s.art_issue;
+                    d.art_onset = s.art_onset; d.art_peak = s.art_peak;
+                    d.art_dicrotic = s.art_dicrotic; d.art_peak2 = s.art_peak2;
+                    d.art_end = s.art_end;
+                    d.art_pulm_issue = s.art_pulm_issue;
+                    d.art_pulm_onset = s.art_pulm_onset; d.art_pulm_peak = s.art_pulm_peak;
+                    d.art_pulm_dicrotic = s.art_pulm_dicrotic;
+                    d.art_pulm_peak2 = s.art_pulm_peak2; d.art_pulm_end = s.art_pulm_end;
+                }
+            }
+        }
+        catch (...) {
+            // No / unreadable R-pass file: fall back to the fresh auto-seed.
+        }
+    }
+
     computeGlobalRefs();
 
     m_capturedPages.clear();   // new subject: nothing saved yet
@@ -327,19 +386,9 @@ void TemplateViewerWindow::showPage() {
             const auto& ppg = hasPPG ? b.ppgTemplate : empty;
 
             int c = leads[li].channelIndex;
-            // R column = argmax of the ECG template itself. Self-locating,
-            // NaN-skipping. Works whether the template is R-anchored by
-            // pad-based slicing (Patch B/C) or by explicit alignment; no
-            // dependency on avg_r_expand.
-            double rPeak = 0.0;
-            {
-                double best = -std::numeric_limits<double>::infinity();
-                for (int i = 0; i < static_cast<int>(ecg.size()); ++i) {
-                    if (!std::isnan(ecg[i]) && ecg[i] > best) {
-                        best = ecg[i]; rPeak = static_cast<double>(i);
-                    }
-                }
-            }
+            // R is NEVER autodetected. Use the R peak passed through from
+            // peak-finding -> alignment -> template (r_peak_ch = r_col_raw).
+            const double rPeak = static_cast<double>(b.r_peak_ch[c]);
 
             // std vectors for this channel + PPG. Empty if the templater
             // didn't compute them for this bin -- the widget treats empty
@@ -800,8 +849,10 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             for (int k = 0; k < 5; ++k) { emitLoc(artAuto[k], row);  emitLoc(artUser[k], row); }
             for (int k = 0; k < 5; ++k) { emitLoc(artpAuto[k], row); emitLoc(artpUser[k], row); }
             for (int gc = 0; gc < 3; ++gc) {
+                // R is never autodetected: emit the passed-in R (r_peak_auto =
+                // r_col), not egl[gc].r_peak_glyph (compute_r_wave argmax).
                 emitLoc(egl[gc].p_peak_glyph, row); emitLoc(egl[gc].q_begin_glyph, row);
-                emitLoc(egl[gc].r_peak_glyph, row); emitLoc(egl[gc].t_peak_glyph, row);
+                emitLoc(b.r_peak_auto_ch[gc], row); emitLoc(egl[gc].t_peak_glyph, row);
             }
             emitLoc(pgl.foot, row); emitLoc(pgl.p1, row);
             f << '\n';

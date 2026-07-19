@@ -75,24 +75,22 @@ static inline SingleMethodResult build_ecg_template_for_method(
     if (rpeaks.size() < 2 || ecgSignal.empty() || ecgRate <= 0.0) return res;
 
     // Alignment (see alignment.hpp): slice each beat as
-    // [R_i - 0.25*RR_i, R_i + 0.75*RR_i], then do TWO in-place NaN-padded
-    // shifts on a shared axis:
-    //   Pass 1: R-align -- every beat's R lands at r_aligned_col
-    //   Pass 2: Q-align -- every beat's Q lands at q_aligned_col
+    // [R_i - 0.25*RR_i, R_i + 0.75*RR_i], then NaN-pad-shift onto a shared
+    // axis so every beat's R lands at r_aligned_col (R-align only). The Q
+    // pass no longer runs here: it reuses these cached R-aligned beats via
+    // qAlignTemplatesFromCache in build_templates.hpp (reuse + Q-shift).
     // The returned beats are all the SAME WIDTH; NaN cells outside each
     // beat's real range don't participate in the column-wise median or std.
     const alignment::BeatSet aligned =
-        alignment::extract_beats_and_align(ecgSignal, rpeaks,
-            alignment::g_q_align, ecgRate);
+        alignment::extract_beats_and_align(ecgSignal, rpeaks);
     if (aligned.beats.empty() || aligned.median_length <= 0) return res;
 
     const size_t maxLen = aligned.beats.front().size();   // shared-axis width
     res.n_beats = aligned.beats.size();
 
-    // R column: the true detected-R fiducial the template was built around,
-    // straight from alignment (every beat's R lands at r_aligned_col). Stored
-    // and used directly as the R marker downstream -- no rate-derived constant,
-    // no re-detection on the finished template.
+    // R column: the detected-R fiducial the template was built around, straight
+    // from alignment (every beat's detected R lands at r_aligned_col). Passed
+    // through as-is -- no re-detection (a window search would grab Q or S).
     res.r_col = aligned.r_aligned_col;
 
     // Column-wise NaN-skipping median over the aligned beats => template.

@@ -35,12 +35,11 @@ namespace alignment {
     constexpr double percent_interval_preceeding_rpeak = 0.3; //how far before the R peak the snip goes, in terms of percent of the RR interval length
     constexpr double percent_interval_following_rpeak = 1.5;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
 
-    // Global switch for the second (Q-aligned) template pass. The generation
-    // pipeline calls extract_beats_and_align once per method per channel via
-    // build_ecg_template_for_method; rather than thread a flag through every
-    // layer, the controller sets this before regenerating. Reset to false at
-    // the start of each subject (see prepareViewerJob).
-    inline bool g_q_align = false;
+    // NOTE: the second (Q-aligned) template pass no longer runs through this
+    // function. It reuses the R-aligned + DC-aligned beats cached during the
+    // R pass; the Q pass reuses these templates and shifts ECG to a common Q
+    // column (see find_q_column below and qAlignTemplatesFromCache).
+    // The old global g_q_align switch and the Pass-4 block are gone.
 
     // Sample counts for a given RR (integer-truncated).
     inline int64_t rr_before_samples(int64_t rr) {
@@ -104,8 +103,7 @@ namespace alignment {
     };
 
     inline BeatSet extract_beats_and_align(const std::vector<double>& signal,
-        const std::vector<size_t>& rPeaks,
-        bool q_align = false, double fs = 0.0)
+        const std::vector<size_t>& rPeaks)
     {
         BeatSet out;
         const int64_t N = static_cast<int64_t>(signal.size());
@@ -274,74 +272,170 @@ namespace alignment {
             }
         }
 
-        // ---- Optional Pass 4: Q-align --------------------------------------
-        // Second-stage alignment (enabled only on the "next" pass): after the
-        // R-align above, shift each beat so its Q lands on a common column.
-        // Q is found from the 1st/2nd derivatives in the 20 ms before the
-        // R-upstroke onset; if none is found, Q falls back to 10% of the
-        // median RR before that onset.
+        // Q-align is no longer done here. extract_beats_and_align now only
+        // R-aligns (+ DC-aligns); the Q pass reuses these beats via
+        // qAlignTemplatesFromCache in build_templates.hpp (reuse + Q-shift).
         out.q_aligned_col = out.r_aligned_col;
-        if (q_align && fs > 0.0 && !out.beats.empty()) {
-            const int Wsh = static_cast<int>(out.beats.front().size());
-            const int w20 = std::max(2, static_cast<int>(std::lround(0.020 * fs)));
-            const int fb = std::max(1, static_cast<int>(std::lround(0.10 * out.median_length)));
+        return out;
+    }
 
-            auto find_q = [&](const std::vector<double>& b) -> int {
-                // R-upstroke onset: steepest rising slope up to R, then walk
-                // left until the slope drops below 20% of that maximum.
-                double maxSlope = 0.0; int steep = R_anchor;
-                for (int k = std::max(1, R_anchor - 3 * w20); k < R_anchor && k + 1 < Wsh; ++k) {
-                    if (std::isnan(b[k]) || std::isnan(b[k + 1])) continue;
-                    const double s = b[k + 1] - b[k];
-                    if (s > maxSlope) { maxSlope = s; steep = k; }
-                }
-                int onset = steep;
-                if (maxSlope > 0.0) {
-                    for (int k = steep; k > std::max(1, R_anchor - 4 * w20); --k) {
-                        if (std::isnan(b[k]) || std::isnan(b[k - 1])) break;
-                        onset = k;
-                        if ((b[k] - b[k - 1]) < 0.2 * maxSlope) break;
-                    }
-                }
-                // Q = the trough before the onset: walk left from the onset to
-                // the first local minimum (1st-derivative sign change - -> +),
-                // searching within ~20 ms (extended a little for jitter).
-                const int lo = std::max(1, onset - 2 * w20);
-                int qmin = -1;
-                for (int k = onset - 1; k > lo; --k) {
-                    if (std::isnan(b[k - 1]) || std::isnan(b[k]) || std::isnan(b[k + 1])) continue;
-                    if (b[k] <= b[k - 1] && b[k] <= b[k + 1]) { qmin = k; break; }
-                }
-                if (qmin >= 0) return qmin;
-                const int q = onset - fb;                  // fallback: 10% RR before onset
-                return (q >= 0 && q < Wsh) ? q : -1;
-                };
+    // =========================================================================
+    // Locate the Q trough of an ECG beat/template: steepest R-upstroke, walk
+    // back to its onset, then the first local minimum before it. R_anchor is
+    // the R column; fs is the ECG rate. Returns -1 if no Q can be located.
+    inline int find_q_column(const std::vector<double>& b, int R_anchor, double fs) {
+        const int Wsh = static_cast<int>(b.size());
+        if (Wsh == 0 || R_anchor < 1 || fs <= 0.0) return -1;
 
-            std::vector<int> qcol(out.beats.size(), -1);
-            int q_target = -1;
-            for (size_t i = 0; i < out.beats.size(); ++i) {
-                qcol[i] = find_q(out.beats[i]);
-                if (qcol[i] > q_target) q_target = qcol[i];
+        int finite = 0;
+        for (double v : b) if (!std::isnan(v)) ++finite;
+        const int w20 = std::max(2, static_cast<int>(std::lround(0.020 * fs)));
+        const int fb = std::max(1, static_cast<int>(
+            std::lround(0.10 * (finite > 0 ? finite : Wsh))));
+
+        double maxSlope = 0.0; int steep = R_anchor;
+        for (int k = std::max(1, R_anchor - 3 * w20); k < R_anchor && k + 1 < Wsh; ++k) {
+            if (std::isnan(b[k]) || std::isnan(b[k + 1])) continue;
+            const double s = b[k + 1] - b[k];
+            if (s > maxSlope) { maxSlope = s; steep = k; }
+        }
+        int onset = steep;
+        if (maxSlope > 0.0) {
+            for (int k = steep; k > std::max(1, R_anchor - 4 * w20); --k) {
+                if (std::isnan(b[k]) || std::isnan(b[k - 1])) break;
+                onset = k;
+                if ((b[k] - b[k - 1]) < 0.2 * maxSlope) break;
             }
-            if (q_target >= 0) {
-                const double NaNv = std::numeric_limits<double>::quiet_NaN();
-                for (size_t i = 0; i < out.beats.size(); ++i) {
-                    if (qcol[i] < 0) continue;
-                    const int shift = q_target - qcol[i];   // >= 0
-                    if (shift == 0) continue;
-                    std::vector<double> a(Wsh, NaNv);
-                    for (int k = 0; k < Wsh; ++k) {
-                        const int dst = k + shift;
-                        if (dst >= 0 && dst < Wsh) a[dst] = out.beats[i][k];
-                    }
-                    out.beats[i] = std::move(a);
+        }
+        const int lo = std::max(1, onset - 2 * w20);
+        for (int k = onset - 1; k > lo; --k) {
+            if (std::isnan(b[k - 1]) || std::isnan(b[k]) || std::isnan(b[k + 1])) continue;
+            if (b[k] <= b[k - 1] && b[k] <= b[k + 1]) return k;
+        }
+        const int q = onset - fb;
+        return (q >= 0 && q < Wsh) ? q : -1;
+    }
+
+    // =========================================================================
+    // Q-align a bin's cached (R-aligned) snippets and re-median.
+    //
+    // Mirrors R-alignment's structure: R-align picks a reference "median
+    // snippet" (the first beat whose finite length equals the median) and
+    // aligns to it. Here we do the same, but on Q. The alignment reference is
+    // the column-wise MEDIAN of all the beats over the -0.25..+0.75 RR window
+    // around R -- which is exactly the R-aligned template (refMedian), since
+    // that template is that column median and find_q only looks in the
+    // R-upstroke region (inside that window). We find Q on that median, then
+    // shift every snippet so its own Q lands on that marker, and re-median the
+    // shifted snippets into the Q template. The snippets stay full length
+    // (never cropped); the window only bounds where the marker is found.
+    //
+    // Because the snippets are re-aligned on Q, each beat's R moves by its own
+    // shift, so the Q template's R spike sits at R_anchor + median(shift). That
+    // column is returned in r_col -- computed from the applied shifts, not a
+    // window search (which would risk landing on Q or S).
+    //
+    // R_anchor is the R-pass R column; fs is the ECG rate; refMedian is the
+    // R-aligned template used to locate the Q marker. compute_std fills the
+    // gray-band std. q_aligned_col is the marker Q landed on; r_col is the R
+    // fiducial (R_anchor).
+    struct QAlignResult {
+        std::vector<double> tmpl;
+        std::vector<double> std;
+        int q_aligned_col = -1;
+        int r_col = -1;
+    };
+
+    inline QAlignResult q_align_beat_matrix(
+        const std::vector<std::vector<double>>& beatsIn,
+        int R_anchor, double fs, bool compute_std,
+        const std::vector<double>& refMedian)
+    {
+        QAlignResult res;
+        if (beatsIn.empty()) return res;
+
+        std::vector<std::vector<double>> beats = beatsIn;
+        const int Wsh = static_cast<int>(beats.front().size());
+
+        // Q marker = Q of the column-wise median of all beats (== the R
+        // template). Every snippet is then shifted so its own Q lands here.
+        const int q_marker = find_q_column(refMedian, R_anchor, fs);
+        res.q_aligned_col = (q_marker >= 0) ? q_marker : R_anchor;
+
+        std::vector<int> shifts;   // per-beat Q-align shift (for R's new column)
+        if (q_marker >= 0 && fs > 0.0) {
+            const double NaNv = std::numeric_limits<double>::quiet_NaN();
+            shifts.reserve(beats.size());
+            for (size_t i = 0; i < beats.size(); ++i) {
+                const int qi = find_q_column(beats[i], R_anchor, fs);
+                if (qi < 0) continue;
+                const int shift = q_marker - qi;   // may be negative
+                shifts.push_back(shift);
+                if (shift == 0) continue;
+                std::vector<double> a(Wsh, NaNv);
+                for (int k = 0; k < Wsh; ++k) {
+                    const int dst = k + shift;
+                    if (dst >= 0 && dst < Wsh) a[dst] = beats[i][k];
                 }
-                out.q_aligned_col = q_target;
+                beats[i] = std::move(a);
             }
         }
 
-        return out;
+        // Column-wise median (+ optional sample std) over the Q-aligned beats.
+        // One gather per column, reused scratch, nth_element for the median.
+        res.tmpl.assign(Wsh, std::numeric_limits<double>::quiet_NaN());
+        if (compute_std) res.std.assign(Wsh, 0.0);
+
+        std::vector<double> col;
+        col.reserve(beats.size());
+        for (int c = 0; c < Wsh; ++c) {
+            col.clear();
+            for (const auto& b : beats) {
+                const double v = b[c];
+                if (!std::isnan(v)) col.push_back(v);
+            }
+            const size_t nc = col.size();
+            if (nc == 0) continue;
+
+            const size_t mid = nc / 2;
+            std::nth_element(col.begin(), col.begin() + mid, col.end());
+            const double hi = col[mid];
+            res.tmpl[c] = (nc % 2 == 0)
+                ? 0.5 * (*std::max_element(col.begin(), col.begin() + mid) + hi)
+                : hi;
+
+            if (compute_std && nc >= 2) {
+                double sum = 0.0;
+                for (double v : col) sum += v;
+                const double mean = sum / static_cast<double>(nc);
+                double ss = 0.0;
+                for (double v : col) { const double d = v - mean; ss += d * d; }
+                res.std[c] = std::sqrt(ss / static_cast<double>(nc - 1));
+            }
+        }
+
+        // Passed-in R, tracked through the Q-align shift (median of the applied shifts).
+        int med_shift = 0;
+        if (!shifts.empty()) {
+            std::sort(shifts.begin(), shifts.end());
+            med_shift = shifts[shifts.size() / 2];
+        }
+        int rc = std::clamp(R_anchor + med_shift, 0, std::max(0, Wsh - 1));
+
+        // Snap to the local peak within +/-5 ms of that passed-in position.
+        // The window is far too tight to reach Q or S, so it only cleans up
+        // sub-window drift of the R spike.
+        const int w5 = std::max(1, static_cast<int>(std::lround(0.005 * fs)));
+        const int rlo = std::max(0, rc - w5);
+        const int rhi = std::min(Wsh - 1, rc + w5);
+        double rbest = -std::numeric_limits<double>::infinity();
+        for (int i = rlo; i <= rhi; ++i) {
+            if (!std::isnan(res.tmpl[i]) && res.tmpl[i] > rbest) { rbest = res.tmpl[i]; rc = i; }
+        }
+        res.r_col = rc;
+        return res;
     }
+
     // =========================================================================
     struct PpgBeatSet {
         std::vector<std::vector<double>> beats;   // NaN-padded, 50%-upslope-aligned

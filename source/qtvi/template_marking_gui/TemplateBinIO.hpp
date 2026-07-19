@@ -294,7 +294,9 @@ inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, int p_peak
 
     if (inRange(r_peak)) f.r_idx = r_peak;
     f.q_idx = FeatureMarks::compute_q_peak(ecg, q_begin, r_peak);
-    f.s_idx = FeatureMarks::compute_s_peak(ecg, r_peak, s_end);
+    // S for |R|+|S| = first opposite-polarity trough after R (robust; not the
+    // max over [R, s_end], which depends on where s_end sits).
+    f.s_idx = FeatureMarks::compute_s_peak(ecg, r_peak, rateHz);
     return f;
 }
 

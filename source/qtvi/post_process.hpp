@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -15,6 +16,7 @@
 #include "template_generation/build_templates.hpp"
 #include "peak_finding/run_find_r_peaks.hpp"
 #include "template_generation/template_io.hpp"
+#include "template_marking_gui/alignment.hpp"   // find_q_column (Q-align)
 
 namespace post_process_detail {
 
@@ -60,6 +62,10 @@ namespace post_process_detail {
         std::string error;                          // set by finalizeViewerJob on failure
     };
 
+    // Forward decl: full-rebuild fallback for the Q-align pass (defined below,
+    // used by regenerateWithQAlign when cached beats/templates are absent).
+    inline bool regenerateWithQAlignFull(ViewerJob& job);
+
     // All analysis CSVs land in ONE shared folder, a sibling of the template
     // output directory: <template_path>/../csv_for_analysis. Change this one
     // function (or point it at a config field) to relocate every CSV at once.
@@ -69,7 +75,6 @@ namespace post_process_detail {
 
     inline std::optional<ViewerJob> prepareViewerJob(const config_entry& cfg, const std::filesystem::path& binPath)
     {
-        alignment::g_q_align = false;   // each subject starts on the R-only pass
         const std::string stem = binPath.stem().string();
         const std::filesystem::path noisePath = std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
         const std::filesystem::path annealedPath = std::filesystem::path(cfg.annealed_data_path) / (stem + "_annealed.bin");
@@ -199,9 +204,8 @@ namespace post_process_detail {
             // entirely: no augment_ecg_ppg_pairs_sqabs (detection) and no
             // mergeTemplatesSlow (squared/absval templating). This keeps this
             // step to plain file writes -- it no longer runs the template
-            // generator, so it can't race the Q-align rebuild on the shared
-            // alignment::g_q_align flag, and the rebuild never waits on heavy
-            // squared/absval work.
+            // generator, so it can't race the Q-align rebuild, and the rebuild
+            // never waits on heavy squared/absval work.
             if (job.needSqabsDetection) {
                 // Fresh raw detection: persist the canonical (raw) r-peaks + CSV.
                 write_output_binfile(job.rPeakPath.string(), job.peakResults);
@@ -216,12 +220,8 @@ namespace post_process_detail {
             template_io::write_template_binfile(job.templatePath.string(), job.tmpl);
             std::filesystem::remove(job.provisionalPath);
 
-            // Individual retained beats ("snips"): one column per snip.
-            const std::filesystem::path csvDir2 = analysisCsvDir(job.templatePath);
-            std::filesystem::create_directories(csvDir2);
-            const std::filesystem::path snipsCsv =
-                csvDir2 / (job.stem + "_template_snips.csv");
-            template_io::write_snips_csv(snipsCsv.string(), job.beats);
+            // (No snips.csv: serializing every retained beat for every channel
+            // dominated finalize time and nothing downstream consumes it.)
         }
         catch (const std::exception& e) {
             job.error = e.what();
@@ -232,39 +232,94 @@ namespace post_process_detail {
     }
 
     // Called by the controller when the viewer emits requestQAlignReload()
-    // (first "Finish and Next"). Re-runs the FAST template build with
-    // Q-alignment enabled and writes it to a SEPARATE provisional file, then
-    // points the job's viewer path at it. Builds into locals and does NOT
-    // mutate job.tmpl / job.beats / job.info / job.peakResults, so it is safe
-    // to call while the background finalize worker (which owns those) is still
-    // running -- it only READS job.peakResults. Returns false if nothing could
-    // be built.
+    // Called by the controller when the viewer emits requestQAlignReload()
+    // (first "Finish and Next"). Q-aligns the cached R-pass templates in place
+    // (no rebuild), writes the result to a SEPARATE provisional file, and
+    // points the job's viewer path at it. Sets job.tmpl to the Q-aligned copy;
+    // call it after joining the finalize worker so the worker's canonical
+    // (R-pass) write has already completed. Returns false if nothing could be
+    // built.
     //
-    // NOTE: since finalizeViewerJob no longer runs the slow merge or sqabs
-    // detection (abs/square are ignored), the background worker is just file
-    // writes -- it neither mutates peakResults nor touches alignment::g_q_align,
-    // so this rebuild no longer contends with it. Joining the worker first is
-    // now only belt-and-suspenders.
+    // NOTE: the Q pass no longer touches the template generator at all -- it
+    // Q-shifts the cached R-aligned beats in place. So there is nothing for
+    // the background finalize worker (plain file writes) to contend with;
+    // joining it first is only belt-and-suspenders.
     inline bool regenerateWithQAlign(ViewerJob& job)
     {
-        alignment::g_q_align = true;
+        using clock = std::chrono::steady_clock;
+        const auto t0 = clock::now();
+        try {
+            // Reuse the R-pass PPG/arterial templates as-is and rebuild each
+            // ECG raw template by Q-aligning its cached snippets. Needs both
+            // the R-pass templates and the cached beats.
+            if (job.tmpl.bins.empty() || job.beats.per_channel_beats.empty()) {
+                std::cerr << "  [q-align] no cached beats/templates -> full rebuild fallback\n";
+                return regenerateWithQAlignFull(job);
+            }
+
+            template_io::TemplateFile qtmpl = job.tmpl;   // copy R-pass templates
+            qAlignTemplatesFromCache(qtmpl, job.beats, job.rates);
+
+            const std::filesystem::path qPath =
+                job.provisionalPath.parent_path() /
+                (job.stem + "_templates.qalign.partial.bin");
+            template_io::write_template_binfile(qPath.string(), qtmpl);
+            job.tmpl = std::move(qtmpl);
+            job.qAlignPath = qPath;
+            job.viewerTemplatePath = qPath;
+
+            const double ms = std::chrono::duration<double, std::milli>(
+                clock::now() - t0).count();
+            std::cerr << "  [q-align] reused R-pass templates, Q-shifted ECG in "
+                << ms << " ms\n";
+            return true;
+        }
+        catch (const std::exception& e) {
+            job.error = e.what();
+            return false;
+        }
+    }
+
+    // Full fallback: used only when the cached beats/templates are unavailable
+    // (e.g. a subject opened cold on the Q pass, where prepareViewerJob short-
+    // circuited on fresh canonical files and never built job.beats in memory).
+    // We can't Q-align without the R-aligned beat matrices, and those are only
+    // produced by the fast build -- so re-run the fast (R-only) build from the
+    // R-peaks to repopulate the cache, then Q-align from it exactly as the
+    // primary path does.
+    inline bool regenerateWithQAlignFull(ViewerJob& job)
+    {
+        using clock = std::chrono::steady_clock;
+        const auto t0 = clock::now();
         try {
             if (job.peakResults.empty()) {
                 if (job.rPeakPath.empty() || job.annealedPath.empty()) return false;
+                std::cerr << "  [q-align] fallback: reloading peakResults from disk\n";
                 job.peakResults = read_output_binfile(
                     job.rPeakPath.string(), job.annealedPath.string());
             }
+            if (job.peakResults.empty()) return false;
+
+            // Rebuild the R-pass templates from the R-peaks.
+            std::cerr << "  [q-align] fallback: full buildTemplatesAndBeatsFast rebuild\n";
             FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
             if (fast.tmpl.bins.empty()) return false;
 
-            // Distinct path so the R-only provisional/canonical files are
-            // untouched (no collision with the worker or the first pass).
+            // Q-shift the ECG raw templates so Q lands on a common column.
+            qAlignTemplatesFromCache(fast, job.rates);
+
             const std::filesystem::path qPath =
                 job.provisionalPath.parent_path() /
                 (job.stem + "_templates.qalign.partial.bin");
             template_io::write_template_binfile(qPath.string(), fast.tmpl);
+            job.tmpl = std::move(fast.tmpl);
+            job.beats = std::move(fast.beats);
+            job.info = std::move(fast.info);
             job.qAlignPath = qPath;
             job.viewerTemplatePath = qPath;
+            const double ms = std::chrono::duration<double, std::milli>(
+                clock::now() - t0).count();
+            std::cerr << "  [q-align] fallback rebuild done in " << ms << " ms\n";
             return true;
         }
         catch (const std::exception& e) {

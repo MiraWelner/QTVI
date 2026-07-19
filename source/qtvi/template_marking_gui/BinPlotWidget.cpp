@@ -840,7 +840,10 @@ void BinPlotWidget::captureGlyphSnapshot() {
             m_sampleRate);
         m_glyphs.ecgPPeak = e.p_peak_glyph;
         m_glyphs.ecgQ = e.q_begin_glyph;
-        m_glyphs.ecgRPeak = e.r_peak_glyph;
+        // R is NEVER autodetected: draw it at the passed-in R marker
+        // (m_markers[EcgRPeak] = r_peak_ch = r_col, straight from peak-finding
+        // through alignment). No argmax, no compute_r_wave, no window search.
+        m_glyphs.ecgRPeak = m_markers[EcgRPeak];
         m_glyphs.ecgS = e.s_end_glyph;
         m_glyphs.ecgTPeak = e.t_peak_glyph;   // computed T peak (max between T begin/end)
         m_glyphs.ecgTend = e.t_end_glyph;     // T end glyph = the user's T-end marker
