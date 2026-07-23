@@ -618,8 +618,7 @@ bool noise_marking_gui::promptThresholdBlanking(const QString& header,
 
     auto* blkSpin = new QDoubleSpinBox(&dlg);
     blkSpin->setRange(0.0, 2000.0); blkSpin->setDecimals(0); blkSpin->setSingleStep(10.0);
-    qDebug() << "blk =" << blk << " cfg.blanking_period =" << m_cfg.blanking_period; \
-        blkSpin->setValue(blk);
+    blkSpin->setValue(blk);
     form->addRow("Blanking (ms):", blkSpin);
 
     auto* buttons = new QDialogButtonBox(

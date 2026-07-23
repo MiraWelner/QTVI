@@ -11,13 +11,14 @@
 // All marker sample indices use -1 as the "unmarked / not applicable"
 // sentinel.
 //
-// Std vectors (ecgTemplate_raw_std per channel, ppgTemplate_std) come
+// IQR vectors (ecgTemplate_raw_iqr per channel, ppg_template_iqr) come
 // straight from the template file. Empty std => the widget renders the
 // trace without a gray band.
 //
 
 #include <vector>
 #include <string>
+#include <map>
 #include <cstdio>
 #include <cstdint>
 #include <cmath>
@@ -37,7 +38,7 @@
 
 struct ChannelTemplateData {
     std::vector<double> ecgTemplate_raw;
-    std::vector<double> ecgTemplate_raw_std;
+    std::vector<double> ecg_template_raw_iqr;
     std::vector<double> ecgTemplate_squared;   // unused by viewer
     std::vector<double> ecgTemplate_absval;    // unused by viewer
     double alignment_point_raw = 0;
@@ -66,7 +67,7 @@ struct TemplateBin {
 
     ChannelTemplateData ch1, ch2, ch3;
     std::vector<double> ppgTemplate;
-    std::vector<double> ppgTemplate_std;
+    std::vector<double> ppg_template_iqr;
 
     // Foot-anchored arterial background traces (empty when absent).
     std::vector<double> abpTemplate;
@@ -74,9 +75,9 @@ struct TemplateBin {
     std::vector<double> artPulmTemplate;
     // Per-sample std for each arterial template (empty when absent / not
     // computed). Same length as the matching template when present.
-    std::vector<double> abpTemplate_std;
-    std::vector<double> artTemplate_std;
-    std::vector<double> artPulmTemplate_std;
+    std::vector<double> abpTemplate_iqr;
+    std::vector<double> artTemplate_iqr;
+    std::vector<double> artPulmTemplate_iqr;
 
     // Markings produced by the viewer. ECG markings are per-channel
     // (the morphology differs by lead). PPG markings are shared across
@@ -150,6 +151,7 @@ struct TemplateBin {
         art_peak2_auto = -1, art_end_auto = -1;
     int art_pulm_onset_auto = -1, art_pulm_peak_auto = -1, art_pulm_dicrotic_auto = -1,
         art_pulm_peak2_auto = -1, art_pulm_end_auto = -1;
+
 };
 
 // ---------------------------------------------------------------------------
@@ -172,26 +174,26 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
         dst.ppg_peak_construct = src.ppg_peak_col;
         dst.ppg_onset_construct = src.ppg_onset_col;
         dst.ppgTemplate = src.ppgTemplate;
-        dst.ppgTemplate_std = src.ppgTemplate_std;
+        dst.ppg_template_iqr = src.ppg_template_iqr;
         dst.abpTemplate = src.abpTemplate;
         dst.artTemplate = src.artTemplate;
         dst.artPulmTemplate = src.artPulmTemplate;
-        dst.abpTemplate_std = src.abpTemplate_std;
-        dst.artTemplate_std = src.artTemplate_std;
-        dst.artPulmTemplate_std = src.artPulmTemplate_std;
+        dst.abpTemplate_iqr = src.abpTemplate_iqr;
+        dst.artTemplate_iqr = src.artTemplate_iqr;
+        dst.artPulmTemplate_iqr = src.artPulmTemplate_iqr;
 
         dst.ch1.ecgTemplate_raw = src.ch1_raw.ecgTemplate;
-        dst.ch1.ecgTemplate_raw_std = src.ch1_raw.ecgTemplate_std;
+        dst.ch1.ecg_template_raw_iqr = src.ch1_raw.ecg_template_iqr;
         dst.ch1.alignment_point_raw = src.ch1_raw.alignment_point;
         dst.ch1.r_col_raw = src.ch1_raw.r_col;
 
         dst.ch2.ecgTemplate_raw = src.ch2_raw.ecgTemplate;
-        dst.ch2.ecgTemplate_raw_std = src.ch2_raw.ecgTemplate_std;
+        dst.ch2.ecg_template_raw_iqr = src.ch2_raw.ecg_template_iqr;
         dst.ch2.alignment_point_raw = src.ch2_raw.alignment_point;
         dst.ch2.r_col_raw = src.ch2_raw.r_col;
 
         dst.ch3.ecgTemplate_raw = src.ch3_raw.ecgTemplate;
-        dst.ch3.ecgTemplate_raw_std = src.ch3_raw.ecgTemplate_std;
+        dst.ch3.ecg_template_raw_iqr = src.ch3_raw.ecg_template_iqr;
         dst.ch3.alignment_point_raw = src.ch3_raw.alignment_point;
         dst.ch3.r_col_raw = src.ch3_raw.r_col;
     }

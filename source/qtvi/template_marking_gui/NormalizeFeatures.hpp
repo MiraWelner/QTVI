@@ -30,7 +30,7 @@ The PPG Normalization algorithm is as follows:
 namespace normalize_features {
 
     inline double median_finite(std::vector<double> v) {
-		// Remove NaN and Inf values, then compute the median of the remaining finite values.
+        // Remove NaN and Inf values, then compute the median of the remaining finite values.
         v.erase(std::remove_if(v.begin(), v.end(),
             [](double x) { return !std::isfinite(x); }), v.end());
         if (v.empty()) return std::nan("");
@@ -65,7 +65,7 @@ namespace normalize_features {
     }
 
     inline double pulse_norm(double y, double foot_y, double ref) {
-		//divide PPG by the global reference (PI)
+        //divide PPG by the global reference (PI)
         if (!std::isfinite(ref) || ref == 0.0) return std::nan("");
         const double lr = calculate_perfusion_index(y, foot_y);
         return std::isnan(lr) ? lr : lr / ref;
@@ -130,6 +130,95 @@ namespace normalize_features {
             vals.push_back(calculate_perfusion_index(peak_y, foot_y));
         }
         return median_finite(std::move(vals));
+    }
+
+    // ------------------------------------------------------------------
+    // Whole-trace normalization. These are the ONLY place a raw ECG/pulse
+    // trace (mean template, individual beat, or a precomputed spread like
+    // IQR) should be converted to normalized units -- callers (viewer,
+    // CSV export, anywhere else) must call these rather than reimplement
+    // the divide/ratio math locally.
+    // ------------------------------------------------------------------
+
+    // Divide every sample of `raw` by `ref`, with the same guards as
+    // ecg_norm. This is also the correct final step for pulse channels:
+    // once a trace is already in "local ratio" units (see
+    // local_ratio_iqr below), dividing by Global_Ref_person is a plain
+    // scalar divide, identical in form to the ECG step.
+    inline std::vector<double> scale_array_by_ref(const std::vector<double>& raw, double ref) {
+        std::vector<double> out(raw.size());
+        for (size_t i = 0; i < raw.size(); ++i) out[i] = ecg_norm(raw[i], ref);
+        return out;
+    }
+
+    inline std::vector<double> normalize_ecg_trace(const std::vector<double>& raw, double ref) {
+        return scale_array_by_ref(raw, ref);
+    }
+
+    // Pulse: local ratio (per-sample, using THIS trace's own foot) then
+    // divide by ref. Works for the mean template or any individual beat --
+    // never uses a median/global foot value, per the documented algorithm.
+    inline std::vector<double> normalize_pulse_trace(const std::vector<double>& raw, int footIdx, double ref) {
+        const double footY = sample_y(raw, footIdx);
+        std::vector<double> out(raw.size());
+        for (size_t i = 0; i < raw.size(); ++i) out[i] = pulse_norm(raw[i], footY, ref);
+        return out;
+    }
+
+    // ------------------------------------------------------------------
+    // Cross-beat IQR (Q3-Q1) helpers, computed once at template-build
+    // time from the raw aligned beats -- NOT from individual beats
+    // retained downstream (that overlay-beat machinery has been removed;
+    // these summary statistics are all that's kept).
+    // ------------------------------------------------------------------
+
+    // ECG: pulse_norm-equivalent step is a plain scalar divide, so taking
+    // the IQR of raw amplitudes and dividing by ref later (scale_array_by_ref)
+    // is exact -- no restructuring needed relative to the raw computation.
+    // (Kept here only as a named entry point so build-time code doesn't
+    // need to hand-roll the quartile loop.)
+    inline std::vector<double> raw_amplitude_iqr(const std::vector<std::vector<double>>& rawBeats) {
+        if (rawBeats.empty()) return {};
+        size_t maxLen = 0;
+        for (const auto& bt : rawBeats) maxLen = std::max(maxLen, bt.size());
+        std::vector<double> iqr(maxLen, 0.0);
+        std::vector<double> col;
+        col.reserve(rawBeats.size());
+        for (size_t c = 0; c < maxLen; ++c) {
+            col.clear();
+            for (const auto& bt : rawBeats)
+                if (c < bt.size() && !std::isnan(bt[c])) col.push_back(bt[c]);
+            const size_t n = col.size();
+            if (n < 2) continue;
+            const size_t q1i = n / 4, q3i = (3 * n) / 4;
+            std::nth_element(col.begin(), col.begin() + q1i, col.end());
+            const double q1 = col[q1i];
+            std::nth_element(col.begin() + q1i, col.begin() + q3i, col.end());
+            const double q3 = col[q3i];
+            iqr[c] = q3 - q1;
+        }
+        return iqr;
+    }
+
+    // Pulse: unlike ECG, the per-sample transform's slope varies beat-to-
+    // beat (each beat has its own foot_y), so taking the IQR of raw values
+    // and dividing by a single factor afterward is NOT equivalent to the
+    // documented algorithm. Convert each beat to its own local-ratio trace
+    // FIRST (own foot, no global/median foot), take the cross-beat IQR of
+    // that, and defer only the final /Global_Ref_person to
+    // scale_array_by_ref() at display/export time -- exactly mirroring how
+    // the ECG IQR defers its /ref step.
+    inline std::vector<double> local_ratio_iqr(const std::vector<std::vector<double>>& rawBeats, int footIdx) {
+        if (rawBeats.empty()) return {};
+        std::vector<std::vector<double>> ratioBeats;
+        ratioBeats.reserve(rawBeats.size());
+        for (const auto& bt : rawBeats) {
+            const double footY = sample_y(bt, footIdx);
+            std::vector<double> r(bt.size());
+            for (size_t i = 0; i < bt.size(); ++i) r[i] = calculate_perfusion_index(bt[i], footY);
+            ratioBeats.push_back(std::move(r));
+        }
+        return raw_amplitude_iqr(ratioBeats);   // same cross-beat quartile mechanics, different input units
     }
 
 }   // namespace normalize_features

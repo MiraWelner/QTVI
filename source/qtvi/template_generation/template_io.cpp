@@ -24,7 +24,7 @@ namespace template_io {
         void writeMethod(std::ofstream& f, const ChannelMethodTemplate& m) {
             writeVecD(f, m.ecgTemplate);
             // Empty for methods that don't compute std (sz=0, no payload).
-            writeVecD(f, m.ecgTemplate_std);
+            writeVecD(f, m.ecg_template_iqr);
             f.write(reinterpret_cast<const char*>(&m.alignment_point), 8);
             f.write(reinterpret_cast<const char*>(&m.r_col), 4);
         }
@@ -44,7 +44,7 @@ namespace template_io {
 
         bool readMethod(std::ifstream& f, ChannelMethodTemplate& m) {
             if (!readVecD(f, m.ecgTemplate)) return false;
-            if (!readVecD(f, m.ecgTemplate_std)) return false;
+            if (!readVecD(f, m.ecg_template_iqr)) return false;
             if (!f.read(reinterpret_cast<char*>(&m.alignment_point), 8)) return false;
             if (!f.read(reinterpret_cast<char*>(&m.r_col), 4)) return false;
             return true;
@@ -76,13 +76,13 @@ namespace template_io {
             writeMethod(f, b.ch3_raw); writeMethod(f, b.ch3_squared);
             writeMethod(f, b.ch3_absval); writeMethod(f, b.ch3_unfiltered);
             writeVecD(f, b.ppgTemplate);
-            writeVecD(f, b.ppgTemplate_std);
+            writeVecD(f, b.ppg_template_iqr);
             writeVecD(f, b.abpTemplate);
-            writeVecD(f, b.abpTemplate_std);
+            writeVecD(f, b.abpTemplate_iqr);
             writeVecD(f, b.artTemplate);
-            writeVecD(f, b.artTemplate_std);
+            writeVecD(f, b.artTemplate_iqr);
             writeVecD(f, b.artPulmTemplate);
-            writeVecD(f, b.artPulmTemplate_std);
+            writeVecD(f, b.artPulmTemplate_iqr);
             f.write(reinterpret_cast<const char*>(&b.ch1_n_beats_raw), 8);
             f.write(reinterpret_cast<const char*>(&b.ch2_n_beats_raw), 8);
             f.write(reinterpret_cast<const char*>(&b.ch3_n_beats_raw), 8);
@@ -118,13 +118,13 @@ namespace template_io {
                 !readMethod(f, b.ch3_raw) || !readMethod(f, b.ch3_squared) ||
                 !readMethod(f, b.ch3_absval) || !readMethod(f, b.ch3_unfiltered) ||
                 !readVecD(f, b.ppgTemplate) ||
-                !readVecD(f, b.ppgTemplate_std) ||
+                !readVecD(f, b.ppg_template_iqr) ||
                 !readVecD(f, b.abpTemplate) ||
-                !readVecD(f, b.abpTemplate_std) ||
+                !readVecD(f, b.abpTemplate_iqr) ||
                 !readVecD(f, b.artTemplate) ||
-                !readVecD(f, b.artTemplate_std) ||
+                !readVecD(f, b.artTemplate_iqr) ||
                 !readVecD(f, b.artPulmTemplate) ||
-                !readVecD(f, b.artPulmTemplate_std))
+                !readVecD(f, b.artPulmTemplate_iqr))
                 throw std::runtime_error("template file truncated mid-bin: " + path);
             if (!f.read(reinterpret_cast<char*>(&b.ch1_n_beats_raw), 8) ||
                 !f.read(reinterpret_cast<char*>(&b.ch2_n_beats_raw), 8) ||

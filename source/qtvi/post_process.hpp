@@ -235,9 +235,19 @@ namespace post_process_detail {
     // (R-pass) write has already completed. Returns false if nothing could be
     // built.
     //
+    inline bool regenerateWithQAlignFull(ViewerJob& job);   // fwd decl
+
     inline bool regenerateWithQAlign(ViewerJob& job)
     {
         try {
+            // If the R pass was served from the on-disk cache (waveFresh &&
+            // templatesFresh in prepareViewerJob), job.tmpl/job.beats were
+            // never built in memory -- both empty. Q-aligning that would write
+            // a 0-bin file ("No bins loaded" on the Q reload), so rebuild from
+            // the R-peaks instead.
+            if (job.tmpl.bins.empty() || job.beats.per_channel_beats.empty())
+                return regenerateWithQAlignFull(job);
+
             template_io::TemplateFile qtmpl = job.tmpl;   // copy R-pass templates
             qAlignTemplatesFromCache(qtmpl, job.beats, job.rates);
 
@@ -247,7 +257,54 @@ namespace post_process_detail {
             template_io::write_template_binfile(qPath.string(), qtmpl);
             job.tmpl = std::move(qtmpl);
             job.qAlignPath = qPath;
-            job.viewerTemplatePath = qPath;;
+            job.viewerTemplatePath = qPath;
+            return true;
+        }
+        catch (const std::exception& e) {
+            job.error = e.what();
+            return false;
+        }
+    }
+
+    // Fallback for when the R-pass templates/beats weren't held in memory
+    // (subject opened from the fresh on-disk cache). Reloads the R-peaks,
+    // rebuilds the R-pass templates + beats, then Q-aligns exactly as the
+    // primary path does.
+    inline bool regenerateWithQAlignFull(ViewerJob& job)
+    {
+        try {
+            if (job.peakResults.empty()) {
+                if (job.rPeakPath.empty() || job.annealedPath.empty()) {
+                    job.error = "Q-align rebuild: no cached beats and no r-peak path";
+                    return false;
+                }
+                job.peakResults = read_output_binfile(
+                    job.rPeakPath.string(), job.annealedPath.string());
+            }
+            if (job.peakResults.empty()) {
+                job.error = "Q-align rebuild: peakResults empty";
+                return false;
+            }
+
+            FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
+            if (fast.tmpl.bins.empty()) {
+                job.error = "Q-align rebuild: produced 0 bins";
+                return false;
+            }
+            job.tmpl = std::move(fast.tmpl);
+            job.beats = std::move(fast.beats);
+            job.info = std::move(fast.info);
+
+            template_io::TemplateFile qtmpl = job.tmpl;
+            qAlignTemplatesFromCache(qtmpl, job.beats, job.rates);
+
+            const std::filesystem::path qPath =
+                job.provisionalPath.parent_path() /
+                (job.stem + "_templates.qalign.partial.bin");
+            template_io::write_template_binfile(qPath.string(), qtmpl);
+            job.tmpl = std::move(qtmpl);
+            job.qAlignPath = qPath;
+            job.viewerTemplatePath = qPath;
             return true;
         }
         catch (const std::exception& e) {

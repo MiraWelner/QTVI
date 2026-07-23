@@ -48,7 +48,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // AlignWaves -> NaN-strip pipeline is unnecessary. We just hand the
     // templates through.
     vector<vector<double>> ppg_templates;
-    vector<vector<double>> ppg_template_stds;
+    vector<vector<double>> ppg_template_iqrs;
     vector<vector<vector<double>>> ppg_kept(n);
     vector<int> ppg_peak_cols(n, -1);
     vector<int> ppg_onset_cols(n, -1);
@@ -57,7 +57,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     if (has_ppg && rates.ppg > 0.0) {
         PPGTemplatesResult ppg_res = CreatePPGTemplates(wave_data, rates.ecg, rates.ppg);
         ppg_templates = std::move(ppg_res.templates);
-        ppg_template_stds = std::move(ppg_res.stds);
+        ppg_template_iqrs = std::move(ppg_res.iqrs);
         ppg_kept = std::move(ppg_res.kept);
         ppg_peak_cols = std::move(ppg_res.peakCol);
         ppg_onset_cols = std::move(ppg_res.footCol);
@@ -78,8 +78,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         dst.ecgTemplate_raw = src.ecgTemplates_raw[i];
         // Per-sample std for the raw method only -- the other three
         // methods are never displayed, so they don't have std computed.
-        if (i < src.ecgTemplates_raw_std.size())
-            dst.ecgTemplate_raw_std = src.ecgTemplates_raw_std[i];
+        if (i < src.ecgTemplates_raw_iqr.size())
+            dst.ecgTemplate_raw_iqr = src.ecgTemplates_raw_iqr[i];
 
         dst.ecgTemplate_squared = src.ecgTemplates_squared[i];
         dst.ecgTemplate_absval = src.ecgTemplates_absval[i];
@@ -100,7 +100,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 
     auto clear_channel = [](ChannelTemplates& dst) {
         dst.ecgTemplate_raw = {};
-        dst.ecgTemplate_raw_std = {};
+        dst.ecgTemplate_raw_iqr = {};
         dst.ecgTemplate_squared = {};
         dst.ecgTemplate_absval = {};
         dst.ecgTemplate_unfiltered = {};
@@ -149,7 +149,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 
         if (ppg_template_good) {
             info.ppgTemplate = ppg_templates[i];
-            info.ppgTemplate_std = ppg_template_stds[i];
+            info.ppg_template_iqr = ppg_template_iqrs[i];
             info.ppg_peak_col = ppg_peak_cols[i];
             info.ppg_onset_col = ppg_onset_cols[i];
             if (i < ppg_kept.size()) {
@@ -157,7 +157,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 info.kept_beats_by_channel["PPG"] = std::move(ppg_kept[i]);
             }
         }
-        // else: info.ppgTemplate / ppgTemplate_std stay default-empty,
+        // else: info.ppgTemplate / ppg_template_iqr stay default-empty,
         // which the viewer already interprets as "no PPG for this bin".
     }
     return result;

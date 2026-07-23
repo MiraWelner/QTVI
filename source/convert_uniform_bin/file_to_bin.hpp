@@ -9,7 +9,7 @@
  *         header so a consumer can reconstruct each channel's upsampled
  *         time axis.
  *
- *   568-byte header (142 x 32-bit fields):
+ *   584-byte header (146 x 32-bit fields):
  *
  *     Offset   0: sleep_state_len (uint32)  sleep-stage epoch length in seconds (e.g. 30 s)
  *
@@ -21,7 +21,7 @@
  *                 0.0 = channel absent (matches a missing-channel placeholder).
  *     Offset 564: size_sleep            (uint32)
  *
- *   Header size check: 1 + 35 + 35 + 35 + 35 + 1 = 142 fields x 4 bytes = 568 bytes
+ *   Header size check: 1 + 35 + 35 + 35 + 35 + 1 = 146 fields x 4 bytes = 584 bytes
  *
  *   Channel index order (35 slots, identical across upsampled/raw/native-rate/upsample-rate blocks):
  *      0: seconds from start of recording           1: ecg_1

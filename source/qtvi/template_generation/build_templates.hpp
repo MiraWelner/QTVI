@@ -24,16 +24,16 @@
 namespace template_generation_detail {
 
     // Copy one template (+ optional std) into the on-disk method block.
-    // The non-raw methods pass an empty tmpl_std and the on-disk std
+    // The non-raw methods pass an empty tmpl_iqr and the on-disk std
     // field stays sz=0 (no payload). Both writer and reader handle that
     // uniformly, so there's only ever one code path.
     inline void copyMethod(template_io::ChannelMethodTemplate& dst,
         const std::vector<double>& tmpl,
-        const std::vector<double>& tmpl_std,
+        const std::vector<double>& tmpl_iqr,
         double alignment, int rCol)
     {
         dst.ecgTemplate = tmpl;
-        dst.ecgTemplate_std = tmpl_std;
+        dst.ecg_template_iqr = tmpl_iqr;
         dst.alignment_point = std::isnan(alignment) ? 0.0 : alignment;
         dst.r_col = rCol;
     }
@@ -49,7 +49,7 @@ namespace template_generation_detail {
         const std::vector<double> noStd;
 
         copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw,
-            info.ch1.ecgTemplate_raw_std,
+            info.ch1.ecgTemplate_raw_iqr,
             info.ch1.alignment_point_raw, info.ch1.r_col_raw);
         copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd,
             info.ch1.alignment_point_squared, info.ch1.r_col_squared);
@@ -59,7 +59,7 @@ namespace template_generation_detail {
             info.ch1.alignment_point_unfiltered, info.ch1.r_col_unfiltered);
 
         copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw,
-            info.ch2.ecgTemplate_raw_std,
+            info.ch2.ecgTemplate_raw_iqr,
             info.ch2.alignment_point_raw, info.ch2.r_col_raw);
         copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd,
             info.ch2.alignment_point_squared, info.ch2.r_col_squared);
@@ -69,7 +69,7 @@ namespace template_generation_detail {
             info.ch2.alignment_point_unfiltered, info.ch2.r_col_unfiltered);
 
         copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw,
-            info.ch3.ecgTemplate_raw_std,
+            info.ch3.ecgTemplate_raw_iqr,
             info.ch3.alignment_point_raw, info.ch3.r_col_raw);
         copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd,
             info.ch3.alignment_point_squared, info.ch3.r_col_squared);
@@ -79,7 +79,7 @@ namespace template_generation_detail {
             info.ch3.alignment_point_unfiltered, info.ch3.r_col_unfiltered);
 
         bt.ppgTemplate = info.ppgTemplate;
-        bt.ppgTemplate_std = info.ppgTemplate_std;
+        bt.ppg_template_iqr = info.ppg_template_iqr;
 
         // Per-channel + PPG slice counts (post drop-rules).
         bt.ch1_n_beats_raw = info.ch1.n_beats_raw;
@@ -99,25 +99,25 @@ namespace template_generation_detail {
         if (bad_segment) return;
 
         copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw,
-            info.ch1.ecgTemplate_raw_std,
+            info.ch1.ecgTemplate_raw_iqr,
             info.ch1.alignment_point_raw, info.ch1.r_col_raw);
         copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, {},
             info.ch1.alignment_point_unfiltered, info.ch1.r_col_unfiltered);
 
         copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw,
-            info.ch2.ecgTemplate_raw_std,
+            info.ch2.ecgTemplate_raw_iqr,
             info.ch2.alignment_point_raw, info.ch2.r_col_raw);
         copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, {},
             info.ch2.alignment_point_unfiltered, info.ch2.r_col_unfiltered);
 
         copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw,
-            info.ch3.ecgTemplate_raw_std,
+            info.ch3.ecgTemplate_raw_iqr,
             info.ch3.alignment_point_raw, info.ch3.r_col_raw);
         copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered, {},
             info.ch3.alignment_point_unfiltered, info.ch3.r_col_unfiltered);
 
         bt.ppgTemplate = info.ppgTemplate;
-        bt.ppgTemplate_std = info.ppgTemplate_std;
+        bt.ppg_template_iqr = info.ppg_template_iqr;
 
         // Per-channel + PPG slice counts (post drop-rules).
         bt.ch1_n_beats_raw = info.ch1.n_beats_raw;
@@ -195,15 +195,15 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
             if (out.tmpl.bins[i].bad_segment) continue;
             if (i < abp.templates.size()) {
                 out.tmpl.bins[i].abpTemplate = std::move(abp.templates[i]);
-                out.tmpl.bins[i].abpTemplate_std = std::move(abp.stds[i]);
+                out.tmpl.bins[i].abpTemplate_iqr = std::move(abp.iqrs[i]);
             }
             if (i < art.templates.size()) {
                 out.tmpl.bins[i].artTemplate = std::move(art.templates[i]);
-                out.tmpl.bins[i].artTemplate_std = std::move(art.stds[i]);
+                out.tmpl.bins[i].artTemplate_iqr = std::move(art.iqrs[i]);
             }
             if (i < artp.templates.size()) {
                 out.tmpl.bins[i].artPulmTemplate = std::move(artp.templates[i]);
-                out.tmpl.bins[i].artPulmTemplate_std = std::move(artp.stds[i]);
+                out.tmpl.bins[i].artPulmTemplate_iqr = std::move(artp.iqrs[i]);
             }
         }
 
@@ -280,11 +280,11 @@ inline void qAlignTemplatesFromCache(template_io::TemplateFile& tmpl,
             // R-aligned beats -- the reference the Q marker is found on.
             alignment::QAlignResult q =
                 alignment::q_align_beat_matrix(perBin[i], blk.r_col, fs,
-                    /*compute_std=*/true, /*refMedian=*/blk.ecgTemplate);
+                    /*compute_iqr=*/true, /*refMedian=*/blk.ecgTemplate);
             if (q.tmpl.empty()) continue;
 
             blk.ecgTemplate = std::move(q.tmpl);
-            blk.ecgTemplate_std = std::move(q.std);
+            blk.ecg_template_iqr = std::move(q.iqr);
             if (q.r_col >= 0) blk.r_col = q.r_col;   // R re-detected on the Q template
         }
     }

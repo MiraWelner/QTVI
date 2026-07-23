@@ -30,10 +30,11 @@
 #include <vector>
 #include "template_marking_gui/alignment.hpp"
 #include "TemplateTypes.hpp"
+#include "template_marking_gui/NormalizeFeatures.hpp"
 
 struct PPGTemplatesResult {
     vector<vector<double>> templates;   // [bin][sample]
-    vector<vector<double>> stds;        // [bin][sample], same shape as templates
+    vector<vector<double>> iqrs;        // [bin][sample], same shape as templates
     vector<vector<vector<double>>> kept; // [bin][beat][sample] retained snips
     vector<int> peakCol;                // [bin] systolic peak column (R1..R2)
     vector<int> footCol;                // [bin] foot column (R1..peak)
@@ -65,13 +66,13 @@ static inline void build_pulse_template_pair_windowed(
     double ecgRate,
     double padSeconds,
     std::vector<double>& outTemplate,
-    std::vector<double>& outStd,
+    std::vector<double>& outIqr,
     std::vector<std::vector<double>>& outKeptBeats,
     int& outPeakCol,
     int& outFootCol)
 {
     outTemplate.clear();
-    outStd.clear();
+    outIqr.clear();
     outKeptBeats.clear();
     outPeakCol = -1;
     outFootCol = -1;
@@ -111,34 +112,13 @@ static inline void build_pulse_template_pair_windowed(
             : col[nc / 2];
     }
 
-    // Per-sample std (sample std, NaN skip, ddof=1).
-    outStd.assign(maxLen, 0.0);
-    for (size_t c = 0; c < maxLen; ++c) {
-        double sum = 0.0;
-        size_t n = 0;
-        for (const auto& sl : aligned.beats)
-            if (!std::isnan(sl[c])) { sum += sl[c]; ++n; }
-        if (n < 2) continue;
-        const double mean = sum / static_cast<double>(n);
-        double ss = 0.0;
-        for (const auto& sl : aligned.beats)
-            if (!std::isnan(sl[c])) {
-                const double d = sl[c] - mean;
-                ss += d * d;
-            }
-        outStd[c] = std::sqrt(ss / static_cast<double>(n - 1));
-    }
-
-    // Retain aligned per-beat slices for downstream (snips CSV, etc).
-    outKeptBeats.reserve(aligned.beats.size());
-    for (const auto& sl : aligned.beats) outKeptBeats.push_back(sl);
-
     // ---- Deterministic PPG fiducials from the real R-peaks -------------
     // The template is R-anchored: R1 lands at column padSeconds*channelRate
     // (0.25 s in) by construction. R2 = R1 + one RR interval. We compute the
     // systolic peak as the max in [R1, R2] (exactly one pulse -> no risk of
     // grabbing a later pulse) and the foot as the min in [R1, peak]. Using the
     // true R-pair interval (not a fixed window) makes these exact.
+    // Computed BEFORE the spread below, since the spread needs outFootCol.
     {
         const int N = static_cast<int>(outTemplate.size());
         const int r1 = std::clamp(
@@ -173,6 +153,23 @@ static inline void build_pulse_template_pair_windowed(
         }
     }
 
+    // Per-sample robust spread, in the SAME units the mean trace will
+    // eventually be displayed/exported in (minus only the final /ref
+    // division, which normalize_features::scale_array_by_ref applies at
+    // display time -- never here). Each beat is first converted to its own
+    // local perfusion-index ratio using ITS OWN foot (outFootCol), per the
+    // documented algorithm -- never a median/global foot -- then the
+    // cross-beat IQR is taken of those local-ratio values. This is NOT the
+    // same as taking the IQR of raw amplitudes, because the per-sample
+    // transform's slope differs beat-to-beat (each beat has its own foot).
+    outIqr = (outFootCol >= 0)
+        ? normalize_features::local_ratio_iqr(aligned.beats, outFootCol)
+        : std::vector<double>(maxLen, 0.0);
+
+    // Retain aligned per-beat slices for downstream (snips CSV, etc).
+    outKeptBeats.reserve(aligned.beats.size());
+    for (const auto& sl : aligned.beats) outKeptBeats.push_back(sl);
+
     (void)padSeconds; (void)channelRate; (void)ecgRate;
 }
 
@@ -194,7 +191,7 @@ inline PPGTemplatesResult CreatePPGTemplates(
     size_t n = bins.size();
     PPGTemplatesResult out;
     out.templates.assign(n, {});
-    out.stds.assign(n, {});
+    out.iqrs.assign(n, {});
     out.kept.assign(n, {});
     out.peakCol.assign(n, -1);
     out.footCol.assign(n, -1);
@@ -210,12 +207,12 @@ inline PPGTemplatesResult CreatePPGTemplates(
                 b.ppgSignal, ppgRate,
                 b.ch1.raw, ecgRate,
                 padSeconds,
-                out.templates[i], out.stds[i], out.kept[i],
+                out.templates[i], out.iqrs[i], out.kept[i],
                 out.peakCol[i], out.footCol[i]);
         }
         catch (...) {
             out.templates[i] = {};
-            out.stds[i] = {};
+            out.iqrs[i] = {};
             out.kept[i] = {};
             out.peakCol[i] = -1;
             out.footCol[i] = -1;

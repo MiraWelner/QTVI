@@ -199,10 +199,24 @@ static void runTemplateMarking(const config_entry& cfg,
         bool ok = false;
         QEventLoop waitLoop;
         std::thread rebuild([&ok, job, &waitLoop, ensureWorkerDone]() {
-            if (ensureWorkerDone) ensureWorkerDone();   // join finalize off the GUI thread
-            ok = post_process_detail::regenerateWithQAlign(*job);
+            // The wait loop below blocks until this thread posts quit. Guard the
+            // whole body so quit is ALWAYS posted -- if ensureWorkerDone() or the
+            // rebuild throws (or returns early), we must still wake waitLoop or
+            // the GUI thread hangs forever in waitLoop.exec() (freeze on close).
+            try {
+                if (ensureWorkerDone) ensureWorkerDone();   // join finalize off the GUI thread
+                ok = post_process_detail::regenerateWithQAlign(*job);
+            }
+            catch (const std::exception& e) {
+                ok = false;
+                if (job->error.empty()) job->error = e.what();
+            }
+            catch (...) {
+                ok = false;
+                if (job->error.empty()) job->error = "unknown exception in Q-align rebuild";
+            }
             QMetaObject::invokeMethod(&waitLoop, &QEventLoop::quit,
-                Qt::QueuedConnection);
+                Qt::QueuedConnection);   // guaranteed reached: no path skips it
             });
         waitLoop.exec();     // GUI stays alive; dialog animates
         rebuild.join();
@@ -215,6 +229,17 @@ static void runTemplateMarking(const config_entry& cfg,
             break;
         }
         // loop: reopen a fresh viewer on job->viewerTemplatePath (now qalign).
+    }
+
+    // The interactively-reviewed job never enters `outstanding`, so its
+    // Q-align provisional (.qalign.partial.bin) is not cleaned by reap/finishJob.
+    // The viewer read it fully and closed the handle in loadSubject (no mmap,
+    // no deferred delete), so it is safe to remove now. Best-effort: never throw
+    // on this path so a failed delete can't stall shutdown.
+    if (!job->qAlignPath.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(job->qAlignPath, ec);
+        job->qAlignPath.clear();
     }
 }
 
@@ -326,10 +351,17 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
+        // The user may have used "Load" inside the noise GUI to switch to a
+        // different file; template/log the file actually marked, not the loop's
+        // binFs. (In the normal case getFilePath() == binFs, so this is a no-op.)
+        const std::filesystem::path effBin =
+            currentBinFile.empty() ? binFs : currentBinFile;
+        const std::string effStem = effBin.stem().string();
+
         // Commit the final partial buffer (the last <30 s the timer didn't
         // reach) and write the populated log out.
         beatLog.flushPending();
-        beatLog.writeCsv(cfg.log_path + "/" + stem + "_log.csv");   // was output_path + "/logs/"
+        beatLog.writeCsv(cfg.log_path + "/" + effStem + "_log.csv");
 
         // ---- Export markings (input to the anneal step) -----------------
         if (allMarkings.isEmpty()) {
@@ -346,28 +378,14 @@ int main(int argc, char* argv[]) {
         // templates and writes a provisional file for the viewer. The
         // squared/absval R-peak detection and templating are deferred to a
         // worker thread that runs while the user marks templates.
-        std::cout << "Processing (fast: anneal / raw r-peaks / raw templates): "
-            << stem << "\n";
-        auto jobOpt = post_process_detail::prepareViewerJob(cfg, binFs);
-        if (!jobOpt) {
-            std::cout << "  prep failed or skipped; not templating.\n";
-            continue;
-        }
+        auto jobOpt = post_process_detail::prepareViewerJob(cfg, effBin);
         // shared_ptr so the worker lambda safely co-owns the job; it is
         // joined later (reaped when finished, or drained at shutdown), so the
         // job data always outlives the worker.
         auto job = std::make_shared<post_process_detail::ViewerJob>(std::move(*jobOpt));
-
-        if (!std::filesystem::exists(job->viewerTemplatePath)) {
-            std::cerr << "  no template file produced for " << stem
-                << "; skipping template marking.\n";
-            continue;
-        }
-
         auto done = std::make_shared<std::atomic<bool>>(false);
         std::thread worker;
         if (job->needsFinalize) {
-            std::cout << "  squared/absval r-peaks + templates finalizing in background\n";
             worker = std::thread([job, done] {
                 // Pure compute + file writes to canonical paths. No Qt here.
                 post_process_detail::finalizeViewerJob(*job);
@@ -402,11 +420,9 @@ int main(int argc, char* argv[]) {
 
     // Drain remaining background jobs before exiting.
     if (!outstanding.empty()) {
-        std::cout << "\nFinishing " << outstanding.size()
-            << " background squared/absval job(s)...\n";
         reap(/*force=*/true);
     }
 
-    std::cout << "\nAll files marked, processed, and templated.\n";
+    std::cout << "\nAll files processed.\n";
     return 0;
 }

@@ -128,9 +128,9 @@ public:
     // are ignored at draw time (the band silently disappears for that
     // trace), so it's safe to call this with stale data.
     void setData(const std::vector<double>& ppg,
-        const std::vector<double>& ppgStd,
+        const std::vector<double>& ppgIqr,
         const std::vector<double>& ecg,
-        const std::vector<double>& ecgStd,
+        const std::vector<double>& ecgIqr,
         int pPeak, int qBegin, int rPeak, int sEnd, int tPeak, int tEnd,
         int ppgOnset, int ppgP50, int ppgPeak,
         int ppgDicrotic, int ppgPeak2, int ppgT80, int ppgEnd,
@@ -178,9 +178,9 @@ public:
     void setArterialTraces(const std::vector<double>& abp,
         const std::vector<double>& art,
         const std::vector<double>& artPulm,
-        const std::vector<double>& abpStd = {},
-        const std::vector<double>& artStd = {},
-        const std::vector<double>& artPulmStd = {});
+        const std::vector<double>& abpIqr = {},
+        const std::vector<double>& artIqr = {},
+        const std::vector<double>& artPulmIqr = {});
     void setBackgroundTraces(const std::vector<std::pair<std::vector<double>, QColor>>& traces);
     std::vector<std::pair<std::vector<double>, QColor>> m_bgTraces;
 
@@ -238,10 +238,9 @@ private:
     int m_leadIndex;
     QString m_leadLabel;
     std::vector<double> m_ppg;
-    std::vector<double> m_ppgStd;
+    std::vector<double> m_ppgIqr;
     std::vector<double> m_ecg;
-    std::vector<double> m_ecgStd;
-
+    std::vector<double> m_ecgIqr;
 
     int m_ecgVisibleN = 0;
     int m_ppgVisibleN = 0;
@@ -284,9 +283,9 @@ private:
     std::vector<double> m_art;
     std::vector<double> m_artPulm;
     // Per-sample std for each arterial trace (empty => no band drawn).
-    std::vector<double> m_abpStd;
-    std::vector<double> m_artStd;
-    std::vector<double> m_artPulmStd;
+    std::vector<double> m_abpIqr;
+    std::vector<double> m_artIqr;
+    std::vector<double> m_artPulmIqr;
 
     State m_state = State::Good;
     bool  m_hasPPG = false;

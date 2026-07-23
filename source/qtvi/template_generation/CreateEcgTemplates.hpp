@@ -32,7 +32,7 @@
 
 struct SingleMethodResult {
     vector<double> ecgTemplate;
-    vector<double> ecgTemplate_std;   // empty for methods that don't compute std
+    vector<double> ecg_template_iqr;   // empty for methods that don't compute std
     double ppg_alignment_point;
     int r_col = -1;   // true R column (alignment's r_aligned_col)
     // Number of slices that survived the drop rules (r1<=r0, len<3) and
@@ -49,7 +49,7 @@ static inline SingleMethodResult build_ecg_template_for_method(
     const vector<vector<double>>& pairs,
     double ecgRate,
     vector<vector<double>>* out_kept_beats = nullptr,
-    bool compute_std = false)
+    bool compute_iqr = false)
 {
     // NEW SLICING (Phase A of the pair-window refactor):
     //   For every consecutive R-peak pair (R_i, R_{i+1}) in `rpeaks`,
@@ -68,7 +68,7 @@ static inline SingleMethodResult build_ecg_template_for_method(
     //   and the true R column (r_aligned_col) is carried out in res.r_col.
     SingleMethodResult res;
     res.ecgTemplate = {};
-    res.ecgTemplate_std = {};
+    res.ecg_template_iqr = {};
     res.ppg_alignment_point = NaN;
     res.r_col = -1;
 
@@ -110,24 +110,29 @@ static inline SingleMethodResult build_ecg_template_for_method(
             : col[nc / 2];
     }
 
-    // Optional per-sample std over the same aligned-beat matrix (sample std,
-    // NaN skip, ddof=1). Used to draw the gray band under the raw template.
-    if (compute_std) {
-        res.ecgTemplate_std.assign(maxLen, 0.0);
+    // Per-sample robust spread over the same aligned-beat matrix: the IQR
+    // (25th-75th percentile). Robust so
+    // the band tracks the median template line and isn't inflated by the few
+    // outlier / 1-sample-off beats at the R spike (which barely move the
+    // median but massively inflate a mean-based std). Used to draw the gray
+    // band under the raw template.
+    if (compute_iqr) {
+        res.ecg_template_iqr.assign(maxLen, 0.0);
+        std::vector<double> col;
+        col.reserve(aligned.beats.size());
         for (size_t c = 0; c < maxLen; ++c) {
-            double sum = 0.0;
-            size_t n = 0;
+            col.clear();
             for (const auto& sl : aligned.beats)
-                if (!std::isnan(sl[c])) { sum += sl[c]; ++n; }
-            if (n < 2) continue;
-            const double mean = sum / static_cast<double>(n);
-            double ss = 0.0;
-            for (const auto& sl : aligned.beats)
-                if (!std::isnan(sl[c])) {
-                    const double d = sl[c] - mean;
-                    ss += d * d;
-                }
-            res.ecgTemplate_std[c] = std::sqrt(ss / static_cast<double>(n - 1));
+                if (!std::isnan(sl[c])) col.push_back(sl[c]);
+            const size_t nc = col.size();
+            if (nc < 2) continue;
+            const size_t q1i = nc / 4;
+            const size_t q3i = (3 * nc) / 4;
+            std::nth_element(col.begin(), col.begin() + q1i, col.end());
+            const double q1 = col[q1i];
+            std::nth_element(col.begin() + q1i, col.begin() + q3i, col.end());
+            const double q3 = col[q3i];
+            res.ecg_template_iqr[c] = q3 - q1;
         }
     }
 
@@ -152,7 +157,7 @@ static inline SingleMethodResult build_ecg_template_for_method(
 
 static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
     cr.ecgTemplates_raw.resize(n);
-    cr.ecgTemplates_raw_std.resize(n);
+    cr.ecgTemplates_raw_iqr.resize(n);
     cr.ecgTemplates_squared.resize(n);
     cr.ecgTemplates_absval.resize(n);
     cr.ecgTemplates_unfiltered.resize(n);
@@ -212,9 +217,9 @@ static inline void process_channel_fast(
         ? &cr.kept_beats_raw[i] : nullptr;
     auto raw_res = build_ecg_template_for_method(
         ecgSignal, masterPeaks, bin.pairs, ecgRate,
-        capture, /*compute_std=*/true);
+        capture, /*compute_iqr=*/true);
     cr.ecgTemplates_raw[i] = raw_res.ecgTemplate;
-    cr.ecgTemplates_raw_std[i] = raw_res.ecgTemplate_std;
+    cr.ecgTemplates_raw_iqr[i] = raw_res.ecg_template_iqr;
     cr.ppg_alignment_point_raw[i] = raw_res.ppg_alignment_point;
     cr.r_col_raw[i] = raw_res.r_col;
     cr.n_beats_raw[i] = raw_res.n_beats;
@@ -222,7 +227,7 @@ static inline void process_channel_fast(
     // Method 4: unfiltered (original ECG signal + master R-peaks). No std.
     auto unfilt_res = build_ecg_template_for_method(
         origSignal, masterPeaks, bin.pairs, ecgRate,
-        nullptr, /*compute_std=*/false);
+        nullptr, /*compute_iqr=*/false);
     cr.ecgTemplates_unfiltered[i] = unfilt_res.ecgTemplate;
     cr.ppg_alignment_point_unfiltered[i] = unfilt_res.ppg_alignment_point;
     cr.r_col_unfiltered[i] = unfilt_res.r_col;
@@ -251,7 +256,7 @@ static inline void process_channel_slow(
     const auto& sq_sig = ch.squared_signal.empty() ? ecgSignal : ch.squared_signal;
     auto sq_res = build_ecg_template_for_method(
         sq_sig, masterPeaks, bin.pairs, ecgRate,
-        nullptr, /*compute_std=*/false);
+        nullptr, /*compute_iqr=*/false);
     cr.ecgTemplates_squared[i] = sq_res.ecgTemplate;
     cr.ppg_alignment_point_squared[i] = sq_res.ppg_alignment_point;
     cr.r_col_squared[i] = sq_res.r_col;
@@ -260,7 +265,7 @@ static inline void process_channel_slow(
     const auto& abs_sig = ch.absval_signal.empty() ? ecgSignal : ch.absval_signal;
     auto abs_res = build_ecg_template_for_method(
         abs_sig, masterPeaks, bin.pairs, ecgRate,
-        nullptr, /*compute_std=*/false);
+        nullptr, /*compute_iqr=*/false);
     cr.ecgTemplates_absval[i] = abs_res.ecgTemplate;
     cr.ppg_alignment_point_absval[i] = abs_res.ppg_alignment_point;
     cr.r_col_absval[i] = abs_res.r_col;

@@ -57,8 +57,8 @@ namespace {
 
     // Std bands: very light -- barely noticeable at a glance, visible on a
     // close look. Low alpha does that.
-    inline const QColor color_stdband_ecg{ 90, 130, 220, 38 };   // light navy/blue
-    inline const QColor color_stdband_ppg{ 220, 120, 130, 38 };  // soft red/pink
+    inline const QColor color_iqrband_ecg{ 90, 130, 220, 38 };   // light navy/blue
+    inline const QColor color_iqrband_ppg{ 220, 120, 130, 38 };  // soft red/pink
 
     // Apply kTraceAlpha to a base trace color.
     inline QColor withTraceAlpha(QColor c) { c.setAlpha(kTraceAlpha); return c; }
@@ -159,7 +159,7 @@ namespace {
     // Draw the gray ±std band at a fixed pixels-per-sample scale using
     // the supplied (lo, hi) range. The caller must use the SAME range
     // for the trace draw so the band and line agree vertically.
-    void drawStdBand(QPainter& p, const std::vector<double>& v, const std::vector<double>& sd, double startPx, int mt, int ph,
+    void drawIqrBand(QPainter& p, const std::vector<double>& v, const std::vector<double>& sd, double startPx, int mt, int ph,
         double pxPerSample, int visN, double lo, double hi, QColor color)
     {
         if (visN < 2 || (int)v.size() < 2) return;
@@ -234,9 +234,9 @@ BinPlotWidget::BinPlotWidget(int binIndex, int leadIndex,
 }
 
 void BinPlotWidget::setData(const std::vector<double>& ppg,
-    const std::vector<double>& ppgStd,
+    const std::vector<double>& ppgIqr,
     const std::vector<double>& ecg,
-    const std::vector<double>& ecgStd,
+    const std::vector<double>& ecgIqr,
     int pPeak, int qBegin, int rPeak, int sEnd, int tPeak, int tEnd,
     int ppgOnset, int ppgP50, int ppgPeak,
     int ppgDicrotic, int ppgPeak2, int ppgT80, int ppgEnd,
@@ -247,9 +247,9 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_nEcgBeats = nEcgBeats;
     m_nPpgBeats = nPpgBeats;
     m_ppg = ppg;
-    m_ppgStd = ppgStd;
+    m_ppgIqr = ppgIqr;
     m_ecg = ecg;
-    m_ecgStd = ecgStd;
+    m_ecgIqr = ecgIqr;
     m_markers[EcgPPeak] = pPeak;
     m_markers[EcgQBegin] = qBegin;
     m_markers[EcgRPeak] = rPeak;
@@ -329,16 +329,16 @@ void BinPlotWidget::setShowArtPulmTrace(bool show) {
 void BinPlotWidget::setArterialTraces(const std::vector<double>& abp,
     const std::vector<double>& art,
     const std::vector<double>& artPulm,
-    const std::vector<double>& abpStd,
-    const std::vector<double>& artStd,
-    const std::vector<double>& artPulmStd)
+    const std::vector<double>& abpIqr,
+    const std::vector<double>& artIqr,
+    const std::vector<double>& artPulmIqr)
 {
     m_abp = abp;
     m_art = art;
     m_artPulm = artPulm;
-    m_abpStd = abpStd;
-    m_artStd = artStd;
-    m_artPulmStd = artPulmStd;
+    m_abpIqr = abpIqr;
+    m_artIqr = artIqr;
+    m_artPulmIqr = artPulmIqr;
     update();
 }
 
@@ -491,7 +491,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     const double pps = pxPerSample();
     p.fillRect(rect(), Qt::white);
 
-	//title: channel, bin number, and number of beats in the bin
+    //title: channel, bin number, and number of beats in the bin
     p.setPen(QColor(150, 150, 150));
     { QFont f = p.font(); f.setPointSize(8); p.setFont(f); }
     QString beatSuffix;
@@ -518,7 +518,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     //   the 0.0 major tick is always inside the frame.
     // Left axis (ECG) and right axis (pulse) each follow this rule.
     double yLo = 0, yHi = 0;
-    computeVisibleRange(m_ecg, m_ecgStd, m_ecgVisibleN, yLo, yHi);
+    computeVisibleRange(m_ecg, m_ecgIqr, m_ecgVisibleN, yLo, yHi);
     if (yLo > 0.0) yLo = 0.0;
 
     // Right axis range: shared by ALL pulse traces (PPG + arterial), so they
@@ -533,10 +533,10 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             double lo, hi; computeVisibleRange(v, sd, n, lo, hi);
             pLo = std::min(pLo, lo); pHi = std::max(pHi, hi);
         };
-    if (m_hasPPG && !m_ppg.empty()) mergePulse(m_ppg, m_ppgStd, m_ppgVisibleN);
-    mergePulse(m_abp, m_abpStd, static_cast<int>(m_abp.size()));
-    mergePulse(m_art, m_artStd, static_cast<int>(m_art.size()));
-    mergePulse(m_artPulm, m_artPulmStd, static_cast<int>(m_artPulm.size()));
+    if (m_hasPPG && !m_ppg.empty()) mergePulse(m_ppg, m_ppgIqr, m_ppgVisibleN);
+    mergePulse(m_abp, m_abpIqr, static_cast<int>(m_abp.size()));
+    mergePulse(m_art, m_artIqr, static_cast<int>(m_art.size()));
+    mergePulse(m_artPulm, m_artPulmIqr, static_cast<int>(m_artPulm.size()));
     if (pLo > pHi) { pLo = 0.0; pHi = 1.0; }
     if (pLo > 0.0) pLo = 0.0;
 
@@ -664,9 +664,9 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             bool show;
         };
         const ArtTrace arts[] = {
-            { &m_abp,     &m_abpStd,     QColor(0, 115, 45),   QColor(80, 185, 120, 38),  m_showAbpTrace },     // green
-            { &m_art,     &m_artStd,     QColor(140, 75, 185), QColor(180, 130, 215, 38), m_showArtTrace },     // purple
-            { &m_artPulm, &m_artPulmStd, QColor(215, 135, 45), QColor(235, 175, 100, 38), m_showArtPulmTrace }, // orange
+            { &m_abp,     &m_abpIqr,     QColor(0, 115, 45),   QColor(80, 185, 120, 38),  m_showAbpTrace },     // green
+            { &m_art,     &m_artIqr,     QColor(140, 75, 185), QColor(180, 130, 215, 38), m_showArtTrace },     // purple
+            { &m_artPulm, &m_artPulmIqr, QColor(215, 135, 45), QColor(235, 175, 100, 38), m_showArtPulmTrace }, // orange
         };
         for (const auto& a : arts) {
             if (!a.show) continue;
@@ -676,7 +676,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             const std::vector<double>& sd = *a.sd;
             const bool haveStd = static_cast<int>(sd.size()) >= visN;
             if (haveStd)
-                drawStdBand(p, v, sd, startPx, margin_top, ph, pps, visN, pLo, pHi, a.band);
+                drawIqrBand(p, v, sd, startPx, margin_top, ph, pps, visN, pLo, pHi, a.band);
             drawTraceFixedScale(p, v, startPx, margin_top, ph, pps,
                 QPen(withTraceAlpha(a.line), 1.3), visN, pLo, pHi);
         }
@@ -684,7 +684,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
     // -------- ECG (left axis) --------
     if (m_showEcgTrace) {
-        drawStdBand(p, m_ecg, m_ecgStd, margin_left, margin_top, ph, pps, m_ecgVisibleN, yLo, yHi, color_stdband_ecg);
+        drawIqrBand(p, m_ecg, m_ecgIqr, margin_left, margin_top, ph, pps, m_ecgVisibleN, yLo, yHi, color_iqrband_ecg);
         drawTraceFixedScale(p, m_ecg, margin_left, margin_top, ph, pps,
             QPen(withTraceAlpha(kColorEcgTrace), 1.5), m_ecgVisibleN, yLo, yHi);
     }
@@ -693,13 +693,13 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     if (m_showPpgTrace && m_hasPPG && !m_ppg.empty() && m_ppgVisibleN > 0) {
         const double startPx = margin_left + ppgStartSample() * pps;
         const int ppgN = std::min(m_ppgVisibleN, pulseClipN());
-        std::vector<double> ppgStdReal;
-        if (static_cast<int>(m_ppgStd.size()) >= ppgN)
-            ppgStdReal.assign(m_ppgStd.begin(), m_ppgStd.begin() + ppgN);
+        std::vector<double> ppgIqrReal;
+        if (static_cast<int>(m_ppgIqr.size()) >= ppgN)
+            ppgIqrReal.assign(m_ppgIqr.begin(), m_ppgIqr.begin() + ppgN);
 
         if (ppgN >= 2) {
-            drawStdBand(p, m_ppg, ppgStdReal, startPx, margin_top, ph, pps,
-                ppgN, pLo, pHi, color_stdband_ppg);
+            drawIqrBand(p, m_ppg, ppgIqrReal, startPx, margin_top, ph, pps,
+                ppgN, pLo, pHi, color_iqrband_ppg);
             drawTraceFixedScale(p, m_ppg, startPx, margin_top, ph,
                 pps, QPen(withTraceAlpha(kColorPpgTrace), 1.5), ppgN, pLo, pHi);
         }

@@ -13,6 +13,7 @@
 #include <fstream>
 #include <sstream>
 #include <QFile>
+#include <QCheckBox>
 #include <iomanip>
 #include <iostream>
 #include <cstdio>
@@ -282,42 +283,25 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     showPage();
 }
 
-// Compute per-subject Global_Ref for every ECG channel + every pulse
-// channel. Called at loadSubject after every bin has been seeded, so
-// R/S positions and pulse foot/peak positions are already set. Results
-// go into m_ecgGlobalRef and m_pulseGlobalRef and stay stable across
-// pages. See normalize_features.hpp for the definitions.
 void TemplateViewerWindow::computeGlobalRefs() {
+    /*compute the ecg global reference value for QRS complex height(abs(R) + abs(S))) and pulse global ref for
+    PPG / ART / ART_PULM(abs(peak) - abs(foot))*/
     for (int c = 0; c < 3; ++c)
         m_ecgGlobalRef[c] = normalize_features::compute_ecg_global_ref(
             m_bins, c, m_sampleRate);
-    for (int c = 0; c < 4; ++c)
-        m_pulseGlobalRef[c] = normalize_features::compute_pulse_global_ref(
-            m_bins, c);
-    fprintf(stderr,
-        "[refs] ecg=[%.4g,%.4g,%.4g] pulse=[%.4g,%.4g,%.4g,%.4g]\n",
-        m_ecgGlobalRef[0], m_ecgGlobalRef[1], m_ecgGlobalRef[2],
-        m_pulseGlobalRef[0], m_pulseGlobalRef[1],
-        m_pulseGlobalRef[2], m_pulseGlobalRef[3]);
+    for (int c = 0; c < 4; ++c) {
+        m_pulseGlobalRef[c] = normalize_features::compute_pulse_global_ref(m_bins, c);
+    }
 }
 
 std::vector<double> TemplateViewerWindow::normalizeEcgTrace(const std::vector<double>& raw, int ch) const {
     const double ref = (ch >= 0 && ch < 3) ? m_ecgGlobalRef[ch] : std::nan("");
-    if (!std::isfinite(ref) || ref == 0.0) return raw;   // untransformed
-    std::vector<double> out(raw.size());
-    for (size_t i = 0; i < raw.size(); ++i)
-        out[i] = normalize_features::ecg_norm(raw[i], ref);
-    return out;
+    return normalize_features::normalize_ecg_trace(raw, ref);
 }
 
 std::vector<double> TemplateViewerWindow::normalize_ppg_or_similar(const std::vector<double>& raw, int footIdx, int pulseChan) const {
-    //if a PPG, ART,etc is to be normalized, use the pulse_norm function 
     const double ref = (pulseChan >= 0 && pulseChan < 4) ? m_pulseGlobalRef[pulseChan] : std::nan("");
-    const double footY = (footIdx >= 0 && footIdx < static_cast<int>(raw.size())) ? raw[footIdx] : std::nan("");
-    std::vector<double> out(raw.size());
-    for (size_t i = 0; i < raw.size(); ++i)
-        out[i] = normalize_features::pulse_norm(raw[i], footY, ref);
-    return out;
+    return normalize_features::normalize_pulse_trace(raw, footIdx, ref);
 }
 // ========================================================================
 // Build / clear plots
@@ -386,18 +370,22 @@ void TemplateViewerWindow::showPage() {
             const auto& ppg = hasPPG ? b.ppgTemplate : empty;
 
             int c = leads[li].channelIndex;
-            // R is NEVER autodetected. Use the R peak passed through from
-            // peak-finding -> alignment -> template (r_peak_ch = r_col_raw).
             const double rPeak = static_cast<double>(b.r_peak_ch[c]);
 
-            // std vectors for this channel + PPG. Empty if the templater
-            // didn't compute them for this bin -- the widget treats empty
-            // std as "no band, just the line".
-            const auto& ecgStd = (c == 0) ? b.ch1.ecgTemplate_raw_std
-                : (c == 1) ? b.ch2.ecgTemplate_raw_std
-                : b.ch3.ecgTemplate_raw_std;
-            const auto& ppgStd = hasPPG ? b.ppgTemplate_std : empty;
-
+            const std::vector<double>& ecgIqrRaw = (c == 0) ? b.ch1.ecg_template_raw_iqr
+                : (c == 1) ? b.ch2.ecg_template_raw_iqr
+                : b.ch3.ecg_template_raw_iqr;
+            const double ecgRef = (c >= 0 && c < 3) ? m_ecgGlobalRef[c] : std::nan("");
+            // Both ecgIqrRaw (Q3-Q1 of raw amplitude) and b.ppg_template_iqr
+            // (Q3-Q1 of each beat's own local perfusion-index ratio, computed
+            // at build time -- see CreatePPGTemplates.hpp) are pre-ref-division.
+            // The only remaining step, for either channel type, is the same
+            // scalar /ref used for the mean trace -- normalization lives only
+            // in NormalizeFeatures.hpp, this is just calling it.
+            const std::vector<double> ecgIqr = normalize_features::scale_array_by_ref(ecgIqrRaw, ecgRef);
+            const std::vector<double> ppgIqr = hasPPG
+                ? normalize_features::scale_array_by_ref(b.ppg_template_iqr, m_pulseGlobalRef[0])
+                : empty;
             // Per-channel beat count for this widget's lead + the bin's
             // PPG count. Both are 0 when the channel is absent, which
             // suppresses that half of the title suffix.
@@ -424,7 +412,7 @@ void TemplateViewerWindow::showPage() {
                 ? normalize_ppg_or_similar(b.artPulmTemplate, b.art_pulm_onset, 3)
                 : b.artPulmTemplate;
 
-            pw->setData(ppgN, ppgStd, ecgN, ecgStd,
+            pw->setData(ppgN, ppgIqr, ecgN, ecgIqr,
                 b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
                 b.s_end_ch[c], b.t_begin_ch[c], b.t_end_ch[c],
                 b.ppg_onset, b.ppg_p50, b.ppg_peak,
@@ -432,6 +420,7 @@ void TemplateViewerWindow::showPage() {
                 rPeak,
                 static_cast<int>(nEcgBeats),
                 static_cast<int>(b.ppg_n_beats));
+
             pw->setHasPPG(hasPPG);
 
             // Faint arterial background-context traces (present-only),
@@ -451,7 +440,7 @@ void TemplateViewerWindow::showPage() {
             // Arterial traces for marker geometry/bounds, plus the markers
             // themselves (shared across leads, like PPG).
             pw->setArterialTraces(abpN, artN, artPN,
-                b.abpTemplate_std, b.artTemplate_std, b.artPulmTemplate_std);
+                b.abpTemplate_iqr, b.artTemplate_iqr, b.artPulmTemplate_iqr);
             pw->setMarker(BinPlotWidget::AbpOnset, b.abp_onset);
             pw->setMarker(BinPlotWidget::AbpPeak, b.abp_peak);
             pw->setMarker(BinPlotWidget::AbpDicrotic, b.abp_dicrotic);
@@ -597,7 +586,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     const double toMs = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 1.0;
 
     // ---- Header ------------------------------------------------------------
-    // Per channel: raw_mv, Normalized_mv, raw_std, normalized_std.
+    // Per channel: raw_mv, Normalized_mv, raw_iqr, normalized_iqr.
     static const char* CHANS[] = {
         "ch1", "ch2", "ch3", "ppg", "abp", "art", "art_pulm"
     };
@@ -605,8 +594,8 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     for (const char* n : CHANS) {
         f << ',' << n << "_raw_mv"
             << ',' << n << "_Normalized"
-            << ',' << n << "_raw_std"
-            << ',' << n << "_normalized_std";
+            << ',' << n << "_raw_iqr"
+            << ',' << n << "_normalized_iqr";
     }
 
     // Marker-location columns. For each marker: two columns (autodetect,
@@ -667,28 +656,12 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     f << '\n';
     f << std::setprecision(10);
 
-    // Scale a per-sample std trace by the same linear factor the mean
-    // transform applies (see the pulse / ECG normalization rules).
-    auto scaleEcgStd = [&](const std::vector<double>& raw_std, int chan) {
-        std::vector<double> out = raw_std;
-        const double ref = (chan >= 0 && chan < 3) ? m_ecgGlobalRef[chan] : 0.0;
-        if (!std::isfinite(ref) || ref == 0.0) return out;
-        for (double& s : out) if (!std::isnan(s)) s /= ref;
-        return out;
-        };
-    auto scalePulseStd = [&](const std::vector<double>& raw_std,
-        int footIdx, const std::vector<double>& mean_trace, int pulseChan)
-        {
-            std::vector<double> out = raw_std;
-            const double ref = (pulseChan >= 0 && pulseChan < 4) ? m_pulseGlobalRef[pulseChan] : 0.0;
-            if (!std::isfinite(ref) || ref == 0.0) return out;
-            if (footIdx < 0 || footIdx >= (int)mean_trace.size()) return out;
-            const double fy = mean_trace[footIdx];
-            if (std::isnan(fy) || std::abs(fy) < 1e-12) return out;
-            const double k = 100.0 / std::abs(fy) / std::abs(ref);
-            for (double& s : out) if (!std::isnan(s)) s *= k;
-            return out;
-        };
+    // Both ecg_template_raw_iqr and every *_template_iqr / *Template_iqr
+    // field are pre-ref-division at build time (see CreatePPGTemplates.hpp /
+    // build_pulse_template_pair_windowed for the pulse channels), so the
+    // only remaining step for any channel is the same scalar /ref used for
+    // its mean trace -- normalize_features::scale_array_by_ref is the one
+    // place that division happens.
 
     // ---- Row loop ----------------------------------------------------------
     for (size_t bi = 0; bi < m_bins.size(); ++bi) {
@@ -703,13 +676,13 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         const std::vector<double>& artR = b.artTemplate;
         const std::vector<double>& artPR = b.artPulmTemplate;
 
-        const std::vector<double>& ch1S = b.ch1.ecgTemplate_raw_std;
-        const std::vector<double>& ch2S = b.ch2.ecgTemplate_raw_std;
-        const std::vector<double>& ch3S = b.ch3.ecgTemplate_raw_std;
-        const std::vector<double>& ppgS = b.ppgTemplate_std;
-        const std::vector<double>& abpS = b.abpTemplate_std;
-        const std::vector<double>& artS = b.artTemplate_std;
-        const std::vector<double>& artPS = b.artPulmTemplate_std;
+        const std::vector<double>& ch1Iqr = b.ch1.ecg_template_raw_iqr;
+        const std::vector<double>& ch2Iqr = b.ch2.ecg_template_raw_iqr;
+        const std::vector<double>& ch3Iqr = b.ch3.ecg_template_raw_iqr;
+        const std::vector<double>& ppgIqrRaw = b.ppg_template_iqr;
+        const std::vector<double>& abpIqrRaw = b.abpTemplate_iqr;
+        const std::vector<double>& artIqrRaw = b.artTemplate_iqr;
+        const std::vector<double>& artPIqrRaw = b.artPulmTemplate_iqr;
 
         // Normalized mean traces (screen-matching).
         std::vector<double> ch1N = normalizeEcgTrace(ch1R, 0);
@@ -720,14 +693,14 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         std::vector<double> artN = normalize_ppg_or_similar(artR, b.art_onset, 2);
         std::vector<double> artPN = normalize_ppg_or_similar(artPR, b.art_pulm_onset, 3);
 
-        // Normalized std traces.
-        std::vector<double> ch1NS = scaleEcgStd(ch1S, 0);
-        std::vector<double> ch2NS = scaleEcgStd(ch2S, 1);
-        std::vector<double> ch3NS = scaleEcgStd(ch3S, 2);
-        std::vector<double> ppgNS = scalePulseStd(ppgS, b.ppg_onset, ppgR, 0);
-        std::vector<double> abpNS = scalePulseStd(abpS, b.abp_onset, abpR, 1);
-        std::vector<double> artNS = scalePulseStd(artS, b.art_onset, artR, 2);
-        std::vector<double> artPNS = scalePulseStd(artPS, b.art_pulm_onset, artPR, 3);
+        // Normalized std traces -- same scalar /ref step for every channel.
+        std::vector<double> ch1IqrN = normalize_features::scale_array_by_ref(ch1Iqr, m_ecgGlobalRef[0]);
+        std::vector<double> ch2IqrN = normalize_features::scale_array_by_ref(ch2Iqr, m_ecgGlobalRef[1]);
+        std::vector<double> ch3IqrN = normalize_features::scale_array_by_ref(ch3Iqr, m_ecgGlobalRef[2]);
+        std::vector<double> ppgIqrN = normalize_features::scale_array_by_ref(ppgIqrRaw, m_pulseGlobalRef[0]);
+        std::vector<double> abpIqrN = normalize_features::scale_array_by_ref(abpIqrRaw, m_pulseGlobalRef[1]);
+        std::vector<double> artIqrN = normalize_features::scale_array_by_ref(artIqrRaw, m_pulseGlobalRef[2]);
+        std::vector<double> artPIqrN = normalize_features::scale_array_by_ref(artPIqrRaw, m_pulseGlobalRef[3]);
 
         // Computed Q/S peaks (both variants) per ECG channel.
         const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
@@ -795,17 +768,17 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         struct Col {
             const std::vector<double>* raw;
             const std::vector<double>* norm;
-            const std::vector<double>* raw_std;
-            const std::vector<double>* norm_std;
+            const std::vector<double>* raw_iqr;
+            const std::vector<double>* norm_iqr;
         };
         const Col cols[] = {
-            { &ch1R,  &ch1N,  &ch1S,  &ch1NS  },
-            { &ch2R,  &ch2N,  &ch2S,  &ch2NS  },
-            { &ch3R,  &ch3N,  &ch3S,  &ch3NS  },
-            { &ppgR,  &ppgN,  &ppgS,  &ppgNS  },
-            { &abpR,  &abpN,  &abpS,  &abpNS  },
-            { &artR,  &artN,  &artS,  &artNS  },
-            { &artPR, &artPN, &artPS, &artPNS },
+            { &ch1R,  &ch1N,  &ch1Iqr,  &ch1IqrN  },
+            { &ch2R,  &ch2N,  &ch2Iqr,  &ch2IqrN  },
+            { &ch3R,  &ch3N,  &ch3Iqr,  &ch3IqrN  },
+            { &ppgR,  &ppgN,  &ppgIqrRaw,  &ppgIqrN  },
+            { &abpR,  &abpN,  &abpIqrRaw,  &abpIqrN  },
+            { &artR,  &artN,  &artIqrRaw,  &artIqrN  },
+            { &artPR, &artPN, &artPIqrRaw, &artPIqrN },
         };
 
         auto emitVal = [&](const std::vector<double>& v, int j) {
@@ -833,8 +806,8 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             for (const Col& c : cols) {
                 emitVal(*c.raw, row);
                 emitVal(*c.norm, row);
-                emitVal(*c.raw_std, row);
-                emitVal(*c.norm_std, row);
+                emitVal(*c.raw_iqr, row);
+                emitVal(*c.norm_iqr, row);
             }
             // ECG location columns (per channel, per marker: auto then user).
             for (int c = 0; c < 3; ++c) {

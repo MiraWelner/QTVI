@@ -32,8 +32,8 @@
 #include <utility>
 #include <vector>
 namespace alignment {
-    constexpr double percent_interval_preceeding_rpeak = 0.3; //how far before the R peak the snip goes, in terms of percent of the RR interval length
-    constexpr double percent_interval_following_rpeak = 1.5;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
+    constexpr double percent_interval_preceeding_rpeak = 0.4; //how far before the R peak the snip goes, in terms of percent of the RR interval length
+    constexpr double percent_interval_following_rpeak = 1.3;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
 
     // NOTE: the second (Q-aligned) template pass no longer runs through this
     // function. It reuses the R-aligned + DC-aligned beats cached during the
@@ -336,19 +336,20 @@ namespace alignment {
     // window search (which would risk landing on Q or S).
     //
     // R_anchor is the R-pass R column; fs is the ECG rate; refMedian is the
-    // R-aligned template used to locate the Q marker. compute_std fills the
-    // gray-band std. q_aligned_col is the marker Q landed on; r_col is the R
-    // fiducial (R_anchor).
+    // R-aligned template used to locate the Q marker. compute_iqr is retained
+    // for call-site compatibility but no longer gates anything -- the gray-band
+    // IQR (a robust spread, not a standard deviation) is always filled.
+    // q_aligned_col is the marker Q landed on; r_col is the R fiducial (R_anchor).
     struct QAlignResult {
         std::vector<double> tmpl;
-        std::vector<double> std;
+        std::vector<double> iqr;
         int q_aligned_col = -1;
         int r_col = -1;
     };
 
     inline QAlignResult q_align_beat_matrix(
         const std::vector<std::vector<double>>& beatsIn,
-        int R_anchor, double fs, bool compute_std,
+        int R_anchor, double fs, bool compute_iqr,
         const std::vector<double>& refMedian)
     {
         QAlignResult res;
@@ -381,10 +382,10 @@ namespace alignment {
             }
         }
 
-        // Column-wise median (+ optional sample std) over the Q-aligned beats.
+        // Column-wise median (+ optional IQR spread) over the Q-aligned beats.
         // One gather per column, reused scratch, nth_element for the median.
         res.tmpl.assign(Wsh, std::numeric_limits<double>::quiet_NaN());
-        if (compute_std) res.std.assign(Wsh, 0.0);
+        res.iqr.assign(Wsh, 0.0);
 
         std::vector<double> col;
         col.reserve(beats.size());
@@ -404,13 +405,19 @@ namespace alignment {
                 ? 0.5 * (*std::max_element(col.begin(), col.begin() + mid) + hi)
                 : hi;
 
-            if (compute_std && nc >= 2) {
-                double sum = 0.0;
-                for (double v : col) sum += v;
-                const double mean = sum / static_cast<double>(nc);
-                double ss = 0.0;
-                for (double v : col) { const double d = v - mean; ss += d * d; }
-                res.std[c] = std::sqrt(ss / static_cast<double>(nc - 1));
+            if (nc >= 2) {
+                // Robust symmetric spread: the IQR (25th-75th percentile)
+                // . Not inflated by the
+                // few outlier / 1-sample-off beats at the R spike, so the band
+                // tracks the median line instead of ballooning at R.
+                std::vector<double> s(col);
+                const size_t q1i = nc / 4;
+                const size_t q3i = (3 * nc) / 4;
+                std::nth_element(s.begin(), s.begin() + q1i, s.end());
+                const double q1 = s[q1i];
+                std::nth_element(s.begin() + q1i, s.begin() + q3i, s.end());
+                const double q3 = s[q3i];
+                res.iqr[c] = q3 - q1;
             }
         }
 

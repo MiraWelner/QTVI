@@ -17,21 +17,21 @@
  *
  *       Each block:
  *         [uint64 sz][sz x double ecgTemplate]
- *         [uint64 sz][sz x double ecgTemplate_std]   (sz=0 for non-raw methods)
+ *         [uint64 sz][sz x double ecg_template_iqr]   (sz=0 for non-raw methods)
  *         [double alignment_point]
  *         [int32  r_col]
  *
  *       Then PPG template + its std:
  *         [uint64 sz][sz x double ppgTemplate]
- *         [uint64 sz][sz x double ppgTemplate_std]
+ *         [uint64 sz][sz x double ppg_template_iqr]
  *
  *       Then arterial background templates, each with its std:
  *         [uint64 sz][sz x double abpTemplate]
- *         [uint64 sz][sz x double abpTemplate_std]
+ *         [uint64 sz][sz x double abpTemplate_iqr]
  *         [uint64 sz][sz x double artTemplate]
- *         [uint64 sz][sz x double artTemplate_std]
+ *         [uint64 sz][sz x double artTemplate_iqr]
  *         [uint64 sz][sz x double artPulmTemplate]
- *         [uint64 sz][sz x double artPulmTemplate_std]
+ *         [uint64 sz][sz x double artPulmTemplate_iqr]
  *       (each sz=0 when that channel was absent in the dataset)
  *
  *       Then per-channel beat counts (slices that survived drop rules and
@@ -66,7 +66,7 @@ namespace template_io {
         // to this template. Same length as ecgTemplate, OR empty when not
         // computed (e.g. the squared/absval/unfiltered methods, which the
         // viewer doesn't display).
-        std::vector<double> ecgTemplate_std;
+        std::vector<double> ecg_template_iqr;
         double alignment_point = 0.0;
         int    r_col = -1;   // true R column in the template (was avg_r_expand)
     };
@@ -78,7 +78,7 @@ namespace template_io {
         std::vector<double>   ppgTemplate;
         // Per-sample std for the PPG template, same length as ppgTemplate
         // (or empty if no PPG / not computed).
-        std::vector<double>   ppgTemplate_std;
+        std::vector<double>   ppg_template_iqr;
         // Foot-anchored averaged arterial templates (ABP / ART / ART_PULM),
         // shown as faint background-context traces in the viewer. Empty when
         // the channel wasn't present in the dataset. No std (background only).
@@ -87,9 +87,9 @@ namespace template_io {
         std::vector<double>   artPulmTemplate;
         // Per-sample std for each arterial template (same length when
         // present, or empty). Written right after each template vector.
-        std::vector<double>   abpTemplate_std;
-        std::vector<double>   artTemplate_std;
-        std::vector<double>   artPulmTemplate_std;
+        std::vector<double>   abpTemplate_iqr;
+        std::vector<double>   artTemplate_iqr;
+        std::vector<double>   artPulmTemplate_iqr;
         // Per-channel slice counts (post drop-rules) fed to each raw-method
         // median. Under Patch B they're driven by ch1.raw R-pairs, so they
         // normally read equal, but any per-channel drop (short slice, bad
@@ -101,6 +101,7 @@ namespace template_io {
         int                   ppg_peak_col = -1;   // construction-time fiducials
         int                   ppg_onset_col = -1;
         bool                  bad_segment = false;
+
     };
 
     struct AveragedTemplate {

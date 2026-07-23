@@ -1,44 +1,26 @@
 #!/usr/bin/env python3
 """
-align_templates_r.py
+plot_templates_by_stage.py
 
-Applies alignment.hpp's horizontal + vertical alignment (R-aligned pass) to the
-bin templates in each folder, for ECG (ch1/ch2/ch3) and PPG, then plots the
-aligned overlay + median per channel per folder.
+Same load + R-aligned overlay look as plot_templates.py, but EACH PATIENT gets
+FIVE subplots -- Wake / N1 / N2 / N3 / REM -- instead of one. A patient's bins are
+split by sleep stage (read from the source .bin), and each stage's bins are
+R-aligned and overlaid (ECG solid + PPG dashed) exactly as before.
 
-WHICH PART OF alignment.hpp THIS IS
------------------------------------
-alignment.hpp's beat-level slice + Tukey rejection already ran inside the C++
-(each bin IS one median beat). The two steps that remain meaningful on the
-bin templates are the two ALIGNMENT steps, ported here exactly:
+Stage codes come from the .bin written by file_to_bin.cpp (with its 5->4
+remap, so 4 == REM in this data):
+    0 -> Wake, 1 -> N1, 2 -> N2, 3 -> N3, 4 -> REM   (-1/other -> skipped)
 
-  * Pass 1 -- horizontal R-align (extract_beats_and_align, lines ~212-237):
-      anchor every beat's R column at R_anchor = max R column over survivors,
-      then integer-shift each beat right by (R_anchor - r_col), NaN-padding.
-      No resampling.
+Pairing: a patient's .bin lives IN THE SAME FOLDER as its template CSV. For
+4013204_20110418_template.csv the bin is 4013204_20110418.bin in that folder
+(label = CSV stem minus "_template").
 
-  * Pass 3 -- vertical PR-baseline DC align (lines ~239-275):
-      reference beat = first beat whose length == median length. Its PR-segment
-      mean (a small window just before R) is the target; every beat is shifted
-      vertically so its own PR mean matches. Window, per the C++:
-          pr_w   = max(3, median_length // 20)
-          pr_gap = max(1, median_length // 50)
-          pr_lo  = max(0, R_anchor - pr_gap - pr_w)
-          pr_hi  = max(pr_lo, R_anchor - pr_gap)
-      baseline = mean of non-NaN samples in [pr_lo, pr_hi); needs >= 3 samples.
+The alignment (align_r: horizontal R/upslope anchor + vertical PR/foot DC
+baseline) and windowing are IDENTICAL to plot_templates.py -- only the bin
+grouping (by stage) and the subplot layout (3 per patient) are new.
 
-Here each "beat" is one bin template and "length" is that bin's non-NaN sample
-count. R column comes from the r_peak_ch<c>_location_autodetect_r one-hot flag
-(PPG anchors on the 50%-upslope crossing between the first-pulse foot and its
-systolic peak, matching the PPG path's upslope alignment intent).
-
-Edit the constants below, then run:  python align_templates_r.py
-
-OUTPUT (normalized only):
-  perpatient_ecg_ppg_normalized.png        -- one subplot per patient
-  group_overlay_<folder>_normalized.png    -- all bins in a folder, per folder
-  combined_overlay_normalized.png          -- both folders overlaid on one axis
-                                              (untreated red, healthy/treated green)
+Run:  python plot_templates_by_stage.py
+Output: perpatient_by_stage_<tag>.png  (rows = patients, cols = Wake/N1/N2/N3/REM)
 """
 
 import sys
@@ -49,21 +31,153 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import struct
+import warnings
 
-# ---- Folders to process. Edit these. ----
+# Benign: an all-NaN column in an overlay matrix makes np.nanmedian warn. The
+# result (NaN) is fine to plot as a gap; silence just this warning.
+warnings.filterwarnings("ignore", message="All-NaN slice encountered")
+warnings.filterwarnings("ignore", message="Mean of empty slice")
+
+# ---- Folders with *_template.csv. Edit these. ----
 FOLDERS = [
     Path("templates_healthy"),
     Path("templates_untreated"),
 ]
 
-# R-aligned pass columns. Only ch1 and ppg are aligned/processed.
-ECG_CHANNELS = ["ch1"]
-PULSE_CHANNELS = ["ppg"]
-VALUE_SUFFIX = "_Normalized_r"          # what we align/plot
+# ---- Where the source .bin files live: IN the same FOLDERS as the templates.
+# A template 4013204_20110418_template.csv pairs with 4013204_20110418.bin in
+# the same folder (label = CSV stem minus "_template"). ----
+BIN_SUFFIX = ".bin"          # <label> + BIN_SUFFIX  ->  the .bin filename
+
+# cfg.bin_size_minutes used when the templates were built (bin duration).
+BIN_SIZE_MINUTES = 5.0
+
+VALUE_SUFFIX = "_Normalized_r"     # column to align/plot
 BIN_COL = "bin_num"
 
+# ---- Absolute RMS rejection thresholds (no Tukey). A bin is dropped if its
+# metric exceeds the cutoff in EITHER channel. Units are in the normalized
+# signal's amplitude. THESE DEFAULTS ARE PLACEHOLDERS -- set PRINT_RMS_STATS
+# below to see your data's actual min/median/max per stage, then put each
+# threshold just above the clean-bin cluster and below the noisy ones.
+NOISE_RMS_MAX = 0.15    # HF noise: RMS of the waveform's 2nd difference
+SHAPE_RMS_MAX = 0.30    # shape:    RMS distance of a bin to the group median
+
+# Set True to print, per stage, the distribution of both RMS metrics across
+# bins (min / median / max) so you can choose the two thresholds above. Does
+# not change plotting -- just prints. Turn off once thresholds are set.
+PRINT_RMS_STATS = False
+
 # Normalized y-axis window shared by every plot.
-Y_LIM = (-0.5, 2.0)
+Y_LIM = (-0.7, 2.0)
+# X-axis window in samples relative to the anchor.
+XLIM = (-300, 500)
+
+# .bin layout constants (from file_to_bin.hpp; the "=142/=568" comments there
+# are stale -- the formula gives 146 fields / 584 bytes).
+NUM_CHANNELS = 36
+NUM_HEADER_FIELDS = 1 + 4 * NUM_CHANNELS + 1     # 146
+HEADER_SIZE = NUM_HEADER_FIELDS * 4              # 584
+
+_X_PERIOD_S = None
+_X_UNITS = "samples"
+
+STAGE_ORDER = ["wake", "n1", "n2", "n3", "rem"]
+STAGE_LABEL = {"wake": "Wake", "n1": "N1", "n2": "N2", "n3": "N3", "rem": "REM"}
+
+
+def read_bin_stages(bin_path):
+    """Read (epoch_seconds, stages[]) from a .bin. The stages array is the last
+    thing in the file; its offset is validated two independent ways (forward
+    sum of channel sizes vs. from-EOF) so a wrong layout errors instead of
+    silently returning garbage. Returns (None, None) if the file has no stages."""
+    data = bin_path.read_bytes()
+    if len(data) < HEADER_SIZE:
+        raise ValueError(f"{bin_path.name}: too small for a {HEADER_SIZE}-byte header")
+    ints = struct.unpack_from(f"<{NUM_HEADER_FIELDS}I", data, 0)
+    epoch_seconds = float(ints[0])
+    sizes_up = ints[1:1 + NUM_CHANNELS]
+    sizes_raw = ints[1 + NUM_CHANNELS:1 + 2 * NUM_CHANNELS]
+    sleep_size = ints[1 + 4 * NUM_CHANNELS]
+    if epoch_seconds <= 0 or sleep_size == 0:
+        return None, None
+
+    stages_bytes = sleep_size * 8
+    eof_offset = len(data) - stages_bytes
+    body = HEADER_SIZE
+    for ch in range(NUM_CHANNELS):
+        body += sizes_up[ch] * 8
+        body += sizes_raw[ch] * 2 * 8
+    if body != eof_offset:
+        raise ValueError(
+            f"{bin_path.name}: stages offset mismatch "
+            f"(forward={body}, fromEOF={eof_offset}); refusing to read.")
+
+    stages = np.frombuffer(data, dtype="<f8", count=sleep_size, offset=eof_offset)
+    return epoch_seconds, np.asarray(stages, dtype=float)
+
+
+def _stage_group(code):
+    """Map a numeric stage code to one of the five sleep states, or None to
+    skip. Codes (as written by file_to_bin.cpp, 5->4 remap so 4 == REM):
+        0 -> Wake, 1 -> N1, 2 -> N2, 3 -> N3, 4 -> REM."""
+    return {0: "wake", 1: "n1", 2: "n2", 3: "n3", 4: "rem"}.get(code)
+
+
+def bin_stage_group(bin_index, bin_seconds, epoch_seconds, stages):
+    """Stage group for a bin ONLY if every sleep epoch it overlaps maps to the
+    same group -- i.e. the bin is pure. Mixed bins (spanning a stage
+    transition, or containing any unknown/-1 epoch) return None and are
+    dropped, so a stage's template is never blended with beats from another
+    stage. A 5-min bin spans ~10 epochs of 30 s, so this drops transition bins."""
+    kind, g = _classify_bin(bin_index, bin_seconds, epoch_seconds, stages)
+    return g if kind == "stage" else None
+
+
+def _classify_bin(bin_index, bin_seconds, epoch_seconds, stages):
+    """Classify a bin by the sleep epochs it overlaps:
+        ("stage", name)  -- every overlapped epoch is the SAME known state
+        ("mixed", None)  -- overlaps >1 known state (a transition bin)
+        ("unknown", None)-- overlaps an unknown/-1 epoch, or none at all
+    'mixed' is reported separately so it can be counted per patient."""
+    t0 = bin_index * bin_seconds
+    t1 = (bin_index + 1) * bin_seconds
+    e0 = max(0, int(t0 // epoch_seconds))
+    e1 = min(len(stages), int(np.ceil(t1 / epoch_seconds)))
+    if e1 <= e0:
+        return ("unknown", None)
+    groups = set()
+    for e in range(e0, e1):
+        g = _stage_group(stages[e])
+        if g is None:
+            return ("unknown", None)     # -1 / unrecognized epoch
+        groups.add(g)
+    if len(groups) == 1:
+        return ("stage", next(iter(groups)))
+    return ("mixed", None)               # spans more than one known state
+
+
+def _detect_period_s(df):
+    """Set the module x-axis scale from a dataframe's x_ms column (once)."""
+    global _X_PERIOD_S, _X_UNITS
+    if _X_PERIOD_S is not None:
+        return
+    if "x_ms" in df.columns:
+        xm = pd.to_numeric(df["x_ms"], errors="coerce").to_numpy(dtype=float)
+        d = np.diff(xm)
+        d = d[np.isfinite(d) & (d > 0)]       # positive = within-bin step (skip resets)
+        if d.size:
+            _X_PERIOD_S = float(np.median(d)) / 1000.0
+            _X_UNITS = "s"
+            return
+    _X_PERIOD_S = 1.0                          # fallback: x stays in samples
+    _X_UNITS = "samples"
+
+
+def _xlabel():
+    return ("seconds relative to anchor" if _X_UNITS == "s"
+            else "samples relative to anchor")
 
 
 # Anchor flag columns (R-pass, autodetect).
@@ -77,7 +191,6 @@ def pulse_anchor_col(chan):
 def split_on_bin_change(df):
     changed = df[BIN_COL].ne(df[BIN_COL].shift())
     return [g for _, g in df.groupby(changed.cumsum(), sort=False)]
-
 
 def _ppg_first_pulse(v, rate=1000.0):
     """Find the FIRST pulse's foot, systolic peak, and 50%-upslope crossing.
@@ -108,7 +221,6 @@ def _ppg_first_pulse(v, rate=1000.0):
             break
     return foot, peak, up50
 
-
 def anchor_index(sub, is_ecg, value):
     """R (ECG, argmax|y-baseline|) or first-pulse 50%-upslope crossing (PPG)."""
     v = value
@@ -122,85 +234,29 @@ def anchor_index(sub, is_ecg, value):
     _, _, up50 = _ppg_first_pulse(v)
     return up50 if up50 >= 0 else 0
 
-
-def collect_beats(df, chan, is_ecg):
-    """Return list of dicts {y, r_col, length} for each GOOD bin on this
-    channel. A bin is rejected if its detected anchor is not a genuine sharp
-    peak (ratio of the anchor deviation to the median deviation is small),
-    which is how the corrupt/flat bins get excluded before alignment."""
-    vcol = f"{chan}{VALUE_SUFFIX}"
-    if vcol not in df.columns:
-        return []
-    beats = []
-    for sub in split_on_bin_change(df):
-        sub = sub.reset_index(drop=True)
-        y = pd.to_numeric(sub[vcol], errors="coerce").to_numpy(dtype=float)
-        if np.all(np.isnan(y)):
-            continue
-        r_col = anchor_index(sub, is_ecg, y)
-
-        # Reject bins whose "R" is really a noise spike / flat trace.
-        base = np.nanmedian(y)
-        dev = np.abs(y - base)
-        med_dev = np.nanmedian(dev)
-        ratio = (dev[r_col] / med_dev) if med_dev > 0 else 0.0
-        if is_ecg and ratio < 8.0:
-            continue                        # no sharp R -> corrupt/flat bin
-
-        # Flip inverted-R beats upright so upright and inverted beats don't
-        # cancel in the pooled median. alignment.hpp's r_peak() reports the
-        # deflection sign and the pipeline orients the trace upright; here the
-        # sign of (y[R] - baseline) tells us the polarity.
-        if is_ecg and (y[r_col] - base) < 0:
-            y = base - (y - base)          # reflect about baseline -> upright R
-            dev = np.abs(y - base)         # (unchanged in magnitude, but keep consistent)
-
-        length = int(np.sum(~np.isnan(y)))
-        r_amp = float(dev[r_col])           # R height above baseline (for Tukey)
-        beats.append({"y": y, "r_col": r_col, "length": length, "r_amp": r_amp})
-    return beats
-
-
-def _tukey_keep(beats, key, k):
-    """Keep beats whose beats[i][key] is within [Q1-k*IQR, Q3+k*IQR].
-    Faithful port of alignment.hpp keep_within_tukey."""
-    vals = np.array([b[key] for b in beats], dtype=float)
-    finite = vals[~np.isnan(vals)]
-    if finite.size < 4:
-        return beats
-    q1, q3 = np.quantile(finite, 0.25), np.quantile(finite, 0.75)
-    iqr = q3 - q1
-    if iqr <= 0.0:
-        return beats
-    lo_b, hi_b = q1 - k * iqr, q3 + k * iqr
-    return [b for b, v in zip(beats, vals)
-            if not np.isnan(v) and lo_b <= v <= hi_b]
-
-
-def align_r(beats):
+def align_r(beats, return_keep=False):
     """alignment.hpp Pass 1 (horizontal anchor) + Pass 3 (vertical DC baseline).
     Horizontal: anchor every beat's R (ECG) / 50%-upslope (PPG) column at the
     max anchor column, integer-shift + NaN-pad. Vertical: match each beat's
     pre-anchor baseline mean (PR segment for ECG, pre-foot for PPG) to the
-    reference (median-length) beat's, via a constant vertical shift. Keeps the
-    Tukey rejection + upright-flip from collect_beats.
-    Returns (matrix [n_beats x shared_w], anchor_col)."""
+    reference (median-length) beat's, via a constant vertical shift. Aligns
+    every input beat -- no scalar Tukey; outlier rejection is the RMS shape pass.
+    Returns (matrix [n_beats x shared_w], anchor_col). If return_keep=True, also
+    returns keep_idx: the indices into the INPUT `beats` in matrix-row order (all
+    of them now, since no beat is rejected here) -- so a caller can map each
+    aligned row back to its source bin for the shape-rejection pass."""
+    orig = beats                                   # keep the input for index mapping
     if not beats:
-        return None, None
+        return (None, None, []) if return_keep else (None, None)
 
-    beats = _tukey_keep(beats, key="length", k=1.5)
-    # PPG rejects on systolic amplitude (peak-foot) and up50 position, as
-    # alignment.hpp does; ECG rejects on R amplitude.
+    # No scalar Tukey here: outlier rejection is done downstream by the RMS
+    # shape-distance pass (_shape_outlier_bins), which is the only Python-side
+    # rejection. This function just aligns every input beat. is_ppg is still
+    # needed to pick the vertical-baseline strategy below.
     is_ppg = any(b.get("foot_col", -1) >= 0 for b in beats)
     if is_ppg:
         for b in beats:
             b["_up50"] = float(b["r_col"])          # up50 column = anchor for PPG
-        beats = _tukey_keep(beats, key="sys_amp", k=1.5)
-        beats = _tukey_keep(beats, key="_up50", k=3.0)
-    else:
-        beats = _tukey_keep(beats, key="r_amp", k=1.5)
-    if not beats:
-        return None, None
 
     # ---- Pass 1: horizontal align on a shared axis ----
     anchor = max(b["r_col"] for b in beats)            # max anchor column
@@ -264,21 +320,26 @@ def align_r(beats):
                 if d != 0.0:
                     mat[i] = mat[i] - d        # constant shift; NaNs stay NaN
 
+    if return_keep:
+        survivors = {id(b) for b in beats}     # kept dicts (identity-stable)
+        keep_idx = [i for i, b in enumerate(orig) if id(b) in survivors]
+        return mat, anchor, keep_idx
     return mat, anchor
 
-
 def beats_for_file(df, chan, is_ecg, value_suffix):
-    """All bins from one file except the final 5, flipped upright. Returns the
-    beat list ready for align_r. For PPG, also records the foot column so the
-    vertical DC step can match foot baselines the way alignment.hpp does."""
+    """Same as plot_templates.py's beats_for_file, but each beat dict also
+    carries its 'bin_num' so beats can be split by sleep stage before align_r.
+    All bins except the final 5; ECG flipped upright; PPG records foot col."""
     vcol = f"{chan}{value_suffix}"
     if vcol not in df.columns:
         return []
-    bins = split_on_bin_change(df)
-    bins = bins[:-5] if len(bins) > 5 else []
+    _detect_period_s(df)
+    subs = split_on_bin_change(df)
+    subs = subs[:-5] if len(subs) > 5 else []
     beats = []
-    for sub in bins:
+    for sub in subs:
         sub = sub.reset_index(drop=True)
+        bnum = int(sub[BIN_COL].iloc[0])
         y = pd.to_numeric(sub[vcol], errors="coerce").to_numpy(dtype=float)
         if np.all(np.isnan(y)):
             continue
@@ -286,8 +347,6 @@ def beats_for_file(df, chan, is_ecg, value_suffix):
         base = np.nanmedian(y)
         if is_ecg and (y[r_col] - base) < 0:
             y = base - (y - base)
-        # PPG foot + systolic amplitude from the SAME first pulse as the up50
-        # anchor (so vertical foot-baseline and up50 horizontal use one pulse).
         foot_col = -1
         sys_amp = np.nan
         if not is_ecg:
@@ -297,34 +356,131 @@ def beats_for_file(df, chan, is_ecg, value_suffix):
         beats.append({"y": y, "r_col": r_col, "foot_col": foot_col,
                       "length": int(np.sum(~np.isnan(y))),
                       "r_amp": float(abs(y[r_col] - base)),
-                      "sys_amp": sys_amp})
+                      "sys_amp": sys_amp, "bin_num": bnum})
     return beats
 
 
 def _windowed(mat, anchor):
     if mat is None:
         return None, None
-    x = np.arange(mat.shape[1]) - anchor
-    msk = (x >= -100) & (x <= 500)
-    return x[msk], mat[:, msk]
+    xs = np.arange(mat.shape[1]) - anchor
+    msk = (xs >= XLIM[0]) & (xs <= XLIM[1])
+    return xs[msk] / 1000.0, mat[:, msk]
 
 
-def run_suffix(value_suffix, tag):
-    """Per-patient plots. Each patient gets ONE subplot with ch1 (ECG, left
-    axis, aligned on R) and ppg (right axis, aligned on 50%-upslope) overlaid.
-    Writes perpatient_ecg_ppg_<tag>.png. Normalized y clamped to Y_LIM."""
-    out_root = Path(".")
-    group_color = {}
+def _find_bin_for(label, folder):
+    """Locate the .bin for a patient, which lives in the SAME folder as the
+    template CSV and is named <label>.bin (label = CSV stem minus '_template').
+    E.g. 4013204_20110418_template.csv  ->  4013204_20110418.bin. Falls back to
+    a <label>*.bin glob in that folder for minor naming variations."""
+    direct = folder / (label + BIN_SUFFIX)
+    if direct.is_file():
+        return direct
+    hits = sorted(folder.glob(f"{label}*{BIN_SUFFIX}"))
+    return hits[0] if hits else None
+
+
+def _split_beats_by_stage(beats, bin2stage):
+    """Partition a beat list into the five sleep states by each beat's bin_num."""
+    out = {g: [] for g in STAGE_ORDER}
+    for bt in beats:
+        g = bin2stage.get(bt["bin_num"])
+        if g in out:
+            out[g].append(bt)
+    return out
+
+
+def _row_rms_to_median(mat):
+    """Per-row RMS distance to the column-wise median of the matrix, over
+    columns where both the row and the median are finite. Returns an array of
+    length n_rows (NaN if a row shares no finite columns with the median)."""
+    if mat is None or mat.shape[0] == 0:
+        return np.array([])
+    with np.errstate(all="ignore"):
+        med = np.nanmedian(mat, axis=0)
+    out = np.full(mat.shape[0], np.nan)
+    for i in range(mat.shape[0]):
+        row = mat[i]
+        m = ~np.isnan(row) & ~np.isnan(med)
+        if m.sum() >= 3:
+            d = row[m] - med[m]
+            out[i] = float(np.sqrt(np.mean(d * d)))
+    return out
+
+
+def _shape_outlier_bins(mat, anchor, keep_idx, beats, thresh):
+    """Return bin_num values whose shape RMS (distance to the group median)
+    exceeds an ABSOLUTE threshold. No Tukey/IQR -- a plain RMS cutoff, so it
+    works even when most bins are bad (unlike a relative outlier test)."""
+    if mat is None or not keep_idx:
+        return set()
+    rms = _row_rms_to_median(mat)
+    bad = set()
+    for row_i, src_i in enumerate(keep_idx):
+        v = rms[row_i]
+        if not np.isnan(v) and v > thresh:
+            bad.add(beats[src_i]["bin_num"])
+    return bad
+
+
+def _drop_bins_from_aligned(mat, keep_idx, beats, drop_bins):
+    """Remove rows whose source bin_num is in drop_bins. Returns a new matrix."""
+    if mat is None:
+        return None
+    rows = [row_i for row_i, src_i in enumerate(keep_idx)
+            if beats[src_i]["bin_num"] not in drop_bins]
+    if not rows:
+        return None
+    return mat[rows, :]
+
+
+def _row_hf_noise(mat):
+    """Per-row high-frequency noise metric: RMS of the discrete 2nd difference
+    (a simple high-pass -- smooth signal -> near 0, HF noise -> large), computed
+    within finite samples only. Returns an array of length n_rows (NaN if a row
+    has too few finite samples)."""
+    if mat is None or mat.shape[0] == 0:
+        return np.array([])
+    out = np.full(mat.shape[0], np.nan)
+    for i in range(mat.shape[0]):
+        row = mat[i]
+        finite = row[~np.isnan(row)]
+        if finite.size >= 5:
+            d2 = np.diff(finite, n=2)          # 2nd difference: HF emphasis
+            out[i] = float(np.sqrt(np.mean(d2 * d2)))
+    return out
+
+
+def _noise_outlier_bins(mat, keep_idx, beats, thresh):
+    """Return bin_num values whose HF-noise RMS (RMS of the 2nd difference)
+    exceeds an ABSOLUTE threshold. No Tukey -- a plain cutoff, so noisy bins
+    are dropped even when noise is the norm (e.g. Wake)."""
+    if mat is None or not keep_idx:
+        return set()
+    hf = _row_hf_noise(mat)
+    bad = set()
+    for row_i, src_i in enumerate(keep_idx):
+        v = hf[row_i]
+        if not np.isnan(v) and v > thresh:
+            bad.add(beats[src_i]["bin_num"])
+    return bad
+
+
+def run_by_stage(value_suffix, tag):
+    """One ROW per patient, five COLUMNS (Wake/N1/N2/N3/REM). Each cell is the
+    R-aligned ECG (solid) + PPG (dashed) overlay for that patient's bins in
+    that stage -- identical alignment/window to plot_templates.py."""
+    palette_group = {}
     palette = ["tab:green", "tab:red", "tab:blue", "tab:purple"]
 
-    # patients = list of (group, label, ecg_mat, ecg_anchor, ppg_mat, ppg_anchor)
+    # patients = list of (group, label, {stage: (ecgmat,ecganc,ppgmat,ppganc)})
     patients = []
 
     for gi, folder in enumerate(FOLDERS):
         if not folder.is_dir():
-            print(f"[skip] {folder} is not a directory", file=sys.stderr)
+            print(f"[skip] {folder} not a directory", file=sys.stderr)
             continue
-        group_color[folder.name] = palette[gi % len(palette)]
+        palette_group[folder.name] = palette[gi % len(palette)]
         files = sorted(p for p in folder.glob("*_template.csv")
                        if "_template_mark" not in p.name and "_template_snips" not in p.name)
         if not files:
@@ -332,6 +488,19 @@ def run_suffix(value_suffix, tag):
             continue
         print(f"\n=== [{tag}] {folder}  ({len(files)} file(s)) ===")
         for path in files:
+            label = path.stem.replace("_template", "")
+            binp = _find_bin_for(label, folder)
+            if binp is None:
+                print(f"  [skip] {label}: no {label}{BIN_SUFFIX} in {folder}")
+                continue
+            try:
+                epoch_s, stages = read_bin_stages(binp)
+            except Exception as e:
+                print(f"  [error] {binp.name}: {e}")
+                continue
+            if stages is None:
+                print(f"  [skip] {label}: .bin has no sleep stages")
+                continue
             try:
                 df = pd.read_csv(path)
             except Exception as e:
@@ -340,225 +509,152 @@ def run_suffix(value_suffix, tag):
 
             ecg_beats = beats_for_file(df, "ch1", True, value_suffix)
             ppg_beats = beats_for_file(df, "ppg", False, value_suffix)
-            ecg_mat, ecg_anchor = align_r(ecg_beats) if ecg_beats else (None, None)
-            ppg_mat, ppg_anchor = align_r(ppg_beats) if ppg_beats else (None, None)
-            if ecg_mat is None and ppg_mat is None:
-                continue
-            patients.append((folder.name, path.stem.replace("_template", ""),
-                             ecg_mat, ecg_anchor, ppg_mat, ppg_anchor))
+
+            # Eligible bins = those that survived beats_for_file's last-5 drop
+            # (union across ECG/PPG). Classify each: pure stage / mixed / unknown.
+            bin_seconds = BIN_SIZE_MINUTES * 60.0
+            eligible_bins = sorted({b["bin_num"] for b in ecg_beats}
+                                   | {b["bin_num"] for b in ppg_beats})
+            bin2stage = {}
+            n_mixed = 0
+            for bnum in eligible_bins:
+                kind, g = _classify_bin(bnum, bin_seconds, epoch_s, stages)
+                if kind == "stage":
+                    bin2stage[bnum] = g
+                elif kind == "mixed":
+                    n_mixed += 1
+                # "unknown" (-1 epochs) is neither assigned nor counted as mixed
+
+            ecg_by = _split_beats_by_stage(ecg_beats, bin2stage)
+            ppg_by = _split_beats_by_stage(ppg_beats, bin2stage)
+
+            per_stage = {}
+            rms_dropped = {}          # stage -> bins dropped by RMS shape
+            noise_dropped = {}        # stage -> bins dropped for HF noise
+            kept = {}                 # stage -> bins kept in the overlay
+            any_stage = False
+            for g in STAGE_ORDER:
+                eb, pb = ecg_by[g], ppg_by[g]
+                # Align each channel (anchor only; no scalar Tukey), keeping the
+                # map from matrix rows back to source bins for rejection.
+                em, ea, e_keep = align_r(eb, return_keep=True) if eb else (None, None, [])
+                pm, pa, p_keep = align_r(pb, return_keep=True) if pb else (None, None, [])
+
+                if PRINT_RMS_STATS:
+                    def _stats(arr):
+                        f = arr[~np.isnan(arr)] if arr.size else arr
+                        if f.size == 0:
+                            return "n/a"
+                        return f"min={f.min():.4f} med={np.median(f):.4f} max={f.max():.4f} (n={f.size})"
+                    if em is not None:
+                        print(f"    [{g}] ECG noise {_stats(_row_hf_noise(em))} | "
+                              f"shape {_stats(_row_rms_to_median(em))}")
+                    if pm is not None:
+                        print(f"    [{g}] PPG noise {_stats(_row_hf_noise(pm))} | "
+                              f"shape {_stats(_row_rms_to_median(pm))}")
+
+                # (1) HF-noise rejection: drop bins whose high-frequency content
+                # (RMS of 2nd difference) exceeds an ABSOLUTE cutoff in EITHER
+                # channel -- the messy/noisy bins, removed entirely.
+                noisy = set()
+                noisy |= _noise_outlier_bins(em, e_keep, eb, NOISE_RMS_MAX)
+                noisy |= _noise_outlier_bins(pm, p_keep, pb, NOISE_RMS_MAX)
+                noise_dropped[g] = len(noisy)
+
+                # (2) Shape rejection: drop bins whose RMS distance to the group
+                # median exceeds an ABSOLUTE cutoff in EITHER channel. Union with
+                # the noisy set; drop all from BOTH overlays.
+                bad = set(noisy)
+                bad |= _shape_outlier_bins(em, ea, e_keep, eb, SHAPE_RMS_MAX)
+                bad |= _shape_outlier_bins(pm, pa, p_keep, pb, SHAPE_RMS_MAX)
+                rms_dropped[g] = len(bad) - len(noisy)   # shape-only, excl. noise
+
+                if bad:
+                    em = _drop_bins_from_aligned(em, e_keep, eb, bad)
+                    pm = _drop_bins_from_aligned(pm, p_keep, pb, bad)
+
+                # Bins kept in this stage = all bins assigned to it minus the
+                # dropped (noise + shape) set.
+                stage_bins = {b["bin_num"] for b in eb} | {b["bin_num"] for b in pb}
+                kept[g] = len(stage_bins - bad)
+
+                per_stage[g] = (em, ea, pm, pa)
+                if em is not None or pm is not None:
+                    any_stage = True
+            if any_stage:
+                patients.append((folder.name, label, per_stage, n_mixed,
+                                 rms_dropped, noise_dropped, kept))
+            n_by = {g: len(ecg_by[g]) for g in STAGE_ORDER}
+            print(f"  {label}: bins/stage ECG {n_by}  | mixed dropped={n_mixed}"
+                  f"  | noise dropped={ {g: noise_dropped[g] for g in STAGE_ORDER if noise_dropped[g]} }"
+                  f"  | rms dropped={ {g: rms_dropped[g] for g in STAGE_ORDER if rms_dropped[g]} }"
+                  f"  | kept={ {g: kept[g] for g in STAGE_ORDER if kept[g]} }")
 
     if not patients:
         print(f"[skip] [{tag}]: no patients")
         return
 
-    patients.sort(key=lambda e: (list(group_color).index(e[0]), e[1]))
+    patients.sort(key=lambda e: (list(palette_group).index(e[0]), e[1]))
 
-    n = len(patients)
-    ncols = min(5, n)
-    nrows = (n + ncols - 1) // ncols
+    nrows = len(patients)
+    ncols = len(STAGE_ORDER)
     fig, axes = plt.subplots(nrows, ncols,
-                             figsize=(3.4 * ncols, 2.4 * nrows),
+                             figsize=(3.6 * ncols, 2.4 * nrows),
                              squeeze=False, sharex=True)
-    for idx in range(nrows * ncols):
-        ax = axes[idx // ncols][idx % ncols]
-        if idx >= n:
-            ax.axis("off")
-            continue
-        group, label, ecg_mat, ecg_anchor, ppg_mat, ppg_anchor = patients[idx]
-        gcolor = group_color[group]
 
-        # ECG on the left axis (group color).
-        xe, me = _windowed(ecg_mat, ecg_anchor)
-        if me is not None:
-            ae = max(0.12, min(0.5, 25.0 / max(1, me.shape[0])))
-            for row in me:
-                ax.plot(xe, row, color=gcolor, alpha=ae, linewidth=0.4)
-            with np.errstate(all="ignore"):
-                ax.plot(xe, np.nanmedian(me, axis=0), color=gcolor, linewidth=1.6)
-        ax.set_ylabel("ecg", color=gcolor, fontsize=6)
-        ax.tick_params(axis="y", labelcolor=gcolor, labelsize=6)
+    for ri, (group, label, per_stage, n_mixed, rms_dropped, noise_dropped, kept) in enumerate(patients):
+        gcolor = palette_group[group]
+        for ci, stg in enumerate(STAGE_ORDER):
+            ax = axes[ri][ci]
+            em, ea, pm, pa = per_stage[stg]
 
-        # PPG on a twin right axis, same group color as ECG (distinguished by
-        # being on the right axis + dashed median).
-        xp, mp = _windowed(ppg_mat, ppg_anchor)
-        if mp is not None:
-            ax2 = ax.twinx()
-            ap = max(0.12, min(0.5, 25.0 / max(1, mp.shape[0])))
-            for row in mp:
-                ax2.plot(xp, row, color=gcolor, alpha=ap, linewidth=0.4)
-            with np.errstate(all="ignore"):
-                ax2.plot(xp, np.nanmedian(mp, axis=0), color=gcolor,
-                         linewidth=1.4, linestyle="--")
-            ax2.set_ylabel("ppg", color=gcolor, fontsize=6)
-            ax2.tick_params(axis="y", labelcolor=gcolor, labelsize=6)
-            ax2.set_ylim(*Y_LIM)
+            xe, me = _windowed(em, ea)
+            if me is not None:
+                al = max(0.12, min(0.5, 25.0 / max(1, me.shape[0])))
+                for row in me:
+                    ax.plot(xe, row, color=gcolor, alpha=al, linewidth=0.4)
+                with np.errstate(all="ignore"):
+                    ax.plot(xe, np.nanmedian(me, axis=0), color=gcolor, linewidth=1.6)
+            ax.set_ylim(*Y_LIM)
+            ax.tick_params(axis="y", labelsize=6, labelcolor=gcolor)
 
-        ax.axvline(0, color="k", linewidth=0.5, linestyle="--", alpha=0.4)
-        ax.set_title(f"{group}\n{label}", fontsize=6)
-        # X ticks labeled on EVERY subplot (sharex keeps the ranges aligned).
-        ax.tick_params(axis="x", labelbottom=True, labelsize=6)
-        ax.set_ylim(*Y_LIM)
+            xp, mp = _windowed(pm, pa)
+            if mp is not None:
+                ax2 = ax.twinx()
+                ap = max(0.12, min(0.5, 25.0 / max(1, mp.shape[0])))
+                for row in mp:
+                    ax2.plot(xp, row, color=gcolor, alpha=ap, linewidth=0.4)
+                with np.errstate(all="ignore"):
+                    ax2.plot(xp, np.nanmedian(mp, axis=0), color=gcolor,
+                             linewidth=1.4, linestyle="--")
+                ax2.set_ylim(*Y_LIM)
+                ax2.tick_params(axis="y", labelsize=6, labelcolor=gcolor)
 
-    fig.suptitle("per-patient ECG (solid, anchor=R) + PPG (dashed, anchor=50%-upslope) "
-                 f"[normalized] -- {', '.join(group_color)}", fontsize=11)
-    fig.supxlabel("samples relative to anchor", fontsize=9)
-    fig.tight_layout(rect=(0, 0.02, 1, 0.95))
+            ax.axvline(0, color="k", linewidth=0.5, linestyle="--", alpha=0.4)
+            ax.tick_params(axis="x", labelbottom=True, labelsize=6)
+            # Each subplot title: stage name + bins kept, and bins dropped this
+            # stage for HF noise and for RMS shape.
+            title = (f"{STAGE_LABEL.get(stg, stg)}  "
+                     f"(kept: {kept.get(stg, 0)}, noise: {noise_dropped.get(stg, 0)}, "
+                     f"rms: {rms_dropped.get(stg, 0)})")
+            ax.set_title(title, fontsize=8)
+            if ci == 0:
+                # Row label: patient + how many bins were dropped as mixed
+                # (spanning >1 sleep stage) for this patient.
+                ax.set_ylabel(f"{group}\n{label}\nmixed drop: {n_mixed}", fontsize=6)
 
-    out_path = out_root / f"perpatient_ecg_ppg_{tag}.png"
+    fig.suptitle("per-patient R-aligned ECG (solid) + PPG (dashed) by sleep stage",
+                 fontsize=11)
+    fig.supxlabel(_xlabel(), fontsize=9)
+    fig.tight_layout(rect=(0, 0.02, 1, 0.96))
+    out_path = Path(f"perpatient_by_stage_{tag}.png")
     fig.savefig(out_path, dpi=140)
     plt.close(fig)
-    print(f"[ok] [{tag}]: {n} patients -> {out_path.name}")
-
-
-def run_group_overlay(folder, value_suffix, tag):
-    """Overlay ALL bins from ALL files in one folder into a single figure
-    (ECG solid on left axis, PPG dashed on right axis, both aligned). Writes
-    group_overlay_<folder>_<tag>.png. Normalized y clamped to Y_LIM."""
-    if not folder.is_dir():
-        print(f"[skip] {folder} is not a directory", file=sys.stderr)
-        return
-    files = sorted(p for p in folder.glob("*_template.csv")
-                   if "_template_mark" not in p.name and "_template_snips" not in p.name)
-    if not files:
-        print(f"[warn] no *_template.csv in {folder}")
-        return
-
-    # Pool every bin across every file in this folder.
-    ecg_beats, ppg_beats = [], []
-    for path in files:
-        try:
-            df = pd.read_csv(path)
-        except Exception as e:
-            print(f"  [error] {path.name}: {e}")
-            continue
-        ecg_beats.extend(beats_for_file(df, "ch1", True, value_suffix))
-        ppg_beats.extend(beats_for_file(df, "ppg", False, value_suffix))
-
-    ecg_mat, ecg_anchor = align_r(ecg_beats) if ecg_beats else (None, None)
-    ppg_mat, ppg_anchor = align_r(ppg_beats) if ppg_beats else (None, None)
-    if ecg_mat is None and ppg_mat is None:
-        print(f"[skip] {folder.name} [{tag}]: no data")
-        return
-
-    color = "tab:green" if "healthy" in folder.name.lower() else "tab:red"
-    fig, ax = plt.subplots(figsize=(10, 5))
-
-    xe, me = _windowed(ecg_mat, ecg_anchor)
-    if me is not None:
-        ae = max(0.05, min(0.4, 15.0 / max(1, me.shape[0])))
-        for row in me:
-            ax.plot(xe, row, color=color, alpha=ae, linewidth=0.3)
-        with np.errstate(all="ignore"):
-            ax.plot(xe, np.nanmedian(me, axis=0), color=color, linewidth=2.0,
-                    label=f"ECG median (n={me.shape[0]})")
-    ax.set_ylabel("ecg", color=color)
-    ax.tick_params(axis="y", labelcolor=color)
-    ax.set_ylim(*Y_LIM)
-
-    xp, mp = _windowed(ppg_mat, ppg_anchor)
-    if mp is not None:
-        ax2 = ax.twinx()
-        ap = max(0.05, min(0.4, 15.0 / max(1, mp.shape[0])))
-        for row in mp:
-            ax2.plot(xp, row, color=color, alpha=ap, linewidth=0.3)
-        with np.errstate(all="ignore"):
-            ax2.plot(xp, np.nanmedian(mp, axis=0), color=color, linewidth=2.0,
-                     linestyle="--", label=f"PPG median (n={mp.shape[0]})")
-        ax2.set_ylabel("ppg", color=color)
-        ax2.tick_params(axis="y", labelcolor=color)
-        ax2.set_ylim(*Y_LIM)
-
-    ax.axvline(0, color="k", linewidth=0.6, linestyle="--", alpha=0.4)
-    ax.set_title(f"{folder.name}: all bins overlaid -- ECG (solid, anchor=R) + "
-                 "PPG (dashed, anchor=50%-upslope) [normalized]")
-    ax.set_xlabel("samples relative to anchor")
-    fig.tight_layout()
-
-    out_path = Path(".") / f"group_overlay_{folder.name}_{tag}.png"
-    fig.savefig(out_path, dpi=140)
-    plt.close(fig)
-    print(f"[ok] group overlay {folder.name} [{tag}] -> {out_path.name}")
-
-
-def run_combined_overlay(value_suffix, tag):
-    """One figure: every bin from every file in BOTH folders, overlaid on
-    shared axes. Untreated = red, healthy/treated = green. ECG solid (left
-    axis), PPG dashed (right axis). Normalized y clamped to Y_LIM."""
-    fig, ax = plt.subplots(figsize=(11, 6))
-    ax2 = ax.twinx()
-
-    def color_for(name):
-        return "tab:green" if "healthy" in name.lower() else "tab:red"
-
-    any_data = False
-    for folder in FOLDERS:
-        if not folder.is_dir():
-            continue
-        files = sorted(p for p in folder.glob("*_template.csv")
-                       if "_template_mark" not in p.name and "_template_snips" not in p.name)
-        if not files:
-            continue
-        ecg_beats, ppg_beats = [], []
-        for path in files:
-            try:
-                df = pd.read_csv(path)
-            except Exception as e:
-                print(f"  [error] {path.name}: {e}")
-                continue
-            ecg_beats.extend(beats_for_file(df, "ch1", True, value_suffix))
-            ppg_beats.extend(beats_for_file(df, "ppg", False, value_suffix))
-        ecg_mat, ecg_anchor = align_r(ecg_beats) if ecg_beats else (None, None)
-        ppg_mat, ppg_anchor = align_r(ppg_beats) if ppg_beats else (None, None)
-        color = color_for(folder.name)
-
-        xe, me = _windowed(ecg_mat, ecg_anchor)
-        if me is not None:
-            any_data = True
-            ae = max(0.03, min(0.3, 10.0 / max(1, me.shape[0])))
-            for row in me:
-                ax.plot(xe, row, color=color, alpha=ae, linewidth=0.3)
-            with np.errstate(all="ignore"):
-                ax.plot(xe, np.nanmedian(me, axis=0), color=color, linewidth=2.2,
-                        label=f"{folder.name} ECG (n={me.shape[0]})")
-
-        xp, mp = _windowed(ppg_mat, ppg_anchor)
-        if mp is not None:
-            any_data = True
-            ap = max(0.03, min(0.3, 10.0 / max(1, mp.shape[0])))
-            for row in mp:
-                ax2.plot(xp, row, color=color, alpha=ap, linewidth=0.3)
-            with np.errstate(all="ignore"):
-                ax2.plot(xp, np.nanmedian(mp, axis=0), color=color, linewidth=2.0,
-                         linestyle="--", label=f"{folder.name} PPG (n={mp.shape[0]})")
-
-    if not any_data:
-        plt.close(fig)
-        print(f"[skip] combined [{tag}]: no data")
-        return
-
-    ax.set_ylim(*Y_LIM)
-    ax2.set_ylim(*Y_LIM)
-    ax.axvline(0, color="k", linewidth=0.6, linestyle="--", alpha=0.4)
-    ax.set_xlabel("samples relative to anchor")
-    ax.set_ylabel("ecg (normalized)")
-    ax2.set_ylabel("ppg (normalized)")
-    ax.set_title("Normalized ECG and PPG from 20 untreated diabetic and 18 healthy patients")
-    h1, l1 = ax.get_legend_handles_labels()
-    h2, l2 = ax2.get_legend_handles_labels()
-    ax.legend(h1 + h2, l1 + l2, loc="best", fontsize=8)
-    fig.tight_layout()
-    out_path = Path(".") / "combined_overlay_normalized.png"
-    fig.savefig(out_path, dpi=140)
-    plt.close(fig)
-    print(f"[ok] combined overlay [{tag}] -> {out_path.name}")
+    print(f"[ok] [{tag}]: {nrows} patients x {ncols} stages -> {out_path.name}")
 
 
 def main():
-    # Normalized only.
-    run_suffix("_Normalized_r", "normalized")
-    for folder in FOLDERS:
-        run_group_overlay(folder, "_Normalized_r", "normalized")
-    run_combined_overlay("_Normalized_r", "normalized")
+    run_by_stage(VALUE_SUFFIX, "normalized")
 
 
 if __name__ == "__main__":

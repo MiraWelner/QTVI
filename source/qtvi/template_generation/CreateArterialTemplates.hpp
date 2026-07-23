@@ -29,7 +29,7 @@
 
 struct ArterialTemplatesResult {
     std::vector<std::vector<double>> templates;
-    std::vector<std::vector<double>> stds;
+    std::vector<std::vector<double>> iqrs;
     std::vector<std::vector<std::vector<double>>> kept; // [bin][beat][sample]
 };
 
@@ -54,7 +54,7 @@ inline ArterialTemplatesResult CreateArterialTemplates(
     const size_t n = bins.size();
     ArterialTemplatesResult out;
     out.templates.assign(n, {});
-    out.stds.assign(n, {});
+    out.iqrs.assign(n, {});
     out.kept.assign(n, {});
 
     if (channelRate <= 0.0) return out;   // channel absent from this dataset
@@ -66,7 +66,7 @@ inline ArterialTemplatesResult CreateArterialTemplates(
         const std::vector<double>& sig = b.*sigMember;
 
         if (b.bad_segment || sig.empty() || b.ch1.raw.size() < 2)
-            continue;   // out.templates[i]/stds[i]/kept[i] stay empty
+            continue;   // out.templates[i]/iqrs[i]/kept[i] stay empty
 
         try {
             // Arterial channels don't use the systolic peak/foot fiducials
@@ -77,12 +77,12 @@ inline ArterialTemplatesResult CreateArterialTemplates(
                 sig, channelRate,
                 b.ch1.raw, ecgRate,
                 padSeconds,
-                out.templates[i], out.stds[i], out.kept[i],
+                out.templates[i], out.iqrs[i], out.kept[i],
                 arterialPeakCol, arterialFootCol);
         }
         catch (...) {
             out.templates[i].clear();
-            out.stds[i].clear();
+            out.iqrs[i].clear();
             out.kept[i].clear();
         }
     }
