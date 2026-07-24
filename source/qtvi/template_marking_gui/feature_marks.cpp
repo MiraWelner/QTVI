@@ -253,7 +253,7 @@ int FeatureMarks::compute_s_end(const std::vector<double>& v, int sUser, double 
 // user's Q-begin marker.
 int FeatureMarks::compute_q_onset(const std::vector<double>& v, int qUser, double fs, int r_idx) {
     const int N = static_cast<int>(v.size());
-    if (qUser < 0 || N < 4) return qUser;
+    if (qUser < 0 || qUser >= N || N < 4) return std::clamp(qUser, 0, std::max(0, N - 1));
     const int w = win_005s(fs);
 
     // Orient so Q is a downward dip.

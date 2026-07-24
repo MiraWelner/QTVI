@@ -421,12 +421,13 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     // ECG 8 point columns + 2 interval columns per channel.
     static const char* ecgPointNames[] = {
         "p_peak", "q_begin", "q_peak", "r_peak", "s_peak",
-        "s_end",  "t_begin",  "t_end"
+        "s_end",  "t_peak", "t_begin",  "t_end"
     };
     static const char* ecgIntervalNames[] = { "qrs", "qt" };
 
     auto emitEcgPointHeader = [&](const char* name, int c) {
-        const bool userToo = (std::strcmp(name, "r_peak") != 0);
+        // r_peak and t_peak are autodetect-only -- no user column emitted.
+        const bool userToo = (std::strcmp(name, "r_peak") != 0 && std::strcmp(name, "t_peak") != 0);
         f << ',' << name << "_ch" << c << "_y_normalized_autodetect";
         if (userToo) f << ',' << name << "_ch" << c << "_y_normalized_user";
         f << ',' << name << "_ch" << c << "_y_mv_raw_autodetect";
@@ -560,9 +561,15 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 b.s_end_ch[c], b.t_end_ch[c],
                 sampleRateHz);
 
+            // Autodetected T-peak = max between user T-begin/T-end, matching
+            // the on-screen glyph (feature_marks.cpp: g.t_peak_glyph). No
+            // user-adjustable T-peak marker exists, so this column pair emits
+            // autodetect only (like r_peak).
+            const int tPeakAuto = FeatureMarks::compute_t_wave(ecg, b.t_begin_ch[c], b.t_end_ch[c]);
+
             // Order MUST match ecgPointNames:
             //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
-            //   s_end,  t_peak, t_end
+            //   s_end,  t_peak(computed, autodetect-only), t_begin, t_end
             struct P { int a; int u; };
             const P pts[] = {
                 { b.p_peak_auto_ch[c],  b.p_peak_ch[c]  },
@@ -571,11 +578,14 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 { b.r_peak_auto_ch[c],  b.r_peak_ch[c]  },
                 { ftAuto.s_idx,         ftUser.s_idx    },
                 { b.s_end_auto_ch[c],   b.s_end_ch[c]   },
-                { b.t_begin_auto_ch[c],  b.t_begin_ch[c]  },
+                { tPeakAuto,            -1              },   // autodetect only
+                { b.t_begin_auto_ch[c], b.t_begin_ch[c] },
                 { b.t_end_auto_ch[c],   b.t_end_ch[c]   }
             };
-            for (int k = 0; k < 8; ++k) {
-                const bool userToo = (k != 3);   // ecgPointNames[3] == "r_peak"
+            for (int k = 0; k < 9; ++k) {
+                // r_peak (index 3) and t_peak (index 6) are autodetect-only,
+                // matching the header's userToo logic.
+                const bool userToo = (k != 3 && k != 6);
                 emitEcgPoint(ecg, pts[k].a, pts[k].u, ref, userToo);
             }
             // Intervals: qrs, qt (order matches ecgIntervalNames).
@@ -673,17 +683,27 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         int32_t v = 0; f.read(reinterpret_cast<char*>(&v), 4); return v;
         };
 
-    // Current format only: sentinel + version + bin count. Legacy v1-v4
-    // files are no longer supported (regenerate markings if needed).
+    // Current format only: sentinel + version + bin count. Legacy files
+    // (any version other than the current one) are rejected -- attempting to
+    // reinterpret their byte layout under the current field order is
+    // fragile enough that two different guesses at v2's PPG layout both
+    // produced visibly wrong markers, so we no longer try. Regenerate
+    // markings from the current tool if a legacy file needs to be reused.
     uint64_t first = 0;
     f.read(reinterpret_cast<char*>(&first), 8);
     if (first != kTemplateMarkingsV2Sentinel)
-        throw std::runtime_error("unsupported (legacy) markings format: " + path);
+        throw std::runtime_error("unsupported (pre-sentinel) markings format: " + path);
 
     uint32_t version = 0;
     uint64_t n = 0;
     f.read(reinterpret_cast<char*>(&version), 4);
     f.read(reinterpret_cast<char*>(&n), 8);
+
+    if (version != kTemplateMarkingsVersion) {
+        throw std::runtime_error("legacy markings version " + std::to_string(version)
+            + " (current is " + std::to_string(kTemplateMarkingsVersion)
+            + "); regenerate markings for: " + path);
+    }
 
     std::vector<TemplateBin> bins(n);
     for (uint64_t i = 0; i < n; ++i) {

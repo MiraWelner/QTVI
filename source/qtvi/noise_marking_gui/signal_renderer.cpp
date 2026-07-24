@@ -89,9 +89,8 @@ namespace {
     // could still reach gt (the prefix-max short-circuits the common no-mark
     // case). Built once per channel per redraw.
     //
-    // This replaces the chanSpans / prefMaxEnd / markTypeAt block that used to be
-    // pasted into both the normal and accel logging paths -- keeping one copy is
-    // what stops the two from drifting apart.
+    // Keeping this in one struct means the normal and accel logging paths
+    // share the exact same span lookup, so they can't drift apart.
     struct MarkSpanIndex {
         struct Span { double s, e; int code; };
         std::vector<Span>   spans;
@@ -396,11 +395,11 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     data_channel_features r = channelRefs(label);
     const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
 
-    // Marked regions on THIS channel (chunk-local s).
-    //   refExcluded: ALL marking types -> excluded from reference-window stats
-    //                (threshold gate level + mean R-R for blanking).
-    //   detExcluded: noise/artifact only -> no R peaks detected there; other
-    //                annotation types still detect.
+    // Marked regions on THIS channel (chunk-local seconds). Two exclusion
+    // lists are built here and passed to the peak finder as its do_not_learn_from_region
+    // and no_peaks_in_region parameters:
+    //   do_not_learn_from_region:  R peaks in this region are not used to set threshold
+    //   no_peaks_in_region:        This has been marked with R peak noise and no R peaks detected here.
     //   withinSpans: non-noise annotations longer than the reference window;
     //                beats inside them take stats from WITHIN the annotation
     //                rather than reaching back to clean pre-annotation data.
@@ -408,7 +407,7 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     //                reduced to (end, tag) for marking the beat that follows.
     constexpr double kRefSec = gui_peak_finder::previous_seconds_to_train_on;
     const double sr = sampleRateForSignal(label);
-    std::vector<std::pair<double, double>> refExcluded, detExcluded, withinSpans;
+    std::vector<std::pair<double, double>> do_not_learn_from_region, no_peaks_in_region, withinSpans;
     std::vector<PostSpan> postSpans;
     const std::string labelStd = label.toStdString();   // convert once, not per segment
     if (m_noiseManager) {
@@ -422,10 +421,10 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
             // effect on detection or on where the following R peaks land.
             const bool inclThr = annotation_types::includeInThreshold(seg.marking_type);
             if (!inclThr)
-                refExcluded.push_back({ s, e });
+                do_not_learn_from_region.push_back({ s, e });
             if (annotation_types::suppressesDetection(seg.marking_type))
             {
-                detExcluded.push_back({ s, e });
+                no_peaks_in_region.push_back({ s, e });
             }
             else if (!inclThr && e - s > kRefSec)
             {
@@ -446,7 +445,7 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     {
         if (detStart >= kRefSec) {
             refEnd = detStart; refPreceding = true;
-            refStart = reachBackUnmarked(detStart, kRefSec, refExcluded);
+            refStart = reachBackUnmarked(detStart, kRefSec, do_not_learn_from_region);
         }
         else {
             const auto [s, e] = statsWindow(detStart, detEnd);
@@ -456,9 +455,8 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
 
     // Per-peak parameter accessors, backed by an O(log n) piecewise-constant
     // index built once from THIS channel's overrides (in chunk-local seconds).
-    // Replaces the old per-call linear scan of the full override vectors, so a
-    // window with no nearby overrides no longer pays for overrides elsewhere in
-    // the chunk.
+    // A window with no nearby overrides pays nothing for overrides elsewhere
+    // in the chunk.
     gui_peak_finder::ParamIndex thrIdx, blkIdx;
     {
         std::vector<std::tuple<double, double, double>> tSeg, bSeg;
@@ -492,15 +490,15 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
         if (label == "PPG" || label == "ABP" || label == "ART" || label == "ART_PULM")
             return gui_peak_finder::findPeaksDerivative(
                 *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
-                refPreceding, refEx, detExcluded, withinSpans);
+                refPreceding, refEx, no_peaks_in_region, withinSpans);
         return gui_peak_finder::findPeaks(
             *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
-            refPreceding, sgnFn, refEx, detExcluded, withinSpans);   // sgnFn, not scalar
+            refPreceding, sgnFn, refEx, no_peaks_in_region, withinSpans);   // sgnFn, not scalar
         };
 
 
     // Pass 1: detect with annotation spans excluded from the reference.
-    QVector<QPointF> peaks = runFinder(refExcluded);
+    QVector<QPointF> peaks = runFinder(do_not_learn_from_region);
 
     // A post beat (first beat after AF/SVT/VT/PVC/PAC) must not contribute to
     // any other beat's reference. Tag the post beats ONCE here; use the tags
@@ -513,7 +511,7 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     if (!postSpans.empty()) {
         tags = tagPostBeats(peaks, postSpans, detStart, detEnd);
         constexpr double kPostEps = 0.06;   // ~one QRS/systole half-width
-        std::vector<std::pair<double, double>> refEx2 = refExcluded;
+        std::vector<std::pair<double, double>> refEx2 = do_not_learn_from_region;
         bool any = false;
         for (int k = 0; k < peaks.size(); ++k)
             if (tags[k] != 0) {
@@ -543,8 +541,8 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
 // sensitive parts are short-range -- the local-max neighbour, the blanking
 // run-up, and the post-beat tag distance, all under ~2 s. Detecting this far
 // past each edge makes every *visible* beat interior to the detection range,
-// so its detection and red/blue classification no longer depend on where the
-// window edge fell. 5 s is comfortably above all those reaches.
+// so its detection and red/blue classification are independent of where the
+// window edge falls. 5 s is comfortably above all those reaches.
 static constexpr double kDetectMargin = 5.0;
 
 // On-screen peaks: detect over a padded interval, then crop to the visible
@@ -867,10 +865,9 @@ void noise_marking_gui::handle_data_plot() {
     mark_state_abp.startMarkerLine = nullptr;
 
     // The timestamp x-axis belongs to the bottom-most ACTIVE markable chart.
-     // Walk markableChannelLabels() (top-to-bottom order) and keep the last
-     // active one, so the labeled axis rides down to ART / ART_PULM when they
-     // are present and falls back to PPG/ABP otherwise. The old list omitted
-     // art_axis / art_pulm_axis, stranding the axis above them.
+    // Walk markableChannelLabels() (top-to-bottom order) and keep the last
+    // active one, so the labeled axis rides down to ART / ART_PULM when they
+    // are present and falls back to PPG/ABP otherwise.
     QChartView* xLabelOwnerRight = nullptr;
     for (const QString& lbl : markableChannelLabels()) {
         if (!isChannelActive(lbl)) continue;

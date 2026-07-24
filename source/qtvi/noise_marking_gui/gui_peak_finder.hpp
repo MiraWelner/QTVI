@@ -1,4 +1,4 @@
-/**
+ï»¿/**
  * @file   gui_peak_finder.hpp
  * @brief  A peak finder for running within the noise marking GUI. Two constants:
  *         blanking (minimum time between peaks) and threshold (minimum height),
@@ -12,17 +12,8 @@
  *         their per-channel "Lead Reversed" checkbox.
  *
  *         findPeaks            (ECG): local-extremum detector (max, or min when inverted).
- *         findPeaksDerivative  (PPG/ABP): squared-derivative systolic detector.
+ *         findPeaksDerivative  (PPG/aBP/ART/ART-PULM): squared-derivative systolic detector.
  *
- *         PERFORMANCE NOTE: the exclusion-span checks (inside the per-sample
- *         reference loop) and the per-peak threshold/blanking lookups used to
- *         scan the *entire* marking / override list linearly, so a clean
- *         present window still paid O(total_marks) per sample because every
- *         historical mark sat in the same list. Both are now backed by
- *         SpanIndex (sorted, merged intervals, O(log n) overlap test) and
- *         ParamIndex (sorted disjoint piecewise-constant lookup, O(log n)),
- *         so a window with no nearby marks/overrides costs ~nothing regardless
- *         of how many exist elsewhere in the chunk.
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -41,7 +32,7 @@
 
 namespace gui_peak_finder {
 
-    inline constexpr double previous_seconds_to_train_on = 10.0;
+    inline constexpr double previous_seconds_to_train_on = 5.0;
 
     // ------------------------------------------------------------------------
     // SpanIndex: sorted, merged, non-overlapping intervals with O(log n)
@@ -212,20 +203,6 @@ namespace gui_peak_finder {
         return *m;
     }
 
-    inline QVector<QPointF> applyBlanking(const QVector<QPointF>& peaks,
-        const ParamFn& blanking, double refMeanInterval) {
-        if (peaks.size() < 2) return peaks;
-        QVector<QPointF> out;
-        double lastT = -1e300;
-        for (const QPointF& c : peaks) {
-            const double blank = blanking(c.x()) / 1000.0;
-            if (c.x() - lastT < blank) continue;
-            out.append(c);
-            lastT = c.x();
-        }
-        return out;
-    }
-
     inline int lowerIdx(const QVector<QPointF>& rp, double val) {
         int lo = 0, hi = rp.size();
         while (lo < hi) { const int mid = (lo + hi) >> 1; if (rp[mid].x() < val) lo = mid + 1; else hi = mid; }
@@ -372,11 +349,10 @@ namespace gui_peak_finder {
             lowerIdx(rawPairs, detEnd) + 1);
 
         QVector<QPointF> prelim;
-        std::vector<double> prelimRR;
         std::unordered_map<long, RefStats> frameCache;   // one reference per frame, this pass only
         for (int i = i0; i < i1; ++i) {
             const double t = rawPairs[i].x();
-            const double s = sgn(t);                       // this beat's sign, ±1
+            const double s = sgn(t);                       // this beat's sign, ï¿½1
             const double yv = s * rawPairs[i].y();
             if (!(yv >= s * rawPairs[i - 1].y() && yv > s * rawPairs[i + 1].y())) continue;
             if (detIdx.covers(t)) continue;
@@ -384,10 +360,10 @@ namespace gui_peak_finder {
                 refIdx, withinSpans, threshold, s, &frameCache);
             if (!rs.ok) continue;
             const double gate = rs.vMin + threshold(t) * (rs.gateTop - rs.vMin);
-            if (yv >= gate) { prelim.append({ t, rawPairs[i].y() }); prelimRR.push_back(rs.meanRR); }
+            if (yv >= gate) prelim.append({ t, rawPairs[i].y() });
         }
 
-        // Per-beat blanking: drop a beat within blanking(t) * meanRR(t) of the last kept one.
+        // Per-beat blanking: drop a beat within blanking(t) of the last kept one.
         QVector<QPointF> kept;
         double lastT = -1e300;
         for (int k = 0; k < prelim.size(); ++k) {
@@ -500,7 +476,7 @@ namespace gui_peak_finder {
         const double d90 = d2[(int)(0.9 * d2.size())];
         if (d90 <= 0.0) return ret(rs);
         rs.upstrokeGate = 0.6 * d90;
-        
+
 
         //the ppg peak threshold is n% between the baseline (calculated by signal median) and peak (calculated by median peak of prev signal)
 
@@ -538,7 +514,6 @@ namespace gui_peak_finder {
         const int i1 = std::min(n - 2, lowerIdx(rawPairs, detEnd) + 1);
 
         QVector<QPointF> prelim;
-        std::vector<double> prelimRR;
         std::unordered_map<long, RefStatsD> frameCache;   // one reference per frame, this pass only
         for (int k = i0; k < i1; ++k) {
             const double dkm = rawPairs[k].y() - rawPairs[k - 1].y();
@@ -561,7 +536,7 @@ namespace gui_peak_finder {
             if (!rs.ok) continue;
             if (d2k < rs.upstrokeGate) continue;
             const double gate = rs.vMin + threshold(t) * (rs.gateTop - rs.vMin);
-            if (apexVal >= gate) { prelim.append({ t, apexVal }); prelimRR.push_back(rs.meanRR); }
+            if (apexVal >= gate) prelim.append({ t, apexVal });
         }
 
         QVector<QPointF> kept;

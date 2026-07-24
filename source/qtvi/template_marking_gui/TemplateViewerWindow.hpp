@@ -116,6 +116,13 @@ private:
     double m_ecgGlobalRef[3] = { std::nan(""), std::nan(""), std::nan("") };
     double m_pulseGlobalRef[4] = { std::nan(""), std::nan(""), std::nan(""), std::nan("") };
     void computeGlobalRefs();
+    // Copies the persisted per-bin marker fields (everything a user can
+    // drag/toggle -- NOT r_peak_ch, which is always auto-derived from that
+    // pass's own template r_col) from a previously-saved
+    // _template_markings_*.bin into m_bins, when the bin counts match.
+    // Returns false (leaving m_bins untouched) if the file is missing,
+    // unreadable, or sized differently than the current template set.
+    bool restoreMarkersFrom(const QString& markingsBinPath);
     // Normalize a copy of `raw` according to the rules in normalize_features.hpp.
     // ECG: sample / globalRef.
     // Pulse: 100*(sample - footY) / footY / globalRef.

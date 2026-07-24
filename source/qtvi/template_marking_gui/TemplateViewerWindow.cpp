@@ -219,68 +219,124 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     // and stay stable across paging.
     for (auto& b : m_bins) FeatureMarks::seed_all(b, m_sampleRate);
 
-    // On the Q-aligned pass, reuse the markers the user placed in the R
-    // pass. Q-align is "R-align plus one ECG-only Q-shift": the PPG (and
-    // arterial) traces are byte-identical across passes, so their markers
-    // carry over exactly. ECG markers are copied as-is; the small Q-shift
-    // may nudge them slightly and the user adjusts from there. This replaces
-    // the fresh auto-seed above wherever the R pass has real values.
-    if (m_qAlignPass) {
-        const std::string rBin =
-            (m_markingPath + "/" + m_subjectId + "_template_markings_r_align.bin")
-            .toStdString();
-        try {
-            std::vector<TemplateBin> rMarks = readTemplateMarkingsBin(rBin);
-            if (rMarks.size() == m_bins.size()) {
-                for (size_t i = 0; i < m_bins.size(); ++i) {
-                    TemplateBin& d = m_bins[i];
-                    const TemplateBin& s = rMarks[i];
-                    // ECG per-channel user markers (copied raw). R is NOT
-                    // copied: it's an auto-only anchor and must come from the
-                    // Q template's own r_col (seeded above), so the R marker
-                    // reflects the Q-aligned template, not the R pass.
-                    for (int c = 0; c < 3; ++c) {
-                        d.p_peak_ch[c] = s.p_peak_ch[c];
-                        d.q_begin_ch[c] = s.q_begin_ch[c];
-                        d.s_end_ch[c] = s.s_end_ch[c];
-                        d.t_begin_ch[c] = s.t_begin_ch[c];
-                        d.t_end_ch[c] = s.t_end_ch[c];
-                        d.bad_r_ch[c] = s.bad_r_ch[c];
-                    }
-                    // PPG markers carry over exactly (PPG is unchanged by Q-align).
-                    d.ppg_issue = s.ppg_issue;
-                    d.ppg_onset = s.ppg_onset;
-                    d.ppg_p50 = s.ppg_p50;
-                    d.ppg_t80 = s.ppg_t80;
-                    d.ppg_peak = s.ppg_peak;
-                    d.ppg_dicrotic = s.ppg_dicrotic;
-                    d.ppg_peak2 = s.ppg_peak2;
-                    d.ppg_end = s.ppg_end;
-                    // Arterial markers likewise unchanged by Q-align.
-                    d.abp_issue = s.abp_issue;
-                    d.abp_onset = s.abp_onset; d.abp_peak = s.abp_peak;
-                    d.abp_dicrotic = s.abp_dicrotic; d.abp_peak2 = s.abp_peak2;
-                    d.abp_end = s.abp_end;
-                    d.art_issue = s.art_issue;
-                    d.art_onset = s.art_onset; d.art_peak = s.art_peak;
-                    d.art_dicrotic = s.art_dicrotic; d.art_peak2 = s.art_peak2;
-                    d.art_end = s.art_end;
-                    d.art_pulm_issue = s.art_pulm_issue;
-                    d.art_pulm_onset = s.art_pulm_onset; d.art_pulm_peak = s.art_pulm_peak;
-                    d.art_pulm_dicrotic = s.art_pulm_dicrotic;
-                    d.art_pulm_peak2 = s.art_pulm_peak2; d.art_pulm_end = s.art_pulm_end;
-                }
-            }
-        }
-        catch (...) {
-            // No / unreadable R-pass file: fall back to the fresh auto-seed.
-        }
-    }
+    // If this subject was already marked in a previous session, restore
+    // those marker positions from the single canonical marking file. If
+    // it doesn't exist (never marked before), the fresh auto-seed above
+    // stands unchanged.
+    const QDir markingDir(m_markingPath);
+    const QString consolidatedBinPath = markingDir.filePath(m_subjectId + "_template_markings.bin");
+    const bool markersReloaded = restoreMarkersFrom(consolidatedBinPath);
+    fprintf(stderr, "[markers] %s for subject %s (%s pass)\n",
+        markersReloaded ? "RELOADED prior markers" : "using FRESH auto-seed (no prior markers applied)",
+        m_subjectId.toStdString().c_str(), m_qAlignPass ? "q_align" : "r_align");
 
     computeGlobalRefs();
 
     m_capturedPages.clear();   // new subject: nothing saved yet
     showPage();
+}
+
+bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath) {
+    try {
+        std::vector<TemplateBin> saved = readTemplateMarkingsBin(markingsBinPath.toStdString());
+        if (saved.empty()) {
+            fprintf(stderr, "[markers] NOT reloaded from %s -- file has 0 bins\n",
+                markingsBinPath.toStdString().c_str());
+            return false;
+        }
+        if (saved.size() > m_bins.size()) {
+            fprintf(stderr, "[markers] ERROR: %s has %zu bins but current subject has only %zu -- "
+                "ignoring the extra %zu bin(s) in the file\n",
+                markingsBinPath.toStdString().c_str(), saved.size(), m_bins.size(),
+                saved.size() - m_bins.size());
+        }
+        else if (saved.size() < m_bins.size()) {
+            fprintf(stderr, "[markers] ERROR: %s has only %zu bins but current subject has %zu -- "
+                "leaving the extra %zu bin(s) at their fresh auto-seed (unedited)\n",
+                markingsBinPath.toStdString().c_str(), saved.size(), m_bins.size(),
+                m_bins.size() - saved.size());
+        }
+        const size_t n = std::min(saved.size(), m_bins.size());
+
+        // Clamp every restored marker index against the CURRENT bin's own
+        // template length before applying it. Marker indices from the saved
+        // file were valid for whatever templates existed when it was
+        // written -- if this subject's templates regenerated with different
+        // per-bin lengths since then (which the bin-count mismatch above
+        // already tells us is possible), blindly applying an old index that
+        // now exceeds the current array length causes an out-of-bounds read
+        // the first time anything indexes into that array with it (a real
+        // crash, not just a cosmetic misplacement). Rejected markers keep
+        // whatever seed_all() already put there.
+        size_t rejectedCount = 0;
+        auto safeIdx = [&](int savedVal, int currentVal, size_t len) -> int {
+            if (savedVal >= 0 && static_cast<size_t>(savedVal) < len) return savedVal;
+            if (savedVal >= 0) ++rejectedCount;   // only count real (non-sentinel) rejections
+            return currentVal;
+            };
+
+        for (size_t i = 0; i < n; ++i) {
+            TemplateBin& d = m_bins[i];
+            const TemplateBin& s = saved[i];
+            const size_t ecgLen[3] = {
+                d.ch1.ecgTemplate_raw.size(), d.ch2.ecgTemplate_raw.size(), d.ch3.ecgTemplate_raw.size()
+            };
+            const size_t ppgLen = d.ppgTemplate.size();
+            const size_t abpLen = d.abpTemplate.size();
+            const size_t artLen = d.artTemplate.size();
+            const size_t artPLen = d.artPulmTemplate.size();
+            // ECG per-channel user markers (copied raw, bounds-checked). R is
+            // NOT copied: it's an auto-only anchor and must come from this
+            // pass's own template r_col (seeded above), never from a saved file.
+            for (int c = 0; c < 3; ++c) {
+                d.p_peak_ch[c] = safeIdx(s.p_peak_ch[c], d.p_peak_ch[c], ecgLen[c]);
+                d.q_begin_ch[c] = safeIdx(s.q_begin_ch[c], d.q_begin_ch[c], ecgLen[c]);
+                d.s_end_ch[c] = safeIdx(s.s_end_ch[c], d.s_end_ch[c], ecgLen[c]);
+                d.t_begin_ch[c] = safeIdx(s.t_begin_ch[c], d.t_begin_ch[c], ecgLen[c]);
+                d.t_end_ch[c] = safeIdx(s.t_end_ch[c], d.t_end_ch[c], ecgLen[c]);
+                d.bad_r_ch[c] = s.bad_r_ch[c];
+            }
+            d.ppg_issue = s.ppg_issue;
+            d.ppg_onset = safeIdx(s.ppg_onset, d.ppg_onset, ppgLen);
+            d.ppg_p50 = safeIdx(s.ppg_p50, d.ppg_p50, ppgLen);
+            d.ppg_t80 = safeIdx(s.ppg_t80, d.ppg_t80, ppgLen);
+            d.ppg_peak = safeIdx(s.ppg_peak, d.ppg_peak, ppgLen);
+            d.ppg_dicrotic = safeIdx(s.ppg_dicrotic, d.ppg_dicrotic, ppgLen);
+            d.ppg_peak2 = safeIdx(s.ppg_peak2, d.ppg_peak2, ppgLen);
+            d.ppg_end = safeIdx(s.ppg_end, d.ppg_end, ppgLen);
+            d.abp_issue = s.abp_issue;
+            d.abp_onset = safeIdx(s.abp_onset, d.abp_onset, abpLen);
+            d.abp_peak = safeIdx(s.abp_peak, d.abp_peak, abpLen);
+            d.abp_dicrotic = safeIdx(s.abp_dicrotic, d.abp_dicrotic, abpLen);
+            d.abp_peak2 = safeIdx(s.abp_peak2, d.abp_peak2, abpLen);
+            d.abp_end = safeIdx(s.abp_end, d.abp_end, abpLen);
+            d.art_issue = s.art_issue;
+            d.art_onset = safeIdx(s.art_onset, d.art_onset, artLen);
+            d.art_peak = safeIdx(s.art_peak, d.art_peak, artLen);
+            d.art_dicrotic = safeIdx(s.art_dicrotic, d.art_dicrotic, artLen);
+            d.art_peak2 = safeIdx(s.art_peak2, d.art_peak2, artLen);
+            d.art_end = safeIdx(s.art_end, d.art_end, artLen);
+            d.art_pulm_issue = s.art_pulm_issue;
+            d.art_pulm_onset = safeIdx(s.art_pulm_onset, d.art_pulm_onset, artPLen);
+            d.art_pulm_peak = safeIdx(s.art_pulm_peak, d.art_pulm_peak, artPLen);
+            d.art_pulm_dicrotic = safeIdx(s.art_pulm_dicrotic, d.art_pulm_dicrotic, artPLen);
+            d.art_pulm_peak2 = safeIdx(s.art_pulm_peak2, d.art_pulm_peak2, artPLen);
+            d.art_pulm_end = safeIdx(s.art_pulm_end, d.art_pulm_end, artPLen);
+        }
+        if (rejectedCount > 0) {
+            fprintf(stderr, "[markers] WARNING: %zu marker(s) from %s were out of range for the "
+                "current templates and were rejected (kept at auto-seed) instead of applied\n",
+                rejectedCount, markingsBinPath.toStdString().c_str());
+        }
+        fprintf(stderr, "[markers] reloaded from %s (%zu of %zu bin(s) restored)\n",
+            markingsBinPath.toStdString().c_str(), n, m_bins.size());
+        return true;
+    }
+    catch (const std::exception& e) {
+        fprintf(stderr, "[markers] NOT reloaded from %s -- %s\n",
+            markingsBinPath.toStdString().c_str(), e.what());
+        return false;   // No / unreadable file: caller keeps the fresh auto-seed.
+    }
 }
 
 void TemplateViewerWindow::computeGlobalRefs() {
@@ -522,66 +578,104 @@ void TemplateViewerWindow::captureCurrentPage() {
     m_capturedPages.insert(page);
 }
 
-// Merge the r_align and q_align aligned-template CSVs into one wide CSV.
-// Shared keys (file_id,bin_num,x_ms) appear once; every other column is
-// emitted as a pair <name>_r,<name>_q. Rows are paired by line index (both
-// passes share bin order and per-bin template length); any length mismatch
-// is blank-padded. Returns true on success.
-namespace {
-    bool mergeAlignedPassCsvs(const std::string& rPath, const std::string& qPath,
-        const std::string& outPath) {
-        std::ifstream rf(rPath), qf(qPath);
-        if (!rf || !qf) return false;
-        auto readAll = [](std::ifstream& in) {
-            std::vector<std::string> lines; std::string ln;
-            while (std::getline(in, ln)) {
-                if (!ln.empty() && ln.back() == '\r') ln.pop_back();
-                lines.push_back(ln);
-            }
-            return lines;
-            };
-        const std::vector<std::string> R = readAll(rf), Q = readAll(qf);
-        if (R.empty() || Q.empty()) return false;
-        auto split = [](const std::string& s) {
-            std::vector<std::string> c; std::string cell; std::stringstream ss(s);
-            while (std::getline(ss, cell, ',')) c.push_back(cell);
-            return c;
-            };
-        std::ofstream out(outPath);
-        if (!out) return false;
-        const std::vector<std::string> qh = split(Q[0]);
-        const size_t ncol = qh.size();
-        out << "file_id,bin_num,x_ms";
-        for (size_t i = 3; i < ncol; ++i) out << ',' << qh[i] << "_r" << ',' << qh[i] << "_q";
-        out << '\n';
-        const size_t n = std::max(R.size(), Q.size());
-        for (size_t li = 1; li < n; ++li) {
-            const std::vector<std::string> rc = (li < R.size()) ? split(R[li]) : std::vector<std::string>();
-            const std::vector<std::string> qc = (li < Q.size()) ? split(Q[li]) : std::vector<std::string>();
-            const std::vector<std::string>& key = !qc.empty() ? qc : rc;
-            out << (key.size() > 0 ? key[0] : "") << ','
-                << (key.size() > 1 ? key[1] : "") << ','
-                << (key.size() > 2 ? key[2] : "");
-            for (size_t i = 3; i < ncol; ++i) {
-                out << ',' << (i < rc.size() ? rc[i] : "")
-                    << ',' << (i < qc.size() ? qc[i] : "");
-            }
-            out << '\n';
+// Suffix every column in `header` (a single header line) with `suffix`,
+// EXCEPT the first three (file_id, bin_num, x_ms), which are row keys and
+// must stay un-suffixed so the R and Q sides line up when zipped.
+static std::string suffixValueColumns(const std::string& header, const std::string& suffix) {
+    std::string out;
+    out.reserve(header.size() + 32);
+    size_t start = 0;
+    int colIdx = 0;
+    for (size_t i = 0; i <= header.size(); ++i) {
+        if (i == header.size() || header[i] == ',') {
+            out.append(header, start, i - start);
+            if (colIdx >= 3) out.append(suffix);   // skip file_id/bin_num/x_ms
+            if (i < header.size()) out.push_back(',');
+            start = i + 1;
+            ++colIdx;
         }
-        return true;
     }
-}   // namespace
+    return out;
+}
+
+// Zip the R canonical file with the just-produced Q content (both as raw CSV
+// text). Header line: R header with un-suffixed keys and _r on values, then
+// Q's non-key value columns with _q on them. Row lines: paired 1:1; each
+// zipped row uses R's file_id/bin_num/x_ms as the keys, then R's value
+// columns, then Q's value columns. Row counts must match -- if they don't we
+// abort and leave the R file untouched (worse to write a garbled file than
+// none). Returns true on success.
+static bool zipCanonicalWithQ(const std::string& canonicalPath,
+    const std::string& qContent)
+{
+    std::ifstream rf(canonicalPath);
+    if (!rf) {
+        fprintf(stderr, "[tmplcsv] zip: cannot open R canonical %s\n", canonicalPath.c_str());
+        return false;
+    }
+    auto readAll = [](std::istream& in) {
+        std::vector<std::string> lines; std::string ln;
+        while (std::getline(in, ln)) {
+            if (!ln.empty() && ln.back() == '\r') ln.pop_back();
+            lines.push_back(ln);
+        }
+        return lines;
+        };
+    std::vector<std::string> R = readAll(rf);
+    rf.close();
+    std::istringstream qs(qContent);
+    std::vector<std::string> Q = readAll(qs);
+    if (R.empty() || Q.empty()) {
+        fprintf(stderr, "[tmplcsv] zip: empty input (R=%zu Q=%zu)\n", R.size(), Q.size());
+        return false;
+    }
+    if (R.size() != Q.size()) {
+        fprintf(stderr, "[tmplcsv] zip: row count mismatch (R=%zu Q=%zu) -- keeping R file as-is\n",
+            R.size(), Q.size());
+        return false;
+    }
+
+    // Strip Q's first three columns (the shared keys) from every line so
+    // we don't duplicate them in the zipped output.
+    auto stripFirstThree = [](const std::string& line) -> std::string {
+        int commas = 0;
+        for (size_t i = 0; i < line.size(); ++i) {
+            if (line[i] == ',') {
+                if (++commas == 3) return line.substr(i + 1);
+            }
+        }
+        return {};   // fewer than 3 commas -- nothing to append
+        };
+
+    std::ofstream out(canonicalPath, std::ios::trunc);
+    if (!out) {
+        fprintf(stderr, "[tmplcsv] zip: cannot rewrite %s\n", canonicalPath.c_str());
+        return false;
+    }
+    for (size_t i = 0; i < R.size(); ++i) {
+        const std::string qTail = stripFirstThree(Q[i]);
+        out << R[i];
+        if (!qTail.empty()) out << ',' << qTail;
+        out << '\n';
+    }
+    return out.good();
+}
 
 void TemplateViewerWindow::writeAlignedTemplateCsv() {
     if (m_bins.empty()) return;
 
     QDir outDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
     if (!outDir.exists()) outDir.mkpath(".");
-    const QString pass = m_qAlignPass ? "q_align" : "r_align";
-    const QString path = outDir.filePath(m_subjectId + "_template_" + pass + ".csv");
+    // Single canonical file; both passes contribute to it directly (no
+    // intermediate _r_align/_q_align files, no post-hoc merge step).
+    const QString path = outDir.filePath(m_subjectId + "_template.csv");
 
-    std::ofstream f(path.toStdString());
-    if (!f) { fprintf(stderr, "[tmplcsv] cannot open %s\n", path.toStdString().c_str()); return; }
+    // Build the pass's CSV content in memory. On the R pass this becomes the
+    // canonical file directly (with _r suffixes applied to every value column).
+    // On the Q pass we hand this buffer to zipCanonicalWithQ, which reads the
+    // R file back and appends the Q columns to each row with _q suffixes.
+    std::ostringstream f;
+    if (!f) { fprintf(stderr, "[tmplcsv] cannot build in-memory buffer for %s\n", path.toStdString().c_str()); return; }
 
     const double toMs = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 1.0;
 
@@ -831,21 +925,44 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             f << '\n';
         }
     }
-    fprintf(stderr, "[tmplcsv] wrote %s\n", path.toStdString().c_str());
-    f.close();
+    // Serialize the in-memory content, suffix its value columns with the
+    // pass tag, and either write it as the fresh canonical file (R pass) or
+    // read the existing canonical file back and append the Q columns to
+    // each line (Q pass). Row-key columns (file_id/bin_num/x_ms) are never
+    // suffixed so the two sides line up cleanly on zip.
+    std::string content = f.str();
+    if (content.empty()) {
+        fprintf(stderr, "[tmplcsv] built empty content for %s -- skipping write\n", path.toStdString().c_str());
+        return;
+    }
+    const size_t nl = content.find('\n');
+    if (nl == std::string::npos) {
+        fprintf(stderr, "[tmplcsv] malformed content (no newline) for %s\n", path.toStdString().c_str());
+        return;
+    }
+    const std::string header = content.substr(0, nl);
+    const std::string body = content.substr(nl);   // includes leading '\n'
 
-    // On the final (q_align) pass, merge the r_align + q_align passes into
-    // one wide CSV (columns suffixed _r / _q) and drop the per-pass files.
-    if (m_qAlignPass) {
-        const QString rPath = outDir.filePath(m_subjectId + "_template_r_align.csv");
-        const QString qPath = outDir.filePath(m_subjectId + "_template_q_align.csv");
-        const QString mPath = outDir.filePath(m_subjectId + "_template.csv");
-        if (mergeAlignedPassCsvs(rPath.toStdString(), qPath.toStdString(),
-            mPath.toStdString())) {
-            QFile::remove(rPath);
-            QFile::remove(qPath);
-            fprintf(stderr, "[tmplcsv] merged -> %s\n", mPath.toStdString().c_str());
+    if (!m_qAlignPass) {
+        // R pass: overwrite the canonical file with our _r-suffixed content.
+        std::ofstream out(path.toStdString(), std::ios::trunc);
+        if (!out) {
+            fprintf(stderr, "[tmplcsv] cannot open %s for R-pass write\n", path.toStdString().c_str());
+            return;
         }
+        out << suffixValueColumns(header, "_r") << body;
+        out.close();
+        fprintf(stderr, "[tmplcsv] wrote %s (R pass)\n", path.toStdString().c_str());
+    }
+    else {
+        // Q pass: build a Q-suffixed version of our content and zip it into
+        // the canonical file's existing rows.
+        std::string qFull = suffixValueColumns(header, "_q");
+        qFull.append(body);
+        if (zipCanonicalWithQ(path.toStdString(), qFull))
+            fprintf(stderr, "[tmplcsv] zipped Q columns into %s\n", path.toStdString().c_str());
+        else
+            fprintf(stderr, "[tmplcsv] zip failed for %s -- R file kept as-is\n", path.toStdString().c_str());
     }
 }
 
@@ -1164,15 +1281,50 @@ void TemplateViewerWindow::save_bin_and_csv() {
     if (!binDir.exists()) binDir.mkpath(".");
 
     try {
-        const QString pass = m_qAlignPass ? "q_align" : "r_align";
-        QString outPath = m_markingPath + "/" + m_subjectId + "_template_markings_" + pass + ".bin";
-        writeTemplateMarkingsBin(outPath.toStdString(), m_bins);
-        std::cout << "Saved: " << outPath.toStdString() << "\n";
+        // Markings .bin: written only on the Q-align (final) pass. Writing
+        // on R-align would overwrite whatever prior full-session save
+        // exists with just-the-R-pass state, which loses information if the
+        // user quits before Q-align finishes. Skipping the R-pass write
+        // means the on-disk .bin always represents a complete R+Q session.
+        if (m_qAlignPass) {
+            const QString outPath = QDir(m_markingPath).filePath(m_subjectId + "_template_markings.bin");
+            writeTemplateMarkingsBin(outPath.toStdString(), m_bins);
+            std::cout << "Saved: " << outPath.toStdString() << "\n";
+        }
 
-        QString csvPath = csvDir.absolutePath() + "/" +
-            m_subjectId + "_template_markings_" + pass + ".csv";
-        writeTemplateMarkingsCsv(csvPath.toStdString(), m_bins,
+        // Markings CSV: single canonical file, R pass writes it fresh with
+        // _r suffixes, Q pass appends _q columns via zipCanonicalWithQ (same
+        // pattern as writeAlignedTemplateCsv above). Writer produces a
+        // temp file, we slurp its content and route it through the
+        // suffix/zip helpers.
+        const QString csvPath = csvDir.absolutePath() + "/"
+            + m_subjectId + "_template_markings.csv";
+        const QString tmpPath = csvPath + ".tmp";
+        writeTemplateMarkingsCsv(tmpPath.toStdString(), m_bins,
             m_subjectId.toStdString(), m_sampleRate);
+        std::ifstream tin(tmpPath.toStdString());
+        std::stringstream tbuf; tbuf << tin.rdbuf();
+        tin.close();
+        QFile::remove(tmpPath);
+        std::string tcontent = tbuf.str();
+        const size_t tnl = tcontent.find('\n');
+        if (tnl == std::string::npos) {
+            throw std::runtime_error("markings CSV writer produced malformed content (no newline)");
+        }
+        const std::string tHeader = tcontent.substr(0, tnl);
+        const std::string tBody = tcontent.substr(tnl);
+        if (!m_qAlignPass) {
+            std::ofstream out(csvPath.toStdString(), std::ios::trunc);
+            if (!out) throw std::runtime_error("cannot open for write: " + csvPath.toStdString());
+            out << suffixValueColumns(tHeader, "_r") << tBody;
+            out.close();
+        }
+        else {
+            std::string qFull = suffixValueColumns(tHeader, "_q");
+            qFull.append(tBody);
+            if (!zipCanonicalWithQ(csvPath.toStdString(), qFull))
+                throw std::runtime_error("could not zip Q markings CSV into " + csvPath.toStdString());
+        }
         std::cout << "Saved: " << csvPath.toStdString() << "\n";
         std::cout.flush();
     }
@@ -1184,8 +1336,9 @@ void TemplateViewerWindow::save_bin_and_csv() {
         return;   // don't emit finished(); let the user retry
     }
 
-    // Aligned-template CSV reflecting the FINAL marker edits (on the q pass
-    // this also merges the two passes into <id>_template.csv).
+    // Aligned-template CSV reflecting the FINAL marker edits. On the R pass
+    // this writes <id>_template.csv fresh with _r columns; on the Q pass it
+    // appends _q columns to that same file.
     writeAlignedTemplateCsv();
 
     if (!m_qAlignPass) {
@@ -1196,20 +1349,6 @@ void TemplateViewerWindow::save_bin_and_csv() {
         ui->finishButton->setText("Finish");
         emit requestQAlignReload();
         return;
-    }
-
-    // Final (q_align) pass: merge the r_align + q_align markings CSVs into one
-    // wide CSV (columns suffixed _r / _q) and drop the per-pass CSVs. The
-    // per-pass .bin files are kept (used to restore state on reload).
-    {
-        const QString rCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings_r_align.csv";
-        const QString qCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings_q_align.csv";
-        const QString mCsv = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings.csv";
-        if (mergeAlignedPassCsvs(rCsv.toStdString(), qCsv.toStdString(), mCsv.toStdString())) {
-            QFile::remove(rCsv);
-            QFile::remove(qCsv);
-            std::cout << "Merged: " << mCsv.toStdString() << "\n";
-        }
     }
 
     emit finished();
