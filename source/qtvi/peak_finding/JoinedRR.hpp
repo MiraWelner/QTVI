@@ -23,9 +23,9 @@ namespace joinedrr_detail {
 
     constexpr int diff_range = 8; // was 2 for 256hz, scaled to 1000hz: 2/256*1000 ~ 8
 
-    // Refinement helper: snap detected R-wave locations to the local maximum
+    // Refinement helper: snap detected R-wave locations to the local extremum
     inline vector<size_t> RPeakfromRWave(const vector<double>& ecg,
-        const vector<size_t>& rWaveIdx, double fs)
+        const vector<size_t>& rWaveIdx, double fs, bool inverted)
     {
         if (rWaveIdx.empty()) return {};
         if (rWaveIdx.size() == 1) return rWaveIdx;
@@ -40,12 +40,13 @@ namespace joinedrr_detail {
             int start = std::max(0, (int)std::round((double)rWaveIdx[i] - half_win));
             int end = std::min((int)ecg.size() - 1, (int)std::round((double)rWaveIdx[i] + half_win));
 
-            double max_v = -1e30;
-            size_t max_i = rWaveIdx[i];
+            double best_v = inverted ? 1e30 : -1e30;
+            size_t best_i = rWaveIdx[i];
             for (int j = start; j <= end; ++j) {
-                if (ecg[j] > max_v) { max_v = ecg[j]; max_i = (size_t)j; }
+                bool better = inverted ? (ecg[j] < best_v) : (ecg[j] > best_v);
+                if (better) { best_v = ecg[j]; best_i = (size_t)j; }
             }
-            refined[i] = max_i;
+            refined[i] = best_i;
         }
         return refined;
     }
@@ -55,8 +56,14 @@ namespace joinedrr_detail {
 
 /**
  * @brief  Full interface that also returns the pre-bandpass (detrended) signal.
+ *
+ * @param[in] inverted  True if this channel's lead is inverted (from the
+ *                      GUI's "Inverted Lead?" checkbox, persisted through
+ *                      the annealed .bin). Determines whether the true
+ *                      R-peak is a local max or local min at every
+ *                      polarity-sensitive decision point below.
  */
-inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, double ecgRate, const std::string fileID) {
+inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, double ecgRate, const std::string fileID, bool inverted) {
     using namespace joinedrr_detail;
 
     JoinedRRResult result;
@@ -80,9 +87,9 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, double ecgRate
     // -- when only the threshold differs. We do the prep once and apply
     // three thresholds. Output is bit-identical.
     auto rpd_prep = rpeakdetect_prep(processedEcg, ecgRate, 0, fileID);
-    output[0] = rpeakdetect_apply(rpd_prep, 0.2).R_index;
-    output[1] = rpeakdetect_apply(rpd_prep, 0.1).R_index;
-    output[2] = rpeakdetect_apply(rpd_prep, 0.4).R_index;
+    output[0] = rpeakdetect_apply(rpd_prep, 0.2, inverted).r_peak_index;
+    output[1] = rpeakdetect_apply(rpd_prep, 0.1, inverted).r_peak_index;
+    output[2] = rpeakdetect_apply(rpd_prep, 0.4, inverted).r_peak_index;
 
     PanTompkinResult pt_res = pan_tompkin(ecgSeg, ecgRate, 0, fileID);
     output[3].assign(pt_res.qrs_i_raw.begin(), pt_res.qrs_i_raw.end());
@@ -104,7 +111,7 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, double ecgRate
 
     // 2. Refine algorithms 4, 5, 6 (indices 3-5, matching MATLAB)
     for (size_t r = 3; r < 6; ++r)
-        output[r] = RPeakfromRWave(ecgSeg, output[r], ecgRate);
+        output[r] = RPeakfromRWave(ecgSeg, output[r], ecgRate, inverted);
 
     // 3. Build weighted detection list
     struct DetWithWeight { size_t pos; double weight; };
@@ -124,11 +131,14 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, double ecgRate
         if (uniq.empty() || uniq.back() != dw.pos)
             uniq.push_back(dw.pos);
 
-    // 5. Merge adjacent positions within diff_range
+    // 5. Merge adjacent positions within diff_range.
     for (size_t i = 0; i + 1 < uniq.size(); ++i) {
         if ((double)(uniq[i + 1] - uniq[i]) <= diff_range) {
             size_t winner, loser;
-            if (ecgSeg[uniq[i]] > ecgSeg[uniq[i + 1]]) {
+            bool first_wins = inverted
+                ? (ecgSeg[uniq[i]] < ecgSeg[uniq[i + 1]])
+                : (ecgSeg[uniq[i]] > ecgSeg[uniq[i + 1]]);
+            if (first_wins) {
                 winner = uniq[i]; loser = uniq[i + 1];
             }
             else {
@@ -153,11 +163,4 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, double ecgRate
     std::sort(candidates.begin(), candidates.end());
     result.peaks = candidates;
     return result;
-}
-
-/**
- * @brief  Backward-compatible wrapper, returns only peak indices.
- */
-inline vector<size_t> JoinedRR(const vector<double>& ecgSeg, double ecgRate, const std::string fileID) {
-    return JoinedRR_full(ecgSeg, ecgRate, fileID).peaks;
 }

@@ -108,4 +108,8 @@ struct config_entry {
     std::string spo2_label = "SpO2";
     std::string hr_label = "HR";
     std::string dhr_label = "DHR";
+
+
+    //determine what r peak finding method to utilize
+    bool use_consensus_rpeak = true;
 };

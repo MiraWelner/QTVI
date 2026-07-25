@@ -170,7 +170,7 @@ namespace {
             return m;
         }
 
-    
+
         std::vector<std::pair<double, double>> computeExclusions(const NoiseMarkings& nm)
         {
 
@@ -570,9 +570,27 @@ namespace {
         auto extract = [](const std::vector<double>& sig,
             const std::vector<std::pair<uint64_t, uint64_t>>& idx,
             std::vector<double>& out) {
-                for (const auto& seg : idx)
-                    for (uint64_t k = seg.first; k <= seg.second && k <= sig.size(); ++k)
-                        out.push_back(sig[k - 1]);
+                // Reserve once for all segments so multi-segment bins don't
+                // repeatedly reallocate/copy as `out` grows.
+                size_t total = 0;
+                for (const auto& seg : idx) {
+                    if (seg.first > sig.size()) continue;
+                    const uint64_t last = std::min<uint64_t>(seg.second, sig.size());
+                    if (last >= seg.first) total += static_cast<size_t>(last - seg.first + 1);
+                }
+                out.reserve(out.size() + total);
+
+                // Bulk range-copy per segment instead of one push_back per
+                // sample -- same clamping behaviour as the original
+                // (k <= sig.size()) bound, just done as one contiguous copy.
+                for (const auto& seg : idx) {
+                    if (seg.first > sig.size()) continue;
+                    const uint64_t last = std::min<uint64_t>(seg.second, sig.size());
+                    if (last < seg.first) continue;
+                    out.insert(out.end(),
+                        sig.begin() + (seg.first - 1),
+                        sig.begin() + last);
+                }
             };
 
         std::vector<FinalSegment> results(final_bins.size());
@@ -680,6 +698,11 @@ namespace {
         std::ifstream f(path, std::ios::binary);
         if (!f.is_open()) throw std::runtime_error("cannot open: " + path.string());
 
+        // Buffered I/O for throughput -- this file is read sequentially in
+        // full, so a large buffer cuts down on small-read syscalls.
+        char read_buf[1 << 16];
+        f.rdbuf()->pubsetbuf(read_buf, sizeof(read_buf));
+
         f.seekg(0, std::ios::end);
         const uint64_t fileSize = static_cast<uint64_t>(f.tellg());
         f.seekg(0, std::ios::beg);
@@ -746,6 +769,7 @@ namespace {
     // Layout:
     //   Header: [uint64 nSegments][double ppgSR][double ecgSR][double epochSec]
     //           [uint32 nChannels=36][36 x float32 nativeRates]
+    //           [uint8 ecg1_inverted][uint8 ecg2_inverted][uint8 ecg3_inverted]
     //   Per segment:
     //     ppg_bin_indexs, ecg_bin_indexs, ppg, ecg1, ecg2, ecg3, sleep,
     //     then 36 x {upsampled_slice, raw_slice}.
@@ -759,11 +783,19 @@ namespace {
     //     window. Timestamps stay in absolute seconds-from-recording-start.
     void write_output_bin(const std::filesystem::path& path,
         const std::vector<FinalSegment>& segs,
-        const Extras& extras)
+        const Extras& extras,
+        bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
     {
         std::ofstream out(path, std::ios::binary);
         if (!out.is_open())
             throw std::runtime_error("cannot create: " + path.string());
+
+        // Buffered I/O for throughput -- default iostream buffering issues
+        // many small writes for a file this size; a 64KB buffer cuts that
+        // substantially. Matches the read-side buffering already used in
+        // run_find_r_peaks.hpp's read_input_binfile.
+        char write_buf[1 << 16];
+        out.rdbuf()->pubsetbuf(write_buf, sizeof(write_buf));
 
         uint64_t n = segs.size();
         out.write(reinterpret_cast<char*>(&n), 8);
@@ -777,6 +809,18 @@ namespace {
         out.write(reinterpret_cast<const char*>(&nch), 4);
         out.write(reinterpret_cast<const char*>(extras.nativeRates.data()),
             NUM_CHANNELS * sizeof(float));
+
+        // Per-channel "Inverted Lead?" checkbox state (noise_marking_gui.ui:
+        // ecg_1_reverse / ecg_2_reverse / ecg_3_reverse), one value for the
+        // whole file. Must land here -- immediately after nativeRates,
+        // before any per-segment data -- to match read_input_binfile() in
+        // run_find_r_peaks.hpp.
+        const uint8_t inv1 = ecg1_inverted ? 1 : 0;
+        const uint8_t inv2 = ecg2_inverted ? 1 : 0;
+        const uint8_t inv3 = ecg3_inverted ? 1 : 0;
+        out.write(reinterpret_cast<const char*>(&inv1), 1);
+        out.write(reinterpret_cast<const char*>(&inv2), 1);
+        out.write(reinterpret_cast<const char*>(&inv3), 1);
 
         auto writePairs = [&](const std::vector<std::pair<uint64_t, uint64_t>>& v) {
             uint64_t sz = v.size();
@@ -892,7 +936,8 @@ namespace {
 bool annealOneFile(const std::filesystem::path& binPath,
     const std::filesystem::path& noisePath,
     const std::filesystem::path& outPath,
-    double binLengthMin)
+    double binLengthMin,
+    bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
 {
     try {
         RawData raw;
@@ -907,7 +952,7 @@ bool annealOneFile(const std::filesystem::path& binPath,
             << " -- annealing with no exclusions\n";
 
         auto results = AnnealSegments(raw, noise, binLengthMin);
-        write_output_bin(outPath, results, extras);
+        write_output_bin(outPath, results, extras, ecg1_inverted, ecg2_inverted, ecg3_inverted);
 
         std::cerr << "  -> " << results.size() << " bins -> "
             << outPath.filename() << "\n";

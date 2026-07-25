@@ -69,7 +69,8 @@ namespace post_process_detail {
         return templatePath.parent_path().parent_path() / "csv_for_analysis";
     }
 
-    inline std::optional<ViewerJob> prepareViewerJob(const config_entry& cfg, const std::filesystem::path& binPath)
+    inline std::optional<ViewerJob> prepareViewerJob(const config_entry& cfg, const std::filesystem::path& binPath,
+        bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
     {
         const std::string stem = binPath.stem().string();
         const std::filesystem::path noisePath = std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
@@ -78,24 +79,8 @@ namespace post_process_detail {
         const std::filesystem::path templatePath = std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
         const std::filesystem::path provisionalPath = std::filesystem::path(cfg.template_path) / (stem + "_templates.partial.bin");
 
-        // ---- Step 1: Anneal (same freshness logic as processOneFile) ----
-        bool annealedFresh = std::filesystem::exists(annealedPath) &&
-            std::filesystem::last_write_time(annealedPath) >=
-            std::filesystem::last_write_time(binPath);
-        if (annealedFresh && std::filesystem::exists(noisePath)) {
-            annealedFresh = std::filesystem::last_write_time(annealedPath) >=
-                std::filesystem::last_write_time(noisePath);
-        }
-        if (!annealedFresh) {
-            std::cerr << "  Annealing: " << stem << "\n";
-            if (!annealOneFile(binPath, noisePath, annealedPath, cfg.bin_size_minutes)) {
-                std::cerr << "  Skipping rest of pipeline for " << stem << "\n";
-                return std::nullopt;
-            }
-        }
-        else {
-            std::cerr << "  [cache] anneal: " << annealedPath.filename() << " up to date\n";
-        }
+        // ---- Step 1: Anneal (always -- freshness check removed) ----
+        annealOneFile(binPath, noisePath, annealedPath, cfg.bin_size_minutes, ecg1_inverted, ecg2_inverted, ecg3_inverted);
 
         ViewerJob job;
         job.stem = stem;
@@ -155,9 +140,8 @@ namespace post_process_detail {
                     if (35 < up.size()) artpSlots[i] = up[35];
                 }
 
-                job.peakResults = create_ecg_ppg_pairs_raw(
-                    std::move(annealedData.bins), true, stem,
-                    cfg.ecg_upsample_rate, cfg.ppg_upsample_rate);
+                job.peakResults = create_ecg_ppg_pairs_raw(std::move(annealedData.bins), true, stem, cfg,
+                    annealedData.ecg1_inverted, annealedData.ecg2_inverted, annealedData.ecg3_inverted);
                 job.needSqabsDetection = true;
 
                 // create_ecg_ppg_pairs_raw doesn't carry the arterial pass-through

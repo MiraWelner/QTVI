@@ -68,7 +68,7 @@ namespace normalize_features {
         //divide PPG by the global reference (PI)
         if (!std::isfinite(ref) || ref == 0.0) return std::nan("");
         const double lr = calculate_perfusion_index(y, foot_y);
-        return std::isnan(lr) ? lr : lr / ref;
+        return std::isnan(lr) ? lr : lr / std::abs(ref);
     }
 
     // ------------------------------------------------------------------

@@ -50,6 +50,9 @@
   *     double   scoringEpoch                   // (consumed, not retained)
   *     uint32   nChannels                      // pass-through channel count
   *     uint32   nativeSR[nChannels]            // per-channel native rate (skipped)
+  *     uint8    ecg1_inverted                  // "Inverted Lead?" checkbox, CH1 (0/1)
+  *     uint8    ecg2_inverted                  // same, CH2
+  *     uint8    ecg3_inverted                  // same, CH3
   *
   *   Per bin (numBins of these):
   *     uint64   nPpgPairs
@@ -92,6 +95,18 @@ inline AnnealedData read_input_binfile(const std::string& path) {
     file.read(reinterpret_cast<char*>(&nChannels), 4);
     if (nChannels > 0)
         file.seekg(static_cast<std::streamoff>(nChannels) * 4, std::ios::cur);
+
+    // Per-channel "Inverted Lead?" checkbox state, one value for the whole
+    // file (not per-bin, not auto-detected). Written by the annealed .bin
+    // writer immediately after the native-rate array above; read here in
+    // the same order.
+    uint8_t inv1 = 0, inv2 = 0, inv3 = 0;
+    file.read(reinterpret_cast<char*>(&inv1), 1);
+    file.read(reinterpret_cast<char*>(&inv2), 1);
+    file.read(reinterpret_cast<char*>(&inv3), 1);
+    data.ecg1_inverted = inv1 != 0;
+    data.ecg2_inverted = inv2 != 0;
+    data.ecg3_inverted = inv3 != 0;
 
     data.bins.resize(numBins);
 

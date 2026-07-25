@@ -56,6 +56,15 @@ struct AnnealedSegment {
 
 struct AnnealedData {
     std::vector<AnnealedSegment> bins;
+
+    // Per-channel "Inverted Lead?" checkbox state (noise_marking_gui.ui:
+    // ecg_1_reverse / ecg_2_reverse / ecg_3_reverse), one value for the
+    // whole file -- not auto-detected, not per-bin. Read from the annealed
+    // .bin header by read_input_binfile() in run_find_r_peaks.hpp; must be
+    // written at the matching header position by the annealed .bin writer.
+    bool ecg1_inverted = false;
+    bool ecg2_inverted = false;
+    bool ecg3_inverted = false;
 };
 
 /**
@@ -252,7 +261,7 @@ inline AnnealedData read_input_binfile(const std::string& path);
  * @param  wavePath       Path to the wave_markings .bin.
  * @param  annealedPath   Path to the matching annealed .bin.
  */
-inline std::vector<output_binfile_data> read_output_binfile(const std::string& wavePath,const std::string& annealedPath)
+inline std::vector<output_binfile_data> read_output_binfile(const std::string& wavePath, const std::string& annealedPath)
 {
     std::vector<output_binfile_data> bins = read_output_binfile(wavePath);
     AnnealedData ann = read_input_binfile(annealedPath);

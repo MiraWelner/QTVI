@@ -28,9 +28,7 @@ static const std::string CONFIG_PATH = "config.csv";
 
 namespace {
     std::vector<std::string> parse_config_row(const std::string& line) {
-        /*
-            The config file is a csv - this just is a util for loading a .csv row
-        */
+        // The config file is a csv - this just is a util for loading a .csv row
         std::vector<std::string> fields;
         std::string cur;
         for (char c : line) {
@@ -45,6 +43,15 @@ namespace {
             f = f.substr(first, last - first + 1);
         }
         return fields;
+    }
+
+    static bool parseBool(const std::string& s, bool dflt) {
+        //this is for the the r consensus variable in the config.csv file
+        if (s.empty()) return dflt;
+        std::string t; for (char c : s) t += std::tolower((unsigned char)c);
+        if (t == "1" || t == "true" || t == "yes") return true;
+        if (t == "0" || t == "false" || t == "no") return false;
+        return dflt;
     }
 
 
@@ -234,6 +241,7 @@ bool load_config(int dataType, config_entry& out) {
         out.bin_size_minutes = stod_or_zero(cell("bin_size_minutes"));
         out.input_path = cell("original_file_path");
         out.output_path = cell("output_folder");
+        out.use_consensus_rpeak = parseBool(cell("use_consensus_rpeak"), true);
 
         apply_dataset_specific_channel_labels(out);
 

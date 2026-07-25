@@ -76,12 +76,21 @@ static std::vector<std::filesystem::path> load_binfiles(const config_entry& cfg)
 // On accept, fills `outAll` with every file's markings touched in the dialog
 // (the dialog lets the user browse to other files) and `outCurrent` with the
 // path that was actually loaded when the dialog closed.
+//
+// Also fills outEcg1Inverted/outEcg2Inverted/outEcg3Inverted with the
+// "Inverted Lead?" checkbox state for each ECG channel, read out while the
+// GUI is still alive -- the dialog (and its checkboxes) is destroyed when
+// this function returns, before the heavy pipeline runs, so these values are
+// the only surviving record of what the user checked.
 // ---------------------------------------------------------------------------
 static bool runNoiseMarking(const config_entry& cfg,
     const std::filesystem::path& binFs,
     QVector<GenExcStruct>& outAll,
     std::filesystem::path& outCurrent,
-    beat_log& beatLog) {
+    beat_log& beatLog,
+    bool& outEcg1Inverted,
+    bool& outEcg2Inverted,
+    bool& outEcg3Inverted) {
     auto gui = std::make_unique<noise_marking_gui>();
     gui->set_params_to_config_defaults(cfg);
     gui->setBeatLog(&beatLog);
@@ -102,6 +111,12 @@ static bool runNoiseMarking(const config_entry& cfg,
 
     outAll = gui->getAllMarkings();
     outCurrent = gui->getFilePath().toStdString();
+
+    // Capture checkbox state before `gui` goes out of scope and is destroyed.
+    outEcg1Inverted = gui->invertedForSignal("ECG1");
+    outEcg2Inverted = gui->invertedForSignal("ECG2");
+    outEcg3Inverted = gui->invertedForSignal("ECG3");
+
     return true;   // gui destroyed here, before the heavy pipeline runs
 }
 
@@ -346,7 +361,9 @@ int main(int argc, char* argv[]) {
         std::cout << "Noise marking: " << binFs.filename().string() << "\n";
         QVector<GenExcStruct> allMarkings;
         std::filesystem::path currentBinFile;
-        if (!runNoiseMarking(cfg, binFs, allMarkings, currentBinFile, beatLog)) {
+        bool ecg1Inverted = false, ecg2Inverted = false, ecg3Inverted = false;
+        if (!runNoiseMarking(cfg, binFs, allMarkings, currentBinFile, beatLog,
+            ecg1Inverted, ecg2Inverted, ecg3Inverted)) {
             std::cout << "  skipped by user; not processing/templating.\n";
             continue;
         }
@@ -378,7 +395,8 @@ int main(int argc, char* argv[]) {
         // templates and writes a provisional file for the viewer. The
         // squared/absval R-peak detection and templating are deferred to a
         // worker thread that runs while the user marks templates.
-        auto jobOpt = post_process_detail::prepareViewerJob(cfg, effBin);
+        auto jobOpt = post_process_detail::prepareViewerJob(cfg, effBin,
+            ecg1Inverted, ecg2Inverted, ecg3Inverted);
         // shared_ptr so the worker lambda safely co-owns the job; it is
         // joined later (reaped when finished, or drained at shutdown), so the
         // job data always outlives the worker.

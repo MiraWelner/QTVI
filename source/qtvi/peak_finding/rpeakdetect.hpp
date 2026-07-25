@@ -18,7 +18,7 @@
 using namespace std;
 
 struct RPeakDetectResult {
-    vector<size_t> R_index;
+    vector<size_t> r_peak_index;
     vector<double> hrv;
     vector<double> R_t;
     vector<double> R_amp;
@@ -104,8 +104,14 @@ inline RPeakDetectPrep rpeakdetect_prep(const vector<double>& data,
 /**
  * @brief Threshold-dependent portion: steps 8-12 of the original rpeakdetect.
  *        Uses the prep struct produced by rpeakdetect_prep().
+ *
+ * @param[in] inverted  True if this channel's lead is inverted (from the
+ *                      GUI's "Inverted Lead?" checkbox, persisted through
+ *                      the annealed .bin). When true, the true R-peak
+ *                      within each candidate region is the local min
+ *                      instead of the local max.
  */
-inline RPeakDetectResult rpeakdetect_apply(const RPeakDetectPrep& prep, double thresh) {
+inline RPeakDetectResult rpeakdetect_apply(const RPeakDetectPrep& prep, double thresh, bool inverted = false) {
     RPeakDetectResult result;
     if (!prep.ok) return result;
 
@@ -141,19 +147,20 @@ inline RPeakDetectResult rpeakdetect_apply(const RPeakDetectPrep& prep, double t
     for (size_t i = 0; i < num_segs; ++i) {
         int l = left[i] - 1;
         int r = right[i] - 1;
-        double cur_max = -1e30;
-        int cur_max_i = l;
+        double cur_best = inverted ? 1e30 : -1e30;
+        int cur_best_i = l;
         for (int k = l; k <= r; ++k) {
             if (k >= 0 && k < (int)bpf.size() && !std::isnan(bpf[k])) {
-                if (bpf[k] > cur_max) { cur_max = bpf[k]; cur_max_i = k; }
+                bool better = inverted ? (bpf[k] < cur_best) : (bpf[k] > cur_best);
+                if (better) { cur_best = bpf[k]; cur_best_i = k; }
             }
         }
-        maxval.push_back(cur_max);
-        maxloc.push_back((size_t)cur_max_i);
+        maxval.push_back(cur_best);
+        maxloc.push_back((size_t)cur_best_i);
     }
 
     // 11. Assign results
-    result.R_index = maxloc;
+    result.r_peak_index = maxloc;
     result.R_amp = maxval;
     auto get_time = [&](size_t idx) { return (double)(idx + 1) / samp_freq; };
     result.R_t.reserve(maxloc.size());
@@ -170,15 +177,17 @@ inline RPeakDetectResult rpeakdetect_apply(const RPeakDetectPrep& prep, double t
 
 /**
  * @brief Backward-compatible wrapper: identical signature and behavior to the
- *        original rpeakdetect(). Internally calls prep + apply.
+ *        original rpeakdetect(), plus an inverted-lead flag. Internally
+ *        calls prep + apply.
  */
 inline RPeakDetectResult rpeakdetect(const vector<double>& data,
     double samp_freq = 256.0,
     double thresh = 0.2,
     int testmode = 0,
-    std::string fileID = "")
+    std::string fileID = "",
+    bool inverted = false)
 {
     auto prep = rpeakdetect_prep(data, samp_freq, testmode, fileID);
     if (!prep.ok) return RPeakDetectResult{};
-    return rpeakdetect_apply(prep, thresh);
+    return rpeakdetect_apply(prep, thresh, inverted);
 }

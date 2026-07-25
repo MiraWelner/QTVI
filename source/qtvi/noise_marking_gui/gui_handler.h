@@ -74,6 +74,12 @@ public:
         // Set the default values for the threshold and blanking period spinboxes based on the config entry.
         m_cfg = cfg;
     }
+    // Per-channel "Inverted Lead?" checkbox state (ecg_1_reverse/2/3 in the
+    // .ui). Public so callers (e.g. main.cpp, which destroys this dialog
+    // before running the peak-detection pipeline) can read the checkbox
+    // values out while the GUI is still alive and carry them forward.
+    // label is "ECG1"/"ECG2"/"ECG3"; PPG/ABP have no reverse box -> false.
+    bool invertedForSignal(const QString& label) const;
 
 protected:
     //these override native QT event handlers which is why they are protected
@@ -267,7 +273,6 @@ private:
 
     bool handleMousePress(QChartView* cv, QWidget* viewport, QMouseEvent* event);
     double yScaleForSignal(const QString& label) const;
-    bool   invertedForSignal(const QString& label) const;
 
     void resetUnpinnedGains();
 
