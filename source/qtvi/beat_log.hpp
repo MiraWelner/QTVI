@@ -10,7 +10,7 @@
  *           <chan>_x, <chan>_y                       for ecg1, ecg2, ecg3, ppg, abp, art, art_pulm
  *           blanking_<chan>, threshold_<chan>        for the same channels
  *           marked_<chan>                            annotation type containing the beat (0 if none)
- *           marked_accel, accelx_val, accely_val, accelz_val
+ *           accel_x, accel_y                         time/value pair, anchored to ECG1's beat times (accel has no beats of its own) 
  *           post_<chan>                              post_pvc/post_af/... if the beat follows an eligible arrhythmia
  *           inverted_<chan>                          1 if the channel is inverted at this beat (checkbox XOR invert-region), else 0
  *
