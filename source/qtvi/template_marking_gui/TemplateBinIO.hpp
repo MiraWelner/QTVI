@@ -565,7 +565,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             // the on-screen glyph (feature_marks.cpp: g.t_peak_glyph). No
             // user-adjustable T-peak marker exists, so this column pair emits
             // autodetect only (like r_peak).
-            const int tPeakAuto = FeatureMarks::compute_t_wave(ecg, b.t_begin_ch[c], b.t_end_ch[c]);
+            const int tPeakAuto = FeatureMarks::compute_t_peak(ecg, b.t_begin_ch[c], b.t_end_ch[c]);
 
             // Order MUST match ecgPointNames:
             //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),

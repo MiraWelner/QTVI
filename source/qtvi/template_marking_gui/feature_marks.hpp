@@ -64,12 +64,15 @@ public:
         int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs);
 
     // Individual reactive computes (all track user markers live).
-    static int compute_p_wave(const std::vector<double>& ecg, int pUser, double fs);
-    static int compute_t_wave(const std::vector<double>& ecg, int tBegin, int tEnd);
-    static int compute_r_wave(const std::vector<double>& ecg, int qBegin, int sEnd);
+    static int compute_p_peak(const std::vector<double>& ecg, int p_onset, int q_begin, int r_peak_idx);
+    static int compute_t_peak(const std::vector<double>& ecg, int tBegin, int tEnd);
+    static int compute_r_peak(const std::vector<double>& ecg, int qBegin, int sEnd);
     static int compute_s_end(const std::vector<double>& ecg, int sUser, double fs);
     static int compute_q_onset(const std::vector<double>& ecg, int qUser, double fs, int r_idx);
     static int compute_t_end(const std::vector<double>& ecg, int tEndUser, double fs);
+    static int compute_p_onset(const std::vector<double>& v, int pUser, double fs, int r_idx);
+    static int compute_t_begin(const std::vector<double>& v, int tBeginUser, double fs, int r_idx);
+
 
     struct PpgGlyphs {
         int foot = -1;

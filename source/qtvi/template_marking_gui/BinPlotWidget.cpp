@@ -876,8 +876,8 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         };
     auto glyph = [&](double x, double y) {   // opaque black "X"
         p.setBrush(Qt::NoBrush);
-        p.setPen(QPen(Qt::black, 1.8));
-        const double s = 4.0;
+        p.setPen(QPen(Qt::black, 1.25));
+        const double s = 2.0; 
         p.drawLine(QPointF(x - s, y - s), QPointF(x + s, y + s));
         p.drawLine(QPointF(x - s, y + s), QPointF(x + s, y - s));
         };

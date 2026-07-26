@@ -1,4 +1,4 @@
-//
+﻿//
 // feature_marks.cpp -- implementations for FeatureMarks.
 // See feature_marks.hpp for the public interface.
 //
@@ -9,9 +9,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>   // TEMP: diagnostics
 #include <limits>
 #include <numeric>
 #include <vector>
+#include <functional>
+#include "anchor_fit.hpp"
 
 // =========================================================================
 // File-scope helpers for the reactive ECG glyphs.
@@ -181,20 +184,26 @@ int FeatureMarks::compute_s_peak(const std::vector<double>& ecg, int r_idx, doub
 // markers live. Windows are +/-0.05 s around the relevant user marker.
 // -------------------------------------------------------------------------
 
-// P wave = max value within +/-0.05 s of the user's P-peak marker.
-int FeatureMarks::compute_p_wave(const std::vector<double>& v, int pUser, double fs) {
-    const int N = static_cast<int>(v.size());
-    if (pUser < 0 || N == 0) return -1;
-    const int w = win_005s(fs);
-    const int lo = std::max(0, pUser - w), hi = std::min(N - 1, pUser + w);
-    int best = lo; double bv = -std::numeric_limits<double>::infinity();
-    for (int i = lo; i <= hi; ++i)
-        if (!std::isnan(v[i]) && v[i] > bv) { bv = v[i]; best = i; }
+int FeatureMarks::compute_p_peak(const std::vector<double>& ecg,
+    int p_onset, int q_begin, int r_peak_idx)
+{
+    const int N = static_cast<int>(ecg.size());
+    if (N == 0 || p_onset < 0 || q_begin < 0
+        || p_onset >= N || q_begin >= N || p_onset > q_begin)
+        return std::clamp(std::max(p_onset, 0), 0, std::max(0, N - 1));
+
+    const bool is_positive = qrs_positive_at(ecg, r_peak_idx);
+    std::vector<double> u = ecg;
+    if (!is_positive) for (auto& x : u) x = -x;
+
+    int best = p_onset;
+    for (int i = p_onset; i <= q_begin; ++i)
+        if (!std::isnan(u[i]) && u[i] > u[best]) best = i;
     return best;
 }
 
 // T peak = max value between the user's T-begin and T-end markers.
-int FeatureMarks::compute_t_wave(const std::vector<double>& v, int tBegin, int tEnd) {
+int FeatureMarks::compute_t_peak(const std::vector<double>& v, int tBegin, int tEnd) {
     const int N = static_cast<int>(v.size());
     if (tBegin < 0 || tEnd < 0 || tBegin >= N || tEnd >= N) return -1;
     const int lo = std::min(tBegin, tEnd), hi = std::max(tBegin, tEnd);
@@ -206,7 +215,7 @@ int FeatureMarks::compute_t_wave(const std::vector<double>& v, int tBegin, int t
 
 // R wave = argmax |v - baseline| within [q_begin, s_end] (the user markers),
 // baseline = mean over that same window. Same rule as r_peak(), new window.
-int FeatureMarks::compute_r_wave(const std::vector<double>& v, int qBegin, int sEnd) {
+int FeatureMarks::compute_r_peak(const std::vector<double>& v, int qBegin, int sEnd) {
     const int N = static_cast<int>(v.size());
     if (qBegin < 0 || sEnd < 0 || qBegin >= N || sEnd >= N || qBegin >= sEnd)
         return -1;
@@ -224,74 +233,135 @@ int FeatureMarks::compute_r_wave(const std::vector<double>& v, int qBegin, int s
     return best;
 }
 
-// S end = recovery dropoff/knee (steepest upstroke back toward baseline, then
-// the point where that slope flattens) within +/-0.05 s of the user's S-end
-// marker.
 int FeatureMarks::compute_s_end(const std::vector<double>& v, int sUser, double fs) {
     const int N = static_cast<int>(v.size());
     if (sUser < 0 || N < 3) return sUser;
     const int w = win_005s(fs);
-    const int lo = std::max(1, sUser - w), hi = std::min(N - 2, sUser + w);
+    const int lo = std::max(0, sUser - w);
+    const int hi = std::min(N - 1, sUser + w / 4);
     if (hi <= lo) return std::clamp(sUser, 0, N - 1);
 
-    double mx = 0.0; int mi = lo;
+    // B = ST baseline: right edge of window (flat region after recovery).
+    double B = v[hi];
+
+    // E = extremum (sample furthest from B in the window).
+    double E = B;
+    double bestDist = 0.0;
     for (int i = lo; i <= hi; ++i) {
-        if (std::isnan(v[i - 1]) || std::isnan(v[i + 1])) continue;
-        const double s = 0.5 * (v[i + 1] - v[i - 1]);
-        if (s > mx) { mx = s; mi = i; }
+        if (std::isnan(v[i])) continue;
+        const double d = std::abs(v[i] - B);
+        if (d > bestDist) { bestDist = d; E = v[i]; }
     }
-    if (mx <= 0.0) return std::clamp(sUser, 0, N - 1);   // no clear recovery
-    for (int i = mi; i <= hi; ++i) {
-        if (std::isnan(v[i - 1]) || std::isnan(v[i + 1])) continue;
-        const double s = 0.5 * (v[i + 1] - v[i - 1]);
-        if (s <= 0.2 * mx) return i;                      // slope has flattened
-    }
-    return hi;
+
+    auto fit = anchor_fit::selectAnchorModel(v, lo, hi);
+    const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B, E, 0.90);
+    return std::clamp(static_cast<int>(std::round(anchor)), 0, N - 1);
 }
 
-// Q onset = knee (max |curvature|) of a cubic fit within +/-0.05 s of the
-// user's Q-begin marker.
 int FeatureMarks::compute_q_onset(const std::vector<double>& v, int qUser, double fs, int r_idx) {
     const int N = static_cast<int>(v.size());
     if (qUser < 0 || qUser >= N || N < 4) return std::clamp(qUser, 0, std::max(0, N - 1));
     const int w = win_005s(fs);
 
-    // Orient so Q is a downward dip.
     const bool is_positive = qrs_positive_at(v, r_idx);
     std::vector<double> u = v;
     if (!is_positive) for (auto& x : u) x = -x;
 
-    // Q trough: search only left of the user's mark, never past it.
-    const int a = std::max(0, qUser - w);
-    int qmin = a;
-    for (int i = a; i <= qUser; ++i)
-        if (!std::isnan(u[i]) && u[i] < u[qmin]) qmin = i;
+    // Window extends left into PQ baseline, barely right past seed.
+    const int lo = std::max(0, qUser - w);
+    const int hi = std::min(N - 1, qUser + w / 4);
 
-    auto d1 = [&](int i) {
-        if (i <= 0)     return u[1] - u[0];
-        if (i >= N - 1) return u[N - 1] - u[N - 2];
-        return 0.5 * (u[i + 1] - u[i - 1]);
-        };
+    // B = PQ baseline: left edge of window.
+    double B = u[lo];
 
-    // Onset = walk left from the trough until the descent flattens.
-    double steep = 0.0;
-    for (int i = qmin; i > std::max(0, qmin - 2 * w); --i)
-        steep = std::min(steep, d1(i));
-    const double thr = 0.10 * steep;
-    const int stop = std::max(0, qmin - 4 * w);
-    for (int i = qmin - 1; i >= stop; --i)
-        if (d1(i) >= thr) return i;
-    return std::max(0, qmin - 1);
+    // E = Q trough (min in the window).
+    double E = B;
+    for (int i = lo; i <= hi; ++i)
+        if (!std::isnan(u[i]) && u[i] < E) E = u[i];
+
+    auto fit = anchor_fit::selectAnchorModel(u, lo, hi);
+    const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B, E, 0.10);
+    return std::clamp(static_cast<int>(std::round(anchor)), 0, N - 1);
 }
 
-// T end = knee (max |curvature|) of a cubic fit within +/-0.05 s of the
-// user's T-end marker.
 int FeatureMarks::compute_t_end(const std::vector<double>& v, int tEndUser, double fs) {
     const int N = static_cast<int>(v.size());
     if (tEndUser < 0 || N < 4) return tEndUser;
     const int w = win_005s(fs);
-    const int lo = std::max(0, tEndUser - w), hi = std::min(N - 1, tEndUser + w);
-    return fit_elbow(v, lo, hi, 3);
+    const int lo = std::max(0, tEndUser - 2 * w);
+    const int hi = std::min(N - 1, tEndUser + w / 4);
+
+    // B = post-T baseline: right edge of window.
+    double B = v[hi];
+
+    // E = extremum (sample furthest from B in the window).
+    double E = B;
+    double bestDist = 0.0;
+    for (int i = lo; i <= hi; ++i) {
+        if (std::isnan(v[i])) continue;
+        const double d = std::abs(v[i] - B);
+        if (d > bestDist) { bestDist = d; E = v[i]; }
+    }
+
+    auto fit = anchor_fit::selectAnchorModel(v, lo, hi);
+    const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B, E, 0.90);
+    return std::clamp(static_cast<int>(std::round(anchor)), 0, N - 1);
+}
+
+// P onset: anchor-fit on the ascending onset of the P wave. No glyph;
+// used only to bound the P-peak search (P peak = max between p_onset
+// and q_begin).
+int FeatureMarks::compute_p_onset(const std::vector<double>& v, int pUser, double fs, int r_idx) {
+    const int N = static_cast<int>(v.size());
+    if (pUser < 0 || pUser >= N || N < 4) return std::clamp(pUser, 0, std::max(0, N - 1));
+    const int w = win_005s(fs);
+
+    const bool is_positive = qrs_positive_at(v, r_idx);
+    std::vector<double> u = v;
+    if (!is_positive) for (auto& x : u) x = -x;
+
+    // Window extends left into pre-P baseline, barely right past seed.
+    const int lo = std::max(0, pUser - w);
+    const int hi = std::min(N - 1, pUser + w / 4);
+
+    // B = pre-P baseline: left edge of window.
+    double B = u[lo];
+
+    // E = P peak (max in the window).
+    double E = -std::numeric_limits<double>::infinity();
+    for (int i = lo; i <= hi; ++i)
+        if (!std::isnan(u[i]) && u[i] > E) E = u[i];
+
+    auto fit = anchor_fit::selectAnchorModel(u, lo, hi);
+    const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B, E, 0.10);
+    return std::clamp(static_cast<int>(std::round(anchor)), 0, N - 1);
+}
+
+// T begin: anchor-fit on the ascending onset of the T wave.
+int FeatureMarks::compute_t_begin(const std::vector<double>& v, int tBeginUser, double fs, int r_idx) {
+    const int N = static_cast<int>(v.size());
+    if (tBeginUser < 0 || tBeginUser >= N || N < 4) return std::clamp(tBeginUser, 0, std::max(0, N - 1));
+    const int w = win_005s(fs);
+
+    const bool is_positive = qrs_positive_at(v, r_idx);
+    std::vector<double> u = v;
+    if (!is_positive) for (auto& x : u) x = -x;
+
+    // Window extends left into ST baseline, short right past marker.
+    const int lo = std::max(0, tBeginUser - w);
+    const int hi = std::min(N - 1, tBeginUser + w / 4);
+
+    // B = ST baseline: left edge of window (isoelectric after S-end).
+    double B = u[lo];
+
+    // E = T peak (max in window — transition ascends toward it).
+    double E = -std::numeric_limits<double>::infinity();
+    for (int i = lo; i <= hi; ++i)
+        if (!std::isnan(u[i]) && u[i] > E) E = u[i];
+
+    auto fit2 = anchor_fit::selectAnchorModel(u, lo, hi);
+    const double anchor2 = anchor_fit::anchorAtFraction(fit2, lo, hi, B, E, 0.10);
+    return std::clamp(static_cast<int>(std::round(anchor2)), 0, N - 1);
 }
 
 FeatureMarks::EcgGlyphs FeatureMarks::compute_ecg_glyphs(
@@ -299,28 +369,13 @@ FeatureMarks::EcgGlyphs FeatureMarks::compute_ecg_glyphs(
     int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs)
 {
     EcgGlyphs g;
-    // R column within the user QRS window (max deviation from baseline),
-    // used to orient the Q-onset search polarity.
-    int r_local = q_begin;
-    {
-        const int N = static_cast<int>(ecg.size());
-        int lo = std::max(0, q_begin), hi = std::min(N - 1, s_end);
-        double base = 0.0; int cnt = 0;
-        for (double x : ecg) if (!std::isnan(x)) { base += x; ++cnt; }
-        if (cnt) base /= cnt;
-        double best = -1.0;
-        for (int i = lo; i <= hi; ++i)
-            if (!std::isnan(ecg[i]) && std::abs(ecg[i] - base) > best) {
-                best = std::abs(ecg[i] - base); r_local = i;
-            }
-    }
-    g.p_peak_glyph = compute_p_wave(ecg, p_peak, fs);
-    g.q_begin_glyph = compute_q_onset(ecg, q_begin, fs, r_local);
-    g.r_peak_glyph = compute_r_wave(ecg, q_begin, s_end);   // window = user q_begin..s_end
     const int N = static_cast<int>(ecg.size());
-    g.s_end_glyph = (s_end >= 0 && s_end < N) ? s_end : -1;  // S = the user's marker (no math)
-    g.t_peak_glyph = compute_t_wave(ecg, t_begin, t_end);   // max between user T begin/end
-    g.t_end_glyph = (t_end >= 0 && t_end < N) ? t_end : -1;  // T end = the user's marker
+    g.p_peak_glyph = (p_peak >= 0 && p_peak < N) ? p_peak : -1;
+    g.q_begin_glyph = (q_begin >= 0 && q_begin < N) ? q_begin : -1;
+    g.r_peak_glyph = compute_r_peak(ecg, q_begin, s_end);
+    g.s_end_glyph = (s_end >= 0 && s_end < N) ? s_end : -1;
+    g.t_peak_glyph = compute_t_peak(ecg, t_begin, t_end);
+    g.t_end_glyph = (t_end >= 0 && t_end < N) ? t_end : -1;
     return g;
 }
 
@@ -750,8 +805,8 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
     }
 
     // ---- ECG (per channel) ---------------------------------------------
-    // Initial user-marker spawn points as fractions of the plot length.
-    // Seeds only; the user drags from here. R stays auto-detected.
+    // Ranges defined from landmarks only. Anchor-fit (per spec) finds
+    // the precise location. Marker = glyph; user drags from here.
     ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
     for (int c = 0; c < 3; ++c) {
         const auto& ecg = chs[c]->ecgTemplate_raw;
@@ -766,21 +821,110 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
 
         const int visN = std::max(static_cast<int>(ecg.size()), 2);
         auto cl = [&](int x) { return clampToVisible(x, visN); };
-        auto pct = [&](double f) { return static_cast<int>(std::lround(f * ecg.size())); };
+        auto ms = [&](double sec) { return static_cast<int>(std::lround(sec * sampleRate)); };
 
-        // R is the deterministic anchor column (r_col_raw) carried on the
-        // template straight from alignment. Used directly -- no re-detection,
-        // no rate math, no positioning constant.
+        // R is the deterministic anchor column from alignment.
         const int r_auto = cl(chs[c]->r_col_raw);
 
-        // S-end: end of the S wave (detect_s_end walks from the S trough to
-        // its recovery). The trough it uses comes from compute_s_peak -- the
-        // single S-trough source, shared with the |R|+|S| normalization.
-        const int p_auto = cl(pct(0.05));            // P       5% in
-        const int q_auto = cl(pct(0.10));            // Q begin 10% in
-        const int s_auto = cl(detect_s_end(ecg, r_auto, sampleRate));   // S end
-        const int tp_auto = cl(detect_t_begin(ecg, r_auto, sampleRate));  // T begin bar: left foot of the T wave (auto)
-        const int te_auto = cl(detect_t_end(ecg, r_auto, sampleRate));    // T end:   right foot of the T wave (auto)
+        // ---- Isoelectric vertical reference (PQ zero) --------------------
+        // Median of the signal in a fixed PQ window before R (40-100 ms).
+        double B_iso;
+        {
+            const int a = cl(r_auto - ms(0.100));
+            const int b = cl(r_auto - ms(0.040));
+            std::vector<double> s;
+            for (int i = std::min(a, b); i <= std::max(a, b); ++i)
+                if (!std::isnan(ecg[i])) s.push_back(ecg[i]);
+            if (s.empty()) B_iso = ecg[cl(r_auto)];
+            else { std::nth_element(s.begin(), s.begin() + s.size() / 2, s.end()); B_iso = s[s.size() / 2]; }
+        }
+
+        // ---- Landmark search bands, in SECONDS relative to R -------------
+        //  *** TUNABLE: replace with your landmark-range table. ***
+        //  {start, end} seconds from the R peak; negative = before R.
+        //  Anchor-fit runs inside the band; B = B_iso, E = band extremum,
+        //  f is the literal spec fraction (onset 0.10, offset 0.90).
+        struct Band { double a, b; };
+        const Band Q_ONSET_BAND = { -0.060, -0.010 };  // QRS onset
+        const Band S_END_BAND = { 0.010,  0.090 };  // J-point / S recovery
+        const Band T_BEGIN_BAND = { 0.080,  0.180 };  // T-wave foot
+        const Band T_END_BAND = { 0.200,  0.400 };  // T-wave offset
+        const Band P_PEAK_BAND = { -0.220, -0.120 };  // P-wave peak (argmax)
+
+        // Anchor-fit inside a band: B = isoelectric, E = band extremum, literal f.
+        auto fitInBand = [&](Band bnd, double f, const char* tag) -> int {
+            int lo = cl(r_auto + ms(bnd.a));
+            int hi = cl(r_auto + ms(bnd.b));
+            if (hi - lo < 4) hi = cl(lo + 4);
+            double E = B_iso; double bd = 0.0;
+            for (int i = lo; i <= hi; ++i)
+                if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); E = ecg[i]; }
+            auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
+            // ---- TEMP DIAGNOSTIC (remove when done) ----
+            const double L = B_iso + f * (E - B_iso);
+            bool crossed = false;
+            for (int t = lo; t < hi; ++t) {
+                const double y0 = fit.f((double)t), y1 = fit.f((double)(t + 1));
+                if (std::abs(y0 - L) < 1e-12 || (y0 - L) * (y1 - L) < 0.0) { crossed = true; break; }
+            }
+            const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, f);
+            const int ai = cl(static_cast<int>(std::round(anchor)));
+            std::fprintf(stderr,
+                "[feat ch%d] %-8s r=%d win=[%d,%d] B_iso=%.4g E=%.4g L=%.4g f(lo)=%.4g -> %s land=%.1f raw=%.4g np=%d\n",
+                c, tag, r_auto, lo, hi, B_iso, E, L, fit.f((double)lo),
+                crossed ? "crossing" : "MIDPOINT-FALLBACK", anchor, ecg[ai], fit.nparams);
+            // ---- end diagnostic ----
+            return cl(static_cast<int>(std::round(anchor)));
+            };
+
+        // Amplitude landmark inside a band: argmax |ecg - isoelectric|.
+        auto peakInBand = [&](Band bnd, const char* tag) -> int {
+            int lo = cl(r_auto + ms(bnd.a));
+            int hi = cl(r_auto + ms(bnd.b));
+            if (hi < lo) std::swap(lo, hi);
+            int p = lo; double bd = -1.0;
+            for (int i = lo; i <= hi; ++i)
+                if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); p = i; }
+            std::fprintf(stderr, "[feat ch%d] %-8s r=%d win=[%d,%d] B_iso=%.4g -> peak@%d (ecg=%.4g)\n",
+                c, tag, r_auto, lo, hi, B_iso, p, ecg[p]);   // TEMP DIAGNOSTIC
+            return p;
+            };
+
+        // Q-onset: right bound is capped at the Q peak (the initial QRS
+        // deflection's extremum = first turning point walking left from R), so
+        // the fit window is [PQ baseline, Q peak] and E can never be the R.
+        // Then follow the spec crossing (f = 0.10) inside that window.
+        int q_auto;
+        {
+            // Q peak = first local extremum in the ~80 ms left of R.
+            const int qs = cl(r_auto - ms(0.080));
+            int qpk = -1;
+            for (int i = r_auto - 1; i > qs; --i) {
+                if (std::isnan(ecg[i - 1]) || std::isnan(ecg[i]) || std::isnan(ecg[i + 1])) continue;
+                const double dL = ecg[i] - ecg[i - 1];
+                const double dR = ecg[i + 1] - ecg[i];
+                if (dL != 0.0 && dL * dR < 0.0) { qpk = i; break; }   // local extremum
+            }
+            if (qpk < 0) qpk = cl(r_auto - ms(0.010));   // monophasic R: no Q, stop just before R
+
+            int lo = cl(r_auto + ms(Q_ONSET_BAND.a));    // PQ-baseline side
+            int hi = qpk;                                 // capped at the Q peak
+            if (hi - lo < 4) lo = cl(hi - 4);
+
+            double E = B_iso; double bd = 0.0;
+            for (int i = lo; i <= hi; ++i)
+                if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); E = ecg[i]; }
+            auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
+            const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, 0.10);
+            q_auto = cl(static_cast<int>(std::round(anchor)));
+            std::fprintf(stderr, "[feat ch%d] Q-onset  r=%d Qpk=%d win=[%d,%d] B_iso=%.4g E=%.4g land=%.1f raw=%.4g\n",
+                c, r_auto, qpk, lo, hi, B_iso, E, anchor, ecg[q_auto]);   // TEMP DIAGNOSTIC
+        }
+        // Onsets use f = 0.10, offsets f = 0.90 (literal spec fractions).
+        const int s_auto = fitInBand(S_END_BAND, 0.90, "S-end");
+        const int tp_auto = fitInBand(T_BEGIN_BAND, 0.10, "T-begin");
+        const int te_auto = fitInBand(T_END_BAND, 0.90, "T-end");
+        const int p_auto = peakInBand(P_PEAK_BAND, "P-peak");
 
         // Auto fields always updated.
         b.p_peak_auto_ch[c] = p_auto;
