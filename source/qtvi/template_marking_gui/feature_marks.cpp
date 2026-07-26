@@ -398,18 +398,42 @@ FeatureMarks::PpgGlyphs FeatureMarks::compute_ppg_glyphs(
         g.foot = fmin;
     }
 
-    // Peak #1 (systolic) = max between the foot and the dicrotic-notch marker.
-    if (g.foot >= 0 && dic > g.foot) {
-        int p1 = g.foot; double best = -std::numeric_limits<double>::infinity();
-        for (int i = g.foot; i <= cl(dic); ++i)
+    // Peak #1 (systolic) = the max after the foot, bounded by a later marker
+    // (peak2 or the dic marker) when available, else the whole trace. Does NOT
+    // fail if those markers are bad -- it always yields a valid index.
+    {
+        int start = (g.foot >= 0) ? g.foot : 0;
+        int pkHi = (peak2 >= 0) ? cl(peak2) : (dic >= 0 ? cl(dic) : N - 1);
+        if (pkHi <= start) pkHi = N - 1;
+        int p1 = start; double best = -std::numeric_limits<double>::infinity();
+        for (int i = start; i <= pkHi; ++i)
             if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; p1 = i; }
         g.p1 = p1;
     }
 
-    // Dicrotic notch and Peak #2 are placed manually -> glyph tracks the marker.
-    if (dic >= 0) g.dic = cl(dic);
+    // Dicrotic notch = deepest interior local minimum on the downslope after
+    // the systolic peak, up to the diastolic-peak marker (or the trace end).
+    // Real notch -> X at the notch; no notch -> O at the midpoint of the search
+    // span. The O index is always clamped/valid so the circle always renders.
     if (peak2 >= 0) g.p2 = cl(peak2);
-    g.notch_found = (dic >= 0);
+    {
+        const int lo = (g.p1 >= 0) ? g.p1 : 0;
+        int hi = (peak2 > lo) ? cl(peak2) : (N - 1);
+        if (hi <= lo + 1) hi = std::min(N - 1, lo + 2);
+        int notch = -1; double best = std::numeric_limits<double>::infinity();
+        for (int i = lo + 1; i < hi; ++i) {
+            if (std::isnan(v[i - 1]) || std::isnan(v[i]) || std::isnan(v[i + 1])) continue;
+            if (v[i] < v[i - 1] && v[i] <= v[i + 1] && v[i] < best) { best = v[i]; notch = i; }
+        }
+        if (notch >= 0) {
+            g.dic = notch;
+            g.notch_found = true;
+        }
+        else {
+            g.notch_found = false;
+            g.dic_fallback = cl((lo + hi) / 2);   // O here -- always a valid index
+        }
+    }
 
     // End = first local minimum after the Peak #2 marker.
     if (peak2 >= 0) {
@@ -785,11 +809,25 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
             }
         }
 
-        // Dicrotic notch = 1/3 from systolic peak to end. P50 = onset..peak
-        // midpoint. Peak #2 = 65% of the window.
-        b.ppg_dicrotic_auto = (b.ppg_end_auto > b.ppg_peak_auto)
-            ? b.ppg_peak_auto + (b.ppg_end_auto - b.ppg_peak_auto) / 3
-            : pct(0.60);
+        // Dicrotic notch = the real notch: the deepest interior local minimum
+        // on the downslope between the systolic peak and the pulse end (mirrors
+        // detect_ppg_dicrotic, which the arterial traces already use). Falls
+        // back to 1/3 peak->end only if no local minimum is present (no notch).
+        {
+            const int pk = b.ppg_peak_auto, en = b.ppg_end_auto;
+            int dic = -1;
+            if (en > pk + 4) {
+                const int margin = std::max(2, (en - pk) / 10);
+                double bestVal = std::numeric_limits<double>::infinity();
+                for (int i = pk + margin + 1; i < en - 1; ++i) {
+                    if (std::isnan(v[i - 1]) || std::isnan(v[i]) || std::isnan(v[i + 1])) continue;
+                    if (v[i] <= v[i - 1] && v[i] <= v[i + 1] && v[i] < bestVal) { bestVal = v[i]; dic = i; }
+                }
+            }
+            b.ppg_dicrotic_auto = (dic >= 0) ? dic
+                : ((en > pk) ? pk + (en - pk) / 3 : pct(0.60));
+        }
+        // P50 = temporal midpoint of the upstroke (halfway between onset and peak).
         b.ppg_p50_auto = (b.ppg_onset_auto + b.ppg_peak_auto) / 2;
         b.ppg_peak2_auto = pct(0.65);
 
@@ -847,35 +885,8 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         struct Band { double a, b; };
         const Band Q_ONSET_BAND = { -0.060, -0.010 };  // QRS onset
         const Band S_END_BAND = { 0.010,  0.090 };  // J-point / S recovery
-        const Band T_BEGIN_BAND = { 0.080,  0.180 };  // T-wave foot
-        const Band T_END_BAND = { 0.200,  0.400 };  // T-wave offset
+        const Band T_BEGIN_BAND = { 0.090,  0.180 };  // T-begin: .a = ST-baseline start (.b unused; hi = T peak)
         const Band P_PEAK_BAND = { -0.220, -0.120 };  // P-wave peak (argmax)
-
-        // Anchor-fit inside a band: B = isoelectric, E = band extremum, literal f.
-        auto fitInBand = [&](Band bnd, double f, const char* tag) -> int {
-            int lo = cl(r_auto + ms(bnd.a));
-            int hi = cl(r_auto + ms(bnd.b));
-            if (hi - lo < 4) hi = cl(lo + 4);
-            double E = B_iso; double bd = 0.0;
-            for (int i = lo; i <= hi; ++i)
-                if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); E = ecg[i]; }
-            auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
-            // ---- TEMP DIAGNOSTIC (remove when done) ----
-            const double L = B_iso + f * (E - B_iso);
-            bool crossed = false;
-            for (int t = lo; t < hi; ++t) {
-                const double y0 = fit.f((double)t), y1 = fit.f((double)(t + 1));
-                if (std::abs(y0 - L) < 1e-12 || (y0 - L) * (y1 - L) < 0.0) { crossed = true; break; }
-            }
-            const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, f);
-            const int ai = cl(static_cast<int>(std::round(anchor)));
-            std::fprintf(stderr,
-                "[feat ch%d] %-8s r=%d win=[%d,%d] B_iso=%.4g E=%.4g L=%.4g f(lo)=%.4g -> %s land=%.1f raw=%.4g np=%d\n",
-                c, tag, r_auto, lo, hi, B_iso, E, L, fit.f((double)lo),
-                crossed ? "crossing" : "MIDPOINT-FALLBACK", anchor, ecg[ai], fit.nparams);
-            // ---- end diagnostic ----
-            return cl(static_cast<int>(std::round(anchor)));
-            };
 
         // Amplitude landmark inside a band: argmax |ecg - isoelectric|.
         auto peakInBand = [&](Band bnd, const char* tag) -> int {
@@ -920,10 +931,91 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
             std::fprintf(stderr, "[feat ch%d] Q-onset  r=%d Qpk=%d win=[%d,%d] B_iso=%.4g E=%.4g land=%.1f raw=%.4g\n",
                 c, r_auto, qpk, lo, hi, B_iso, E, anchor, ecg[q_auto]);   // TEMP DIAGNOSTIC
         }
-        // Onsets use f = 0.10, offsets f = 0.90 (literal spec fractions).
-        const int s_auto = fitInBand(S_END_BAND, 0.90, "S-end");
-        const int tp_auto = fitInBand(T_BEGIN_BAND, 0.10, "T-begin");
-        const int te_auto = fitInBand(T_END_BAND, 0.90, "T-end");
+        // S-end: mirror of Q-onset. Cap the LEFT bound at the S peak (first
+        // turning point walking right from R = the S extremum) so E is the S,
+        // not the R tail. Then follow the spec crossing over [S peak, ST
+        // baseline]. To land at the END of the S wave -- the J-point, where the
+        // wave has recovered to baseline (the spec's "80-100% of an offset") --
+        // the target sits near baseline. In the literal formula L = B + f*(E-B)
+        // that is f = 0.10 (== 90% recovered from the extremum), NOT 0.90 which
+        // would sit at the trough. Recovery is monotonic S -> baseline, so the
+        // forward crossing lands at the J-point.
+        int s_auto;
+        {
+            const int ss = cl(r_auto + ms(0.080));
+            int spk = -1;
+            for (int i = r_auto + 1; i < ss; ++i) {
+                if (std::isnan(ecg[i - 1]) || std::isnan(ecg[i]) || std::isnan(ecg[i + 1])) continue;
+                const double dL = ecg[i] - ecg[i - 1];
+                const double dR = ecg[i + 1] - ecg[i];
+                if (dL != 0.0 && dL * dR < 0.0) { spk = i; break; }   // local extremum (S)
+            }
+            if (spk < 0) spk = cl(r_auto + ms(0.010));   // monophasic: no S, start just after R
+
+            int lo = spk;                                 // capped at the S peak
+            int hi = cl(r_auto + ms(S_END_BAND.b));       // ST-baseline side
+            if (hi - lo < 4) hi = cl(lo + 4);
+
+            double E = B_iso; double bd = 0.0;
+            for (int i = lo; i <= hi; ++i)
+                if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); E = ecg[i]; }
+            auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
+            const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, 0.10);
+            s_auto = cl(static_cast<int>(std::round(anchor)));
+            std::fprintf(stderr, "[feat ch%d] S-end    r=%d Spk=%d win=[%d,%d] B_iso=%.4g E=%.4g land=%.1f raw=%.4g\n",
+                c, r_auto, spk, lo, hi, B_iso, E, anchor, ecg[s_auto]);   // TEMP DIAGNOSTIC
+        }
+        // T peak: largest deflection from baseline in the T-wave region. It
+        // splits the T wave into its onset (T-begin) and offset (T-end) sides.
+        int t_peak;
+        {
+            const int tlo = cl(r_auto + ms(0.150));
+            const int thi = cl(std::min(visN - 1, r_auto + ms(0.400)));
+            t_peak = tlo; double bd = 0.0;
+            for (int i = tlo; i <= thi; ++i)
+                if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); t_peak = i; }
+        }
+
+        // T-begin: T-wave foot. Mirror of Q-onset -- cap the RIGHT bound at the
+        // T peak so E is the T (the old fixed window ended before the T peak, so
+        // E was a tiny ST value and the crossing fell back to the midpoint).
+        // Window [ST baseline, T peak], spec crossing with near-baseline target
+        // (f=0.10) -> the foot where the T departs baseline.
+        int tp_auto;
+        {
+            int lo = cl(r_auto + ms(T_BEGIN_BAND.a));   // ST-segment baseline
+            int hi = t_peak;                             // capped at the T peak
+            if (hi - lo < 4) lo = cl(hi - 4);
+
+            double E = B_iso; double bd = 0.0;
+            for (int i = lo; i <= hi; ++i)
+                if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); E = ecg[i]; }
+            auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
+            const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, 0.10);
+            tp_auto = cl(static_cast<int>(std::round(anchor)));
+            std::fprintf(stderr, "[feat ch%d] T-begin  r=%d Tpk=%d win=[%d,%d] B_iso=%.4g E=%.4g land=%.1f raw=%.4g\n",
+                c, r_auto, t_peak, lo, hi, B_iso, E, anchor, ecg[tp_auto]);   // TEMP DIAGNOSTIC
+        }
+        // T-end: mirror of S-end. Use the shared T peak as the LEFT bound so E
+        // is the T, then the spec crossing over [T peak, post-T baseline] with a
+        // near-baseline target so the forward crossing lands where the T returns
+        // to baseline = the actual T offset (not up at the T peak). Literal
+        // L = B + f*(E-B) with f=0.10 == 90% recovered = "80-100% of an offset".
+        int te_auto;
+        {
+            int lo = t_peak;                                        // shared T peak
+            int hi = cl(std::min(visN - 1, r_auto + ms(0.520)));     // post-T baseline
+            if (hi - lo < 4) hi = cl(lo + 4);
+
+            double E = B_iso; double bd = 0.0;
+            for (int i = lo; i <= hi; ++i)
+                if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); E = ecg[i]; }
+            auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
+            const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, 0.10);
+            te_auto = cl(static_cast<int>(std::round(anchor)));
+            std::fprintf(stderr, "[feat ch%d] T-end    r=%d Tpk=%d win=[%d,%d] B_iso=%.4g E=%.4g land=%.1f raw=%.4g\n",
+                c, r_auto, t_peak, lo, hi, B_iso, E, anchor, ecg[te_auto]);   // TEMP DIAGNOSTIC
+        }
         const int p_auto = peakInBand(P_PEAK_BAND, "P-peak");
 
         // Auto fields always updated.
