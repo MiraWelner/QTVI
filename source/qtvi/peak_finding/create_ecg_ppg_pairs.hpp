@@ -152,12 +152,8 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
     bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted) {
 
     std::vector<output_binfile_data> data(annealedSegments.size());
-
-    // Print once per call, not once per channel/segment: reflects the
-    // whole run's detector choice rather than spamming the console from
-    // inside the OpenMP loop below.
     if (!cfg.use_consensus_rpeak) {
-        std::cout << "[create_ecg_ppg_pairs] Using single-detector fallback (rpeakdetect)\n";
+        std::cout << "Using only one r peak detection method\n";
     }
 
 #pragma omp parallel for schedule(dynamic)

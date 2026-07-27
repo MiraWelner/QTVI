@@ -482,8 +482,6 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(
         g.end_found = true;   // the refinement always yields SOME position
     }
 
-    g.peak2 = pct(0.65);
-
     // ---- DICROTIC NOTCH: find the deepest interior local minimum in the
     // raw signal over [peak + 10ms, halfway to end] -- the physical
     // definition of the notch. Using anchor_fit's model-selection argmin
@@ -518,14 +516,39 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(
             if (rhi - rlo >= 3) {
                 const auto rfit = anchor_fit::selectAnchorModel(v, rlo, rhi);
                 const double rt = anchor_fit::anchorAtPeak(rfit, rlo, rhi, /*findMin=*/true);
-                notch = cl(static_cast<int>(std::lround(rt)));
+                notch = static_cast<int>(std::lround(rt));
             }
-            g.dicrotic = notch;
+            // Clamp to the [lo, hi] range explicitly. The refinement
+            // window can extend past hi, and a monotonic fit's argmin can
+            // land at its own window edge (past hi), so the refined value
+            // must be re-bounded to the notch's specified search range.
+            g.dicrotic = std::clamp(notch, lo, hi);
             g.notch_found = true;
         }
         else {
             g.dicrotic = cl((lo + hi) / 2);
             g.notch_found = false;
+        }
+    }
+
+    // ---- PEAK2 (diastolic peak): the small rebound between the dicrotic
+    // notch and the pulse end. Search for the argmax in [dicrotic, end].
+    // If the notch wasn't genuinely found, peak2 doesn't have a
+    // well-defined range and falls back to the midpoint between the notch
+    // fallback position and end. Hard-clamped to [dicrotic, end] so it
+    // can never escape past end (as it was doing when it was a fixed
+    // pct(0.65) of the whole window, unrelated to peak/end at all).
+    {
+        const int lo = std::clamp(g.dicrotic, 0, Wc - 1);
+        const int hi = std::clamp(g.end, lo, Wc - 1);
+        if (g.notch_found && hi > lo + 1) {
+            int p2 = lo; double best = -std::numeric_limits<double>::infinity();
+            for (int i = lo; i <= hi; ++i)
+                if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; p2 = i; }
+            g.peak2 = std::clamp(p2, lo, hi);
+        }
+        else {
+            g.peak2 = std::clamp((lo + hi) / 2, lo, hi);
         }
     }
 
