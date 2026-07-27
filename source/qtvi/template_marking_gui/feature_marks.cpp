@@ -379,72 +379,163 @@ FeatureMarks::EcgGlyphs FeatureMarks::compute_ecg_glyphs(
     return g;
 }
 
-FeatureMarks::PpgGlyphs FeatureMarks::compute_ppg_glyphs(
-    const std::vector<double>& v, int foot, int dic, int peak2)
+int FeatureMarks::amplitude_crossing(const std::vector<double>& v, int a, int b, double frac) {
+    const int N = static_cast<int>(v.size());
+    if (a < 0 || b < 0 || b <= a || b >= N) return -1;
+    const double va = v[a], vb = v[b];
+    if (std::isnan(va) || std::isnan(vb)) return -1;
+    const double target = va + frac * (vb - va);
+    int best = a; double bestDiff = std::numeric_limits<double>::infinity();
+    for (int i = a; i <= b; ++i) {
+        if (std::isnan(v[i])) continue;
+        const double d = std::abs(v[i] - target);
+        if (d < bestDiff) { bestDiff = d; best = i; }
+    }
+    return best;
+}
+
+FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(
+    const std::vector<double>& v, int constructPeak, int constructOnset,
+    int firstR, int W, double fs)
 {
-    PpgGlyphs g;
+    PpgFiducials g;
     const int N = static_cast<int>(v.size());
     if (N < 3) return g;
-    auto cl = [&](int x) { return std::clamp(x, 0, N - 1); };
+    const int Wc = std::clamp(W, 2, N);   // visible window; nothing below is ever placed past Wc-1
+    auto cl = [&](int x) { return std::clamp(x, 0, Wc - 1); };
+    auto pct = [&](double f) { return std::clamp(static_cast<int>(std::lround(f * Wc)), 0, Wc - 1); };
+    const int marginSamples = (fs > 0.0)
+        ? std::max(1, static_cast<int>(std::lround(0.010 * fs)))
+        : 1;
 
-    // Foot = minimum near the foot marker (the marker is seeded in the trough,
-    // so this small-window search refines/tracks it).
-    if (foot >= 0) {
-        const int w = std::max(3, N / 30);
-        const int lo = cl(foot - w), hi = cl(foot + w);
-        int fmin = lo; double best = std::numeric_limits<double>::infinity();
-        for (int i = lo; i <= hi; ++i)
-            if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; fmin = i; }
-        g.foot = fmin;
+    // ---- PEAK + ONSET: original detection method, INDEPENDENT of end.
+    // Kept independent because the display normalization uses onset as the
+    // per-sample perfusion-index baseline (v[onset] is the divisor in
+    // pulse_norm) -- if onset lands wrong, the entire displayed trace goes
+    // off-scale. Decoupling from end means end detection can't corrupt the
+    // display no matter what happens downstream.
+    if (constructPeak >= 0 && constructPeak < Wc
+        && (firstR < 0 || constructPeak >= firstR)) {
+        g.peak = constructPeak;
+        g.onset = (constructOnset >= 0 && constructOnset <= g.peak)
+            ? constructOnset : 0;
+    }
+    else {
+        // Peak = argmax over [firstR, pct(0.40)). Search starts at the
+        // ACTUAL first R sample (passed in from the ECG channel's
+        // r_col_raw), not a proportional guess -- PPG templates are
+        // R-anchored, so peak by definition must sit at or after R1.
+        // If firstR wasn't provided (< 0), skip the constraint and search
+        // from 0 as a last resort.
+        const int firstPulseStart = (firstR >= 0 && firstR < Wc) ? firstR : 0;
+        const int firstPulseEnd = std::max(firstPulseStart + 2, pct(0.40));
+        int pk = firstPulseStart; double best = -std::numeric_limits<double>::infinity();
+        for (int i = firstPulseStart; i < firstPulseEnd; ++i)
+            if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; pk = i; }
+        g.peak = pk;
+        // Onset = argmin over [pct(0.10), peak] -- the trough just before
+        // the systolic upstroke.
+        int ft = std::min(pct(0.10), pk); best = std::numeric_limits<double>::infinity();
+        for (int i = std::min(pct(0.10), pk); i <= pk; ++i)
+            if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; ft = i; }
+        g.onset = ft;
     }
 
-    // Peak #1 (systolic) = the max after the foot, bounded by a later marker
-    // (peak2 or the dic marker) when available, else the whole trace. Does NOT
-    // fail if those markers are bad -- it always yields a valid index.
+    // ---- END: curve-fit detection, bounded to start AFTER peak so it
+    // can't degenerately land on the pulse's own foot/onset trough (which
+    // is very often deeper than the true diastolic end-of-cycle trough).
+    //
+    // Stage 1 (coarse locate): plain raw-signal argmin over [peak+1, Wc-1]
+    // -- O(n), no model fitting. Full-window BIC model selection here was
+    // the earlier performance regression (piecewise-linear breakpoint
+    // search is O(n^2), running once per bin).
+    // Stage 2 (refine): a small +/-10ms window centered on the coarse
+    // point -- THAT small window is where the (cheap, since it's tiny)
+    // curve fit runs, for sub-sample precision without paying for it over
+    // the whole trace. Bounded to [0, Wc-1] throughout, so end can never
+    // land in the off-screen tail-overlap region past the visible window.
     {
-        int start = (g.foot >= 0) ? g.foot : 0;
-        int pkHi = (peak2 >= 0) ? cl(peak2) : (dic >= 0 ? cl(dic) : N - 1);
-        if (pkHi <= start) pkHi = N - 1;
-        int p1 = start; double best = -std::numeric_limits<double>::infinity();
-        for (int i = start; i <= pkHi; ++i)
-            if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; p1 = i; }
-        g.p1 = p1;
+        const int lo = std::min(g.peak + 1, Wc - 1);
+        const int hi = Wc - 1;
+        int coarse = hi;
+        {
+            double best = std::numeric_limits<double>::infinity();
+            for (int i = lo; i <= hi; ++i)
+                if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; coarse = i; }
+        }
+
+        const int rlo = cl(coarse - marginSamples);
+        const int rhi = cl(coarse + marginSamples);
+        int refined = coarse;
+        if (rhi - rlo >= 3) {
+            const auto rfit = anchor_fit::selectAnchorModel(v, rlo, rhi);
+            const double rt = anchor_fit::anchorAtPeak(rfit, rlo, rhi, /*findMin=*/true);
+            refined = cl(static_cast<int>(std::lround(rt)));
+        }
+        else {
+            double best = std::numeric_limits<double>::infinity();
+            for (int i = rlo; i <= rhi; ++i)
+                if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; refined = i; }
+        }
+
+        g.end = refined;
+        g.end_found = true;   // the refinement always yields SOME position
     }
 
-    // Dicrotic notch = deepest interior local minimum on the downslope after
-    // the systolic peak, up to the diastolic-peak marker (or the trace end).
-    // Real notch -> X at the notch; no notch -> O at the midpoint of the search
-    // span. The O index is always clamped/valid so the circle always renders.
-    if (peak2 >= 0) g.p2 = cl(peak2);
+    g.peak2 = pct(0.65);
+
+    // ---- DICROTIC NOTCH: find the deepest interior local minimum in the
+    // raw signal over [peak + 10ms, halfway to end] -- the physical
+    // definition of the notch. Using anchor_fit's model-selection argmin
+    // as the primary detector was fragile: for subtle notches, BIC could
+    // pick a smooth monotonic model (sigmoid, fewer params) over
+    // piecewise-linear when RSS was comparable, and a monotonic fit's
+    // argmin sits at an edge -- so the "no notch" rejection would fire
+    // even when a clear notch was visible in the raw trace. The direct
+    // raw-signal local-min search finds real notches robustly; anchor_fit
+    // is only useful for refining a notch's position AFTER it's located,
+    // which is what we do below.
     {
-        const int lo = (g.p1 >= 0) ? g.p1 : 0;
-        int hi = (peak2 > lo) ? cl(peak2) : (N - 1);
-        if (hi <= lo + 1) hi = std::min(N - 1, lo + 2);
-        int notch = -1; double best = std::numeric_limits<double>::infinity();
+        const int lo = cl(g.peak + marginSamples);
+        const int hi = std::max(lo, g.peak + (g.end - g.peak) / 2);
+
+        int notch = -1;
+        double bestVal = std::numeric_limits<double>::infinity();
         for (int i = lo + 1; i < hi; ++i) {
             if (std::isnan(v[i - 1]) || std::isnan(v[i]) || std::isnan(v[i + 1])) continue;
-            if (v[i] < v[i - 1] && v[i] <= v[i + 1] && v[i] < best) { best = v[i]; notch = i; }
+            if (v[i] <= v[i - 1] && v[i] <= v[i + 1] && v[i] < bestVal) {
+                bestVal = v[i]; notch = i;
+            }
         }
+
         if (notch >= 0) {
-            g.dic = notch;
+            // Refine with a small +/-10ms curve fit for sub-sample
+            // precision -- anchor_fit is well-suited to this: it fits
+            // smooth models to a narrow window, and its argmin is
+            // meaningful when we already know a real dip is there.
+            const int rlo = cl(notch - marginSamples);
+            const int rhi = cl(notch + marginSamples);
+            if (rhi - rlo >= 3) {
+                const auto rfit = anchor_fit::selectAnchorModel(v, rlo, rhi);
+                const double rt = anchor_fit::anchorAtPeak(rfit, rlo, rhi, /*findMin=*/true);
+                notch = cl(static_cast<int>(std::lround(rt)));
+            }
+            g.dicrotic = notch;
             g.notch_found = true;
         }
         else {
+            g.dicrotic = cl((lo + hi) / 2);
             g.notch_found = false;
-            g.dic_fallback = cl((lo + hi) / 2);   // O here -- always a valid index
         }
     }
 
-    // End = first local minimum after the Peak #2 marker.
-    if (peak2 >= 0) {
-        for (int i = cl(peak2) + 1; i < N - 1; ++i) {
-            if (std::isnan(v[i - 1]) || std::isnan(v[i]) || std::isnan(v[i + 1])) continue;
-            if (v[i] <= v[i - 1] && v[i] <= v[i + 1]) { g.end = i; break; }
-        }
-    }
+    // ---- T80 / P50: amplitude crossings (shared helper -- same formula
+    // the GUI's reactive T80/P50 glyphs use). ------------------------------
+    g.t80 = amplitude_crossing(v, g.peak, g.end, 0.80);
+    if (g.t80 < 0) g.t80 = cl((g.peak + g.end) / 2);
+    g.p50 = amplitude_crossing(v, g.onset, g.peak, 0.50);
+    if (g.p50 < 0) g.p50 = cl((g.onset + g.peak) / 2);
 
-    // Not used in this scheme.
-    g.p50 = -1;
     return g;
 }
 
@@ -759,77 +850,40 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
             if (any) W = std::min(N, mn);
         }
         W = std::max(2, W);
-        auto pct = [&](double f) {
-            return std::clamp(static_cast<int>(std::lround(f * W)), 0, W - 1);
-            };
 
         // Movable-marker spawn points.
         // Seeds only; the user drags from here.
 
-        // ---- PPG autodetect positions (all set here) -----------------------
-        // Systolic peak + foot: prefer the construction-time fiducials (exact,
-        // one pulse); else a first-pulse-bounded search.
-        if (b.ppg_peak_construct >= 0 && b.ppg_peak_construct < W) {
-            b.ppg_peak_auto = b.ppg_peak_construct;
-            b.ppg_onset_auto = (b.ppg_onset_construct >= 0 &&
-                b.ppg_onset_construct <= b.ppg_peak_auto)
-                ? b.ppg_onset_construct : 0;
-        }
-        else {
-            int pk = 0; double best = -std::numeric_limits<double>::infinity();
-            const int firstPulseEnd = std::max(2, pct(0.40));
-            for (int i = 0; i < firstPulseEnd && i < W; ++i)
-                if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; pk = i; }
-            b.ppg_peak_auto = pk;
-            int ft = 0; best = std::numeric_limits<double>::infinity();
-            for (int i = std::min(pct(0.10), pk); i <= pk; ++i)
-                if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; ft = i; }
-            b.ppg_onset_auto = ft;
-        }
-
-        // End = minimum between the peak and the end of the visible window.
-        b.ppg_end_auto = std::min(W - 1, b.ppg_peak_auto + 1);
+        // ---- PPG autodetect positions: ONE call, single source of truth
+        // for every fiducial. Nothing here recomputes anything independently
+        // -- the GUI's frozen glyphs read straight from these same *_auto
+        // fields (see BinPlotWidget::captureGlyphSnapshot), so "peak" (etc.)
+        // can never mean two different things in two different places.
         {
-            double best = std::numeric_limits<double>::infinity();
-            for (int i = b.ppg_peak_auto + 1; i < W; ++i)
-                if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; b.ppg_end_auto = i; }
-        }
-
-        // T80 = 80% of the way down from peak to end.
-        b.ppg_t80_auto = std::clamp((b.ppg_peak_auto + b.ppg_end_auto) / 2, 0, W - 1);
-        if (b.ppg_end_auto > b.ppg_peak_auto &&
-            !std::isnan(v[b.ppg_peak_auto]) && !std::isnan(v[b.ppg_end_auto])) {
-            const double target = v[b.ppg_peak_auto]
-                + 0.80 * (v[b.ppg_end_auto] - v[b.ppg_peak_auto]);
-            double bestDiff = std::numeric_limits<double>::infinity();
-            for (int i = b.ppg_peak_auto; i <= b.ppg_end_auto; ++i) {
-                if (std::isnan(v[i])) continue;
-                const double d = std::abs(v[i] - target);
-                if (d < bestDiff) { bestDiff = d; b.ppg_t80_auto = i; }
-            }
-        }
-
-        // Dicrotic notch = the real notch: the deepest interior local minimum
-        // on the downslope between the systolic peak and the pulse end (mirrors
-        // detect_ppg_dicrotic, which the arterial traces already use). Falls
-        // back to 1/3 peak->end only if no local minimum is present (no notch).
-        {
-            const int pk = b.ppg_peak_auto, en = b.ppg_end_auto;
-            int dic = -1;
-            if (en > pk + 4) {
-                const int margin = std::max(2, (en - pk) / 10);
-                double bestVal = std::numeric_limits<double>::infinity();
-                for (int i = pk + margin + 1; i < en - 1; ++i) {
-                    if (std::isnan(v[i - 1]) || std::isnan(v[i]) || std::isnan(v[i + 1])) continue;
-                    if (v[i] <= v[i - 1] && v[i] <= v[i + 1] && v[i] < bestVal) { bestVal = v[i]; dic = i; }
+            // firstR = the actual R position, taken from any available ECG
+            // channel's r_col_raw (all three should agree, since ECG and
+            // PPG templates are R-anchored to the same sample). -1 if no
+            // ECG channel is present, which lets detect_ppg_fiducials fall
+            // back to searching from 0.
+            int firstR = -1;
+            const ChannelTemplateData* cc[3] = { &b.ch1, &b.ch2, &b.ch3 };
+            for (const auto* ch : cc) {
+                if (!ch->ecgTemplate_raw.empty() && ch->r_col_raw >= 0) {
+                    firstR = ch->r_col_raw;
+                    break;
                 }
             }
-            b.ppg_dicrotic_auto = (dic >= 0) ? dic
-                : ((en > pk) ? pk + (en - pk) / 3 : pct(0.60));
+
+            const auto pf = FeatureMarks::detect_ppg_fiducials(
+                v, b.ppg_peak_construct, b.ppg_onset_construct, firstR, W, sampleRate);
+            b.ppg_peak_auto = pf.peak;
+            b.ppg_onset_auto = pf.onset;
+            b.ppg_peak2_auto = pf.peak2;
+            b.ppg_end_auto = pf.end;               b.ppg_end_found_auto = pf.end_found;
+            b.ppg_dicrotic_auto = pf.dicrotic;     b.ppg_dicrotic_found_auto = pf.notch_found;
+            b.ppg_t80_auto = pf.t80;
+            b.ppg_p50_auto = pf.p50;
         }
-        // P50 = temporal midpoint of the upstroke (halfway between onset and peak).
-        b.ppg_p50_auto = (b.ppg_onset_auto + b.ppg_peak_auto) / 2;
-        b.ppg_peak2_auto = pct(0.65);
 
         // ---- seed the movable bars once (only when unset) ------------------
         if (b.ppg_onset < 0) b.ppg_onset = b.ppg_onset_auto;

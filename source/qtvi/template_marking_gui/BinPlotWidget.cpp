@@ -242,7 +242,14 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     int ppgDicrotic, int ppgPeak2, int ppgT80, int ppgEnd,
     double rPeakSample,
     int nEcgBeats,
-    int nPpgBeats)
+    int nPpgBeats,
+    int ppgOnsetAuto,
+    int ppgPeakAuto,
+    int ppgPeak2Auto,
+    int ppgDicroticAuto,
+    bool ppgDicroticFoundAuto,
+    int ppgEndAuto,
+    bool ppgEndFoundAuto)
 {
     m_nEcgBeats = nEcgBeats;
     m_nPpgBeats = nPpgBeats;
@@ -263,11 +270,21 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_markers[PpgPeak2] = ppgPeak2;
     m_markers[PpgT80] = ppgT80;
     m_markers[PpgEnd] = ppgEnd;
+    // Fall back to the current bar position if no true auto value was
+    // supplied, so the glyph snapshot always has something sensible to
+    // seed from.
+    m_ppgOnsetAuto = (ppgOnsetAuto >= 0) ? ppgOnsetAuto : ppgOnset;
+    m_ppgPeakAuto = (ppgPeakAuto >= 0) ? ppgPeakAuto : ppgPeak;
+    m_ppgPeak2Auto = (ppgPeak2Auto >= 0) ? ppgPeak2Auto : ppgPeak2;
+    m_ppgDicroticAuto = (ppgDicroticAuto >= 0) ? ppgDicroticAuto : ppgDicrotic;
+    m_ppgDicroticFoundAuto = ppgDicroticFoundAuto;
+    m_ppgEndAuto = (ppgEndAuto >= 0) ? ppgEndAuto : ppgEnd;
+    m_ppgEndFoundAuto = ppgEndFoundAuto;
     m_rPeakSample = rPeakSample;
     m_hasPPG = !ppg.empty();
     m_ecgVisibleN = std::max(static_cast<int>(m_ecg.size()), 2);
     m_ppgVisibleN = visiblePpgCount(static_cast<int>(m_ppg.size()));
-    captureGlyphSnapshot();   // freeze glyph landmarks at the initial markers
+    captureGlyphSnapshot();   // frozen PPG glyphs = the auto fields, straight through
     updateGeometry();
     update();
 }
@@ -465,6 +482,8 @@ int BinPlotWidget::markerAtX(double x) const {
         if (idx < 0) continue;
         if (m == EcgRPeak) continue;   // R is auto-only: no draggable bar
         if (m == PpgPeak) continue;    // systolic peak is auto-only (shown as X)
+        if (m == PpgT80) continue;     // t80 is a reactive glyph now, not draggable
+        if (m == PpgP50) continue;      // p50 is a reactive glyph now, not draggable
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;
@@ -720,6 +739,8 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         if (idx < 0) continue;
         if (m == EcgRPeak) continue;   // R is auto-only: no draggable bar
         if (m == PpgPeak) continue;    // systolic peak is auto-only (shown as X)
+        if (m == PpgT80) continue;     // t80 is a reactive glyph now, not draggable
+        if (m == PpgP50) continue;      // p50 is a reactive glyph now, not draggable
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;
@@ -804,7 +825,12 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     s = std::clamp(s, 0, std::max(0, visN - 1));
     m_markers[m_dragMarker] = s;
     emit markerMoved(m_binIndex, m_leadIndex, m_dragMarker, s);
-    captureGlyphSnapshot();   // recompute reactive glyphs so X's track live
+    // Always recompute: ECG's Q-peak/S-peak track the live ECG bars by
+    // design. The frozen PPG glyphs (foot/P1/dicrotic/P2/end) are sourced
+    // from the auto members, not from m_markers, so they can't drift no
+    // matter which bar is dragged. T80/P50 ARE reactive to the current PPG
+    // bars, so this needs to run on PPG drags too for them to track live.
+    captureGlyphSnapshot();
     update();
 }
 
@@ -850,16 +876,29 @@ void BinPlotWidget::captureGlyphSnapshot() {
     }
 
     if (m_hasPPG && (int)m_ppg.size() >= 3) {
-        auto pg = FeatureMarks::compute_ppg_glyphs(
-            m_ppg, m_markers[PpgOnset], m_markers[PpgDicrotic], m_markers[PpgPeak2]);
-        m_glyphs.ppgFoot = pg.foot;
-        m_glyphs.ppgP1 = pg.p1;    m_glyphs.ppgP1OFallback = pg.p1_fallback;
-        m_glyphs.ppgP50 = pg.p50;   m_glyphs.ppgP50OFallback = pg.p50_fallback;
-        m_glyphs.ppgDic = pg.dic;
-        m_glyphs.ppgNoNotchO = pg.dic_fallback;
-        m_glyphs.ppgP2 = pg.p2;    m_glyphs.ppgP2OFallback = pg.p2_fallback;
-        m_glyphs.ppgEnd = -1;       // End has a bar, no computed X
-        m_glyphs.ppgNotch = pg.notch_found;
+        // Frozen glyphs: read DIRECTLY from the auto fields captured in
+        // setData() -- these are the single source of truth (see
+        // FeatureMarks::detect_ppg_fiducials), so there's nothing to
+        // recompute and nothing that can drift from the auto-seeded
+        // movable bars. No freeze flag needed either: these members never
+        // change after setData() loads new data.
+        m_glyphs.ppgFoot = m_ppgOnsetAuto;
+        m_glyphs.ppgP1 = m_ppgPeakAuto;
+        m_glyphs.ppgP2 = m_ppgPeak2Auto;
+        m_glyphs.ppgDic = m_ppgDicroticAuto;    m_glyphs.ppgNotchFound = m_ppgDicroticFoundAuto;
+        m_glyphs.ppgEnd = m_ppgEndAuto;         m_glyphs.ppgEndFound = m_ppgEndFoundAuto;
+
+        // T80 and P50 are reactive, not frozen: always recomputed from the
+        // CURRENT markers (peak is auto-only/effectively fixed; onset and
+        // end are still draggable), same treatment as the ECG Q-peak/
+        // S-peak reactive glyphs, just applied on the PPG side. Uses the
+        // same amplitude_crossing formula the auto-detection itself uses,
+        // so the two never disagree on what "80% down" means.
+        const int pk = m_markers[PpgPeak];
+        const int en = m_markers[PpgEnd];
+        const int on = m_markers[PpgOnset];
+        if (pk >= 0 && en > pk) m_glyphs.ppgT80 = FeatureMarks::amplitude_crossing(m_ppg, pk, en, 0.80);
+        if (on >= 0 && pk > on) m_glyphs.ppgP50 = FeatureMarks::amplitude_crossing(m_ppg, on, pk, 0.50);
     }
 
     m_glyphs.valid = true;
@@ -877,7 +916,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
     auto glyph = [&](double x, double y) {   // opaque black "X"
         p.setBrush(Qt::NoBrush);
         p.setPen(QPen(Qt::black, 1.25));
-        const double s = 2.0; 
+        const double s = 2.0;
         p.drawLine(QPointF(x - s, y - s), QPointF(x + s, y + s));
         p.drawLine(QPointF(x - s, y + s), QPointF(x + s, y - s));
         };
@@ -923,11 +962,13 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             p.drawEllipse(QPointF(x, y), 4.0, 4.0);
             };
         g(m_glyphs.ppgFoot);
-        if (m_glyphs.ppgP1 >= 0)  g(m_glyphs.ppgP1);
-        else                      circ(m_glyphs.ppgP1OFallback);
-        if (m_glyphs.ppgNotch)    g(m_glyphs.ppgDic);
-        else                      circ(m_glyphs.ppgNoNotchO);
-        if (m_glyphs.ppgP2 >= 0)  g(m_glyphs.ppgP2);
-        else                      circ(m_glyphs.ppgP2OFallback);
+        g(m_glyphs.ppgP50);   // reactive: 50% onset->peak, always a computed X
+        g(m_glyphs.ppgP1);
+        if (m_glyphs.ppgNotchFound) g(m_glyphs.ppgDic);
+        else                        circ(m_glyphs.ppgDic);
+        g(m_glyphs.ppgP2);
+        if (m_glyphs.ppgEndFound)   g(m_glyphs.ppgEnd);
+        else                        circ(m_glyphs.ppgEnd);
+        g(m_glyphs.ppgT80);   // reactive: 80% peak->end, always a computed X
     }
 }

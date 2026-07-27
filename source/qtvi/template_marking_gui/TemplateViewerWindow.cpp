@@ -475,7 +475,10 @@ void TemplateViewerWindow::showPage() {
                 b.ppg_dicrotic, b.ppg_peak2, b.ppg_t80, b.ppg_end,
                 rPeak,
                 static_cast<int>(nEcgBeats),
-                static_cast<int>(b.ppg_n_beats));
+                static_cast<int>(b.ppg_n_beats),
+                b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_peak2_auto,
+                b.ppg_dicrotic_auto, b.ppg_dicrotic_found_auto,
+                b.ppg_end_auto, b.ppg_end_found_auto);
 
             pw->setHasPPG(hasPPG);
 
@@ -745,7 +748,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             emitAutoFeatLocHeader(gb);
         }
     }
-    for (const char* g : { "ppg_foot", "ppg_p1" })
+    for (const char* g : { "ppg_foot", "ppg_p1", "ppg_dicrotic_glyph", "ppg_end_glyph" })
         emitAutoFeatLocHeader(g);
     f << '\n';
     f << std::setprecision(10);
@@ -887,8 +890,9 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             egl[gc] = FeatureMarks::compute_ecg_glyphs(
                 gchs[gc]->ecgTemplate_raw, b.p_peak_auto_ch[gc], b.q_begin_auto_ch[gc],
                 b.s_end_auto_ch[gc], b.t_begin_auto_ch[gc], b.t_end_auto_ch[gc], m_sampleRate);
-        const FeatureMarks::PpgGlyphs pgl = FeatureMarks::compute_ppg_glyphs(
-            b.ppgTemplate, b.ppg_onset_auto, b.ppg_dicrotic_auto, b.ppg_peak2_auto);
+        // PPG glyph locations are just the bin's own auto fields now --
+        // there's no separate glyph recompute anymore (see
+        // FeatureMarks::detect_ppg_fiducials).
         auto emitLoc = [&](int markerIdx, int row) {
             f << ',';
             if (markerIdx >= 0 && markerIdx == row) f << '1';
@@ -921,7 +925,9 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
                 emitLoc(egl[gc].p_peak_glyph, row); emitLoc(egl[gc].q_begin_glyph, row);
                 emitLoc(b.r_peak_auto_ch[gc], row); emitLoc(egl[gc].t_peak_glyph, row);
             }
-            emitLoc(pgl.foot, row); emitLoc(pgl.p1, row);
+            emitLoc(b.ppg_onset_auto, row); emitLoc(b.ppg_peak_auto, row);
+            emitLoc(b.ppg_dicrotic_auto, row);
+            emitLoc(b.ppg_end_auto, row);
             f << '\n';
         }
     }
@@ -998,11 +1004,9 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
             pw->setMarker(BinPlotWidget::EcgTBegin, b.t_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgTEnd, b.t_end_ch[c]);
             pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
-            pw->setMarker(BinPlotWidget::PpgP50, b.ppg_p50);
             pw->setMarker(BinPlotWidget::PpgPeak, b.ppg_peak);
             pw->setMarker(BinPlotWidget::PpgDicrotic, b.ppg_dicrotic);
             pw->setMarker(BinPlotWidget::PpgPeak2, b.ppg_peak2);
-            pw->setMarker(BinPlotWidget::PpgT80, b.ppg_t80);
             pw->setMarker(BinPlotWidget::PpgEnd, b.ppg_end);
             pw->setMarker(BinPlotWidget::AbpOnset, b.abp_onset);
             pw->setMarker(BinPlotWidget::AbpPeak, b.abp_peak);
@@ -1091,11 +1095,9 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         auto ppgGet = [&](TemplateBin& tb) -> int {
             switch (marker) {
             case BinPlotWidget::PpgOnset:    return tb.ppg_onset;
-            case BinPlotWidget::PpgP50:      return tb.ppg_p50;
             case BinPlotWidget::PpgPeak:     return tb.ppg_peak;
             case BinPlotWidget::PpgDicrotic: return tb.ppg_dicrotic;
             case BinPlotWidget::PpgPeak2:    return tb.ppg_peak2;
-            case BinPlotWidget::PpgT80:      return tb.ppg_t80;
             case BinPlotWidget::PpgEnd:      return tb.ppg_end;
             }
             return -1;
@@ -1103,11 +1105,9 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         auto ppgSet = [&](TemplateBin& tb, int v) {
             switch (marker) {
             case BinPlotWidget::PpgOnset:    tb.ppg_onset = v; break;
-            case BinPlotWidget::PpgP50:      tb.ppg_p50 = v; break;
             case BinPlotWidget::PpgPeak:     tb.ppg_peak = v; break;
             case BinPlotWidget::PpgDicrotic: tb.ppg_dicrotic = v; break;
             case BinPlotWidget::PpgPeak2:    tb.ppg_peak2 = v; break;
-            case BinPlotWidget::PpgT80:      tb.ppg_t80 = v; break;
             case BinPlotWidget::PpgEnd:      tb.ppg_end = v; break;
             }
             };

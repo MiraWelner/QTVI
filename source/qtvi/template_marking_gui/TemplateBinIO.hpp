@@ -145,6 +145,11 @@ struct TemplateBin {
     int ppg_onset_auto = -1, ppg_p50_auto = -1, ppg_peak_auto = -1,
         ppg_dicrotic_auto = -1, ppg_peak2_auto = -1, ppg_end_auto = -1;
     int ppg_t80_auto = -1;
+    // Whether the dicrotic notch / pulse end were genuinely found by the
+    // detector vs. fell back to a placeholder position. Drives X-vs-O glyph
+    // rendering; set once by seed_all's single PPG detection pass.
+    bool ppg_dicrotic_found_auto = false;
+    bool ppg_end_found_auto = false;
     int abp_onset_auto = -1, abp_peak_auto = -1, abp_dicrotic_auto = -1,
         abp_peak2_auto = -1, abp_end_auto = -1;
     int art_onset_auto = -1, art_peak_auto = -1, art_dicrotic_auto = -1,
@@ -472,8 +477,11 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             emitAutoFeatHeader(b);
         }
     }
-    for (const char* g : { "ppg_foot_autodetect", "ppg_p1_autodetect" })
+    for (const char* g : { "ppg_foot_autodetect", "ppg_p1_autodetect",
+                           "ppg_dicrotic_glyph_autodetect", "ppg_end_glyph_autodetect" })
         emitAutoFeatHeader(g);
+    f << ",ppg_notch_found";
+    f << ",ppg_end_found";
     f << '\n';
 
     // ---- row loop ----------------------------------------------------------
@@ -661,10 +669,14 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             emitAutoFeatPt(ecg, gl.t_peak_glyph);
         }
         {
-            const FeatureMarks::PpgGlyphs pgl = FeatureMarks::compute_ppg_glyphs(
-                b.ppgTemplate, b.ppg_onset_auto, b.ppg_dicrotic_auto, b.ppg_peak2_auto);
-            emitAutoFeatPt(b.ppgTemplate, pgl.foot);
-            emitAutoFeatPt(b.ppgTemplate, pgl.p1);
+            // PPG glyph values are just the bin's own auto fields now --
+            // no separate recompute (see FeatureMarks::detect_ppg_fiducials).
+            emitAutoFeatPt(b.ppgTemplate, b.ppg_onset_auto);
+            emitAutoFeatPt(b.ppgTemplate, b.ppg_peak_auto);
+            emitAutoFeatPt(b.ppgTemplate, b.ppg_dicrotic_auto);
+            f << ',' << (b.ppg_dicrotic_found_auto ? 1 : 0);
+            emitAutoFeatPt(b.ppgTemplate, b.ppg_end_auto);
+            f << ',' << (b.ppg_end_found_auto ? 1 : 0);
         }
 
         f << '\n';

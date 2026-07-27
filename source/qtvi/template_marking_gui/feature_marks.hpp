@@ -74,17 +74,38 @@ public:
     static int compute_t_begin(const std::vector<double>& v, int tBeginUser, double fs, int r_idx);
 
 
-    struct PpgGlyphs {
-        int foot = -1;
-        int p1 = -1, p1_fallback = -1;
-        int p50 = -1, p50_fallback = -1;
-        int dic = -1, dic_fallback = -1;
-        int p2 = -1, p2_fallback = -1;
-        int end = -1;
-        bool notch_found = false;
+    // Single source of truth for EVERY PPG fiducial. Used by seed_all() to
+    // populate the *_auto fields AND by the GUI to draw the frozen glyphs --
+    // there is no separate/independent glyph recompute anymore, so "peak"
+    // (etc.) can't mean two different things in two different places.
+    // Dependency order: end is computed FIRST and independently; peak/onset
+    // are then bounded by end; the dicrotic notch is bounded by peak and
+    // end; t80/p50 are amplitude crossings derived from peak/onset/end.
+    // end/peak/notch never exceed W-1, so nothing can land in the invisible
+    // tail-overlap region past the displayed window.
+    struct PpgFiducials {
+        int onset = -1;
+        int peak = -1;
+        int peak2 = -1;
+        int end = -1;        bool end_found = false;
+        int dicrotic = -1;   bool notch_found = false;
+        int t80 = -1;
+        int p50 = -1;
     };
-    static PpgGlyphs compute_ppg_glyphs(
-        const std::vector<double>& ppg, int foot, int dic, int peak2);
+    // constructPeak/constructOnset: the real R-pair construction fiducials
+    // (TemplateBin::ppg_peak_construct/ppg_onset_construct); pass -1 if
+    // unavailable. firstR: the sample position of the first R peak in the
+    // PPG template's coordinate system -- typically an ECG channel's
+    // r_col_raw (templates are R-anchored, so the R column is shared).
+    // Peak search is bounded to start at or after firstR. W: the visible
+    // window length (samples); bounds every output to [0, W-1].
+    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v,
+        int constructPeak, int constructOnset, int firstR, int W, double fs);
+
+    // Sample whose AMPLITUDE is frac of the way from v[a] to v[b] (NOT frac
+    // of the sample-index distance). Shared by detect_ppg_fiducials (t80/
+    // p50) and the GUI's reactive T80/P50 glyphs, so both always agree.
+    static int amplitude_crossing(const std::vector<double>& v, int a, int b, double frac);
 
     // =================================================================
     // Movable (auto-detected seeds)

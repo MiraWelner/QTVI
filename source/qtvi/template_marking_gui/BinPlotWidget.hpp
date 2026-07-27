@@ -136,7 +136,21 @@ public:
         int ppgDicrotic, int ppgPeak2, int ppgT80, int ppgEnd,
         double rPeakSample,
         int nEcgBeats = 0,
-        int nPpgBeats = 0);
+        int nPpgBeats = 0,
+        // The full set of PPG auto-detected fiducials (TemplateBin's
+        // ppg_*_auto fields, all from ONE detect_ppg_fiducials() call --
+        // see feature_marks.cpp). These are the single source of truth for
+        // the frozen glyphs: captureGlyphSnapshot() reads them directly,
+        // with no independent recompute. They're separate from
+        // ppgOnset/ppgDicrotic/ppgPeak2/etc. above, which are the current
+        // (possibly user-dragged) bar positions.
+        int ppgOnsetAuto = -1,
+        int ppgPeakAuto = -1,
+        int ppgPeak2Auto = -1,
+        int ppgDicroticAuto = -1,
+        bool ppgDicroticFoundAuto = false,
+        int ppgEndAuto = -1,
+        bool ppgEndFoundAuto = false);
 
     void setHasPPG(bool has);
     bool hasPPG() const { return m_hasPPG; }
@@ -261,18 +275,35 @@ private:
         // X at its marker's position; no O fallbacks (a marker is always
         // set, or the field stays -1 and the draw is skipped).
         int ecgPPeak = -1, ecgQ = -1, ecgQPeak = -1, ecgRPeak = -1, ecgSPeak = -1, ecgS = -1, ecgTPeak = -1, ecgTend = -1;
-        int ppgFoot = -1, ppgP50 = -1, ppgP1 = -1, ppgDic = -1, ppgP2 = -1, ppgEnd = -1;
-        // Fallback midpoints for landmarks that can be "expected but not
-        // found". X drawn at the real index; O drawn at the fallback.
-        int ppgP50OFallback = -1;
-        int ppgP1OFallback = -1;
-        int ppgP2OFallback = -1;
-        bool ppgNotch = false;
-        int  ppgNoNotchO = -1;
+        // PPG: sourced directly from the bin's single-source-of-truth
+        // ppg_*_auto fields (see FeatureMarks::detect_ppg_fiducials) -- no
+        // independent glyph recompute, so these can never disagree with
+        // the auto-seeded movable bars (they're set once from setData()
+        // and never change, since dragging a bar only touches the
+        // non-auto TemplateBin fields).
+        int ppgFoot = -1;    // = onset_auto
+        int ppgP1 = -1;      // = peak_auto
+        int ppgP2 = -1;      // = peak2_auto
+        int ppgDic = -1;     bool ppgNotchFound = false;
+        int ppgEnd = -1;     bool ppgEndFound = false;
+        // T80/P50 are reactive (NOT from the auto fields): always tracked
+        // live from the CURRENT onset/peak/end markers, recomputed every
+        // capture -- same "reactive" treatment ECG's Q-peak/S-peak get.
+        int ppgP50 = -1;
+        int ppgT80 = -1;
         bool valid = false;
     };
 
     GlyphSnapshot m_glyphs;
+
+    // The full set of PPG auto-detected fiducials (TemplateBin's
+    // ppg_*_auto fields), captured once per setData() call. These feed the
+    // frozen glyphs directly -- no recompute, no freeze flag needed, since
+    // they never change after load (dragging a bar only touches the
+    // separate, non-auto TemplateBin fields in m_markers[Ppg*]).
+    int m_ppgOnsetAuto = -1, m_ppgPeakAuto = -1, m_ppgPeak2Auto = -1;
+    int m_ppgDicroticAuto = -1;   bool m_ppgDicroticFoundAuto = false;
+    int m_ppgEndAuto = -1;        bool m_ppgEndFoundAuto = false;
 
     // Compute the glyph snapshot from current trace + marker state.
     void captureGlyphSnapshot();
