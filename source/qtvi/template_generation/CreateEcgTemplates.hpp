@@ -43,29 +43,8 @@ struct SingleMethodResult {
     size_t n_beats = 0;
 };
 
-static inline SingleMethodResult build_ecg_template_for_method(
-    const vector<double>& ecgSignal,
-    const vector<size_t>& rpeaks,
-    const vector<vector<double>>& pairs,
-    double ecgRate,
-    vector<vector<double>>* out_kept_beats = nullptr,
-    bool compute_iqr = false)
-{
-    // NEW SLICING (Phase A of the pair-window refactor):
-    //   For every consecutive R-peak pair (R_i, R_{i+1}) in `rpeaks`,
-    //   slice ecgSignal at [R_i - 1s, R_{i+1} + 1s] and stack the slices.
-    //   All slices start 1s before R_first, so R_first sits at column
-    //   `ecgRate` (== 1s worth of samples) in every slice, and therefore
-    //   in the column-wise-median template.
-    //
-    //   Slices have variable length (RR varies beat-to-beat). Shorter
-    //   slices contribute NaN past their real end; the NaN-skipping
-    //   column median downweights those columns automatically.
-    //
-    //   The old machinery (10% bin reduction, preP snipping via
-    //   kEcgPrePFrac, EnsembleTemplate's foot alignment for PPG) is
-    //   gone. The whole template is now deterministically R-anchored,
-    //   and the true R column (r_aligned_col) is carried out in res.r_col.
+static inline SingleMethodResult build_ecg_template_for_method(const vector<double>& ecgSignal, const vector<size_t>& rpeaks, const vector<vector<double>>& pairs,
+    double ecgRate, vector<vector<double>>* out_kept_beats = nullptr, bool compute_iqr = false){
     SingleMethodResult res;
     res.ecgTemplate = {};
     res.ecg_template_iqr = {};
@@ -74,15 +53,7 @@ static inline SingleMethodResult build_ecg_template_for_method(
 
     if (rpeaks.size() < 2 || ecgSignal.empty() || ecgRate <= 0.0) return res;
 
-    // Alignment (see alignment.hpp): slice each beat as
-    // [R_i - 0.25*RR_i, R_i + 0.75*RR_i], then NaN-pad-shift onto a shared
-    // axis so every beat's R lands at r_aligned_col (R-align only). The Q
-    // pass no longer runs here: it reuses these cached R-aligned beats via
-    // qAlignTemplatesFromCache in build_templates.hpp (reuse + Q-shift).
-    // The returned beats are all the SAME WIDTH; NaN cells outside each
-    // beat's real range don't participate in the column-wise median or std.
-    const alignment::ecg_beat_set aligned =
-        alignment::extract_beats_and_align(ecgSignal, rpeaks);
+    const alignment::ecg_beat_set aligned = alignment::extract_beats_and_align(ecgSignal, rpeaks, ecgRate);
     if (aligned.beats.empty() || aligned.median_length <= 0) return res;
 
     const size_t maxLen = aligned.beats.front().size();   // shared-axis width

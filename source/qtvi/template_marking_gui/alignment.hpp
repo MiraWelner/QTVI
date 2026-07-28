@@ -5,19 +5,9 @@
 // Per-bin beat alignment for ECG and PPG. Runs BEFORE any normalization
 // or template averaging.
 //
-//   1) Slice one beat per RR window as
-//        [R_i - percent_interval_preceeding_rpeak*RR,
-//         R_i + percent_interval_following_rpeak*RR].
-//   2) Tukey outlier rejection: length (1.5), systolic amplitude (1.5),
-//      and fiducial-position (3.0, PPG only) using [Q1-k*IQR, Q3+k*IQR].
-//   3) Horizontal align onto a shared axis (integer shift + NaN pad, no
-//      resampling):
-//        - ECG: anchor R at percent_interval_preceeding_rpeak * max_rr_len.
-//        - PPG: anchor the 50%-upslope (half-height) point at the largest
-//               such column among survivors. The half-height point sits on
-//               the steep systolic upstroke, so it is well-localized (like
-//               ECG's R) and pinning it does NOT create an apex cusp; peaks
-//               scatter and the apex averages honestly.
+//   1) Slice one beat per RR window as 0.4*RR before R to 1.3*RR after R (integer-truncated).
+//   2) Tukey outlier rejection: ECG is based on RR length and distance from max to min, PPG is based on 50% upslope location and distance from max to min.
+//   3) Horizontal align the ECG such that R peaks are aligned, if it is the Q peak screening then after align by Q peak
 //   4) Vertical DC shift:
 //        - ECG: match each beat's PR-baseline mean to the reference beat's.
 //        - PPG: match each beat's foot-baseline mean (a small window around
@@ -28,6 +18,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <iostream>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -96,9 +87,7 @@ namespace alignment {
         int ref_beat_index = -1;
     };
 
-    inline ecg_beat_set extract_beats_and_align(const std::vector<double>& signal,
-        const std::vector<size_t>& rPeaks)
-    {
+    inline ecg_beat_set extract_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs) {
         ecg_beat_set out;
         const int64_t N = static_cast<int64_t>(signal.size());
         if (N == 0 || rPeaks.size() < 2) {
@@ -155,7 +144,7 @@ namespace alignment {
             apply_mask(keep_within_tukey(lens_d, 1.5));
         }
         if (out.beats.empty()) return out;
-		//Tukey rejection: R peak from template min distance (1.5*IQR)
+        //Tukey rejection: R peak from template min distance (1.5*IQR)
         {
             std::vector<double> amps;
             amps.reserve(out.beats.size());
@@ -226,35 +215,48 @@ namespace alignment {
         out.beats = std::move(aligned);
         out.r_aligned_col = R_anchor;
 
-        // ---- Pass 3: PR-baseline vertical DC alignment -----------------
-        if (out.ref_beat_index >= 0
-            && out.ref_beat_index < static_cast<int>(out.beats.size()))
+        // ---- Pass 3: PQ-baseline vertical DC alignment ------------------
+        if (out.ref_beat_index >= 0 && out.ref_beat_index < static_cast<int>(out.beats.size()))
         {
-            const int pr_w = std::max(3, out.median_length / 20);
-            const int pr_gap = std::max(1, out.median_length / 50);
-            const int pr_lo = std::max(0, R_anchor - pr_gap - pr_w);
-            const int pr_hi = std::max(pr_lo, R_anchor - pr_gap);
+            const int pq_min_w = std::max(1, static_cast<int>(std::lround(0.010 * fs)));  // 10 ms window
+            const int pq_ceiling = static_cast<int>(std::lround(0.100 * fs));               // 100 ms max lookback
 
-            auto pr_baseline = [&](const std::vector<double>& beat)
-                -> std::pair<double, int>
+            const int pq_hi_bound = R_anchor;
+            const int pq_lo_bound = std::max(0, R_anchor - pq_ceiling);
+
+            auto find_flat_baseline = [&](const std::vector<double>& beat)
+                -> std::pair<double, int>   // {mean, window_start}
                 {
-                    double sum = 0.0; int n = 0;
-                    for (int k = pr_lo; k < pr_hi
-                        && k < static_cast<int>(beat.size()); ++k) {
-                        const double v = beat[k];
-                        if (!std::isnan(v)) { sum += v; ++n; }
+                    const int hi = std::min(pq_hi_bound,
+                        static_cast<int>(beat.size()) - pq_min_w);
+                    if (hi < pq_lo_bound)
+                        return { std::numeric_limits<double>::quiet_NaN(), -1 };
+
+                    double best_var = std::numeric_limits<double>::infinity();
+                    double best_mean = std::numeric_limits<double>::quiet_NaN();
+                    int best_start = -1;
+
+                    for (int s = pq_lo_bound; s <= hi; ++s) {
+                        double sum = 0.0, sumsq = 0.0; int n = 0;
+                        for (int k = s; k < s + pq_min_w; ++k) {
+                            const double v = beat[k];
+                            if (std::isnan(v)) continue;
+                            sum += v; sumsq += v * v; ++n;
+                        }
+                        if (n < static_cast<int>(pq_min_w * 0.7)) continue;
+                        const double mean = sum / n;
+                        const double var = sumsq / n - mean * mean;
+                        if (var < best_var) { best_var = var; best_mean = mean; best_start = s; }
                     }
-                    if (n < 3)
-                        return { std::numeric_limits<double>::quiet_NaN(), n };
-                    return { sum / n, n };
+                    return { best_mean, best_start };
                 };
 
-            const auto [target, target_n] =
-                pr_baseline(out.beats[out.ref_beat_index]);
+            const auto [target, target_start] =
+                find_flat_baseline(out.beats[out.ref_beat_index]);
 
             if (!std::isnan(target)) {
                 for (auto& beat : out.beats) {
-                    const auto [b_base, b_n] = pr_baseline(beat);
+                    const auto [b_base, b_start] = find_flat_baseline(beat);
                     if (std::isnan(b_base)) continue;
                     const double d = b_base - target;
                     if (d == 0.0) continue;
@@ -263,13 +265,9 @@ namespace alignment {
                 }
             }
         }
-
-        // Q-align is no longer done here. extract_beats_and_align now only
-        // R-aligns (+ DC-aligns); the Q pass reuses these beats via
-        // qAlignTemplatesFromCache in build_templates.hpp (reuse + Q-shift).
         out.q_aligned_col = out.r_aligned_col;
         return out;
-    }
+	}
 
     inline int find_q_column(const std::vector<double>& b, int R_anchor, double fs) {
         /*Finds Q column by negative 1st derivative followed by positive first dirivative and the whole thing
@@ -439,9 +437,7 @@ namespace alignment {
         int    ref_beat_index = -1;
     };
 
-    inline PpgBeatSet extract_ppg_beats_and_align(
-        const std::vector<double>& signal,
-        const std::vector<size_t>& rPeaks)
+    inline PpgBeatSet extract_ppg_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks)
     {
         PpgBeatSet out;
         const int64_t N = static_cast<int64_t>(signal.size());
@@ -566,16 +562,17 @@ namespace alignment {
         }
 
         // ---- Pass 1: 50%-upslope align on a shared axis (shift + NaN) ---
-        // Anchor every beat's half-height point to the largest up50 column
-        // among survivors. Anchoring on the max fiducial column (as ECG does
-        // with 0.3*max) guarantees prepend >= 0, so beats are only ever
-        // NaN-prepended, never left-clipped. The half-height point sits on the
-        // steep upstroke, so its column is well-localized and pinning it does
-        // not manufacture an apex cusp; peaks and feet both scatter.
-        int up50_anchor = 0;      // max up50 column over survivors
+        // Anchor every beat's half-height point to the MEDIAN up50 column
+        // among survivors. Beats with up50 > anchor get their leading samples
+        // clipped (dst < 0 dropped by the guard below); this is accepted.
+        std::vector<int> up50s;
+        up50s.reserve(raw.size());
+        for (const auto& r : raw) up50s.push_back(r.up50);
+        std::sort(up50s.begin(), up50s.end());
+        const int up50_anchor = up50s[up50s.size() / 2];   // median
+
         int max_tail = 0;         // max (beat_len - up50) over survivors
         for (const auto& r : raw) {
-            if (r.up50 > up50_anchor) up50_anchor = r.up50;
             const int tail = static_cast<int>(r.data.size()) - r.up50;
             if (tail > max_tail) max_tail = tail;
         }
@@ -587,46 +584,56 @@ namespace alignment {
         out.peak_cols.reserve(raw.size());
         out.foot_cols.reserve(raw.size());
         for (const auto& b : raw) {
-            const int prepend = up50_anchor - b.up50;   // >= 0 by construction
+            const int prepend = up50_anchor - b.up50;   // may be < 0 now
             std::vector<double> a(shared_w, NaND);
             for (int k = 0; k < (int)b.data.size(); ++k) {
                 const int dst = prepend + k;
-                if (dst >= 0 && dst < shared_w) a[dst] = b.data[k];
+                if (dst >= 0 && dst < shared_w) a[dst] = b.data[k];   // clips left overflow
             }
             out.beats.push_back(std::move(a));
-            out.peak_cols.push_back(prepend + b.peak);   // scatters across beats
-            out.foot_cols.push_back(prepend + b.foot);   // scatters across beats
+            out.peak_cols.push_back(prepend + b.peak);   // may be < 0 for clipped beats
+            out.foot_cols.push_back(prepend + b.foot);   // may be < 0 for clipped beats
         }
         out.up50_aligned_col = up50_anchor;
 
-        // ---- Pass 2: foot-baseline vertical DC match (mirrors ECG) ------
-        // Match each beat's mean over a small window around its OWN foot column
-        // to the reference beat's. Feet no longer share a column (we aligned on the
-        // upslope), so the window is centered per beat at foot_cols[i]. A
-        // windowed mean, rather than the single argmin sample, avoids an
-        // order-statistic bias at the foot. A constant vertical shift moves no
-        // column, so it cannot affect the (cusp-free) horizontal alignment.
+        // ---- Pass 2: min-baseline vertical DC match ---------------------
+        // Match each beat's baseline (windowed mean around its OWN minimum
+        // sample) to the reference beat's. We use the per-beat argmin rather
+        // than the stored foot column: after median-anchoring, a beat's foot
+        // can be clipped off the left edge (foot_cols[i] < 0), but the argmin
+        // over surviving samples is always a valid in-range column. For
+        // unclipped beats the min IS the foot; for clipped beats it's the
+        // lowest surviving point, a good-enough baseline proxy. Windowed mean
+        // (not the single argmin sample) avoids order-statistic bias. A
+        // constant vertical shift can't disturb horizontal alignment.
         if (out.ref_beat_index >= 0
             && out.ref_beat_index < static_cast<int>(out.beats.size()))
         {
             const int fb_w = std::max(1, out.median_length / 50);
-            auto foot_baseline = [&](size_t i) -> double {
-                const int fc = out.foot_cols[i];
-                const int lo = std::max(0, fc - fb_w);
-                const int hi = std::min(shared_w, fc + fb_w + 1);
+            auto min_baseline = [&](size_t i) -> double {
+                const auto& beat = out.beats[i];
+                int mc = -1;
+                double mv = std::numeric_limits<double>::infinity();
+                for (int k = 0; k < (int)beat.size(); ++k) {
+                    const double v = beat[k];
+                    if (!std::isnan(v) && v < mv) { mv = v; mc = k; }
+                }
+                if (mc < 0) return std::numeric_limits<double>::quiet_NaN();
+                const int lo = std::max(0, mc - fb_w);
+                const int hi = std::min(shared_w, mc + fb_w + 1);
                 double sum = 0.0; int n = 0;
                 for (int k = lo; k < hi; ++k) {
-                    const double v = out.beats[i][k];
+                    const double v = beat[k];
                     if (!std::isnan(v)) { sum += v; ++n; }
                 }
                 return n >= 1 ? sum / n
                     : std::numeric_limits<double>::quiet_NaN();
                 };
 
-            const double target = foot_baseline(static_cast<size_t>(out.ref_beat_index));
+            const double target = min_baseline(static_cast<size_t>(out.ref_beat_index));
             if (!std::isnan(target)) {
                 for (size_t i = 0; i < out.beats.size(); ++i) {
-                    const double b_base = foot_baseline(i);
+                    const double b_base = min_baseline(i);
                     if (std::isnan(b_base)) continue;
                     const double d = b_base - target;
                     if (d == 0.0) continue;
