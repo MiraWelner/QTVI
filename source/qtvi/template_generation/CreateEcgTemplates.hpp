@@ -81,7 +81,7 @@ static inline SingleMethodResult build_ecg_template_for_method(
     // qAlignTemplatesFromCache in build_templates.hpp (reuse + Q-shift).
     // The returned beats are all the SAME WIDTH; NaN cells outside each
     // beat's real range don't participate in the column-wise median or std.
-    const alignment::BeatSet aligned =
+    const alignment::ecg_beat_set aligned =
         alignment::extract_beats_and_align(ecgSignal, rpeaks);
     if (aligned.beats.empty() || aligned.median_length <= 0) return res;
 

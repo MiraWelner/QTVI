@@ -145,10 +145,14 @@ struct TemplateBin {
     int ppg_onset_auto = -1, ppg_p50_auto = -1, ppg_peak_auto = -1,
         ppg_dicrotic_auto = -1, ppg_peak2_auto = -1, ppg_end_auto = -1;
     int ppg_t80_auto = -1;
-    // Whether the dicrotic notch / pulse end were genuinely found by the
-    // detector vs. fell back to a placeholder position. Drives X-vs-O glyph
-    // rendering; set once by seed_all's single PPG detection pass.
+    // Whether the dicrotic notch / diastolic peak / pulse end were
+    // genuinely found by the detector vs. fell back to a placeholder
+    // position. Drive X-vs-O glyph rendering; set once by seed_all's
+    // single PPG detection pass. Not written to CSV -- the CSV only
+    // needs the x/y values for each landmark, since a fallback landmark
+    // still has valid coordinates.
     bool ppg_dicrotic_found_auto = false;
+    bool ppg_peak2_found_auto = false;
     bool ppg_end_found_auto = false;
     int abp_onset_auto = -1, abp_peak_auto = -1, abp_dicrotic_auto = -1,
         abp_peak2_auto = -1, abp_end_auto = -1;

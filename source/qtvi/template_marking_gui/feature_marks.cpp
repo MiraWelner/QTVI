@@ -482,46 +482,49 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(
         g.end_found = true;   // the refinement always yields SOME position
     }
 
-    // ---- DICROTIC NOTCH: find the deepest interior local minimum in the
-    // raw signal over [peak + 10ms, halfway to end] -- the physical
-    // definition of the notch. Using anchor_fit's model-selection argmin
-    // as the primary detector was fragile: for subtle notches, BIC could
-    // pick a smooth monotonic model (sigmoid, fewer params) over
-    // piecewise-linear when RSS was comparable, and a monotonic fit's
-    // argmin sits at an edge -- so the "no notch" rejection would fire
-    // even when a clear notch was visible in the raw trace. The direct
-    // raw-signal local-min search finds real notches robustly; anchor_fit
-    // is only useful for refining a notch's position AFTER it's located,
-    // which is what we do below.
+    // Scale threshold for the 2nd-derivative extrema tests below.
+    // Requiring d2 > kThresh * pulse_amplitude keeps the tests
+    // scale-invariant (works whether the raw signal is in mV, ADC
+    // counts, or normalized units) and filters out noise-driven
+    // near-zero d2 values that were previously being called notches.
+    const double pulseAmp = (!std::isnan(v[g.peak]) && !std::isnan(v[g.end]))
+        ? std::abs(v[g.peak] - v[g.end])
+        : 0.0;
+    const double kThresh = 0.001;    // 1% of pulse amplitude per sample^2
+    const double curvThresh = kThresh * pulseAmp;
+
+    // Amplitude landmarks: samples where the trace has descended a given
+    // fraction of the peak-to-end amplitude range.
+    int amp30 = amplitude_crossing(v, g.peak, g.end, 0.30);
+    int amp60 = amplitude_crossing(v, g.peak, g.end, 0.60);
+    int amp80 = amplitude_crossing(v, g.peak, g.end, 0.80);
+    if (amp30 < 0) amp30 = g.peak;
+    if (amp60 < 0) amp60 = g.end;
+    if (amp80 < 0) amp80 = g.end;
+    amp30 = std::clamp(amp30, 0, Wc - 1);
+    amp60 = std::clamp(amp60, amp30, Wc - 1);
+    amp80 = std::clamp(amp80, amp60, Wc - 1);
+
+    // ---- DICROTIC NOTCH: sample with the steepest (most positive) 2nd
+    // derivative in [30%-height-down, 60%-height-down]. The 2nd derivative
+    // d2[i] = v[i+1] - 2v[i] + v[i-1] is positive where the curve is
+    // concave-up (a "cup" -- physically, a dip). The threshold requires
+    // d2 to exceed a small fraction of pulse amplitude, so noise-level
+    // fluctuations don't get called a notch. If no sample clears the
+    // threshold, draw the O in the middle of the range.
     {
-        const int lo = cl(g.peak + marginSamples);
-        const int hi = std::max(lo, g.peak + (g.end - g.peak) / 2);
+        const int lo = amp30;
+        const int hi = std::max(lo, amp60);
 
         int notch = -1;
-        double bestVal = std::numeric_limits<double>::infinity();
+        double bestCurv = curvThresh;
         for (int i = lo + 1; i < hi; ++i) {
             if (std::isnan(v[i - 1]) || std::isnan(v[i]) || std::isnan(v[i + 1])) continue;
-            if (v[i] <= v[i - 1] && v[i] <= v[i + 1] && v[i] < bestVal) {
-                bestVal = v[i]; notch = i;
-            }
+            const double d2 = v[i + 1] - 2.0 * v[i] + v[i - 1];
+            if (d2 > bestCurv) { bestCurv = d2; notch = i; }
         }
 
         if (notch >= 0) {
-            // Refine with a small +/-10ms curve fit for sub-sample
-            // precision -- anchor_fit is well-suited to this: it fits
-            // smooth models to a narrow window, and its argmin is
-            // meaningful when we already know a real dip is there.
-            const int rlo = cl(notch - marginSamples);
-            const int rhi = cl(notch + marginSamples);
-            if (rhi - rlo >= 3) {
-                const auto rfit = anchor_fit::selectAnchorModel(v, rlo, rhi);
-                const double rt = anchor_fit::anchorAtPeak(rfit, rlo, rhi, /*findMin=*/true);
-                notch = static_cast<int>(std::lround(rt));
-            }
-            // Clamp to the [lo, hi] range explicitly. The refinement
-            // window can extend past hi, and a monotonic fit's argmin can
-            // land at its own window edge (past hi), so the refined value
-            // must be re-bounded to the notch's specified search range.
             g.dicrotic = std::clamp(notch, lo, hi);
             g.notch_found = true;
         }
@@ -531,24 +534,33 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(
         }
     }
 
-    // ---- PEAK2 (diastolic peak): the small rebound between the dicrotic
-    // notch and the pulse end. Search for the argmax in [dicrotic, end].
-    // If the notch wasn't genuinely found, peak2 doesn't have a
-    // well-defined range and falls back to the midpoint between the notch
-    // fallback position and end. Hard-clamped to [dicrotic, end] so it
-    // can never escape past end (as it was doing when it was a fixed
-    // pct(0.65) of the whole window, unrelated to peak/end at all).
+    // ---- PEAK2 (diastolic peak): sample with the least steep (most
+    // negative) 2nd derivative in [DN + 5ms, T80]. Lower bound in x is
+    // 5ms past the notch (skip the notch's own curvature-recovery
+    // region); upper bound is the 80%-height-down marker (T80). If no
+    // sample clears the threshold in magnitude, draw the O in the middle.
     {
-        const int lo = std::clamp(g.dicrotic, 0, Wc - 1);
-        const int hi = std::clamp(g.end, lo, Wc - 1);
-        if (g.notch_found && hi > lo + 1) {
-            int p2 = lo; double best = -std::numeric_limits<double>::infinity();
-            for (int i = lo; i <= hi; ++i)
-                if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; p2 = i; }
+        const int fiveMsSamples = (fs > 0.0)
+            ? std::max(1, static_cast<int>(std::lround(0.005 * fs)))
+            : 1;
+        const int lo = std::clamp(g.dicrotic + fiveMsSamples, 0, Wc - 1);
+        const int hi = std::max(lo, amp80);
+
+        int p2 = -1;
+        double bestCurv = -curvThresh;
+        for (int i = lo + 1; i < hi; ++i) {
+            if (std::isnan(v[i - 1]) || std::isnan(v[i]) || std::isnan(v[i + 1])) continue;
+            const double d2 = v[i + 1] - 2.0 * v[i] + v[i - 1];
+            if (d2 < bestCurv) { bestCurv = d2; p2 = i; }
+        }
+
+        if (p2 >= 0) {
             g.peak2 = std::clamp(p2, lo, hi);
+            g.peak2_found = true;
         }
         else {
-            g.peak2 = std::clamp((lo + hi) / 2, lo, hi);
+            g.peak2 = cl((lo + hi) / 2);
+            g.peak2_found = false;
         }
     }
 
@@ -901,7 +913,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
                 v, b.ppg_peak_construct, b.ppg_onset_construct, firstR, W, sampleRate);
             b.ppg_peak_auto = pf.peak;
             b.ppg_onset_auto = pf.onset;
-            b.ppg_peak2_auto = pf.peak2;
+            b.ppg_peak2_auto = pf.peak2;           b.ppg_peak2_found_auto = pf.peak2_found;
             b.ppg_end_auto = pf.end;               b.ppg_end_found_auto = pf.end_found;
             b.ppg_dicrotic_auto = pf.dicrotic;     b.ppg_dicrotic_found_auto = pf.notch_found;
             b.ppg_t80_auto = pf.t80;
@@ -973,8 +985,6 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
             int p = lo; double bd = -1.0;
             for (int i = lo; i <= hi; ++i)
                 if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); p = i; }
-            std::fprintf(stderr, "[feat ch%d] %-8s r=%d win=[%d,%d] B_iso=%.4g -> peak@%d (ecg=%.4g)\n",
-                c, tag, r_auto, lo, hi, B_iso, p, ecg[p]);   // TEMP DIAGNOSTIC
             return p;
             };
 
@@ -1005,8 +1015,6 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
             auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
             const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, 0.10);
             q_auto = cl(static_cast<int>(std::round(anchor)));
-            std::fprintf(stderr, "[feat ch%d] Q-onset  r=%d Qpk=%d win=[%d,%d] B_iso=%.4g E=%.4g land=%.1f raw=%.4g\n",
-                c, r_auto, qpk, lo, hi, B_iso, E, anchor, ecg[q_auto]);   // TEMP DIAGNOSTIC
         }
         // S-end: mirror of Q-onset. Cap the LEFT bound at the S peak (first
         // turning point walking right from R = the S extremum) so E is the S,
@@ -1039,8 +1047,6 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
             auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
             const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, 0.10);
             s_auto = cl(static_cast<int>(std::round(anchor)));
-            std::fprintf(stderr, "[feat ch%d] S-end    r=%d Spk=%d win=[%d,%d] B_iso=%.4g E=%.4g land=%.1f raw=%.4g\n",
-                c, r_auto, spk, lo, hi, B_iso, E, anchor, ecg[s_auto]);   // TEMP DIAGNOSTIC
         }
         // T peak: largest deflection from baseline in the T-wave region. It
         // splits the T wave into its onset (T-begin) and offset (T-end) sides.
@@ -1070,8 +1076,6 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
             auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
             const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, 0.10);
             tp_auto = cl(static_cast<int>(std::round(anchor)));
-            std::fprintf(stderr, "[feat ch%d] T-begin  r=%d Tpk=%d win=[%d,%d] B_iso=%.4g E=%.4g land=%.1f raw=%.4g\n",
-                c, r_auto, t_peak, lo, hi, B_iso, E, anchor, ecg[tp_auto]);   // TEMP DIAGNOSTIC
         }
         // T-end: mirror of S-end. Use the shared T peak as the LEFT bound so E
         // is the T, then the spec crossing over [T peak, post-T baseline] with a
@@ -1084,14 +1088,22 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
             int hi = cl(std::min(visN - 1, r_auto + ms(0.520)));     // post-T baseline
             if (hi - lo < 4) hi = cl(lo + 4);
 
+            // E = the T-peak value. Constrain search to a tight window
+            // around t_peak (not the whole [lo, hi]) so that any later
+            // noise / U wave that happens to be more distant from B_iso
+            // than the T peak itself can't flip E to the wrong extremum
+            // -- that flip puts L on the wrong side of baseline, kills
+            // the anchor-fit crossing, and drops T-end at the midpoint
+            // fallback.
+            const int eWin = ms(0.020);   // +/-20 ms around t_peak
+            const int eLo = cl(t_peak - eWin);
+            const int eHi = cl(std::min(hi, t_peak + eWin));
             double E = B_iso; double bd = 0.0;
-            for (int i = lo; i <= hi; ++i)
+            for (int i = eLo; i <= eHi; ++i)
                 if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); E = ecg[i]; }
             auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
             const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, 0.10);
             te_auto = cl(static_cast<int>(std::round(anchor)));
-            std::fprintf(stderr, "[feat ch%d] T-end    r=%d Tpk=%d win=[%d,%d] B_iso=%.4g E=%.4g land=%.1f raw=%.4g\n",
-                c, r_auto, t_peak, lo, hi, B_iso, E, anchor, ecg[te_auto]);   // TEMP DIAGNOSTIC
         }
         const int p_auto = peakInBand(P_PEAK_BAND, "P-peak");
 

@@ -101,78 +101,54 @@ namespace post_process_detail {
         job.provisionalPath = provisionalPath;
         job.annealedPath = annealedPath;
 
-        bool waveFresh = std::filesystem::exists(rPeakPath) &&
-            std::filesystem::last_write_time(rPeakPath) >=
-            std::filesystem::last_write_time(annealedPath);
-        bool templatesFresh = std::filesystem::exists(templatePath) &&
-            std::filesystem::last_write_time(templatePath) >=
-            std::filesystem::last_write_time(rPeakPath);
-
         // ---- Everything already cached: open the canonical file, no worker.
-        if (waveFresh && templatesFresh) {
-            std::cerr << "  [cache] templates: " << templatePath.filename() << " up to date\n";
+        if (std::filesystem::exists(templatePath)) {
+            std::cerr << " Templates Already Exist - processing\n";
             job.viewerTemplatePath = templatePath;
             job.needsFinalize = false;
             return job;
         }
+        AnnealedData annealedData = read_input_binfile(annealedPath.string());
 
-        try {
-            if (waveFresh) {
-                // wave_markings already holds all three methods + preprocessed
-                // signals; only the (deferred) templating remains.
-                std::cerr << "  [cache] r-peaks: " << rPeakPath.filename()
-                    << " up to date (loading)\n";
-                job.peakResults = read_output_binfile(rPeakPath.string(), annealedPath.string());
-                job.needSqabsDetection = false;
-            }
-            else {
-                std::cerr << "  R-peaks (raw, fast): " << stem << "\n";
-                AnnealedData annealedData = read_input_binfile(annealedPath.string());
-
-                // Grab arterial pass-through slots BEFORE the move consumes the bins.
-                // Slots match file_to_bin / gui_handler: CH_ABP=33, CH_ART=34, CH_ART_PULM=35.
-                const size_t nAnnealed = annealedData.bins.size();
-                std::vector<std::vector<double>> abpSlots(nAnnealed), artSlots(nAnnealed), artpSlots(nAnnealed);
-                for (size_t i = 0; i < nAnnealed; ++i) {
-                    auto& up = annealedData.bins[i].all_upsampled;
-                    if (33 < up.size()) abpSlots[i] = up[33];
-                    if (34 < up.size()) artSlots[i] = up[34];
-                    if (35 < up.size()) artpSlots[i] = up[35];
-                }
-
-                job.peakResults = create_ecg_ppg_pairs_raw(std::move(annealedData.bins), true, stem, cfg,
-                    annealedData.ecg1_inverted, annealedData.ecg2_inverted, annealedData.ecg3_inverted);
-                job.needSqabsDetection = true;
-
-                // create_ecg_ppg_pairs_raw doesn't carry the arterial pass-through
-                // channels, so attach them here (parallel by bin index).
-                for (size_t i = 0; i < job.peakResults.size() && i < nAnnealed; ++i) {
-                    job.peakResults[i].abpSignal = std::move(abpSlots[i]);
-                    job.peakResults[i].artSignal = std::move(artSlots[i]);
-                    job.peakResults[i].artPulmSignal = std::move(artpSlots[i]);
-                }
-            }
-
-            std::cerr << "  Templates (raw/unfiltered/ppg, fast): " << stem << "\n";
-            FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
-            if (fast.tmpl.bins.empty()) {
-                std::cerr << "  no bins for " << stem
-                    << " (recording shorter than one bin?); skipping.\n";
-                return std::nullopt;   // main.cpp prints "prep failed or skipped"
-            }
-            job.tmpl = std::move(fast.tmpl);
-            job.beats = std::move(fast.beats);
-            job.info = std::move(fast.info);
-
-            template_io::write_template_binfile(provisionalPath.string(), job.tmpl);
-
-            job.viewerTemplatePath = provisionalPath;
-            job.needsFinalize = true;
-            return job;
+        // Grab arterial pass-through slots BEFORE the move consumes the bins.
+        // Slots match file_to_bin / gui_handler: CH_ABP=33, CH_ART=34, CH_ART_PULM=35.
+        const size_t nAnnealed = annealedData.bins.size();
+        std::vector<std::vector<double>> abpSlots(nAnnealed), artSlots(nAnnealed), artpSlots(nAnnealed);
+        for (size_t i = 0; i < nAnnealed; ++i) {
+            auto& up = annealedData.bins[i].all_upsampled;
+            if (33 < up.size()) abpSlots[i] = up[33];
+            if (34 < up.size()) artSlots[i] = up[34];
+            if (35 < up.size()) artpSlots[i] = up[35];
         }
-        catch (const std::exception& e) {
-            return std::nullopt;
+
+        job.peakResults = create_ecg_ppg_pairs_raw(std::move(annealedData.bins), true, stem, cfg,
+            annealedData.ecg1_inverted, annealedData.ecg2_inverted, annealedData.ecg3_inverted);
+        job.needSqabsDetection = true;
+
+        // create_ecg_ppg_pairs_raw doesn't carry the arterial pass-through
+        // channels, so attach them here (parallel by bin index).
+        for (size_t i = 0; i < job.peakResults.size() && i < nAnnealed; ++i) {
+            job.peakResults[i].abpSignal = std::move(abpSlots[i]);
+            job.peakResults[i].artSignal = std::move(artSlots[i]);
+            job.peakResults[i].artPulmSignal = std::move(artpSlots[i]);
         }
+
+        std::cerr << "  Templates (raw/unfiltered/ppg, fast): " << stem << "\n";
+        FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
+        if (fast.tmpl.bins.empty()) {
+            std::cerr << "  no bins for " << stem
+                << " (recording shorter than one bin?); skipping.\n";
+            return std::nullopt;   // main.cpp prints "prep failed or skipped"
+        }
+        job.tmpl = std::move(fast.tmpl);
+        job.beats = std::move(fast.beats);
+        job.info = std::move(fast.info);
+
+        template_io::write_template_binfile(provisionalPath.string(), job.tmpl);
+
+        job.viewerTemplatePath = provisionalPath;
+        job.needsFinalize = true;
+        return job;
     }
 
     // Runs on a worker thread. Must not touch Qt. Stores any error in

@@ -86,7 +86,7 @@ public:
     struct PpgFiducials {
         int onset = -1;
         int peak = -1;
-        int peak2 = -1;
+        int peak2 = -1;      bool peak2_found = false;
         int end = -1;        bool end_found = false;
         int dicrotic = -1;   bool notch_found = false;
         int t80 = -1;

@@ -84,28 +84,23 @@ namespace alignment {
         }
         return keep;
     }
-
-    // =========================================================================
-    // ECG
-    // =========================================================================
-    struct BeatSet {
-        std::vector<std::vector<double>> beats;   // NaN-padded, R-aligned
+    struct ecg_beat_set {
+        //a set of individually-aligned beats that will become a template.
+        std::vector<std::vector<double>> beats; 
         std::vector<size_t> r_indices;
         std::vector<int>    rr_lens;
-
         int    median_length = -1;
         size_t median_count = 0;
         size_t total_beats = 0;
-
         int r_aligned_col = -1;
         int q_aligned_col = -1;
         int ref_beat_index = -1;
     };
 
-    inline BeatSet extract_beats_and_align(const std::vector<double>& signal,
+    inline ecg_beat_set extract_beats_and_align(const std::vector<double>& signal,
         const std::vector<size_t>& rPeaks)
     {
-        BeatSet out;
+        ecg_beat_set out;
         const int64_t N = static_cast<int64_t>(signal.size());
         if (N == 0 || rPeaks.size() < 2) {
             fprintf(stderr, "[align] no beats: signal=%lld rPeaks=%zu\n",
@@ -155,25 +150,30 @@ namespace alignment {
         }
         if (out.beats.empty()) return out;
 
-        // ---- Tukey rejection: length (1.5*IQR) --------------------------
+        //Tukey rejection: R-R interval (1.5*IQR)
         {
             std::vector<double> lens_d(out.rr_lens.begin(), out.rr_lens.end());
             apply_mask(keep_within_tukey(lens_d, 1.5));
         }
         if (out.beats.empty()) return out;
-
-        // ---- Tukey rejection: R amplitude (1.5*IQR) ---------------------
-        // Position pass is skipped for ECG: R sits at column
-        // rr_before_samples(rr_lens[i]) in every beat by construction, so
-        // intra-beat position is fixed.
+		//Tukey rejection: R peak from template min distance (1.5*IQR)
         {
             std::vector<double> amps;
             amps.reserve(out.beats.size());
             for (size_t i = 0; i < out.beats.size(); ++i) {
                 const int r_col = static_cast<int>(rr_before_samples(out.rr_lens[i]));
-                amps.push_back(
-                    (r_col < (int)out.beats[i].size() && !std::isnan(out.beats[i][r_col]))
-                    ? out.beats[i][r_col]
+                const auto& beat = out.beats[i];
+
+                if (r_col >= (int)beat.size() || std::isnan(beat[r_col])) {
+                    amps.push_back(std::numeric_limits<double>::quiet_NaN());
+                    continue;
+                }
+                double min_val = std::numeric_limits<double>::infinity();
+                for (double v : beat)
+                    if (!std::isnan(v) && v < min_val) min_val = v;
+
+                amps.push_back(std::isfinite(min_val)
+                    ? beat[r_col] - min_val
                     : std::numeric_limits<double>::quiet_NaN());
             }
             auto keepA = keep_within_tukey(amps, 1.5);
@@ -557,14 +557,14 @@ namespace alignment {
         }
         if (raw.empty()) return out;
 
-        // ---- Tukey rejection: 50%-upslope position (3.0*IQR) ------------
+        // ---- Tukey rejection: 50%-upslope position (1.5*IQR) ------------
         // up50 is the horizontal alignment fiducial and is searched per beat
         // (unlike ECG's analytic R column), so we guard its position here.
         {
             std::vector<double> poss;
             poss.reserve(raw.size());
             for (const auto& r : raw) poss.push_back(static_cast<double>(r.up50));
-            apply_mask(keep_within_tukey(poss, 3.0));
+            apply_mask(keep_within_tukey(poss, 1.5));
         }
         out.total_beats = raw.size();
         if (raw.empty()) return out;

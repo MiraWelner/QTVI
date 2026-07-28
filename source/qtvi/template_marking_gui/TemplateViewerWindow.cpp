@@ -477,6 +477,7 @@ void TemplateViewerWindow::showPage() {
                 static_cast<int>(nEcgBeats),
                 static_cast<int>(b.ppg_n_beats),
                 b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_peak2_auto,
+                b.ppg_peak2_found_auto,
                 b.ppg_dicrotic_auto, b.ppg_dicrotic_found_auto,
                 b.ppg_end_auto, b.ppg_end_found_auto);
 

@@ -246,6 +246,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     int ppgOnsetAuto,
     int ppgPeakAuto,
     int ppgPeak2Auto,
+    bool ppgPeak2FoundAuto,
     int ppgDicroticAuto,
     bool ppgDicroticFoundAuto,
     int ppgEndAuto,
@@ -276,6 +277,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_ppgOnsetAuto = (ppgOnsetAuto >= 0) ? ppgOnsetAuto : ppgOnset;
     m_ppgPeakAuto = (ppgPeakAuto >= 0) ? ppgPeakAuto : ppgPeak;
     m_ppgPeak2Auto = (ppgPeak2Auto >= 0) ? ppgPeak2Auto : ppgPeak2;
+    m_ppgPeak2FoundAuto = ppgPeak2FoundAuto;
     m_ppgDicroticAuto = (ppgDicroticAuto >= 0) ? ppgDicroticAuto : ppgDicrotic;
     m_ppgDicroticFoundAuto = ppgDicroticFoundAuto;
     m_ppgEndAuto = (ppgEndAuto >= 0) ? ppgEndAuto : ppgEnd;
@@ -884,7 +886,7 @@ void BinPlotWidget::captureGlyphSnapshot() {
         // change after setData() loads new data.
         m_glyphs.ppgFoot = m_ppgOnsetAuto;
         m_glyphs.ppgP1 = m_ppgPeakAuto;
-        m_glyphs.ppgP2 = m_ppgPeak2Auto;
+        m_glyphs.ppgP2 = m_ppgPeak2Auto;        m_glyphs.ppgPeak2Found = m_ppgPeak2FoundAuto;
         m_glyphs.ppgDic = m_ppgDicroticAuto;    m_glyphs.ppgNotchFound = m_ppgDicroticFoundAuto;
         m_glyphs.ppgEnd = m_ppgEndAuto;         m_glyphs.ppgEndFound = m_ppgEndFoundAuto;
 
@@ -966,7 +968,8 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         g(m_glyphs.ppgP1);
         if (m_glyphs.ppgNotchFound) g(m_glyphs.ppgDic);
         else                        circ(m_glyphs.ppgDic);
-        g(m_glyphs.ppgP2);
+        if (m_glyphs.ppgPeak2Found) g(m_glyphs.ppgP2);
+        else                        circ(m_glyphs.ppgP2);
         if (m_glyphs.ppgEndFound)   g(m_glyphs.ppgEnd);
         else                        circ(m_glyphs.ppgEnd);
         g(m_glyphs.ppgT80);   // reactive: 80% peak->end, always a computed X

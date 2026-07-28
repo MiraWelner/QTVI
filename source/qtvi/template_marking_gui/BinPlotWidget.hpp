@@ -147,6 +147,7 @@ public:
         int ppgOnsetAuto = -1,
         int ppgPeakAuto = -1,
         int ppgPeak2Auto = -1,
+        bool ppgPeak2FoundAuto = false,
         int ppgDicroticAuto = -1,
         bool ppgDicroticFoundAuto = false,
         int ppgEndAuto = -1,
@@ -283,7 +284,7 @@ private:
         // non-auto TemplateBin fields).
         int ppgFoot = -1;    // = onset_auto
         int ppgP1 = -1;      // = peak_auto
-        int ppgP2 = -1;      // = peak2_auto
+        int ppgP2 = -1;      bool ppgPeak2Found = false;
         int ppgDic = -1;     bool ppgNotchFound = false;
         int ppgEnd = -1;     bool ppgEndFound = false;
         // T80/P50 are reactive (NOT from the auto fields): always tracked
@@ -302,6 +303,7 @@ private:
     // they never change after load (dragging a bar only touches the
     // separate, non-auto TemplateBin fields in m_markers[Ppg*]).
     int m_ppgOnsetAuto = -1, m_ppgPeakAuto = -1, m_ppgPeak2Auto = -1;
+    bool m_ppgPeak2FoundAuto = false;
     int m_ppgDicroticAuto = -1;   bool m_ppgDicroticFoundAuto = false;
     int m_ppgEndAuto = -1;        bool m_ppgEndFoundAuto = false;
 
