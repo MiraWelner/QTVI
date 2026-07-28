@@ -90,7 +90,6 @@ namespace alignment {
         std::vector<size_t> r_indices;
         std::vector<int>    rr_lens;
         int    median_length = -1;
-        size_t median_count = 0;
         size_t total_beats = 0;
         int r_aligned_col = -1;
         int q_aligned_col = -1;
@@ -184,29 +183,22 @@ namespace alignment {
         out.total_beats = out.beats.size();
         if (out.beats.empty()) return out;
 
-        // ---- representative (median) length ----------------------------
-        // Use the MEDIAN RR length as the representative beat length (not the
-        // modal one). Take the middle element of the sorted lengths so the
-        // value is guaranteed to be a length that some beat actually has,
-        // which keeps the exact-match shape clustering below non-empty.
+        // the Sangala document says use mode, in this case we use median length
         {
             std::vector<int> lens = out.rr_lens;
             std::sort(lens.begin(), lens.end());
             out.median_length = lens[lens.size() / 2];
-            out.median_count = 0;
-            for (int L : out.rr_lens)
-                if (L == out.median_length) ++out.median_count;
         }
 
         // ---- reference beat = first median-length beat -----------------
         // Used only as the PR-baseline DC-alignment reference. No RMS shape
         // clustering: the final template is the column-wise median.
-        for (size_t i = 0; i < out.beats.size(); ++i)
+        for (size_t i = 0; i < out.beats.size(); ++i) {
             if (out.rr_lens[i] == out.median_length) {
                 out.ref_beat_index = static_cast<int>(i);
                 break;
             }
-
+        }
         // ---- Pass 1: R-align on shared axis ----------------------------
         int max_rr_len = 0;
         for (int L : out.rr_lens)
@@ -279,41 +271,34 @@ namespace alignment {
         return out;
     }
 
-    // =========================================================================
-    // Locate the Q trough of an ECG beat/template: steepest R-upstroke, walk
-    // back to its onset, then the first local minimum before it. R_anchor is
-    // the R column; fs is the ECG rate. Returns -1 if no Q can be located.
     inline int find_q_column(const std::vector<double>& b, int R_anchor, double fs) {
+        /*Finds Q column by negative 1st derivative followed by positive first dirivative and the whole thing
+        has positive second derivative. Closets to R peak wins. If none found, */
         const int Wsh = static_cast<int>(b.size());
         if (Wsh == 0 || R_anchor < 1 || fs <= 0.0) return -1;
 
-        int finite = 0;
-        for (double v : b) if (!std::isnan(v)) ++finite;
-        const int w20 = std::max(2, static_cast<int>(std::lround(0.020 * fs)));
-        const int fb = std::max(1, static_cast<int>(
-            std::lround(0.10 * (finite > 0 ? finite : Wsh))));
+        const int q_window = std::max(2, static_cast<int>(std::lround(0.100 * fs)));
+        const int lo = std::max(1, R_anchor - q_window);
 
-        double maxSlope = 0.0; int steep = R_anchor;
-        for (int k = std::max(1, R_anchor - 3 * w20); k < R_anchor && k + 1 < Wsh; ++k) {
+        for (int k = R_anchor - 1; k > lo; --k) {
+            if (k + 1 >= Wsh) continue;
+            if (std::isnan(b[k - 1]) || std::isnan(b[k]) || std::isnan(b[k + 1])) continue;
+
+            const double d1_prev = b[k] - b[k - 1];              // slope into k
+            const double d1_next = b[k + 1] - b[k];              // slope out of k
+            const double d2 = b[k + 1] - 2.0 * b[k] + b[k - 1];  // curvature at k
+
+            if (d1_prev <= 0.0 && d1_next >= 0.0 && d2 > 0.0) return k;
+        }
+		std::cout << "No Q peak found in QAlign, falling back to steepest slope in R-upstroke region\n";
+        int fallback = -1;
+        double maxSlope = -std::numeric_limits<double>::infinity();
+        for (int k = lo; k < R_anchor && k + 1 < Wsh; ++k) {
             if (std::isnan(b[k]) || std::isnan(b[k + 1])) continue;
             const double s = b[k + 1] - b[k];
-            if (s > maxSlope) { maxSlope = s; steep = k; }
+            if (s > maxSlope) { maxSlope = s; fallback = k; }
         }
-        int onset = steep;
-        if (maxSlope > 0.0) {
-            for (int k = steep; k > std::max(1, R_anchor - 4 * w20); --k) {
-                if (std::isnan(b[k]) || std::isnan(b[k - 1])) break;
-                onset = k;
-                if ((b[k] - b[k - 1]) < 0.2 * maxSlope) break;
-            }
-        }
-        const int lo = std::max(1, onset - 2 * w20);
-        for (int k = onset - 1; k > lo; --k) {
-            if (std::isnan(b[k - 1]) || std::isnan(b[k]) || std::isnan(b[k + 1])) continue;
-            if (b[k] <= b[k - 1] && b[k] <= b[k + 1]) return k;
-        }
-        const int q = onset - fb;
-        return (q >= 0 && q < Wsh) ? q : -1;
+        return fallback;
     }
 
     // =========================================================================
@@ -322,10 +307,8 @@ namespace alignment {
     // Mirrors R-alignment's structure: R-align picks a reference "median
     // snippet" (the first beat whose finite length equals the median) and
     // aligns to it. Here we do the same, but on Q. The alignment reference is
-    // the column-wise MEDIAN of all the beats over the -0.25..+0.75 RR window
-    // around R -- which is exactly the R-aligned template (refMedian), since
-    // that template is that column median and find_q only looks in the
-    // R-upstroke region (inside that window). We find Q on that median, then
+    // the location of the R peak on the beat of median length.  
+    // find_q only looks in the R-upstroke region. We find Q on that median, then
     // shift every snippet so its own Q lands on that marker, and re-median the
     // shifted snippets into the Q template. The snippets stay full length
     // (never cropped); the window only bounds where the marker is found.
@@ -449,7 +432,6 @@ namespace alignment {
         std::vector<int> peak_cols;               // per-beat systolic peak column (varies)
         std::vector<int> foot_cols;               // per-beat foot column (varies)
         int    median_length = -1;
-        size_t median_count = 0;
         size_t total_beats = 0;
         int    up50_aligned_col = -1;             // shared column all half-height points land on
         int    foot_aligned_col = -1;             // feet scatter (per-beat); not a shared column
@@ -575,8 +557,6 @@ namespace alignment {
             std::vector<int> lens = rr_lens;
             std::sort(lens.begin(), lens.end());
             out.median_length = lens[lens.size() / 2];
-            out.median_count = 0;
-            for (int L : rr_lens) if (L == out.median_length) ++out.median_count;
         }
         for (size_t i = 0; i < raw.size(); ++i) {
             if (rr_lens[i] == out.median_length) {
