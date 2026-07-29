@@ -337,6 +337,26 @@ int FeatureMarks::compute_p_onset(const std::vector<double>& v, int pUser, doubl
     return std::clamp(static_cast<int>(std::round(anchor)), 0, N - 1);
 }
 
+// P begin: anchor-fit elbow on the ascending onset of the P wave. The
+// human-editable P-onset marker. Mirrors compute_q_onset (f = 0.10).
+int FeatureMarks::compute_p_begin(const std::vector<double>& v, int pUser, double fs, int r_idx) {
+    const int N = static_cast<int>(v.size());
+    if (pUser < 0 || pUser >= N || N < 4) return std::clamp(pUser, 0, std::max(0, N - 1));
+    const int w = win_005s(fs);
+    const bool is_positive = qrs_positive_at(v, r_idx);
+    std::vector<double> u = v;
+    if (!is_positive) for (auto& x : u) x = -x;
+    const int lo = std::max(0, pUser - w);
+    const int hi = std::min(N - 1, pUser + w / 4);
+    double B = u[lo];
+    double E = -std::numeric_limits<double>::infinity();
+    for (int i = lo; i <= hi; ++i)
+        if (!std::isnan(u[i]) && u[i] > E) E = u[i];
+    auto fit = anchor_fit::selectAnchorModel(u, lo, hi);
+    const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B, E, 0.10);
+    return std::clamp(static_cast<int>(std::round(anchor)), 0, N - 1);
+}
+
 // T begin: anchor-fit on the ascending onset of the T wave.
 int FeatureMarks::compute_t_begin(const std::vector<double>& v, int tBeginUser, double fs, int r_idx) {
     const int N = static_cast<int>(v.size());
@@ -364,9 +384,61 @@ int FeatureMarks::compute_t_begin(const std::vector<double>& v, int tBeginUser, 
     return std::clamp(static_cast<int>(std::round(anchor2)), 0, N - 1);
 }
 
-FeatureMarks::EcgGlyphs FeatureMarks::compute_ecg_glyphs(
-    const std::vector<double>& ecg,
-    int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs)
+AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
+    switch (type) {
+    case AnchorType::R_PEAK:  return [r_col](const std::vector<double>&) { return r_col; };
+    case AnchorType::Q_ONSET:
+        return [r_col, fs](const std::vector<double>& b) {
+            const int N = static_cast<int>(b.size());
+            if (r_col < 2 || r_col >= N) return r_col;
+
+            // Primary: real Q onset.
+            const int q = FeatureMarks::detect_q_begin(b, r_col);
+            // detect_q_begin returns r_col-20 (fixed) when it found no Q
+            // trough. Treat that exact value as "Q not found" and fall back
+            // to the R-upstroke onset instead of the rate-dependent offset.
+            if (q != std::max(0, r_col - 20)) return q;
+
+            // R-upstroke onset: walk left from R down the steep rise to
+            // where the slope flattens to <10% of the peak upstroke slope.
+            // Scan window is 50 ms before R (rate-independent).
+            const bool pos = qrs_positive_at(b, r_col);
+            auto up = [&](int i) { const double v = b[i]; return pos ? v : -v; };
+
+            const int win = std::max(2, static_cast<int>(std::lround(0.050 * fs)));
+            const int scanLo = std::max(1, r_col - win);
+
+            double maxSlope = 0.0;
+            for (int i = r_col; i > scanLo; --i) {
+                const double s = up(i) - up(i - 1);
+                if (s > maxSlope) maxSlope = s;
+            }
+            if (maxSlope <= 0.0) return r_col;   // no rise: anchor on R
+
+            const double thresh = 0.10 * maxSlope;
+            for (int i = r_col; i > scanLo; --i) {
+                const double s = up(i) - up(i - 1);
+                if (s < thresh) return i;        // slope flattened -> onset
+            }
+            return scanLo;                        // never flattened in window
+            };    case AnchorType::J_POINT: return [r_col, fs](const std::vector<double>& b) { return FeatureMarks::detect_s_end(b, r_col, fs); };
+    case AnchorType::P_PEAK:  return [r_col](const std::vector<double>& b) { return FeatureMarks::detect_p_peak(b, r_col); };
+    case AnchorType::P_ONSET: // no pure detector: seed at P-peak, refine with compute_p_begin
+        return [r_col, fs](const std::vector<double>& b) {
+            const int pk = FeatureMarks::detect_p_peak(b, r_col);
+            return FeatureMarks::compute_p_begin(b, pk, fs, r_col);
+            };
+    case AnchorType::T_PEAK:  // no detect_t_peak: bracket via t_begin/t_end
+        return [r_col, fs](const std::vector<double>& b) {
+            return FeatureMarks::compute_t_peak(b,
+                FeatureMarks::detect_t_begin(b, r_col, fs),
+                FeatureMarks::detect_t_end(b, r_col, fs));
+            };
+    }
+    return [](const std::vector<double>&) { return -1; };
+}
+
+FeatureMarks::EcgGlyphs FeatureMarks::compute_ecg_glyphs(const std::vector<double>& ecg, int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs)
 {
     EcgGlyphs g;
     const int N = static_cast<int>(ecg.size());
@@ -976,6 +1048,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         const Band S_END_BAND = { 0.010,  0.090 };  // J-point / S recovery
         const Band T_BEGIN_BAND = { 0.090,  0.180 };  // T-begin: .a = ST-baseline start (.b unused; hi = T peak)
         const Band P_PEAK_BAND = { -0.220, -0.120 };  // P-wave peak (argmax)
+        const Band P_BEGIN_BAND = { -0.320, -0.250 };  // P-wave onset (left of P peak)
 
         // Amplitude landmark inside a band: argmax |ecg - isoelectric|.
         auto peakInBand = [&](Band bnd, const char* tag) -> int {
@@ -1106,6 +1179,20 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
             te_auto = cl(static_cast<int>(std::round(anchor)));
         }
         const int p_auto = peakInBand(P_PEAK_BAND, "P-peak");
+        // P-begin: P-wave foot. Window [pre-P baseline, P peak], anchor-fit
+        // crossing near baseline (f=0.10). Right bound capped at the P peak.
+        int pb_auto;
+        {
+            int lo = cl(r_auto + ms(P_BEGIN_BAND.a));   // pre-P baseline
+            int hi = p_auto;                             // capped at the P peak
+            if (hi - lo < 4) lo = cl(hi - 4);
+            double E = B_iso; double bd = 0.0;
+            for (int i = lo; i <= hi; ++i)
+                if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); E = ecg[i]; }
+            auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
+            const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, 0.10);
+            pb_auto = cl(static_cast<int>(std::round(anchor)));
+        }
 
         // Auto fields always updated.
         b.p_peak_auto_ch[c] = p_auto;
@@ -1114,6 +1201,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         b.s_end_auto_ch[c] = s_auto;
         b.t_begin_auto_ch[c] = tp_auto;
         b.t_end_auto_ch[c] = te_auto;
+        b.p_begin_auto_ch[c] = pb_auto;
 
         // User fields: only seed when unset. R peak is auto-only so its user
         // field is always overwritten with the fresh auto.
@@ -1123,6 +1211,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         if (b.s_end_ch[c] < 0) b.s_end_ch[c] = s_auto;
         if (b.t_begin_ch[c] < 0) b.t_begin_ch[c] = tp_auto;
         if (b.t_end_ch[c] < 0) b.t_end_ch[c] = te_auto;
+        if (b.p_begin_ch[c] < 0) b.p_begin_ch[c] = pb_auto;
     }
 
 

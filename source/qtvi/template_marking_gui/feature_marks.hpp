@@ -21,9 +21,17 @@
 
 #include <utility>
 #include <vector>
+#include <functional>
 
 struct TemplateBin;   // forward-declare -- full definition in TemplateBinIO.hpp
 
+enum class AnchorType { P_ONSET, P_PEAK, Q_ONSET, R_PEAK, J_POINT, T_PEAK };//J_POINT = S_END
+
+// Returns the landmark sample index for one beat, or -1 if not found.
+using AnchorLocator = std::function<int(const std::vector<double>& beat)>;
+
+// Build the per-beat locator for one anchor. Binds r_col/fs into the detector.
+AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs);
 class FeatureMarks {
 public:
     // =================================================================
@@ -53,12 +61,12 @@ public:
     // auto-computed but tracks the user's movable markers live (see the
     // compute_* functions below).
     struct EcgGlyphs {
-        int p_peak_glyph = -1;    // max within +/-0.05s of user P peak
-        int q_begin_glyph = -1;   // cubic-fit knee within +/-0.05s of user Q begin
-        int r_peak_glyph = -1;    // argmax|v-baseline| over [q_begin, s_end]
-        int s_end_glyph = -1;     // recovery dropoff/knee within +/-0.05s of user S end
-        int t_peak_glyph = -1;    // max value between user T begin and T end
-        int t_end_glyph = -1;     // = the user's T-end marker (passthrough)
+        int p_peak_glyph = -1; 
+        int q_begin_glyph = -1;
+        int r_peak_glyph = -1;
+        int s_end_glyph = -1; 
+        int t_peak_glyph = -1;
+        int t_end_glyph = -1;
     };
     static EcgGlyphs compute_ecg_glyphs(const std::vector<double>& ecg,
         int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs);
@@ -72,7 +80,7 @@ public:
     static int compute_t_end(const std::vector<double>& ecg, int tEndUser, double fs);
     static int compute_p_onset(const std::vector<double>& v, int pUser, double fs, int r_idx);
     static int compute_t_begin(const std::vector<double>& v, int tBeginUser, double fs, int r_idx);
-
+    static int compute_p_begin(const std::vector<double>& v, int pUser, double fs, int r_idx);
 
     // Single source of truth for EVERY PPG fiducial. Used by seed_all() to
     // populate the *_auto fields AND by the GUI to draw the frozen glyphs --

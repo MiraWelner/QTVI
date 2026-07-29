@@ -20,10 +20,14 @@ public:
     void loadSubject(const QString& templatePath, const QString& markingPath,
         const QString& subjectId, double sampleRateHz);
 
-    // Marks this viewer instance as the second (Q-aligned) pass, so the button
-    // reads "Finish" and outputs use the _q_align suffix. Call before
-    // loadSubject on the reopened window.
-    void setQAlignPass(bool q) { m_qAlignPass = q; }
+    // Anchor cycle state. m_anchorStep: -1 = R pass; 0..N-1 index into the
+    // controller's anchor sequence. m_qAlignPass is kept as a derived flag
+    // (true for any non-R pass) so existing pass-dependent code still works.
+    void setAnchorStep(int s) { m_anchorStep = s; m_qAlignPass = (s >= 0); }
+    void setAnchorLabel(const QString& s);
+    // Total passes in the cycle (R + all anchors); controller sets this so the
+    // finish handler knows when to stop emitting reloads. Default 2 = old R/Q.
+    void setAnchorPassCount(int n) { m_anchorPassCount = n; }
 
 signals:
     void finished();
@@ -96,8 +100,12 @@ private:
     enum class MoveMode { Individual, SubsequentDelta, SubsequentRaw };
     MoveMode m_moveMode = MoveMode::SubsequentDelta;
     // false = first (R-aligned) pass, button reads "Finish and Next";
-    // true  = second (Q-aligned) pass, button reads "Finish".
+    // true  = any anchor pass, button reads per remaining-anchor logic.
+    // Derived from m_anchorStep via setAnchorStep; kept for pass-dependent code.
     bool m_qAlignPass = false;
+    int  m_anchorStep = -1;        // -1 = R pass; 0..N-1 = anchor index
+    int  m_anchorPassCount = 2;    // R + anchors; controller overrides
+    QString m_anchorLabel = "R";   // shown in the top bar next to the subject id
     bool m_showEcgMarkers = false;
     bool m_showPpgMarkers = false;
     bool m_showAbpMarkers = false;

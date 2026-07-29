@@ -166,13 +166,26 @@ static void runTemplateMarking(const config_entry& cfg,
     const QString displayId = fileId;
     std::cout << "Template marking: " << displayId.toStdString() << "\n";
 
-    // Two passes at most: pass 0 = R-aligned, pass 1 = Q-aligned. On "Finish
-    // and Next" the viewer emits requestQAlignReload(); we tear the window
-    // down, rebuild the templates with Q-alignment (worker joined first so the
+    // Anchor cycle: pass 0 = R-aligned (the primary build), then one pass per
+    // entry in anchorSequence() (Q, J-point, T-peak, ...). On "Finish and Next"
+    // the viewer emits requestQAlignReload(); we tear the window down, rebuild
+    // the templates re-anchored on the next landmark (worker joined first so the
     // peakResults read can't race it), and open a fresh viewer on the result.
-    for (int pass = 0; pass < 2; ++pass) {
+    // job.anchorStep is the cursor: 0 before the first reload, N after the last.
+    const size_t nAnchorPasses =
+        post_process_detail::anchorSequence().size() + 1;   // +1 for the R pass
+    for (size_t pass = 0; pass < nAnchorPasses; ++pass) {
         TemplateViewerWindow viewer;
-        if (pass >= 1) viewer.setQAlignPass(true);
+        // pass 0 = R (anchorStep -1); pass k>0 shows anchorSequence()[k-1].
+        {
+            const auto& seq = post_process_detail::anchorSequence();
+            viewer.setAnchorPassCount(int(seq.size()) + 1);   // R + anchors
+            viewer.setAnchorStep(int(job->anchorStep) - 1);
+            viewer.setAnchorLabel(job->anchorStep == 0
+                ? QStringLiteral("R")
+                : QString::fromLatin1(
+                    post_process_detail::anchorName(seq[job->anchorStep - 1])));
+        }
 
         QEventLoop loop;
         bool reloadRequested = false;
@@ -220,7 +233,15 @@ static void runTemplateMarking(const config_entry& cfg,
             // the GUI thread hangs forever in waitLoop.exec() (freeze on close).
             try {
                 if (ensureWorkerDone) ensureWorkerDone();   // join finalize off the GUI thread
-                ok = post_process_detail::regenerateWithQAlign(*job);
+                const auto& seq = post_process_detail::anchorSequence();
+                if (job->anchorStep < seq.size()) {
+                    ok = post_process_detail::regenerateWithAnchor(
+                        *job, seq[job->anchorStep]);
+                    if (ok) job->anchorStep++;
+                }
+                else {
+                    ok = false;   // past the last anchor: viewer shouldn't emit reload
+                }
             }
             catch (const std::exception& e) {
                 ok = false;

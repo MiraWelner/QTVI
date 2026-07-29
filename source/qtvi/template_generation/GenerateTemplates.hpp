@@ -133,12 +133,18 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
             fill_channel(info.ch2, ecg_res.ch2, i);
             fill_channel(info.ch3, ecg_res.ch3, i);
 
-            if (i < ecg_res.ch1.kept_beats_raw.size())
+            if (i < ecg_res.ch1.kept_beats_raw.size()) {
                 info.kept_beats_by_channel["CH1"] = std::move(ecg_res.ch1.kept_beats_raw[i]);
-            if (i < ecg_res.ch2.kept_beats_raw.size())
+                info.ref_index_by_channel["CH1"] = (i < ecg_res.ch1.ref_index_raw.size()) ? ecg_res.ch1.ref_index_raw[i] : -1;
+            }
+            if (i < ecg_res.ch2.kept_beats_raw.size()) {
                 info.kept_beats_by_channel["CH2"] = std::move(ecg_res.ch2.kept_beats_raw[i]);
-            if (i < ecg_res.ch3.kept_beats_raw.size())
+                info.ref_index_by_channel["CH2"] = (i < ecg_res.ch2.ref_index_raw.size()) ? ecg_res.ch2.ref_index_raw[i] : -1;
+            }
+            if (i < ecg_res.ch3.kept_beats_raw.size()) {
                 info.kept_beats_by_channel["CH3"] = std::move(ecg_res.ch3.kept_beats_raw[i]);
+                info.ref_index_by_channel["CH3"] = (i < ecg_res.ch3.ref_index_raw.size()) ? ecg_res.ch3.ref_index_raw[i] : -1;
+            }
         }
         else {
             clear_channel(info.ch1);

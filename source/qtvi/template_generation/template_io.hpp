@@ -117,6 +117,7 @@ namespace template_io {
         std::vector<std::vector<std::vector<double>>> per_bin_beats;
         std::vector<bool> bad_segment;
         std::map<std::string, std::vector<std::vector<std::vector<double>>>> per_channel_beats;
+        std::map<std::string, std::vector<int>> per_channel_ref_index;
     };
 
     void write_template_binfile(const std::string& path, const TemplateFile& data);

@@ -83,6 +83,7 @@ struct TemplateInfo {
     // populated when capture_beats was requested for ch1 in
     // CreateEcgTemplates.
     std::vector<std::vector<double>> kept_beats_ch1_raw;
+    std::map<std::string, int> ref_index_by_channel;   // channel -> ref beat idx
     // Retained per-channel beats for the snips CSV. Key is the channel label
     // ("CH1"/"CH2"/"CH3"/"PPG"); value is [beat][sample] for this bin.
     std::map<std::string, std::vector<std::vector<double>>> kept_beats_by_channel;
@@ -110,6 +111,7 @@ struct EcgChannelResult {
     vector<vector<double>> ecgTemplates_squared;
     vector<vector<double>> ecgTemplates_absval;
     vector<vector<double>> ecgTemplates_unfiltered;
+    std::vector<int> ref_index_raw;
 
     vector<double> ppg_alignment_point_raw;
     vector<double> ppg_alignment_point_squared;

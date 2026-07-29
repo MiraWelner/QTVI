@@ -20,6 +20,30 @@
 
 namespace post_process_detail {
 
+    // Second-pass anchor sequence, one applied per "Finish and Next".
+    // R is the primary build (already in job.tmpl), so it is NOT in this list;
+    // the cycle is R (shown first) -> each of these in order.
+    inline const std::vector<AnchorType>& anchorSequence() {
+        static const std::vector<AnchorType> seq = {
+            AnchorType::Q_ONSET, AnchorType::J_POINT, AnchorType::T_PEAK,
+            AnchorType::P_PEAK,  AnchorType::P_ONSET
+        };
+        return seq;
+    }
+
+    // Short label for the corner readout / CSV tags.
+    inline const char* anchorName(AnchorType a) {
+        switch (a) {
+        case AnchorType::P_ONSET: return "P_ONSET";
+        case AnchorType::P_PEAK:  return "P_PEAK";
+        case AnchorType::Q_ONSET: return "Q_ONSET";
+        case AnchorType::R_PEAK:  return "R_PEAK";
+        case AnchorType::J_POINT: return "J_POINT";
+        case AnchorType::T_PEAK:  return "T_PEAK";
+        }
+        return "?";
+    }
+
     // ---------------------------------------------------------------------
     // GUI fast/slow split.
     //
@@ -43,6 +67,10 @@ namespace post_process_detail {
     struct ViewerJob {
         std::filesystem::path viewerTemplatePath;   // what the viewer opens
         bool needsFinalize = false;                 // false => everything already cached
+
+        // Anchor cycle cursor. 0 = next reload builds anchorSequence()[0].
+        // Incremented by the controller after each successful reload.
+        size_t anchorStep = 0;
 
         // Carried fast -> slow (only meaningful when needsFinalize):
         std::string stem;
@@ -195,29 +223,29 @@ namespace post_process_detail {
     // (R-pass) write has already completed. Returns false if nothing could be
     // built.
     //
-    inline bool regenerateWithQAlignFull(ViewerJob& job);   // fwd decl
+    inline bool regenerateWithAnchorFull(ViewerJob& job, AnchorType anchor);   // fwd decl
 
-    inline bool regenerateWithQAlign(ViewerJob& job)
+    inline bool regenerateWithAnchor(ViewerJob& job, AnchorType anchor)
     {
         try {
             // If the R pass was served from the on-disk cache (waveFresh &&
             // templatesFresh in prepareViewerJob), job.tmpl/job.beats were
-            // never built in memory -- both empty. Q-aligning that would write
-            // a 0-bin file ("No bins loaded" on the Q reload), so rebuild from
+            // never built in memory -- both empty. Aligning that would write
+            // a 0-bin file ("No bins loaded" on reload), so rebuild from
             // the R-peaks instead.
             if (job.tmpl.bins.empty() || job.beats.per_channel_beats.empty())
-                return regenerateWithQAlignFull(job);
+                return regenerateWithAnchorFull(job, anchor);
 
-            template_io::TemplateFile qtmpl = job.tmpl;   // copy R-pass templates
-            qAlignTemplatesFromCache(qtmpl, job.beats, job.rates);
+            template_io::TemplateFile atmpl = job.tmpl;   // copy R-pass templates
+            alignTemplatesFromCache(atmpl, job.beats, job.rates, anchor);
 
-            const std::filesystem::path qPath =
+            const std::filesystem::path aPath =
                 job.provisionalPath.parent_path() /
-                (job.stem + "_templates.qalign.partial.bin");
-            template_io::write_template_binfile(qPath.string(), qtmpl);
-            job.tmpl = std::move(qtmpl);
-            job.qAlignPath = qPath;
-            job.viewerTemplatePath = qPath;
+                (job.stem + "_templates.anchor.partial.bin");
+            template_io::write_template_binfile(aPath.string(), atmpl);
+            job.tmpl = std::move(atmpl);
+            job.qAlignPath = aPath;
+            job.viewerTemplatePath = aPath;
             return true;
         }
         catch (const std::exception& e) {
@@ -230,41 +258,41 @@ namespace post_process_detail {
     // (subject opened from the fresh on-disk cache). Reloads the R-peaks,
     // rebuilds the R-pass templates + beats, then Q-aligns exactly as the
     // primary path does.
-    inline bool regenerateWithQAlignFull(ViewerJob& job)
+    inline bool regenerateWithAnchorFull(ViewerJob& job, AnchorType anchor)
     {
         try {
             if (job.peakResults.empty()) {
                 if (job.rPeakPath.empty() || job.annealedPath.empty()) {
-                    job.error = "Q-align rebuild: no cached beats and no r-peak path";
+                    job.error = "anchor rebuild: no cached beats and no r-peak path";
                     return false;
                 }
                 job.peakResults = read_output_binfile(
                     job.rPeakPath.string(), job.annealedPath.string());
             }
             if (job.peakResults.empty()) {
-                job.error = "Q-align rebuild: peakResults empty";
+                job.error = "anchor rebuild: peakResults empty";
                 return false;
             }
 
             FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
             if (fast.tmpl.bins.empty()) {
-                job.error = "Q-align rebuild: produced 0 bins";
+                job.error = "anchor rebuild: produced 0 bins";
                 return false;
             }
             job.tmpl = std::move(fast.tmpl);
             job.beats = std::move(fast.beats);
             job.info = std::move(fast.info);
 
-            template_io::TemplateFile qtmpl = job.tmpl;
-            qAlignTemplatesFromCache(qtmpl, job.beats, job.rates);
+            template_io::TemplateFile atmpl = job.tmpl;
+            alignTemplatesFromCache(atmpl, job.beats, job.rates, anchor);
 
-            const std::filesystem::path qPath =
+            const std::filesystem::path aPath =
                 job.provisionalPath.parent_path() /
-                (job.stem + "_templates.qalign.partial.bin");
-            template_io::write_template_binfile(qPath.string(), qtmpl);
-            job.tmpl = std::move(qtmpl);
-            job.qAlignPath = qPath;
-            job.viewerTemplatePath = qPath;
+                (job.stem + "_templates.anchor.partial.bin");
+            template_io::write_template_binfile(aPath.string(), atmpl);
+            job.tmpl = std::move(atmpl);
+            job.qAlignPath = aPath;
+            job.viewerTemplatePath = aPath;
             return true;
         }
         catch (const std::exception& e) {

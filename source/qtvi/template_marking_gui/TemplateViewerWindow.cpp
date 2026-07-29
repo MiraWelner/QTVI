@@ -14,6 +14,7 @@
 #include <sstream>
 #include <QFile>
 #include <QCheckBox>
+#include <QLabel>
 #include <iomanip>
 #include <iostream>
 #include <cstdio>
@@ -110,6 +111,17 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
 
 TemplateViewerWindow::~TemplateViewerWindow() { delete ui; }
 
+void TemplateViewerWindow::setAnchorLabel(const QString& s) {
+    m_anchorLabel = s;
+    // Reflect the anchor in the window title bar. Uses m_subjectId if loaded;
+    // loadSubject() sets the full title too, so this keeps it in sync if the
+    // anchor changes without a reload.
+    if (!m_subjectId.isEmpty())
+        setWindowTitle(QString("Template Marking - %1  [%2]").arg(m_subjectId, s));
+    else
+        setWindowTitle(QString("Template Marking  [%1]").arg(s));
+}
+
 // ========================================================================
 // Helpers
 // ========================================================================
@@ -179,12 +191,15 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     m_templateDir = QFileInfo(templatePath).absolutePath();
     m_subjectId = subjectId;
     m_sampleRate = sampleRateHz;
-    setWindowTitle(QString("Template Marking - %1").arg(subjectId));
+    // Anchor shown in the window title bar (the UI's top bar).
+    setWindowTitle(QString("Template Marking - %1  [%2]").arg(subjectId, m_anchorLabel));
     ui->subjectLabel->setText(subjectId);
-    // First pass shows "Finish and Next"; after the Q-align reload it reads
-    // "Finish" (m_qAlignPass is set in save_bin_and_csv and preserved across
-    // the reload).
-    ui->finishButton->setText(m_qAlignPass ? "Finish" : "Finish and Next");
+    // Button reads "Finish" only on the final pass of the anchor cycle;
+    // every earlier pass reads "Finish and Next". currentPassIndex = R(0) or
+    // anchor step + 1.
+    const int currentPassIndex = m_anchorStep + 1;
+    const bool lastPass = (currentPassIndex + 1 >= m_anchorPassCount);
+    ui->finishButton->setText(lastPass ? "Finish" : "Finish and Next");
 
     try {
         m_bins = readTemplateInfoBin(templatePath.toStdString());
@@ -289,6 +304,7 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath) {
             // NOT copied: it's an auto-only anchor and must come from this
             // pass's own template r_col (seeded above), never from a saved file.
             for (int c = 0; c < 3; ++c) {
+                d.p_begin_ch[c] = safeIdx(s.p_begin_ch[c], d.p_begin_ch[c], ecgLen[c]);
                 d.p_peak_ch[c] = safeIdx(s.p_peak_ch[c], d.p_peak_ch[c], ecgLen[c]);
                 d.q_begin_ch[c] = safeIdx(s.q_begin_ch[c], d.q_begin_ch[c], ecgLen[c]);
                 d.s_end_ch[c] = safeIdx(s.s_end_ch[c], d.s_end_ch[c], ecgLen[c]);
@@ -704,13 +720,13 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     //   p_peak, q_begin, q_peak (computed), r_peak, s_peak (computed),
     //   s_end, t_peak, t_end.
     static const char* ECG_MARKERS[] = {
-        "p_peak", "q_begin", "q_peak", "r_peak", "s_peak",
+        "p_begin", "p_peak", "q_begin", "q_peak", "r_peak", "s_peak",
         "s_end",  "t_begin",  "t_end"
     };
     for (int c = 1; c <= 3; ++c) {
-        for (int k = 0; k < 8; ++k) {
+        for (int k = 0; k < 9; ++k) {
             const char* mname = ECG_MARKERS[k];
-            const bool userToo = (k != 3);   // r_peak = auto-only
+            const bool userToo = (k != 4);   // r_peak = auto-only
             f << ',' << mname << "_ch" << c << "_location_autodetect";
             if (userToo) f << ',' << mname << "_ch" << c << "_location_user";
         }
@@ -818,24 +834,26 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         // ECG marker positions per channel, aligned with ECG_MARKERS order:
         //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
         //   s_end,  t_peak, t_end.
-        int ecgAuto[3][8], ecgUser[3][8];
+        int ecgAuto[3][9], ecgUser[3][9];
         for (int c = 0; c < 3; ++c) {
-            ecgAuto[c][0] = b.p_peak_auto_ch[c];
-            ecgAuto[c][1] = b.q_begin_auto_ch[c];
-            ecgAuto[c][2] = ftAuto[c].q_idx;
-            ecgAuto[c][3] = b.r_peak_auto_ch[c];
-            ecgAuto[c][4] = ftAuto[c].s_idx;
-            ecgAuto[c][5] = b.s_end_auto_ch[c];
-            ecgAuto[c][6] = b.t_begin_auto_ch[c];
-            ecgAuto[c][7] = b.t_end_auto_ch[c];
-            ecgUser[c][0] = b.p_peak_ch[c];
-            ecgUser[c][1] = b.q_begin_ch[c];
-            ecgUser[c][2] = ftUser[c].q_idx;
-            ecgUser[c][3] = b.r_peak_ch[c];
-            ecgUser[c][4] = ftUser[c].s_idx;
-            ecgUser[c][5] = b.s_end_ch[c];
-            ecgUser[c][6] = b.t_begin_ch[c];
-            ecgUser[c][7] = b.t_end_ch[c];
+            ecgAuto[c][0] = b.p_begin_auto_ch[c];
+            ecgAuto[c][1] = b.p_peak_auto_ch[c];
+            ecgAuto[c][2] = b.q_begin_auto_ch[c];
+            ecgAuto[c][3] = ftAuto[c].q_idx;
+            ecgAuto[c][4] = b.r_peak_auto_ch[c];
+            ecgAuto[c][5] = ftAuto[c].s_idx;
+            ecgAuto[c][6] = b.s_end_auto_ch[c];
+            ecgAuto[c][7] = b.t_begin_auto_ch[c];
+            ecgAuto[c][8] = b.t_end_auto_ch[c];
+            ecgUser[c][0] = b.p_begin_ch[c];
+            ecgUser[c][1] = b.p_peak_ch[c];
+            ecgUser[c][2] = b.q_begin_ch[c];
+            ecgUser[c][3] = ftUser[c].q_idx;
+            ecgUser[c][4] = b.r_peak_ch[c];
+            ecgUser[c][5] = ftUser[c].s_idx;
+            ecgUser[c][6] = b.s_end_ch[c];
+            ecgUser[c][7] = b.t_begin_ch[c];
+            ecgUser[c][8] = b.t_end_ch[c];
         }
 
         // Pulse marker positions, order matching PPG_MARKERS / ABP_MARKERS etc.
@@ -910,9 +928,9 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             }
             // ECG location columns (per channel, per marker: auto then user).
             for (int c = 0; c < 3; ++c) {
-                for (int k = 0; k < 8; ++k) {
+                for (int k = 0; k < 9; ++k) {
                     emitLoc(ecgAuto[c][k], row);
-                    if (k != 3) emitLoc(ecgUser[c][k], row);
+                    if (k != 4) emitLoc(ecgUser[c][k], row);
                 }
             }
             // PPG (6), ABP/ART/ART_PULM (5 each).
@@ -998,6 +1016,7 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
         const TemplateBin& b = m_bins[binIdx];
         for (auto* pw : m_binPlots[li]) {
             int c = pw->leadIndex();
+            pw->setMarker(BinPlotWidget::EcgPBegin, b.p_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgPPeak, b.p_peak_ch[c]);
             pw->setMarker(BinPlotWidget::EcgQBegin, b.q_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgRPeak, b.r_peak_ch[c]);
@@ -1040,6 +1059,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         if (leadIdx < 0 || leadIdx > 2) return;
         auto ecgGet = [&](TemplateBin& tb) -> int {
             switch (marker) {
+            case BinPlotWidget::EcgPBegin: return tb.p_begin_ch[leadIdx];
             case BinPlotWidget::EcgPPeak:  return tb.p_peak_ch[leadIdx];
             case BinPlotWidget::EcgQBegin: return tb.q_begin_ch[leadIdx];
             case BinPlotWidget::EcgRPeak:  return tb.r_peak_ch[leadIdx];
@@ -1051,6 +1071,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             };
         auto ecgSet = [&](TemplateBin& tb, int v) {
             switch (marker) {
+            case BinPlotWidget::EcgPBegin: tb.p_begin_ch[leadIdx] = v; break;
             case BinPlotWidget::EcgPPeak:  tb.p_peak_ch[leadIdx] = v; break;
             case BinPlotWidget::EcgQBegin: tb.q_begin_ch[leadIdx] = v; break;
             case BinPlotWidget::EcgRPeak:  tb.r_peak_ch[leadIdx] = v; break;
@@ -1342,12 +1363,16 @@ void TemplateViewerWindow::save_bin_and_csv() {
     // appends _q columns to that same file.
     writeAlignedTemplateCsv();
 
-    if (!m_qAlignPass) {
-        // First (R-aligned) pass just saved. Switch to the Q-aligned pass:
-        // ask the controller to regenerate with Q-alignment and reload, and
-        // relabel the button. Do NOT emit finished() yet.
-        m_qAlignPass = true;
-        ui->finishButton->setText("Finish");
+    // Anchor cycle: m_anchorStep is -1 on the R pass, then 0..N-2 for the
+    // anchor passes. There are m_anchorPassCount passes total (R + anchors).
+    // Keep emitting reload until the last pass, then finish. (The controller
+    // advances the anchor + reopens on each requestQAlignReload.)
+    // currentPassIndex: 0 for R, k+1 for anchor step k.
+    const int currentPassIndex = m_anchorStep + 1;
+    if (currentPassIndex + 1 < m_anchorPassCount) {
+        // more anchor passes remain: ask the controller to build the next one.
+        // Button keeps reading "Finish and Next"; final pass will read "Finish"
+        // (relabelled in loadSubject from m_anchorStep/m_anchorPassCount).
         emit requestQAlignReload();
         return;
     }

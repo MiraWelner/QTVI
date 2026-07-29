@@ -44,34 +44,30 @@ public:
     // m_markers). ECG markers come first, then PPG markers, so
     // markerIsEcg / markerIsPpg can use range checks.
     enum Marker : int {
-        // --- ECG markers (contiguous, starting at 0) ---
-        // Six draggable ECG landmarks in temporal order:
-        //   P peak, Q onset, R peak, S end, T peak, T end.
-        // Every one is both draggable (as a movable bar) and displayed
-        // with an X glyph at its current position.
-        EcgPPeak = 0,
-        EcgQBegin = 1,
-        EcgRPeak = 2,
-        EcgSEnd = 3,
-        EcgTBegin = 4,
-        EcgTEnd = 5,
+        EcgPBegin = 0,
+        EcgPPeak = 1,
+        EcgQBegin = 2,
+        EcgRPeak = 3,
+        EcgSEnd = 4,
+        EcgTBegin = 5,
+        EcgTEnd = 6,
         // --- PPG markers (contiguous, immediately after ECG) ---
-        PpgOnset = 6,
-        PpgP50 = 7,
-        PpgPeak = 8,
-        PpgDicrotic = 9,
-        PpgPeak2 = 10,
-        PpgT80 = 11,
-        PpgEnd = 12,
+        PpgOnset = 7,
+        PpgP50 = 8,
+        PpgPeak = 9,
+        PpgDicrotic = 10,
+        PpgPeak2 = 11,
+        PpgT80 = 12,
+        PpgEnd = 13,
         // --- Arterial markers ---
-        AbpOnset = 13, AbpPeak = 14, AbpDicrotic = 15, AbpPeak2 = 16, AbpEnd = 17,
-        ArtOnset = 18, ArtPeak = 19, ArtDicrotic = 20, ArtPeak2 = 21, ArtEnd = 22,
-        ArtPulmOnset = 23, ArtPulmPeak = 24, ArtPulmDicrotic = 25,
-        ArtPulmPeak2 = 26, ArtPulmEnd = 27,
-        MarkerCount = 28
+        AbpOnset = 14, AbpPeak = 15, AbpDicrotic = 16, AbpPeak2 = 17, AbpEnd = 18,
+        ArtOnset = 19, ArtPeak = 20, ArtDicrotic = 21, ArtPeak2 = 22, ArtEnd = 23,
+        ArtPulmOnset = 24, ArtPulmPeak = 25, ArtPulmDicrotic = 26,
+        ArtPulmPeak2 = 27, ArtPulmEnd = 28,
+        MarkerCount = 29
     };
 
-    static bool markerIsEcg(int m) { return m >= EcgPPeak && m <= EcgTEnd; }
+    static bool markerIsEcg(int m) { return m >= EcgPBegin && m <= EcgTEnd; }
     static bool markerIsPpg(int m) { return m >= PpgOnset && m <= PpgEnd; }
     static bool markerIsAbp(int m) { return m >= AbpOnset && m <= AbpEnd; }
     static bool markerIsArt(int m) { return m >= ArtOnset && m <= ArtEnd; }
@@ -82,7 +78,7 @@ public:
     // "Begin"/onset markers are drawn dashed; everything else (incl. "end")
     // solid.
     static bool markerIsBegin(int m) {
-        return m == EcgQBegin || m == EcgTBegin /* T begin */
+        return m == EcgPBegin || m == EcgQBegin || m == EcgTBegin
             || m == PpgOnset || m == AbpOnset || m == ArtOnset || m == ArtPulmOnset;
     }
     double m_rPeakSample = 0.0;   // R-peak sample index within the ECG template
@@ -259,16 +255,7 @@ private:
 
     int m_ecgVisibleN = 0;
     int m_ppgVisibleN = 0;
-
-    // Storage sized by MarkerCount so it grows automatically if you add
-    // more entries to the enum. All marker slots start hidden (-1).
-    int m_markers[MarkerCount] = {
-        -1, -1, -1, -1, -1, -1,   // ECG (6: p_peak, q_begin, r_peak, s_end, t_peak, t_end)
-        -1, -1, -1, -1, -1, -1, -1,   // PPG (7: onset, p50, peak, dicrotic, peak2, t80, end)
-        -1, -1, -1, -1, -1,       // ABP
-        -1, -1, -1, -1, -1,       // ART
-        -1, -1, -1, -1, -1        // ART_PULM
-    };
+    int m_markers[MarkerCount];
 
     struct GlyphSnapshot {
         // All ECG glyphs read straight from the movable markers now

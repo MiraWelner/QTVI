@@ -35,11 +35,7 @@ struct SingleMethodResult {
     vector<double> ecg_template_iqr;   // empty for methods that don't compute std
     double ppg_alignment_point;
     int r_col = -1;   // true R column (alignment's r_aligned_col)
-    // Number of slices that survived the drop rules (r1<=r0, len<3) and
-    // were fed to the column-wise median. Under Patch B this is nearly
-    // always n_rpeaks - 1, but any future length/amplitude filter would
-    // drop it lower; the widget shows this so bins with poor signal are
-    // visible at a glance.
+    int ref_beat_index = -1;
     size_t n_beats = 0;
 };
 
@@ -63,7 +59,7 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
     // from alignment (every beat's detected R lands at r_aligned_col). Passed
     // through as-is -- no re-detection (a window search would grab Q or S).
     res.r_col = aligned.r_aligned_col;
-
+    res.ref_beat_index = aligned.ref_beat_index;
     // Column-wise NaN-skipping median over the aligned beats => template.
     res.ecgTemplate.assign(maxLen, NaN);
     for (size_t c = 0; c < maxLen; ++c) {
@@ -132,6 +128,7 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
     cr.ecgTemplates_squared.resize(n);
     cr.ecgTemplates_absval.resize(n);
     cr.ecgTemplates_unfiltered.resize(n);
+    cr.ref_index_raw.resize(n, -1);
 
     cr.ppg_alignment_point_raw.resize(n, NaN);
     cr.ppg_alignment_point_squared.resize(n, NaN);
@@ -194,6 +191,7 @@ static inline void process_channel_fast(
     cr.ppg_alignment_point_raw[i] = raw_res.ppg_alignment_point;
     cr.r_col_raw[i] = raw_res.r_col;
     cr.n_beats_raw[i] = raw_res.n_beats;
+    cr.ref_index_raw[i] = raw_res.ref_beat_index;
 
     // Method 4: unfiltered (original ECG signal + master R-peaks). No std.
     auto unfilt_res = build_ecg_template_for_method(

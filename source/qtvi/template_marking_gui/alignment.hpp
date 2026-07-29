@@ -22,15 +22,14 @@
 #include <limits>
 #include <utility>
 #include <vector>
+#include <functional>
+
+
 namespace alignment {
     constexpr double percent_interval_preceeding_rpeak = 0.4; //how far before the R peak the snip goes, in terms of percent of the RR interval length
     constexpr double percent_interval_following_rpeak = 1.3;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
 
-    // NOTE: the second (Q-aligned) template pass no longer runs through this
-    // function. It reuses the R-aligned + DC-aligned beats cached during the
-    // R pass; the Q pass reuses these templates and shifts ECG to a common Q
-    // column (see find_q_column below and qAlignTemplatesFromCache).
-    // The old global g_q_align switch and the Pass-4 block are gone.
+    enum class AnchorType { P_ONSET, P_PEAK, Q_ONSET, R_PEAK, J_POINT, T_PEAK };
 
     // Sample counts for a given RR (integer-truncated).
     inline int64_t rr_before_samples(int64_t rr) {
@@ -328,10 +327,11 @@ namespace alignment {
         int r_col = -1;
     };
 
-    inline QAlignResult q_align_beat_matrix(
+    inline QAlignResult align_beat_matrix(
         const std::vector<std::vector<double>>& beatsIn,
         int R_anchor, double fs, bool compute_iqr,
-        const std::vector<double>& refMedian)
+        const std::vector<double>& ref_beat_of_median_length,
+        const std::function<int(const std::vector<double>&)>& locate)
     {
         QAlignResult res;
         if (beatsIn.empty()) return res;
@@ -341,17 +341,17 @@ namespace alignment {
 
         // Q marker = Q of the column-wise median of all beats (== the R
         // template). Every snippet is then shifted so its own Q lands here.
-        const int q_marker = find_q_column(refMedian, R_anchor, fs);
-        res.q_aligned_col = (q_marker >= 0) ? q_marker : R_anchor;
+        const int marker = locate(ref_beat_of_median_length);
+        res.q_aligned_col = (marker >= 0) ? marker : R_anchor;
 
         std::vector<int> shifts;   // per-beat Q-align shift (for R's new column)
-        if (q_marker >= 0 && fs > 0.0) {
+        if (marker >= 0) {
             const double NaNv = std::numeric_limits<double>::quiet_NaN();
             shifts.reserve(beats.size());
             for (size_t i = 0; i < beats.size(); ++i) {
-                const int qi = find_q_column(beats[i], R_anchor, fs);
-                if (qi < 0) continue;
-                const int shift = q_marker - qi;   // may be negative
+                const int mi = locate(beats[i]);
+                if (mi < 0) continue;
+                const int shift = marker - mi;   // may be negative
                 shifts.push_back(shift);
                 if (shift == 0) continue;
                 std::vector<double> a(Wsh, NaNv);

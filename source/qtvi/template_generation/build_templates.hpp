@@ -18,7 +18,8 @@
 #include "GenerateTemplates.hpp"
 #include "TemplateTypes.hpp"
 #include "template_generation/CreateArterialTemplates.hpp"
-#include "template_marking_gui/alignment.hpp"   // find_q_column (Q-align)
+#include "template_marking_gui/alignment.hpp"   // align_beat_matrix, QAlignResult
+#include "template_marking_gui/feature_marks.hpp"   // AnchorType, make_anchor_locator
 #include "peak_finding/peakfinding_io.hpp"
 
 namespace template_generation_detail {
@@ -237,6 +238,11 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
         if (out.beats.bad_segment[i]) continue;
         for (auto& kv : out.info[i].kept_beats_by_channel)
             ensureBins(kv.first)[i] = std::move(kv.second);
+        for (auto& kv : out.info[i].ref_index_by_channel) {
+            auto& v = out.beats.per_channel_ref_index[kv.first];
+            if (v.size() < nb) v.resize(nb, -1);
+            v[i] = kv.second;
+        }
     }
 
     return out;
@@ -249,9 +255,10 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
 // re-detection. Because the alignment anchor is the median snippet, the
 // median snippet doesn't move, so R stays on its column and the template
 // stays centred in the window (no far-from-the-wall drift).
-inline void qAlignTemplatesFromCache(template_io::TemplateFile& tmpl,
+inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl,
     const template_io::BeatsFile& beats,
-    const SignalRates& rates)
+    const SignalRates& rates,
+    AnchorType anchor)
 {
     const double fs = rates.ecg;
 
@@ -267,7 +274,7 @@ inline void qAlignTemplatesFromCache(template_io::TemplateFile& tmpl,
         auto it = beats.per_channel_beats.find(key);
         if (it == beats.per_channel_beats.end()) continue;
         const auto& perBin = it->second;   // [bin][beat][sample]
-
+        const auto refIt = beats.per_channel_ref_index.find(key);
         for (size_t i = 0; i < tmpl.bins.size(); ++i) {
             template_io::BinTemplates& bin = tmpl.bins[i];
             if (bin.bad_segment) continue;
@@ -278,9 +285,24 @@ inline void qAlignTemplatesFromCache(template_io::TemplateFile& tmpl,
 
             // The R template (blk.ecgTemplate) is the column-wise median of the
             // R-aligned beats -- the reference the Q marker is found on.
+            // Global reference = the median-length reference BEAT (not the
+            // column-wise median template). Falls back to the template if the
+            // ref index is unknown (old cached data / no median-length beat).
+            int refIdx = (refIt != beats.per_channel_ref_index.end()
+                && i < refIt->second.size()) ? refIt->second[i] : -1;
+            const std::vector<double>& ref_beat_of_median_length =
+                (refIdx >= 0 && refIdx < (int)perBin[i].size())
+                ? perBin[i][refIdx] : blk.ecgTemplate;
+
+            const int r_anchor = blk.r_col;
+            // Every anchor (including Q_ONSET) dispatches through the
+            // feature_marks detector. Q_ONSET -> detect_q_begin, which finds
+            // Q onset and falls back to r_idx-20 on its own when Q isn't found.
+            AnchorLocator locate = make_anchor_locator(anchor, r_anchor, fs);
+
             alignment::QAlignResult q =
-                alignment::q_align_beat_matrix(perBin[i], blk.r_col, fs,
-                    /*compute_iqr=*/true, /*refMedian=*/blk.ecgTemplate);
+                alignment::align_beat_matrix(perBin[i], blk.r_col, fs,
+                    /*compute_iqr=*/true, ref_beat_of_median_length, locate);
             if (q.tmpl.empty()) continue;
 
             blk.ecgTemplate = std::move(q.tmpl);
@@ -291,10 +313,11 @@ inline void qAlignTemplatesFromCache(template_io::TemplateFile& tmpl,
 }
 
 // Convenience overload for the in-memory R-pass build.
-inline void qAlignTemplatesFromCache(FastTemplateBuild& build,
-    const SignalRates& rates)
+inline void alignTemplatesFromCache(FastTemplateBuild& build,
+    const SignalRates& rates,
+    AnchorType anchor)
 {
-    qAlignTemplatesFromCache(build.tmpl, build.beats, rates);
+    alignTemplatesFromCache(build.tmpl, build.beats, rates, anchor);
 }
 
 // SLOW merge: fills the squared/absval per-bin blocks and their SAECG

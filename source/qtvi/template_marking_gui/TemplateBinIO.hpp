@@ -79,35 +79,26 @@ struct TemplateBin {
     std::vector<double> artTemplate_iqr;
     std::vector<double> artPulmTemplate_iqr;
 
-    // Markings produced by the viewer. ECG markings are per-channel
-    // (the morphology differs by lead). PPG markings are shared across
-    // channels of the same bin (the PPG trace is identical in all three
-    // channel views).
+    //error markings made via user right click
     bool    bad_r_ch[3] = { false, false, false };
     uint8_t ppg_issue = 0;   // 0 = ok, 1 = bad, 2 = no ppg
 
-    // ECG: per-channel sample indices into the channel's ecgTemplate_raw.
-    // Six user-placed landmarks per channel, in temporal order:
-    //   P peak, Q onset, R peak, S end, T peak, T end.
-    // All -1 = unmarked / not applicable.
+	//sample indices for each of the 3 ECG channels. -1 = unmarked / not applicable.
     int p_peak_ch[3] = { -1, -1, -1 };
     int q_begin_ch[3] = { -1, -1, -1 };
     int r_peak_ch[3] = { -1, -1, -1 };
     int s_end_ch[3] = { -1, -1, -1 };
     int t_begin_ch[3] = { -1, -1, -1 };
     int t_end_ch[3] = { -1, -1, -1 };
-
-    // Auto-detect mirror fields (populated at every loadSubject in
-    // seedBinMarkers, NOT serialized to the .bin). These preserve the
-    // original auto-detected positions so CSVs can emit both the
-    // autodetect and user versions of every column even after the user
-    // has dragged markers around.
+    int p_begin_ch[3] = { -1, -1, -1 };
+	//sample indicies for each of the 3 ECG channels, auto-detected. -1 = unmarked / not applicable.
     int p_peak_auto_ch[3] = { -1, -1, -1 };
     int q_begin_auto_ch[3] = { -1, -1, -1 };
     int r_peak_auto_ch[3] = { -1, -1, -1 };
     int s_end_auto_ch[3] = { -1, -1, -1 };
     int t_begin_auto_ch[3] = { -1, -1, -1 };
     int t_end_auto_ch[3] = { -1, -1, -1 };
+    int p_begin_auto_ch[3] = { -1, -1, -1 };
 
     // PPG: sample indices into ppgTemplate. Shared across channels.
     int ppg_onset = -1;
@@ -212,10 +203,8 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
 // ---------------------------------------------------------------------------
 // template_markings.bin layout:
 //
-//   VERSIONING: v1 files begin directly with uint64 numBins. v2 files begin
-//   with a sentinel (uint64 = 0xFFFFFFFFFFFFFFFF, an impossible bin count)
-//   followed by uint32 version, then uint64 numBins. Only the current format
-//   is read; legacy files are rejected.
+//   header:
+//     uint64  numBins
 //
 //   per bin:
 //     uint64  index
@@ -230,21 +219,13 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
 //
 // All int32 fields use -1 as the "unmarked / not applicable" sentinel.
 // ---------------------------------------------------------------------------
-static constexpr uint64_t kTemplateMarkingsV2Sentinel = ~uint64_t(0);
-static constexpr uint32_t kTemplateMarkingsVersion = 5;
-
 inline void writeTemplateMarkingsBin(const std::string& path,
     const std::vector<TemplateBin>& bins) {
     std::ofstream f(path, std::ios::binary);
     if (!f.is_open())
         throw std::runtime_error("cannot open for write: " + path);
 
-    // Header: sentinel + version + bin count.
-    uint64_t sentinel = kTemplateMarkingsV2Sentinel;
-    f.write(reinterpret_cast<const char*>(&sentinel), 8);
-    uint32_t ver = kTemplateMarkingsVersion;
-    f.write(reinterpret_cast<const char*>(&ver), 4);
-
+    //header: just bin count
     uint64_t n = bins.size();
     f.write(reinterpret_cast<const char*>(&n), 8);
 
@@ -267,6 +248,7 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         for (int c = 0; c < 3; ++c) w32(b.s_end_ch[c]);
         for (int c = 0; c < 3; ++c) w32(b.t_begin_ch[c]);
         for (int c = 0; c < 3; ++c) w32(b.t_end_ch[c]);
+        for (int c = 0; c < 3; ++c) w32(b.p_begin_ch[c]);
 
         w32(b.ppg_onset);
         w32(b.ppg_p50);
@@ -699,27 +681,9 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         int32_t v = 0; f.read(reinterpret_cast<char*>(&v), 4); return v;
         };
 
-    // Current format only: sentinel + version + bin count. Legacy files
-    // (any version other than the current one) are rejected -- attempting to
-    // reinterpret their byte layout under the current field order is
-    // fragile enough that two different guesses at v2's PPG layout both
-    // produced visibly wrong markers, so we no longer try. Regenerate
-    // markings from the current tool if a legacy file needs to be reused.
-    uint64_t first = 0;
-    f.read(reinterpret_cast<char*>(&first), 8);
-    if (first != kTemplateMarkingsV2Sentinel)
-        throw std::runtime_error("unsupported (pre-sentinel) markings format: " + path);
-
-    uint32_t version = 0;
+	//read header - it tells you how many bins to expect
     uint64_t n = 0;
-    f.read(reinterpret_cast<char*>(&version), 4);
     f.read(reinterpret_cast<char*>(&n), 8);
-
-    if (version != kTemplateMarkingsVersion) {
-        throw std::runtime_error("legacy markings version " + std::to_string(version)
-            + " (current is " + std::to_string(kTemplateMarkingsVersion)
-            + "); regenerate markings for: " + path);
-    }
 
     std::vector<TemplateBin> bins(n);
     for (uint64_t i = 0; i < n; ++i) {
@@ -738,6 +702,7 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         for (int c = 0; c < 3; ++c) b.s_end_ch[c] = r32();
         for (int c = 0; c < 3; ++c) b.t_begin_ch[c] = r32();
         for (int c = 0; c < 3; ++c) b.t_end_ch[c] = r32();
+        for (int c = 0; c < 3; ++c) b.p_begin_ch[c] = r32();
 
         b.ppg_onset = r32();
         b.ppg_p50 = r32();
