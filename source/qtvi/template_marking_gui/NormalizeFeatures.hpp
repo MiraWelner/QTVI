@@ -85,9 +85,12 @@ namespace normalize_features {
             const auto& ecg = chs[ch]->ecgTemplate_raw;
             if (ecg.empty()) continue;
 
+            // Normalization reference is a stable per-subject quantity, so it
+            // always reads the R-pass markers, never the current anchor's.
+            const TemplateBin::MarkerSet& rmk = b.marks(AnchorType::R_PEAK);
             EcgFeatures f = computeEcgFeatures(ecg,
-                b.p_peak_ch[ch], b.q_begin_ch[ch], b.r_peak_ch[ch],
-                b.s_end_ch[ch], b.t_end_ch[ch], sampleRateHz);
+                rmk.p_peak_ch[ch], rmk.q_begin_ch[ch], b.r_peak_ch[ch],
+                rmk.s_end_ch[ch], rmk.t_end_ch[ch], sampleRateHz);
             const double ry = sample_y(ecg, f.r_idx);
             const double sy = sample_y(ecg, f.s_idx);
             if (std::isnan(ry) || std::isnan(sy)) continue;

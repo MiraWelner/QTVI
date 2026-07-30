@@ -201,7 +201,8 @@ private:
     QVector<QPointF> m_tempRaw, m_markerRaw, m_pacemakerRaw, m_artRaw, m_artPulmRaw;
     QString m_binFilePath;
 
-    static constexpr qint64 FILE_HEADER_SIZE = 584;
+    static constexpr uint32_t BIN_HEADER_VERSION = 1;   // header format version (offset 0)
+    static constexpr qint64 FILE_HEADER_SIZE = 592;     // version+n_channels+sleep + 4*36 arrays + sleep_count
     static constexpr int NUM_CHANNELS = 36;
 
     uint32_t upsampled_channel_sizes[NUM_CHANNELS] = {};

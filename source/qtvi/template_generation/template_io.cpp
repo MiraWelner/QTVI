@@ -29,11 +29,6 @@ namespace template_io {
             f.write(reinterpret_cast<const char*>(&m.r_col), 4);
         }
 
-        void writeAveraged(std::ofstream& f, const AveragedTemplate& a) {
-            writeVecD(f, a.waveform);
-            f.write(reinterpret_cast<const char*>(&a.n_contributing), 8);
-        }
-
         bool readVecD(std::ifstream& f, std::vector<double>& v) {
             uint64_t sz;
             if (!f.read(reinterpret_cast<char*>(&sz), 8)) return false;
@@ -47,12 +42,6 @@ namespace template_io {
             if (!readVecD(f, m.ecg_template_iqr)) return false;
             if (!f.read(reinterpret_cast<char*>(&m.alignment_point), 8)) return false;
             if (!f.read(reinterpret_cast<char*>(&m.r_col), 4)) return false;
-            return true;
-        }
-
-        bool readAveraged(std::ifstream& f, AveragedTemplate& a) {
-            if (!readVecD(f, a.waveform)) return false;
-            if (!f.read(reinterpret_cast<char*>(&a.n_contributing), 8)) return false;
             return true;
         }
 

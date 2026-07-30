@@ -83,15 +83,35 @@ struct TemplateBin {
     bool    bad_r_ch[3] = { false, false, false };
     uint8_t ppg_issue = 0;   // 0 = ok, 1 = bad, 2 = no ppg
 
-	//sample indices for each of the 3 ECG channels. -1 = unmarked / not applicable.
-    int p_peak_ch[3] = { -1, -1, -1 };
-    int q_begin_ch[3] = { -1, -1, -1 };
+    // Per-anchor USER marker positions. Each alignment anchor (R, Q_ONSET,
+    // J_POINT, T_PEAK, ...) has its OWN independent set of draggable ECG
+    // markers, because a marker's sample column is only meaningful relative to
+    // the alignment it was placed on. Keyed by AnchorType; a missing anchor
+    // means "not marked yet for that anchor" (seed fresh on load). Use marks().
+    struct MarkerSet {
+        int p_begin_ch[3] = { -1, -1, -1 };
+        int p_peak_ch[3] = { -1, -1, -1 };
+        int q_begin_ch[3] = { -1, -1, -1 };
+        int s_end_ch[3] = { -1, -1, -1 };
+        int t_begin_ch[3] = { -1, -1, -1 };
+        int t_end_ch[3] = { -1, -1, -1 };
+    };
+    std::map<AnchorType, MarkerSet> markers_by_anchor;
+
+    // Accessor: returns the marker set for `a`, creating an all-unmarked one
+    // on first access. Every read/write of a per-anchor ECG user marker goes
+    // through here.
+    MarkerSet& marks(AnchorType a) { return markers_by_anchor[a]; }
+    const MarkerSet& marks(AnchorType a) const {
+        static const MarkerSet kEmpty;
+        auto it = markers_by_anchor.find(a);
+        return (it == markers_by_anchor.end()) ? kEmpty : it->second;
+    }
+
+    // R peak column: auto-only, re-derived each pass from the template r_col;
+    // NOT per-anchor and NOT persisted. Kept flat.
     int r_peak_ch[3] = { -1, -1, -1 };
-    int s_end_ch[3] = { -1, -1, -1 };
-    int t_begin_ch[3] = { -1, -1, -1 };
-    int t_end_ch[3] = { -1, -1, -1 };
-    int p_begin_ch[3] = { -1, -1, -1 };
-	//sample indicies for each of the 3 ECG channels, auto-detected. -1 = unmarked / not applicable.
+    //sample indicies for each of the 3 ECG channels, auto-detected. -1 = unmarked / not applicable.
     int p_peak_auto_ch[3] = { -1, -1, -1 };
     int q_begin_auto_ch[3] = { -1, -1, -1 };
     int r_peak_auto_ch[3] = { -1, -1, -1 };
@@ -241,14 +261,20 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         w8(b.bad_r_ch[2] ? 1 : 0);
         w8(b.ppg_issue);
 
-        // ECG markers: six per channel in temporal order.
-        for (int c = 0; c < 3; ++c) w32(b.p_peak_ch[c]);
-        for (int c = 0; c < 3; ++c) w32(b.q_begin_ch[c]);
-        for (int c = 0; c < 3; ++c) w32(b.r_peak_ch[c]);
-        for (int c = 0; c < 3; ++c) w32(b.s_end_ch[c]);
-        for (int c = 0; c < 3; ++c) w32(b.t_begin_ch[c]);
-        for (int c = 0; c < 3; ++c) w32(b.t_end_ch[c]);
-        for (int c = 0; c < 3; ++c) w32(b.p_begin_ch[c]);
+        // Per-anchor ECG user markers: [uint32 count] then, per anchor,
+        // [int32 anchorTag][6 marker fields x 3 channels]. R peak is auto-only
+        // and re-derived each pass, so it is NOT written here.
+        w32(static_cast<int>(b.markers_by_anchor.size()));
+        for (const auto& kv : b.markers_by_anchor) {
+            w32(static_cast<int>(kv.first));           // AnchorType tag
+            const TemplateBin::MarkerSet& m = kv.second;
+            for (int c = 0; c < 3; ++c) w32(m.p_begin_ch[c]);
+            for (int c = 0; c < 3; ++c) w32(m.p_peak_ch[c]);
+            for (int c = 0; c < 3; ++c) w32(m.q_begin_ch[c]);
+            for (int c = 0; c < 3; ++c) w32(m.s_end_ch[c]);
+            for (int c = 0; c < 3; ++c) w32(m.t_begin_ch[c]);
+            for (int c = 0; c < 3; ++c) w32(m.t_end_ch[c]);
+        }
 
         w32(b.ppg_onset);
         w32(b.ppg_p50);
@@ -340,7 +366,8 @@ inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak",
 inline void writeTemplateMarkingsCsv(const std::string& path,
     const std::vector<TemplateBin>& bins,
     const std::string& fileID,
-    double sampleRateHz)
+    double sampleRateHz,
+    AnchorType anchor)
 {
     std::ofstream f(path);
     if (!f.is_open())
@@ -550,31 +577,32 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
                 b.s_end_auto_ch[c], b.t_end_auto_ch[c],
                 sampleRateHz);
+            const TemplateBin::MarkerSet& umk = b.marks(anchor);
             EcgFeatures ftUser = computeEcgFeatures(ecg,
-                b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
-                b.s_end_ch[c], b.t_end_ch[c],
+                umk.p_peak_ch[c], umk.q_begin_ch[c], b.r_peak_ch[c],
+                umk.s_end_ch[c], umk.t_end_ch[c],
                 sampleRateHz);
 
             // Autodetected T-peak = max between user T-begin/T-end, matching
             // the on-screen glyph (feature_marks.cpp: g.t_peak_glyph). No
             // user-adjustable T-peak marker exists, so this column pair emits
             // autodetect only (like r_peak).
-            const int tPeakAuto = FeatureMarks::compute_t_peak(ecg, b.t_begin_ch[c], b.t_end_ch[c]);
+            const int tPeakAuto = FeatureMarks::compute_t_peak(ecg, umk.t_begin_ch[c], umk.t_end_ch[c]);
 
             // Order MUST match ecgPointNames:
             //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
             //   s_end,  t_peak(computed, autodetect-only), t_begin, t_end
             struct P { int a; int u; };
             const P pts[] = {
-                { b.p_peak_auto_ch[c],  b.p_peak_ch[c]  },
-                { b.q_begin_auto_ch[c], b.q_begin_ch[c] },
+                { b.p_peak_auto_ch[c],  umk.p_peak_ch[c]  },
+                { b.q_begin_auto_ch[c], umk.q_begin_ch[c] },
                 { ftAuto.q_idx,         ftUser.q_idx    },
                 { b.r_peak_auto_ch[c],  b.r_peak_ch[c]  },
                 { ftAuto.s_idx,         ftUser.s_idx    },
-                { b.s_end_auto_ch[c],   b.s_end_ch[c]   },
+                { b.s_end_auto_ch[c],   umk.s_end_ch[c]   },
                 { tPeakAuto,            -1              },   // autodetect only
-                { b.t_begin_auto_ch[c], b.t_begin_ch[c] },
-                { b.t_end_auto_ch[c],   b.t_end_ch[c]   }
+                { b.t_begin_auto_ch[c], umk.t_begin_ch[c] },
+                { b.t_end_auto_ch[c],   umk.t_end_ch[c]   }
             };
             for (int k = 0; k < 9; ++k) {
                 // r_peak (index 3) and t_peak (index 6) are autodetect-only,
@@ -681,7 +709,7 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         int32_t v = 0; f.read(reinterpret_cast<char*>(&v), 4); return v;
         };
 
-	//read header - it tells you how many bins to expect
+    //read header - it tells you how many bins to expect
     uint64_t n = 0;
     f.read(reinterpret_cast<char*>(&n), 8);
 
@@ -695,14 +723,22 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         b.bad_r_ch[2] = (r8() != 0);
         b.ppg_issue = r8();
 
-        // ECG: P peak, Q begin, R peak, S end, T begin, T end.
-        for (int c = 0; c < 3; ++c) b.p_peak_ch[c] = r32();
-        for (int c = 0; c < 3; ++c) b.q_begin_ch[c] = r32();
-        for (int c = 0; c < 3; ++c) b.r_peak_ch[c] = r32();
-        for (int c = 0; c < 3; ++c) b.s_end_ch[c] = r32();
-        for (int c = 0; c < 3; ++c) b.t_begin_ch[c] = r32();
-        for (int c = 0; c < 3; ++c) b.t_end_ch[c] = r32();
-        for (int c = 0; c < 3; ++c) b.p_begin_ch[c] = r32();
+        // Per-anchor ECG user markers: [count] then (tag, 6x3 fields) each.
+        // Mirrors the write order. R peak is not stored (auto-only per pass).
+        {
+            const int nAnchors = r32();
+            for (int a = 0; a < nAnchors; ++a) {
+                const int tag = r32();
+                TemplateBin::MarkerSet m;
+                for (int c = 0; c < 3; ++c) m.p_begin_ch[c] = r32();
+                for (int c = 0; c < 3; ++c) m.p_peak_ch[c] = r32();
+                for (int c = 0; c < 3; ++c) m.q_begin_ch[c] = r32();
+                for (int c = 0; c < 3; ++c) m.s_end_ch[c] = r32();
+                for (int c = 0; c < 3; ++c) m.t_begin_ch[c] = r32();
+                for (int c = 0; c < 3; ++c) m.t_end_ch[c] = r32();
+                b.markers_by_anchor[static_cast<AnchorType>(tag)] = m;
+            }
+        }
 
         b.ppg_onset = r32();
         b.ppg_p50 = r32();

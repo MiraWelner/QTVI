@@ -61,10 +61,10 @@ public:
     // auto-computed but tracks the user's movable markers live (see the
     // compute_* functions below).
     struct EcgGlyphs {
-        int p_peak_glyph = -1; 
+        int p_peak_glyph = -1;
         int q_begin_glyph = -1;
         int r_peak_glyph = -1;
-        int s_end_glyph = -1; 
+        int s_end_glyph = -1;
         int t_peak_glyph = -1;
         int t_end_glyph = -1;
     };
@@ -133,7 +133,7 @@ public:
     static int detect_ppg_dicrotic(const std::vector<double>& pulse);
     static int detect_ppg_end(const std::vector<double>& pulse);
 
-    static void seed_all(TemplateBin& bin, double sampleRate);
+    static void seed_all(TemplateBin& bin, double sampleRate, AnchorType anchor);
 
 private:
     // Internal helpers.

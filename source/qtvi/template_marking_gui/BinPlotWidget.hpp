@@ -161,6 +161,14 @@ public:
     void setMarker(Marker m, int idx);
     int  marker(Marker m) const { return m_markers[m]; }
 
+    // Load-time autodetected ECG landmark columns (the *_auto_ch fields).
+    // Own-bar glyphs (P-begin, P-peak, Q-begin, S-end, T-end) are FROZEN at
+    // these positions and do NOT follow their bars. -1 => fall back to the bar.
+    struct EcgAuto {
+        int pBegin = -1, pPeak = -1, qBegin = -1, sEnd = -1, tEnd = -1;
+    };
+    void setEcgAuto(const EcgAuto& a) { m_ecgAuto = a; captureGlyphSnapshot(); update(); }
+
     // Recompute the reactive feature glyphs from the current markers and
     // repaint. Call once after programmatically setting markers (e.g. from
     // refreshBinMarkers) so the X glyphs track the markers live.
@@ -262,7 +270,7 @@ private:
         // (P peak, Q onset, R peak, S end, T peak, T end). Each draws an
         // X at its marker's position; no O fallbacks (a marker is always
         // set, or the field stays -1 and the draw is skipped).
-        int ecgPPeak = -1, ecgQ = -1, ecgQPeak = -1, ecgRPeak = -1, ecgSPeak = -1, ecgS = -1, ecgTPeak = -1, ecgTend = -1;
+        int ecgPBegin = -1, ecgPPeak = -1, ecgQ = -1, ecgQPeak = -1, ecgRPeak = -1, ecgSPeak = -1, ecgS = -1, ecgTPeak = -1, ecgTend = -1;
         // PPG: sourced directly from the bin's single-source-of-truth
         // ppg_*_auto fields (see FeatureMarks::detect_ppg_fiducials) -- no
         // independent glyph recompute, so these can never disagree with
@@ -293,6 +301,9 @@ private:
     bool m_ppgPeak2FoundAuto = false;
     int m_ppgDicroticAuto = -1;   bool m_ppgDicroticFoundAuto = false;
     int m_ppgEndAuto = -1;        bool m_ppgEndFoundAuto = false;
+
+    // Frozen ECG autodetect positions (own-bar glyphs read from here).
+    EcgAuto m_ecgAuto;
 
     // Compute the glyph snapshot from current trace + marker state.
     void captureGlyphSnapshot();

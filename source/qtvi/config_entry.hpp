@@ -112,4 +112,17 @@ struct config_entry {
 
     //determine what r peak finding method to utilize
     bool use_consensus_rpeak = true;
+    // --- Filtering options ---
+    // Powerline notch filter. 0 = disabled; valid enabled values are 50 or 60 Hz.
+    int notch_filter_hz = 0;
+    // Waveform high-pass cutoff in Hz. 0 = disabled; default 0.5 when enabled.
+    double waveform_highpass_hz = 0.5;
+
+    // --- Subject demographics (stored only; no downstream use yet) ---
+    int    age = 0;
+    std::string sex;               // stored verbatim, not interpreted
+    double weight_kg = 0.0;
+    double height_cm = 0.0;
+    int    hr_rest = 0;
+    int    hr_max = 0;
 };

@@ -87,23 +87,16 @@ inline QString get_timestamp(double seconds) {
         .arg(d);
 }
 
-inline QString get_chart_title(const QString& signalName, double nativeHz, double pxPerSample, double bpm = -1.0) {
-    /*
-    * Make title for each markable chart, set sig figs in each printed value. If you don't pass it bpm (for example in accel charts
-    * it just doesn't include it.
-    */
+inline QString get_chart_title(const QString& signalName, double nativeHz, double pxPerSample, double bpm = -1.0, double upHz = -1.0) {
+	/*On the chart list the native rate, the upsampled rate, the pixel resolution, and the bpm if it is a heart signal.
+    The bpm is optional because not all signals have a bpm.*/
     QString space = QString(QChar(0x00A0)).repeated(4);
-    QString base;
-    if (bpm < 0.0) {
-        base = QString("%1" + space + "Original Frequency: %2 Hz" + space
-            + "Pixel Resolution: %3 px/sample")
-            .arg(signalName).arg(nativeHz, 0, 'f', 1).arg(pxPerSample, 0, 'f', 3);
-    }
-    else {
-        base = QString("%1" + space + "Original Frequency: %2 Hz" + space
-            + "Pixel Resolution: %3 px/sample" + space + "%4 bpm")
-            .arg(signalName).arg(nativeHz, 0, 'f', 1)
-            .arg(pxPerSample, 0, 'f', 3).arg(bpm, 0, 'f', 0);
-    }
+    QString base = signalName + space
+        + QString("Original Frequency: %1 Hz").arg(nativeHz, 0, 'f', 1);
+    if (upHz >= 0.0)
+        base += space + QString("Upsampled Frequency: %1 Hz").arg(upHz, 0, 'f', 1);
+    base += space + QString("Pixel Resolution: %1 px/sample").arg(pxPerSample, 0, 'f', 3);
+    if (bpm >= 0.0)
+        base += space + QString("%1 bpm").arg(bpm, 0, 'f', 0);
     return base;
 }

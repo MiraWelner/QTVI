@@ -422,18 +422,18 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
             }
             return scanLo;                        // never flattened in window
             };    case AnchorType::J_POINT: return [r_col, fs](const std::vector<double>& b) { return FeatureMarks::detect_s_end(b, r_col, fs); };
-    case AnchorType::P_PEAK:  return [r_col](const std::vector<double>& b) { return FeatureMarks::detect_p_peak(b, r_col); };
-    case AnchorType::P_ONSET: // no pure detector: seed at P-peak, refine with compute_p_begin
-        return [r_col, fs](const std::vector<double>& b) {
-            const int pk = FeatureMarks::detect_p_peak(b, r_col);
-            return FeatureMarks::compute_p_begin(b, pk, fs, r_col);
-            };
-    case AnchorType::T_PEAK:  // no detect_t_peak: bracket via t_begin/t_end
-        return [r_col, fs](const std::vector<double>& b) {
-            return FeatureMarks::compute_t_peak(b,
-                FeatureMarks::detect_t_begin(b, r_col, fs),
-                FeatureMarks::detect_t_end(b, r_col, fs));
-            };
+            case AnchorType::P_PEAK:  return [r_col](const std::vector<double>& b) { return FeatureMarks::detect_p_peak(b, r_col); };
+            case AnchorType::P_ONSET: // no pure detector: seed at P-peak, refine with compute_p_begin
+                return [r_col, fs](const std::vector<double>& b) {
+                    const int pk = FeatureMarks::detect_p_peak(b, r_col);
+                    return FeatureMarks::compute_p_begin(b, pk, fs, r_col);
+                    };
+            case AnchorType::T_PEAK:  // no detect_t_peak: bracket via t_begin/t_end
+                return [r_col, fs](const std::vector<double>& b) {
+                    return FeatureMarks::compute_t_peak(b,
+                        FeatureMarks::detect_t_begin(b, r_col, fs),
+                        FeatureMarks::detect_t_end(b, r_col, fs));
+                    };
     }
     return [](const std::vector<double>&) { return -1; };
 }
@@ -925,7 +925,9 @@ namespace {
 
 } // anonymous
 
-void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
+void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor) {
+    // Per-anchor ECG user markers are seeded into this anchor's set.
+    TemplateBin::MarkerSet& mk = b.marks(anchor);
 
     // ---- PPG ------------------------------------------------------------
     if (b.ppgTemplate.empty()) {
@@ -1011,8 +1013,9 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         const auto& ecg = chs[c]->ecgTemplate_raw;
         if (ecg.empty()) {
             b.bad_r_ch[c] = true;
-            b.p_peak_ch[c] = b.q_begin_ch[c] = b.r_peak_ch[c] = -1;
-            b.s_end_ch[c] = b.t_begin_ch[c] = b.t_end_ch[c] = -1;
+            mk.p_peak_ch[c] = mk.q_begin_ch[c] = -1;
+            mk.s_end_ch[c] = mk.t_begin_ch[c] = mk.t_end_ch[c] = mk.p_begin_ch[c] = -1;
+            b.r_peak_ch[c] = -1;
             b.p_peak_auto_ch[c] = b.q_begin_auto_ch[c] = b.r_peak_auto_ch[c] = -1;
             b.s_end_auto_ch[c] = b.t_begin_auto_ch[c] = b.t_end_auto_ch[c] = -1;
             continue;
@@ -1203,15 +1206,15 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate) {
         b.t_end_auto_ch[c] = te_auto;
         b.p_begin_auto_ch[c] = pb_auto;
 
-        // User fields: only seed when unset. R peak is auto-only so its user
-        // field is always overwritten with the fresh auto.
-        if (b.p_peak_ch[c] < 0) b.p_peak_ch[c] = p_auto;
-        if (b.q_begin_ch[c] < 0) b.q_begin_ch[c] = q_auto;
+        // User fields (per-anchor): only seed when unset for THIS anchor.
+        // R peak is auto-only (flat) so it's always overwritten with fresh auto.
+        if (mk.p_peak_ch[c] < 0)  mk.p_peak_ch[c] = p_auto;
+        if (mk.q_begin_ch[c] < 0) mk.q_begin_ch[c] = q_auto;
         b.r_peak_ch[c] = r_auto;
-        if (b.s_end_ch[c] < 0) b.s_end_ch[c] = s_auto;
-        if (b.t_begin_ch[c] < 0) b.t_begin_ch[c] = tp_auto;
-        if (b.t_end_ch[c] < 0) b.t_end_ch[c] = te_auto;
-        if (b.p_begin_ch[c] < 0) b.p_begin_ch[c] = pb_auto;
+        if (mk.s_end_ch[c] < 0)   mk.s_end_ch[c] = s_auto;
+        if (mk.t_begin_ch[c] < 0) mk.t_begin_ch[c] = tp_auto;
+        if (mk.t_end_ch[c] < 0)   mk.t_end_ch[c] = te_auto;
+        if (mk.p_begin_ch[c] < 0) mk.p_begin_ch[c] = pb_auto;
     }
 
 

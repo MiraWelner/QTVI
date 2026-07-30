@@ -75,24 +75,44 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) return;
 
-    // Header layout: 1 scalar (sleep epoch length) + 36 upsampled sizes + 36 raw sizes + 36 native rates + 36 upsampled rates + 1 sleep count.
-    constexpr int n_fields = 1 + 4 * NUM_CHANNELS + 1;
-    static_assert(FILE_HEADER_SIZE == n_fields * 4, "FILE_HEADER_SIZE must match 1 + 4*N + 1 slot count");
+    // Header layout (v1, 592 bytes): version + n_channels + sleep-epoch length,
+    // then 36 upsampled sizes, 36 raw sizes, 36 native rates, 36 upsampled rates,
+    // and 1 sleep count. 'version' and 'n_channels' were added at the front, so
+    // every per-channel array sits 2 slots (8 bytes) past the old 584-byte layout.
+    constexpr int n_fields = 2 + 1 + 4 * NUM_CHANNELS + 1;   // version,n_channels + old layout = 148
+    static_assert(FILE_HEADER_SIZE == n_fields * 4,
+        "FILE_HEADER_SIZE must match version + n_channels + sleep + 4*N + sleep_count");
 
     uint32_t raw32[n_fields] = {};
     file.read(reinterpret_cast<char*>(raw32), sizeof(raw32));
     file.close();
 
-    double sleepEpoch = static_cast<double>(raw32[0]);
+    const uint32_t header_version = raw32[0];               // offset 0
+    const uint32_t n_channels = raw32[1];               // offset 4
+    if (header_version != BIN_HEADER_VERSION || static_cast<int>(n_channels) != NUM_CHANNELS) {
+        // Legacy (pre-version) bins began directly with the sleep-epoch length
+        // and have no version/n_channels, so their fields would be misread.
+        // Refuse loudly rather than plot garbage; regenerate with file_to_bin.
+        QMessageBox::warning(this, "Unsupported .bin format",
+            QString("Expected header version %1 with %2 channels, but got "
+                "version=%3, n_channels=%4.\nThis .bin predates the header "
+                "change - re-run file_to_bin to regenerate it.")
+            .arg(BIN_HEADER_VERSION).arg(NUM_CHANNELS)
+            .arg(header_version).arg(n_channels));
+        return;
+    }
+
+    double sleepEpoch = static_cast<double>(raw32[2]);      // offset 8
     m_sleepSR = (sleepEpoch > 0) ? (1.0 / sleepEpoch) : 0;
 
-    constexpr int kSizesRawBase = 1 + NUM_CHANNELS;
+    constexpr int kSizesUpBase = 3;                     // after version, n_channels, sleep_epoch
+    constexpr int kSizesRawBase = kSizesUpBase + NUM_CHANNELS;
     constexpr int kNativeRatesBase = kSizesRawBase + NUM_CHANNELS;
     constexpr int kUpRatesBase = kNativeRatesBase + NUM_CHANNELS;
     constexpr int kSleepCountIdx = kUpRatesBase + NUM_CHANNELS;
 
     for (int i = 0; i < NUM_CHANNELS; ++i) {
-        upsampled_channel_sizes[i] = raw32[1 + i];
+        upsampled_channel_sizes[i] = raw32[kSizesUpBase + i];
         raw_channel_sizes[i] = raw32[kSizesRawBase + i];
         std::memcpy(&channel_native_rates[i], &raw32[kNativeRatesBase + i], sizeof(float));
         std::memcpy(&channel_upsampled_rates[i], &raw32[kUpRatesBase + i], sizeof(float));
@@ -191,6 +211,20 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     }
     const uint64_t sleepByteOffset = running;
 
+    // Raw (t,v) x-values are absolute Unix-epoch milliseconds (channel 0,
+    // sample 0 is the recording start). Convert to seconds-from-start so the
+    // raw scatter shares the upsampled block's index/rate time axis. Legacy
+    // bins (x already in seconds, no epoch anchor) pass through unchanged.
+    double recStartEpochMs = 0.0;
+    if (upsampled_channel_sizes[CH_TIMESTAMP] > 0) {
+        file.seek(FILE_HEADER_SIZE + chanUpOffset[CH_TIMESTAMP] * sizeof(double));
+        file.read(reinterpret_cast<char*>(&recStartEpochMs), sizeof(double));
+    }
+    const bool rawIsEpochMs = (recStartEpochMs > 1.0e9);   // plausible epoch(ms) => new format
+    auto rawToLocalSec = [recStartEpochMs, rawIsEpochMs](double t) -> double {
+        return rawIsEpochMs ? (t - recStartEpochMs) / 1000.0 : t;
+        };
+
 
     auto loadSignal = [&](QVector<double>& dest, int chIdx) {
         const double rate = channel_upsampled_rates[chIdx];
@@ -247,7 +281,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         uint64_t lo = 0, hi = totalPairs;
         while (lo < hi) {
             const uint64_t mid = (lo + hi) / 2;
-            if (pairTimeAt(mid) < chunkStartT) lo = mid + 1; else hi = mid;
+            if (rawToLocalSec(pairTimeAt(mid)) < chunkStartT) lo = mid + 1; else hi = mid;
         }
         const uint64_t firstPair = lo;
         if (firstPair >= totalPairs) return;
@@ -271,12 +305,12 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
             if (got <= 0) break;
             const uint64_t gotPairs = static_cast<uint64_t>(got) / 16;
             for (uint64_t k = 0; k < gotPairs; ++k) {
-                const double t = buf[k * 2];
-                if (t >= chunkEndT) { done = true; break; }
+                const double ts = rawToLocalSec(buf[k * 2]);   // epoch-ms -> s from start
+                if (ts >= chunkEndT) { done = true; break; }
                 // Store chunk-local x (subtract chunk start), matching the
                 // upsampled block, which the renderer plots at index/rate =
                 // chunk-local seconds. current_start_time resets to 0 per chunk.
-                dest.append(QPointF(t - chunkStartT, buf[k * 2 + 1]));
+                dest.append(QPointF(ts - chunkStartT, buf[k * 2 + 1]));
             }
             remaining -= gotPairs;
             if (gotPairs < thisBlock) break;   // short read = EOF

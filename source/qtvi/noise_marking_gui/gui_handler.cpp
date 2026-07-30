@@ -460,14 +460,15 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
                 const QString sigName = v->property("signalName").toString();
                 if (sigName.isEmpty()) return;
                 const double nativeHz = v->property("nativeHz").toDouble();
+                const double upHz = v->property("upHz").toDouble();
                 const double pxPerSec = (visible_window_size > 0.0)
                     ? v->chart()->plotArea().width() / visible_window_size : 0.0;
                 const double pxPerSample = (nativeHz > 0.0) ? pxPerSec / nativeHz : 0.0;
                 if (v->property("bpm").isValid())
                     v->chart()->setTitle(get_chart_title(sigName, nativeHz, pxPerSample,
-                        v->property("bpm").toDouble()));
+                        v->property("bpm").toDouble(), upHz));            // + upHz
                 else
-                    v->chart()->setTitle(get_chart_title(sigName, nativeHz, pxPerSample));
+                    v->chart()->setTitle(get_chart_title(sigName, nativeHz, pxPerSample, -1.0, upHz));
             });
     }
 

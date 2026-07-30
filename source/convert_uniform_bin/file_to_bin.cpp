@@ -385,7 +385,7 @@ namespace {
     // is this channel's own target rate from config; it is stamped into the
     // per-channel upsample-rate header block via upRateOut.
     void edf_to_bin(int handle, int idx, long long n,
-        double old_rate, double finalSamplingRate,
+        double old_rate, double finalSamplingRate, double startEpochMs,
         std::ofstream& out,
         uint32_t& sizeUpOut, uint32_t& sizeRawOut,
         float& nativeRateOut, float& upRateOut)
@@ -404,9 +404,9 @@ namespace {
         out.write(reinterpret_cast<const char*>(up.data()), up.size() * 8);
         sizeUpOut = (uint32_t)up.size();
 
-        const double dt = (old_rate > 0.0) ? (1.0 / old_rate) : 0.0;
+        const double dtMs = (old_rate > 0.0) ? (1000.0 / old_rate) : 0.0;
         for (size_t k = 0; k < raw.size(); ++k) {
-            double pair[2] = { static_cast<double>(k) * dt, raw[k] };
+            double pair[2] = { startEpochMs + static_cast<double>(k) * dtMs, raw[k] };
             out.write(reinterpret_cast<const char*>(pair), 16);
         }
         sizeRawOut = (uint32_t)raw.size();
@@ -416,7 +416,7 @@ namespace {
 
     void write_synthetic_timestamp(std::ofstream& out,
         double durationSec, double nativeRate,
-        double finalSamplingRate,
+        double finalSamplingRate, double startEpochMs,
         uint32_t& sizeUpOut, uint32_t& sizeRawOut,
         float& nativeRateOut, float& upRateOut)
     {
@@ -425,17 +425,19 @@ namespace {
             return;
         }
 
+        // Upsampled block: absolute Unix-epoch milliseconds on the ECG target grid.
         const size_t upLen = (size_t)std::ceil(durationSec * finalSamplingRate);
         std::vector<double> up(upLen);
-        const double dtUp = 1.0 / finalSamplingRate;
-        for (size_t k = 0; k < upLen; ++k) up[k] = (double)k * dtUp;
+        const double dtUpMs = 1000.0 / finalSamplingRate;
+        for (size_t k = 0; k < upLen; ++k) up[k] = startEpochMs + (double)k * dtUpMs;
         out.write(reinterpret_cast<const char*>(up.data()), up.size() * 8);
         sizeUpOut = (uint32_t)up.size();
 
+        // Raw block: same epoch-ms axis at the native grid.
         const size_t rawLen = (size_t)std::floor(durationSec * nativeRate) + 1;
-        const double dtRaw = 1.0 / nativeRate;
+        const double dtRawMs = 1000.0 / nativeRate;
         for (size_t k = 0; k < rawLen; ++k) {
-            const double t = (double)k * dtRaw;
+            const double t = startEpochMs + (double)k * dtRawMs;
             double pair[2] = { t, t };
             out.write(reinterpret_cast<const char*>(pair), 16);
         }
@@ -453,6 +455,10 @@ namespace {
         uint32_t sleep_size)
     {
         out.seekp(0);
+        uint32_t header_version = BIN_HEADER_VERSION;   // offset 0
+        uint32_t n_channels = (uint32_t)NUM_CHANNELS; // offset 4
+        out.write(reinterpret_cast<const char*>(&header_version), 4);
+        out.write(reinterpret_cast<const char*>(&n_channels), 4);
         uint32_t sleep_state_len = (uint32_t)cfg.sleepstate_length;
         out.write(reinterpret_cast<const char*>(&sleep_state_len), 4);
         out.write(reinterpret_cast<const char*>(sizes_up), NUM_CHANNELS * 4);
@@ -739,6 +745,82 @@ namespace {
         }
     }
 
+
+    // ---------- absolute time anchoring (Unix epoch milliseconds) ----------
+
+    // Days since 1970-01-01 for a civil date (proleptic Gregorian).
+    long long days_from_civil(int y, int m, int d) {
+        y -= (m <= 2);
+        const int era = (y >= 0 ? y : y - 399) / 400;
+        const unsigned yoe = (unsigned)(y - era * 400);
+        const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+        const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        return (long long)era * 146097 + (long long)doe - 719468;
+    }
+
+    // Recording start as Unix-epoch MILLISECONDS from the EDF header.
+    // NOTE: EDF stores wall-clock with no timezone; we treat it as UTC. If the
+    // EDFs are in local time the epoch is offset by the TZ. subsecond is
+    // edflib's units of 100 ns (0..9,999,999).
+    double edf_start_epoch_ms(const edf_hdr_struct* hdr) {
+        if (hdr->startdate_year < 1970) {
+            std::cerr << "WARNING: EDF start year " << hdr->startdate_year
+                << " looks invalid; epoch anchor set to 0\n";
+            return 0.0;
+        }
+        const long long days = days_from_civil(hdr->startdate_year,
+            hdr->startdate_month,
+            hdr->startdate_day);
+        const double sec = (double)days * 86400.0
+            + hdr->starttime_hour * 3600.0
+            + hdr->starttime_minute * 60.0
+            + hdr->starttime_second
+            + (double)hdr->starttime_subsecond / 1e7;
+        return sec * 1000.0;
+    }
+
+    // First parseable "System TimeStamp UTC" (fallback "Monitor TimeStamp") of a
+    // .dat as Unix-epoch ms. Returns 0.0 (and warns) if none is found -- the file
+    // then carries an elapsed-from-zero axis rather than an absolute one.
+    double dat_start_epoch_ms(const std::filesystem::path& path) {
+        std::ifstream in(path);
+        if (!in) return 0.0;
+        std::vector<std::string> hdrs = find_real_header(in);
+        if (hdrs.empty()) return 0.0;
+
+        int tsCol = -1;
+        for (int i = 0; i < (int)hdrs.size(); ++i)
+            if (contains(hdrs[i], "System TimeStamp UTC")) { tsCol = i; break; }
+        if (tsCol < 0)
+            for (int i = 0; i < (int)hdrs.size(); ++i)
+                if (contains(hdrs[i], "Monitor TimeStamp")) { tsCol = i; break; }
+        if (tsCol < 0) {
+            std::cerr << "WARNING: no UTC timestamp column in "
+                << path.filename().string() << "; epoch anchor set to 0\n";
+            return 0.0;
+        }
+
+        std::string line;
+        while (std::getline(in, line)) {
+            if (line.empty()) continue;
+            std::vector<std::string> cells = parse_csv_row(line);
+            if (tsCol >= (int)cells.size() || cells[tsCol].empty()) continue;
+            int d = 0, mo = 0, y = 0, hh = 0, mm = 0, ss = 0, ms = 0;
+            // CHAOS "System TimeStamp UTC" format is DD-MM-YYYY HH:MM:SS.mmm
+            if (std::sscanf(cells[tsCol].c_str(), "%d-%d-%d %d:%d:%d.%d",
+                &d, &mo, &y, &hh, &mm, &ss, &ms) >= 6 ||
+                std::sscanf(cells[tsCol].c_str(), "%d-%d-%d %d:%d:%d",
+                    &d, &mo, &y, &hh, &mm, &ss) == 6) {
+                const long long days = days_from_civil(y, mo, d);
+                const double sec = (double)days * 86400.0 + hh * 3600.0 + mm * 60.0 + ss + ms / 1000.0;
+                return sec * 1000.0;
+            }
+        }
+        std::cerr << "WARNING: could not parse any UTC timestamp in "
+            << path.filename().string() << "; epoch anchor set to 0\n";
+        return 0.0;
+    }
+
 }   // anonymous namespace
 
 // ============================================================================
@@ -772,6 +854,8 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
 
     EdfSignalMap sigmap = build_edf_channel_map(hdr.get(), cfg);
 
+    const double startEpochMs = edf_start_epoch_ms(hdr.get());
+
     uint32_t sizes_up[NUM_CHANNELS] = {};
     uint32_t sizes_raw[NUM_CHANNELS] = {};
     float    native_rates[NUM_CHANNELS] = {};
@@ -788,7 +872,7 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
         if (sigmap[CH_ECG1] >= 0 && tsRate > 0.0) {
             tsDur = (double)edf_samples(hdr.get(), sigmap[CH_ECG1]) / tsRate;
         }
-        write_synthetic_timestamp(out, tsDur, tsRate, cfg.ecg_upsample_rate,
+        write_synthetic_timestamp(out, tsDur, tsRate, cfg.ecg_upsample_rate, startEpochMs,
             sizes_up[CH_TIMESTAMP], sizes_raw[CH_TIMESTAMP],
             native_rates[CH_TIMESTAMP], up_rates[CH_TIMESTAMP]);
     }
@@ -800,7 +884,7 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
         double upRate = 0.0) {
             int chIdx = sigmap[ch];
             long long n = (chIdx < 0) ? 0 : edf_samples(hdr.get(), chIdx);
-            edf_to_bin(hdr->handle, chIdx, n, rawRate, upRate, out,
+            edf_to_bin(hdr->handle, chIdx, n, rawRate, upRate, startEpochMs, out,
                 sizes_up[ch], sizes_raw[ch], native_rates[ch], up_rates[ch]);
         };
 
@@ -901,6 +985,8 @@ void make_binfile_dat(const std::filesystem::path& path,
     }
     PrescannedDat prescan = prescan_dat_columns(path);
 
+    const double startEpochMs = dat_start_epoch_ms(path);
+
     // Resample a channel to its target rate using ONLY its real populated
     // samples, placed at their true times. Linear interpolation between
     // consecutive real samples. Avoids the "fake plateau" bug from treating
@@ -968,8 +1054,14 @@ void make_binfile_dat(const std::filesystem::path& path,
             // block is built, so the upsampled and raw blocks share one clock.
             fix_double_rate_regions(rawRowIdx, row_rate, nativeHz);
 
-            std::vector<double> up =
-                resample_from_sparse(rawValues, rawRowIdx, prescan.totalRows, upHz);
+            // Reconstruct a dense native-rate signal from the sparse column
+            // (linear fill over gaps via resample_from_sparse targeting the
+            // native rate), then polyphase-upsample native -> target, matching
+            // the EDF path (edf_to_bin -> upsample). No fallback: an unfactorable
+            // ratio throws from upsample(), same as EDF.
+            std::vector<double> dense =
+                resample_from_sparse(rawValues, rawRowIdx, prescan.totalRows, nativeHz);
+            std::vector<double> up = upsample(dense, nativeHz, upHz);
 
             if (up.empty()) {
                 double v = -1.0;
@@ -987,9 +1079,9 @@ void make_binfile_dat(const std::filesystem::path& path,
             // has already corrected rawRowIdx for 2x packing while leaving genuine
             // gaps open, so row index is the single source of truth: the raw
             // scatter now lands exactly on the upsampled trace everywhere.
-            const double dt = (row_rate > 0.0) ? (1.0 / row_rate) : 0.0;
+            const double dtMs = (row_rate > 0.0) ? (1000.0 / row_rate) : 0.0;
             for (size_t k = 0; k < rawValues.size(); ++k) {
-                const double t = (double)rawRowIdx[k] * dt;
+                const double t = startEpochMs + (double)rawRowIdx[k] * dtMs;
                 double pair[2] = { t, rawValues[k] };
                 out.write(reinterpret_cast<const char*>(pair), 16);
             }
@@ -1006,7 +1098,7 @@ void make_binfile_dat(const std::filesystem::path& path,
     {
         const double durationSec = (row_rate > 0.0)
             ? (double)prescan.totalRows / row_rate : 0.0;
-        write_synthetic_timestamp(out, durationSec, row_rate, cfg.ecg_upsample_rate,
+        write_synthetic_timestamp(out, durationSec, row_rate, cfg.ecg_upsample_rate, startEpochMs,
             sizes_up[CH_TIMESTAMP], sizes_raw[CH_TIMESTAMP],
             native_rates[CH_TIMESTAMP], up_rates[CH_TIMESTAMP]);
     }

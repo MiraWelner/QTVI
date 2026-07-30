@@ -9,22 +9,25 @@
  *         header so a consumer can reconstruct each channel's upsampled
  *         time axis.
  *
- *   584-byte header (146 x 32-bit fields):
+ *   592-byte header (148 x 32-bit fields):
  *
- *     Offset   0: sleep_state_len (uint32)  sleep-stage epoch length in seconds (e.g. 30 s)
+ *     Offset   0: header_version  (uint32)  = BIN_HEADER_VERSION (currently 1)
+ *     Offset   4: n_channels      (uint32)  = NUM_CHANNELS (currently 36)
+ *     Offset   8: sleep_state_len (uint32)  sleep-stage epoch length in seconds (e.g. 30 s)
  *
- *     Offset   4: upsampled sizes       35 x uint32  (size_<chan>)
- *     Offset 144: raw-pair sizes        35 x uint32  (size_<chan>_raw, counts PAIRS)
- *     Offset 284: native sampling rates 35 x float32 (Hz)
+ *     Offset  12: upsampled sizes       36 x uint32  (size_<chan>)
+ *     Offset 156: raw-pair sizes        36 x uint32  (size_<chan>_raw, counts PAIRS)
+ *     Offset 300: native sampling rates 36 x float32 (Hz)
  *                 0.0 = channel absent; negative values never used.
- *     Offset 424: upsampled rates       35 x float32 (Hz)
+ *     Offset 444: upsampled rates       36 x float32 (Hz)
  *                 0.0 = channel absent (matches a missing-channel placeholder).
- *     Offset 564: size_sleep            (uint32)
+ *     Offset 588: size_sleep            (uint32)
  *
- *   Header size check: 1 + 35 + 35 + 35 + 35 + 1 = 146 fields x 4 bytes = 584 bytes
+ *   Header size check: 2 + 1 + 36 + 36 + 36 + 36 + 1 = 148 fields x 4 bytes = 592 bytes
+ *   (2 = version + n_channels)
  *
  *   Channel index order (35 slots, identical across upsampled/raw/native-rate/upsample-rate blocks):
- *      0: seconds from start of recording           1: ecg_1
+ *      0: Unix epoch milliseconds (absolute)           1: ecg_1
  *      2: ecg_2                                     3: ecg_3
  *      4: ppg                                       5: accel_x
  *      6: accel_y                                   7: accel_z
@@ -48,6 +51,7 @@
  * @date   2026-07-02
  */
 
+#include <cstdint>
 #include <filesystem>
 #include "config_entry.hpp"   // config_entry
 
@@ -55,8 +59,15 @@
  // Public constants
  // ============================================================================
 inline constexpr int          NUM_CHANNELS = 36;
-inline constexpr int          NUM_HEADER_FIELDS = 1 + 4 * NUM_CHANNELS + 1; // = 142
-inline constexpr std::streamoff HEADER_SIZE = NUM_HEADER_FIELDS * 4;        // = 568
+// On-disk header format version, written as a uint32 at offset 0 so future
+// readers can detect layout changes (e.g. a larger slot count). Bump when
+// the header or channel layout changes incompatibly.
+inline constexpr uint32_t     BIN_HEADER_VERSION = 1;
+// Scalar fields: version, n_channels, sleep_state_len, size_sleep (4),
+// plus 4 per-channel arrays (upsampled sizes, raw sizes, native rates,
+// upsampled rates). 4 + 4*36 = 148 fields x 4 bytes = 592 bytes.
+inline constexpr int          NUM_HEADER_FIELDS = 4 + 4 * NUM_CHANNELS; // = 148
+inline constexpr std::streamoff HEADER_SIZE = NUM_HEADER_FIELDS * 4;    // = 592
 
 // Channel indices (one source of truth, used throughout file_to_bin and
 // any consumer that needs to address channels by name).

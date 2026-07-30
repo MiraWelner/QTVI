@@ -217,7 +217,7 @@ static void runTemplateMarking(const config_entry& cfg,
         // not freeze. The finalize worker is joined inside the same thread
         // (keeps the peakResults read race-free), and a modal busy dialog
         // keeps the UI responsive until the rebuild finishes.
-        QProgressDialog busy(QStringLiteral("Building Q-aligned templates\xE2\x80\xA6"),
+        QProgressDialog busy(QStringLiteral("Aligning around new anchor\xE2\x80\xA6"),
             QString(), 0, 0, nullptr);
         busy.setWindowModality(Qt::ApplicationModal);
         busy.setCancelButton(nullptr);

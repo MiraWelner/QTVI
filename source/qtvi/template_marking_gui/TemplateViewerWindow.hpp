@@ -28,6 +28,10 @@ public:
     // Total passes in the cycle (R + all anchors); controller sets this so the
     // finish handler knows when to stop emitting reloads. Default 2 = old R/Q.
     void setAnchorPassCount(int n) { m_anchorPassCount = n; }
+    // Which AnchorType this pass is marking. Controller sets it before
+    // loadSubject; all per-anchor marker reads/writes use it. Defaults to R.
+    void setCurrentAnchor(AnchorType a) { m_currentAnchor = a; }
+    AnchorType currentAnchor() const { return m_currentAnchor; }
 
 signals:
     void finished();
@@ -106,6 +110,7 @@ private:
     int  m_anchorStep = -1;        // -1 = R pass; 0..N-1 = anchor index
     int  m_anchorPassCount = 2;    // R + anchors; controller overrides
     QString m_anchorLabel = "R";   // shown in the top bar next to the subject id
+    AnchorType m_currentAnchor = AnchorType::R_PEAK;   // which anchor's markers this pass edits
     bool m_showEcgMarkers = false;
     bool m_showPpgMarkers = false;
     bool m_showAbpMarkers = false;

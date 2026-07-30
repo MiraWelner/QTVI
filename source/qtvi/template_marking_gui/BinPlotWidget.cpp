@@ -113,6 +113,7 @@ namespace {
     }
     const char* markerShortLabel(int m) {
         switch (m) {
+        case BinPlotWidget::EcgPBegin:   return "P beg";
         case BinPlotWidget::EcgPPeak:    return "P peak";
         case BinPlotWidget::EcgQBegin:   return "Q beg";
         case BinPlotWidget::EcgRPeak:    return "R peak";
@@ -860,19 +861,30 @@ void BinPlotWidget::captureGlyphSnapshot() {
     m_glyphs = GlyphSnapshot{};   // reset to all -1 / false
 
     if ((int)m_ecg.size() >= 3) {
-        auto e = FeatureMarks::compute_ecg_glyphs(m_ecg,
-            m_markers[EcgPPeak], m_markers[EcgQBegin],
-            m_markers[EcgSEnd], m_markers[EcgTBegin] /*= T begin*/, m_markers[EcgTEnd],
-            m_sampleRate);
-        m_glyphs.ecgPPeak = e.p_peak_glyph;
-        m_glyphs.ecgQ = e.q_begin_glyph;
+        const int N = (int)m_ecg.size();
+        // Frozen (own-bar) glyphs: read from the load-time auto positions, NOT
+        // the live markers, so dragging a bar leaves its X where detection put
+        // it. Fall back to the bar only if no auto value was supplied (-1).
+        auto frozen = [&](int autoVal, int barVal) {
+            const int v = (autoVal >= 0) ? autoVal : barVal;
+            return (v >= 0 && v < N) ? v : -1;
+            };
+        m_glyphs.ecgPBegin = frozen(m_ecgAuto.pBegin, m_markers[EcgPBegin]);
+        m_glyphs.ecgPPeak = frozen(m_ecgAuto.pPeak, m_markers[EcgPPeak]);
+        m_glyphs.ecgQ = frozen(m_ecgAuto.qBegin, m_markers[EcgQBegin]);
+        m_glyphs.ecgS = frozen(m_ecgAuto.sEnd, m_markers[EcgSEnd]);
+        m_glyphs.ecgTend = frozen(m_ecgAuto.tEnd, m_markers[EcgTEnd]);
+
         // R is NEVER autodetected: draw it at the passed-in R marker
         // (m_markers[EcgRPeak] = r_peak_ch = r_col, straight from peak-finding
         // through alignment). No argmax, no compute_r_wave, no window search.
         m_glyphs.ecgRPeak = m_markers[EcgRPeak];
-        m_glyphs.ecgS = e.s_end_glyph;
-        m_glyphs.ecgTPeak = e.t_peak_glyph;   // computed T peak (max between T begin/end)
-        m_glyphs.ecgTend = e.t_end_glyph;     // T end glyph = the user's T-end marker
+
+        // Responsive (bracketed) glyph: T peak = extremum between T-begin and
+        // T-end. Recomputed live from the current markers so it tracks as those
+        // bars move. Q-peak/S-peak remain unused (-1), as before.
+        m_glyphs.ecgTPeak = FeatureMarks::compute_t_peak(
+            m_ecg, m_markers[EcgTBegin], m_markers[EcgTEnd]);
         m_glyphs.ecgQPeak = -1;
         m_glyphs.ecgSPeak = -1;
     }
@@ -938,6 +950,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             const double val = std::isnan(v[idx]) ? baseline : v[idx];
             glyph(xFromSample(idx, /*isEcg=*/true), plotY(val, yLo, yHi));
             };
+        g(m_glyphs.ecgPBegin);  // P begin (frozen)
         g(m_glyphs.ecgPPeak);   // P wave
         g(m_glyphs.ecgQ);       // Q onset
         g(m_glyphs.ecgRPeak);   // R wave

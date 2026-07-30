@@ -939,7 +939,8 @@ void noise_marking_gui::handle_data_plot() {
             serieses.append({ r.upsampled_data, r.color, &rawData });
         }
 
-        double nativeHz = r.sampleRate;   // fallback if no real raw
+        double nativeHz = r.sampleRate;
+        const double upHz = r.sampleRate;
         const bool hasRealRaw = rawData.size() >= 2
             && rawData.last().x() > rawData.first().x()
             && !(rawData.size() == 1 && rawData[0].x() == -1.0);
@@ -951,6 +952,7 @@ void noise_marking_gui::handle_data_plot() {
         const double pxPerSample = pxPerSec / nativeHz;
         r.chartView->setProperty("signalName", label);
         r.chartView->setProperty("nativeHz", nativeHz);
+        r.chartView->setProperty("upHz", r.sampleRate);
 
         const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
         renderWindowedChart(
@@ -999,7 +1001,7 @@ void noise_marking_gui::handle_data_plot() {
         if (label == "ACCEL") {
 
             r.chartView->setProperty("bpm", QVariant());
-            r.chartView->chart()->setTitle(get_chart_title(label, nativeHz, pxPerSample));
+            r.chartView->chart()->setTitle(get_chart_title(label, nativeHz, pxPerSample, -1.0, r.sampleRate));
 
             {
                 const char* names[] = { "X", "Y", "Z" };
@@ -1043,7 +1045,7 @@ void noise_marking_gui::handle_data_plot() {
             if (dur > 0.0) bpm = bpmPeaks.size() * 60.0 / dur;
         }
         r.chartView->setProperty("bpm", bpm);
-        r.chartView->chart()->setTitle(get_chart_title(label, nativeHz, pxPerSample, bpm));
+        r.chartView->chart()->setTitle(get_chart_title(label, nativeHz, pxPerSample, bpm, r.sampleRate));
 
         // Log every detected beat: value, the blanking/threshold in effect,
         // which annotation (if any) covers it, its post-arrhythmia tag, and

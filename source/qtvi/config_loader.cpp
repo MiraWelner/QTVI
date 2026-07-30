@@ -27,6 +27,25 @@
 static const std::string CONFIG_PATH = "config.csv";
 
 namespace {
+    static double stod_or_zero(const std::string& s) {
+        if (s.empty()) return 0.0;
+        try { return std::stod(s); }
+        catch (...) { return 0.0; }
+    }
+
+    static int stoi_or_default(const std::string& s, int dflt) {
+        if (s.empty()) return dflt;
+        try { return std::stoi(s); }
+        catch (...) { return dflt; }
+    }
+
+    static double stod_or_default(const std::string& s, double dflt) {
+        if (s.empty()) return dflt;
+        try { return std::stod(s); }
+        catch (...) { return dflt; }
+    }
+
+
     std::vector<std::string> parse_config_row(const std::string& line) {
         // The config file is a csv - this just is a util for loading a .csv row
         std::vector<std::string> fields;
@@ -169,12 +188,7 @@ bool load_config(int dataType, config_entry& out) {
         std::transform(rowName.begin(), rowName.end(), rowName.begin(), ::toupper);
         if (rowName != user_selected_dataset) continue;
 
-        auto stod_or_zero = [](const std::string& s) -> double {
-            if (s.empty()) return 0.0;
-            try { return std::stod(s); }
-            catch (...) { return 0.0; }
-            };
-
+        
         out.dataset_type = user_selected_dataset;
         out.main_file_extention = cell("main_file_extention");
         out.sleep_file_extention = cell("sleep_file_extention");
@@ -242,6 +256,32 @@ bool load_config(int dataType, config_entry& out) {
         out.input_path = cell("original_file_path");
         out.output_path = cell("output_folder");
         out.use_consensus_rpeak = parseBool(cell("use_consensus_rpeak"), true);
+
+        // --- Filtering options ---
+        // Notch: blank -> 0 (disabled). Only 0/50/60 are valid; anything else
+        // warns and falls back to disabled.
+        out.notch_filter_hz = stoi_or_default(cell("notch_filter_hz"), 0);
+        if (out.notch_filter_hz != 0 &&
+            out.notch_filter_hz != 50 &&
+            out.notch_filter_hz != 60) {
+            std::cerr << "WARNING: notch_filter_hz=" << out.notch_filter_hz
+                << " is not 50 or 60; disabling notch filter\n";
+            out.notch_filter_hz = 0;
+        }
+
+        // High-pass: blank -> documented default 0.5 (i.e. enabled at 0.5 Hz).
+        // An explicit 0 in the cell means disabled.
+        // NOTE: if a blank cell should instead mean *disabled*, change the
+        // default below from 0.5 to 0.0.
+        out.waveform_highpass_hz = stod_or_default(cell("waveform_highpass_hz"), 0.5);
+
+        // --- Subject demographics (stored only, ignored downstream for now) ---
+        out.age = stoi_or_default(cell("age"), 0);
+        out.sex = cell("sex");                       // stored verbatim
+        out.weight_kg = stod_or_default(cell("weight_kg"), 0.0);
+        out.height_cm = stod_or_default(cell("height_cm"), 0.0);
+        out.hr_rest = stoi_or_default(cell("hr_rest"), 0);
+        out.hr_max = stoi_or_default(cell("hr_max"), 0);
 
         apply_dataset_specific_channel_labels(out);
 

@@ -14,7 +14,6 @@
 #include <sstream>
 #include <QFile>
 #include <QCheckBox>
-#include <QLabel>
 #include <iomanip>
 #include <iostream>
 #include <cstdio>
@@ -113,9 +112,7 @@ TemplateViewerWindow::~TemplateViewerWindow() { delete ui; }
 
 void TemplateViewerWindow::setAnchorLabel(const QString& s) {
     m_anchorLabel = s;
-    // Reflect the anchor in the window title bar. Uses m_subjectId if loaded;
-    // loadSubject() sets the full title too, so this keeps it in sync if the
-    // anchor changes without a reload.
+    // Anchor shown in the window title bar (the UI's top bar).
     if (!m_subjectId.isEmpty())
         setWindowTitle(QString("Template Marking - %1  [%2]").arg(m_subjectId, s));
     else
@@ -191,12 +188,10 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     m_templateDir = QFileInfo(templatePath).absolutePath();
     m_subjectId = subjectId;
     m_sampleRate = sampleRateHz;
-    // Anchor shown in the window title bar (the UI's top bar).
     setWindowTitle(QString("Template Marking - %1  [%2]").arg(subjectId, m_anchorLabel));
     ui->subjectLabel->setText(subjectId);
     // Button reads "Finish" only on the final pass of the anchor cycle;
-    // every earlier pass reads "Finish and Next". currentPassIndex = R(0) or
-    // anchor step + 1.
+    // every earlier pass reads "Finish and Next".
     const int currentPassIndex = m_anchorStep + 1;
     const bool lastPass = (currentPassIndex + 1 >= m_anchorPassCount);
     ui->finishButton->setText(lastPass ? "Finish" : "Finish and Next");
@@ -232,7 +227,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     // Seed markers for every bin so per-subject global refs (which need
     // R/S and foot/peak positions across all bins) can be computed once
     // and stay stable across paging.
-    for (auto& b : m_bins) FeatureMarks::seed_all(b, m_sampleRate);
+    for (auto& b : m_bins) FeatureMarks::seed_all(b, m_sampleRate, currentAnchor());
 
     // If this subject was already marked in a previous session, restore
     // those marker positions from the single canonical marking file. If
@@ -243,7 +238,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     const bool markersReloaded = restoreMarkersFrom(consolidatedBinPath);
     fprintf(stderr, "[markers] %s for subject %s (%s pass)\n",
         markersReloaded ? "RELOADED prior markers" : "using FRESH auto-seed (no prior markers applied)",
-        m_subjectId.toStdString().c_str(), m_qAlignPass ? "q_align" : "r_align");
+        m_subjectId.toStdString().c_str(), m_anchorLabel.toStdString().c_str());
 
     computeGlobalRefs();
 
@@ -303,15 +298,21 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath) {
             // ECG per-channel user markers (copied raw, bounds-checked). R is
             // NOT copied: it's an auto-only anchor and must come from this
             // pass's own template r_col (seeded above), never from a saved file.
-            for (int c = 0; c < 3; ++c) {
-                d.p_begin_ch[c] = safeIdx(s.p_begin_ch[c], d.p_begin_ch[c], ecgLen[c]);
-                d.p_peak_ch[c] = safeIdx(s.p_peak_ch[c], d.p_peak_ch[c], ecgLen[c]);
-                d.q_begin_ch[c] = safeIdx(s.q_begin_ch[c], d.q_begin_ch[c], ecgLen[c]);
-                d.s_end_ch[c] = safeIdx(s.s_end_ch[c], d.s_end_ch[c], ecgLen[c]);
-                d.t_begin_ch[c] = safeIdx(s.t_begin_ch[c], d.t_begin_ch[c], ecgLen[c]);
-                d.t_end_ch[c] = safeIdx(s.t_end_ch[c], d.t_end_ch[c], ecgLen[c]);
-                d.bad_r_ch[c] = s.bad_r_ch[c];
+            // Copy every anchor's saved marker set (each independent), bounds-
+            // checked per channel. R is NOT copied (auto-only, re-derived).
+            for (const auto& kv : s.markers_by_anchor) {
+                const TemplateBin::MarkerSet& sm = kv.second;
+                TemplateBin::MarkerSet& dm = d.marks(kv.first);
+                for (int c = 0; c < 3; ++c) {
+                    dm.p_begin_ch[c] = safeIdx(sm.p_begin_ch[c], dm.p_begin_ch[c], ecgLen[c]);
+                    dm.p_peak_ch[c] = safeIdx(sm.p_peak_ch[c], dm.p_peak_ch[c], ecgLen[c]);
+                    dm.q_begin_ch[c] = safeIdx(sm.q_begin_ch[c], dm.q_begin_ch[c], ecgLen[c]);
+                    dm.s_end_ch[c] = safeIdx(sm.s_end_ch[c], dm.s_end_ch[c], ecgLen[c]);
+                    dm.t_begin_ch[c] = safeIdx(sm.t_begin_ch[c], dm.t_begin_ch[c], ecgLen[c]);
+                    dm.t_end_ch[c] = safeIdx(sm.t_end_ch[c], dm.t_end_ch[c], ecgLen[c]);
+                }
             }
+            for (int c = 0; c < 3; ++c) d.bad_r_ch[c] = s.bad_r_ch[c];
             d.ppg_issue = s.ppg_issue;
             d.ppg_onset = safeIdx(s.ppg_onset, d.ppg_onset, ppgLen);
             d.ppg_p50 = safeIdx(s.ppg_p50, d.ppg_p50, ppgLen);
@@ -485,8 +486,8 @@ void TemplateViewerWindow::showPage() {
                 : b.artPulmTemplate;
 
             pw->setData(ppgN, ppgIqr, ecgN, ecgIqr,
-                b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
-                b.s_end_ch[c], b.t_begin_ch[c], b.t_end_ch[c],
+                b.marks(currentAnchor()).p_peak_ch[c], b.marks(currentAnchor()).q_begin_ch[c], b.r_peak_ch[c],
+                b.marks(currentAnchor()).s_end_ch[c], b.marks(currentAnchor()).t_begin_ch[c], b.marks(currentAnchor()).t_end_ch[c],
                 b.ppg_onset, b.ppg_p50, b.ppg_peak,
                 b.ppg_dicrotic, b.ppg_peak2, b.ppg_t80, b.ppg_end,
                 rPeak,
@@ -496,6 +497,13 @@ void TemplateViewerWindow::showPage() {
                 b.ppg_peak2_found_auto,
                 b.ppg_dicrotic_auto, b.ppg_dicrotic_found_auto,
                 b.ppg_end_auto, b.ppg_end_found_auto);
+
+            // Frozen ECG autodetect positions for the own-bar glyphs
+            // (P-begin, P-peak, Q-begin, S-end, T-end). These come from the
+            // *_auto_ch fields and do NOT move when the user drags a bar.
+            pw->setEcgAuto({ b.p_begin_auto_ch[c], b.p_peak_auto_ch[c],
+                             b.q_begin_auto_ch[c], b.s_end_auto_ch[c],
+                             b.t_end_auto_ch[c] });
 
             pw->setHasPPG(hasPPG);
 
@@ -588,7 +596,7 @@ void TemplateViewerWindow::captureCurrentPage() {
     QDir outDir(m_templateDir);
     const int page = m_currentPage;
     const QPixmap shot = ui->scrollContents->grab();
-    const QString pass = m_qAlignPass ? "_q" : "_r";   // R-aligned vs Q-aligned pass
+    const QString pass = "_" + m_anchorLabel;   // per-anchor: _R, _Q_ONSET, ...
     const QString fn = outDir.filePath(
         QString("%1_templates_page%2%3.png")
         .arg(m_subjectId)
@@ -825,9 +833,10 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
                 b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
                 b.s_end_auto_ch[c], b.t_end_auto_ch[c],
                 m_sampleRate);
+            const TemplateBin::MarkerSet& fmk = b.marks(currentAnchor());
             ftUser[c] = computeEcgFeatures(ecg,
-                b.p_peak_ch[c], b.q_begin_ch[c], b.r_peak_ch[c],
-                b.s_end_ch[c], b.t_end_ch[c],
+                fmk.p_peak_ch[c], fmk.q_begin_ch[c], b.r_peak_ch[c],
+                fmk.s_end_ch[c], fmk.t_end_ch[c],
                 m_sampleRate);
         }
 
@@ -835,6 +844,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
         //   s_end,  t_peak, t_end.
         int ecgAuto[3][9], ecgUser[3][9];
+        const TemplateBin::MarkerSet& umk = b.marks(currentAnchor());
         for (int c = 0; c < 3; ++c) {
             ecgAuto[c][0] = b.p_begin_auto_ch[c];
             ecgAuto[c][1] = b.p_peak_auto_ch[c];
@@ -845,15 +855,15 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             ecgAuto[c][6] = b.s_end_auto_ch[c];
             ecgAuto[c][7] = b.t_begin_auto_ch[c];
             ecgAuto[c][8] = b.t_end_auto_ch[c];
-            ecgUser[c][0] = b.p_begin_ch[c];
-            ecgUser[c][1] = b.p_peak_ch[c];
-            ecgUser[c][2] = b.q_begin_ch[c];
+            ecgUser[c][0] = umk.p_begin_ch[c];
+            ecgUser[c][1] = umk.p_peak_ch[c];
+            ecgUser[c][2] = umk.q_begin_ch[c];
             ecgUser[c][3] = ftUser[c].q_idx;
             ecgUser[c][4] = b.r_peak_ch[c];
             ecgUser[c][5] = ftUser[c].s_idx;
-            ecgUser[c][6] = b.s_end_ch[c];
-            ecgUser[c][7] = b.t_begin_ch[c];
-            ecgUser[c][8] = b.t_end_ch[c];
+            ecgUser[c][6] = umk.s_end_ch[c];
+            ecgUser[c][7] = umk.t_begin_ch[c];
+            ecgUser[c][8] = umk.t_end_ch[c];
         }
 
         // Pulse marker positions, order matching PPG_MARKERS / ABP_MARKERS etc.
@@ -968,26 +978,30 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     const std::string header = content.substr(0, nl);
     const std::string body = content.substr(nl);   // includes leading '\n'
 
-    if (!m_qAlignPass) {
-        // R pass: overwrite the canonical file with our _r-suffixed content.
+    const std::string suffix = "_" + m_anchorLabel.toStdString();  // _R, _Q_ONSET, _J_POINT, ...
+    if (m_anchorStep < 0) {
+        // R pass (first): overwrite the canonical file with _R-suffixed content.
         std::ofstream out(path.toStdString(), std::ios::trunc);
         if (!out) {
             fprintf(stderr, "[tmplcsv] cannot open %s for R-pass write\n", path.toStdString().c_str());
             return;
         }
-        out << suffixValueColumns(header, "_r") << body;
+        out << suffixValueColumns(header, suffix) << body;
         out.close();
-        fprintf(stderr, "[tmplcsv] wrote %s (R pass)\n", path.toStdString().c_str());
+        fprintf(stderr, "[tmplcsv] wrote %s (%s pass)\n",
+            path.toStdString().c_str(), m_anchorLabel.toStdString().c_str());
     }
     else {
-        // Q pass: build a Q-suffixed version of our content and zip it into
-        // the canonical file's existing rows.
-        std::string qFull = suffixValueColumns(header, "_q");
-        qFull.append(body);
-        if (zipCanonicalWithQ(path.toStdString(), qFull))
-            fprintf(stderr, "[tmplcsv] zipped Q columns into %s\n", path.toStdString().c_str());
+        // Any later anchor pass: zip this anchor's columns (suffix = anchor
+        // name) into the accumulating canonical file. zipCanonicalWithQ widens
+        // the file by one group per call, so all anchors accumulate.
+        std::string aFull = suffixValueColumns(header, suffix);
+        aFull.append(body);
+        if (zipCanonicalWithQ(path.toStdString(), aFull))
+            fprintf(stderr, "[tmplcsv] zipped %s columns into %s\n",
+                suffix.c_str(), path.toStdString().c_str());
         else
-            fprintf(stderr, "[tmplcsv] zip failed for %s -- R file kept as-is\n", path.toStdString().c_str());
+            fprintf(stderr, "[tmplcsv] zip failed for %s -- file kept as-is\n", path.toStdString().c_str());
     }
 }
 
@@ -1016,13 +1030,13 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
         const TemplateBin& b = m_bins[binIdx];
         for (auto* pw : m_binPlots[li]) {
             int c = pw->leadIndex();
-            pw->setMarker(BinPlotWidget::EcgPBegin, b.p_begin_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgPPeak, b.p_peak_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgQBegin, b.q_begin_ch[c]);
+            pw->setMarker(BinPlotWidget::EcgPBegin, b.marks(currentAnchor()).p_begin_ch[c]);
+            pw->setMarker(BinPlotWidget::EcgPPeak, b.marks(currentAnchor()).p_peak_ch[c]);
+            pw->setMarker(BinPlotWidget::EcgQBegin, b.marks(currentAnchor()).q_begin_ch[c]);
             pw->setMarker(BinPlotWidget::EcgRPeak, b.r_peak_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgSEnd, b.s_end_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgTBegin, b.t_begin_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgTEnd, b.t_end_ch[c]);
+            pw->setMarker(BinPlotWidget::EcgSEnd, b.marks(currentAnchor()).s_end_ch[c]);
+            pw->setMarker(BinPlotWidget::EcgTBegin, b.marks(currentAnchor()).t_begin_ch[c]);
+            pw->setMarker(BinPlotWidget::EcgTEnd, b.marks(currentAnchor()).t_end_ch[c]);
             pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
             pw->setMarker(BinPlotWidget::PpgPeak, b.ppg_peak);
             pw->setMarker(BinPlotWidget::PpgDicrotic, b.ppg_dicrotic);
@@ -1059,25 +1073,25 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         if (leadIdx < 0 || leadIdx > 2) return;
         auto ecgGet = [&](TemplateBin& tb) -> int {
             switch (marker) {
-            case BinPlotWidget::EcgPBegin: return tb.p_begin_ch[leadIdx];
-            case BinPlotWidget::EcgPPeak:  return tb.p_peak_ch[leadIdx];
-            case BinPlotWidget::EcgQBegin: return tb.q_begin_ch[leadIdx];
+            case BinPlotWidget::EcgPBegin: return tb.marks(currentAnchor()).p_begin_ch[leadIdx];
+            case BinPlotWidget::EcgPPeak:  return tb.marks(currentAnchor()).p_peak_ch[leadIdx];
+            case BinPlotWidget::EcgQBegin: return tb.marks(currentAnchor()).q_begin_ch[leadIdx];
             case BinPlotWidget::EcgRPeak:  return tb.r_peak_ch[leadIdx];
-            case BinPlotWidget::EcgSEnd:   return tb.s_end_ch[leadIdx];
-            case BinPlotWidget::EcgTBegin:  return tb.t_begin_ch[leadIdx];
-            case BinPlotWidget::EcgTEnd:   return tb.t_end_ch[leadIdx];
+            case BinPlotWidget::EcgSEnd:   return tb.marks(currentAnchor()).s_end_ch[leadIdx];
+            case BinPlotWidget::EcgTBegin:  return tb.marks(currentAnchor()).t_begin_ch[leadIdx];
+            case BinPlotWidget::EcgTEnd:   return tb.marks(currentAnchor()).t_end_ch[leadIdx];
             }
             return -1;
             };
         auto ecgSet = [&](TemplateBin& tb, int v) {
             switch (marker) {
-            case BinPlotWidget::EcgPBegin: tb.p_begin_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgPPeak:  tb.p_peak_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgQBegin: tb.q_begin_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgPBegin: tb.marks(currentAnchor()).p_begin_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgPPeak:  tb.marks(currentAnchor()).p_peak_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgQBegin: tb.marks(currentAnchor()).q_begin_ch[leadIdx] = v; break;
             case BinPlotWidget::EcgRPeak:  tb.r_peak_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgSEnd:   tb.s_end_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgTBegin:  tb.t_begin_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgTEnd:   tb.t_end_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgSEnd:   tb.marks(currentAnchor()).s_end_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgTBegin:  tb.marks(currentAnchor()).t_begin_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgTEnd:   tb.marks(currentAnchor()).t_end_ch[leadIdx] = v; break;
             }
             };
 
@@ -1323,7 +1337,7 @@ void TemplateViewerWindow::save_bin_and_csv() {
             + m_subjectId + "_template_markings.csv";
         const QString tmpPath = csvPath + ".tmp";
         writeTemplateMarkingsCsv(tmpPath.toStdString(), m_bins,
-            m_subjectId.toStdString(), m_sampleRate);
+            m_subjectId.toStdString(), m_sampleRate, currentAnchor());
         std::ifstream tin(tmpPath.toStdString());
         std::stringstream tbuf; tbuf << tin.rdbuf();
         tin.close();
@@ -1335,17 +1349,18 @@ void TemplateViewerWindow::save_bin_and_csv() {
         }
         const std::string tHeader = tcontent.substr(0, tnl);
         const std::string tBody = tcontent.substr(tnl);
-        if (!m_qAlignPass) {
+        const std::string tsuffix = "_" + m_anchorLabel.toStdString();
+        if (m_anchorStep < 0) {
             std::ofstream out(csvPath.toStdString(), std::ios::trunc);
             if (!out) throw std::runtime_error("cannot open for write: " + csvPath.toStdString());
-            out << suffixValueColumns(tHeader, "_r") << tBody;
+            out << suffixValueColumns(tHeader, tsuffix) << tBody;
             out.close();
         }
         else {
-            std::string qFull = suffixValueColumns(tHeader, "_q");
-            qFull.append(tBody);
-            if (!zipCanonicalWithQ(csvPath.toStdString(), qFull))
-                throw std::runtime_error("could not zip Q markings CSV into " + csvPath.toStdString());
+            std::string aFull = suffixValueColumns(tHeader, tsuffix);
+            aFull.append(tBody);
+            if (!zipCanonicalWithQ(csvPath.toStdString(), aFull))
+                throw std::runtime_error("could not zip " + tsuffix + " markings CSV into " + csvPath.toStdString());
         }
         std::cout << "Saved: " << csvPath.toStdString() << "\n";
         std::cout.flush();
@@ -1363,16 +1378,11 @@ void TemplateViewerWindow::save_bin_and_csv() {
     // appends _q columns to that same file.
     writeAlignedTemplateCsv();
 
-    // Anchor cycle: m_anchorStep is -1 on the R pass, then 0..N-2 for the
-    // anchor passes. There are m_anchorPassCount passes total (R + anchors).
-    // Keep emitting reload until the last pass, then finish. (The controller
-    // advances the anchor + reopens on each requestQAlignReload.)
-    // currentPassIndex: 0 for R, k+1 for anchor step k.
+    // Anchor cycle: emit reload until the last pass, then finish. The
+    // controller advances the anchor + reopens on each requestQAlignReload.
+    // currentPassIndex: 0 for R, anchor step + 1 for the anchor passes.
     const int currentPassIndex = m_anchorStep + 1;
     if (currentPassIndex + 1 < m_anchorPassCount) {
-        // more anchor passes remain: ask the controller to build the next one.
-        // Button keeps reading "Finish and Next"; final pass will read "Finish"
-        // (relabelled in loadSubject from m_anchorStep/m_anchorPassCount).
         emit requestQAlignReload();
         return;
     }
