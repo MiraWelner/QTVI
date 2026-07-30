@@ -70,16 +70,11 @@ public:
     enum class MarkScope { One, Ecg, All };
     enum class PlotMode { Line, Scatter };
     void setBeatLog(beat_log* log) { m_beatLog = log; }
-    void set_params_to_config_defaults(const config_entry& cfg) {
-        // Set the default values for the threshold and blanking period spinboxes based on the config entry.
-        m_cfg = cfg;
-    }
-    // Per-channel "Inverted Lead?" checkbox state (ecg_1_reverse/2/3 in the
-    // .ui). Public so callers (e.g. main.cpp, which destroys this dialog
-    // before running the peak-detection pipeline) can read the checkbox
-    // values out while the GUI is still alive and carry them forward.
-    // label is "ECG1"/"ECG2"/"ECG3"; PPG/ABP have no reverse box -> false.
     bool invertedForSignal(const QString& label) const;
+    void set_params_to_config_defaults(const config_entry& cfg) {
+        m_cfg = cfg;        // Set the default values for the threshold and blanking period spinboxes based on the config entry.
+		ui->notch_filter->setEnabled(m_cfg.notch_filter_hz != 0); //enable notch filter checkbox if the config entry has a non-zero notch filter frequency
+    }
 
 protected:
     //these override native QT event handlers which is why they are protected
@@ -115,6 +110,7 @@ private:
         const QVector<double>* upsampled_data = nullptr;
         const QVector<QPointF>* dataRaw = nullptr;   ///< raw (t, v) pairs, chunk-local seconds
         double sampleRate = 0.0;
+        double nativeRate = 0.0;   ///< config native rate (Hz), for the 'Original Frequency' label
         QColor  color;
     };
     struct ParamOverride {
@@ -182,7 +178,7 @@ private:
     PlotMode m_plotMode = PlotMode::Line;
 
     // checked = per-window autoscale (drift hidden)
-    bool m_filterBaselineDrift = false;
+    bool m_notchFilterEnabled = false;
 
     // --- Drag state ---
     bool     m_isDragging = false;
@@ -245,7 +241,7 @@ private:
     // --- Per-channel button helpers ---
     QPushButton* startButtonForSignal(const QString& label) const;
     QPushButton* stopButtonForSignal(const QString& label) const;
-    bool loadChunkFromFile(uint64_t chunkIndex);
+    bool loadChunkFromFile(uint64_t chunkIndex, bool resetScroll = true);
     void handle_data_plot();
     void determine_which_nonmarkable_charts_to_plot();
     void plot_nonmarkable(QChartView* view, const QString& title, const QList<markable_data_series>& serieses, double sampling_rate);

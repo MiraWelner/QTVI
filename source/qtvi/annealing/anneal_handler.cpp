@@ -684,22 +684,22 @@ namespace {
     }
 
     // Header layout MUST match write_header_and_close() in file_to_bin.cpp:
-     //   [uint32 sleep_state_len]
-     //   [NUM_CH x uint32 sizes_up]
-     //   [NUM_CH x uint32 sizes_raw]
-     //   [NUM_CH x float32 native_rates]
-     //   [NUM_CH x float32 up_rates]
-     //   [uint32 sleep_size]
-     // NUM_CH = 36 (file_to_bin NUM_CHANNELS). Channel slots per file_to_bin
-     // ChannelIdx: 0=timestamp, 1=ECG1, 2=ECG2, 3=ECG3, 4=PPG, ...
+//   [uint32 header_version]
+//   [uint32 n_channels]
+//   [uint32 sleep_state_len]
+//   [NUM_CH x uint32 sizes_up]
+//   [NUM_CH x uint32 sizes_raw]
+//   [NUM_CH x float32 native_rates]
+//   [NUM_CH x float32 up_rates]
+//   [uint32 sleep_size]
+// NUM_CH = 36 (file_to_bin NUM_CHANNELS). Channel slots per file_to_bin
+// ChannelIdx: 0=timestamp, 1=ECG1, 2=ECG2, 3=ECG3, 4=PPG, ...
     void read_data_bin(const std::filesystem::path& path,
         RawData& data, Extras& extras)
     {
         std::ifstream f(path, std::ios::binary);
         if (!f.is_open()) throw std::runtime_error("cannot open: " + path.string());
 
-        // Buffered I/O for throughput -- this file is read sequentially in
-        // full, so a large buffer cuts down on small-read syscalls.
         char read_buf[1 << 16];
         f.rdbuf()->pubsetbuf(read_buf, sizeof(read_buf));
 
@@ -708,16 +708,23 @@ namespace {
         f.seekg(0, std::ios::beg);
 
         constexpr int    NCH = 36;                       // file_to_bin NUM_CHANNELS
-        constexpr size_t NHF = 1 + 4 * NCH + 1;          // = 146 fields
-        constexpr size_t HDR = NHF * 4;                  // = 584 bytes
+        constexpr size_t NHF = 4 + 4 * NCH;              // version+n_channels+sleep_state_len+sleep_size + 4*36 = 148 fields
+        constexpr size_t HDR = NHF * 4;                  // = 592 bytes
         if (fileSize < HDR)
             throw std::runtime_error("bin too small (need " + std::to_string(HDR)
                 + "-byte header): " + path.string());
 
+        uint32_t header_version = 0, n_channels = 0;
         uint32_t sleep_state_len = 0, sleep_size = 0;
         std::vector<uint32_t> sizes_up(NCH), sizes_raw(NCH);
         std::vector<float>    native_rates(NCH), up_rates(NCH);
 
+        f.read(reinterpret_cast<char*>(&header_version), 4);
+        f.read(reinterpret_cast<char*>(&n_channels), 4);
+        if (header_version != 1 || n_channels != static_cast<uint32_t>(NCH))
+            throw std::runtime_error("unsupported .bin header (version=" +
+                std::to_string(header_version) + ", n_channels=" + std::to_string(n_channels) +
+                "); regenerate with file_to_bin: " + path.string());
         f.read(reinterpret_cast<char*>(&sleep_state_len), 4);
         f.read(reinterpret_cast<char*>(sizes_up.data()), NCH * 4);
         f.read(reinterpret_cast<char*>(sizes_raw.data()), NCH * 4);

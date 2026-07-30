@@ -7,7 +7,7 @@
 #include "gui_handler.h"
 #include "chart_utils.hpp"
 #include "annotation_types.hpp"
-#include "gui_handler.h"
+#include "notch_filter.hpp"
 
 #include <QFile>
 #include <QFileDialog>
@@ -198,7 +198,7 @@ void noise_marking_gui::handleBrowseFile() {
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 }
 
-bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
+bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll) {
     QFile file(m_binFilePath);
     if (!file.open(QIODevice::ReadOnly)) return false;
     current_chunk_index = chunkIndex;
@@ -326,6 +326,25 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
     loadSignal(m_temp, CH_TEMP);    loadSignal(m_marker, CH_MARKER);
     loadSignal(m_pacemaker, CH_PACEMAKER_EVENT);
 
+    // Powerline notch (config-driven Hz, toggled by the repurposed "Notch
+    // Filter" checkbox). Applied once per chunk load, zero-phase, so both the
+    // display and downstream peak detection see the same cleaned signal.
+    if (m_notchFilterEnabled && m_cfg.notch_filter_hz != 0) {
+        auto notch = [&](QVector<double>& sig, double rateHz) {
+            if (is_missing_signal(sig)) return;
+            std::vector<double> tmp(sig.begin(), sig.end());
+            tmp = notch_filter::apply(tmp, rateHz, m_cfg.notch_filter_hz);
+            sig = QVector<double>(tmp.begin(), tmp.end());
+            };
+        notch(m_ecg1, channel_upsampled_rates[CH_ECG1]);
+        notch(m_ecg2, channel_upsampled_rates[CH_ECG2]);
+        notch(m_ecg3, channel_upsampled_rates[CH_ECG3]);
+        notch(m_ppg, channel_upsampled_rates[CH_PPG]);
+        notch(m_abp, channel_upsampled_rates[CH_ABP]);
+        notch(m_art, channel_upsampled_rates[CH_ART]);
+        notch(m_artPulm, channel_upsampled_rates[CH_ART_PULM]);
+    }
+
     loadRaw(m_ecg1Raw, CH_ECG1);   loadRaw(m_ecg2Raw, CH_ECG2);
     loadRaw(m_ecg3Raw, CH_ECG3);   loadRaw(m_ppgRaw, CH_PPG);
     loadRaw(m_abpRaw, CH_ABP);    loadRaw(m_accelXRaw, CH_ACCEL_X);
@@ -352,8 +371,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
         file.read(reinterpret_cast<char*>(m_sleepStages.data()), count * sizeof(double));
     }
     file.close();
-    current_start_time = 0;
-
+    if (resetScroll) current_start_time = 0;
     m_activeChannels.clear();
     auto markActive = [this](const QString& label, const QVector<double>& data) {
         bool missing = is_missing_signal(data);
@@ -401,7 +419,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex) {
 
     updateMarkingButtons();
     ampogram();
-    handle_data_plot();
+    if (resetScroll) handle_data_plot();
     setupHypnogram();
     updateAmpogramCursor();
 

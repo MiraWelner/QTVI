@@ -18,7 +18,12 @@ public:
     ~TemplateViewerWindow();
 
     void loadSubject(const QString& templatePath, const QString& markingPath,
-        const QString& subjectId, double sampleRateHz);
+        const QString& subjectId, double sampleRateHz,
+        // Per-pulse-channel upsample rates (Hz). Default 0.0 = unknown, in
+        // which case BinPlotWidget::rateRatio() falls back to 1.0 -- the
+        // historical behavior from when every channel shared one rate.
+        double ppgRateHz = 0.0, double abpRateHz = 0.0,
+        double artRateHz = 0.0, double artPulmRateHz = 0.0);
 
     // Anchor cycle state. m_anchorStep: -1 = R pass; 0..N-1 index into the
     // controller's anchor sequence. m_qAlignPass is kept as a derived flag
@@ -89,7 +94,11 @@ private:
     QString m_templateDir;   // folder containing templates.bin/.csv (screenshot target)
     std::set<int> m_capturedPages;   // pages already screenshotted this subject
     QString m_subjectId;
-    double  m_sampleRate = 0.0;
+    double  m_sampleRate = 0.0;    // ECG rate; also feeds ECG-only feature/ms code below
+    double  m_ppgRateHz = 0.0;
+    double  m_abpRateHz = 0.0;
+    double  m_artRateHz = 0.0;
+    double  m_artPulmRateHz = 0.0;
 
     std::vector<BinPlotWidget*> m_allPlots;
     std::vector<std::vector<BinPlotWidget*>> m_binPlots;

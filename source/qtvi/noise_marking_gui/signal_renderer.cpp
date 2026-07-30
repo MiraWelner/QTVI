@@ -240,8 +240,11 @@ namespace {
             //for scaling, use median as the center, so the scaling is robust to noise
             std::vector<double> winVals;
             winVals.reserve(endIdx - startIdx);
-            for (int i = startIdx; i < endIdx; ++i)
-                winVals.push_back((*d.data)[i]);
+            for (int i = startIdx; i < endIdx; ++i) {
+                double v = (*d.data)[i];
+                if (std::isnan(v)) continue;
+                winVals.push_back(v);
+            }
             const double winEnd = currentStartTime + windowDuration;
             for (int i = firstRawAtOrAfter(*d.rawData, currentStartTime);
                 i < d.rawData->size(); ++i) {
@@ -262,6 +265,7 @@ namespace {
             if (plotSeries) pts.reserve(endIdx - startIdx);
             for (int i = startIdx; i < endIdx; ++i) {
                 const double raw = (*d.data)[i];
+                if (std::isnan(raw)) continue;   // gap: don't feed NaN to the OpenGL line
                 if (raw < gMin) gMin = raw;
                 if (raw > gMax) gMax = raw;
                 if (plotSeries) {
@@ -939,13 +943,11 @@ void noise_marking_gui::handle_data_plot() {
             serieses.append({ r.upsampled_data, r.color, &rawData });
         }
 
-        double nativeHz = r.sampleRate;
+        // "Original Frequency" comes straight from config (channel_native_rates,
+        // carried on r.nativeRate) -- not inferred from the raw span, which is
+        // wrong for gappy/mostly-absent channels (e.g. ART).
+        double nativeHz = (r.nativeRate > 0.0) ? r.nativeRate : r.sampleRate;
         const double upHz = r.sampleRate;
-        const bool hasRealRaw = rawData.size() >= 2
-            && rawData.last().x() > rawData.first().x()
-            && !(rawData.size() == 1 && rawData[0].x() == -1.0);
-        if (hasRealRaw)
-            nativeHz = (rawData.size() - 1) / (rawData.last().x() - rawData.first().x());
 
         const double pxPerSec = (visible_window_size > 0.0)
             ? r.chartView->chart()->plotArea().width() / visible_window_size : 0.0;
@@ -965,6 +967,20 @@ void noise_marking_gui::handle_data_plot() {
             m_plotMode == PlotMode::Line,
             yScaleForSignal(label));
 
+
+        if (label == "PPG") {
+            const QVector<double>& v = *r.upsampled_data;
+            double lo = 1e18, hi = -1e18; int nan = 0, n = 0;
+            for (double x : v) { if (std::isnan(x)) { ++nan; continue; } lo = std::min(lo, x); hi = std::max(hi, x); ++n; }
+            auto vAxes = r.chartView->chart()->axes(Qt::Vertical);
+            double amin = 0, amax = 0;
+            if (!vAxes.isEmpty()) if (auto* ya = qobject_cast<QValueAxis*>(vAxes.first())) { amin = ya->min(); amax = ya->max(); }
+            qDebug() << "PPG chunk n=" << n << "nan=" << nan << "data[" << lo << "," << hi << "]"
+                << "axis[" << amin << "," << amax << "]"
+                << "size=" << v.size() << "sr=" << r.sampleRate
+                << "fixed=" << m_fixedYRange.contains("PPG");
+        }
+
         // --- y-range: frozen (Fix Scale) wins; else chunk-wide pin when
         //     drift filtering is off; else the per-window autoscale that
         //     renderWindowedChart already applied. ---
@@ -975,24 +991,7 @@ void noise_marking_gui::handle_data_plot() {
                 if (auto* yAxis = qobject_cast<QValueAxis*>(vAxes.first()))
                     yAxis->setRange(fixedIt->first, fixedIt->second);   // no re-pad; use captured range as-is
         }
-        else if (!m_filterBaselineDrift) {
-            double glo = 1e9, ghi = -1e9;
-            for (const markable_data_series& s : serieses) {
-                if (s.data)
-                    for (double v : *s.data) { if (v < glo) glo = v; if (v > ghi) ghi = v; }
-                if (s.rawData)
-                    for (const QPointF& p : *s.rawData) {
-                        if (p.x() == -1.0) continue;    // skip the (-1,-1) sentinel
-                        if (p.y() < glo) glo = p.y();
-                        if (p.y() > ghi) ghi = p.y();
-                    }
-            }
-            auto vAxes = r.chartView->chart()->axes(Qt::Vertical);
-            if (!vAxes.isEmpty()) {
-                if (auto* yAxis = qobject_cast<QValueAxis*>(vAxes.first()))
-                    set_padded_y_range(yAxis, glo, ghi);   // reuse the same 5% padding helper
-            }
-        }
+        
 
         // ACCEL has no R-peaks: render the trace (done above), then log the accel
         // value at each ECG1 beat time into its own beat_log column, markType

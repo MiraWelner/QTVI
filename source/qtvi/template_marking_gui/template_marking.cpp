@@ -144,7 +144,9 @@ int main(int argc, char* argv[]) {
         std::cout.flush();
 
         QString templateFile = templatePath + "/" + s.file;
-        viewer.loadSubject(templateFile, markingPath, s.id, cfg.finalSamplingRate);
+        viewer.loadSubject(templateFile, markingPath, s.id, cfg.finalSamplingRate,
+            cfg.ppg_upsample_rate, cfg.abp_upsample_rate,
+            cfg.art_upsample_rate, cfg.art_pulm_upsample_rate);
         QEventLoop loop;
         QObject::connect(&viewer, &TemplateViewerWindow::finished,
             &loop, &QEventLoop::quit);

@@ -182,12 +182,18 @@ void TemplateViewerWindow::onPrevPage() {
 // Load subject
 // ========================================================================
 
-void TemplateViewerWindow::loadSubject(const QString& templatePath, const QString& markingPath, const QString& subjectId, double sampleRateHz) {
+void TemplateViewerWindow::loadSubject(const QString& templatePath, const QString& markingPath,
+    const QString& subjectId, double sampleRateHz,
+    double ppgRateHz, double abpRateHz, double artRateHz, double artPulmRateHz) {
 
     m_markingPath = markingPath;
     m_templateDir = QFileInfo(templatePath).absolutePath();
     m_subjectId = subjectId;
     m_sampleRate = sampleRateHz;
+    m_ppgRateHz = ppgRateHz;
+    m_abpRateHz = abpRateHz;
+    m_artRateHz = artRateHz;
+    m_artPulmRateHz = artPulmRateHz;
     setWindowTitle(QString("Template Marking - %1  [%2]").arg(subjectId, m_anchorLabel));
     ui->subjectLabel->setText(subjectId);
     // Button reads "Finish" only on the final pass of the anchor cycle;
@@ -436,7 +442,11 @@ void TemplateViewerWindow::showPage() {
 
         for (int li = 0; li < (int)leads.size(); ++li) {
             auto* pw = new BinPlotWidget(gi, leads[li].channelIndex, leads[li].label);
-            pw->setSampleRate(m_sampleRate);
+            pw->setChannelRate(BinPlotWidget::Channel::Ecg, m_sampleRate);
+            pw->setChannelRate(BinPlotWidget::Channel::Ppg, m_ppgRateHz);
+            pw->setChannelRate(BinPlotWidget::Channel::Abp, m_abpRateHz);
+            pw->setChannelRate(BinPlotWidget::Channel::Art, m_artRateHz);
+            pw->setChannelRate(BinPlotWidget::Channel::ArtPulm, m_artPulmRateHz);
 
             static const std::vector<double> empty;
             const auto& ecg = leads[li].ecg ? *leads[li].ecg : empty;

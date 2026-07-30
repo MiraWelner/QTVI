@@ -129,13 +129,6 @@ namespace post_process_detail {
         job.provisionalPath = provisionalPath;
         job.annealedPath = annealedPath;
 
-        // ---- Everything already cached: open the canonical file, no worker.
-        if (std::filesystem::exists(templatePath)) {
-            std::cerr << " Templates Already Exist - processing\n";
-            job.viewerTemplatePath = templatePath;
-            job.needsFinalize = false;
-            return job;
-        }
         AnnealedData annealedData = read_input_binfile(annealedPath.string());
 
         // Grab arterial pass-through slots BEFORE the move consumes the bins.

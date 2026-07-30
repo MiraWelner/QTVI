@@ -25,7 +25,7 @@ inline const QColor COLOR_RAW_SCATTER{ 0, 0, 0 };   // black
 inline const QColor COLOR_ART{ 150, 40, 40 };       // dark red
 inline const QColor COLOR_ART_PULM{ 40, 60, 150 };  // dark blue
 
-inline void wipe_chart(QChart* chart, const QList<QAbstractSeries*>& keep = {}){
+inline void wipe_chart(QChart* chart, const QList<QAbstractSeries*>& keep = {}) {
     /*
     * Only ever called in handle_data_plot in signal_renderer. It is to remove things from charts when the signal is changed.
     * The QList 'keep' contains everything that is supposed to be persistent and
@@ -47,9 +47,10 @@ inline void set_padded_y_range(QValueAxis* yAxis, double yMin, double yMax) {
     * The y range of a plot isn't just the max min diff, there is a pad. It can be tuned here!
     * Handles range in event of flatline.
     */
+    if (!(yMin <= yMax)) { yMin = -1.0; yMax = 1.0; }   // NaN/inverted (no valid data): safe default
     double span = yMax - yMin;
     double pad = 0.05 * span;
-    if (!span) {pad = 0.05;}//flatline
+    if (!span) { pad = 0.05; }//flatline
     yAxis->setRange(yMin - pad, yMax + pad);
 }
 
@@ -88,7 +89,7 @@ inline QString get_timestamp(double seconds) {
 }
 
 inline QString get_chart_title(const QString& signalName, double nativeHz, double pxPerSample, double bpm = -1.0, double upHz = -1.0) {
-	/*On the chart list the native rate, the upsampled rate, the pixel resolution, and the bpm if it is a heart signal.
+    /*On the chart list the native rate, the upsampled rate, the pixel resolution, and the bpm if it is a heart signal.
     The bpm is optional because not all signals have a bpm.*/
     QString space = QString(QChar(0x00A0)).repeated(4);
     QString base = signalName + space

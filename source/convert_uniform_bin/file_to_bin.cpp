@@ -744,7 +744,30 @@ namespace {
             }
         }
     }
-
+    // Build a dense NATIVE-rate signal from a blank-padded .dat column. Each real
+    // sample is placed on the native grid at slot = round(rowIdx / stride). Over-
+    // dense (2x-packed) samples that would collide are pushed to the next slot
+    // (spread); native slots with no real sample stay NaN (absent -> a gap, never
+    // interpolated). The caller fills these gaps before polyphase upsampling.
+    std::vector<double> depad_column_to_native(
+        const std::vector<double>& vals, const std::vector<size_t>& rowIdx,
+        size_t totalRows, double rowRate, double nativeHz)
+    {
+        if (vals.empty() || rowRate <= 0.0 || nativeHz <= 0.0) return {};
+        const double stride = rowRate / nativeHz;                 // rows per native sample
+        const size_t nOut = (size_t)std::ceil((double)totalRows / stride);
+        if (nOut == 0) return {};
+        std::vector<double> out(nOut, std::numeric_limits<double>::quiet_NaN());
+        size_t lastSlot = (size_t)-1;
+        for (size_t k = 0; k < vals.size(); ++k) {
+            size_t slot = (size_t)std::llround((double)rowIdx[k] / stride);
+            if (lastSlot != (size_t)-1 && slot <= lastSlot) slot = lastSlot + 1;  // spread 2x
+            if (slot >= nOut) break;
+            out[slot] = vals[k];
+            lastSlot = slot;
+        }
+        return out;
+    }
 
     // ---------- absolute time anchoring (Unix epoch milliseconds) ----------
 
@@ -806,11 +829,19 @@ namespace {
             std::vector<std::string> cells = parse_csv_row(line);
             if (tsCol >= (int)cells.size() || cells[tsCol].empty()) continue;
             int d = 0, mo = 0, y = 0, hh = 0, mm = 0, ss = 0, ms = 0;
-            // CHAOS "System TimeStamp UTC" format is DD-MM-YYYY HH:MM:SS.mmm
-            if (std::sscanf(cells[tsCol].c_str(), "%d-%d-%d %d:%d:%d.%d",
-                &d, &mo, &y, &hh, &mm, &ss, &ms) >= 6 ||
-                std::sscanf(cells[tsCol].c_str(), "%d-%d-%d %d:%d:%d",
-                    &d, &mo, &y, &hh, &mm, &ss) == 6) {
+            // CHAOS "System TimeStamp UTC" comes in two forms across files:
+            //   dashed  "DD-MM-YYYY HH:MM:SS.mmm"  (day first)
+            //   packed  "YYYYMMDD HH:MM:SS.mmm"    (year first, no separators)
+            // Detect by the '-': dashed => d,mo,y; packed => %4d%2d%2d => y,mo,d.
+            const std::string& ts = cells[tsCol];
+            bool ok;
+            if (ts.find('-') != std::string::npos)
+                ok = std::sscanf(ts.c_str(), "%d-%d-%d %d:%d:%d.%d",
+                    &d, &mo, &y, &hh, &mm, &ss, &ms) >= 6;
+            else
+                ok = std::sscanf(ts.c_str(), "%4d%2d%2d %d:%d:%d.%d",
+                    &y, &mo, &d, &hh, &mm, &ss, &ms) >= 6;
+            if (ok) {
                 const long long days = days_from_civil(y, mo, d);
                 const double sec = (double)days * 86400.0 + hh * 3600.0 + mm * 60.0 + ss + ms / 1000.0;
                 return sec * 1000.0;
@@ -987,44 +1018,7 @@ void make_binfile_dat(const std::filesystem::path& path,
 
     const double startEpochMs = dat_start_epoch_ms(path);
 
-    // Resample a channel to its target rate using ONLY its real populated
-    // samples, placed at their true times. Linear interpolation between
-    // consecutive real samples. Avoids the "fake plateau" bug from treating
-    // a sparse column (populated every Nth row) as a dense signal.
-    auto resample_from_sparse = [&](const std::vector<double>& rawValues,
-        const std::vector<size_t>& rawRowIdx,
-        size_t totalRows, double targetRate) -> std::vector<double>
-        {
-            if (rawValues.size() < 2 || row_rate <= 0.0 || targetRate <= 0.0) return {};
 
-            const double totalDur = (double)totalRows / row_rate;
-            const size_t outLen = (size_t)std::ceil(totalDur * targetRate);
-            if (outLen == 0) return {};
-
-            std::vector<double> result(outLen);
-            const double inv_row_rate = 1.0 / row_rate;
-            const size_t N = rawValues.size();
-
-            size_t k = 0;
-            for (size_t m = 0; m < outLen; ++m) {
-                const double t = (double)m / targetRate;
-                while (k + 1 < N &&
-                    (double)rawRowIdx[k + 1] * inv_row_rate <= t) {
-                    ++k;
-                }
-                if (k + 1 >= N) {
-                    result[m] = rawValues[N - 1];
-                    continue;
-                }
-                const double t0 = (double)rawRowIdx[k] * inv_row_rate;
-                const double t1 = (double)rawRowIdx[k + 1] * inv_row_rate;
-                if (t <= t0) { result[m] = rawValues[k]; continue; }
-                const double span = t1 - t0;
-                const double f = (span > 0.0) ? (t - t0) / span : 0.0;
-                result[m] = rawValues[k] * (1.0 - f) + rawValues[k + 1] * f;
-            }
-            return result;
-        };
 
     // Write one column from the .dat. Empty label, column-not-found,
     // nativeHz<=0, or upHz<=0 all produce a missing-channel placeholder.
@@ -1050,17 +1044,28 @@ void make_binfile_dat(const std::filesystem::path& path,
                 return;
             }
 
-            // Correct "double-rate then blank" packing artifacts before either
-            // block is built, so the upsampled and raw blocks share one clock.
+            // De-pad the blank-padded column onto its native grid (config rate;
+            // 2x-packed runs spread; absent stretches left as NaN gaps), then
+            // polyphase native -> target -- the same upsample() the EDF path uses.
             fix_double_rate_regions(rawRowIdx, row_rate, nativeHz);
-
-            // Reconstruct a dense native-rate signal from the sparse column
-            // (linear fill over gaps via resample_from_sparse targeting the
-            // native rate), then polyphase-upsample native -> target, matching
-            // the EDF path (edf_to_bin -> upsample). No fallback: an unfactorable
-            // ratio throws from upsample(), same as EDF.
             std::vector<double> dense =
-                resample_from_sparse(rawValues, rawRowIdx, prescan.totalRows, nativeHz);
+                depad_column_to_native(rawValues, rawRowIdx, prescan.totalRows, row_rate, nativeHz);
+            // Fill absent (NaN) slots by linear hold so the polyphase input is
+            // continuous: the upsampled LINE runs straight through gaps (OpenGL
+            // can't break on NaN, which is fine -- the raw scatter, empty over
+            // gaps, is the real "data present" cue). No NaN reaches the block.
+            for (size_t nn = 0; nn < dense.size(); ++nn) {
+                if (!std::isnan(dense[nn])) continue;
+                size_t p = nn; while (p > 0 && std::isnan(dense[p - 1])) --p;
+                size_t q = nn; while (q + 1 < dense.size() && std::isnan(dense[q + 1])) ++q;
+                const double a = (p > 0) ? dense[p - 1] : 0.0;
+                const double b = (q + 1 < dense.size()) ? dense[q + 1] : a;
+                for (size_t m = p; m <= q; ++m) {
+                    const double f = (q + 1 > p) ? (double)(m - p + 1) / (double)(q - p + 2) : 0.0;
+                    dense[m] = a + (b - a) * f;
+                }
+                nn = q;
+            }
             std::vector<double> up = upsample(dense, nativeHz, upHz);
 
             if (up.empty()) {

@@ -16,6 +16,15 @@
 //   R->foot delay adjustment needed. R sits at column pad*channelRate in
 //   every template.
 //
+//   Every channel may run at its OWN sample rate (set via setChannelRate).
+//   Geometry never assumes rates match: xFromSample/sampleFromX take a
+//   (startSample, ratio) pair, where ratio = rateRatio(Channel) rescales
+//   that channel's own sample index into ECG-equivalent sample units --
+//   the frame's reference space (see pxPerSample/totalSampleSpan, both
+//   sized from ECG alone). ratio is 1.0 whenever a rate is unknown or
+//   matches ECG's, so this is a no-op for the historical case where every
+//   channel happened to share one rate.
+//
 // Std band: when a per-sample std vector is available for the trace
 // (covering at least the visible samples), the widget paints a
 // translucent gray polygon between mean-std and mean+std underneath
@@ -234,6 +243,24 @@ BinPlotWidget::BinPlotWidget(int binIndex, int leadIndex,
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
+void BinPlotWidget::setChannelRate(Channel ch, double hz) {
+    const size_t i = static_cast<size_t>(ch);
+    if (m_rates[i] == hz) return;
+    m_rates[i] = hz;
+    update();
+}
+
+int BinPlotWidget::sampleFromX(double x, double startSample, double ratio) const {
+    const double pps = pxPerSample();
+    const double basePx = margin_left + startSample * pps;
+    return static_cast<int>(std::round((x - basePx) / (pps * ratio)));
+}
+
+double BinPlotWidget::xFromSample(int s, double startSample, double ratio) const {
+    const double pps = pxPerSample();
+    return margin_left + startSample * pps + s * ratio * pps;
+}
+
 void BinPlotWidget::setData(const std::vector<double>& ppg,
     const std::vector<double>& ppgIqr,
     const std::vector<double>& ecg,
@@ -293,11 +320,6 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
 }
 
 void BinPlotWidget::setHasPPG(bool has) { m_hasPPG = has; }
-void BinPlotWidget::setSampleRate(double hz) {
-    if (m_sampleRate == hz) return;
-    m_sampleRate = hz;
-    update();
-}
 void BinPlotWidget::setState(State s) { m_state = s; update(); }
 
 void BinPlotWidget::setShowEcgMarkers(bool show) {
@@ -407,49 +429,30 @@ int BinPlotWidget::pulseClipN() const {
 double BinPlotWidget::pxPerSample() const {
     // ONE scale shared by ECG and all pulse traces, so the R->foot offset is
     // a true horizontal distance. The frame spans the widest trace; every
-    // trace is drawn at this same pps.
+    // trace is drawn at this same pps. Per-channel RATE differences are
+    // handled separately via rateRatio()/xFromSample's ratio argument, not
+    // here -- this stays purely a sample-count-to-pixel-width scale.
     const int span = totalSampleSpan();
     const double drawW = std::max(1, width() - margin_left - margin_right);
     return (span > 1) ? (drawW / static_cast<double>(span - 1)) : 1.0;
 }
 
-int BinPlotWidget::sampleFromX(double x, bool isEcg) const {
-    const double pps = pxPerSample();
-    if (isEcg) {
-        return static_cast<int>(std::round((x - margin_left) / pps));
-    }
-    else {
-        const double ppgPx = margin_left + ppgStartSample() * pps;
-        return static_cast<int>(std::round((x - ppgPx) / pps));
-    }
-}
-
-double BinPlotWidget::xFromSample(int s, bool isEcg) const {
-    const double pps = pxPerSample();
-    if (isEcg) {
-        return margin_left + s * pps;
-    }
-    else {
-        const double ppgPx = margin_left + ppgStartSample() * pps;
-        return ppgPx + s * pps;
-    }
-}
-
 // For a given marker, resolve which trace vector bounds it, whether its
-// group is currently visible, and whether it uses ECG x-geometry, plus the
-// visible-sample count that bounds its markers. ECG uses its own visible
-// window; PPG and all arterial channels are foot-anchored. Pulse markers
-// are further capped at pulseClipN() so a marker sitting in the PPG (or
+// group is currently visible, the visible-sample count that bounds its
+// markers, and the ECG-equivalent rate ratio for its geometry. ECG uses
+// its own visible window (ratio 1.0); PPG and all arterial channels are
+// foot-anchored and rescaled by their own rateRatio(). Pulse markers are
+// further capped at pulseClipN() so a marker sitting in the PPG (or
 // arterial) tail past the ECG's right edge is neither drawn nor draggable
 // -- the tail is visually clipped, and we don't want invisible markers
 // out there that the user can't see or reach. Returns false if the trace
 // is empty/absent.
 bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
-    bool& isEcg, bool& visible, int& visN) const
+    bool& isEcg, bool& visible, int& visN, double& ratio) const
 {
     if (markerIsEcg(m)) {
         vec = &m_ecg; isEcg = true; visible = m_showEcgMarkers;
-        visN = m_ecgVisibleN;
+        visN = m_ecgVisibleN; ratio = rateRatio(Channel::Ecg);
         return !m_ecg.empty();
     }
     isEcg = false;   // PPG and all arterial groups ride the foot-anchored geometry
@@ -457,21 +460,25 @@ bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
     if (markerIsPpg(m)) {
         vec = &m_ppg; visible = m_showPpgMarkers;
         visN = std::min(visiblePpgCount(static_cast<int>(m_ppg.size())), pulseCap);
+        ratio = rateRatio(Channel::Ppg);
         return m_hasPPG && !m_ppg.empty();
     }
     if (markerIsAbp(m)) {
         vec = &m_abp; visible = m_showAbpMarkers;
         visN = std::min(visiblePpgCount(static_cast<int>(m_abp.size())), pulseCap);
+        ratio = rateRatio(Channel::Abp);
         return !m_abp.empty();
     }
     if (markerIsArt(m)) {
         vec = &m_art; visible = m_showArtMarkers;
         visN = std::min(visiblePpgCount(static_cast<int>(m_art.size())), pulseCap);
+        ratio = rateRatio(Channel::Art);
         return !m_art.empty();
     }
     if (markerIsArtPulm(m)) {
         vec = &m_artPulm; visible = m_showArtPulmMarkers;
         visN = std::min(visiblePpgCount(static_cast<int>(m_artPulm.size())), pulseCap);
+        ratio = rateRatio(Channel::ArtPulm);
         return !m_artPulm.empty();
     }
     return false;
@@ -490,13 +497,14 @@ int BinPlotWidget::markerAtX(double x) const {
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;
-        if (!markerTrace(m, vec, isEcg, visible, visN)) continue;
+        double ratio = 1.0;
+        if (!markerTrace(m, vec, isEcg, visible, visN, ratio)) continue;
         if (!visible) continue;
         if (idx >= (int)vec->size()) continue;
         // Every marker clamps to its trace's visible window (same rule for
         // ECG, PPG, and all arterial channels).
         if (idx >= visN) continue;
-        const double mx = xFromSample(idx, isEcg);
+        const double mx = xFromSample(idx, isEcg ? 0.0 : ppgStartSample(), ratio);
         const double d = std::abs(x - mx);
         if (d < bestDist) { bestDist = d; best = m; }
     }
@@ -589,7 +597,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             double x = margin_left + s * pps;
             if (x > yAxisR) x = yAxisR;
             p.drawLine(QPointF(x, xAxisY), QPointF(x, xAxisY + 3));
-            QString lbl = QString::number(s / m_sampleRate, 'f', 2);
+            QString lbl = QString::number(s / channelRate(Channel::Ecg), 'f', 2);
             p.drawText(QPointF(x - 3.0 * lbl.size(), xAxisY + 12), lbl);
             // X-axis caption, centered under the tick numbers.
             if (m_binIndex == 0) {
@@ -675,7 +683,9 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
     // -------- Arterial traces (ABP/ART/ART_PULM) --------
     // Foot-anchored like the PPG, drawn on the SHARED right-axis range
-    // (pLo,pHi) so all pulse tracings sit on one mV scale.
+    // (pLo,pHi) so all pulse tracings sit on one mV scale. Each channel's
+    // OWN rate ratio rescales pps so a channel running at a different rate
+    // than ECG still draws at the correct real-time width.
     {
         const double startPx = margin_left + ppgStartSample() * pps;
         struct ArtTrace {
@@ -684,22 +694,24 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             QColor line;
             QColor band;
             bool show;
+            double ratio;
         };
         const ArtTrace arts[] = {
-            { &m_abp,     &m_abpIqr,     QColor(0, 115, 45),   QColor(80, 185, 120, 38),  m_showAbpTrace },     // green
-            { &m_art,     &m_artIqr,     QColor(140, 75, 185), QColor(180, 130, 215, 38), m_showArtTrace },     // purple
-            { &m_artPulm, &m_artPulmIqr, QColor(215, 135, 45), QColor(235, 175, 100, 38), m_showArtPulmTrace }, // orange
+            { &m_abp,     &m_abpIqr,     QColor(0, 115, 45),   QColor(80, 185, 120, 38),  m_showAbpTrace,     rateRatio(Channel::Abp) },     // green
+            { &m_art,     &m_artIqr,     QColor(140, 75, 185), QColor(180, 130, 215, 38), m_showArtTrace,     rateRatio(Channel::Art) },     // purple
+            { &m_artPulm, &m_artPulmIqr, QColor(215, 135, 45), QColor(235, 175, 100, 38), m_showArtPulmTrace, rateRatio(Channel::ArtPulm) }, // orange
         };
         for (const auto& a : arts) {
             if (!a.show) continue;
             const std::vector<double>& v = *a.v;
             const int visN = std::min(static_cast<int>(v.size()), pulseClip);
             if (visN < 2) continue;
+            const double effPps = pps * a.ratio;
             const std::vector<double>& sd = *a.sd;
             const bool haveStd = static_cast<int>(sd.size()) >= visN;
             if (haveStd)
-                drawIqrBand(p, v, sd, startPx, margin_top, ph, pps, visN, pLo, pHi, a.band);
-            drawTraceFixedScale(p, v, startPx, margin_top, ph, pps,
+                drawIqrBand(p, v, sd, startPx, margin_top, ph, effPps, visN, pLo, pHi, a.band);
+            drawTraceFixedScale(p, v, startPx, margin_top, ph, effPps,
                 QPen(withTraceAlpha(a.line), 1.3), visN, pLo, pHi);
         }
     }
@@ -714,16 +726,17 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // -------- PPG (right/shared axis) --------
     if (m_showPpgTrace && m_hasPPG && !m_ppg.empty() && m_ppgVisibleN > 0) {
         const double startPx = margin_left + ppgStartSample() * pps;
+        const double effPps = pps * rateRatio(Channel::Ppg);
         const int ppgN = std::min(m_ppgVisibleN, pulseClipN());
         std::vector<double> ppgIqrReal;
         if (static_cast<int>(m_ppgIqr.size()) >= ppgN)
             ppgIqrReal.assign(m_ppgIqr.begin(), m_ppgIqr.begin() + ppgN);
 
         if (ppgN >= 2) {
-            drawIqrBand(p, m_ppg, ppgIqrReal, startPx, margin_top, ph, pps,
+            drawIqrBand(p, m_ppg, ppgIqrReal, startPx, margin_top, ph, effPps,
                 ppgN, pLo, pHi, color_iqrband_ppg);
             drawTraceFixedScale(p, m_ppg, startPx, margin_top, ph,
-                pps, QPen(withTraceAlpha(kColorPpgTrace), 1.5), ppgN, pLo, pHi);
+                effPps, QPen(withTraceAlpha(kColorPpgTrace), 1.5), ppgN, pLo, pHi);
         }
     }
     p.restore();
@@ -747,11 +760,12 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;
-        if (!markerTrace(m, vec, isEcg, visible, visN)) continue;
+        double ratio = 1.0;
+        if (!markerTrace(m, vec, isEcg, visible, visN, ratio)) continue;
         if (!visible) continue;
         if (idx >= (int)vec->size()) continue;
         if (idx >= visN) continue;
-        double mx = xFromSample(idx, isEcg);
+        double mx = xFromSample(idx, isEcg ? 0.0 : ppgStartSample(), ratio);
         QPen pen(markerColor(m), 2);
         pen.setStyle(markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine);
         p.setPen(pen);
@@ -820,9 +834,10 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     const std::vector<double>* vec = nullptr;
     bool isEcg = false, visible = false;
     int visN = 0;
-    if (!markerTrace(m_dragMarker, vec, isEcg, visible, visN)) return;
+    double ratio = 1.0;
+    if (!markerTrace(m_dragMarker, vec, isEcg, visible, visN, ratio)) return;
     if (vec->empty()) return;
-    int s = sampleFromX(e->position().x(), isEcg);
+    int s = sampleFromX(e->position().x(), isEcg ? 0.0 : ppgStartSample(), ratio);
     // Every marker clamps to its trace's visible window (one rule for
     // ECG, PPG, and all arterial channels).
     s = std::clamp(s, 0, std::max(0, visN - 1));
@@ -948,7 +963,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         auto g = [&](int idx) {
             if (idx < 0 || idx >= N) return;
             const double val = std::isnan(v[idx]) ? baseline : v[idx];
-            glyph(xFromSample(idx, /*isEcg=*/true), plotY(val, yLo, yHi));
+            glyph(xFromSample(idx, 0.0, rateRatio(Channel::Ecg)), plotY(val, yLo, yHi));
             };
         g(m_glyphs.ecgPBegin);  // P begin (frozen)
         g(m_glyphs.ecgPPeak);   // P wave
@@ -965,12 +980,12 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         auto g = [&](int idx) {
             if (idx < 0 || idx >= N) return;
             const double val = std::isnan(v[idx]) ? pLo : v[idx];
-            glyph(xFromSample(idx, /*isEcg=*/false), plotY(val, pLo, pHi));
+            glyph(xFromSample(idx, ppgStartSample(), rateRatio(Channel::Ppg)), plotY(val, pLo, pHi));
             };
         auto circ = [&](int idx) {
             if (idx < 0 || idx >= N) return;
             const double val = std::isnan(v[idx]) ? pLo : v[idx];
-            const double x = xFromSample(idx, /*isEcg=*/false);
+            const double x = xFromSample(idx, ppgStartSample(), rateRatio(Channel::Ppg));
             const double y = plotY(val, pLo, pHi);
             p.setBrush(Qt::NoBrush);
             p.setPen(QPen(Qt::black, 1.8));

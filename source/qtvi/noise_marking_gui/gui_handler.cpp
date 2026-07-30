@@ -56,6 +56,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.upsampled_data = &m_ecg1;
         r.dataRaw = &m_ecg1Raw;
         r.sampleRate = channel_upsampled_rates[CH_ECG1];
+        r.nativeRate = channel_native_rates[CH_ECG1];
         r.color = COLOR_ECG1;
     }
     else if (label == "ECG2") {
@@ -64,6 +65,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.upsampled_data = &m_ecg2;
         r.dataRaw = &m_ecg2Raw;
         r.sampleRate = channel_upsampled_rates[CH_ECG2];
+        r.nativeRate = channel_native_rates[CH_ECG2];
         r.color = COLOR_ECG2;
     }
     else if (label == "ECG3") {
@@ -72,6 +74,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.upsampled_data = &m_ecg3;
         r.dataRaw = &m_ecg3Raw;
         r.sampleRate = channel_upsampled_rates[CH_ECG3];
+        r.nativeRate = channel_native_rates[CH_ECG3];
         r.color = COLOR_ECG3;
     }
     else if (label == "PPG") {
@@ -80,6 +83,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.upsampled_data = &m_ppg;
         r.dataRaw = &m_ppgRaw;
         r.sampleRate = channel_upsampled_rates[CH_PPG];
+        r.nativeRate = channel_native_rates[CH_PPG];
         r.color = COLOR_PPG;
     }
     else if (label == "ACCEL") {
@@ -88,6 +92,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.upsampled_data = &m_accelX;
         r.dataRaw = &m_accelXRaw;
         r.sampleRate = channel_upsampled_rates[CH_ACCEL_X];
+        r.nativeRate = channel_native_rates[CH_ACCEL_X];
         r.color = COLOR_ACCEL_X;
     }
     else if (label == "ABP") {
@@ -96,6 +101,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.upsampled_data = &m_abp;
         r.dataRaw = &m_abpRaw;
         r.sampleRate = channel_upsampled_rates[CH_ABP];
+        r.nativeRate = channel_native_rates[CH_ABP];
         r.color = COLOR_ABP;
     }
     else if (label == "ART") {
@@ -104,6 +110,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.upsampled_data = &m_art;
         r.dataRaw = &m_artRaw;
         r.sampleRate = channel_upsampled_rates[CH_ART];
+        r.nativeRate = channel_native_rates[CH_ART];
         r.color = COLOR_ART;
     }
     else if (label == "ART_PULM") {
@@ -112,6 +119,7 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.upsampled_data = &m_artPulm;
         r.dataRaw = &m_artPulmRaw;
         r.sampleRate = channel_upsampled_rates[CH_ART_PULM];
+        r.nativeRate = channel_native_rates[CH_ART_PULM];
         r.color = COLOR_ART_PULM;
     }
     return r;
@@ -410,13 +418,17 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         updateAmpogramCursor();
         });
 
-    //handle the checkbox that changes max and min of the scaling to the global max and min
-    { QSignalBlocker block(ui->global_scaling); ui->global_scaling->setChecked(false); }
-    m_filterBaselineDrift = !ui->global_scaling->isChecked();
-    ui->global_scaling->setFocusPolicy(Qt::NoFocus);
-    connect(ui->global_scaling, &QCheckBox::toggled, this, [this](bool on) {
-        m_filterBaselineDrift = !on;
+    //Toggles the config-driven
+    // powerline notch filter (cfg.notch_filter_hz). Disabled entirely if the
+    // config has no notch configured (0 Hz), since there'd be nothing to toggle.
+    { QSignalBlocker block(ui->notch_filter); ui->notch_filter->setChecked(false); }
+    ui->notch_filter->setFocusPolicy(Qt::NoFocus);
+    m_notchFilterEnabled = false;
+    connect(ui->notch_filter, &QCheckBox::toggled, this, [this](bool on) {
+        m_notchFilterEnabled = on;
+        loadChunkFromFile(current_chunk_index, /*resetScroll=*/false);
         handle_data_plot();
+        updateAmpogramCursor();
         });
 
     auto wire_gain = [this](QCheckBox* /*check*/, QDoubleSpinBox* gain) {
@@ -561,9 +573,21 @@ GenExcStruct noise_marking_gui::getMarkings() const {
 }
 
 QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
+	//get all markings - both annotations and threshold/invert overrides
     QMap<QString, GenExcStruct> all = m_fileMarkings;
     GenExcStruct current = m_genExc;
     current.filePath = m_binFilePath;
+    for (const ParamOverride& o : m_thresholdOverrides) {
+        current.noiseExc.append({ o.start, o.end });
+        current.data_type.append(o.channel);
+        current.marking_type.append("3) Blank.+Thresh.");
+    }
+    for (const ParamOverride& o : m_invertOverrides) {
+        current.noiseExc.append({ o.start, o.end });
+        current.data_type.append(o.channel);
+        current.marking_type.append("Invert/Noninvert");
+    }
+
     all[m_binFilePath] = current;
     QVector<GenExcStruct> result;
     for (auto it = all.cbegin(); it != all.cend(); ++it)

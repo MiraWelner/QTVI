@@ -29,6 +29,7 @@
 #include <QString>
 #include <QColor>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <utility>
 #include <vector>
@@ -82,9 +83,14 @@ public:
             || m == PpgOnset || m == AbpOnset || m == ArtOnset || m == ArtPulmOnset;
     }
     double m_rPeakSample = 0.0;   // R-peak sample index within the ECG template
-    double m_sampleRate = 0.0;   // Hz; 0 => label x-axis in samples
     // (m_ppgDelay / m_ppgFootIdx retired in Patch C: every channel is
     // real-time-aligned by construction under Patch B slicing.)
+
+    // Every trace this widget can draw, including ECG (the reference
+    // channel that defines the frame's sample-space -- see
+    // totalSampleSpan()/pxPerSample()). Add new channels here only, before
+    // Count; nothing else in the geometry code needs to change.
+    enum class Channel { Ecg, Ppg, Abp, Art, ArtPulm, Count };
 
     // ----------------------------------------------------------------------
     // Visible-range rules.
@@ -152,8 +158,18 @@ public:
     void setHasPPG(bool has);
     bool hasPPG() const { return m_hasPPG; }
 
-    void setSampleRate(double hz);
-    double sampleRate() const { return m_sampleRate; }
+    void setChannelRate(Channel ch, double hz);
+    double channelRate(Channel ch) const { return m_rates[static_cast<size_t>(ch)]; }
+    // Ratio that converts `ch`'s own sample index into ECG-equivalent
+    // sample units (the frame's reference space). 1.0 for ECG itself, and
+    // 1.0 whenever either rate is unknown -- the historical case, when
+    // every rate happened to match, so this never changes old behavior for
+    // a channel with no rate set.
+    double rateRatio(Channel ch) const {
+        const double r = m_rates[static_cast<size_t>(ch)];
+        const double ecgR = m_rates[static_cast<size_t>(Channel::Ecg)];
+        return (r > 0.0 && ecgR > 0.0) ? ecgR / r : 1.0;
+    }
 
     void setState(State s);
     State state() const { return m_state; }
@@ -229,15 +245,16 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
 
 private:
-    int    sampleFromX(double x, bool isEcg) const;
-    double xFromSample(int s, bool isEcg) const;
+    int    sampleFromX(double x, double startSample, double ratio) const;
+    double xFromSample(int s, double startSample, double ratio) const;
     int    markerAtX(double x) const;
     int    visibleN(bool isEcg) const;
-    // Resolve a marker's trace vector, geometry, current visibility, and
-    // visible-sample bound. ECG, PPG, and all arterial channels resolve
-    // through one path so they behave identically.
+    // Resolve a marker's trace vector, geometry, current visibility,
+    // visible-sample bound, and ECG-equivalent rate ratio. ECG, PPG, and
+    // all arterial channels resolve through one path so they behave
+    // identically.
     bool   markerTrace(int m, const std::vector<double>*& vec,
-        bool& isEcg, bool& visible, int& visN) const;
+        bool& isEcg, bool& visible, int& visN, double& ratio) const;
 
     // Widest sample extent any trace needs (in samples), and the
     // pixels-per-sample that makes that extent fill the drawable width.
@@ -264,6 +281,10 @@ private:
     int m_ecgVisibleN = 0;
     int m_ppgVisibleN = 0;
     int m_markers[MarkerCount];
+
+    // Hz per channel (indexed by Channel); 0 = unknown -> rateRatio()
+    // falls back to 1.0 for that channel.
+    std::array<double, static_cast<size_t>(Channel::Count)> m_rates{};
 
     struct GlyphSnapshot {
         // All ECG glyphs read straight from the movable markers now
