@@ -484,6 +484,61 @@ bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
     return false;
 }
 
+int BinPlotWidget::glyphAtX(double x, int& outCol, bool& outIsEcg) const {
+    // Hit-test the feature GLYPHS (the X marks), as opposed to markerAtX
+    // which hit-tests the draggable bars. B2 focus mode selects landmarks by
+    // clicking their glyph. Returns a Marker-enum routing id (so refreshFocus
+    // can label/route it) or -1 if no glyph is near x. outCol receives the
+    // glyph's sample column; outIsEcg whether it rides ECG or PPG geometry.
+    if (!m_glyphs.valid) return -1;
+
+    struct GlyphHit { int col; bool isEcg; int routeMarker; };
+    const double ecgRatio = rateRatio(Channel::Ecg);
+    const double ppgRatio = rateRatio(Channel::Ppg);
+
+    // Map each ECG glyph to (column, geometry, routing Marker id). The R-peak
+    // glyph (which has no draggable bar) routes to EcgRPeak so the focus
+    // panel can show it. T-peak glyph routes to EcgTBegin so refreshFocus
+    // sends it to the JT-side panel.
+    const std::vector<GlyphHit> hits = {
+        { m_glyphs.ecgPBegin, true,  EcgPBegin },
+        { m_glyphs.ecgPPeak,  true,  EcgPPeak  },
+        { m_glyphs.ecgQ,      true,  EcgQBegin },
+        { m_glyphs.ecgRPeak,  true,  EcgRPeak  },
+        { m_glyphs.ecgS,      true,  EcgSEnd   },
+        { m_glyphs.ecgTPeak,  true,  EcgTBegin },
+        { m_glyphs.ecgTend,   true,  EcgTEnd   },
+        // PPG glyphs (B2 focus mode extended to PPG). All ride PPG geometry
+        // (isEcg=false). Routed to their PPG Marker ids so refreshFocus can
+        // pull the PPG template + label them.
+        { m_glyphs.ppgFoot,   false, PpgOnset    },
+        { m_glyphs.ppgP1,     false, PpgPeak     },
+        { m_glyphs.ppgDic,    false, PpgDicrotic },
+        { m_glyphs.ppgP2,     false, PpgPeak2    },
+        { m_glyphs.ppgEnd,    false, PpgEnd      },
+        { m_glyphs.ppgP50,    false, PpgP50      },
+        { m_glyphs.ppgT80,    false, PpgT80      },
+    };
+
+    int best = -1;
+    double bestDist = click_radius_around_marker + 1.0;
+    for (const auto& h : hits) {
+        if (h.col < 0) continue;
+        // NOTE: no visibility gate here (unlike markerAtX). The feature
+        // glyphs are always drawn regardless of the marker-visibility
+        // toggles, so they're always selectable.
+        const double startSample = h.isEcg ? 0.0 : ppgStartSample();
+        const double ratio = h.isEcg ? ecgRatio : ppgRatio;
+        const double gx = xFromSample(h.col, startSample, ratio);
+        const double d = std::abs(x - gx);
+        if (d < bestDist) {
+            bestDist = d; best = h.routeMarker;
+            outCol = h.col; outIsEcg = h.isEcg;
+        }
+    }
+    return best;
+}
+
 int BinPlotWidget::markerAtX(double x) const {
     int best = -1;
     double bestDist = click_radius_around_marker + 1.0;
@@ -794,12 +849,33 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
 void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::LeftButton) {
+        // B2 focus mode: a click on a feature GLYPH selects that landmark for
+        // the focus panel (this is the intended selection target -- glyphs,
+        // not bars). Checked first so glyph-only landmarks like the R-peak
+        // (which has no draggable bar) are selectable.
+        int gcol = -1; bool gEcg = false;
+        int gm = glyphAtX(e->position().x(), gcol, gEcg);
+        if (gm >= 0) {
+            fprintf(stderr, "[FOCUS] glyph click -> marker=%d col=%d\n", gm, gcol);
+            emit landmarkSelected(m_binIndex, m_leadIndex, gm, gcol);
+            // fall through: if a draggable bar is also under the cursor, still
+            // begin a drag on it (glyph selection and bar drag can coexist).
+        }
         int m = markerAtX(e->position().x());
         if (m >= 0) {
             m_dragMarker = m;
             emit markerDragStarted(m_binIndex, m_leadIndex, m);
+            // B2 focus mode: bar-click selects focus ONLY for arterial
+            // channels (ABP/ART/ART_PULM), which have draggable bars but no X
+            // glyphs so the glyph path can't reach them. ECG and PPG have
+            // glyphs -- their focus selection comes from glyphAtX above, and
+            // their bars are for dragging only (avoids the redundant
+            // double-trigger of selecting via both bar and glyph).
+            if (gm < 0 && BinPlotWidget::markerIsArterial(m))
+                emit landmarkSelected(m_binIndex, m_leadIndex, m, m_markers[m]);
             return;
         }
+        if (gm >= 0) return;   // glyph selected but no bar to drag
     }
 
     if (e->button() == Qt::RightButton) {

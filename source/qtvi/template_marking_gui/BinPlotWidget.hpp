@@ -235,6 +235,14 @@ signals:
     void markerMoved(int binIndex, int leadIndex, int marker, int newIdx);
     void markerDragStarted(int binIndex, int leadIndex, int marker);
 
+    // B2 focus mode: emitted when the operator selects (clicks) a landmark,
+    // so the owner can render that landmark's focus panel. Distinct from
+    // markerDragStarted (which is about beginning a drag) -- selection fires
+    // on the same click but carries the intent "show this landmark's focus
+    // view," and the owner decides what to do (e.g. J-point refreshes both
+    // the QRS and JT panels).
+    void landmarkSelected(int binIndex, int leadIndex, int marker, int col);
+
     void badRToggled(int binIndex, int leadIndex, bool bad);
     void badPPGToggled(int binIndex, bool bad);
 
@@ -248,6 +256,10 @@ private:
     int    sampleFromX(double x, double startSample, double ratio) const;
     double xFromSample(int s, double startSample, double ratio) const;
     int    markerAtX(double x) const;
+    // B2 focus mode: hit-test the feature glyphs (X marks). Returns a
+    // Marker-enum routing id (or -1); outCol = the glyph's sample column,
+    // outIsEcg = whether it uses ECG (vs PPG) geometry.
+    int    glyphAtX(double x, int& outCol, bool& outIsEcg) const;
     int    visibleN(bool isEcg) const;
     // Resolve a marker's trace vector, geometry, current visibility,
     // visible-sample bound, and ECG-equivalent rate ratio. ECG, PPG, and

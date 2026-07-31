@@ -10,6 +10,13 @@ struct AnchoredTemplate {
     AnchorType anchor;
     std::vector<double> mean;   // column-wise NaN-skipping median
     std::vector<double> iqr;    // column-wise IQR (q3-q1); robust, not std
+    // B2 focus-mode stats (spec's confidence band uses true mean +/- 1.96*se,
+    // se = sd/sqrt(n)). Kept SEPARATE from the median/iqr above so the main
+    // view's median center line is unaffected -- these are additive, only the
+    // focus panel reads them.
+    std::vector<double> arithMean;   // column-wise NaN-skipping arithmetic mean
+    std::vector<double> sd;          // column-wise NaN-skipping sample sd (ddof=1)
+    std::vector<int>    colCount;    // per-column count of non-NaN beats (the n in se)
     int refColumn = -1;
     int nBeats = 0;
 };
@@ -43,6 +50,9 @@ inline AnchoredTemplate makeAnchoredAverage(
     out.nBeats = static_cast<int>(aligned.size());
     out.mean.assign(width, NaN);
     out.iqr.assign(width, 0.0);
+    out.arithMean.assign(width, NaN);
+    out.sd.assign(width, 0.0);
+    out.colCount.assign(width, 0);
 
     std::vector<double> col;
     col.reserve(aligned.size());
@@ -52,6 +62,20 @@ inline AnchoredTemplate makeAnchoredAverage(
             if (!std::isnan(r[c])) col.push_back(r[c]);
         const size_t nc = col.size();
         if (nc == 0) continue;
+
+        // Arithmetic mean + sample sd (ddof=1) for the focus-mode band, over
+        // the same non-NaN column values used for the median below.
+        out.colCount[c] = static_cast<int>(nc);
+        double sum = 0.0;
+        for (double v : col) sum += v;
+        const double m = sum / static_cast<double>(nc);
+        out.arithMean[c] = m;
+        if (nc >= 2) {
+            double ss = 0.0;
+            for (double v : col) { const double d = v - m; ss += d * d; }
+            out.sd[c] = std::sqrt(ss / static_cast<double>(nc - 1));
+        }
+
         const size_t mid = nc / 2;
         std::nth_element(col.begin(), col.begin() + mid, col.end());
         const double hi = col[mid];

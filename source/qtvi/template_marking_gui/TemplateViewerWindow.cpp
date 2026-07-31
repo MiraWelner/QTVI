@@ -14,6 +14,8 @@
 #include <sstream>
 #include <QFile>
 #include <QCheckBox>
+#include <QDockWidget>
+#include <QVBoxLayout>
 #include <iomanip>
 #include <iostream>
 #include <cstdio>
@@ -106,6 +108,26 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
     connect(ui->show_art_pulm, &QCheckBox::toggled, this, [this](bool on) {
         m_showArtPulmTrace = on; applyMarkerVisibility();
         });
+
+    // B2 focus mode: two stacked panels (QRS and JT views) in a right-side
+    // dock. The J-point (S-end) is shared between them, so a J-point
+    // selection/edit refreshes both (see refreshFocus). Created in code (not
+    // the .ui) so the existing Designer layout is untouched.
+    {
+        auto* dock = new QDockWidget(QStringLiteral("Focus"), this);
+        dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+        auto* holder = new QWidget(dock);
+        auto* vlay = new QVBoxLayout(holder);
+        vlay->setContentsMargins(4, 4, 4, 4);
+        vlay->setSpacing(6);
+        m_focusQrs = new FocusPanelWidget(holder);
+        m_focusJt = new FocusPanelWidget(holder);
+        vlay->addWidget(m_focusQrs);
+        vlay->addWidget(m_focusJt);
+        holder->setLayout(vlay);
+        dock->setWidget(holder);
+        addDockWidget(Qt::RightDockWidgetArea, dock);
+    }
 }
 
 TemplateViewerWindow::~TemplateViewerWindow() { delete ui; }
@@ -560,6 +582,8 @@ void TemplateViewerWindow::showPage() {
                 this, &TemplateViewerWindow::onMarkerMoved);
             connect(pw, &BinPlotWidget::markerDragStarted,
                 this, &TemplateViewerWindow::onMarkerDragStarted);
+            connect(pw, &BinPlotWidget::landmarkSelected,
+                this, &TemplateViewerWindow::onLandmarkSelected);
             connect(pw, &BinPlotWidget::badRToggled,
                 this, &TemplateViewerWindow::onBadRToggled);
             connect(pw, &BinPlotWidget::badPPGToggled,
@@ -1134,6 +1158,11 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 if (gi > binIdx) refreshBinMarkers(gi);
             }
         }
+        // B2: an edit to this landmark updates its focus view. For the
+        // J-point (S-end) this refreshes BOTH the QRS and JT panels; other
+        // landmarks refresh their single panel. refreshFocus() handles the
+        // routing.
+        refreshFocus(binIdx, leadIdx, marker, newIdx);
         return;
     }
 
@@ -1280,6 +1309,157 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
 }
 
 void TemplateViewerWindow::onMarkerDragStarted(int, int, int) {}
+
+// B2 focus mode --------------------------------------------------------------
+
+void TemplateViewerWindow::onLandmarkSelected(int binIdx, int leadIdx,
+    int marker, int col)
+{
+    refreshFocus(binIdx, leadIdx, marker, col);
+}
+
+// Rebuild the focus panel(s) for one landmark from the current bin/lead's
+// anchored-average stats. Reads mean/sd/n straight from the template the
+// viewer already holds:
+//   mean = ecgTemplate_raw
+//   sd   = ecg_template_raw_iqr  (holds STD, ddof=1 -- despite the _iqr name)
+//   n    = ch{1,2,3}_n_beats_raw (per-bin, not per-channel-struct)
+// The J-point (S-end) is shared by the QRS and JT views, so selecting/editing
+// it refreshes BOTH panels; every other landmark refreshes its own single
+// panel.
+void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
+    int marker, int col)
+{
+    if (!m_focusQrs && !m_focusJt) return;   // panels not created (nothing to do)
+    if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
+    TemplateBin& b = m_bins[binIdx];
+
+    // ---- PPG and ARTERIAL landmarks (B2 focus extended to all channels) --
+    // These ride their own template (ppgTemplate / abpTemplate / artTemplate
+    // / artPulmTemplate) with the matching per-sample std (*_iqr, ddof=1) and
+    // the shared pulse beat count (ppg_n_beats -- all pulse channels derive
+    // from the same foot-anchored beat set). Routed to the QRS panel as the
+    // single focus view for pulse channels (they have no QRS/JT split).
+    if (!BinPlotWidget::markerIsEcg(marker)) {
+        const std::vector<double>* meanRaw = nullptr;
+        const std::vector<double>* iqrRaw = nullptr;
+        int pulseChan = -1;   // index into m_pulseGlobalRef: PPG=0,ABP=1,ART=2,ART_PULM=3
+        int footIdx = -1;     // this channel's foot/onset column (perfusion-index baseline)
+        QString chLabel;
+        if (BinPlotWidget::markerIsPpg(marker)) {
+            meanRaw = &b.ppgTemplate;      iqrRaw = &b.ppg_template_iqr;      pulseChan = 0; footIdx = b.ppg_onset;      chLabel = "PPG";
+        }
+        else if (BinPlotWidget::markerIsAbp(marker)) {
+            meanRaw = &b.abpTemplate;      iqrRaw = &b.abpTemplate_iqr;      pulseChan = 1; footIdx = b.abp_onset;      chLabel = "ABP";
+        }
+        else if (BinPlotWidget::markerIsArt(marker)) {
+            meanRaw = &b.artTemplate;      iqrRaw = &b.artTemplate_iqr;      pulseChan = 2; footIdx = b.art_onset;      chLabel = "ART";
+        }
+        else if (BinPlotWidget::markerIsArtPulm(marker)) {
+            meanRaw = &b.artPulmTemplate;  iqrRaw = &b.artPulmTemplate_iqr;  pulseChan = 3; footIdx = b.art_pulm_onset; chLabel = "ART_PULM";
+        }
+        if (!meanRaw || meanRaw->empty()) return;
+
+        // Pulse channels are NOT normalized by a plain scalar (that was the
+        // bug -- it left the trace flat). The displayed trace uses a per-
+        // sample PERFUSION-INDEX transform relative to the pulse's own foot,
+        // then /ref (normalize_ppg_or_similar -> normalize_pulse_trace, see
+        // the main plot ~line 508). The mean MUST use that same transform.
+        const std::vector<double> mean = normalize_ppg_or_similar(*meanRaw, footIdx, pulseChan);
+        // The *_iqr is ALREADY in perfusion-index space (local_ratio_iqr at
+        // build time), so it only needs the scalar /ref -- NOT the perfusion
+        // transform again (main plot ~line 492). It's a true IQR (Q3-Q1), so
+        // convert to an SD estimate (IQR/1.349) for the 95% CI.
+        const double ref = (pulseChan >= 0 && pulseChan < 4) ? m_pulseGlobalRef[pulseChan] : std::nan("");
+        std::vector<double> sd = normalize_features::scale_array_by_ref(*iqrRaw, ref);
+        for (double& s : sd) if (!std::isnan(s)) s /= 1.349;
+
+        const int nBeats = static_cast<int>(b.ppg_n_beats);
+
+        auto pulseLabel = [](int m) -> QString {
+            switch (m) {
+            case BinPlotWidget::PpgOnset:    return QStringLiteral("foot");
+            case BinPlotWidget::PpgP50:      return QStringLiteral("P50");
+            case BinPlotWidget::PpgPeak:     return QStringLiteral("peak");
+            case BinPlotWidget::PpgDicrotic: return QStringLiteral("dicrotic notch");
+            case BinPlotWidget::PpgPeak2:    return QStringLiteral("2nd peak");
+            case BinPlotWidget::PpgT80:      return QStringLiteral("T80");
+            case BinPlotWidget::PpgEnd:      return QStringLiteral("end");
+            case BinPlotWidget::AbpOnset: case BinPlotWidget::ArtOnset: case BinPlotWidget::ArtPulmOnset:       return QStringLiteral("onset");
+            case BinPlotWidget::AbpPeak: case BinPlotWidget::ArtPeak: case BinPlotWidget::ArtPulmPeak:          return QStringLiteral("peak");
+            case BinPlotWidget::AbpDicrotic: case BinPlotWidget::ArtDicrotic: case BinPlotWidget::ArtPulmDicrotic: return QStringLiteral("dicrotic");
+            case BinPlotWidget::AbpPeak2: case BinPlotWidget::ArtPeak2: case BinPlotWidget::ArtPulmPeak2:        return QStringLiteral("peak2");
+            case BinPlotWidget::AbpEnd: case BinPlotWidget::ArtEnd: case BinPlotWidget::ArtPulmEnd:             return QStringLiteral("end");
+            }
+            return QStringLiteral("landmark");
+            };
+
+        if (m_focusQrs)
+            m_focusQrs->setFocus(mean, sd, nBeats, col,
+                chLabel + " " + pulseLabel(marker));
+        // A pulse landmark has nothing to do with the JT (T-wave) view; clear
+        // it so a previously-shown J-point view doesn't stay stuck there.
+        if (m_focusJt) m_focusJt->clearFocus();
+        return;
+    }
+
+    // ---- ECG landmarks ---------------------------------------------------
+    if (leadIdx < 0 || leadIdx > 2) return;
+
+    ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
+    const ChannelTemplateData& ch = *chs[leadIdx];
+    // Templates + iqr are stored PRE-reference-division; scale by the same
+    // per-lead ref the displayed ECG trace uses (main plot ~line 484). The
+    // ECG *_iqr field already holds a STD (ddof=1) -- CreateEcgTemplates step
+    // 7 changed it from IQR to std despite the "iqr" name -- so it feeds the
+    // CI directly, NO IQR->SD conversion (unlike the pulse channels, whose
+    // *_iqr is a true interquartile range).
+    const double eref = m_ecgGlobalRef[leadIdx];
+    const std::vector<double> mean = normalize_features::scale_array_by_ref(ch.ecgTemplate_raw, eref);
+    const std::vector<double> sd = normalize_features::scale_array_by_ref(ch.ecg_template_raw_iqr, eref);
+    const uint64_t nb[3] = { b.ch1_n_beats_raw, b.ch2_n_beats_raw, b.ch3_n_beats_raw };
+    const int nBeats = static_cast<int>(nb[leadIdx]);
+    if (mean.empty()) return;
+
+    m_lastFocusBin = binIdx;
+    m_lastFocusLead = leadIdx;
+
+    auto labelFor = [](int m, const char* side) -> QString {
+        switch (m) {
+        case BinPlotWidget::EcgPBegin: return QStringLiteral("P onset");
+        case BinPlotWidget::EcgPPeak:  return QStringLiteral("P peak");
+        case BinPlotWidget::EcgQBegin: return QStringLiteral("Q onset");
+        case BinPlotWidget::EcgRPeak:  return QStringLiteral("R peak");
+        case BinPlotWidget::EcgSEnd:   return QStringLiteral("J-point (%1)").arg(side);
+        case BinPlotWidget::EcgTBegin: return QStringLiteral("T onset");
+        case BinPlotWidget::EcgTEnd:   return QStringLiteral("T end");
+        }
+        return QStringLiteral("landmark");
+        };
+
+    if (marker == BinPlotWidget::EcgSEnd) {
+        // J-point: shared landmark, but framed differently per panel so the
+        // two views aren't identical -- QRS shows it at the RIGHT edge (it
+        // ENDS the QRS), JT shows it at the LEFT edge (it STARTS the JT).
+        if (m_focusQrs) m_focusQrs->setFocus(mean, sd, nBeats, col, labelFor(marker, "QRS"), 30, -1);
+        if (m_focusJt)  m_focusJt->setFocus(mean, sd, nBeats, col, labelFor(marker, "JT"), 30, +1);
+        return;
+    }
+
+    // Non-J-point ECG landmarks: route to the panel for their segment, and
+    // CLEAR the other panel so a stale J-point view (which had set both)
+    // doesn't stay stuck when the next selection isn't a J-point.
+    const bool isJtSide = (marker == BinPlotWidget::EcgTBegin
+        || marker == BinPlotWidget::EcgTEnd);
+    if (isJtSide) {
+        if (m_focusJt) m_focusJt->setFocus(mean, sd, nBeats, col, labelFor(marker, "JT"));
+        if (m_focusQrs) m_focusQrs->clearFocus();
+    }
+    else {
+        if (m_focusQrs) m_focusQrs->setFocus(mean, sd, nBeats, col, labelFor(marker, "QRS"));
+        if (m_focusJt) m_focusJt->clearFocus();
+    }
+}
 
 // ========================================================================
 // BadR / BadPPG

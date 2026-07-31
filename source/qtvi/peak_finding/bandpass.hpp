@@ -1,4 +1,4 @@
-/**
+/*
  * @file   bandpass.hpp
  * @brief  Butterworth filter via cascaded biquads with filtfilt
  */
@@ -13,15 +13,10 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-
-/*
-* These are the biquad coefficeints
-* Second order biquad coefficients are used in digital biquad filters, 
-* which are recursive filters characterized by two poles and two zeros.
-*/
 struct Biquad {
+    //Second order biquad coefficients 
     double b0, b1, b2;
-    double a1, a2;  // a0 is always 1.0 (normalized)
+    double a1, a2;
 };
 
 namespace bandpass_detail {
@@ -35,10 +30,8 @@ namespace bandpass_detail {
 
 } // namespace bandpass_detail
 
-// ============================================================================
-// Lowpass design via bilinear transform - cascaded second-order sections
-// ============================================================================
 inline std::vector<Biquad> butterworth_lowpass(int order, double cutoff_hz, double sample_rate) {
+    //Lowpass design via bilinear transform - cascaded second-order sections
     if (order < 1) throw std::invalid_argument("Order must be >= 1");
     if (cutoff_hz <= 0 || cutoff_hz >= sample_rate / 2.0)
         throw std::invalid_argument("Cutoff must be in (0, Nyquist)");
@@ -74,10 +67,8 @@ inline std::vector<Biquad> butterworth_lowpass(int order, double cutoff_hz, doub
     return sections;
 }
 
-// ============================================================================
-// Highpass design via bilinear transform
-// ============================================================================
 inline std::vector<Biquad> butterworth_highpass(int order, double cutoff_hz, double sample_rate) {
+    //Highpass butterworth filter via bilinear transform
     if (order < 1) throw std::invalid_argument("Order must be >= 1");
     if (cutoff_hz <= 0 || cutoff_hz >= sample_rate / 2.0)
         throw std::invalid_argument("Cutoff must be in (0, Nyquist)");
@@ -113,10 +104,8 @@ inline std::vector<Biquad> butterworth_highpass(int order, double cutoff_hz, dou
     return sections;
 }
 
-// ============================================================================
-// Apply single biquad — Direct Form II Transposed
-// ============================================================================
 inline std::vector<double> apply_biquad(const Biquad& bq, const std::vector<double>& x) {
+    //Apply single biquad - Direct Form II Transposed
     size_t n = x.size();
     std::vector<double> y(n);
     double z1 = 0.0, z2 = 0.0;
@@ -130,20 +119,16 @@ inline std::vector<double> apply_biquad(const Biquad& bq, const std::vector<doub
     return y;
 }
 
-// ============================================================================
-// Apply cascaded second-order sections forward
-// ============================================================================
 inline std::vector<double> apply_sos(const std::vector<Biquad>& sos, const std::vector<double>& x) {
+    //Apply cascaded second-order sections forward
     std::vector<double> y = x;
     for (const auto& bq : sos)
         y = apply_biquad(bq, y);
     return y;
 }
 
-// ============================================================================
-// filtfilt - zero-phase filtering (forward + reverse) for biquad cascade
-// ============================================================================
 inline std::vector<double> filtfilt(const std::vector<Biquad>& sos, const std::vector<double>& x) {
+    // filtfilt - zero-phase filtering (forward + reverse) for biquad cascade
     if (x.size() < 4) return x;
 
     size_t pad_len = 3 * sos.size();
@@ -169,13 +154,9 @@ inline std::vector<double> filtfilt(const std::vector<Biquad>& sos, const std::v
     return result;
 }
 
-// ============================================================================
-// Convenience: bandpass via cascaded HP + LP with filtfilt
-// ============================================================================
-inline std::vector<double> bandpass_filtfilt(
-    int order, double low_hz, double high_hz, double sample_rate,
-    const std::vector<double>& x)
+inline std::vector<double> bandpass_filtfilt(int order, double low_hz, double high_hz, double sample_rate, const std::vector<double>& x)
 {
+    // Convenience: bandpass via cascaded HP + LP with filtfilt
     auto hp = butterworth_highpass(order, low_hz, sample_rate);
     auto lp = butterworth_lowpass(order, high_hz, sample_rate);
     auto y = filtfilt(hp, x);

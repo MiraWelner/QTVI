@@ -24,6 +24,7 @@
 #include <vector>
 #include <functional>
 #include "feature_marks.hpp"
+#include "subsample_refine.hpp"
 
 
 namespace alignment {
@@ -96,6 +97,10 @@ namespace alignment {
         // baseline (TP/PQ/NONE). Kept in sync with `beats` through every
         // apply_mask() compaction, including the wave-score pruning pass.
         std::vector<BaselineSource> baseline_source;
+        // Parallel to `beats`: PQ_level - TP_level whenever BOTH stage
+        // estimates succeeded for that beat (NaN otherwise). QC metric per
+        // spec I-1; not used to drive any decision, just recorded.
+        std::vector<double> tp_pq_delta;
     };
 
     inline ecg_beat_set extract_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs) {
@@ -114,18 +119,22 @@ namespace alignment {
             std::vector<size_t> kr;
             std::vector<int>    km;
             std::vector<BaselineSource> ks;
+            std::vector<double> kd;
             const bool haveSrc = out.baseline_source.size() == out.beats.size();
+            const bool haveDelta = out.tp_pq_delta.size() == out.beats.size();
             for (size_t i = 0; i < keep.size(); ++i) {
                 if (!keep[i]) continue;
                 kb.push_back(std::move(out.beats[i]));
                 kr.push_back(out.r_indices[i]);
                 km.push_back(out.rr_lens[i]);
                 if (haveSrc) ks.push_back(out.baseline_source[i]);
+                if (haveDelta) kd.push_back(out.tp_pq_delta[i]);
             }
             out.beats = std::move(kb);
             out.r_indices = std::move(kr);
             out.rr_lens = std::move(km);
             if (haveSrc) out.baseline_source = std::move(ks);
+            if (haveDelta) out.tp_pq_delta = std::move(kd);
             };
 
         // ---- slice every beat ------------------------------------------
@@ -231,36 +240,38 @@ namespace alignment {
         out.beats = std::move(aligned);
         out.r_aligned_col = R_anchor;
 
-        // ---- Pass 3: TP-preferred, PQ-fallback vertical DC alignment ----
-        // TP (this beat's own T-end -> the NEXT beat's P-onset) is the
-        // preferred isoelectric baseline -- closer to true zero potential
-        // than PQ, which can carry atrial repolarization (Ta wave). Falls
-        // back to PQ when TP's landmarks aren't usable (e.g. fast heart
-        // rate leaves no true gap between T and the next P). Both report
-        // level as the MEDIAN over the flattest (lowest-variance) min_w-wide
-        // sub-window of their respective bound -- flatness search still
-        // uses variance (cheapest way to find "flat"), only the reported
-        // level is now median rather than mean.
+        // ---- Pass 3: two-stage TP-then-PQ vertical DC alignment --------
+        // Stage 1 (TP): this beat's own T-end -> the NEXT beat's P-onset.
+        // Stage 2 (PQ): this beat's own P-end -> this beat's own Q-onset.
+        // PQ is the higher-priority reference (spec): when BOTH estimates
+        // are available, the beat is shifted using PQ's level, not TP's --
+        // TP is used only when PQ's landmarks aren't usable. Both are always
+        // attempted whenever possible (not short-circuited on TP success)
+        // so the TP-to-PQ delta can be recorded as a per-beat QC metric even
+        // on beats where PQ ends up winning.
+        //
+        // Both estimators report level as the MEDIAN over the flattest
+        // (lowest-variance) min_w-wide sub-window of their respective
+        // landmark-bounded segment -- flatness search still uses variance
+        // (cheapest way to find "flat"), only the reported level is median
+        // rather than mean.
         //
         // The next beat's own R, in this beat's own SHARED aligned column
         // space, sits at R_anchor + rr_lens[i] (this beat's own R was moved
-        // to R_anchor by Pass 1; the next R was the same distance further
-        // in the original slice, so the same shift lands it there) -- pure
-        // arithmetic, no extra detection needed to locate it. detect_p_peak
-        // / compute_p_begin then locate the next beat's P exactly as they
-        // would for any other beat, just searching backward from that
-        // computed index instead of this beat's own R.
+        // to R_anchor by Pass 1; the next R was the same distance further in
+        // the original slice, so the same shift lands it there) -- pure
+        // arithmetic, no extra detection needed to locate it.
         //
         // Degrades gracefully: baseline_source[i] records which segment (if
-        // any) supplied this beat's baseline. NONE means neither TP nor PQ
-        // was usable; that beat is left un-shifted, and
+        // any) supplied this beat's baseline; tp_pq_delta[i] records
+        // PQ_level - TP_level whenever both succeeded (NaN otherwise). NONE
+        // means neither was usable; that beat is left un-shifted, and
         // CreateEcgTemplates.hpp excludes it from the per-sample amplitude
         // aggregation (median/std) rather than silently contribute an
         // unreliable, unadjusted amplitude.
         if (out.ref_beat_index >= 0 && out.ref_beat_index < static_cast<int>(out.beats.size()))
         {
             const int min_w = std::max(1, static_cast<int>(std::lround(0.010 * fs)));  // 10 ms window
-            const int pq_ceiling = static_cast<int>(std::lround(0.100 * fs));           // 100 ms max PQ lookback
 
             // Median over the lowest-variance min_w-wide sub-window of
             // [lo, hi] (inclusive, in this beat's own aligned column space).
@@ -301,44 +312,100 @@ namespace alignment {
                     return { med, true };
                 };
 
-            // TP window for beat i: [this beat's own T-end, next beat's
-            // P-onset]. Returns {-1,-1} if the next R isn't inside this
-            // beat's slice, or the landmarks come back invalid/out of order
-            // (e.g. HR fast enough that T runs into the next P).
+            // Stage 1, TP window: [this beat's own T-end, next beat's
+            // P-onset]. {-1,-1} if the next R isn't inside this beat's slice
+            // or the landmarks come back invalid/out of order (e.g. HR fast
+            // enough that T runs into the next P).
+            //
+            // detect_p_peak/detect_q_begin (and likely other single-beat
+            // detectors) search from absolute column 0 up to r_idx -- safe
+            // only when r_idx is the array's OWN first/only R. Calling them
+            // directly on this beat's SHARED array with next_r reaches back
+            // across THIS beat's own, much-larger QRS spike, which wins any
+            // min/max search meant to find the next beat's P or Q. Rather
+            // than modify those detectors (used correctly elsewhere in the
+            // true single-beat context), extract a small, genuinely-
+            // isolated local window around next_r first, so every detector
+            // sees exactly the kind of array it was designed for.
             auto tp_window = [&](size_t i) -> std::pair<int, int> {
                 const auto& beat = out.beats[i];
                 const int N = static_cast<int>(beat.size());
                 const int t_end = FeatureMarks::detect_t_end(beat, R_anchor, fs);
                 const int next_r = R_anchor + out.rr_lens[i];
                 if (next_r <= 0 || next_r >= N) return { -1, -1 };
-                const int p_pk = FeatureMarks::detect_p_peak(beat, next_r);
-                const int p_on = FeatureMarks::compute_p_begin(beat, p_pk, fs, next_r);
+
+                // Local window: comfortably covers a PR interval before
+                // next_r (400 samples ~ 400ms at 1000 Hz, generous margin)
+                // with a little slack past it, clamped to this beat's own
+                // array bounds.
+                const int localLo = std::max(0, next_r - 400);
+                const int localHi = std::min(N, next_r + 50);
+                if (localHi - localLo < 10) return { -1, -1 };
+                std::vector<double> local(beat.begin() + localLo, beat.begin() + localHi);
+                const int local_r = next_r - localLo;
+
+                const int p_pk_local = FeatureMarks::detect_p_peak(local, local_r);
+                const int p_on_local = FeatureMarks::compute_p_begin(local, p_pk_local, fs, local_r);
+                if (p_on_local < 0) return { -1, -1 };
+                const int p_on = p_on_local + localLo;   // back to shared column space
+
                 if (t_end < 0 || p_on < 0 || t_end >= N || p_on >= N || p_on <= t_end)
                     return { -1, -1 };
                 return { t_end, p_on };
                 };
 
-            auto baseline_for = [&](size_t i, BaselineSource& src) -> double {
-                const auto [tlo, thi] = tp_window(i);
-                if (tlo >= 0) {
-                    const auto [lvl, ok] = flattest_median(out.beats[i], tlo, thi);
-                    if (ok) { src = BaselineSource::TP; return lvl; }
-                }
-                const int pq_hi = R_anchor;
-                const int pq_lo = std::max(0, R_anchor - pq_ceiling);
-                const auto [lvl2, ok2] = flattest_median(out.beats[i], pq_lo, pq_hi);
-                if (ok2) { src = BaselineSource::PQ; return lvl2; }
-                src = BaselineSource::NONE;
-                return std::numeric_limits<double>::quiet_NaN();
+            // Stage 2, PQ window: [this beat's own P-end, this beat's own
+            // Q-onset]. Both landmarks are real, fitted anchors (Phase A/B),
+            // not a fixed lookback -- matches the spec's literal PQ
+            // definition ("end of P to immediately before Q onset").
+            // {-1,-1} if the landmarks come back invalid/out of order.
+            auto pq_window = [&](size_t i) -> std::pair<int, int> {
+                const auto& beat = out.beats[i];
+                const int N = static_cast<int>(beat.size());
+                const int p_end_seed = FeatureMarks::detect_p_end(beat, R_anchor);
+                const int p_end = FeatureMarks::compute_p_end(beat, p_end_seed, fs, R_anchor);
+                const int q_seed = FeatureMarks::detect_q_begin(beat, R_anchor);
+                const int q_on = FeatureMarks::compute_q_onset(beat, q_seed, fs, R_anchor);
+                if (p_end < 0 || q_on < 0 || p_end >= N || q_on >= N || q_on <= p_end)
+                    return { -1, -1 };
+                return { p_end, q_on };
                 };
 
+            // Compute both stage estimates for beat i (never short-circuited,
+            // so the delta can be recorded even when PQ will be used).
+            auto both_levels = [&](size_t i) -> std::tuple<double, bool, double, bool> {
+                double tpLvl = std::numeric_limits<double>::quiet_NaN(), pqLvl = tpLvl;
+                bool tpOk = false, pqOk = false;
+                const auto [tlo, thi] = tp_window(i);
+                if (tlo >= 0) { const auto [lvl, ok] = flattest_median(out.beats[i], tlo, thi); tpLvl = lvl; tpOk = ok; }
+                const auto [plo, phi] = pq_window(i);
+                if (plo >= 0) { const auto [lvl, ok] = flattest_median(out.beats[i], plo, phi); pqLvl = lvl; pqOk = ok; }
+                return { tpLvl, tpOk, pqLvl, pqOk };
+                };
+
+            // PQ is the higher-priority reference: use it whenever available,
+            // falling back to TP only when PQ's landmarks aren't usable.
+            auto pick = [&](double tpLvl, bool tpOk, double pqLvl, bool pqOk,
+                BaselineSource& src) -> double {
+                    if (pqOk) { src = BaselineSource::PQ; return pqLvl; }
+                    if (tpOk) { src = BaselineSource::TP; return tpLvl; }
+                    src = BaselineSource::NONE;
+                    return std::numeric_limits<double>::quiet_NaN();
+                };
+
+            out.tp_pq_delta.assign(out.beats.size(), std::numeric_limits<double>::quiet_NaN());
+
+            const auto [refTp, refTpOk, refPq, refPqOk] = both_levels(static_cast<size_t>(out.ref_beat_index));
             BaselineSource refSrc = BaselineSource::NONE;
-            const double target = baseline_for(static_cast<size_t>(out.ref_beat_index), refSrc);
+            const double target = pick(refTp, refTpOk, refPq, refPqOk, refSrc);
 
             if (refSrc != BaselineSource::NONE && !std::isnan(target)) {
                 for (size_t i = 0; i < out.beats.size(); ++i) {
+                    const auto [tpLvl, tpOk, pqLvl, pqOk] = both_levels(i);
+                    if (tpOk && pqOk) out.tp_pq_delta[i] = pqLvl - tpLvl;   // QC metric, whenever both succeed
+
                     BaselineSource src = BaselineSource::NONE;
-                    const double lvl = baseline_for(i, src);
+                    const double lvl = pick(tpLvl, tpOk, pqLvl, pqOk, src);
                     out.baseline_source[i] = src;
                     if (src == BaselineSource::NONE || std::isnan(lvl))
                         continue;   // graceful degrade: leave un-shifted, flagged NONE
@@ -703,7 +770,22 @@ namespace alignment {
             }
             if (up50 < 0) continue;   // no clean upslope crossing; drop beat
 
-            raw.push_back({ std::move(beat), peak, foot, up50 });
+            // Spec I-3: PPG peak is a symmetric extremum (sigma=8); PPG foot
+            // is a transition anchor (4x upsample + fit-and-select). Refined
+            // here, AFTER up50 (the shared alignment anchor, computed above
+            // from the raw peak/foot) so refining these doesn't perturb the
+            // alignment reference itself -- only the stored peak/foot used
+            // by the amplitude-Tukey check below, a much lower-stakes
+            // consumer than the alignment anchor.
+            const int peak_refined = std::clamp(static_cast<int>(std::lround(
+                subsample_refine::symmetricExtremum(beat, peak, 8.0))), 0, (int)beat.size() - 1);
+            const int foot_refined = std::clamp(static_cast<int>(std::lround(
+                subsample_refine::transitionAnchor(beat, foot, 0.10, 40,
+                    std::numeric_limits<double>::quiet_NaN(),
+                    foot, std::min(foot + 40, (int)beat.size() - 1)))),
+                0, (int)beat.size() - 1);
+
+            raw.push_back({ std::move(beat), peak_refined, foot_refined, up50 });
             rr_lens.push_back(static_cast<int>(rr));
         }
         if (raw.empty()) return out;

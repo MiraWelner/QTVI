@@ -30,8 +30,23 @@ enum class AnchorType { P_ONSET, P_PEAK, Q_ONSET, R_PEAK, J_POINT, T_PEAK };//J_
 // Returns the landmark sample index for one beat, or -1 if not found.
 using AnchorLocator = std::function<int(const std::vector<double>& beat)>;
 
+// Returns the landmark as a sub-sample (floating-point) position, per spec
+// I-3. Built on top of make_anchor_locator's already-tested integer result:
+// the integer locator supplies the seed (including its own fallback logic,
+// reused as-is, not duplicated), and a subsample_refine method appropriate
+// to that anchor type -- Gaussian-weighted quadratic for R (symmetric),
+// cubic-with-analytic-derivative for P/T (asymmetric), or 4x-upsample-then-
+// fit-and-select for the transition anchors (Q-onset, P-onset, J-point) --
+// refines it to double precision.
+using AnchorLocatorD = std::function<double(const std::vector<double>& beat)>;
+
 // Build the per-beat locator for one anchor. Binds r_col/fs into the detector.
 AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs);
+// Sub-sample counterpart of make_anchor_locator (spec I-3). Covers the six
+// ECG anchor-table entries (P-onset, P-peak, Q-onset, R-peak, J-point,
+// T-peak); PPG-specific I-3 landmarks (dicrotic notch, PPG peak/foot/
+// upslope) aren't in the given anchor table and aren't wired here.
+AnchorLocatorD make_anchor_locator_subsample(AnchorType type, int r_col, double fs);
 class FeatureMarks {
 public:
     // =================================================================
@@ -75,9 +90,10 @@ public:
     static int compute_p_peak(const std::vector<double>& ecg, int p_onset, int q_begin, int r_peak_idx);
     static int compute_t_peak(const std::vector<double>& ecg, int tBegin, int tEnd);
     static int compute_r_peak(const std::vector<double>& ecg, int qBegin, int sEnd);
-    static int compute_s_end(const std::vector<double>& ecg, int sUser, double fs);
+    static int compute_s_end(const std::vector<double>& ecg, int sUser, double fs, int r_col);
     static int compute_q_onset(const std::vector<double>& ecg, int qUser, double fs, int r_idx);
-    static int compute_t_end(const std::vector<double>& ecg, int tEndUser, double fs);
+    static int compute_t_end(const std::vector<double>& ecg, int tEndUser, double fs, int r_col);
+    static int compute_p_end(const std::vector<double>& ecg, int pEndUser, double fs, int r_idx);
     static int compute_p_onset(const std::vector<double>& v, int pUser, double fs, int r_idx);
     static int compute_t_begin(const std::vector<double>& v, int tBeginUser, double fs, int r_idx);
     static int compute_p_begin(const std::vector<double>& v, int pUser, double fs, int r_idx);
@@ -121,6 +137,7 @@ public:
 
     // ECG landmarks.
     static int detect_p_peak(const std::vector<double>& ecg_signal, int r_idx);
+    static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx);
     static int detect_q_begin(const std::vector<double>& ecg_signal, int r_idx);
     static int detect_s_end(const std::vector<double>& ecg_signal, int r_idx, double fs);
     static int detect_t_begin(const std::vector<double>& ecg_signal, int r_idx, double fs);
@@ -131,6 +148,7 @@ public:
     static int detect_ppg_t80(const std::vector<double>& pulse);
     static int detect_ppg_peak(const std::vector<double>& pulse);
     static int detect_ppg_dicrotic(const std::vector<double>& pulse);
+    static int detect_ppg_peak2(const std::vector<double>& pulse);
     static int detect_ppg_end(const std::vector<double>& pulse);
 
     static void seed_all(TemplateBin& bin, double sampleRate, AnchorType anchor);

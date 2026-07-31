@@ -7,6 +7,7 @@
 #include <QString>
 #include "TemplateBinIO.hpp"
 #include "BinPlotWidget.hpp"
+#include "FocusPanelWidget.hpp"
 
 namespace Ui { class TemplateViewerWindow; }
 
@@ -57,6 +58,8 @@ private slots:
     void onMarkerDragStarted(int binIdx, int leadIdx, int marker);
     void onBadRToggled(int binIdx, int leadIdx, bool bad);
     void onBadPPGToggled(int binIdx, bool bad);
+    // B2 focus mode: operator selected a landmark in some bin/lead.
+    void onLandmarkSelected(int binIdx, int leadIdx, int marker, int col);
 
 private:
     struct Lead {
@@ -86,6 +89,19 @@ private:
     // Pushes the current bin's markings into every plot showing it.
     // Used when a PPG marker drags (which propagates across channels).
     void refreshBinMarkers(int binIdx);
+
+    // B2 focus mode. Two panels: the QRS view and the JT view. The J-point
+    // (S-end) is shared between them (spec I-4), so a J-point selection or
+    // edit refreshes BOTH; any other landmark refreshes whichever single
+    // panel it belongs to. refreshFocus() rebuilds a panel from the current
+    // bin/lead template stats (mean = ecgTemplate_raw, sd = ecgTemplate_raw_iqr
+    // [ddof=1 std], n = n_beats_raw) around the given landmark column.
+    void refreshFocus(int binIdx, int leadIdx, int marker, int col);
+    FocusPanelWidget* m_focusQrs = nullptr;
+    FocusPanelWidget* m_focusJt = nullptr;
+    // Remember the last J-point column per (bin,lead) so a QRS-side or
+    // JT-side edit can refresh the other view against the same landmark.
+    int m_lastFocusBin = -1, m_lastFocusLead = -1;
 
     Ui::TemplateViewerWindow* ui;
 
