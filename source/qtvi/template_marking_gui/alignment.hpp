@@ -23,11 +23,19 @@
 #include <utility>
 #include <vector>
 #include <functional>
+#include "feature_marks.hpp"
 
 
 namespace alignment {
-    constexpr double percent_interval_preceeding_rpeak = 0.4; //how far before the R peak the snip goes, in terms of percent of the RR interval length
-    constexpr double percent_interval_following_rpeak = 1.3;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
+
+    // Which isoelectric segment supplied a beat's DC baseline. TP (T-end to
+    // next P-onset) is preferred over PQ; NONE means neither was usable for
+    // this beat -- it is left un-shifted, and CreateEcgTemplates.hpp excludes
+    // it from the per-sample amplitude aggregation (median/std) rather than
+    // silently contribute an unreliable, unadjusted amplitude.
+    enum class BaselineSource { TP, PQ, NONE };
+    constexpr double percent_interval_preceeding_rpeak = 0.3; //how far before the R peak the snip goes, in terms of percent of the RR interval length
+    constexpr double percent_interval_following_rpeak = 1.5;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
 
     enum class AnchorType { P_ONSET, P_PEAK, Q_ONSET, R_PEAK, J_POINT, T_PEAK };
 
@@ -76,7 +84,7 @@ namespace alignment {
     }
     struct ecg_beat_set {
         //a set of individually-aligned beats that will become a template.
-        std::vector<std::vector<double>> beats; 
+        std::vector<std::vector<double>> beats;
         std::vector<size_t> r_indices;
         std::vector<int>    rr_lens;
         int    median_length = -1;
@@ -84,6 +92,10 @@ namespace alignment {
         int r_aligned_col = -1;
         int q_aligned_col = -1;
         int ref_beat_index = -1;
+        // Parallel to `beats`: which segment supplied each beat's DC
+        // baseline (TP/PQ/NONE). Kept in sync with `beats` through every
+        // apply_mask() compaction, including the wave-score pruning pass.
+        std::vector<BaselineSource> baseline_source;
     };
 
     inline ecg_beat_set extract_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs) {
@@ -101,15 +113,19 @@ namespace alignment {
             std::vector<std::vector<double>> kb;
             std::vector<size_t> kr;
             std::vector<int>    km;
+            std::vector<BaselineSource> ks;
+            const bool haveSrc = out.baseline_source.size() == out.beats.size();
             for (size_t i = 0; i < keep.size(); ++i) {
                 if (!keep[i]) continue;
                 kb.push_back(std::move(out.beats[i]));
                 kr.push_back(out.r_indices[i]);
                 km.push_back(out.rr_lens[i]);
+                if (haveSrc) ks.push_back(out.baseline_source[i]);
             }
             out.beats = std::move(kb);
             out.r_indices = std::move(kr);
             out.rr_lens = std::move(km);
+            if (haveSrc) out.baseline_source = std::move(ks);
             };
 
         // ---- slice every beat ------------------------------------------
@@ -136,6 +152,7 @@ namespace alignment {
             out.rr_lens.push_back(static_cast<int>(rr));
         }
         if (out.beats.empty()) return out;
+        out.baseline_source.assign(out.beats.size(), BaselineSource::NONE);
 
         //Tukey rejection: R-R interval (1.5*IQR)
         {
@@ -214,59 +231,231 @@ namespace alignment {
         out.beats = std::move(aligned);
         out.r_aligned_col = R_anchor;
 
-        // ---- Pass 3: PQ-baseline vertical DC alignment ------------------
+        // ---- Pass 3: TP-preferred, PQ-fallback vertical DC alignment ----
+        // TP (this beat's own T-end -> the NEXT beat's P-onset) is the
+        // preferred isoelectric baseline -- closer to true zero potential
+        // than PQ, which can carry atrial repolarization (Ta wave). Falls
+        // back to PQ when TP's landmarks aren't usable (e.g. fast heart
+        // rate leaves no true gap between T and the next P). Both report
+        // level as the MEDIAN over the flattest (lowest-variance) min_w-wide
+        // sub-window of their respective bound -- flatness search still
+        // uses variance (cheapest way to find "flat"), only the reported
+        // level is now median rather than mean.
+        //
+        // The next beat's own R, in this beat's own SHARED aligned column
+        // space, sits at R_anchor + rr_lens[i] (this beat's own R was moved
+        // to R_anchor by Pass 1; the next R was the same distance further
+        // in the original slice, so the same shift lands it there) -- pure
+        // arithmetic, no extra detection needed to locate it. detect_p_peak
+        // / compute_p_begin then locate the next beat's P exactly as they
+        // would for any other beat, just searching backward from that
+        // computed index instead of this beat's own R.
+        //
+        // Degrades gracefully: baseline_source[i] records which segment (if
+        // any) supplied this beat's baseline. NONE means neither TP nor PQ
+        // was usable; that beat is left un-shifted, and
+        // CreateEcgTemplates.hpp excludes it from the per-sample amplitude
+        // aggregation (median/std) rather than silently contribute an
+        // unreliable, unadjusted amplitude.
         if (out.ref_beat_index >= 0 && out.ref_beat_index < static_cast<int>(out.beats.size()))
         {
-            const int pq_min_w = std::max(1, static_cast<int>(std::lround(0.010 * fs)));  // 10 ms window
-            const int pq_ceiling = static_cast<int>(std::lround(0.100 * fs));               // 100 ms max lookback
+            const int min_w = std::max(1, static_cast<int>(std::lround(0.010 * fs)));  // 10 ms window
+            const int pq_ceiling = static_cast<int>(std::lround(0.100 * fs));           // 100 ms max PQ lookback
 
-            const int pq_hi_bound = R_anchor;
-            const int pq_lo_bound = std::max(0, R_anchor - pq_ceiling);
-
-            auto find_flat_baseline = [&](const std::vector<double>& beat)
-                -> std::pair<double, int>   // {mean, window_start}
+            // Median over the lowest-variance min_w-wide sub-window of
+            // [lo, hi] (inclusive, in this beat's own aligned column space).
+            auto flattest_median = [&](const std::vector<double>& beat, int lo, int hi)
+                -> std::pair<double, bool>
                 {
-                    const int hi = std::min(pq_hi_bound,
-                        static_cast<int>(beat.size()) - pq_min_w);
-                    if (hi < pq_lo_bound)
-                        return { std::numeric_limits<double>::quiet_NaN(), -1 };
+                    const int hi_bound = std::min(hi, static_cast<int>(beat.size()) - min_w);
+                    if (hi_bound < lo)
+                        return { std::numeric_limits<double>::quiet_NaN(), false };
 
                     double best_var = std::numeric_limits<double>::infinity();
-                    double best_mean = std::numeric_limits<double>::quiet_NaN();
                     int best_start = -1;
-
-                    for (int s = pq_lo_bound; s <= hi; ++s) {
+                    for (int s = lo; s <= hi_bound; ++s) {
                         double sum = 0.0, sumsq = 0.0; int n = 0;
-                        for (int k = s; k < s + pq_min_w; ++k) {
+                        for (int k = s; k < s + min_w; ++k) {
                             const double v = beat[k];
                             if (std::isnan(v)) continue;
                             sum += v; sumsq += v * v; ++n;
                         }
-                        if (n < static_cast<int>(pq_min_w * 0.7)) continue;
+                        if (n < static_cast<int>(min_w * 0.7)) continue;
                         const double mean = sum / n;
                         const double var = sumsq / n - mean * mean;
-                        if (var < best_var) { best_var = var; best_mean = mean; best_start = s; }
+                        if (var < best_var) { best_var = var; best_start = s; }
                     }
-                    return { best_mean, best_start };
+                    if (best_start < 0)
+                        return { std::numeric_limits<double>::quiet_NaN(), false };
+
+                    std::vector<double> win;
+                    win.reserve(min_w);
+                    for (int k = best_start; k < best_start + min_w; ++k)
+                        if (!std::isnan(beat[k])) win.push_back(beat[k]);
+                    if (win.empty())
+                        return { std::numeric_limits<double>::quiet_NaN(), false };
+                    std::sort(win.begin(), win.end());
+                    const size_t m = win.size() / 2;
+                    const double med = (win.size() % 2 == 0)
+                        ? 0.5 * (win[m - 1] + win[m]) : win[m];
+                    return { med, true };
                 };
 
-            const auto [target, target_start] =
-                find_flat_baseline(out.beats[out.ref_beat_index]);
+            // TP window for beat i: [this beat's own T-end, next beat's
+            // P-onset]. Returns {-1,-1} if the next R isn't inside this
+            // beat's slice, or the landmarks come back invalid/out of order
+            // (e.g. HR fast enough that T runs into the next P).
+            auto tp_window = [&](size_t i) -> std::pair<int, int> {
+                const auto& beat = out.beats[i];
+                const int N = static_cast<int>(beat.size());
+                const int t_end = FeatureMarks::detect_t_end(beat, R_anchor, fs);
+                const int next_r = R_anchor + out.rr_lens[i];
+                if (next_r <= 0 || next_r >= N) return { -1, -1 };
+                const int p_pk = FeatureMarks::detect_p_peak(beat, next_r);
+                const int p_on = FeatureMarks::compute_p_begin(beat, p_pk, fs, next_r);
+                if (t_end < 0 || p_on < 0 || t_end >= N || p_on >= N || p_on <= t_end)
+                    return { -1, -1 };
+                return { t_end, p_on };
+                };
 
-            if (!std::isnan(target)) {
-                for (auto& beat : out.beats) {
-                    const auto [b_base, b_start] = find_flat_baseline(beat);
-                    if (std::isnan(b_base)) continue;
-                    const double d = b_base - target;
+            auto baseline_for = [&](size_t i, BaselineSource& src) -> double {
+                const auto [tlo, thi] = tp_window(i);
+                if (tlo >= 0) {
+                    const auto [lvl, ok] = flattest_median(out.beats[i], tlo, thi);
+                    if (ok) { src = BaselineSource::TP; return lvl; }
+                }
+                const int pq_hi = R_anchor;
+                const int pq_lo = std::max(0, R_anchor - pq_ceiling);
+                const auto [lvl2, ok2] = flattest_median(out.beats[i], pq_lo, pq_hi);
+                if (ok2) { src = BaselineSource::PQ; return lvl2; }
+                src = BaselineSource::NONE;
+                return std::numeric_limits<double>::quiet_NaN();
+                };
+
+            BaselineSource refSrc = BaselineSource::NONE;
+            const double target = baseline_for(static_cast<size_t>(out.ref_beat_index), refSrc);
+
+            if (refSrc != BaselineSource::NONE && !std::isnan(target)) {
+                for (size_t i = 0; i < out.beats.size(); ++i) {
+                    BaselineSource src = BaselineSource::NONE;
+                    const double lvl = baseline_for(i, src);
+                    out.baseline_source[i] = src;
+                    if (src == BaselineSource::NONE || std::isnan(lvl))
+                        continue;   // graceful degrade: leave un-shifted, flagged NONE
+                    const double d = lvl - target;
                     if (d == 0.0) continue;
-                    for (double& v : beat)
+                    for (double& v : out.beats[i])
                         if (!std::isnan(v)) v -= d;
                 }
             }
         }
+        // ---- Wave-score pruning ----------------------------------------
+        // Iterative template-matching QC, run AFTER R-alignment and PQ-
+        // baseline DC-shift (so beats are already on a common axis and
+        // vertical offset). Three tightening passes (4.0 -> 3.0 -> 2.5 SD);
+        // each pass rebuilds a column-wise NaN-skipping median template from
+        // the CURRENT survivors, then drops any beat whose:
+        //   (a) Pearson correlation with that template (over columns where
+        //       both are non-NaN) is below 0.30, OR
+        //   (b) worst single-sample deviation from the template exceeds
+        //       (pass threshold) x the template's own per-sample residual SD
+        //       (one scalar per pass, not per-column, to avoid overfitting a
+        //       591-column threshold vector to a handful of beats).
+        // ASSUMPTION: the spec's three SD numbers are read as three
+        // successive tightening passes, not three simultaneous per-metric
+        // thresholds -- flag if that's not the intended reading.
+        {
+            auto column_median = [&](const std::vector<std::vector<double>>& beats, int width) {
+                std::vector<double> tmpl(width, NaND);
+                std::vector<double> col;
+                col.reserve(beats.size());
+                for (int c = 0; c < width; ++c) {
+                    col.clear();
+                    for (const auto& b : beats)
+                        if (!std::isnan(b[c])) col.push_back(b[c]);
+                    if (col.empty()) continue;
+                    std::sort(col.begin(), col.end());
+                    const size_t nc = col.size();
+                    tmpl[c] = (nc % 2 == 0)
+                        ? 0.5 * (col[nc / 2 - 1] + col[nc / 2])
+                        : col[nc / 2];
+                }
+                return tmpl;
+                };
+
+            auto pearson = [&](const std::vector<double>& a, const std::vector<double>& b) -> double {
+                double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0; int n = 0;
+                for (size_t k = 0; k < a.size(); ++k) {
+                    if (std::isnan(a[k]) || std::isnan(b[k])) continue;
+                    sa += a[k]; sb += b[k]; saa += a[k] * a[k];
+                    sbb += b[k] * b[k]; sab += a[k] * b[k]; ++n;
+                }
+                if (n < 4) return 0.0;   // too few overlapping samples to trust
+                const double ma = sa / n, mb = sb / n;
+                const double cov = sab / n - ma * mb;
+                const double va = saa / n - ma * ma, vb = sbb / n - mb * mb;
+                if (va <= 0.0 || vb <= 0.0) return 0.0;
+                return cov / std::sqrt(va * vb);
+                };
+
+            const double corr_min = 0.30;
+            const double sd_thresholds[3] = { 4.0, 3.0, 2.5 };
+
+            // Freeze the residual-SD SCALE once, from the population as it
+            // stands right before wave-score pruning starts (post length/
+            // amplitude Tukey). Recomputing this scale fresh each pass from
+            // an ever-shrinking, ever-more-homogeneous survivor set makes it
+            // collapse toward zero -- the absolute threshold (sdThresh x SD)
+            // then shrinks faster than intended and the last pass rejects
+            // everything, including clean beats. Only the TEMPLATE (shape)
+            // and the surviving set are allowed to refine across passes;
+            // the yardstick they're measured against does not shrink with
+            // them.
+            double frozenSD = -1.0;
+            {
+                const std::vector<double> tmpl0 = column_median(out.beats, shared_w);
+                double sumsq = 0.0; long n = 0;
+                for (const auto& b : out.beats)
+                    for (int c = 0; c < shared_w; ++c) {
+                        const double v = b[c], t = tmpl0[c];
+                        if (std::isnan(v) || std::isnan(t)) continue;
+                        sumsq += (v - t) * (v - t); ++n;
+                    }
+                if (n >= 2) frozenSD = std::sqrt(sumsq / (n - 1));
+            }
+
+            if (frozenSD > 0.0) {
+                for (double sdThresh : sd_thresholds) {
+                    if (out.beats.size() < 4) break;   // not enough left to keep pruning meaningfully
+
+                    const std::vector<double> tmpl = column_median(out.beats, shared_w);
+
+                    std::vector<bool> keep(out.beats.size(), true);
+                    for (size_t i = 0; i < out.beats.size(); ++i) {
+                        const double r = pearson(out.beats[i], tmpl);
+                        // RMS deviation over this beat's own overlapping columns --
+                        // NOT the single worst sample. With hundreds of columns the
+                        // max single-sample deviation is always several SDs out
+                        // (extreme-value statistics), regardless of whether the
+                        // beat is a good match; RMS is the well-behaved, standard
+                        // "how many SDs away is this beat" measure.
+                        double sumsq = 0.0; int n = 0;
+                        for (int c = 0; c < shared_w; ++c) {
+                            const double v = out.beats[i][c], t = tmpl[c];
+                            if (std::isnan(v) || std::isnan(t)) continue;
+                            sumsq += (v - t) * (v - t); ++n;
+                        }
+                        const double rms = (n > 0) ? std::sqrt(sumsq / n) : 0.0;
+                        keep[i] = (r >= corr_min) && (rms <= sdThresh * frozenSD);
+                    }
+                    apply_mask(keep);
+                }
+            }
+        }
+
         out.q_aligned_col = out.r_aligned_col;
         return out;
-	}
+    }
 
     inline int find_q_column(const std::vector<double>& b, int R_anchor, double fs) {
         /*Finds Q column by negative 1st derivative followed by positive first dirivative and the whole thing
@@ -287,7 +476,7 @@ namespace alignment {
 
             if (d1_prev <= 0.0 && d1_next >= 0.0 && d2 > 0.0) return k;
         }
-		std::cout << "No Q peak found in QAlign, falling back to steepest slope in R-upstroke region\n";
+        std::cout << "No Q peak found in QAlign, falling back to steepest slope in R-upstroke region\n";
         int fallback = -1;
         double maxSlope = -std::numeric_limits<double>::infinity();
         for (int k = lo; k < R_anchor && k + 1 < Wsh; ++k) {

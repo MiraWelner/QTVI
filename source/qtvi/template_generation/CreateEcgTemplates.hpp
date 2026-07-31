@@ -23,7 +23,7 @@
 #pragma once
 
 #include "TemplateTypes.hpp"
-#include "template_marking_gui\alignment.hpp"
+#include "template_marking_gui/alignment.hpp"
 #include <atomic>
 
 #ifdef _OPENMP
@@ -40,7 +40,7 @@ struct SingleMethodResult {
 };
 
 static inline SingleMethodResult build_ecg_template_for_method(const vector<double>& ecgSignal, const vector<size_t>& rpeaks, const vector<vector<double>>& pairs,
-    double ecgRate, vector<vector<double>>* out_kept_beats = nullptr, bool compute_iqr = false){
+    double ecgRate, vector<vector<double>>* out_kept_beats = nullptr, bool compute_iqr = false) {
     SingleMethodResult res;
     res.ecgTemplate = {};
     res.ecg_template_iqr = {};
@@ -52,8 +52,31 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
     const alignment::ecg_beat_set aligned = alignment::extract_beats_and_align(ecgSignal, rpeaks, ecgRate);
     if (aligned.beats.empty() || aligned.median_length <= 0) return res;
 
-    const size_t maxLen = aligned.beats.front().size();   // shared-axis width
-    res.n_beats = aligned.beats.size();
+    // Beats with baseline_source == NONE had neither a usable TP nor PQ
+    // isoelectric reference, so their DC level is untrustworthy -- exclude
+    // them from every amplitude-dependent aggregate below (median template,
+    // std band, and the surviving-beats QC capture), same as the Tukey/
+    // wave-score rejections that already ran upstream in extract_beats_and_
+    // align(). NOTE: this changes prior behavior -- previously an
+    // unavailable baseline meant "use the beat un-shifted anyway"; now it
+    // means "exclude it entirely" per spec. If baseline_source is empty or
+    // mismatched in length (e.g. ref_beat_index was invalid so Pass 3 never
+    // ran), fall back to using every beat unfiltered rather than silently
+    // producing an empty template.
+    const bool haveSrc = aligned.baseline_source.size() == aligned.beats.size();
+    std::vector<const std::vector<double>*> usable;
+    usable.reserve(aligned.beats.size());
+    for (size_t i = 0; i < aligned.beats.size(); ++i) {
+        if (haveSrc && aligned.baseline_source[i] == alignment::BaselineSource::NONE) continue;
+        usable.push_back(&aligned.beats[i]);
+    }
+    if (usable.empty()) {   // every beat's baseline was NONE -- fail safe, don't zero the template
+        usable.reserve(aligned.beats.size());
+        for (const auto& b : aligned.beats) usable.push_back(&b);
+    }
+
+    const size_t maxLen = usable.front()->size();   // shared-axis width
+    res.n_beats = usable.size();
 
     // R column: the detected-R fiducial the template was built around, straight
     // from alignment (every beat's detected R lands at r_aligned_col). Passed
@@ -64,9 +87,9 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
     res.ecgTemplate.assign(maxLen, NaN);
     for (size_t c = 0; c < maxLen; ++c) {
         std::vector<double> col;
-        col.reserve(aligned.beats.size());
-        for (const auto& sl : aligned.beats) {
-            const double v = sl[c];
+        col.reserve(usable.size());
+        for (const auto* sl : usable) {
+            const double v = (*sl)[c];
             if (!std::isnan(v)) col.push_back(v);
         }
         if (col.empty()) continue;
@@ -77,37 +100,40 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
             : col[nc / 2];
     }
 
-    // Per-sample robust spread over the same aligned-beat matrix: the IQR
-    // (25th-75th percentile). Robust so
-    // the band tracks the median template line and isn't inflated by the few
-    // outlier / 1-sample-off beats at the R spike (which barely move the
-    // median but massively inflate a mean-based std). Used to draw the gray
-    // band under the raw template.
+    // Per-sample robust spread over the same aligned-beat matrix: per-sample
+    // STD (ddof=1) -- changed from IQR per spec step 7. Used to draw the
+    // gray band under the raw template.
+    // NOTE: field/param names say "iqr" but this now computes the
+    // per-sample STD (ddof=1), not the interquartile range -- changed
+    // per spec step 7. Renaming ecg_template_iqr/compute_iqr throughout
+    // the codebase (TemplateTypes.hpp, BinPlotWidget, TemplateBinIO,
+    // template_io, ...) is a separate, larger follow-up; left as-is here
+    // to keep this change to the computation only.
     if (compute_iqr) {
         res.ecg_template_iqr.assign(maxLen, 0.0);
         std::vector<double> col;
-        col.reserve(aligned.beats.size());
+        col.reserve(usable.size());
         for (size_t c = 0; c < maxLen; ++c) {
             col.clear();
-            for (const auto& sl : aligned.beats)
-                if (!std::isnan(sl[c])) col.push_back(sl[c]);
+            for (const auto* sl : usable)
+                if (!std::isnan((*sl)[c])) col.push_back((*sl)[c]);
             const size_t nc = col.size();
             if (nc < 2) continue;
-            const size_t q1i = nc / 4;
-            const size_t q3i = (3 * nc) / 4;
-            std::nth_element(col.begin(), col.begin() + q1i, col.end());
-            const double q1 = col[q1i];
-            std::nth_element(col.begin() + q1i, col.begin() + q3i, col.end());
-            const double q3 = col[q3i];
-            res.ecg_template_iqr[c] = q3 - q1;
+            double mean = 0.0;
+            for (double v : col) mean += v;
+            mean /= static_cast<double>(nc);
+            double sumsq = 0.0;
+            for (double v : col) sumsq += (v - mean) * (v - mean);
+            res.ecg_template_iqr[c] = std::sqrt(sumsq / static_cast<double>(nc - 1));   // ddof = 1
         }
     }
 
-    // Retain the aligned per-beat slices for the snips CSV.
+    // Retain the aligned per-beat slices for the snips CSV (baseline-
+    // unreliable beats excluded, same set used for the template above).
     if (out_kept_beats) {
         out_kept_beats->clear();
-        out_kept_beats->reserve(aligned.beats.size());
-        for (const auto& sl : aligned.beats) out_kept_beats->push_back(sl);
+        out_kept_beats->reserve(usable.size());
+        for (const auto* sl : usable) out_kept_beats->push_back(*sl);
     }
 
     // PPG transit delay (median foot - R across paired beats), unchanged.
