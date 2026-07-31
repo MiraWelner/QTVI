@@ -256,7 +256,6 @@ bool load_config(int dataType, config_entry& out) {
         out.input_path = cell("original_file_path");
         out.output_path = cell("output_folder");
         out.use_consensus_rpeak = parseBool(cell("use_consensus_rpeak"), true);
-
         // --- Filtering options ---
         // Notch: blank -> 0 (disabled). Only 0/50/60 are valid; anything else
         // warns and falls back to disabled.

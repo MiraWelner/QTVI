@@ -142,8 +142,13 @@ namespace post_process_detail {
             if (35 < up.size()) artpSlots[i] = up[35];
         }
 
+        auto t0 = std::chrono::steady_clock::now();
         job.peakResults = create_ecg_ppg_pairs_raw(std::move(annealedData.bins), true, stem, cfg,
             annealedData.ecg1_inverted, annealedData.ecg2_inverted, annealedData.ecg3_inverted);
+        auto t1 = std::chrono::steady_clock::now();
+        std::cerr << "  [timing] create_ecg_ppg_pairs_raw: "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
+            << " ms  (use_consensus_rpeak=" << cfg.use_consensus_rpeak << ")\n";
         job.needSqabsDetection = true;
 
         // create_ecg_ppg_pairs_raw doesn't carry the arterial pass-through
