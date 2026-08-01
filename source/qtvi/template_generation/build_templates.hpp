@@ -17,7 +17,7 @@
 #include "template_io.hpp"
 #include "GenerateTemplates.hpp"
 #include "TemplateTypes.hpp"
-#include "template_generation/CreateArterialTemplates.hpp"
+#include "template_generation/create_arterial_templates.hpp"
 #include "template_marking_gui/alignment.hpp"   // align_beat_matrix, QAlignResult
 #include "template_marking_gui/feature_marks.hpp"   // AnchorType, make_anchor_locator
 #include "peak_finding/peakfinding_io.hpp"
@@ -181,17 +181,18 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
     }
 
     // Arterial background-context templates (ABP / ART / ART_PULM),
-    // R-anchored under Patch B (same [R_i-pad, R_{i+1}+pad] slicing as
-    // ECG and PPG, driven by ch1.raw). Present-only; a channel with
-    // rate=0 in SignalRates yields an empty result and is silently
+    // FOOT-anchored per spec: self-detected pulses on each channel's own
+    // waveform, no borrowed ECG R-peaks (contrast with PPG above, which
+    // stays R-anchored via CreatePulseTemplates). Present-only; a channel
+    // with rate=0 in SignalRates yields an empty result and is silently
     // skipped when packed into the bins.
     {
         auto abp = CreateArterialTemplates(
-            peakResults, &output_binfile_data::abpSignal, rates.ecg, rates.abp);
+            peakResults, &output_binfile_data::abpSignal, rates.abp);
         auto art = CreateArterialTemplates(
-            peakResults, &output_binfile_data::artSignal, rates.ecg, rates.art);
+            peakResults, &output_binfile_data::artSignal, rates.art);
         auto artp = CreateArterialTemplates(
-            peakResults, &output_binfile_data::artPulmSignal, rates.ecg, rates.artPulm);
+            peakResults, &output_binfile_data::artPulmSignal, rates.artPulm);
         for (size_t i = 0; i < out.tmpl.bins.size(); ++i) {
             if (out.tmpl.bins[i].bad_segment) continue;
             if (i < abp.templates.size()) {
@@ -209,7 +210,7 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
         }
 
         // Retain each arterial channel's snips into per_channel_beats.
-        auto stashArt = [&](const char* name, ArterialTemplatesResult& r) {
+        auto stashArt = [&](const char* name, PPGTemplatesResult& r) {
             auto& dst = out.beats.per_channel_beats[name];
             if (dst.size() < r.kept.size()) dst.resize(r.kept.size());
             for (size_t i = 0; i < r.kept.size(); ++i)
@@ -310,14 +311,6 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl,
             if (q.r_col >= 0) blk.r_col = q.r_col;   // R re-detected on the Q template
         }
     }
-}
-
-// Convenience overload for the in-memory R-pass build.
-inline void alignTemplatesFromCache(FastTemplateBuild& build,
-    const SignalRates& rates,
-    AnchorType anchor)
-{
-    alignTemplatesFromCache(build.tmpl, build.beats, rates, anchor);
 }
 
 // SLOW merge: fills the squared/absval per-bin blocks and their SAECG

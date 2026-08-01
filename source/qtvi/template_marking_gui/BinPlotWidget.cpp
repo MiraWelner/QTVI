@@ -856,7 +856,6 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
         int gcol = -1; bool gEcg = false;
         int gm = glyphAtX(e->position().x(), gcol, gEcg);
         if (gm >= 0) {
-            fprintf(stderr, "[FOCUS] glyph click -> marker=%d col=%d\n", gm, gcol);
             emit landmarkSelected(m_binIndex, m_leadIndex, gm, gcol);
             // fall through: if a draggable bar is also under the cursor, still
             // begin a drag on it (glyph selection and bar drag can coexist).

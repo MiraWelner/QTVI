@@ -209,7 +209,8 @@ static void runTemplateMarking(const config_entry& cfg,
             QString::fromStdString(cfg.qtvi_marker_path),
             displayId, cfg.ecg_upsample_rate,
             cfg.ppg_upsample_rate, cfg.abp_upsample_rate,
-            cfg.art_upsample_rate, cfg.art_pulm_upsample_rate);
+            cfg.art_upsample_rate, cfg.art_pulm_upsample_rate,
+            cfg.notch_filter_hz);
         loop.exec();
         // viewer is destroyed here (window closes) before we rebuild.
 

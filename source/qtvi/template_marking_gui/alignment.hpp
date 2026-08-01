@@ -24,7 +24,6 @@
 #include <vector>
 #include <functional>
 #include "feature_marks.hpp"
-#include "subsample_refine.hpp"
 
 
 namespace alignment {
@@ -770,52 +769,16 @@ namespace alignment {
             }
             if (up50 < 0) continue;   // no clean upslope crossing; drop beat
 
-            // Spec I-3: PPG peak is a symmetric extremum (sigma=8); PPG foot
-            // is a transition anchor (4x upsample + fit-and-select). Refined
-            // here, AFTER up50 (the shared alignment anchor, computed above
-            // from the raw peak/foot) so refining these doesn't perturb the
-            // alignment reference itself -- only the stored peak/foot used
-            // by the amplitude-Tukey check below, a much lower-stakes
-            // consumer than the alignment anchor.
-            const int peak_refined = std::clamp(static_cast<int>(std::lround(
-                subsample_refine::symmetricExtremum(beat, peak, 8.0))), 0, (int)beat.size() - 1);
-            const int foot_refined = std::clamp(static_cast<int>(std::lround(
-                subsample_refine::transitionAnchor(beat, foot, 0.10, 40,
-                    std::numeric_limits<double>::quiet_NaN(),
-                    foot, std::min(foot + 40, (int)beat.size() - 1)))),
-                0, (int)beat.size() - 1);
-
-            raw.push_back({ std::move(beat), peak_refined, foot_refined, up50 });
+            // NOTE: peak/foot are stored raw (no subsample_refine call) --
+            // they only feed the peak-position rejection check below and
+            // the (unread by any caller) peak_cols/foot_cols output,
+            // neither of which needs sub-sample precision. The expensive
+            // 4x-upsample fit-and-select refinement was pure overhead here;
+            // the real fiducials used downstream (outPeakCol/outFootCol)
+            // are recomputed independently from the final median template.
+            raw.push_back({ std::move(beat), peak, foot, up50 });
             rr_lens.push_back(static_cast<int>(rr));
         }
-        if (raw.empty()) return out;
-
-        // ---- Tukey rejection: length (1.5*IQR) --------------------------
-        {
-            std::vector<double> lens_d(rr_lens.begin(), rr_lens.end());
-            apply_mask(keep_within_tukey(lens_d, 1.5));
-        }
-        if (raw.empty()) return out;
-
-        // ---- Tukey rejection: systolic amplitude peak-foot (1.5*IQR) ----
-        {
-            std::vector<double> amps;
-            amps.reserve(raw.size());
-            for (const auto& r : raw) amps.push_back(r.data[r.peak] - r.data[r.foot]);
-            apply_mask(keep_within_tukey(amps, 1.5));
-        }
-        if (raw.empty()) return out;
-
-        // ---- Tukey rejection: 50%-upslope position (1.5*IQR) ------------
-        // up50 is the horizontal alignment fiducial and is searched per beat
-        // (unlike ECG's analytic R column), so we guard its position here.
-        {
-            std::vector<double> poss;
-            poss.reserve(raw.size());
-            for (const auto& r : raw) poss.push_back(static_cast<double>(r.up50));
-            apply_mask(keep_within_tukey(poss, 1.5));
-        }
-        out.total_beats = raw.size();
         if (raw.empty()) return out;
 
         // ---- representative (median) length ----------------------------
@@ -866,6 +829,67 @@ namespace alignment {
             out.foot_cols.push_back(prepend + b.foot);   // may be < 0 for clipped beats
         }
         out.up50_aligned_col = up50_anchor;
+
+        // ---- Rejection: peak-column distance from the median peak column,
+        // measured HERE (after alignment) rather than in each beat's own
+        // local frame, because peak/foot/r_col all scale with that beat's
+        // own RR before alignment -- raw column values aren't comparable
+        // across beats until they share this common up50-anchored axis.
+        //
+        // The first 100 beats (or all, if fewer are available) seed the
+        // reference median peak column and are kept unconditionally --
+        // there's no reference to reject them against yet. Every beat after
+        // that is rejected once its peak sits 5% of its own RR or further
+        // from that median column. This guarantees at least
+        // min(100, total_beats) beats always survive.
+        {
+            const size_t nSeed = std::min<size_t>(100, out.peak_cols.size());
+            std::vector<int> seedPeaks(out.peak_cols.begin(), out.peak_cols.begin() + nSeed);
+            std::sort(seedPeaks.begin(), seedPeaks.end());
+            const int medianPeakCol = seedPeaks[seedPeaks.size() / 2];
+
+            std::vector<bool> keep(out.peak_cols.size(), true);
+            for (size_t i = nSeed; i < out.peak_cols.size(); ++i) {
+                const double dist = std::abs(out.peak_cols[i] - medianPeakCol);
+                keep[i] = (rr_lens[i] > 0) && (dist < 0.05 * rr_lens[i]);
+            }
+
+            std::vector<std::vector<double>> fBeats;
+            std::vector<int> fPeak, fFoot, fRr;
+            fBeats.reserve(out.beats.size());
+            fPeak.reserve(out.beats.size());
+            fFoot.reserve(out.beats.size());
+            fRr.reserve(out.beats.size());
+            for (size_t i = 0; i < out.beats.size(); ++i) {
+                if (!keep[i]) continue;
+                fBeats.push_back(std::move(out.beats[i]));
+                fPeak.push_back(out.peak_cols[i]);
+                fFoot.push_back(out.foot_cols[i]);
+                fRr.push_back(rr_lens[i]);
+            }
+            out.beats.swap(fBeats);
+            out.peak_cols.swap(fPeak);
+            out.foot_cols.swap(fFoot);
+            rr_lens.swap(fRr);
+
+            // Re-anchor ref_beat_index to the filtered set (same
+            // median_length target chosen above); fall back to the closest
+            // surviving RR if the original reference beat itself got cut.
+            out.ref_beat_index = -1;
+            for (size_t i = 0; i < rr_lens.size(); ++i)
+                if (rr_lens[i] == out.median_length) { out.ref_beat_index = static_cast<int>(i); break; }
+            if (out.ref_beat_index < 0 && !rr_lens.empty()) {
+                size_t best = 0;
+                int bestDiff = std::abs(rr_lens[0] - out.median_length);
+                for (size_t i = 1; i < rr_lens.size(); ++i) {
+                    const int d = std::abs(rr_lens[i] - out.median_length);
+                    if (d < bestDiff) { bestDiff = d; best = i; }
+                }
+                out.ref_beat_index = static_cast<int>(best);
+            }
+        }
+        out.total_beats = out.beats.size();
+        if (out.beats.empty()) return out;
 
         // ---- Pass 2: min-baseline vertical DC match ---------------------
         // Match each beat's baseline (windowed mean around its OWN minimum

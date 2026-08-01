@@ -7,7 +7,10 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include <omp.h>
 
 #include "annealing/anneal_handler.hpp"
 #include "peak_finding/peakfinding_io.hpp"
@@ -63,6 +66,10 @@ namespace post_process_detail {
     // is killed mid-marking (canonical files just won't exist yet and
     // regenerate next run). The worker touches only the canonical paths; the
     // viewer reads only the provisional path; the two never collide.
+    //
+    // Callers MUST join the finalize worker before invoking
+    // regenerateWithAnchor -- both mutate job.tmpl and would race if run
+    // concurrently. (Also documented at each function's declaration below.)
     // ---------------------------------------------------------------------
     struct ViewerJob {
         std::filesystem::path viewerTemplatePath;   // what the viewer opens
@@ -86,6 +93,16 @@ namespace post_process_detail {
         template_io::TemplateFile tmpl;
         template_io::BeatsFile beats;
         std::vector<TemplateInfo> info;
+
+        // Carried into the finalize step so it can rerun the squared/absval
+        // R-peak detection on the worker thread. Cheaper than re-plumbing
+        // the whole cfg into the worker; these are the only fields
+        // augment_ecg_ppg_pairs_sqabs actually reads.
+        config_entry cfg{};
+        bool use_R_algorithm = true;    // = cfg.use_consensus_rpeak in prepareViewerJob
+        bool ecg1_inverted = false;
+        bool ecg2_inverted = false;
+        bool ecg3_inverted = false;
 
         std::string error;                          // set by finalizeViewerJob on failure
     };
@@ -124,6 +141,13 @@ namespace post_process_detail {
             cfg.art_upsample_rate,
             cfg.art_pulm_upsample_rate
         };
+        // Everything finalize needs from cfg. Copy it once here rather than
+        // wiring individual fields piecewise later.
+        job.cfg = cfg;
+        job.use_R_algorithm = cfg.use_consensus_rpeak;
+        job.ecg1_inverted = ecg1_inverted;
+        job.ecg2_inverted = ecg2_inverted;
+        job.ecg3_inverted = ecg3_inverted;
         job.rPeakPath = rPeakPath;
         job.templatePath = templatePath;
         job.provisionalPath = provisionalPath;
@@ -179,17 +203,33 @@ namespace post_process_detail {
 
     // Runs on a worker thread. Must not touch Qt. Stores any error in
     // job.error rather than throwing across the thread boundary.
+    //
+    // Callers MUST join this worker before invoking regenerateWithAnchor:
+    // both operate on job.tmpl and would race if allowed to run
+    // concurrently. That discipline is already documented at
+    // regenerateWithAnchor's declaration.
     inline void finalizeViewerJob(ViewerJob& job)
     {
+        // Cap OpenMP so the Qt UI thread always has at least one core to
+        // schedule on. Without this, augment_ecg_ppg_pairs_sqabs and the
+        // downstream template builders each grab omp_get_max_threads() cores
+        // by default; on an N-core machine that saturates all N cores at
+        // 100%, the Qt main thread gets starved by the scheduler, and the
+        // marking UI freezes -- even though it's technically off the Qt
+        // thread. Leaving one core for Qt keeps the GUI responsive.
+        // omp_set_nested(0) also blocks any internal parallel-for from
+        // spawning a nested team inside the outer one (the same nested-
+        // parallelism pattern that made create_arterial_templates slow
+        // before -- see its own omp_set_nested call).
+        const int hw = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
+        const int workerThreads = std::max(1, hw - 1);
+        omp_set_num_threads(workerThreads);
+        omp_set_nested(0);
+
         try {
-            // Squared/absval are unused by the viewer, so we ignore them
-            // entirely: no augment_ecg_ppg_pairs_sqabs (detection) and no
-            // mergeTemplatesSlow (squared/absval templating). This keeps this
-            // step to plain file writes -- it no longer runs the template
-            // generator, so it can't race the Q-align rebuild, and the rebuild
-            // never waits on heavy squared/absval work.
             if (job.needSqabsDetection) {
-                // Fresh raw detection: persist the canonical (raw) r-peaks + CSV.
+                // Fresh raw detection: persist the canonical (raw) r-peaks + CSV
+                // first, before squared/absval overwrite the beat lists.
                 write_output_binfile(job.rPeakPath.string(), job.peakResults);
 
                 const std::filesystem::path csvDir = analysisCsvDir(job.templatePath);
@@ -198,9 +238,30 @@ namespace post_process_detail {
                     csvDir / (job.stem + "_peak_locations_all_beats.csv");
                 write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
             }
-            // Canonical templates = the fast (raw/unfilt/ppg) build as-is.
+
+            // Squared/absval R-peak detection on ECG channels, then slow
+            // templating to pack the two extra per-bin blocks (squared,
+            // absval) plus their SAECG entries into job.tmpl. Runs entirely
+            // on this worker; no Qt access. The worker is expected to have
+            // been joined before regenerateWithAnchor is called (see
+            // comment above), so no race with the anchor path here.
+            auto t_sq0 = std::chrono::steady_clock::now();
+            augment_ecg_ppg_pairs_sqabs(job.peakResults, job.use_R_algorithm,
+                job.fileID, job.samplingRate, job.cfg,
+                job.ecg1_inverted, job.ecg2_inverted, job.ecg3_inverted);
+            mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
+            auto t_sq1 = std::chrono::steady_clock::now();
+            std::cerr << "  [timing] squared/absval build for " << job.stem << ": "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(t_sq1 - t_sq0).count()
+                << " ms\n";
+
+            // Canonical templates now include squared/absval alongside
+            // raw/unfilt/ppg. Write once, then drop the provisional file
+            // the viewer has been reading from.
             template_io::write_template_binfile(job.templatePath.string(), job.tmpl);
             std::filesystem::remove(job.provisionalPath);
+
+            std::cout << "Squared/absval slow processing done for " << job.stem << "\n";
 
             // (No snips.csv: serializing every retained beat for every channel
             // dominated finalize time and nothing downstream consumes it.)

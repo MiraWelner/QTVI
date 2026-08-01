@@ -24,7 +24,13 @@ public:
         // which case BinPlotWidget::rateRatio() falls back to 1.0 -- the
         // historical behavior from when every channel shared one rate.
         double ppgRateHz = 0.0, double abpRateHz = 0.0,
-        double artRateHz = 0.0, double artPulmRateHz = 0.0);
+        double artRateHz = 0.0, double artPulmRateHz = 0.0,
+        // Notch frequency for the viewer's display-time notch toggle
+        // (see the `notch_filter` checkbox). 0 disables the toggle entirely
+        // regardless of the checkbox state; typically comes from
+        // cfg.notch_filter_hz so the display filter matches whatever was
+        // (or would have been) applied at build time.
+        int notchFilterHz = 0);
 
     // Anchor cycle state. m_anchorStep: -1 = R pass; 0..N-1 index into the
     // controller's anchor sequence. m_qAlignPass is kept as a derived flag
@@ -146,6 +152,15 @@ private:
     bool m_showAbpTrace = true;
     bool m_showArtTrace = true;
     bool m_showArtPulmTrace = true;
+
+    // Display-time notch filter toggle. When on, every template array is
+    // pushed through notch_filter() at draw time (in showPage) before it
+    // reaches normalize_* and the plot widget. Does NOT rebuild templates
+    // or touch saved files -- purely a viewing convenience. m_notchHz is
+    // seeded from cfg.notch_filter_hz at loadSubject; a value <= 0 also
+    // means "disabled" (the checkbox becomes a no-op).
+    bool m_notchFilterOn = false;
+    int  m_notchFilterHz = 0;
 
     // Per-subject global references, computed once at loadSubject after
     // marker seeding. Used to normalize traces both on-screen and in

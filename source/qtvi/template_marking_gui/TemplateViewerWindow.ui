@@ -116,6 +116,13 @@
        </widget>
       </item>
       <item>
+       <widget class="QCheckBox" name="notch_filter">
+        <property name="text">
+         <string>Notch Filter</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QLabel" name="subjectLabel">
         <property name="font">
          <font>

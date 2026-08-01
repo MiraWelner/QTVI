@@ -131,8 +131,8 @@ inline RPeakDetectResult rpeakdetect_apply(const RPeakDetectPrep& prep, double t
     if (!poss_reg.empty()) {
         if (poss_reg[0] == 1) left.push_back(1);
         for (size_t i = 1; i < poss_reg.size(); ++i) {
-            if (poss_reg[i] == 1 && poss_reg[i - 1] == 0) left.push_back(i + 1);
-            if (poss_reg[i] == 0 && poss_reg[i - 1] == 1) right.push_back(i);
+            if (poss_reg[i] == 1 && poss_reg[i - 1] == 0) left.push_back(static_cast<int>(i + 1));
+            if (poss_reg[i] == 0 && poss_reg[i - 1] == 1) right.push_back(static_cast<int>(i));
         }
         if (poss_reg.back() == 1) right.push_back((int)poss_reg.size());
     }

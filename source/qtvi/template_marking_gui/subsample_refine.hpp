@@ -245,89 +245,74 @@ namespace subsample_refine {
     // -----------------------------------------------------------------------
     // Least-squares cubic regression spline over [lo, hi] with exactly 4
     // knots: the two endpoints (lo, hi) plus TWO interior knots whose
-    // positions are chosen to MINIMIZE the fit's residual sum of squares
-    // (searched over a grid). Fit to all samples. Returns the sample index of
-    // the first LOCAL MINIMUM of the best-fit spline after lo (the dicrotic
-    // notch), or -1 on failure / no interior minimum.
+    // Least-squares cubic regression spline over [lo, hi] with interior knots
+    // spaced every `knotSpacing` samples -- dense enough to track the pulse
+    // faithfully (notch + diastolic peak) rather than smoothing them away.
+    // Truncated-power basis {1, x, x^2, x^3, (x-kj)_+^3 for each interior kj}.
     //
-    // Helper: fit a 4-knot spline with given interior knots k1<k2 (relative
-    // to lo), return {coef, rss}. Basis {1,x,x^2,x^3,(x-k1)_+^3,(x-k2)_+^3}.
-    inline bool fitSpline4(const std::vector<double>& v, int lo, int hi,
-        double k1, double k2,
-        std::vector<double>& coefOut, double& rssOut) {
-        const int P = 6;
-        auto basis = [&](double x, double b[6]) {
-            const double t1 = (x > k1) ? (x - k1) : 0.0;
-            const double t2 = (x > k2) ? (x - k2) : 0.0;
-            b[0] = 1.0; b[1] = x; b[2] = x * x; b[3] = x * x * x; b[4] = t1 * t1 * t1; b[5] = t2 * t2 * t2;
+    // Returns the sample index of the first LOCAL MINIMUM of the fitted spline
+    // after lo (the dicrotic notch), or -1 on failure / none. diastolicOut
+    // (optional) receives the first local MAXIMUM after the notch (the
+    // diastolic peak), or -1 if none. No prominence guard yet -- the first
+    // min is taken as the notch and the first max after it as the diastolic
+    // peak; add a depth/prominence filter here if noise wiggles get mislabeled.
+    inline int cubicSplineNotch(const std::vector<double>& v, int lo, int hi,
+        int* diastolicOut = nullptr, int knotSpacing = 10) {
+        if (diastolicOut) *diastolicOut = -1;
+        const int n = hi - lo + 1;
+        if (n < 8) return -1;
+
+        // Interior knots every knotSpacing samples strictly inside (lo, hi).
+        std::vector<double> knots;   // relative to lo
+        for (int x = knotSpacing; x < n - 1; x += knotSpacing)
+            knots.push_back(static_cast<double>(x));
+        const int P = 4 + static_cast<int>(knots.size());
+        if (n < P + 2) return -1;
+
+        auto basis = [&](double x, std::vector<double>& b) {
+            b.assign(P, 0.0);
+            b[0] = 1.0; b[1] = x; b[2] = x * x; b[3] = x * x * x;
+            for (size_t j = 0; j < knots.size(); ++j) {
+                const double t = (x > knots[j]) ? (x - knots[j]) : 0.0;
+                b[4 + j] = t * t * t;
+            }
             };
+
         std::vector<std::vector<double>> A(P, std::vector<double>(P, 0.0));
         std::vector<double> Y(P, 0.0);
         int used = 0;
+        std::vector<double> b;
         for (int i = lo; i <= hi; ++i) {
             if (std::isnan(v[i])) continue;
-            double b[6]; basis(static_cast<double>(i - lo), b);
-            for (int r = 0; r < P; ++r) { Y[r] += b[r] * v[i]; for (int c = 0; c < P; ++c) A[r][c] += b[r] * b[c]; }
+            basis(static_cast<double>(i - lo), b);
+            for (int r = 0; r < P; ++r) {
+                Y[r] += b[r] * v[i];
+                for (int c = 0; c < P; ++c) A[r][c] += b[r] * b[c];
+            }
             ++used;
         }
-        if (used < P + 2) return false;
-        if (!solveLinear(A, Y, coefOut)) return false;
-        double rss = 0.0;
-        for (int i = lo; i <= hi; ++i) {
-            if (std::isnan(v[i])) continue;
-            double b[6]; basis(static_cast<double>(i - lo), b);
-            double yh = 0.0; for (int r = 0; r < P; ++r) yh += coefOut[r] * b[r];
-            const double e = v[i] - yh; rss += e * e;
-        }
-        rssOut = rss;
-        return true;
-    }
+        if (used < P + 2) return -1;
 
-    // diastolicOut (optional): receives the sample index of the DIASTOLIC
-    // PEAK -- the first local MAXIMUM of the same best-fit spline after the
-    // notch (the small bump following the dicrotic notch) -- or -1 if none.
-    inline int cubicSplineNotch(const std::vector<double>& v, int lo, int hi,
-        int* diastolicOut = nullptr) {
-        if (diastolicOut) *diastolicOut = -1;
-        const int n = hi - lo + 1;
-        if (n < 10) return -1;
-        const double span = static_cast<double>(hi - lo);
-
-        // Search interior-knot placement (k1<k2, both strictly interior) for
-        // the pair giving minimum residual. Grid step scales with the region.
-        const double step = std::max(1.0, span / 20.0);
-        std::vector<double> bestCoef; double bestRss = std::numeric_limits<double>::infinity();
-        double bk1 = span / 3.0, bk2 = 2.0 * span / 3.0;
-        bool any = false;
-        for (double k1 = step; k1 < span - step; k1 += step) {
-            for (double k2 = k1 + step; k2 < span; k2 += step) {
-                std::vector<double> coef; double rss;
-                if (!fitSpline4(v, lo, hi, k1, k2, coef, rss)) continue;
-                if (rss < bestRss) { bestRss = rss; bestCoef = coef; bk1 = k1; bk2 = k2; any = true; }
-            }
-        }
-        if (!any) return -1;
+        std::vector<double> coef;
+        if (!solveLinear(A, Y, coef)) return -1;
 
         auto evalAt = [&](double x) {
-            const double t1 = (x > bk1) ? (x - bk1) : 0.0;
-            const double t2 = (x > bk2) ? (x - bk2) : 0.0;
-            const double b[6] = { 1.0, x, x * x, x * x * x, t1 * t1 * t1, t2 * t2 * t2 };
-            double y = 0.0; for (int r = 0; r < 6; ++r) y += bestCoef[r] * b[r];
+            std::vector<double> bb; basis(x, bb);
+            double y = 0.0; for (int r = 0; r < P; ++r) y += coef[r] * bb[r];
             return y;
             };
 
-        // First local minimum of the best-fit spline strictly interior = the
-        // dicrotic notch. Then the first local MAXIMUM after it = the
-        // diastolic peak (the bump following the notch).
+        // First local minimum = dicrotic notch; first local maximum after it
+        // = diastolic peak (physiological order: notch then diastolic bump).
         int notch = -1, diastolic = -1;
         double prev = evalAt(0.0), cur = evalAt(1.0);
         for (int i = 1; i < n - 1; ++i) {
             const double next = evalAt(static_cast<double>(i + 1));
             if (notch < 0) {
-                if (cur <= prev && cur <= next) notch = lo + i;   // dip
+                if (cur <= prev && cur <= next) notch = lo + i;
             }
             else {
-                if (cur >= prev && cur >= next) { diastolic = lo + i; break; }  // bump after
+                if (cur >= prev && cur >= next) { diastolic = lo + i; break; }
             }
             prev = cur; cur = next;
         }

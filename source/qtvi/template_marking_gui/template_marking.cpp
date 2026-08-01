@@ -46,8 +46,8 @@ int main(int argc, char* argv[]) {
 
     const QString templatePath = QString::fromStdString(cfg.template_path);
     const QString markingPath = QString::fromStdString(cfg.qtvi_marker_path);
-    const int     expectedRate = static_cast<int>(cfg.finalSamplingRate);
-    const int     expectedBin = static_cast<int>(cfg.bin_length_minutes);
+    const int     expectedRate = static_cast<int>(cfg.ecg_upsample_rate);
+    const int     expectedBin = static_cast<int>(cfg.bin_size_minutes);
 
     std::cout << "\nTemplate path: " << templatePath.toStdString()
         << "\nMarking path:  " << markingPath.toStdString()
@@ -144,9 +144,10 @@ int main(int argc, char* argv[]) {
         std::cout.flush();
 
         QString templateFile = templatePath + "/" + s.file;
-        viewer.loadSubject(templateFile, markingPath, s.id, cfg.finalSamplingRate,
+        viewer.loadSubject(templateFile, markingPath, s.id, cfg.ecg_upsample_rate,
             cfg.ppg_upsample_rate, cfg.abp_upsample_rate,
-            cfg.art_upsample_rate, cfg.art_pulm_upsample_rate);
+            cfg.art_upsample_rate, cfg.art_pulm_upsample_rate,
+            cfg.notch_filter_hz);
         QEventLoop loop;
         QObject::connect(&viewer, &TemplateViewerWindow::finished,
             &loop, &QEventLoop::quit);

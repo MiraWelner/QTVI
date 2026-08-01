@@ -22,7 +22,7 @@
 #pragma once
 
 #include "TemplateTypes.hpp"
-#include "CreatePPGTemplates.hpp"
+#include "create_arterial_templates.hpp"
 #include "CreateEcgTemplates.hpp"
 #include <iostream>
 
@@ -55,7 +55,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     vector<bool> template_good(n, false);
 
     if (has_ppg && rates.ppg > 0.0) {
-        PPGTemplatesResult ppg_res = CreatePPGTemplates(wave_data, rates.ecg, rates.ppg);
+        PPGTemplatesResult ppg_res = CreatePulseTemplates(wave_data, &output_binfile_data::ppgSignal, rates.ecg, rates.ppg);
         ppg_templates = std::move(ppg_res.templates);
         ppg_template_iqrs = std::move(ppg_res.iqrs);
         ppg_kept = std::move(ppg_res.kept);

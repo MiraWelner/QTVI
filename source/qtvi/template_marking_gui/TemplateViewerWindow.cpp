@@ -2,6 +2,7 @@
 #include "ui_TemplateViewerWindow.h"
 #include "feature_marks.hpp"
 #include "NormalizeFeatures.hpp"
+#include "peak_finding/FilterUtils.hpp"   // notch_filter for display-time toggle
 #include <QMessageBox>
 #include <QColor>
 #include <QTimer>
@@ -109,6 +110,18 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
         m_showArtPulmTrace = on; applyMarkerVisibility();
         });
 
+    // Optional display-time notch filter toggle. Wired defensively via
+    // findChild so this compiles/runs even if the .ui doesn't (yet) declare
+    // a checkbox named "notch_filter"; when the widget is present, ticking
+    // it re-runs showPage() with each template pushed through notch_filter
+    // before drawing. When absent, this block is silently a no-op.
+    if (auto* notchBox = findChild<QCheckBox*>("notch_filter")) {
+        connect(notchBox, &QCheckBox::toggled, this, [this](bool on) {
+            m_notchFilterOn = on;
+            showPage();   // full page redraw; templates re-filtered on the way in
+            });
+    }
+
     // B2 focus mode: two stacked panels (QRS and JT views) in a right-side
     // dock. The J-point (S-end) is shared between them, so a J-point
     // selection/edit refreshes both (see refreshFocus). Created in code (not
@@ -206,7 +219,8 @@ void TemplateViewerWindow::onPrevPage() {
 
 void TemplateViewerWindow::loadSubject(const QString& templatePath, const QString& markingPath,
     const QString& subjectId, double sampleRateHz,
-    double ppgRateHz, double abpRateHz, double artRateHz, double artPulmRateHz) {
+    double ppgRateHz, double abpRateHz, double artRateHz, double artPulmRateHz,
+    int notchFilterHz) {
 
     m_markingPath = markingPath;
     m_templateDir = QFileInfo(templatePath).absolutePath();
@@ -216,6 +230,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     m_abpRateHz = abpRateHz;
     m_artRateHz = artRateHz;
     m_artPulmRateHz = artPulmRateHz;
+    m_notchFilterHz = notchFilterHz;
     setWindowTitle(QString("Template Marking - %1  [%2]").arg(subjectId, m_anchorLabel));
     ui->subjectLabel->setText(subjectId);
     // Button reads "Finish" only on the final pass of the anchor cycle;
@@ -503,19 +518,66 @@ void TemplateViewerWindow::showPage() {
             // Pulse: ((sample - foot_y) / |foot_y| * 100) / Global_Ref_pulse(chan)
             // If the ref or foot is unusable, the helpers pass the raw
             // trace through unchanged.
-            const std::vector<double> ecgN = normalizeEcgTrace(ecg, c);
+            //
+            // Display-time notch filter toggle: when the `notch_filter`
+            // checkbox is on AND a valid notch frequency was passed in via
+            // loadSubject, push each channel's template through notch_filter
+            // at that channel's own rate BEFORE normalization. Purely a
+            // viewing convenience: templates on disk are untouched, and
+            // toggling off returns to the raw stored templates on the next
+            // showPage() (which the checkbox handler triggers).
+            //
+            // maybeNotch also REBASES: notch_filter (implemented as
+            // x - narrow_bandpass(x)) leaves the waveform shape intact but
+            // shifts the DC level by whatever tiny residual mean the
+            // bandpass emits. That shift moves foot_y (the value at the foot
+            // column), which is what normalize_pulse_trace divides by. For
+            // pulse channels stored near-baseline-subtracted, foot_y sits
+            // near zero, so even a tiny DC shift is a LARGE relative change
+            // to foot_y -- the normalized trace then collapses to the
+            // bottom of the y-axis (looks like "PPG went away"). Rebasing
+            // to the pre-notch foot value keeps the normalization stable
+            // and the visible effect really is just the notch, not a
+            // baseline-hunt-induced squash.
+
+            const bool notchActive = m_notchFilterOn && m_notchFilterHz > 0;
+            auto maybeNotch = [&](const std::vector<double>& sig, double fs, int footIdx) -> std::vector<double> {
+                if (!notchActive || sig.empty() || fs <= 0.0) return sig;
+                std::vector<double> out = notch_filter(sig, static_cast<double>(m_notchFilterHz), fs);
+                if (footIdx >= 0 && footIdx < (int)sig.size() && footIdx < (int)out.size()) {
+                    const double shift = sig[footIdx] - out[footIdx];
+                    if (std::isfinite(shift) && shift != 0.0)
+                        for (auto& v : out) v += shift;
+                }
+                if (footIdx >= 0 && footIdx < (int)sig.size() && footIdx < (int)out.size()) {
+                    qDebug() << "[notch]"
+                        << "raw[foot]=" << sig[footIdx]
+                        << "out[foot]=" << out[footIdx]
+                        << "raw[peak]=" << *std::max_element(sig.begin(), sig.end())
+                        << "out[peak]=" << *std::max_element(out.begin(), out.end())
+                        << "shift=" << (sig[footIdx] - out[footIdx]);
+                }
+                return out;
+                };
+            const std::vector<double> ecgSrc = maybeNotch(ecg, m_sampleRate, -1);   // ECG uses /ref, not a foot; no rebase needed
+            const std::vector<double> ppgSrc = hasPPG ? maybeNotch(b.ppgTemplate, m_ppgRateHz, b.ppg_onset) : empty;
+            const std::vector<double> abpSrc = !b.abpTemplate.empty() ? maybeNotch(b.abpTemplate, m_abpRateHz, b.abp_onset) : b.abpTemplate;
+            const std::vector<double> artSrc = !b.artTemplate.empty() ? maybeNotch(b.artTemplate, m_artRateHz, b.art_onset) : b.artTemplate;
+            const std::vector<double> artPSrc = !b.artPulmTemplate.empty() ? maybeNotch(b.artPulmTemplate, m_artPulmRateHz, b.art_pulm_onset) : b.artPulmTemplate;
+
+            const std::vector<double> ecgN = normalizeEcgTrace(ecgSrc, c);
             const std::vector<double> ppgN = hasPPG
-                ? normalize_ppg_or_similar(b.ppgTemplate, b.ppg_onset, 0)
+                ? normalize_ppg_or_similar(ppgSrc, b.ppg_onset, 0)
                 : empty;
-            const std::vector<double> abpN = !b.abpTemplate.empty()
-                ? normalize_ppg_or_similar(b.abpTemplate, b.abp_onset, 1)
-                : b.abpTemplate;
-            const std::vector<double> artN = !b.artTemplate.empty()
-                ? normalize_ppg_or_similar(b.artTemplate, b.art_onset, 2)
-                : b.artTemplate;
-            const std::vector<double> artPN = !b.artPulmTemplate.empty()
-                ? normalize_ppg_or_similar(b.artPulmTemplate, b.art_pulm_onset, 3)
-                : b.artPulmTemplate;
+            const std::vector<double> abpN = !abpSrc.empty()
+                ? normalize_ppg_or_similar(abpSrc, b.abp_onset, 1)
+                : abpSrc;
+            const std::vector<double> artN = !artSrc.empty()
+                ? normalize_ppg_or_similar(artSrc, b.art_onset, 2)
+                : artSrc;
+            const std::vector<double> artPN = !artPSrc.empty()
+                ? normalize_ppg_or_similar(artPSrc, b.art_pulm_onset, 3)
+                : artPSrc;
 
             pw->setData(ppgN, ppgIqr, ecgN, ecgIqr,
                 b.marks(currentAnchor()).p_peak_ch[c], b.marks(currentAnchor()).q_begin_ch[c], b.r_peak_ch[c],

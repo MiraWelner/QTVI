@@ -975,10 +975,6 @@ void noise_marking_gui::handle_data_plot() {
             auto vAxes = r.chartView->chart()->axes(Qt::Vertical);
             double amin = 0, amax = 0;
             if (!vAxes.isEmpty()) if (auto* ya = qobject_cast<QValueAxis*>(vAxes.first())) { amin = ya->min(); amax = ya->max(); }
-            qDebug() << "PPG chunk n=" << n << "nan=" << nan << "data[" << lo << "," << hi << "]"
-                << "axis[" << amin << "," << amax << "]"
-                << "size=" << v.size() << "sr=" << r.sampleRate
-                << "fixed=" << m_fixedYRange.contains("PPG");
         }
 
         // --- y-range: frozen (Fix Scale) wins; else chunk-wide pin when

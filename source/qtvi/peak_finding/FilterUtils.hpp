@@ -5,7 +5,21 @@
 // ============================================================================
 #pragma once
 
+#include <vector>
+#include <string>
 #include <complex>
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+
+// FilterUtils uses the project-wide `vector` / `string` aliases (no std::
+// prefix). Historically these were provided by a project-level force-include
+// hitting every translation unit; a couple of TUs miss it (e.g. the caller
+// that surfaced C7568 here), so pull them in directly to make this header
+// stand on its own without breaking the callers that already have them.
+using std::vector;
+using std::string;
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -202,29 +216,95 @@ inline vector<double> filtfilt(const vector<double>& b, const vector<double>& a,
 }
 
 // ============================================================================
-// Butterworth lowpass/highpass design (3rd order)
+// Butterworth lowpass/highpass design (arbitrary order N, ZPK pipeline).
+//
+// Replaces an earlier direct-3rd-order formula. That version silently ignored
+// N (always producing 3rd-order) AND had a sign bug in the HP denominator
+// that put its poles outside the unit circle at high frequencies -- the
+// "highpass" was really an unstable filter that exponentially amplified
+// content well above cutoff. This ZPK version follows the same design flow
+// as the bandpass overload below:
+//
+//   1) Place N analog Butterworth prototype poles on the left-half unit
+//      circle (zeros are all at infinity).
+//   2) Prewarp the digital cutoff frequency for the bilinear transform.
+//   3) Apply the s-domain LP->LP or LP->HP transformation (scale by cutoff,
+//      or invert-and-scale).
+//   4) Bilinear-transform to z-domain: (2*fs + s) / (2*fs - s).
+//   5) Expand pole/zero polynomials, normalize DC gain (LP) or Nyquist
+//      gain (HP) to unity.
+//
+// Wn is the digital cutoff normalized to Nyquist (0 < Wn < 1), same
+// convention as MATLAB's butter().
 // ============================================================================
 inline void butter(int N, double Wn, const string& type, vector<double>& b, vector<double>& a) {
-    double alpha = std::tan(M_PI * Wn / 2.0);
-    double a2 = alpha * alpha;
-    double a3 = alpha * a2;
+    using cd = std::complex<double>;
+    if (N < 1) N = 1;
 
+    const double fs = 2.0;
+    const double u = 2.0 * fs * std::tan(M_PI * Wn / fs);   // prewarped cutoff
+
+    // (1) Analog Butterworth prototype poles: unit-circle, left half plane.
+    vector<cd> proto_poles;
+    proto_poles.reserve(N);
+    for (int k = 1; k <= N; ++k) {
+        const double angle = M_PI * (2.0 * k + N - 1.0) / (2.0 * N);
+        proto_poles.push_back(cd(std::cos(angle), std::sin(angle)));
+    }
+
+    // (2)+(3) LP->LP: multiply each proto pole by u.  LP->HP: divide u by
+    // each proto pole (and place N zeros at s=0).
+    vector<cd> s_poles, s_zeros;
+    s_poles.reserve(N);
     if (type == "low") {
-        double d = 1.0 + 2.0 * alpha + 2.0 * a2 + a3;
-        b = { a3 / d, 3.0 * a3 / d, 3.0 * a3 / d, a3 / d };
-        a = { 1.0,
-             (3.0 * a3 + 2.0 * a2 - 2.0 * alpha - 3.0) / d,
-             (3.0 * a3 - 2.0 * a2 - 2.0 * alpha + 3.0) / d,
-             (a3 - 2.0 * a2 + 2.0 * alpha - 1.0) / d };
+        for (const auto& p : proto_poles) s_poles.push_back(p * u);
+        // No finite zeros; bilinear will add N zeros at z=-1.
     }
     else if (type == "high") {
-        double d = 1.0 + 2.0 * alpha + 2.0 * a2 + a3;
-        b = { 1.0 / d, -3.0 / d, 3.0 / d, -1.0 / d };
-        a = { 1.0,
-             (3.0 + 2.0 * alpha - 2.0 * a2 - 3.0 * a3) / d,
-             (3.0 - 2.0 * alpha - 2.0 * a2 + 3.0 * a3) / d,
-             (1.0 - 2.0 * alpha + 2.0 * a2 - a3) / d };
+        for (const auto& p : proto_poles) s_poles.push_back(u / p);
+        s_zeros.assign(N, cd(0.0, 0.0));
     }
+    else {
+        // Unknown type: leave b/a empty so callers can detect the mistake.
+        b.clear(); a.clear();
+        return;
+    }
+
+    // (4) Bilinear s -> z:  z = (2*fs + s) / (2*fs - s).
+    vector<cd> z_poles, z_zeros;
+    z_poles.reserve(s_poles.size());
+    z_zeros.reserve(std::max<size_t>(s_zeros.size(), s_poles.size()));
+    for (const auto& s : s_poles)
+        z_poles.push_back((2.0 * fs + s) / (2.0 * fs - s));
+    for (const auto& s : s_zeros)
+        z_zeros.push_back((2.0 * fs + s) / (2.0 * fs - s));
+    // Missing finite zeros get placed at z=-1 (the LP case: N zeros there).
+    while (z_zeros.size() < z_poles.size())
+        z_zeros.push_back(cd(-1.0, 0.0));
+
+    // (5) Expand to polynomial coefficients, then normalize DC (LP) or
+    // Nyquist (HP) gain to unity so the passband peaks at 0 dB.
+    a = filter_detail::poly_from_roots(z_poles);
+    b = filter_detail::poly_from_roots(z_zeros);
+
+    // Normalize a[0] to 1 first (poly_from_roots produces monic leading term
+    // already, but keep this defensive against any FP roundoff).
+    const double a0 = a[0];
+    for (auto& v : a) v /= a0;
+    for (auto& v : b) v /= a0;
+
+    // Passband gain at z = 1 (LP) or z = -1 (HP).
+    auto polyEval = [](const vector<double>& p, double z) {
+        double zp = 1.0, s = 0.0;
+        for (size_t i = 0; i < p.size(); ++i) { s += p[p.size() - 1 - i] * zp; zp *= z; }
+        return s;
+        };
+    const double z_eval = (type == "low") ? 1.0 : -1.0;
+    const double num = polyEval(b, z_eval);
+    const double den = polyEval(a, z_eval);
+    const double gain = num / den;
+    if (std::fabs(gain) > 1e-15)
+        for (auto& v : b) v /= gain;
 }
 
 // ============================================================================
@@ -350,5 +430,186 @@ inline std::vector<double> medfilt1(const std::vector<double>& x, int n) {
         else
             y[i] = (window[n / 2 - 1] + window[n / 2]) / 2.0;
     }
+    return y;
+}
+
+// ============================================================================
+// detrend: subtract a fitted trend from x. mode="constant" removes the mean;
+// mode="linear" (default) fits a least-squares line and subtracts it. Matches
+// MATLAB detrend(x) / detrend(x, 'constant'). NaN-aware: NaN samples are
+// excluded from the fit, and are returned as NaN in the output.
+// ============================================================================
+inline std::vector<double> detrend(const std::vector<double>& x, const std::string& mode = "linear") {
+    const size_t n = x.size();
+    std::vector<double> y(n, std::numeric_limits<double>::quiet_NaN());
+    if (n == 0) return y;
+
+    if (mode == "constant") {
+        double s = 0.0; size_t cnt = 0;
+        for (double v : x) if (!std::isnan(v)) { s += v; ++cnt; }
+        const double m = (cnt > 0) ? s / cnt : 0.0;
+        for (size_t i = 0; i < n; ++i)
+            if (!std::isnan(x[i])) y[i] = x[i] - m;
+        return y;
+    }
+
+    // Linear least-squares fit: y = m*i + c over non-NaN samples.
+    double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
+    size_t cnt = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (std::isnan(x[i])) continue;
+        const double xi = static_cast<double>(i);
+        sx += xi; sy += x[i]; sxx += xi * xi; sxy += xi * x[i]; ++cnt;
+    }
+    if (cnt < 2) {
+        // Degenerate: fall back to constant detrend (or copy through if empty).
+        const double m = (cnt == 1) ? sy : 0.0;
+        for (size_t i = 0; i < n; ++i)
+            if (!std::isnan(x[i])) y[i] = x[i] - m;
+        return y;
+    }
+    const double dcnt = static_cast<double>(cnt);
+    const double denom = dcnt * sxx - sx * sx;
+    const double slope = (std::fabs(denom) > 1e-15) ? (dcnt * sxy - sx * sy) / denom : 0.0;
+    const double intercept = (sy - slope * sx) / dcnt;
+    for (size_t i = 0; i < n; ++i)
+        if (!std::isnan(x[i])) y[i] = x[i] - (slope * static_cast<double>(i) + intercept);
+    return y;
+}
+
+// ============================================================================
+// notch_filter: remove a narrow band around notch_hz from x.
+//
+// Implemented as (x - narrow_bandpass(x)) using the ZPK bandpass overload,
+// applied zero-phase with filtfilt. Q sets the notch width: bandwidth =
+// notch_hz / Q. Q=30 gives ~2 Hz total width at 60 Hz -- tight enough to
+// kill powerline without smearing neighboring content. Order N applies to
+// the internal bandpass; N=4 is a solid default.
+//
+// If notch_hz <= 0 or fs <= 0, returns the input unchanged (this is what
+// callers gated on notch_filter_hz should see when the setting is disabled).
+// ============================================================================
+inline std::vector<double> notch_filter(const std::vector<double>& x, double notch_hz,
+    double fs, double Q = 30.0, int N = 4) {
+    if (x.empty() || notch_hz <= 0.0 || fs <= 0.0 || Q <= 0.0) return x;
+    const double nyq = fs / 2.0;
+    const double bw = notch_hz / Q;
+    const double lo = notch_hz - 0.5 * bw;
+    const double hi = notch_hz + 0.5 * bw;
+    if (lo <= 0.0 || hi >= nyq) return x;   // out of band; no-op
+
+    // NaN-aware: filtfilt is IIR + zero-phase, so a single NaN in the input
+    // contaminates every output sample. Real templates commonly have NaN
+    // tails (column-median-over-variable-length beats), so plain filtfilt
+    // would return all-NaN for almost every bin. Replace NaNs with
+    // linearly-interpolated placeholders for the filter run and restore
+    // them at the end so the caller sees exactly the same NaN mask.
+    std::vector<bool> was_nan(x.size(), false);
+    std::vector<double> xi = x;
+    size_t total_valid = 0;
+    for (size_t i = 0; i < xi.size(); ++i) {
+        if (std::isnan(xi[i])) was_nan[i] = true;
+        else ++total_valid;
+    }
+    if (total_valid == 0) return x;   // nothing to filter; every sample was NaN
+    if (total_valid < xi.size()) {
+        // Forward pass: any leading NaNs get the first valid sample.
+        double last = std::numeric_limits<double>::quiet_NaN();
+        for (size_t i = 0; i < xi.size(); ++i)
+            if (!was_nan[i]) { last = xi[i]; break; }
+        for (size_t i = 0; i < xi.size(); ++i) {
+            if (was_nan[i]) xi[i] = last;
+            else last = xi[i];
+        }
+        // Backward pass: any remaining leading-run (never had a valid sample
+        // to their left originally, but the forward pass already fixed
+        // them). This second pass handles interior NaN runs by linearly
+        // interpolating between the valid neighbors on either side, so we
+        // don't inject a flat step that ripples through the filter.
+        for (size_t i = 0; i < xi.size(); ++i) {
+            if (!was_nan[i]) continue;
+            // Find end of this NaN run.
+            size_t j = i;
+            while (j < xi.size() && was_nan[j]) ++j;
+            // xi[i-1] is the last valid before, xi[j] is the first valid
+            // after (if any). Linear interp between them for the whole run.
+            if (i > 0 && j < xi.size()) {
+                const double a = xi[i - 1];
+                const double b = xi[j];
+                const double denom = static_cast<double>(j - (i - 1));
+                for (size_t k = i; k < j; ++k)
+                    xi[k] = a + (b - a) * static_cast<double>(k - (i - 1)) / denom;
+            }
+            // else: trailing NaN run past the last valid sample; the forward
+            // pass already filled these with the last valid value, which
+            // is the best we can do without extrapolation.
+            i = j;
+        }
+    }
+
+    std::vector<double> b, a;
+    std::vector<double> Wn = { lo / nyq, hi / nyq };
+    butter(N, Wn, b, a);
+    const auto bp = filtfilt(b, a, xi);
+
+    std::vector<double> y(x.size());
+    for (size_t i = 0; i < x.size(); ++i) {
+        if (was_nan[i]) y[i] = std::numeric_limits<double>::quiet_NaN();
+        else            y[i] = xi[i] - bp[i];
+    }
+    return y;
+}
+
+// ============================================================================
+// waveform_highpass: high-pass a waveform at cutoff_hz, applied zero-phase
+// via filtfilt. Spec: disabled by default (returns input unchanged if
+// cutoff_hz <= 0), 0.5 Hz when enabled. Applied before template averaging.
+// Order default 3 matches the LP/HP default in the rest of this codebase.
+// ============================================================================
+inline std::vector<double> waveform_highpass(const std::vector<double>& x,
+    double cutoff_hz, double fs, int N = 3) {
+    if (x.empty() || cutoff_hz <= 0.0 || fs <= 0.0) return x;
+    const double Wn = cutoff_hz / (fs / 2.0);
+    if (Wn <= 0.0 || Wn >= 1.0) return x;
+
+    // NaN-aware, same reasoning as notch_filter above: IIR + zero-phase
+    // means one NaN contaminates the whole output. Interpolate NaN runs
+    // linearly for the filter, restore the NaN mask at the end.
+    std::vector<bool> was_nan(x.size(), false);
+    std::vector<double> xi = x;
+    size_t total_valid = 0;
+    for (size_t i = 0; i < xi.size(); ++i) {
+        if (std::isnan(xi[i])) was_nan[i] = true;
+        else ++total_valid;
+    }
+    if (total_valid == 0) return x;
+    if (total_valid < xi.size()) {
+        double last = std::numeric_limits<double>::quiet_NaN();
+        for (size_t i = 0; i < xi.size(); ++i)
+            if (!was_nan[i]) { last = xi[i]; break; }
+        for (size_t i = 0; i < xi.size(); ++i) {
+            if (was_nan[i]) xi[i] = last;
+            else last = xi[i];
+        }
+        for (size_t i = 0; i < xi.size(); ++i) {
+            if (!was_nan[i]) continue;
+            size_t j = i;
+            while (j < xi.size() && was_nan[j]) ++j;
+            if (i > 0 && j < xi.size()) {
+                const double a = xi[i - 1];
+                const double b = xi[j];
+                const double denom = static_cast<double>(j - (i - 1));
+                for (size_t k = i; k < j; ++k)
+                    xi[k] = a + (b - a) * static_cast<double>(k - (i - 1)) / denom;
+            }
+            i = j;
+        }
+    }
+
+    std::vector<double> b, a;
+    butter(N, Wn, "high", b, a);
+    auto y = filtfilt(b, a, xi);
+    for (size_t i = 0; i < x.size(); ++i)
+        if (was_nan[i]) y[i] = std::numeric_limits<double>::quiet_NaN();
     return y;
 }

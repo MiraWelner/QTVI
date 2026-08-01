@@ -713,12 +713,12 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(
     // block below only runs as a fallback if the spline didn't yield one.
     int splineDiastolic = -1;
     {
-        int amp20 = amplitude_crossing(v, g.peak, g.end, 0.20);
-        int amp60 = amplitude_crossing(v, g.peak, g.end, 0.60);
-        if (amp20 < 0) amp20 = g.peak;
-        if (amp60 < 0) amp60 = cl((g.peak + g.end) / 2);
-        const int lo = std::clamp(amp20, 0, Wc - 1);
-        const int hi = std::clamp(amp60, lo, Wc - 1);
+        int amp15 = amplitude_crossing(v, g.peak, g.end, 0.15);
+        if (amp15 < 0) amp15 = g.peak;
+        const int lo = std::clamp(amp15, 0, Wc - 1);
+        int t90 = amplitude_crossing(v, g.peak, g.end, 0.90);
+        if (t90 < 0) t90 = cl((g.peak + g.end) / 2);
+        const int hi = std::clamp(t90, lo, Wc - 1);
         const int notch = subsample_refine::cubicSplineNotch(v, lo, hi, &splineDiastolic);
 
         if (notch > lo && notch < hi) {
@@ -736,7 +736,7 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(
         }
         else {
             // Nothing fit: place the O at the midpoint between the systolic
-            // peak and the region's upper bound (amp60), flagged not-found
+            // peak and the region's upper bound (g.end), flagged not-found
             // so it draws as an "o".
             g.peak2 = cl((g.peak + hi) / 2);
             g.peak2_found = false;
