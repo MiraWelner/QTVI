@@ -18,9 +18,10 @@
  *             build_arterial_template_foot_anchored.
  *
  *         Both pipelines share the same matched-filter QC (pulse_matched_
- *         filter.hpp): the first 20 beats seed a provisional template, and
- *         every later beat is rejected once its normalized error against
- *         that template reaches 5%.
+ *         filter.hpp): two-pass median-based rejection. Build a reference
+ *         template as the median of ALL candidate beats, then reject any
+ *         candidate whose normalized error against that reference exceeds
+ *         5%. The final template is rebuilt from the survivors.
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -34,6 +35,7 @@
 #include "TemplateTypes.hpp"
 #include "template_marking_gui/NormalizeFeatures.hpp"
 #include "pulse_matched_filter.hpp"
+#include "ppg_matched_filter.hpp"   // derivativePulseLocations for arterial stage-1 census
 #include "find_foot_pulseox.hpp"
 
 struct PPGTemplatesResult {
@@ -97,29 +99,43 @@ static inline void build_pulse_template_pair_windowed(
     const auto aligned = alignment::extract_ppg_beats_and_align(signal, peaksCh);
     if (aligned.beats.empty()) return;
 
-    // ---- Matched-filter QC (spec: PPG/arterial pulse filter) -----------
-    // Beats are already located (R-anchored above). The provisional
-    // template is built from only the first 20 beats (or all of them, if
-    // fewer than 20 are available); those seed beats are kept unconditionally.
-    // Every remaining beat is then tested by NORMALIZED ERROR vs that
-    // template (||beat - templ|| / ||templ||) and rejected once error
-    // reaches 5%. Falls back to all beats if the filter would reject
-    // everything (degenerate template).
+    // ---- Matched-filter QC, two-pass, per spec:
+    //   (a) build a REFERENCE template as the column-wise NaN-skipping
+    //       median across ALL candidate beats. The median is robust to
+    //       outliers without needing to pick a fixed "seed" count.
+    //   (b) score every candidate against the reference by normalized
+    //       error ||beat - ref|| / ||ref||; keep beats whose error is
+    //       below 5%.
+    // The final template below is then rebuilt from the survivors,
+    // giving the two-pass: median-of-all -> reject high-error ->
+    // re-median. Same wave-score pruning logic as ECG, adapted to PPG's
+    // normalized-error metric. Falls back to keeping everything if the
+    // filter would otherwise reject the whole set (degenerate reference).
     std::vector<std::vector<double>> filteredBeats;
     {
         const int w = static_cast<int>(aligned.beats.front().size());
-        const size_t nSeed = std::min<size_t>(20, aligned.beats.size());
-        const std::vector<std::vector<double>> seedBeats(
-            aligned.beats.begin(), aligned.beats.begin() + nSeed);
-        const std::vector<double> provisional =
-            pulse_matched_filter::buildTemplate(seedBeats, w);
-
-        filteredBeats.assign(aligned.beats.begin(), aligned.beats.begin() + nSeed);
-        for (size_t i = nSeed; i < aligned.beats.size(); ++i) {
-            const double err = pulse_matched_filter::normalizedError(aligned.beats[i], provisional);
-            if (err < 0.05) filteredBeats.push_back(aligned.beats[i]);
+        // (a) reference = column-wise median across ALL candidates.
+        std::vector<double> reference(w, NaN);
+        for (int c = 0; c < w; ++c) {
+            std::vector<double> col;
+            col.reserve(aligned.beats.size());
+            for (const auto& sl : aligned.beats)
+                if (c < (int)sl.size() && !std::isnan(sl[c])) col.push_back(sl[c]);
+            if (col.empty()) continue;
+            const size_t nc = col.size();
+            const size_t mid = nc / 2;
+            std::nth_element(col.begin(), col.begin() + mid, col.end());
+            reference[c] = (nc % 2)
+                ? col[mid]
+                : 0.5 * (*std::max_element(col.begin(), col.begin() + mid) + col[mid]);
         }
-        if (filteredBeats.empty()) filteredBeats = aligned.beats;   // don't discard all
+        // (b) per-pulse accept/reject against the reference.
+        filteredBeats.reserve(aligned.beats.size());
+        for (const auto& bt : aligned.beats) {
+            const double err = pulse_matched_filter::normalizedError(bt, reference);
+            if (err < 0.05) filteredBeats.push_back(bt);
+        }
+        if (filteredBeats.empty()) filteredBeats = aligned.beats;   // degenerate ref -> keep all
     }
     const auto& beatsForTemplate = filteredBeats;
 
@@ -259,18 +275,28 @@ inline PPGTemplatesResult CreatePulseTemplates(
  * @brief  Foot-anchored pulse template for ONE arterial channel of ONE bin,
  *         per spec. Unlike PPG above, this is entirely self-contained --
  *         no borrowed ECG R-peaks. Pipeline:
- *           (1) self-detect systolic peaks directly on `signal` (local
- *               maxima, refractory window sized off channelRate);
+ *           (1) self-detect systolic peaks in TWO steps:
+ *               1a) derivative-max census (ppg_matched_filter): finds each
+ *                   pulse's steepest upstroke, the sharpest and least-
+ *                   variable landmark in an arterial waveform;
+ *               1b) apex-walk: from each upstroke, walk forward to the
+ *                   local maximum (the true systolic peak), bounded by
+ *                   the next upstroke so we can't cross into the next beat.
  *           (2) slice [prevPeak, thisPeak] segments and batch them through
  *               find_foot_pulseox to locate each beat's true foot;
  *           (3) re-slice on a shared axis so every beat's OWN foot lands at
  *               a fixed column (padSamples), one foot-to-foot interval
  *               (median-length fallback for the last beat) plus trailing
  *               pad wide, NaN-padding short beats;
- *           (4) matched-filter QC (pulse_matched_filter): first 20 beats
- *               seed a provisional template, later beats rejected at >=5%
- *               normalized error;
- *           (5) column-wise NaN-skipping median -> template.
+ *           (4) two-pass matched-filter QC:
+ *               4a) reference template = column-wise median of ALL
+ *                   candidate beats (robust to outliers, no need to pick
+ *                   a fixed "seed" count);
+ *               4b) score every candidate by normalized error against the
+ *                   reference; keep beats whose error is below 5%.
+ *           (5) column-wise NaN-skipping median across survivors ->
+ *               final template. (This is the "re-median from survivors"
+ *               half of the two-pass approach.)
  */
 static inline void build_arterial_template_foot_anchored(
     const std::vector<double>& signal,
@@ -291,20 +317,41 @@ static inline void build_arterial_template_foot_anchored(
 
     const int n = static_cast<int>(signal.size());
 
-    // ---- (1) self-detect systolic peaks: local maxima, refractory window
-    // generous enough for up to ~240 bpm (0.25 s minimum separation). -----
+    // ---- (1) self-detect systolic peaks in TWO steps, per spec:
+    //   1a) derivative-max census: run ppg_matched_filter's derivative-max
+    //       detector to get a rough list of where each pulse's steepest
+    //       upstroke sits. The upstroke is the sharpest, least-variable
+    //       part of an arterial pulse -- more reliable to detect than the
+    //       apex or dicrotic notch, both of which vary beat-to-beat.
+    //   1b) apex-walk: from each detected upstroke, walk forward through
+    //       the signal to the local maximum -- the actual systolic peak.
+    //       Bounded by the next upstroke's location so we can't overshoot
+    //       into the following beat.
+    // -------------------------------------------------------------------
     const int minSep = std::max(1, static_cast<int>(std::llround(0.25 * channelRate)));
+    const std::vector<int> upstrokes =
+        ppg_matched_filter::derivativePulseLocations(signal, minSep);
+    if (upstrokes.size() < 2) return;
+
     std::vector<int> peaks;
-    for (int i = 1; i + 1 < n; ++i) {
-        if (std::isnan(signal[i - 1]) || std::isnan(signal[i]) || std::isnan(signal[i + 1])) continue;
-        if (signal[i] > signal[i - 1] && signal[i] >= signal[i + 1]) {
-            if (!peaks.empty() && (i - peaks.back()) < minSep) {
-                if (signal[i] > signal[peaks.back()]) peaks.back() = i;   // stronger peak wins
-            }
-            else {
-                peaks.push_back(i);
-            }
+    peaks.reserve(upstrokes.size());
+    for (size_t k = 0; k < upstrokes.size(); ++k) {
+        const int start = upstrokes[k];
+        // Search up to the next upstroke (exclusive), or to the end of the
+        // signal for the last one; cap at start + minSep as a safety belt
+        // in case an upstroke got dropped and the "next" one is far away.
+        const int hardEnd = (k + 1 < upstrokes.size())
+            ? upstrokes[k + 1]
+            : n;
+        const int end = std::min(hardEnd, start + minSep);
+        int pk = start;
+        double pkVal = -Inf;
+        for (int i = start; i < end && i < n; ++i) {
+            const double v = signal[i];
+            if (std::isnan(v)) continue;
+            if (v > pkVal) { pkVal = v; pk = i; }
         }
+        if (std::isfinite(pkVal)) peaks.push_back(pk);
     }
     if (peaks.size() < 2) return;
 
@@ -350,21 +397,44 @@ static inline void build_arterial_template_foot_anchored(
     }
     if (beats.empty()) return;
 
-    // ---- (4) matched-filter QC: first 20 beats seed the template, the
-    // rest tested by 5% normalized error (mirrors the PPG QC step). ------
+    // ---- (4) Matched-filter QC, two-pass, per spec:
+    //   4a) build a REFERENCE template as the column-wise NaN-skipping
+    //       median across ALL candidate beats. The median is robust to
+    //       outliers without needing to pick a fixed "seed" count.
+    //   4b) score every candidate against the reference by normalized
+    //       error ||beat - ref|| / ||ref||; keep beats whose error is
+    //       below 5%.
+    // The final template (step 5 below) is rebuilt from the survivors,
+    // giving the two-pass: median-of-all -> reject high-error ->
+    // re-median. Same wave-score pruning logic as ECG, adapted to PPG's
+    // normalized-error metric. Falls back to keeping everything if the
+    // filter would otherwise reject the whole set (degenerate reference).
+    // ---------------------------------------------------------------------
     std::vector<std::vector<double>> filteredBeats;
     {
-        const size_t nSeed = std::min<size_t>(20, beats.size());
-        const std::vector<std::vector<double>> seedBeats(beats.begin(), beats.begin() + nSeed);
-        const std::vector<double> provisional =
-            pulse_matched_filter::buildTemplate(seedBeats, width);
-
-        filteredBeats.assign(beats.begin(), beats.begin() + nSeed);
-        for (size_t i = nSeed; i < beats.size(); ++i) {
-            const double err = pulse_matched_filter::normalizedError(beats[i], provisional);
-            if (err < 0.05) filteredBeats.push_back(beats[i]);
+        // 4a) reference = column-wise median of ALL candidates.
+        std::vector<double> reference(width, NaN);
+        for (int c = 0; c < width; ++c) {
+            std::vector<double> col;
+            col.reserve(beats.size());
+            for (const auto& sl : beats)
+                if (!std::isnan(sl[c])) col.push_back(sl[c]);
+            if (col.empty()) continue;
+            const size_t nc = col.size();
+            const size_t mid = nc / 2;
+            std::nth_element(col.begin(), col.begin() + mid, col.end());
+            reference[c] = (nc % 2)
+                ? col[mid]
+                : 0.5 * (*std::max_element(col.begin(), col.begin() + mid) + col[mid]);
         }
-        if (filteredBeats.empty()) filteredBeats = beats;   // don't discard all
+
+        // 4b) per-pulse accept/reject on normalized error against reference.
+        filteredBeats.reserve(beats.size());
+        for (const auto& bt : beats) {
+            const double err = pulse_matched_filter::normalizedError(bt, reference);
+            if (err < 0.05) filteredBeats.push_back(bt);
+        }
+        if (filteredBeats.empty()) filteredBeats = beats;   // degenerate ref -> keep all
     }
 
     // ---- (5) column-wise NaN-skipping median -> template. --------------

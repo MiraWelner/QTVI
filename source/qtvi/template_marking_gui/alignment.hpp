@@ -408,7 +408,29 @@ namespace alignment {
                     out.baseline_source[i] = src;
                     if (src == BaselineSource::NONE || std::isnan(lvl))
                         continue;   // graceful degrade: leave un-shifted, flagged NONE
-                    const double d = lvl - target;
+
+                    // Compensate for TP<->PQ segment differences when the
+                    // beat's baseline source doesn't match the reference beat's.
+                    // TP and PQ are both isoelectric BUT sit at slightly
+                    // different electrical levels (the P-wave rises and falls
+                    // between them); tp_pq_delta records PQ_level - TP_level
+                    // per beat. If we blindly force this beat's `lvl` to equal
+                    // the reference's `target` without acknowledging that they
+                    // came from different segments, all PQ-aligned beats end
+                    // up at one DC level and all TP-aligned beats at a
+                    // different one -- symmetric flare on both sides of R,
+                    // wider than the signal it purports to characterize.
+                    // Correction: bias `lvl` by the beat's own TP<->PQ delta
+                    // so both cases end up expressed in the reference's
+                    // segment terms before we subtract.
+                    double lvl_corrected = lvl;
+                    if (src != refSrc && tpOk && pqOk && std::isfinite(out.tp_pq_delta[i])) {
+                        if (src == BaselineSource::TP && refSrc == BaselineSource::PQ)
+                            lvl_corrected = lvl + out.tp_pq_delta[i];   // TP -> PQ terms
+                        else if (src == BaselineSource::PQ && refSrc == BaselineSource::TP)
+                            lvl_corrected = lvl - out.tp_pq_delta[i];   // PQ -> TP terms
+                    }
+                    const double d = lvl_corrected - target;
                     if (d == 0.0) continue;
                     for (double& v : out.beats[i])
                         if (!std::isnan(v)) v -= d;
