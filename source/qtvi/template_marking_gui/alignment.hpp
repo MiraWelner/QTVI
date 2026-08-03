@@ -392,11 +392,17 @@ namespace alignment {
                     return std::numeric_limits<double>::quiet_NaN();
                 };
 
-            out.tp_pq_delta.assign(out.beats.size(), std::numeric_limits<double>::quiet_NaN());
-
             const auto [refTp, refTpOk, refPq, refPqOk] = both_levels(static_cast<size_t>(out.ref_beat_index));
             BaselineSource refSrc = BaselineSource::NONE;
             const double target = pick(refTp, refTpOk, refPq, refPqOk, refSrc);
+
+            out.tp_pq_delta.assign(out.beats.size(), std::numeric_limits<double>::quiet_NaN());
+
+            // Diagnostic accumulators (spec-neutral: recorded only, doesn't
+            // change any beat).
+            int diag_pq = 0, diag_tp = 0, diag_none = 0;
+            std::vector<double> diag_shifts;
+            diag_shifts.reserve(out.beats.size());
 
             if (refSrc != BaselineSource::NONE && !std::isnan(target)) {
                 for (size_t i = 0; i < out.beats.size(); ++i) {
@@ -406,34 +412,40 @@ namespace alignment {
                     BaselineSource src = BaselineSource::NONE;
                     const double lvl = pick(tpLvl, tpOk, pqLvl, pqOk, src);
                     out.baseline_source[i] = src;
+                    if (src == BaselineSource::PQ) ++diag_pq;
+                    else if (src == BaselineSource::TP) ++diag_tp;
+                    else ++diag_none;
                     if (src == BaselineSource::NONE || std::isnan(lvl))
                         continue;   // graceful degrade: leave un-shifted, flagged NONE
-
-                    // Compensate for TP<->PQ segment differences when the
-                    // beat's baseline source doesn't match the reference beat's.
-                    // TP and PQ are both isoelectric BUT sit at slightly
-                    // different electrical levels (the P-wave rises and falls
-                    // between them); tp_pq_delta records PQ_level - TP_level
-                    // per beat. If we blindly force this beat's `lvl` to equal
-                    // the reference's `target` without acknowledging that they
-                    // came from different segments, all PQ-aligned beats end
-                    // up at one DC level and all TP-aligned beats at a
-                    // different one -- symmetric flare on both sides of R,
-                    // wider than the signal it purports to characterize.
-                    // Correction: bias `lvl` by the beat's own TP<->PQ delta
-                    // so both cases end up expressed in the reference's
-                    // segment terms before we subtract.
-                    double lvl_corrected = lvl;
-                    if (src != refSrc && tpOk && pqOk && std::isfinite(out.tp_pq_delta[i])) {
-                        if (src == BaselineSource::TP && refSrc == BaselineSource::PQ)
-                            lvl_corrected = lvl + out.tp_pq_delta[i];   // TP -> PQ terms
-                        else if (src == BaselineSource::PQ && refSrc == BaselineSource::TP)
-                            lvl_corrected = lvl - out.tp_pq_delta[i];   // PQ -> TP terms
-                    }
-                    const double d = lvl_corrected - target;
+                    const double d = lvl - target;
+                    diag_shifts.push_back(d);
                     if (d == 0.0) continue;
                     for (double& v : out.beats[i])
                         if (!std::isnan(v)) v -= d;
+                }
+            }
+            // One line per aligned matrix. Shows whether shifts are sane
+            // (small std, tight range) or wild (large std, big range).
+            {
+                const char* refTag = (refSrc == BaselineSource::PQ) ? "PQ"
+                    : (refSrc == BaselineSource::TP) ? "TP" : "NONE";
+                double smin = std::numeric_limits<double>::infinity();
+                double smax = -std::numeric_limits<double>::infinity();
+                double ssum = 0.0, ssumsq = 0.0;
+                for (double s : diag_shifts) {
+                    if (s < smin) smin = s;
+                    if (s > smax) smax = s;
+                    ssum += s; ssumsq += s * s;
+                }
+                const size_t nS = diag_shifts.size();
+                const double smean = (nS > 0) ? ssum / nS : 0.0;
+                const double sstd = (nS > 1)
+                    ? std::sqrt(std::max(0.0, ssumsq / nS - smean * smean)) : 0.0;
+                double smed = 0.0;
+                if (!diag_shifts.empty()) {
+                    auto tmp = diag_shifts;
+                    std::sort(tmp.begin(), tmp.end());
+                    smed = tmp[tmp.size() / 2];
                 }
             }
         }
@@ -714,7 +726,7 @@ namespace alignment {
         int    ref_beat_index = -1;
     };
 
-    inline PpgBeatSet extract_ppg_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks)
+    inline PpgBeatSet extract_ppg_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs)
     {
         PpgBeatSet out;
         const int64_t N = static_cast<int64_t>(signal.size());
@@ -741,14 +753,26 @@ namespace alignment {
             rr_lens.swap(filt_lens);
             };
 
+        // Physiological cap on the RR used to SIZE the beat window: 3.0 s
+        // (20 bpm). On long signal dropouts/artifacts the peak-finder can
+        // report an enormous RR; a single such beat sizes the shared window
+        // (Pass 1: shared_w = up50_anchor + max_tail) for the WHOLE bin,
+        // NaN-padding every beat out to tens of thousands of columns and
+        // hanging the template build. Clamp the window-sizing RR (rr_w).
+        // The beat is still sliced and kept -- only its width is clamped --
+        // and the raw rr is still recorded in rr_lens so median_length and
+        // the Tukey RR rejection see the true interval.
+        const int64_t rr_cap = (fs > 0.0) ? static_cast<int64_t>(3.0 * fs) : 0;
+
         // ---- slice + per-beat peak/foot --------------------------------
         for (size_t i = 0; i + 1 < rPeaks.size(); ++i) {
             const int64_t r0 = static_cast<int64_t>(rPeaks[i]);
             const int64_t rr = static_cast<int64_t>(rPeaks[i + 1]) - r0;
             if (rr <= 3) continue;
 
-            const int64_t before = rr_before_samples(rr);
-            const int64_t after = rr_after_samples(rr);
+            const int64_t rr_w = (rr_cap > 0) ? std::min(rr, rr_cap) : rr;
+            const int64_t before = rr_before_samples(rr_w);
+            const int64_t after = rr_after_samples(rr_w);
             const int64_t len = before + after;
             const int64_t start = r0 - before;
             const int64_t end = r0 + after;
@@ -761,9 +785,22 @@ namespace alignment {
                 beat[static_cast<size_t>(k - start)] = signal[static_cast<size_t>(k)];
 
             const int r_col = static_cast<int>(before);
+            // Peak search is bounded to THIS beat's own R-R window: from
+            // r_col+1 to the next R (which sits at r_col + rr). The full
+            // beat slice extends past next R (beat length = 1.8*rr, next R
+            // at 1.3*rr), so argmax-over-whole-beat would easily land on
+            // the NEXT beat's peak whenever it's taller. That mislocated
+            // "peak" then anchors up50 detection on the next beat's
+            // upstroke, and up50-alignment then shifts every beat such
+            // that individual beats' data effectively ends at their own
+            // peak in the shared frame -- producing the peak-cutoff
+            // plummet in the displayed template.
+            const int peakSearchEnd = std::min(
+                static_cast<int>(r_col + rr_w),
+                static_cast<int>(beat.size()));
             int peak = -1;
             double pv = -std::numeric_limits<double>::infinity();
-            for (int k = r_col + 1; k < (int)beat.size(); ++k)
+            for (int k = r_col + 1; k < peakSearchEnd; ++k)
                 if (!std::isnan(beat[k]) && beat[k] > pv) { pv = beat[k]; peak = k; }
             if (peak < 0) continue;
 

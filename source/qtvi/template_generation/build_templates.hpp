@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "template_io.hpp"
-#include "GenerateTemplates.hpp"
+#include "template_generation/make_averaged_templates.hpp"
 #include "TemplateTypes.hpp"
 #include "template_generation/create_arterial_templates.hpp"
 #include "template_marking_gui/alignment.hpp"   // align_beat_matrix, QAlignResult

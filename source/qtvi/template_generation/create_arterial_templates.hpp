@@ -35,7 +35,6 @@
 #include "TemplateTypes.hpp"
 #include "template_marking_gui/NormalizeFeatures.hpp"
 #include "pulse_matched_filter.hpp"
-#include "ppg_matched_filter.hpp"   // derivativePulseLocations for arterial stage-1 census
 #include "find_foot_pulseox.hpp"
 
 struct PPGTemplatesResult {
@@ -96,7 +95,7 @@ static inline void build_pulse_template_pair_windowed(
             static_cast<double>(r) * scale)));
 
     // Per-bin peak-aligned + foot-vertical-aligned beat matrix.
-    const auto aligned = alignment::extract_ppg_beats_and_align(signal, peaksCh);
+    const auto aligned = alignment::extract_ppg_beats_and_align(signal, peaksCh, channelRate);
     if (aligned.beats.empty()) return;
 
     // ---- Matched-filter QC, two-pass, per spec:
@@ -112,15 +111,26 @@ static inline void build_pulse_template_pair_windowed(
     // normalized-error metric. Falls back to keeping everything if the
     // filter would otherwise reject the whole set (degenerate reference).
     std::vector<std::vector<double>> filteredBeats;
+    // Diagnostic accumulators, populated inside the QC block.
+    int diag_ref_col_early = 0, diag_ref_col_mid = 0, diag_ref_col_late = 0;
+    int diag_ref_defined_cols = 0;
+    int diag_input_beats = 0, diag_survivors = 0;
+    double diag_err_min = std::numeric_limits<double>::infinity();
+    double diag_err_max = -std::numeric_limits<double>::infinity();
+    std::vector<double> diag_all_errs;
     {
         const int w = static_cast<int>(aligned.beats.front().size());
+        diag_input_beats = static_cast<int>(aligned.beats.size());
+
         // (a) reference = column-wise median across ALL candidates.
         std::vector<double> reference(w, NaN);
+        std::vector<int> col_counts(w, 0);   // for diagnostic
         for (int c = 0; c < w; ++c) {
             std::vector<double> col;
             col.reserve(aligned.beats.size());
             for (const auto& sl : aligned.beats)
                 if (c < (int)sl.size() && !std::isnan(sl[c])) col.push_back(sl[c]);
+            col_counts[c] = static_cast<int>(col.size());
             if (col.empty()) continue;
             const size_t nc = col.size();
             const size_t mid = nc / 2;
@@ -128,17 +138,115 @@ static inline void build_pulse_template_pair_windowed(
             reference[c] = (nc % 2)
                 ? col[mid]
                 : 0.5 * (*std::max_element(col.begin(), col.begin() + mid) + col[mid]);
+            ++diag_ref_defined_cols;
         }
-        // (b) per-pulse accept/reject against the reference.
+        // Sample the column-count profile at three positions.
+        diag_ref_col_early = col_counts[w / 8];
+        diag_ref_col_mid = col_counts[w / 2];
+        diag_ref_col_late = col_counts[(7 * w) / 8];
+
+        // ---- Foot-to-foot region of the reference pulse (spec steps 2-3:
+        // the rejection math runs on the single pulse, foot to foot -- NOT
+        // on the full ECG-length window). All beats are up50-aligned to
+        // shared columns, so the reference's landmarks are every beat's
+        // landmarks: systolic peak = argmax; first foot = reference min on
+        // [0, peak]; second foot = reference min on [peak, w). The output
+        // window/template stays the full ECG length -- only the accept/
+        // reject error below is restricted to [firstFoot, secondFoot]. The
+        // ECG-length window carries padding (previous pulse's tail before
+        // foot 1, next pulse's onset past foot 2) that varies beat-to-beat;
+        // scoring the whole window would let that padding dominate the error
+        // and reject clean pulses.
+        int refPeak = -1; double pv = -std::numeric_limits<double>::infinity();
+        for (int c = 0; c < w; ++c)
+            if (!std::isnan(reference[c]) && reference[c] > pv) { pv = reference[c]; refPeak = c; }
+
+        int f2fLo = 0, f2fHi = w;   // safe default: whole window
+        if (refPeak > 0 && refPeak < w - 1) {
+            int fl = 0; double flv = std::numeric_limits<double>::infinity();
+            for (int c = 0; c <= refPeak; ++c)
+                if (!std::isnan(reference[c]) && reference[c] < flv) { flv = reference[c]; fl = c; }
+            int fr = w - 1; double frv = std::numeric_limits<double>::infinity();
+            for (int c = refPeak; c < w; ++c)
+                if (!std::isnan(reference[c]) && reference[c] < frv) { frv = reference[c]; fr = c; }
+            if (fr > fl) { f2fLo = fl; f2fHi = fr + 1; }   // inclusive of 2nd foot
+        }
+
+        // Normalized error restricted to [f2fLo, f2fHi): ||beat - ref|| /
+        // ||ref|| over that column band, non-NaN overlap only. Same formula
+        // as pulse_matched_filter::normalizedError, just windowed to the
+        // foot-to-foot span.
+        auto footToFootError = [&](const std::vector<double>& bt) -> double {
+            double num = 0.0, den = 0.0; int overlap = 0;
+            const int hi = std::min<int>(f2fHi, std::min<int>(bt.size(), reference.size()));
+            for (int c = std::max(0, f2fLo); c < hi; ++c) {
+                if (std::isnan(bt[c]) || std::isnan(reference[c])) continue;
+                const double e = bt[c] - reference[c];
+                num += e * e; den += reference[c] * reference[c]; ++overlap;
+            }
+            if (overlap == 0 || den <= 0.0) return std::numeric_limits<double>::infinity();
+            return std::sqrt(num / den);
+            };
+
+        // (b) per-pulse accept/reject on the foot-to-foot error.
         filteredBeats.reserve(aligned.beats.size());
+        diag_all_errs.reserve(aligned.beats.size());
         for (const auto& bt : aligned.beats) {
-            const double err = pulse_matched_filter::normalizedError(bt, reference);
-            if (err < 0.05) filteredBeats.push_back(bt);
+            const double err = footToFootError(bt);
+            diag_all_errs.push_back(err);
+            if (std::isfinite(err)) {
+                if (err < diag_err_min) diag_err_min = err;
+                if (err > diag_err_max) diag_err_max = err;
+            }
+            if (err < 0.1) filteredBeats.push_back(bt);
         }
-        if (filteredBeats.empty()) filteredBeats = aligned.beats;   // degenerate ref -> keep all
+        // Degenerate case: nothing passed at 5%. Escalate the threshold
+         // 10% -> 20% -> 50%, taking the first non-empty survivor set. The
+         // error is still the foot-to-foot metric from above.
+        for (const double thr : { 0.10, 0.20, 0.50, 0.75}) {
+            if (!filteredBeats.empty()) break;
+            for (size_t k = 0; k < aligned.beats.size(); ++k)
+                if (diag_all_errs[k] < thr) filteredBeats.push_back(aligned.beats[k]);
+        }
+        diag_survivors = static_cast<int>(filteredBeats.size());
     }
     const auto& beatsForTemplate = filteredBeats;
 
+    // Peak-column distribution of surviving beats, argmax of each (skip NaN).
+    // If they cluster tightly, the template's median peak has a lot of support;
+    // if the count of contributing beats drops fast past that column, that's
+    // the cutoff signature.
+    int diag_peak_min = std::numeric_limits<int>::max();
+    int diag_peak_max = std::numeric_limits<int>::min();
+    std::vector<int> diag_peak_cols;
+    diag_peak_cols.reserve(beatsForTemplate.size());
+    for (const auto& b : beatsForTemplate) {
+        int pk = -1; double pv = -std::numeric_limits<double>::infinity();
+        for (int c = 0; c < (int)b.size(); ++c)
+            if (!std::isnan(b[c]) && b[c] > pv) { pv = b[c]; pk = c; }
+        if (pk >= 0) {
+            diag_peak_cols.push_back(pk);
+            if (pk < diag_peak_min) diag_peak_min = pk;
+            if (pk > diag_peak_max) diag_peak_max = pk;
+        }
+    }
+    int diag_peak_median = -1;
+    if (!diag_peak_cols.empty()) {
+        auto tmp = diag_peak_cols;
+        std::sort(tmp.begin(), tmp.end());
+        diag_peak_median = tmp[tmp.size() / 2];
+    }
+    // Median normalized error (rank quality metric).
+    double diag_err_median = std::nan("");
+    if (!diag_all_errs.empty()) {
+        std::vector<double> tmp;
+        tmp.reserve(diag_all_errs.size());
+        for (double e : diag_all_errs) if (std::isfinite(e)) tmp.push_back(e);
+        if (!tmp.empty()) {
+            std::sort(tmp.begin(), tmp.end());
+            diag_err_median = tmp[tmp.size() / 2];
+        }
+    }
     const size_t maxLen = beatsForTemplate.front().size();
 
     // Column-wise NaN-skipping median => template.
@@ -151,11 +259,17 @@ static inline void build_pulse_template_pair_windowed(
             if (!std::isnan(v)) col.push_back(v);
         }
         if (col.empty()) continue;
-        std::sort(col.begin(), col.end());
+        // Median via nth_element (O(k)) rather than a full sort (O(k log k));
+        // this column loop runs maxLen times over up to beats.size() values,
+        // and in messy bins the escalated QC can keep the whole bin, so the
+        // full sort here was a hot path.
         const size_t nc = col.size();
-        outTemplate[c] = (nc % 2 == 0)
-            ? 0.5 * (col[nc / 2 - 1] + col[nc / 2])
-            : col[nc / 2];
+        const size_t mid = nc / 2;
+        std::nth_element(col.begin(), col.begin() + mid, col.end());
+        const double hi = col[mid];
+        outTemplate[c] = (nc % 2)
+            ? hi
+            : 0.5 * (*std::max_element(col.begin(), col.begin() + mid) + hi);
     }
 
     // ---- Deterministic PPG fiducials from the real R-peaks -------------
@@ -276,7 +390,7 @@ inline PPGTemplatesResult CreatePulseTemplates(
  *         per spec. Unlike PPG above, this is entirely self-contained --
  *         no borrowed ECG R-peaks. Pipeline:
  *           (1) self-detect systolic peaks in TWO steps:
- *               1a) derivative-max census (ppg_matched_filter): finds each
+ *               1a) derivative-max census (pulse_matched_filter): finds each
  *                   pulse's steepest upstroke, the sharpest and least-
  *                   variable landmark in an arterial waveform;
  *               1b) apex-walk: from each upstroke, walk forward to the
@@ -318,7 +432,7 @@ static inline void build_arterial_template_foot_anchored(
     const int n = static_cast<int>(signal.size());
 
     // ---- (1) self-detect systolic peaks in TWO steps, per spec:
-    //   1a) derivative-max census: run ppg_matched_filter's derivative-max
+    //   1a) derivative-max census: run pulse_matched_filter's derivative-max
     //       detector to get a rough list of where each pulse's steepest
     //       upstroke sits. The upstroke is the sharpest, least-variable
     //       part of an arterial pulse -- more reliable to detect than the
@@ -330,7 +444,7 @@ static inline void build_arterial_template_foot_anchored(
     // -------------------------------------------------------------------
     const int minSep = std::max(1, static_cast<int>(std::llround(0.25 * channelRate)));
     const std::vector<int> upstrokes =
-        ppg_matched_filter::derivativePulseLocations(signal, minSep);
+        pulse_matched_filter::derivativePulseLocations(signal, minSep);
     if (upstrokes.size() < 2) return;
 
     std::vector<int> peaks;

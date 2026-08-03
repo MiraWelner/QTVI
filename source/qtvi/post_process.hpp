@@ -20,6 +20,7 @@
 #include "peak_finding/run_find_r_peaks.hpp"
 #include "template_generation/template_io.hpp"
 #include "template_marking_gui/alignment.hpp"   // find_q_column (Q-align)
+#include "quality_check/sqi_ecg.hpp"   // computeEcgSQI / writeEcgSQICsv -> cfg.quality_metric
 
 namespace post_process_detail {
 
@@ -260,6 +261,11 @@ namespace post_process_detail {
             // the viewer has been reading from.
             template_io::write_template_binfile(job.templatePath.string(), job.tmpl);
             std::filesystem::remove(job.provisionalPath);
+
+            // ---- SQI: score every kept beat against this file's own,
+            //      just-finalized templates. Written alongside the other
+            //      per-file outputs, into cfg.quality_metric. ----
+            writeEcgSQICsv(job.cfg, job.stem, job.tmpl, job.beats, job.samplingRate);
 
             std::cout << "Squared/absval slow processing done for " << job.stem << "\n";
 

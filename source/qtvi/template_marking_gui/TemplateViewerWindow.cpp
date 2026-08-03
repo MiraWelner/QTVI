@@ -549,14 +549,6 @@ void TemplateViewerWindow::showPage() {
                     if (std::isfinite(shift) && shift != 0.0)
                         for (auto& v : out) v += shift;
                 }
-                if (footIdx >= 0 && footIdx < (int)sig.size() && footIdx < (int)out.size()) {
-                    qDebug() << "[notch]"
-                        << "raw[foot]=" << sig[footIdx]
-                        << "out[foot]=" << out[footIdx]
-                        << "raw[peak]=" << *std::max_element(sig.begin(), sig.end())
-                        << "out[peak]=" << *std::max_element(out.begin(), out.end())
-                        << "shift=" << (sig[footIdx] - out[footIdx]);
-                }
                 return out;
                 };
             const std::vector<double> ecgSrc = maybeNotch(ecg, m_sampleRate, -1);   // ECG uses /ref, not a foot; no rebase needed
