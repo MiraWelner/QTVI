@@ -81,6 +81,28 @@ namespace template_io {
             uint8_t bad = b.bad_segment ? 1 : 0;
             f.write(reinterpret_cast<const char*>(&bad), 1);
         }
+
+        // ---- trailing per-anchor section (v2) --------------------------
+        // [uint64 nAnchors] then per anchor:
+        //   [int32 anchorTag][uint64 nBinsForAnchor] then, per bin, 3x
+        //   ChannelMethodTemplate (ch1_raw, ch2_raw, ch3_raw) via writeMethod.
+        // Old readers stop after the bins loop above and never see this, so
+        // a v2 file still reads as R-only under the old reader.
+        {
+            uint64_t nAnchors = data.raw_anchors.size();
+            f.write(reinterpret_cast<const char*>(&nAnchors), 8);
+            for (const auto& kv : data.raw_anchors) {
+                int32_t tag = kv.first;
+                f.write(reinterpret_cast<const char*>(&tag), 4);
+                uint64_t nb = kv.second.size();
+                f.write(reinterpret_cast<const char*>(&nb), 8);
+                for (const auto& triplet : kv.second) {
+                    writeMethod(f, triplet[0]);
+                    writeMethod(f, triplet[1]);
+                    writeMethod(f, triplet[2]);
+                }
+            }
+        }
     }
 
 
@@ -126,6 +148,29 @@ namespace template_io {
             uint8_t bad = 0;
             f.read(reinterpret_cast<char*>(&bad), 1);
             b.bad_segment = (bad != 0);
+        }
+
+        // ---- trailing per-anchor section (v2, optional) ----------------
+        // Old (v1) files end after the last bin, so a failed/short read here
+        // just means "no extra anchors" -- leave raw_anchors empty and return
+        // the R-only file. Only a CLEAN read of the count populates anchors.
+        uint64_t nAnchors = 0;
+        if (f.read(reinterpret_cast<char*>(&nAnchors), 8)) {
+            for (uint64_t a = 0; a < nAnchors; ++a) {
+                int32_t tag = 0;
+                if (!f.read(reinterpret_cast<char*>(&tag), 4)) break;
+                uint64_t nb = 0;
+                if (!f.read(reinterpret_cast<char*>(&nb), 8)) break;
+                std::vector<std::array<ChannelMethodTemplate, 3>> perBin(nb);
+                bool ok = true;
+                for (uint64_t i = 0; i < nb && ok; ++i) {
+                    ok = readMethod(f, perBin[i][0])
+                        && readMethod(f, perBin[i][1])
+                        && readMethod(f, perBin[i][2]);
+                }
+                if (!ok) break;   // truncated anchor section: keep what parsed cleanly
+                out.raw_anchors[static_cast<int>(tag)] = std::move(perBin);
+            }
         }
 
         return out;

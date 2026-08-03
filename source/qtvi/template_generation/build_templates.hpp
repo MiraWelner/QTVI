@@ -257,7 +257,7 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
 // median snippet doesn't move, so R stays on its column and the template
 // stays centred in the window (no far-from-the-wall drift).
 inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl,
-    const template_io::BeatsFile& beats,
+    template_io::BeatsFile& beats,
     const SignalRates& rates,
     AnchorType anchor)
 {
@@ -265,30 +265,39 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl,
 
     using MethodPtr =
         template_io::ChannelMethodTemplate template_io::BinTemplates::*;
-    const std::pair<const char*, MethodPtr> channels[] = {
-        { "CH1", &template_io::BinTemplates::ch1_raw },
-        { "CH2", &template_io::BinTemplates::ch2_raw },
-        { "CH3", &template_io::BinTemplates::ch3_raw },
+    // chIdx is the 0-based channel index used to address raw_anchors[tag][bin][chIdx].
+    struct Chan { const char* key; MethodPtr ptr; int chIdx; };
+    const Chan channels[] = {
+        { "CH1", &template_io::BinTemplates::ch1_raw, 0 },
+        { "CH2", &template_io::BinTemplates::ch2_raw, 1 },
+        { "CH3", &template_io::BinTemplates::ch3_raw, 2 },
     };
 
-    for (const auto& [key, methodPtr] : channels) {
-        auto it = beats.per_channel_beats.find(key);
+    // This anchor's per-bin store. R_PEAK is the scalar base and is NOT put
+    // here; only the re-aligned anchors accumulate. Sized to bins up front so
+    // every (bin, channel) slot exists; unaligned slots stay default-empty
+    // and readTemplateInfoBin falls back to the R base for them.
+    const int anchorTag = static_cast<int>(anchor);
+    std::vector<std::array<template_io::ChannelMethodTemplate, 3>>& store =
+        tmpl.raw_anchors[anchorTag];
+    if (store.size() != tmpl.bins.size())
+        store.assign(tmpl.bins.size(), {});
+
+    for (const auto& ch : channels) {
+        auto it = beats.per_channel_beats.find(ch.key);
         if (it == beats.per_channel_beats.end()) continue;
-        const auto& perBin = it->second;   // [bin][beat][sample]
-        const auto refIt = beats.per_channel_ref_index.find(key);
+        auto& perBin = it->second;
+        const auto refIt = beats.per_channel_ref_index.find(ch.key);
         for (size_t i = 0; i < tmpl.bins.size(); ++i) {
             template_io::BinTemplates& bin = tmpl.bins[i];
             if (bin.bad_segment) continue;
             if (i >= perBin.size() || perBin[i].empty()) continue;
 
-            template_io::ChannelMethodTemplate& blk = bin.*methodPtr;
+            // The R base (blk) is the reference every anchor aligns FROM; it
+            // is read-only here and never overwritten.
+            const template_io::ChannelMethodTemplate& blk = bin.*(ch.ptr);
             if (blk.r_col < 0 || blk.ecgTemplate.empty()) continue;
 
-            // The R template (blk.ecgTemplate) is the column-wise median of the
-            // R-aligned beats -- the reference the Q marker is found on.
-            // Global reference = the median-length reference BEAT (not the
-            // column-wise median template). Falls back to the template if the
-            // ref index is unknown (old cached data / no median-length beat).
             int refIdx = (refIt != beats.per_channel_ref_index.end()
                 && i < refIt->second.size()) ? refIt->second[i] : -1;
             const std::vector<double>& ref_beat_of_median_length =
@@ -296,19 +305,18 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl,
                 ? perBin[i][refIdx] : blk.ecgTemplate;
 
             const int r_anchor = blk.r_col;
-            // Every anchor (including Q_ONSET) dispatches through the
-            // feature_marks detector. Q_ONSET -> detect_q_begin, which finds
-            // Q onset and falls back to r_idx-20 on its own when Q isn't found.
             AnchorLocator locate = make_anchor_locator(anchor, r_anchor, fs);
 
-            alignment::QAlignResult q =
-                alignment::align_beat_matrix(perBin[i], blk.r_col, fs,
-                    /*compute_iqr=*/true, ref_beat_of_median_length, locate);
+            alignment::aligned_beats q = alignment::align_beat_matrix(perBin[i], blk.r_col, fs, /*compute_iqr=*/true, ref_beat_of_median_length, locate);
             if (q.tmpl.empty()) continue;
 
-            blk.ecgTemplate = std::move(q.tmpl);
-            blk.ecg_template_iqr = std::move(q.iqr);
-            if (q.r_col >= 0) blk.r_col = q.r_col;   // R re-detected on the Q template
+            // Store the aligned result in the per-anchor slot, leaving the R
+            // base untouched so the NEXT anchor step still aligns from R.
+            template_io::ChannelMethodTemplate& dst = store[i][ch.chIdx];
+            dst.ecgTemplate = std::move(q.tmpl);
+            dst.ecg_template_iqr = std::move(q.iqr);
+            dst.alignment_point = blk.alignment_point;
+            dst.r_col = (q.r_col >= 0) ? q.r_col : blk.r_col;
         }
     }
 }

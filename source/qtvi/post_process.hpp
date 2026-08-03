@@ -106,6 +106,9 @@ namespace post_process_detail {
         bool ecg3_inverted = false;
 
         std::string error;                          // set by finalizeViewerJob on failure
+
+        template_io::TemplateFile tmplR;      //  R-pass template to be reused by re-alignment
+        template_io::BeatsFile    beatsR;     // pristine R-pass beats
     };
 
     // All analysis CSVs land in ONE shared folder, a sibling of the template
@@ -194,10 +197,11 @@ namespace post_process_detail {
         job.tmpl = std::move(fast.tmpl);
         job.beats = std::move(fast.beats);
         job.info = std::move(fast.info);
-
+        job.tmplR = job.tmpl;      // snapshot R frame (one copy, at prep time)
+        job.beatsR = job.beats;
         template_io::write_template_binfile(provisionalPath.string(), job.tmpl);
-
         job.viewerTemplatePath = provisionalPath;
+        writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats, job.samplingRate);
         job.needsFinalize = true;
         return job;
     }
@@ -256,17 +260,13 @@ namespace post_process_detail {
                 << std::chrono::duration_cast<std::chrono::milliseconds>(t_sq1 - t_sq0).count()
                 << " ms\n";
 
-            // Canonical templates now include squared/absval alongside
-            // raw/unfilt/ppg. Write once, then drop the provisional file
-            // the viewer has been reading from.
-            template_io::write_template_binfile(job.templatePath.string(), job.tmpl);
-            std::filesystem::remove(job.provisionalPath);
-
-            // ---- SQI: score every kept beat against this file's own,
-            //      just-finalized templates. Written alongside the other
-            //      per-file outputs, into cfg.quality_metric. ----
-            writeEcgSQICsv(job.cfg, job.stem, job.tmpl, job.beats, job.samplingRate);
-
+            // Base (R) templates now include squared/absval alongside
+            // raw/unfilt/ppg. Write them to the PROVISIONAL file -- the
+            // canonical _templates.bin is created only at the END of the
+            // anchor cycle (final "Finish"), once all anchors have been
+            // accumulated into it. Until then only the .partial.bin exists.
+            template_io::write_template_binfile(job.provisionalPath.string(), job.tmpl);
+            job.viewerTemplatePath = job.provisionalPath;
             std::cout << "Squared/absval slow processing done for " << job.stem << "\n";
 
             // (No snips.csv: serializing every retained beat for every channel
@@ -288,82 +288,71 @@ namespace post_process_detail {
     // (R-pass) write has already completed. Returns false if nothing could be
     // built.
     //
-    inline bool regenerateWithAnchorFull(ViewerJob& job, AnchorType anchor);   // fwd decl
-
+    // Called by the controller when the viewer emits requestQAlignReload()
+    // (each "Finish and Next"). Aligns the R-base templates to `anchor` and
+    // ACCUMULATES the result into job.tmpl.raw_anchors -- the single
+    // _templates file grows one anchor per step. Each step aligns FROM the
+    // pristine R snapshot (job.tmplR / job.beatsR), never from the previous
+    // anchor. While iterating, only the provisional (.partial.bin) exists;
+    // on the final anchor it is promoted to the canonical _templates.bin.
     inline bool regenerateWithAnchor(ViewerJob& job, AnchorType anchor)
     {
         try {
-            // If the R pass was served from the on-disk cache (waveFresh &&
-            // templatesFresh in prepareViewerJob), job.tmpl/job.beats were
-            // never built in memory -- both empty. Aligning that would write
-            // a 0-bin file ("No bins loaded" on reload), so rebuild from
-            // the R-peaks instead.
-            if (job.tmpl.bins.empty() || job.beats.per_channel_beats.empty())
-                return regenerateWithAnchorFull(job, anchor);
+            // Align from the pristine R snapshot into a fresh beats copy;
+            // alignTemplatesFromCache reads the R base and writes this
+            // anchor's block into atmpl.raw_anchors. We then merge that block
+            // into the persistent job.tmpl so anchors accumulate across steps.
+            template_io::TemplateFile atmpl = job.tmplR;
+            template_io::BeatsFile    abeats = job.beatsR;
+            alignTemplatesFromCache(atmpl, abeats, job.rates, anchor);
 
-            template_io::TemplateFile atmpl = job.tmpl;   // copy R-pass templates
-            alignTemplatesFromCache(atmpl, job.beats, job.rates, anchor);
-
-            const std::filesystem::path aPath =
-                job.provisionalPath.parent_path() /
-                (job.stem + "_templates.anchor.partial.bin");
-            template_io::write_template_binfile(aPath.string(), atmpl);
-            job.tmpl = std::move(atmpl);
-            job.qAlignPath = aPath;
-            job.viewerTemplatePath = aPath;
-            return true;
-        }
-        catch (const std::exception& e) {
-            job.error = e.what();
-            return false;
-        }
-    }
-
-    // Fallback for when the R-pass templates/beats weren't held in memory
-    // (subject opened from the fresh on-disk cache). Reloads the R-peaks,
-    // rebuilds the R-pass templates + beats, then Q-aligns exactly as the
-    // primary path does.
-    inline bool regenerateWithAnchorFull(ViewerJob& job, AnchorType anchor)
-    {
-        try {
-            if (job.peakResults.empty()) {
-                if (job.rPeakPath.empty() || job.annealedPath.empty()) {
-                    job.error = "anchor rebuild: no cached beats and no r-peak path";
-                    return false;
+            const int anchorTag = static_cast<int>(anchor);
+            auto it = atmpl.raw_anchors.find(anchorTag);
+            if (it != atmpl.raw_anchors.end()) {
+                // SQI reads the SCALAR ch*_raw. atmpl is a throwaway used only
+                // for this anchor's SQI, so project the aligned block into its
+                // scalars (bin-by-bin, 3 channels) so SQI scores the anchor's
+                // templates -- not R. job.tmpl keeps R in its scalars.
+                for (size_t i = 0; i < atmpl.bins.size() && i < it->second.size(); ++i) {
+                    auto& bin = atmpl.bins[i];
+                    const auto& trip = it->second[i];
+                    if (!trip[0].ecgTemplate.empty()) bin.ch1_raw = trip[0];
+                    if (!trip[1].ecgTemplate.empty()) bin.ch2_raw = trip[1];
+                    if (!trip[2].ecgTemplate.empty()) bin.ch3_raw = trip[2];
                 }
-                job.peakResults = read_output_binfile(
-                    job.rPeakPath.string(), job.annealedPath.string());
-            }
-            if (job.peakResults.empty()) {
-                job.error = "anchor rebuild: peakResults empty";
-                return false;
+                // Accumulate this anchor's block into the persistent job.tmpl.
+                job.tmpl.raw_anchors[anchorTag] = std::move(it->second);
             }
 
-            FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
-            if (fast.tmpl.bins.empty()) {
-                job.error = "anchor rebuild: produced 0 bins";
-                return false;
+            // Write the accumulating templates to the provisional file and
+            // point the viewer at it.
+            template_io::write_template_binfile(job.provisionalPath.string(), job.tmpl);
+            job.viewerTemplatePath = job.provisionalPath;
+
+            // SQI for this anchor (unchanged): scored on the freshly aligned
+            // atmpl + its co-framed beats.
+            writeEcgSQICsv(job.cfg, job.stem + "_" + anchorName(anchor),
+                atmpl, abeats, job.samplingRate);
+
+            // Final anchor -> promote provisional to canonical _templates.bin.
+            const auto& seq = anchorSequence();
+            const bool finalAnchor =
+                (!seq.empty() && anchor == seq.back());
+            if (finalAnchor) {
+                std::error_code ec;
+                std::filesystem::remove(job.templatePath, ec);
+                std::filesystem::rename(job.provisionalPath, job.templatePath, ec);
+                if (ec) {
+                    std::cerr << "[templates] WARNING: could not promote "
+                        << job.provisionalPath.string() << " -> "
+                        << job.templatePath.string() << ": " << ec.message() << "\n";
+                }
+                else {
+                    job.viewerTemplatePath = job.templatePath;
+                }
             }
-            job.tmpl = std::move(fast.tmpl);
-            job.beats = std::move(fast.beats);
-            job.info = std::move(fast.info);
-
-            template_io::TemplateFile atmpl = job.tmpl;
-            alignTemplatesFromCache(atmpl, job.beats, job.rates, anchor);
-
-            const std::filesystem::path aPath =
-                job.provisionalPath.parent_path() /
-                (job.stem + "_templates.anchor.partial.bin");
-            template_io::write_template_binfile(aPath.string(), atmpl);
-            job.tmpl = std::move(atmpl);
-            job.qAlignPath = aPath;
-            job.viewerTemplatePath = aPath;
             return true;
         }
-        catch (const std::exception& e) {
-            job.error = e.what();
-            return false;
-        }
+        catch (const std::exception& e) { job.error = e.what(); return false; }
     }
-
 }  // namespace post_process_detail

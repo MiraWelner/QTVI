@@ -57,6 +57,7 @@
 #include <cstdint>
 #include <string>
 #include <map>
+#include <array>
 #include <vector>
 namespace template_io {
 
@@ -111,6 +112,18 @@ namespace template_io {
 
     struct TemplateFile {
         std::vector<BinTemplates> bins;
+
+        // Per-anchor ECG "raw" templates, accumulated as the interactive
+        // anchor cycle steps through Q/J/T/P_peak/P_onset. Key = AnchorType
+        // (stored as int to keep this header free of the feature_marks
+        // dependency). Value is parallel to `bins`: one entry per bin, each a
+        // 3-element array of {ch1_raw, ch2_raw, ch3_raw} aligned on that
+        // anchor. R_PEAK is NOT stored here -- it lives in bins[i].chN_raw
+        // (the scalar base). Empty for a plain R-only file.
+        //
+        // Serialized as a trailing section after the base bins, so old
+        // (R-only) readers ignore it and old files read back with it empty.
+        std::map<int, std::vector<std::array<ChannelMethodTemplate, 3>>> raw_anchors;
     };
 
     struct BeatsFile {

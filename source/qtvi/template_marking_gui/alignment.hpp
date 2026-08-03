@@ -623,20 +623,21 @@ namespace alignment {
     // for call-site compatibility but no longer gates anything -- the gray-band
     // IQR (a robust spread, not a standard deviation) is always filled.
     // q_aligned_col is the marker Q landed on; r_col is the R fiducial (R_anchor).
-    struct QAlignResult {
+    struct aligned_beats {
         std::vector<double> tmpl;
         std::vector<double> iqr;
+        std::vector<std::vector<double>> beats;
         int q_aligned_col = -1;
         int r_col = -1;
     };
 
-    inline QAlignResult align_beat_matrix(
+    inline aligned_beats align_beat_matrix(
         const std::vector<std::vector<double>>& beatsIn,
         int R_anchor, double fs, bool compute_iqr,
         const std::vector<double>& ref_beat_of_median_length,
         const std::function<int(const std::vector<double>&)>& locate)
     {
-        QAlignResult res;
+        aligned_beats res;
         if (beatsIn.empty()) return res;
 
         std::vector<std::vector<double>> beats = beatsIn;
@@ -724,6 +725,7 @@ namespace alignment {
             if (!std::isnan(res.tmpl[i]) && res.tmpl[i] > rbest) { rbest = res.tmpl[i]; rc = i; }
         }
         res.r_col = rc;
+        res.beats = std::move(beats);
         return res;
     }
 

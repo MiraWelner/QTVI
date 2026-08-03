@@ -240,7 +240,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     ui->finishButton->setText(lastPass ? "Finish" : "Finish and Next");
 
     try {
-        m_bins = readTemplateInfoBin(templatePath.toStdString());
+        m_bins = readTemplateInfoBin(templatePath.toStdString(), m_currentAnchor);
     }
     catch (const std::exception& e) {
         QMessageBox::critical(this, "Read error",
@@ -277,8 +277,22 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     // it doesn't exist (never marked before), the fresh auto-seed above
     // stands unchanged.
     const QDir markingDir(m_markingPath);
-    const QString consolidatedBinPath = markingDir.filePath(m_subjectId + "_template_markings.bin");
-    const bool markersReloaded = restoreMarkersFrom(consolidatedBinPath);
+    const QString canonical = markingDir.filePath(m_subjectId + "_template_markings.bin");
+    const QString partial = canonical + ".partial";
+
+    // Source + modality by cycle state:
+    //  - mid-cycle (.partial present): restore PULSE only; ECG stays at this
+    //    anchor's fresh auto-seed (seed_all above).
+    //  - finished subject re-opened (canonical present, no partial): restore
+    //    everything.
+    //  - neither: fresh auto-seed stands.
+    bool markersReloaded = false;
+    if (QFile::exists(partial)) {
+        markersReloaded = restoreMarkersFrom(partial, /*ecg=*/false, /*pulse=*/true);
+    }
+    else if (QFile::exists(canonical)) {
+        markersReloaded = restoreMarkersFrom(canonical, /*ecg=*/true, /*pulse=*/true);
+    }
     fprintf(stderr, "[markers] %s for subject %s (%s pass)\n",
         markersReloaded ? "RELOADED prior markers" : "using FRESH auto-seed (no prior markers applied)",
         m_subjectId.toStdString().c_str(), m_anchorLabel.toStdString().c_str());
@@ -289,7 +303,8 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     showPage();
 }
 
-bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath) {
+bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath,
+    bool ecg, bool pulse) {
     try {
         std::vector<TemplateBin> saved = readTemplateMarkingsBin(markingsBinPath.toStdString());
         if (saved.empty()) {
@@ -343,45 +358,50 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath) {
             // pass's own template r_col (seeded above), never from a saved file.
             // Copy every anchor's saved marker set (each independent), bounds-
             // checked per channel. R is NOT copied (auto-only, re-derived).
-            for (const auto& kv : s.markers_by_anchor) {
-                const TemplateBin::MarkerSet& sm = kv.second;
-                TemplateBin::MarkerSet& dm = d.marks(kv.first);
-                for (int c = 0; c < 3; ++c) {
-                    dm.p_begin_ch[c] = safeIdx(sm.p_begin_ch[c], dm.p_begin_ch[c], ecgLen[c]);
-                    dm.p_peak_ch[c] = safeIdx(sm.p_peak_ch[c], dm.p_peak_ch[c], ecgLen[c]);
-                    dm.q_begin_ch[c] = safeIdx(sm.q_begin_ch[c], dm.q_begin_ch[c], ecgLen[c]);
-                    dm.s_end_ch[c] = safeIdx(sm.s_end_ch[c], dm.s_end_ch[c], ecgLen[c]);
-                    dm.t_begin_ch[c] = safeIdx(sm.t_begin_ch[c], dm.t_begin_ch[c], ecgLen[c]);
-                    dm.t_end_ch[c] = safeIdx(sm.t_end_ch[c], dm.t_end_ch[c], ecgLen[c]);
+            if (ecg) {
+                for (const auto& kv : s.markers_by_anchor) {
+                    const TemplateBin::MarkerSet& sm = kv.second;
+                    TemplateBin::MarkerSet& dm = d.marks(kv.first);
+                    for (int c = 0; c < 3; ++c) {
+                        dm.p_begin_ch[c] = safeIdx(sm.p_begin_ch[c], dm.p_begin_ch[c], ecgLen[c]);
+                        dm.p_peak_ch[c] = safeIdx(sm.p_peak_ch[c], dm.p_peak_ch[c], ecgLen[c]);
+                        dm.q_begin_ch[c] = safeIdx(sm.q_begin_ch[c], dm.q_begin_ch[c], ecgLen[c]);
+                        dm.s_end_ch[c] = safeIdx(sm.s_end_ch[c], dm.s_end_ch[c], ecgLen[c]);
+                        dm.t_begin_ch[c] = safeIdx(sm.t_begin_ch[c], dm.t_begin_ch[c], ecgLen[c]);
+                        dm.t_end_ch[c] = safeIdx(sm.t_end_ch[c], dm.t_end_ch[c], ecgLen[c]);
+                    }
                 }
-            }
-            for (int c = 0; c < 3; ++c) d.bad_r_ch[c] = s.bad_r_ch[c];
-            d.bad_ppg = s.bad_ppg;
-            d.ppg_onset = safeIdx(s.ppg_onset, d.ppg_onset, ppgLen);
-            d.ppg_t50 = safeIdx(s.ppg_t50, d.ppg_t50, ppgLen);
-            d.ppg_t80 = safeIdx(s.ppg_t80, d.ppg_t80, ppgLen);
-            d.ppg_peak = safeIdx(s.ppg_peak, d.ppg_peak, ppgLen);
-            d.ppg_dicrotic = safeIdx(s.ppg_dicrotic, d.ppg_dicrotic, ppgLen);
-            d.ppg_peak2 = safeIdx(s.ppg_peak2, d.ppg_peak2, ppgLen);
-            d.ppg_end = safeIdx(s.ppg_end, d.ppg_end, ppgLen);
-            d.abp_issue = s.abp_issue;
-            d.abp_onset = safeIdx(s.abp_onset, d.abp_onset, abpLen);
-            d.abp_peak = safeIdx(s.abp_peak, d.abp_peak, abpLen);
-            d.abp_dicrotic = safeIdx(s.abp_dicrotic, d.abp_dicrotic, abpLen);
-            d.abp_peak2 = safeIdx(s.abp_peak2, d.abp_peak2, abpLen);
-            d.abp_end = safeIdx(s.abp_end, d.abp_end, abpLen);
-            d.art_issue = s.art_issue;
-            d.art_onset = safeIdx(s.art_onset, d.art_onset, artLen);
-            d.art_peak = safeIdx(s.art_peak, d.art_peak, artLen);
-            d.art_dicrotic = safeIdx(s.art_dicrotic, d.art_dicrotic, artLen);
-            d.art_peak2 = safeIdx(s.art_peak2, d.art_peak2, artLen);
-            d.art_end = safeIdx(s.art_end, d.art_end, artLen);
-            d.art_pulm_issue = s.art_pulm_issue;
-            d.art_pulm_onset = safeIdx(s.art_pulm_onset, d.art_pulm_onset, artPLen);
-            d.art_pulm_peak = safeIdx(s.art_pulm_peak, d.art_pulm_peak, artPLen);
-            d.art_pulm_dicrotic = safeIdx(s.art_pulm_dicrotic, d.art_pulm_dicrotic, artPLen);
-            d.art_pulm_peak2 = safeIdx(s.art_pulm_peak2, d.art_pulm_peak2, artPLen);
-            d.art_pulm_end = safeIdx(s.art_pulm_end, d.art_pulm_end, artPLen);
+                for (int c = 0; c < 3; ++c) d.bad_r_ch[c] = s.bad_r_ch[c];
+            } // if (ecg)
+
+            if (pulse) {
+                d.bad_ppg = s.bad_ppg;
+                d.ppg_onset = safeIdx(s.ppg_onset, d.ppg_onset, ppgLen);
+                d.ppg_t50 = safeIdx(s.ppg_t50, d.ppg_t50, ppgLen);
+                d.ppg_t80 = safeIdx(s.ppg_t80, d.ppg_t80, ppgLen);
+                d.ppg_peak = safeIdx(s.ppg_peak, d.ppg_peak, ppgLen);
+                d.ppg_dicrotic = safeIdx(s.ppg_dicrotic, d.ppg_dicrotic, ppgLen);
+                d.ppg_peak2 = safeIdx(s.ppg_peak2, d.ppg_peak2, ppgLen);
+                d.ppg_end = safeIdx(s.ppg_end, d.ppg_end, ppgLen);
+                d.abp_issue = s.abp_issue;
+                d.abp_onset = safeIdx(s.abp_onset, d.abp_onset, abpLen);
+                d.abp_peak = safeIdx(s.abp_peak, d.abp_peak, abpLen);
+                d.abp_dicrotic = safeIdx(s.abp_dicrotic, d.abp_dicrotic, abpLen);
+                d.abp_peak2 = safeIdx(s.abp_peak2, d.abp_peak2, abpLen);
+                d.abp_end = safeIdx(s.abp_end, d.abp_end, abpLen);
+                d.art_issue = s.art_issue;
+                d.art_onset = safeIdx(s.art_onset, d.art_onset, artLen);
+                d.art_peak = safeIdx(s.art_peak, d.art_peak, artLen);
+                d.art_dicrotic = safeIdx(s.art_dicrotic, d.art_dicrotic, artLen);
+                d.art_peak2 = safeIdx(s.art_peak2, d.art_peak2, artLen);
+                d.art_end = safeIdx(s.art_end, d.art_end, artLen);
+                d.art_pulm_issue = s.art_pulm_issue;
+                d.art_pulm_onset = safeIdx(s.art_pulm_onset, d.art_pulm_onset, artPLen);
+                d.art_pulm_peak = safeIdx(s.art_pulm_peak, d.art_pulm_peak, artPLen);
+                d.art_pulm_dicrotic = safeIdx(s.art_pulm_dicrotic, d.art_pulm_dicrotic, artPLen);
+                d.art_pulm_peak2 = safeIdx(s.art_pulm_peak2, d.art_pulm_peak2, artPLen);
+                d.art_pulm_end = safeIdx(s.art_pulm_end, d.art_pulm_end, artPLen);
+            } // if (pulse)
         }
         if (rejectedCount > 0) {
             fprintf(stderr, "[markers] WARNING: %zu marker(s) from %s were out of range for the "
@@ -861,7 +881,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             emitAutoFeatLocHeader(gb);
         }
     }
-    for (const char* g : { "ppg_foot", "ppg_p1", "ppg_dicrotic_glyph", "ppg_end_glyph" })
+    for (const char* g : { "ppg_foot", "ppg_systolic_peak", "ppg_dicrotic", "ppg_end" })
         emitAutoFeatLocHeader(g);
     f << '\n';
     f << std::setprecision(10);
@@ -1560,28 +1580,29 @@ void TemplateViewerWindow::save_bin_and_csv() {
     QDir binDir(m_markingPath);
     if (!binDir.exists()) binDir.mkpath(".");
 
-    try {
-        // Markings .bin: written only on the Q-align (final) pass. Writing
-        // on R-align would overwrite whatever prior full-session save
-        // exists with just-the-R-pass state, which loses information if the
-        // user quits before Q-align finishes. Skipping the R-pass write
-        // means the on-disk .bin always represents a complete R+Q session.
-        if (m_qAlignPass) {
-            const QString outPath = QDir(m_markingPath).filePath(m_subjectId + "_template_markings.bin");
-            writeTemplateMarkingsBin(outPath.toStdString(), m_bins);
-            std::cout << "Saved: " << outPath.toStdString() << "\n";
-        }
+    const QString canonicalBin = QDir(m_markingPath).filePath(m_subjectId + "_template_markings.bin");
+    const QString partialBin = canonicalBin + ".partial";
 
-        // Markings CSV: single canonical file, R pass writes it fresh with
-        // _r suffixes, Q pass appends _q columns via zipCanonicalWithQ (same
-        // pattern as writeAlignedTemplateCsv above). Writer produces a
-        // temp file, we slurp its content and route it through the
-        // suffix/zip helpers.
+    // currentPassIndex: 0 for R, anchor step + 1 for the anchor passes.
+    const int currentPassIndex = m_anchorStep + 1;
+    const bool finalPass = (currentPassIndex + 1 >= m_anchorPassCount);
+
+    try {
+        // Markings .bin: written to a PARTIAL every pass so pulse markers (and
+        // in-progress state) carry across anchor reloads. Promoted to the
+        // canonical name on the final pass only.
+        writeTemplateMarkingsBin(partialBin.toStdString(), m_bins);
+        std::cout << "Saved: " << partialBin.toStdString() << "\n";
+
+        // ECG markings CSV: per-anchor suffixed columns, zipped into the
+        // canonical file (R pass writes fresh, later passes append). Pulse
+        // columns are NOT written here -- they go once, on the final pass.
         const QString csvPath = csvDir.absolutePath() + "/"
             + m_subjectId + "_template_markings.csv";
         const QString tmpPath = csvPath + ".tmp";
         writeTemplateMarkingsCsv(tmpPath.toStdString(), m_bins,
-            m_subjectId.toStdString(), m_sampleRate, currentAnchor());
+            m_subjectId.toStdString(), m_sampleRate, currentAnchor(),
+            MarkingsCsvSection::EcgOnly);
         std::ifstream tin(tmpPath.toStdString());
         std::stringstream tbuf; tbuf << tin.rdbuf();
         tin.close();
@@ -1608,6 +1629,27 @@ void TemplateViewerWindow::save_bin_and_csv() {
         }
         std::cout << "Saved: " << csvPath.toStdString() << "\n";
         std::cout.flush();
+
+        // Final pass only: pulse markings written ONCE (no anchor suffix),
+        // appended to the canonical CSV; then promote the .bin.
+        if (finalPass) {
+            const QString pulseTmp = csvPath + ".pulse.tmp";
+            writeTemplateMarkingsCsv(pulseTmp.toStdString(), m_bins,
+                m_subjectId.toStdString(), m_sampleRate, currentAnchor(),
+                MarkingsCsvSection::PulseOnly);
+            std::ifstream pin(pulseTmp.toStdString());
+            std::stringstream pbuf; pbuf << pin.rdbuf();
+            pin.close();
+            QFile::remove(pulseTmp);
+            // No suffixValueColumns() -> pulse columns stay un-suffixed.
+            if (!zipCanonicalWithQ(csvPath.toStdString(), pbuf.str()))
+                throw std::runtime_error("could not append pulse markings CSV into " + csvPath.toStdString());
+
+            QFile::remove(canonicalBin);
+            if (!QFile::rename(partialBin, canonicalBin))
+                fprintf(stderr, "[markers] WARNING: could not promote %s -> %s\n",
+                    partialBin.toStdString().c_str(), canonicalBin.toStdString().c_str());
+        }
     }
     catch (const std::exception& e) {
         QMessageBox::critical(this, "Save failed",
@@ -1617,16 +1659,11 @@ void TemplateViewerWindow::save_bin_and_csv() {
         return;   // don't emit finished(); let the user retry
     }
 
-    // Aligned-template CSV reflecting the FINAL marker edits. On the R pass
-    // this writes <id>_template.csv fresh with _r columns; on the Q pass it
-    // appends _q columns to that same file.
+    // Aligned-template CSV reflecting the FINAL marker edits.
     writeAlignedTemplateCsv();
 
-    // Anchor cycle: emit reload until the last pass, then finish. The
-    // controller advances the anchor + reopens on each requestQAlignReload.
-    // currentPassIndex: 0 for R, anchor step + 1 for the anchor passes.
-    const int currentPassIndex = m_anchorStep + 1;
-    if (currentPassIndex + 1 < m_anchorPassCount) {
+    // Anchor cycle: emit reload until the last pass, then finish.
+    if (!finalPass) {
         emit requestQAlignReload();
         return;
     }

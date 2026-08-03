@@ -177,8 +177,17 @@ struct TemplateBin {
 // ---------------------------------------------------------------------------
 // Read: convert template_io::TemplateFile -> std::vector<TemplateBin>
 // ---------------------------------------------------------------------------
-inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
+inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
+    AnchorType anchor = AnchorType::R_PEAK) {
     template_io::TemplateFile tf = template_io::read_template_binfile(path);
+
+    // Non-R anchors live in tf.raw_anchors (per-bin 3-channel raw). R_PEAK
+    // (and any anchor not present in the file) uses the scalar base in
+    // bins[i].chN_raw. Look the requested anchor up once.
+    const int anchorTag = static_cast<int>(anchor);
+    const auto anchorIt = tf.raw_anchors.find(anchorTag);
+    const bool useAnchor = (anchor != AnchorType::R_PEAK)
+        && (anchorIt != tf.raw_anchors.end());
 
     std::vector<TemplateBin> bins(tf.bins.size());
     for (size_t i = 0; i < tf.bins.size(); ++i) {
@@ -202,20 +211,32 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path) {
         dst.artTemplate_iqr = src.artTemplate_iqr;
         dst.artPulmTemplate_iqr = src.artPulmTemplate_iqr;
 
-        dst.ch1.ecgTemplate_raw = src.ch1_raw.ecgTemplate;
-        dst.ch1.ecg_template_raw_iqr = src.ch1_raw.ecg_template_iqr;
-        dst.ch1.alignment_point_raw = src.ch1_raw.alignment_point;
-        dst.ch1.r_col_raw = src.ch1_raw.r_col;
+        // Pick the raw ECG source: the requested anchor's block if present
+        // and non-R, else the scalar base (R_PEAK). Guard the per-bin index
+        // in case an anchor block is shorter than the base (shouldn't happen,
+        // but never index past it).
+        const bool anchorHasBin = useAnchor && (i < anchorIt->second.size());
+        const template_io::ChannelMethodTemplate& c1 =
+            anchorHasBin ? anchorIt->second[i][0] : src.ch1_raw;
+        const template_io::ChannelMethodTemplate& c2 =
+            anchorHasBin ? anchorIt->second[i][1] : src.ch2_raw;
+        const template_io::ChannelMethodTemplate& c3 =
+            anchorHasBin ? anchorIt->second[i][2] : src.ch3_raw;
 
-        dst.ch2.ecgTemplate_raw = src.ch2_raw.ecgTemplate;
-        dst.ch2.ecg_template_raw_iqr = src.ch2_raw.ecg_template_iqr;
-        dst.ch2.alignment_point_raw = src.ch2_raw.alignment_point;
-        dst.ch2.r_col_raw = src.ch2_raw.r_col;
+        dst.ch1.ecgTemplate_raw = c1.ecgTemplate;
+        dst.ch1.ecg_template_raw_iqr = c1.ecg_template_iqr;
+        dst.ch1.alignment_point_raw = c1.alignment_point;
+        dst.ch1.r_col_raw = c1.r_col;
 
-        dst.ch3.ecgTemplate_raw = src.ch3_raw.ecgTemplate;
-        dst.ch3.ecg_template_raw_iqr = src.ch3_raw.ecg_template_iqr;
-        dst.ch3.alignment_point_raw = src.ch3_raw.alignment_point;
-        dst.ch3.r_col_raw = src.ch3_raw.r_col;
+        dst.ch2.ecgTemplate_raw = c2.ecgTemplate;
+        dst.ch2.ecg_template_raw_iqr = c2.ecg_template_iqr;
+        dst.ch2.alignment_point_raw = c2.alignment_point;
+        dst.ch2.r_col_raw = c2.r_col;
+
+        dst.ch3.ecgTemplate_raw = c3.ecgTemplate;
+        dst.ch3.ecg_template_raw_iqr = c3.ecg_template_iqr;
+        dst.ch3.alignment_point_raw = c3.alignment_point;
+        dst.ch3.r_col_raw = c3.r_col;
     }
     return bins;
 }
@@ -363,15 +384,22 @@ inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak",
 // uses (Q_begin_auto, R_peak_auto, S_end_auto); user variant uses the current
 // user markers.
 // ---------------------------------------------------------------------------
+enum class MarkingsCsvSection { EcgOnly, PulseOnly };
+
 inline void writeTemplateMarkingsCsv(const std::string& path,
     const std::vector<TemplateBin>& bins,
     const std::string& fileID,
     double sampleRateHz,
-    AnchorType anchor)
+    AnchorType anchor,
+    MarkingsCsvSection section)
 {
     std::ofstream f(path);
     if (!f.is_open())
         throw std::runtime_error("cannot open for write: " + path);
+
+    const bool wantEcg = (section == MarkingsCsvSection::EcgOnly);
+    const bool wantPulse = (section == MarkingsCsvSection::PulseOnly);
+
 
     // ---- helpers -----------------------------------------------------------
     auto medianFinite = [](std::vector<double> v) -> double {
@@ -385,56 +413,62 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
 
     // ---- global refs (subject-wide, computed from AUTO positions) ----------
     double ecgRef[3] = { std::nan(""), std::nan(""), std::nan("") };
-    for (int c = 0; c < 3; ++c) {
-        std::vector<double> vals;
-        for (const auto& b : bins) {
-            if (b.bad_segment || b.bad_r_ch[c]) continue;
-            const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-            const auto& ecg = chs[c]->ecgTemplate_raw;
-            if (ecg.empty()) continue;
-            EcgFeatures ft = computeEcgFeatures(ecg,
-                b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
-                b.s_end_auto_ch[c], b.t_end_auto_ch[c],
-                sampleRateHz);
-            if (ft.r_idx < 0 || ft.s_idx < 0) continue;
-            if (ft.r_idx >= (int)ecg.size() || ft.s_idx >= (int)ecg.size()) continue;
-            const double ry = ecg[ft.r_idx], sy = ecg[ft.s_idx];
-            if (std::isnan(ry) || std::isnan(sy)) continue;
-            vals.push_back(std::abs(ry) + std::abs(sy));
-        }
-        ecgRef[c] = medianFinite(std::move(vals));
-    }
-
-    auto pulseRefAuto = [&](const std::vector<double> TemplateBin::* trace,
-        const int TemplateBin::* footAuto,
-        const int TemplateBin::* peakAuto,
-        bool checkPpgIssue) -> double
-        {
+    if (wantEcg) {
+        for (int c = 0; c < 3; ++c) {
             std::vector<double> vals;
             for (const auto& b : bins) {
-                if (b.bad_segment) continue;
-                if (checkPpgIssue && b.bad_ppg != 0) continue;
-                const auto& v = b.*trace;
-                const int fi = b.*footAuto;
-                const int pi = b.*peakAuto;
-                if (fi < 0 || pi < 0 || fi >= (int)v.size() || pi >= (int)v.size()) continue;
-                const double fy = v[fi], py = v[pi];
-                if (std::isnan(fy) || std::isnan(py) || std::abs(fy) < 1e-12) continue;
-                vals.push_back(100.0 * (py - fy) / fy);
+                if (b.bad_segment || b.bad_r_ch[c]) continue;
+                const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
+                const auto& ecg = chs[c]->ecgTemplate_raw;
+                if (ecg.empty()) continue;
+                EcgFeatures ft = computeEcgFeatures(ecg,
+                    b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
+                    b.s_end_auto_ch[c], b.t_end_auto_ch[c],
+                    sampleRateHz);
+                if (ft.r_idx < 0 || ft.s_idx < 0) continue;
+                if (ft.r_idx >= (int)ecg.size() || ft.s_idx >= (int)ecg.size()) continue;
+                const double ry = ecg[ft.r_idx], sy = ecg[ft.s_idx];
+                if (std::isnan(ry) || std::isnan(sy)) continue;
+                vals.push_back(std::abs(ry) + std::abs(sy));
             }
-            return medianFinite(std::move(vals));
-        };
-    const double refPpg = pulseRefAuto(&TemplateBin::ppgTemplate,
-        &TemplateBin::ppg_onset_auto, &TemplateBin::ppg_peak_auto, true);
-    const double refAbp = pulseRefAuto(&TemplateBin::abpTemplate,
-        &TemplateBin::abp_onset_auto, &TemplateBin::abp_peak_auto, false);
-    const double refArt = pulseRefAuto(&TemplateBin::artTemplate,
-        &TemplateBin::art_onset_auto, &TemplateBin::art_peak_auto, false);
-    const double refArtPulm = pulseRefAuto(&TemplateBin::artPulmTemplate,
-        &TemplateBin::art_pulm_onset_auto, &TemplateBin::art_pulm_peak_auto, false);
+            ecgRef[c] = medianFinite(std::move(vals));
+        }
+    }
+    double refPpg = std::nan(""), refAbp = std::nan(""), refArt = std::nan(""), refArtPulm = std::nan("");
+    if (wantPulse) {
+        auto pulseRefAuto = [&](const std::vector<double> TemplateBin::* trace,
+            const int TemplateBin::* footAuto,
+            const int TemplateBin::* peakAuto,
+            bool checkPpgIssue) -> double
+            {
+                std::vector<double> vals;
+                for (const auto& b : bins) {
+                    if (b.bad_segment) continue;
+                    if (checkPpgIssue && b.bad_ppg != 0) continue;
+                    const auto& v = b.*trace;
+                    const int fi = b.*footAuto;
+                    const int pi = b.*peakAuto;
+                    if (fi < 0 || pi < 0 || fi >= (int)v.size() || pi >= (int)v.size()) continue;
+                    const double fy = v[fi], py = v[pi];
+                    if (std::isnan(fy) || std::isnan(py) || std::abs(fy) < 1e-12) continue;
+                    vals.push_back(100.0 * (py - fy) / fy);
+                }
+                return medianFinite(std::move(vals));
+            };
+        refPpg = pulseRefAuto(&TemplateBin::ppgTemplate,
+            &TemplateBin::ppg_onset_auto, &TemplateBin::ppg_peak_auto, true);
+        refAbp = pulseRefAuto(&TemplateBin::abpTemplate,
+            &TemplateBin::abp_onset_auto, &TemplateBin::abp_peak_auto, false);
+        refArt = pulseRefAuto(&TemplateBin::artTemplate,
+            &TemplateBin::art_onset_auto, &TemplateBin::art_peak_auto, false);
+        refArtPulm = pulseRefAuto(&TemplateBin::artPulmTemplate,
+            &TemplateBin::art_pulm_onset_auto, &TemplateBin::art_pulm_peak_auto, false);
+    }
 
     // ---- header ------------------------------------------------------------
-    f << "file_id,bin_index,bad_r_ch1,bad_r_ch2,bad_r_ch3,ppg_issue";
+    // Keys. ppg_issue is PULSE metadata -> only in the pulse section.
+    f << "file_id,bin_index,bad_r_ch1,bad_r_ch2,bad_r_ch3";
+    if (wantPulse) f << ",ppg_issue";
 
     // ECG 8 point columns + 2 interval columns per channel.
     static const char* ecgPointNames[] = {
@@ -457,11 +491,6 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
         f << ',' << name << "_ch" << c << "_ms_autodetect"
             << ',' << name << "_ch" << c << "_ms_user";
         };
-    for (int c = 1; c <= 3; ++c) {
-        for (const char* n : ecgPointNames)     emitEcgPointHeader(n, c);
-        for (const char* n : ecgIntervalNames)  emitIntervalHeader(n, c);
-    }
-
     // Pulse: 6 cols per marker.
     auto emitPulsePointHeader = [&](const char* name) {
         f << ',' << name << "_y_normalized_autodetect"
@@ -471,30 +500,40 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             << ',' << name << "_x_ms_autodetect"
             << ',' << name << "_x_ms_user";
         };
-    for (const char* n : ppgCols)     emitPulsePointHeader(n);
-    f << ",abp_issue";
-    for (const char* n : abpCols)     emitPulsePointHeader(n);
-    f << ",art_issue";
-    for (const char* n : artCols)     emitPulsePointHeader(n);
-    f << ",art_pulm_issue";
-    for (const char* n : artPulmCols) emitPulsePointHeader(n);
     // Autodetected computed features (no user bar; derived from AUTODETECT markers).
     auto emitAutoFeatHeader = [&](const char* name) {
         f << ',' << name << "_x_ms" << ',' << name << "_y_mv_raw";
         };
-    for (int c = 1; c <= 3; ++c) {
-        char b[64];
-        for (const char* g : { "p_wave_autodetect", "q_onset_autodetect",
-                               "r_wave_autodetect", "t_peak_autodetect" }) {
-            std::snprintf(b, sizeof b, "%s_ch%d", g, c);
-            emitAutoFeatHeader(b);
+
+    if (wantEcg) {
+        for (int c = 1; c <= 3; ++c) {
+            for (const char* n : ecgPointNames)     emitEcgPointHeader(n, c);
+            for (const char* n : ecgIntervalNames)  emitIntervalHeader(n, c);
+        }
+        for (int c = 1; c <= 3; ++c) {
+            char b[64];
+            for (const char* g : { "p_wave_autodetect", "q_onset_autodetect",
+                                   "r_wave_autodetect", "t_peak_autodetect" }) {
+                std::snprintf(b, sizeof b, "%s_ch%d", g, c);
+                emitAutoFeatHeader(b);
+            }
         }
     }
-    for (const char* g : { "ppg_foot_autodetect", "ppg_p1_autodetect",
-                           "ppg_dicrotic_glyph_autodetect", "ppg_end_glyph_autodetect" })
-        emitAutoFeatHeader(g);
-    f << ",ppg_notch_found";
-    f << ",ppg_end_found";
+
+    if (wantPulse) {
+        for (const char* n : ppgCols)     emitPulsePointHeader(n);
+        f << ",abp_issue";
+        for (const char* n : abpCols)     emitPulsePointHeader(n);
+        f << ",art_issue";
+        for (const char* n : artCols)     emitPulsePointHeader(n);
+        f << ",art_pulm_issue";
+        for (const char* n : artPulmCols) emitPulsePointHeader(n);
+        for (const char* g : { "ppg_foot_autodetect", "ppg_systolic_peak_autodetect",
+                               "ppg_dicrotic_autodetect", "ppg_end_autodetect" })
+            emitAutoFeatHeader(g);
+        f << ",ppg_notch_found";
+        f << ",ppg_end_found";
+    }
     f << '\n';
 
     // ---- row loop ----------------------------------------------------------
@@ -561,128 +600,136 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
         f << ',';   if (std::isfinite(user_ms)) f << user_ms;
         };
 
+    // Autodetected computed feature point (used by both ECG and PPG glyph
+    // blocks -- defined once here so it's in scope for both).
+    auto emitAutoFeatPt = [&](const std::vector<double>& sig, int idx) {
+        f << ',';   if (idx >= 0) f << (idx * toMs);
+        f << ',';   if (idx >= 0 && idx < (int)sig.size() && !std::isnan(sig[idx])) f << sig[idx];
+        };
+
     for (const auto& b : bins) {
         f << fileID << ',' << b.index << ','
             << (b.bad_r_ch[0] ? 1 : 0) << ','
             << (b.bad_r_ch[1] ? 1 : 0) << ','
-            << (b.bad_r_ch[2] ? 1 : 0) << ','
-            << static_cast<int>(b.bad_ppg);
+            << (b.bad_r_ch[2] ? 1 : 0);
+        if (wantPulse) f << ',' << static_cast<int>(b.bad_ppg);
 
         const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-        for (int c = 0; c < 3; ++c) {
-            const auto& ecg = chs[c]->ecgTemplate_raw;
-            const double ref = ecgRef[c];
 
-            EcgFeatures ftAuto = computeEcgFeatures(ecg,
-                b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
-                b.s_end_auto_ch[c], b.t_end_auto_ch[c],
-                sampleRateHz);
-            const TemplateBin::MarkerSet& umk = b.marks(anchor);
-            EcgFeatures ftUser = computeEcgFeatures(ecg,
-                umk.p_peak_ch[c], umk.q_begin_ch[c], b.r_peak_ch[c],
-                umk.s_end_ch[c], umk.t_end_ch[c],
-                sampleRateHz);
+        if (wantEcg)
+            for (int c = 0; c < 3; ++c) {
+                const auto& ecg = chs[c]->ecgTemplate_raw;
+                const double ref = ecgRef[c];
 
-            // Autodetected T-peak = max between user T-begin/T-end, matching
-            // the on-screen glyph (feature_marks.cpp: g.t_peak_glyph). No
-            // user-adjustable T-peak marker exists, so this column pair emits
-            // autodetect only (like r_peak).
-            const int tPeakAuto = FeatureMarks::compute_t_peak(ecg, umk.t_begin_ch[c], umk.t_end_ch[c]);
+                EcgFeatures ftAuto = computeEcgFeatures(ecg,
+                    b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
+                    b.s_end_auto_ch[c], b.t_end_auto_ch[c],
+                    sampleRateHz);
+                const TemplateBin::MarkerSet& umk = b.marks(anchor);
+                EcgFeatures ftUser = computeEcgFeatures(ecg,
+                    umk.p_peak_ch[c], umk.q_begin_ch[c], b.r_peak_ch[c],
+                    umk.s_end_ch[c], umk.t_end_ch[c],
+                    sampleRateHz);
 
-            // Order MUST match ecgPointNames:
-            //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
-            //   s_end,  t_peak(computed, autodetect-only), t_begin, t_end
-            struct P { int a; int u; };
-            const P pts[] = {
-                { b.p_peak_auto_ch[c],  umk.p_peak_ch[c]  },
-                { b.q_begin_auto_ch[c], umk.q_begin_ch[c] },
-                { ftAuto.q_idx,         ftUser.q_idx    },
-                { b.r_peak_auto_ch[c],  b.r_peak_ch[c]  },
-                { ftAuto.s_idx,         ftUser.s_idx    },
-                { b.s_end_auto_ch[c],   umk.s_end_ch[c]   },
-                { tPeakAuto,            -1              },   // autodetect only
-                { b.t_begin_auto_ch[c], umk.t_begin_ch[c] },
-                { b.t_end_auto_ch[c],   umk.t_end_ch[c]   }
-            };
-            for (int k = 0; k < 9; ++k) {
-                // r_peak (index 3) and t_peak (index 6) are autodetect-only,
-                // matching the header's userToo logic.
-                const bool userToo = (k != 3 && k != 6);
-                emitEcgPoint(ecg, pts[k].a, pts[k].u, ref, userToo);
+                // Autodetected T-peak = max between user T-begin/T-end, matching
+                // the on-screen glyph (feature_marks.cpp: g.t_peak_glyph). No
+                // user-adjustable T-peak marker exists, so this column pair emits
+                // autodetect only (like r_peak).
+                const int tPeakAuto = FeatureMarks::compute_t_peak(ecg, umk.t_begin_ch[c], umk.t_end_ch[c]);
+
+                // Order MUST match ecgPointNames:
+                //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
+                //   s_end,  t_peak(computed, autodetect-only), t_begin, t_end
+                struct P { int a; int u; };
+                const P pts[] = {
+                    { b.p_peak_auto_ch[c],  umk.p_peak_ch[c]  },
+                    { b.q_begin_auto_ch[c], umk.q_begin_ch[c] },
+                    { ftAuto.q_idx,         ftUser.q_idx    },
+                    { b.r_peak_auto_ch[c],  b.r_peak_ch[c]  },
+                    { ftAuto.s_idx,         ftUser.s_idx    },
+                    { b.s_end_auto_ch[c],   umk.s_end_ch[c]   },
+                    { tPeakAuto,            -1              },   // autodetect only
+                    { b.t_begin_auto_ch[c], umk.t_begin_ch[c] },
+                    { b.t_end_auto_ch[c],   umk.t_end_ch[c]   }
+                };
+                for (int k = 0; k < 9; ++k) {
+                    // r_peak (index 3) and t_peak (index 6) are autodetect-only,
+                    // matching the header's userToo logic.
+                    const bool userToo = (k != 3 && k != 6);
+                    emitEcgPoint(ecg, pts[k].a, pts[k].u, ref, userToo);
+                }
+                // Intervals: qrs, qt (order matches ecgIntervalNames).
+                emitIntervalPair(ftAuto.qrs_ms, ftUser.qrs_ms);
+                emitIntervalPair(ftAuto.qt_ms, ftUser.qt_ms);
             }
-            // Intervals: qrs, qt (order matches ecgIntervalNames).
-            emitIntervalPair(ftAuto.qrs_ms, ftUser.qrs_ms);
-            emitIntervalPair(ftAuto.qt_ms, ftUser.qt_ms);
-        }
 
-        // PPG: onset, p50, peak, dicrotic, peak2, end (matches ppgCols).
-        emitPulsePoint(b.ppgTemplate, b.ppg_onset_auto, b.ppg_onset,
-            b.ppg_onset_auto, b.ppg_onset, refPpg);
-        emitPulsePoint(b.ppgTemplate, b.ppg_t50_auto, b.ppg_t50,
-            b.ppg_onset_auto, b.ppg_onset, refPpg);
-        emitPulsePoint(b.ppgTemplate, b.ppg_peak_auto, b.ppg_peak,
-            b.ppg_onset_auto, b.ppg_onset, refPpg);
-        emitPulsePoint(b.ppgTemplate, b.ppg_dicrotic_auto, b.ppg_dicrotic,
-            b.ppg_onset_auto, b.ppg_onset, refPpg);
-        emitPulsePoint(b.ppgTemplate, b.ppg_peak2_auto, b.ppg_peak2,
-            b.ppg_onset_auto, b.ppg_onset, refPpg);
-        emitPulsePoint(b.ppgTemplate, b.ppg_t80_auto, b.ppg_t80,
-            b.ppg_onset_auto, b.ppg_onset, refPpg);
-        emitPulsePoint(b.ppgTemplate, b.ppg_end_auto, b.ppg_end,
-            b.ppg_onset_auto, b.ppg_onset, refPpg);
+        if (wantPulse) {
+            // PPG: onset, p50, peak, dicrotic, peak2, end (matches ppgCols).
+            emitPulsePoint(b.ppgTemplate, b.ppg_onset_auto, b.ppg_onset,
+                b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint(b.ppgTemplate, b.ppg_t50_auto, b.ppg_t50,
+                b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint(b.ppgTemplate, b.ppg_peak_auto, b.ppg_peak,
+                b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint(b.ppgTemplate, b.ppg_dicrotic_auto, b.ppg_dicrotic,
+                b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint(b.ppgTemplate, b.ppg_peak2_auto, b.ppg_peak2,
+                b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint(b.ppgTemplate, b.ppg_t80_auto, b.ppg_t80,
+                b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint(b.ppgTemplate, b.ppg_end_auto, b.ppg_end,
+                b.ppg_onset_auto, b.ppg_onset, refPpg);
 
-        f << ',' << static_cast<int>(b.abp_issue);
-        emitPulsePoint(b.abpTemplate, b.abp_onset_auto, b.abp_onset,
-            b.abp_onset_auto, b.abp_onset, refAbp);
-        emitPulsePoint(b.abpTemplate, b.abp_peak_auto, b.abp_peak,
-            b.abp_onset_auto, b.abp_onset, refAbp);
-        emitPulsePoint(b.abpTemplate, b.abp_dicrotic_auto, b.abp_dicrotic,
-            b.abp_onset_auto, b.abp_onset, refAbp);
-        emitPulsePoint(b.abpTemplate, b.abp_peak2_auto, b.abp_peak2,
-            b.abp_onset_auto, b.abp_onset, refAbp);
-        emitPulsePoint(b.abpTemplate, b.abp_end_auto, b.abp_end,
-            b.abp_onset_auto, b.abp_onset, refAbp);
+            f << ',' << static_cast<int>(b.abp_issue);
+            emitPulsePoint(b.abpTemplate, b.abp_onset_auto, b.abp_onset,
+                b.abp_onset_auto, b.abp_onset, refAbp);
+            emitPulsePoint(b.abpTemplate, b.abp_peak_auto, b.abp_peak,
+                b.abp_onset_auto, b.abp_onset, refAbp);
+            emitPulsePoint(b.abpTemplate, b.abp_dicrotic_auto, b.abp_dicrotic,
+                b.abp_onset_auto, b.abp_onset, refAbp);
+            emitPulsePoint(b.abpTemplate, b.abp_peak2_auto, b.abp_peak2,
+                b.abp_onset_auto, b.abp_onset, refAbp);
+            emitPulsePoint(b.abpTemplate, b.abp_end_auto, b.abp_end,
+                b.abp_onset_auto, b.abp_onset, refAbp);
 
-        f << ',' << static_cast<int>(b.art_issue);
-        emitPulsePoint(b.artTemplate, b.art_onset_auto, b.art_onset,
-            b.art_onset_auto, b.art_onset, refArt);
-        emitPulsePoint(b.artTemplate, b.art_peak_auto, b.art_peak,
-            b.art_onset_auto, b.art_onset, refArt);
-        emitPulsePoint(b.artTemplate, b.art_dicrotic_auto, b.art_dicrotic,
-            b.art_onset_auto, b.art_onset, refArt);
-        emitPulsePoint(b.artTemplate, b.art_peak2_auto, b.art_peak2,
-            b.art_onset_auto, b.art_onset, refArt);
-        emitPulsePoint(b.artTemplate, b.art_end_auto, b.art_end,
-            b.art_onset_auto, b.art_onset, refArt);
+            f << ',' << static_cast<int>(b.art_issue);
+            emitPulsePoint(b.artTemplate, b.art_onset_auto, b.art_onset,
+                b.art_onset_auto, b.art_onset, refArt);
+            emitPulsePoint(b.artTemplate, b.art_peak_auto, b.art_peak,
+                b.art_onset_auto, b.art_onset, refArt);
+            emitPulsePoint(b.artTemplate, b.art_dicrotic_auto, b.art_dicrotic,
+                b.art_onset_auto, b.art_onset, refArt);
+            emitPulsePoint(b.artTemplate, b.art_peak2_auto, b.art_peak2,
+                b.art_onset_auto, b.art_onset, refArt);
+            emitPulsePoint(b.artTemplate, b.art_end_auto, b.art_end,
+                b.art_onset_auto, b.art_onset, refArt);
 
-        f << ',' << static_cast<int>(b.art_pulm_issue);
-        emitPulsePoint(b.artPulmTemplate, b.art_pulm_onset_auto, b.art_pulm_onset,
-            b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
-        emitPulsePoint(b.artPulmTemplate, b.art_pulm_peak_auto, b.art_pulm_peak,
-            b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
-        emitPulsePoint(b.artPulmTemplate, b.art_pulm_dicrotic_auto, b.art_pulm_dicrotic,
-            b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
-        emitPulsePoint(b.artPulmTemplate, b.art_pulm_peak2_auto, b.art_pulm_peak2,
-            b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
-        emitPulsePoint(b.artPulmTemplate, b.art_pulm_end_auto, b.art_pulm_end,
-            b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
+            f << ',' << static_cast<int>(b.art_pulm_issue);
+            emitPulsePoint(b.artPulmTemplate, b.art_pulm_onset_auto, b.art_pulm_onset,
+                b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
+            emitPulsePoint(b.artPulmTemplate, b.art_pulm_peak_auto, b.art_pulm_peak,
+                b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
+            emitPulsePoint(b.artPulmTemplate, b.art_pulm_dicrotic_auto, b.art_pulm_dicrotic,
+                b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
+            emitPulsePoint(b.artPulmTemplate, b.art_pulm_peak2_auto, b.art_pulm_peak2,
+                b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
+            emitPulsePoint(b.artPulmTemplate, b.art_pulm_end_auto, b.art_pulm_end,
+                b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
+        } // end if (wantPulse) pulse point groups
 
-        // Autodetected computed features (no user bar; from AUTODETECT markers).
-        auto emitAutoFeatPt = [&](const std::vector<double>& sig, int idx) {
-            f << ',';   if (idx >= 0) f << (idx * toMs);
-            f << ',';   if (idx >= 0 && idx < (int)sig.size() && !std::isnan(sig[idx])) f << sig[idx];
-            };
-        for (int c = 0; c < 3; ++c) {
-            const auto& ecg = chs[c]->ecgTemplate_raw;
-            const FeatureMarks::EcgGlyphs gl = FeatureMarks::compute_ecg_glyphs(
-                ecg, b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.s_end_auto_ch[c],
-                b.t_begin_auto_ch[c], b.t_end_auto_ch[c], sampleRateHz);
-            emitAutoFeatPt(ecg, gl.p_peak_glyph);
-            emitAutoFeatPt(ecg, gl.q_begin_glyph);
-            emitAutoFeatPt(ecg, gl.r_peak_glyph);
-            emitAutoFeatPt(ecg, gl.t_peak_glyph);
-        }
-        {
+        // Autodetected ECG computed features (no user bar; from AUTODETECT markers).
+        if (wantEcg)
+            for (int c = 0; c < 3; ++c) {
+                const auto& ecg = chs[c]->ecgTemplate_raw;
+                const FeatureMarks::EcgGlyphs gl = FeatureMarks::compute_ecg_glyphs(
+                    ecg, b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.s_end_auto_ch[c],
+                    b.t_begin_auto_ch[c], b.t_end_auto_ch[c], sampleRateHz);
+                emitAutoFeatPt(ecg, gl.p_peak_glyph);
+                emitAutoFeatPt(ecg, gl.q_begin_glyph);
+                emitAutoFeatPt(ecg, gl.r_peak_glyph);
+                emitAutoFeatPt(ecg, gl.t_peak_glyph);
+            }
+        if (wantPulse) {
             // PPG glyph values are just the bin's own auto fields now --
             // no separate recompute (see FeatureMarks::detect_ppg_fiducials).
             emitAutoFeatPt(b.ppgTemplate, b.ppg_onset_auto);

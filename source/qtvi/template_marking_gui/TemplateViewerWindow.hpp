@@ -175,7 +175,7 @@ private:
     // _template_markings_*.bin into m_bins, when the bin counts match.
     // Returns false (leaving m_bins untouched) if the file is missing,
     // unreadable, or sized differently than the current template set.
-    bool restoreMarkersFrom(const QString& markingsBinPath);
+    bool restoreMarkersFrom(const QString& markingsBinPath, bool ecg, bool pulse);
     // Normalize a copy of `raw` according to the rules in normalize_features.hpp.
     // ECG: sample / globalRef.
     // Pulse: 100*(sample - footY) / footY / globalRef.
