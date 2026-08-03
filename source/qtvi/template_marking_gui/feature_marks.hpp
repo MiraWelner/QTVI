@@ -136,6 +136,12 @@ public:
     // =================================================================
 
     // ECG landmarks.
+    // QRS polarity from the known R column: positive if the R sample sits
+    // above the trace baseline (median), negative otherwise. Exposed
+    // publicly so callers outside feature_marks.cpp (e.g. sqi_ecg.hpp's
+    // next-beat P-wave search) can search in the same polarity every
+    // detector in this file already uses internally.
+    static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
     static int detect_p_peak(const std::vector<double>& ecg_signal, int r_idx);
     static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx);
     static int detect_q_begin(const std::vector<double>& ecg_signal, int r_idx);

@@ -111,7 +111,7 @@ namespace normalize_features {
 
     inline PulseChannel pulseChan(const TemplateBin& b, int which) {
         switch (which) {
-        case 0: return { &b.ppgTemplate,     b.ppg_onset,    b.ppg_peak,    b.ppg_issue };
+        case 0: return { &b.ppgTemplate,     b.ppg_onset,    b.ppg_peak,    b.bad_ppg };
         case 1: return { &b.abpTemplate,     b.abp_onset,    b.abp_peak,    b.abp_issue };
         case 2: return { &b.artTemplate,     b.art_onset,    b.art_peak,    b.art_issue };
         default: return { &b.artPulmTemplate, b.art_pulm_onset, b.art_pulm_peak, b.art_pulm_issue };

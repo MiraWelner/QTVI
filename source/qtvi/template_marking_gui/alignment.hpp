@@ -396,6 +396,20 @@ namespace alignment {
             BaselineSource refSrc = BaselineSource::NONE;
             const double target = pick(refTp, refTpOk, refPq, refPqOk, refSrc);
 
+            // If the default reference beat has no usable PQ/TP, don't abandon
+            // the whole bin: find any beat with a usable PQ (else TP) and use
+            // it as the reference so beats that DO resolve still align.
+            double refTarget = target;
+            if (refSrc == BaselineSource::NONE) {
+                for (size_t i = 0; i < out.beats.size(); ++i) {
+                    const auto [tTp, tTpOk, tPq, tPqOk] = both_levels(i);
+                    if (tPqOk) { refTarget = tPq; refSrc = BaselineSource::PQ; break; }
+                    if (tTpOk && refSrc == BaselineSource::NONE) {
+                        refTarget = tTp; refSrc = BaselineSource::TP;
+                    }
+                }
+            }
+
             out.tp_pq_delta.assign(out.beats.size(), std::numeric_limits<double>::quiet_NaN());
 
             // Diagnostic accumulators (spec-neutral: recorded only, doesn't
@@ -404,7 +418,7 @@ namespace alignment {
             std::vector<double> diag_shifts;
             diag_shifts.reserve(out.beats.size());
 
-            if (refSrc != BaselineSource::NONE && !std::isnan(target)) {
+            if (refSrc != BaselineSource::NONE && !std::isnan(refTarget)) {
                 for (size_t i = 0; i < out.beats.size(); ++i) {
                     const auto [tpLvl, tpOk, pqLvl, pqOk] = both_levels(i);
                     if (tpOk && pqOk) out.tp_pq_delta[i] = pqLvl - tpLvl;   // QC metric, whenever both succeed
@@ -417,7 +431,7 @@ namespace alignment {
                     else ++diag_none;
                     if (src == BaselineSource::NONE || std::isnan(lvl))
                         continue;   // graceful degrade: leave un-shifted, flagged NONE
-                    const double d = lvl - target;
+                    const double d = lvl - refTarget;
                     diag_shifts.push_back(d);
                     if (d == 0.0) continue;
                     for (double& v : out.beats[i])

@@ -200,11 +200,13 @@ static inline void build_pulse_template_pair_windowed(
             }
             if (err < 0.1) filteredBeats.push_back(bt);
         }
-        // Degenerate case: nothing passed at 5%. Escalate the threshold
-         // 10% -> 20% -> 50%, taking the first non-empty survivor set. The
-         // error is still the foot-to-foot metric from above.
-        for (const double thr : { 0.10, 0.20, 0.50, 0.75}) {
-            if (!filteredBeats.empty()) break;
+        // If fewer than 3 beats passed the tight threshold, escalate
+        // 10% -> 20% -> 50%, taking the first tier that yields >= 3.
+        // Each tier rebuilds from scratch (clear first) so tiers don't
+        // double-count beats already added by a stricter tier.
+        for (const double thr : { 0.10, 0.20, 0.50 }) {
+            if (filteredBeats.size() >= 3) break;
+            filteredBeats.clear();
             for (size_t k = 0; k < aligned.beats.size(); ++k)
                 if (diag_all_errs[k] < thr) filteredBeats.push_back(aligned.beats[k]);
         }

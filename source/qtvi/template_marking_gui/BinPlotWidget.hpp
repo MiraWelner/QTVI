@@ -54,7 +54,7 @@ public:
         EcgTEnd = 6,
         // --- PPG markers (contiguous, immediately after ECG) ---
         PpgOnset = 7,
-        PpgP50 = 8,
+        PpgT50 = 8,
         PpgPeak = 9,
         PpgDicrotic = 10,
         PpgPeak2 = 11,
@@ -134,7 +134,7 @@ public:
         const std::vector<double>& ecg,
         const std::vector<double>& ecgIqr,
         int pPeak, int qBegin, int rPeak, int sEnd, int tPeak, int tEnd,
-        int ppgOnset, int ppgP50, int ppgPeak,
+        int ppgOnset, int ppgT50, int ppgPeak,
         int ppgDicrotic, int ppgPeak2, int ppgT80, int ppgEnd,
         double rPeakSample,
         int nEcgBeats = 0,
@@ -318,7 +318,7 @@ private:
         // T80/P50 are reactive (NOT from the auto fields): always tracked
         // live from the CURRENT onset/peak/end markers, recomputed every
         // capture -- same "reactive" treatment ECG's Q-peak/S-peak get.
-        int ppgP50 = -1;
+        int ppgT50 = -1;
         int ppgT80 = -1;
         bool valid = false;
     };

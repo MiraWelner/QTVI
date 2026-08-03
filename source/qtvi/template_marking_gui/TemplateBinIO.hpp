@@ -81,7 +81,7 @@ struct TemplateBin {
 
     //error markings made via user right click
     bool    bad_r_ch[3] = { false, false, false };
-    uint8_t ppg_issue = 0;   // 0 = ok, 1 = bad, 2 = no ppg
+    uint8_t bad_ppg = 0;   // 0 = ok, 1 = bad, 2 = no ppg
 
     // Per-anchor USER marker positions. Each alignment anchor (R, Q_ONSET,
     // J_POINT, T_PEAK, ...) has its OWN independent set of draggable ECG
@@ -122,7 +122,7 @@ struct TemplateBin {
 
     // PPG: sample indices into ppgTemplate. Shared across channels.
     int ppg_onset = -1;
-    int ppg_p50 = -1;   // 50% up the upslope, foot -> systolic peak
+    int ppg_t50 = -1;   // 50% up the upslope, foot -> systolic peak
     int ppg_t80 = -1; // 80% up the upslope, foot -> systolic peak
     int ppg_peak = -1;
     int ppg_dicrotic = -1;
@@ -153,7 +153,7 @@ struct TemplateBin {
     // Auto-detect mirror fields for pulse channels (same rule as ECG auto
     // mirrors above: filled every loadSubject, NOT serialized). Preserve
     // the original auto positions so the CSV can emit both variants.
-    int ppg_onset_auto = -1, ppg_p50_auto = -1, ppg_peak_auto = -1,
+    int ppg_onset_auto = -1, ppg_t50_auto = -1, ppg_peak_auto = -1,
         ppg_dicrotic_auto = -1, ppg_peak2_auto = -1, ppg_end_auto = -1;
     int ppg_t80_auto = -1;
     // Whether the dicrotic notch / diastolic peak / pulse end were
@@ -259,7 +259,7 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         w8(b.bad_r_ch[0] ? 1 : 0);
         w8(b.bad_r_ch[1] ? 1 : 0);
         w8(b.bad_r_ch[2] ? 1 : 0);
-        w8(b.ppg_issue);
+        w8(b.bad_ppg);
 
         // Per-anchor ECG user markers: [uint32 count] then, per anchor,
         // [int32 anchorTag][6 marker fields x 3 channels]. R peak is auto-only
@@ -277,7 +277,7 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         }
 
         w32(b.ppg_onset);
-        w32(b.ppg_p50);
+        w32(b.ppg_t50);
         w32(b.ppg_peak);
         w32(b.ppg_dicrotic);
         w32(b.ppg_peak2);
@@ -413,7 +413,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             std::vector<double> vals;
             for (const auto& b : bins) {
                 if (b.bad_segment) continue;
-                if (checkPpgIssue && b.ppg_issue != 0) continue;
+                if (checkPpgIssue && b.bad_ppg != 0) continue;
                 const auto& v = b.*trace;
                 const int fi = b.*footAuto;
                 const int pi = b.*peakAuto;
@@ -566,7 +566,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             << (b.bad_r_ch[0] ? 1 : 0) << ','
             << (b.bad_r_ch[1] ? 1 : 0) << ','
             << (b.bad_r_ch[2] ? 1 : 0) << ','
-            << static_cast<int>(b.ppg_issue);
+            << static_cast<int>(b.bad_ppg);
 
         const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
         for (int c = 0; c < 3; ++c) {
@@ -618,7 +618,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
         // PPG: onset, p50, peak, dicrotic, peak2, end (matches ppgCols).
         emitPulsePoint(b.ppgTemplate, b.ppg_onset_auto, b.ppg_onset,
             b.ppg_onset_auto, b.ppg_onset, refPpg);
-        emitPulsePoint(b.ppgTemplate, b.ppg_p50_auto, b.ppg_p50,
+        emitPulsePoint(b.ppgTemplate, b.ppg_t50_auto, b.ppg_t50,
             b.ppg_onset_auto, b.ppg_onset, refPpg);
         emitPulsePoint(b.ppgTemplate, b.ppg_peak_auto, b.ppg_peak,
             b.ppg_onset_auto, b.ppg_onset, refPpg);
@@ -721,7 +721,7 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         b.bad_r_ch[0] = (r8() != 0);
         b.bad_r_ch[1] = (r8() != 0);
         b.bad_r_ch[2] = (r8() != 0);
-        b.ppg_issue = r8();
+        b.bad_ppg = r8();
 
         // Per-anchor ECG user markers: [count] then (tag, 6x3 fields) each.
         // Mirrors the write order. R peak is not stored (auto-only per pass).
@@ -741,7 +741,7 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         }
 
         b.ppg_onset = r32();
-        b.ppg_p50 = r32();
+        b.ppg_t50 = r32();
         b.ppg_peak = r32();
         b.ppg_dicrotic = r32();
         b.ppg_peak2 = r32();

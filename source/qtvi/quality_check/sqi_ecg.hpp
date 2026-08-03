@@ -22,6 +22,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -35,18 +36,22 @@ struct Segments {
     int pLo = 0, pHi = 0;       // P wave
     int qrsLo = 0, qrsHi = 0;   // QRS complex
     int stLo = 0, stHi = 0;     // ST segment (J point -> T onset)
-    int tHi = 0;                // isoelectric-window start = QRS end / J point
-    int nextPLo = 0;            // isoelectric-window end = T-wave onset
+    int tHi = 0;                // isoelectric-window start = this beat's T-end
+    int nextPLo = 0;            // isoelectric-window end = next beat's P-onset (TP segment)
 };
 
 // Builds a Segments from FeatureMarks' auto-detectors, anchored on r_col
 // (the same R column the template was built around) at sample rate fs.
 //
-// The isoelectric window used for the noise metric is [tHi, nextPLo] =
-// [QRS end (J point), T-wave onset] -- the classic isoelectric segment
-// right after the QRS, before the T wave starts. So tHi is the QRS-end
-// landmark and nextPLo is the T-onset landmark, both taken directly from
-// FeatureMarks (no estimation needed there).
+// The isoelectric window used for the noise metric is [tHi, nextPLo] = [this
+// beat's T-end, the NEXT beat's P-onset] -- the TP segment, the true flat
+// baseline between two consecutive beats. tHi is a direct FeatureMarks
+// landmark; nextPLo has no direct detector (it belongs to a beat this
+// function was never handed), so it's found the same way a normal p_begin
+// is -- detect a peak, then FeatureMarks::compute_p_begin's anchor-fit -- just
+// with the peak search restricted to [t_end, t_end+600ms]. If the array
+// doesn't extend that far (no next beat in view), nextPLo falls back to tHi
+// (a zero-width window, handled gracefully by the noise metric).
 //
 // ASSUMPTION: P onset (pLo) is estimated by reflecting the detected P-end
 // around the detected P-peak (symmetric-P-wave assumption) -- FeatureMarks
@@ -64,11 +69,6 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     const int tBegin = FeatureMarks::detect_t_begin(ecg, r_col, fs);    // T onset
     const int tEnd = FeatureMarks::detect_t_end(ecg, r_col, fs);
 
-    std::cerr << "DEBUG n=" << n << " r_col=" << r_col
-        << " pPeak=" << pPeak << " pEnd=" << pEnd
-        << " qBegin=" << qBegin << " sEnd=" << sEnd
-        << " tBegin=" << tBegin << " tEnd=" << tEnd << "\n";
-
     auto clampIdx = [&](int v) { return std::max(0, std::min(n - 1, v)); };
 
     s.pHi = clampIdx(pEnd >= 0 ? pEnd : r_col);
@@ -77,23 +77,53 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     s.qrsHi = clampIdx(sEnd >= 0 ? sEnd : r_col);
     s.stLo = s.qrsHi;
     s.stHi = clampIdx(tBegin >= 0 ? tBegin : s.qrsHi);
-    // Isoelectric window for the noise metric: J point -> T onset.
-    s.tHi = s.qrsHi;
-    s.nextPLo = s.stHi;
-    // tEnd isn't used for segment bounds (nothing here needs "after the T
-    // wave"), but keep the variable named for clarity/future use.
-    (void)tEnd;
+    // Isoelectric window for the noise metric: THIS beat's T-end -> the
+    // NEXT beat's P-onset -- the TP segment, the true baseline between
+    // consecutive beats.
+    s.tHi = clampIdx(tEnd >= 0 ? tEnd : s.stHi);
+
+    // Find the next beat's P-onset the same way a normal p_begin is found
+    // (detect-a-peak, then refine with FeatureMarks::compute_p_begin's
+    // anchor-fit) -- just with the peak search restricted to
+    // [t_end, t_end+600ms] instead of the usual before-Q window, since
+    // that's this beat's OWN P wave, not the next one's.
+    
+    {
+        const int searchLo = s.tHi;
+        const int searchHi = clampIdx(s.tHi + static_cast<int>(std::lround(0.6 * fs)));
+        int nextR = -1;
+        if (searchHi > searchLo) {
+            const bool up = FeatureMarks::qrs_positive_at(ecg, r_col);
+            double best = -std::numeric_limits<double>::infinity();
+            for (int i = searchLo; i <= searchHi; ++i) {
+                if (std::isnan(ecg[i])) continue;
+                const double val = up ? ecg[i] : -ecg[i];
+                if (val > best) { best = val; nextR = i; }
+            }
+        }
+
+        s.nextPLo = s.tHi;   // fallback: zero-width window (no next beat in range)
+        if (nextR >= 0) {
+            const int localLo = std::max(0, nextR - 400);   // ~PR margin before next R
+            const int localHi = std::min(n, nextR + 50);
+            if (localHi - localLo >= 10) {
+                std::vector<double> local(ecg.begin() + localLo, ecg.begin() + localHi);
+                const int local_r = nextR - localLo;
+                const int pPeakLocal = FeatureMarks::detect_p_peak(local, local_r);
+                const int pOnLocal = FeatureMarks::compute_p_begin(local, pPeakLocal, fs, local_r);
+                if (pOnLocal >= 0) {
+                    const int pOn = pOnLocal + localLo;   // back to full-array space
+                    if (pOn > s.tHi && pOn < nextR) s.nextPLo = clampIdx(pOn);
+                }
+            }
+        }
+    }
 
     // Keep every range non-decreasing even if a detector fell back/failed.
     s.pHi = std::max(s.pHi, s.pLo);
     s.qrsHi = std::max(s.qrsHi, s.qrsLo);
     s.stHi = std::max(s.stHi, s.stLo);
     s.nextPLo = std::max(s.nextPLo, s.tHi);
-
-    std::cerr << "  -> pLo=" << s.pLo << " pHi=" << s.pHi
-        << " qrsLo=" << s.qrsLo << " qrsHi=" << s.qrsHi
-        << " stLo=" << s.stLo << " stHi=" << s.stHi
-        << " tHi=" << s.tHi << " nextPLo=" << s.nextPLo << "\n";
     return s;
 }
 
@@ -108,18 +138,28 @@ struct BeatSQI {
 
 // NaN-aware Pearson correlation (same convention as alignment.hpp's local
 // pearson() lambda, factored out here so sqi_ecg.hpp has no dependency on it).
-inline double pearsonSQI(const std::vector<double>& a, const std::vector<double>& b) {
-    double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0; int n = 0;
-    const size_t len = std::min(a.size(), b.size());
-    for (size_t k = 0; k < len; ++k) {
-        if (std::isnan(a[k]) || std::isnan(b[k])) continue;
-        sa += a[k]; sb += b[k]; saa += a[k] * a[k];
-        sbb += b[k] * b[k]; sab += a[k] * b[k]; ++n;
+// pearsonSQI signature change: add lo/hi bounds (default = whole array,
+// so any other caller is unaffected)
+inline double pearsonSQI(const std::vector<double>& a, const std::vector<double>& b,
+    int lo = 0, int hi = -1) {
+    const int n = static_cast<int>(std::min(a.size(), b.size()));
+    if (hi < 0 || hi > n) hi = n;
+    lo = std::max(0, lo);
+    if (hi - lo < 4) return 0.0;
+
+    double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+    int cnt = 0;
+    for (int k = lo; k < hi; ++k) {
+        const double av = a[k], bv = b[k];
+        if (std::isnan(av) || std::isnan(bv)) continue;
+        sa += av; sb += bv; saa += av * av; sbb += bv * bv; sab += av * bv;
+        ++cnt;
     }
-    if (n < 4) return 0.0;   // too few overlapping samples to trust
-    const double ma = sa / n, mb = sb / n;
-    const double cov = sab / n - ma * mb;
-    const double va = saa / n - ma * ma, vb = sbb / n - mb * mb;
+    if (cnt < 4) return 0.0;
+    const double ma = sa / cnt, mb = sb / cnt;
+    const double cov = sab / cnt - ma * mb;
+    const double va = saa / cnt - ma * ma;
+    const double vb = sbb / cnt - mb * mb;
     if (va <= 0.0 || vb <= 0.0) return 0.0;
     return cov / std::sqrt(va * vb);
 }
@@ -143,8 +183,7 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
     const Segments& seg,                  // P/QRS/ST sample ranges
     int motionFlag) {
     BeatSQI q{};
-    q.templateCorr = pearsonSQI(beat, tmpl);
-
+    q.templateCorr = pearsonSQI(beat, tmpl, 0, seg.tHi);
     auto chi = [&](const std::vector<double>& ref, int a, int b) {
         double s = 0.0;
         const int hi = std::min(b, static_cast<int>(std::min(beat.size(), ref.size())));
@@ -165,12 +204,28 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
 
     const int lastIdx = static_cast<int>(beat.size()) - 1;
     if (lastIdx >= 0) {
-        // Two isoelectric reference points: just before P, and just after
-        // the QRS (J point) -- compares baseline level before/after the
-        // beat's main deflection to catch drift.
-        const double preP = beat[std::clamp(seg.pLo, 0, lastIdx)];
-        const double postQRS = beat[std::clamp(seg.tHi, 0, lastIdx)];
-        q.baseline = std::max(0.0, 1.0 - std::abs(preP - postQRS) / 0.5);    // 0.5 mV budget
+        const int pLo = std::clamp(seg.pLo, 0, lastIdx);
+        const int pw = std::max(3, seg.pHi - seg.pLo);        // ~P-wave width
+        const int wLo = std::max(0, pLo - pw);
+        double preP;
+        {
+            std::vector<double> win;
+            win.reserve(pLo - wLo);
+            for (int i = wLo; i < pLo; ++i)
+                if (!std::isnan(beat[i])) win.push_back(beat[i]);
+            if (win.empty()) {
+                preP = beat[pLo];                              // fallback: single sample
+            }
+            else {
+                std::sort(win.begin(), win.end());
+                const size_t m = win.size() / 2;
+                preP = (win.size() % 2 == 0)
+                    ? 0.5 * (win[m - 1] + win[m]) : win[m];
+            }
+        }
+
+        const double postT = beat[std::clamp(seg.tHi, 0, lastIdx)];
+        q.baseline = std::max(0.0, 1.0 - std::abs(preP - postT) / 0.5); // 0.5 mV
     }
     q.noise = std::max(0.0, 1.0 - stddevSQI(beat, seg.tHi, seg.nextPLo) / 0.1);   // 0.1 mV budget
 

@@ -117,7 +117,7 @@ std::vector<double> FeatureMarks::first_derivative(const std::vector<double>& v)
 // QRS polarity from the KNOWN R column: positive if the R sample sits above
 // the trace baseline (median), negative otherwise. Replaces the old r_peak()
 // geometric guesser -- callers now pass the true R column (r_col).
-static bool qrs_positive_at(const std::vector<double>& v, int r_idx) {
+bool FeatureMarks::qrs_positive_at(const std::vector<double>& v, int r_idx) {
     const int N = static_cast<int>(v.size());
     if (N == 0 || r_idx < 0 || r_idx >= N || std::isnan(v[r_idx])) return true;
     std::vector<double> f;
@@ -141,7 +141,7 @@ int FeatureMarks::compute_q_peak(const std::vector<double>& ecg,
         || q_begin >= N || r_peak_idx >= N || q_begin > r_peak_idx)
         return -1;
 
-    const bool up = qrs_positive_at(ecg, r_peak_idx);
+    const bool up = FeatureMarks::qrs_positive_at(ecg, r_peak_idx);
 
     int q = q_begin;
     for (int i = q_begin; i <= r_peak_idx; ++i) {
@@ -162,7 +162,7 @@ int FeatureMarks::compute_s_peak(const std::vector<double>& ecg, int r_idx, doub
     if (r_idx < 0 || r_idx >= N - 1)
         return std::clamp(r_idx + 1, 0, std::max(0, N - 1));
 
-    const bool up = qrs_positive_at(ecg, r_idx);
+    const bool up = FeatureMarks::qrs_positive_at(ecg, r_idx);
     const int w = (fs > 0.0)
         ? std::max(4, static_cast<int>(std::lround(0.12 * fs)))
         : 60;
@@ -193,7 +193,7 @@ int FeatureMarks::compute_p_peak(const std::vector<double>& ecg,
         || p_onset >= N || q_begin >= N || p_onset > q_begin)
         return std::clamp(std::max(p_onset, 0), 0, std::max(0, N - 1));
 
-    const bool is_positive = qrs_positive_at(ecg, r_peak_idx);
+    const bool is_positive = FeatureMarks::qrs_positive_at(ecg, r_peak_idx);
     std::vector<double> u = ecg;
     if (!is_positive) for (auto& x : u) x = -x;
 
@@ -272,7 +272,7 @@ int FeatureMarks::compute_q_onset(const std::vector<double>& v, int qUser, doubl
     if (qUser < 0 || qUser >= N || N < 4) return std::clamp(qUser, 0, std::max(0, N - 1));
     const int w = win_005s(fs);
 
-    const bool is_positive = qrs_positive_at(v, r_idx);
+    const bool is_positive = FeatureMarks::qrs_positive_at(v, r_idx);
     std::vector<double> u = v;
     if (!is_positive) for (auto& x : u) x = -x;
 
@@ -378,7 +378,7 @@ int FeatureMarks::compute_p_onset(const std::vector<double>& v, int pUser, doubl
     if (pUser < 0 || pUser >= N || N < 4) return std::clamp(pUser, 0, std::max(0, N - 1));
     const int w = win_005s(fs);
 
-    const bool is_positive = qrs_positive_at(v, r_idx);
+    const bool is_positive = FeatureMarks::qrs_positive_at(v, r_idx);
     std::vector<double> u = v;
     if (!is_positive) for (auto& x : u) x = -x;
 
@@ -405,7 +405,7 @@ int FeatureMarks::compute_p_begin(const std::vector<double>& v, int pUser, doubl
     const int N = static_cast<int>(v.size());
     if (pUser < 0 || pUser >= N || N < 4) return std::clamp(pUser, 0, std::max(0, N - 1));
     const int w = win_005s(fs);
-    const bool is_positive = qrs_positive_at(v, r_idx);
+    const bool is_positive = FeatureMarks::qrs_positive_at(v, r_idx);
     std::vector<double> u = v;
     if (!is_positive) for (auto& x : u) x = -x;
     const int lo = std::max(0, pUser - w);
@@ -425,7 +425,7 @@ int FeatureMarks::compute_t_begin(const std::vector<double>& v, int tBeginUser, 
     if (tBeginUser < 0 || tBeginUser >= N || N < 4) return std::clamp(tBeginUser, 0, std::max(0, N - 1));
     const int w = win_005s(fs);
 
-    const bool is_positive = qrs_positive_at(v, r_idx);
+    const bool is_positive = FeatureMarks::qrs_positive_at(v, r_idx);
     std::vector<double> u = v;
     if (!is_positive) for (auto& x : u) x = -x;
 
@@ -470,7 +470,7 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
             // R-upstroke onset: walk left from R down the steep rise to
             // where the slope flattens to <10% of the peak upstroke slope.
             // Scan window is 50 ms before R (rate-independent).
-            const bool pos = qrs_positive_at(b, r_col);
+            const bool pos = FeatureMarks::qrs_positive_at(b, r_col);
             auto up = [&](int i) { const double v = b[i]; return pos ? v : -v; };
 
             const int win = std::max(2, static_cast<int>(std::lround(0.050 * fs)));
@@ -759,7 +759,7 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(
 
 int FeatureMarks::detect_q_begin(const std::vector<double>& ecg_signal, int r_idx) {
     const int N = static_cast<int>(ecg_signal.size());
-    const bool is_positive = qrs_positive_at(ecg_signal, r_idx);
+    const bool is_positive = FeatureMarks::qrs_positive_at(ecg_signal, r_idx);
 
     std::vector<double> upright_signal = ecg_signal;
     if (!is_positive) for (auto& x : upright_signal) x = -x;
@@ -784,7 +784,7 @@ int FeatureMarks::detect_p_peak(const std::vector<double>& ecg_signal, int r_idx
     const int N = static_cast<int>(ecg_signal.size());
     if (N < 3) return 0;
 
-    const bool is_positive = qrs_positive_at(ecg_signal, r_idx);
+    const bool is_positive = FeatureMarks::qrs_positive_at(ecg_signal, r_idx);
     std::vector<double> upright = ecg_signal;
     if (!is_positive) for (auto& x : upright) x = -x;
 
@@ -821,7 +821,7 @@ int FeatureMarks::detect_p_peak(const std::vector<double>& ecg_signal, int r_idx
 // landmark from P-onset -- no prior detector existed for it.
 int FeatureMarks::detect_p_end(const std::vector<double>& ecg_signal, int r_idx) {
     const int N = static_cast<int>(ecg_signal.size());
-    const bool is_positive = qrs_positive_at(ecg_signal, r_idx);
+    const bool is_positive = FeatureMarks::qrs_positive_at(ecg_signal, r_idx);
     if (r_idx < 0 || r_idx >= N)
         return std::clamp(r_idx, 0, std::max(0, N - 1));
 
@@ -862,7 +862,7 @@ int FeatureMarks::detect_t_begin(const std::vector<double>& ecg_signal, int r_id
     // foot. begin/end bracket that peak.
     const int N = static_cast<int>(ecg_signal.size());
     if (N < 3) return 0;
-    const bool is_positive = qrs_positive_at(ecg_signal, r_idx);
+    const bool is_positive = FeatureMarks::qrs_positive_at(ecg_signal, r_idx);
     std::vector<double> upright = ecg_signal;
     if (!is_positive) for (auto& x : upright) x = -x;
 
@@ -887,7 +887,7 @@ int FeatureMarks::detect_t_begin(const std::vector<double>& ecg_signal, int r_id
 
 int FeatureMarks::detect_s_end(const std::vector<double>& ecg_signal, int r_idx, double fs) {
     const int N = static_cast<int>(ecg_signal.size());
-    const bool is_positive = qrs_positive_at(ecg_signal, r_idx);
+    const bool is_positive = FeatureMarks::qrs_positive_at(ecg_signal, r_idx);
     if (r_idx < 0 || r_idx >= N - 1)
         return std::clamp(r_idx + 1, 0, std::max(0, N - 1));
 
@@ -924,7 +924,7 @@ int FeatureMarks::detect_t_end(const std::vector<double>& ecg_signal, int r_idx,
     // First local maximum right of S end, then walk right to its foot.
     const int N = static_cast<int>(ecg_signal.size());
     if (N < 3) return std::max(0, N - 1);
-    const bool is_positive = qrs_positive_at(ecg_signal, r_idx);
+    const bool is_positive = FeatureMarks::qrs_positive_at(ecg_signal, r_idx);
     std::vector<double> upright = ecg_signal;
     if (!is_positive) for (auto& x : upright) x = -x;
 
@@ -1170,14 +1170,14 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
 
     // ---- PPG ------------------------------------------------------------
     if (b.ppgTemplate.empty()) {
-        b.ppg_issue = 2;
-        b.ppg_onset = b.ppg_p50 = b.ppg_t80 = b.ppg_peak = -1;
+        b.bad_ppg = 2;
+        b.ppg_onset = b.ppg_t50 = b.ppg_t80 = b.ppg_peak = -1;
         b.ppg_dicrotic = b.ppg_peak2 = b.ppg_end = -1;
-        b.ppg_onset_auto = b.ppg_p50_auto = b.ppg_t80_auto = b.ppg_peak_auto = -1;
+        b.ppg_onset_auto = b.ppg_t50_auto = b.ppg_t80_auto = b.ppg_peak_auto = -1;
         b.ppg_dicrotic_auto = b.ppg_peak2_auto = b.ppg_end_auto = -1;
     }
-    else if (b.ppg_issue == 1) {
-        b.ppg_onset = b.ppg_p50 = b.ppg_t80 = b.ppg_peak = -1;
+    else if (b.bad_ppg == 1) {
+        b.ppg_onset = b.ppg_t50 = b.ppg_t80 = b.ppg_peak = -1;
         b.ppg_dicrotic = b.ppg_peak2 = b.ppg_end = -1;
         // Leave *_auto alone -- they're the original auto positions.
     }
@@ -1230,7 +1230,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
             b.ppg_end_auto = pf.end;               b.ppg_end_found_auto = pf.end_found;
             b.ppg_dicrotic_auto = pf.dicrotic;     b.ppg_dicrotic_found_auto = pf.notch_found;
             b.ppg_t80_auto = pf.t80;
-            b.ppg_p50_auto = pf.p50;
+            b.ppg_t50_auto = pf.p50;
         }
 
         // ---- seed the movable bars once (only when unset) ------------------
@@ -1241,7 +1241,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
         if (b.ppg_end < 0) b.ppg_end = b.ppg_end_auto;
         // Auto-only bars: always refreshed.
         b.ppg_peak = b.ppg_peak_auto;
-        b.ppg_p50 = b.ppg_p50_auto;
+        b.ppg_t50 = b.ppg_t50_auto;
     }
 
     // ---- ECG (per channel) ---------------------------------------------

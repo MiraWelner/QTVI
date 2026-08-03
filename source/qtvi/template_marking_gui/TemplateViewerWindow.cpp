@@ -356,9 +356,9 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath) {
                 }
             }
             for (int c = 0; c < 3; ++c) d.bad_r_ch[c] = s.bad_r_ch[c];
-            d.ppg_issue = s.ppg_issue;
+            d.bad_ppg = s.bad_ppg;
             d.ppg_onset = safeIdx(s.ppg_onset, d.ppg_onset, ppgLen);
-            d.ppg_p50 = safeIdx(s.ppg_p50, d.ppg_p50, ppgLen);
+            d.ppg_t50 = safeIdx(s.ppg_t50, d.ppg_t50, ppgLen);
             d.ppg_t80 = safeIdx(s.ppg_t80, d.ppg_t80, ppgLen);
             d.ppg_peak = safeIdx(s.ppg_peak, d.ppg_peak, ppgLen);
             d.ppg_dicrotic = safeIdx(s.ppg_dicrotic, d.ppg_dicrotic, ppgLen);
@@ -574,7 +574,7 @@ void TemplateViewerWindow::showPage() {
             pw->setData(ppgN, ppgIqr, ecgN, ecgIqr,
                 b.marks(currentAnchor()).p_peak_ch[c], b.marks(currentAnchor()).q_begin_ch[c], b.r_peak_ch[c],
                 b.marks(currentAnchor()).s_end_ch[c], b.marks(currentAnchor()).t_begin_ch[c], b.marks(currentAnchor()).t_end_ch[c],
-                b.ppg_onset, b.ppg_p50, b.ppg_peak,
+                b.ppg_onset, b.ppg_t50, b.ppg_peak,
                 b.ppg_dicrotic, b.ppg_peak2, b.ppg_t80, b.ppg_end,
                 rPeak,
                 static_cast<int>(nEcgBeats),
@@ -627,7 +627,7 @@ void TemplateViewerWindow::showPage() {
             pw->setMarker(BinPlotWidget::ArtPulmPeak2, b.art_pulm_peak2);
             pw->setMarker(BinPlotWidget::ArtPulmEnd, b.art_pulm_end);
 
-            if (b.ppg_issue == 1)
+            if (b.bad_ppg == 1)
                 pw->setState(BinPlotWidget::State::BadPPG);
             else if (b.bad_r_ch[c])
                 pw->setState(BinPlotWidget::State::BadR);
@@ -829,7 +829,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     }
     // Pulse markers (PPG has 6 with p50, arterial has 5).
     static const char* PPG_MARKERS[] = {
-        "ppg_onset", "ppg_p50", "ppg_peak",
+        "ppg_onset", "ppg_t50", "ppg_peak",
         "ppg_dicrotic", "ppg_peak2", "ppg_t80", "ppg_end"
     };
     static const char* ABP_MARKERS[] = {
@@ -955,9 +955,9 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         }
 
         // Pulse marker positions, order matching PPG_MARKERS / ABP_MARKERS etc.
-        const int ppgAuto[7] = { b.ppg_onset_auto, b.ppg_p50_auto, b.ppg_peak_auto,
+        const int ppgAuto[7] = { b.ppg_onset_auto, b.ppg_t50_auto, b.ppg_peak_auto,
                                  b.ppg_dicrotic_auto, b.ppg_peak2_auto, b.ppg_t80_auto, b.ppg_end_auto };
-        const int ppgUser[7] = { b.ppg_onset, b.ppg_p50, b.ppg_peak,
+        const int ppgUser[7] = { b.ppg_onset, b.ppg_t50, b.ppg_peak,
                                  b.ppg_dicrotic, b.ppg_peak2, b.ppg_t80, b.ppg_end };
         const int abpAuto[5] = { b.abp_onset_auto, b.abp_peak_auto,
                                  b.abp_dicrotic_auto, b.abp_peak2_auto, b.abp_end_auto };
@@ -1251,7 +1251,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             const double pct = (nDragged > 1) ? double(newIdx) / (nDragged - 1) : 0.0;
 
             for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
-                if (m_bins[i].ppg_issue != 0) continue;
+                if (m_bins[i].bad_ppg != 0) continue;
                 const int cur = ppgGet(m_bins[i]);
                 if (cur < 0) continue;
 
@@ -1267,7 +1267,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             }
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
                 int gi = m_pageGlobalIdx[li];
-                if (gi > binIdx && m_bins[gi].ppg_issue == 0) refreshBinMarkers(gi);
+                if (gi > binIdx && m_bins[gi].bad_ppg == 0) refreshBinMarkers(gi);
             }
         }
         return;
@@ -1432,13 +1432,13 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
 
         auto pulseLabel = [](int m) -> QString {
             switch (m) {
-            case BinPlotWidget::PpgOnset:    return QStringLiteral("foot");
-            case BinPlotWidget::PpgP50:      return QStringLiteral("P50");
-            case BinPlotWidget::PpgPeak:     return QStringLiteral("peak");
-            case BinPlotWidget::PpgDicrotic: return QStringLiteral("dicrotic notch");
-            case BinPlotWidget::PpgPeak2:    return QStringLiteral("2nd peak");
+            case BinPlotWidget::PpgOnset:    return QStringLiteral("Foot");
+            case BinPlotWidget::PpgT50:      return QStringLiteral("T50");
+            case BinPlotWidget::PpgPeak:     return QStringLiteral("Diastolic Peak");
+            case BinPlotWidget::PpgDicrotic: return QStringLiteral("Dicrotic Notch");
+            case BinPlotWidget::PpgPeak2:    return QStringLiteral("Systolic Peak");
             case BinPlotWidget::PpgT80:      return QStringLiteral("T80");
-            case BinPlotWidget::PpgEnd:      return QStringLiteral("end");
+            case BinPlotWidget::PpgEnd:      return QStringLiteral("End");
             case BinPlotWidget::AbpOnset: case BinPlotWidget::ArtOnset: case BinPlotWidget::ArtPulmOnset:       return QStringLiteral("onset");
             case BinPlotWidget::AbpPeak: case BinPlotWidget::ArtPeak: case BinPlotWidget::ArtPulmPeak:          return QStringLiteral("peak");
             case BinPlotWidget::AbpDicrotic: case BinPlotWidget::ArtDicrotic: case BinPlotWidget::ArtPulmDicrotic: return QStringLiteral("dicrotic");
@@ -1527,7 +1527,7 @@ void TemplateViewerWindow::onBadRToggled(int binIdx, int leadIdx, bool bad) {
 
 void TemplateViewerWindow::onBadPPGToggled(int binIdx, bool bad) {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
-    m_bins[binIdx].ppg_issue = bad ? 1 : 0;
+    m_bins[binIdx].bad_ppg = bad ? 1 : 0;
 
     if (bad) {
         for (int c = 0; c < 3; ++c)

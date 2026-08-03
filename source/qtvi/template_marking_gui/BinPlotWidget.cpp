@@ -81,7 +81,7 @@ namespace {
     constexpr QColor kColorEcgTBegin{ 50,  60, 130 };
     constexpr QColor kColorEcgTEnd{ 70,  90, 160 };
 
-    // PPG markers (On, P50, Pk, Dc, 2, En) - shades of red, darkest to lightest.
+    // PPG markers (On, T50, Pk, Dc, 2, En) - shades of red, darkest to lightest.
     constexpr QColor kColorPpgOnset{ 110,   0,   0 };  // dark red
     constexpr QColor kColorPpgP50{ 150,  20,  20 };  // dark red variant
     constexpr QColor kColorPpgPeak{ 180,   0,   0 };  // red
@@ -108,7 +108,7 @@ namespace {
         case BinPlotWidget::EcgTBegin:    return kColorEcgTBegin;
         case BinPlotWidget::EcgTEnd:     return kColorEcgTEnd;
         case BinPlotWidget::PpgOnset:    return kColorPpgOnset;
-        case BinPlotWidget::PpgP50:      return kColorPpgP50;
+        case BinPlotWidget::PpgT50:      return kColorPpgP50;
         case BinPlotWidget::PpgPeak:     return kColorPpgPeak;
         case BinPlotWidget::PpgDicrotic: return kColorPpgDicrotic;
         case BinPlotWidget::PpgPeak2:    return kColorPpgPeak2;
@@ -130,7 +130,7 @@ namespace {
         case BinPlotWidget::EcgTBegin:    return "T begin";
         case BinPlotWidget::EcgTEnd:     return "T end";
         case BinPlotWidget::PpgOnset:    return "PPG On";
-        case BinPlotWidget::PpgP50:      return "PPG 50%";
+        case BinPlotWidget::PpgT50:      return "PPG 50%";
         case BinPlotWidget::PpgPeak:     return "PPG Peak";
         case BinPlotWidget::PpgDicrotic: return "DN";
         case BinPlotWidget::PpgPeak2:    return "PPG Peak2";
@@ -293,7 +293,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_markers[EcgTBegin] = tPeak;
     m_markers[EcgTEnd] = tEnd;
     m_markers[PpgOnset] = ppgOnset;
-    m_markers[PpgP50] = ppgP50;
+    m_markers[PpgT50] = ppgP50;
     m_markers[PpgPeak] = ppgPeak;
     m_markers[PpgDicrotic] = ppgDicrotic;
     m_markers[PpgPeak2] = ppgPeak2;
@@ -516,7 +516,7 @@ int BinPlotWidget::glyphAtX(double x, int& outCol, bool& outIsEcg) const {
         { m_glyphs.ppgDic,    false, PpgDicrotic },
         { m_glyphs.ppgP2,     false, PpgPeak2    },
         { m_glyphs.ppgEnd,    false, PpgEnd      },
-        { m_glyphs.ppgP50,    false, PpgP50      },
+        { m_glyphs.ppgT50,    false, PpgT50      },
         { m_glyphs.ppgT80,    false, PpgT80      },
     };
 
@@ -548,7 +548,7 @@ int BinPlotWidget::markerAtX(double x) const {
         if (m == EcgRPeak) continue;   // R is auto-only: no draggable bar
         if (m == PpgPeak) continue;    // systolic peak is auto-only (shown as X)
         if (m == PpgT80) continue;     // t80 is a reactive glyph now, not draggable
-        if (m == PpgP50) continue;      // p50 is a reactive glyph now, not draggable
+        if (m == PpgT50) continue;      // p50 is a reactive glyph now, not draggable
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;
@@ -811,7 +811,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         if (m == EcgRPeak) continue;   // R is auto-only: no draggable bar
         if (m == PpgPeak) continue;    // systolic peak is auto-only (shown as X)
         if (m == PpgT80) continue;     // t80 is a reactive glyph now, not draggable
-        if (m == PpgP50) continue;      // p50 is a reactive glyph now, not draggable
+        if (m == PpgT50) continue;      // p50 is a reactive glyph now, not draggable
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;
@@ -992,7 +992,7 @@ void BinPlotWidget::captureGlyphSnapshot() {
         m_glyphs.ppgDic = m_ppgDicroticAuto;    m_glyphs.ppgNotchFound = m_ppgDicroticFoundAuto;
         m_glyphs.ppgEnd = m_ppgEndAuto;         m_glyphs.ppgEndFound = m_ppgEndFoundAuto;
 
-        // T80 and P50 are reactive, not frozen: always recomputed from the
+        // T80 and T50 are reactive, not frozen: always recomputed from the
         // CURRENT markers (peak is auto-only/effectively fixed; onset and
         // end are still draggable), same treatment as the ECG Q-peak/
         // S-peak reactive glyphs, just applied on the PPG side. Uses the
@@ -1002,7 +1002,7 @@ void BinPlotWidget::captureGlyphSnapshot() {
         const int en = m_markers[PpgEnd];
         const int on = m_markers[PpgOnset];
         if (pk >= 0 && en > pk) m_glyphs.ppgT80 = FeatureMarks::amplitude_crossing(m_ppg, pk, en, 0.80);
-        if (on >= 0 && pk > on) m_glyphs.ppgP50 = FeatureMarks::amplitude_crossing(m_ppg, on, pk, 0.50);
+        if (on >= 0 && pk > on) m_glyphs.ppgT50 = FeatureMarks::amplitude_crossing(m_ppg, on, pk, 0.50);
     }
 
     m_glyphs.valid = true;
@@ -1067,7 +1067,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             p.drawEllipse(QPointF(x, y), 4.0, 4.0);
             };
         g(m_glyphs.ppgFoot);
-        g(m_glyphs.ppgP50);   // reactive: 50% onset->peak, always a computed X
+        g(m_glyphs.ppgT50);   // reactive: 50% onset->peak, always a computed X
         g(m_glyphs.ppgP1);
         if (m_glyphs.ppgNotchFound) g(m_glyphs.ppgDic);
         else                        circ(m_glyphs.ppgDic);
