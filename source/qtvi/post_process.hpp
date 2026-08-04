@@ -1,9 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -109,6 +111,14 @@ namespace post_process_detail {
 
         template_io::TemplateFile tmplR;      //  R-pass template to be reused by re-alignment
         template_io::BeatsFile    beatsR;     // pristine R-pass beats
+
+        // Per-anchor raw templates accumulated by regenerateWithAnchor, kept
+        // SEPARATE from job.tmpl so the anchor cycle and the finalize worker
+        // (which mutates job.tmpl to pack squared/absval) never touch the same
+        // object -- no data race, so finalize no longer has to be joined before
+        // the first anchor. Merged into job.tmpl.raw_anchors once, at the final
+        // promote (after the worker is joined). Key = AnchorType tag.
+        std::map<int, std::vector<std::array<template_io::ChannelMethodTemplate, 3>>> anchorAccum;
     };
 
     // All analysis CSVs land in ONE shared folder, a sibling of the template
@@ -201,7 +211,6 @@ namespace post_process_detail {
         job.beatsR = job.beats;
         template_io::write_template_binfile(provisionalPath.string(), job.tmpl);
         job.viewerTemplatePath = provisionalPath;
-        writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats, job.samplingRate);
         job.needsFinalize = true;
         return job;
     }
@@ -290,55 +299,81 @@ namespace post_process_detail {
     //
     // Called by the controller when the viewer emits requestQAlignReload()
     // (each "Finish and Next"). Aligns the R-base templates to `anchor` and
-    // ACCUMULATES the result into job.tmpl.raw_anchors -- the single
-    // _templates file grows one anchor per step. Each step aligns FROM the
-    // pristine R snapshot (job.tmplR / job.beatsR), never from the previous
-    // anchor. While iterating, only the provisional (.partial.bin) exists;
-    // on the final anchor it is promoted to the canonical _templates.bin.
+    // accumulates the result into job.anchorAccum (SEPARATE from job.tmpl, so
+    // it can run concurrently with the finalize worker). Each step aligns FROM
+    // the pristine R snapshot (job.tmplR / job.beatsR), never the previous
+    // anchor. At the final anchor the accumulated set is folded into job.tmpl
+    // and promoted to the canonical _templates.bin.
     inline bool regenerateWithAnchor(ViewerJob& job, AnchorType anchor)
     {
         try {
-            // Align from the pristine R snapshot into a fresh beats copy;
-            // alignTemplatesFromCache reads the R base and writes this
-            // anchor's block into atmpl.raw_anchors. We then merge that block
-            // into the persistent job.tmpl so anchors accumulate across steps.
-            template_io::TemplateFile atmpl = job.tmplR;
-            template_io::BeatsFile    abeats = job.beatsR;
-            alignTemplatesFromCache(atmpl, abeats, job.rates, anchor);
+            // Align from the pristine R snapshot. alignTemplatesFromCache
+            // reads the R base + beats (beats passed by reference, NOT copied,
+            // and not mutated in the default non-scoring mode) and writes this
+            // anchor's block into atmpl.raw_anchors. We then move that block
+            // into the persistent job.tmpl so anchors accumulate across steps
+            // into the one growing provisional file.
+            //
+            // NOTE: per-anchor SQI is NOT written here -- it is deferred to the
+            // final anchor (below), so the interactive steps stay fast.
+            auto _t0 = std::chrono::steady_clock::now();
+            template_io::TemplateFile atmpl = job.tmplR;   // R base to align from (cheap vs beats)
+            alignTemplatesFromCache(atmpl, job.beatsR, job.rates, anchor);
+            auto _t1 = std::chrono::steady_clock::now();
 
             const int anchorTag = static_cast<int>(anchor);
             auto it = atmpl.raw_anchors.find(anchorTag);
-            if (it != atmpl.raw_anchors.end()) {
-                // SQI reads the SCALAR ch*_raw. atmpl is a throwaway used only
-                // for this anchor's SQI, so project the aligned block into its
-                // scalars (bin-by-bin, 3 channels) so SQI scores the anchor's
-                // templates -- not R. job.tmpl keeps R in its scalars.
-                for (size_t i = 0; i < atmpl.bins.size() && i < it->second.size(); ++i) {
-                    auto& bin = atmpl.bins[i];
-                    const auto& trip = it->second[i];
-                    if (!trip[0].ecgTemplate.empty()) bin.ch1_raw = trip[0];
-                    if (!trip[1].ecgTemplate.empty()) bin.ch2_raw = trip[1];
-                    if (!trip[2].ecgTemplate.empty()) bin.ch3_raw = trip[2];
-                }
-                // Accumulate this anchor's block into the persistent job.tmpl.
-                job.tmpl.raw_anchors[anchorTag] = std::move(it->second);
-            }
+            if (it != atmpl.raw_anchors.end())
+                job.anchorAccum[anchorTag] = std::move(it->second);   // NOT job.tmpl -- avoids racing finalize
 
-            // Write the accumulating templates to the provisional file and
-            // point the viewer at it.
-            template_io::write_template_binfile(job.provisionalPath.string(), job.tmpl);
-            job.viewerTemplatePath = job.provisionalPath;
-
-            // SQI for this anchor (unchanged): scored on the freshly aligned
-            // atmpl + its co-framed beats.
-            writeEcgSQICsv(job.cfg, job.stem + "_" + anchorName(anchor),
-                atmpl, abeats, job.samplingRate);
-
-            // Final anchor -> promote provisional to canonical _templates.bin.
+            // Per-step write is TRIMMED: the viewer only reads the CURRENT
+            // anchor (readTemplateInfoBin(path, m_currentAnchor)), so the
+            // provisional it opens needs just the R scalar base + this one
+            // anchor's block -- NOT the whole accumulating set. This keeps the
+            // per-step write constant-size instead of growing each anchor.
+            // The full accumulated job.tmpl (all anchors) is written once, at
+            // the final promote below.
             const auto& seq = anchorSequence();
             const bool finalAnchor =
                 (!seq.empty() && anchor == seq.back());
-            if (finalAnchor) {
+
+            if (!finalAnchor) {
+                // Build the viewer's provisional from the SMALL R-only base
+                // (job.tmplR), not job.tmpl -- copying job.tmpl would deep-copy
+                // the whole growing accumulated set every step. tmplR carries
+                // the R scalar raw the viewer displays; we add just this
+                // anchor's block. (Squared/absval aren't in tmplR, but the
+                // viewer only draws raw, so the interactive provisional is
+                // fine without them.)
+                template_io::TemplateFile view = job.tmplR;   // constant-size, R only
+                view.raw_anchors.clear();
+                auto jt = job.anchorAccum.find(anchorTag);
+                if (jt != job.anchorAccum.end())
+                    view.raw_anchors[anchorTag] = jt->second;   // just this anchor
+                template_io::write_template_binfile(job.provisionalPath.string(), view);
+                job.viewerTemplatePath = job.provisionalPath;
+                auto _t2 = std::chrono::steady_clock::now();
+                std::cerr << "  [timing] anchor " << anchorName(anchor)
+                    << ": align="
+                    << std::chrono::duration_cast<std::chrono::milliseconds>(_t1 - _t0).count()
+                    << "ms write="
+                    << std::chrono::duration_cast<std::chrono::milliseconds>(_t2 - _t1).count()
+                    << "ms\n";
+                return true;   // interactive step done -- fast path, no QC
+            }
+
+            // Final anchor. By now the finalize worker has been joined (the
+            // controller joins it before the final step -- see main.cpp), so
+            // job.tmpl carries the squared/absval scalars AND is safe to touch.
+            // Fold the separately-accumulated anchors into it, write the FULL
+            // file (all anchors + absval), promote, then run deferred QC.
+            for (auto& kv : job.anchorAccum)
+                job.tmpl.raw_anchors[kv.first] = std::move(kv.second);
+            job.anchorAccum.clear();
+
+            template_io::write_template_binfile(job.provisionalPath.string(), job.tmpl);
+            job.viewerTemplatePath = job.provisionalPath;
+            {
                 std::error_code ec;
                 std::filesystem::remove(job.templatePath, ec);
                 std::filesystem::rename(job.provisionalPath, job.templatePath, ec);
@@ -349,6 +384,27 @@ namespace post_process_detail {
                 }
                 else {
                     job.viewerTemplatePath = job.templatePath;
+                }
+
+                // ---- deferred QC over every anchor (R + the sequence) ----
+                // For each anchor: take a fresh copy of the FINALIZED base
+                // (job.tmpl -- carries absval in its scalars) and a fresh copy
+                // of the R beats, then align in scoring mode so the raw scalars
+                // + beats are put in the anchor frame. absval scalars ride
+                // along unchanged. Score with writeEcgSQICsv.
+                //
+                // R_PEAK is scored directly from job.tmpl/job.beats (already
+                // in the R frame, no alignment needed).
+                writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK",
+                    job.tmpl, job.beats, job.samplingRate);
+
+                for (AnchorType a : seq) {
+                    template_io::TemplateFile scoreT = job.tmpl;    // has absval in scalars
+                    template_io::BeatsFile    scoreB = job.beatsR;  // R beats, to be shifted
+                    alignTemplatesFromCache(scoreT, scoreB, job.rates, a,
+                        /*forScoring=*/true);
+                    writeEcgSQICsv(job.cfg, job.stem + "_" + anchorName(a),
+                        scoreT, scoreB, job.samplingRate);
                 }
             }
             return true;

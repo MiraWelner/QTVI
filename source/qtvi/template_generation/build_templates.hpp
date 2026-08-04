@@ -13,6 +13,8 @@
 
 #include <cmath>
 #include <vector>
+#include <limits>
+#include <algorithm>
 
 #include "template_io.hpp"
 #include "template_generation/make_averaged_templates.hpp"
@@ -256,21 +258,33 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
 // re-detection. Because the alignment anchor is the median snippet, the
 // median snippet doesn't move, so R stays on its column and the template
 // stays centred in the window (no far-from-the-wall drift).
+// When forScoring is false (default, interactive cycle): reads beats by const
+// ref, writes only tmpl.raw_anchors[anchor], leaves the R scalar base and the
+// cached beats untouched -- so each step re-aligns from R and stays fast.
+//
+// When forScoring is true (one-shot QC at end): ALSO projects each aligned
+// block into the scalar ch*_raw of the passed tmpl and writes the aligned
+// (co-framed) beats back into the passed beats. The caller passes COPIES it
+// owns (never job.tmpl/job.beatsR), so this is safe. This yields a tmpl whose
+// scalar raw + beats are in the anchor frame, which writeEcgSQICsv consumes.
 inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl,
     template_io::BeatsFile& beats,
     const SignalRates& rates,
-    AnchorType anchor)
+    AnchorType anchor,
+    bool forScoring = false)
 {
     const double fs = rates.ecg;
 
     using MethodPtr =
         template_io::ChannelMethodTemplate template_io::BinTemplates::*;
-    // chIdx is the 0-based channel index used to address raw_anchors[tag][bin][chIdx].
-    struct Chan { const char* key; MethodPtr ptr; int chIdx; };
+    // chIdx addresses raw_anchors[tag][bin][chIdx]. absPtr is the matching
+    // absval scalar block, used in scoring mode to store the co-framed
+    // aligned absval template ( = column-median of |aligned raw beats| ).
+    struct Chan { const char* key; MethodPtr ptr; MethodPtr absPtr; int chIdx; };
     const Chan channels[] = {
-        { "CH1", &template_io::BinTemplates::ch1_raw, 0 },
-        { "CH2", &template_io::BinTemplates::ch2_raw, 1 },
-        { "CH3", &template_io::BinTemplates::ch3_raw, 2 },
+        { "CH1", &template_io::BinTemplates::ch1_raw, &template_io::BinTemplates::ch1_absval, 0 },
+        { "CH2", &template_io::BinTemplates::ch2_raw, &template_io::BinTemplates::ch2_absval, 1 },
+        { "CH3", &template_io::BinTemplates::ch3_raw, &template_io::BinTemplates::ch3_absval, 2 },
     };
 
     // This anchor's per-bin store. R_PEAK is the scalar base and is NOT put
@@ -288,10 +302,25 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl,
         if (it == beats.per_channel_beats.end()) continue;
         auto& perBin = it->second;
         const auto refIt = beats.per_channel_ref_index.find(ch.key);
-        for (size_t i = 0; i < tmpl.bins.size(); ++i) {
+        // Bins are independent (each iteration touches only store[i], bins[i],
+        // perBin[i]), so align them in parallel -- this is the dominant cost
+        // of an anchor step. int index for OpenMP.
+        const int nBins = static_cast<int>(tmpl.bins.size());
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) num_threads(std::min(8, std::max(1, nBins)))
+#endif
+        for (int i = 0; i < nBins; ++i) {
             template_io::BinTemplates& bin = tmpl.bins[i];
             if (bin.bad_segment) continue;
-            if (i >= perBin.size() || perBin[i].empty()) continue;
+            if ((size_t)i >= perBin.size() || perBin[i].empty()) continue;
+
+            // DEBUG: inject one grossly bad beat into bin 0 to test exclusion.
+            if (i == 0 && !perBin[i].empty()) {
+                std::vector<double> badBeat = perBin[i].front();   // right length
+                for (double& v : badBeat) v = 0.6;              // gross outlier, NOT NaN
+                perBin[i].push_back(badBeat);
+            }
+
 
             // The R base (blk) is the reference every anchor aligns FROM; it
             // is read-only here and never overwritten.
@@ -310,13 +339,57 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl,
             alignment::aligned_beats q = alignment::align_beat_matrix(perBin[i], blk.r_col, fs, /*compute_iqr=*/true, ref_beat_of_median_length, locate);
             if (q.tmpl.empty()) continue;
 
+            const int alignedRcol = (q.r_col >= 0) ? q.r_col : blk.r_col;
+
             // Store the aligned result in the per-anchor slot, leaving the R
             // base untouched so the NEXT anchor step still aligns from R.
             template_io::ChannelMethodTemplate& dst = store[i][ch.chIdx];
+            dst.alignment_point = blk.alignment_point;
+            dst.r_col = alignedRcol;
+
+            if (forScoring) {
+                // Project into the scalar ch*_raw (so writeEcgSQICsv reads the
+                // anchor template) and write the co-framed aligned beats back
+                // (so QC scores beats in the same frame). Caller owns copies.
+                template_io::ChannelMethodTemplate& scalar = bin.*(ch.ptr);
+                scalar.ecgTemplate = q.tmpl;          // copy: also stored below
+                scalar.ecg_template_iqr = q.iqr;
+                scalar.r_col = alignedRcol;
+
+                // Co-framed aligned ABSVAL template: |shifted raw beat| IS the
+                // shifted |raw| beat (abs is pointwise), so the column-wise
+                // NaN-skipping median of |q.beats| equals what aligning the
+                // absval beats on this anchor would produce -- exact, no
+                // separate absval beat matrix needed. Write it into the absval
+                // scalar so writeEcgSQICsv's chiSqAbs is scored co-framed.
+                if (!q.beats.empty()) {
+                    const size_t W = q.beats.front().size();
+                    std::vector<double> absTmpl(W, std::numeric_limits<double>::quiet_NaN());
+                    std::vector<double> col;
+                    col.reserve(q.beats.size());
+                    for (size_t c = 0; c < W; ++c) {
+                        col.clear();
+                        for (const auto& bt : q.beats) {
+                            if (c < bt.size() && !std::isnan(bt[c])) col.push_back(std::abs(bt[c]));
+                        }
+                        if (col.empty()) continue;
+                        std::sort(col.begin(), col.end());
+                        const size_t m = col.size() / 2;
+                        absTmpl[c] = (col.size() % 2 == 0)
+                            ? 0.5 * (col[m - 1] + col[m]) : col[m];
+                    }
+                    template_io::ChannelMethodTemplate& absScalar = bin.*(ch.absPtr);
+                    absScalar.ecgTemplate = std::move(absTmpl);
+                    absScalar.r_col = alignedRcol;
+
+                    perBin[i] = std::move(q.beats);
+                }
+            }
+
             dst.ecgTemplate = std::move(q.tmpl);
             dst.ecg_template_iqr = std::move(q.iqr);
-            dst.alignment_point = blk.alignment_point;
-            dst.r_col = (q.r_col >= 0) ? q.r_col : blk.r_col;
+            // NOTE (interactive path): perBin[i] is NOT overwritten -- each
+            // anchor step re-aligns from the original R-aligned beats.
         }
     }
 }

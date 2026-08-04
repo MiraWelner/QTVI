@@ -242,8 +242,6 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
 inline void augment_ecg_ppg_pairs_sqabs(std::vector<output_binfile_data>& data, bool use_R_algorithm, std::string fileID,
     double ecgRate, config_entry cfg, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
 {
-    if (!use_R_algorithm) return;
-
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < static_cast<int>(data.size()); ++i) {
         auto& d = data[i];

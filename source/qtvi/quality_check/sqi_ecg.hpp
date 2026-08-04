@@ -262,7 +262,7 @@ inline void writeEcgSQICsv(const config_entry& cfg,
     }
 
     f << "bin,channel,beat,template_corr,chiSq0,chiSqAbs,chiSq0_P,chiSq0_QRS,chiSq0_ST,"
-        "baseline,noise,motion,composite,handling\n";
+        "baseline,noise,motion,composite,is_included\n";
 
     struct ChannelSpec {
         const char* key;
@@ -274,7 +274,7 @@ inline void writeEcgSQICsv(const config_entry& cfg,
         { "CH2", &template_io::BinTemplates::ch2_raw, &template_io::BinTemplates::ch2_absval },
         { "CH3", &template_io::BinTemplates::ch3_raw, &template_io::BinTemplates::ch3_absval },
     };
-    static const char* const handlingName[] = { "INCLUDE", "SUBSTITUTE", "EXCLUDE" };
+    static const char* const included_levels[] = { "INCLUDE", "SUBSTITUTE", "EXCLUDE" };
 
     constexpr int motionFlag = -1;   // see comment above
 
@@ -301,7 +301,7 @@ inline void writeEcgSQICsv(const config_entry& cfg,
                     << q.templateCorr << ',' << q.chiSq0 << ',' << q.chiSqAbs << ','
                     << q.chiSq0_P << ',' << q.chiSq0_QRS << ',' << q.chiSq0_ST << ','
                     << q.baseline << ',' << q.noise << ',' << q.motion << ','
-                    << q.composite << ',' << handlingName[q.handling] << '\n';
+                    << q.composite << ',' << included_levels[q.handling] << '\n';
             }
         }
     }

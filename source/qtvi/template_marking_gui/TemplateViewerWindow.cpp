@@ -741,6 +741,61 @@ static std::string suffixValueColumns(const std::string& header, const std::stri
 // columns, then Q's value columns. Row counts must match -- if they don't we
 // abort and leave the R file untouched (worse to write a garbled file than
 // none). Returns true on success.
+// Merge an ordered list of sidecar CSV files into one canonical file.
+// files[0] is the base (kept whole, with its keys); each subsequent file
+// contributes only its value columns (first 3 key columns stripped), appended
+// to every row -- same column convention as zipCanonicalWithQ, generalized to
+// N inputs and done ONCE at the end instead of a growing read-modify-write per
+// pass. Row counts must match across all files. Returns true on success.
+static bool mergeSidecarCsvs(const std::string& canonicalPath,
+    const std::vector<std::string>& sidecarPaths)
+{
+    if (sidecarPaths.empty()) return false;
+
+    auto readLines = [](const std::string& p) {
+        std::vector<std::string> lines; std::string ln;
+        std::ifstream in(p);
+        if (!in) return lines;
+        while (std::getline(in, ln)) {
+            if (!ln.empty() && ln.back() == '\r') ln.pop_back();
+            lines.push_back(ln);
+        }
+        return lines;
+        };
+    auto stripFirstThree = [](const std::string& line) -> std::string {
+        int commas = 0;
+        for (size_t i = 0; i < line.size(); ++i)
+            if (line[i] == ',' && ++commas == 3) return line.substr(i + 1);
+        return {};
+        };
+
+    std::vector<std::string> merged = readLines(sidecarPaths[0]);
+    if (merged.empty()) {
+        fprintf(stderr, "[tmplcsv] merge: base sidecar empty/missing: %s\n", sidecarPaths[0].c_str());
+        return false;
+    }
+    for (size_t s = 1; s < sidecarPaths.size(); ++s) {
+        std::vector<std::string> next = readLines(sidecarPaths[s]);
+        if (next.size() != merged.size()) {
+            fprintf(stderr, "[tmplcsv] merge: row mismatch (%zu vs %zu) for %s -- skipping\n",
+                next.size(), merged.size(), sidecarPaths[s].c_str());
+            continue;   // skip a bad sidecar rather than abort the whole merge
+        }
+        for (size_t i = 0; i < merged.size(); ++i) {
+            const std::string tail = stripFirstThree(next[i]);
+            if (!tail.empty()) { merged[i] += ','; merged[i] += tail; }
+        }
+    }
+
+    std::ofstream out(canonicalPath, std::ios::trunc);
+    if (!out) {
+        fprintf(stderr, "[tmplcsv] merge: cannot write %s\n", canonicalPath.c_str());
+        return false;
+    }
+    for (const auto& l : merged) out << l << '\n';
+    return out.good();
+}
+
 static bool zipCanonicalWithQ(const std::string& canonicalPath,
     const std::string& qContent)
 {
@@ -802,8 +857,9 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
 
     QDir outDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
     if (!outDir.exists()) outDir.mkpath(".");
-    // Single canonical file; both passes contribute to it directly (no
-    // intermediate _r_align/_q_align files, no post-hoc merge step).
+    // Each pass writes a per-anchor sidecar; merged into the canonical
+    // <id>_template.csv once at the final pass. `path` names the canonical
+    // target and is used only in log/error messages below.
     const QString path = outDir.filePath(m_subjectId + "_template.csv");
 
     // Build the pass's CSV content in memory. On the R pass this becomes the
@@ -1087,29 +1143,22 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     const std::string body = content.substr(nl);   // includes leading '\n'
 
     const std::string suffix = "_" + m_anchorLabel.toStdString();  // _R, _Q_ONSET, _J_POINT, ...
-    if (m_anchorStep < 0) {
-        // R pass (first): overwrite the canonical file with _R-suffixed content.
-        std::ofstream out(path.toStdString(), std::ios::trunc);
+
+    // Every pass writes its OWN sidecar (<id>_template.<ANCHOR>.csv) with its
+    // suffixed value columns. No growing read-modify-write here; the sidecars
+    // are merged into the canonical <id>_template.csv once, at the final pass
+    // (see mergeSidecarCsvs in save_bin_and_csv).
+    const QString sidecar = outDir.filePath(
+        m_subjectId + "_template" + suffix.c_str() + ".csv");
+    {
+        std::ofstream out(sidecar.toStdString(), std::ios::trunc);
         if (!out) {
-            fprintf(stderr, "[tmplcsv] cannot open %s for R-pass write\n", path.toStdString().c_str());
+            fprintf(stderr, "[tmplcsv] cannot open sidecar %s\n", sidecar.toStdString().c_str());
             return;
         }
         out << suffixValueColumns(header, suffix) << body;
         out.close();
-        fprintf(stderr, "[tmplcsv] wrote %s (%s pass)\n",
-            path.toStdString().c_str(), m_anchorLabel.toStdString().c_str());
-    }
-    else {
-        // Any later anchor pass: zip this anchor's columns (suffix = anchor
-        // name) into the accumulating canonical file. zipCanonicalWithQ widens
-        // the file by one group per call, so all anchors accumulate.
-        std::string aFull = suffixValueColumns(header, suffix);
-        aFull.append(body);
-        if (zipCanonicalWithQ(path.toStdString(), aFull))
-            fprintf(stderr, "[tmplcsv] zipped %s columns into %s\n",
-                suffix.c_str(), path.toStdString().c_str());
-        else
-            fprintf(stderr, "[tmplcsv] zip failed for %s -- file kept as-is\n", path.toStdString().c_str());
+        fprintf(stderr, "[tmplcsv] wrote sidecar %s\n", sidecar.toStdString().c_str());
     }
 }
 
@@ -1594,56 +1643,82 @@ void TemplateViewerWindow::save_bin_and_csv() {
         writeTemplateMarkingsBin(partialBin.toStdString(), m_bins);
         std::cout << "Saved: " << partialBin.toStdString() << "\n";
 
-        // ECG markings CSV: per-anchor suffixed columns, zipped into the
-        // canonical file (R pass writes fresh, later passes append). Pulse
-        // columns are NOT written here -- they go once, on the final pass.
+        // ECG markings CSV: each pass writes its OWN per-anchor sidecar
+        // (<id>_template_markings.<ANCHOR>.csv) with suffixed columns. No
+        // growing zip per pass; all sidecars are merged into the canonical
+        // <id>_template_markings.csv once, at the final pass.
         const QString csvPath = csvDir.absolutePath() + "/"
             + m_subjectId + "_template_markings.csv";
-        const QString tmpPath = csvPath + ".tmp";
-        writeTemplateMarkingsCsv(tmpPath.toStdString(), m_bins,
-            m_subjectId.toStdString(), m_sampleRate, currentAnchor(),
-            MarkingsCsvSection::EcgOnly);
-        std::ifstream tin(tmpPath.toStdString());
-        std::stringstream tbuf; tbuf << tin.rdbuf();
-        tin.close();
-        QFile::remove(tmpPath);
-        std::string tcontent = tbuf.str();
-        const size_t tnl = tcontent.find('\n');
-        if (tnl == std::string::npos) {
-            throw std::runtime_error("markings CSV writer produced malformed content (no newline)");
-        }
-        const std::string tHeader = tcontent.substr(0, tnl);
-        const std::string tBody = tcontent.substr(tnl);
-        const std::string tsuffix = "_" + m_anchorLabel.toStdString();
-        if (m_anchorStep < 0) {
-            std::ofstream out(csvPath.toStdString(), std::ios::trunc);
-            if (!out) throw std::runtime_error("cannot open for write: " + csvPath.toStdString());
-            out << suffixValueColumns(tHeader, tsuffix) << tBody;
+        const QString tsuffix = "_" + m_anchorLabel;
+        const QString ecgSidecar = csvDir.absolutePath() + "/"
+            + m_subjectId + "_template_markings" + tsuffix + ".csv";
+        {
+            const QString tmpPath = ecgSidecar + ".tmp";
+            writeTemplateMarkingsCsv(tmpPath.toStdString(), m_bins,
+                m_subjectId.toStdString(), m_sampleRate, currentAnchor(),
+                MarkingsCsvSection::EcgOnly);
+            std::ifstream tin(tmpPath.toStdString());
+            std::stringstream tbuf; tbuf << tin.rdbuf();
+            tin.close();
+            QFile::remove(tmpPath);
+            std::string tcontent = tbuf.str();
+            const size_t tnl = tcontent.find('\n');
+            if (tnl == std::string::npos)
+                throw std::runtime_error("markings CSV writer produced malformed content (no newline)");
+            const std::string tHeader = tcontent.substr(0, tnl);
+            const std::string tBody = tcontent.substr(tnl);
+            std::ofstream out(ecgSidecar.toStdString(), std::ios::trunc);
+            if (!out) throw std::runtime_error("cannot open for write: " + ecgSidecar.toStdString());
+            out << suffixValueColumns(tHeader, tsuffix.toStdString()) << tBody;
             out.close();
         }
-        else {
-            std::string aFull = suffixValueColumns(tHeader, tsuffix);
-            aFull.append(tBody);
-            if (!zipCanonicalWithQ(csvPath.toStdString(), aFull))
-                throw std::runtime_error("could not zip " + tsuffix + " markings CSV into " + csvPath.toStdString());
-        }
-        std::cout << "Saved: " << csvPath.toStdString() << "\n";
+        std::cout << "Saved sidecar: " << ecgSidecar.toStdString() << "\n";
         std::cout.flush();
 
-        // Final pass only: pulse markings written ONCE (no anchor suffix),
-        // appended to the canonical CSV; then promote the .bin.
+        // Final pass: write the pulse sidecar (un-suffixed, once), then MERGE
+        // every per-anchor sidecar (R first, then the anchor sequence, then
+        // pulse) into the canonical markings CSV in one pass; delete sidecars.
         if (finalPass) {
-            const QString pulseTmp = csvPath + ".pulse.tmp";
-            writeTemplateMarkingsCsv(pulseTmp.toStdString(), m_bins,
-                m_subjectId.toStdString(), m_sampleRate, currentAnchor(),
-                MarkingsCsvSection::PulseOnly);
-            std::ifstream pin(pulseTmp.toStdString());
-            std::stringstream pbuf; pbuf << pin.rdbuf();
-            pin.close();
-            QFile::remove(pulseTmp);
-            // No suffixValueColumns() -> pulse columns stay un-suffixed.
-            if (!zipCanonicalWithQ(csvPath.toStdString(), pbuf.str()))
-                throw std::runtime_error("could not append pulse markings CSV into " + csvPath.toStdString());
+            const QString pulseSidecar = csvDir.absolutePath() + "/"
+                + m_subjectId + "_template_markings_PULSE.csv";
+            {
+                const QString pulseTmp = pulseSidecar + ".tmp";
+                writeTemplateMarkingsCsv(pulseTmp.toStdString(), m_bins,
+                    m_subjectId.toStdString(), m_sampleRate, currentAnchor(),
+                    MarkingsCsvSection::PulseOnly);
+                std::ifstream pin(pulseTmp.toStdString());
+                std::stringstream pbuf; pbuf << pin.rdbuf();
+                pin.close();
+                QFile::remove(pulseTmp);
+                std::ofstream out(pulseSidecar.toStdString(), std::ios::trunc);
+                if (!out) throw std::runtime_error("cannot open for write: " + pulseSidecar.toStdString());
+                out << pbuf.str();   // pulse columns stay un-suffixed
+                out.close();
+            }
+
+            // Discover the per-anchor sidecars by glob (no dependency on the
+            // controller's anchor list). Order R first, then the rest
+            // alphabetically, then pulse last.
+            const QString stem = m_subjectId + "_template_markings_";
+            QDir scDir(csvDir.absolutePath());
+            QStringList found = scDir.entryList(
+                QStringList{ stem + "*.csv" }, QDir::Files, QDir::Name);
+            std::vector<std::string> order;
+            // R sidecar first if present.
+            const QString rName = stem + "R.csv";
+            if (found.contains(rName))
+                order.push_back(scDir.filePath(rName).toStdString());
+            for (const QString& fn : found) {
+                if (fn == rName) continue;
+                if (fn == QFileInfo(pulseSidecar).fileName()) continue;  // pulse added last
+                order.push_back(scDir.filePath(fn).toStdString());
+            }
+            order.push_back(pulseSidecar.toStdString());
+
+            if (!mergeSidecarCsvs(csvPath.toStdString(), order))
+                throw std::runtime_error("could not merge markings sidecars into " + csvPath.toStdString());
+            for (const auto& p : order) QFile::remove(QString::fromStdString(p));
+            std::cout << "Merged markings CSV: " << csvPath.toStdString() << "\n";
 
             QFile::remove(canonicalBin);
             if (!QFile::rename(partialBin, canonicalBin))
@@ -1659,8 +1734,31 @@ void TemplateViewerWindow::save_bin_and_csv() {
         return;   // don't emit finished(); let the user retry
     }
 
-    // Aligned-template CSV reflecting the FINAL marker edits.
+    // Aligned-template CSV: writes a per-anchor sidecar every pass; merge the
+    // sidecars into the canonical <id>_template.csv once, at the final pass.
     writeAlignedTemplateCsv();
+    if (finalPass) {
+        QDir alignedDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
+        const QString canonical = alignedDir.filePath(m_subjectId + "_template.csv");
+        const QString stem = m_subjectId + "_template_";
+        QStringList found = alignedDir.entryList(
+            QStringList{ stem + "*.csv" }, QDir::Files, QDir::Name);
+        // Exclude the canonical itself (<id>_template.csv doesn't match the
+        // trailing-underscore stem, but guard anyway) and order R first.
+        std::vector<std::string> order;
+        const QString rName = stem + "R.csv";
+        if (found.contains(rName))
+            order.push_back(alignedDir.filePath(rName).toStdString());
+        for (const QString& fn : found) {
+            if (fn == rName) continue;
+            if (fn.startsWith(m_subjectId + "_template_markings")) continue;  // different family
+            order.push_back(alignedDir.filePath(fn).toStdString());
+        }
+        if (!order.empty() && mergeSidecarCsvs(canonical.toStdString(), order)) {
+            for (const auto& p : order) QFile::remove(QString::fromStdString(p));
+            std::cout << "Merged aligned-template CSV: " << canonical.toStdString() << "\n";
+        }
+    }
 
     // Anchor cycle: emit reload until the last pass, then finish.
     if (!finalPass) {

@@ -235,9 +235,18 @@ static void runTemplateMarking(const config_entry& cfg,
             // rebuild throws (or returns early), we must still wake waitLoop or
             // the GUI thread hangs forever in waitLoop.exec() (freeze on close).
             try {
-                if (ensureWorkerDone) ensureWorkerDone();   // join finalize off the GUI thread
                 const auto& seq = post_process_detail::anchorSequence();
                 if (job->anchorStep < seq.size()) {
+                    // Join the finalize worker ONLY before the final anchor:
+                    // that's the step that folds anchors into job.tmpl and
+                    // writes/promotes the canonical, which needs finalize's
+                    // squared/absval done and job.tmpl race-free. Earlier steps
+                    // accumulate into job.anchorAccum (separate from job.tmpl)
+                    // and read only job.tmplR/job.beatsR, so they don't need
+                    // finalize -- no more R->Q wait on the squared build.
+                    const bool finalStep = (job->anchorStep + 1 == seq.size());
+                    if (finalStep && ensureWorkerDone) ensureWorkerDone();
+
                     ok = post_process_detail::regenerateWithAnchor(
                         *job, seq[job->anchorStep]);
                     if (ok) job->anchorStep++;

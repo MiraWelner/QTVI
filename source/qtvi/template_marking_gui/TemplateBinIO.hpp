@@ -508,7 +508,6 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     if (wantEcg) {
         for (int c = 1; c <= 3; ++c) {
             for (const char* n : ecgPointNames)     emitEcgPointHeader(n, c);
-            for (const char* n : ecgIntervalNames)  emitIntervalHeader(n, c);
         }
         for (int c = 1; c <= 3; ++c) {
             char b[64];
@@ -658,9 +657,6 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                     const bool userToo = (k != 3 && k != 6);
                     emitEcgPoint(ecg, pts[k].a, pts[k].u, ref, userToo);
                 }
-                // Intervals: qrs, qt (order matches ecgIntervalNames).
-                emitIntervalPair(ftAuto.qrs_ms, ftUser.qrs_ms);
-                emitIntervalPair(ftAuto.qt_ms, ftUser.qt_ms);
             }
 
         if (wantPulse) {
