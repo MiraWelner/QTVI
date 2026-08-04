@@ -15,6 +15,8 @@
 #include <vector>
 #include <limits>
 #include <algorithm>
+#include <random>
+#include <cstdlib>
 
 #include "template_io.hpp"
 #include "template_generation/make_averaged_templates.hpp"
@@ -247,32 +249,34 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
             v[i] = kv.second;
         }
     }
+    /*
+    // DEBUG/TEST: corrupt ~50% of bin 0's beats with additive noise (remove when done).
+    {
+        const double sigma = 3.0;   // mV noise stddev
+        static std::mt19937 rng(2025);
+        std::normal_distribution<double> gauss(0.0, sigma);
+        std::bernoulli_distribution coin(0.5);   // 50% of beats get hit
+        const size_t targetBin = 0;
+        for (auto& kv : out.beats.per_channel_beats) {
+            auto& binsVec = kv.second;               // [bin][beat][sample]
+            if (targetBin >= binsVec.size()) continue;
+            for (auto& beat : binsVec[targetBin]) {
+                if (!coin(rng)) continue;            // skip half, leave them clean
+                for (double& s : beat)
+                    if (!std::isnan(s)) s += gauss(rng);
+            }
+        }
+    }
+    */
 
     return out;
 }
 
-// =====================================================================
-// Q-ALIGN PASS: reuse PPG/arterial as-is; rebuild each ECG raw template by
-// Q-aligning its cached snippets (align every snippet's Q to the median
-// snippet's Q, then re-median). Reuses the R-pass beats -- no re-slicing or
-// re-detection. Because the alignment anchor is the median snippet, the
-// median snippet doesn't move, so R stays on its column and the template
-// stays centred in the window (no far-from-the-wall drift).
-// When forScoring is false (default, interactive cycle): reads beats by const
-// ref, writes only tmpl.raw_anchors[anchor], leaves the R scalar base and the
-// cached beats untouched -- so each step re-aligns from R and stays fast.
-//
-// When forScoring is true (one-shot QC at end): ALSO projects each aligned
-// block into the scalar ch*_raw of the passed tmpl and writes the aligned
-// (co-framed) beats back into the passed beats. The caller passes COPIES it
-// owns (never job.tmpl/job.beatsR), so this is safe. This yields a tmpl whose
-// scalar raw + beats are in the anchor frame, which writeEcgSQICsv consumes.
-inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl,
-    template_io::BeatsFile& beats,
-    const SignalRates& rates,
-    AnchorType anchor,
-    bool forScoring = false)
+inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io::BeatsFile& beats, const SignalRates& rates, AnchorType anchor, bool forScoring = false)
 {
+    /* Re-align reuse PPG/arterial as-is; Re-align the R-pass beats.
+    Because the alignment anchor is the median snippet, the median snippet doesn't move, 
+    so R stays on its column*/
     const double fs = rates.ecg;
 
     using MethodPtr =
@@ -313,14 +317,6 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl,
             template_io::BinTemplates& bin = tmpl.bins[i];
             if (bin.bad_segment) continue;
             if ((size_t)i >= perBin.size() || perBin[i].empty()) continue;
-
-            // DEBUG: inject one grossly bad beat into bin 0 to test exclusion.
-            if (i == 0 && !perBin[i].empty()) {
-                std::vector<double> badBeat = perBin[i].front();   // right length
-                for (double& v : badBeat) v = 0.6;              // gross outlier, NOT NaN
-                perBin[i].push_back(badBeat);
-            }
-
 
             // The R base (blk) is the reference every anchor aligns FROM; it
             // is read-only here and never overwritten.
@@ -388,8 +384,6 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl,
 
             dst.ecgTemplate = std::move(q.tmpl);
             dst.ecg_template_iqr = std::move(q.iqr);
-            // NOTE (interactive path): perBin[i] is NOT overwritten -- each
-            // anchor step re-aligns from the original R-aligned beats.
         }
     }
 }

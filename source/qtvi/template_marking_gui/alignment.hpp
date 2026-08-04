@@ -691,18 +691,16 @@ namespace alignment {
                 : hi;
 
             if (nc >= 2) {
-                // Robust symmetric spread: the IQR (25th-75th percentile)
-                // . Not inflated by the
-                // few outlier / 1-sample-off beats at the R spike, so the band
-                // tracks the median line instead of ballooning at R.
-                std::vector<double> s(col);
-                const size_t q1i = nc / 4;
-                const size_t q3i = (3 * nc) / 4;
-                std::nth_element(s.begin(), s.begin() + q1i, s.end());
-                const double q1 = s[q1i];
-                std::nth_element(s.begin() + q1i, s.begin() + q3i, s.end());
-                const double q3 = s[q3i];
-                res.iqr[c] = q3 - q1;
+                // Per-column standard deviation (matches the QC noise metric,
+                // which also uses std). Computed over the same non-NaN values
+                // used for the median. Field is still named 'iqr' downstream
+                // (serializer/viewer) but now carries std.
+                double mean = 0.0;
+                for (double v : col) mean += v;
+                mean /= static_cast<double>(nc);
+                double ss = 0.0;
+                for (double v : col) { const double d = v - mean; ss += d * d; }
+                res.iqr[c] = std::sqrt(ss / static_cast<double>(nc - 1));  // sample std
             }
         }
 

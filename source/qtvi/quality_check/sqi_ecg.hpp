@@ -147,7 +147,7 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
     int motionFlag,
     double fs) {
     BeatSQI q{};
-    q.templateCorr = pearsonSQI(beat, tmpl, 0, seg.tHi);
+    q.templateCorr = pearsonSQI(beat, tmpl, 0, seg.tHi+ 0.050 * fs);
     auto chi = [&](const std::vector<double>& ref, int a, int b) {
         double s = 0.0;
         const int hi = std::min(b, static_cast<int>(std::min(beat.size(), ref.size())));
