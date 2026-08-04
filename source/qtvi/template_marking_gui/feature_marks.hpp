@@ -42,11 +42,6 @@ using AnchorLocatorD = std::function<double(const std::vector<double>& beat)>;
 
 // Build the per-beat locator for one anchor. Binds r_col/fs into the detector.
 AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs);
-// Sub-sample counterpart of make_anchor_locator (spec I-3). Covers the six
-// ECG anchor-table entries (P-onset, P-peak, Q-onset, R-peak, J-point,
-// T-peak); PPG-specific I-3 landmarks (dicrotic notch, PPG peak/foot/
-// upslope) aren't in the given anchor table and aren't wired here.
-AnchorLocatorD make_anchor_locator_subsample(AnchorType type, int r_col, double fs);
 class FeatureMarks {
 public:
     // =================================================================

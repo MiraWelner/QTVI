@@ -100,6 +100,12 @@ namespace alignment {
         // estimates succeeded for that beat (NaN otherwise). QC metric per
         // spec I-1; not used to drive any decision, just recorded.
         std::vector<double> tp_pq_delta;
+        // Parallel to `beats`: the per-stage vertical DC shifts applied by the
+        // two-stage leveling. tp_shift = Stage 1 (TP) amount; pq_shift =
+        // Stage 2 (PQ finalize) amount. NaN where that stage didn't apply.
+        // Returned for the per-beat move log.
+        std::vector<double> tp_shift;
+        std::vector<double> pq_shift;
     };
 
     inline ecg_beat_set extract_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs) {
@@ -361,13 +367,14 @@ namespace alignment {
             auto pq_window = [&](size_t i) -> std::pair<int, int> {
                 const auto& beat = out.beats[i];
                 const int N = static_cast<int>(beat.size());
-                const int p_end_seed = FeatureMarks::detect_p_end(beat, R_anchor);
-                const int p_end = FeatureMarks::compute_p_end(beat, p_end_seed, fs, R_anchor);
                 const int q_seed = FeatureMarks::detect_q_begin(beat, R_anchor);
                 const int q_on = FeatureMarks::compute_q_onset(beat, q_seed, fs, R_anchor);
-                if (p_end < 0 || q_on < 0 || p_end >= N || q_on >= N || q_on <= p_end)
-                    return { -1, -1 };
-                return { p_end, q_on };
+                if (q_on <= 0 || q_on >= N) return { -1, -1 };
+                const int w = std::max(3, static_cast<int>(std::lround(0.040 * fs)));  // 40 ms
+                const int lo = std::max(0, q_on - w);
+                const int hi = q_on;                          // up to (not incl) Q-onset
+                if (hi - lo < 3) return { -1, -1 };
+                return { lo, hi };
                 };
 
             // Compute both stage estimates for beat i (never short-circuited,
@@ -382,33 +389,23 @@ namespace alignment {
                 return { tpLvl, tpOk, pqLvl, pqOk };
                 };
 
-            // PQ is the higher-priority reference: use it whenever available,
-            // falling back to TP only when PQ's landmarks aren't usable.
-            auto pick = [&](double tpLvl, bool tpOk, double pqLvl, bool pqOk,
-                BaselineSource& src) -> double {
-                    if (pqOk) { src = BaselineSource::PQ; return pqLvl; }
-                    if (tpOk) { src = BaselineSource::TP; return tpLvl; }
-                    src = BaselineSource::NONE;
-                    return std::numeric_limits<double>::quiet_NaN();
-                };
-
             const auto [refTp, refTpOk, refPq, refPqOk] = both_levels(static_cast<size_t>(out.ref_beat_index));
             BaselineSource refSrc = BaselineSource::NONE;
-            const double target = pick(refTp, refTpOk, refPq, refPqOk, refSrc);
 
-            // If the default reference beat has no usable PQ/TP, don't abandon
-            // the whole bin: find any beat with a usable PQ (else TP) and use
-            // it as the reference so beats that DO resolve still align.
-            double refTarget = target;
-            if (refSrc == BaselineSource::NONE) {
+            /*Two-stage vertical alignment. - Stage 1: level each beat on the TP segment (end of T to just before onset of
+            next P). Estimate level with median over the flattest sub-window bounded by fitted landmarks. - Stage
+            2: finalize the zero on the PQ segment (end of P to immediately before Q onset). PQ is the higher-priority reference.*/
+            double refTpTarget = refTpOk ? refTp : std::numeric_limits<double>::quiet_NaN();
+            double refPqTarget = refPqOk ? refPq : std::numeric_limits<double>::quiet_NaN();
+            if (std::isnan(refTpTarget) || std::isnan(refPqTarget)) {
                 for (size_t i = 0; i < out.beats.size(); ++i) {
+                    if (!std::isnan(refTpTarget) && !std::isnan(refPqTarget)) break;
                     const auto [tTp, tTpOk, tPq, tPqOk] = both_levels(i);
-                    if (tPqOk) { refTarget = tPq; refSrc = BaselineSource::PQ; break; }
-                    if (tTpOk && refSrc == BaselineSource::NONE) {
-                        refTarget = tTp; refSrc = BaselineSource::TP;
-                    }
+                    if (tTpOk && std::isnan(refTpTarget)) refTpTarget = tTp;
+                    if (tPqOk && std::isnan(refPqTarget)) refPqTarget = tPq;
                 }
             }
+            const bool haveAnyRef = !std::isnan(refTpTarget) || !std::isnan(refPqTarget);
 
             out.tp_pq_delta.assign(out.beats.size(), std::numeric_limits<double>::quiet_NaN());
 
@@ -418,25 +415,46 @@ namespace alignment {
             std::vector<double> diag_shifts;
             diag_shifts.reserve(out.beats.size());
 
-            if (refSrc != BaselineSource::NONE && !std::isnan(refTarget)) {
+            out.tp_shift.assign(out.beats.size(), std::numeric_limits<double>::quiet_NaN());
+            out.pq_shift.assign(out.beats.size(), std::numeric_limits<double>::quiet_NaN());
+            if (haveAnyRef) {
                 for (size_t i = 0; i < out.beats.size(); ++i) {
                     const auto [tpLvl, tpOk, pqLvl, pqOk] = both_levels(i);
-                    if (tpOk && pqOk) out.tp_pq_delta[i] = pqLvl - tpLvl;   // QC metric, whenever both succeed
+                    if (tpOk && pqOk) out.tp_pq_delta[i] = pqLvl - tpLvl;
 
-                    BaselineSource src = BaselineSource::NONE;
-                    const double lvl = pick(tpLvl, tpOk, pqLvl, pqOk, src);
-                    out.baseline_source[i] = src;
-                    if (src == BaselineSource::PQ) ++diag_pq;
-                    else if (src == BaselineSource::TP) ++diag_tp;
-                    else ++diag_none;
-                    if (src == BaselineSource::NONE || std::isnan(lvl))
-                        continue;   // graceful degrade: leave un-shifted, flagged NONE
-                    const double d = lvl - refTarget;
-                    diag_shifts.push_back(d);
-                    if (d == 0.0) continue;
-                    for (double& v : out.beats[i])
-                        if (!std::isnan(v)) v -= d;
+                    // Stage 1 (TP): coarse level, applied only if BOTH this
+                    // beat and the reference have a usable TP.
+                    double applied = 0.0;
+                    bool leveled = false;
+                    if (tpOk && !std::isnan(refTpTarget)) {
+                        const double d = tpLvl - refTpTarget;
+                        for (double& v : out.beats[i]) if (!std::isnan(v)) v -= d;
+                        applied += d; leveled = true;
+                        out.tp_shift[i] = d;
+                    }
+                    // Stage 2 (PQ finalize): authoritative zero. Recompute PQ
+                    // level AFTER stage 1 shift, match it to the reference PQ.
+                    if (!std::isnan(refPqTarget)) {
+                        const auto [plo, phi] = pq_window(i);
+                        if (plo >= 0) {
+                            const auto [lvl2, ok2] = flattest_median(out.beats[i], plo, phi);
+                            if (ok2) {
+                                const double d = lvl2 - refPqTarget;
+                                for (double& v : out.beats[i]) if (!std::isnan(v)) v -= d;
+                                applied += d; leveled = true;
+                                out.pq_shift[i] = d;
+                                out.baseline_source[i] = BaselineSource::PQ;
+                            }
+                        }
+                    }
+                    if (!leveled) { out.baseline_source[i] = BaselineSource::NONE; continue; }
+                    if (out.baseline_source[i] != BaselineSource::PQ)
+                        out.baseline_source[i] = BaselineSource::TP;   // TP-only
+                    diag_shifts.push_back(applied);
+                    if (out.baseline_source[i] == BaselineSource::PQ) ++diag_pq;
+                    else ++diag_tp;
                 }
+                diag_none = (int)out.beats.size() - diag_pq - diag_tp;
             }
             // One line per aligned matrix. Shows whether shifts are sane
             // (small std, tight range) or wild (large std, big range).

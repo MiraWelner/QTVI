@@ -13,6 +13,7 @@
 
 #include <vector>
 #include <string>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include "peakfinding_io.hpp"
@@ -171,6 +172,32 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
         d.ecgSignal = seg.ecg_signal_1;
         d.ecgSignal2 = seg.ecg_signal_2;
         d.ecgSignal3 = seg.ecg_signal_3;
+
+        // CHAOS: subtract each ECG channel's whole-signal median ONCE, here,
+        // before any detection or alignment runs. Removes the per-segment DC
+        // pedestal globally (cheaper and simpler than doing it per beat, per
+        // method, per bin downstream).
+        if (cfg.dataset_type == "CHAOS") {
+            auto subtract_median = [](std::vector<double>& sig) {
+                if (sig.empty()) return;
+                std::vector<double> vals;
+                vals.reserve(sig.size());
+                for (double v : sig) if (!std::isnan(v)) vals.push_back(v);
+                if (vals.empty()) return;
+                const size_t m = vals.size() / 2;
+                std::nth_element(vals.begin(), vals.begin() + m, vals.end());
+                double med = vals[m];
+                if (vals.size() % 2 == 0) {
+                    const double hi = med;
+                    med = 0.5 * (*std::max_element(vals.begin(), vals.begin() + m) + hi);
+                }
+                for (double& v : sig) if (!std::isnan(v)) v -= med;
+                };
+            subtract_median(d.ecgSignal);
+            subtract_median(d.ecgSignal2);
+            subtract_median(d.ecgSignal3);
+        }
+
         d.ppg_bin_indexs = std::move(seg.ppg_bin_indexs);
         d.ecg_bin_indexs = std::move(seg.ecg_bin_indexs);
 

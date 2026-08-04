@@ -204,14 +204,28 @@ int FeatureMarks::compute_p_peak(const std::vector<double>& ecg,
 }
 
 // T peak = max value between the user's T-begin and T-end markers.
+// T-peak: single canonical finder. T-peak is an AMPLITUDE landmark (a peak),
+// so per spec it is placed at the fitted peak and refined as an ASYMMETRIC
+// EXTREMUM -- cubic fit on Gaussian-weighted samples with the derivative
+// solved analytically, sigma = 15 -- NOT via the transition-upsample path used
+// for onsets/offsets. Bracketed by t_begin/t_end (the T-wave's position varies
+// with heart rate, so it can't be derived from R alone). Both the movable bar
+// (T_PEAK locator) and the auto glyph call this; the sigma=15 refinement is
+// folded in here so neither caller re-refines.
 int FeatureMarks::compute_t_peak(const std::vector<double>& v, int tBegin, int tEnd) {
     const int N = static_cast<int>(v.size());
     if (tBegin < 0 || tEnd < 0 || tBegin >= N || tEnd >= N) return -1;
     const int lo = std::min(tBegin, tEnd), hi = std::max(tBegin, tEnd);
+
+    // Coarse seed: argmax over the bracket (the T-peak amplitude).
     int best = lo; double bv = -std::numeric_limits<double>::infinity();
     for (int i = lo; i <= hi; ++i)
         if (!std::isnan(v[i]) && v[i] > bv) { bv = v[i]; best = i; }
-    return best;
+
+    // Refine: asymmetric extremum (cubic on Gaussian-weighted samples,
+    // analytic derivative), sigma = 15.
+    return std::clamp(static_cast<int>(std::lround(
+        subsample_refine::asymmetricExtremum(v, best, 15.0))), 0, N - 1);
 }
 
 // R wave = argmax |v - baseline| within [q_begin, s_end] (the user markers),
@@ -237,66 +251,129 @@ int FeatureMarks::compute_r_peak(const std::vector<double>& v, int qBegin, int s
         subsample_refine::symmetricExtremum(v, best, 5.0))), 0, N - 1);
 }
 
+// Shared search span: S-peak lives within 50 ms after R; the J-point within
+// 50 ms after the S-peak. Both in seconds, converted to samples via fs.
+namespace { constexpr double S_PEAK_WIN_S = 0.050; constexpr double J_POINT_WIN_S = 0.050; }
+
+// SINGLE canonical S-peak + J-point finder (spec steps 1-5). Used by BOTH the
+// movable bar (J_POINT locator) and the auto glyph. Steps:
+//   1) S-peak search range = [R, R + 50 ms].
+//   2) S-peak = Gaussian-weighted quadratic (symmetricExtremum), sigma = 4.
+//   3) The offset found here is the J-point (see rename pass).
+//   4) J-point search range = [S-peak, S-peak + 50 ms].
+//   5) 40-sample window, 4x cubic upsample, fit-and-select (piecewise-linear /
+//      sigmoid / fractional-poly by BIC) via transitionAnchor; anchor placed
+//      at the offset fractional level.
 int FeatureMarks::compute_s_end(const std::vector<double>& v, int sUser, double fs, int r_col) {
     const int N = static_cast<int>(v.size());
-    if (sUser < 0 || N < 3) return sUser;
-    const int w = win_005s(fs);
-    int lo = std::max(0, sUser - w);
-    const int hi = std::min(N - 1, sUser + w / 4);
-    // J-point/S-end is always strictly after R; a window reaching back into
-    // (or onto) the QRS spike corrupts the extremum search below (it can pick
-    // R itself as E instead of the real S-trough). Clamp the left edge so it
-    // never crosses r_col.
-    lo = std::max(lo, r_col + 1);
-    if (hi <= lo) return std::clamp(sUser, 0, N - 1);
+    if (r_col < 0 || r_col >= N - 1 || N < 4) return std::clamp(sUser, 0, std::max(0, N - 1));
+    auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
+    auto ms = [&](double s) { return static_cast<int>(std::lround(s * fs)); };
 
-    // B = ST baseline: right edge of window (flat region after recovery).
-    double B = v[hi];
+    const bool is_positive = FeatureMarks::qrs_positive_at(v, r_col);
+    std::vector<double> u = v;
+    if (!is_positive) for (auto& x : u) x = -x;
 
-    // E = extremum (sample furthest from B in the window).
-    double E = B;
-    double bestDist = 0.0;
-    for (int i = lo; i <= hi; ++i) {
-        if (std::isnan(v[i])) continue;
-        const double d = std::abs(v[i] - B);
-        if (d > bestDist) { bestDist = d; E = v[i]; }
-    }
+    // Step 1: S-peak search range = [R, R + 50 ms].
+    const int sp_lo = cl(r_col);
+    const int sp_hi = cl(r_col + ms(S_PEAK_WIN_S));
 
-    auto fit = anchor_fit::selectAnchorModel(v, lo, hi);
-    const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B, E, 0.90);
-    return std::clamp(static_cast<int>(std::round(anchor)), 0, N - 1);
+    // Integer S-trough seed in that range (upright signal => S is the min).
+    int sSeed = sp_lo;
+    double sv = std::numeric_limits<double>::infinity();
+    for (int i = sp_lo; i <= sp_hi; ++i)
+        if (!std::isnan(u[i]) && u[i] < sv) { sv = u[i]; sSeed = i; }
+
+    // Step 2: refine S-peak via Gaussian-weighted quadratic, sigma = 4.
+    const int sPeak = cl(static_cast<int>(std::lround(
+        subsample_refine::symmetricExtremum(u, sSeed, 4.0))));
+
+    // Step 4: J-point search range = [S-peak, S-peak + 50 ms].
+    const int lo = cl(sPeak);
+    const int hi = cl(sPeak + ms(J_POINT_WIN_S));
+    if (hi - lo < 4) return cl(sPeak);
+
+    // Baseline reference = right edge of the J-point window (recovered ST
+    // level); extremum = the S trough at lo.
+    const double baseline = u[hi];
+
+    // Step 5: 40-sample 4x cubic-upsample transition fit-and-select. Offset
+    // anchor placed at the recovered-baseline end (fraction 0.08 with
+    // transitionAnchor's baseline-referenced convention).
+    return cl(static_cast<int>(std::lround(
+        subsample_refine::transitionAnchor(u, sPeak, 0.08, 40, baseline, lo, hi))));
 }
 
+// Q-peak search range, in seconds before R (mirror of S_PEAK_WIN_S).
+namespace { constexpr double Q_PEAK_WIN_S = 0.050; constexpr double Q_ONSET_WIN_S = 0.050; }
+
+// Q-onset finder, structured exactly like compute_s_end (spec steps 1-5,
+// mirrored for an onset):
+//   1) Q-peak search range = [R - 50 ms, R].
+//   2) Q-peak = Gaussian-weighted quadratic (symmetricExtremum), sigma = 4.
+//   4) Q-onset search range = [Q-peak - 50 ms, Q-peak].
+//   5) 40-sample window, 4x cubic upsample, fit-and-select via transitionAnchor;
+//      onset anchor placed at 0-20% of the onset (fraction 0.10, baseline side).
 int FeatureMarks::compute_q_onset(const std::vector<double>& v, int qUser, double fs, int r_idx) {
     const int N = static_cast<int>(v.size());
-    if (qUser < 0 || qUser >= N || N < 4) return std::clamp(qUser, 0, std::max(0, N - 1));
-    const int w = win_005s(fs);
+    if (r_idx <= 0 || r_idx >= N || N < 4) return std::clamp(qUser, 0, std::max(0, N - 1));
+    auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
+    auto ms = [&](double s) { return static_cast<int>(std::lround(s * fs)); };
 
     const bool is_positive = FeatureMarks::qrs_positive_at(v, r_idx);
     std::vector<double> u = v;
     if (!is_positive) for (auto& x : u) x = -x;
 
-    // Window extends left into PQ baseline, barely right past seed.
-    int lo = std::max(0, qUser - w);
-    int hi = std::min(N - 1, qUser + w / 4);
-    // Q-onset is always strictly before R; a window reaching forward onto
-    // the QRS spike corrupts the extremum search below (it can pick R
-    // itself as E instead of the real Q-trough). Clamp the right edge so it
-    // never crosses r_idx.
-    hi = std::min(hi, r_idx - 1);
-    if (hi <= lo) return std::clamp(qUser, 0, N - 1);
+    // Step 1: Q-peak search range = [R - 50 ms, R]. Q is the trough just
+    // before R (upright signal => min). A REAL Q is a local minimum strictly
+    // inside the window (the signal turns back up before R); if the minimum
+    // sits at the window's right edge (== R, monophasic R with no Q) there is
+    // no Q trough and we fall back to the R-upstroke onset below.
+    const int qp_lo = cl(r_idx - ms(Q_PEAK_WIN_S));
+    const int qp_hi = cl(r_idx);
+    int qSeed = qp_hi;
+    double qv = std::numeric_limits<double>::infinity();
+    for (int i = qp_lo; i <= qp_hi; ++i)
+        if (!std::isnan(u[i]) && u[i] < qv) { qv = u[i]; qSeed = i; }
 
-    // B = PQ baseline: left edge of window.
-    double B = u[lo];
+    const bool haveQ = (qSeed > qp_lo && qSeed < qp_hi);   // genuine interior trough
 
-    // E = Q trough (min in the window).
-    double E = B;
-    for (int i = lo; i <= hi; ++i)
-        if (!std::isnan(u[i]) && u[i] < E) E = u[i];
+    if (haveQ) {
+        // Step 2: refine Q-peak via Gaussian-weighted quadratic, sigma = 4.
+        const int qPeak = cl(static_cast<int>(std::lround(
+            subsample_refine::symmetricExtremum(u, qSeed, 4.0))));
 
-    auto fit = anchor_fit::selectAnchorModel(u, lo, hi);
-    const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B, E, 0.10);
-    return std::clamp(static_cast<int>(std::round(anchor)), 0, N - 1);
+        // Step 4: Q-onset search range = [Q-peak - 50 ms, Q-peak].
+        const int lo = cl(qPeak - ms(Q_ONSET_WIN_S));
+        const int hi = cl(qPeak);
+        if (hi - lo >= 4) {
+            // Baseline = left edge (PQ baseline, the level the onset rises FROM).
+            const double baseline = u[lo];
+            // Step 5: 40-sample 4x cubic-upsample transition fit-and-select.
+            // Onset anchor at 0-20% (fraction 0.10, baseline side).
+            return cl(static_cast<int>(std::lround(
+                subsample_refine::transitionAnchor(u, qPeak, 0.10, 40, baseline, lo, hi))));
+        }
+        return cl(qPeak);
+    }
+
+    // No Q trough (monophasic R): R-upstroke onset. Walk left from R down the
+    // steep rise to where the slope flattens to < 10% of the peak upstroke
+    // slope. Scan window is 50 ms before R.
+    const int win = std::max(2, ms(0.050));
+    const int scanLo = std::max(1, r_idx - win);
+    double maxSlope = 0.0;
+    for (int i = r_idx; i > scanLo; --i) {
+        const double s = u[i] - u[i - 1];
+        if (s > maxSlope) maxSlope = s;
+    }
+    if (maxSlope <= 0.0) return cl(r_idx);   // no rise: anchor on R
+    const double thresh = 0.10 * maxSlope;
+    for (int i = r_idx; i > scanLo; --i) {
+        const double s = u[i] - u[i - 1];
+        if (s < thresh) return cl(i);         // slope flattened: onset
+    }
+    return cl(scanLo);
 }
 
 // P-end: anchor-fit on the descending offset of the P wave, refining the
@@ -455,40 +532,13 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
     switch (type) {
     case AnchorType::R_PEAK:  return [r_col](const std::vector<double>&) { return r_col; };
     case AnchorType::Q_ONSET:
+        // Single canonical finder: detect_q_begin supplies the seed;
+        // compute_q_onset does the Q-peak search + sigma=4 refine + I-3
+        // transitionAnchor refinement, and folds in the R-upstroke fallback
+        // for monophasic-R (no-Q) beats. Same shape as J_POINT below.
         return [r_col, fs](const std::vector<double>& b) {
-            const int N = static_cast<int>(b.size());
-            if (r_col < 2 || r_col >= N) return r_col;
-
-            // Primary: real Q onset. Phase A: refine the seed via
-            // compute_q_onset (fit-and-select) instead of returning it raw.
-            const int q = FeatureMarks::detect_q_begin(b, r_col);
-            // detect_q_begin returns r_col-20 (fixed) when it found no Q
-            // trough. Treat that exact value as "Q not found" and fall back
-            // to the R-upstroke onset instead of the rate-dependent offset.
-            if (q != std::max(0, r_col - 20)) return FeatureMarks::compute_q_onset(b, q, fs, r_col);
-
-            // R-upstroke onset: walk left from R down the steep rise to
-            // where the slope flattens to <10% of the peak upstroke slope.
-            // Scan window is 50 ms before R (rate-independent).
-            const bool pos = FeatureMarks::qrs_positive_at(b, r_col);
-            auto up = [&](int i) { const double v = b[i]; return pos ? v : -v; };
-
-            const int win = std::max(2, static_cast<int>(std::lround(0.050 * fs)));
-            const int scanLo = std::max(1, r_col - win);
-
-            double maxSlope = 0.0;
-            for (int i = r_col; i > scanLo; --i) {
-                const double s = up(i) - up(i - 1);
-                if (s > maxSlope) maxSlope = s;
-            }
-            if (maxSlope <= 0.0) return r_col;   // no rise: anchor on R
-
-            const double thresh = 0.10 * maxSlope;
-            for (int i = r_col; i > scanLo; --i) {
-                const double s = up(i) - up(i - 1);
-                if (s < thresh) return i;        // slope flattened -> onset
-            }
-            return scanLo;                        // never flattened in window
+            const int seed = FeatureMarks::detect_q_begin(b, r_col);
+            return FeatureMarks::compute_q_onset(b, seed, fs, r_col);
             };
     case AnchorType::J_POINT:
         // Phase A: detect_s_end supplies the seed; compute_s_end refines via
@@ -519,64 +569,6 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
     return [](const std::vector<double>&) { return -1; };
 }
 
-AnchorLocatorD make_anchor_locator_subsample(AnchorType type, int r_col, double fs) {
-    // Reuse the existing, already-tested integer locator (including its own
-    // seed-detection and fallback logic, e.g. Q_ONSET's R-upstroke-onset
-    // walk) as the SEED for sub-sample refinement -- no duplication of any
-    // detection logic, only a refinement layer on top of it.
-    AnchorLocator intLoc = make_anchor_locator(type, r_col, fs);
-    switch (type) {
-    case AnchorType::R_PEAK:   // symmetric extremum, sigma=5
-        return [intLoc](const std::vector<double>& b) {
-            return subsample_refine::symmetricExtremum(b, intLoc(b), 5.0);
-            };
-    case AnchorType::Q_ONSET:  // transition (onset band, fraction=0.10)
-        return [intLoc, r_col](const std::vector<double>& b) {
-            const int seed = intLoc(b);
-            // Q-onset is always strictly before R; bound the window's right
-            // edge there so it can't reach across R the way an unbounded
-            // symmetric seed+-20 window did for s_auto/PPG foot in an
-            // earlier pass. Left edge unconstrained beyond normal clamping.
-            const int lo = std::max(0, seed - 20);
-            const int hi = std::min(seed + 20, r_col - 1);
-            return subsample_refine::transitionAnchor(b, seed, 0.10, 40,
-                std::numeric_limits<double>::quiet_NaN(), lo, hi);
-            };
-    case AnchorType::J_POINT:  // transition (offset band, fraction=0.90)
-        return [intLoc, r_col](const std::vector<double>& b) {
-            const int seed = intLoc(b);
-            const int N = static_cast<int>(b.size());
-            // J-point is always strictly after R; bound the window's left
-            // edge there so it can't reach back across R.
-            const int lo = std::max(seed - 20, r_col + 1);
-            const int hi = std::min(seed + 20, N - 1);
-            return subsample_refine::transitionAnchor(b, seed, 0.90, 40,
-                std::numeric_limits<double>::quiet_NaN(), lo, hi);
-            };
-    case AnchorType::P_PEAK:   // asymmetric extremum, sigma=12
-        return [intLoc](const std::vector<double>& b) {
-            return subsample_refine::asymmetricExtremum(b, intLoc(b), 12.0);
-            };
-    case AnchorType::P_ONSET:  // transition (onset band, fraction=0.10)
-        return [intLoc, r_col](const std::vector<double>& b) {
-            const int seed = intLoc(b);
-            // P-onset is always strictly before R (P precedes the whole
-            // QRS); bound the window's right edge there. Not as tight as
-            // capping at the P-peak specifically (unavailable in this
-            // locator's scope), but always topologically valid.
-            const int lo = std::max(0, seed - 20);
-            const int hi = std::min(seed + 20, r_col - 1);
-            return subsample_refine::transitionAnchor(b, seed, 0.10, 40,
-                std::numeric_limits<double>::quiet_NaN(), lo, hi);
-            };
-    case AnchorType::T_PEAK:   // asymmetric extremum, sigma=15
-        return [intLoc](const std::vector<double>& b) {
-            return subsample_refine::asymmetricExtremum(b, intLoc(b), 15.0);
-            };
-    }
-    return [](const std::vector<double>&) { return -1.0; };
-}
-
 FeatureMarks::EcgGlyphs FeatureMarks::compute_ecg_glyphs(const std::vector<double>& ecg, int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs)
 {
     EcgGlyphs g;
@@ -585,19 +577,9 @@ FeatureMarks::EcgGlyphs FeatureMarks::compute_ecg_glyphs(const std::vector<doubl
     g.q_begin_glyph = (q_begin >= 0 && q_begin < N) ? q_begin : -1;
     g.r_peak_glyph = compute_r_peak(ecg, q_begin, s_end);
     g.s_end_glyph = (s_end >= 0 && s_end < N) ? s_end : -1;
+    // compute_t_peak folds in the sigma=15 asymmetric-extremum refinement, so
+    // this is the fully-refined T-peak (same as the bar path uses).
     g.t_peak_glyph = compute_t_peak(ecg, t_begin, t_end);
-    if (g.t_peak_glyph >= 0) {
-        // Spec I-3: T-peak is an asymmetric extremum (cubic fit on
-        // Gaussian-weighted samples, analytic derivative solve), sigma=15.
-        // compute_t_peak (above) supplies the coarse seed; refine it here
-        // for the displayed glyph specifically. Left as a separate step
-        // (not baked into compute_t_peak itself) because that function is
-        // also the seed for make_anchor_locator_subsample's OWN sigma=15
-        // refinement on the alignment path -- doing it there too would
-        // double-refine and risk regressing already-verified behavior.
-        g.t_peak_glyph = std::clamp(static_cast<int>(std::lround(
-            subsample_refine::asymmetricExtremum(ecg, g.t_peak_glyph, 15.0))), 0, N - 1);
-    }
     g.t_end_glyph = (t_end >= 0 && t_end < N) ? t_end : -1;
     return g;
 }
@@ -1297,7 +1279,8 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
         //  f is the literal spec fraction (onset 0.10, offset 0.90).
         struct Band { double a, b; };
         const Band Q_ONSET_BAND = { -0.060, -0.010 };  // QRS onset
-        const Band S_END_BAND = { 0.010,  0.090 };  // J-point / S recovery
+        // (S-peak/J-point search ranges live in the file-scope S_PEAK_WIN_S /
+        //  J_POINT_WIN_S constants, used by the single canonical finder.)
         const Band T_BEGIN_BAND = { 0.090,  0.180 };  // T-begin: .a = ST-baseline start (.b unused; hi = T peak)
         const Band P_PEAK_BAND = { -0.220, -0.120 };  // P-wave peak (argmax)
         const Band P_BEGIN_BAND = { -0.320, -0.250 };  // P-wave onset (left of P peak)
@@ -1313,43 +1296,13 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
             return p;
             };
 
-        // Q-onset: right bound is capped at the Q peak (the initial QRS
-        // deflection's extremum = first turning point walking left from R), so
-        // the fit window is [PQ baseline, Q peak] and E can never be the R.
-        // Then follow the spec crossing (f = 0.10) inside that window.
-        int q_auto;
-        {
-            // Q peak = first local extremum in the ~80 ms left of R.
-            const int qs = cl(r_auto - ms(0.080));
-            int qpk = -1;
-            for (int i = r_auto - 1; i > qs; --i) {
-                if (std::isnan(ecg[i - 1]) || std::isnan(ecg[i]) || std::isnan(ecg[i + 1])) continue;
-                const double dL = ecg[i] - ecg[i - 1];
-                const double dR = ecg[i + 1] - ecg[i];
-                if (dL != 0.0 && dL * dR < 0.0) { qpk = i; break; }   // local extremum
-            }
-            if (qpk < 0) qpk = cl(r_auto - ms(0.010));   // monophasic R: no Q, stop just before R
+        // Q-onset: single canonical finder (same one the movable bar uses via
+        // the Q_ONSET locator). detect_q_begin supplies the seed; compute_q_onset
+        // does the Q-peak search + sigma=4 refine + I-3 transitionAnchor
+        // refinement internally.
+        const int q_auto = cl(FeatureMarks::compute_q_onset(
+            ecg, FeatureMarks::detect_q_begin(ecg, r_auto), sampleRate, r_auto));
 
-            int lo = cl(r_auto + ms(Q_ONSET_BAND.a));    // PQ-baseline side
-            int hi = qpk;                                 // capped at the Q peak
-            if (hi - lo < 4) lo = cl(hi - 4);
-
-            double E = B_iso; double bd = 0.0;
-            for (int i = lo; i <= hi; ++i)
-                if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); E = ecg[i]; }
-            auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
-            const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, 0.10);
-            const int q_bounded = cl(static_cast<int>(std::round(anchor)));
-            // Spec I-3: Q-onset is a transition anchor -- locally upsample
-            // 40 samples from the native rate to 4x via cubic interpolation,
-            // then fit-and-select on the upsampled window. q_bounded (above)
-            // supplies the seed, already correctly bounded to [PQ-baseline,
-            // Q-peak] so it can't cross into the QRS; transitionAnchor
-            // refines it on the finer grid, using the SAME B_iso every other
-            // landmark shares (not its own auto-detected local baseline).
-            q_auto = cl(static_cast<int>(std::lround(
-                subsample_refine::transitionAnchor(ecg, q_bounded, 0.10, 40, B_iso, lo, hi))));
-        }
         // S-end: mirror of Q-onset. Cap the LEFT bound at the S peak (first
         // turning point walking right from R = the S extremum) so E is the S,
         // not the R tail. Then follow the spec crossing over [S peak, ST
@@ -1359,35 +1312,12 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
         // that is f = 0.10 (== 90% recovered from the extremum), NOT 0.90 which
         // would sit at the trough. Recovery is monotonic S -> baseline, so the
         // forward crossing lands at the J-point.
-        int s_auto;
-        {
-            const int ss = cl(r_auto + ms(0.080));
-            int spk = -1;
-            for (int i = r_auto + 1; i < ss; ++i) {
-                if (std::isnan(ecg[i - 1]) || std::isnan(ecg[i]) || std::isnan(ecg[i + 1])) continue;
-                const double dL = ecg[i] - ecg[i - 1];
-                const double dR = ecg[i + 1] - ecg[i];
-                if (dL != 0.0 && dL * dR < 0.0) { spk = i; break; }   // local extremum (S)
-            }
-            if (spk < 0) spk = cl(r_auto + ms(0.010));   // monophasic: no S, start just after R
-
-            int lo = spk;                                 // capped at the S peak
-            int hi = cl(r_auto + ms(S_END_BAND.b));       // ST-baseline side
-            if (hi - lo < 4) hi = cl(lo + 4);
-
-            double E = B_iso; double bd = 0.0;
-            for (int i = lo; i <= hi; ++i)
-                if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); E = ecg[i]; }
-            auto fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
-            const double anchor = anchor_fit::anchorAtFraction(fit, lo, hi, B_iso, E, 0.10);
-            const int s_bounded = cl(static_cast<int>(std::round(anchor)));
-            // Spec I-3: J-point/S-end is a transition anchor -- 4x upsample
-            // then fit-and-select on the finer grid. s_bounded (above)
-            // supplies the seed, already correctly bounded to [S-peak,
-            // ST-baseline]; refined here using the shared B_iso.
-            s_auto = cl(static_cast<int>(std::lround(
-                subsample_refine::transitionAnchor(ecg, s_bounded, 0.10, 40, B_iso, lo, hi))));
-        }
+        // S-end / J-point: single canonical finder (same one the movable bar
+        // uses via the J_POINT locator). detect_s_end supplies the seed;
+        // compute_s_end does the S-peak-capped window + fit-and-select + I-3
+        // transitionAnchor refinement internally.
+        const int s_auto = cl(FeatureMarks::compute_s_end(
+            ecg, FeatureMarks::detect_s_end(ecg, r_auto, sampleRate), sampleRate, r_auto));
         // T peak: largest deflection from baseline in the T-wave region. It
         // splits the T wave into its onset (T-begin) and offset (T-end) sides.
         int t_peak;

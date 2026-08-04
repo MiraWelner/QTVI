@@ -25,10 +25,42 @@
 #include "TemplateTypes.hpp"
 #include "template_marking_gui/alignment.hpp"
 #include <atomic>
+#include <fstream>
+#include <string>
+#include <limits>
 
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+
+ // Beat-move log destination. Set once from main/post_process before the build
+ // (read-only afterwards, and the writer runs single-threaded post-loop, so no
+ // race). Empty dir/stem => no log.
+namespace ecg_move_log {
+    inline std::string g_dir;
+    inline std::string g_stem;
+    inline void set(const std::string& dir, const std::string& stem) { g_dir = dir; g_stem = stem; }
+
+    // Write one channel's per-bin/per-beat two-stage vertical shifts. Called
+    // single-threaded (after the parallel build loop). `first` truncates +
+    // writes the header; later channels append.
+    inline void write_channel(const char* channel,
+        const std::vector<std::vector<double>>& tp,
+        const std::vector<std::vector<double>>& pq, bool first) {
+        if (g_dir.empty() || g_stem.empty()) return;
+        std::ofstream f(g_dir + "/" + g_stem + "_beat_moves.csv",
+            first ? std::ios::trunc : std::ios::app);
+        if (!f) return;
+        if (first) f << "stem,channel,bin,beat,tp_mv_shift,pq_mv_shift\n";
+        for (size_t b = 0; b < tp.size(); ++b)
+            for (size_t k = 0; k < tp[b].size(); ++k) {
+                const double pqv = (b < pq.size() && k < pq[b].size())
+                    ? pq[b][k] : std::numeric_limits<double>::quiet_NaN();
+                f << g_stem << ',' << channel << ',' << b << ',' << k
+                    << ',' << tp[b][k] << ',' << pqv << '\n';
+            }
+    }
+}
 
 struct SingleMethodResult {
     vector<double> ecgTemplate;
@@ -37,6 +69,10 @@ struct SingleMethodResult {
     int r_col = -1;   // true R column (alignment's r_aligned_col)
     int ref_beat_index = -1;
     size_t n_beats = 0;
+    // Per-beat per-stage vertical DC shifts (TP stage, PQ stage) from the
+    // two-stage leveling, surfaced for the move log.
+    vector<double> tp_shift;
+    vector<double> pq_shift;
 };
 
 static inline SingleMethodResult build_ecg_template_for_method(const vector<double>& ecgSignal, const vector<size_t>& rpeaks, const vector<vector<double>>& pairs,
@@ -51,6 +87,9 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
 
     const alignment::ecg_beat_set aligned = alignment::extract_beats_and_align(ecgSignal, rpeaks, ecgRate);
     if (aligned.beats.empty() || aligned.median_length <= 0) return res;
+
+    res.tp_shift = aligned.tp_shift;   // surface for the move log
+    res.pq_shift = aligned.pq_shift;
 
     // Beats with baseline_source == NONE had neither a usable TP nor PQ
     // isoelectric reference, so their DC level is untrustworthy -- exclude
@@ -169,6 +208,8 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
     cr.n_beats_raw.resize(n, 0);
 
     cr.kept_beats_raw.resize(n);
+    cr.tp_shift_raw.resize(n);
+    cr.pq_shift_raw.resize(n);
 }
 
 /**
@@ -218,6 +259,10 @@ static inline void process_channel_fast(
     cr.r_col_raw[i] = raw_res.r_col;
     cr.n_beats_raw[i] = raw_res.n_beats;
     cr.ref_index_raw[i] = raw_res.ref_beat_index;
+    if (i < cr.tp_shift_raw.size()) {
+        cr.tp_shift_raw[i] = std::move(raw_res.tp_shift);   // distinct i -> race-free
+        cr.pq_shift_raw[i] = std::move(raw_res.pq_shift);
+    }
 
     // Method 4: unfiltered (original ECG signal + master R-peaks). No std.
     auto unfilt_res = build_ecg_template_for_method(
@@ -318,6 +363,13 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
             process_channel_fast(res.ch3, bins, i, bin.ecgSignal3, bin.ecgSignal3,
                 master, ecgRate, /*capture_raw_beats=*/true);
     }
+
+    // Single-threaded, post-loop: write the per-beat vertical move log
+    // (CH1 truncates+headers, CH2/CH3 append).
+    ecg_move_log::write_channel("CH1", res.ch1.tp_shift_raw, res.ch1.pq_shift_raw, /*first=*/true);
+    ecg_move_log::write_channel("CH2", res.ch2.tp_shift_raw, res.ch2.pq_shift_raw, /*first=*/false);
+    ecg_move_log::write_channel("CH3", res.ch3.tp_shift_raw, res.ch3.pq_shift_raw, /*first=*/false);
+
     return res;
 }
 

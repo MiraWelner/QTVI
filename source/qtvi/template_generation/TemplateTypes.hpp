@@ -126,6 +126,11 @@ struct EcgChannelResult {
     vector<size_t> n_beats_raw;//the viewer displays the number of beats contributing to template for each channel
 
     vector<vector<vector<double>>> kept_beats_raw;
+
+    // Per-bin, per-beat vertical DC leveling shifts (two-stage TP/PQ),
+    // indexed [bin][beat]. Written to the beat-move log post-loop.
+    vector<vector<double>> tp_shift_raw;
+    vector<vector<double>> pq_shift_raw;
 };
 
 struct EcgTemplateResult {
