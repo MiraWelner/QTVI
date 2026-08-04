@@ -82,43 +82,6 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     // consecutive beats.
     s.tHi = clampIdx(tEnd >= 0 ? tEnd : s.stHi);
 
-    // Find the next beat's P-onset the same way a normal p_begin is found
-    // (detect-a-peak, then refine with FeatureMarks::compute_p_begin's
-    // anchor-fit) -- just with the peak search restricted to
-    // [t_end, t_end+600ms] instead of the usual before-Q window, since
-    // that's this beat's OWN P wave, not the next one's.
-    
-    {
-        const int searchLo = s.tHi;
-        const int searchHi = clampIdx(s.tHi + static_cast<int>(std::lround(0.6 * fs)));
-        int nextR = -1;
-        if (searchHi > searchLo) {
-            const bool up = FeatureMarks::qrs_positive_at(ecg, r_col);
-            double best = -std::numeric_limits<double>::infinity();
-            for (int i = searchLo; i <= searchHi; ++i) {
-                if (std::isnan(ecg[i])) continue;
-                const double val = up ? ecg[i] : -ecg[i];
-                if (val > best) { best = val; nextR = i; }
-            }
-        }
-
-        s.nextPLo = s.tHi;   // fallback: zero-width window (no next beat in range)
-        if (nextR >= 0) {
-            const int localLo = std::max(0, nextR - 400);   // ~PR margin before next R
-            const int localHi = std::min(n, nextR + 50);
-            if (localHi - localLo >= 10) {
-                std::vector<double> local(ecg.begin() + localLo, ecg.begin() + localHi);
-                const int local_r = nextR - localLo;
-                const int pPeakLocal = FeatureMarks::detect_p_peak(local, local_r);
-                const int pOnLocal = FeatureMarks::compute_p_begin(local, pPeakLocal, fs, local_r);
-                if (pOnLocal >= 0) {
-                    const int pOn = pOnLocal + localLo;   // back to full-array space
-                    if (pOn > s.tHi && pOn < nextR) s.nextPLo = clampIdx(pOn);
-                }
-            }
-        }
-    }
-
     // Keep every range non-decreasing even if a detector fell back/failed.
     s.pHi = std::max(s.pHi, s.pLo);
     s.qrsHi = std::max(s.qrsHi, s.qrsLo);
@@ -181,7 +144,8 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
     const std::vector<double>& tmpl,      // median template, same length as beat
     const std::vector<double>& tmplAbs,   // absolute-value template
     const Segments& seg,                  // P/QRS/ST sample ranges
-    int motionFlag) {
+    int motionFlag,
+    double fs) {
     BeatSQI q{};
     q.templateCorr = pearsonSQI(beat, tmpl, 0, seg.tHi);
     auto chi = [&](const std::vector<double>& ref, int a, int b) {
@@ -227,7 +191,8 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
         const double postT = beat[std::clamp(seg.tHi, 0, lastIdx)];
         q.baseline = std::max(0.0, 1.0 - std::abs(preP - postT) / 0.5); // 0.5 mV
     }
-    q.noise = std::max(0.0, 1.0 - stddevSQI(beat, seg.tHi, seg.nextPLo) / 0.1);   // 0.1 mV budget
+    const int noiseHi = seg.tHi + static_cast<int>(std::lround(0.080 * fs));
+    q.noise = std::max(0.0, 1.0 - stddevSQI(beat, seg.tHi, noiseHi) / 0.1);   // 0.1 mV budget
 
     q.motion = motionFlag;
     const double motionTerm = (motionFlag < 0) ? 1.0 : static_cast<double>(motionFlag);
@@ -296,7 +261,7 @@ inline void writeEcgSQICsv(const config_entry& cfg,
 
             for (size_t bi = 0; bi < binBeats.size(); ++bi) {
                 const BeatSQI q = computeEcgSQI(binBeats[bi], rawBlk.ecgTemplate,
-                    absBlk.ecgTemplate, seg, motionFlag);
+                    absBlk.ecgTemplate, seg, motionFlag, ecgFs);
                 f << bin << ',' << ch.key << ',' << bi << ','
                     << q.templateCorr << ',' << q.chiSq0 << ',' << q.chiSqAbs << ','
                     << q.chiSq0_P << ',' << q.chiSq0_QRS << ',' << q.chiSq0_ST << ','
