@@ -5,7 +5,7 @@
 #include "annotation_eraser.h"
 #include "gui_handler.h"
 #include "user_annotation_handler.h"
-#include "beat_log.hpp"
+#include "logging/user_mark_log.hpp"
 
 #include <QtCharts/QChart>
 #include <QtCharts/QChartView>

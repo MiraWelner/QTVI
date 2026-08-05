@@ -849,32 +849,17 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
 void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::LeftButton) {
-        // B2 focus mode: a click on a feature GLYPH selects that landmark for
-        // the focus panel (this is the intended selection target -- glyphs,
-        // not bars). Checked first so glyph-only landmarks like the R-peak
-        // (which has no draggable bar) are selectable.
-        int gcol = -1; bool gEcg = false;
-        int gm = glyphAtX(e->position().x(), gcol, gEcg);
-        if (gm >= 0) {
-            emit landmarkSelected(m_binIndex, m_leadIndex, gm, gcol);
-            // fall through: if a draggable bar is also under the cursor, still
-            // begin a drag on it (glyph selection and bar drag can coexist).
-        }
+        // B2 focus mode: focus selection is driven by the user BAR (the
+        // draggable marker), NOT the automated glyph. A click on a bar selects
+        // that landmark for the focus panel (using the bar's own position) and
+        // begins a drag; a subsequent drag re-fires focus via markerMoved.
         int m = markerAtX(e->position().x());
         if (m >= 0) {
             m_dragMarker = m;
             emit markerDragStarted(m_binIndex, m_leadIndex, m);
-            // B2 focus mode: bar-click selects focus ONLY for arterial
-            // channels (ABP/ART/ART_PULM), which have draggable bars but no X
-            // glyphs so the glyph path can't reach them. ECG and PPG have
-            // glyphs -- their focus selection comes from glyphAtX above, and
-            // their bars are for dragging only (avoids the redundant
-            // double-trigger of selecting via both bar and glyph).
-            if (gm < 0 && BinPlotWidget::markerIsArterial(m))
-                emit landmarkSelected(m_binIndex, m_leadIndex, m, m_markers[m]);
+            emit landmarkSelected(m_binIndex, m_leadIndex, m, m_markers[m]);
             return;
         }
-        if (gm >= 0) return;   // glyph selected but no bar to drag
     }
 
     if (e->button() == Qt::RightButton) {

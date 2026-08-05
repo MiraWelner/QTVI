@@ -22,7 +22,7 @@
 #include "peak_finding/run_find_r_peaks.hpp"
 #include "template_generation/template_io.hpp"
 #include "template_marking_gui/alignment.hpp"   // find_q_column (Q-align)
-#include "quality_check/sqi_ecg.hpp"   // computeEcgSQI / writeEcgSQICsv -> cfg.quality_metric
+#include "logging/sqi_ecg.hpp"   // computeEcgSQI / writeEcgSQICsv -> cfg.quality_metric
 
 namespace post_process_detail {
 
@@ -121,12 +121,6 @@ namespace post_process_detail {
         std::map<int, std::vector<std::array<template_io::ChannelMethodTemplate, 3>>> anchorAccum;
     };
 
-    // All analysis CSVs land in ONE shared folder, a sibling of the template
-    // output directory: <template_path>/../csv_for_analysis. Change this one
-    // function (or point it at a config field) to relocate every CSV at once.
-    inline std::filesystem::path analysisCsvDir(const std::filesystem::path& templatePath) {
-        return templatePath.parent_path().parent_path() / "csv_for_analysis";
-    }
 
     inline std::optional<ViewerJob> prepareViewerJob(const config_entry& cfg, const std::filesystem::path& binPath,
         bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
@@ -245,13 +239,18 @@ namespace post_process_detail {
             if (job.needSqabsDetection) {
                 // Fresh raw detection: persist the canonical (raw) r-peaks + CSV
                 // first, before squared/absval overwrite the beat lists.
+                auto t_io0 = std::chrono::steady_clock::now();
                 write_output_binfile(job.rPeakPath.string(), job.peakResults);
 
-                const std::filesystem::path csvDir = analysisCsvDir(job.templatePath);
+                const std::filesystem::path csvDir = job.cfg.r_peak_data_path;
                 std::filesystem::create_directories(csvDir);
                 const std::filesystem::path rPeakCsv =
                     csvDir / (job.stem + "_peak_locations_all_beats.csv");
                 write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
+                auto t_io1 = std::chrono::steady_clock::now();
+                std::cerr << "  [timing] rpeak bin+csv write for " << job.stem << ": "
+                    << std::chrono::duration_cast<std::chrono::milliseconds>(t_io1 - t_io0).count()
+                    << " ms\n";
             }
 
             // Squared/absval R-peak detection on ECG channels, then slow
@@ -264,9 +263,14 @@ namespace post_process_detail {
             augment_ecg_ppg_pairs_sqabs(job.peakResults, job.use_R_algorithm,
                 job.fileID, job.samplingRate, job.cfg,
                 job.ecg1_inverted, job.ecg2_inverted, job.ecg3_inverted);
+            auto t_aug = std::chrono::steady_clock::now();
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
             auto t_sq1 = std::chrono::steady_clock::now();
-            std::cerr << "  [timing] squared/absval build for " << job.stem << ": "
+            std::cerr << "  [timing] sqabs for " << job.stem << ": augment "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(t_aug - t_sq0).count()
+                << " ms + mergeSlow "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(t_sq1 - t_aug).count()
+                << " ms = "
                 << std::chrono::duration_cast<std::chrono::milliseconds>(t_sq1 - t_sq0).count()
                 << " ms\n";
 
@@ -275,7 +279,12 @@ namespace post_process_detail {
             // canonical _templates.bin is created only at the END of the
             // anchor cycle (final "Finish"), once all anchors have been
             // accumulated into it. Until then only the .partial.bin exists.
+            auto t_tw0 = std::chrono::steady_clock::now();
             template_io::write_template_binfile(job.provisionalPath.string(), job.tmpl);
+            auto t_tw1 = std::chrono::steady_clock::now();
+            std::cerr << "  [timing] template write for " << job.stem << ": "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(t_tw1 - t_tw0).count()
+                << " ms\n";
             job.viewerTemplatePath = job.provisionalPath;
             std::cout << "Squared/absval slow processing done for " << job.stem << "\n";
 

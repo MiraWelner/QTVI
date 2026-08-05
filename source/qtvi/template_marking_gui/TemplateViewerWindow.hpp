@@ -3,11 +3,13 @@
 #include <QMainWindow>
 #include <vector>
 #include <set>
+#include <map>
 #include <cmath>
 #include <QString>
 #include "TemplateBinIO.hpp"
 #include "BinPlotWidget.hpp"
 #include "FocusPanelWidget.hpp"
+#include "logging/boundary_training_log.hpp"
 
 namespace Ui { class TemplateViewerWindow; }
 
@@ -17,6 +19,13 @@ class TemplateViewerWindow : public QMainWindow {
 public:
     explicit TemplateViewerWindow(QWidget* parent = nullptr);
     ~TemplateViewerWindow();
+
+    // Destination for operator-confirmed boundary training data (from
+    // cfg.training_log). Set once before/at loadSubject; the log is
+    // (re)constructed here so the directory is created up front.
+    void setBoundaryTrainingDir(const QString& dir) {
+        m_boundaryLog = boundary_training::BoundaryTrainingLog(dir.toStdString());
+    }
 
     void loadSubject(const QString& templatePath, const QString& markingPath,
         const QString& subjectId, double sampleRateHz,
@@ -108,6 +117,24 @@ private:
     // Remember the last J-point column per (bin,lead) so a QRS-side or
     // JT-side edit can refresh the other view against the same landmark.
     int m_lastFocusBin = -1, m_lastFocusLead = -1;
+
+    // Operator-confirmed boundary training data (Section 9.10). Destination
+    // set via setBoundaryTrainingDir (from cfg.training_log). logBoundary is
+    // called at the B2 focus-mode confirmation point.
+    boundary_training::BoundaryTrainingLog m_boundaryLog;
+
+    // Operator-touched landmark positions, keyed by (binIdx, leadIdx, marker)
+    // packed into a single int, value = the bar position at the click. Filled
+    // in onLandmarkSelected (focus activation = bar click). logBoundaryTrainingAtSave
+    // reads this to fill confirmedIndex; landmarks never clicked stay blank.
+    std::map<long long, int> m_touchedMarks;
+    static long long touchKey(int binIdx, int leadIdx, int marker) {
+        return ((long long)binIdx * 100 + leadIdx) * 100 + marker;
+    }
+
+    // Log boundary training data for all landmarks at save (auto_detect from
+    // the bin's *_auto_ch glyph fields; expert_mark from the user marks).
+    void logBoundaryTrainingAtSave();
 
     Ui::TemplateViewerWindow* ui;
 

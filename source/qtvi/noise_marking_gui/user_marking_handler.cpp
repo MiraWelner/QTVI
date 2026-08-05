@@ -7,7 +7,7 @@
 
 #include "gui_handler.h"
 #include "chart_utils.hpp"
-#include "beat_log.hpp"
+#include "logging/user_mark_log.hpp"
 #include "annotation_types.hpp"
 #include "annotation_eraser.h"
 

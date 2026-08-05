@@ -9,7 +9,7 @@
 #include "chart_utils.hpp"
 #include "grid_overlay.hpp"
 #include "config_loader.hpp"
-#include "beat_log.hpp"
+#include "logging/user_mark_log.hpp"
 #include "annotation_eraser.h"
 #include "annotation_types.hpp"
 

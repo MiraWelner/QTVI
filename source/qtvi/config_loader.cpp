@@ -116,7 +116,7 @@ namespace {
         cfg.template_path = cfg.output_path + "/template_outputs/";
         cfg.qtvi_marker_path = cfg.output_path + "/qtvi_marker_path/";
         cfg.quality_metric = cfg.output_path + "/quality_metric/";
-
+        cfg.training_log = cfg.output_path + "/training_log/";
         cfg.snapshot_path = cfg.output_path + "/snapshot_path/";
 
     }

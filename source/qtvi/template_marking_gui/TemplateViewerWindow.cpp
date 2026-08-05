@@ -1,6 +1,8 @@
 ﻿#include "TemplateViewerWindow.hpp"
 #include "ui_TemplateViewerWindow.h"
 #include "feature_marks.hpp"
+#include "anchor_fit.hpp"
+#include "alignment.hpp"   // percent_interval_preceeding_rpeak (RR from r_col)
 #include "NormalizeFeatures.hpp"
 #include "peak_finding/FilterUtils.hpp"   // notch_filter for display-time toggle
 #include <QMessageBox>
@@ -1254,6 +1256,10 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
 
         const int oldIdx = ecgGet(b);
         ecgSet(b, newIdx);
+        // Track the drag: the touched store follows the bar to its final
+        // position so confirmedIndex reflects where the operator left it.
+        if (newIdx >= 0)
+            m_touchedMarks[touchKey(binIdx, leadIdx, marker)] = newIdx;
         const int delta = newIdx - oldIdx;
 
         if (m_moveMode != MoveMode::Individual && oldIdx >= 0) {
@@ -1438,6 +1444,11 @@ void TemplateViewerWindow::onMarkerDragStarted(int, int, int) {}
 void TemplateViewerWindow::onLandmarkSelected(int binIdx, int leadIdx,
     int marker, int col)
 {
+    // Focus activation = the operator clicked this bar. Record it as "touched"
+    // at position col; logBoundaryTrainingAtSave reads this to fill
+    // confirmedIndex for the matching landmark.
+    if (binIdx >= 0 && leadIdx >= 0 && col >= 0)
+        m_touchedMarks[touchKey(binIdx, leadIdx, marker)] = col;
     refreshFocus(binIdx, leadIdx, marker, col);
 }
 
@@ -1614,6 +1625,128 @@ void TemplateViewerWindow::onBadPPGToggled(int binIdx, bool bad) {
     }
 }
 
+// AnchorType -> short name for the boundary log's `anchor` column.
+static const char* anchorName_boundary(AnchorType a) {
+    switch (a) {
+    case AnchorType::P_ONSET: return "P_ONSET";
+    case AnchorType::P_PEAK:  return "P_PEAK";
+    case AnchorType::Q_ONSET: return "Q_ONSET";
+    case AnchorType::R_PEAK:  return "R_PEAK";
+    case AnchorType::J_POINT: return "J_POINT";
+    case AnchorType::T_PEAK:  return "T_PEAK";
+    }
+    return "UNKNOWN";
+}
+
+// Log boundary training data at save time. For EVERY template (bin/lead), log
+// each landmark (Q-onset, J-point, P-onset, T-end). auto_detect comes from the
+// bin's auto-detected glyph fields (*_auto_ch), which hold every landmark on
+// every template regardless of anchor pass. expert_mark = the user marker for
+// that landmark iff the operator moved it away from auto (else null).
+void TemplateViewerWindow::logBoundaryTrainingAtSave() {
+    using boundary_training::Landmark;
+
+    struct Target { Landmark lm; };
+    // S-end omitted (same feature as J-point). Each landmark's auto position is
+    // read from the bin below; its expert mark (if any) from the current pass.
+    const Target targets[] = {
+        { Landmark::Q_ONSET  },
+        { Landmark::J_POINT  },
+        { Landmark::P_ONSET  },
+        { Landmark::T_OFFSET },   // T-end
+    };
+
+    // auto-detected position (glyph field) for a landmark on a lead.
+    auto autoPosOf = [](const TemplateBin& tb, Landmark lm, int lead) -> int {
+        switch (lm) {
+        case Landmark::Q_ONSET:  return tb.q_begin_auto_ch[lead];
+        case Landmark::J_POINT:  return tb.s_end_auto_ch[lead];   // J-point == S-end field
+        case Landmark::P_ONSET:  return tb.p_begin_auto_ch[lead];
+        case Landmark::T_OFFSET: return tb.t_end_auto_ch[lead];
+        default: return -1;
+        }
+        };
+    // Map each logged landmark to its BinPlotWidget marker id (for the touch key).
+    auto markerIdOf = [](Landmark lm) -> int {
+        switch (lm) {
+        case Landmark::Q_ONSET:  return BinPlotWidget::EcgQBegin;
+        case Landmark::J_POINT:  return BinPlotWidget::EcgSEnd;
+        case Landmark::P_ONSET:  return BinPlotWidget::EcgPBegin;
+        case Landmark::T_OFFSET: return BinPlotWidget::EcgTEnd;
+        default: return -1;
+        }
+        };
+
+    const int half = std::max(1, (int)std::lround(0.100 * m_sampleRate)); // +/-100 ms
+    int written = 0, failed = 0;
+
+    // Slicing puts R at r_col = percent_interval_preceeding_rpeak * RR, so
+    // RR_samples = r_col / that fraction. Used for heart rate.
+    constexpr double kPreRFrac = alignment::percent_interval_preceeding_rpeak;
+
+    for (int i = 0; i < (int)m_bins.size(); ++i) {
+        const TemplateBin& b = m_bins[i];
+        const std::vector<double>* chs[3] = {
+            &b.ch1.ecgTemplate_raw, &b.ch2.ecgTemplate_raw, &b.ch3.ecgTemplate_raw };
+        const int rcol[3] = { b.ch1.r_col_raw, b.ch2.r_col_raw, b.ch3.r_col_raw };
+        for (int lead = 0; lead < 3; ++lead) {
+            const std::vector<double>& sig = *chs[lead];
+
+            // Heart rate (bpm) = 60000 / RR(ms); RR from this lead's r_col.
+            double heartRate = 0.0;
+            if (rcol[lead] > 0 && m_sampleRate > 0.0) {
+                const double rrSamples = rcol[lead] / kPreRFrac;
+                const double rrMs = rrSamples / m_sampleRate * 1000.0;
+                if (rrMs > 0.0) heartRate = 60000.0 / rrMs;
+            }
+            // QRS duration (ms) = distance between q_begin and s_end glyphs.
+            double qrsMs = 0.0;
+            {
+                const int q = b.q_begin_auto_ch[lead];
+                const int s = b.s_end_auto_ch[lead];
+                if (q >= 0 && s >= 0 && m_sampleRate > 0.0)
+                    qrsMs = std::abs(s - q) / m_sampleRate * 1000.0;
+            }
+
+            for (const Target& tgt : targets) {
+                const int autoPos = autoPosOf(b, tgt.lm, lead);
+                if (autoPos < 0 || autoPos >= (int)sig.size()) continue;
+
+                const int lo = std::max(0, autoPos - half);
+                const int hi = std::min((int)sig.size(), autoPos + half);
+                if (hi - lo < 2) continue;
+
+                // confirmedIndex = the operator's clicked position (segment-
+                // relative) if this landmark was touched (focus activated on
+                // its bar), else -1 => blank. The row is logged either way.
+                int confirmed = -1;
+                const int mid = markerIdOf(tgt.lm);
+                auto it = m_touchedMarks.find(touchKey(i, lead, mid));
+                if (it != m_touchedMarks.end()) confirmed = it->second - lo;
+
+                boundary_training::BoundaryTrainingRecord rec;
+                rec.segment.assign(sig.begin() + lo, sig.begin() + hi);
+                rec.confirmedIndex = confirmed;
+                // fit from anchor_fit: fit-and-select on this landmark's window.
+                const anchor_fit::FitResult fit = anchor_fit::selectAnchorModel(sig, lo, hi - 1);
+                rec.fitType = fit.type;
+                rec.fitRSS = fit.rss;
+                rec.individualID = m_subjectId.toStdString();
+                rec.bbb = false;                 // left blank for now
+                rec.heartRate = heartRate;
+                rec.qrsDurationMs = qrsMs;
+                if (boundary_training::logBoundary(
+                    m_boundaryLog,
+                    anchorName_boundary(currentAnchor()),// anchor = this template's alignment
+                    tgt.lm, rec)) ++written; else ++failed;
+            }
+        }
+    }
+    std::fprintf(stderr,
+        "[boundary_log] save: dir='%s' wrote=%d failed=%d\n",
+        m_boundaryLog.dir.c_str(), written, failed);
+}
+
 void TemplateViewerWindow::save_bin_and_csv() {
     captureCurrentPage();   // snapshot the page being left on Finish
 
@@ -1642,6 +1775,7 @@ void TemplateViewerWindow::save_bin_and_csv() {
         // canonical name on the final pass only.
         writeTemplateMarkingsBin(partialBin.toStdString(), m_bins);
         std::cout << "Saved: " << partialBin.toStdString() << "\n";
+        logBoundaryTrainingAtSave();
 
         // ECG markings CSV: each pass writes its OWN per-anchor sidecar
         // (<id>_template_markings.<ANCHOR>.csv) with suffixed columns. No

@@ -68,6 +68,7 @@ struct config_entry {
 	std::string quality_metric;
     std::string snapshot_path;
     std::string log_path;
+    std::string training_log;
 
     /*
     Different filetypes have different terms for the same type of signal,

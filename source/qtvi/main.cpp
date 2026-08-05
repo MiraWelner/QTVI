@@ -8,7 +8,7 @@
 #include "noise_marking_gui\gui_handler.h"
 #include "noise_marking_gui\user_annotation_handler.h"
 #include "template_marking_gui\parse_data_from_filename.hpp"
-#include "beat_log.hpp"
+#include "logging/user_mark_log.hpp"
 #include "template_marking_gui\TemplateViewerWindow.hpp"
 
 #include <QtWidgets/QApplication>
@@ -176,6 +176,7 @@ static void runTemplateMarking(const config_entry& cfg,
         post_process_detail::anchorSequence().size() + 1;   // +1 for the R pass
     for (size_t pass = 0; pass < nAnchorPasses; ++pass) {
         TemplateViewerWindow viewer;
+        viewer.setBoundaryTrainingDir(QString::fromStdString(cfg.training_log));
         // pass 0 = R (anchorStep -1); pass k>0 shows anchorSequence()[k-1].
         {
             const auto& seq = post_process_detail::anchorSequence();
@@ -314,6 +315,7 @@ int main(int argc, char* argv[]) {
     std::filesystem::create_directories(cfg.template_path);
     std::filesystem::create_directories(cfg.qtvi_marker_path);
     std::filesystem::create_directories(cfg.quality_metric);
+    std::filesystem::create_directories(cfg.training_log);
 
 
 

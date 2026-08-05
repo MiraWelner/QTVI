@@ -13,7 +13,7 @@
 #include "gui_handler.h"
 #include "chart_utils.hpp"
 #include "gui_peak_finder.hpp"
-#include "beat_log.hpp"
+#include "logging/user_mark_log.hpp"
 #include "theme/theme.h"
 #include "annotation_types.hpp"
 

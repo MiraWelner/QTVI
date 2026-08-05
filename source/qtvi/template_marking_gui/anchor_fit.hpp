@@ -55,9 +55,14 @@ namespace anchor_fit {
     // FitResult
     // =========================================================================
 
+    // Which candidate model a FitResult came from. Recorded so downstream
+    // consumers (e.g. the boundary training log) can label each fit.
+    enum class FitType { LINEAR, SIGMOID, FRACTIONAL, FLAT };
+
     struct FitResult {
         double rss = std::numeric_limits<double>::infinity();
         int    nparams = 0;
+        FitType type = FitType::FLAT;
         std::function<double(double)> f;   // evaluator: f(sample_index) -> fitted value
     };
 
@@ -155,6 +160,7 @@ namespace anchor_fit {
     inline FitResult fitPiecewiseLinear(const std::vector<double>& y, int lo, int hi) {
         FitResult best;
         best.nparams = 5;
+        best.type = FitType::LINEAR;
 
         auto lineFit = [&](int a, int b, double& m, double& c) -> double {
             int n = 0;
@@ -216,6 +222,7 @@ namespace anchor_fit {
     {
         FitResult result;
         result.nparams = 4;
+        result.type = FitType::SIGMOID;
 
         const int n = hi - lo + 1;
         if (n < 5) { result.rss = std::numeric_limits<double>::infinity(); return result; }
@@ -344,6 +351,7 @@ namespace anchor_fit {
 
         FitResult best;
         best.nparams = 3;
+        best.type = FitType::FRACTIONAL;
 
         const int n = hi - lo + 1;
         if (n < 4) return best;
@@ -398,6 +406,7 @@ namespace anchor_fit {
             FitResult fallback;
             fallback.rss = 0.0;
             fallback.nparams = 1;
+            fallback.type = FitType::FLAT;
             double mean = 0.0; int cnt = 0;
             for (int i = lo; i <= hi; ++i)
                 if (!std::isnan(y[i])) { mean += y[i]; ++cnt; }
