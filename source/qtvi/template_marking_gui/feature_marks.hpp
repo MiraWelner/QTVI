@@ -55,53 +55,31 @@ public:
     // =================================================================
     // Reactive
     // =================================================================
-    // Given the current positions of the movable markers, return the
-    // computed reactive marker's sample index. -1 if inputs invalid.
-
-    // Q peak = extreme (opposite R polarity) inside [q_begin, r_peak].
-    static int compute_q_peak(const std::vector<double>& ecg,
-        int q_begin, int r_peak);
-
-    // S = first opposite-polarity trough after R (rate-aware window). The
-    // single S-trough source, used for s_end detection and QRS-height
-    // normalization; needs no s_end bound.
+    static int compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs);
     static int compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
-
-    // ---- Reactive glyph bundles ------------------------------------------
-    // The ONLY definition of the bracketed glyphs. Each is a pure function of
-    // a trace plus the bracketing bar positions, so the result is NEVER
-    // stored: the GUI calls it per repaint, the writers call it per row, and
-    // no cache exists that could go stale. Pass the *_auto bars to get an
-    // autodetect column, the user bars to get a user column -- that choice is
-    // the caller's, but the formula is only ever here.
     struct ReactiveEcg { int t_peak = -1; };
-    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg,
-        int t_begin, int t_end);
-
+    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, int t_begin, int t_end);
     struct ReactivePpg { int t50 = -1, t80 = -1; };
     static ReactivePpg reactive_ppg(const std::vector<double>& ppg,
         int onset, int peak, int end);
 
     // Individual reactive computes (all track user markers live).
     static int compute_t_peak(const std::vector<double>& ecg, int tBegin, int tEnd);
-    // The ONE J-point calculation. Transition detector only (40-sample window,
-    // 4x cubic upsample, fit-and-select via transitionAnchor); re-derives the
-    // S peak internally, so it needs no seed. Returns a sub-sample double.
-    static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col);
-    static double compute_q_onset(const std::vector<double>& ecg, int qUser, double fs, int r_idx);
-    static double compute_t_end(const std::vector<double>& ecg, int tEndUser, double fs, int r_col);
-    static int compute_t_begin(const std::vector<double>& v, int tBeginUser, double fs, int r_idx);
-    static double compute_p_begin(const std::vector<double>& v, int pUser, double fs, int r_idx);
-
-    // Single source of truth for EVERY PPG fiducial. Used by seed_all() to
-    // populate the *_auto fields AND by the GUI to draw the frozen glyphs --
-    // there is no separate/independent glyph recompute anymore, so "peak"
-    // (etc.) can't mean two different things in two different places.
-    // Dependency order: end is computed FIRST and independently; peak/onset
-    // are then bounded by end; the dicrotic notch is bounded by peak and
-    // end; t80/p50 are amplitude crossings derived from peak/onset/end.
-    // end/peak/notch never exceed W-1, so nothing can land in the invisible
-    // tail-overlap region past the displayed window.
+    static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col); //ONE j-point calculation
+    static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx);
+    // T-offset. Window [T-begin + 100 ms, T-begin + 200 ms] -- bounded by
+    // T-begin, so no T-end seed is needed and the old circular bound (a T-end
+    // estimate bounding the search for T-end) is gone. tBeginIn avoids
+    // recomputing T-begin.
+    static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col,
+        double tBeginIn = -1.0);
+    // T-onset. Same onset algorithm as Q-onset / P-onset / the J-point: window
+    // [J-point, J-point + 100 ms], baseline at the left edge (the recovered ST
+    // level), anchor at 10% of the rise, 4x-upsampled fit-and-select. Has a
+    // draggable bar and NO glyph. jPointIn avoids recomputing the J-point.
+    static double compute_t_begin(const std::vector<double>& v, double fs, int r_idx,
+        double jPointIn = -1.0);
+    static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0);
     struct PpgFiducials {
         int onset = -1;
         int peak = -1;
@@ -120,24 +98,13 @@ public:
     // p50) and the GUI's reactive T80/P50 glyphs, so both always agree.
     static int amplitude_crossing(const std::vector<double>& v, int a, int b, double frac);
 
-    // =================================================================
-    // Movable (auto-detected seeds)
-    // =================================================================
-
-    // ECG landmarks.
-    // QRS polarity from the known R column: positive if the R sample sits
-    // above the trace baseline (median), negative otherwise. Exposed
-    // publicly so callers outside feature_marks.cpp (e.g. sqi_ecg.hpp's
-    // next-beat P-wave search) can search in the same polarity every
-    // detector in this file already uses internally.
+    //movable ecg bars
     static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
     static double detect_p_peak(const std::vector<double>& ecg_signal, int r_idx, double fs);
-    static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs);
+    static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double pPeakIn = -1.0);
     static int detect_q_begin(const std::vector<double>& ecg_signal, int r_idx);
-    static int detect_t_begin(const std::vector<double>& ecg_signal, int r_idx, double fs);
-    static int detect_t_end(const std::vector<double>& ecg_signal, int r_idx, double fs);
 
-    // PPG landmarks.
+    // PPG landmarks
     static int detect_ppg_onset(const std::vector<double>& pulse);
     static double detect_ppg_peak(const std::vector<double>& pulse);
     static int detect_ppg_dicrotic(const std::vector<double>& pulse);

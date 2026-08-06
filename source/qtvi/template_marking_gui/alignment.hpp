@@ -335,7 +335,13 @@ namespace alignment {
             auto tp_window = [&](size_t i) -> std::pair<int, int> {
                 const auto& beat = out.beats[i];
                 const int N = static_cast<int>(beat.size());
-                const int t_end = FeatureMarks::detect_t_end(beat, R_anchor, fs);
+                // T-end via the canonical chain: J-point bounds T-begin, which
+                // bounds T-end. Replaces the old downhill-walk detector, whose
+                // estimate was only ever a seed and is now deleted.
+                const double jD = FeatureMarks::compute_j_point(beat, fs, R_anchor);
+                const double tbD = FeatureMarks::compute_t_begin(beat, fs, R_anchor, jD);
+                const int t_end = (int)std::lround(
+                    FeatureMarks::compute_t_end(beat, fs, R_anchor, tbD));
                 const int next_r = R_anchor + out.rr_lens[i];
                 if (next_r <= 0 || next_r >= N) return { -1, -1 };
 
@@ -350,7 +356,7 @@ namespace alignment {
                 const int local_r = next_r - localLo;
 
                 const int p_pk_local = (int)std::lround(FeatureMarks::detect_p_peak(local, local_r, fs));
-                const int p_on_local = (int)std::lround(FeatureMarks::compute_p_begin(local, p_pk_local, fs, local_r));
+                const int p_on_local = (int)std::lround(FeatureMarks::compute_p_begin(local, fs, local_r, (double)p_pk_local));
                 if (p_on_local < 0) return { -1, -1 };
                 const int p_on = p_on_local + localLo;   // back to shared column space
 
@@ -367,8 +373,7 @@ namespace alignment {
             auto pq_window = [&](size_t i) -> std::pair<int, int> {
                 const auto& beat = out.beats[i];
                 const int N = static_cast<int>(beat.size());
-                const int q_seed = FeatureMarks::detect_q_begin(beat, R_anchor);
-                const int q_on = (int)std::lround(FeatureMarks::compute_q_onset(beat, q_seed, fs, R_anchor));
+                const int q_on = (int)std::lround(FeatureMarks::compute_q_onset(beat, fs, R_anchor));
                 if (q_on <= 0 || q_on >= N) return { -1, -1 };
                 const int w = std::max(3, static_cast<int>(std::lround(0.040 * fs)));  // 40 ms
                 const int lo = std::max(0, q_on - w);

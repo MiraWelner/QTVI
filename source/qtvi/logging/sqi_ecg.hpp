@@ -62,12 +62,18 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     const int n = static_cast<int>(ecg.size());
     if (n == 0 || r_col < 0) return s;
 
-    const int pPeak = (int)std::lround(FeatureMarks::detect_p_peak(ecg, r_col, fs));
-    const int pEnd = FeatureMarks::detect_p_end(ecg, r_col, fs);
+    // Each landmark computed ONCE and reused: detect_p_end would otherwise
+    // re-run detect_p_peak, and the two T detectors would each re-run
+    // compute_j_point (a full transitionAnchor fit).
+    const double pPeakD = FeatureMarks::detect_p_peak(ecg, r_col, fs);
+    const int pPeak = (int)std::lround(pPeakD);
+    const int pEnd = FeatureMarks::detect_p_end(ecg, r_col, fs, pPeakD);
     const int qBegin = FeatureMarks::detect_q_begin(ecg, r_col);
-    const int jPoint = (int)std::lround(FeatureMarks::compute_j_point(ecg, fs, r_col));   // QRS end / J point
-    const int tBegin = FeatureMarks::detect_t_begin(ecg, r_col, fs);    // T onset
-    const int tEnd = FeatureMarks::detect_t_end(ecg, r_col, fs);
+    const double jPointD = FeatureMarks::compute_j_point(ecg, fs, r_col);   // QRS end / J point
+    const int jPoint = (int)std::lround(jPointD);
+    const double tBeginD = FeatureMarks::compute_t_begin(ecg, fs, r_col, jPointD);   // T onset
+    const int tBegin = (int)std::lround(tBeginD);
+    const int tEnd = (int)std::lround(FeatureMarks::compute_t_end(ecg, fs, r_col, tBeginD));
 
     auto clampIdx = [&](int v) { return std::max(0, std::min(n - 1, v)); };
 

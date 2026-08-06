@@ -338,7 +338,9 @@ inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, int p_peak
     if (q_begin >= 0 && t_end >= q_begin) f.qt_ms = (t_end - q_begin) * msPerSamp;
 
     if (inRange(r_peak)) f.r_idx = r_peak;
-    f.q_idx = FeatureMarks::compute_q_peak(ecg, q_begin, r_peak);
+    // Q for the q_peak column: same canonical finder compute_q_onset uses.
+    // Mirrors compute_s_peak's signature below. -1 when there is no Q trough.
+    f.q_idx = FeatureMarks::compute_q_peak(ecg, r_peak, rateHz);
     // S for |R|+|S| = first opposite-polarity trough after R (robust; not the
     // max over [R, s_end], which depends on where s_end sits).
     f.s_idx = FeatureMarks::compute_s_peak(ecg, r_peak, rateHz);

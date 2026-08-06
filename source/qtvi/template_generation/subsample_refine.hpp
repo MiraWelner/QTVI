@@ -237,7 +237,7 @@ namespace subsample_refine {
     inline double transitionAnchor(const std::vector<double>& signal, int seed,
         double fraction, int windowSamples = 40,
         double externalBaseline = std::numeric_limits<double>::quiet_NaN(),
-        int boundLo = -1, int boundHi = -1) {
+        double boundLo = -1.0, double boundHi = -1.0) {
         const int N = static_cast<int>(signal.size());
         // If the caller supplies explicit bounds (e.g. already correctly
         // one-sided, capped at a known extremum so the window can't cross
@@ -247,10 +247,14 @@ namespace subsample_refine {
         // seed sits close to one (the same class of bug found and fixed for
         // compute_s_end/compute_t_end/compute_q_onset in an earlier pass) --
         // callers that already know a safe one-sided range should supply it.
+        // Bounds arrive as sub-sample doubles so callers can pass a landmark
+        // straight through. The slice below is necessarily integer, so widen
+        // outward -- floor the lower, ceil the upper -- and the requested span
+        // is always covered rather than clipped.
         int lo, hi;
-        if (boundLo >= 0 && boundHi >= 0 && boundHi > boundLo) {
-            lo = std::max(0, boundLo);
-            hi = std::min(N - 1, boundHi);
+        if (boundLo >= 0.0 && boundHi >= 0.0 && boundHi > boundLo) {
+            lo = std::max(0, static_cast<int>(std::floor(boundLo)));
+            hi = std::min(N - 1, static_cast<int>(std::ceil(boundHi)));
         }
         else {
             const int half = windowSamples / 2;
@@ -299,4 +303,6 @@ namespace subsample_refine {
         return static_cast<double>(lo) + anchorUp / upsampleFactor;
     }
 
+
+    inline int cubicSplineNotch(const std::vector<double>&, int lo, int, int*) { return lo; }
 }  // namespace subsample_refine
