@@ -24,6 +24,7 @@
 #include <cmath>
 #include <utility>
 #include <fstream>
+#include <iomanip>
 #include <stdexcept>
 #include <algorithm> 
 #include <cstring>
@@ -545,15 +546,23 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
 
     // ---- row loop ----------------------------------------------------------
     const double toMs = (sampleRateHz > 0.0) ? 1000.0 / sampleRateHz : 1.0;
+    // Default 6 significant figures would drop the sub-sample fraction on
+    // 4-digit millisecond values.
+    f << std::setprecision(10);
 
     // Emit one 6-column ECG point group: normalized (auto/user), raw
     // (auto/user), x_ms (auto/user). Any missing piece leaves that field blank.
+    // Positions arrive as sub-sample doubles (the *_auto_ch fields are double),
+    // so the _x_ms columns carry the fraction. Only the amplitude lookup needs
+    // an integer index, and it rounds locally.
     auto emitEcgPoint = [&](const std::vector<double>& ecg,
-        int idx_auto, int idx_user, double ref, bool userToo)
+        double idx_auto, double idx_user, double ref, bool userToo)
         {
-            auto y_of = [&](int idx) -> double {
-                if (idx < 0 || idx >= (int)ecg.size()) return std::nan("");
-                const double y = ecg[idx];
+            auto y_of = [&](double idx) -> double {
+                if (idx < 0.0) return std::nan("");
+                const int i = static_cast<int>(std::lround(idx));
+                if (i < 0 || i >= (int)ecg.size()) return std::nan("");
+                const double y = ecg[i];
                 return std::isnan(y) ? std::nan("") : y;
                 };
             const double y_a = y_of(idx_auto);
@@ -653,17 +662,22 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 // Order MUST match ecgPointNames:
                 //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
                 //   s_end,  t_peak(reactive), t_begin, t_end
-                struct P { int a; int u; };
+                // Autodetect side keeps its sub-sample precision; the user side
+                // is int because MarkerSet stores integer sample indices.
+                // q_peak/s_peak/t_peak are still int upstream (compute_q_peak,
+                // compute_s_peak, compute_t_peak all return int), so those three
+                // columns emit whole samples until those functions return double.
+                struct P { double a; double u; };
                 const P pts[] = {
-                    { (int)std::lround(b.p_peak_auto_ch[c]),  umk.p_peak_ch[c]  },
-                    { (int)std::lround(b.q_begin_auto_ch[c]), umk.q_begin_ch[c] },
-                    { ftAuto.q_idx,         ftUser.q_idx    },
-                    { (int)std::lround(b.r_peak_auto_ch[c]),  b.r_peak_ch[c]  },
-                    { ftAuto.s_idx,         ftUser.s_idx    },
-                    { (int)std::lround(b.s_end_auto_ch[c]),   umk.s_end_ch[c]   },
-                    { tPeakAuto,            tPeakUser       },   // reactive, both sides
-                    { (int)std::lround(b.t_begin_auto_ch[c]), umk.t_begin_ch[c] },
-                    { (int)std::lround(b.t_end_auto_ch[c]),   umk.t_end_ch[c]   }
+                    { b.p_peak_auto_ch[c],  (double)umk.p_peak_ch[c]  },
+                    { b.q_begin_auto_ch[c], (double)umk.q_begin_ch[c] },
+                    { (double)ftAuto.q_idx, (double)ftUser.q_idx      },
+                    { b.r_peak_auto_ch[c],  (double)b.r_peak_ch[c]    },
+                    { (double)ftAuto.s_idx, (double)ftUser.s_idx      },
+                    { b.s_end_auto_ch[c],   (double)umk.s_end_ch[c]   },
+                    { (double)tPeakAuto,    (double)tPeakUser         },   // reactive, both sides
+                    { b.t_begin_auto_ch[c], (double)umk.t_begin_ch[c] },
+                    { b.t_end_auto_ch[c],   (double)umk.t_end_ch[c]   }
                 };
                 for (int k = 0; k < 9; ++k) {
                     // r_peak (index 3) is the only autodetect-only column --

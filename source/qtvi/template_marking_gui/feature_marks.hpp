@@ -84,7 +84,10 @@ public:
 
     // Individual reactive computes (all track user markers live).
     static int compute_t_peak(const std::vector<double>& ecg, int tBegin, int tEnd);
-    static double compute_s_end(const std::vector<double>& ecg, int sUser, double fs, int r_col);
+    // The ONE J-point calculation. Transition detector only (40-sample window,
+    // 4x cubic upsample, fit-and-select via transitionAnchor); re-derives the
+    // S peak internally, so it needs no seed. Returns a sub-sample double.
+    static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col);
     static double compute_q_onset(const std::vector<double>& ecg, int qUser, double fs, int r_idx);
     static double compute_t_end(const std::vector<double>& ecg, int tEndUser, double fs, int r_col);
     static int compute_t_begin(const std::vector<double>& v, int tBeginUser, double fs, int r_idx);
@@ -110,7 +113,7 @@ public:
     };
 
     //find all fiducial markers for PPG
-   static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v,double tR1, int W, double ppgRate);
+    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, double tR1, int W, double ppgRate);
 
     // Sample whose AMPLITUDE is frac of the way from v[a] to v[b] (NOT frac
     // of the sample-index distance). Shared by detect_ppg_fiducials (t80/
@@ -131,7 +134,6 @@ public:
     static double detect_p_peak(const std::vector<double>& ecg_signal, int r_idx, double fs);
     static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs);
     static int detect_q_begin(const std::vector<double>& ecg_signal, int r_idx);
-    static int detect_s_end(const std::vector<double>& ecg_signal, int r_idx, double fs);
     static int detect_t_begin(const std::vector<double>& ecg_signal, int r_idx, double fs);
     static int detect_t_end(const std::vector<double>& ecg_signal, int r_idx, double fs);
 

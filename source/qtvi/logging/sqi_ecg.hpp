@@ -65,7 +65,7 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     const int pPeak = (int)std::lround(FeatureMarks::detect_p_peak(ecg, r_col, fs));
     const int pEnd = FeatureMarks::detect_p_end(ecg, r_col, fs);
     const int qBegin = FeatureMarks::detect_q_begin(ecg, r_col);
-    const int sEnd = FeatureMarks::detect_s_end(ecg, r_col, fs);      // QRS end / J point
+    const int jPoint = (int)std::lround(FeatureMarks::compute_j_point(ecg, fs, r_col));   // QRS end / J point
     const int tBegin = FeatureMarks::detect_t_begin(ecg, r_col, fs);    // T onset
     const int tEnd = FeatureMarks::detect_t_end(ecg, r_col, fs);
 
@@ -74,7 +74,7 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     s.pHi = clampIdx(pEnd >= 0 ? pEnd : r_col);
     s.pLo = clampIdx((pPeak >= 0 && pEnd >= 0) ? (2 * pPeak - pEnd) : s.pHi);
     s.qrsLo = clampIdx(qBegin >= 0 ? qBegin : r_col);
-    s.qrsHi = clampIdx(sEnd >= 0 ? sEnd : r_col);
+    s.qrsHi = clampIdx(jPoint >= 0 ? jPoint : r_col);
     s.stLo = s.qrsHi;
     s.stHi = clampIdx(tBegin >= 0 ? tBegin : s.qrsHi);
     // Isoelectric window for the noise metric: THIS beat's T-end -> the
