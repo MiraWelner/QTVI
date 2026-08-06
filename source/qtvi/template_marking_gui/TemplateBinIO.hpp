@@ -112,13 +112,17 @@ struct TemplateBin {
     // NOT per-anchor and NOT persisted. Kept flat.
     int r_peak_ch[3] = { -1, -1, -1 };
     //sample indicies for each of the 3 ECG channels, auto-detected. -1 = unmarked / not applicable.
-    int p_peak_auto_ch[3] = { -1, -1, -1 };
-    int q_begin_auto_ch[3] = { -1, -1, -1 };
-    int r_peak_auto_ch[3] = { -1, -1, -1 };
-    int s_end_auto_ch[3] = { -1, -1, -1 };
-    int t_begin_auto_ch[3] = { -1, -1, -1 };
-    int t_end_auto_ch[3] = { -1, -1, -1 };
-    int p_begin_auto_ch[3] = { -1, -1, -1 };
+    // Auto-detected ECG landmark positions, stored as DOUBLE (sub-sample
+    // precision from the fit/refine stages; -1 = unset). NOT serialized --
+    // recomputed every loadSubject -- so widening to double is not a .bin
+    // format change. Consumers that need an integer sample index round at use.
+    double p_peak_auto_ch[3] = { -1, -1, -1 };
+    double q_begin_auto_ch[3] = { -1, -1, -1 };
+    double r_peak_auto_ch[3] = { -1, -1, -1 };
+    double s_end_auto_ch[3] = { -1, -1, -1 };
+    double t_begin_auto_ch[3] = { -1, -1, -1 };
+    double t_end_auto_ch[3] = { -1, -1, -1 };
+    double p_begin_auto_ch[3] = { -1, -1, -1 };
 
     // PPG: sample indices into ppgTemplate. Shared across channels.
     int ppg_onset = -1;
@@ -422,8 +426,8 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 const auto& ecg = chs[c]->ecgTemplate_raw;
                 if (ecg.empty()) continue;
                 EcgFeatures ft = computeEcgFeatures(ecg,
-                    b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
-                    b.s_end_auto_ch[c], b.t_end_auto_ch[c],
+                    (int)std::lround(b.p_peak_auto_ch[c]), (int)std::lround(b.q_begin_auto_ch[c]), (int)std::lround(b.r_peak_auto_ch[c]),
+                    (int)std::lround(b.s_end_auto_ch[c]), (int)std::lround(b.t_end_auto_ch[c]),
                     sampleRateHz);
                 if (ft.r_idx < 0 || ft.s_idx < 0) continue;
                 if (ft.r_idx >= (int)ecg.size() || ft.s_idx >= (int)ecg.size()) continue;
@@ -478,8 +482,12 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     static const char* ecgIntervalNames[] = { "qrs", "qt" };
 
     auto emitEcgPointHeader = [&](const char* name, int c) {
-        // r_peak and t_peak are autodetect-only -- no user column emitted.
-        const bool userToo = (std::strcmp(name, "r_peak") != 0 && std::strcmp(name, "t_peak") != 0);
+        // r_peak is the only autodetect-only column (R is never user-placed).
+        // t_peak DOES get a user column: it's reactive, so it has a distinct
+        // value under the auto brackets and under the user brackets, and the
+        // user one is what the operator sees on screen. Keep this rule and the
+        // row loop's `k != 3` test in step -- they are the same rule.
+        const bool userToo = (std::strcmp(name, "r_peak") != 0);
         f << ',' << name << "_ch" << c << "_y_normalized_autodetect";
         if (userToo) f << ',' << name << "_ch" << c << "_y_normalized_user";
         f << ',' << name << "_ch" << c << "_y_mv_raw_autodetect";
@@ -621,8 +629,8 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 const double ref = ecgRef[c];
 
                 EcgFeatures ftAuto = computeEcgFeatures(ecg,
-                    b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
-                    b.s_end_auto_ch[c], b.t_end_auto_ch[c],
+                    (int)std::lround(b.p_peak_auto_ch[c]), (int)std::lround(b.q_begin_auto_ch[c]), (int)std::lround(b.r_peak_auto_ch[c]),
+                    (int)std::lround(b.s_end_auto_ch[c]), (int)std::lround(b.t_end_auto_ch[c]),
                     sampleRateHz);
                 const TemplateBin::MarkerSet& umk = b.marks(anchor);
                 EcgFeatures ftUser = computeEcgFeatures(ecg,
@@ -630,40 +638,55 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                     umk.s_end_ch[c], umk.t_end_ch[c],
                     sampleRateHz);
 
-                // Autodetected T-peak = max between user T-begin/T-end, matching
-                // the on-screen glyph (feature_marks.cpp: g.t_peak_glyph). No
-                // user-adjustable T-peak marker exists, so this column pair emits
-                // autodetect only (like r_peak).
-                const int tPeakAuto = FeatureMarks::compute_t_peak(ecg, umk.t_begin_ch[c], umk.t_end_ch[c]);
+                // T-peak is reactive: there's no T-peak bar, it's the extremum
+                // between the T-begin and T-end bars. So it has two honest
+                // values, and both are emitted through the one shared
+                // FeatureMarks::reactive_ecg -- the autodetect column bracketed
+                // by the *_auto_ch columns, the user column bracketed by the
+                // operator's own bars (i.e. exactly the X drawn on screen).
+                const int tPeakAuto = FeatureMarks::reactive_ecg(ecg,
+                    (int)std::lround(b.t_begin_auto_ch[c]),
+                    (int)std::lround(b.t_end_auto_ch[c])).t_peak;
+                const int tPeakUser = FeatureMarks::reactive_ecg(ecg,
+                    umk.t_begin_ch[c], umk.t_end_ch[c]).t_peak;
 
                 // Order MUST match ecgPointNames:
                 //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
-                //   s_end,  t_peak(computed, autodetect-only), t_begin, t_end
+                //   s_end,  t_peak(reactive), t_begin, t_end
                 struct P { int a; int u; };
                 const P pts[] = {
-                    { b.p_peak_auto_ch[c],  umk.p_peak_ch[c]  },
-                    { b.q_begin_auto_ch[c], umk.q_begin_ch[c] },
+                    { (int)std::lround(b.p_peak_auto_ch[c]),  umk.p_peak_ch[c]  },
+                    { (int)std::lround(b.q_begin_auto_ch[c]), umk.q_begin_ch[c] },
                     { ftAuto.q_idx,         ftUser.q_idx    },
-                    { b.r_peak_auto_ch[c],  b.r_peak_ch[c]  },
+                    { (int)std::lround(b.r_peak_auto_ch[c]),  b.r_peak_ch[c]  },
                     { ftAuto.s_idx,         ftUser.s_idx    },
-                    { b.s_end_auto_ch[c],   umk.s_end_ch[c]   },
-                    { tPeakAuto,            -1              },   // autodetect only
-                    { b.t_begin_auto_ch[c], umk.t_begin_ch[c] },
-                    { b.t_end_auto_ch[c],   umk.t_end_ch[c]   }
+                    { (int)std::lround(b.s_end_auto_ch[c]),   umk.s_end_ch[c]   },
+                    { tPeakAuto,            tPeakUser       },   // reactive, both sides
+                    { (int)std::lround(b.t_begin_auto_ch[c]), umk.t_begin_ch[c] },
+                    { (int)std::lround(b.t_end_auto_ch[c]),   umk.t_end_ch[c]   }
                 };
                 for (int k = 0; k < 9; ++k) {
-                    // r_peak (index 3) and t_peak (index 6) are autodetect-only,
-                    // matching the header's userToo logic.
-                    const bool userToo = (k != 3 && k != 6);
+                    // r_peak (index 3) is the only autodetect-only column --
+                    // same rule as emitEcgPointHeader's userToo above.
+                    const bool userToo = (k != 3);
                     emitEcgPoint(ecg, pts[k].a, pts[k].u, ref, userToo);
                 }
             }
 
         if (wantPulse) {
-            // PPG: onset, p50, peak, dicrotic, peak2, end (matches ppgCols).
+            // PPG: onset, p50, peak, dicrotic, peak2, t80, end (matches ppgCols).
+            // p50/t80 are reactive -- amplitude crossings bracketed by
+            // onset/peak/end -- so each side is derived from its own bar set via
+            // the shared FeatureMarks::reactive_ppg, the same call the on-screen
+            // glyph makes. The stored ppg_t50/ppg_t80 fields are the detector's
+            // originals and are deliberately not used for these columns.
+            const FeatureMarks::ReactivePpg rxAuto = FeatureMarks::reactive_ppg(
+                b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_end_auto);
+            const FeatureMarks::ReactivePpg rxUser = FeatureMarks::reactive_ppg(
+                b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_end);
             emitPulsePoint(b.ppgTemplate, b.ppg_onset_auto, b.ppg_onset,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
-            emitPulsePoint(b.ppgTemplate, b.ppg_t50_auto, b.ppg_t50,
+            emitPulsePoint(b.ppgTemplate, rxAuto.t50, rxUser.t50,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
             emitPulsePoint(b.ppgTemplate, b.ppg_peak_auto, b.ppg_peak,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
@@ -671,7 +694,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
             emitPulsePoint(b.ppgTemplate, b.ppg_peak2_auto, b.ppg_peak2,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
-            emitPulsePoint(b.ppgTemplate, b.ppg_t80_auto, b.ppg_t80,
+            emitPulsePoint(b.ppgTemplate, rxAuto.t80, rxUser.t80,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
             emitPulsePoint(b.ppgTemplate, b.ppg_end_auto, b.ppg_end,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
@@ -713,17 +736,22 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
         } // end if (wantPulse) pulse point groups
 
-        // Autodetected ECG computed features (no user bar; from AUTODETECT markers).
+        // Autodetected ECG glyph columns (p_wave, q_onset, r_wave, t_peak).
+        // p_wave/q_onset/r_wave ARE the stored autodetect columns -- emitted
+        // straight, with no parallel recompute that could disagree with them.
+        // (r_wave in particular: R has exactly one definition, r_peak_auto_ch
+        // from alignment. It is never re-derived by an argmax here.) Only
+        // t_peak is reactive, bracketed by the auto T-begin/T-end to match this
+        // group's "_autodetect" name.
         if (wantEcg)
             for (int c = 0; c < 3; ++c) {
                 const auto& ecg = chs[c]->ecgTemplate_raw;
-                const FeatureMarks::EcgGlyphs gl = FeatureMarks::compute_ecg_glyphs(
-                    ecg, b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.s_end_auto_ch[c],
-                    b.t_begin_auto_ch[c], b.t_end_auto_ch[c], sampleRateHz);
-                emitAutoFeatPt(ecg, gl.p_peak_glyph);
-                emitAutoFeatPt(ecg, gl.q_begin_glyph);
-                emitAutoFeatPt(ecg, gl.r_peak_glyph);
-                emitAutoFeatPt(ecg, gl.t_peak_glyph);
+                emitAutoFeatPt(ecg, (int)std::lround(b.p_peak_auto_ch[c]));
+                emitAutoFeatPt(ecg, (int)std::lround(b.q_begin_auto_ch[c]));
+                emitAutoFeatPt(ecg, (int)std::lround(b.r_peak_auto_ch[c]));
+                emitAutoFeatPt(ecg, FeatureMarks::reactive_ecg(ecg,
+                    (int)std::lround(b.t_begin_auto_ch[c]),
+                    (int)std::lround(b.t_end_auto_ch[c])).t_peak);
             }
         if (wantPulse) {
             // PPG glyph values are just the bin's own auto fields now --

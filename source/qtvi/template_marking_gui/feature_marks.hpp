@@ -67,31 +67,28 @@ public:
     // normalization; needs no s_end bound.
     static int compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
 
-    // Whole-beat reactive bundle for the GUI's glyph overlay. Each field is
-    // auto-computed but tracks the user's movable markers live (see the
-    // compute_* functions below).
-    struct EcgGlyphs {
-        int p_peak_glyph = -1;
-        int q_begin_glyph = -1;
-        int r_peak_glyph = -1;
-        int s_end_glyph = -1;
-        int t_peak_glyph = -1;
-        int t_end_glyph = -1;
-    };
-    static EcgGlyphs compute_ecg_glyphs(const std::vector<double>& ecg,
-        int p_peak, int q_begin, int s_end, int t_begin, int t_end, double fs);
+    // ---- Reactive glyph bundles ------------------------------------------
+    // The ONLY definition of the bracketed glyphs. Each is a pure function of
+    // a trace plus the bracketing bar positions, so the result is NEVER
+    // stored: the GUI calls it per repaint, the writers call it per row, and
+    // no cache exists that could go stale. Pass the *_auto bars to get an
+    // autodetect column, the user bars to get a user column -- that choice is
+    // the caller's, but the formula is only ever here.
+    struct ReactiveEcg { int t_peak = -1; };
+    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg,
+        int t_begin, int t_end);
+
+    struct ReactivePpg { int t50 = -1, t80 = -1; };
+    static ReactivePpg reactive_ppg(const std::vector<double>& ppg,
+        int onset, int peak, int end);
 
     // Individual reactive computes (all track user markers live).
-    static int compute_p_peak(const std::vector<double>& ecg, int p_onset, int q_begin, int r_peak_idx);
     static int compute_t_peak(const std::vector<double>& ecg, int tBegin, int tEnd);
-    static int compute_r_peak(const std::vector<double>& ecg, int qBegin, int sEnd);
-    static int compute_s_end(const std::vector<double>& ecg, int sUser, double fs, int r_col);
-    static int compute_q_onset(const std::vector<double>& ecg, int qUser, double fs, int r_idx);
-    static int compute_t_end(const std::vector<double>& ecg, int tEndUser, double fs, int r_col);
-    static int compute_p_end(const std::vector<double>& ecg, int pEndUser, double fs, int r_idx);
-    static int compute_p_onset(const std::vector<double>& v, int pUser, double fs, int r_idx);
+    static double compute_s_end(const std::vector<double>& ecg, int sUser, double fs, int r_col);
+    static double compute_q_onset(const std::vector<double>& ecg, int qUser, double fs, int r_idx);
+    static double compute_t_end(const std::vector<double>& ecg, int tEndUser, double fs, int r_col);
     static int compute_t_begin(const std::vector<double>& v, int tBeginUser, double fs, int r_idx);
-    static int compute_p_begin(const std::vector<double>& v, int pUser, double fs, int r_idx);
+    static double compute_p_begin(const std::vector<double>& v, int pUser, double fs, int r_idx);
 
     // Single source of truth for EVERY PPG fiducial. Used by seed_all() to
     // populate the *_auto fields AND by the GUI to draw the frozen glyphs --
@@ -137,8 +134,8 @@ public:
     // next-beat P-wave search) can search in the same polarity every
     // detector in this file already uses internally.
     static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
-    static int detect_p_peak(const std::vector<double>& ecg_signal, int r_idx);
-    static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx);
+    static double detect_p_peak(const std::vector<double>& ecg_signal, int r_idx, double fs);
+    static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs);
     static int detect_q_begin(const std::vector<double>& ecg_signal, int r_idx);
     static int detect_s_end(const std::vector<double>& ecg_signal, int r_idx, double fs);
     static int detect_t_begin(const std::vector<double>& ecg_signal, int r_idx, double fs);
@@ -146,8 +143,7 @@ public:
 
     // PPG landmarks.
     static int detect_ppg_onset(const std::vector<double>& pulse);
-    static int detect_ppg_t80(const std::vector<double>& pulse);
-    static int detect_ppg_peak(const std::vector<double>& pulse);
+    static double detect_ppg_peak(const std::vector<double>& pulse);
     static int detect_ppg_dicrotic(const std::vector<double>& pulse);
     static int detect_ppg_peak2(const std::vector<double>& pulse);
     static int detect_ppg_end(const std::vector<double>& pulse);

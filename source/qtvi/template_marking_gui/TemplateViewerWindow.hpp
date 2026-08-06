@@ -103,6 +103,11 @@ private:
 
     // Pushes the current bin's markings into every plot showing it.
     // Used when a PPG marker drags (which propagates across channels).
+    // The ONE place a bin's marker positions and autodetect columns are
+    // pushed into a plot widget. Both the initial page build (showPage) and
+    // every later refresh go through it, so the bars and the glyphs are always
+    // written from the same TemplateBin in the same call.
+    void applyBinToWidget(BinPlotWidget* pw, const TemplateBin& b);
     void refreshBinMarkers(int binIdx);
 
     // B2 focus mode. Two panels: the QRS view and the JT view. The J-point

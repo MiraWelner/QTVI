@@ -124,36 +124,20 @@ public:
     explicit BinPlotWidget(int binIndex, int leadIndex,
         const QString& leadLabel, QWidget* parent = nullptr);
 
-    // Sole data setter. Pass empty std vectors to draw without a band
-    // for that trace; pass -1 for any marker you don't have a position
-    // for. Std vectors that are shorter than the visible sample count
-    // are ignored at draw time (the band silently disappears for that
-    // trace), so it's safe to call this with stale data.
+    // Traces only. Markers and autodetect positions go in through
+    // setMarker()/setAuto(), which TemplateViewerWindow::applyBinToWidget()
+    // calls as one unit -- there is deliberately no second way to get a
+    // position into this widget, since two paths is how the bars and the
+    // glyphs drifted apart in the first place. Std vectors shorter than the
+    // visible sample count are ignored at draw time (the band silently
+    // disappears for that trace), so stale data is safe.
     void setData(const std::vector<double>& ppg,
         const std::vector<double>& ppgIqr,
         const std::vector<double>& ecg,
         const std::vector<double>& ecgIqr,
-        int pPeak, int qBegin, int rPeak, int sEnd, int tPeak, int tEnd,
-        int ppgOnset, int ppgT50, int ppgPeak,
-        int ppgDicrotic, int ppgPeak2, int ppgT80, int ppgEnd,
         double rPeakSample,
         int nEcgBeats = 0,
-        int nPpgBeats = 0,
-        // The full set of PPG auto-detected fiducials (TemplateBin's
-        // ppg_*_auto fields, all from ONE detect_ppg_fiducials() call --
-        // see feature_marks.cpp). These are the single source of truth for
-        // the frozen glyphs: captureGlyphSnapshot() reads them directly,
-        // with no independent recompute. They're separate from
-        // ppgOnset/ppgDicrotic/ppgPeak2/etc. above, which are the current
-        // (possibly user-dragged) bar positions.
-        int ppgOnsetAuto = -1,
-        int ppgPeakAuto = -1,
-        int ppgPeak2Auto = -1,
-        bool ppgPeak2FoundAuto = false,
-        int ppgDicroticAuto = -1,
-        bool ppgDicroticFoundAuto = false,
-        int ppgEndAuto = -1,
-        bool ppgEndFoundAuto = false);
+        int nPpgBeats = 0);
 
     void setHasPPG(bool has);
     bool hasPPG() const { return m_hasPPG; }
@@ -177,18 +161,32 @@ public:
     void setMarker(Marker m, int idx);
     int  marker(Marker m) const { return m_markers[m]; }
 
-    // Load-time autodetected ECG landmark columns (the *_auto_ch fields).
-    // Own-bar glyphs (P-begin, P-peak, Q-begin, S-end, T-end) are FROZEN at
-    // these positions and do NOT follow their bars. -1 => fall back to the bar.
-    struct EcgAuto {
+    // Load-time autodetect positions, ECG (*_auto_ch) and PPG (ppg_*_auto),
+    // in ONE struct set by ONE call. The frozen glyphs are drawn at exactly
+    // these columns and never follow their bars, so dragging a bar leaves its
+    // X where detection put it. -1 => that glyph is not drawn (a failed
+    // detection looks failed; it does NOT silently fall back to the bar).
+    struct AutoMarks {
+        // ECG, from p_begin_auto_ch / p_peak_auto_ch / q_begin_auto_ch /
+        // s_end_auto_ch / t_end_auto_ch.
         int pBegin = -1, pPeak = -1, qBegin = -1, sEnd = -1, tEnd = -1;
+        // PPG, from the ppg_*_auto fields (all from one
+        // FeatureMarks::detect_ppg_fiducials call -- see seed_all()).
+        int ppgOnset = -1, ppgPeak = -1, ppgPeak2 = -1, ppgDicrotic = -1, ppgEnd = -1;
+        bool ppgPeak2Found = false, ppgDicroticFound = false, ppgEndFound = false;
     };
-    void setEcgAuto(const EcgAuto& a) { m_ecgAuto = a; captureGlyphSnapshot(); update(); }
+    // Recaptures the frozen glyph snapshot and repaints. Call this LAST in a
+    // seeding pass (see applyBinToWidget): m_glyphs.ecgRPeak reads the R bar,
+    // which must already be set.
+    void setAuto(const AutoMarks& a) { m_auto = a; captureGlyphSnapshot(); update(); }
 
-    // Recompute the reactive feature glyphs from the current markers and
-    // repaint. Call once after programmatically setting markers (e.g. from
-    // refreshBinMarkers) so the X glyphs track the markers live.
-    void refreshGlyphs() { captureGlyphSnapshot(); update(); }
+    // Reactive glyphs: pure functions of the CURRENT bar positions, computed
+    // on demand at paint time and never stored. T-peak therefore tracks
+    // T-begin/T-end live, per drag pixel, and no caller has to remember to
+    // refresh anything. The formula itself lives in FeatureMarks, shared with
+    // the CSV/bin writers.
+    struct Reactive { int ecgTPeak = -1, ppgT50 = -1, ppgT80 = -1; };
+    Reactive reactiveGlyphs() const;
 
     // Per-trace marker visibility. When false, that group's markers
     // are neither drawn nor hit-testable (drag-pick ignores them).
@@ -255,11 +253,10 @@ protected:
 private:
     int    sampleFromX(double x, double startSample, double ratio) const;
     double xFromSample(int s, double startSample, double ratio) const;
+    // The ONLY hit-test. Bars are clickable; glyphs are display-only and are
+    // deliberately not hit-tested, so a click can never select or drag an
+    // automated mark.
     int    markerAtX(double x) const;
-    // B2 focus mode: hit-test the feature glyphs (X marks). Returns a
-    // Marker-enum routing id (or -1); outCol = the glyph's sample column,
-    // outIsEcg = whether it uses ECG (vs PPG) geometry.
-    int    glyphAtX(double x, int& outCol, bool& outIsEcg) const;
     int    visibleN(bool isEcg) const;
     // Resolve a marker's trace vector, geometry, current visibility,
     // visible-sample bound, and ECG-equivalent rate ratio. ECG, PPG, and
@@ -292,51 +289,35 @@ private:
 
     int m_ecgVisibleN = 0;
     int m_ppgVisibleN = 0;
-    int m_markers[MarkerCount];
+    int m_markers[MarkerCount];   // all -1 until seeded (filled in the ctor)
 
     // Hz per channel (indexed by Channel); 0 = unknown -> rateRatio()
     // falls back to 1.0 for that channel.
     std::array<double, static_cast<size_t>(Channel::Count)> m_rates{};
 
+    // FROZEN glyph columns only -- every field here is a copy of an m_auto
+    // value (bounds-checked against the trace), so nothing in this struct can
+    // drift as the user drags. The reactive glyphs (ECG T-peak, PPG T50/T80)
+    // are deliberately NOT here: they are recomputed on demand by
+    // reactiveGlyphs(), because a stored copy of a derived value is exactly
+    // what has to be manually refreshed and therefore exactly what goes
+    // stale. The one bar-dependent field is ecgRPeak, and R is not draggable.
     struct GlyphSnapshot {
-        // All ECG glyphs read straight from the movable markers now
-        // (P peak, Q onset, R peak, S end, T peak, T end). Each draws an
-        // X at its marker's position; no O fallbacks (a marker is always
-        // set, or the field stays -1 and the draw is skipped).
-        int ecgPBegin = -1, ecgPPeak = -1, ecgQ = -1, ecgQPeak = -1, ecgRPeak = -1, ecgSPeak = -1, ecgS = -1, ecgTPeak = -1, ecgTend = -1;
-        // PPG: sourced directly from the bin's single-source-of-truth
-        // ppg_*_auto fields (see FeatureMarks::detect_ppg_fiducials) -- no
-        // independent glyph recompute, so these can never disagree with
-        // the auto-seeded movable bars (they're set once from setData()
-        // and never change, since dragging a bar only touches the
-        // non-auto TemplateBin fields).
-        int ppgFoot = -1;    // = onset_auto
-        int ppgP1 = -1;      // = peak_auto
+        int ecgPBegin = -1, ecgPPeak = -1, ecgQ = -1, ecgRPeak = -1,
+            ecgS = -1, ecgTend = -1;
+        int ppgFoot = -1;    // = ppgOnset auto
+        int ppgP1 = -1;      // = ppgPeak auto
         int ppgP2 = -1;      bool ppgPeak2Found = false;
         int ppgDic = -1;     bool ppgNotchFound = false;
         int ppgEnd = -1;     bool ppgEndFound = false;
-        // T80/P50 are reactive (NOT from the auto fields): always tracked
-        // live from the CURRENT onset/peak/end markers, recomputed every
-        // capture -- same "reactive" treatment ECG's Q-peak/S-peak get.
-        int ppgT50 = -1;
-        int ppgT80 = -1;
         bool valid = false;
     };
 
     GlyphSnapshot m_glyphs;
 
-    // The full set of PPG auto-detected fiducials (TemplateBin's
-    // ppg_*_auto fields), captured once per setData() call. These feed the
-    // frozen glyphs directly -- no recompute, no freeze flag needed, since
-    // they never change after load (dragging a bar only touches the
-    // separate, non-auto TemplateBin fields in m_markers[Ppg*]).
-    int m_ppgOnsetAuto = -1, m_ppgPeakAuto = -1, m_ppgPeak2Auto = -1;
-    bool m_ppgPeak2FoundAuto = false;
-    int m_ppgDicroticAuto = -1;   bool m_ppgDicroticFoundAuto = false;
-    int m_ppgEndAuto = -1;        bool m_ppgEndFoundAuto = false;
-
-    // Frozen ECG autodetect positions (own-bar glyphs read from here).
-    EcgAuto m_ecgAuto;
+    // Load-time autodetect positions (ECG + PPG). Set once per seeding pass by
+    // setAuto(); never touched by dragging, which only writes m_markers.
+    AutoMarks m_auto;
 
     // Compute the glyph snapshot from current trace + marker state.
     void captureGlyphSnapshot();

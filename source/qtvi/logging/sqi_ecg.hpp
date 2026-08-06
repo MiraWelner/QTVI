@@ -62,8 +62,8 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     const int n = static_cast<int>(ecg.size());
     if (n == 0 || r_col < 0) return s;
 
-    const int pPeak = FeatureMarks::detect_p_peak(ecg, r_col);
-    const int pEnd = FeatureMarks::detect_p_end(ecg, r_col);
+    const int pPeak = (int)std::lround(FeatureMarks::detect_p_peak(ecg, r_col, fs));
+    const int pEnd = FeatureMarks::detect_p_end(ecg, r_col, fs);
     const int qBegin = FeatureMarks::detect_q_begin(ecg, r_col);
     const int sEnd = FeatureMarks::detect_s_end(ecg, r_col, fs);      // QRS end / J point
     const int tBegin = FeatureMarks::detect_t_begin(ecg, r_col, fs);    // T onset
@@ -147,7 +147,7 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
     int motionFlag,
     double fs) {
     BeatSQI q{};
-    q.templateCorr = pearsonSQI(beat, tmpl, 0, seg.tHi+ 0.050 * fs);
+    q.templateCorr = pearsonSQI(beat, tmpl, 0, seg.tHi + 0.050 * fs);
     auto chi = [&](const std::vector<double>& ref, int a, int b) {
         double s = 0.0;
         const int hi = std::min(b, static_cast<int>(std::min(beat.size(), ref.size())));

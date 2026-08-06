@@ -25,13 +25,27 @@
 //   matches ECG's, so this is a no-op for the historical case where every
 //   channel happened to share one rate.
 //
-// Std band: when a per-sample std vector is available for the trace
-// (covering at least the visible samples), the widget paints a
-// translucent gray polygon between mean-std and mean+std underneath
-// the line. The band uses the SAME lo/hi vertical range as the trace
-// so it lines up with the line at every sample. Empty std => no band,
-// just the line.
 // ============================================================================
+// The glpyhs and bars:
+//
+//
+//   FROZEN   -- captured once per seeding pass by setAuto()
+//               (captureGlyphSnapshot) from the bin's autodetect columns.
+//               Does NOT follow subsequent drags.
+//   REACTIVE -- never stored. reactiveGlyphs() recomputes it from the current
+//               bars at every paint, via the same FeatureMarks functions the
+//               CSV/bin writers use.
+//
+// Marks:
+//   ECG - P peak, Q begin, Q peak (reactive), R peak, S peak (reactive),
+//         S end, T peak, T end. All drawn as X.
+//   PPG - foot, P1, P50, dicrotic notch, P2, end. Each of P1/P50/dic/P2
+//         falls back to an O glyph at a sensible midpoint if the shape
+//         detection didn't find a real landmark.
+// ECG glyphs use the left-axis (yLo,yHi) scale + ECG x-geometry; PPG
+// glyphs use the shared right-axis (pLo,pHi) scale + foot-anchored x.
+// ============================================================================
+
 #include "BinPlotWidget.hpp"
 #include "feature_marks.hpp"
 #include <QPainter>
@@ -241,6 +255,9 @@ BinPlotWidget::BinPlotWidget(int binIndex, int leadIndex,
     setMinimumHeight(100);
     setMouseTracking(true);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    // Every marker starts unset. Anything the seeding pass doesn't provide
+    // stays -1 and is simply not drawn -- never an indeterminate column.
+    std::fill(std::begin(m_markers), std::end(m_markers), -1);
 }
 
 void BinPlotWidget::setChannelRate(Channel ch, double hz) {
@@ -265,20 +282,9 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     const std::vector<double>& ppgIqr,
     const std::vector<double>& ecg,
     const std::vector<double>& ecgIqr,
-    int pPeak, int qBegin, int rPeak, int sEnd, int tPeak, int tEnd,
-    int ppgOnset, int ppgP50, int ppgPeak,
-    int ppgDicrotic, int ppgPeak2, int ppgT80, int ppgEnd,
     double rPeakSample,
     int nEcgBeats,
-    int nPpgBeats,
-    int ppgOnsetAuto,
-    int ppgPeakAuto,
-    int ppgPeak2Auto,
-    bool ppgPeak2FoundAuto,
-    int ppgDicroticAuto,
-    bool ppgDicroticFoundAuto,
-    int ppgEndAuto,
-    bool ppgEndFoundAuto)
+    int nPpgBeats)
 {
     m_nEcgBeats = nEcgBeats;
     m_nPpgBeats = nPpgBeats;
@@ -286,35 +292,12 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_ppgIqr = ppgIqr;
     m_ecg = ecg;
     m_ecgIqr = ecgIqr;
-    m_markers[EcgPPeak] = pPeak;
-    m_markers[EcgQBegin] = qBegin;
-    m_markers[EcgRPeak] = rPeak;
-    m_markers[EcgSEnd] = sEnd;
-    m_markers[EcgTBegin] = tPeak;
-    m_markers[EcgTEnd] = tEnd;
-    m_markers[PpgOnset] = ppgOnset;
-    m_markers[PpgT50] = ppgP50;
-    m_markers[PpgPeak] = ppgPeak;
-    m_markers[PpgDicrotic] = ppgDicrotic;
-    m_markers[PpgPeak2] = ppgPeak2;
-    m_markers[PpgT80] = ppgT80;
-    m_markers[PpgEnd] = ppgEnd;
-    // Fall back to the current bar position if no true auto value was
-    // supplied, so the glyph snapshot always has something sensible to
-    // seed from.
-    m_ppgOnsetAuto = (ppgOnsetAuto >= 0) ? ppgOnsetAuto : ppgOnset;
-    m_ppgPeakAuto = (ppgPeakAuto >= 0) ? ppgPeakAuto : ppgPeak;
-    m_ppgPeak2Auto = (ppgPeak2Auto >= 0) ? ppgPeak2Auto : ppgPeak2;
-    m_ppgPeak2FoundAuto = ppgPeak2FoundAuto;
-    m_ppgDicroticAuto = (ppgDicroticAuto >= 0) ? ppgDicroticAuto : ppgDicrotic;
-    m_ppgDicroticFoundAuto = ppgDicroticFoundAuto;
-    m_ppgEndAuto = (ppgEndAuto >= 0) ? ppgEndAuto : ppgEnd;
-    m_ppgEndFoundAuto = ppgEndFoundAuto;
     m_rPeakSample = rPeakSample;
     m_hasPPG = !ppg.empty();
     m_ecgVisibleN = std::max(static_cast<int>(m_ecg.size()), 2);
     m_ppgVisibleN = visiblePpgCount(static_cast<int>(m_ppg.size()));
-    captureGlyphSnapshot();   // frozen PPG glyphs = the auto fields, straight through
+    // No captureGlyphSnapshot() here: markers aren't in yet. setAuto(), called
+    // last in the seeding pass, does the capture.
     updateGeometry();
     update();
 }
@@ -387,6 +370,22 @@ void BinPlotWidget::setArterialTraces(const std::vector<double>& abp,
 void BinPlotWidget::setMarker(Marker m, int idx) {
     m_markers[m] = idx;
     update();
+}
+
+// Reactive glyphs. No arithmetic lives here -- FeatureMarks owns the formula,
+// and the CSV/bin writers call the same functions with the bar set they're
+// reporting on, so the screen and the files agree by construction.
+BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
+    Reactive r;
+    r.ecgTPeak = FeatureMarks::reactive_ecg(
+        m_ecg, m_markers[EcgTBegin], m_markers[EcgTEnd]).t_peak;
+    if (m_hasPPG) {
+        const FeatureMarks::ReactivePpg p = FeatureMarks::reactive_ppg(
+            m_ppg, m_markers[PpgOnset], m_markers[PpgPeak], m_markers[PpgEnd]);
+        r.ppgT50 = p.t50;
+        r.ppgT80 = p.t80;
+    }
+    return r;
 }
 
 void BinPlotWidget::setBackgroundTraces(
@@ -484,60 +483,6 @@ bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
     return false;
 }
 
-int BinPlotWidget::glyphAtX(double x, int& outCol, bool& outIsEcg) const {
-    // Hit-test the feature GLYPHS (the X marks), as opposed to markerAtX
-    // which hit-tests the draggable bars. B2 focus mode selects landmarks by
-    // clicking their glyph. Returns a Marker-enum routing id (so refreshFocus
-    // can label/route it) or -1 if no glyph is near x. outCol receives the
-    // glyph's sample column; outIsEcg whether it rides ECG or PPG geometry.
-    if (!m_glyphs.valid) return -1;
-
-    struct GlyphHit { int col; bool isEcg; int routeMarker; };
-    const double ecgRatio = rateRatio(Channel::Ecg);
-    const double ppgRatio = rateRatio(Channel::Ppg);
-
-    // Map each ECG glyph to (column, geometry, routing Marker id). The R-peak
-    // glyph (which has no draggable bar) routes to EcgRPeak so the focus
-    // panel can show it. T-peak glyph routes to EcgTBegin so refreshFocus
-    // sends it to the JT-side panel.
-    const std::vector<GlyphHit> hits = {
-        { m_glyphs.ecgPBegin, true,  EcgPBegin },
-        { m_glyphs.ecgPPeak,  true,  EcgPPeak  },
-        { m_glyphs.ecgQ,      true,  EcgQBegin },
-        { m_glyphs.ecgRPeak,  true,  EcgRPeak  },
-        { m_glyphs.ecgS,      true,  EcgSEnd   },
-        { m_glyphs.ecgTPeak,  true,  EcgTBegin },
-        { m_glyphs.ecgTend,   true,  EcgTEnd   },
-        // PPG glyphs (B2 focus mode extended to PPG). All ride PPG geometry
-        // (isEcg=false). Routed to their PPG Marker ids so refreshFocus can
-        // pull the PPG template + label them.
-        { m_glyphs.ppgFoot,   false, PpgOnset    },
-        { m_glyphs.ppgP1,     false, PpgPeak     },
-        { m_glyphs.ppgDic,    false, PpgDicrotic },
-        { m_glyphs.ppgP2,     false, PpgPeak2    },
-        { m_glyphs.ppgEnd,    false, PpgEnd      },
-        { m_glyphs.ppgT50,    false, PpgT50      },
-        { m_glyphs.ppgT80,    false, PpgT80      },
-    };
-
-    int best = -1;
-    double bestDist = click_radius_around_marker + 1.0;
-    for (const auto& h : hits) {
-        if (h.col < 0) continue;
-        // NOTE: no visibility gate here (unlike markerAtX). The feature
-        // glyphs are always drawn regardless of the marker-visibility
-        // toggles, so they're always selectable.
-        const double startSample = h.isEcg ? 0.0 : ppgStartSample();
-        const double ratio = h.isEcg ? ecgRatio : ppgRatio;
-        const double gx = xFromSample(h.col, startSample, ratio);
-        const double d = std::abs(x - gx);
-        if (d < bestDist) {
-            bestDist = d; best = h.routeMarker;
-            outCol = h.col; outIsEcg = h.isEcg;
-        }
-    }
-    return best;
-}
 
 int BinPlotWidget::markerAtX(double x) const {
     int best = -1;
@@ -903,91 +848,50 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     s = std::clamp(s, 0, std::max(0, visN - 1));
     m_markers[m_dragMarker] = s;
     emit markerMoved(m_binIndex, m_leadIndex, m_dragMarker, s);
-    // Always recompute: ECG's Q-peak/S-peak track the live ECG bars by
-    // design. The frozen PPG glyphs (foot/P1/dicrotic/P2/end) are sourced
-    // from the auto members, not from m_markers, so they can't drift no
-    // matter which bar is dragged. T80/P50 ARE reactive to the current PPG
-    // bars, so this needs to run on PPG drags too for them to track live.
-    captureGlyphSnapshot();
+    // No snapshot recapture: the snapshot holds only frozen autodetect
+    // columns, which a drag cannot affect. The reactive glyphs (T-peak,
+    // T50/T80) are recomputed inside the repaint this update() triggers, so
+    // they track the bar live without anything having to be invalidated.
     update();
 }
 
 void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
     m_dragMarker = -1;
 }
-// ============================================================================
-// Feature-glyph QC layer (formerly BinPlotGlyphs.cpp)
-//
-// Landmark positions are captured ONCE at setData() (captureGlyphSnapshot)
-// from the current markers and frozen -- they do NOT follow subsequent
-// drags. drawFeatureGlyphs() just renders the stored snapshot.
-//
-// Marks:
-//   ECG - P peak, Q begin, Q peak (reactive), R peak, S peak (reactive),
-//         S end, T peak, T end. All drawn as X.
-//   PPG - foot, P1, P50, dicrotic notch, P2, end. Each of P1/P50/dic/P2
-//         falls back to an O glyph at a sensible midpoint if the shape
-//         detection didn't find a real landmark.
-// ECG glyphs use the left-axis (yLo,yHi) scale + ECG x-geometry; PPG
-// glyphs use the shared right-axis (pLo,pHi) scale + foot-anchored x.
-// ============================================================================
 
 void BinPlotWidget::captureGlyphSnapshot() {
     m_glyphs = GlyphSnapshot{};   // reset to all -1 / false
 
     if ((int)m_ecg.size() >= 3) {
         const int N = (int)m_ecg.size();
-        // Frozen (own-bar) glyphs: read from the load-time auto positions, NOT
-        // the live markers, so dragging a bar leaves its X where detection put
-        // it. Fall back to the bar only if no auto value was supplied (-1).
-        auto frozen = [&](int autoVal, int barVal) {
-            const int v = (autoVal >= 0) ? autoVal : barVal;
-            return (v >= 0 && v < N) ? v : -1;
-            };
-        m_glyphs.ecgPBegin = frozen(m_ecgAuto.pBegin, m_markers[EcgPBegin]);
-        m_glyphs.ecgPPeak = frozen(m_ecgAuto.pPeak, m_markers[EcgPPeak]);
-        m_glyphs.ecgQ = frozen(m_ecgAuto.qBegin, m_markers[EcgQBegin]);
-        m_glyphs.ecgS = frozen(m_ecgAuto.sEnd, m_markers[EcgSEnd]);
-        m_glyphs.ecgTend = frozen(m_ecgAuto.tEnd, m_markers[EcgTEnd]);
+        // Frozen glyphs: straight from the autodetect columns, bounds-checked
+        // only. NOT from the live markers, so dragging a bar leaves its X where
+        // detection put it -- and NOT falling back to the bar when an auto
+        // value is missing, so a failed detection reads as missing instead of
+        // masquerading as a detection that happens to sit under the bar.
+        auto frozen = [&](int v) { return (v >= 0 && v < N) ? v : -1; };
+        m_glyphs.ecgPBegin = frozen(m_auto.pBegin);
+        m_glyphs.ecgPPeak = frozen(m_auto.pPeak);
+        m_glyphs.ecgQ = frozen(m_auto.qBegin);
+        m_glyphs.ecgS = frozen(m_auto.sEnd);
+        m_glyphs.ecgTend = frozen(m_auto.tEnd);
 
-        // R is NEVER autodetected: draw it at the passed-in R marker
-        // (m_markers[EcgRPeak] = r_peak_ch = r_col, straight from peak-finding
-        // through alignment). No argmax, no compute_r_wave, no window search.
-        m_glyphs.ecgRPeak = m_markers[EcgRPeak];
-
-        // Responsive (bracketed) glyph: T peak = extremum between T-begin and
-        // T-end. Recomputed live from the current markers so it tracks as those
-        // bars move. Q-peak/S-peak remain unused (-1), as before.
-        m_glyphs.ecgTPeak = FeatureMarks::compute_t_peak(
-            m_ecg, m_markers[EcgTBegin], m_markers[EcgTEnd]);
-        m_glyphs.ecgQPeak = -1;
-        m_glyphs.ecgSPeak = -1;
+        // R is NEVER autodetected: draw it at the R bar (m_markers[EcgRPeak] =
+        // r_peak_ch = r_col, straight from peak-finding through alignment). No
+        // argmax, no window search -- there is exactly one definition of R in
+        // this codebase and this is it. R isn't draggable, so reading the bar
+        // here is safe as long as setAuto() runs last in the seeding pass.
+        m_glyphs.ecgRPeak = frozen(m_markers[EcgRPeak]);
     }
 
     if (m_hasPPG && (int)m_ppg.size() >= 3) {
-        // Frozen glyphs: read DIRECTLY from the auto fields captured in
-        // setData() -- these are the single source of truth (see
-        // FeatureMarks::detect_ppg_fiducials), so there's nothing to
-        // recompute and nothing that can drift from the auto-seeded
-        // movable bars. No freeze flag needed either: these members never
-        // change after setData() loads new data.
-        m_glyphs.ppgFoot = m_ppgOnsetAuto;
-        m_glyphs.ppgP1 = m_ppgPeakAuto;
-        m_glyphs.ppgP2 = m_ppgPeak2Auto;        m_glyphs.ppgPeak2Found = m_ppgPeak2FoundAuto;
-        m_glyphs.ppgDic = m_ppgDicroticAuto;    m_glyphs.ppgNotchFound = m_ppgDicroticFoundAuto;
-        m_glyphs.ppgEnd = m_ppgEndAuto;         m_glyphs.ppgEndFound = m_ppgEndFoundAuto;
-
-        // T80 and T50 are reactive, not frozen: always recomputed from the
-        // CURRENT markers (peak is auto-only/effectively fixed; onset and
-        // end are still draggable), same treatment as the ECG Q-peak/
-        // S-peak reactive glyphs, just applied on the PPG side. Uses the
-        // same amplitude_crossing formula the auto-detection itself uses,
-        // so the two never disagree on what "80% down" means.
-        const int pk = m_markers[PpgPeak];
-        const int en = m_markers[PpgEnd];
-        const int on = m_markers[PpgOnset];
-        if (pk >= 0 && en > pk) m_glyphs.ppgT80 = FeatureMarks::amplitude_crossing(m_ppg, pk, en, 0.80);
-        if (on >= 0 && pk > on) m_glyphs.ppgT50 = FeatureMarks::amplitude_crossing(m_ppg, on, pk, 0.50);
+        const int N = (int)m_ppg.size();
+        auto frozen = [&](int v) { return (v >= 0 && v < N) ? v : -1; };
+        m_glyphs.ppgFoot = frozen(m_auto.ppgOnset);
+        m_glyphs.ppgP1 = frozen(m_auto.ppgPeak);
+        m_glyphs.ppgP2 = frozen(m_auto.ppgPeak2);      m_glyphs.ppgPeak2Found = m_auto.ppgPeak2Found;
+        m_glyphs.ppgDic = frozen(m_auto.ppgDicrotic);  m_glyphs.ppgNotchFound = m_auto.ppgDicroticFound;
+        m_glyphs.ppgEnd = frozen(m_auto.ppgEnd);       m_glyphs.ppgEndFound = m_auto.ppgEndFound;
     }
 
     m_glyphs.valid = true;
@@ -997,6 +901,9 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
     double yLo, double yHi, double pLo, double pHi, int ph) const
 {
     if (!m_glyphs.valid) return;
+
+    // Reactive columns, recomputed every paint from the current bars.
+    const Reactive rx = reactiveGlyphs();
 
     auto plotY = [&](double val, double lo, double hi) {
         const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
@@ -1030,7 +937,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         g(m_glyphs.ecgQ);       // Q onset
         g(m_glyphs.ecgRPeak);   // R wave
         g(m_glyphs.ecgS);       // S end
-        g(m_glyphs.ecgTPeak);   // T peak (between T begin/end)
+        g(rx.ecgTPeak);         // T peak (reactive: between the T-begin/T-end bars)
         g(m_glyphs.ecgTend);    // T end (= marker)
     }
 
@@ -1052,7 +959,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             p.drawEllipse(QPointF(x, y), 4.0, 4.0);
             };
         g(m_glyphs.ppgFoot);
-        g(m_glyphs.ppgT50);   // reactive: 50% onset->peak, always a computed X
+        g(rx.ppgT50);         // reactive: 50% onset->peak, always a computed X
         g(m_glyphs.ppgP1);
         if (m_glyphs.ppgNotchFound) g(m_glyphs.ppgDic);
         else                        circ(m_glyphs.ppgDic);
@@ -1060,6 +967,6 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         else                        circ(m_glyphs.ppgP2);
         if (m_glyphs.ppgEndFound)   g(m_glyphs.ppgEnd);
         else                        circ(m_glyphs.ppgEnd);
-        g(m_glyphs.ppgT80);   // reactive: 80% peak->end, always a computed X
+        g(rx.ppgT80);         // reactive: 80% peak->end, always a computed X
     }
 }

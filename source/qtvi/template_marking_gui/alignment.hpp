@@ -349,8 +349,8 @@ namespace alignment {
                 std::vector<double> local(beat.begin() + localLo, beat.begin() + localHi);
                 const int local_r = next_r - localLo;
 
-                const int p_pk_local = FeatureMarks::detect_p_peak(local, local_r);
-                const int p_on_local = FeatureMarks::compute_p_begin(local, p_pk_local, fs, local_r);
+                const int p_pk_local = (int)std::lround(FeatureMarks::detect_p_peak(local, local_r, fs));
+                const int p_on_local = (int)std::lround(FeatureMarks::compute_p_begin(local, p_pk_local, fs, local_r));
                 if (p_on_local < 0) return { -1, -1 };
                 const int p_on = p_on_local + localLo;   // back to shared column space
 
@@ -368,7 +368,7 @@ namespace alignment {
                 const auto& beat = out.beats[i];
                 const int N = static_cast<int>(beat.size());
                 const int q_seed = FeatureMarks::detect_q_begin(beat, R_anchor);
-                const int q_on = FeatureMarks::compute_q_onset(beat, q_seed, fs, R_anchor);
+                const int q_on = (int)std::lround(FeatureMarks::compute_q_onset(beat, q_seed, fs, R_anchor));
                 if (q_on <= 0 || q_on >= N) return { -1, -1 };
                 const int w = std::max(3, static_cast<int>(std::lround(0.040 * fs)));  // 40 ms
                 const int lo = std::max(0, q_on - w);

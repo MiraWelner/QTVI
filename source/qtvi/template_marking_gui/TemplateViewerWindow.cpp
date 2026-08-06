@@ -593,25 +593,11 @@ void TemplateViewerWindow::showPage() {
                 ? normalize_ppg_or_similar(artPSrc, b.art_pulm_onset, 3)
                 : artPSrc;
 
-            pw->setData(ppgN, ppgIqr, ecgN, ecgIqr,
-                b.marks(currentAnchor()).p_peak_ch[c], b.marks(currentAnchor()).q_begin_ch[c], b.r_peak_ch[c],
-                b.marks(currentAnchor()).s_end_ch[c], b.marks(currentAnchor()).t_begin_ch[c], b.marks(currentAnchor()).t_end_ch[c],
-                b.ppg_onset, b.ppg_t50, b.ppg_peak,
-                b.ppg_dicrotic, b.ppg_peak2, b.ppg_t80, b.ppg_end,
-                rPeak,
+            // Traces only. Every marker and autodetect column arrives via the
+            // single applyBinToWidget() call below.
+            pw->setData(ppgN, ppgIqr, ecgN, ecgIqr, rPeak,
                 static_cast<int>(nEcgBeats),
-                static_cast<int>(b.ppg_n_beats),
-                b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_peak2_auto,
-                b.ppg_peak2_found_auto,
-                b.ppg_dicrotic_auto, b.ppg_dicrotic_found_auto,
-                b.ppg_end_auto, b.ppg_end_found_auto);
-
-            // Frozen ECG autodetect positions for the own-bar glyphs
-            // (P-begin, P-peak, Q-begin, S-end, T-end). These come from the
-            // *_auto_ch fields and do NOT move when the user drags a bar.
-            pw->setEcgAuto({ b.p_begin_auto_ch[c], b.p_peak_auto_ch[c],
-                             b.q_begin_auto_ch[c], b.s_end_auto_ch[c],
-                             b.t_end_auto_ch[c] });
+                static_cast<int>(b.ppg_n_beats));
 
             pw->setHasPPG(hasPPG);
 
@@ -629,25 +615,14 @@ void TemplateViewerWindow::showPage() {
                 pw->setBackgroundTraces(bg);
             }
 
-            // Arterial traces for marker geometry/bounds, plus the markers
-            // themselves (shared across leads, like PPG).
+            // Arterial traces for marker geometry/bounds. The arterial markers
+            // themselves come from applyBinToWidget() with all the others.
             pw->setArterialTraces(abpN, artN, artPN,
                 b.abpTemplate_iqr, b.artTemplate_iqr, b.artPulmTemplate_iqr);
-            pw->setMarker(BinPlotWidget::AbpOnset, b.abp_onset);
-            pw->setMarker(BinPlotWidget::AbpPeak, b.abp_peak);
-            pw->setMarker(BinPlotWidget::AbpDicrotic, b.abp_dicrotic);
-            pw->setMarker(BinPlotWidget::AbpPeak2, b.abp_peak2);
-            pw->setMarker(BinPlotWidget::AbpEnd, b.abp_end);
-            pw->setMarker(BinPlotWidget::ArtOnset, b.art_onset);
-            pw->setMarker(BinPlotWidget::ArtPeak, b.art_peak);
-            pw->setMarker(BinPlotWidget::ArtDicrotic, b.art_dicrotic);
-            pw->setMarker(BinPlotWidget::ArtPeak2, b.art_peak2);
-            pw->setMarker(BinPlotWidget::ArtEnd, b.art_end);
-            pw->setMarker(BinPlotWidget::ArtPulmOnset, b.art_pulm_onset);
-            pw->setMarker(BinPlotWidget::ArtPulmPeak, b.art_pulm_peak);
-            pw->setMarker(BinPlotWidget::ArtPulmDicrotic, b.art_pulm_dicrotic);
-            pw->setMarker(BinPlotWidget::ArtPulmPeak2, b.art_pulm_peak2);
-            pw->setMarker(BinPlotWidget::ArtPulmEnd, b.art_pulm_end);
+
+            // Seed every bar + every autodetect column, in one call, after all
+            // traces are in place (the glyph capture needs them).
+            applyBinToWidget(pw, b);
 
             if (b.bad_ppg == 1)
                 pw->setState(BinPlotWidget::State::BadPPG);
@@ -996,8 +971,8 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         for (int c = 0; c < 3; ++c) {
             const auto& ecg = chs[c]->ecgTemplate_raw;
             ftAuto[c] = computeEcgFeatures(ecg,
-                b.p_peak_auto_ch[c], b.q_begin_auto_ch[c], b.r_peak_auto_ch[c],
-                b.s_end_auto_ch[c], b.t_end_auto_ch[c],
+                (int)std::lround(b.p_peak_auto_ch[c]), (int)std::lround(b.q_begin_auto_ch[c]), (int)std::lround(b.r_peak_auto_ch[c]),
+                (int)std::lround(b.s_end_auto_ch[c]), (int)std::lround(b.t_end_auto_ch[c]),
                 m_sampleRate);
             const TemplateBin::MarkerSet& fmk = b.marks(currentAnchor());
             ftUser[c] = computeEcgFeatures(ecg,
@@ -1012,15 +987,15 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         int ecgAuto[3][9], ecgUser[3][9];
         const TemplateBin::MarkerSet& umk = b.marks(currentAnchor());
         for (int c = 0; c < 3; ++c) {
-            ecgAuto[c][0] = b.p_begin_auto_ch[c];
-            ecgAuto[c][1] = b.p_peak_auto_ch[c];
-            ecgAuto[c][2] = b.q_begin_auto_ch[c];
+            ecgAuto[c][0] = (int)std::lround(b.p_begin_auto_ch[c]);
+            ecgAuto[c][1] = (int)std::lround(b.p_peak_auto_ch[c]);
+            ecgAuto[c][2] = (int)std::lround(b.q_begin_auto_ch[c]);
             ecgAuto[c][3] = ftAuto[c].q_idx;
-            ecgAuto[c][4] = b.r_peak_auto_ch[c];
+            ecgAuto[c][4] = (int)std::lround(b.r_peak_auto_ch[c]);
             ecgAuto[c][5] = ftAuto[c].s_idx;
-            ecgAuto[c][6] = b.s_end_auto_ch[c];
-            ecgAuto[c][7] = b.t_begin_auto_ch[c];
-            ecgAuto[c][8] = b.t_end_auto_ch[c];
+            ecgAuto[c][6] = (int)std::lround(b.s_end_auto_ch[c]);
+            ecgAuto[c][7] = (int)std::lround(b.t_begin_auto_ch[c]);
+            ecgAuto[c][8] = (int)std::lround(b.t_end_auto_ch[c]);
             ecgUser[c][0] = umk.p_begin_ch[c];
             ecgUser[c][1] = umk.p_peak_ch[c];
             ecgUser[c][2] = umk.q_begin_ch[c];
@@ -1033,10 +1008,18 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         }
 
         // Pulse marker positions, order matching PPG_MARKERS / ABP_MARKERS etc.
-        const int ppgAuto[7] = { b.ppg_onset_auto, b.ppg_t50_auto, b.ppg_peak_auto,
-                                 b.ppg_dicrotic_auto, b.ppg_peak2_auto, b.ppg_t80_auto, b.ppg_end_auto };
-        const int ppgUser[7] = { b.ppg_onset, b.ppg_t50, b.ppg_peak,
-                                 b.ppg_dicrotic, b.ppg_peak2, b.ppg_t80, b.ppg_end };
+        // T50/T80 are reactive: bracketed by onset/peak/end, never stored. The
+        // autodetect column brackets with the *_auto bars, the user column with
+        // the user bars, both through the same FeatureMarks::reactive_ppg the
+        // on-screen glyph uses -- so what is plotted is what is exported.
+        const FeatureMarks::ReactivePpg rxPpgAuto = FeatureMarks::reactive_ppg(
+            b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_end_auto);
+        const FeatureMarks::ReactivePpg rxPpgUser = FeatureMarks::reactive_ppg(
+            b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_end);
+        const int ppgAuto[7] = { b.ppg_onset_auto, rxPpgAuto.t50, b.ppg_peak_auto,
+                                 b.ppg_dicrotic_auto, b.ppg_peak2_auto, rxPpgAuto.t80, b.ppg_end_auto };
+        const int ppgUser[7] = { b.ppg_onset, rxPpgUser.t50, b.ppg_peak,
+                                 b.ppg_dicrotic, b.ppg_peak2, rxPpgUser.t80, b.ppg_end };
         const int abpAuto[5] = { b.abp_onset_auto, b.abp_peak_auto,
                                  b.abp_dicrotic_auto, b.abp_peak2_auto, b.abp_end_auto };
         const int abpUser[5] = { b.abp_onset, b.abp_peak,
@@ -1079,14 +1062,18 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             };
         // Emit ",1" if row equals marker index, ",<blank>" otherwise.
         // Autodetected computed feature indices (no user bar; from AUTODETECT markers).
+        // Autodetect glyph columns. p_wave / q_onset / r_wave ARE the stored
+        // autodetect columns -- emitted directly, with no parallel recompute
+        // that could disagree with them. Only t_peak is derived, and it is
+        // bracketed by the AUTO T-begin/T-end here to match this group's name.
         const ChannelTemplateData* gchs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-        FeatureMarks::EcgGlyphs egl[3];
+        int tPeakAutoGlyph[3];
         for (int gc = 0; gc < 3; ++gc)
-            egl[gc] = FeatureMarks::compute_ecg_glyphs(
-                gchs[gc]->ecgTemplate_raw, b.p_peak_auto_ch[gc], b.q_begin_auto_ch[gc],
-                b.s_end_auto_ch[gc], b.t_begin_auto_ch[gc], b.t_end_auto_ch[gc], m_sampleRate);
-        // PPG glyph locations are just the bin's own auto fields now --
-        // there's no separate glyph recompute anymore (see
+            tPeakAutoGlyph[gc] = FeatureMarks::reactive_ecg(
+                gchs[gc]->ecgTemplate_raw,
+                (int)std::lround(b.t_begin_auto_ch[gc]),
+                (int)std::lround(b.t_end_auto_ch[gc])).t_peak;
+        // PPG glyph locations are just the bin's own auto fields (see
         // FeatureMarks::detect_ppg_fiducials).
         auto emitLoc = [&](int markerIdx, int row) {
             f << ',';
@@ -1115,10 +1102,10 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             for (int k = 0; k < 5; ++k) { emitLoc(artAuto[k], row);  emitLoc(artUser[k], row); }
             for (int k = 0; k < 5; ++k) { emitLoc(artpAuto[k], row); emitLoc(artpUser[k], row); }
             for (int gc = 0; gc < 3; ++gc) {
-                // R is never autodetected: emit the passed-in R (r_peak_auto =
-                // r_col), not egl[gc].r_peak_glyph (compute_r_wave argmax).
-                emitLoc(egl[gc].p_peak_glyph, row); emitLoc(egl[gc].q_begin_glyph, row);
-                emitLoc(b.r_peak_auto_ch[gc], row); emitLoc(egl[gc].t_peak_glyph, row);
+                emitLoc((int)std::lround(b.p_peak_auto_ch[gc]), row);
+                emitLoc((int)std::lround(b.q_begin_auto_ch[gc]), row);
+                emitLoc((int)std::lround(b.r_peak_auto_ch[gc]), row);
+                emitLoc(tPeakAutoGlyph[gc], row);
             }
             emitLoc(b.ppg_onset_auto, row); emitLoc(b.ppg_peak_auto, row);
             emitLoc(b.ppg_dicrotic_auto, row);
@@ -1183,41 +1170,79 @@ void TemplateViewerWindow::applyMarkerVisibility() {
 // Marker movement
 // ========================================================================
 
+// ============================================================================
+// The single seeding path from a TemplateBin into a plot widget.
+//
+// Every draggable bar and every frozen autodetect column is written here, from
+// one bin, in one pass. There is no second list anywhere: showPage() calls this
+// on build and refreshBinMarkers() calls it on every later change, so a bar and
+// its glyph can never be seeded from different places (which is how the P-onset
+// bar ended up unseeded while its glyph was drawn).
+//
+// setAuto() MUST stay last: it performs the glyph capture, and the frozen
+// snapshot reads the R bar.
+// ============================================================================
+void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin& b) {
+    const int c = pw->leadIndex();
+    const TemplateBin::MarkerSet& mk = b.marks(currentAnchor());
+
+    // ---- draggable bars ----------------------------------------------------
+    pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin_ch[c]);
+    pw->setMarker(BinPlotWidget::EcgPPeak, mk.p_peak_ch[c]);
+    pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_begin_ch[c]);
+    pw->setMarker(BinPlotWidget::EcgRPeak, b.r_peak_ch[c]);   // auto-only, no bar drawn
+    pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end_ch[c]);
+    pw->setMarker(BinPlotWidget::EcgTBegin, mk.t_begin_ch[c]);
+    pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end_ch[c]);
+
+    pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
+    pw->setMarker(BinPlotWidget::PpgPeak, b.ppg_peak);
+    pw->setMarker(BinPlotWidget::PpgDicrotic, b.ppg_dicrotic);
+    pw->setMarker(BinPlotWidget::PpgPeak2, b.ppg_peak2);
+    pw->setMarker(BinPlotWidget::PpgEnd, b.ppg_end);
+    // T50/T80 are neither drawn nor draggable -- they're reactive glyphs now.
+    // Kept in sync anyway so the enum entries never hold a stale position.
+    pw->setMarker(BinPlotWidget::PpgT50, b.ppg_t50);
+    pw->setMarker(BinPlotWidget::PpgT80, b.ppg_t80);
+
+    pw->setMarker(BinPlotWidget::AbpOnset, b.abp_onset);
+    pw->setMarker(BinPlotWidget::AbpPeak, b.abp_peak);
+    pw->setMarker(BinPlotWidget::AbpDicrotic, b.abp_dicrotic);
+    pw->setMarker(BinPlotWidget::AbpPeak2, b.abp_peak2);
+    pw->setMarker(BinPlotWidget::AbpEnd, b.abp_end);
+    pw->setMarker(BinPlotWidget::ArtOnset, b.art_onset);
+    pw->setMarker(BinPlotWidget::ArtPeak, b.art_peak);
+    pw->setMarker(BinPlotWidget::ArtDicrotic, b.art_dicrotic);
+    pw->setMarker(BinPlotWidget::ArtPeak2, b.art_peak2);
+    pw->setMarker(BinPlotWidget::ArtEnd, b.art_end);
+    pw->setMarker(BinPlotWidget::ArtPulmOnset, b.art_pulm_onset);
+    pw->setMarker(BinPlotWidget::ArtPulmPeak, b.art_pulm_peak);
+    pw->setMarker(BinPlotWidget::ArtPulmDicrotic, b.art_pulm_dicrotic);
+    pw->setMarker(BinPlotWidget::ArtPulmPeak2, b.art_pulm_peak2);
+    pw->setMarker(BinPlotWidget::ArtPulmEnd, b.art_pulm_end);
+
+    // ---- frozen autodetect columns (glyph positions) -----------------------
+    // The *_auto_ch fields carry sub-sample doubles; glyph columns are integer
+    // samples, so they round here exactly as the bar seeds do in seed_all().
+    BinPlotWidget::AutoMarks a;
+    a.pBegin = (int)std::lround(b.p_begin_auto_ch[c]);
+    a.pPeak = (int)std::lround(b.p_peak_auto_ch[c]);
+    a.qBegin = (int)std::lround(b.q_begin_auto_ch[c]);
+    a.sEnd = (int)std::lround(b.s_end_auto_ch[c]);
+    a.tEnd = (int)std::lround(b.t_end_auto_ch[c]);
+    a.ppgOnset = b.ppg_onset_auto;
+    a.ppgPeak = b.ppg_peak_auto;
+    a.ppgPeak2 = b.ppg_peak2_auto;        a.ppgPeak2Found = b.ppg_peak2_found_auto;
+    a.ppgDicrotic = b.ppg_dicrotic_auto;  a.ppgDicroticFound = b.ppg_dicrotic_found_auto;
+    a.ppgEnd = b.ppg_end_auto;            a.ppgEndFound = b.ppg_end_found_auto;
+    pw->setAuto(a);   // last: captures the glyph snapshot and repaints
+}
+
 void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
+    if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
     for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
         if (m_pageGlobalIdx[li] != binIdx) continue;
-        const TemplateBin& b = m_bins[binIdx];
-        for (auto* pw : m_binPlots[li]) {
-            int c = pw->leadIndex();
-            pw->setMarker(BinPlotWidget::EcgPBegin, b.marks(currentAnchor()).p_begin_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgPPeak, b.marks(currentAnchor()).p_peak_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgQBegin, b.marks(currentAnchor()).q_begin_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgRPeak, b.r_peak_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgSEnd, b.marks(currentAnchor()).s_end_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgTBegin, b.marks(currentAnchor()).t_begin_ch[c]);
-            pw->setMarker(BinPlotWidget::EcgTEnd, b.marks(currentAnchor()).t_end_ch[c]);
-            pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
-            pw->setMarker(BinPlotWidget::PpgPeak, b.ppg_peak);
-            pw->setMarker(BinPlotWidget::PpgDicrotic, b.ppg_dicrotic);
-            pw->setMarker(BinPlotWidget::PpgPeak2, b.ppg_peak2);
-            pw->setMarker(BinPlotWidget::PpgEnd, b.ppg_end);
-            pw->setMarker(BinPlotWidget::AbpOnset, b.abp_onset);
-            pw->setMarker(BinPlotWidget::AbpPeak, b.abp_peak);
-            pw->setMarker(BinPlotWidget::AbpDicrotic, b.abp_dicrotic);
-            pw->setMarker(BinPlotWidget::AbpPeak2, b.abp_peak2);
-            pw->setMarker(BinPlotWidget::AbpEnd, b.abp_end);
-            pw->setMarker(BinPlotWidget::ArtOnset, b.art_onset);
-            pw->setMarker(BinPlotWidget::ArtPeak, b.art_peak);
-            pw->setMarker(BinPlotWidget::ArtDicrotic, b.art_dicrotic);
-            pw->setMarker(BinPlotWidget::ArtPeak2, b.art_peak2);
-            pw->setMarker(BinPlotWidget::ArtEnd, b.art_end);
-            pw->setMarker(BinPlotWidget::ArtPulmOnset, b.art_pulm_onset);
-            pw->setMarker(BinPlotWidget::ArtPulmPeak, b.art_pulm_peak);
-            pw->setMarker(BinPlotWidget::ArtPulmDicrotic, b.art_pulm_dicrotic);
-            pw->setMarker(BinPlotWidget::ArtPulmPeak2, b.art_pulm_peak2);
-            pw->setMarker(BinPlotWidget::ArtPulmEnd, b.art_pulm_end);
-            pw->refreshGlyphs();   // one recapture per widget, after all markers set
-        }
+        for (auto* pw : m_binPlots[li]) applyBinToWidget(pw, m_bins[binIdx]);
         break;
     }
 }
@@ -1656,13 +1681,15 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
         { Landmark::T_OFFSET },   // T-end
     };
 
-    // auto-detected position (glyph field) for a landmark on a lead.
+    // auto-detected position (glyph field) for a landmark on a lead. The
+    // *_auto_ch fields are double (sub-sample); rounded here since this seeds
+    // an integer segment window.
     auto autoPosOf = [](const TemplateBin& tb, Landmark lm, int lead) -> int {
         switch (lm) {
-        case Landmark::Q_ONSET:  return tb.q_begin_auto_ch[lead];
-        case Landmark::J_POINT:  return tb.s_end_auto_ch[lead];   // J-point == S-end field
-        case Landmark::P_ONSET:  return tb.p_begin_auto_ch[lead];
-        case Landmark::T_OFFSET: return tb.t_end_auto_ch[lead];
+        case Landmark::Q_ONSET:  return (int)std::lround(tb.q_begin_auto_ch[lead]);
+        case Landmark::J_POINT:  return (int)std::lround(tb.s_end_auto_ch[lead]);   // J-point == S-end field
+        case Landmark::P_ONSET:  return (int)std::lround(tb.p_begin_auto_ch[lead]);
+        case Landmark::T_OFFSET: return (int)std::lround(tb.t_end_auto_ch[lead]);
         default: return -1;
         }
         };
@@ -1702,8 +1729,8 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
             // QRS duration (ms) = distance between q_begin and s_end glyphs.
             double qrsMs = 0.0;
             {
-                const int q = b.q_begin_auto_ch[lead];
-                const int s = b.s_end_auto_ch[lead];
+                const int q = (int)std::lround(b.q_begin_auto_ch[lead]);
+                const int s = (int)std::lround(b.s_end_auto_ch[lead]);
                 if (q >= 0 && s >= 0 && m_sampleRate > 0.0)
                     qrsMs = std::abs(s - q) / m_sampleRate * 1000.0;
             }
