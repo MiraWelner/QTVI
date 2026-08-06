@@ -1,15 +1,11 @@
-﻿//
-// feature_marks.cpp -- implementations for FeatureMarks.
-// See feature_marks.hpp for the public interface.
-//
+﻿/*feature_marks.cpp -- implementations for FeatureMarks.
+See feature_marks.hpp for the public interface*/
 
 #include "feature_marks.hpp"
-#include "TemplateBinIO.hpp"    // for TemplateBin (used by seed_all)
-
+#include "TemplateBinIO.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>   // TEMP: diagnostics
 #include <limits>
 #include <numeric>
 #include <vector>
@@ -17,9 +13,6 @@
 #include "anchor_fit.hpp"
 #include "subsample_refine.hpp"
 
-// =========================================================================
-// File-scope helpers for the reactive ECG glyphs.
-// =========================================================================
 namespace {
 
     // Half-window in samples for a +/-0.05 s search around a user marker.
@@ -199,15 +192,24 @@ int FeatureMarks::compute_t_peak(const std::vector<double>& v, int tBegin, int t
     if (tBegin < 0 || tEnd < 0 || tBegin >= N || tEnd >= N) return -1;
     const int lo = std::min(tBegin, tEnd), hi = std::max(tBegin, tEnd);
 
-    // Coarse seed: argmax over the bracket (the T-peak amplitude).
-    int best = lo; double bv = -std::numeric_limits<double>::infinity();
+    // Bracketed by the T-begin/T-end bars, so it tracks them live. T polarity is
+    // INDEPENDENT of QRS polarity, so this must not assume an upright T (a plain
+    // argmax picks the highest shoulder when the T is inverted). Both bracket
+    // ends sit at the T's feet, i.e. on baseline, so their mean is a local
+    // isoelectric reference and the peak is the sample furthest from it.
+    const double B = 0.5 * (v[lo] + v[hi]);
+    int best = lo; double bd = -1.0;
     for (int i = lo; i <= hi; ++i)
-        if (!std::isnan(v[i]) && v[i] > bv) { bv = v[i]; best = i; }
+        if (!std::isnan(v[i]) && std::abs(v[i] - B) > bd) { bd = std::abs(v[i] - B); best = i; }
 
-    // Refine: asymmetric extremum (cubic on Gaussian-weighted samples,
-    // analytic derivative), sigma = 15.
+    // Refine on a copy oriented so the peak is a maximum (asymmetric extremum:
+    // cubic on Gaussian-weighted samples, analytic derivative, sigma = 15), then
+    // clamp to the BRACKET rather than the array -- a bracketed landmark must
+    // stay bracketed no matter where the refinement drifts.
+    std::vector<double> u = v;
+    if (v[best] < B) for (auto& x : u) x = -x;
     return std::clamp(static_cast<int>(std::lround(
-        subsample_refine::asymmetricExtremum(v, best, 15.0))), 0, N - 1);
+        subsample_refine::asymmetricExtremum(u, best, 15.0))), lo, hi);
 }
 
 // Shared search span: S-peak lives within 50 ms after R; the J-point within
@@ -339,35 +341,39 @@ double FeatureMarks::compute_t_end(const std::vector<double>& v, int tEndUser, d
     const int N = static_cast<int>(v.size());
     if (tEndUser < 0 || N < 4) return tEndUser;
     const int w = win_005s(fs);
-    int lo = std::max(0, tEndUser - 2 * w);
-    const int hi = std::min(N - 1, tEndUser + w / 4);
-    // T-end is always strictly after R (in practice well after S-end); a
-    // window reaching back onto/before the QRS spike corrupts the extremum
-    // search below. Clamp the left edge so it never crosses r_col.
-    lo = std::max(lo, r_col + 1);
-    if (hi <= lo) return std::clamp(tEndUser, 0, N - 1);
 
-    // B = post-T baseline: right edge of window.
-    double B = v[hi];
+    // Offset window, same SHAPE as compute_s_end's J-point window: start at the
+    // wave's own extremum and run FORWARD to where it has actually recovered.
+    // The old window was [seed - 100 ms, seed + 12.5 ms] -- almost entirely
+    // LEFT of the marker -- so B = v[hi] sampled a point still well up on the T.
+    // With a bogus baseline the first left-to-right crossing of L lands on the
+    // T's UPSLOPE, which is what put T-end before T-peak.
+    const int lo0 = std::max(r_col + 1, tEndUser - 2 * w);   // -100 ms
+    const int hi = std::min(N - 1, tEndUser + 2 * w);        // +100 ms: clear of the T
+    if (hi <= lo0 + 3) return std::clamp(tEndUser, 0, N - 1);
 
-    // E = extremum (sample furthest from B in the window).
-    double E = B;
-    double bestDist = 0.0;
-    for (int i = lo; i <= hi; ++i) {
+    // B = post-T baseline at the RIGHT edge. E = the extremum in the
+    // neighbourhood, by |distance| so an inverted T behaves the same. lo starts
+    // AT that extremum, so the only crossing available is on the recovery limb.
+    const double B = v[hi];
+    int ePos = lo0; double bestDist = 0.0;
+    for (int i = lo0; i <= hi; ++i) {
         if (std::isnan(v[i])) continue;
         const double d = std::abs(v[i] - B);
-        if (d > bestDist) { bestDist = d; E = v[i]; }
+        if (d > bestDist) { bestDist = d; ePos = i; }
     }
+    const int lo = std::min(ePos, hi - 3);
+    const double E = v[ePos];
 
-    // Coarse seed = native-rate anchor-fit crossing (offset, fraction 0.90).
+    // Near-baseline target (f = 0.10 == 90% recovered), matching compute_s_end
+    // (0.08), compute_q_onset (0.10) and compute_p_begin (0.10). The old 0.90
+    // put the level next to the PEAK, not at the recovery.
     auto fit = anchor_fit::selectAnchorModel(v, lo, hi);
     const int seed = std::clamp(static_cast<int>(std::round(
-        anchor_fit::anchorAtFraction(fit, lo, hi, B, E, 0.90))), 0, N - 1);
-    // Spec I-3: T-end is a transition offset -- 40-sample window, 4x cubic
-    // upsample, fit-and-select via transitionAnchor. Right-edge (post-T)
-    // baseline; fraction 0.90 (offset side).
+        anchor_fit::anchorAtFraction(fit, lo, hi, B, E, 0.10))), 0, N - 1);
+    // Spec I-3: 40-sample window, 4x cubic upsample, fit-and-select.
     return std::clamp(
-        subsample_refine::transitionAnchor(v, seed, 0.90, 40, B, lo, hi),
+        subsample_refine::transitionAnchor(v, seed, 0.10, 40, B, lo, hi),
         0.0, static_cast<double>(N - 1));
 }
 
@@ -512,134 +518,88 @@ int FeatureMarks::amplitude_crossing(const std::vector<double>& v, int a, int b,
     return best;
 }
 
-FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(
-    const std::vector<double>& v, int constructPeak, int constructOnset,
-    int firstR, int W, double fs)
+FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials( const std::vector<double>& v, double tR1, int W, double ppgRate)
 {
     PpgFiducials g;
     const int N = static_cast<int>(v.size());
     if (N < 3) return g;
-    const int Wc = std::clamp(W, 2, N);   // visible window; nothing below is ever placed past Wc-1
+    const int Wc = std::clamp(W, 2, N);   // visible window; nothing is ever placed past Wc-1
     auto cl = [&](int x) { return std::clamp(x, 0, Wc - 1); };
-    auto pct = [&](double f) { return std::clamp(static_cast<int>(std::lround(f * Wc)), 0, Wc - 1); };
-    const int marginSamples = (fs > 0.0)
-        ? std::max(1, static_cast<int>(std::lround(0.010 * fs)))
-        : 1;
-    (void)marginSamples;   // end-refinement removed; kept for any later use
 
-    // ---- PEAK + ONSET: original detection method, INDEPENDENT of end.
-    // Kept independent because the display normalization uses onset as the
-    // per-sample perfusion-index baseline (v[onset] is the divisor in
-    // pulse_norm) -- if onset lands wrong, the entire displayed trace goes
-    // off-scale. Decoupling from end means end detection can't corrupt the
-    // display no matter what happens downstream.
-    if (constructPeak >= 0 && constructPeak < Wc
-        && (firstR < 0 || constructPeak >= firstR)) {
-        g.peak = constructPeak;
-        g.onset = (constructOnset >= 0 && constructOnset <= g.peak)
-            ? constructOnset : 0;
-    }
-    else {
-        // Peak = argmax over [firstR, pct(0.40)). Search starts at the
-        // ACTUAL first R sample (passed in from the ECG channel's
-        // r_col_raw), not a proportional guess -- PPG templates are
-        // R-anchored, so peak by definition must sit at or after R1.
-        // If firstR wasn't provided (< 0), skip the constraint and search
-        // from 0 as a last resort.
-        const int firstPulseStart = (firstR >= 0 && firstR < Wc) ? firstR : 0;
-        const int firstPulseEnd = std::max(firstPulseStart + 2, pct(0.40));
-        int pk = firstPulseStart; double best = -std::numeric_limits<double>::infinity();
-        for (int i = firstPulseStart; i < firstPulseEnd; ++i)
-            if (!std::isnan(v[i]) && v[i] > best) { best = v[i]; pk = i; }
-        g.peak = pk;
-        // Onset = argmin over [pct(0.10), peak] -- the trough just before
-        // the systolic upstroke.
-        int ft = std::min(pct(0.10), pk); best = std::numeric_limits<double>::infinity();
-        for (int i = std::min(pct(0.10), pk); i <= pk; ++i)
-            if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; ft = i; }
-        g.onset = ft;
-    }
+    // R locations arrive in TIME (seconds from template start). No sample index
+        // from another channel enters here.
+    if (tR1 <= 0.0 || ppgRate <= 0.0) return g;
+    const double tRR = tR1 / 0.3;   // R1 sits at 0.3 of the RR by construction
+    auto at = [&](double t) { return cl(static_cast<int>(std::lround(t * ppgRate))); };
+    const int r1 = at(tR1);
+    const int r2 = at(tR1 + tRR);
+    if (r2 <= r1) return g;
 
-    // ---- END: curve-fit detection, bounded to start AFTER peak so it
-    // can't degenerately land on the pulse's own foot/onset trough (which
-    // is very often deeper than the true diastolic end-of-cycle trough).
-    //
-    // Stage 1 (coarse locate): plain raw-signal argmin over [peak+1, Wc-1]
-    // -- O(n), no model fitting. Full-window BIC model selection here was
-    // the earlier performance regression (piecewise-linear breakpoint
-    // search is O(n^2), running once per bin).
-    // Stage 2 (refine): a small +/-10ms window centered on the coarse
-    // point -- THAT small window is where the (cheap, since it's tiny)
-    // curve fit runs, for sub-sample precision without paying for it over
-    // the whole trace. Bounded to [0, Wc-1] throughout, so end can never
-    // land in the off-screen tail-overlap region past the visible window.
+    // ---- Systolic peak: argmax in [R1, R2], symmetric extremum (sigma = 8) --
+    int pkSeed = r1; double pkBest = -std::numeric_limits<double>::infinity();
+    for (int i = r1; i <= r2; ++i)
+        if (!std::isnan(v[i]) && v[i] > pkBest) { pkBest = v[i]; pkSeed = i; }
+    g.peak = cl(static_cast<int>(std::lround(
+        subsample_refine::symmetricExtremum(v, pkSeed, 8.0))));
+
+    // ---- Feet: argmin seed, then transitionAnchor -- 40-sample window, 4x
+    // cubic upsample, fit-and-select, fraction 0.10 (baseline side), the same
+    // treatment Q-onset and the J-point get. Bounded one-sided FORWARD from
+    // each trough so the window can't reach back across it into the previous
+    // beat's tail. No B_iso equivalent exists for PPG, so the baseline is left
+    // NaN and transitionAnchor uses the trough itself.
+    auto footAnchor = [&](int seed) {
+        return cl(static_cast<int>(std::lround(
+            subsample_refine::transitionAnchor(v, seed, 0.10, 40,
+                std::numeric_limits<double>::quiet_NaN(),
+                seed, std::min(seed + 40, Wc - 1)))));
+        };
+
+    // Systolic foot: the trough in [R1, peak].
     {
-        const int lo = std::min(g.peak + 1, Wc - 1);
-        const int hi = Wc - 1;
-        int coarse = hi;
-        {
-            double best = std::numeric_limits<double>::infinity();
-            for (int i = lo; i <= hi; ++i)
-                if (!std::isnan(v[i]) && v[i] < best) { best = v[i]; coarse = i; }
-        }
+        int seed = r1; double lowest = std::numeric_limits<double>::infinity();
+        for (int i = r1; i <= g.peak; ++i)
+            if (!std::isnan(v[i]) && v[i] < lowest) { lowest = v[i]; seed = i; }
+        g.onset = footAnchor(seed);
+    }
 
-        // Use the plain argmin trough -- the diastolic FOOT (the deep low
-        // point after the pulse, visible on the plot) -- directly as `end`.
-        // The previous +/-10ms curve-fit refinement (anchor_fit) could move
-        // `end` off that reliable trough onto a spurious nearby point, which
-        // in turn threw off every amplitude fraction (amp10/amp70) built on
-        // peak->end and mislocated the dicrotic-notch search window. The raw
-        // argmin foot is robust and matches what's drawn, so anchor to it.
-        g.end = cl(coarse);
+    // End of cycle: the next beat's foot -- the trough after the peak. Same
+    // detection as the systolic foot, since it IS a foot.
+    {
+        int seed = Wc - 1; double lowest = std::numeric_limits<double>::infinity();
+        for (int i = std::min(g.peak + 1, Wc - 1); i <= Wc - 1; ++i)
+            if (!std::isnan(v[i]) && v[i] < lowest) { lowest = v[i]; seed = i; }
+        g.end = footAnchor(seed);
         g.end_found = true;
     }
 
-    // ---- DICROTIC NOTCH: 4-knot least-squares cubic spline ------------
-    // Fit a cubic regression spline to the PPG signal over [amp15, T80]
-    // (15% down the downslope to the 80%-down crossing) with exactly 4 knots:
-    // the two endpoints plus two interior knots whose positions are chosen to
-    // MINIMIZE the fit residual (searched over a grid). The notch is the
-    // first local minimum of the best-fit spline. 4 knots over this narrowed
-    // region (not the whole beat) keeps the fit flexible enough to bend at
-    // the notch while error-minimizing placement puts the interior knots
-    // where the pulse actually has structure.
-    // Diastolic peak (g.peak2) comes from the SAME best-fit spline as the
-    // notch -- the first local maximum after the notch dip. Filled here; the
-    // block below only runs as a fallback if the spline didn't yield one.
-    int splineDiastolic = -1;
+    // ---- DICROTIC NOTCH + DIASTOLIC PEAK -----------------------------------
+    // 4-knot least-squares cubic spline over [amp15, amp90] (15% to 90% down
+    // the downslope), interior knots placed to minimize the fit residual. The
+    // notch is the first local minimum of the best fit; the diastolic peak is
+    // the first local maximum after it, from the SAME fit. Either falling
+    // through leaves a midpoint placeholder flagged not-found, which draws as
+    // an "o" instead of an "x".
     {
         int amp15 = amplitude_crossing(v, g.peak, g.end, 0.15);
         if (amp15 < 0) amp15 = g.peak;
-        const int lo = std::clamp(amp15, 0, Wc - 1);
-        int t90 = amplitude_crossing(v, g.peak, g.end, 0.90);
-        if (t90 < 0) t90 = cl((g.peak + g.end) / 2);
-        const int hi = std::clamp(t90, lo, Wc - 1);
+        int amp90 = amplitude_crossing(v, g.peak, g.end, 0.90);
+        if (amp90 < 0) amp90 = cl((g.peak + g.end) / 2);
+        const int lo = cl(amp15);
+        const int hi = std::clamp(amp90, lo, Wc - 1);
+
+        int splineDiastolic = -1;
         const int notch = subsample_refine::cubicSplineNotch(v, lo, hi, &splineDiastolic);
 
-        if (notch > lo && notch < hi) {
-            g.dicrotic = notch;
-            g.notch_found = true;
-        }
-        else {
-            g.dicrotic = cl((lo + hi) / 2);
-            g.notch_found = false;
-        }
+        g.notch_found = (notch > lo && notch < hi);
+        g.dicrotic = g.notch_found ? notch : cl((lo + hi) / 2);
 
-        if (splineDiastolic > g.dicrotic && splineDiastolic < hi) {
-            g.peak2 = splineDiastolic;
-            g.peak2_found = true;
-        }
-        else {
-            // Nothing fit: place the O at the midpoint between the systolic
-            // peak and the region's upper bound (g.end), flagged not-found
-            // so it draws as an "o".
-            g.peak2 = cl((g.peak + hi) / 2);
-            g.peak2_found = false;
-        }
+        g.peak2_found = (splineDiastolic > g.dicrotic && splineDiastolic < hi);
+        g.peak2 = g.peak2_found ? splineDiastolic : cl((g.peak + hi) / 2);
     }
 
-    // ---- T80 / P50: amplitude crossings (shared helper -- same formula
-    // the GUI's reactive T80/P50 glyphs use). ------------------------------
+    // ---- T80 / P50: amplitude crossings (the same helper the GUI's reactive
+    // T80/P50 glyphs call, so the two can't disagree). ----------------------
     g.t80 = amplitude_crossing(v, g.peak, g.end, 0.80);
     if (g.t80 < 0) g.t80 = cl((g.peak + g.end) / 2);
     g.p50 = amplitude_crossing(v, g.onset, g.peak, 0.50);
@@ -647,6 +607,8 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(
 
     return g;
 }
+
+
 
 // =========================================================================
 // Movable (auto-detected seeds)
@@ -760,7 +722,13 @@ int FeatureMarks::detect_t_begin(const std::vector<double>& ecg_signal, int r_id
 
     const int s_end = detect_s_end(ecg_signal, r_idx, fs);
     const int lo = std::clamp(s_end + 1, 1, N - 2);
-    const int hi = std::min(N - 1, N / 2);              // first half only
+    // T-peak search range (spec): S-end .. R + 600 ms. lo is already s_end+1.
+    // The old bound was N/2 -- an ARRAY fraction, not a physiological one: with
+    // R at 0.3*RR it left only 0.2*RR after R, so at normal rates the T peak
+    // fell outside it, no local max was found, and the s_end + 0.1*N fallback
+    // below did all the work.
+    const int hi = std::clamp(r_idx + static_cast<int>(std::lround(0.600 * fs)),
+        lo + 2, N - 1);
 
     int tPeak = -1;
     double tBest = -std::numeric_limits<double>::infinity();
@@ -822,7 +790,9 @@ int FeatureMarks::detect_t_end(const std::vector<double>& ecg_signal, int r_idx,
 
     const int s_end = detect_s_end(ecg_signal, r_idx, fs);
     const int lo = std::clamp(s_end + 1, 1, N - 2);
-    const int hi = std::min(N - 1, N / 2);
+    // T-peak search range (spec): S-end .. R + 600 ms. See detect_t_begin.
+    const int hi = std::clamp(r_idx + static_cast<int>(std::lround(0.600 * fs)),
+        lo + 2, N - 1);
 
     int tPeak = -1;
     double tBest = -std::numeric_limits<double>::infinity();
@@ -1043,7 +1013,7 @@ namespace {
 
 } // anonymous
 
-void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor) {
+void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, AnchorType anchor) {   
     // Per-anchor ECG user markers are seeded into this anchor's set.
     TemplateBin::MarkerSet& mk = b.marks(anchor);
 
@@ -1087,22 +1057,17 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
         // fields (see BinPlotWidget::captureGlyphSnapshot), so "peak" (etc.)
         // can never mean two different things in two different places.
         {
-            // firstR = the actual R position, taken from any available ECG
-            // channel's r_col_raw (all three should agree, since ECG and
-            // PPG templates are R-anchored to the same sample). -1 if no
-            // ECG channel is present, which lets detect_ppg_fiducials fall
-            // back to searching from 0.
-            int firstR = -1;
+            double tR1 = -1.0;
             const ChannelTemplateData* cc[3] = { &b.ch1, &b.ch2, &b.ch3 };
             for (const auto* ch : cc) {
                 if (!ch->ecgTemplate_raw.empty() && ch->r_col_raw >= 0) {
-                    firstR = ch->r_col_raw;
+                    tR1 = ch->r_col_raw / sampleRate;   // ECG samples -> seconds
                     break;
                 }
             }
 
-            const auto pf = FeatureMarks::detect_ppg_fiducials(
-                v, b.ppg_peak_construct, b.ppg_onset_construct, firstR, W, sampleRate);
+            const auto pf = FeatureMarks::detect_ppg_fiducials(v, tR1, W, ppgRate);
+
             b.ppg_peak_auto = pf.peak;
             b.ppg_onset_auto = pf.onset;
             b.ppg_peak2_auto = pf.peak2;           b.ppg_peak2_found_auto = pf.peak2_found;
@@ -1139,35 +1104,24 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
             continue;
         }
 
-        const int visN = std::max(static_cast<int>(ecg.size()), 2);
+        const double visN = std::max(static_cast<int>(ecg.size()), 2);
         auto cl = [&](int x) { return clampToVisible(x, visN); };
         auto cld = [&](double d) { return std::clamp(d, 0.0, static_cast<double>(visN - 1)); };
         auto ms = [&](double sec) { return static_cast<int>(std::lround(sec * sampleRate)); };
 
-        // R is the deterministic anchor column from alignment. Every other
-        // landmark's window below is built relative to this RAW value,
-        // unchanged -- only R's own reported/stored position is refined
-        // (see r_auto_refined below); the shared window anchor is not
-        // shifted onto a refined value, since nothing in the spec calls for
-        // that and it would ripple into every other landmark's window.
-        const int r_auto = cl(chs[c]->r_col_raw);
-        // Spec I-3: R-peak is a symmetric extremum (Gaussian-weighted
-        // quadratic, sigma=5). Reported separately; does not affect any
-        // other landmark's window construction below. Kept as a double so the
-        // auto field retains sub-sample precision.
-        const double r_auto_refined = cld(
-            subsample_refine::symmetricExtremum(ecg, r_auto, 5.0));
+        //The R peak which defines the template is the baseline for every other 
+        const double r_peak_location = cld(subsample_refine::symmetricExtremum(ecg, cl(chs[c]->r_col_raw) , 5.0));
 
         // ---- Isoelectric vertical reference (PQ zero) --------------------
         // Median of the signal in a fixed PQ window before R (40-100 ms).
         double B_iso;
         {
-            const int a = cl(r_auto - ms(0.100));
-            const int b = cl(r_auto - ms(0.040));
+            const int a = cl(r_peak_location - ms(0.100));
+            const int b = cl(r_peak_location - ms(0.040));
             std::vector<double> s;
             for (int i = std::min(a, b); i <= std::max(a, b); ++i)
                 if (!std::isnan(ecg[i])) s.push_back(ecg[i]);
-            if (s.empty()) B_iso = ecg[cl(r_auto)];
+            if (s.empty()) B_iso = ecg[cl(r_peak_location)];
             else { std::nth_element(s.begin(), s.begin() + s.size() / 2, s.end()); B_iso = s[s.size() / 2]; }
         }
 
@@ -1186,7 +1140,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
         // does the Q-peak search + sigma=4 refine + I-3 transitionAnchor
         // refinement internally.
         const double q_auto = cld(FeatureMarks::compute_q_onset(
-            ecg, FeatureMarks::detect_q_begin(ecg, r_auto), sampleRate, r_auto));
+            ecg, FeatureMarks::detect_q_begin(ecg, r_peak_location), sampleRate, r_peak_location));
 
         // S-end: mirror of Q-onset. Cap the LEFT bound at the S peak (first
         // turning point walking right from R = the S extremum) so E is the S,
@@ -1202,13 +1156,14 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
         // compute_s_end does the S-peak-capped window + fit-and-select + I-3
         // transitionAnchor refinement internally.
         const double s_auto = cld(FeatureMarks::compute_s_end(
-            ecg, FeatureMarks::detect_s_end(ecg, r_auto, sampleRate), sampleRate, r_auto));
+            ecg, FeatureMarks::detect_s_end(ecg, r_peak_location, sampleRate), sampleRate, r_peak_location));
         // T peak: largest deflection from baseline in the T-wave region. It
         // splits the T wave into its onset (T-begin) and offset (T-end) sides.
         int t_peak;
         {
-            const int tlo = cl(r_auto + ms(0.150));
-            const int thi = cl(std::min(visN - 1, r_auto + ms(0.400)));
+            // Same spec range the detectors use: S-end .. R + 600 ms.
+            const int tlo = cl(static_cast<int>(std::lround(s_auto)));
+            const int thi = cl(std::min(visN - 1, r_peak_location + ms(0.600)));
             t_peak = tlo; double bd = 0.0;
             for (int i = tlo; i <= thi; ++i)
                 if (!std::isnan(ecg[i]) && std::abs(ecg[i] - B_iso) > bd) { bd = std::abs(ecg[i] - B_iso); t_peak = i; }
@@ -1221,7 +1176,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
         // (f=0.10) -> the foot where the T departs baseline.
         double tp_auto;
         {
-            int lo = cl(r_auto + ms(T_BEGIN_BAND.a));   // ST-segment baseline
+            int lo = cl(r_peak_location + ms(T_BEGIN_BAND.a));   // ST-segment baseline
             int hi = t_peak;                             // capped at the T peak
             if (hi - lo < 4) lo = cl(hi - 4);
 
@@ -1241,22 +1196,22 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
         // compute_t_end does the window + fit-and-select + I-3 transitionAnchor
         // refinement internally. Identical to the bar path.
         const double te_auto = cld(FeatureMarks::compute_t_end(
-            ecg, FeatureMarks::detect_t_end(ecg, r_auto, sampleRate), sampleRate, r_auto));
+            ecg, FeatureMarks::detect_t_end(ecg, r_peak_location, sampleRate), sampleRate, r_peak_location));
         // P-peak: single canonical finder (asymmetric-extremum refinement,
         // sigma=12, folded into detect_p_peak). Same source the P-onset seed
         // uses below, so the reported peak and the onset seed are identical.
-        const double p_auto_refined = cld(FeatureMarks::detect_p_peak(ecg, r_auto, sampleRate));
+        const double p_auto_refined = cld(FeatureMarks::detect_p_peak(ecg, r_peak_location, sampleRate));
         // P-begin: single canonical finder (same one the movable bar uses via
         // the P_ONSET locator). detect_p_peak supplies the seed; compute_p_begin
         // does the window + fit-and-select + I-3 transitionAnchor refinement
         // internally. Identical to the bar path.
         const double pb_auto = cld(FeatureMarks::compute_p_begin(
-            ecg, (int)std::lround(FeatureMarks::detect_p_peak(ecg, r_auto, sampleRate)), sampleRate, r_auto));
+            ecg, (int)std::lround(FeatureMarks::detect_p_peak(ecg, r_peak_location, sampleRate)), sampleRate, r_peak_location));
 
         // Auto fields always updated.
         b.p_peak_auto_ch[c] = p_auto_refined;
         b.q_begin_auto_ch[c] = q_auto;
-        b.r_peak_auto_ch[c] = r_auto_refined;
+        b.r_peak_auto_ch[c] = r_peak_location;
         b.s_end_auto_ch[c] = s_auto;
         b.t_begin_auto_ch[c] = tp_auto;
         b.t_end_auto_ch[c] = te_auto;
@@ -1269,7 +1224,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, AnchorType anchor
         // above keep the sub-sample doubles).
         if (mk.p_peak_ch[c] < 0)  mk.p_peak_ch[c] = (int)std::lround(p_auto_refined);
         if (mk.q_begin_ch[c] < 0) mk.q_begin_ch[c] = (int)std::lround(q_auto);
-        b.r_peak_ch[c] = (int)std::lround(r_auto_refined);
+        b.r_peak_ch[c] = (int)std::lround(r_peak_location);
         if (mk.s_end_ch[c] < 0)   mk.s_end_ch[c] = (int)std::lround(s_auto);
         if (mk.t_begin_ch[c] < 0) mk.t_begin_ch[c] = (int)std::lround(tp_auto);
         if (mk.t_end_ch[c] < 0)   mk.t_end_ch[c] = (int)std::lround(te_auto);

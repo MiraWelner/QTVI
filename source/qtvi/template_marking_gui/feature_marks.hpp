@@ -108,15 +108,9 @@ public:
         int t80 = -1;
         int p50 = -1;
     };
-    // constructPeak/constructOnset: the real R-pair construction fiducials
-    // (TemplateBin::ppg_peak_construct/ppg_onset_construct); pass -1 if
-    // unavailable. firstR: the sample position of the first R peak in the
-    // PPG template's coordinate system -- typically an ECG channel's
-    // r_col_raw (templates are R-anchored, so the R column is shared).
-    // Peak search is bounded to start at or after firstR. W: the visible
-    // window length (samples); bounds every output to [0, W-1].
-    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v,
-        int constructPeak, int constructOnset, int firstR, int W, double fs);
+
+    //find all fiducial markers for PPG
+   static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v,double tR1, int W, double ppgRate);
 
     // Sample whose AMPLITUDE is frac of the way from v[a] to v[b] (NOT frac
     // of the sample-index distance). Shared by detect_ppg_fiducials (t80/
@@ -148,8 +142,7 @@ public:
     static int detect_ppg_peak2(const std::vector<double>& pulse);
     static int detect_ppg_end(const std::vector<double>& pulse);
 
-    static void seed_all(TemplateBin& bin, double sampleRate, AnchorType anchor);
-
+    static void seed_all(TemplateBin& bin, double sampleRate, double ppgRate, AnchorType anchor);
 private:
     // Internal helpers.
     static std::vector<double> first_derivative(const std::vector<double>& v);

@@ -272,7 +272,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     // Seed markers for every bin so per-subject global refs (which need
     // R/S and foot/peak positions across all bins) can be computed once
     // and stay stable across paging.
-    for (auto& b : m_bins) FeatureMarks::seed_all(b, m_sampleRate, currentAnchor());
+    for (auto& b : m_bins) FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, currentAnchor());
 
     // If this subject was already marked in a previous session, restore
     // those marker positions from the single canonical marking file. If
