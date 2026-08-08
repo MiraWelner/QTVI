@@ -3,7 +3,7 @@
 #include "feature_marks.hpp"
 #include "anchor_fit.hpp"
 #include "alignment.hpp"   // percent_interval_preceeding_rpeak (RR from r_col)
-#include "NormalizeFeatures.hpp"
+#include "template_generation/NormalizeFeatures.hpp"
 #include "peak_finding/FilterUtils.hpp"   // notch_filter for display-time toggle
 #include <QMessageBox>
 #include <QColor>

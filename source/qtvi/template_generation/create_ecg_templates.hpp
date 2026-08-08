@@ -22,7 +22,7 @@
  */
 #pragma once
 
-#include "TemplateTypes.hpp"
+#include "template_structs.hpp"
 #include "template_marking_gui/alignment.hpp"
 #include <atomic>
 #include <fstream>

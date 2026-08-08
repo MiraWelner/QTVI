@@ -20,7 +20,7 @@
 #include "SegmentPPG.hpp"
 #include "JoinedRR.hpp"
 #include "pairRtoPPGBeat.hpp"
-#include "config_entry.hpp"
+#include "config_file_handling/config_entry.hpp"
 
  /**
   * @brief  Run R-peak detection on one preprocessed version of a signal.

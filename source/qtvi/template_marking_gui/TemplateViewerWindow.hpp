@@ -6,7 +6,7 @@
 #include <map>
 #include <cmath>
 #include <QString>
-#include "TemplateBinIO.hpp"
+#include "template_marking_bin_io.hpp"
 #include "BinPlotWidget.hpp"
 #include "FocusPanelWidget.hpp"
 #include "logging/boundary_training_log.hpp"

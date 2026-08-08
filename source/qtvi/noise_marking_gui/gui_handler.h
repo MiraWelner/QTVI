@@ -28,7 +28,7 @@
 #include "ui_noise_marking_gui.h"
 #include "user_annotation_handler.h"
 #include "user_control_handler.h"
-#include "config_entry.hpp"
+#include "config_file_handling/config_entry.hpp"
 #include "grid_overlay.hpp"
 
 struct GenExcStruct {

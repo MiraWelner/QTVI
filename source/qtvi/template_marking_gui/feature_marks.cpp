@@ -2,7 +2,7 @@
 See feature_marks.hpp for the public interface*/
 
 #include "feature_marks.hpp"
-#include "TemplateBinIO.hpp"
+#include "template_marking_gui\template_marking_bin_io.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>

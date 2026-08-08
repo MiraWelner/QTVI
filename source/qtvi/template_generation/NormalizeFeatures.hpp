@@ -21,7 +21,7 @@ The PPG Normalization algorithm is as follows:
 
 */
 
-#include "TemplateBinIO.hpp"
+#include "template_marking_gui\template_marking_bin_io.hpp"
 
 #include <algorithm>
 #include <cmath>

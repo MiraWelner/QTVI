@@ -26,7 +26,7 @@
 #include <string>
 #include <vector>
 
-#include "config_entry.hpp"
+#include "config_file_handling/config_entry.hpp"
 #include "template_generation/template_io.hpp"
 #include "template_marking_gui/feature_marks.hpp"   // FeatureMarks
 

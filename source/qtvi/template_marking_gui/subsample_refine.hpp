@@ -160,9 +160,8 @@ namespace subsample_refine {
     // dy/dt = 3a t^2 + 2b t + c = 0 analytically; pick the root inside the
     // window closest to t=0 (the seed).
     // ---------------------------------------------------------------------
-    inline double asymmetricExtremum(const std::vector<double>& signal, int seed, double sigma,
-        int halfWidth = kWindowHalfWidth) {
-        const WindowSamples ws = gatherWindow(signal, seed, sigma, halfWidth);
+    inline double asymmetricExtremum(const std::vector<double>& signal, int seed, double sigma) {
+        const WindowSamples ws = gatherWindow(signal, seed, sigma);
         if (!ws.ok) return static_cast<double>(seed);
 
         // Weighted least squares for y = a t^3 + b t^2 + c t + d.
@@ -193,31 +192,19 @@ namespace subsample_refine {
 
         // dy/dt = 3a t^2 + 2b t + c = 0
         const double a = sol[0], b = sol[1], c = sol[2];
-        // Which extremum type the seed actually represents (a trough like
-        // the dicrotic notch, or a peak like P/T), read directly from the
-        // raw data at the seed -- not assumed from which cubic-derivative
-        // root happens to be closer to it.
-        const double leftNeighbor = signal[std::max(0, seed - 1)];
-        const double rightNeighbor = signal[std::min((int)signal.size() - 1, seed + 1)];
-        const double atSeed = (seed >= 0 && seed < (int)signal.size()) ? signal[seed] : 0.0;
-        const bool wantMin = (atSeed <= leftNeighbor && atSeed <= rightNeighbor);
         if (std::fabs(a) < 1e-12) {
             if (std::fabs(b) < 1e-12) return fivePointParabolaExtremum(signal, seed);
             const double t = -c / (2.0 * b);
-            return static_cast<double>(seed) + std::clamp(t, (double)-halfWidth, (double)halfWidth);
+            return static_cast<double>(seed) + std::clamp(t, (double)-kWindowHalfWidth, (double)kWindowHalfWidth);
         }
         const double disc = 4.0 * b * b - 12.0 * a * c;
         if (disc < 0.0) return fivePointParabolaExtremum(signal, seed);
         const double sq = std::sqrt(disc);
         const double r1 = (-2.0 * b + sq) / (6.0 * a);
         const double r2 = (-2.0 * b - sq) / (6.0 * a);
-        // Second derivative 6at+2b: positive => local min, negative => local
-        // max. Only accept a root whose curvature sign matches what the seed
-        // is actually looking for; between two matching roots, prefer the one
-        // closer to t=0.
-        auto isMinAt = [&](double t) { return (6.0 * a * t + 2.0 * b) > 0.0; };
-        const bool r1In = r1 >= -halfWidth && r1 <= halfWidth && isMinAt(r1) == wantMin;
-        const bool r2In = r2 >= -halfWidth && r2 <= halfWidth && isMinAt(r2) == wantMin;
+        // Pick whichever root is inside the window and closer to t=0.
+        const bool r1In = r1 >= -kWindowHalfWidth && r1 <= kWindowHalfWidth;
+        const bool r2In = r2 >= -kWindowHalfWidth && r2 <= kWindowHalfWidth;
         double tBest;
         if (r1In && r2In) tBest = (std::fabs(r1) < std::fabs(r2)) ? r1 : r2;
         else if (r1In) tBest = r1;
@@ -241,87 +228,6 @@ namespace subsample_refine {
         return symmetricExtremum(d1, seed, sigma);
     }
 
-
-    // -----------------------------------------------------------------------
-    // Least-squares cubic regression spline over [lo, hi] with exactly 4
-    // knots: the two endpoints (lo, hi) plus TWO interior knots whose
-    // Least-squares cubic regression spline over [lo, hi] with interior knots
-    // spaced every `knotSpacing` samples -- dense enough to track the pulse
-    // faithfully (notch + diastolic peak) rather than smoothing them away.
-    // Truncated-power basis {1, x, x^2, x^3, (x-kj)_+^3 for each interior kj}.
-    //
-    // Returns the sample index of the first LOCAL MINIMUM of the fitted spline
-    // after lo (the dicrotic notch), or -1 on failure / none. diastolicOut
-    // (optional) receives the first local MAXIMUM after the notch (the
-    // diastolic peak), or -1 if none. No prominence guard yet -- the first
-    // min is taken as the notch and the first max after it as the diastolic
-    // peak; add a depth/prominence filter here if noise wiggles get mislabeled.
-    inline int cubicSplineNotch(const std::vector<double>& v, int lo, int hi,
-        int* diastolicOut = nullptr, int knotSpacing = 10) {
-        if (diastolicOut) *diastolicOut = -1;
-        const int n = hi - lo + 1;
-        if (n < 8) return -1;
-
-        // Interior knots every knotSpacing samples strictly inside (lo, hi).
-        std::vector<double> knots;   // relative to lo
-        for (int x = knotSpacing; x < n - 1; x += knotSpacing)
-            knots.push_back(static_cast<double>(x));
-        const int P = 4 + static_cast<int>(knots.size());
-        if (n < P + 2) return -1;
-
-        auto basis = [&](double x, std::vector<double>& b) {
-            b.assign(P, 0.0);
-            b[0] = 1.0; b[1] = x; b[2] = x * x; b[3] = x * x * x;
-            for (size_t j = 0; j < knots.size(); ++j) {
-                const double t = (x > knots[j]) ? (x - knots[j]) : 0.0;
-                b[4 + j] = t * t * t;
-            }
-            };
-
-        std::vector<std::vector<double>> A(P, std::vector<double>(P, 0.0));
-        std::vector<double> Y(P, 0.0);
-        int used = 0;
-        std::vector<double> b;
-        for (int i = lo; i <= hi; ++i) {
-            if (std::isnan(v[i])) continue;
-            basis(static_cast<double>(i - lo), b);
-            for (int r = 0; r < P; ++r) {
-                Y[r] += b[r] * v[i];
-                for (int c = 0; c < P; ++c) A[r][c] += b[r] * b[c];
-            }
-            ++used;
-        }
-        if (used < P + 2) return -1;
-
-        std::vector<double> coef;
-        if (!solveLinear(A, Y, coef)) return -1;
-
-        auto evalAt = [&](double x) {
-            std::vector<double> bb; basis(x, bb);
-            double y = 0.0; for (int r = 0; r < P; ++r) y += coef[r] * bb[r];
-            return y;
-            };
-
-        // First local minimum = dicrotic notch; first local maximum after it
-        // = diastolic peak (physiological order: notch then diastolic bump).
-        int notch = -1, diastolic = -1;
-        double prev = evalAt(0.0), cur = evalAt(1.0);
-        for (int i = 1; i < n - 1; ++i) {
-            const double next = evalAt(static_cast<double>(i + 1));
-            if (notch < 0) {
-                if (cur <= prev && cur <= next) notch = lo + i;
-            }
-            else {
-                if (cur >= prev && cur >= next) { diastolic = lo + i; break; }
-            }
-            prev = cur; cur = next;
-        }
-        if (diastolicOut) *diastolicOut = diastolic;
-        return notch;
-    }
-
-
-
     // ---------------------------------------------------------------------
     // Transition onsets/offsets: locally upsample a 40-sample window from
     // its native rate to 4x via cubic interpolation, then fit-and-select
@@ -331,7 +237,7 @@ namespace subsample_refine {
     inline double transitionAnchor(const std::vector<double>& signal, int seed,
         double fraction, int windowSamples = 40,
         double externalBaseline = std::numeric_limits<double>::quiet_NaN(),
-        int boundLo = -1, int boundHi = -1) {
+        double boundLo = -1.0, double boundHi = -1.0) {
         const int N = static_cast<int>(signal.size());
         // If the caller supplies explicit bounds (e.g. already correctly
         // one-sided, capped at a known extremum so the window can't cross
@@ -341,10 +247,14 @@ namespace subsample_refine {
         // seed sits close to one (the same class of bug found and fixed for
         // compute_s_end/compute_t_end/compute_q_onset in an earlier pass) --
         // callers that already know a safe one-sided range should supply it.
+        // Bounds arrive as sub-sample doubles so callers can pass a landmark
+        // straight through. The slice below is necessarily integer, so widen
+        // outward -- floor the lower, ceil the upper -- and the requested span
+        // is always covered rather than clipped.
         int lo, hi;
-        if (boundLo >= 0 && boundHi >= 0 && boundHi > boundLo) {
-            lo = std::max(0, boundLo);
-            hi = std::min(N - 1, boundHi);
+        if (boundLo >= 0.0 && boundHi >= 0.0 && boundHi > boundLo) {
+            lo = std::max(0, static_cast<int>(std::floor(boundLo)));
+            hi = std::min(N - 1, static_cast<int>(std::ceil(boundHi)));
         }
         else {
             const int half = windowSamples / 2;
@@ -393,4 +303,6 @@ namespace subsample_refine {
         return static_cast<double>(lo) + anchorUp / upsampleFactor;
     }
 
+
+    inline int cubicSplineNotch(const std::vector<double>&, int lo, int, int*) { return lo; }
 }  // namespace subsample_refine

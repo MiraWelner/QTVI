@@ -16,7 +16,7 @@
 
 #include "annealing/anneal_handler.hpp"
 #include "peak_finding/peakfinding_io.hpp"
-#include "config_entry.hpp"
+#include "config_file_handling/config_entry.hpp"
 #include "peak_finding/create_ecg_ppg_pairs.hpp"
 #include "template_generation/build_templates.hpp"
 #include "peak_finding/run_find_r_peaks.hpp"

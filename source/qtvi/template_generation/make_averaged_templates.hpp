@@ -21,9 +21,9 @@
  */
 #pragma once
 
-#include "TemplateTypes.hpp"
+#include "template_structs.hpp"
 #include "create_arterial_templates.hpp"
-#include "CreateEcgTemplates.hpp"
+#include "create_ecg_templates.hpp"
 #include <iostream>
 
  // FAST: PPG templates + ECG raw/unfiltered templates. The squared/absval

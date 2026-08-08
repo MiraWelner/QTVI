@@ -8,7 +8,7 @@
 #include "gui_handler.h"
 #include "chart_utils.hpp"
 #include "grid_overlay.hpp"
-#include "config_loader.hpp"
+#include "config_file_handling/config_loader.hpp"
 #include "logging/user_mark_log.hpp"
 #include "annotation_eraser.h"
 #include "annotation_types.hpp"
