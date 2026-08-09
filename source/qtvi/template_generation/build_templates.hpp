@@ -228,7 +228,6 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
 
     // Beats: assemble per-channel retained snips (CH1/CH2/CH3/PPG from the
     // TemplateInfo map; arterial channels already stashed above) so every
-    // channel reaches write_snips_csv.
     const size_t nb = out.info.size();
     out.beats.bad_segment.resize(nb, false);
     auto ensureBins = [&](const std::string& ch)
