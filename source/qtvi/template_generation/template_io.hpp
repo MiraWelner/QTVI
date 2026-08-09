@@ -134,7 +134,6 @@ namespace template_io {
     };
 
     void write_template_binfile(const std::string& path, const TemplateFile& data);
-    void write_snips_csv(const std::string& path, const BeatsFile& beats);
 
     TemplateFile read_template_binfile(const std::string& path);
 }  // namespace template_io
