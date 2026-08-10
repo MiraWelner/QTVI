@@ -101,7 +101,7 @@ namespace {
     constexpr QColor kColorPpgPeak{ 180,   0,   0 };  // red
     constexpr QColor kColorPpgDicrotic{ 220,  50,  50 };  // medium red
     constexpr QColor kColorPpgPeak2{ 235, 100, 100 };  // light red (2nd/diastolic peak)
-    constexpr QColor kColorPpgT80{ 210,  30,  70 };  // pink-red (80% upslope)
+    constexpr QColor kColorPpgT80{ 210,  30,  70 };  // pink-red (80% downslope)
     constexpr QColor kColorPpgEnd{ 200,  60,  90 };  // dark pink-red
 
     // Arterial markers (ABP green, ART purple, ART_PULM orange),
