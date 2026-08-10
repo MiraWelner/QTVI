@@ -37,6 +37,10 @@ extern "C" {
 }
 #include "file_format_parsing/pugixml.hpp"
 
+// Polyphase resampler + zero-phase filtering helpers (single source of truth;
+// this file previously carried its own copy of the resampler).
+#include "filter_utils.hpp"
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -46,191 +50,6 @@ extern "C" {
 // ============================================================================
 
 namespace {
-
-    // ---------- polyphase resampler ----------
-    //
-    // The resampler builds a filter bank of small filters (one per
-    // fractional phase between input samples), then for each output sample
-    // dot-products the right sub-filter against a window of inputs. Output is
-    // split into a leading boundary (filter hangs off the left edge), a multi-
-    // threaded interior (no bounds checks), and a trailing boundary.
-
-    int greatest_common_divisor(int a, int b) {
-        a = std::abs(a); b = std::abs(b);
-        while (b) { int t = b; b = a % b; a = t; }
-        return a;
-    }
-
-    std::vector<std::vector<double>> buildPolyphaseBank(int P, int Q, int halfLobes) {
-        int maxPQ = std::max(P, Q);
-        int numTaps = 2 * halfLobes * maxPQ + 1;
-        double fc = 1.0 / static_cast<double>(maxPQ);
-        int M = numTaps - 1;
-        double halfM = M / 2.0;
-
-        std::vector<double> h(numTaps);
-        for (int n = 0; n < numTaps; ++n) {
-            double x = n - halfM;
-            double sinc = (std::abs(x) < 1e-12) ? 1.0
-                : std::sin(M_PI * fc * x) / (M_PI * x);
-            double w = 0.42 - 0.5 * std::cos(2.0 * M_PI * n / M)
-                + 0.08 * std::cos(4.0 * M_PI * n / M);
-            h[n] = sinc * w;
-        }
-
-        int subLen = (numTaps + P - 1) / P;
-        std::vector<std::vector<double>> bank(P, std::vector<double>(subLen, 0.0));
-        for (int i = 0; i < numTaps; ++i) {
-            bank[i % P][i / P] = h[i];
-        }
-
-        for (int p = 0; p < P; ++p) {
-            double s = 0.0;
-            for (int k = 0; k < subLen; ++k) s += bank[p][k];
-            if (std::abs(s) > 1e-15) {
-                for (int k = 0; k < subLen; ++k) bank[p][k] /= s;
-            }
-        }
-        return bank;
-    }
-
-    void processRangeBoundary(
-        const double* inPtr, long long inLen,
-        double* outPtr, long long mStart, long long mEnd,
-        const std::vector<const double*>& bankPtrs,
-        int subLen, int filterCenter, int P, int Q)
-    {
-        for (long long m = mStart; m < mEnd; ++m) {
-            long long upsampledIdx = m * Q;
-            int phase = static_cast<int>(upsampledIdx % P);
-            long long baseInput = upsampledIdx / P;
-            const double* sub = bankPtrs[phase];
-
-            double sum = 0.0;
-            for (int k = 0; k < subLen; ++k) {
-                long long inIdx = baseInput - k + filterCenter;
-                if (inIdx >= 0 && inIdx < inLen) {
-                    sum += sub[k] * inPtr[inIdx];
-                }
-            }
-            outPtr[m] = sum;
-        }
-    }
-
-    void processRangeInterior(
-        const double* inPtr,
-        double* outPtr, long long mStart, long long mEnd,
-        const std::vector<const double*>& bankPtrs,
-        int subLen, int filterCenter, int P, int Q)
-    {
-        for (long long m = mStart; m < mEnd; ++m) {
-            long long upsampledIdx = m * Q;
-            int phase = static_cast<int>(upsampledIdx % P);
-            long long baseInput = upsampledIdx / P;
-            const double* sub = bankPtrs[phase];
-            const double* inBase = inPtr + baseInput + filterCenter;
-
-            double sum = 0.0;
-            for (int k = 0; k < subLen; ++k) {
-                sum += sub[k] * inBase[-k];
-            }
-            outPtr[m] = sum;
-        }
-    }
-
-    std::vector<double> polyphase_resample(const std::vector<double>& input, int P, int Q) {
-        if (input.empty()) return {};
-        if (P == 1 && Q == 1) return input;
-
-        int halfLobes = std::max(16, std::max(P, Q) / 2);
-        auto bank = buildPolyphaseBank(P, Q, halfLobes);
-        int subLen = static_cast<int>(bank[0].size());
-
-        long long inLen = static_cast<long long>(input.size());
-        long long outLen = static_cast<long long>(
-            std::ceil(static_cast<double>(inLen) * P / Q));
-        std::vector<double> output(outLen);
-
-        int maxPQ = std::max(P, Q);
-        int filterCenter = halfLobes * maxPQ / P;
-
-        const double* inPtr = input.data();
-        double* outPtr = output.data();
-
-        std::vector<const double*> bankPtrs(P);
-        for (int p = 0; p < P; ++p) bankPtrs[p] = bank[p].data();
-
-        long long safeStartM = 0;
-        long long safeEndM = 0;
-        for (long long m = 0; m < outLen; ++m) {
-            long long baseInput = (m * Q) / P;
-            if (baseInput - subLen + 1 + filterCenter >= 0 &&
-                baseInput + filterCenter < inLen) {
-                safeStartM = m;
-                break;
-            }
-        }
-        for (long long m = outLen - 1; m >= safeStartM; --m) {
-            long long baseInput = (m * Q) / P;
-            if (baseInput - subLen + 1 + filterCenter >= 0 &&
-                baseInput + filterCenter < inLen) {
-                safeEndM = m + 1;
-                break;
-            }
-        }
-
-        processRangeBoundary(inPtr, inLen, outPtr, 0, safeStartM,
-            bankPtrs, subLen, filterCenter, P, Q);
-        processRangeBoundary(inPtr, inLen, outPtr, safeEndM, outLen,
-            bankPtrs, subLen, filterCenter, P, Q);
-
-        long long interiorLen = safeEndM - safeStartM;
-        if (interiorLen <= 0) return output;
-
-        unsigned int numThreads = std::thread::hardware_concurrency();
-        if (numThreads == 0) numThreads = 4;
-        if (interiorLen < 100000) numThreads = 1;
-        numThreads = std::min(numThreads, static_cast<unsigned int>(interiorLen));
-
-        if (numThreads == 1) {
-            processRangeInterior(inPtr, outPtr, safeStartM, safeEndM,
-                bankPtrs, subLen, filterCenter, P, Q);
-        }
-        else {
-            std::vector<std::thread> threads;
-            threads.reserve(numThreads);
-            long long chunkSize = interiorLen / numThreads;
-
-            for (unsigned int t = 0; t < numThreads; ++t) {
-                long long start = safeStartM + t * chunkSize;
-                long long end = (t == numThreads - 1) ? safeEndM : start + chunkSize;
-
-                threads.emplace_back(processRangeInterior,
-                    inPtr, outPtr, start, end,
-                    std::cref(bankPtrs), subLen, filterCenter, P, Q);
-            }
-            for (auto& th : threads) th.join();
-        }
-        return output;
-    }
-
-    std::vector<double> upsample(const std::vector<double>& input,
-        double sourceRate, double targetRate) {
-        if (input.empty()) return {};
-        if (sourceRate == targetRate) return input;
-
-        int gcd = greatest_common_divisor((int)targetRate, (int)sourceRate);
-        int P = (int)targetRate / gcd;
-        int Q = (int)sourceRate / gcd;
-
-        if (P > 1000 || Q > 1000) {
-            throw std::runtime_error(
-                "Resampling ratio " + std::to_string(P) + "/" +
-                std::to_string(Q) + " too large - source rate: " +
-                std::to_string(sourceRate));
-        }
-        return polyphase_resample(input, P, Q);
-    }
 
     // ---------- string utilities ----------
 
@@ -399,7 +218,7 @@ namespace {
         std::vector<double> raw(n);
         edfread_physical_samples(handle, idx, (int)n, raw.data());
 
-        std::vector<double> up = upsample(raw, old_rate, finalSamplingRate);
+        std::vector<double> up = filterutils::upsample(raw, old_rate, finalSamplingRate);
 
         out.write(reinterpret_cast<const char*>(up.data()), up.size() * 8);
         sizeUpOut = (uint32_t)up.size();
@@ -1066,7 +885,7 @@ void make_binfile_dat(const std::filesystem::path& path,
                 }
                 nn = q;
             }
-            std::vector<double> up = upsample(dense, nativeHz, upHz);
+            std::vector<double> up = filterutils::upsample(dense, nativeHz, upHz);
 
             if (up.empty()) {
                 double v = -1.0;

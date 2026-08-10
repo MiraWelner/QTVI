@@ -110,7 +110,6 @@ namespace post_process_detail {
         std::string error;                          // set by finalizeViewerJob on failure
 
         template_io::TemplateFile tmplR;      //  R-pass template to be reused by re-alignment
-        template_io::BeatsFile    beatsR;     // pristine R-pass beats
 
         // Per-anchor raw templates accumulated by regenerateWithAnchor, kept
         // SEPARATE from job.tmpl so the anchor cycle and the finalize worker
@@ -203,7 +202,6 @@ namespace post_process_detail {
         job.beats = std::move(fast.beats);
         job.info = std::move(fast.info);
         job.tmplR = job.tmpl;      // snapshot R frame (one copy, at prep time)
-        job.beatsR = job.beats;
         template_io::write_template_binfile(provisionalPath.string(), job.tmpl);
         job.viewerTemplatePath = provisionalPath;
         job.needsFinalize = true;
@@ -328,7 +326,7 @@ namespace post_process_detail {
             // final anchor (below), so the interactive steps stay fast.
             auto _t0 = std::chrono::steady_clock::now();
             template_io::TemplateFile atmpl = job.tmplR;   // R base to align from (cheap vs beats)
-            alignTemplatesFromCache(atmpl, job.beatsR, job.rates, anchor);
+            alignTemplatesFromCache(atmpl, job.beats, job.rates, anchor);
             auto _t1 = std::chrono::steady_clock::now();
 
             const int anchorTag = static_cast<int>(anchor);
@@ -402,17 +400,13 @@ namespace post_process_detail {
                 // of the R beats, then align in scoring mode so the raw scalars
                 // + beats are put in the anchor frame. absval scalars ride
                 // along unchanged. Score with writeEcgSQICsv.
-                //
-                // R_PEAK is scored directly from job.tmpl/job.beats (already
-                // in the R frame, no alignment needed).
                 writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK",
                     job.tmpl, job.beats, job.samplingRate);
 
                 for (AnchorType a : seq) {
                     template_io::TemplateFile scoreT = job.tmpl;    // has absval in scalars
-                    template_io::BeatsFile    scoreB = job.beatsR;  // R beats, to be shifted
-                    alignTemplatesFromCache(scoreT, scoreB, job.rates, a,
-                        /*forScoring=*/true);
+                    template_io::BeatsFile scoreB = job.beats;   // R beats, to be shifted
+                    alignTemplatesFromCache(scoreT, scoreB, job.rates, a, /*forScoring=*/true);
                     writeEcgSQICsv(job.cfg, job.stem + "_" + anchorName(a),
                         scoreT, scoreB, job.samplingRate);
                 }
