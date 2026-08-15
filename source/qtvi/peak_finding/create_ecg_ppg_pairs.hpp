@@ -196,6 +196,8 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
             subtract_median(d.ecgSignal);
             subtract_median(d.ecgSignal2);
             subtract_median(d.ecgSignal3);
+            subtract_median(d.ppgSignal);
+
         }
 
         d.ppg_bin_indexs = std::move(seg.ppg_bin_indexs);

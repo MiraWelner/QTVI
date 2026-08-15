@@ -1,4 +1,6 @@
-# The Noise Marking GUI
+# DeepEntropyX QTVI pipeline
+
+**Confidential. Proprietary to DEMAZUMDER LLC. Do not distribute.**
 
 A Qt desktop tool for marking noise and cardiac features in polysomnography and
 bedside-monitor recordings. It reads EDF or `.dat` recordings, converts them to a
@@ -23,12 +25,12 @@ Supported datasets: **MESA**, **BITTIUM**, **CHAOS**.
 
 ### Requirements
 
-| | |
-|---|---|
-| **C++ standard** | **C++20** (`/std:c++20` on MSVC, `-std=c++20` on GCC/Clang) |
-| **Compiler** | MSVC 2022 (v143 toolset). GCC 11+ or Clang 14+ should also work but are untested |
-| **Qt** | **6.7 or newer**, modules `Core` `Gui` `Widgets` `Charts` `OpenGLWidgets` |
-| **Build system** | Visual Studio + Qt VS Tools, or CMake 3.19+ |
+|                  |                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------- |
+| **C++ standard** | **C++20** (`/std:c++20` on MSVC, `-std=c++20` on GCC/Clang)                      |
+| **Compiler**     | MSVC 2022 (v143 toolset). GCC 11+ or Clang 14+ should also work but are untested |
+| **Qt**           | **6.7 or newer**, modules `Core` `Gui` `Widgets` `Charts` `OpenGLWidgets`        |
+| **Build system** | Visual Studio + Qt VS Tools, or CMake 3.19+                                      |
 
 Two notes on those versions, since both are easy to get wrong:
 
@@ -110,6 +112,7 @@ cmake --build build --config Release
 Adjust the source lists to match your tree — the headers expect the
 subdirectories `file_format_parsing/`, `logging/`, `peak_finding/`, `theme/` and
 `template_marking_gui/` to be reachable from the include path.
+
 ---
 
 ## Pointing the application at your data
@@ -125,10 +128,10 @@ directory to `$(OutDir)` or copy `config.csv` into the project root.
 
 ### The two columns you need
 
-| Column | Meaning |
-|---|---|
+| Column               | Meaning                                              |
+| -------------------- | ---------------------------------------------------- |
 | `original_file_path` | Folder holding the source `.edf` / `.dat` recordings |
-| `output_folder` | Root folder for everything the tool writes |
+| `output_folder`      | Root folder for everything the tool writes           |
 
 **Leave either blank and you will be prompted with a folder picker at startup.**
 Filling them in with absolute paths skips the dialogs — the faster option if you
@@ -207,11 +210,10 @@ To improve the visible GUI peak finding, Click the
 0 and 1 in the popup.
 
 - **Blanking** is the interval after an R peak during which no further R peak may
-  be detected. This is a raw ms value - it does not depend on previous segments of the datsaet.
+  be detected. This is a raw ms value - it does not depend on previous segments of the dataset.
 - **Threshold** is the height an R peak must reach. This is relative to the previous stretch of data.
 
-Marking noise helps here too: regions marked as noise are excluded when 
-and threshold are estimated.
+Marking noise helps here too: regions marked as noise are excluded when blanking and threshold are estimated.
 
 ### Saving
 
@@ -229,17 +231,17 @@ If they are too crowded, un-check the PPG or ECG marker boxes to hide a set.
 To flag a bad beat: **right-click once** for a bad R, **right-click twice** for a
 bad PPG.
 
-| # | Marker | Meaning |
-|---|---|---|
-| 1 | P beg  | Onset of P wave |
-| 2 | P peak  | Peak of P wave |
-| 3 | Q beg | Onset of Q wave |
-| 4 | S end | End of S wave (J Point) |
-| 5 | T begin | Before the T wave |
-| 6 | T end | After the T wave |
-| 5 | On | PPG onset |
-| 6 | Pk | PPG Systolic peak |
-| 7 | Dc | Dicrotic notch |
-| 8 | En | End |
+| #   | Marker  | Meaning                 |
+| --- | ------- | ----------------------- |
+| 1   | P beg   | Onset of P wave         |
+| 2   | P peak  | Peak of P wave          |
+| 3   | Q beg   | Onset of Q wave         |
+| 4   | S end   | End of S wave (J Point) |
+| 5   | T begin | Before the T wave       |
+| 6   | T end   | After the T wave        |
+| 7   | On      | PPG onset               |
+| 8   | Pk      | PPG Systolic peak       |
+| 9   | Dc      | Dicrotic notch          |
+| 10  | En      | End                     |
 
 Save when finished and the next file opens automatically.
