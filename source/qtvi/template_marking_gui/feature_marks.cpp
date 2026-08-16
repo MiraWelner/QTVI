@@ -571,32 +571,38 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     g.peak = cl(static_cast<int>(std::lround(
         subsample_refine::symmetricExtremum(v, pkSeed, 8.0))));
 
-    // Systolic foot: a genuine local minimum, so it is an EXTREMUM -- symmetric
-    // extremum (Gaussian-weighted quadratic), sigma = 8, same as the peak. A
-    // transition anchor cannot place a landmark here at all: its baseline would
-    // be the trough value itself, so there is no level for the fit to cross.
+	//systolic foot: asymmetric extremum (sigma = 8) on the rising shoulder
     auto refine_foot = [&](int seed) {
         return cl(static_cast<int>(std::lround(
-            subsample_refine::symmetricExtremum(v, seed, 8.0))));
+            subsample_refine::asymmetricExtremum(v, seed, 8.0))));
         };
 
-    // End of cycle: NOT reliably an extremum -- on a truncated or still-decaying
-    // tail there may be no local minimum -- so it keeps the transition anchor,
-    // on a symmetric +-20 ms window around the coarse trough.
+    //systolic foot end of cycle: asymmetric extremum (sigma = 8) after the peak
     const double w20 = 0.020 * ppgRate;
     auto refine_end = [&](int seed) {
         return cl(static_cast<int>(std::lround(
-            subsample_refine::transitionAnchor(v, seed, 0.00, 40,
-                std::numeric_limits<double>::quiet_NaN(),
-                std::max(0.0, seed - w20),
-                std::min(seed + w20, static_cast<double>(Wc - 1))))));
+            subsample_refine::asymmetricExtremum(v, seed, 8.0))));
         };
     // ppg onset trough
     {
-        int seed = r1; double lowest = std::numeric_limits<double>::infinity();
-        for (int i = r1; i <= g.peak; ++i)
+        int seed = 0; double lowest = std::numeric_limits<double>::infinity();
+        for (int i = 0; i < g.peak; ++i)
             if (!std::isnan(v[i]) && v[i] < lowest) { lowest = v[i]; seed = i; }
         g.onset = refine_foot(seed);
+        // DEBUG: peak/onset gate diagnosis. onset is the trough in [r1, peak],
+        // so a mis-placed peak drags the onset with it. This shows the gate
+        // [r1,r2], where the argmax landed (pkSeed->g.peak), the onset trough,
+        // and the true global-max column for comparison.
+        {
+            int gmax = 0; double gv = -1e300;
+            for (int i = 0; i < Wc; ++i) if (!std::isnan(v[i]) && v[i] > gv) { gv = v[i]; gmax = i; }
+            std::fprintf(stderr,
+                "[ppg-fid] Wc=%d gate=[r1=%d,r2=%d] pkSeed=%d peak=%d onset=%d "
+                "| globalMax=%d(val=%.3f) peakVal=%.3f onsetVal=%.3f\n",
+                Wc, r1, r2, pkSeed, g.peak, g.onset, gmax, gv,
+                (g.peak >= 0 && g.peak < Wc ? v[g.peak] : std::nan("")),
+                (g.onset >= 0 && g.onset < Wc ? v[g.onset] : std::nan("")));
+        }
     }
 
     {
@@ -801,9 +807,9 @@ int FeatureMarks::detect_ppg_end(const std::vector<double>& pulse) {
     return end;
 }
 
-int FeatureMarks::detect_ppg_dicrotic(const std::vector<double>& pulse) {
+int FeatureMarks::detect_ppg_dicrotic(const std::vector<double>& pulse, int peak) {
     const int N = static_cast<int>(pulse.size());
-    const int peak = std::clamp((int)std::lround(detect_ppg_peak(pulse)), 0, std::max(0, N - 1));
+    peak = std::clamp(peak, 0, std::max(0, N - 1));
     const int end = detect_ppg_end(pulse);
     if (peak < 0 || end < 0 || end - peak < 10)
         return std::clamp((peak + end) / 2, 0, N - 1);
@@ -830,7 +836,8 @@ int FeatureMarks::detect_ppg_dicrotic(const std::vector<double>& pulse) {
 // the dicrotic notch (physiologically, diastolic peak follows the notch).
 int FeatureMarks::detect_ppg_peak2(const std::vector<double>& pulse) {
     const int N = static_cast<int>(pulse.size());
-    const int dic = detect_ppg_dicrotic(pulse);
+    const int sysPeak = std::clamp((int)std::lround(detect_ppg_peak(pulse)), 0, std::max(0, N - 1));
+    const int dic = detect_ppg_dicrotic(pulse, sysPeak);
     const int end = detect_ppg_end(pulse);
     if (dic < 0 || end < 0 || end - dic < 10)
         return std::clamp((dic + end) / 2, 0, N - 1);
@@ -903,7 +910,8 @@ namespace {
         if (dicrotic < 0 && cl(end) > cl(onset) + 2) {
             const int base = cl(onset);
             std::vector<double> cyc(v.begin() + base, v.begin() + cl(end) + 1);
-            const int seed = FeatureMarks::detect_ppg_dicrotic(cyc);
+            const int peakInCyc = std::clamp(peak - base, 0, (int)cyc.size() - 1);
+            const int seed = FeatureMarks::detect_ppg_dicrotic(cyc, peakInCyc);
             // Spec I-3: dicrotic notch is an asymmetric extremum (cubic fit
             // on Gaussian-weighted samples, analytic derivative solve),
             // sigma=10. detect_ppg_dicrotic (above) supplies the coarse

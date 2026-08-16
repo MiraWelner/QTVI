@@ -1,5 +1,5 @@
 ﻿/**
- * @file   GenerateTemplates.hpp
+ * @file   make_averaged_templates.hpp
  * @brief  Orchestrate the full template generation pipeline.
  *         Port of GenerateTemplates.m
  *
@@ -29,9 +29,17 @@
  // FAST: PPG templates + ECG raw/unfiltered templates. The squared/absval
  // fields of each returned TemplateInfo are left empty for
  // AugmentTemplatesSlow() to fill. This is everything the viewer displays.
+#include <chrono>
+#include <cstdio>
+
 inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_data>& wave_data,
     const SignalRates& rates) {
     size_t n = wave_data.size();
+    // ---- phase timing: which part of the "fast" build is slow ----------
+    auto _ms = [](std::chrono::steady_clock::time_point a,
+        std::chrono::steady_clock::time_point b) {
+            return std::chrono::duration<double, std::milli>(b - a).count(); };
+    const auto _g0 = std::chrono::steady_clock::now();
 
     // Check if any bin has PPG data
     bool has_ppg = false;
@@ -54,6 +62,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     vector<int> ppg_onset_cols(n, -1);
     vector<bool> template_good(n, false);
 
+    const auto _ppg0 = std::chrono::steady_clock::now();
     if (has_ppg && rates.ppg > 0.0) {
         PPGTemplatesResult ppg_res = CreatePulseTemplates(wave_data, &output_binfile_data::ppgSignal, rates.ecg, rates.ppg);
         ppg_templates = std::move(ppg_res.templates);
@@ -71,7 +80,13 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // squared/absval columns stay empty here; fill_channel copies those
     // empty vectors through harmlessly, and AugmentTemplatesSlow fills
     // them later.
+    const auto _ppg1 = std::chrono::steady_clock::now();
     EcgTemplateResult ecg_res = CreateEcgTemplatesFast(wave_data, rates.ecg);
+    const auto _ecg1 = std::chrono::steady_clock::now();
+    std::fprintf(stderr,
+        "[fast-phases] bins=%zu | PPG %8.1f  ECG(align+template) %8.1f ms"
+        "  <- ECG is where alignment lives\n",
+        n, _ms(_ppg0, _ppg1), _ms(_ppg1, _ecg1));
 
     // Assemble TemplateInfo
     auto fill_channel = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {

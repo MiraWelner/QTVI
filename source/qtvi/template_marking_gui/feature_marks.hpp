@@ -107,7 +107,7 @@ public:
     // PPG landmarks
     static int detect_ppg_onset(const std::vector<double>& pulse);
     static double detect_ppg_peak(const std::vector<double>& pulse);
-    static int detect_ppg_dicrotic(const std::vector<double>& pulse);
+    static int detect_ppg_dicrotic(const std::vector<double>& pulse, int peak);
     static int detect_ppg_peak2(const std::vector<double>& pulse);
     static int detect_ppg_end(const std::vector<double>& pulse);
 

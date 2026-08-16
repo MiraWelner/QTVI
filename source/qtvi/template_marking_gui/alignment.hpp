@@ -277,6 +277,13 @@ namespace alignment {
         if (out.ref_beat_index >= 0 && out.ref_beat_index < static_cast<int>(out.beats.size()))
         {
             const int min_w = std::max(1, static_cast<int>(std::lround(0.010 * fs)));  // 10 ms window
+            // RR-fraction bounds for the TP baseline window, and ms-before-R
+            // bounds for the PQ baseline window. Conservative defaults; tune
+            // against real recordings if the leveling looks off.
+            const double kTpLoFrac = 0.55;   // start of TP flat, fraction of RR after R
+            const double kTpHiFrac = 0.85;   // end of TP flat, before next P
+            const double kPqPreRMs = 80.0;   // PQ window opens this many ms before R
+            const double kPqGuardMs = 20.0;  // and closes this many ms before R (guard vs Q)
 
             // Median over the lowest-variance min_w-wide sub-window of
             // [lo, hi] (inclusive, in this beat's own aligned column space).
@@ -317,69 +324,33 @@ namespace alignment {
                     return { med, true };
                 };
 
-            // Stage 1, TP window: [this beat's own T-end, next beat's
-            // P-onset]. {-1,-1} if the next R isn't inside this beat's slice
-            // or the landmarks come back invalid/out of order (e.g. HR fast
-            // enough that T runs into the next P).
-            //
-            // detect_p_peak/detect_q_begin (and likely other single-beat
-            // detectors) search from absolute column 0 up to r_idx -- safe
-            // only when r_idx is the array's OWN first/only R. Calling them
-            // directly on this beat's SHARED array with next_r reaches back
-            // across THIS beat's own, much-larger QRS spike, which wins any
-            // min/max search meant to find the next beat's P or Q. Rather
-            // than modify those detectors (used correctly elsewhere in the
-            // true single-beat context), extract a small, genuinely-
-            // isolated local window around next_r first, so every detector
-            // sees exactly the kind of array it was designed for.
+              /* Stage 1: TP Window. The baseline segment is the TP window ESTIMATED 
+              * by range:
+              * lo = R_anchor + 0.55 · RR
+              * hi = R_anchor + 0.85 · RR
+              * And then the flattest 10ms wide segment is located via a minimum variance scan 
+              */
             auto tp_window = [&](size_t i) -> std::pair<int, int> {
-                const auto& beat = out.beats[i];
-                const int N = static_cast<int>(beat.size());
-                // T-end via the canonical chain: J-point bounds T-begin, which
-                // bounds T-end. Replaces the old downhill-walk detector, whose
-                // estimate was only ever a seed and is now deleted.
-                const double jD = FeatureMarks::compute_j_point(beat, fs, R_anchor);
-                const double tbD = FeatureMarks::compute_t_begin(beat, fs, R_anchor, jD);
-                const int t_end = (int)std::lround(
-                    FeatureMarks::compute_t_end(beat, fs, R_anchor, tbD));
-                const int next_r = R_anchor + out.rr_lens[i];
-                if (next_r <= 0 || next_r >= N) return { -1, -1 };
-
-                // Local window: comfortably covers a PR interval before
-                // next_r (400 samples ~ 400ms at 1000 Hz, generous margin)
-                // with a little slack past it, clamped to this beat's own
-                // array bounds.
-                const int localLo = std::max(0, next_r - 400);
-                const int localHi = std::min(N, next_r + 50);
-                if (localHi - localLo < 10) return { -1, -1 };
-                std::vector<double> local(beat.begin() + localLo, beat.begin() + localHi);
-                const int local_r = next_r - localLo;
-
-                const int p_pk_local = (int)std::lround(FeatureMarks::detect_p_peak(local, local_r, fs));
-                const int p_on_local = (int)std::lround(FeatureMarks::compute_p_begin(local, fs, local_r, (double)p_pk_local));
-                if (p_on_local < 0) return { -1, -1 };
-                const int p_on = p_on_local + localLo;   // back to shared column space
-
-                if (t_end < 0 || p_on < 0 || t_end >= N || p_on >= N || p_on <= t_end)
-                    return { -1, -1 };
-                return { t_end, p_on };
+                const int N = static_cast<int>(out.beats[i].size());
+                const int rr = out.rr_lens[i];
+                if (rr <= 0) return { -1, -1 };
+                const int lo = R_anchor + static_cast<int>(std::lround(kTpLoFrac * rr));
+                const int hi = R_anchor + static_cast<int>(std::lround(kTpHiFrac * rr));
+                const int clo = std::max(0, lo);
+                const int chi = std::min(N, hi);
+                if (chi - clo < 3) return { -1, -1 };
+                return { clo, chi };
                 };
 
-            // Stage 2, PQ window: [this beat's own P-end, this beat's own
-            // Q-onset]. Both landmarks are real, fitted anchors (Phase A/B),
-            // not a fixed lookback -- matches the spec's literal PQ
-            // definition ("end of P to immediately before Q onset").
-            // {-1,-1} if the landmarks come back invalid/out of order.
+            // Stage 2, PQ window:Segment is always 80 ms before R to 20 ms before R
             auto pq_window = [&](size_t i) -> std::pair<int, int> {
-                const auto& beat = out.beats[i];
-                const int N = static_cast<int>(beat.size());
-                const int q_on = (int)std::lround(FeatureMarks::compute_q_onset(beat, fs, R_anchor));
-                if (q_on <= 0 || q_on >= N) return { -1, -1 };
-                const int w = std::max(3, static_cast<int>(std::lround(0.040 * fs)));  // 40 ms
-                const int lo = std::max(0, q_on - w);
-                const int hi = q_on;                          // up to (not incl) Q-onset
-                if (hi - lo < 3) return { -1, -1 };
-                return { lo, hi };
+                const int N = static_cast<int>(out.beats[i].size());
+                const int lo = R_anchor - static_cast<int>(std::lround(kPqPreRMs * 0.001 * fs));
+                const int hi = R_anchor - static_cast<int>(std::lround(kPqGuardMs * 0.001 * fs));
+                const int clo = std::max(0, lo);
+                const int chi = std::min(N, hi);
+                if (chi - clo < 3) return { -1, -1 };
+                return { clo, chi };
                 };
 
             // Compute both stage estimates for beat i (never short-circuited,
