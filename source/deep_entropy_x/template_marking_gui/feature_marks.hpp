@@ -98,6 +98,20 @@ public:
     // p50) and the GUI's reactive T80/P50 glyphs, so both always agree.
     static int amplitude_crossing(const std::vector<double>& v, int a, int b, double frac);
 
+    // Index of the minimum sample on [lo, hi], NaN-skipping; -1 if none.
+    static int trough_in(const std::vector<double>& v, int lo, int hi);
+
+    // FIRST crossing of the frac-of-amplitude level on [a, b], linearly
+    // interpolated between the bracketing samples and rounded.
+    static int first_crossing(const std::vector<double>& v, int a, int b, double frac);
+
+    // Augmentation tally: how many scored pulses had their tallest sample away
+    // from the systolic peak, i.e. how many the old argmax detector mislocated.
+    // Read after a run; reset per record if you want per-record figures.
+    static long long ppg_pulses_scored();
+    static long long ppg_tallest_not_first();
+    static void       ppg_reset_tally();
+
     //movable ecg bars
     static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
     static double detect_p_peak(const std::vector<double>& ecg_signal, int r_idx, double fs);
@@ -105,6 +119,13 @@ public:
     static int detect_q_begin(const std::vector<double>& ecg_signal, int r_idx);
 
     // PPG landmarks
+    //
+    // Systolic peak located from the UPSTROKE, on [lo, hi) (hi <= 0 => whole
+    // vector). Returns -1 when no upstroke is present (flat, all-NaN, too
+    // short) -- callers must handle that rather than substituting index 0.
+
+    static int detect_ppg_upstroke_peak(const std::vector<double>& v,
+        int lo = 0, int hi = -1);
     static int detect_ppg_onset(const std::vector<double>& pulse);
     static double detect_ppg_peak(const std::vector<double>& pulse);
     static int detect_ppg_dicrotic(const std::vector<double>& pulse, int peak);

@@ -31,6 +31,7 @@
 #include "template_generation/beat_classifier.hpp"
 #include "template_marking_gui/feature_marks.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -59,10 +60,18 @@ namespace premark {
 
     // Band boundaries on the shared template axis.
     struct SegmentCols {
-        int pEnd = -1, qrsStart = -1, qrsEnd = -1, tEnd = -1;
+        int pEnd = -1, qrsStart = -1, qrsEnd = -1, tBegin = -1, tEnd = -1;
+        // Bin admission is deliberately UNCHANGED from before tBegin existed:
+        // the structural landmarks must be ordered, and that is all. A
+        // degenerate T sub-band (tBegin == tEnd, which compute_t_begin and
+        // compute_t_end can both return on a low-amplitude or absent T) must
+        // NOT cost the whole bin its scores -- an empty band now reads NaN,
+        // which is exactly the case NaN was introduced to represent. Requiring
+        // tEnd > tBegin here would have dropped bins that used to score.
         bool valid(int W) const {
-            return pEnd >= 0 && qrsStart >= pEnd && qrsEnd > qrsStart
-                && tEnd > qrsEnd && tEnd <= W;
+            return pEnd >= 0 && pEnd <= qrsStart && qrsEnd > qrsStart
+                && tEnd > qrsEnd && tEnd <= W
+                && tBegin >= qrsEnd && tBegin <= tEnd;
         }
     };
 
@@ -81,10 +90,29 @@ namespace premark {
         s.qrsStart = (qOn >= 0.0) ? (int)std::lround(qOn) : -1;
         s.qrsEnd = (jPt >= 0.0) ? (int)std::lround(jPt) : -1;
         s.tEnd = (tEnd >= 0.0) ? (int)std::lround(tEnd) : -1;
+        // T onset was previously computed only to feed compute_t_end and then
+        // thrown away, which left the ST band covering J-point..T-end and the
+        // "T" band covering the isoelectric tail. Undetected T onset falls
+        // back to the J point: the ST band then reads NaN (nothing to score)
+        // and the T band spans what the ST band used to, which is the old
+        // behaviour rather than a silently wrong one.
+        // Clamped into [qrsEnd, tEnd] so a detector returning a T onset outside
+        // the ST..T span cannot produce a negative-width band.
+        s.tBegin = (tBeg >= 0.0) ? (int)std::lround(tBeg) : s.qrsEnd;
+        if (s.qrsEnd >= 0 && s.tEnd >= 0)
+            s.tBegin = std::max(s.qrsEnd, std::min(s.tBegin, s.tEnd));
         // No P-end detected (absent or flat P) -- fall back to the QRS onset,
         // which makes the P band the whole pre-QRS span rather than dropping
         // the band entirely.
         s.pEnd = (pEnd >= 0) ? pEnd : s.qrsStart;
+        // ...and CLAMP to the QRS onset even when detection "succeeded".
+        // detect_p_end's last resort returns p_peak + 59 samples when the
+        // 90%-return-to-baseline target is never reached; at 1 kHz that
+        // routinely lands past q_onset on a normal beat. The bin-validity test
+        // requires pEnd <= qrsStart, so an unclamped fallback silently cost the
+        // WHOLE BIN its envelope and scores -- a P-wave detector's bad day
+        // should shorten the P band, not delete the QRS and T scores with it.
+        if (s.qrsStart >= 0) s.pEnd = std::min(s.pEnd, s.qrsStart);
         return s;
     }
 
@@ -107,7 +135,7 @@ namespace premark {
     inline double meanSd(const MorphologyEnvelope& env) {
         double s = 0.0; int n = 0;
         for (size_t c = 0; c < env.sd.size(); ++c)
-            if (env.sd[c] > 0.0) { s += env.sd[c]; ++n; }
+            if (!std::isnan(env.sd[c]) && env.sd[c] > 0.0) { s += env.sd[c]; ++n; }
         return n ? s / n : std::numeric_limits<double>::quiet_NaN();
     }
 
@@ -135,9 +163,9 @@ namespace premark {
             // the columns so it is obvious which detector returned junk rather
             // than just losing the bin.
             std::fprintf(stderr, "[premark]     bin %d %s: bad landmarks "
-                "pEnd=%d qrs=[%d,%d] tEnd=%d W=%d rCol=%d\n",
+                "pEnd=%d qrs=[%d,%d] tBegin=%d tEnd=%d W=%d rCol=%d\n",
                 binIdx, channel.c_str(), r.seg.pEnd, r.seg.qrsStart,
-                r.seg.qrsEnd, r.seg.tEnd, W, rCol);
+                r.seg.qrsEnd, r.seg.tBegin, r.seg.tEnd, W, rCol);
             return r;
         }
 
@@ -149,9 +177,17 @@ namespace premark {
         std::vector<std::vector<double>> clean;
         clean.reserve(beats.size());
         for (const auto& b : beats) {
-            const BandMatchResult bm = scoreBeat(b, env1, r.seg.pEnd, r.seg.qrsStart,
-                r.seg.qrsEnd, r.seg.tEnd);
-            if (bm.pct_overall >= kCleanPctThreshold
+            // Pass 1 reads pct_overall and pct_QRS only -- scoring P, ST, T and
+            // tail here computes four bands per beat that are then discarded.
+            // The full six-band score is taken in the final pass below, against
+            // the pass-2 corridor, which is what actually reaches the CSV.
+            const BandMatchResult bm = scoreBeatBands(b, env1, r.seg.qrsStart,
+                r.seg.qrsEnd);
+            // NaN (unscorable band) fails the gate, same as a low score did
+            // before -- but it is now visible as NaN in the CSV rather than
+            // masquerading as 0.0.
+            if (!std::isnan(bm.pct_overall) && !std::isnan(bm.pct_QRS)
+                && bm.pct_overall >= kCleanPctThreshold
                 && bm.pct_QRS >= kCleanPctThreshold) clean.push_back(b);
         }
         // Everything scored out (very noisy bin) -- keep pass 1 rather than
@@ -165,7 +201,7 @@ namespace premark {
         r.scores.resize(beats.size());
         for (size_t i = 0; i < beats.size(); ++i)
             r.scores[i] = scoreBeat(beats[i], r.env, r.seg.pEnd, r.seg.qrsStart,
-                r.seg.qrsEnd, r.seg.tEnd);
+                r.seg.qrsEnd, r.seg.tBegin, r.seg.tEnd);
 
         // Pre-marks. NOTE: preMarkAll's body is comments in the spec (feature
         // matrix + ONNX batch), so until the model is wired this returns
@@ -190,14 +226,38 @@ namespace premark {
         if (it == beats.per_channel_beats.end() || fs <= 0.0) return out;
 
         const auto& perBin = it->second;
-        out.reserve(perBin.size());
-        for (size_t i = 0; i < perBin.size(); ++i) {
-            if (i < beats.bad_segment.size() && beats.bad_segment[i]) continue;
-            if (i >= tmpl.bins.size()) break;
+
+        // Bins are independent: runBin reads only its own beat matrix and its
+        // own template, and writes only into its own BinResult. Nothing here
+        // touches shared state -- the CSV writers run afterwards, on the
+        // caller's thread.
+        //
+        // Indexed into a pre-sized vector rather than push_back, because
+        // push_back from a parallel loop would race on the vector itself and
+        // would also scramble bin order. Skipped bins keep ok=false and are
+        // filtered out below, so bin i stays at index i during the loop.
+        //
+        // NAMING: not `slots`. Qt's qobjectdefs.h defines `slots`, `signals`
+        // and `emit` as macros expanding to nothing (unless QT_NO_KEYWORDS),
+        // and this header is pulled into a Qt target via post_process.hpp, so
+        // a variable named `slots` silently vanishes at the preprocessor and
+        // surfaces as "reserve does not take 0 arguments" -- the argument was
+        // eaten, not miscounted. Avoid those three identifiers here.
+        const int nBins = (int)std::min(perBin.size(), tmpl.bins.size());
+        std::vector<BinResult> binResults((size_t)std::max(0, nBins));
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+        for (int i = 0; i < nBins; ++i) {
+            if (i < (int)beats.bad_segment.size() && beats.bad_segment[i]) continue;
             const template_io::ChannelMethodTemplate& blk = tmpl.bins[i].*methodPtr;
-            out.push_back(runBin(perBin[i], blk.ecgTemplate, blk.r_col, fs,
-                classifier, (int)i, channel));
+            binResults[i] = runBin(perBin[i], blk.ecgTemplate, blk.r_col, fs,
+                classifier, i, channel);
         }
+
+        out.reserve(binResults.size());
+        for (auto& s : binResults)
+            if (s.bin >= 0) out.push_back(std::move(s));
         return out;
     }
 
@@ -211,16 +271,23 @@ namespace premark {
 
     // Per-beat band scores + pre-mark. `first` truncates and writes the
     // header; later channels append.
-    inline void write_scores(const std::vector<BinResult>& results, bool first) {
-        if (g_dir.empty() || g_stem.empty()) return;
-        const std::string path = g_dir + "/" + g_stem + "_premarks.csv";
+    // Explicit destination. THREAD SAFETY: this deliberately does not read
+    // g_dir/g_stem. finalizeViewerJob runs on a worker thread and main.cpp
+    // parks workers to advance to the next file, so up to kMaxOutstanding
+    // finalizes can be in flight at once -- a shared mutable stem would let
+    // two files write each other's filenames. Every path below is a parameter.
+    inline void write_scores(const std::vector<BinResult>& results, bool first,
+        const std::string& dir, const std::string& stem) {
+        if (dir.empty() || stem.empty()) return;
+        const std::string path = dir + "/" + stem + "_premarks.csv";
         std::ofstream f(path, first ? std::ios::trunc : std::ios::app);
         if (!f) {
             std::fprintf(stderr, "[premark] cannot open %s for writing\n", path.c_str());
             return;
         }
         if (first) f << "stem,channel,bin,beat,pct_overall,pct_P,pct_QRS,pct_ST,"
-            "pct_T,class,confidence\n";
+            "pct_T,pct_tail,class,confidence\n";
+        const std::string& g_stem = stem;   // rows carry the stem in column 1
         for (const auto& r : results) {
             if (!r.ok) continue;
             for (size_t k = 0; k < r.scores.size(); ++k) {
@@ -230,28 +297,32 @@ namespace premark {
                 f << g_stem << ',' << r.channel << ',' << r.bin << ',' << k << ','
                     << r.scores[k].pct_overall << ',' << r.scores[k].pct_P << ','
                     << r.scores[k].pct_QRS << ',' << r.scores[k].pct_ST << ','
-                    << r.scores[k].pct_T << ',' << (int)cls << ',' << conf << '\n';
+                    << r.scores[k].pct_T << ',' << r.scores[k].pct_tail << ','
+                    << (int)cls << ',' << conf << '\n';
             }
         }
     }
 
     // Per-bin envelope summary: landmarks, beat counts, and the pass-1 to
     // pass-2 sd change (the tightening readout).
-    inline void write_envelope_summary(const std::vector<BinResult>& results, bool first) {
-        if (g_dir.empty() || g_stem.empty()) return;
-        const std::string path = g_dir + "/" + g_stem + "_envelopes.csv";
+    inline void write_envelope_summary(const std::vector<BinResult>& results, bool first,
+        const std::string& dir, const std::string& stem) {
+        if (dir.empty() || stem.empty()) return;
+        const std::string path = dir + "/" + stem + "_envelopes.csv";
         std::ofstream f(path, first ? std::ios::trunc : std::ios::app);
         if (!f) {
             std::fprintf(stderr, "[premark] cannot open %s for writing\n", path.c_str());
             return;
         }
         if (first) f << "stem,channel,bin,ok,n_beats,n_clean,p_end,qrs_start,"
-            "qrs_end,t_end,sd_pass1,sd_pass2\n";
+            "qrs_end,t_begin,t_end,sd_pass1,sd_pass2,env_tight\n";
+        const std::string& g_stem = stem;
         for (const auto& r : results)
             f << g_stem << ',' << r.channel << ',' << r.bin << ',' << (r.ok ? 1 : 0)
             << ',' << r.nBeats << ',' << r.nClean << ',' << r.seg.pEnd << ','
-            << r.seg.qrsStart << ',' << r.seg.qrsEnd << ',' << r.seg.tEnd << ','
-            << r.sdPass1 << ',' << r.sdPass2 << '\n';
+            << r.seg.qrsStart << ',' << r.seg.qrsEnd << ',' << r.seg.tBegin << ','
+            << r.seg.tEnd << ',' << r.sdPass1 << ',' << r.sdPass2 << ','
+            << (r.env.tight() ? 1 : 0) << '\n';
     }
 
     // ---------------------------------------------------------------------
@@ -260,17 +331,20 @@ namespace premark {
     inline void runAll(const template_io::BeatsFile& beats,
         const template_io::TemplateFile& tmpl,
         double ecgRate,
+        const std::string& dirIn,
+        const std::string& stemIn,
         const std::string& onnxModelPath = {})
     {
+        // Shadow the globals with locals: nothing below is shared state, so
+        // concurrent finalize workers cannot interfere.
+        const std::string g_dir = dirIn;
+        const std::string g_stem = stemIn;
         // Silent-return diagnostics. Every early exit below prints its reason,
         // because the failure mode this replaces was "no files appear and
         // nothing says why" -- an ofstream onto a directory that does not
         // exist fails without throwing, and set() being handed an empty
         // config path looks identical to the feature being switched off.
         if (g_dir.empty() || g_stem.empty()) {
-            std::fprintf(stderr, "[premark] skipped: destination not set "
-                "(dir='%s' stem='%s') -- check the config field passed to "
-                "premark::set\n", g_dir.c_str(), g_stem.c_str());
             return;
         }
 
@@ -286,15 +360,7 @@ namespace premark {
             }
         }
 
-        if (ecgRate <= 0.0) {
-            std::fprintf(stderr, "[premark] skipped %s: ecg rate is %g\n",
-                g_stem.c_str(), ecgRate);
-            return;
-        }
-        std::fprintf(stderr, "[premark] %s -> %s | channels=%zu bins=%zu fs=%g\n",
-            g_stem.c_str(), g_dir.c_str(), beats.per_channel_beats.size(),
-            tmpl.bins.size(), ecgRate);
-
+        if (ecgRate <= 0.0) {  return;  }
         BeatClassifier classifier(onnxModelPath);
 
         struct Chan {
@@ -310,20 +376,27 @@ namespace premark {
         for (const Chan& c : chans) {
             const auto res = runChannel(beats, tmpl, c.key, c.ptr, ecgRate, classifier);
             if (res.empty()) {
-                const bool haveKey =
-                    beats.per_channel_beats.find(c.key) != beats.per_channel_beats.end();
-                std::fprintf(stderr, "[premark]   %s: no bins (key present=%d)\n",
-                    c.key, haveKey ? 1 : 0);
+                const bool haveKey =  beats.per_channel_beats.find(c.key) != beats.per_channel_beats.end();
+    
                 continue;
             }
             int nOk = 0, nBeats = 0;
             for (const auto& r : res) { if (r.ok) ++nOk; nBeats += r.nBeats; }
-            std::fprintf(stderr, "[premark]   %s: %zu bins, %d scored, %d beats\n",
-                c.key, res.size(), nOk, nBeats);
-            write_scores(res, first);
-            write_envelope_summary(res, first);
+            write_scores(res, first, g_dir, g_stem);
+            write_envelope_summary(res, first, g_dir, g_stem);
             first = false;
         }
+    }
+
+    // Backward-compatible form using the globals set by premark::set().
+    // Safe ONLY when called from a single thread. Prefer the explicit
+    // destination overload from any worker thread.
+    inline void runAll(const template_io::BeatsFile& beats,
+        const template_io::TemplateFile& tmpl,
+        double ecgRate,
+        const std::string& onnxModelPath = {})
+    {
+        runAll(beats, tmpl, ecgRate, g_dir, g_stem, onnxModelPath);
     }
 
 } // namespace premark

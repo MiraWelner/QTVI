@@ -23,6 +23,7 @@
 #include "template_generation/template_io.hpp"
 #include "template_marking_gui/alignment.hpp"   // find_q_column (Q-align)
 #include "logging/sqi_ecg.hpp"   // computeEcgSQI / writeEcgSQICsv -> cfg.quality_metric
+#include "template_generation/premark_beats.hpp"   // 4.7 envelope + band scores
 
 namespace post_process_detail {
 
@@ -271,6 +272,32 @@ namespace post_process_detail {
                 << " ms = "
                 << std::chrono::duration_cast<std::chrono::milliseconds>(t_sq1 - t_sq0).count()
                 << " ms\n";
+
+            // Section 4.7 morphology envelope + band scores. Deliberately on
+            // THIS thread, not in prepareViewerJob: prepare blocks the marking
+            // UI from opening, and premark is pure compute plus two CSV writes
+            // that nothing reads during marking, so it belongs on the worker
+            // that already runs concurrently with the operator.
+            //
+            // Safe here: premark mutates neither job.beats nor job.tmpl, so it
+            // cannot race the anchor path (which touches job.anchorAccum) nor
+            // the mergeTemplatesSlow above (already complete). It reads the RAW
+            // per-bin blocks, which augment/merge leave intact.
+            //
+            // Explicit dir/stem rather than premark::set(): main.cpp parks
+            // finalize workers and advances to the next file, so several
+            // finalizes can be in flight together and the file-scope
+            // g_dir/g_stem would be a data race between them.
+            {
+                auto t_pm0 = std::chrono::steady_clock::now();
+                premark::runAll(job.beats, job.tmpl, job.rates.ecg,
+                    job.cfg.quality_metric, job.stem);
+                auto t_pm1 = std::chrono::steady_clock::now();
+                std::cerr << "  [timing] premark envelope+scores for " << job.stem
+                    << ": "
+                    << std::chrono::duration_cast<std::chrono::milliseconds>(t_pm1 - t_pm0).count()
+                    << " ms\n";
+            }
 
             // Base (R) templates now include squared/absval alongside
             // raw/unfilt/ppg. Write them to the PROVISIONAL file -- the

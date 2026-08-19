@@ -547,6 +547,46 @@ int FeatureMarks::amplitude_crossing(const std::vector<double>& v, int a, int b,
     return best;
 }
 
+// Augmentation tally counters. Plain statics: detect_ppg_fiducials is called
+// from the single-threaded seeding path, and these are diagnostics -- a lost
+// increment under any future parallel caller costs nothing.
+static long long s_ppgPulsesScored = 0;
+static long long s_ppgTallestNotFirst = 0;
+
+long long FeatureMarks::ppg_pulses_scored() { return s_ppgPulsesScored; }
+long long FeatureMarks::ppg_tallest_not_first() { return s_ppgTallestNotFirst; }
+void FeatureMarks::ppg_reset_tally() { s_ppgPulsesScored = s_ppgTallestNotFirst = 0; }
+
+int FeatureMarks::first_crossing(const std::vector<double>& v, int a, int b, double frac) {
+    const int N = static_cast<int>(v.size());
+    if (a < 0 || b <= a || b >= N) return -1;
+    const double va = v[a], vb = v[b];
+    if (std::isnan(va) || std::isnan(vb)) return -1;
+    const double target = va + frac * (vb - va);
+    const bool rising = (vb >= va);
+    for (int i = a + 1; i <= b; ++i) {
+        if (std::isnan(v[i]) || std::isnan(v[i - 1])) continue;
+        const bool crossed = rising ? (v[i] >= target && v[i - 1] < target)
+            : (v[i] <= target && v[i - 1] > target);
+        if (!crossed) continue;
+        const double den = v[i] - v[i - 1];
+        const double f = (den != 0.0) ? (target - v[i - 1]) / den : 0.0;
+        return static_cast<int>(std::lround((i - 1) + f));
+    }
+    return -1;
+}
+
+int FeatureMarks::trough_in(const std::vector<double>& v, int lo, int hi) {
+    const int N = static_cast<int>(v.size());
+    lo = std::max(0, lo);
+    hi = std::min(hi, N - 1);
+    int best = -1;
+    double bestV = std::numeric_limits<double>::infinity();
+    for (int i = lo; i <= hi; ++i)
+        if (!std::isnan(v[i]) && v[i] < bestV) { bestV = v[i]; best = i; }
+    return best;
+}
+
 FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, double tR1, int W, double ppgRate)
 {
     PpgFiducials g;
@@ -564,52 +604,55 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     const int r2 = at(tR1 + tRR);
     if (r2 <= r1) return g;
 
-    // ---- Systolic peak: argmax in [R1, R2], symmetric extremum (sigma = 8) --
-    int pkSeed = r1; double pkBest = -std::numeric_limits<double>::infinity();
-    for (int i = r1; i <= r2; ++i)
-        if (!std::isnan(v[i]) && v[i] > pkBest) { pkBest = v[i]; pkSeed = i; }
+    // ---- Systolic peak: FIRST peak via the upstroke, then symmetric extremum
+    // (sigma = 8). Was argmax over [R1, R2], which returns the tallest peak in
+    // the gate -- the reflected wave whenever it exceeds systole.
+    int pkSeed = FeatureMarks::detect_ppg_upstroke_peak(v, r1, r2 + 1);
+    if (pkSeed < 0) return g;              // no upstroke in the gate
     g.peak = cl(static_cast<int>(std::lround(
         subsample_refine::symmetricExtremum(v, pkSeed, 8.0))));
 
-	//systolic foot: asymmetric extremum (sigma = 8) on the rising shoulder
+    //systolic foot: asymmetric extremum (sigma = 8) on the rising shoulder
     auto refine_foot = [&](int seed) {
         return cl(static_cast<int>(std::lround(
             subsample_refine::asymmetricExtremum(v, seed, 8.0))));
         };
 
     //systolic foot end of cycle: asymmetric extremum (sigma = 8) after the peak
-    const double w20 = 0.020 * ppgRate;
+    // (a dead `w20 = 0.020 * ppgRate` sat here, declared and never read)
     auto refine_end = [&](int seed) {
         return cl(static_cast<int>(std::lround(
             subsample_refine::asymmetricExtremum(v, seed, 8.0))));
         };
-    // ppg onset trough
+    // Augmentation tally, replacing the old per-pulse [ppg-fid] stderr line.
+    //
+    // That line printed the chosen peak next to the window's globalMax. Keep
+    // the measurement: tallest != first is a property of the SIGNAL (a
+    // reflected wave taller than systole), so it stays informative now that the
+    // peak is located from the upstroke -- it is the count of pulses the old
+    // argmax detector got wrong. Dropped the once-per-pulse fprintf; a caller
+    // reads the counters when it wants them.
     {
-        int seed = 0; double lowest = std::numeric_limits<double>::infinity();
-        for (int i = 0; i < g.peak; ++i)
-            if (!std::isnan(v[i]) && v[i] < lowest) { lowest = v[i]; seed = i; }
-        g.onset = refine_foot(seed);
-        // DEBUG: peak/onset gate diagnosis. onset is the trough in [r1, peak],
-        // so a mis-placed peak drags the onset with it. This shows the gate
-        // [r1,r2], where the argmax landed (pkSeed->g.peak), the onset trough,
-        // and the true global-max column for comparison.
-        {
-            int gmax = 0; double gv = -1e300;
-            for (int i = 0; i < Wc; ++i) if (!std::isnan(v[i]) && v[i] > gv) { gv = v[i]; gmax = i; }
-            std::fprintf(stderr,
-                "[ppg-fid] Wc=%d gate=[r1=%d,r2=%d] pkSeed=%d peak=%d onset=%d "
-                "| globalMax=%d(val=%.3f) peakVal=%.3f onsetVal=%.3f\n",
-                Wc, r1, r2, pkSeed, g.peak, g.onset, gmax, gv,
-                (g.peak >= 0 && g.peak < Wc ? v[g.peak] : std::nan("")),
-                (g.onset >= 0 && g.onset < Wc ? v[g.onset] : std::nan("")));
-        }
+        const int gmax = 0 <= g.peak ? [&] {
+            int m = -1; double mv = -std::numeric_limits<double>::infinity();
+            for (int i = 0; i < Wc; ++i)
+                if (!std::isnan(v[i]) && v[i] > mv) { mv = v[i]; m = i; }
+            return m;
+            }() : -1;
+        ++s_ppgPulsesScored;
+        if (gmax >= 0 && std::abs(gmax - g.peak) > 8) ++s_ppgTallestNotFirst;
     }
 
+    // Systolic foot: the trough before the peak.
     {
-        int seed = Wc - 1; double lowest = std::numeric_limits<double>::infinity();
-        for (int i = std::min(g.peak + 1, Wc - 1); i <= Wc - 1; ++i)
-            if (!std::isnan(v[i]) && v[i] < lowest) { lowest = v[i]; seed = i; }
-        g.end = refine_end(seed);
+        const int seed = trough_in(v, 0, g.peak - 1);
+        g.onset = refine_foot(seed >= 0 ? seed : 0);
+    }
+
+    // Pulse end: the trough after the peak.
+    {
+        const int seed = trough_in(v, std::min(g.peak + 1, Wc - 1), Wc - 1);
+        g.end = refine_end(seed >= 0 ? seed : Wc - 1);
         g.end_found = true;
     }
 
@@ -760,32 +803,107 @@ int FeatureMarks::detect_p_end(const std::vector<double>& ecg_signal, int r_idx,
 // PPG detectors
 // -------------------------------------------------------------------------
 
+// Systolic peak from the upstroke. See the note at the declaration for why
+// argmax is wrong here.
+//
+// Steps, none of which compare amplitudes of competing peaks:
+//   1. FIRST significant upstroke. The largest slope only sets a scale; the
+//      anchor is the first slope run reaching kSlopeFrac of it. Anchoring on
+//      the STEEPEST rise instead fails the same way argmax does -- with a
+//      strong reflected wave its upstroke is the steeper one.
+//   2. Peak = first point after the anchor where the slope stops being
+//      positive, i.e. the first local maximum. A taller later peak is
+//      unreachable by construction: the walk stops at the first apex.
+//   3. The run must PERSIST (>= h samples). Noise clears any slope gate for a
+//      sample or two; a systolic upstroke holds for tens of ms.
+//
+// The derivative window h scales with the range: a FIXED window does not work
+// across heart rates, because at 50 bpm the rise is spread over ~3x the samples
+// of a 110 bpm rise so its per-sample slope is ~3x smaller while fixed-window
+// noise is unchanged.
+int FeatureMarks::detect_ppg_upstroke_peak(const std::vector<double>& v,
+    int lo, int hi)
+{
+    const int n = static_cast<int>(v.size());
+    if (hi <= 0 || hi > n) hi = n;
+    lo = std::max(0, lo);
+    if (hi - lo < 5) return -1;
+
+    const int h = std::max(3, (hi - lo) / 50);
+
+    // Smoothed central-difference derivative; NaN-safe.
+    std::vector<double> d(n, std::numeric_limits<double>::quiet_NaN());
+    for (int i = std::max(lo, h); i + h < hi; ++i) {
+        if (std::isnan(v[i - h]) || std::isnan(v[i + h])) continue;
+        d[i] = (v[i + h] - v[i - h]) / (2.0 * h);
+    }
+
+    double maxSlope = 0.0;
+    for (int i = lo; i < hi; ++i)
+        if (!std::isnan(d[i]) && d[i] > maxSlope) maxSlope = d[i];
+    if (maxSlope <= 0.0) return -1;                 // flat / no rise
+    const double gate = 0.25 * maxSlope;
+    const int minRun = std::max(2, h);
+
+    int anchor = -1;
+    for (int i = lo; i < hi; ++i) {
+        if (std::isnan(d[i]) || d[i] < gate) continue;
+        int j = i, bestJ = i, held = 0;
+        double bestD = d[i];
+        while (j < hi && (std::isnan(d[j]) || d[j] >= gate)) {
+            if (!std::isnan(d[j])) {
+                ++held;
+                if (d[j] > bestD) { bestD = d[j]; bestJ = j; }
+            }
+            ++j;
+        }
+        if (held >= minRun) { anchor = bestJ; break; }
+        i = j;                                      // too brief: keep looking
+    }
+    if (anchor < 0) return -1;
+
+    int pk = -1;
+    for (int i = anchor; i + 1 < hi; ++i) {
+        if (std::isnan(d[i])) continue;
+        if (d[i] <= 0.0) { pk = i; break; }
+    }
+    if (pk < 0) pk = hi - 1;                        // apex at/past the boundary
+
+    // The smoothed derivative crosses zero slightly past the true apex (it
+    // averages over +/-h), so settle onto the local maximum sample.
+    {
+        const int wlo = std::max(lo, pk - h - 1);
+        const int whi = std::min(hi, pk + h + 2);
+        int bestI = pk; double bestV = -std::numeric_limits<double>::infinity();
+        for (int i = wlo; i < whi; ++i)
+            if (!std::isnan(v[i]) && v[i] > bestV) { bestV = v[i]; bestI = i; }
+        pk = bestI;
+    }
+    return pk;
+}
+
 int FeatureMarks::detect_ppg_onset(const std::vector<double>& pulse) {
     const int N = static_cast<int>(pulse.size());
     if (N < 2) return 0;
 
-    int peak = 0;
-    double pv = pulse[0];
-    for (int i = 1; i < N; ++i)
-        if (pulse[i] > pv) { pv = pulse[i]; peak = i; }
-
-    int idx = 0;
-    double v = pulse[0];
-    for (int i = 1; i <= peak; ++i)
-        if (pulse[i] < v) { v = pulse[i]; idx = i; }
-
-    if (idx == 0) return std::min(5, N - 1);
+    // Both steps delegate: upstroke peak, then the shared trough primitive.
+    // No local loops, so this cannot drift from detect_ppg_fiducials' onset.
+    const int peak = detect_ppg_upstroke_peak(pulse);
+    if (peak < 0) return std::min(5, N - 1);
+    const int idx = trough_in(pulse, 0, peak);
+    if (idx <= 0) return std::min(5, N - 1);
     return idx;
 }
 
-// PPG systolic peak, sub-sample refined. Coarse seed = argmax; refined with a
-// Gaussian-weighted quadratic (symmetric extremum, sigma = 8, the per-landmark
-// PPG-peak sigma). Returns a FLOAT position so downstream fiducials that key
-// off the peak (onset/t80/dicrotic/end brackets) inherit the sub-sample peak.
+// PPG systolic peak, sub-sample refined. Coarse seed = FIRST peak via the
+// upstroke (was argmax, i.e. the tallest peak); refined with a Gaussian-
+// weighted quadratic (symmetric extremum, sigma = 8, the per-landmark PPG-peak
+// sigma). Returns a FLOAT position so downstream fiducials that key off the
+// peak (onset/t80/dicrotic/end brackets) inherit the sub-sample peak.
 double FeatureMarks::detect_ppg_peak(const std::vector<double>& pulse) {
     if (pulse.empty()) return 0.0;
-    auto it = std::max_element(pulse.begin(), pulse.end());
-    const int seed = static_cast<int>(it - pulse.begin());
+    const int seed = detect_ppg_upstroke_peak(pulse);
+    if (seed < 0) return 0.0;
     return subsample_refine::symmetricExtremum(pulse, seed, 8.0);
 }
 
@@ -793,18 +911,11 @@ int FeatureMarks::detect_ppg_end(const std::vector<double>& pulse) {
     const int N = static_cast<int>(pulse.size());
     if (N < 4) return std::max(0, N - 1);
 
-    int peak = 0;
-    double pv = pulse[0];
-    for (int i = 1; i < N; ++i)
-        if (pulse[i] > pv) { pv = pulse[i]; peak = i; }
-
-    if (peak >= N - 2) return std::max(0, N - 1);
-
-    int end = peak + 1;
-    double v = pulse[end];
-    for (int i = peak + 2; i < N; ++i)
-        if (pulse[i] < v) { v = pulse[i]; end = i; }
-    return end;
+    // Same two shared primitives as detect_ppg_fiducials' end.
+    const int peak = detect_ppg_upstroke_peak(pulse);
+    if (peak < 0 || peak >= N - 2) return std::max(0, N - 1);
+    const int end = trough_in(pulse, peak + 1, N - 1);
+    return (end >= 0) ? end : std::max(0, N - 1);
 }
 
 int FeatureMarks::detect_ppg_dicrotic(const std::vector<double>& pulse, int peak) {
@@ -880,9 +991,8 @@ namespace {
         if (hi - lo < 3) { lo = 0; hi = n - 1; }
 
         if (peak < 0) {
-            int p = -1; double pv = -std::numeric_limits<double>::infinity();
-            for (int i = lo; i <= hi; ++i)
-                if (!std::isnan(v[i]) && v[i] > pv) { pv = v[i]; p = i; }
+            // Upstroke, not argmax -- see detect_ppg_upstroke_peak.
+            const int p = FeatureMarks::detect_ppg_upstroke_peak(v, lo, hi + 1);
             if (p < 0) return;
             peak = p;
         }

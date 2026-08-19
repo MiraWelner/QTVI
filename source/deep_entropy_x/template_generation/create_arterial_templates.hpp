@@ -157,19 +157,18 @@ static inline void build_pulse_template_pair_windowed(
         // foot 1, next pulse's onset past foot 2) that varies beat-to-beat;
         // scoring the whole window would let that padding dominate the error
         // and reject clean pulses.
-        int refPeak = -1; double pv = -std::numeric_limits<double>::infinity();
-        for (int c = 0; c < w; ++c)
-            if (!std::isnan(reference[c]) && reference[c] > pv) { pv = reference[c]; refPeak = c; }
+        // Systolic peak of the reference pulse from the upstroke, not argmax:
+        // the two feet below are found relative to it, so a peak on the
+        // reflected wave puts foot 1 at the dicrotic notch and narrows the
+        // foot-to-foot error window to the back half of the pulse.
+        int refPeak = FeatureMarks::detect_ppg_upstroke_peak(reference, 0, w);
 
         int f2fLo = 0, f2fHi = w;   // safe default: whole window
         if (refPeak > 0 && refPeak < w - 1) {
-            int fl = 0; double flv = std::numeric_limits<double>::infinity();
-            for (int c = 0; c <= refPeak; ++c)
-                if (!std::isnan(reference[c]) && reference[c] < flv) { flv = reference[c]; fl = c; }
-            int fr = w - 1; double frv = std::numeric_limits<double>::infinity();
-            for (int c = refPeak; c < w; ++c)
-                if (!std::isnan(reference[c]) && reference[c] < frv) { frv = reference[c]; fr = c; }
-            if (fr > fl) { f2fLo = fl; f2fHi = fr + 1; }   // inclusive of 2nd foot
+            // Both feet through the shared trough primitive.
+            const int fl = FeatureMarks::trough_in(reference, 0, refPeak);
+            const int fr = FeatureMarks::trough_in(reference, refPeak, w - 1);
+            if (fl >= 0 && fr > fl) { f2fLo = fl; f2fHi = fr + 1; }   // incl. 2nd foot
         }
 
         // Normalized error restricted to [f2fLo, f2fHi): ||beat - ref|| /
@@ -225,7 +224,7 @@ static inline void build_pulse_template_pair_windowed(
     for (const auto& b : beatsForTemplate) {
         int pk = -1; double pv = -std::numeric_limits<double>::infinity();
         for (int c = 0; c < (int)b.size(); ++c)
-            if (!std::isnan(b[c]) && b[c] > pv) { pv = b[c]; pk = c; }
+            if (!std::isnan(b[c]) && b[c] > pv) { pv = b[c]; pk = c; }   // see note below
         if (pk >= 0) {
             diag_peak_cols.push_back(pk);
             if (pk < diag_peak_min) diag_peak_min = pk;

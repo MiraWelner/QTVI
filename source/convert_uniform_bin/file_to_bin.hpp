@@ -99,6 +99,19 @@ enum ChannelIdx {
 void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg);
 
 /**
+ * @brief Convert a time window [winStartSec, winEndSec) of one EDF recording
+ *        into a .bin at outPath. winEndSec < 0 means "to the end of the file".
+ *        Used to split a recording into fixed-length segments (e.g. the
+ *        8-hour Bittium segments written as <stem>_0.bin, <stem>_1.bin, ...).
+ *        Each channel is sliced to the same wall-clock window on its own
+ *        native grid, so the native and upsampled time axes stay identical.
+ */
+void make_binfile_edf_window(const std::filesystem::path& path,
+    const config_entry& cfg,
+    const std::filesystem::path& outPath,
+    double winStartSec, double winEndSec);
+
+/**
  * @brief Convert one CHAOS / Bittium .dat recording into a 35-channel
  *        .bin file in cfg.output_path. See make_binfile_edf for details.
  */

@@ -324,12 +324,12 @@ namespace alignment {
                     return { med, true };
                 };
 
-              /* Stage 1: TP Window. The baseline segment is the TP window ESTIMATED 
-              * by range:
-              * lo = R_anchor + 0.55 · RR
-              * hi = R_anchor + 0.85 · RR
-              * And then the flattest 10ms wide segment is located via a minimum variance scan 
-              */
+            /* Stage 1: TP Window. The baseline segment is the TP window ESTIMATED
+            * by range:
+            * lo = R_anchor + 0.55 · RR
+            * hi = R_anchor + 0.85 · RR
+            * And then the flattest 10ms wide segment is located via a minimum variance scan
+            */
             auto tp_window = [&](size_t i) -> std::pair<int, int> {
                 const int N = static_cast<int>(out.beats[i].size());
                 const int rr = out.rr_lens[i];
@@ -806,34 +806,32 @@ namespace alignment {
             const int peakSearchEnd = std::min(
                 static_cast<int>(r_col + rr_w),
                 static_cast<int>(beat.size()));
-            int peak = -1;
-            double pv = -std::numeric_limits<double>::infinity();
-            for (int k = r_col + 1; k < peakSearchEnd; ++k)
-                if (!std::isnan(beat[k]) && beat[k] > pv) { pv = beat[k]; peak = k; }
+            // Upstroke-located FIRST peak, not the tallest sample in the window.
+            // This is the site that matters most: the peak found here brackets
+            // the foot and the up50 half-height crossing below, and a beat whose
+            // up50 cannot be found is DISCARDED. With argmax, a pulse whose
+            // reflected wave exceeds systole had its up50 searched on the
+            // notch-to-P2 rise, which frequently has no clean single crossing --
+            // so those beats were dropped, and the surviving count collapsed.
+            const int peak = FeatureMarks::detect_ppg_upstroke_peak(beat, r_col + 1,
+                peakSearchEnd);
             if (peak < 0) continue;
 
-            int foot = 0;
-            double fv = std::numeric_limits<double>::infinity();
-            for (int k = 0; k <= peak; ++k)
-                if (!std::isnan(beat[k]) && beat[k] < fv) { fv = beat[k]; foot = k; }
+            // Foot and up50 through the SAME primitives the display fiducials
+            // use (FeatureMarks::trough_in / amplitude_crossing), so the
+            // alignment axis and the markers drawn on it are defined
+            // identically. Both were hand-rolled here, which is why a fix to
+            // one never reached the other.
+            const int foot = FeatureMarks::trough_in(beat, 0, peak);
+            if (foot < 0) continue;
 
             // 50%-upslope (half-height) crossing on [foot, peak]. This is the
-            // horizontal alignment fiducial: it sits on the steep upstroke,
-            // so its column is well-localized (unlike the flat apex or the
-            // shallow foot). Linear-interpolate the crossing, round to a
-            // column for the integer shift.
-            const double half = fv + 0.5 * (pv - fv);
-            int up50 = -1;
-            for (int k = foot + 1; k <= peak; ++k) {
-                if (std::isnan(beat[k]) || std::isnan(beat[k - 1])) continue;
-                if (beat[k] >= half && beat[k - 1] < half) {
-                    const double denom = beat[k] - beat[k - 1];
-                    const double frac = (denom != 0.0)
-                        ? (half - beat[k - 1]) / denom : 0.0;
-                    up50 = static_cast<int>(std::lround((k - 1) + frac));
-                    break;
-                }
-            }
+            // horizontal alignment fiducial: it sits on the steep upstroke, so
+            // its column is well-localized (unlike the flat apex or the shallow
+            // foot). Interpolated first-upward-crossing, and it can FAIL --
+            // both properties matter here and neither is provided by
+            // amplitude_crossing, which is for display markers.
+            const int up50 = FeatureMarks::first_crossing(beat, foot, peak, 0.50);
             if (up50 < 0) continue;   // no clean upslope crossing; drop beat
 
             // NOTE: peak/foot are stored raw (no subsample_refine call) --

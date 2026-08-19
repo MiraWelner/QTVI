@@ -203,20 +203,37 @@ namespace {
     // Write an EDF channel as a (upsampled, raw-pairs) pair. `finalSamplingRate`
     // is this channel's own target rate from config; it is stamped into the
     // per-channel upsample-rate header block via upRateOut.
+    // Read a channel over the sample window [winStartSamp, winEndSamp) on this
+    // channel's OWN native grid (or the whole channel when winEndSamp < 0), then
+    // upsample and write the (upsampled, raw-pairs) blocks. The raw block's
+    // epoch axis is anchored at winStartEpochMs so a segment's absolute time is
+    // correct regardless of which 8-hour window it is.
     void edf_to_bin(int handle, int idx, long long n,
-        double old_rate, double finalSamplingRate, double startEpochMs,
+        double old_rate, double finalSamplingRate, double winStartEpochMs,
         std::ofstream& out,
         uint32_t& sizeUpOut, uint32_t& sizeRawOut,
-        float& nativeRateOut, float& upRateOut)
-
+        float& nativeRateOut, float& upRateOut,
+        long long winStartSamp = 0, long long winEndSamp = -1)
     {
         if (idx < 0 || n <= 0 || finalSamplingRate <= 0.0) {
             write_missing(out, sizeUpOut, sizeRawOut, nativeRateOut, upRateOut);
             return;
         }
 
-        std::vector<double> raw(n);
-        edfread_physical_samples(handle, idx, (int)n, raw.data());
+        // Clamp the window to the channel's available samples.
+        long long lo = (winStartSamp < 0) ? 0 : winStartSamp;
+        long long hi = (winEndSamp < 0) ? n : std::min(winEndSamp, n);
+        if (lo >= hi) {                       // nothing in this window
+            write_missing(out, sizeUpOut, sizeRawOut, nativeRateOut, upRateOut);
+            return;
+        }
+        long long count = hi - lo;
+
+        // Position this signal's read cursor at the window start, then read only
+        // the window. edfseek is per-signal; EDFSEEK_SET == 0 in edflib.
+        edfseek(handle, idx, lo, EDFSEEK_SET);
+        std::vector<double> raw(count);
+        edfread_physical_samples(handle, idx, (int)count, raw.data());
 
         std::vector<double> up = filterutils::upsample(raw, old_rate, finalSamplingRate);
 
@@ -225,7 +242,7 @@ namespace {
 
         const double dtMs = (old_rate > 0.0) ? (1000.0 / old_rate) : 0.0;
         for (size_t k = 0; k < raw.size(); ++k) {
-            double pair[2] = { startEpochMs + static_cast<double>(k) * dtMs, raw[k] };
+            double pair[2] = { winStartEpochMs + static_cast<double>(k) * dtMs, raw[k] };
             out.write(reinterpret_cast<const char*>(pair), 16);
         }
         sizeRawOut = (uint32_t)raw.size();
@@ -677,10 +694,22 @@ namespace {
 // Public entry points
 // ============================================================================
 
+// Full-recording conversion: window covers the entire file.
 void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg)
 {
-    std::filesystem::path outPath = make_out_path(path, cfg);
+    make_binfile_edf_window(path, cfg, make_out_path(path, cfg), 0.0, -1.0);
+}
 
+// Windowed conversion. [winStartSec, winEndSec) bounds the output on the
+// recording's own seconds-from-start clock; winEndSec < 0 means "to the end".
+// outPath lets a caller name the segment (e.g. <stem>_0.bin). Every channel is
+// sliced to the same wall-clock window on its own native grid, so the two time
+// axes (native raw / upsampled) stay identical across the segment set.
+void make_binfile_edf_window(const std::filesystem::path& path,
+    const config_entry& cfg,
+    const std::filesystem::path& outPath,
+    double winStartSec, double winEndSec)
+{
     char filebuf[1 << 16];
     std::ofstream out;
     out.rdbuf()->pubsetbuf(filebuf, sizeof(filebuf));
@@ -704,38 +733,59 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
 
     EdfSignalMap sigmap = build_edf_channel_map(hdr.get(), cfg);
 
-    const double startEpochMs = edf_start_epoch_ms(hdr.get());
+    // The recording's absolute start; a windowed segment's own start is offset
+    // by winStartSec so its timestamps remain correct wall-clock epoch ms.
+    const double recStartEpochMs = edf_start_epoch_ms(hdr.get());
+    const double segStartEpochMs = recStartEpochMs
+        + ((winStartSec > 0.0) ? winStartSec * 1000.0 : 0.0);
 
     uint32_t sizes_up[NUM_CHANNELS] = {};
     uint32_t sizes_raw[NUM_CHANNELS] = {};
     float    native_rates[NUM_CHANNELS] = {};
     float    up_rates[NUM_CHANNELS] = {};
 
+    // Convert a [winStartSec, winEndSec) span into a [lo, hi) sample window on a
+    // channel of the given native rate. winEndSec < 0 => to end (hi = -1).
+    auto sampleWindow = [&](double rate, long long& lo, long long& hi) {
+        lo = (winStartSec > 0.0) ? (long long)std::floor(winStartSec * rate) : 0;
+        hi = (winEndSec >= 0.0) ? (long long)std::floor(winEndSec * rate) : -1;
+        };
+
     // Channel 0: synthetic timestamp (seconds from start). EDF has no monitor
     // clock, so anchor the raw block to the primary ECG channel's rate and the
-    // upsampled block to the ECG target rate.
+    // upsampled block to the ECG target rate. For a window, the duration is the
+    // window length (clamped to what the ECG channel actually has).
     {
         double tsRate = (cfg.ecg_raw_rate > 0.0)
             ? cfg.ecg_raw_rate
             : edf_channel_rate(hdr.get(), sigmap[CH_ECG1]);
         double tsDur = 0.0;
         if (sigmap[CH_ECG1] >= 0 && tsRate > 0.0) {
-            tsDur = (double)edf_samples(hdr.get(), sigmap[CH_ECG1]) / tsRate;
+            long long total = edf_samples(hdr.get(), sigmap[CH_ECG1]);
+            long long lo, hi; sampleWindow(tsRate, lo, hi);
+            if (lo < 0) lo = 0;
+            if (hi < 0 || hi > total) hi = total;
+            long long cnt = (hi > lo) ? (hi - lo) : 0;
+            tsDur = (double)cnt / tsRate;
         }
-        write_synthetic_timestamp(out, tsDur, tsRate, cfg.ecg_upsample_rate, startEpochMs,
+        write_synthetic_timestamp(out, tsDur, tsRate, cfg.ecg_upsample_rate, segStartEpochMs,
             sizes_up[CH_TIMESTAMP], sizes_raw[CH_TIMESTAMP],
             native_rates[CH_TIMESTAMP], up_rates[CH_TIMESTAMP]);
     }
 
     // Each channel is upsampled to its own configured target rate. Unmapped
     // slots (-1 in sigmap) or channels with no configured rate become
-    // missing-channel placeholders via edf_to_bin -> write_missing.
+    // missing-channel placeholders via edf_to_bin -> write_missing. The window
+    // is recomputed per channel because each has its own native rate.
     auto write_signal_to_bin = [&](ChannelIdx ch, double rawRate = 0.0,
         double upRate = 0.0) {
             int chIdx = sigmap[ch];
             long long n = (chIdx < 0) ? 0 : edf_samples(hdr.get(), chIdx);
-            edf_to_bin(hdr->handle, chIdx, n, rawRate, upRate, startEpochMs, out,
-                sizes_up[ch], sizes_raw[ch], native_rates[ch], up_rates[ch]);
+            long long lo = 0, hi = -1;
+            if (chIdx >= 0 && rawRate > 0.0) sampleWindow(rawRate, lo, hi);
+            edf_to_bin(hdr->handle, chIdx, n, rawRate, upRate, segStartEpochMs, out,
+                sizes_up[ch], sizes_raw[ch], native_rates[ch], up_rates[ch],
+                lo, hi);
         };
 
     write_signal_to_bin(CH_ECG1, cfg.ecg_raw_rate, cfg.ecg_upsample_rate);
@@ -974,6 +1024,31 @@ void make_binfile_dat(const std::filesystem::path& path,
     write_header_and_close(out, cfg, sizes_up, sizes_raw, native_rates, up_rates, sleep_size);
 }
 
+namespace {
+    // Recording duration in seconds, taken from the primary ECG channel's
+    // sample count and configured native rate. Returns 0 on any failure.
+    double edf_duration_seconds(const std::filesystem::path& path,
+        const config_entry& cfg)
+    {
+        auto hdr = std::make_unique<edf_hdr_struct>();
+        if (edfopen_file_readonly(path.string().c_str(), hdr.get(),
+            EDFLIB_READ_ALL_ANNOTATIONS)) {
+            return 0.0;
+        }
+        EdfSignalMap sigmap = build_edf_channel_map(hdr.get(), cfg);
+        double rate = (cfg.ecg_raw_rate > 0.0)
+            ? cfg.ecg_raw_rate
+            : edf_channel_rate(hdr.get(), sigmap[CH_ECG1]);
+        long long n = (sigmap[CH_ECG1] >= 0)
+            ? edf_samples(hdr.get(), sigmap[CH_ECG1]) : 0;
+        edfclose_file(hdr->handle);
+        return (rate > 0.0 && n > 0) ? (double)n / rate : 0.0;
+    }
+
+    // Seconds in one output segment. 8 hours.
+    constexpr double SEGMENT_SECONDS = 8.0 * 3600.0;
+}
+
 std::filesystem::path make_binfile(const std::filesystem::path& path, const config_entry& cfg)
 {
     /*
@@ -985,6 +1060,33 @@ std::filesystem::path make_binfile(const std::filesystem::path& path, const conf
     std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
 
     if (ext == ".EDF") {
+        // BITTIUM: split the recording into fixed 8-hour segments, each written
+        // as its own valid .bin named <stem>_0.bin, <stem>_1.bin, ... The final
+        // segment shorter than 8 h is kept as-is. All other EDF datasets write
+        // a single whole-recording .bin.
+        if (cfg.dataset_type == "BITTIUM") {
+            double dur = edf_duration_seconds(path, cfg);
+            if (dur <= 0.0) {
+                std::cerr << "ERROR: could not determine duration of "
+                    << path.filename().string() << "; writing single .bin\n";
+                make_binfile_edf(path, cfg);
+                return out;
+            }
+            int nSeg = (int)std::ceil(dur / SEGMENT_SECONDS);
+            if (nSeg < 1) nSeg = 1;
+            const std::string stem = path.stem().string();
+            std::filesystem::path firstOut;
+            for (int s = 0; s < nSeg; ++s) {
+                double t0 = s * SEGMENT_SECONDS;
+                double t1 = (s == nSeg - 1) ? -1.0 : (s + 1) * SEGMENT_SECONDS;
+                std::filesystem::path segOut =
+                    std::filesystem::path(cfg.output_path) /
+                    (stem + "_" + std::to_string(s) + ".bin");
+                if (s == 0) firstOut = segOut;
+                make_binfile_edf_window(path, cfg, segOut, t0, t1);
+            }
+            return firstOut;
+        }
         make_binfile_edf(path, cfg);
     }
     else if (ext == ".DAT") {
