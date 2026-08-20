@@ -14,6 +14,7 @@
 
 #include <omp.h>
 
+#include "peak_finding/channel_offset.hpp"
 #include "annealing/anneal_handler.hpp"
 #include "peak_finding/peakfinding_io.hpp"
 #include "config_file_handling/config_entry.hpp"
@@ -21,9 +22,9 @@
 #include "template_generation/build_templates.hpp"
 #include "peak_finding/run_find_r_peaks.hpp"
 #include "template_generation/template_io.hpp"
-#include "template_marking_gui/alignment.hpp"   // find_q_column (Q-align)
-#include "logging/sqi_ecg.hpp"   // computeEcgSQI / writeEcgSQICsv -> cfg.quality_metric
-#include "template_generation/premark_beats.hpp"   // 4.7 envelope + band scores
+#include "template_marking_gui/alignment.hpp"
+#include "logging/sqi_ecg.hpp"
+#include "template_generation/premark_beats.hpp"
 
 namespace post_process_detail {
 
@@ -163,6 +164,44 @@ namespace post_process_detail {
 
         AnnealedData annealedData = read_input_binfile(annealedPath.string());
 
+        // ---- shift PPG due to hardware lag----------
+        // The lag needs R peaks and PPG feet, both produced by
+        // create_ecg_ppg_pairs_raw -- but the shift has to land BEFORE that
+        // call, so SegmentPPG, ppgMinAmps, R-pairing and every template
+        // derive from the shifted signal. Nothing then needs renumbering and
+        // nothing can fall out of sync. So: measure on a 5-minute truncated
+        // COPY, shift the real segments, and let the normal pass proceed.
+        channel_offset::set(cfg.quality_metric, stem);
+        channel_offset::Result chOff;
+        {
+            auto _cot0 = std::chrono::steady_clock::now();
+            auto probeSegs = channel_offset::make_probe(
+                annealedData.bins, cfg.ecg_upsample_rate, cfg.ppg_upsample_rate);
+            if (!probeSegs.empty()) {
+                auto probeResults = create_ecg_ppg_pairs_raw(
+                    std::move(probeSegs), true, stem, cfg,
+                    annealedData.ecg1_inverted, annealedData.ecg2_inverted,
+                    annealedData.ecg3_inverted);
+                chOff = channel_offset::measure(probeResults,
+                    cfg.ecg_upsample_rate, cfg.ppg_upsample_rate);
+            }
+            auto _cot1 = std::chrono::steady_clock::now();
+            std::cerr << "  [timing] channel_offset probe: "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(_cot1 - _cot0).count()
+                << " ms\n";
+        }
+        channel_offset::apply(annealedData.bins, chOff, cfg.ppg_upsample_rate);
+        channel_offset::write_log(chOff);
+        if (chOff.ambiguous) {
+            std::cerr << "  [channel_offset] " << stem
+                << ": ambiguous, PPG NOT shifted (ratio=" << chOff.ratio
+                << ", lag would have been " << chOff.lag_ms << " ms)\n";
+        }
+        else {
+            std::cerr << "  [channel_offset] " << stem << ": PPG shifted "
+                << chOff.lag_ms << " ms (ratio=" << chOff.ratio << ")\n";
+        }
+
         // Grab arterial pass-through slots BEFORE the move consumes the bins.
         // Slots match file_to_bin / gui_handler: CH_ABP=33, CH_ART=34, CH_ART_PULM=35.
         const size_t nAnnealed = annealedData.bins.size();
@@ -191,7 +230,7 @@ namespace post_process_detail {
             job.peakResults[i].artPulmSignal = std::move(artpSlots[i]);
         }
 
-        std::cerr << "  Templates (raw/unfiltered/ppg, fast): " << stem << "\n";
+        std::cerr << "  Processing Raw Templates (fast stage): " << stem << "\n";
         ecg_move_log::set(cfg.quality_metric, stem);   // per-beat vertical move log
         FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
         if (fast.tmpl.bins.empty()) {
@@ -243,13 +282,10 @@ namespace post_process_detail {
 
                 const std::filesystem::path csvDir = job.cfg.r_peak_data_path;
                 std::filesystem::create_directories(csvDir);
-                const std::filesystem::path rPeakCsv =
-                    csvDir / (job.stem + "_peak_locations_all_beats.csv");
+                const std::filesystem::path rPeakCsv =   csvDir / (job.stem + "_peak_locations_all_beats.csv");
                 write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
                 auto t_io1 = std::chrono::steady_clock::now();
-                std::cerr << "  [timing] rpeak bin+csv write for " << job.stem << ": "
-                    << std::chrono::duration_cast<std::chrono::milliseconds>(t_io1 - t_io0).count()
-                    << " ms\n";
+               
             }
 
             // Squared/absval R-peak detection on ECG channels, then slow
@@ -265,13 +301,6 @@ namespace post_process_detail {
             auto t_aug = std::chrono::steady_clock::now();
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
             auto t_sq1 = std::chrono::steady_clock::now();
-            std::cerr << "  [timing] sqabs for " << job.stem << ": augment "
-                << std::chrono::duration_cast<std::chrono::milliseconds>(t_aug - t_sq0).count()
-                << " ms + mergeSlow "
-                << std::chrono::duration_cast<std::chrono::milliseconds>(t_sq1 - t_aug).count()
-                << " ms = "
-                << std::chrono::duration_cast<std::chrono::milliseconds>(t_sq1 - t_sq0).count()
-                << " ms\n";
 
             // Section 4.7 morphology envelope + band scores. Deliberately on
             // THIS thread, not in prepareViewerJob: prepare blocks the marking
@@ -293,10 +322,6 @@ namespace post_process_detail {
                 premark::runAll(job.beats, job.tmpl, job.rates.ecg,
                     job.cfg.quality_metric, job.stem);
                 auto t_pm1 = std::chrono::steady_clock::now();
-                std::cerr << "  [timing] premark envelope+scores for " << job.stem
-                    << ": "
-                    << std::chrono::duration_cast<std::chrono::milliseconds>(t_pm1 - t_pm0).count()
-                    << " ms\n";
             }
 
             // Base (R) templates now include squared/absval alongside
@@ -307,11 +332,8 @@ namespace post_process_detail {
             auto t_tw0 = std::chrono::steady_clock::now();
             template_io::write_template_binfile(job.provisionalPath.string(), job.tmpl);
             auto t_tw1 = std::chrono::steady_clock::now();
-            std::cerr << "  [timing] template write for " << job.stem << ": "
-                << std::chrono::duration_cast<std::chrono::milliseconds>(t_tw1 - t_tw0).count()
-                << " ms\n";
             job.viewerTemplatePath = job.provisionalPath;
-            std::cout << "Squared/absval slow processing done for " << job.stem << "\n";
+            std::cout << "Processing Squared and Absolute Value Templates (slow) for " << job.stem << "\n";
 
             // (No snips.csv: serializing every retained beat for every channel
             // dominated finalize time and nothing downstream consumes it.)

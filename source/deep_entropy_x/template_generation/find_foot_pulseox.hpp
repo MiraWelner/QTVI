@@ -11,15 +11,22 @@
 
 #include "template_structs.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <utility>
+#include <vector>
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
  // Simple local-maxima finder (no min-distance constraint).
  // Only used here for derivative peaks - not the full R-peak findpeaks.
-static inline void fp_findpeaks_simple(const vector<double>& data,
-    vector<double>& pks,
-    vector<size_t>& locs) {
+static inline void fp_findpeaks_simple(const std::vector<double>& data,
+    std::vector<double>& pks,
+    std::vector<size_t>& locs) {
     pks.clear();
     locs.clear();
     if (data.size() < 3) return;
@@ -36,7 +43,7 @@ static inline void fp_findpeaks_simple(const vector<double>& data,
     }
 }
 
-inline FootResult find_foot_pulseox(const vector<vector<double>>& data) {
+inline FootResult find_foot_pulseox(const std::vector<std::vector<double>>& data) {
     FootResult res;
     size_t nrows = data.size();
     res.val.resize(nrows, 0.0);
@@ -57,34 +64,34 @@ inline FootResult find_foot_pulseox(const vector<vector<double>>& data) {
         }
 
         // data = data - max(data)
-        double row_max = -Inf;
+        double row_max = -std::numeric_limits<double>::infinity();
         for (size_t k = 0; k < len; ++k) {
             if (!std::isnan(row[k]) && row[k] > row_max) row_max = row[k];
         }
-        vector<double> d(len);
+        std::vector<double> d(len);
         for (size_t k = 0; k < len; ++k) {
-            d[k] = std::isnan(row[k]) ? NaN : row[k] - row_max;
+            d[k] = std::isnan(row[k]) ? std::numeric_limits<double>::quiet_NaN() : row[k] - row_max;
         }
 
         // Find max position
         size_t m_pos = 0;
-        double m_val = -Inf;
+        double m_val = -std::numeric_limits<double>::infinity();
         for (size_t k = 0; k < len; ++k) {
             if (!std::isnan(d[k]) && d[k] > m_val) { m_val = d[k]; m_pos = k; }
         }
 
         // Compute diff of shifted signal
-        vector<double> dd(len > 0 ? len - 1 : 0);
+        std::vector<double> dd(len > 0 ? len - 1 : 0);
         for (size_t k = 0; k + 1 < len; ++k) {
             dd[k] = d[k + 1] - d[k];
         }
 
         // Find local maxima on diff, keep only those at or before the max
-        vector<double> pks;
-        vector<size_t> locs;
+        std::vector<double> pks;
+        std::vector<size_t> locs;
         fp_findpeaks_simple(dd, pks, locs);
 
-        vector<std::pair<double, size_t>> before_peaks;
+        std::vector<std::pair<double, size_t>> before_peaks;
         for (size_t k = 0; k < locs.size(); ++k) {
             if (locs[k] <= m_pos) {
                 before_peaks.push_back({ pks[k], locs[k] });
@@ -129,7 +136,7 @@ inline FootResult find_foot_pulseox(const vector<vector<double>>& data) {
 
         // Translate so begin = (0, 0)
         double p1y = -d[0];
-        vector<double> moved(diff_peak_loc + 1);
+        std::vector<double> moved(diff_peak_loc + 1);
         for (size_t k = 0; k <= diff_peak_loc && k < len; ++k) {
             moved[k] = d[k] + p1y;
         }
@@ -145,7 +152,7 @@ inline FootResult find_foot_pulseox(const vector<vector<double>>& data) {
         double st = std::sin(theta * M_PI / 180.0);
 
         // Rotate and find max of x-component (= the foot)
-        double best_rx = -Inf;
+        double best_rx = -std::numeric_limits<double>::infinity();
         size_t best_k = 0;
         for (size_t k = 0; k <= diff_peak_loc; ++k) {
             double x = static_cast<double>(k);

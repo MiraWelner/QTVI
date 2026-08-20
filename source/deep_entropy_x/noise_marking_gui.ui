@@ -1165,17 +1165,7 @@
           </property>
          </spacer>
         </item>
-        <item row="0" column="2" rowspan="2">
-         <widget class="QDoubleSpinBox" name="accel_gain"/>
-        </item>
-        <item row="1" column="1">
-         <widget class="QCheckBox" name="accel_check">
-          <property name="text">
-           <string>Fix Scale</string>
-          </property>
-         </widget>
-        </item>
-        <item row="2" column="1">
+        <item row="3" column="1">
          <spacer name="verticalSpacer_8">
           <property name="orientation">
            <enum>Qt::Orientation::Vertical</enum>
@@ -1188,7 +1178,17 @@
           </property>
          </spacer>
         </item>
-        <item row="2" column="0">
+        <item row="1" column="1">
+         <widget class="QCheckBox" name="accel_check">
+          <property name="text">
+           <string>Fix Scale</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="2" rowspan="2">
+         <widget class="QDoubleSpinBox" name="accel_gain"/>
+        </item>
+        <item row="3" column="0">
          <widget class="QScrollBar" name="chunk_scrollbar">
           <property name="orientation">
            <enum>Qt::Orientation::Horizontal</enum>

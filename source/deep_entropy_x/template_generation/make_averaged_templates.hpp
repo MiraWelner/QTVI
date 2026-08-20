@@ -17,7 +17,7 @@
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
- * @date   2026-03-26
+ * @date   2026-08-20
  */
 #pragma once
 
@@ -25,12 +25,10 @@
 #include "create_arterial_templates.hpp"
 #include "create_ecg_templates.hpp"
 #include <iostream>
-
- // FAST: PPG templates + ECG raw/unfiltered templates. The squared/absval
- // fields of each returned TemplateInfo are left empty for
- // AugmentTemplatesSlow() to fill. This is everything the viewer displays.
 #include <chrono>
 #include <cstdio>
+#include <utility>
+
 
 inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_data>& wave_data,
     const SignalRates& rates) {

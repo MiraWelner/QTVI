@@ -150,22 +150,13 @@ namespace premark {
         r.channel = channel;
         r.nBeats = (int)beats.size();
         if (r.nBeats < kMinBeatsForEnvelope || beats[0].empty()) {
-            std::fprintf(stderr, "[premark]     bin %d %s: only %d beats "
-                "(need %d)\n", binIdx, channel.c_str(), r.nBeats,
-                kMinBeatsForEnvelope);
             return r;
         }
 
         const int W = (int)beats[0].size();
         r.seg = segmentsFromTemplate(tmpl, rCol, fs);
         if (!r.seg.valid(W)) {
-            // Landmark auto-detection failed or came back out of order. Print
-            // the columns so it is obvious which detector returned junk rather
-            // than just losing the bin.
-            std::fprintf(stderr, "[premark]     bin %d %s: bad landmarks "
-                "pEnd=%d qrs=[%d,%d] tBegin=%d tEnd=%d W=%d rCol=%d\n",
-                binIdx, channel.c_str(), r.seg.pEnd, r.seg.qrsStart,
-                r.seg.qrsEnd, r.seg.tBegin, r.seg.tEnd, W, rCol);
+            // Landmark auto-detection failed or came back out of order.
             return r;
         }
 
@@ -269,15 +260,8 @@ namespace premark {
         g_dir = dir; g_stem = stem;
     }
 
-    // Per-beat band scores + pre-mark. `first` truncates and writes the
-    // header; later channels append.
-    // Explicit destination. THREAD SAFETY: this deliberately does not read
-    // g_dir/g_stem. finalizeViewerJob runs on a worker thread and main.cpp
-    // parks workers to advance to the next file, so up to kMaxOutstanding
-    // finalizes can be in flight at once -- a shared mutable stem would let
-    // two files write each other's filenames. Every path below is a parameter.
-    inline void write_scores(const std::vector<BinResult>& results, bool first,
-        const std::string& dir, const std::string& stem) {
+    inline void write_scores(const std::vector<BinResult>& results, bool first, const std::string& dir, const std::string& stem) {
+        // Write each bin's per-beat scores and pre-marks to a CSV in quality_metric
         if (dir.empty() || stem.empty()) return;
         const std::string path = dir + "/" + stem + "_premarks.csv";
         std::ofstream f(path, first ? std::ios::trunc : std::ios::app);
@@ -285,8 +269,7 @@ namespace premark {
             std::fprintf(stderr, "[premark] cannot open %s for writing\n", path.c_str());
             return;
         }
-        if (first) f << "stem,channel,bin,beat,pct_overall,pct_P,pct_QRS,pct_ST,"
-            "pct_T,pct_tail,class,confidence\n";
+        if (first) f << "stem,channel,bin,beat,pct_overall,pct_P,pct_QRS,pct_ST,pct_T,pct_tail,class,confidence\n";
         const std::string& g_stem = stem;   // rows carry the stem in column 1
         for (const auto& r : results) {
             if (!r.ok) continue;
@@ -298,7 +281,7 @@ namespace premark {
                     << r.scores[k].pct_overall << ',' << r.scores[k].pct_P << ','
                     << r.scores[k].pct_QRS << ',' << r.scores[k].pct_ST << ','
                     << r.scores[k].pct_T << ',' << r.scores[k].pct_tail << ','
-                    << (int)cls << ',' << conf << '\n';
+                    << preMarkClassName(cls) << ',' << conf << '\n';
             }
         }
     }
