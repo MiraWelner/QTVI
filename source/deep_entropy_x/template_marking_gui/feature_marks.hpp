@@ -95,7 +95,8 @@ public:
     };
 
     //find all fiducial markers for PPG
-    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, double tR1, int W, double ppgRate);
+
+    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate);
 
     // Sample whose AMPLITUDE is frac of the way from v[a] to v[b] (NOT frac
     // of the sample-index distance). Shared by detect_ppg_fiducials (t80/
@@ -108,13 +109,6 @@ public:
     // FIRST crossing of the frac-of-amplitude level on [a, b], linearly
     // interpolated between the bracketing samples and rounded.
     static int first_crossing(const std::vector<double>& v, int a, int b, double frac);
-
-    // Augmentation tally: how many scored pulses had their tallest sample away
-    // from the systolic peak, i.e. how many the old argmax detector mislocated.
-    // Read after a run; reset per record if you want per-record figures.
-    static long long ppg_pulses_scored();
-    static long long ppg_tallest_not_first();
-    static void       ppg_reset_tally();
 
     //movable ecg bars
     static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);

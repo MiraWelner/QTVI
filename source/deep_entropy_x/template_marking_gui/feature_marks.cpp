@@ -548,16 +548,6 @@ int FeatureMarks::amplitude_crossing(const std::vector<double>& v, int a, int b,
     return best;
 }
 
-// Augmentation tally counters. Plain statics: detect_ppg_fiducials is called
-// from the single-threaded seeding path, and these are diagnostics -- a lost
-// increment under any future parallel caller costs nothing.
-static long long s_ppgPulsesScored = 0;
-static long long s_ppgTallestNotFirst = 0;
-
-long long FeatureMarks::ppg_pulses_scored() { return s_ppgPulsesScored; }
-long long FeatureMarks::ppg_tallest_not_first() { return s_ppgTallestNotFirst; }
-void FeatureMarks::ppg_reset_tally() { s_ppgPulsesScored = s_ppgTallestNotFirst = 0; }
-
 int FeatureMarks::first_crossing(const std::vector<double>& v, int a, int b, double frac) {
     const int N = static_cast<int>(v.size());
     if (a < 0 || b <= a || b >= N) return -1;
@@ -588,33 +578,47 @@ int FeatureMarks::trough_in(const std::vector<double>& v, int lo, int hi) {
     return best;
 }
 
-FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, double tR1, int W, double ppgRate)
+FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate)
 {
     PpgFiducials g;
     const int N = static_cast<int>(v.size());
-    if (N < 3) return g;
+    if (N < 3) { fprintf(stderr, "[ppg] bail: N=%d\n", N); return g; }
     const int Wc = std::clamp(W, 2, N);   // visible window; nothing is ever placed past Wc-1
     auto cl = [&](int x) { return std::clamp(x, 0, Wc - 1); };
 
-    // R locations arrive in TIME (seconds from template start). No sample index
-        // from another channel enters here.
-    if (tR1 <= 0.0 || ppgRate <= 0.0) return g;
-    const double tRR = tR1 / 0.3;   // R1 sits at 0.3 of the RR by construction
-    auto at = [&](double t) { return cl(static_cast<int>(std::lround(t * ppgRate))); };
-    const int r1 = at(tR1);
-    const int r2 = at(tR1 + tRR);
-    if (r2 <= r1) return g;
+    // ---- Systolic peak: the FIRST upstroke in the visible window, then
+ // symmetric extremum (sigma = 8).
+ //
+ // No R-derived gate. [...comment block stays as-is...]
 
-    // ---- Systolic peak: FIRST peak via the upstroke, then symmetric extremum
-    // (sigma = 8). Was argmax over [R1, R2], which returns the tallest peak in
-    // the gate -- the reflected wave whenever it exceeds systole.
-    int pkSeed = FeatureMarks::detect_ppg_upstroke_peak(v, r1, r2 + 1);
-    if (pkSeed < 0) return g;              // no upstroke in the gate
+ // Skip any leading NaN run: the template's first samples sit before the
+ // first R (construction pads by `pad` seconds), so a partial pulse there
+ // can win the slope gate and drag every landmark onto the left edge.
+    int lo0 = 0;
+    while (lo0 < Wc && std::isnan(v[lo0])) ++lo0;
+
+    int pkSeed = FeatureMarks::detect_ppg_upstroke_peak(v, lo0, Wc);
+    if (pkSeed < 0) {
+        // No detectable upstroke - use argmax for ppg peak
+        int best = -1; double bv = -std::numeric_limits<double>::infinity();
+        for (int i = lo0; i < Wc; ++i)
+            if (!std::isnan(v[i]) && v[i] > bv) { bv = v[i]; best = i; }
+        pkSeed = best;
+    }
+    if (pkSeed < 0) return g;              // all-NaN window: nothing to mark
+    g.peak = cl(static_cast<int>(std::lround(
+        subsample_refine::symmetricExtremum(v, pkSeed, 8.0))));
     g.peak = cl(static_cast<int>(std::lround(
         subsample_refine::symmetricExtremum(v, pkSeed, 8.0))));
 
+    // A systolic peak with no room for a foot before it is a head fragment,
+    // not a pulse. Bail rather than pile every landmark at sample 0.
+    if (g.peak < 3) { fprintf(stderr, "[ppg] bail: peak=%d\n", g.peak); return g; }
+    fprintf(stderr, "[ppg] Wc=%d lo0=%d pkSeed=%d peak=%d\n", Wc, lo0, pkSeed, g.peak);
+
     //systolic foot: asymmetric extremum (sigma = 8) on the rising shoulder
     auto refine_foot = [&](int seed) {
+
         return cl(static_cast<int>(std::lround(
             subsample_refine::asymmetricExtremum(v, seed, 8.0))));
         };
@@ -625,24 +629,6 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         return cl(static_cast<int>(std::lround(
             subsample_refine::asymmetricExtremum(v, seed, 8.0))));
         };
-    // Augmentation tally, replacing the old per-pulse [ppg-fid] stderr line.
-    //
-    // That line printed the chosen peak next to the window's globalMax. Keep
-    // the measurement: tallest != first is a property of the SIGNAL (a
-    // reflected wave taller than systole), so it stays informative now that the
-    // peak is located from the upstroke -- it is the count of pulses the old
-    // argmax detector got wrong. Dropped the once-per-pulse fprintf; a caller
-    // reads the counters when it wants them.
-    {
-        const int gmax = 0 <= g.peak ? [&] {
-            int m = -1; double mv = -std::numeric_limits<double>::infinity();
-            for (int i = 0; i < Wc; ++i)
-                if (!std::isnan(v[i]) && v[i] > mv) { mv = v[i]; m = i; }
-            return m;
-            }() : -1;
-        ++s_ppgPulsesScored;
-        if (gmax >= 0 && std::abs(gmax - g.peak) > 8) ++s_ppgTallestNotFirst;
-    }
 
     // Systolic foot: the trough before the peak.
     {
@@ -688,23 +674,16 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     g.p50 = amplitude_crossing(v, g.onset, g.peak, 0.50);
     if (g.p50 < 0) g.p50 = cl((g.onset + g.peak) / 2);
 
-    // ---- Derivative fiducials: VPG u/v/w and APG a-f.
+    // ---- Derivative fiducials: VPG u/v/w, APG a-f, JPG p1/p2. One call;
+    // the definitions cross-reference each other, so detect() owns the
+    // resolution order.
     {
-        const auto d1 = ppg_deriv::compute_vpg(v, ppgRate);
-        const auto d2 = ppg_deriv::compute_apg(d1, ppgRate);
-        const auto d3 = ppg_deriv::compute_jpg(d2, ppgRate);
-        const int dp = g.peak2_found ? g.peak2 : -1;
-
-        const auto vf = ppg_deriv::detect_vpg(d1, g.onset, g.peak, g.end, Wc, dp);
-        g.u = vf.u;  g.v = vf.v;  g.w = vf.w;
-
-        const auto af = ppg_deriv::detect_apg(d2, g.onset, g.peak, g.end, Wc, dp);
-        g.a = af.a;  g.b = af.b;  g.c = af.c;
-        g.d = af.d;  g.e = af.e;  g.f = af.f;
-
-        // p1/p2 are bounded by b and d, so this must follow detect_apg.
-        const auto jf = ppg_deriv::detect_jpg(d3, g.onset, g.end, Wc, af.b, af.d);
-        g.p1 = jf.p1;  g.p2 = jf.p2;
+        const auto d = ppg_deriv::compute(v, ppgRate);
+        const auto fd = ppg_deriv::detect(d, g.onset, g.peak, g.dicrotic, g.peak2, Wc);
+        g.u = fd.u;  g.v = fd.v;  g.w = fd.w;
+        g.a = fd.a;  g.b = fd.b;  g.c = fd.c;
+        g.d = fd.d;  g.e = fd.e;  g.f = fd.f;
+        g.p1 = fd.p1;  g.p2 = fd.p2;
     }
 
     return g;
@@ -1105,17 +1084,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // fields (see BinPlotWidget::captureGlyphSnapshot), so "peak" (etc.)
         // can never mean two different things in two different places.
         {
-            double tR1 = -1.0;
-            const ChannelTemplateData* cc[3] = { &b.ch1, &b.ch2, &b.ch3 };
-            for (const auto* ch : cc) {
-                if (!ch->ecgTemplate_raw.empty() && ch->r_col_raw >= 0) {
-                    tR1 = ch->r_col_raw / sampleRate;   // ECG samples -> seconds
-                    break;
-                }
-            }
-
-            const auto pf = FeatureMarks::detect_ppg_fiducials(v, tR1, W, ppgRate);
-
+            const auto pf = FeatureMarks::detect_ppg_fiducials(v, W, ppgRate);
             b.ppg_peak_auto = pf.peak;
             b.ppg_onset_auto = pf.onset;
             b.ppg_peak2_auto = pf.peak2;           b.ppg_peak2_found_auto = pf.peak2_found;
