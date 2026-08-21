@@ -12,6 +12,7 @@ See feature_marks.hpp for the public interface*/
 #include <functional>
 #include "anchor_fit.hpp"
 #include "subsample_refine.hpp"
+#include "ppg_derivative_fiducials.hpp"
 
 namespace {
 
@@ -653,7 +654,6 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     {
         const int seed = trough_in(v, std::min(g.peak + 1, Wc - 1), Wc - 1);
         g.end = refine_end(seed >= 0 ? seed : Wc - 1);
-        g.end_found = true;
     }
 
     // ---- DICROTIC NOTCH + DIASTOLIC PEAK -----------------------------------
@@ -687,6 +687,25 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     if (g.t80 < 0) g.t80 = cl((g.peak + g.end) / 2);
     g.p50 = amplitude_crossing(v, g.onset, g.peak, 0.50);
     if (g.p50 < 0) g.p50 = cl((g.onset + g.peak) / 2);
+
+    // ---- Derivative fiducials: VPG u/v/w and APG a-f.
+    {
+        const auto d1 = ppg_deriv::compute_vpg(v, ppgRate);
+        const auto d2 = ppg_deriv::compute_apg(d1, ppgRate);
+        const auto d3 = ppg_deriv::compute_jpg(d2, ppgRate);
+        const int dp = g.peak2_found ? g.peak2 : -1;
+
+        const auto vf = ppg_deriv::detect_vpg(d1, g.onset, g.peak, g.end, Wc, dp);
+        g.u = vf.u;  g.v = vf.v;  g.w = vf.w;
+
+        const auto af = ppg_deriv::detect_apg(d2, g.onset, g.peak, g.end, Wc, dp);
+        g.a = af.a;  g.b = af.b;  g.c = af.c;
+        g.d = af.d;  g.e = af.e;  g.f = af.f;
+
+        // p1/p2 are bounded by b and d, so this must follow detect_apg.
+        const auto jf = ppg_deriv::detect_jpg(d3, g.onset, g.end, Wc, af.b, af.d);
+        g.p1 = jf.p1;  g.p2 = jf.p2;
+    }
 
     return g;
 }
@@ -991,7 +1010,6 @@ namespace {
         if (hi - lo < 3) { lo = 0; hi = n - 1; }
 
         if (peak < 0) {
-            // Upstroke, not argmax -- see detect_ppg_upstroke_peak.
             const int p = FeatureMarks::detect_ppg_upstroke_peak(v, lo, hi + 1);
             if (p < 0) return;
             peak = p;
@@ -1010,26 +1028,14 @@ namespace {
             if (e < 0) e = std::min(n - 1, peak + 1);
             end = e;
         }
-        // Spec I-3: PPG peak is a symmetric extremum (Gaussian-weighted
-        // quadratic), sigma=8. Refined in place, AFTER onset/end (above)
-        // have already used the raw peak to bound their own search windows
-        // -- nothing after this point depends on the raw value, so it's
-        // safe to overwrite here.
-        peak = cl(static_cast<int>(std::lround(
-            subsample_refine::symmetricExtremum(v, peak, 8.0))));
+
+        peak = cl(static_cast<int>(std::lround(subsample_refine::symmetricExtremum(v, peak, 8.0))));
+
         if (dicrotic < 0 && cl(end) > cl(onset) + 2) {
             const int base = cl(onset);
             std::vector<double> cyc(v.begin() + base, v.begin() + cl(end) + 1);
             const int peakInCyc = std::clamp(peak - base, 0, (int)cyc.size() - 1);
             const int seed = FeatureMarks::detect_ppg_dicrotic(cyc, peakInCyc);
-            // Spec I-3: dicrotic notch is an asymmetric extremum (cubic fit
-            // on Gaussian-weighted samples, analytic derivative solve),
-            // sigma=10. detect_ppg_dicrotic (above) supplies the coarse
-            // integer seed; this refines it. Storage is still int (b.*_ch
-            // fields), so the sub-sample result is rounded here -- the
-            // algorithmic benefit (a more accurate local fit) survives;
-            // the fractional precision itself does not, unless/until
-            // TemplateBin's storage is migrated to double.
             const double refined = subsample_refine::asymmetricExtremum(cyc, seed, 10.0);
             dicrotic = cl(base + static_cast<int>(std::lround(refined)));
         }
@@ -1037,14 +1043,6 @@ namespace {
             const int base = cl(onset);
             std::vector<double> cyc(v.begin() + base, v.begin() + cl(end) + 1);
             const int seed = FeatureMarks::detect_ppg_peak2(cyc);
-            // Not itself named in spec I-3 (only P/T/dicrotic notch are
-            // listed under asymmetric extrema) -- per instruction, treated
-            // identically to dicrotic notch's method for consistency: cubic
-            // fit on Gaussian-weighted samples, analytic derivative solve,
-            // same sigma=10. detect_ppg_peak2 (above) supplies the coarse
-            // integer seed (a real local-maximum search after the dicrotic
-            // notch, replacing the previous fixed onset+90%*(end-onset)
-            // placeholder, which wasn't a detection at all).
             const double refined = subsample_refine::asymmetricExtremum(cyc, seed, 10.0);
             peak2 = cl(base + static_cast<int>(std::lround(refined)));
         }
@@ -1070,6 +1068,10 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         b.ppg_dicrotic = b.ppg_peak2 = b.ppg_end = -1;
         b.ppg_onset_auto = b.ppg_t50_auto = b.ppg_t80_auto = b.ppg_peak_auto = -1;
         b.ppg_dicrotic_auto = b.ppg_peak2_auto = b.ppg_end_auto = -1;
+        b.ppg_u_auto = b.ppg_v_auto = b.ppg_w_auto = -1;
+        b.ppg_a_auto = b.ppg_b_auto = b.ppg_c_auto = -1;
+        b.ppg_d_auto = b.ppg_e_auto = b.ppg_f_auto = -1;
+        b.ppg_p1_auto = b.ppg_p2_auto = -1;
     }
     else if (b.bad_ppg == 1) {
         b.ppg_onset = b.ppg_t50 = b.ppg_t80 = b.ppg_peak = -1;
@@ -1117,10 +1119,21 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
             b.ppg_peak_auto = pf.peak;
             b.ppg_onset_auto = pf.onset;
             b.ppg_peak2_auto = pf.peak2;           b.ppg_peak2_found_auto = pf.peak2_found;
-            b.ppg_end_auto = pf.end;               b.ppg_end_found_auto = pf.end_found;
+            b.ppg_end_auto = pf.end;
             b.ppg_dicrotic_auto = pf.dicrotic;     b.ppg_dicrotic_found_auto = pf.notch_found;
             b.ppg_t80_auto = pf.t80;
             b.ppg_t50_auto = pf.p50;
+            b.ppg_u_auto = pf.u;
+            b.ppg_v_auto = pf.v;
+            b.ppg_w_auto = pf.w;
+            b.ppg_a_auto = pf.a;
+            b.ppg_b_auto = pf.b;
+            b.ppg_c_auto = pf.c;
+            b.ppg_d_auto = pf.d;
+            b.ppg_e_auto = pf.e;
+            b.ppg_f_auto = pf.f;
+            b.ppg_p1_auto = pf.p1;
+            b.ppg_p2_auto = pf.p2;
         }
 
         // ---- seed the movable bars once (only when unset) ------------------

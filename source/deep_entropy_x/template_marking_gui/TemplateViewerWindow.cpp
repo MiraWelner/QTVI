@@ -79,12 +79,17 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
     m_showAbpTrace = true;
     m_showArtTrace = true;
     m_showArtPulmTrace = true;
+    m_showArtPulmMarkers = false;
+    m_showPpgDerivMarkers = false;
 
     connect(ui->show_ecg_markers, &QCheckBox::toggled, this, [this](bool on) {
         m_showEcgMarkers = on; applyMarkerVisibility();
         });
     connect(ui->show_ppg_markers, &QCheckBox::toggled, this, [this](bool on) {
         m_showPpgMarkers = on; applyMarkerVisibility();
+        });
+    connect(ui->show_ppg_deriv, &QCheckBox::toggled, this, [this](bool on) {
+        m_showPpgDerivMarkers = on; applyMarkerVisibility();
         });
     connect(ui->show_abp_markers, &QCheckBox::toggled, this, [this](bool on) {
         m_showAbpMarkers = on; applyMarkerVisibility();
@@ -980,6 +985,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
                 fmk.s_end_ch[c], fmk.t_end_ch[c],
                 m_sampleRate);
         }
+        for (const auto& gl : ppg_and_artpulse_automated_markers) emitAutoFeatLocHeader(gl.name);
 
         // ECG marker positions per channel, aligned with ECG_MARKERS order:
         //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
@@ -1107,9 +1113,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
                 emitLoc((int)std::lround(b.r_peak_auto_ch[gc]), row);
                 emitLoc(tPeakAutoGlyph[gc], row);
             }
-            emitLoc(b.ppg_onset_auto, row); emitLoc(b.ppg_peak_auto, row);
-            emitLoc(b.ppg_dicrotic_auto, row);
-            emitLoc(b.ppg_end_auto, row);
+            for (const auto& gl : ppg_and_artpulse_automated_markers) emitLoc(b.*gl.idx, row);
             f << '\n';
         }
     }
@@ -1155,6 +1159,7 @@ void TemplateViewerWindow::applyMarkerVisibility() {
     for (auto* pw : m_allPlots) {
         pw->setShowEcgMarkers(m_showEcgMarkers);
         pw->setShowPpgMarkers(m_showPpgMarkers);
+        pw->setShowPpgDerivMarkers(m_showPpgDerivMarkers);
         pw->setShowAbpMarkers(m_showAbpMarkers);
         pw->setShowArtMarkers(m_showArtMarkers);
         pw->setShowArtPulmMarkers(m_showArtPulmMarkers);
@@ -1220,22 +1225,7 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     pw->setMarker(BinPlotWidget::ArtPulmDicrotic, b.art_pulm_dicrotic);
     pw->setMarker(BinPlotWidget::ArtPulmPeak2, b.art_pulm_peak2);
     pw->setMarker(BinPlotWidget::ArtPulmEnd, b.art_pulm_end);
-
-    // ---- frozen autodetect columns (glyph positions) -----------------------
-    // The *_auto_ch fields carry sub-sample doubles; glyph columns are integer
-    // samples, so they round here exactly as the bar seeds do in seed_all().
-    BinPlotWidget::AutoMarks a;
-    a.pBegin = (int)std::lround(b.p_begin_auto_ch[c]);
-    a.pPeak = (int)std::lround(b.p_peak_auto_ch[c]);
-    a.qBegin = (int)std::lround(b.q_begin_auto_ch[c]);
-    a.sEnd = (int)std::lround(b.s_end_auto_ch[c]);
-    a.tEnd = (int)std::lround(b.t_end_auto_ch[c]);
-    a.ppgOnset = b.ppg_onset_auto;
-    a.ppgPeak = b.ppg_peak_auto;
-    a.ppgPeak2 = b.ppg_peak2_auto;        a.ppgPeak2Found = b.ppg_peak2_found_auto;
-    a.ppgDicrotic = b.ppg_dicrotic_auto;  a.ppgDicroticFound = b.ppg_dicrotic_found_auto;
-    a.ppgEnd = b.ppg_end_auto;            a.ppgEndFound = b.ppg_end_found_auto;
-    pw->setAuto(a);   // last: captures the glyph snapshot and repaints
+    pw->setAuto(b);   // last: captures the glyph snapshot and repaints
 }
 
 void TemplateViewerWindow::refreshBinMarkers(int binIdx) {

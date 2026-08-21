@@ -40,10 +40,8 @@
 struct ChannelTemplateData {
     std::vector<double> ecgTemplate_raw;
     std::vector<double> ecg_template_raw_iqr;
-    std::vector<double> ecgTemplate_squared;   // unused by viewer
-    std::vector<double> ecgTemplate_absval;    // unused by viewer
-    double alignment_point_raw = 0;
-    double alignment_point_squared = 0;
+    std::vector<double> ecgTemplate_squared, ecgTemplate_absval;    // unused by viewer
+    double alignment_point_raw = 0, alignment_point_squared = 0;
     double alignment_point_absval = 0;
     // True R column in the template (from alignment). Used directly as the R
     // fiducial; replaces the old avg_r_expand positioning constant.
@@ -155,29 +153,22 @@ struct TemplateBin {
     int art_pulm_onset = -1, art_pulm_peak = -1, art_pulm_dicrotic = -1,
         art_pulm_peak2 = -1, art_pulm_end = -1;
 
-    // Auto-detect mirror fields for pulse channels (same rule as ECG auto
-    // mirrors above: filled every loadSubject, NOT serialized). Preserve
-    // the original auto positions so the CSV can emit both variants.
-    int ppg_onset_auto = -1, ppg_t50_auto = -1, ppg_peak_auto = -1,
-        ppg_dicrotic_auto = -1, ppg_peak2_auto = -1, ppg_end_auto = -1;
-    int ppg_t80_auto = -1;
-    // Whether the dicrotic notch / diastolic peak / pulse end were
-    // genuinely found by the detector vs. fell back to a placeholder
-    // position. Drive X-vs-O glyph rendering; set once by seed_all's
-    // single PPG detection pass. Not written to CSV -- the CSV only
-    // needs the x/y values for each landmark, since a fallback landmark
-    // still has valid coordinates.
-    bool ppg_dicrotic_found_auto = false;
-    bool ppg_peak2_found_auto = false;
-    bool ppg_end_found_auto = false;
-    int abp_onset_auto = -1, abp_peak_auto = -1, abp_dicrotic_auto = -1,
-        abp_peak2_auto = -1, abp_end_auto = -1;
-    int art_onset_auto = -1, art_peak_auto = -1, art_dicrotic_auto = -1,
-        art_peak2_auto = -1, art_end_auto = -1;
-    int art_pulm_onset_auto = -1, art_pulm_peak_auto = -1, art_pulm_dicrotic_auto = -1,
-        art_pulm_peak2_auto = -1, art_pulm_end_auto = -1;
+    /*these initialized autodetect values(none will actually spend their whole lives at - 1) represnt the initial
+    positions of movable markers and the permanant positions of nonmovable markers*/
+    int ppg_onset_auto = -1, ppg_peak_auto = -1, ppg_dicrotic_auto = -1, ppg_peak2_auto = -1, ppg_end_auto = -1;
+    int ppg_t80_auto = -1, ppg_t50_auto = -1;
+    int ppg_u_auto = -1, ppg_v_auto = -1, ppg_w_auto = -1;
+    int ppg_a_auto = -1, ppg_b_auto = -1, ppg_c_auto = -1, ppg_d_auto = -1, ppg_e_auto = -1, ppg_f_auto = -1;
+    bool ppg_dicrotic_found_auto = false, ppg_peak2_found_auto = false;
+    int abp_onset_auto = -1, abp_peak_auto = -1, abp_dicrotic_auto = -1, abp_peak2_auto = -1, abp_end_auto = -1;
+    int art_onset_auto = -1, art_peak_auto = -1, art_dicrotic_auto = -1, art_peak2_auto = -1, art_end_auto = -1;
+    int ppg_p1_auto = -1, ppg_p2_auto = -1;
+    int art_pulm_onset_auto = -1, art_pulm_peak_auto = -1, art_pulm_dicrotic_auto = -1, art_pulm_peak2_auto = -1, art_pulm_end_auto = -1;
 
 };
+
+
+
 
 // ---------------------------------------------------------------------------
 // Read: convert template_io::TemplateFile -> std::vector<TemplateBin>
@@ -366,6 +357,32 @@ inline constexpr const char* abpCols[] = { "abp_onset","abp_peak","abp_dicrotic"
 inline constexpr const char* artCols[] = { "art_onset","art_peak","art_dicrotic","art_peak2","art_end" };
 inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak","art_pulm_dicrotic","art_pulm_peak2","art_pulm_end" };
 
+
+//one unifornm table for pp autodetected pulses
+struct PulseAutoGlyph {
+    const char* name;
+    int TemplateBin::* idx;
+    bool TemplateBin::* found;
+    const char* foundName;
+};
+inline constexpr PulseAutoGlyph ppg_and_artpulse_automated_markers[] = {
+    { "ppg_foot",          &TemplateBin::ppg_onset_auto,    nullptr,                                 nullptr },
+    { "ppg_systolic_peak", &TemplateBin::ppg_peak_auto,     nullptr,                                 nullptr },
+    { "ppg_dicrotic",      &TemplateBin::ppg_dicrotic_auto, &TemplateBin::ppg_dicrotic_found_auto,   "ppg_notch_found" },
+    { "ppg_end",           &TemplateBin::ppg_end_auto,      nullptr,                                 nullptr },
+    { "vpg_u",             &TemplateBin::ppg_u_auto,        nullptr,                                 nullptr },
+    { "vpg_v",             &TemplateBin::ppg_v_auto,        nullptr,                                 nullptr },
+    { "vpg_w",             &TemplateBin::ppg_w_auto,        nullptr,                                 nullptr },
+    { "apg_a",             &TemplateBin::ppg_a_auto,        nullptr,                                 nullptr },
+    { "apg_b",             &TemplateBin::ppg_b_auto,        nullptr,                                 nullptr },
+    { "apg_c",             &TemplateBin::ppg_c_auto,        nullptr,                                 nullptr },
+    { "apg_d",             &TemplateBin::ppg_d_auto,        nullptr,                                 nullptr },
+    { "apg_e",             &TemplateBin::ppg_e_auto,        nullptr,                                 nullptr },
+    { "apg_f",             &TemplateBin::ppg_f_auto,        nullptr,                                 nullptr },
+    { "jpg_p1",            &TemplateBin::ppg_p1_auto,       nullptr,                                 nullptr },
+    { "jpg_p2",            &TemplateBin::ppg_p2_auto,       nullptr,                                 nullptr },
+};
+
 // ---------------------------------------------------------------------------
 // writeTemplateMarkingsCsv
 //
@@ -538,11 +555,14 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
         for (const char* n : artCols)     emitPulsePointHeader(n);
         f << ",art_pulm_issue";
         for (const char* n : artPulmCols) emitPulsePointHeader(n);
-        for (const char* g : { "ppg_foot_autodetect", "ppg_systolic_peak_autodetect",
-                               "ppg_dicrotic_autodetect", "ppg_end_autodetect" })
+        for (const auto& gl : ppg_and_artpulse_automated_markers) {
+            char nb[64];
+            std::snprintf(nb, sizeof nb, "%s_autodetect", gl.name);
+            emitAutoFeatHeader(nb);
+            if (gl.foundName) f << ',' << gl.foundName;
+        }
+        for (const char* g : { "vpg_u_autodetect", "vpg_v_autodetect", "vpg_w_autodetect" })
             emitAutoFeatHeader(g);
-        f << ",ppg_notch_found";
-        f << ",ppg_end_found";
     }
     f << '\n';
 
@@ -770,14 +790,10 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                     (int)std::lround(b.t_end_auto_ch[c])).t_peak);
             }
         if (wantPulse) {
-            // PPG glyph values are just the bin's own auto fields now --
-            // no separate recompute (see FeatureMarks::detect_ppg_fiducials).
-            emitAutoFeatPt(b.ppgTemplate, b.ppg_onset_auto);
-            emitAutoFeatPt(b.ppgTemplate, b.ppg_peak_auto);
-            emitAutoFeatPt(b.ppgTemplate, b.ppg_dicrotic_auto);
-            f << ',' << (b.ppg_dicrotic_found_auto ? 1 : 0);
-            emitAutoFeatPt(b.ppgTemplate, b.ppg_end_auto);
-            f << ',' << (b.ppg_end_found_auto ? 1 : 0);
+            for (const auto& gl : ppg_and_artpulse_automated_markers) {
+                emitAutoFeatPt(b.ppgTemplate, b.*gl.idx);
+                if (gl.found) f << ',' << (b.*gl.found ? 1 : 0);
+            }
         }
 
         f << '\n';

@@ -184,6 +184,7 @@ private:
     bool m_showAbpTrace = true;
     bool m_showArtTrace = true;
     bool m_showArtPulmTrace = true;
+    bool m_showPpgDerivMarkers = false;
 
     // Display-time notch filter toggle. When on, every template array is
     // pushed through notch_filter() at draw time (in showPage) before it

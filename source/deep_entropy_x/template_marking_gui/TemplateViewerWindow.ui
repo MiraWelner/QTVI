@@ -253,6 +253,13 @@
        </widget>
       </item>
       <item>
+       <widget class="QCheckBox" name="show_ppg_deriv">
+        <property name="text">
+         <string>Show PPG Derivative Markers</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QCheckBox" name="show_abp_markers">
         <property name="text">
          <string>Show aBP Markers</string>

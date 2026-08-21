@@ -80,14 +80,18 @@ public:
     static double compute_t_begin(const std::vector<double>& v, double fs, int r_idx,
         double jPointIn = -1.0);
     static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0);
+
+    // the x, o, |, || or ||| markers for to mark the ppg and to be output in the csv
     struct PpgFiducials {
         int onset = -1;
         int peak = -1;
+        int end = -1;
         int peak2 = -1;      bool peak2_found = false;
-        int end = -1;        bool end_found = false;
         int dicrotic = -1;   bool notch_found = false;
-        int t80 = -1;
-        int p50 = -1;
+        int t80 = -1, p50 = -1;
+        int u = -1, v = -1, w = -1;
+        int a = -1, b = -1, c = -1, d = -1, e = -1, f = -1;
+        int p1 = -1, p2 = -1;
     };
 
     //find all fiducial markers for PPG

@@ -33,6 +33,7 @@
 #include <cmath>
 #include <utility>
 #include <vector>
+#include "template_marking_bin_io.hpp"
 
 class QPainter;
 
@@ -161,24 +162,10 @@ public:
     void setMarker(Marker m, int idx);
     int  marker(Marker m) const { return m_markers[m]; }
 
-    // Load-time autodetect positions, ECG (*_auto_ch) and PPG (ppg_*_auto),
-    // in ONE struct set by ONE call. The frozen glyphs are drawn at exactly
-    // these columns and never follow their bars, so dragging a bar leaves its
-    // X where detection put it. -1 => that glyph is not drawn (a failed
-    // detection looks failed; it does NOT silently fall back to the bar).
-    struct AutoMarks {
-        // ECG, from p_begin_auto_ch / p_peak_auto_ch / q_begin_auto_ch /
-        // s_end_auto_ch / t_end_auto_ch.
-        int pBegin = -1, pPeak = -1, qBegin = -1, sEnd = -1, tEnd = -1;
-        // PPG, from the ppg_*_auto fields (all from one
-        // FeatureMarks::detect_ppg_fiducials call -- see seed_all()).
-        int ppgOnset = -1, ppgPeak = -1, ppgPeak2 = -1, ppgDicrotic = -1, ppgEnd = -1;
-        bool ppgPeak2Found = false, ppgDicroticFound = false, ppgEndFound = false;
-    };
     // Recaptures the frozen glyph snapshot and repaints. Call this LAST in a
     // seeding pass (see applyBinToWidget): m_glyphs.ecgRPeak reads the R bar,
     // which must already be set.
-    void setAuto(const AutoMarks& a) { m_auto = a; captureGlyphSnapshot(); update(); }
+    void setAuto(const TemplateBin& b) { captureGlyphSnapshot(b); update(); }
 
     // Reactive glyphs: pure functions of the CURRENT bar positions, computed
     // on demand at paint time and never stored. T-peak therefore tracks
@@ -193,6 +180,7 @@ public:
     // Both default to true.
     void setShowEcgMarkers(bool show);
     void setShowPpgMarkers(bool show);
+    void setShowPpgDerivMarkers(bool show);
     void setShowAbpMarkers(bool show);
     void setShowArtMarkers(bool show);
     void setShowArtPulmMarkers(bool show);
@@ -309,18 +297,16 @@ private:
         int ppgP1 = -1;      // = ppgPeak auto
         int ppgP2 = -1;      bool ppgPeak2Found = false;
         int ppgDic = -1;     bool ppgNotchFound = false;
-        int ppgEnd = -1;     bool ppgEndFound = false;
-        bool valid = false;
+        int ppgEnd = -1;
+        int vpgU = -1, vpgV = -1, vpgW = -1;
+        int apgA = -1, apgB = -1, apgC = -1, apgD = -1, apgE = -1, apgF = -1;
+        int jpgP1 = -1, jpgP2 = -1;
     };
 
     GlyphSnapshot m_glyphs;
 
-    // Load-time autodetect positions (ECG + PPG). Set once per seeding pass by
-    // setAuto(); never touched by dragging, which only writes m_markers.
-    AutoMarks m_auto;
-
     // Compute the glyph snapshot from current trace + marker state.
-    void captureGlyphSnapshot();
+    void captureGlyphSnapshot(const TemplateBin& b);
 
     // Arterial trace vectors (own sample space; drawn foot-anchored at the
     // PPG origin). Empty when the channel is absent.
@@ -336,6 +322,7 @@ private:
     bool  m_hasPPG = false;
     bool  m_showEcgMarkers = true;
     bool  m_showPpgMarkers = true;
+    bool  m_showPpgDerivMarkers = false;
     bool  m_showAbpMarkers = true;
     bool  m_showArtMarkers = true;
     bool  m_showArtPulmMarkers = true;

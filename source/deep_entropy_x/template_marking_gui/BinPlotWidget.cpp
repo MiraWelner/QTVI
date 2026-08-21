@@ -20,30 +20,55 @@
 //   Geometry never assumes rates match: xFromSample/sampleFromX take a
 //   (startSample, ratio) pair, where ratio = rateRatio(Channel) rescales
 //   that channel's own sample index into ECG-equivalent sample units --
-//   the frame's reference space (see pxPerSample/totalSampleSpan, both
+//   the frame's reference space (see px_per_sample/totalSampleSpan, both
 //   sized from ECG alone). ratio is 1.0 whenever a rate is unknown or
 //   matches ECG's, so this is a no-op for the historical case where every
 //   channel happened to share one rate.
 //
 // ============================================================================
-// The glpyhs and bars:
+// Glyphs and bars
 //
+// A BAR is a draggable vertical line the operator positions. A GLYPH is a
+// small mark the widget draws and the operator cannot touch -- markerAtX()
+// never hit-tests glyphs, so a click can neither select nor move one.
+//
+// Glyphs come in two flavours, distinguished by when they are computed:
 //
 //   FROZEN   -- captured once per seeding pass by setAuto()
-//               (captureGlyphSnapshot) from the bin's autodetect columns.
-//               Does NOT follow subsequent drags.
+//               (captureGlyphSnapshot) from the bin's *_auto columns.
+//               Does NOT follow subsequent drags, so dragging a bar leaves
+//               its glyph where detection put it. That difference is what
+//               makes the paired _autodetect / _user CSV columns meaningful.
 //   REACTIVE -- never stored. reactiveGlyphs() recomputes it from the current
 //               bars at every paint, via the same FeatureMarks functions the
-//               CSV/bin writers use.
+//               CSV/bin writers use, so screen and files cannot disagree.
 //
-// Marks:
-//   ECG - P peak, Q begin, Q peak (reactive), R peak, S peak (reactive),
-//         S end, T peak, T end. All drawn as X.
-//   PPG - foot, P1, P50, dicrotic notch, P2, end. Each of P1/P50/dic/P2
-//         falls back to an O glyph at a sensible midpoint if the shape
-//         detection didn't find a real landmark.
-// ECG glyphs use the left-axis (yLo,yHi) scale + ECG x-geometry; PPG
-// glyphs use the shared right-axis (pLo,pHi) scale + foot-anchored x.
+// Three glyph shapes, three meanings:
+//
+//   X       the detector found a real landmark
+//   O       the detector fell back to a placeholder position (notch and
+//           diastolic peak only -- they are the two that carry a *_found flag)
+//   dash    an auto-only derivative landmark, coloured by derivative order:
+//           VPG blue, APG green, JPG amber. Horizontal, so it cuts across
+//           the trace instead of lying along it.
+//
+// Marks drawn:
+//   ECG  - P begin, P peak, Q onset, R peak, S end, T peak (reactive), T end.
+//          All X.
+//   PPG  - foot, T50 (reactive), systolic peak, dicrotic notch, diastolic
+//          peak, pulse end, T80 (reactive). X, except notch and diastolic
+//          peak which fall back to O.
+//   VPG  - u, v, w                      | dashes, behind the
+//   APG  - a, b, c, d, e, f             | "Show PPG Derivative Markers"
+//   JPG  - p1, p2                       | checkbox
+//
+// A derivative landmark reads -1 when it genuinely does not exist in the
+// pulse (c, d and p2 are the common cases), and -1 simply draws nothing --
+// there is no placeholder and no flag.
+//
+// ECG glyphs use the left-axis (yLo,yHi) scale + ECG x-geometry; PPG and
+// derivative glyphs use the shared right-axis (pLo,pHi) scale + the pulse
+// x-geometry.
 // ============================================================================
 
 #include "BinPlotWidget.hpp"
@@ -69,72 +94,85 @@ namespace {
     //   ECG markers - shades of black / dark blue
     //   PPG markers - shades of red
     //
-    // Edit these constants in one place; markerColor() does the lookup.
+    // Edit these constants in one place; marker_color() does the lookup.
     // ------------------------------------------------------------------
-    constexpr QColor kColorEcgTrace{ 10,  20,  90 };   // dark navy blue
-    constexpr QColor kColorPpgTrace{ 130,  10,  20 };   // dark red
+    constexpr QColor ecg_trace_color{ 10,  20,  90 };   // dark navy blue
+    constexpr QColor ppg_trace_color{ 130,  10,  20 };   // dark red
 
     // Average-trace opacity: a little transparent so overlapping traces
     // (up to ECG + PPG + 3 arterial) reveal where they cross. ~60% opaque.
-    constexpr int kTraceAlpha = 150;
+    constexpr int trace_alpha = 150;
 
     // Std bands: very light -- barely noticeable at a glance, visible on a
     // close look. Low alpha does that.
     inline const QColor color_iqrband_ecg{ 90, 130, 220, 38 };   // light navy/blue
     inline const QColor color_iqrband_ppg{ 220, 120, 130, 38 };  // soft red/pink
 
-    // Apply kTraceAlpha to a base trace color.
-    inline QColor withTraceAlpha(QColor c) { c.setAlpha(kTraceAlpha); return c; }
+    // Apply trace_alpha to a base trace color.
+    inline QColor with_trace_alpha(QColor c) { c.setAlpha(trace_alpha); return c; }
 
 
     // ECG markers (P peak, Q begin, R peak, S end, T peak, T end).
-    constexpr QColor kColorEcgPPeak{ 0,   0,   0 };
-    constexpr QColor kColorEcgQBegin{ 20,  20,  60 };
-    constexpr QColor kColorEcgRPeak{ 15,  15,  40 };
-    constexpr QColor kColorEcgS{ 30, 35, 85 };
-    constexpr QColor kColorEcgTBegin{ 50,  60, 130 };
-    constexpr QColor kColorEcgTEnd{ 70,  90, 160 };
+    constexpr QColor ecg_p_peak_color{ 0,   0,   0 };
+    constexpr QColor ecg_q_begin_color{ 20,  20,  60 };
+    constexpr QColor ecg_r_peak_color{ 15,  15,  40 };
+    constexpr QColor ecg_s_color{ 30, 35, 85 };
+    constexpr QColor ecg_t_begin_color{ 50,  60, 130 };
+    constexpr QColor ecg_t_end_color{ 70,  90, 160 };
 
-    // PPG markers (On, T50, Pk, Dc, 2, En) - shades of red, darkest to lightest.
-    constexpr QColor kColorPpgOnset{ 110,   0,   0 };  // dark red
-    constexpr QColor kColorPpgP50{ 150,  20,  20 };  // dark red variant
-    constexpr QColor kColorPpgPeak{ 180,   0,   0 };  // red
-    constexpr QColor kColorPpgDicrotic{ 220,  50,  50 };  // medium red
-    constexpr QColor kColorPpgPeak2{ 235, 100, 100 };  // light red (2nd/diastolic peak)
-    constexpr QColor kColorPpgT80{ 210,  30,  70 };  // pink-red (80% downslope)
-    constexpr QColor kColorPpgEnd{ 200,  60,  90 };  // dark pink-red
+    // PPG bar markers - shades of red, darkest to lightest.
+    constexpr QColor ppg_onset_color{ 110,   0,   0 };  // dark red
+    constexpr QColor p50_color{ 150,  20,  20 };  // dark red variant
+    constexpr QColor ppg_peak_color{ 180,   0,   0 };  // red
+    constexpr QColor ppg_dicrotic_color{ 220,  50,  50 };  // medium red
+    constexpr QColor ppg_peak2_color{ 235, 100, 100 };  // light red (2nd/diastolic peak)
+    constexpr QColor ppg_t80_color{ 210,  30,  70 };  // pink-red (80% downslope)
+    constexpr QColor ppg_end_color{ 200,  60,  90 };  // dark pink-red
+    // Derivative marks, one colour per derivative order. Deliberately outside
+    // the PPG reds above: a dash is an auto-only landmark with no bar, and the
+    // hue says so at a glance.
+    constexpr QColor vpg_mark_color{ 20,  80, 170 };  // blue   (PPG')
+    constexpr QColor apg_mark_color{ 20, 120,  60 };  // green  (PPG'')
+    constexpr QColor jpg_mark_color{ 190, 110,   0 };  // amber  (PPG''')
+
+    // Glyph geometry, in pixels. marker_half_size is the X's half-extent on
+    // both axes; dash_half_width is the dash's half-length. The dash is longer
+    // because it has one stroke to the X's two and needs the extra reach to
+    // stay findable where the trace is steep.
+    constexpr double marker_half_size = 2.0;
+    constexpr double dash_half_width = 5.0;
+    constexpr double marker_pen_size = 1.25;
+    constexpr double marker_circle_radius = 4.0;
+    constexpr double marker_circle_pen = 1.8;
 
     // Arterial markers (ABP green, ART purple, ART_PULM orange),
     // darkest-to-lightest within a group.
-    constexpr QColor kColorAbp[5] = {
-        {0,80,30},{0,115,45},{30,150,75},{80,185,120},{130,210,160} };
-    constexpr QColor kColorArt[5] = {
-        {75,20,110},{105,35,150},{140,75,185},{170,120,210},{195,160,225} };
-    constexpr QColor kColorArtPulm[5] = {
-        {150,70,0},{190,100,15},{215,135,45},{230,165,90},{240,195,140} };
+    constexpr QColor abp_marker_colors[5] = { {0,80,30},{0,115,45},{30,150,75},{80,185,120},{130,210,160} };
+    constexpr QColor art_marker_colors[5] = { {75,20,110},{105,35,150},{140,75,185},{170,120,210},{195,160,225} };
+    constexpr QColor art_pulm_marker_colors[5] = { {150,70,0},{190,100,15},{215,135,45},{230,165,90},{240,195,140} };
 
-    QColor markerColor(int m) {
+    QColor marker_color(int m) {
         switch (m) {
-        case BinPlotWidget::EcgPPeak:    return kColorEcgPPeak;
-        case BinPlotWidget::EcgQBegin:   return kColorEcgQBegin;
-        case BinPlotWidget::EcgRPeak:    return kColorEcgRPeak;
-        case BinPlotWidget::EcgSEnd:     return kColorEcgS;
-        case BinPlotWidget::EcgTBegin:    return kColorEcgTBegin;
-        case BinPlotWidget::EcgTEnd:     return kColorEcgTEnd;
-        case BinPlotWidget::PpgOnset:    return kColorPpgOnset;
-        case BinPlotWidget::PpgT50:      return kColorPpgP50;
-        case BinPlotWidget::PpgPeak:     return kColorPpgPeak;
-        case BinPlotWidget::PpgDicrotic: return kColorPpgDicrotic;
-        case BinPlotWidget::PpgPeak2:    return kColorPpgPeak2;
-        case BinPlotWidget::PpgT80:      return kColorPpgT80;
-        case BinPlotWidget::PpgEnd:      return kColorPpgEnd;
+        case BinPlotWidget::EcgPPeak:    return ecg_p_peak_color;
+        case BinPlotWidget::EcgQBegin:   return ecg_q_begin_color;
+        case BinPlotWidget::EcgRPeak:    return ecg_r_peak_color;
+        case BinPlotWidget::EcgSEnd:     return ecg_s_color;
+        case BinPlotWidget::EcgTBegin:    return ecg_t_begin_color;
+        case BinPlotWidget::EcgTEnd:     return ecg_t_end_color;
+        case BinPlotWidget::PpgOnset:    return ppg_onset_color;
+        case BinPlotWidget::PpgT50:      return p50_color;
+        case BinPlotWidget::PpgPeak:     return ppg_peak_color;
+        case BinPlotWidget::PpgDicrotic: return ppg_dicrotic_color;
+        case BinPlotWidget::PpgPeak2:    return ppg_peak2_color;
+        case BinPlotWidget::PpgT80:      return ppg_t80_color;
+        case BinPlotWidget::PpgEnd:      return ppg_end_color;
         }
-        if (BinPlotWidget::markerIsAbp(m))     return kColorAbp[m - BinPlotWidget::AbpOnset];
-        if (BinPlotWidget::markerIsArt(m))     return kColorArt[m - BinPlotWidget::ArtOnset];
-        if (BinPlotWidget::markerIsArtPulm(m)) return kColorArtPulm[m - BinPlotWidget::ArtPulmOnset];
+        if (BinPlotWidget::markerIsAbp(m))     return abp_marker_colors[m - BinPlotWidget::AbpOnset];
+        if (BinPlotWidget::markerIsArt(m))     return art_marker_colors[m - BinPlotWidget::ArtOnset];
+        if (BinPlotWidget::markerIsArtPulm(m)) return art_pulm_marker_colors[m - BinPlotWidget::ArtPulmOnset];
         return Qt::black;
     }
-    const char* markerShortLabel(int m) {
+    const char* marker_short_label(int m) {
         switch (m) {
         case BinPlotWidget::EcgPBegin:   return "P beg";
         case BinPlotWidget::EcgPPeak:    return "P peak";
@@ -163,7 +201,7 @@ namespace {
         return "?";
     }
 
-    void computeVisibleRange(const std::vector<double>& v, const std::vector<double>& /*sd*/, int visN, double& lo, double& hi) {
+    void compute_visible_range(const std::vector<double>& v, const std::vector<double>& /*sd*/, int visN, double& lo, double& hi) {
         /* Compute the visible range of the average template plot, ignoring the std band. 5% padding is added to accout for x marks
         */
         const int n = std::min(visN, static_cast<int>(v.size()));
@@ -183,8 +221,8 @@ namespace {
     // Draw the gray ±std band at a fixed pixels-per-sample scale using
     // the supplied (lo, hi) range. The caller must use the SAME range
     // for the trace draw so the band and line agree vertically.
-    void drawIqrBand(QPainter& p, const std::vector<double>& v, const std::vector<double>& sd, double startPx, int mt, int ph,
-        double pxPerSample, int visN, double lo, double hi, QColor color)
+    void draw_iqr_band(QPainter& p, const std::vector<double>& v, const std::vector<double>& sd, double startPx, int mt, int ph,
+        double px_per_sample, int visN, double lo, double hi, QColor color)
     {
         if (visN < 2 || (int)v.size() < 2) return;
         if ((int)sd.size() < visN) return;          // empty/mismatched => no band
@@ -204,12 +242,12 @@ namespace {
 
             QPainterPath band;
             for (int k = runStart; k < runEnd; ++k) {
-                const double x = startPx + (double)k * pxPerSample;
+                const double x = startPx + (double)k * px_per_sample;
                 const double y = mt + ph - ((v[k] + sd[k]) - lo) / r * ph;
                 if (k == runStart) band.moveTo(x, y); else band.lineTo(x, y);
             }
             for (int k = runEnd - 1; k >= runStart; --k) {
-                const double x = startPx + (double)k * pxPerSample;
+                const double x = startPx + (double)k * px_per_sample;
                 const double y = mt + ph - ((v[k] - sd[k]) - lo) / r * ph;
                 band.lineTo(x, y);
             }
@@ -221,9 +259,9 @@ namespace {
     // Draw a trace at a fixed pixels-per-sample scale using the supplied
     // (lo, hi) vertical range. Caller-supplied range so that the band
     // and the line share an axis.
-    void drawTraceFixedScale(QPainter& p, const std::vector<double>& v,
+    void draw_trace_fixed_scale(QPainter& p, const std::vector<double>& v,
         double startPx, int mt, int ph,
-        double pxPerSample, const QPen& pen, int visN,
+        double px_per_sample, const QPen& pen, int visN,
         double lo, double hi)
     {
         if (visN < 2 || (int)v.size() < 2) return;
@@ -238,7 +276,7 @@ namespace {
         bool pending_move = true;
         for (int i = 0; i < visN; ++i) {
             if (std::isnan(v[i])) { pending_move = true; continue; }
-            const double x = startPx + (double)i * pxPerSample;
+            const double x = startPx + (double)i * px_per_sample;
             const double y = mt + ph - (v[i] - lo) / r * ph;
             if (pending_move) { path.moveTo(x, y); pending_move = false; }
             else { path.lineTo(x, y); }
@@ -296,8 +334,6 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_hasPPG = !ppg.empty();
     m_ecgVisibleN = std::max(static_cast<int>(m_ecg.size()), 2);
     m_ppgVisibleN = visiblePpgCount(static_cast<int>(m_ppg.size()));
-    // No captureGlyphSnapshot() here: markers aren't in yet. setAuto(), called
-    // last in the seeding pass, does the capture.
     updateGeometry();
     update();
 }
@@ -314,6 +350,14 @@ void BinPlotWidget::setShowEcgMarkers(bool show) {
 void BinPlotWidget::setShowPpgMarkers(bool show) {
     if (m_showPpgMarkers == show) return;
     m_showPpgMarkers = show;
+    update();
+}
+
+// Derivative marks (u/v/w, a-f, p1/p2) have their own toggle: they are
+// auto-only and numerous, so they stay off while the operator works the bars.
+void BinPlotWidget::setShowPpgDerivMarkers(bool show) {
+    if (m_showPpgDerivMarkers == show) return;
+    m_showPpgDerivMarkers = show;
     update();
 }
 
@@ -548,7 +592,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     //   the 0.0 major tick is always inside the frame.
     // Left axis (ECG) and right axis (pulse) each follow this rule.
     double yLo = 0, yHi = 0;
-    computeVisibleRange(m_ecg, m_ecgIqr, m_ecgVisibleN, yLo, yHi);
+    compute_visible_range(m_ecg, m_ecgIqr, m_ecgVisibleN, yLo, yHi);
     if (yLo > 0.0) yLo = 0.0;
 
     // Right axis range: shared by ALL pulse traces (PPG + arterial), so they
@@ -556,23 +600,23 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // the RETAINED samples (clipped at the ECG's right edge).
     const int pulseClip = pulseClipN();
     double pLo = 1e300, pHi = -1e300;
-    auto mergePulse = [&](const std::vector<double>& v,
+    auto merge_pulse = [&](const std::vector<double>& v,
         const std::vector<double>& sd, int visN) {
             const int n = std::min(visN, pulseClip);
             if (n < 1) return;
-            double lo, hi; computeVisibleRange(v, sd, n, lo, hi);
+            double lo, hi; compute_visible_range(v, sd, n, lo, hi);
             pLo = std::min(pLo, lo); pHi = std::max(pHi, hi);
         };
-    if (m_hasPPG && !m_ppg.empty()) mergePulse(m_ppg, m_ppgIqr, m_ppgVisibleN);
-    mergePulse(m_abp, m_abpIqr, static_cast<int>(m_abp.size()));
-    mergePulse(m_art, m_artIqr, static_cast<int>(m_art.size()));
-    mergePulse(m_artPulm, m_artPulmIqr, static_cast<int>(m_artPulm.size()));
+    if (m_hasPPG && !m_ppg.empty()) merge_pulse(m_ppg, m_ppgIqr, m_ppgVisibleN);
+    merge_pulse(m_abp, m_abpIqr, static_cast<int>(m_abp.size()));
+    merge_pulse(m_art, m_artIqr, static_cast<int>(m_art.size()));
+    merge_pulse(m_artPulm, m_artPulmIqr, static_cast<int>(m_artPulm.size()));
     if (pLo > pHi) { pLo = 0.0; pHi = 1.0; }
     if (pLo > 0.0) pLo = 0.0;
 
     // Each axis keeps its own y-min (autoscaled from the DATA it displays,
     // clipped at 0). The pulse axis already only considers samples up to
-    // pulseClipN() = m_ecgVisibleN via the mergePulse lambda above, so the
+    // pulseClipN() = m_ecgVisibleN via the merge_pulse lambda above, so the
     // pulse range reflects only what's visible on-screen inside the ECG
     // plot's right edge. Anything past the ECG width is ignored.
 
@@ -607,7 +651,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         }
 
         // Helper: y-pixel for a given data value on a given (lo, hi) scale.
-        auto yPix = [&](double val, double lo, double hi) {
+        auto y_pix = [&](double val, double lo, double hi) {
             const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
             return margin_top + ph - (val - lo) / r * ph;
             };
@@ -618,9 +662,9 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         // (right edge stops just short of the tick marks so they don't overlap).
         p.setPen(QColor(150, 150, 150));
         {
-            const double yTop = yPix(yHi, yLo, yHi);
-            const double yBot = yPix(yLo, yLo, yHi);
-            const double yZero = yPix(0.0, yLo, yHi);
+            const double yTop = y_pix(yHi, yLo, yHi);
+            const double yBot = y_pix(yLo, yLo, yHi);
+            const double yZero = y_pix(0.0, yLo, yHi);
             struct Tick { double val; double y; };
             const Tick ticks[] = {
                 { yHi, yTop  },
@@ -641,9 +685,9 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         // left-aligned snug to the right of the tick marks.
         p.setPen(QColor(150, 150, 150));
         {
-            const double yTop = yPix(pHi, pLo, pHi);
-            const double yBot = yPix(pLo, pLo, pHi);
-            const double yZero = yPix(0.0, pLo, pHi);
+            const double yTop = y_pix(pHi, pLo, pHi);
+            const double yBot = y_pix(pLo, pLo, pHi);
+            const double yZero = y_pix(0.0, pLo, pHi);
             struct Tick { double val; double y; };
             const Tick ticks[] = {
                 { pHi, yTop  },
@@ -688,7 +732,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // than ECG still draws at the correct real-time width.
     {
         const double startPx = margin_left + ppgStartSample() * pps;
-        struct ArtTrace {
+        struct art_trace {
             const std::vector<double>* v;
             const std::vector<double>* sd;
             QColor line;
@@ -696,7 +740,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             bool show;
             double ratio;
         };
-        const ArtTrace arts[] = {
+        const art_trace arts[] = {
             { &m_abp,     &m_abpIqr,     QColor(0, 115, 45),   QColor(80, 185, 120, 38),  m_showAbpTrace,     rateRatio(Channel::Abp) },     // green
             { &m_art,     &m_artIqr,     QColor(140, 75, 185), QColor(180, 130, 215, 38), m_showArtTrace,     rateRatio(Channel::Art) },     // purple
             { &m_artPulm, &m_artPulmIqr, QColor(215, 135, 45), QColor(235, 175, 100, 38), m_showArtPulmTrace, rateRatio(Channel::ArtPulm) }, // orange
@@ -710,17 +754,17 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             const std::vector<double>& sd = *a.sd;
             const bool haveStd = static_cast<int>(sd.size()) >= visN;
             if (haveStd)
-                drawIqrBand(p, v, sd, startPx, margin_top, ph, effPps, visN, pLo, pHi, a.band);
-            drawTraceFixedScale(p, v, startPx, margin_top, ph, effPps,
-                QPen(withTraceAlpha(a.line), 1.3), visN, pLo, pHi);
+                draw_iqr_band(p, v, sd, startPx, margin_top, ph, effPps, visN, pLo, pHi, a.band);
+            draw_trace_fixed_scale(p, v, startPx, margin_top, ph, effPps,
+                QPen(with_trace_alpha(a.line), 1.3), visN, pLo, pHi);
         }
     }
 
     // -------- ECG (left axis) --------
     if (m_showEcgTrace) {
-        drawIqrBand(p, m_ecg, m_ecgIqr, margin_left, margin_top, ph, pps, m_ecgVisibleN, yLo, yHi, color_iqrband_ecg);
-        drawTraceFixedScale(p, m_ecg, margin_left, margin_top, ph, pps,
-            QPen(withTraceAlpha(kColorEcgTrace), 1.5), m_ecgVisibleN, yLo, yHi);
+        draw_iqr_band(p, m_ecg, m_ecgIqr, margin_left, margin_top, ph, pps, m_ecgVisibleN, yLo, yHi, color_iqrband_ecg);
+        draw_trace_fixed_scale(p, m_ecg, margin_left, margin_top, ph, pps,
+            QPen(with_trace_alpha(ecg_trace_color), 1.5), m_ecgVisibleN, yLo, yHi);
     }
 
     // -------- PPG (right/shared axis) --------
@@ -733,10 +777,10 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             ppgIqrReal.assign(m_ppgIqr.begin(), m_ppgIqr.begin() + ppgN);
 
         if (ppgN >= 2) {
-            drawIqrBand(p, m_ppg, ppgIqrReal, startPx, margin_top, ph, effPps,
+            draw_iqr_band(p, m_ppg, ppgIqrReal, startPx, margin_top, ph, effPps,
                 ppgN, pLo, pHi, color_iqrband_ppg);
-            drawTraceFixedScale(p, m_ppg, startPx, margin_top, ph,
-                effPps, QPen(withTraceAlpha(kColorPpgTrace), 1.5), ppgN, pLo, pHi);
+            draw_trace_fixed_scale(p, m_ppg, startPx, margin_top, ph,
+                effPps, QPen(with_trace_alpha(ppg_trace_color), 1.5), ppgN, pLo, pHi);
         }
     }
     p.restore();
@@ -766,11 +810,11 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         if (idx >= (int)vec->size()) continue;
         if (idx >= visN) continue;
         double mx = xFromSample(idx, isEcg ? 0.0 : ppgStartSample(), ratio);
-        QPen pen(markerColor(m), 2);
+        QPen pen(marker_color(m), 2);
         pen.setStyle(markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine);
         p.setPen(pen);
         p.drawLine(QPointF(mx, margin_top), QPointF(mx, h - margin_bottom));
-        p.drawText(QPointF(mx + 2, margin_top + 8), markerShortLabel(m));
+        p.drawText(QPointF(mx + 2, margin_top + 8), marker_short_label(m));
     }
 
     drawFeatureGlyphs(p, yLo, yHi, pLo, pHi, ph);
@@ -859,64 +903,85 @@ void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
     m_dragMarker = -1;
 }
 
-void BinPlotWidget::captureGlyphSnapshot() {
-    m_glyphs = GlyphSnapshot{};   // reset to all -1 / false
+void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
+    m_glyphs = GlyphSnapshot{};
+    const int c = m_leadIndex;
 
     if ((int)m_ecg.size() >= 3) {
         const int N = (int)m_ecg.size();
-        // Frozen glyphs: straight from the autodetect columns, bounds-checked
-        // only. NOT from the live markers, so dragging a bar leaves its X where
-        // detection put it -- and NOT falling back to the bar when an auto
-        // value is missing, so a failed detection reads as missing instead of
-        // masquerading as a detection that happens to sit under the bar.
         auto frozen = [&](int v) { return (v >= 0 && v < N) ? v : -1; };
-        m_glyphs.ecgPBegin = frozen(m_auto.pBegin);
-        m_glyphs.ecgPPeak = frozen(m_auto.pPeak);
-        m_glyphs.ecgQ = frozen(m_auto.qBegin);
-        m_glyphs.ecgS = frozen(m_auto.sEnd);
-        m_glyphs.ecgTend = frozen(m_auto.tEnd);
-
-        // R is NEVER autodetected: draw it at the R bar (m_markers[EcgRPeak] =
-        // r_peak_ch = r_col, straight from peak-finding through alignment). No
-        // argmax, no window search -- there is exactly one definition of R in
-        // this codebase and this is it. R isn't draggable, so reading the bar
-        // here is safe as long as setAuto() runs last in the seeding pass.
+        // The *_auto_ch fields are sub-sample doubles; glyph columns are
+        // integer samples, so they round here exactly as the bar seeds do
+        // in seed_all().
+        auto froz = [&](double v) { return frozen((int)std::lround(v)); };
+        m_glyphs.ecgPBegin = froz(b.p_begin_auto_ch[c]);
+        m_glyphs.ecgPPeak = froz(b.p_peak_auto_ch[c]);
+        m_glyphs.ecgQ = froz(b.q_begin_auto_ch[c]);
+        m_glyphs.ecgS = froz(b.s_end_auto_ch[c]);
+        m_glyphs.ecgTend = froz(b.t_end_auto_ch[c]);
         m_glyphs.ecgRPeak = frozen(m_markers[EcgRPeak]);
     }
 
     if (m_hasPPG && (int)m_ppg.size() >= 3) {
         const int N = (int)m_ppg.size();
         auto frozen = [&](int v) { return (v >= 0 && v < N) ? v : -1; };
-        m_glyphs.ppgFoot = frozen(m_auto.ppgOnset);
-        m_glyphs.ppgP1 = frozen(m_auto.ppgPeak);
-        m_glyphs.ppgP2 = frozen(m_auto.ppgPeak2);      m_glyphs.ppgPeak2Found = m_auto.ppgPeak2Found;
-        m_glyphs.ppgDic = frozen(m_auto.ppgDicrotic);  m_glyphs.ppgNotchFound = m_auto.ppgDicroticFound;
-        m_glyphs.ppgEnd = frozen(m_auto.ppgEnd);       m_glyphs.ppgEndFound = m_auto.ppgEndFound;
+        m_glyphs.ppgFoot = frozen(b.ppg_onset_auto);
+        m_glyphs.ppgP1 = frozen(b.ppg_peak_auto);
+        m_glyphs.ppgP2 = frozen(b.ppg_peak2_auto);    m_glyphs.ppgPeak2Found = b.ppg_peak2_found_auto;
+        m_glyphs.ppgDic = frozen(b.ppg_dicrotic_auto); m_glyphs.ppgNotchFound = b.ppg_dicrotic_found_auto;
+        m_glyphs.ppgEnd = frozen(b.ppg_end_auto);
+        m_glyphs.vpgU = frozen(b.ppg_u_auto);
+        m_glyphs.vpgV = frozen(b.ppg_v_auto);
+        m_glyphs.vpgW = frozen(b.ppg_w_auto);
+        m_glyphs.apgA = frozen(b.ppg_a_auto);
+        m_glyphs.apgB = frozen(b.ppg_b_auto);
+        m_glyphs.apgC = frozen(b.ppg_c_auto);
+        m_glyphs.apgD = frozen(b.ppg_d_auto);
+        m_glyphs.apgE = frozen(b.ppg_e_auto);
+        m_glyphs.apgF = frozen(b.ppg_f_auto);
+        m_glyphs.jpgP1 = frozen(b.ppg_p1_auto);
+        m_glyphs.jpgP2 = frozen(b.ppg_p2_auto);
     }
-
-    m_glyphs.valid = true;
 }
 
 void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
     double yLo, double yHi, double pLo, double pHi, int ph) const
 {
-    if (!m_glyphs.valid) return;
-
     // Reactive columns, recomputed every paint from the current bars.
     const Reactive rx = reactiveGlyphs();
 
-    auto plotY = [&](double val, double lo, double hi) {
+    auto plot_y = [&](double val, double lo, double hi) {
         const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
         return margin_top + ph - (val - lo) / r * ph;
         };
-    auto glyph = [&](double x, double y) {   // opaque black "X"
+
+    // The detector found a real landmark.
+    auto x_glyph = [&](double x, double y) {
         p.setBrush(Qt::NoBrush);
-        p.setPen(QPen(Qt::black, 1.25));
-        const double s = 2.0;
-        p.drawLine(QPointF(x - s, y - s), QPointF(x + s, y + s));
-        p.drawLine(QPointF(x - s, y + s), QPointF(x + s, y - s));
+        p.setPen(QPen(Qt::black, marker_pen_size));
+        p.drawLine(QPointF(x - marker_half_size, y - marker_half_size),
+            QPointF(x + marker_half_size, y + marker_half_size));
+        p.drawLine(QPointF(x - marker_half_size, y + marker_half_size),
+            QPointF(x + marker_half_size, y - marker_half_size));
+        };
+    // The detector fell back to a placeholder position. Only the notch and
+    // the diastolic peak can reach this: they are the two marks that carry a
+    // *_found flag.
+    auto circle_glyph = [&](double x, double y) {
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(Qt::black, marker_circle_pen));
+        p.drawEllipse(QPointF(x, y), marker_circle_radius, marker_circle_radius);
+        };
+    // A derivative (VPG/APG/JPG) landmark: horizontal dash, coloured by
+    // derivative order. No draggable bar exists for these, and the colour
+    // plus the shape both say so.
+    auto dash_glyph = [&](double x, double y, const QColor& col) {
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(col, marker_pen_size));
+        p.drawLine(QPointF(x - dash_half_width, y), QPointF(x + dash_half_width, y));
         };
 
+    // ---- ECG --------------------------------------------------------------
     if (m_showEcgTrace && (int)m_ecg.size() >= 3) {
         const std::vector<double>& v = m_ecg;
         const int N = (int)v.size();
@@ -927,46 +992,74 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             for (int i = 0; i < bhi; ++i) if (!std::isnan(v[i])) bw.push_back(v[i]);
             if (!bw.empty()) { std::sort(bw.begin(), bw.end()); baseline = bw[bw.size() / 2]; }
         }
-        auto g = [&](int idx) {
-            if (idx < 0 || idx >= N) return;
+        // One index -> plot-point rule for the whole block. False when the
+        // landmark is unset (-1) or out of range, so a failed detection
+        // draws nothing and no shape carries its own bounds logic.
+        auto point = [&](int idx, QPointF& out) {
+            if (idx < 0 || idx >= N) return false;
             const double val = std::isnan(v[idx]) ? baseline : v[idx];
-            glyph(xFromSample(idx, 0.0, rateRatio(Channel::Ecg)), plotY(val, yLo, yHi));
+            out = QPointF(xFromSample(idx, 0.0, rateRatio(Channel::Ecg)),
+                plot_y(val, yLo, yHi));
+            return true;
             };
-        g(m_glyphs.ecgPBegin);  // P begin (frozen)
-        g(m_glyphs.ecgPPeak);   // P wave
-        g(m_glyphs.ecgQ);       // Q onset
-        g(m_glyphs.ecgRPeak);   // R wave
-        g(m_glyphs.ecgS);       // S end
-        g(rx.ecgTPeak);         // T peak (reactive: between the T-begin/T-end bars)
-        g(m_glyphs.ecgTend);    // T end (= marker)
+        auto cross = [&](int idx) { QPointF q; if (point(idx, q)) x_glyph(q.x(), q.y()); };
+
+        cross(m_glyphs.ecgPBegin);   // P begin
+        cross(m_glyphs.ecgPPeak);    // P wave
+        cross(m_glyphs.ecgQ);        // Q onset
+        cross(m_glyphs.ecgRPeak);    // R wave
+        cross(m_glyphs.ecgS);        // S end
+        cross(rx.ecgTPeak);          // reactive: between the T-begin/T-end bars
+        cross(m_glyphs.ecgTend);     // T end
     }
 
+    // ---- PPG --------------------------------------------------------------
     if (m_showPpgTrace && m_hasPPG && (int)m_ppg.size() >= 3) {
         const std::vector<double>& v = m_ppg;
         const int N = (int)v.size();
-        auto g = [&](int idx) {
-            if (idx < 0 || idx >= N) return;
+        // Same rule as the ECG block, but PPG x-geometry (foot-anchored
+        // start, PPG rate ratio) and the right-axis scale.
+        auto point = [&](int idx, QPointF& out) {
+            if (idx < 0 || idx >= N) return false;
             const double val = std::isnan(v[idx]) ? pLo : v[idx];
-            glyph(xFromSample(idx, ppgStartSample(), rateRatio(Channel::Ppg)), plotY(val, pLo, pHi));
+            out = QPointF(xFromSample(idx, ppgStartSample(), rateRatio(Channel::Ppg)),
+                plot_y(val, pLo, pHi));
+            return true;
             };
-        auto circ = [&](int idx) {
-            if (idx < 0 || idx >= N) return;
-            const double val = std::isnan(v[idx]) ? pLo : v[idx];
-            const double x = xFromSample(idx, ppgStartSample(), rateRatio(Channel::Ppg));
-            const double y = plotY(val, pLo, pHi);
-            p.setBrush(Qt::NoBrush);
-            p.setPen(QPen(Qt::black, 1.8));
-            p.drawEllipse(QPointF(x, y), 4.0, 4.0);
+        auto cross = [&](int idx) { QPointF q; if (point(idx, q)) x_glyph(q.x(), q.y()); };
+        auto circle = [&](int idx) { QPointF q; if (point(idx, q)) circle_glyph(q.x(), q.y()); };
+        auto dash = [&](int idx, const QColor& col) {
+            QPointF q; if (point(idx, q)) dash_glyph(q.x(), q.y(), col);
             };
-        g(m_glyphs.ppgFoot);
-        g(rx.ppgT50);         // reactive: 50% onset->peak, always a computed X
-        g(m_glyphs.ppgP1);
-        if (m_glyphs.ppgNotchFound) g(m_glyphs.ppgDic);
-        else                        circ(m_glyphs.ppgDic);
-        if (m_glyphs.ppgPeak2Found) g(m_glyphs.ppgP2);
-        else                        circ(m_glyphs.ppgP2);
-        if (m_glyphs.ppgEndFound)   g(m_glyphs.ppgEnd);
-        else                        circ(m_glyphs.ppgEnd);
-        g(rx.ppgT80);         // reactive: 80% peak->end, always a computed X
+        // X when the shape detection succeeded, O when it fell back.
+        auto found = [&](int idx, bool ok) { ok ? cross(idx) : circle(idx); };
+
+        cross(m_glyphs.ppgFoot);
+        cross(rx.ppgT50);            // reactive: 50% onset->peak
+        cross(m_glyphs.ppgP1);       // systolic peak
+        found(m_glyphs.ppgDic, m_glyphs.ppgNotchFound);
+        found(m_glyphs.ppgP2, m_glyphs.ppgPeak2Found);
+        cross(m_glyphs.ppgEnd);
+        cross(rx.ppgT80);            // reactive: 80% peak->end
+        // Derivative landmarks: auto-only, no draggable bar, so a horizontal
+        // dash rather than an X, coloured by derivative order. Horizontal
+        // because the PPG upstroke is near-vertical at u and a, where a
+        // vertical dash lies along the trace and vanishes into it.
+        //
+        // Behind their own checkbox: eleven extra marks on one pulse is noise
+        // while the operator is dragging bars.
+        if (m_showPpgDerivMarkers) {
+            dash(m_glyphs.vpgU, vpg_mark_color);
+            dash(m_glyphs.vpgV, vpg_mark_color);
+            dash(m_glyphs.vpgW, vpg_mark_color);
+            dash(m_glyphs.apgA, apg_mark_color);
+            dash(m_glyphs.apgB, apg_mark_color);
+            dash(m_glyphs.apgC, apg_mark_color);
+            dash(m_glyphs.apgD, apg_mark_color);
+            dash(m_glyphs.apgE, apg_mark_color);
+            dash(m_glyphs.apgF, apg_mark_color);
+            dash(m_glyphs.jpgP1, jpg_mark_color);
+            dash(m_glyphs.jpgP2, jpg_mark_color);
+        }
     }
 }
