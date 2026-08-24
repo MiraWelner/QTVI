@@ -165,6 +165,19 @@ struct TemplateBin {
     int ppg_p1_auto = -1, ppg_p2_auto = -1;
     int art_pulm_onset_auto = -1, art_pulm_peak_auto = -1, art_pulm_dicrotic_auto = -1, art_pulm_peak2_auto = -1, art_pulm_end_auto = -1;
 
+    // Derived PPG indices (DeepEntropyX Section 6.3). Like every other *_auto
+    // field these are recomputed by seed_all each pass and are NOT part of the
+    // serialized template_markings.bin format. SI stays NaN until a subject
+    // height is threaded into seed_all.
+    double ppg_ba_auto = NAN, ppg_ca_auto = NAN, ppg_da_auto = NAN;
+    double ppg_ea_auto = NAN, ppg_fa_auto = NAN;
+    double ppg_agi_auto = NAN, ppg_ri_auto = NAN, ppg_si_auto = NAN;
+    uint16_t ppg_found_mask_auto = 0;
+
+    // Three-tier dicrotic-notch provenance (E-5), recomputed by seed_all.
+    int    ppg_dn_tier_auto = 3;          // 1=IEM, 2=Windkessel, 3=absent
+    double ppg_dn_confidence_auto = 0.0;
+
 };
 
 

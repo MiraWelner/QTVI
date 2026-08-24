@@ -22,6 +22,8 @@
 #include <utility>
 #include <vector>
 #include <functional>
+#include <cmath>
+#include <cstdint>
 
 struct TemplateBin;   // forward-declare -- full definition in TemplateBinIO.hpp
 
@@ -92,11 +94,28 @@ public:
         int u = -1, v = -1, w = -1;
         int a = -1, b = -1, c = -1, d = -1, e = -1, f = -1;
         int p1 = -1, p2 = -1;
+
+        // Three-tier dicrotic-notch provenance (E-5). Which tier produced the
+        // notch, and its normalized confidence. dn_tier: 1=IEM, 2=Windkessel,
+        // 3=absent (matches ppg_dicrotic::DnResult::Tier).
+        int    dn_tier = 3;         // ABSENT until a tier resolves it
+        double dn_confidence = 0.0;
+
+        // Derived indices (DeepEntropyX Section 6.3). NaN when the points they
+        // depend on are absent; SI stays NaN unless subject height is supplied.
+        double ba = NAN, ca = NAN, da = NAN, ea = NAN, fa = NAN;
+        double agi = NAN;   // (b - c - d - e)/a on the APG (aging index)
+        double ri = NAN;   // amp(p2)/amp(p1) on the pulse (reflection index)
+        double si = NAN;   // height / (t_p2 - t_p1) (stiffness index)
+        uint16_t foundMask = 0;   // bit k (u,v,w,a,b,c,d,e,f,p1,p2) set when >= 0
     };
 
     //find all fiducial markers for PPG
 
-    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate);
+    // heightMeters is the subject height from the demographics record, used
+    // only for the stiffness index SI. Absent (default NaN) => SI is left NaN.
+    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate,
+        double heightMeters = NAN);
 
     // Sample whose AMPLITUDE is frac of the way from v[a] to v[b] (NOT frac
     // of the sample-index distance). Shared by detect_ppg_fiducials (t80/
@@ -130,7 +149,8 @@ public:
     static int detect_ppg_peak2(const std::vector<double>& pulse);
     static int detect_ppg_end(const std::vector<double>& pulse);
 
-    static void seed_all(TemplateBin& bin, double sampleRate, double ppgRate, AnchorType anchor);
+    static void seed_all(TemplateBin& bin, double sampleRate, double ppgRate, AnchorType anchor,
+        double heightMeters = NAN);
 private:
     // Internal helpers.
     static std::vector<double> first_derivative(const std::vector<double>& v);

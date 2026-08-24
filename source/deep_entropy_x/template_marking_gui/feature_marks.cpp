@@ -12,7 +12,8 @@ See feature_marks.hpp for the public interface*/
 #include <functional>
 #include "anchor_fit.hpp"
 #include "subsample_refine.hpp"
-#include "ppg_derivative_fiducials.hpp"
+#include "ppg_derivative.hpp"
+#include "ppg_dicrotic.hpp"
 
 namespace {
 
@@ -578,7 +579,8 @@ int FeatureMarks::trough_in(const std::vector<double>& v, int lo, int hi) {
     return best;
 }
 
-FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate)
+FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate,
+    double heightMeters)
 {
     PpgFiducials g;
     const int N = static_cast<int>(v.size());
@@ -613,8 +615,7 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
 
     // A systolic peak with no room for a foot before it is a head fragment,
     // not a pulse. Bail rather than pile every landmark at sample 0.
-    if (g.peak < 3) { fprintf(stderr, "[ppg] bail: peak=%d\n", g.peak); return g; }
-    fprintf(stderr, "[ppg] Wc=%d lo0=%d pkSeed=%d peak=%d\n", Wc, lo0, pkSeed, g.peak);
+    if (g.peak < 3) {return g; }
 
     //systolic foot: asymmetric extremum (sigma = 8) on the rising shoulder
     auto refine_foot = [&](int seed) {
@@ -642,13 +643,12 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         g.end = refine_end(seed >= 0 ? seed : Wc - 1);
     }
 
-    // ---- DICROTIC NOTCH + DIASTOLIC PEAK -----------------------------------
-    // 4-knot least-squares cubic spline over [amp15, amp90] (15% to 90% down
-    // the downslope), interior knots placed to minimize the fit residual. The
-    // notch is the first local minimum of the best fit; the diastolic peak is
-    // the first local maximum after it, from the SAME fit. Either falling
-    // through leaves a midpoint placeholder flagged not-found, which draws as
-    // an "o" instead of an "x".
+    // ---- DICROTIC NOTCH (three-tier, E-5) + DIASTOLIC PEAK -----------------
+    // The notch comes from ppg_dicrotic::detectDicroticNotch (Tier 1 IEM ->
+    // Tier 2 Windkessel -> Tier 3 absent), recording which tier answered. The
+    // detector returns only the notch, so the diastolic peak (peak2) still comes
+    // from the 4-knot cubic-spline fit over [amp15, amp90]. A not-found notch
+    // leaves a midpoint placeholder flagged not-found (draws "o" not "x").
     {
         int amp15 = amplitude_crossing(v, g.peak, g.end, 0.15);
         if (amp15 < 0) amp15 = g.peak;
@@ -657,12 +657,23 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         const int lo = cl(amp15);
         const int hi = std::clamp(amp90, lo, Wc - 1);
 
+        // Notch: three-tier detector. The template spans ~one cardiac cycle, so
+        // RR is its visible duration. Enhancement is left off (gain 0) pending
+        // real-record validation -- the 0.15 default fills clear notches.
+        const double rrSeconds = double(Wc) / ppgRate;
+        ppg_dicrotic::PpgConfig dnCfg;
+        dnCfg.dnEnhanceGain = 0.0;
+        const ppg_dicrotic::DnResult dn =
+            ppg_dicrotic::detectDicroticNotch(v, ppgRate, g.peak, rrSeconds, dnCfg);
+
+        g.notch_found = (dn.tier != ppg_dicrotic::DnResult::ABSENT) && dn.index > 0;
+        g.dicrotic = g.notch_found ? dn.index : cl((lo + hi) / 2);
+        g.dn_tier = static_cast<int>(dn.tier);
+        g.dn_confidence = dn.confidence;
+
+        // Diastolic peak (peak2): first local max after the notch from the spline fit.
         int splineDiastolic = -1;
-        const int notch = subsample_refine::cubicSplineNotch(v, lo, hi, &splineDiastolic);
-
-        g.notch_found = (notch > lo && notch < hi);
-        g.dicrotic = g.notch_found ? notch : cl((lo + hi) / 2);
-
+        subsample_refine::cubicSplineNotch(v, lo, hi, &splineDiastolic);
         g.peak2_found = (splineDiastolic > g.dicrotic && splineDiastolic < hi);
         g.peak2 = g.peak2_found ? splineDiastolic : cl((g.peak + hi) / 2);
     }
@@ -678,12 +689,19 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     // the definitions cross-reference each other, so detect() owns the
     // resolution order.
     {
-        const auto d = ppg_deriv::compute(v, ppgRate);
+        const auto d = ppg_deriv::buildDerivatives(v, ppgRate);
         const auto fd = ppg_deriv::detect(d, g.onset, g.peak, g.dicrotic, g.peak2, Wc);
         g.u = fd.u;  g.v = fd.v;  g.w = fd.w;
         g.a = fd.a;  g.b = fd.b;  g.c = fd.c;
         g.d = fd.d;  g.e = fd.e;  g.f = fd.f;
         g.p1 = fd.p1;  g.p2 = fd.p2;
+
+        // Derived indices from the same derivatives + resolved points. RI reads
+        // the original pulse amplitude at p1/p2; SI needs height (NaN => NaN).
+        const auto ix = ppg_deriv::computeIndices(v, d, fd, ppgRate, heightMeters);
+        g.ba = ix.ba;  g.ca = ix.ca;  g.da = ix.da;  g.ea = ix.ea;  g.fa = ix.fa;
+        g.agi = ix.agi;  g.ri = ix.ri;  g.si = ix.si;
+        g.foundMask = ix.foundMask;
     }
 
     return g;
@@ -1036,7 +1054,8 @@ namespace {
 
 } // anonymous
 
-void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, AnchorType anchor) {
+void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, AnchorType anchor,
+    double heightMeters) {
     // Per-anchor ECG user markers are seeded into this anchor's set.
     TemplateBin::MarkerSet& mk = b.marks(anchor);
 
@@ -1051,6 +1070,11 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         b.ppg_a_auto = b.ppg_b_auto = b.ppg_c_auto = -1;
         b.ppg_d_auto = b.ppg_e_auto = b.ppg_f_auto = -1;
         b.ppg_p1_auto = b.ppg_p2_auto = -1;
+        b.ppg_ba_auto = b.ppg_ca_auto = b.ppg_da_auto = NAN;
+        b.ppg_ea_auto = b.ppg_fa_auto = NAN;
+        b.ppg_agi_auto = b.ppg_ri_auto = b.ppg_si_auto = NAN;
+        b.ppg_found_mask_auto = 0;
+        b.ppg_dn_tier_auto = 3;  b.ppg_dn_confidence_auto = 0.0;
     }
     else if (b.bad_ppg == 1) {
         b.ppg_onset = b.ppg_t50 = b.ppg_t80 = b.ppg_peak = -1;
@@ -1084,7 +1108,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // fields (see BinPlotWidget::captureGlyphSnapshot), so "peak" (etc.)
         // can never mean two different things in two different places.
         {
-            const auto pf = FeatureMarks::detect_ppg_fiducials(v, W, ppgRate);
+            const auto pf = FeatureMarks::detect_ppg_fiducials(v, W, ppgRate, heightMeters);
             b.ppg_peak_auto = pf.peak;
             b.ppg_onset_auto = pf.onset;
             b.ppg_peak2_auto = pf.peak2;           b.ppg_peak2_found_auto = pf.peak2_found;
@@ -1103,6 +1127,11 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
             b.ppg_f_auto = pf.f;
             b.ppg_p1_auto = pf.p1;
             b.ppg_p2_auto = pf.p2;
+            b.ppg_ba_auto = pf.ba;  b.ppg_ca_auto = pf.ca;  b.ppg_da_auto = pf.da;
+            b.ppg_ea_auto = pf.ea;  b.ppg_fa_auto = pf.fa;
+            b.ppg_agi_auto = pf.agi;  b.ppg_ri_auto = pf.ri;  b.ppg_si_auto = pf.si;
+            b.ppg_found_mask_auto = pf.foundMask;
+            b.ppg_dn_tier_auto = pf.dn_tier;  b.ppg_dn_confidence_auto = pf.dn_confidence;
         }
 
         // ---- seed the movable bars once (only when unset) ------------------
