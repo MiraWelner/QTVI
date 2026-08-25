@@ -1,203 +1,179 @@
+/**
+ * @file   beat_substitute.hpp
+ * @brief  Beat substitution by exponentially weighted moving average,
+ *         alpha = 1/8. Spec Section 4.6.
+ *
+ *         SPEC FIDELITY. substituteBeat is transcribed verbatim. Its
+ *         preconditions are therefore the spec's preconditions and are stated
+ *         below rather than defended against in code:
+ *
+ *           - avgOld and current must be the SAME LENGTH. The output is sized
+ *             from avgOld and indexes current at the same j, so a shorter
+ *             `current` reads past its end. Callers must pass equal-length
+ *             beats; the bin beat matrices out of Phase 1 are uniform width,
+ *             so this holds for the pipeline path.
+ *           - avgOld must be non-empty. An empty running average returns an
+ *             empty beat.
+ *           - Both must be free of non-finite samples. EWMA has infinite
+ *             memory, so one NaN entering a column makes that column NaN for
+ *             the remainder of the record.
+ *
+ *         applyToBin below enforces those preconditions at the boundary --
+ *         seeding on the first clean beat and skipping ill-formed rows --
+ *         without altering substituteBeat itself.
+ *
+ * @date   2026-08-24
+ */
 #pragma once
-//
-// beat_substitute.hpp
-//
-// Spec 4.6, "beat substitution, EWMA with alpha = 1/8".
-//
-// ---------------------------------------------------------------------------
-// The spec conflates two different operations under one name, so they are
-// separate here:
-//
-//   ewma_update()  -- a RUNNING TEMPLATE. avg = (1-a)*avg + a*beat, per sample
-//                     index, so every column is an independent EWMA across beat
-//                     index. This is what the spec's snippet actually computes.
-//
-//   fill_gap()     -- a REPLACEMENT BEAT for a rejected one, so downstream code
-//                     that assumes an unbroken beat sequence still works.
-//
-// They must not be the same call. The spec's snippet takes `current` and mixes
-// 12.5% of it into the average -- if `current` is the beat that was just
-// rejected, the rejection has been undone: at alpha = 1/8 that beat still holds
-// 34% of its original weight eight updates later and 12% after sixteen. So
-// ewma_update() is only ever called on ACCEPTED beats, and a rejected slot is
-// filled from its neighbours by fill_gap(), which never reads the bad beat.
-//
-// What alpha = 1/8 buys, in beats:
-//   newest beat weight      12.5%      weight k beats back = a*(1-a)^k
-//   last 8 beats            65.6%
-//   last 16 beats           88.2%
-//   half-life               5.2 beats
-//   mean age of the data    7.0 beats
-//   ~equivalent to a        15-point simple moving average
-// The 1/8 is chosen because x + (y-x)/8 is a shift, not a divide.
-//
-// NOTE this is a MEAN, streaming and recency-weighted, whereas
-// CreateEcgTemplates builds its templates from a per-sample MEDIAN over all kept
-// beats -- batch and outlier-resistant. Two different estimators, not variations
-// of one. Which feeds the dynamic master template selection of spec 9.5 is still
-// unresolved.
-// ---------------------------------------------------------------------------
 
-#include <vector>
-#include <cmath>
-#include <limits>
+#include "five_categories.hpp"   // beatcls::BeatVerdict
+
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <vector>
 
-namespace beat_substitute {
+ // Section 4.6, EWMA with alpha = 1/8 -- VERBATIM.
+inline std::vector<double> substituteBeat(const std::vector<double>& avgOld,
+    const std::vector<double>& current, double alpha = 0.125)
+{
+    std::vector<double> out(avgOld.size());
+    for (size_t j = 0; j < out.size(); ++j) out[j] = (1 - alpha) * avgOld[j] + alpha * current[j];
+    return out;                                  // preserves temporal continuity
+}
 
-    constexpr double kDefaultAlpha = 0.125;   // 1/8, per spec 4.6
+namespace beatsub {
 
-    struct RunningTemplate {
-        std::vector<double> avg;
-        int    n_updates = 0;          // accepted beats folded in so far
-        double alpha = kDefaultAlpha;
-        bool   seeded = false;
+    inline constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+    inline constexpr double kAlpha = 0.125;      // 1/8, as specified
 
-        // Until ~1/alpha beats are in, the average still carries a visible share
-        // of whatever seeded it.
-        bool warm() const {
-            return seeded && n_updates >= static_cast<int>(std::lround(1.0 / alpha));
-        }
+    // Per-bin state: the running average that substituted beats are drawn
+    // from, and the counts feeding the Task I max_correction_pct gate.
+    struct SubstitutionState {
+        std::vector<double> average;
+        double alpha = kAlpha;
+        int nIncluded = 0, nSubstituted = 0, nExcluded = 0;
+        bool ready() const { return !average.empty() && nIncluded > 0; }
     };
 
-    // Seed. The spec gives no initialisation and it needs one: starting from
-    // zeros makes the template climb toward the real morphology over ~8 beats,
-    // so everything before that is wrong. Seed with the first accepted beat.
-    inline void seed(RunningTemplate& rt, const std::vector<double>& first_accepted,
-        double alpha = kDefaultAlpha)
+    // Is this row a legal argument to substituteBeat against `average`?
+    inline bool wellFormed(const std::vector<double>& beat,
+        const std::vector<double>& average)
     {
-        rt.avg = first_accepted;
-        rt.alpha = alpha;
-        rt.n_updates = first_accepted.empty() ? 0 : 1;
-        rt.seeded = !first_accepted.empty();
+        if (beat.empty() || beat.size() != average.size()) return false;
+        for (double v : beat) if (!std::isfinite(v)) return false;
+        return true;
     }
 
-    // The spec's arithmetic. Call ONLY with an accepted beat.
-    //
-    // Length mismatch is tolerated (beats can differ by a sample after
-    // alignment): the overlap updates, any tail of avg is left alone, a longer
-    // `current` is ignored past the end. NaN samples in `current` are skipped so
-    // one bad sample can't poison a column.
-    inline void ewma_update(RunningTemplate& rt, const std::vector<double>& current)
-    {
-        if (current.empty()) return;
-        if (!rt.seeded) { seed(rt, current, rt.alpha); return; }
-        const size_t n = std::min(rt.avg.size(), current.size());
-        const double a = rt.alpha;
-        for (size_t j = 0; j < n; ++j) {
-            if (std::isnan(current[j])) continue;
-            if (std::isnan(rt.avg[j])) { rt.avg[j] = current[j]; continue; }
-            rt.avg[j] += a * (current[j] - rt.avg[j]);   // == (1-a)*avg + a*current
+    // The running average is updated from INCLUDE-quality beats only. A
+    // substituted beat is a read of the average, never a write to it --
+    // otherwise the reference becomes an average of the beats it replaced.
+    inline bool observeClean(SubstitutionState& st, const std::vector<double>& beat) {
+        if (beat.empty()) return false;
+        if (st.average.empty()) {                    // seed
+            bool ok = true;
+            for (double v : beat) if (!std::isfinite(v)) ok = false;
+            if (!ok) return false;
+            st.average = beat;
+            ++st.nIncluded;
+            return true;
         }
-        ++rt.n_updates;
+        if (!wellFormed(beat, st.average)) return false;
+        st.average = substituteBeat(st.average, beat, st.alpha);
+        ++st.nIncluded;
+        return true;
     }
 
-    // Free-function form matching the spec's signature, for callers keeping their
-    // own state. Same caveat: accepted beats only.
-    inline std::vector<double> ewma_update(const std::vector<double>& avg_old,
-        const std::vector<double>& current,
-        double alpha = kDefaultAlpha)
+    struct SubstitutionResult {
+        std::vector<double> beat;
+        bool substituted = false;
+        bool dropped = false;
+        const char* note = "";
+    };
+
+    inline SubstitutionResult substitute(SubstitutionState& st,
+        const std::vector<double>& beat)
     {
-        RunningTemplate rt;
-        rt.avg = avg_old; rt.alpha = alpha; rt.seeded = !avg_old.empty();
-        ewma_update(rt, current);
-        return rt.avg;
+        SubstitutionResult r;
+        if (!st.ready()) {
+            r.dropped = true; r.note = "no_reference_yet"; ++st.nExcluded; return r;
+        }
+        if (!wellFormed(beat, st.average)) {
+            r.dropped = true; r.note = "ill_formed_beat"; ++st.nExcluded; return r;
+        }
+        r.beat = substituteBeat(st.average, beat, st.alpha);
+        r.substituted = true;
+        r.note = "ewma_blend";
+        ++st.nSubstituted;
+        return r;
     }
 
-    // ---- Gap filling ------------------------------------------------------
-    // A rejected beat leaves a hole. This produces a stand-in so the sequence
-    // stays evenly populated -- "a smooth blend, not a copy", per the acceptance
-    // test -- without letting the rejected samples back in.
-    //
-    // Blends the nearest accepted beat on each side, weighted by distance in
-    // beat index: a hole one beat from a good beat on the left and five from one
-    // on the right leans 5:1 toward the left. With only one side available it
-    // blends that neighbour with the running template; with neither it returns
-    // the running template alone.
-    //
-    // Never reads beats[t].
-    inline std::vector<double> fill_gap(const std::vector<std::vector<double>>& beats,
-        const std::vector<char>& accepted,
-        int t,
-        const RunningTemplate& rt)
+    inline void observeExcluded(SubstitutionState& st) { ++st.nExcluded; }
+
+    struct SubstitutionSummary {
+        int nBeats = 0, nIncluded = 0, nSubstituted = 0, nExcluded = 0;
+        double substitutedPct = kNaN;
+        bool overCorrectionFlag = false;    // Task I max_correction_pct
+    };
+
+    inline SubstitutionSummary summarize(const SubstitutionState& st,
+        double maxPct = 1.0)
     {
-        const int n = static_cast<int>(beats.size());
-        if (t < 0 || t >= n) return rt.avg;
-
-        int L = -1, R = -1;
-        for (int i = t - 1; i >= 0; --i)
-            if (i < static_cast<int>(accepted.size()) && accepted[i] && !beats[i].empty()) { L = i; break; }
-        for (int i = t + 1; i < n; ++i)
-            if (i < static_cast<int>(accepted.size()) && accepted[i] && !beats[i].empty()) { R = i; break; }
-
-        const std::vector<double>* a = nullptr;
-        const std::vector<double>* b = nullptr;
-        double wa = 0.0, wb = 0.0;
-
-        if (L >= 0 && R >= 0) {
-            const double dl = static_cast<double>(t - L), dr = static_cast<double>(R - t);
-            a = &beats[L]; b = &beats[R];
-            wa = dr / (dl + dr); wb = dl / (dl + dr);       // nearer neighbour weighs more
+        SubstitutionSummary s;
+        s.nIncluded = st.nIncluded;
+        s.nSubstituted = st.nSubstituted;
+        s.nExcluded = st.nExcluded;
+        s.nBeats = st.nIncluded + st.nSubstituted + st.nExcluded;
+        if (s.nBeats > 0) {
+            s.substitutedPct = 100.0 * st.nSubstituted / s.nBeats;
+            s.overCorrectionFlag = (s.substitutedPct > maxPct);
         }
-        else if (L >= 0 && rt.seeded) { a = &beats[L]; b = &rt.avg; wa = 0.5; wb = 0.5; }
-        else if (R >= 0 && rt.seeded) { a = &beats[R]; b = &rt.avg; wa = 0.5; wb = 0.5; }
-        else if (L >= 0) return beats[L];
-        else if (R >= 0) return beats[R];
-        else return rt.avg;
+        return s;
+    }
 
-        const size_t len = std::max(a->size(), b->size());
-        std::vector<double> out(len, std::numeric_limits<double>::quiet_NaN());
-        for (size_t j = 0; j < len; ++j) {
-            const bool ha = j < a->size() && !std::isnan((*a)[j]);
-            const bool hb = j < b->size() && !std::isnan((*b)[j]);
-            if (ha && hb) out[j] = wa * (*a)[j] + wb * (*b)[j];
-            else if (ha)  out[j] = (*a)[j];
-            else if (hb)  out[j] = (*b)[j];
+    // One pass over a bin. Dropped beats come back as empty rows so the row
+    // index still equals the beat index.
+    struct BinSubstitutionResult {
+        std::vector<std::vector<double>> beats;
+        std::vector<char> wasSubstituted, wasDropped;
+        SubstitutionSummary summary;
+    };
+
+    inline BinSubstitutionResult applyToBin(const std::vector<std::vector<double>>& beats,
+        const std::vector<beatcls::BeatVerdict>& verdicts,
+        double alpha = kAlpha,
+        double maxCorrectionPct = 1.0)
+    {
+        BinSubstitutionResult out;
+        const std::size_t n = std::min(beats.size(), verdicts.size());
+        out.beats.resize(beats.size());
+        out.wasSubstituted.assign(beats.size(), 0);
+        out.wasDropped.assign(beats.size(), 0);
+
+        SubstitutionState st;
+        st.alpha = alpha;
+
+        for (std::size_t i = 0; i < n; ++i) {
+            switch (verdicts[i].handling) {
+            case beatcls::BeatVerdict::INCLUDE:
+                if (observeClean(st, beats[i])) out.beats[i] = beats[i];
+                else                            out.wasDropped[i] = 1;
+                break;
+            case beatcls::BeatVerdict::SUBSTITUTE: {
+                const SubstitutionResult r = substitute(st, beats[i]);
+                if (r.substituted) { out.beats[i] = r.beat; out.wasSubstituted[i] = 1; }
+                else { out.wasDropped[i] = 1; }
+                break;
+            }
+            default:
+                observeExcluded(st);
+                out.wasDropped[i] = 1;
+                break;
+            }
         }
+        out.summary = summarize(st, maxCorrectionPct);
         return out;
     }
 
-    // Whole-record pass, in beat order: fold accepted beats into the running
-    // template, fill the rejected slots from their neighbours. Returns the
-    // substituted series; `rt` is left holding the final template.
-    //
-    // Two-pass, deliberately: the running template is built from accepted beats
-    // FIRST, so a gap near the start is filled against a warm template rather
-    // than a cold one.
-    inline std::vector<std::vector<double>> substitute_all(
-        const std::vector<std::vector<double>>& beats,
-        const std::vector<char>& accepted,
-        RunningTemplate& rt,
-        double alpha = kDefaultAlpha)
-    {
-        rt = RunningTemplate{};
-        rt.alpha = alpha;
-
-        for (size_t i = 0; i < beats.size(); ++i)
-            if (i < accepted.size() && accepted[i]) ewma_update(rt, beats[i]);
-
-        std::vector<std::vector<double>> out = beats;
-        for (size_t i = 0; i < beats.size(); ++i) {
-            const bool ok = (i < accepted.size() && accepted[i]);
-            if (!ok) out[i] = fill_gap(beats, accepted, static_cast<int>(i), rt);
-        }
-        return out;
-    }
-
-    // How far a substituted beat sits from the original -- the acceptance test's
-    // "a smooth blend, not a copy". 0 means it IS a copy.
-    inline double substitution_distance(const std::vector<double>& original,
-        const std::vector<double>& substituted)
-    {
-        const size_t n = std::min(original.size(), substituted.size());
-        if (n == 0) return std::numeric_limits<double>::quiet_NaN();
-        double s = 0.0; size_t m = 0;
-        for (size_t j = 0; j < n; ++j) {
-            if (std::isnan(original[j]) || std::isnan(substituted[j])) continue;
-            const double d = original[j] - substituted[j];
-            s += d * d; ++m;
-        }
-        return (m > 0) ? std::sqrt(s / m) : std::numeric_limits<double>::quiet_NaN();
-    }
-
-}   // namespace beat_substitute
+} // namespace beatsub

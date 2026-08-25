@@ -629,7 +629,7 @@ namespace alignment {
         const std::vector<std::vector<double>>& beatsIn,
         int R_anchor, double fs, bool compute_iqr,
         const std::vector<double>& ref_beat_of_median_length,
-        const std::function<int(const std::vector<double>&)>& locate)
+        const std::function<double(const std::vector<double>&)>& locate)
     {
         aligned_beats res;
         if (beatsIn.empty()) return res;
@@ -639,7 +639,11 @@ namespace alignment {
 
         // Q marker = Q of the column-wise median of all beats (== the R
         // template). Every snippet is then shifted so its own Q lands here.
-        const int marker = locate(ref_beat_of_median_length);
+        // AnchorLocator returns a sub-sample position now; this path shifts by
+        // whole samples, so it rounds. Numerically identical to the previous
+        // int-returning locator, which rounded inside the finder.
+        const int marker = static_cast<int>(std::lround(
+            locate(ref_beat_of_median_length)));
         res.q_aligned_col = (marker >= 0) ? marker : R_anchor;
 
         std::vector<int> shifts;   // per-beat Q-align shift (for R's new column)
@@ -647,7 +651,7 @@ namespace alignment {
             const double NaNv = std::numeric_limits<double>::quiet_NaN();
             shifts.reserve(beats.size());
             for (size_t i = 0; i < beats.size(); ++i) {
-                const int mi = locate(beats[i]);
+                const int mi = static_cast<int>(std::lround(locate(beats[i])));
                 if (mi < 0) continue;
                 const int shift = marker - mi;   // may be negative
                 shifts.push_back(shift);
@@ -831,7 +835,11 @@ namespace alignment {
             // foot). Interpolated first-upward-crossing, and it can FAIL --
             // both properties matter here and neither is provided by
             // amplitude_crossing, which is for display markers.
-            const int up50 = FeatureMarks::first_crossing(beat, foot, peak, 0.50);
+            // first_crossing returns a sub-sample crossing now; the up50 axis
+            // is integer-column, so it rounds here.
+            const double up50D = FeatureMarks::first_crossing(beat, foot, peak, 0.50);
+            const int up50 = (up50D >= 0.0)
+                ? static_cast<int>(std::lround(up50D)) : -1;
             if (up50 < 0) continue;   // no clean upslope crossing; drop beat
 
             // NOTE: peak/foot are stored raw (no subsample_refine call) --

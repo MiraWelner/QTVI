@@ -7,8 +7,7 @@
 #include <vector>
 #include <algorithm>
 
-#include "config_loader.hpp"
-#include "config_entry.hpp"
+#include "config_file_handling/config_loader.hpp"
 #include "parse_data_from_filename.hpp"
 #include "TemplateViewerWindow.hpp"
 #include <theme/theme.h>

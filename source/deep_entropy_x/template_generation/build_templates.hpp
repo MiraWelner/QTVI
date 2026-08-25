@@ -274,7 +274,7 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
 inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io::BeatsFile& beats, const SignalRates& rates, AnchorType anchor, bool forScoring = false)
 {
     /* Re-align reuse PPG/arterial as-is; Re-align the R-pass beats.
-    Because the alignment anchor is the median snippet, the median snippet doesn't move, 
+    Because the alignment anchor is the median snippet, the median snippet doesn't move,
     so R stays on its column*/
     const double fs = rates.ecg;
 
@@ -334,7 +334,13 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
             alignment::aligned_beats q = alignment::align_beat_matrix(perBin[i], blk.r_col, fs, /*compute_iqr=*/true, ref_beat_of_median_length, locate);
             if (q.tmpl.empty()) continue;
 
-            const int alignedRcol = (q.r_col >= 0) ? q.r_col : blk.r_col;
+            // ROUNDING BOUNDARY. q.r_col is sub-sample (the anchor locators and
+            // the R refinement in alignment.hpp both return doubles), but
+            // ChannelMethodTemplate::r_col is int and is SERIALIZED as an int32
+            // in the template .bin (see template_io.hpp's on-disk layout), so
+            // widening it is a file-format change. Rounded here, once, visibly.
+            const int alignedRcol = (q.r_col >= 0.0)
+                ? static_cast<int>(std::lround(q.r_col)) : blk.r_col;
 
             // Store the aligned result in the per-anchor slot, leaving the R
             // base untouched so the NEXT anchor step still aligns from R.

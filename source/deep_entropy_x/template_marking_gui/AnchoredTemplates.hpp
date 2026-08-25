@@ -33,7 +33,9 @@ inline AnchoredTemplate makeAnchoredAverage(
     std::vector<std::vector<double>> aligned;
     aligned.reserve(beats.size());
     for (const auto& beat : beats) {
-        const int lm = locate(beat);
+        // Sub-sample locator, whole-sample shift: rounds, as the previous
+        // int-returning locator did inside the finder.
+        const int lm = static_cast<int>(std::lround(locate(beat)));
         if (lm < 0) continue;
         std::vector<double> row(width, NaN);
         const int shift = refColumn - lm;
@@ -109,7 +111,8 @@ struct AnchorCache {
         auto it = cache.find(a);
         if (it != cache.end()) return it->second;
         auto locate = make_anchor_locator(a, r_col, fs);
-        const int refColumn = locate(*ref_beat_of_median_length);
+        const int refColumn = static_cast<int>(std::lround(
+            locate(*ref_beat_of_median_length)));
         AnchoredTemplate t = makeAnchoredAverage(*cleanBeats, locate, a, width, refColumn);
         return cache.emplace(a, std::move(t)).first->second;
     }

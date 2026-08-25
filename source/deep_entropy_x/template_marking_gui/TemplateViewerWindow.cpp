@@ -1022,10 +1022,17 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_end_auto);
         const FeatureMarks::ReactivePpg rxPpgUser = FeatureMarks::reactive_ppg(
             b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_end);
-        const int ppgAuto[7] = { b.ppg_onset_auto, rxPpgAuto.t50, b.ppg_peak_auto,
-                                 b.ppg_dicrotic_auto, b.ppg_peak2_auto, rxPpgAuto.t80, b.ppg_end_auto };
-        const int ppgUser[7] = { b.ppg_onset, rxPpgUser.t50, b.ppg_peak,
-                                 b.ppg_dicrotic, b.ppg_peak2, rxPpgUser.t80, b.ppg_end };
+        // double, not int: t50/t80 are interpolated crossings and the stored
+        // fields promote without loss. The rounding these arrays used to do
+        // implicitly now happens once, in emitLoc, where the one-hot row format
+        // forces it.
+        const double ppgAuto[7] = { (double)b.ppg_onset_auto, rxPpgAuto.t50,
+                                 (double)b.ppg_peak_auto, (double)b.ppg_dicrotic_auto,
+                                 (double)b.ppg_peak2_auto, rxPpgAuto.t80,
+                                 (double)b.ppg_end_auto };
+        const double ppgUser[7] = { (double)b.ppg_onset, rxPpgUser.t50,
+                                 (double)b.ppg_peak, (double)b.ppg_dicrotic,
+                                 (double)b.ppg_peak2, rxPpgUser.t80, (double)b.ppg_end };
         const int abpAuto[5] = { b.abp_onset_auto, b.abp_peak_auto,
                                  b.abp_dicrotic_auto, b.abp_peak2_auto, b.abp_end_auto };
         const int abpUser[5] = { b.abp_onset, b.abp_peak,
@@ -1073,17 +1080,24 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         // that could disagree with them. Only t_peak is derived, and it is
         // bracketed by the AUTO T-begin/T-end here to match this group's name.
         const ChannelTemplateData* gchs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-        int tPeakAutoGlyph[3];
+        double tPeakAutoGlyph[3];
         for (int gc = 0; gc < 3; ++gc)
-            tPeakAutoGlyph[gc] = FeatureMarks::reactive_ecg(
+            // Brackets stay fractional; compute_t_peak takes doubles now.
+            tPeakAutoGlyph[gc] = FeatureMarks::compute_t_peak(
                 gchs[gc]->ecgTemplate_raw,
-                (int)std::lround(b.t_begin_auto_ch[gc]),
-                (int)std::lround(b.t_end_auto_ch[gc])).t_peak;
+                b.t_begin_auto_ch[gc], b.t_end_auto_ch[gc]);
         // PPG glyph locations are just the bin's own auto fields (see
         // FeatureMarks::detect_ppg_fiducials).
-        auto emitLoc = [&](int markerIdx, int row) {
+        // ROUNDING BOUNDARY, and an unavoidable one: this column is a one-hot
+        // flag per SAMPLE ROW, so a landmark at 104.37 has to be attributed to
+        // a row and there is no fractional representation available in the
+        // format. Rounded to the nearest row, explicitly, rather than
+        // truncated by an implicit conversion in the array initialiser above.
+        // The millisecond columns elsewhere in this file carry the fraction.
+        auto emitLoc = [&](double markerIdx, int row) {
             f << ',';
-            if (markerIdx >= 0 && markerIdx == row) f << '1';
+            if (markerIdx >= 0.0
+                && static_cast<int>(std::lround(markerIdx)) == row) f << '1';
             };
 
         for (int row = 0; row < hiRow; ++row) {

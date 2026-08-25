@@ -1,75 +1,74 @@
-﻿// ============================================================================
-// BinPlotWidget.cpp
-//
-// ECG and PPG are drawn at a single per-paint pixels-per-sample scale
-// (BinPlotWidget::pxPerSample()), chosen so the widest trace fills the
-// cell the layout gives this widget. Every bin window therefore comes out
-// the same on-screen length; the full PPG tail stays visible and shares
-// the ECG's time axis within the widget.
-//
-// ECG/PPG alignment (Patch B/C):
-//   Every channel's template is sliced from the SAME real-time window --
-//   [t_R_i - pad, t_R_{i+1} + pad], driven by ch1.raw -- at that channel's
-//   own sample rate. Sample 0 of the ECG, PPG, and every arterial channel
-//   all correspond to the same real-time instant (pad seconds before the
-//   first R). So they overlay by construction: ppgStartSample() = 0, no
-//   R->foot delay adjustment needed. R sits at column pad*channelRate in
-//   every template.
-//
-//   Every channel may run at its OWN sample rate (set via setChannelRate).
-//   Geometry never assumes rates match: xFromSample/sampleFromX take a
-//   (startSample, ratio) pair, where ratio = rateRatio(Channel) rescales
-//   that channel's own sample index into ECG-equivalent sample units --
-//   the frame's reference space (see px_per_sample/totalSampleSpan, both
-//   sized from ECG alone). ratio is 1.0 whenever a rate is unknown or
-//   matches ECG's, so this is a no-op for the historical case where every
-//   channel happened to share one rate.
-//
-// ============================================================================
-// Glyphs and bars
-//
-// A BAR is a draggable vertical line the operator positions. A GLYPH is a
-// small mark the widget draws and the operator cannot touch -- markerAtX()
-// never hit-tests glyphs, so a click can neither select nor move one.
-//
-// Glyphs come in two flavours, distinguished by when they are computed:
-//
-//   FROZEN   -- captured once per seeding pass by setAuto()
-//               (captureGlyphSnapshot) from the bin's *_auto columns.
-//               Does NOT follow subsequent drags, so dragging a bar leaves
-//               its glyph where detection put it. That difference is what
-//               makes the paired _autodetect / _user CSV columns meaningful.
-//   REACTIVE -- never stored. reactiveGlyphs() recomputes it from the current
-//               bars at every paint, via the same FeatureMarks functions the
-//               CSV/bin writers use, so screen and files cannot disagree.
-//
-// Three glyph shapes, three meanings:
-//
-//   X       the detector found a real landmark
-//   O       the detector fell back to a placeholder position (notch and
-//           diastolic peak only -- they are the two that carry a *_found flag)
-//   dash    an auto-only derivative landmark, coloured by derivative order:
-//           VPG blue, APG green, JPG amber. Horizontal, so it cuts across
-//           the trace instead of lying along it.
-//
-// Marks drawn:
-//   ECG  - P begin, P peak, Q onset, R peak, S end, T peak (reactive), T end.
-//          All X.
-//   PPG  - foot, T50 (reactive), systolic peak, dicrotic notch, diastolic
-//          peak, pulse end, T80 (reactive). X, except notch and diastolic
-//          peak which fall back to O.
-//   VPG  - u, v, w                      | dashes, behind the
-//   APG  - a, b, c, d, e, f             | "Show PPG Derivative Markers"
-//   JPG  - p1, p2                       | checkbox
-//
-// A derivative landmark reads -1 when it genuinely does not exist in the
-// pulse (c, d and p2 are the common cases), and -1 simply draws nothing --
-// there is no placeholder and no flag.
-//
-// ECG glyphs use the left-axis (yLo,yHi) scale + ECG x-geometry; PPG and
-// derivative glyphs use the shared right-axis (pLo,pHi) scale + the pulse
-// x-geometry.
-// ============================================================================
+﻿/*
+* @brief BinPlotWidget.cpp
+*
+* ECG and PPG are drawn at a single per-paint pixels-per-sample scale
+* (BinPlotWidget::pxPerSample()), chosen so the widest trace fills the
+* cell the layout gives this widget. Every bin window therefore comes out
+* the same on-screen length; the full PPG tail stays visible and shares
+* the ECG's time axis within the widget.
+*
+* ECG/PPG alignment (Patch B/C):
+*   Every channel's template is sliced from the SAME real-time window --
+*   [t_R_i - pad, t_R_{i+1} + pad], driven by ch1.raw -- at that channel's
+*   own sample rate. Sample 0 of the ECG, PPG, and every arterial channel
+*   all correspond to the same real-time instant (pad seconds before the
+*   first R). So they overlay by construction: ppgStartSample() = 0, no
+*   R->foot delay adjustment needed. R sits at column pad*channelRate in
+*   every template.
+
+* Every channel may run at its OWN sample rate (set via setChannelRate).
+*   Geometry never assumes rates match: xFromSample/sampleFromX take a
+*   (startSample, ratio) pair, where ratio = rateRatio(Channel) rescales
+*   that channel's own sample index into ECG-equivalent sample units --
+*   the frame's reference space (see px_per_sample/totalSampleSpan, both
+*   sized from ECG alone). ratio is 1.0 whenever a rate is unknown or
+*   matches ECG's, so this is a no-op for the historical case where every
+*   channel happened to share one rate.
+*
+* ============================================================================
+* Glyphs and bars
+*
+* A BAR is a draggable vertical line the operator positions. A GLYPH is a
+* small mark the widget draws and the operator cannot touch -- markerAtX()
+* never hit-tests glyphs, so a click can neither select nor move one.
+*
+* Glyphs come in two flavours, distinguished by when they are computed:
+*
+*   FROZEN   -- captured once per seeding pass by setAuto()
+*               (captureGlyphSnapshot) from the bin's *_auto columns.
+*               Does NOT follow subsequent drags, so dragging a bar leaves
+*               its glyph where detection put it. That difference is what
+*               makes the paired _autodetect / _user CSV columns meaningful.
+*   REACTIVE -- never stored. reactiveGlyphs() recomputes it from the current
+*               bars at every paint, via the same FeatureMarks functions the
+*               CSV/bin writers use, so screen and files cannot disagree.
+*
+* Three glyph shapes, three meanings:
+*
+*   X       the detector found a real landmark
+*   O       the detector fell back to a placeholder position (notch and
+*           diastolic peak only -- they are the two that carry a *_found flag)
+*   dash    an auto-only derivative landmark, coloured by derivative order:
+*           VPG blue, APG green, JPG amber.
+*
+* Marks drawn:
+*   ECG  - P begin, P peak, Q onset, R peak, S end, T peak (reactive), T end.
+*          All X.
+*   PPG  - foot, T50 (reactive), systolic peak, dicrotic notch, diastolic
+*          peak, pulse end, T80 (reactive). X, except notch and diastolic
+*          peak which fall back to O.
+*   VPG  - u, v, w                      | dashes, behind the
+*   APG  - a, b, c, d, e, f             | "Show PPG Derivative Markers"
+*   JPG  - p1, p2                       | checkbox
+*
+* A derivative landmark reads -1 when it genuinely does not exist in the
+* pulse (c, d and p2 are the common cases), and -1 simply draws nothing --
+* there is no placeholder and no flag.
+*
+* ECG glyphs use the left-axis (yLo,yHi) scale + ECG x-geometry; PPG and
+* derivative glyphs use the shared right-axis (pLo,pHi) scale + the pulse
+* x-geometry.
+*/
 
 #include "BinPlotWidget.hpp"
 #include "feature_marks.hpp"
@@ -311,7 +310,7 @@ int BinPlotWidget::sampleFromX(double x, double startSample, double ratio) const
     return static_cast<int>(std::round((x - basePx) / (pps * ratio)));
 }
 
-double BinPlotWidget::xFromSample(int s, double startSample, double ratio) const {
+double BinPlotWidget::xFromSample(double s, double startSample, double ratio) const {
     const double pps = pxPerSample();
     return margin_left + startSample * pps + s * ratio * pps;
 }
@@ -909,11 +908,16 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
 
     if ((int)m_ecg.size() >= 3) {
         const int N = (int)m_ecg.size();
-        auto frozen = [&](int v) { return (v >= 0 && v < N) ? v : -1; };
-        // The *_auto_ch fields are sub-sample doubles; glyph columns are
-        // integer samples, so they round here exactly as the bar seeds do
-        // in seed_all().
-        auto froz = [&](double v) { return frozen((int)std::lround(v)); };
+        // Glyph positions are sub-sample. The *_auto_ch fields are already
+        // doubles and are now passed through unrounded -- froz() used to
+        // lround them "exactly as the bar seeds do in seed_all()", but a
+        // draggable BAR has to land on a sample the operator can grab, whereas
+        // a drawn GLYPH does not, and rounding it put the mark up to half a
+        // sample off the landmark the writers report.
+        auto frozen = [&](double v) {
+            return (v >= 0.0 && v <= static_cast<double>(N - 1)) ? v : -1.0;
+            };
+        auto froz = frozen;
         m_glyphs.ecgPBegin = froz(b.p_begin_auto_ch[c]);
         m_glyphs.ecgPPeak = froz(b.p_peak_auto_ch[c]);
         m_glyphs.ecgQ = froz(b.q_begin_auto_ch[c]);
@@ -924,7 +928,13 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
 
     if (m_hasPPG && (int)m_ppg.size() >= 3) {
         const int N = (int)m_ppg.size();
-        auto frozen = [&](int v) { return (v >= 0 && v < N) ? v : -1; };
+        // The ppg_*_auto source fields are still int in TemplateBin (a
+        // versioned on-disk struct), so nothing is gained here yet -- but the
+        // lambda is double so the glyph path stops being the thing that
+        // narrows once those fields widen.
+        auto frozen = [&](double v) {
+            return (v >= 0.0 && v <= static_cast<double>(N - 1)) ? v : -1.0;
+            };
         m_glyphs.ppgFoot = frozen(b.ppg_onset_auto);
         m_glyphs.ppgP1 = frozen(b.ppg_peak_auto);
         m_glyphs.ppgP2 = frozen(b.ppg_peak2_auto);    m_glyphs.ppgPeak2Found = b.ppg_peak2_found_auto;
@@ -995,14 +1005,18 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         // One index -> plot-point rule for the whole block. False when the
         // landmark is unset (-1) or out of range, so a failed detection
         // draws nothing and no shape carries its own bounds logic.
-        auto point = [&](int idx, QPointF& out) {
-            if (idx < 0 || idx >= N) return false;
-            const double val = std::isnan(v[idx]) ? baseline : v[idx];
+        // idx is a sub-sample position; the amplitude is interpolated at it
+        // rather than read from a rounded column, so the glyph sits on the
+        // trace instead of up to half a sample beside it.
+        auto point = [&](double idx, QPointF& out) {
+            if (idx < 0.0 || idx > static_cast<double>(N - 1)) return false;
+            const double raw = FeatureMarks::sample_at(v, idx);
+            const double val = std::isnan(raw) ? baseline : raw;
             out = QPointF(xFromSample(idx, 0.0, rateRatio(Channel::Ecg)),
                 plot_y(val, yLo, yHi));
             return true;
             };
-        auto cross = [&](int idx) { QPointF q; if (point(idx, q)) x_glyph(q.x(), q.y()); };
+        auto cross = [&](double idx) { QPointF q; if (point(idx, q)) x_glyph(q.x(), q.y()); };
 
         cross(m_glyphs.ecgPBegin);   // P begin
         cross(m_glyphs.ecgPPeak);    // P wave
@@ -1019,20 +1033,21 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         const int N = (int)v.size();
         // Same rule as the ECG block, but PPG x-geometry (foot-anchored
         // start, PPG rate ratio) and the right-axis scale.
-        auto point = [&](int idx, QPointF& out) {
-            if (idx < 0 || idx >= N) return false;
-            const double val = std::isnan(v[idx]) ? pLo : v[idx];
+        auto point = [&](double idx, QPointF& out) {
+            if (idx < 0.0 || idx > static_cast<double>(N - 1)) return false;
+            const double raw = FeatureMarks::sample_at(v, idx);
+            const double val = std::isnan(raw) ? pLo : raw;
             out = QPointF(xFromSample(idx, ppgStartSample(), rateRatio(Channel::Ppg)),
                 plot_y(val, pLo, pHi));
             return true;
             };
-        auto cross = [&](int idx) { QPointF q; if (point(idx, q)) x_glyph(q.x(), q.y()); };
-        auto circle = [&](int idx) { QPointF q; if (point(idx, q)) circle_glyph(q.x(), q.y()); };
-        auto dash = [&](int idx, const QColor& col) {
+        auto cross = [&](double idx) { QPointF q; if (point(idx, q)) x_glyph(q.x(), q.y()); };
+        auto circle = [&](double idx) { QPointF q; if (point(idx, q)) circle_glyph(q.x(), q.y()); };
+        auto dash = [&](double idx, const QColor& col) {
             QPointF q; if (point(idx, q)) dash_glyph(q.x(), q.y(), col);
             };
         // X when the shape detection succeeded, O when it fell back.
-        auto found = [&](int idx, bool ok) { ok ? cross(idx) : circle(idx); };
+        auto found = [&](double idx, bool ok) { ok ? cross(idx) : circle(idx); };
 
         cross(m_glyphs.ppgFoot);
         cross(rx.ppgT50);            // reactive: 50% onset->peak

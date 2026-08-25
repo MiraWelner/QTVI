@@ -172,7 +172,11 @@ public:
     // T-begin/T-end live, per drag pixel, and no caller has to remember to
     // refresh anything. The formula itself lives in FeatureMarks, shared with
     // the CSV/bin writers.
-    struct Reactive { int ecgTPeak = -1, ppgT50 = -1, ppgT80 = -1; };
+    // Sub-sample positions, straight from FeatureMarks. Were int, which
+    // rounded the refined T-peak and the interpolated T50/T80 crossings on the
+    // way into the paint path -- so the glyph drew up to half a sample away
+    // from the value the CSV reported for the same landmark.
+    struct Reactive { double ecgTPeak = -1.0, ppgT50 = -1.0, ppgT80 = -1.0; };
     Reactive reactiveGlyphs() const;
 
     // Per-trace marker visibility. When false, that group's markers
@@ -240,7 +244,8 @@ protected:
 
 private:
     int    sampleFromX(double x, double startSample, double ratio) const;
-    double xFromSample(int s, double startSample, double ratio) const;
+    // s is a sub-sample position: glyph landmarks are fractional.
+    double xFromSample(double s, double startSample, double ratio) const;
     // The ONLY hit-test. Bars are clickable; glyphs are display-only and are
     // deliberately not hit-tested, so a click can never select or drag an
     // automated mark.
@@ -290,17 +295,20 @@ private:
     // reactiveGlyphs(), because a stored copy of a derived value is exactly
     // what has to be manually refreshed and therefore exactly what goes
     // stale. The one bar-dependent field is ecgRPeak, and R is not draggable.
+    // All sub-sample. Every one of these comes from a refined finder, so an
+    // int field here re-quantised what the refinement had resolved.
     struct GlyphSnapshot {
-        int ecgPBegin = -1, ecgPPeak = -1, ecgQ = -1, ecgRPeak = -1,
-            ecgS = -1, ecgTend = -1;
-        int ppgFoot = -1;    // = ppgOnset auto
-        int ppgP1 = -1;      // = ppgPeak auto
-        int ppgP2 = -1;      bool ppgPeak2Found = false;
-        int ppgDic = -1;     bool ppgNotchFound = false;
-        int ppgEnd = -1;
-        int vpgU = -1, vpgV = -1, vpgW = -1;
-        int apgA = -1, apgB = -1, apgC = -1, apgD = -1, apgE = -1, apgF = -1;
-        int jpgP1 = -1, jpgP2 = -1;
+        double ecgPBegin = -1.0, ecgPPeak = -1.0, ecgQ = -1.0, ecgRPeak = -1.0,
+            ecgS = -1.0, ecgTend = -1.0;
+        double ppgFoot = -1.0;    // = ppgOnset auto
+        double ppgP1 = -1.0;      // = ppgPeak auto
+        double ppgP2 = -1.0;      bool ppgPeak2Found = false;
+        double ppgDic = -1.0;     bool ppgNotchFound = false;
+        double ppgEnd = -1.0;
+        double vpgU = -1.0, vpgV = -1.0, vpgW = -1.0;
+        double apgA = -1.0, apgB = -1.0, apgC = -1.0, apgD = -1.0, apgE = -1.0,
+            apgF = -1.0;
+        double jpgP1 = -1.0, jpgP2 = -1.0;
     };
 
     GlyphSnapshot m_glyphs;

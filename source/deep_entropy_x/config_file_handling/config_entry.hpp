@@ -66,6 +66,7 @@ struct config_entry {
     std::string template_path;
     std::string qtvi_marker_path;
 	std::string quality_metric;
+    std::string five_category_output;
     std::string snapshot_path;
     std::string log_path;
     std::string training_log;

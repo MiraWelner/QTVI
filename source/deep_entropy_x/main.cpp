@@ -4,6 +4,7 @@
  */
 
 #include "post_process.hpp"
+#include "five_category_classification/five_category_output.hpp"
 #include "config_file_handling\config_loader.hpp"
 #include "noise_marking_gui\gui_handler.h"
 #include "noise_marking_gui\user_annotation_handler.h"
@@ -315,6 +316,7 @@ int main(int argc, char* argv[]) {
     std::filesystem::create_directories(cfg.template_path);
     std::filesystem::create_directories(cfg.qtvi_marker_path);
     std::filesystem::create_directories(cfg.quality_metric);
+    std::filesystem::create_directories(cfg.five_category_output);
     std::filesystem::create_directories(cfg.training_log);
 
 
@@ -438,6 +440,17 @@ int main(int argc, char* argv[]) {
         // joined later (reaped when finished, or drained at shutdown), so the
         // job data always outlives the worker.
         auto job = std::make_shared<post_process_detail::ViewerJob>(std::move(*jobOpt));
+
+        // ---- Task C: five-category classification (Sections 4.5-4.7) ----
+        // Deliberately NOT inside the needsFinalize block below.
+        // finalizeViewerJob only runs when squared/absval R-peak
+        // detection was deferred, so on a record that already has wave
+        // markings it never runs at all -- and Task C would silently
+        // produce nothing, which is exactly what happened. Task C needs
+        // only job->beats and job->tmpl, both filled by
+        // prepareViewerJob above, so it runs here for every record.
+        five_category_output::runAll(job->cfg, job->beats, job->tmpl,
+            job->stem);
         auto done = std::make_shared<std::atomic<bool>>(false);
         std::thread worker;
         if (job->needsFinalize) {

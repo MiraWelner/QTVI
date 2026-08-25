@@ -327,7 +327,11 @@ inline void writeTemplateMarkingsBin(const std::string& path,
 
 
 struct EcgFeatures {
-    int q_idx = -1, r_idx = -1, s_idx = -1;   // peak sample positions
+    // Sub-sample peak positions. q and s come from the refined finders in
+    // FeatureMarks and are no longer rounded; r is the detected R column and
+    // stays whole because that is what the detector produced.
+    double q_idx = -1.0, s_idx = -1.0;
+    int    r_idx = -1;
     double qrs_ms = NAN, qt_ms = NAN;
 };
 
@@ -344,10 +348,10 @@ inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, int p_peak
     if (inRange(r_peak)) f.r_idx = r_peak;
     // Q for the q_peak column: same canonical finder compute_q_onset uses.
     // Mirrors compute_s_peak's signature below. -1 when there is no Q trough.
-    f.q_idx = FeatureMarks::compute_q_peak(ecg, r_peak, rateHz);
+    f.q_idx = FeatureMarks::compute_q_peak(ecg, r_peak, rateHz);   // sub-sample
     // S for |R|+|S| = first opposite-polarity trough after R (robust; not the
     // max over [R, s_end], which depends on where s_end sits).
-    f.s_idx = FeatureMarks::compute_s_peak(ecg, r_peak, rateHz);
+    f.s_idx = FeatureMarks::compute_s_peak(ecg, r_peak, rateHz);   // sub-sample
     return f;
 }
 
@@ -462,9 +466,14 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                     (int)std::lround(b.p_peak_auto_ch[c]), (int)std::lround(b.q_begin_auto_ch[c]), (int)std::lround(b.r_peak_auto_ch[c]),
                     (int)std::lround(b.s_end_auto_ch[c]), (int)std::lround(b.t_end_auto_ch[c]),
                     sampleRateHz);
-                if (ft.r_idx < 0 || ft.s_idx < 0) continue;
-                if (ft.r_idx >= (int)ecg.size() || ft.s_idx >= (int)ecg.size()) continue;
-                const double ry = ecg[ft.r_idx], sy = ecg[ft.s_idx];
+                if (ft.r_idx < 0 || ft.s_idx < 0.0) continue;
+                if (ft.r_idx >= (int)ecg.size() || ft.s_idx > (double)(ecg.size() - 1))
+                    continue;
+                // |R| + |S| at the SUB-SAMPLE S position: interpolated, not
+                // read from a rounded column. On a steep S limb the two differ
+                // by more than the amplitude tolerance this feeds.
+                const double ry = ecg[ft.r_idx];
+                const double sy = FeatureMarks::sample_at(ecg, ft.s_idx);
                 if (std::isnan(ry) || std::isnan(sy)) continue;
                 vals.push_back(std::abs(ry) + std::abs(sy));
             }
@@ -615,19 +624,25 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     // Emit one 6-column pulse point group. footIdx_auto / footIdx_user are
     // the "onset" indices for their respective variants (used to compute the
     // local ratio (y - foot)/foot). ref is the channel's global PI median.
+    // Positions arrive as doubles: the autodetect landmarks are sub-sample and
+    // the user's markers are whole samples widened to double at the call. The
+    // amplitude at a fractional position is INTERPOLATED (FeatureMarks::
+    // sample_at) rather than read from a rounded column, and the millisecond
+    // column carries the fraction, so T80 is no longer quantised to 3.9 ms at
+    // 256 Hz -- which matters because Section 6.3's T80 entropy result turns on
+    // small differences in exactly that interval.
     auto emitPulsePoint = [&](const std::vector<double>& v,
-        int idx_auto, int idx_user,
-        int foot_auto, int foot_user, double ref)
+        double idx_auto, double idx_user,
+        double foot_auto, double foot_user, double ref)
         {
-            auto y_of = [&](int idx) -> double {
-                if (idx < 0 || idx >= (int)v.size()) return std::nan("");
-                const double y = v[idx];
-                return std::isnan(y) ? std::nan("") : y;
+            auto y_of = [&](double idx) -> double {
+                if (idx < 0.0 || idx >(double)v.size() - 1.0) return std::nan("");
+                return FeatureMarks::sample_at(v, idx);
                 };
-            auto normOf = [&](double y, int fIdx) -> double {
+            auto normOf = [&](double y, double fIdx) -> double {
                 if (!std::isfinite(y)) return std::nan("");
-                if (fIdx < 0 || fIdx >= (int)v.size()) return std::nan("");
-                const double fy = v[fIdx];
+                if (fIdx < 0.0 || fIdx >(double)v.size() - 1.0) return std::nan("");
+                const double fy = FeatureMarks::sample_at(v, fIdx);
                 if (std::isnan(fy) || std::abs(fy) < 1e-12) return std::nan("");
                 if (!std::isfinite(ref) || ref == 0.0)      return std::nan("");
                 const double local = 100.0 * (y - fy) / fy;
@@ -642,8 +657,8 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             f << ',';   if (std::isfinite(n_u)) f << n_u;
             f << ',';   if (std::isfinite(y_a)) f << y_a;
             f << ',';   if (std::isfinite(y_u)) f << y_u;
-            f << ',';   if (idx_auto >= 0)      f << (idx_auto * toMs);
-            f << ',';   if (idx_user >= 0)      f << (idx_user * toMs);
+            f << ',';   if (idx_auto >= 0.0)    f << (idx_auto * toMs);
+            f << ',';   if (idx_user >= 0.0)    f << (idx_user * toMs);
         };
 
     auto emitIntervalPair = [&](double auto_ms, double user_ms) {
@@ -653,9 +668,15 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
 
     // Autodetected computed feature point (used by both ECG and PPG glyph
     // blocks -- defined once here so it's in scope for both).
-    auto emitAutoFeatPt = [&](const std::vector<double>& sig, int idx) {
-        f << ',';   if (idx >= 0) f << (idx * toMs);
-        f << ',';   if (idx >= 0 && idx < (int)sig.size() && !std::isnan(sig[idx])) f << sig[idx];
+    // Sub-sample position in, interpolated amplitude out. The autodetect
+    // landmarks in b.*_auto_ch are already doubles; this used to take an int,
+    // so every caller rounded on the way in and the CSV's millisecond column
+    // carried whole samples.
+    auto emitAutoFeatPt = [&](const std::vector<double>& sig, double idx) {
+        f << ',';   if (idx >= 0.0) f << (idx * toMs);
+        const double y = (idx >= 0.0) ? FeatureMarks::sample_at(sig, idx)
+            : std::nan("");
+        f << ',';   if (std::isfinite(y)) f << y;
         };
 
     for (const auto& b : bins) {
@@ -688,29 +709,31 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 // FeatureMarks::reactive_ecg -- the autodetect column bracketed
                 // by the *_auto_ch columns, the user column bracketed by the
                 // operator's own bars (i.e. exactly the X drawn on screen).
-                const int tPeakAuto = FeatureMarks::reactive_ecg(ecg,
-                    (int)std::lround(b.t_begin_auto_ch[c]),
-                    (int)std::lround(b.t_end_auto_ch[c])).t_peak;
-                const int tPeakUser = FeatureMarks::reactive_ecg(ecg,
-                    umk.t_begin_ch[c], umk.t_end_ch[c]).t_peak;
+                // The autodetect brackets are already sub-sample, so they are
+                // passed through unrounded -- the lround here was discarding
+                // precision on the way IN as well as on the way out.
+                const double tPeakAuto = FeatureMarks::compute_t_peak(ecg,
+                    b.t_begin_auto_ch[c], b.t_end_auto_ch[c]);
+                const double tPeakUser = FeatureMarks::compute_t_peak(ecg,
+                    static_cast<double>(umk.t_begin_ch[c]),
+                    static_cast<double>(umk.t_end_ch[c]));
 
                 // Order MUST match ecgPointNames:
                 //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
                 //   s_end,  t_peak(reactive), t_begin, t_end
                 // Autodetect side keeps its sub-sample precision; the user side
                 // is int because MarkerSet stores integer sample indices.
-                // q_peak/s_peak/t_peak are still int upstream (compute_q_peak,
-                // compute_s_peak, compute_t_peak all return int), so those three
-                // columns emit whole samples until those functions return double.
+                // q_peak/s_peak/t_peak now return double, so all nine autodetect
+                // columns carry sub-sample positions.
                 struct P { double a; double u; };
                 const P pts[] = {
                     { b.p_peak_auto_ch[c],  (double)umk.p_peak_ch[c]  },
                     { b.q_begin_auto_ch[c], (double)umk.q_begin_ch[c] },
-                    { (double)ftAuto.q_idx, (double)ftUser.q_idx      },
+                    { ftAuto.q_idx,         ftUser.q_idx             },
                     { b.r_peak_auto_ch[c],  (double)b.r_peak_ch[c]    },
-                    { (double)ftAuto.s_idx, (double)ftUser.s_idx      },
+                    { ftAuto.s_idx,         ftUser.s_idx             },
                     { b.s_end_auto_ch[c],   (double)umk.s_end_ch[c]   },
-                    { (double)tPeakAuto,    (double)tPeakUser         },   // reactive, both sides
+                    { tPeakAuto,            tPeakUser                },   // reactive, both sides
                     { b.t_begin_auto_ch[c], (double)umk.t_begin_ch[c] },
                     { b.t_end_auto_ch[c],   (double)umk.t_end_ch[c]   }
                 };
@@ -795,12 +818,11 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
         if (wantEcg)
             for (int c = 0; c < 3; ++c) {
                 const auto& ecg = chs[c]->ecgTemplate_raw;
-                emitAutoFeatPt(ecg, (int)std::lround(b.p_peak_auto_ch[c]));
-                emitAutoFeatPt(ecg, (int)std::lround(b.q_begin_auto_ch[c]));
-                emitAutoFeatPt(ecg, (int)std::lround(b.r_peak_auto_ch[c]));
-                emitAutoFeatPt(ecg, FeatureMarks::reactive_ecg(ecg,
-                    (int)std::lround(b.t_begin_auto_ch[c]),
-                    (int)std::lround(b.t_end_auto_ch[c])).t_peak);
+                emitAutoFeatPt(ecg, b.p_peak_auto_ch[c]);
+                emitAutoFeatPt(ecg, b.q_begin_auto_ch[c]);
+                emitAutoFeatPt(ecg, b.r_peak_auto_ch[c]);
+                emitAutoFeatPt(ecg, FeatureMarks::compute_t_peak(ecg,
+                    b.t_begin_auto_ch[c], b.t_end_auto_ch[c]));
             }
         if (wantPulse) {
             for (const auto& gl : ppg_and_artpulse_automated_markers) {

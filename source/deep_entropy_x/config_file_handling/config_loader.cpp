@@ -104,10 +104,10 @@ namespace {
     }
 
 
-    void deriveSubpaths(config_entry & cfg) {
+    void deriveSubpaths(config_entry& cfg) {
         /*
         This script yeilds different types of outputs, each of which are saved in their own
-        subfolder of output_path          
+        subfolder of output_path
         */
         cfg.snapshot_path = cfg.output_path + "/saved_plot_snapshots/";
         cfg.annealed_data_path = cfg.output_path + "/annealed_output/";
@@ -116,6 +116,7 @@ namespace {
         cfg.template_path = cfg.output_path + "/template_outputs/";
         cfg.qtvi_marker_path = cfg.output_path + "/qtvi_marker_path/";
         cfg.quality_metric = cfg.output_path + "/quality_metric/";
+        cfg.five_category_output = cfg.output_path + "/five_category_output/";
         cfg.training_log = cfg.output_path + "/training_log/";
         cfg.snapshot_path = cfg.output_path + "/snapshot_path/";
 
@@ -190,7 +191,7 @@ bool load_config(int dataType, config_entry& out) {
         std::transform(rowName.begin(), rowName.end(), rowName.begin(), ::toupper);
         if (rowName != user_selected_dataset) continue;
 
-        
+
         out.dataset_type = user_selected_dataset;
         out.main_file_extention = cell("main_file_extention");
         out.sleep_file_extention = cell("sleep_file_extention");

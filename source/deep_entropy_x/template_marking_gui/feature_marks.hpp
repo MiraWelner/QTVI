@@ -30,7 +30,14 @@ struct TemplateBin;   // forward-declare -- full definition in TemplateBinIO.hpp
 enum class AnchorType { P_ONSET, P_PEAK, Q_ONSET, R_PEAK, J_POINT, T_PEAK };//J_POINT = S_END
 
 // Returns the landmark sample index for one beat, or -1 if not found.
-using AnchorLocator = std::function<int(const std::vector<double>& beat)>;
+// Anchor locators return SUB-SAMPLE positions. This was
+// std::function<int(...)>, which forced every locator lambda to lround the
+// landmark its finder had just refined -- the note that used to sit in
+// make_anchor_locator ("Rounded only because AnchorLocator is declared
+// int-returning; AnchorLocatorD is the sub-sample form and is still
+// unimplemented") described exactly that. AnchorLocatorD was the intended
+// replacement and is now what AnchorLocator is.
+using AnchorLocator = std::function<double(const std::vector<double>& beat)>;
 
 // Returns the landmark as a sub-sample (floating-point) position, per spec
 // I-3. Built on top of make_anchor_locator's already-tested integer result:
@@ -40,7 +47,9 @@ using AnchorLocator = std::function<int(const std::vector<double>& beat)>;
 // cubic-with-analytic-derivative for P/T (asymmetric), or 4x-upsample-then-
 // fit-and-select for the transition anchors (Q-onset, P-onset, J-point) --
 // refines it to double precision.
-using AnchorLocatorD = std::function<double(const std::vector<double>& beat)>;
+// Retained as an alias so existing references keep compiling; AnchorLocator
+// is now the same type.
+using AnchorLocatorD = AnchorLocator;
 
 // Build the per-beat locator for one anchor. Binds r_col/fs into the detector.
 AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs);
@@ -57,16 +66,26 @@ public:
     // =================================================================
     // Reactive
     // =================================================================
-    static int compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs);
-    static int compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
-    struct ReactiveEcg { int t_peak = -1; };
+    // Sub-sample positions. These three used to return int, rounding away a
+    // refinement they had already computed; they now return the refined double
+    // and nothing downstream rounds it. Callers needing the trace value at the
+    // landmark use sample_at() rather than indexing a rounded column.
+    // Linear interpolation of a trace at a fractional position. NaN outside
+    // the array or across a gap. This is how an amplitude is read at a
+    // sub-sample landmark: a mark at 104.37 has a value, and it is not
+    // ecg[104].
+    static double sample_at(const std::vector<double>& v, double p);
+
+    static double compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs);
+    static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
+    struct ReactiveEcg { double t_peak = -1.0; };
     static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, int t_begin, int t_end);
-    struct ReactivePpg { int t50 = -1, t80 = -1; };
+    struct ReactivePpg { double t50 = -1.0, t80 = -1.0; };   // sub-sample
     static ReactivePpg reactive_ppg(const std::vector<double>& ppg,
         int onset, int peak, int end);
 
     // Individual reactive computes (all track user markers live).
-    static int compute_t_peak(const std::vector<double>& ecg, int tBegin, int tEnd);
+    static double compute_t_peak(const std::vector<double>& ecg, double tBegin, double tEnd);
     static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col); //ONE j-point calculation
     static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx);
     // T-offset. Window [T-begin + 100 ms, T-begin + 200 ms] -- bounded by
@@ -85,15 +104,21 @@ public:
 
     // the x, o, |, || or ||| markers for to mark the ppg and to be output in the csv
     struct PpgFiducials {
-        int onset = -1;
-        int peak = -1;
-        int end = -1;
-        int peak2 = -1;      bool peak2_found = false;
-        int dicrotic = -1;   bool notch_found = false;
-        int t80 = -1, p50 = -1;
-        int u = -1, v = -1, w = -1;
-        int a = -1, b = -1, c = -1, d = -1, e = -1, f = -1;
-        int p1 = -1, p2 = -1;
+        // SUB-SAMPLE POSITIONS. Every one of these is produced by a refinement
+        // -- symmetricExtremum, asymmetricExtremum, a spline notch, a
+        // fractional-crossing search -- so they are doubles and nothing inside
+        // FeatureMarks rounds them. Rounding happens once, at the boundary
+        // where a position enters TemplateBin's int fields (a versioned
+        // on-disk format); see the note at that call site.
+        double onset = -1.0;
+        double peak = -1.0;
+        double end = -1.0;
+        double peak2 = -1.0;      bool peak2_found = false;
+        double dicrotic = -1.0;   bool notch_found = false;
+        double t80 = -1.0, p50 = -1.0;
+        double u = -1.0, v = -1.0, w = -1.0;
+        double a = -1.0, b = -1.0, c = -1.0, d = -1.0, e = -1.0, f = -1.0;
+        double p1 = -1.0, p2 = -1.0;
 
         // Three-tier dicrotic-notch provenance (E-5). Which tier produced the
         // notch, and its normalized confidence. dn_tier: 1=IEM, 2=Windkessel,
@@ -120,14 +145,14 @@ public:
     // Sample whose AMPLITUDE is frac of the way from v[a] to v[b] (NOT frac
     // of the sample-index distance). Shared by detect_ppg_fiducials (t80/
     // p50) and the GUI's reactive T80/P50 glyphs, so both always agree.
-    static int amplitude_crossing(const std::vector<double>& v, int a, int b, double frac);
+    static double amplitude_crossing(const std::vector<double>& v, int a, int b, double frac);
 
     // Index of the minimum sample on [lo, hi], NaN-skipping; -1 if none.
     static int trough_in(const std::vector<double>& v, int lo, int hi);
 
     // FIRST crossing of the frac-of-amplitude level on [a, b], linearly
     // interpolated between the bracketing samples and rounded.
-    static int first_crossing(const std::vector<double>& v, int a, int b, double frac);
+    static double first_crossing(const std::vector<double>& v, int a, int b, double frac);
 
     //movable ecg bars
     static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
