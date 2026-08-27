@@ -127,10 +127,15 @@ namespace template_io {
     };
 
     struct BeatsFile {
-        std::vector<std::vector<std::vector<double>>> per_bin_beats;
         std::vector<bool> bad_segment;
         std::map<std::string, std::vector<std::vector<std::vector<double>>>> per_channel_beats;
         std::map<std::string, std::vector<int>> per_channel_ref_index;
+        // Rhythm verdict per kept beat, [bin][beat], keyed like
+        // per_channel_beats: 0 = NORMAL, 1 = PVC, 2 = VOTED_PVC. Assigned in
+        // alignment.hpp after the slice and before the pruning, and carried
+        // here because it cannot be recomputed once the R-peak vector and the
+        // kept-beat matrix stop corresponding.
+        std::map<std::string, std::vector<std::vector<uint8_t>>> per_channel_rhythm;
     };
 
     void write_template_binfile(const std::string& path, const TemplateFile& data);

@@ -41,7 +41,7 @@
  // ============================================================================
 
 const QStringList& noise_marking_gui::markableChannelLabels() {
-    static const QStringList lables{ "ECG1","ECG2","ECG3","PPG","ACCEL","ABP","ART","ART_PULM" };
+    static const QStringList lables{ "ECG1","ECG2","ECG3","VCG", "PPG","ACCEL","ABP","ART","ART_PULM" };
     return lables;
 }
 
@@ -76,6 +76,15 @@ noise_marking_gui::channelRefs(const QString& label) const {
         r.sampleRate = channel_upsampled_rates[CH_ECG3];
         r.nativeRate = channel_native_rates[CH_ECG3];
         r.color = COLOR_ECG3;
+    }
+    else if (label == "VCG") {
+        r.chartView = ui->kors_matrix;
+        r.state = &self->mark_state_vcg;
+        r.upsampled_data = &m_vcg;
+        r.dataRaw = &m_vcgRaw;
+        r.sampleRate = channel_upsampled_rates[CH_ECG1];
+        r.nativeRate = channel_native_rates[CH_ECG1];
+        r.color = COLOR_VCG;
     }
     else if (label == "PPG") {
         r.chartView = ui->ppg_axis;
@@ -137,6 +146,7 @@ QString noise_marking_gui::signalLabelForChartView(QChartView* cv) const {
     if (cv == ui->ecg_axis_3) return "ECG3";
     if (cv == ui->ppg_axis)   return "PPG";
     if (cv == ui->accel_axis) return "ACCEL";
+    if (cv == ui->kors_matrix) return "VCG";
     if (cv == ui->abp_axis) {
         bool anyAccel = !is_missing_signal(m_accelX)
             || !is_missing_signal(m_accelY) || !is_missing_signal(m_accelZ);
@@ -175,6 +185,7 @@ double noise_marking_gui::yScaleForSignal(const QString& label) const {
     else if (label == "ABP") { check = ui->abp_check; gain = ui->abp_gain; }
     else if (label == "ART") { check = ui->art_check; gain = ui->art_gain; }
     else if (label == "ART_PULM") { check = ui->art_pulm_check; gain = ui->art_pulm_gain; }
+    else if (label == "VCG") { check = ui->kors_check; gain = ui->kors_gain; }
     if (!gain) return 1.0;
     double v = gain->value();
     return (v > 0.0) ? v : 1.0;
@@ -292,6 +303,7 @@ void noise_marking_gui::resetUnpinnedGains() {
     reset(ui->abp_check, ui->abp_gain);
     reset(ui->art_check, ui->art_gain);
     reset(ui->art_pulm_check, ui->art_pulm_gain);
+    reset(ui->kors_check, ui->kors_gain);
 }
 
 double noise_marking_gui::totalChunkDuration() const {
@@ -380,7 +392,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         });
 
     const QList<QChartView*> allCharts = {
-       ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,
+       ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,ui->kors_matrix,
        ui->ppg_axis, ui->accel_axis, ui->abp_axis,
        ui->art_axis, ui->art_pulm_axis,
        ui->ecg_ampogram_axis, ui->ppg_ampogram_axis,
@@ -447,6 +459,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     wire_gain(ui->abp_check, ui->abp_gain);
     wire_gain(ui->art_check, ui->art_gain);
     wire_gain(ui->art_pulm_check, ui->art_pulm_gain);
+    wire_gain(ui->kors_check, ui->kors_gain);
 
     auto wire_fix = [this](QCheckBox* check, const QString& label) {
         connect(check, &QCheckBox::toggled, this,
@@ -460,6 +473,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     wire_fix(ui->abp_check, "ABP");
     wire_fix(ui->art_check, "ART");
     wire_fix(ui->art_pulm_check, "ART_PULM");
+    wire_fix(ui->kors_check, "VCG");
 
     for (QChartView* v : allCharts) {
         if (!v) continue;

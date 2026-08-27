@@ -2,9 +2,12 @@
 #include "ui_TemplateViewerWindow.h"
 #include "feature_marks.hpp"
 #include "anchor_fit.hpp"
-#include "alignment.hpp"   // percent_interval_preceeding_rpeak (RR from r_col)
+#include "alignment.hpp"
+#include "global_intervals.hpp" 
+#include "global_interval_lines.hpp"
+#include "vcg_signal_average.hpp"
 #include "template_generation/NormalizeFeatures.hpp"
-#include "peak_finding/FilterUtils.hpp"   // notch_filter for display-time toggle
+#include "peak_finding/FilterUtils.hpp"
 #include <QMessageBox>
 #include <QColor>
 #include <QTimer>
@@ -502,6 +505,18 @@ void TemplateViewerWindow::showPage() {
         if (leads.empty())
             leads.push_back({ nullptr, 0, "No ECG" });
 
+        // VCG needs all three channels; with fewer, the trace comes back empty
+        // and no row is reserved, so the leads keep the full height.
+        double vcgRCol = -1.0;
+        const std::vector<double> vcgTrace = vcg_avg::derivedTraceOnChannelAxis(
+            b, 0, vcg::DerivedLead::VectorMagnitude, vcg::kIdentity, &vcgRCol);
+        const bool vcgRowWanted = !compact && !vcgTrace.empty()
+            && (int)leads.size() < gridRows;
+
+        const auto gi_intervals = global_intervals::computeGlobalIntervals(
+            b, m_currentAnchor, m_sampleRate,
+            global_intervals::MarkerSource::USER);
+
         std::vector<BinPlotWidget*> group;
 
         for (int li = 0; li < (int)leads.size(); ++li) {
@@ -629,6 +644,8 @@ void TemplateViewerWindow::showPage() {
             // traces are in place (the glyph capture needs them).
             applyBinToWidget(pw, b);
 
+            pw->setReferenceLines(global_interval_lines::forChannel(b, gi_intervals, c));
+
             if (b.bad_ppg == 1)
                 pw->setState(BinPlotWidget::State::BadPPG);
             else if (b.bad_r_ch[c])
@@ -653,8 +670,10 @@ void TemplateViewerWindow::showPage() {
                 usedCols = std::max(usedCols, col + 1);
             }
             else {
+                // The last lead no longer swallows the remaining rows: the
+                // bottom row belongs to the VCG panel added after this loop.
                 int rowspan = (li == (int)leads.size() - 1)
-                    ? (gridRows - li) : 1;
+                    ? std::max(1, gridRows - li - (vcgRowWanted ? 1 : 0)) : 1;
                 ui->plotGrid->addWidget(pw, li, i, rowspan, 1);
                 usedRows = std::max(usedRows, li + rowspan);
                 usedCols = std::max(usedCols, i + 1);
@@ -662,6 +681,49 @@ void TemplateViewerWindow::showPage() {
 
             m_allPlots.push_back(pw);
             group.push_back(pw);
+        }
+
+        // ------------------------------------------------------------------
+        // VCG panel: the bottom row of each bin's column, under lead 3.
+        // ------------------------------------------------------------------
+        // The trace is laid out on ch1's COLUMN axis by
+        // derivedTraceOnChannelAxis, so it shares the x axis of the lead
+        // panels above and lines up with them sample for sample -- while every
+        // channel is still sampled at its own r_col internally, which is what
+        // keeps the combination per-instant.
+        //
+        // Display only: no markers are set and marker signals are not
+        // connected, so nothing here is draggable. The VCG is derived from the
+        // three leads, so marking it would create a fourth set of fiducials
+        // with no channel of its own to store them in.
+        if (vcgRowWanted) {
+            const int vcgRow = gridRows - 1;
+            auto* vp = new BinPlotWidget(gi, vcgRow, "VCG", this);
+
+            static const std::vector<double> emptyVec;
+            vp->setChannelRate(BinPlotWidget::Channel::Ecg, m_sampleRate);
+            vp->setData(emptyVec, emptyVec, vcgTrace, emptyVec,
+                (vcgRCol >= 0.0) ? vcgRCol : 0.0, 0, 0);
+            vp->setHasPPG(false);
+            vp->setShowPpgTrace(false);
+            vp->setShowEcgMarkers(false);
+            vp->setShowPpgMarkers(false);
+            vp->setShowPpgDerivMarkers(false);
+            vp->setShowAbpMarkers(false);
+            vp->setShowArtMarkers(false);
+            vp->setShowArtPulmMarkers(false);
+
+            // Same global boundaries as the leads above, converted onto ch1's
+            // axis since that is the axis this trace is drawn on.
+            vp->setReferenceLines(
+                global_interval_lines::forChannel(b, gi_intervals, 0));
+
+            ui->plotGrid->addWidget(vp, vcgRow, i, 1, 1);
+            usedRows = std::max(usedRows, vcgRow + 1);
+            usedCols = std::max(usedCols, i + 1);
+
+            m_allPlots.push_back(vp);
+            group.push_back(vp);
         }
 
         m_binPlots[i] = std::move(group);
@@ -1812,6 +1874,28 @@ void TemplateViewerWindow::save_bin_and_csv() {
         // (<id>_template_markings.<ANCHOR>.csv) with suffixed columns. No
         // growing zip per pass; all sidecars are merged into the canonical
         // <id>_template_markings.csv once, at the final pass.
+        // VCG loop features: one row per bin, <id>_vcg.csv, beside this CSV.
+        // Written every pass -- it is a standalone file, not a per-anchor
+        // sidecar that needs merging, and the markers it measures against
+        // change on every pass, so the latest write is the one that matters.
+        {
+            std::vector<vcg_avg::BinFeatures> vcgRows;
+            vcgRows.reserve(m_bins.size());
+            for (int vi = 0; vi < (int)m_bins.size(); ++vi) {
+                const auto vgi = global_intervals::computeGlobalIntervals(
+                    m_bins[vi], currentAnchor(), m_sampleRate,
+                    global_intervals::MarkerSource::USER);
+                vcgRows.push_back(vcg_avg::analyzeBinFromTemplates(
+                    vi, m_bins[vi], vgi, m_sampleRate));
+            }
+            const bool vok = vcg_avg::writeVcgCsv(
+                csvDir.absolutePath().toStdString(),
+                m_subjectId.toStdString(), vcgRows);
+            std::cout << (vok ? "Saved: " : "FAILED: ")
+                << csvDir.absolutePath().toStdString() << "/"
+                << m_subjectId.toStdString() << "_vcg.csv\n";
+        }
+
         const QString csvPath = csvDir.absolutePath() + "/"
             + m_subjectId + "_template_markings.csv";
         const QString tsuffix = "_" + m_anchorLabel;

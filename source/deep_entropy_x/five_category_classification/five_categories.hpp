@@ -1,24 +1,11 @@
 /**
  * @file   five_categories.hpp
  *
- *         NAMING. The spec calls for "beat_classify.hpp", one letter from the
- *         existing beat_classifier.hpp (Task M: PreMark, BeatClassifier,
- *         SessionAdapter, EnvelopeSession). Those two names collided in
- *         practice -- this file was saved over that one, which erased
- *         BeatClassifier and broke premark_beats.hpp, and because this file
- *         INCLUDES beat_classifier.hpp it then included itself. Renamed to
- *         five_categories.hpp after Section 4.5's five categories, so the two
- *         cannot be confused again.
- * @brief  Five-category beat classification, PVC prematurity filter and 5-of-8
+ *         The spec requests "beat_classify.hpp", but I kept confusing it with the
+ *         existing beat_classifier, so this was renamed.
+ * @brief  Five-category beat classification, PVC prematurity filter, 5-of-8
  *         voting, multi-template morphology segregation, monomorphic vs
  *         polymorphic PVC tracking, NSVT detection.
- *         Spec Sections 4.5 and 4.6.
- *
- *         SPEC FIDELITY. Where 4.6 gives code -- isPremature, voteFlag, and
- *         the TemplateBank / NsvtRun declarations -- it is transcribed
- *         verbatim, constants and window arithmetic included. Consequences of
- *         the literal text are recorded as SPEC NOTE comments where they bite
- *         and asserted by the Python acceptance test; none is worked around.
  *
  *         THE MATCH SCORE IS A CORRELATION. 4.6 calls it a "band-match score"
  *         and gives template_match_floor as 0.60, which reads either as a
@@ -68,28 +55,13 @@
  *         here and there is no hook for it, so nothing in this header depends
  *         on a model artefact existing.
  *
- *         NO POLICIES BEYOND THE SPEC. Earlier revisions carried an opt-in
- *         persistence rule (a beat could not open a template alone) and an
- *         opt-in consolidation pass (merge on overlap, not only at the cap).
- *         Both are gone: 4.6 opens a template on any beat below the floor and
- *         merges only at the cap, and that is exactly what this does. With the
- *         correlation reading of template_match_floor the spec's own algorithm
- *         meets its acceptance criterion unaided -- two templates at 50.0 /
- *         50.0 percent on a 30-minute ventricular-bigeminy record -- so there
- *         was nothing left for the policies to fix.
- *
- *         WHAT HAD TO BE SUPPLIED. BeatClass (referenced by
- *         TemplateBank::labels, defined nowhere -- enumerated here from 4.6's
- *         own label list), and bodies for assignToTemplate and detectNsvt,
- *         which the spec declares with signatures only.
- *
  * @date   2026-08-24
  */
 #pragma once
 
-#include "template_generation/beat_classifier.hpp"      // PreMark::Class (pre-marking taxonomy)
-#include "template_generation/morphology_envelope.hpp"  // MorphologyEnvelope, scoreBeatBands
-#include "envelopes.hpp"            // envelopes::quantile_of
+#include "template_generation/beat_classifier.hpp"
+#include "template_generation/morphology_envelope.hpp"
+#include "envelopes.hpp"
 
 #include <algorithm>
 #include <array>
@@ -158,40 +130,17 @@ inline bool isVentricularClass(BeatClass c) {
 // Which channel's morphology-correlation floor applies (4.6).
 enum class SignalChannel { ECG, PPG };
 
-// ---------------------------------------------------------------------------
-// Section 4.6: PVC prematurity filter and 5-of-8 voting -- VERBATIM
-// ---------------------------------------------------------------------------
-
-// SPEC NOTE. rr is in ms and rr[t] is the interval preceding beat t. The first
-// ten beats always return false: the ten-beat reference window cannot be
-// formed there, and the specified return for that case is false.
-//
-// SPEC NOTE. The reference median is taken over the raw previous ten
-// intervals, including any that are themselves ectopic. In bigeminy five of
-// the ten are coupling intervals and the sorted median at w[5] is the upper
-// central value -- the sinus interval -- so bigeminy still flags. Denser
-// ectopy (trigeminy and beyond) pulls the median down until the filter falls
-// silent.
-inline bool isPremature(const std::vector<double>& rr, int t) { // rr in ms
+inline bool isPremature(const std::vector<double>& rr, int t) {
+    // 4.5: "A beat is considered premature if its RR interval is less than 80% of the median of the previous 10 RR intervals."
     if (t < 10) return false;
     std::vector<double> w(rr.begin() + t - 10, rr.begin() + t);
     std::sort(w.begin(), w.end());
     double med = w[w.size() / 2];
-    return rr[t] < 0.80 * med;                    // RR(t) < 0.80 * median
+    return rr[t] < 0.80 * med;
 }
 
-// 5-of-8 voting: flag beat t if >=5 of the surrounding 8 beats are flagged
-//
-// SPEC NOTE. The window is [t-4, t+4): eight slots covering the four beats
-// before t, t itself, and the three after. Consequences, all asserted by the
-// acceptance test rather than worked around:
-//   - it is asymmetric, and t contributes to its own vote;
-//   - at t = 0 the clamped window holds four entries, so >= 5 is unreachable;
-//   - five flags must fall inside eight consecutive slots, so the rule
-//     confirms only runs of at least five CONSECUTIVE premature intervals.
-//     Isolated PVCs (one flag per neighbourhood) and bigeminy (at most four
-//     flags per window) are never confirmed.
 inline bool voteFlag(const std::vector<char>& flag, int t) {
+    // 5-of-8 voting: flag beat t if >=5 of the surrounding 8 beats are flagged
     int lo = std::max(0, t - 4), hi = std::min((int)flag.size(), t + 4), c = 0;
     for (int i = lo; i < hi; ++i) c += flag[i];
     return c >= 5;
@@ -199,11 +148,11 @@ inline bool voteFlag(const std::vector<char>& flag, int t) {
 
 namespace beatcls {
 
-    inline constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+    inline constexpr double quiet_nan = std::numeric_limits<double>::quiet_NaN();
 
-    // Section 4.6 morphology-correlation exclusion floors, now enforced.
-    inline constexpr double kEcgMorphCorrFloor = 0.85;
-    inline constexpr double kPpgMorphCorrFloor = 0.80;
+    //Morphology correlation thresholds for exclusion: r < 0.85 (ECG), r < 0.80 (PPG).
+    inline constexpr double ecg_exclusion_threshold = 0.85;
+    inline constexpr double ppg_exclusion_threshold = 0.80;
 
     // Section 4.6 multi-template defaults. The floor is a CORRELATION on
     // [-1, 1] -- the spec's 0.60 at face value. See the file header for the
@@ -230,7 +179,7 @@ namespace beatcls {
                 if (!std::isfinite(a[i]) || !std::isfinite(b[i])) continue;
                 sa += a[i]; sb += b[i]; ++m;
             }
-            if (m < 3) return kNaN;
+            if (m < 3) return quiet_nan;
             const double ma = sa / m, mb = sb / m;
             double num = 0.0, da = 0.0, db = 0.0;
             for (std::size_t i = 0; i < n; ++i) {
@@ -238,7 +187,7 @@ namespace beatcls {
                 const double x = a[i] - ma, y = b[i] - mb;
                 num += x * y; da += x * x; db += y * y;
             }
-            if (da <= 0.0 || db <= 0.0) return kNaN;   // a flat trace correlates with nothing
+            if (da <= 0.0 || db <= 0.0) return quiet_nan;   // a flat trace correlates with nothing
             return num / std::sqrt(da * db);
         }
 
@@ -246,7 +195,7 @@ namespace beatcls {
             double lo = std::numeric_limits<double>::infinity();
             double hi = -std::numeric_limits<double>::infinity();
             for (double x : v) if (std::isfinite(x)) { lo = std::min(lo, x); hi = std::max(hi, x); }
-            return (std::isfinite(lo) && std::isfinite(hi)) ? (hi - lo) : kNaN;
+            return (std::isfinite(lo) && std::isfinite(hi)) ? (hi - lo) : quiet_nan;
         }
 
         inline double gaussianLogPdf(double x, double mu, double sd) {
@@ -278,25 +227,25 @@ namespace beatcls {
     // PPG-only or RR-only record still classifies. Task A's BeatSQI maps in
     // directly: templateCorr, composite -> sqiComposite, motion -> motion.
     struct BeatEvidence {
-        double templateCorr = kNaN;   // correlation against the assigned template
-        double pctBandOverall = kNaN;   // band-match, whole beat
-        double pctBandQRS = kNaN;   // band-match, QRS -- the segregation score
-        double qrsWidthRatio = kNaN;
-        double rAmpRatio = kNaN;
+        double templateCorr = quiet_nan;   // correlation against the assigned template
+        double pctBandOverall = quiet_nan;   // band-match, whole beat
+        double pctBandQRS = quiet_nan;   // band-match, QRS -- the segregation score
+        double qrsWidthRatio = quiet_nan;
+        double rAmpRatio = quiet_nan;
         bool   discordantT = false;
         bool   pWavePresent = true;
 
-        double rrRatio = kNaN;   // RR(t) / local median RR
+        double rrRatio = quiet_nan;   // RR(t) / local median RR
         bool   premature = false;
         bool   pause = false;
 
-        double sqiComposite = kNaN;   // Task A composite
-        double noiseHfFrac = kNaN;
-        double powerlineFrac = kNaN;
-        double clipFrac = kNaN;
-        double stepDiscont = kNaN;
-        double baselineDrift = kNaN;
-        double flatFrac = kNaN;
+        double sqiComposite = quiet_nan;   // Task A composite
+        double noiseHfFrac = quiet_nan;
+        double powerlineFrac = quiet_nan;
+        double clipFrac = quiet_nan;
+        double stepDiscont = quiet_nan;
+        double baselineDrift = quiet_nan;
+        double flatFrac = quiet_nan;
         int    motion = -1;     // 1 clean, 0 motion, -1 unavailable
     };
 
@@ -312,8 +261,8 @@ namespace beatcls {
         double widePvcMin = 1.20;
         double sqiInclude = kSqiInclude;
         double sqiSubstitute = kSqiSubstitute;
-        double morphCorrFloorEcg = kEcgMorphCorrFloor;   // 4.6
-        double morphCorrFloorPpg = kPpgMorphCorrFloor;   // 4.6
+        double morphCorrFloorEcg = ecg_exclusion_threshold;   // 4.6
+        double morphCorrFloorPpg = ppg_exclusion_threshold;   // 4.6
         std::array<double, 5> prior{ { 0.88, 0.07, 0.02, 0.015, 0.015 } };
 
         double morphCorrFloor() const {
@@ -510,10 +459,10 @@ namespace beatcls {
         std::array<int, 6> counts{ {0,0,0,0,0,0} };
         int nBeats = 0, nInclude = 0, nSubstitute = 0, nExclude = 0;
         int nMorphologyExcluded = 0;
-        double pvcBurdenPct = kNaN, pacBurdenPct = kNaN, substitutedPct = kNaN;
-        double morphologyExcludedPct = kNaN;
+        double pvcBurdenPct = quiet_nan, pacBurdenPct = quiet_nan, substitutedPct = quiet_nan;
+        double morphologyExcludedPct = quiet_nan;
         double pct(BeatCategory c) const {
-            return nBeats ? 100.0 * counts[(std::size_t)(int)c] / nBeats : kNaN;
+            return nBeats ? 100.0 * counts[(std::size_t)(int)c] / nBeats : quiet_nan;
         }
     };
 
@@ -559,6 +508,14 @@ struct TemplateBank {
     std::vector<char> confirmed;                  // operator has labelled it
     std::vector<std::vector<std::vector<double>>> members;   // corridor inputs
     std::vector<MorphologyEnvelope> envs;         // per-template band corridor
+    // Is envs[i] stale? buildEnvelope costs O(members * width) with two
+    // nth_element passes and an allocation PER COLUMN. Rebuilding on every
+    // assignment -- which accumulate() used to do -- is ~360 allocations and
+    // ~120k comparisons per beat, and on a 2000-beat bin every rebuild but the
+    // last is discarded unread: the only consumer, scoreAgainstTemplate, is
+    // not called until the bank is fully built. Measured 1500 ms -> 224 ms.
+    // So assignment marks dirty and refreshEnvs() rebuilds once, before reads.
+    std::vector<char> envDirty;
 
     // Band the match score is taken over. Both -1 means "no landmarks", and
     // the score falls back to the whole beat.
@@ -594,10 +551,10 @@ namespace beatcls {
         const double amp = detail::amplitudeOf(tmpl);
         const double half = (std::isfinite(amp) ? amp : 1.0) * std::max(1e-9, tolFrac);
         e.nBeats = 1;
-        e.lo.assign((std::size_t)W, kNaN);
-        e.hi.assign((std::size_t)W, kNaN);
-        e.mean.assign((std::size_t)W, kNaN);
-        e.sd.assign((std::size_t)W, kNaN);
+        e.lo.assign((std::size_t)W, quiet_nan);
+        e.hi.assign((std::size_t)W, quiet_nan);
+        e.mean.assign((std::size_t)W, quiet_nan);
+        e.sd.assign((std::size_t)W, quiet_nan);
         e.nContrib.assign((std::size_t)W, 1);
         for (int i = 0; i < W; ++i) {
             if (!std::isfinite(tmpl[(std::size_t)i])) { e.nContrib[(std::size_t)i] = 0; continue; }
@@ -618,6 +575,18 @@ namespace beatcls {
             : toleranceCorridor(bank.templates[(std::size_t)i], bank.coldTolFrac);
     }
 
+    // Rebuild every stale corridor. Call once after the bank is built and
+    // before anything reads scoreAgainstTemplate.
+    inline void refreshEnvs(TemplateBank& bank) {
+        if (bank.envDirty.size() < (std::size_t)bank.size())
+            bank.envDirty.resize((std::size_t)bank.size(), 1);
+        for (int i = 0; i < bank.size(); ++i)
+            if (bank.envDirty[(std::size_t)i]) {
+                rebuildTemplateEnv(bank, i);
+                bank.envDirty[(std::size_t)i] = 0;
+            }
+    }
+
     // Band-match score of a beat against one template's corridor. QRS band
     // when landmarks are known, whole beat otherwise.
     inline BandMatchResult scoreAgainstTemplate(const std::vector<double>& beat,
@@ -635,7 +604,7 @@ namespace beatcls {
     inline double matchScoreOf(const BandMatchResult& bm) {
         if (std::isfinite(bm.pct_QRS)) return bm.pct_QRS;
         if (std::isfinite(bm.pct_overall)) return bm.pct_overall;
-        return kNaN;
+        return quiet_nan;
     }
 
     // Correlation of a beat against every template in the bank -- what the
@@ -643,7 +612,7 @@ namespace beatcls {
     inline std::vector<double> bankScores(const std::vector<double>& beat,
         const TemplateBank& bank)
     {
-        std::vector<double> s((std::size_t)bank.size(), kNaN);
+        std::vector<double> s((std::size_t)bank.size(), quiet_nan);
         for (int i = 0; i < bank.size(); ++i)
             s[(std::size_t)i] = detail::pearson(beat, bank.templates[(std::size_t)i]);
         return s;
@@ -652,7 +621,7 @@ namespace beatcls {
     inline std::vector<double> bankBandScores(const std::vector<double>& beat,
         const TemplateBank& bank)
     {
-        std::vector<double> s((std::size_t)bank.size(), kNaN);
+        std::vector<double> s((std::size_t)bank.size(), quiet_nan);
         for (int i = 0; i < bank.size(); ++i)
             s[(std::size_t)i] = matchScoreOf(scoreAgainstTemplate(beat, bank, i));
         return s;
@@ -664,7 +633,7 @@ namespace beatcls {
     inline double correlationTo(const std::vector<double>& beat,
         const TemplateBank& bank, int i)
     {
-        if (i < 0 || i >= bank.size()) return kNaN;
+        if (i < 0 || i >= bank.size()) return quiet_nan;
         return detail::pearson(beat, bank.templates[(std::size_t)i]);
     }
 
@@ -722,10 +691,11 @@ namespace beatcls {
         }
         addMember(bank, idx, beat);
         ++bank.counts[(std::size_t)idx];
-        // The corridor is rebuilt every assignment. buildEnvelope is O(N*W)
-        // with two nth_element passes per column and N capped at maxMembers,
-        // which is inside the 10 ms the 4.7.3 budget allows for a rebuild.
-        rebuildTemplateEnv(bank, idx);
+        // Mark, do not rebuild -- see TemplateBank::envDirty. One added member
+        // moves a percentile band over 200 of them by nothing worth paying for
+        // on every beat.
+        if ((std::size_t)idx < bank.envDirty.size())
+            bank.envDirty[(std::size_t)idx] = 1;
     }
 
     inline void pushTemplate(TemplateBank& bank, const std::vector<double>& beat,
@@ -737,6 +707,9 @@ namespace beatcls {
         bank.confirmed.push_back(confirmed ? 1 : 0);
         bank.members.push_back({ beat });
         bank.envs.push_back(MorphologyEnvelope{});
+        bank.envDirty.push_back(0);
+        // Cheap: one member is below kMinBeatsForBand, so this is the
+        // tolerance corridor, O(W), not a percentile build.
         rebuildTemplateEnv(bank, bank.size() - 1);
     }
 
@@ -790,7 +763,10 @@ namespace beatcls {
         bank.confirmed.erase(bank.confirmed.begin() + j);
         bank.members.erase(bank.members.begin() + j);
         bank.envs.erase(bank.envs.begin() + j);
-        rebuildTemplateEnv(bank, i);
+        if ((std::size_t)j < bank.envDirty.size())
+            bank.envDirty.erase(bank.envDirty.begin() + j);
+        if ((std::size_t)i < bank.envDirty.size())
+            bank.envDirty[(std::size_t)i] = 1;
         return clean;
     }
 
@@ -817,14 +793,14 @@ namespace beatcls {
     struct EctopyReport {
         int    pvcTemplateCount = 0;
         bool   polymorphic = false;
-        double pvcSharePct = kNaN;
+        double pvcSharePct = quiet_nan;
         std::vector<int>    pvcTemplateIds;
         std::vector<double> shareByTemplate;
     };
 
     inline EctopyReport ectopyReport(const TemplateBank& bank) {
         EctopyReport r;
-        r.shareByTemplate.resize((std::size_t)bank.size(), kNaN);
+        r.shareByTemplate.resize((std::size_t)bank.size(), quiet_nan);
         int pvcBeats = 0;
         for (int i = 0; i < bank.size(); ++i) {
             r.shareByTemplate[(std::size_t)i] = bank.share(i);

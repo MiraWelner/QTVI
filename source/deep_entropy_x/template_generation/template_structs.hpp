@@ -87,6 +87,13 @@ struct TemplateInfo {
     // Retained per-channel beats for the snips CSV. Key is the channel label
     // ("CH1"/"CH2"/"CH3"/"PPG"); value is [beat][sample] for this bin.
     std::map<std::string, std::vector<std::vector<double>>> kept_beats_by_channel;
+    // Rhythm verdict per kept beat, parallel to kept_beats_by_channel[ch]:
+    // 0 = NORMAL, 1 = PVC (premature), 2 = VOTED_PVC (5-of-8 vote).
+    // Assigned in alignment.hpp after the slice and before any pruning, and
+    // carried here because it cannot be recomputed downstream: the R-peak
+    // vector and the kept-beat matrix stop corresponding the moment the Tukey
+    // passes run.
+    std::map<std::string, std::vector<uint8_t>> kept_rhythm_by_channel;
 };
 
 struct AlignWavesResult {
@@ -126,6 +133,9 @@ struct EcgChannelResult {
     vector<size_t> n_beats_raw;//the viewer displays the number of beats contributing to template for each channel
 
     vector<vector<vector<double>>> kept_beats_raw;
+
+    // Rhythm verdict per kept beat, [bin][beat]: 0 NORMAL, 1 PVC, 2 VOTED_PVC.
+    vector<vector<uint8_t>> kept_rhythm_raw;
 
     // Per-bin, per-beat vertical DC leveling shifts (two-stage TP/PQ),
     // indexed [bin][beat]. Written to the beat-move log post-loop.

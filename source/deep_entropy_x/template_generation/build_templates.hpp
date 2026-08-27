@@ -242,6 +242,11 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
         if (out.beats.bad_segment[i]) continue;
         for (auto& kv : out.info[i].kept_beats_by_channel)
             ensureBins(kv.first)[i] = std::move(kv.second);
+        for (auto& kv : out.info[i].kept_rhythm_by_channel) {
+            auto& v = out.beats.per_channel_rhythm[kv.first];
+            if (v.size() < nb) v.resize(nb);
+            v[i] = std::move(kv.second);
+        }
         for (auto& kv : out.info[i].ref_index_by_channel) {
             auto& v = out.beats.per_channel_ref_index[kv.first];
             if (v.size() < nb) v.resize(nb, -1);

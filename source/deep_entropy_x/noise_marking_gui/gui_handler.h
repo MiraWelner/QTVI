@@ -27,6 +27,7 @@
 
 #include "ui_noise_marking_gui.h"
 #include "user_annotation_handler.h"
+#include "noise_marking_gui/vcg_lead.hpp"
 #include "user_control_handler.h"
 #include "config_file_handling/config_entry.hpp"
 #include "grid_overlay.hpp"
@@ -53,9 +54,7 @@ class noise_marking_gui : public QDialog {
     friend class annotation_eraser;
 
 public:
-    /**
-     * @param parent Optional Qt parent widget.
-     */
+    // @param parent Optional Qt parent widget.
     explicit noise_marking_gui(QWidget* parent = nullptr);
     ~noise_marking_gui() override;
     GenExcStruct getMarkings() const;
@@ -235,8 +234,7 @@ private:
     double               sampleRateForSignal(const QString& label) const;
     QColor               colorForSignal(const QString& label) const;
 
-    /** @return Duration in seconds of the currently-loaded 8-hour chunk. */
-    double               totalChunkDuration() const;
+    double totalChunkDuration() const; //duration of chunk loaded in memory in SECONDS
 
     // --- Per-channel button helpers ---
     QPushButton* startButtonForSignal(const QString& label) const;
@@ -253,6 +251,13 @@ private:
 
     QVector<QPointF> get_bpm(const QString& label, double& outDuration) const;
 
+	// --- VCG (vectorcardiogram) ---
+    QVector<double>      m_vcg;         // upsampled, ECG1's grid
+    QVector<QPointF>     m_vcgRaw;      // (chunk-local seconds, value)
+    ChannelMarkingState  mark_state_vcg;
+    vcg_lead::Config     m_vcgCfg;
+    QString              m_vcgStatus;   // basis name, or why it is absent
+
     std::pair<double, double> statsWindow(double detStart, double detEnd) const;
     void ampogram(double sampling_length = 15);
     void updateAmpogramCursor();
@@ -261,7 +266,6 @@ private:
     void updateNoiseHighlights();
     void finalizeMarking(QChartView* cv, double endX, const QString& signalLabel);
     void cancelMarking(const QString& signalLabel);
-    void restoreMarkingFeatureMarkers();
     void showStartMarker(QChartView* cv, double xValue, ChannelMarkingState& state, const QColor& color, QPushButton* stopBtn);
     void clearStartMarker(ChannelMarkingState& state);
     void updateDragPreview(QChartView* cv, double x0, double x1, const QColor& color);
@@ -286,4 +290,6 @@ private:
     void   commitMarkingSpan(const QString& clickedLabel, double globalStart, double globalEnd);
     double thresholdAt(const QString& label, double globalTime) const;
     double blankingAt(const QString& label, double globalTime) const;
+
+    
 };

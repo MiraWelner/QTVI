@@ -5,12 +5,12 @@
 
 #include "post_process.hpp"
 #include "five_category_classification/five_category_output.hpp"
-#include "config_file_handling\config_loader.hpp"
-#include "noise_marking_gui\gui_handler.h"
-#include "noise_marking_gui\user_annotation_handler.h"
-#include "template_marking_gui\parse_data_from_filename.hpp"
+#include "config_file_handling/config_loader.hpp"
+#include "noise_marking_gui/gui_handler.h"
+#include "noise_marking_gui/user_annotation_handler.h"
+#include "template_marking_gui/parse_data_from_filename.hpp"
 #include "logging/user_mark_log.hpp"
-#include "template_marking_gui\TemplateViewerWindow.hpp"
+#include "template_marking_gui/TemplateViewerWindow.hpp"
 
 #include <QtWidgets/QApplication>
 #include <QGuiApplication>
@@ -42,17 +42,17 @@ static int get_dataset_choice() {
     int choice;
     if (!(std::cin >> choice)) return -1;
     while (choice < 1 || choice > 3) {
-        std::cout << "Invalid choice. Please enter 1, 2, or 3: ";
+        std::cout << "Please enter 1, 2, or 3: ";
         if (!(std::cin >> choice)) return -1;
     }
     return choice;
 }
 
 static std::string get_initials() {
-    std::cout << "Enter your initials: ";
+    std::cout << "Enter your initials so it can be identified who logged what: ";
     std::string raw;
     std::getline(std::cin >> std::ws, raw);
-    std::string out;                       // keep alphanumerics only, lowercased
+    std::string out;
     for (char c : raw)
         if (std::isalnum(static_cast<unsigned char>(c)))
             out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -71,32 +71,13 @@ static std::vector<std::filesystem::path> load_binfiles(const config_entry& cfg)
     return binFiles;
 }
 
-// ---------------------------------------------------------------------------
-// Stage 1: noise marking. Returns false if the user skipped the dialog
-// (rejected), in which case the rest of the pipeline is skipped for this file.
-// On accept, fills `outAll` with every file's markings touched in the dialog
-// (the dialog lets the user browse to other files) and `outCurrent` with the
-// path that was actually loaded when the dialog closed.
-//
-// Also fills outEcg1Inverted/outEcg2Inverted/outEcg3Inverted with the
-// "Inverted Lead?" checkbox state for each ECG channel, read out while the
-// GUI is still alive -- the dialog (and its checkboxes) is destroyed when
-// this function returns, before the heavy pipeline runs, so these values are
-// the only surviving record of what the user checked.
-// ---------------------------------------------------------------------------
-static bool runNoiseMarking(const config_entry& cfg,
-    const std::filesystem::path& binFs,
-    QVector<GenExcStruct>& outAll,
-    std::filesystem::path& outCurrent,
-    beat_log& beatLog,
-    bool& outEcg1Inverted,
-    bool& outEcg2Inverted,
-    bool& outEcg3Inverted) {
+static bool runNoiseMarking(const config_entry& cfg, const std::filesystem::path& binFs, QVector<GenExcStruct>& outAll,
+    std::filesystem::path& outCurrent, beat_log& beatLog, bool& outEcg1Inverted, bool& outEcg2Inverted, bool& outEcg3Inverted) {
+    /*Launch the GUI to do the noise marking. One important thing that takes place is that the gui object (a noise_marking_gui) has
+    an invertedForSignal attribute for each channel. */
     auto gui = std::make_unique<noise_marking_gui>();
     gui->set_params_to_config_defaults(cfg);
     gui->setBeatLog(&beatLog);
-    // NOTE: no setPostProcessQueue() -- there is no queue anymore. The GUI's
-    // m_postQueue stays nullptr and every `if (m_postQueue)` branch is skipped.
 
     QScreen* screen = QGuiApplication::primaryScreen();
     if (screen) {
@@ -113,21 +94,16 @@ static bool runNoiseMarking(const config_entry& cfg,
     outAll = gui->getAllMarkings();
     outCurrent = gui->getFilePath().toStdString();
 
-    // Capture checkbox state before `gui` goes out of scope and is destroyed.
     outEcg1Inverted = gui->invertedForSignal("ECG1");
     outEcg2Inverted = gui->invertedForSignal("ECG2");
     outEcg3Inverted = gui->invertedForSignal("ECG3");
 
-    return true;   // gui destroyed here, before the heavy pipeline runs
+    return true;
 }
 
-// ---------------------------------------------------------------------------
-// Export the recorded markings to <noise_data_path>/<stem>_noise_markings.{csv,bin}.
-// The .bin is the file the anneal step (processOneFile) reads back in.
-// ---------------------------------------------------------------------------
-static void exportMarkings(const config_entry& cfg,
-    const std::filesystem::path& binFile,
-    const GenExcStruct* markings) {
+static void exportMarkings(const config_entry& cfg, const std::filesystem::path& binFile, const GenExcStruct* markings) {
+    /*Export the recorded markings to <noise_data_path>/<stem>_noise_markings.{csv,bin}.
+    The .bin is the file the anneal step (processOneFile) reads back in.*/
     annotation_handler nm;
     auto rateForLabel = [&](const QString& label) -> double {
         if (label == "PPG")      return cfg.ppg_upsample_rate;
@@ -153,19 +129,15 @@ static void exportMarkings(const config_entry& cfg,
         / (binFile.stem().string() + "_noise_markings");
     nm.exportCSV(base.string() + ".csv");
     nm.exportBinary(base.string() + ".bin");
-    std::cout << "  saved markings for " << binFile.filename().string() << "\n";
+    std::cout << "Saved Noise Markings for " << binFile.filename().string() << "\n";
 }
 
 // ---------------------------------------------------------------------------
 // Stage 3: template marking. Opens TemplateViewerWindow on the templates file
 // produced by Stage 2 and blocks (local event loop) until the viewer finishes.
 // ---------------------------------------------------------------------------
-static void runTemplateMarking(const config_entry& cfg,
-    std::shared_ptr<post_process_detail::ViewerJob> job,
-    const QString& fileId,
-    std::function<void()> ensureWorkerDone) {
+static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_process_detail::ViewerJob> job, const QString& fileId, std::function<void()> ensureWorkerDone) {
     const QString displayId = fileId;
-    std::cout << "Template marking: " << displayId.toStdString() << "\n";
 
     // Anchor cycle: pass 0 = R-aligned (the primary build), then one pass per
     // entry in anchorSequence() (Q, J-point, T-peak, ...). On "Finish and Next"
@@ -173,8 +145,7 @@ static void runTemplateMarking(const config_entry& cfg,
     // the templates re-anchored on the next landmark (worker joined first so the
     // peakResults read can't race it), and open a fresh viewer on the result.
     // job.anchorStep is the cursor: 0 before the first reload, N after the last.
-    const size_t nAnchorPasses =
-        post_process_detail::anchorSequence().size() + 1;   // +1 for the R pass
+    const size_t nAnchorPasses = post_process_detail::anchorSequence().size() + 1;   // +1 for the R pass
     for (size_t pass = 0; pass < nAnchorPasses; ++pass) {
         TemplateViewerWindow viewer;
         viewer.setBoundaryTrainingDir(QString::fromStdString(cfg.training_log));
@@ -449,8 +420,48 @@ int main(int argc, char* argv[]) {
         // produce nothing, which is exactly what happened. Task C needs
         // only job->beats and job->tmpl, both filled by
         // prepareViewerJob above, so it runs here for every record.
+        // REAL RR INTERVALS ARE NOT OPTIONAL HERE. Without them runBin falls
+        // back to rrFromSliceWidths, which hands every beat in a bin the SAME
+        // interval -- and isPremature then compares a constant against the
+        // median of ten identical constants, which is never below 0.80 of it.
+        // The prematurity filter cannot fire, the 5-of-8 vote has nothing to
+        // count, every beat reads NORMAL, _substituted.csv comes out empty and
+        // pvc_burden_pct reads 0 on a record full of ectopy. Meanwhile the
+        // ectopic mask in create_ecg_templates.hpp IS excluding those beats,
+        // because alignment handed it real rr_lens -- so the two halves of the
+        // pipeline disagreed for no reason other than this argument being
+        // omitted.
+        //
+        // ch1.raw is the R-peak vector that drove the slicing for every
+        // channel (Patch B), so its consecutive differences are the intervals
+        // the beats were actually cut at.
+        // RR is used only for the rate-proportional geometry (ms-per-column,
+        // the QRS-width scale). The rhythm verdict is NOT derived here: it is
+        // assigned in alignment.hpp after the slice and before the pruning and
+        // travels with the beats in BeatsFile::per_channel_rhythm, because the
+        // peak vector and the kept-beat matrix stop corresponding once the
+        // Tukey passes have run.
+        std::vector<std::vector<double>> rrPerBin;
+        {
+            const five_category_output::BeatSource bsrc =
+                five_category_output::pickBeatSource(job->beats);
+            rrPerBin.assign(bsrc.beats ? bsrc.beats->size() : 0,
+                std::vector<double>{});
+            const double msPerSample = (job->cfg.ecg_upsample_rate > 0.0)
+                ? 1000.0 / job->cfg.ecg_upsample_rate : 0.0;
+            for (size_t b = 0; b < rrPerBin.size(); ++b) {
+                if (msPerSample <= 0.0 || b >= job->peakResults.size()) break;
+                const auto& pk = job->peakResults[b].ch1.raw;
+                rrPerBin[b].reserve(pk.size());
+                for (size_t k = 1; k < pk.size(); ++k)
+                    rrPerBin[b].push_back(
+                        (static_cast<double>(pk[k]) - static_cast<double>(pk[k - 1]))
+                        * msPerSample);
+            }
+        }
         five_category_output::runAll(job->cfg, job->beats, job->tmpl,
-            job->stem);
+            job->stem, rrPerBin);
+
         auto done = std::make_shared<std::atomic<bool>>(false);
         std::thread worker;
         if (job->needsFinalize) {

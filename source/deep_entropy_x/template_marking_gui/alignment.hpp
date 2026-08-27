@@ -96,6 +96,29 @@ namespace alignment {
         // baseline (TP/PQ/NONE). Kept in sync with `beats` through every
         // apply_mask() compaction, including the wave-score pruning pass.
         std::vector<BaselineSource> baseline_source;
+        // Parallel to `beats`: the Section 4.6 rhythm verdict, assigned
+        // AFTER SLICING AND BEFORE ANY PRUNING, and compacted through every
+        // apply_mask() alongside `beats`.
+        //
+        // Why here and not downstream. The first Tukey pass below rejects on
+        // RR LENGTH, and a premature beat is short by definition -- so
+        // alignment itself throws ectopics out as length outliers, for outlier
+        // reasons, with no flag and no record. Anything that asks "was this
+        // beat premature" after that pass is asking about the beats that
+        // survived not being premature. Assigned here, the verdict exists for
+        // every sliced beat and survives whatever the pruning does next.
+        //
+        // premature: RR(i) < 0.80 * median of the trailing ten.
+        // voted:     the 5-of-8 rule over the raw premature flags -- the
+        //            middle of a run, where the trailing median has itself
+        //            gone short so the beat stops reading as premature alone.
+        std::vector<char> premature;
+        std::vector<char> voted;
+        // Counts as they stood BEFORE pruning, so the flag survivors can be
+        // compared against what the record actually contained.
+        int n_premature_presliced = 0;
+        int n_voted_presliced = 0;
+
         // Parallel to `beats`: PQ_level - TP_level whenever BOTH stage
         // estimates succeeded for that beat (NaN otherwise). QC metric per
         // spec I-1; not used to drive any decision, just recorded.
@@ -125,21 +148,45 @@ namespace alignment {
             std::vector<int>    km;
             std::vector<BaselineSource> ks;
             std::vector<double> kd;
+            std::vector<char> kp, kv;
             const bool haveSrc = out.baseline_source.size() == out.beats.size();
             const bool haveDelta = out.tp_pq_delta.size() == out.beats.size();
+            const bool haveFlags = out.premature.size() == out.beats.size()
+                && out.voted.size() == out.beats.size();
             for (size_t i = 0; i < keep.size(); ++i) {
-                if (!keep[i]) continue;
+                // A RHYTHM-FLAGGED BEAT IS NEVER PRUNED.
+                //
+                // The first Tukey pass below rejects on RR LENGTH at 1.5*IQR,
+                // and a premature beat is short by definition -- so without
+                // this exemption alignment discards the ectopy as a length
+                // outlier, for outlier reasons, and every beat that survives
+                // is one that was not premature. Measured on a record with 9
+                // scripted PVCs: all 9 were pruned, the flag vector came out
+                // empty of positives, and the per-beat output read NORMAL
+                // throughout while being entirely correct about the beats it
+                // still had.
+                //
+                // 4.6 requires these beats "excluded from the reference
+                // template but RETAINED with flags". Excluding them is the
+                // ectopic mask's job (create_ecg_templates.hpp), and it keeps
+                // a record; dropping them here leaves nothing to retain.
+                // Pruning is for detector errors, not for real ectopy.
+                const bool flagged = haveFlags
+                    && (out.premature[i] || out.voted[i]);
+                if (!keep[i] && !flagged) continue;   // rejected, discarded
                 kb.push_back(std::move(out.beats[i]));
                 kr.push_back(out.r_indices[i]);
                 km.push_back(out.rr_lens[i]);
                 if (haveSrc) ks.push_back(out.baseline_source[i]);
                 if (haveDelta) kd.push_back(out.tp_pq_delta[i]);
+                if (haveFlags) { kp.push_back(out.premature[i]); kv.push_back(out.voted[i]); }
             }
             out.beats = std::move(kb);
             out.r_indices = std::move(kr);
             out.rr_lens = std::move(km);
             if (haveSrc) out.baseline_source = std::move(ks);
             if (haveDelta) out.tp_pq_delta = std::move(kd);
+            if (haveFlags) { out.premature = std::move(kp); out.voted = std::move(kv); }
             };
 
         // ---- slice every beat ------------------------------------------
@@ -167,6 +214,47 @@ namespace alignment {
         }
         if (out.beats.empty()) return out;
         out.baseline_source.assign(out.beats.size(), BaselineSource::NONE);
+
+        // ---- Section 4.6 rhythm verdict: after the slice, before the -----
+        // ---- pruning. Indexed with `beats`; compacted with them.      -----
+        // out.rr_lens[i] is beat i's own interval, so this is exact -- one
+        // interval per beat, none missing, which is precisely what stops being
+        // true the moment the Tukey passes below run.
+        {
+            const size_t nb = out.beats.size();
+            out.premature.assign(nb, 0);
+            out.voted.assign(nb, 0);
+            if (nb >= 12) {
+                // Beat t is premature when the interval BEFORE it is short.
+                // rr_lens[i] holds the interval AFTER beat i (R[i+1] - R[i]),
+                // because that is the span the slice covers -- so beat t's
+                // PRECEDING interval is rr_lens[t-1]. Testing rr_lens[t]
+                // directly flags the beat that precedes each PVC instead of
+                // the PVC, which is an off-by-one that looks exactly like a
+                // detector that "nearly works".
+                for (size_t t = 11; t < nb; ++t) {
+                    std::vector<double> w(out.rr_lens.begin() + (t - 11),
+                        out.rr_lens.begin() + (t - 1));   // the ten before it
+                    std::sort(w.begin(), w.end());
+                    const double med = w[w.size() / 2];
+                    if (med > 0.0 && out.rr_lens[t - 1] < 0.80 * med)
+                        out.premature[t] = 1;
+                }
+                // The vote reads the RAW flags, never its own output: feeding
+                // it back would let one run grow along the whole record.
+                for (size_t t = 0; t < nb; ++t) {
+                    const size_t lo = (t > 4) ? t - 4 : 0;
+                    const size_t hi = std::min(nb, t + 4);
+                    int c = 0;
+                    for (size_t i = lo; i < hi; ++i) c += out.premature[i];
+                    if (c >= 5) out.voted[t] = 1;
+                }
+                for (size_t i = 0; i < nb; ++i) {
+                    out.n_premature_presliced += out.premature[i];
+                    if (out.voted[i] && !out.premature[i]) ++out.n_voted_presliced;
+                }
+            }
+        }
 
         //Tukey rejection: R-R interval (1.5*IQR)
         {

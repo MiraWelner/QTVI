@@ -8,6 +8,7 @@
 #include "chart_utils.hpp"
 #include "annotation_types.hpp"
 #include "notch_filter.hpp"
+#include "vcg_lead.hpp"
 
 #include <QFile>
 #include <QFileDialog>
@@ -383,6 +384,9 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
     markActive("ECG1", m_ecg1);
     markActive("ECG2", m_ecg2);
     markActive("ECG3", m_ecg3);
+    vcg_lead::rebuild(m_ecg1Raw, m_ecg2Raw, m_ecg3Raw,
+        m_ecg1.size(), m_vcgCfg, m_vcg, m_vcgRaw, m_vcgStatus);
+    markActive("VCG", m_vcg);
     markActive("PPG", m_ppg);
     markActive("ACCEL", m_accelX);
     markActive("ART", m_art);

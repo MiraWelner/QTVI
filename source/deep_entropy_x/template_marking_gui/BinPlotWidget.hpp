@@ -34,6 +34,7 @@
 #include <utility>
 #include <vector>
 #include "template_marking_bin_io.hpp"
+#include "global_interval_lines.hpp"
 
 class QPainter;
 
@@ -73,6 +74,7 @@ public:
     static bool markerIsPpg(int m) { return m >= PpgOnset && m <= PpgEnd; }
     static bool markerIsAbp(int m) { return m >= AbpOnset && m <= AbpEnd; }
     static bool markerIsArt(int m) { return m >= ArtOnset && m <= ArtEnd; }
+    void setReferenceLines(const std::vector<global_interval_lines::Line>& lines);
     static bool markerIsArtPulm(int m) { return m >= ArtPulmOnset && m <= ArtPulmEnd; }
     // Any arterial marker (ABP/ART/ART_PULM) rides the PPG x-geometry.
     static bool markerIsArterial(int m) { return m >= AbpOnset && m <= ArtPulmEnd; }
@@ -243,6 +245,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
 
 private:
+	std::vector<global_interval_lines::Line> m_refLines; //global refernce lines eg. earliest Q-onset 
     int    sampleFromX(double x, double startSample, double ratio) const;
     // s is a sub-sample position: glyph landmarks are fractional.
     double xFromSample(double s, double startSample, double ratio) const;

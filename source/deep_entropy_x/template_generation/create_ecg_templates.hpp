@@ -24,6 +24,7 @@
 
 #include "template_structs.hpp"
 #include "template_marking_gui/alignment.hpp"
+#include "five_category_classification/ectopic_beat_mask.hpp"
 #include <atomic>
 #include <fstream>
 #include <string>
@@ -67,6 +68,19 @@ struct SingleMethodResult {
     vector<double> ecg_template_iqr;   // empty for methods that don't compute std
     double ppg_alignment_point;
     int r_col = -1;   // true R column (alignment's r_aligned_col)
+    // Ectopic exclusion (Section 4.6 morphology floor). Reported so the beat
+    // count that fed the median is explainable rather than just smaller: a
+    // template the operator marks must never quietly change what it was built
+    // from.
+    // Verdict per beat handed downstream, parallel to out_kept_beats:
+    //   0 NORMAL     1 PVC (premature)     2 VOTED_PVC (5-of-8 vote)
+    // Captured BEFORE the ectopic mask, so the beats handed downstream still
+    // contain the ectopy: excluded from the median the operator sees, present
+    // and flagged in the per-beat output.
+    std::vector<uint8_t> kept_rhythm;
+    size_t      n_beats_ectopic_excluded = 0;
+    bool        ectopic_mask_applied = false;
+    const char* ectopic_note = "not_run";
     int ref_beat_index = -1;
     size_t n_beats = 0;
     // Per-beat per-stage vertical DC shifts (TP stage, PQ stage) from the
@@ -76,7 +90,9 @@ struct SingleMethodResult {
 };
 
 static inline SingleMethodResult build_ecg_template_for_method(const vector<double>& ecgSignal, const vector<size_t>& rpeaks, const vector<vector<double>>& pairs,
-    double ecgRate, vector<vector<double>>* out_kept_beats = nullptr, bool compute_iqr = false) {
+    double ecgRate, vector<vector<double>>* out_kept_beats = nullptr, bool compute_iqr = false,
+    bool apply_ectopic_mask = false) {
+    // (out_kept_beats is captured pre-mask; see the capture block below.)
     SingleMethodResult res;
     res.ecgTemplate = {};
     res.ecg_template_iqr = {};
@@ -104,40 +120,159 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
     // producing an empty template.
     const bool haveSrc = aligned.baseline_source.size() == aligned.beats.size();
     std::vector<const std::vector<double>*> usable;
+    std::vector<size_t> usableIdx;          // parallel to `usable`, into aligned.*
     usable.reserve(aligned.beats.size());
+    usableIdx.reserve(aligned.beats.size());
     for (size_t i = 0; i < aligned.beats.size(); ++i) {
         if (haveSrc && aligned.baseline_source[i] == alignment::BaselineSource::NONE) continue;
         usable.push_back(&aligned.beats[i]);
+        usableIdx.push_back(i);
     }
     if (usable.empty()) {   // every beat's baseline was NONE -- fail safe, don't zero the template
         usable.reserve(aligned.beats.size());
-        for (const auto& b : aligned.beats) usable.push_back(&b);
+        usableIdx.reserve(aligned.beats.size());
+        for (size_t i = 0; i < aligned.beats.size(); ++i) {
+            usable.push_back(&aligned.beats[i]);
+            usableIdx.push_back(i);
+        }
     }
 
     const size_t maxLen = usable.front()->size();   // shared-axis width
-    res.n_beats = usable.size();
 
     // R column: the detected-R fiducial the template was built around, straight
     // from alignment (every beat's detected R lands at r_aligned_col). Passed
     // through as-is -- no re-detection (a window search would grab Q or S).
     res.r_col = aligned.r_aligned_col;
     res.ref_beat_index = aligned.ref_beat_index;
+
     // Column-wise NaN-skipping median over the aligned beats => template.
-    res.ecgTemplate.assign(maxLen, NaN);
-    for (size_t c = 0; c < maxLen; ++c) {
-        std::vector<double> col;
-        col.reserve(usable.size());
-        for (const auto* sl : usable) {
-            const double v = (*sl)[c];
-            if (!std::isnan(v)) col.push_back(v);
+    // Factored out because the ectopic pass below recomputes it over a subset:
+    // the axis, maxLen and r_col are IDENTICAL between the two passes -- only
+    // the membership changes -- so no downstream marker column shifts.
+    auto medianOver = [&](const std::vector<const std::vector<double>*>& set) {
+        std::vector<double> tmpl(maxLen, NaN);
+        for (size_t c = 0; c < maxLen; ++c) {
+            std::vector<double> col;
+            col.reserve(set.size());
+            for (const auto* sl : set) {
+                const double v = (*sl)[c];
+                if (!std::isnan(v)) col.push_back(v);
+            }
+            if (col.empty()) continue;
+            std::sort(col.begin(), col.end());
+            const size_t nc = col.size();
+            tmpl[c] = (nc % 2 == 0)
+                ? 0.5 * (col[nc / 2 - 1] + col[nc / 2])
+                : col[nc / 2];
         }
-        if (col.empty()) continue;
-        std::sort(col.begin(), col.end());
-        const size_t nc = col.size();
-        res.ecgTemplate[c] = (nc % 2 == 0)
-            ? 0.5 * (col[nc / 2 - 1] + col[nc / 2])
-            : col[nc / 2];
+        return tmpl;
+        };
+
+    res.ecgTemplate = medianOver(usable);
+
+    // ---- capture the beats handed downstream, BEFORE the mask ------------
+    // The mask exists to keep ectopy out of the median the operator marks. It
+    // must NOT also delete those beats from the record: the per-beat output
+    // has to show them, flagged. So the snips capture and the rhythm codes are
+    // taken here, from the full usable set, while the median below is rebuilt
+    // from the reduced one. Two different questions, two different sets.
+    // The beats handed downstream, with their verdicts. Captured from the
+    // FULL usable set, before the ectopic mask reduces it -- the mask keeps
+    // ectopy out of the median the operator marks, it must not delete those
+    // beats from the record. 4.6: "excluded from the reference template but
+    // retained with flags."
+    //
+    // A rhythm-flagged beat is here because apply_mask never prunes one. That
+    // exemption is what makes detecting before the Tukey passes worth
+    // anything: the first pass rejects on RR LENGTH, and a premature beat is
+    // short by definition, so without it the ectopy is detected and then
+    // immediately thrown away as a length outlier -- every surviving beat is
+    // one that was not premature, and the per-beat output reads NORMAL
+    // throughout while being perfectly correct about the beats it still has.
+    if (out_kept_beats) {
+        out_kept_beats->clear();
+        out_kept_beats->reserve(usable.size());
+        for (const auto* sl : usable) out_kept_beats->push_back(*sl);
     }
+    {
+        const bool haveFlags = aligned.premature.size() == aligned.beats.size()
+            && aligned.voted.size() == aligned.beats.size();
+        res.kept_rhythm.assign(usableIdx.size(), 0);
+        if (haveFlags) {
+            for (size_t k = 0; k < usableIdx.size(); ++k) {
+                const size_t ai = usableIdx[k];
+                // Premature wins over voted: direct evidence over inferred.
+                res.kept_rhythm[k] = aligned.premature[ai] ? 1u
+                    : (aligned.voted[ai] ? 2u : 0u);
+            }
+        }
+    }
+
+    // ---- pass 2: ectopic beats out of the median (Section 4.6) -----------
+    // Two passes because the gate needs a reference and the reference is the
+    // median: pass 1 builds it from every usable beat, pass 2 rebuilds it from
+    // the beats that correlate with it. Same shape as the two-pass envelope in
+    // premark_beats.hpp, and the same reason.
+    //
+    // This is what keeps ectopy off the operator's screen: the viewer draws
+    // this vector, so a PVC excluded here is a PVC not displayed. The mask
+    // fails safe -- see ectopic_beat_mask.hpp -- so a bad median cannot empty
+    // the template.
+    if (apply_ectopic_mask && usable.size() >= 2) {
+        std::vector<std::vector<double>> u;
+        u.reserve(usable.size());
+        for (const auto* sl : usable) u.push_back(*sl);
+
+        // The rhythm verdict was assigned after slicing and before pruning,
+        // and alignment compacted it alongside `beats`, so usableIdx indexes
+        // it directly. No join, no reconstruction, no index arithmetic.
+        std::vector<char> flagged(usable.size(), 0);
+        const bool haveFlags = aligned.premature.size() == aligned.beats.size()
+            && aligned.voted.size() == aligned.beats.size();
+        if (haveFlags) {
+            for (size_t k = 0; k < usableIdx.size(); ++k) {
+                const size_t ai = usableIdx[k];
+                flagged[k] = (aligned.premature[ai] || aligned.voted[ai]) ? 1 : 0;
+            }
+        }
+
+        const ectopic_mask::Result m =
+            ectopic_mask::build(u, res.ecgTemplate, haveFlags ? flagged
+                : std::vector<char>{});
+        res.ectopic_mask_applied = m.applied;
+        res.ectopic_note = m.note;
+
+        if (m.applied) {
+            std::vector<const std::vector<double>*> keep;
+            std::vector<size_t> keepIdx;
+            keep.reserve(usable.size());
+            keepIdx.reserve(usableIdx.size());
+            for (size_t k = 0; k < usable.size(); ++k) {
+                if (m.ectopic[k]) continue;
+                keep.push_back(usable[k]);
+                keepIdx.push_back(usableIdx[k]);
+            }
+            res.n_beats_ectopic_excluded = usable.size() - keep.size();
+            usable.swap(keep);
+            usableIdx.swap(keepIdx);
+            res.ecgTemplate = medianOver(usable);   // same axis, fewer members
+        }
+        // A silent change to what the operator marks is the one thing this
+        // must not be. compute_iqr is true only for the displayed "raw"
+        // method, so this logs once per bin per channel, not four times.
+        if (compute_iqr && m.applied) {
+            std::fprintf(stderr, "  [ectopic] %zu of %zu beats out of the "
+                "displayed median: %d on rhythm, %d on morphology "
+                "(record had %d premature + %d voted at slice time, before "
+                "pruning)%s\n",
+                res.n_beats_ectopic_excluded, u.size(),
+                m.nRhythm, m.nMorph,
+                aligned.n_premature_presliced, aligned.n_voted_presliced,
+                m.morphRouteUsed ? "" : " [morph route capped off]");
+        }
+    }
+
+    res.n_beats = usable.size();
 
     // Per-sample robust spread over the same aligned-beat matrix: per-sample
     // STD (ddof=1) -- changed from IQR per spec step 7. Used to draw the
@@ -165,14 +300,6 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
             for (double v : col) sumsq += (v - mean) * (v - mean);
             res.ecg_template_iqr[c] = std::sqrt(sumsq / static_cast<double>(nc - 1));   // ddof = 1
         }
-    }
-
-    // Retain the aligned per-beat slices for the snips CSV (baseline-
-    // unreliable beats excluded, same set used for the template above).
-    if (out_kept_beats) {
-        out_kept_beats->clear();
-        out_kept_beats->reserve(usable.size());
-        for (const auto* sl : usable) out_kept_beats->push_back(*sl);
     }
 
     // PPG transit delay (median foot - R across paired beats), unchanged.
@@ -208,6 +335,7 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
     cr.n_beats_raw.resize(n, 0);
 
     cr.kept_beats_raw.resize(n);
+    cr.kept_rhythm_raw.resize(n);
     cr.tp_shift_raw.resize(n);
     cr.pq_shift_raw.resize(n);
 }
@@ -252,12 +380,14 @@ static inline void process_channel_fast(
         ? &cr.kept_beats_raw[i] : nullptr;
     auto raw_res = build_ecg_template_for_method(
         ecgSignal, masterPeaks, bin.pairs, ecgRate,
-        capture, /*compute_iqr=*/true);
+        capture, /*compute_iqr=*/true, /*apply_ectopic_mask=*/true);
     cr.ecgTemplates_raw[i] = raw_res.ecgTemplate;
     cr.ecgTemplates_raw_iqr[i] = raw_res.ecg_template_iqr;
     cr.ppg_alignment_point_raw[i] = raw_res.ppg_alignment_point;
     cr.r_col_raw[i] = raw_res.r_col;
     cr.n_beats_raw[i] = raw_res.n_beats;
+    if (i < cr.kept_rhythm_raw.size())
+        cr.kept_rhythm_raw[i] = std::move(raw_res.kept_rhythm);
     cr.ref_index_raw[i] = raw_res.ref_beat_index;
     if (i < cr.tp_shift_raw.size()) {
         cr.tp_shift_raw[i] = std::move(raw_res.tp_shift);   // distinct i -> race-free
@@ -265,9 +395,16 @@ static inline void process_channel_fast(
     }
 
     // Method 4: unfiltered (original ECG signal + master R-peaks). No std.
+    // Masked too: the viewer renders this trace as well, and an unfiltered
+    // template still carrying the ectopy would contradict the raw one drawn
+    // beside it. The mask is recomputed against THIS method's own pass-1
+    // median rather than reusing the raw method's -- extract_beats_and_align
+    // prunes per signal, so the two methods' beat indices do not necessarily
+    // correspond and reusing the mask across them could exclude the wrong
+    // beats. Expect the two counts to differ slightly.
     auto unfilt_res = build_ecg_template_for_method(
         origSignal, masterPeaks, bin.pairs, ecgRate,
-        nullptr, /*compute_iqr=*/false);
+        nullptr, /*compute_iqr=*/false, /*apply_ectopic_mask=*/true);
     cr.ecgTemplates_unfiltered[i] = unfilt_res.ecgTemplate;
     cr.ppg_alignment_point_unfiltered[i] = unfilt_res.ppg_alignment_point;
     cr.r_col_unfiltered[i] = unfilt_res.r_col;

@@ -304,6 +304,12 @@ void BinPlotWidget::setChannelRate(Channel ch, double hz) {
     update();
 }
 
+void BinPlotWidget::setReferenceLines(
+    const std::vector<global_interval_lines::Line>& lines) {
+    m_refLines = lines;
+    update();
+}
+
 int BinPlotWidget::sampleFromX(double x, double startSample, double ratio) const {
     const double pps = pxPerSample();
     const double basePx = margin_left + startSample * pps;
@@ -783,6 +789,15 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         }
     }
     p.restore();
+
+    global_interval_lines::paint(p, m_refLines,
+        [this](double s) { return xFromSample(s, 0.0, 1.0); },
+        margin_top, h - margin_bottom, (int)m_ecg.size());
+
+    // Clip marker bars, labels, and fiducial glyphs to the plot area so
+    // nothing (including the ~4px X/O glyphs at edge samples) draws past
+    // the frame boundary.
+    p.save();
 
 
     // Clip marker bars, labels, and fiducial glyphs to the plot area so

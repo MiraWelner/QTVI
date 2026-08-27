@@ -1102,9 +1102,7 @@ void noise_marking_gui::handle_data_plot() {
         addPeakSeries(redPts, Qt::red);
         addPeakSeries(bluePts, Qt::blue);
         };
-
-    plotMarkable("ECG1"); plotMarkable("ECG2"); plotMarkable("ECG3");
-    plotMarkable("PPG");  plotMarkable("ACCEL");
+        plotMarkable("ECG1"); plotMarkable("ECG2"); plotMarkable("ECG3"); plotMarkable("VCG"); plotMarkable("PPG");  plotMarkable("ACCEL");
     if (ui->abp_axis && !is_missing_signal(m_abp)) plotMarkable("ABP");
     if (ui->art_axis && !is_missing_signal(m_art)) plotMarkable("ART");
     if (ui->art_pulm_axis && !is_missing_signal(m_artPulm)) plotMarkable("ART_PULM");
