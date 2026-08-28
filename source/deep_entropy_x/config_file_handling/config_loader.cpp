@@ -107,19 +107,34 @@ namespace {
     void deriveSubpaths(config_entry& cfg) {
         /*
         This script yeilds different types of outputs, each of which are saved in their own
-        subfolder of output_path
+        subfolder of output_path. The folders are CREATED here, so every writer
+        downstream can open a file in one without checking first.
         */
-        cfg.snapshot_path = cfg.output_path + "/saved_plot_snapshots/";
-        cfg.annealed_data_path = cfg.output_path + "/annealed_output/";
-        cfg.noise_data_path = cfg.output_path + "/noise_marking_output/";
-        cfg.r_peak_data_path = cfg.output_path + "/r_peak_finding_output/";
-        cfg.template_path = cfg.output_path + "/template_outputs/";
-        cfg.qtvi_marker_path = cfg.output_path + "/qtvi_marker_path/";
-        cfg.quality_metric = cfg.output_path + "/quality_metric/";
-        cfg.five_category_output = cfg.output_path + "/five_category_output/";
-        cfg.training_log = cfg.output_path + "/training_log/";
-        cfg.snapshot_path = cfg.output_path + "/snapshot_path/";
+        if (cfg.output_path.empty()) return;   // nothing to hang the subfolders off
 
+        auto sub = [&cfg](const char* name) {
+            const std::string p = cfg.output_path + "/" + name + "/";
+            std::error_code ec;
+            std::filesystem::create_directories(p, ec);
+            // Non-fatal and non-throwing: a missing output folder should not
+            // abort config loading, and create_directories reports "already
+            // exists" as success, so a re-derive is a no-op. The writers still
+            // check their own opens; this only removes the first-run failure.
+            if (ec) std::cerr << "[config] could not create " << p
+                << ": " << ec.message() << "\n";
+            return p;
+            };
+
+        cfg.annealed_data_path = sub("annealed_output");
+        cfg.noise_data_path = sub("noise_marking_output");
+        cfg.r_peak_data_path = sub("r_peak_finding_output");
+        cfg.template_path = sub("template_outputs");
+        cfg.qtvi_marker_path = sub("qtvi_marker_path");
+        cfg.quality_metric = sub("quality_metric");
+        cfg.five_category_output = sub("five_category_output");
+        cfg.training_log = sub("training_log");
+        cfg.snapshot_path = sub("snapshot_path");
+        cfg.vcg_output = sub("vcg_output");
     }
 
     bool manually_select_folder(config_entry& cfg) {

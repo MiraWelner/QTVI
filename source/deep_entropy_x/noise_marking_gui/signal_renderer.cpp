@@ -858,15 +858,9 @@ void noise_marking_gui::handle_data_plot() {
         delete area;
     }
     m_highlights.clear();
-
-    mark_state_ecg1.startMarkerLine = nullptr;
-    mark_state_ecg2.startMarkerLine = nullptr;
-    mark_state_ecg3.startMarkerLine = nullptr;
-    mark_state_ppg.startMarkerLine = nullptr;
-    mark_state_accel.startMarkerLine = nullptr;
-    mark_state_art.startMarkerLine = nullptr;
-    mark_state_art_pulm.startMarkerLine = nullptr;
-    mark_state_abp.startMarkerLine = nullptr;
+    for (const QString& lbl : markableChannelLabels()) {
+        markStateFor(lbl).startMarkerLine = nullptr;
+    }
 
     // The timestamp x-axis belongs to the bottom-most ACTIVE markable chart.
     // Walk markableChannelLabels() (top-to-bottom order) and keep the last
@@ -910,6 +904,8 @@ void noise_marking_gui::handle_data_plot() {
         wipe_chart(ui->art_axis->chart(), keepFor(ui->art_axis));
     if (ui->art_pulm_axis && !is_missing_signal(m_artPulm))
         wipe_chart(ui->art_pulm_axis->chart(), keepFor(ui->art_pulm_axis));
+    if (ui->kors_matrix && !is_missing_signal(m_vcg))
+        wipe_chart(ui->kors_matrix->chart(), keepFor(ui->kors_matrix));
 
     const bool sleepPresent = sleep_data_present(m_sleepStages);
     if (!sleepPresent && ui->hyp_resp_axis)

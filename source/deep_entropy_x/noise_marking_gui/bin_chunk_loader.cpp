@@ -10,6 +10,7 @@
 #include "notch_filter.hpp"
 #include "vcg_lead.hpp"
 
+#include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -131,6 +132,20 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
             GenExcStruct g = readNoiseMarkingsBin(nb, filePath);
             if (!g.noiseExc.isEmpty()) m_fileMarkings[filePath] = g;
         }
+    }
+
+    // Per-file VCG state: clear the cached basis so the next chunk rebuilds
+    // it for THIS recording, and tell vcg_lead where to file it. Both belong
+    // here and not in loadChunkFromFile -- a basis rebuilt per chunk gives a
+    // markable channel whose meaning drifts as the operator scrolls.
+    m_vcgCfg.ortho = vcg::OrthoBasis{};
+    m_vcgCfg.orthoAcc.reset();
+    {
+        const QString stem = QFileInfo(filePath).completeBaseName();
+        const QString dir = QString::fromStdString(m_cfg.vcg_output);
+        QDir().mkpath(dir);   // nothing upstream creates vcg_output/
+        m_vcgCfg.basisCsvPath = (dir + stem + "_vcg_basis.csv").toStdString();
+        m_vcgCfg.basisCsvSubject = stem.toStdString();
     }
 
     if (m_fileMarkings.contains(filePath)) {

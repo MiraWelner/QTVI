@@ -24,6 +24,7 @@
 #include <QVBoxLayout>
 #include <iomanip>
 #include <iostream>
+#include <chrono>
 #include <cstdio>
 
 // ========================================================================
@@ -307,10 +308,28 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
         markersReloaded ? "RELOADED prior markers" : "using FRESH auto-seed (no prior markers applied)",
         m_subjectId.toStdString().c_str(), m_anchorLabel.toStdString().c_str());
 
-    computeGlobalRefs();
+    // ---- TEMPORARY INSTRUMENTATION ------------------------------------
+    // Everything above this point has already printed by the time the
+    // operator sees a delay ([fast-phases], [ectopic], [markers]), so the
+    // hang is in one of the two calls below or in Qt's first layout of what
+    // showPage builds. If showPage reports a small number and the window is
+    // still slow, the cost is the paint, not this function.
+    using clk = std::chrono::steady_clock;
+    auto t_prev = clk::now();
+    auto lap = [&t_prev](const char* what) {
+        const auto now = clk::now();
+        fprintf(stderr, "[viewer] %-26s %7lld ms\n", what,
+            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - t_prev).count());
+        fflush(stderr);
+        t_prev = now;
+        };
 
-    m_capturedPages.clear();   // new subject: nothing saved yet
+    computeGlobalRefs();
+    lap("computeGlobalRefs");
+
     showPage();
+    lap("showPage");
 }
 
 bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath,
@@ -471,7 +490,20 @@ void TemplateViewerWindow::clearPlots() {
 }
 
 void TemplateViewerWindow::showPage() {
+    // ---- TEMPORARY INSTRUMENTATION ------------------------------------
+    using clk = std::chrono::steady_clock;
+    auto t_prev = clk::now();
+    auto lap = [&t_prev](const char* what) {
+        const auto now = clk::now();
+        fprintf(stderr, "[showPage] %-24s %7lld ms\n", what,
+            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - t_prev).count());
+        fflush(stderr);
+        t_prev = now;
+        };
+
     clearPlots();
+    lap("clearPlots");
 
     int start = m_currentPage * m_binsPerPage;
     int end = std::min(start + m_binsPerPage, static_cast<int>(m_bins.size()));
@@ -486,7 +518,19 @@ void TemplateViewerWindow::showPage() {
         gridRows = c;
     }
     else {
-        gridRows = m_maxLeads;
+        // One extra row for the VCG panel, but only if some bin on this page
+        // can actually produce one (all three ECG channels present with an R
+        // column). Without this the row count equals the lead count and there
+        // is no row index left for the VCG to occupy.
+        bool anyVcg = false;
+        for (int k = start; k < end && !anyVcg; ++k)
+            anyVcg = !vcg_avg::derivedTraceOnChannelAxis(
+                m_bins[k], 0, vcg::DerivedLead::VectorMagnitude).empty();
+        gridRows = m_maxLeads + (anyVcg ? 1 : 0);
+        // Note: this probe throws its trace away and the per-bin loop below
+        // recomputes the same thing for the same bins. If this lap is large,
+        // that duplication is the first thing to remove.
+        lap("anyVcg probe");
     }
 
     m_binPlots.resize(count);
@@ -511,7 +555,7 @@ void TemplateViewerWindow::showPage() {
         const std::vector<double> vcgTrace = vcg_avg::derivedTraceOnChannelAxis(
             b, 0, vcg::DerivedLead::VectorMagnitude, vcg::kIdentity, &vcgRCol);
         const bool vcgRowWanted = !compact && !vcgTrace.empty()
-            && (int)leads.size() < gridRows;
+            && gridRows > m_maxLeads;
 
         const auto gi_intervals = global_intervals::computeGlobalIntervals(
             b, m_currentAnchor, m_sampleRate,
@@ -727,7 +771,9 @@ void TemplateViewerWindow::showPage() {
         }
 
         m_binPlots[i] = std::move(group);
+        lap("  one bin's widgets");
     }
+    lap("all bin widgets");
 
     // Equal stretch on every used row/column => equal-width, equal-height
     // cells that together fill the whole plot area. Combined with each
@@ -738,7 +784,7 @@ void TemplateViewerWindow::showPage() {
 
     applyMarkerVisibility();
     updatePageControls();
-
+    lap("stretch+visibility+controls");
 }
 
 void TemplateViewerWindow::captureCurrentPage() {
@@ -755,7 +801,6 @@ void TemplateViewerWindow::captureCurrentPage() {
         .arg(page + 1, 2, 10, QChar('0'))
         .arg(pass));
     shot.save(fn, "PNG");
-    m_capturedPages.insert(page);
 }
 
 // Suffix every column in `header` (a single header line) with `suffix`,
@@ -897,57 +942,42 @@ static bool zipCanonicalWithQ(const std::string& canonicalPath,
 }
 
 void TemplateViewerWindow::writeAlignedTemplateCsv() {
+    // One row per sample column per bin. Every value column is emitted twice,
+    // raw and normalized, plus its IQR band in both forms; marker positions
+    // ride along as one-hot flags on the row matching their sample index.
     if (m_bins.empty()) return;
 
-    QDir outDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
+    QDir outDir(m_templateDir);
     if (!outDir.exists()) outDir.mkpath(".");
-    // Each pass writes a per-anchor sidecar; merged into the canonical
-    // <id>_template.csv once at the final pass. `path` names the canonical
-    // target and is used only in log/error messages below.
+    // Names the canonical merge target. Used only in the log/error messages
+    // below -- this function writes a per-anchor sidecar, never `path` itself.
     const QString path = outDir.filePath(m_subjectId + "_template.csv");
 
-    // Build the pass's CSV content in memory. On the R pass this becomes the
-    // canonical file directly (with _r suffixes applied to every value column).
-    // On the Q pass we hand this buffer to zipCanonicalWithQ, which reads the
-    // R file back and appends the Q columns to each row with _q suffixes.
     std::ostringstream f;
-    if (!f) { fprintf(stderr, "[tmplcsv] cannot build in-memory buffer for %s\n", path.toStdString().c_str()); return; }
-
     const double toMs = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 1.0;
 
-    // ---- Header ------------------------------------------------------------
-    // Per channel: raw_mv, Normalized_mv, raw_iqr, normalized_iqr.
+    // ---- Column lists (shared by the header pass and the row loop) ---------
     static const char* CHANS[] = {
         "ch1", "ch2", "ch3", "ppg", "abp", "art", "art_pulm"
     };
-    f << "file_id,bin_num,x_ms";
-    for (const char* n : CHANS) {
-        f << ',' << n << "_raw_mv"
-            << ',' << n << "_Normalized"
-            << ',' << n << "_raw_iqr"
-            << ',' << n << "_normalized_iqr";
-    }
+    constexpr int num_chans = static_cast<int>(std::size(CHANS));
 
-    // Marker-location columns. For each marker: two columns (autodetect,
-    // user). A row has "1" in the column iff its row index equals that
-    // marker's sample index for the current bin; blank otherwise.
-    //
-    // ECG markers per channel (8 each x 3 channels x 2 auto/user = 48):
-    //   p_peak, q_begin, q_peak (computed), r_peak, s_peak (computed),
-    //   s_end, t_peak, t_end.
+    // Per ECG channel, in emission order. r_peak is auto-only: there is no
+    // user bar for it, so it contributes one column where the others
+    // contribute two. kRPeak is derived from the array rather than written as
+    // a literal, because the index was previously hardcoded as `4` in two
+    // places and inserting a marker ahead of it would have silently moved the
+    // auto-only column onto the wrong landmark.
     static const char* ECG_MARKERS[] = {
         "p_begin", "p_peak", "q_begin", "q_peak", "r_peak", "s_peak",
-        "s_end",  "t_begin",  "t_end"
+        "s_end",   "t_begin", "t_end"
     };
-    for (int c = 1; c <= 3; ++c) {
-        for (int k = 0; k < 9; ++k) {
-            const char* mname = ECG_MARKERS[k];
-            const bool userToo = (k != 4);   // r_peak = auto-only
-            f << ',' << mname << "_ch" << c << "_location_autodetect";
-            if (userToo) f << ',' << mname << "_ch" << c << "_location_user";
-        }
-    }
-    // Pulse markers (PPG has 6 with p50, arterial has 5).
+    constexpr int kNumEcgMarkers = static_cast<int>(std::size(ECG_MARKERS));
+    constexpr int kRPeak = 4;
+    static_assert(kNumEcgMarkers == 9, "ECG marker count changed; check kRPeak");
+
+    // Pulse marker groups. Counts differ by channel: PPG carries the two
+    // interpolated upslope crossings (t50/t80), the arterial channels do not.
     static const char* PPG_MARKERS[] = {
         "ppg_onset", "ppg_t50", "ppg_peak",
         "ppg_dicrotic", "ppg_peak2", "ppg_t80", "ppg_end"
@@ -962,108 +992,135 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         "art_pulm_onset", "art_pulm_peak", "art_pulm_dicrotic",
         "art_pulm_peak2", "art_pulm_end"
     };
-    auto emitPulseHeaderGroup = [&](auto const& group) {
-        for (const char* m : group) {
-            f << ',' << m << "_location_autodetect"
-                << ',' << m << "_location_user";
+    constexpr int kNumPpgMarkers = static_cast<int>(std::size(PPG_MARKERS));
+    constexpr int kNumArterialMarkers = static_cast<int>(std::size(ABP_MARKERS));
+
+    // Per-ECG-channel autodetect glyph group. p_wave/q_onset/r_wave are the
+    // stored autodetect columns, emitted directly so no parallel recompute can
+    // disagree with them; t_peak is the only derived one.
+    static const char* ECG_GLYPHS[] = { "p_wave", "q_onset", "r_wave", "t_peak" };
+
+    // ---- Header ------------------------------------------------------------
+    f << "file_id,bin_num,x_ms";
+    for (const char* n : CHANS) {
+        f << ',' << n << "_raw_mv"
+            << ',' << n << "_Normalized"
+            << ',' << n << "_raw_iqr"
+            << ',' << n << "_normalized_iqr";
+    }
+    for (int c = 1; c <= 3; ++c) {
+        for (int k = 0; k < kNumEcgMarkers; ++k) {
+            f << ',' << ECG_MARKERS[k] << "_ch" << c << "_location_autodetect";
+            if (k != kRPeak)
+                f << ',' << ECG_MARKERS[k] << "_ch" << c << "_location_user";
         }
+    }
+    auto emitPulseHeaderGroup = [&](auto const& group) {
+        for (const char* m : group)
+            f << ',' << m << "_location_autodetect"
+            << ',' << m << "_location_user";
         };
     emitPulseHeaderGroup(PPG_MARKERS);
     emitPulseHeaderGroup(ABP_MARKERS);
     emitPulseHeaderGroup(ART_MARKERS);
     emitPulseHeaderGroup(ARTP_MARKERS);
-    // Autodetected computed feature locations (no user bar; from AUTODETECT markers).
-    auto emitAutoFeatLocHeader = [&](const char* n) { f << ',' << n << "_autodetect_location"; };
+
+    // Autodetected computed feature locations (no user bar).
     for (int gc = 1; gc <= 3; ++gc) {
         char gb[64];
-        for (const char* g : { "p_wave", "q_onset", "r_wave", "t_peak" }) {
+        for (const char* g : ECG_GLYPHS) {
             std::snprintf(gb, sizeof gb, "%s_ch%d", g, gc);
-            emitAutoFeatLocHeader(gb);
+            f << ',' << gb << "_autodetect_location";
         }
     }
-    for (const char* g : { "ppg_foot", "ppg_systolic_peak", "ppg_dicrotic", "ppg_end" })
-        emitAutoFeatLocHeader(g);
+    // Driven off ppg_and_artpulse_automated_markers, the same table the row
+    // loop emits from. This used to be a hand-written list of four names while
+    // the table had grown to fifteen entries, so the file carried eleven
+    // unnamed columns and every header-keyed reader was reading the wrong
+    // field from here to the end of the row.
+    for (const auto& gl : ppg_and_artpulse_automated_markers)
+        f << ',' << gl.name << "_autodetect_location";
     f << '\n';
+
     f << std::setprecision(10);
 
-    // Both ecg_template_raw_iqr and every *_template_iqr / *Template_iqr
-    // field are pre-ref-division at build time (see CreatePPGTemplates.hpp /
-    // build_pulse_template_pair_windowed for the pulse channels), so the
-    // only remaining step for any channel is the same scalar /ref used for
-    // its mean trace -- normalize_features::scale_array_by_ref is the one
-    // place that division happens.
+    // Both ecg_template_raw_iqr and every *_template_iqr field are
+    // pre-ref-division at build time (see CreatePPGTemplates.hpp /
+    // build_pulse_template_pair_windowed), so the only remaining step for any
+    // channel is the same scalar /ref used for its mean trace --
+    // normalize_features::scale_array_by_ref is the one place that happens.
 
     // ---- Row loop ----------------------------------------------------------
     for (size_t bi = 0; bi < m_bins.size(); ++bi) {
         const TemplateBin& b = m_bins[bi];
+        const TemplateBin::MarkerSet& umk = b.marks(currentAnchor());
 
-        // Raw + std traces per channel.
-        const std::vector<double>& ch1R = b.ch1.ecgTemplate_raw;
-        const std::vector<double>& ch2R = b.ch2.ecgTemplate_raw;
-        const std::vector<double>& ch3R = b.ch3.ecgTemplate_raw;
-        const std::vector<double>& ppgR = b.ppgTemplate;
-        const std::vector<double>& abpR = b.abpTemplate;
-        const std::vector<double>& artR = b.artTemplate;
-        const std::vector<double>& artPR = b.artPulmTemplate;
+        // One description per value column, in CHANS order. The seven channels
+        // differ only in which normalizer they take and which global reference
+        // scales their IQR, so they are described rather than transcribed:
+        // the previous form repeated four near-identical statements per channel
+        // and the ordering of CHANS was only implicitly matched.
+        struct Src {
+            const std::vector<double>* raw;
+            const std::vector<double>* rawIqr;
+            double ref;      ///< global reference for this channel's scaling
+            int    idx;      ///< channel index handed to the normalizer
+            bool   isEcg;    ///< selects the normalizer
+            int    onset;    ///< pulse channels only: alignment onset
+        };
+        const Src src[num_chans] = {
+            { &b.ch1.ecgTemplate_raw, &b.ch1.ecg_template_raw_iqr, m_ecgGlobalRef[0],   0, true,  0 },
+            { &b.ch2.ecgTemplate_raw, &b.ch2.ecg_template_raw_iqr, m_ecgGlobalRef[1],   1, true,  0 },
+            { &b.ch3.ecgTemplate_raw, &b.ch3.ecg_template_raw_iqr, m_ecgGlobalRef[2],   2, true,  0 },
+            { &b.ppgTemplate,         &b.ppg_template_iqr,         m_pulseGlobalRef[0], 0, false, b.ppg_onset },
+            { &b.abpTemplate,         &b.abpTemplate_iqr,          m_pulseGlobalRef[1], 1, false, b.abp_onset },
+            { &b.artTemplate,         &b.artTemplate_iqr,          m_pulseGlobalRef[2], 2, false, b.art_onset },
+            { &b.artPulmTemplate,     &b.artPulmTemplate_iqr,      m_pulseGlobalRef[3], 3, false, b.art_pulm_onset },
+        };
 
-        const std::vector<double>& ch1Iqr = b.ch1.ecg_template_raw_iqr;
-        const std::vector<double>& ch2Iqr = b.ch2.ecg_template_raw_iqr;
-        const std::vector<double>& ch3Iqr = b.ch3.ecg_template_raw_iqr;
-        const std::vector<double>& ppgIqrRaw = b.ppg_template_iqr;
-        const std::vector<double>& abpIqrRaw = b.abpTemplate_iqr;
-        const std::vector<double>& artIqrRaw = b.artTemplate_iqr;
-        const std::vector<double>& artPIqrRaw = b.artPulmTemplate_iqr;
+        std::vector<double> norm[num_chans], normIqr[num_chans];
+        for (int k = 0; k < num_chans; ++k) {
+            norm[k] = src[k].isEcg
+                ? normalizeEcgTrace(*src[k].raw, src[k].idx)
+                : normalize_ppg_or_similar(*src[k].raw, src[k].onset, src[k].idx);
+            normIqr[k] = normalize_features::scale_array_by_ref(*src[k].rawIqr, src[k].ref);
+        }
 
-        // Normalized mean traces (screen-matching).
-        std::vector<double> ch1N = normalizeEcgTrace(ch1R, 0);
-        std::vector<double> ch2N = normalizeEcgTrace(ch2R, 1);
-        std::vector<double> ch3N = normalizeEcgTrace(ch3R, 2);
-        std::vector<double> ppgN = normalize_ppg_or_similar(ppgR, b.ppg_onset, 0);
-        std::vector<double> abpN = normalize_ppg_or_similar(abpR, b.abp_onset, 1);
-        std::vector<double> artN = normalize_ppg_or_similar(artR, b.art_onset, 2);
-        std::vector<double> artPN = normalize_ppg_or_similar(artPR, b.art_pulm_onset, 3);
+        // Row span = longest trace; all traces start at row 0. Marker indices
+        // are NOT considered: a landmark past the end of every trace has no row
+        // to flag, which is a template-construction problem rather than
+        // something this writer can represent.
+        int hiRow = 0;
+        for (const Src& s : src) hiRow = std::max(hiRow, (int)s.raw->size());
+        if (hiRow <= 0) continue;
 
-        // Normalized std traces -- same scalar /ref step for every channel.
-        std::vector<double> ch1IqrN = normalize_features::scale_array_by_ref(ch1Iqr, m_ecgGlobalRef[0]);
-        std::vector<double> ch2IqrN = normalize_features::scale_array_by_ref(ch2Iqr, m_ecgGlobalRef[1]);
-        std::vector<double> ch3IqrN = normalize_features::scale_array_by_ref(ch3Iqr, m_ecgGlobalRef[2]);
-        std::vector<double> ppgIqrN = normalize_features::scale_array_by_ref(ppgIqrRaw, m_pulseGlobalRef[0]);
-        std::vector<double> abpIqrN = normalize_features::scale_array_by_ref(abpIqrRaw, m_pulseGlobalRef[1]);
-        std::vector<double> artIqrN = normalize_features::scale_array_by_ref(artIqrRaw, m_pulseGlobalRef[2]);
-        std::vector<double> artPIqrN = normalize_features::scale_array_by_ref(artPIqrRaw, m_pulseGlobalRef[3]);
-
-        // Computed Q/S peaks (both variants) per ECG channel.
+        // Computed Q/S peaks per ECG channel, from the auto bars and the user
+        // bars separately.
         const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
         EcgFeatures ftAuto[3], ftUser[3];
         for (int c = 0; c < 3; ++c) {
             const auto& ecg = chs[c]->ecgTemplate_raw;
             ftAuto[c] = computeEcgFeatures(ecg,
-                (int)std::lround(b.p_peak_auto_ch[c]), (int)std::lround(b.q_begin_auto_ch[c]), (int)std::lround(b.r_peak_auto_ch[c]),
-                (int)std::lround(b.s_end_auto_ch[c]), (int)std::lround(b.t_end_auto_ch[c]),
-                m_sampleRate);
-            const TemplateBin::MarkerSet& fmk = b.marks(currentAnchor());
+                (int)std::lround(b.p_peak_auto_ch[c]), (int)std::lround(b.q_begin_auto_ch[c]),
+                (int)std::lround(b.r_peak_auto_ch[c]), (int)std::lround(b.s_end_auto_ch[c]),
+                (int)std::lround(b.t_end_auto_ch[c]), m_sampleRate);
             ftUser[c] = computeEcgFeatures(ecg,
-                fmk.p_peak_ch[c], fmk.q_begin_ch[c], b.r_peak_ch[c],
-                fmk.s_end_ch[c], fmk.t_end_ch[c],
-                m_sampleRate);
+                umk.p_peak_ch[c], umk.q_begin_ch[c], b.r_peak_ch[c],
+                umk.s_end_ch[c], umk.t_end_ch[c], m_sampleRate);
         }
-        for (const auto& gl : ppg_and_artpulse_automated_markers) emitAutoFeatLocHeader(gl.name);
 
-        // ECG marker positions per channel, aligned with ECG_MARKERS order:
-        //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
-        //   s_end,  t_peak, t_end.
-        int ecgAuto[3][9], ecgUser[3][9];
-        const TemplateBin::MarkerSet& umk = b.marks(currentAnchor());
+        // ECG marker positions, indices aligned with ECG_MARKERS.
+        double ecgAuto[3][kNumEcgMarkers], ecgUser[3][kNumEcgMarkers];
         for (int c = 0; c < 3; ++c) {
-            ecgAuto[c][0] = (int)std::lround(b.p_begin_auto_ch[c]);
-            ecgAuto[c][1] = (int)std::lround(b.p_peak_auto_ch[c]);
-            ecgAuto[c][2] = (int)std::lround(b.q_begin_auto_ch[c]);
+            ecgAuto[c][0] = b.p_begin_auto_ch[c];
+            ecgAuto[c][1] = b.p_peak_auto_ch[c];
+            ecgAuto[c][2] = b.q_begin_auto_ch[c];
             ecgAuto[c][3] = ftAuto[c].q_idx;
-            ecgAuto[c][4] = (int)std::lround(b.r_peak_auto_ch[c]);
+            ecgAuto[c][4] = b.r_peak_auto_ch[c];
             ecgAuto[c][5] = ftAuto[c].s_idx;
-            ecgAuto[c][6] = (int)std::lround(b.s_end_auto_ch[c]);
-            ecgAuto[c][7] = (int)std::lround(b.t_begin_auto_ch[c]);
-            ecgAuto[c][8] = (int)std::lround(b.t_end_auto_ch[c]);
+            ecgAuto[c][6] = b.s_end_auto_ch[c];
+            ecgAuto[c][7] = b.t_begin_auto_ch[c];
+            ecgAuto[c][8] = b.t_end_auto_ch[c];
             ecgUser[c][0] = umk.p_begin_ch[c];
             ecgUser[c][1] = umk.p_peak_ch[c];
             ecgUser[c][2] = umk.q_begin_ch[c];
@@ -1075,160 +1132,123 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             ecgUser[c][8] = umk.t_end_ch[c];
         }
 
-        // Pulse marker positions, order matching PPG_MARKERS / ABP_MARKERS etc.
-        // T50/T80 are reactive: bracketed by onset/peak/end, never stored. The
-        // autodetect column brackets with the *_auto bars, the user column with
-        // the user bars, both through the same FeatureMarks::reactive_ppg the
-        // on-screen glyph uses -- so what is plotted is what is exported.
+        // Pulse marker positions, order matching the *_MARKERS arrays.
+        // t50/t80 are reactive: bracketed by onset/peak/end, never stored. The
+        // autodetect column brackets with the *_auto bars and the user column
+        // with the user bars, both through the same FeatureMarks::reactive_ppg
+        // the on-screen glyph uses -- so what is plotted is what is exported.
         const FeatureMarks::ReactivePpg rxPpgAuto = FeatureMarks::reactive_ppg(
             b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_end_auto);
         const FeatureMarks::ReactivePpg rxPpgUser = FeatureMarks::reactive_ppg(
             b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_end);
         // double, not int: t50/t80 are interpolated crossings and the stored
-        // fields promote without loss. The rounding these arrays used to do
-        // implicitly now happens once, in emitLoc, where the one-hot row format
-        // forces it.
-        const double ppgAuto[7] = { (double)b.ppg_onset_auto, rxPpgAuto.t50,
-                                 (double)b.ppg_peak_auto, (double)b.ppg_dicrotic_auto,
-                                 (double)b.ppg_peak2_auto, rxPpgAuto.t80,
-                                 (double)b.ppg_end_auto };
-        const double ppgUser[7] = { (double)b.ppg_onset, rxPpgUser.t50,
-                                 (double)b.ppg_peak, (double)b.ppg_dicrotic,
-                                 (double)b.ppg_peak2, rxPpgUser.t80, (double)b.ppg_end };
-        const int abpAuto[5] = { b.abp_onset_auto, b.abp_peak_auto,
-                                 b.abp_dicrotic_auto, b.abp_peak2_auto, b.abp_end_auto };
-        const int abpUser[5] = { b.abp_onset, b.abp_peak,
-                                 b.abp_dicrotic, b.abp_peak2, b.abp_end };
-        const int artAuto[5] = { b.art_onset_auto, b.art_peak_auto,
-                                 b.art_dicrotic_auto, b.art_peak2_auto, b.art_end_auto };
-        const int artUser[5] = { b.art_onset, b.art_peak,
-                                 b.art_dicrotic, b.art_peak2, b.art_end };
-        const int artpAuto[5] = { b.art_pulm_onset_auto, b.art_pulm_peak_auto,
-                                  b.art_pulm_dicrotic_auto, b.art_pulm_peak2_auto,
-                                  b.art_pulm_end_auto };
-        const int artpUser[5] = { b.art_pulm_onset, b.art_pulm_peak,
-                                  b.art_pulm_dicrotic, b.art_pulm_peak2, b.art_pulm_end };
+        // fields promote without loss. Rounding happens once, in emitLoc.
+        const double ppgAuto[kNumPpgMarkers] = {
+            (double)b.ppg_onset_auto, rxPpgAuto.t50, (double)b.ppg_peak_auto,
+            (double)b.ppg_dicrotic_auto, (double)b.ppg_peak2_auto, rxPpgAuto.t80,
+            (double)b.ppg_end_auto };
+        const double ppgUser[kNumPpgMarkers] = {
+            (double)b.ppg_onset, rxPpgUser.t50, (double)b.ppg_peak,
+            (double)b.ppg_dicrotic, (double)b.ppg_peak2, rxPpgUser.t80,
+            (double)b.ppg_end };
+        const int abpAuto[kNumArterialMarkers] = { b.abp_onset_auto, b.abp_peak_auto,
+            b.abp_dicrotic_auto, b.abp_peak2_auto, b.abp_end_auto };
+        const int abpUser[kNumArterialMarkers] = { b.abp_onset, b.abp_peak,
+            b.abp_dicrotic, b.abp_peak2, b.abp_end };
+        const int artAuto[kNumArterialMarkers] = { b.art_onset_auto, b.art_peak_auto,
+            b.art_dicrotic_auto, b.art_peak2_auto, b.art_end_auto };
+        const int artUser[kNumArterialMarkers] = { b.art_onset, b.art_peak,
+            b.art_dicrotic, b.art_peak2, b.art_end };
+        const int artpAuto[kNumArterialMarkers] = { b.art_pulm_onset_auto, b.art_pulm_peak_auto,
+            b.art_pulm_dicrotic_auto, b.art_pulm_peak2_auto, b.art_pulm_end_auto };
+        const int artpUser[kNumArterialMarkers] = { b.art_pulm_onset, b.art_pulm_peak,
+            b.art_pulm_dicrotic, b.art_pulm_peak2, b.art_pulm_end };
 
-        // Row span = longest trace (all start at row 0).
-        auto Nof = [](const std::vector<double>& v) { return (int)v.size(); };
-        const int hiRow = std::max({ Nof(ch1R), Nof(ch2R), Nof(ch3R),
-            Nof(ppgR), Nof(abpR), Nof(artR), Nof(artPR) });
-        if (hiRow <= 0) continue;
-
-        struct Col {
-            const std::vector<double>* raw;
-            const std::vector<double>* norm;
-            const std::vector<double>* raw_iqr;
-            const std::vector<double>* norm_iqr;
-        };
-        const Col cols[] = {
-            { &ch1R,  &ch1N,  &ch1Iqr,  &ch1IqrN  },
-            { &ch2R,  &ch2N,  &ch2Iqr,  &ch2IqrN  },
-            { &ch3R,  &ch3N,  &ch3Iqr,  &ch3IqrN  },
-            { &ppgR,  &ppgN,  &ppgIqrRaw,  &ppgIqrN  },
-            { &abpR,  &abpN,  &abpIqrRaw,  &abpIqrN  },
-            { &artR,  &artN,  &artIqrRaw,  &artIqrN  },
-            { &artPR, &artPN, &artPIqrRaw, &artPIqrN },
-        };
+        // Derived T peak for the autodetect glyph group, bracketed by the AUTO
+        // T-begin/T-end so it matches that group's name. Brackets stay
+        // fractional; compute_t_peak takes doubles.
+        double tPeakAutoGlyph[3];
+        for (int gc = 0; gc < 3; ++gc)
+            tPeakAutoGlyph[gc] = FeatureMarks::compute_t_peak(
+                chs[gc]->ecgTemplate_raw,
+                b.t_begin_auto_ch[gc], b.t_end_auto_ch[gc]);
 
         auto emitVal = [&](const std::vector<double>& v, int j) {
             f << ',';
             if (j >= 0 && j < (int)v.size() && !std::isnan(v[j])) f << v[j];
             };
-        // Emit ",1" if row equals marker index, ",<blank>" otherwise.
-        // Autodetected computed feature indices (no user bar; from AUTODETECT markers).
-        // Autodetect glyph columns. p_wave / q_onset / r_wave ARE the stored
-        // autodetect columns -- emitted directly, with no parallel recompute
-        // that could disagree with them. Only t_peak is derived, and it is
-        // bracketed by the AUTO T-begin/T-end here to match this group's name.
-        const ChannelTemplateData* gchs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-        double tPeakAutoGlyph[3];
-        for (int gc = 0; gc < 3; ++gc)
-            // Brackets stay fractional; compute_t_peak takes doubles now.
-            tPeakAutoGlyph[gc] = FeatureMarks::compute_t_peak(
-                gchs[gc]->ecgTemplate_raw,
-                b.t_begin_auto_ch[gc], b.t_end_auto_ch[gc]);
-        // PPG glyph locations are just the bin's own auto fields (see
-        // FeatureMarks::detect_ppg_fiducials).
+        // Emit ",1" if the row is this marker's row, ",<blank>" otherwise.
+        //
         // ROUNDING BOUNDARY, and an unavoidable one: this column is a one-hot
         // flag per SAMPLE ROW, so a landmark at 104.37 has to be attributed to
-        // a row and there is no fractional representation available in the
-        // format. Rounded to the nearest row, explicitly, rather than
-        // truncated by an implicit conversion in the array initialiser above.
-        // The millisecond columns elsewhere in this file carry the fraction.
+        // a row and the format has no fractional representation. Rounded to the
+        // nearest row explicitly, in one place, rather than truncated by
+        // implicit conversions at each call site. The millisecond columns
+        // elsewhere in this file carry the fraction.
         auto emitLoc = [&](double markerIdx, int row) {
             f << ',';
-            if (markerIdx >= 0.0
-                && static_cast<int>(std::lround(markerIdx)) == row) f << '1';
+            if (markerIdx >= 0.0 && (int)std::lround(markerIdx) == row) f << '1';
             };
-
         for (int row = 0; row < hiRow; ++row) {
-            f << m_subjectId.toStdString() << ',' << bi << ','
-                << (row * toMs);
-            for (const Col& c : cols) {
-                emitVal(*c.raw, row);
-                emitVal(*c.norm, row);
-                emitVal(*c.raw_iqr, row);
-                emitVal(*c.norm_iqr, row);
+            f << m_subjectId.toStdString() << ',' << bi << ',' << (row * toMs);
+            for (int k = 0; k < num_chans; ++k) {
+                emitVal(*src[k].raw, row);
+                emitVal(norm[k], row);
+                emitVal(*src[k].rawIqr, row);
+                emitVal(normIqr[k], row);
             }
-            // ECG location columns (per channel, per marker: auto then user).
-            for (int c = 0; c < 3; ++c) {
-                for (int k = 0; k < 9; ++k) {
+            // ECG: per channel, per marker, auto then user (r_peak auto only).
+            for (int c = 0; c < 3; ++c)
+                for (int k = 0; k < kNumEcgMarkers; ++k) {
                     emitLoc(ecgAuto[c][k], row);
-                    if (k != 4) emitLoc(ecgUser[c][k], row);
+                    if (k != kRPeak) emitLoc(ecgUser[c][k], row);
                 }
-            }
-            // PPG (6), ABP/ART/ART_PULM (5 each).
-            for (int k = 0; k < 7; ++k) { emitLoc(ppgAuto[k], row);  emitLoc(ppgUser[k], row); }
-            for (int k = 0; k < 5; ++k) { emitLoc(abpAuto[k], row);  emitLoc(abpUser[k], row); }
-            for (int k = 0; k < 5; ++k) { emitLoc(artAuto[k], row);  emitLoc(artUser[k], row); }
-            for (int k = 0; k < 5; ++k) { emitLoc(artpAuto[k], row); emitLoc(artpUser[k], row); }
+            // Pulse groups, auto and user interleaved per marker.
+            auto emitPair = [&](const auto& a, const auto& u, int n) {
+                for (int k = 0; k < n; ++k) { emitLoc(a[k], row); emitLoc(u[k], row); }
+                };
+            emitPair(ppgAuto, ppgUser, kNumPpgMarkers);
+            emitPair(abpAuto, abpUser, kNumArterialMarkers);
+            emitPair(artAuto, artUser, kNumArterialMarkers);
+            emitPair(artpAuto, artpUser, kNumArterialMarkers);
+            // Autodetect glyphs: per ECG channel, then the pulse table.
             for (int gc = 0; gc < 3; ++gc) {
-                emitLoc((int)std::lround(b.p_peak_auto_ch[gc]), row);
-                emitLoc((int)std::lround(b.q_begin_auto_ch[gc]), row);
-                emitLoc((int)std::lround(b.r_peak_auto_ch[gc]), row);
+                emitLoc(b.p_peak_auto_ch[gc], row);
+                emitLoc(b.q_begin_auto_ch[gc], row);
+                emitLoc(b.r_peak_auto_ch[gc], row);
                 emitLoc(tPeakAutoGlyph[gc], row);
             }
-            for (const auto& gl : ppg_and_artpulse_automated_markers) emitLoc(b.*gl.idx, row);
+            for (const auto& gl : ppg_and_artpulse_automated_markers)
+                emitLoc(b.*gl.idx, row);
             f << '\n';
         }
     }
-    // Serialize the in-memory content, suffix its value columns with the
-    // pass tag, and either write it as the fresh canonical file (R pass) or
-    // read the existing canonical file back and append the Q columns to
-    // each line (Q pass). Row-key columns (file_id/bin_num/x_ms) are never
-    // suffixed so the two sides line up cleanly on zip.
+
+    // Serialize, suffix the value columns with the pass tag, and write this
+    // pass's sidecar. Row-key columns (file_id/bin_num/x_ms) are never
+    // suffixed, so the sidecars line up on the merge in save_bin_and_csv.
     std::string content = f.str();
-    if (content.empty()) {
-        fprintf(stderr, "[tmplcsv] built empty content for %s -- skipping write\n", path.toStdString().c_str());
-        return;
-    }
     const size_t nl = content.find('\n');
     if (nl == std::string::npos) {
-        fprintf(stderr, "[tmplcsv] malformed content (no newline) for %s\n", path.toStdString().c_str());
+        fprintf(stderr, "[tmplcsv] malformed content (no newline) for %s\n",
+            path.toStdString().c_str());
         return;
     }
     const std::string header = content.substr(0, nl);
-    const std::string body = content.substr(nl);   // includes leading '\n'
+    const std::string body = content.substr(nl);   // includes the leading '\n'
+    const std::string suffix = "_" + m_anchorLabel.toStdString();
 
-    const std::string suffix = "_" + m_anchorLabel.toStdString();  // _R, _Q_ONSET, _J_POINT, ...
-
-    // Every pass writes its OWN sidecar (<id>_template.<ANCHOR>.csv) with its
-    // suffixed value columns. No growing read-modify-write here; the sidecars
-    // are merged into the canonical <id>_template.csv once, at the final pass
-    // (see mergeSidecarCsvs in save_bin_and_csv).
     const QString sidecar = outDir.filePath(
         m_subjectId + "_template" + suffix.c_str() + ".csv");
-    {
-        std::ofstream out(sidecar.toStdString(), std::ios::trunc);
-        if (!out) {
-            fprintf(stderr, "[tmplcsv] cannot open sidecar %s\n", sidecar.toStdString().c_str());
-            return;
-        }
-        out << suffixValueColumns(header, suffix) << body;
-        out.close();
-        fprintf(stderr, "[tmplcsv] wrote sidecar %s\n", sidecar.toStdString().c_str());
+    std::ofstream out(sidecar.toStdString(), std::ios::trunc);
+    if (!out) {
+        fprintf(stderr, "[tmplcsv] cannot open sidecar %s\n",
+            sidecar.toStdString().c_str());
+        return;
     }
+    out << suffixValueColumns(header, suffix) << body;
+    out.close();
+    fprintf(stderr, "[tmplcsv] wrote sidecar %s\n", sidecar.toStdString().c_str());
 }
 
 void TemplateViewerWindow::applyMarkerVisibility() {
@@ -1843,18 +1863,9 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
 void TemplateViewerWindow::save_bin_and_csv() {
     captureCurrentPage();   // snapshot the page being left on Finish
 
-    // Do NOT re-seed here. Markers were seeded once at loadSubject and
-    // updated by user drags via onMarkerMoved. Re-seeding now would wipe
-    // every user edit.
-
-    // .bin goes to markingPath (qtvi folder, config's qtvi_marker_path)
-    // -- that's where the viewer LOADS state from on subsequent runs.
-    // .csv goes to csv_for_analysis alongside <subject>_templates.csv.
-    QDir csvDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
-    if (!csvDir.exists()) csvDir.mkpath(".");
     QDir binDir(m_markingPath);
-    if (!binDir.exists()) binDir.mkpath(".");
-
+    QDir csvDir(m_markingPath);
+    QDir vcgDir(m_vcgOutputPath);
     const QString canonicalBin = QDir(m_markingPath).filePath(m_subjectId + "_template_markings.bin");
     const QString partialBin = canonicalBin + ".partial";
 
@@ -1882,25 +1893,38 @@ void TemplateViewerWindow::save_bin_and_csv() {
             std::vector<vcg_avg::BinFeatures> vcgRows;
             vcgRows.reserve(m_bins.size());
             for (int vi = 0; vi < (int)m_bins.size(); ++vi) {
-                const auto vgi = global_intervals::computeGlobalIntervals(
+                // Prefer the operator's markers. On the R pass (and on any bin
+                // not yet marked for this anchor) there are none, so fall back
+                // to the autodetected ones rather than emitting an empty row --
+                // the features are still measurable, and the source is
+                // recorded so a row is never ambiguous about where its
+                // boundaries came from.
+                auto vgi = global_intervals::computeGlobalIntervals(
                     m_bins[vi], currentAnchor(), m_sampleRate,
                     global_intervals::MarkerSource::USER);
-                vcgRows.push_back(vcg_avg::analyzeBinFromTemplates(
-                    vi, m_bins[vi], vgi, m_sampleRate));
+                bool fromAuto = false;
+                if (!vgi.valid) {
+                    vgi = global_intervals::computeGlobalIntervals(
+                        m_bins[vi], currentAnchor(), m_sampleRate,
+                        global_intervals::MarkerSource::AUTO);
+                    fromAuto = vgi.valid;
+                }
+                auto vrow = vcg_avg::analyzeBinFromTemplates(
+                    vi, m_bins[vi], vgi, m_sampleRate);
+                if (vrow.valid && fromAuto) vrow.note = "auto markers";
+                vcgRows.push_back(vrow);
             }
             const bool vok = vcg_avg::writeVcgCsv(
-                csvDir.absolutePath().toStdString(),
+                vcgDir.absolutePath().toStdString(),
                 m_subjectId.toStdString(), vcgRows);
             std::cout << (vok ? "Saved: " : "FAILED: ")
-                << csvDir.absolutePath().toStdString() << "/"
+                << vcgDir.absolutePath().toStdString() << "/"
                 << m_subjectId.toStdString() << "_vcg.csv\n";
         }
 
-        const QString csvPath = csvDir.absolutePath() + "/"
-            + m_subjectId + "_template_markings.csv";
+        const QString csvPath = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings.csv";
         const QString tsuffix = "_" + m_anchorLabel;
-        const QString ecgSidecar = csvDir.absolutePath() + "/"
-            + m_subjectId + "_template_markings" + tsuffix + ".csv";
+        const QString ecgSidecar = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings" + tsuffix + ".csv";
         {
             const QString tmpPath = ecgSidecar + ".tmp";
             writeTemplateMarkingsCsv(tmpPath.toStdString(), m_bins,

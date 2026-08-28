@@ -1,5 +1,5 @@
 /**
- * @file   beat_log.hpp
+ * @file   user_mark_log.hpp
  * @brief  Logs the x and y locations, as well as the peak finding constants like blanking and threshold, and certain
  *         attributes pertaining to arrhythmia, of each beat as it is observed. If a beat is skipped over and not ever
  *         shown in the window, it will not be included in the log. One row per beat.
@@ -44,7 +44,7 @@ class beat_log {
 
 public:
     // Channels in column order. Keep in sync with the CSV header.
-    enum ChannelIdx { ECG1 = 0, ECG2, ECG3, PPG, ABP, ART, ART_PULM, ACCEL, NUM_CHANNELS };
+    enum ChannelIdx { ECG1 = 0, ECG2, ECG3, VCG, PPG, ABP, ART, ART_PULM, ACCEL, NUM_CHANNELS };
 
     static ChannelIdx channelForLabel(const QString& label) {
         /*
@@ -53,11 +53,13 @@ public:
         if (label == "ECG1")     return ECG1;
         if (label == "ECG2")     return ECG2;
         if (label == "ECG3")     return ECG3;
+        if (label == "VCG")      return VCG;
         if (label == "PPG")      return PPG;
         if (label == "ACCEL")    return ACCEL;
         if (label == "ART")      return ART;
         if (label == "ART_PULM") return ART_PULM;
-        return ABP;
+        if (label == "ABP")      return ABP;
+        return NUM_CHANNELS;
     }
 
     // One channel's reading for a beat: time (x), amplitude (y), and the
@@ -91,8 +93,8 @@ public:
     }
 
     struct pendingPeak { double y, blanking, threshold; int markType, postType, inverted; };
-    void logPeak(ChannelIdx ch, double x, double y, double blanking, double threshold,
-        int markType = 0, int postType = 0, int inverted = 0) {
+    void logPeak(ChannelIdx ch, double x, double y, double blanking, double threshold, int markType = 0, int postType = 0, int inverted = 0) {
+        if (ch < 0 || ch >= NUM_CHANNELS) return;
         //Record a peak for a channel in the pending buffer, keyed by global time 
         auto& m = peak_buffer[ch];
         m[x] = { y, blanking, threshold, markType, postType, inverted };
@@ -139,6 +141,7 @@ public:
     // by the next redraw. Committed slots are cleared by zeroing x (the
     // empty-slot marker); blanking/threshold columns are left as seeded.
     void removeInRange(ChannelIdx ch, double t0, double t1) {
+        if (ch < 0 || ch >= NUM_CHANNELS) return;
         if (t0 > t1) { double tmp = t0; t0 = t1; t1 = tmp; }
         auto& pend = peak_buffer[ch];
         for (auto it = pend.begin(); it != pend.end(); ) {
@@ -199,14 +202,19 @@ inline bool beat_log::writeCsv(const std::string& path) const {
     std::ofstream f(path);
     if (!f.is_open()) return false;
 
-    f << "beat,ecg1_x,ecg1_y,ecg2_x,ecg2_y,ecg3_x,ecg3_y,ppg_x,ppg_y,abp_x,abp_y,"
+    f << "beat,"
+        "ecg1_x,ecg1_y,ecg2_x,ecg2_y,ecg3_x,ecg3_y,vcg_x,vcg_y,ppg_x,ppg_y,abp_x,abp_y,"
         "art_x,art_y,art_pulm_x,art_pulm_y,accel_x,accel_y,"
         "blanking_ecg1,threshold_ecg1,blanking_ecg2,threshold_ecg2,"
-        "blanking_ecg3,threshold_ecg3,blanking_ppg,threshold_ppg,blanking_abp,threshold_abp,"
-        "blanking_art,threshold_art,blanking_art_pulm,threshold_art_pulm,blanking_accel,threshold_accel,"
-        "marked_ecg1,marked_ecg2,marked_ecg3,marked_ppg,marked_abp,marked_art,marked_art_pulm,marked_accel,"
-        "post_ecg1,post_ecg2,post_ecg3,post_ppg,post_abp,post_art,post_art_pulm,post_accel,"
-        "inverted_ecg1,inverted_ecg2,inverted_ecg3,inverted_ppg,inverted_abp,inverted_art,inverted_art_pulm,inverted_accel\n";
+        "blanking_ecg3,threshold_ecg3,blanking_vcg,threshold_vcg,blanking_ppg,threshold_ppg,"
+        "blanking_abp,threshold_abp,blanking_art,threshold_art,"
+        "blanking_art_pulm,threshold_art_pulm,blanking_accel,threshold_accel,"
+        "marked_ecg1,marked_ecg2,marked_ecg3,marked_vcg,marked_ppg,marked_abp,"
+        "marked_art,marked_art_pulm,marked_accel,"
+        "post_ecg1,post_ecg2,post_ecg3,post_vcg,post_ppg,post_abp,"
+        "post_art,post_art_pulm,post_accel,"
+        "inverted_ecg1,inverted_ecg2,inverted_ecg3,inverted_vcg,inverted_ppg,inverted_abp,"
+        "inverted_art,inverted_art_pulm,inverted_accel\n";
 
 
     f << std::fixed << std::setprecision(6);

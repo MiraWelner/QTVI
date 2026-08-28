@@ -70,6 +70,7 @@ struct config_entry {
     std::string snapshot_path;
     std::string log_path;
     std::string training_log;
+    std::string vcg_output;
 
     /*
     Different filetypes have different terms for the same type of signal,

@@ -45,7 +45,7 @@ struct markable_data_series {
     const QVector<QPointF>* rawData;
 };
 
-class beat_log;   // defined in beat_log.hpp; only a pointer is held here
+class beat_log;   // defined in user_mark_log.hpp; only a pointer is held here
 class annotation_eraser;   // defined in annotation_eraser.h; pointer held below
 
 class noise_marking_gui : public QDialog {

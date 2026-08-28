@@ -2,7 +2,6 @@
 
 #include <QMainWindow>
 #include <vector>
-#include <set>
 #include <map>
 #include <cmath>
 #include <QString>
@@ -26,6 +25,7 @@ public:
     void setBoundaryTrainingDir(const QString& dir) {
         m_boundaryLog = boundary_training::BoundaryTrainingLog(dir.toStdString());
     }
+    void setVcgOutputDir(const QString& dir) { m_vcgOutputPath = dir; }
 
     void loadSubject(const QString& templatePath, const QString& markingPath,
         const QString& subjectId, double sampleRateHz,
@@ -146,7 +146,7 @@ private:
     std::vector<TemplateBin> m_bins;
     QString m_markingPath;
     QString m_templateDir;   // folder containing templates.bin/.csv (screenshot target)
-    std::set<int> m_capturedPages;   // pages already screenshotted this subject
+    QString m_vcgOutputPath;   // cfg.vcg_output; <id>_vcg.csv lands here
     QString m_subjectId;
     double  m_sampleRate = 0.0;    // ECG rate; also feeds ECG-only feature/ms code below
     double  m_ppgRateHz = 0.0;

@@ -5,7 +5,7 @@
 // Turns the recorded ECG channels into ONE derived lead that the rest of the
 // GUI treats as an ordinary channel: it is markable, it scrolls, it gets a
 // peak finder and annotations like any other. It is rendered in the
-// kors_matrix chart view.
+// derived-lead chart view (ui->kors_matrix).
 //
 // This is the GUI-side adapter. The transform itself lives in vcg.hpp; this
 // file's only job is the part specific to continuous scrolling data:
@@ -39,6 +39,8 @@
 #include <QVector>
 
 #include <cmath>
+#include <cstdio>
+#include <string>
 #include <limits>
 
 namespace vcg_lead {
@@ -47,9 +49,37 @@ namespace vcg_lead {
     inline const char* kLabel = "VCG";
 
     struct Config {
-        /// The 3x3 transform: rows X/Y/Z, columns ECG1/ECG2/ECG3.
+        enum class Basis {
+            Fixed,          ///< use `matrix` as given (debug / identity path)
+            SvdOrthogonal   ///< derive an orthonormal basis from the recording
+        };
+        Basis basis = Basis::SvdOrthogonal;
+
+        /// The 3x3 transform, rows = axes, columns = ECG1/ECG2/ECG3. Used only
+        /// when basis == Fixed; under SvdOrthogonal it is ignored in favour of
+        /// `ortho.mat`.
         vcg::VcgMatrix   matrix = vcg::kIdentity;
-        vcg::DerivedLead derived = vcg::DerivedLead::VectorMagnitude;
+
+        /// Built ONCE per file and reused for every chunk. A basis rebuilt per
+        /// chunk gives a markable channel whose meaning drifts as the operator
+        /// scrolls: an annotation placed in chunk 3 would refer to a different
+        /// linear combination of the leads than the same trace in chunk 4.
+        /// build() populates this on first use; the FILE-open path must clear
+        /// it (see rebuild's note), and the chunk-load path must not.
+        vcg::OrthoBasis       ortho;
+        vcg::OrthoAccumulator orthoAcc;
+
+        /// Where the basis is written when one is built, and the name it is
+        /// filed under. Empty path = do not write. Set at FILE open, next to
+        /// the `ortho` reset: a basis is built exactly once per file, so the
+        /// write fires exactly once per file with no bookkeeping flag.
+        std::string basisCsvPath;
+        std::string basisCsvSubject;
+
+        /// PC1, the max-variance axis. NOT VectorMagnitude: that is invariant
+        /// under any orthonormal basis, so selecting it would make the whole
+        /// SVD step a no-op (vcg.hpp, SVD section).
+        vcg::DerivedLead derived = vcg::DerivedLead::X;
     };
 
     struct Built {
@@ -117,12 +147,12 @@ namespace vcg_lead {
      *                     channel expects. 0 => derive from raw only.
      *
      * @return `valid == false` with `why` set when the inputs cannot support a
-     *         reconstruction. Callers should then leave the kors_matrix panel
+     *         reconstruction. Callers should then leave the derived-lead panel
      *         empty and inactive rather than plotting a partial result.
      */
     inline Built build(const QVector<QPointF>* ecgRaw[3],
         int upsampledLen,
-        const Config& cfg) {
+        Config& cfg) {
         Built out;
 
         for (int c = 0; c < 3; ++c) {
@@ -153,17 +183,70 @@ namespace vcg_lead {
         }
 
         // ------------------------------------------------------------------
+        // Basis
+        // ------------------------------------------------------------------
+        // The lanes are on one grid by now, which is the precondition the basis
+        // computation shares with the transform: a covariance accumulated
+        // across mismatched instants describes a mixture, not the lead
+        // geometry.
+        const std::vector<const std::vector<double>*> chans{ &lane[0], &lane[1], &lane[2] };
+
+        vcg::VcgMatrix mat = cfg.matrix;
+        if (cfg.basis == Config::Basis::SvdOrthogonal) {
+            if (!cfg.ortho.valid) {          // first chunk of this file only
+                cfg.orthoAcc.addLanes(chans);
+                vcg::OrthoBasis nb = cfg.orthoAcc.finish();
+                vcg::fixSigns(nb, chans);
+                if (!nb.valid) {
+                    // Not enough usable data to define a basis. Refusing beats
+                    // silently falling back to kIdentity, which would relabel
+                    // three correlated channels as orthogonal axes without
+                    // saying so anywhere the operator can see.
+                    out.why = QString::fromStdString(nb.why);
+                    return out;
+                }
+                cfg.ortho = nb;
+                // The one moment a basis comes into existence. Writing here
+                // rather than from the caller is what makes "once per file"
+                // structural instead of something a flag has to remember.
+                if (!cfg.basisCsvPath.empty()) {
+                    std::string bwhy;
+                    if (!vcg::writeBasisCsv(cfg.ortho, cfg.basisCsvPath,
+                        cfg.basisCsvSubject, bwhy))
+                        fprintf(stderr, "[vcg] basis CSV failed: %s\n", bwhy.c_str());
+                    else
+                        fprintf(stderr, "[vcg] wrote %s\n", cfg.basisCsvPath.c_str());
+                }
+            }
+            mat = cfg.ortho.mat;
+
+            // The basis was derived from mean-removed data, so project the same
+            // quantity: leaving the mean in adds a DC offset along whichever
+            // axes it happens to project onto, which the basis never saw and
+            // the sign convention was not measured against.
+            for (int c = 0; c < 3; ++c)
+                for (int i = 0; i < n; ++i) lane[c][i] -= cfg.ortho.mean[c];
+        }
+
+        // ------------------------------------------------------------------
         // Transform
         // ------------------------------------------------------------------
-        const std::vector<const std::vector<double>*> chans{ &lane[0], &lane[1], &lane[2] };
-        const vcg::VcgResult xyz = vcg::reconstructVCG(chans, cfg.matrix);
+        const vcg::VcgResult xyz = vcg::reconstructVCG(chans, mat);
         if (!xyz.valid) {
             out.why = QString::fromStdString(xyz.why);
             return out;
         }
-        out.basisName = QString("%1 / %2")
-            .arg(QString::fromUtf8(xyz.basisName))
-            .arg(QString::fromUtf8(vcg::derivedLeadName(cfg.derived)));
+        if (cfg.basis == Config::Basis::SvdOrthogonal) {
+            out.basisName = QString("%1  %2  (planarity %3)")
+                .arg(QString::fromStdString(cfg.ortho.label))
+                .arg(QString::fromUtf8(vcg::orthoAxisName(cfg.derived)))
+                .arg(cfg.ortho.planarity(), 0, 'f', 3);
+        }
+        else {
+            out.basisName = QString("%1 / %2")
+                .arg(QString::fromUtf8(xyz.basisName))
+                .arg(QString::fromUtf8(vcg::derivedLeadName(cfg.derived)));
+        }
 
         // ------------------------------------------------------------------
         // Flatten to the single markable trace
@@ -204,12 +287,23 @@ namespace vcg_lead {
      *        Returns false and leaves the destinations untouched on failure,
      *        so a stale-but-valid lead is never half-overwritten by a failed
      *        rebuild.
+     *
+     * @param cfg  NON-CONST: the SVD basis is cached here on the first chunk
+     *             and reused for the rest of the file. The caller must clear
+     *             it when a NEW FILE is opened --
+     *                 cfg.ortho = vcg::OrthoBasis{};
+     *                 cfg.orthoAcc.reset();
+     *             -- and must NOT clear it on a chunk load. Clearing per chunk
+     *             is the failure mode this cache exists to prevent: the derived
+     *             lead would silently change meaning under the operator's
+     *             existing annotations. Carrying it across files is the other
+     *             direction of the same bug.
      */
     inline bool rebuild(const QVector<QPointF>& e1,
         const QVector<QPointF>& e2,
         const QVector<QPointF>& e3,
         int upsampledLen,
-        const Config& cfg,
+        Config& cfg,
         QVector<double>& dstUpsampled,
         QVector<QPointF>& dstRaw,
         QString& status) {

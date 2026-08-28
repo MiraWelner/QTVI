@@ -57,6 +57,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -251,6 +252,21 @@ namespace five_category_output {
         BinResult out;
         if (beats.empty()) return out;
 
+        // ---- TEMPORARY INSTRUMENTATION --------------------------------
+        // This is the phase that runs between [fast-phases] and the
+        // "five-category output:" line, i.e. where the freeze is.
+        using fc_clk = std::chrono::steady_clock;
+        auto fc_prev = fc_clk::now();
+        const auto fc_t0 = fc_prev;
+        auto fc_lap = [&fc_prev, binIndex](const char* what) {
+            const auto now = fc_clk::now();
+            std::fprintf(stderr, "    [5cat bin %d] %-22s %7lld ms\n", binIndex, what,
+                (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - fc_prev).count());
+            std::fflush(stderr);
+            fc_prev = now;
+            };
+
         const double medRr = medianOf(rrMs);
         const SliceGeometry geo = geometryOf(tmplRaw, medRr);
 
@@ -276,27 +292,41 @@ namespace five_category_output {
         if (out.bank.size() == 0 && !beats.empty())
             out.bank = beatcls::seedBank(beats[0], qrsLo, qrsHi);
 
+        fc_lap("seedBank");
+
         std::vector<int> templateId(beats.size(), -1);
         for (std::size_t i = 0; i < beats.size(); ++i)
             templateId[i] = assignToTemplate(beats[i], out.bank);
+        fc_lap("assignToTemplate xN");
 
-        // Label templates by class, as 4.6 says an operator would: the wide
-        // ones are ventricular. The threshold is RELATIVE to the bin's own
-        // narrowest template, because a heart-rate-proportional slice truncates
-        // a broad complex at a short RR and the same morphology then measures
-        // narrower at a faster rate.
-        // Boundaries once per beat, not once per pass. buildSegments runs the
-        // wave detectors over the whole slice; it was being called twice per
-        // beat here and a third time in envelope_output, for an answer that
-        // cannot change between calls.
+        // Boundaries from the TEMPLATE, once, shared by every beat in the bin.
+        //
+        // buildSegments runs four transitionAnchor fits (three candidate models
+        // each, BIC-selected, 50 Newton iterations in the sigmoid), which costs
+        // 13-15 ms. Per beat that was 92% of this whole phase -- ~166 s for
+        // 11.5k beats. Every beat here sits on the template's axis: geo.rCol
+        // comes from geometryOf(tmplRaw, ...) and the slice geometry puts each
+        // beat's R at that column by construction. So the windows are the same
+        // windows, and a sub-sample model fit per individual noisy beat is
+        // template-grade work on beat-grade data.
+        //
+        // It is also the more defensible measurement: the per-beat SQI compares
+        // beats against each other, and fixed windows are what make those
+        // numbers comparable.
         std::vector<Segments> segOf(beats.size());
-        for (std::size_t i = 0; i < beats.size(); ++i)
-            segOf[i] = buildSegments(beats[i], geo.rCol, geo.sliceFs);
+        {
+            const Segments shared = tmplRaw.ecgTemplate.empty()
+                ? buildSegments(beats[0], geo.rCol, geo.sliceFs)
+                : buildSegments(tmplRaw.ecgTemplate, geo.rCol, geo.sliceFs);
+            std::fill(segOf.begin(), segOf.end(), shared);
+        }
+        fc_lap("buildSegments xN");
 
         // Every assignment above marked its template's corridor dirty rather
         // than rebuilding it; rebuild them now, once, before the only consumer
         // (scoreAgainstTemplate, below) reads them.
         beatcls::refreshEnvs(out.bank);
+        fc_lap("refreshEnvs");
 
         out.templateWidthMs.assign(static_cast<std::size_t>(out.bank.size()), kNaN);
         {
@@ -327,6 +357,8 @@ namespace five_category_output {
                     wide ? BeatClass::PVC_A : BeatClass::SINUS);
             }
         }
+
+        fc_lap("template widths/labels");
 
         // ---- five-category classification (4.5) -------------------------
         std::vector<beatcls::BeatVerdict> verdicts(beats.size());
@@ -395,6 +427,7 @@ namespace five_category_output {
 
             verdicts[i] = beatcls::classifyBeat(e);
         }
+        fc_lap("SQI+bandmatch+classify xN");
 
         out.report = beatcls::summarizeBin(verdicts);
 
@@ -436,6 +469,12 @@ namespace five_category_output {
             else if (r.flag == RhythmFlag::VOTED_PVC) ++out.nVoted;
             out.rows.push_back(std::move(r));
         }
+        fc_lap("rows xN");
+        std::fprintf(stderr, "    [5cat bin %d] %zu beats, TOTAL %lld ms\n",
+            binIndex, beats.size(),
+            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                fc_clk::now() - fc_t0).count());
+        std::fflush(stderr);
         return out;
     }
 
@@ -490,6 +529,8 @@ namespace five_category_output {
         int nRhythmMissing = 0;
         std::vector<BinResult> results;
         results.reserve(nBins);
+        // ---- TEMPORARY INSTRUMENTATION ------------------------------------
+        const auto fc_all0 = std::chrono::steady_clock::now();
         for (std::size_t b = 0; b < nBins; ++b) {
             if (b < beats.bad_segment.size() && beats.bad_segment[b]) {
                 results.push_back(BinResult{});
@@ -526,6 +567,10 @@ namespace five_category_output {
             results.push_back(runBin(bb, rr, rh, tmpl.bins[b].*src.raw,
                 tmpl.bins[b].*src.absval, static_cast<int>(b)));
         }
+        std::fprintf(stderr, "[5cat] all bins: %lld ms\n",
+            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - fc_all0).count());
+        std::fflush(stderr);
 
         const std::string base = dir + "/" + stem;
         int nBeats = 0, nSub = 0;

@@ -51,7 +51,7 @@
 // planarity and variability ratios are dimensionless.
 //
 
-#include "vcg.hpp"
+#include "noise_marking_gui/vcg.hpp"
 #include "global_intervals.hpp"
 
 #include <algorithm>
@@ -301,31 +301,23 @@ namespace vcg_avg {
         }
         for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) C[r][c] /= (cnt - 1);
 
-        for (int sweep = 0; sweep < 32; ++sweep) {
-            const double off = std::fabs(C[0][1]) + std::fabs(C[0][2]) + std::fabs(C[1][2]);
-            if (off < 1e-15) break;
-            for (int p = 0; p < 2; ++p) for (int q = p + 1; q < 3; ++q) {
-                if (std::fabs(C[p][q]) < 1e-18) continue;
-                const double th = 0.5 * std::atan2(2.0 * C[p][q], C[q][q] - C[p][p]);
-                const double cs = std::cos(th), sn = std::sin(th);
-                for (int k = 0; k < 3; ++k) {
-                    const double akp = C[k][p], akq = C[k][q];
-                    C[k][p] = cs * akp - sn * akq; C[k][q] = sn * akp + cs * akq;
-                }
-                for (int k = 0; k < 3; ++k) {
-                    const double apk = C[p][k], aqk = C[q][k];
-                    C[p][k] = cs * apk - sn * aqk; C[q][k] = sn * apk + cs * aqk;
-                }
-            }
-        }
+        // Shared with the basis derivation in vcg.hpp rather than swept here:
+        // this file used to carry its own copy of the same Jacobi iteration,
+        // whose convergence test was absolute (off < 1e-15). Loop covariances
+        // are in mV^2 and routinely land near that threshold, so the sweep
+        // could stop before converging on exactly the small-amplitude loops
+        // whose planarity is most in question. symmetricEigen3 tests relative
+        // to the diagonal, which is scale-free. Eigenvectors are returned but
+        // unused: only the spread magnitudes matter here.
+        double ev[3], evec[3][3];
+        vcg::symmetricEigen3(C, ev, evec);
+        (void)evec;
         // A covariance matrix is positive semi-definite, so a negative
         // eigenvalue here is Jacobi round-off on a degenerate (flat or
         // collinear) loop -- around -1e-18 in practice. Clamped at zero:
         // otherwise the planarity ratio comes out slightly negative, which
         // reads as a nonsensical measurement rather than "perfectly planar".
-        double ev[3] = { std::max(0.0, C[0][0]),
-                         std::max(0.0, C[1][1]),
-                         std::max(0.0, C[2][2]) };
+        for (int k = 0; k < 3; ++k) ev[k] = std::max(0.0, ev[k]);
         std::sort(ev, ev + 3, std::greater<double>());
         for (int k = 0; k < 3; ++k) out.lambda[k] = ev[k];
         out.nPts = cnt;

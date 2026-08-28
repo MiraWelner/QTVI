@@ -105,26 +105,28 @@ void noise_marking_gui::clearStartMarker(ChannelMarkingState& state) {
     }
 }
 
-void noise_marking_gui::showStartMarker(QChartView* cv, double xValue,
-    ChannelMarkingState& state, const QColor& color, QPushButton* stopBtn)
-{
+void noise_marking_gui::showStartMarker(QChartView* cv, double xValue,  ChannelMarkingState& state, const QColor& color, QPushButton* stopBtn){
+    //Draws the dashed vertical line marking a click-click span's start on one channel's chart; no-op if that chart has no axes yet.
     clearStartMarker(state);
+    if (!cv || !cv->chart()) return;
+    const auto vAxes = cv->chart()->axes(Qt::Vertical);
+    const auto hAxes = cv->chart()->axes(Qt::Horizontal);
+    if (vAxes.isEmpty() || hAxes.isEmpty()) return;
+    auto* yAxis = qobject_cast<QValueAxis*>(vAxes.first());
+    if (!yAxis) return;
+
     state.startMarkerLine = new QLineSeries();
     state.startMarkerLine->setPen(QPen(color, 2, Qt::DashLine));
-
-    auto* yAxis = qobject_cast<QValueAxis*>(cv->chart()->axes(Qt::Vertical).first());
     state.startMarkerLine->append(xValue, yAxis->min());
     state.startMarkerLine->append(xValue, yAxis->max());
 
     cv->chart()->addSeries(state.startMarkerLine);
-    state.startMarkerLine->attachAxis(cv->chart()->axes(Qt::Horizontal).first());
+    state.startMarkerLine->attachAxis(hAxes.first());
     state.startMarkerLine->attachAxis(yAxis);
     if (stopBtn) stopBtn->setEnabled(true);
 }
 
-void noise_marking_gui::updateDragPreview(QChartView* cv, double x0, double x1,
-    const QColor& color)
-{
+void noise_marking_gui::updateDragPreview(QChartView* cv, double x0, double x1, const QColor& color){
     if (!cv || !cv->chart()) return;
     auto vAxes = cv->chart()->axes(Qt::Vertical);
     auto hAxes = cv->chart()->axes(Qt::Horizontal);
