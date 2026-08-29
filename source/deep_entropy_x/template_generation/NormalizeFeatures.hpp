@@ -30,6 +30,9 @@ The PPG Normalization algorithm is as follows:
 #include <cstdint>
 #include <limits>
 #include <vector>
+#include <utility>
+#include <string>
+#include <fstream>
 
 namespace normalize_features {
 
@@ -601,6 +604,188 @@ namespace normalize_features {
         out.sufficient = out.nExpected > 0
             && static_cast<double>(out.beats.size()) >= 0.5 * out.nExpected;
         return out;
+    }
+
+    // ==================================================================
+    // Length / area / volume TIME SERIES over segmented beats (5.5)
+    // ==================================================================
+    // The final assembly the spec's "Build the length, area, and volume
+    // time series for each feature" clause asks for: given beats already
+    // segmented by segment_beats_proportional (0.25/0.75 RR, PQ-zeroed),
+    // compute the three per-segment measures on EACH beat's feature window,
+    // producing one value per beat in time order -- i.e. how that feature's
+    // morphology evolves across the record, rather than collapsed to a
+    // single template.
+    //
+    // Feature window = the QRS complex (Q-onset -> J-point), auto-detected
+    // per beat with the same FeatureMarks detectors segment_beats_
+    // proportional already uses for its PQ zero. length and area are
+    // PER CHANNEL. volume is inherently 3-lead (segment_volume integrates
+    // the vector magnitude), so it needs all three channels segmented from
+    // the SAME R-peaks -- pass the three ProportionalBeatSets and it uses
+    // the beats at matching indices, sampled at matching R-relative offsets.
+    //
+    // NaN entries mark beats where the QRS window couldn't be located (or,
+    // for volume, where the three beats' windows didn't overlap) -- the
+    // series stays index-aligned with the input beats rather than silently
+    // shrinking, so a caller can still line each value up with its beat.
+    struct FeatureTimeSeries {
+        std::vector<double> length;   // per beat, over that beat's QRS window
+        std::vector<double> area;     // per beat
+        std::vector<double> volume;   // per beat, 3-lead (empty if <3 channels given)
+        bool sufficient = false;      // carried through from the segmentation gate
+    };
+
+    // Locate a beat's QRS window [q_onset, j_point] in its own local
+    // coordinates (rCol is R). Returns {-1,-1} if either landmark is
+    // unavailable, which the callers treat as "skip this beat" (NaN).
+    inline std::pair<int, int> qrs_window_of(const ProportionalBeat& pb, double fs) {
+        if (pb.rCol < 0 || pb.samples.empty() || !(fs > 0.0)) return { -1, -1 };
+        const double qOnsetD = FeatureMarks::compute_q_onset(pb.samples, fs, pb.rCol);
+        const double jPointD = FeatureMarks::compute_j_point(pb.samples, fs, pb.rCol);
+        if (std::isnan(qOnsetD) || std::isnan(jPointD)) return { -1, -1 };
+        const int lo = static_cast<int>(std::lround(qOnsetD));
+        const int hi = static_cast<int>(std::lround(jPointD));
+        if (hi <= lo) return { -1, -1 };
+        return { lo, hi };
+    }
+
+    // Single-channel: length + area series (volume left empty). Use when
+    // only one lead is available or wanted.
+    inline FeatureTimeSeries build_feature_time_series(
+        const ProportionalBeatSet& beats, double fs)
+    {
+        FeatureTimeSeries out;
+        out.sufficient = beats.sufficient;
+        out.length.reserve(beats.beats.size());
+        out.area.reserve(beats.beats.size());
+        for (const ProportionalBeat& pb : beats.beats) {
+            const auto [lo, hi] = qrs_window_of(pb, fs);
+            if (lo < 0) {
+                out.length.push_back(std::nan(""));
+                out.area.push_back(std::nan(""));
+                continue;
+            }
+            out.length.push_back(segment_length(pb.samples, lo, hi));
+            out.area.push_back(segment_area(pb.samples, lo, hi, /*absolute=*/true));
+        }
+        return out;
+    }
+
+    // Three-channel: length + area (from ch1, the reference lead) AND the
+    // 3-lead volume series. The three sets MUST be segmented from the same
+    // R-peaks (so beats at index i correspond and share an rCol); volume
+    // integrates the vector magnitude over ch1's QRS window, sampled at the
+    // same R-relative offset in each channel's beat.
+    inline FeatureTimeSeries build_feature_time_series_3ch(
+        const ProportionalBeatSet& ch1, const ProportionalBeatSet& ch2,
+        const ProportionalBeatSet& ch3, double fs)
+    {
+        FeatureTimeSeries out;
+        out.sufficient = ch1.sufficient;
+        const size_t n = std::min({ ch1.beats.size(), ch2.beats.size(), ch3.beats.size() });
+        out.length.reserve(n);
+        out.area.reserve(n);
+        out.volume.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            const ProportionalBeat& b1 = ch1.beats[i];
+            const auto [lo, hi] = qrs_window_of(b1, fs);
+            if (lo < 0) {
+                out.length.push_back(std::nan(""));
+                out.area.push_back(std::nan(""));
+                out.volume.push_back(std::nan(""));
+                continue;
+            }
+            out.length.push_back(segment_length(b1.samples, lo, hi));
+            out.area.push_back(segment_area(b1.samples, lo, hi, /*absolute=*/true));
+
+            // Re-register ch2/ch3 onto ch1's R column so the window's sample
+            // offsets line up across leads: shift each so its rCol sits at
+            // b1.rCol, then integrate the magnitude over [lo, hi]. A beat
+            // whose window falls outside a channel's samples contributes NaN
+            // there and segment_volume skips it.
+            auto shifted = [&](const ProportionalBeatSet& set) {
+                std::vector<double> v(b1.samples.size(), std::nan(""));
+                if (i >= set.beats.size()) return v;
+                const ProportionalBeat& b = set.beats[i];
+                const int delta = b1.rCol - b.rCol;   // map b's rCol -> b1's rCol
+                for (int k = 0; k < static_cast<int>(b.samples.size()); ++k) {
+                    const int dst = k + delta;
+                    if (dst >= 0 && dst < static_cast<int>(v.size())) v[dst] = b.samples[k];
+                }
+                return v;
+                };
+            const std::vector<double> v2 = shifted(ch2);
+            const std::vector<double> v3 = shifted(ch3);
+            out.volume.push_back(segment_volume(b1.samples, v2, v3, lo, hi));
+        }
+        return out;
+    }
+
+    // ==================================================================
+    // Length / area / volume time-series CSV (5.5), from raw per-bin data
+    // ==================================================================
+    // Runs the full 0.25/0.75-RR proportional segmentation + PQ-zero +
+    // length/area/volume triad on the ACTUAL raw per-channel ECG and its
+    // detected R-peaks (output_binfile_data), one row per (bin, channel,
+    // beat). This is the concrete, testable output for the spec clause
+    // "Build the length, area, and volume time series for each feature".
+    //
+    // Volume is 3-lead, so it is written on the ch1 row of each beat (the
+    // channels are segmented from their own R-peaks and co-registered on R
+    // inside build_feature_time_series_3ch); ch2/ch3 rows leave volume
+    // blank. `sufficient` (the >=50%-expected-beats gate) is written per
+    // (bin, channel) so a reader can drop under-sampled bins.
+    //
+    // `Bins` is any range of output_binfile_data (e.g. job.peakResults):
+    // needs .ecgSignal/.ecgSignal2/.ecgSignal3 and .ch1/.ch2/.ch3.raw.
+    template <class Bins>
+    inline bool writeFeatureTimeSeriesCsv(const std::string& path,
+        const std::string& subjectId, const Bins& bins, double ecgFs)
+    {
+        std::ofstream f(path, std::ios::trunc);
+        if (!f) return false;
+        f << "subject_id,bin_index,channel,beat_index,rr_len,pq_baseline,"
+            "sufficient,qrs_length,qrs_area,qrs_volume\n";
+        f.setf(std::ios::fixed);
+        f.precision(6);
+
+        auto num = [&](double v) { return std::isnan(v) ? std::string("") : std::to_string(v); };
+
+        int bi = 0;
+        for (const auto& b : bins) {
+            const std::vector<double>* sig[3] =
+            { &b.ecgSignal, &b.ecgSignal2, &b.ecgSignal3 };
+            const std::vector<std::size_t>* rp[3] =
+            { &b.ch1.raw, &b.ch2.raw, &b.ch3.raw };
+
+            normalize_features::ProportionalBeatSet segs[3];
+            for (int c = 0; c < 3; ++c)
+                segs[c] = normalize_features::segment_beats_proportional(*sig[c], *rp[c], ecgFs);
+
+            // 3-lead series (length/area from ch1 + cross-lead volume), plus
+            // per-channel length/area for ch2/ch3 from their own segments.
+            const normalize_features::FeatureTimeSeries ts3 =
+                normalize_features::build_feature_time_series_3ch(segs[0], segs[1], segs[2], ecgFs);
+            normalize_features::FeatureTimeSeries perCh[3];
+            for (int c = 0; c < 3; ++c)
+                perCh[c] = normalize_features::build_feature_time_series(segs[c], ecgFs);
+
+            for (int c = 0; c < 3; ++c) {
+                const auto& seg = segs[c];
+                for (size_t k = 0; k < seg.beats.size(); ++k) {
+                    const double len = (k < perCh[c].length.size()) ? perCh[c].length[k] : std::nan("");
+                    const double area = (k < perCh[c].area.size()) ? perCh[c].area[k] : std::nan("");
+                    const double vol = (c == 0 && k < ts3.volume.size()) ? ts3.volume[k] : std::nan("");
+                    f << subjectId << ',' << bi << ",CH" << (c + 1) << ',' << k << ','
+                        << seg.beats[k].rrLen << ',' << num(seg.beats[k].pqBaseline) << ','
+                        << (seg.sufficient ? 1 : 0) << ','
+                        << num(len) << ',' << num(area) << ',' << num(vol) << '\n';
+                }
+            }
+            ++bi;
+        }
+        return static_cast<bool>(f);
     }
 
 }   // namespace normalize_features

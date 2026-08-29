@@ -16,6 +16,7 @@
 #include <QFileInfo>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <fstream>
 #include <sstream>
 #include <QFile>
@@ -456,6 +457,127 @@ void TemplateViewerWindow::computeGlobalRefs() {
             m_bins, c, m_sampleRate);
     for (int c = 0; c < 4; ++c) {
         m_pulseGlobalRef[c] = normalize_features::compute_pulse_global_ref(m_bins, c);
+    }
+
+    // ---- Sections 5.2-5.4: CV check + ratio/percentile normalization -----
+    // Runs HERE because this is the one place TemplateBin data and a global
+    // ref coexist (compute_ecg_global_ref itself is called just above). The
+    // functions live in NormalizeFeatures.hpp; this drives them on real
+    // per-bin data and persists the results.
+    //
+    // Decisions the spec left open, made explicit (override as needed):
+    //  - Reference FEATURE = per-bin |R|+|S| (Option A's own basis), so the
+    //    ratio and its reference are the same quantity. Computed per channel.
+    //  - GLOBAL REF = all three options (A=|R|+|S|, B=QRS area, C=spatial)
+    //    are written side by side rather than picking one; the ratio/pct
+    //    columns use Option A to stay consistent with the reference feature.
+    //  - p2/p98 for pct_scale come from THIS subject's own distribution of
+    //    the per-bin ratio (per channel), matching the acceptance criterion
+    //    "2nd and 98th percentiles at the extremes".
+    if (!m_normOutputPath.isEmpty())
+        writeNormalizationCsvs();
+}
+
+// Section 5.2-5.4 persistence. Split out of computeGlobalRefs for clarity.
+void TemplateViewerWindow::writeNormalizationCsvs() {
+    const std::string subj = m_subjectId.toStdString();
+    const std::string dir = m_normOutputPath.toStdString();
+
+    // Per-channel per-bin QRS reference (|R|+|S|), parallel to m_bins, NaN
+    // for bins that don't yield one -- same extraction compute_ecg_global_ref
+    // uses internally, just retained per bin instead of reduced to a median.
+    auto perBinQrsRef = [&](int ch) {
+        std::vector<double> v(m_bins.size(), std::numeric_limits<double>::quiet_NaN());
+        for (size_t i = 0; i < m_bins.size(); ++i) {
+            const auto& b = m_bins[i];
+            if (b.bad_segment || b.bad_r_ch[ch]) continue;
+            const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
+            const auto& ecg = chs[ch]->ecgTemplate_raw;
+            if (ecg.empty()) continue;
+            const TemplateBin::MarkerSet& rmk = b.marks(AnchorType::R_PEAK);
+            EcgFeatures f = computeEcgFeatures(
+                ecg, rmk.p_peak_ch[ch], rmk.q_begin_ch[ch], b.r_peak_ch[ch],
+                rmk.s_end_ch[ch], rmk.t_end_ch[ch], m_sampleRate);
+            const double ry = normalize_features::sample_y(ecg, f.r_idx);
+            const double sy = normalize_features::sample_y(ecg, f.s_idx);
+            if (std::isnan(ry) || std::isnan(sy)) continue;
+            v[i] = std::abs(ry) + std::abs(sy);
+        }
+        return v;
+        };
+
+    // ---- cv_check.csv : one row per (channel, bin) ----------------------
+    // global_ref repeated per row (constant within a channel); cv_flag is
+    // the per-channel record-level flag, also repeated. This is exactly the
+    // long format the acceptance test reads.
+    {
+        std::ofstream f(dir + "/" + subj + "_cv_check.csv", std::ios::trunc);
+        if (f) {
+            f << "subject_id,channel,bin_index,qrs_ref_value,"
+                "global_ref_A,global_ref_B,global_ref_C,cv_flag\n";
+            for (int ch = 0; ch < 3; ++ch) {
+                const std::vector<double> qref = perBinQrsRef(ch);
+                const double grefA = normalize_features::compute_ecg_global_ref(m_bins, ch, m_sampleRate);
+                const double grefB = normalize_features::compute_ecg_global_ref_area(m_bins, ch, m_sampleRate);
+                const double grefC = normalize_features::compute_ecg_global_ref_spatial(m_bins);
+                const bool flag = normalize_features::cv_flag(qref, grefA);
+                for (size_t i = 0; i < qref.size(); ++i) {
+                    f << subj << ",CH" << (ch + 1) << ',' << i << ',';
+                    if (!std::isnan(qref[i])) f << qref[i];
+                    f << ',';
+                    if (!std::isnan(grefA)) f << grefA; f << ',';
+                    if (!std::isnan(grefB)) f << grefB; f << ',';
+                    if (!std::isnan(grefC)) f << grefC; f << ',';
+                    f << (flag ? 1 : 0) << '\n';
+                }
+            }
+        }
+    }
+
+    // ---- feature_norm.csv : one row per (channel, bin) ------------------
+    // ratio = ratio_norm(qrsRef, grefA); feature_norm = pct_scale against
+    // this channel's own p2/p98 of the finite ratios. By construction the
+    // p2 and p98 rows land at 0 and 100 (clamped), which is the property the
+    // acceptance test checks.
+    {
+        std::ofstream f(dir + "/" + subj + "_feature_norm.csv", std::ios::trunc);
+        if (f) {
+            f << "subject_id,channel,bin_index,ratio,feature_norm\n";
+            for (int ch = 0; ch < 3; ++ch) {
+                const std::vector<double> qref = perBinQrsRef(ch);
+                const double grefA = normalize_features::compute_ecg_global_ref(m_bins, ch, m_sampleRate);
+
+                std::vector<double> ratios(qref.size(), std::numeric_limits<double>::quiet_NaN());
+                std::vector<double> finite;
+                for (size_t i = 0; i < qref.size(); ++i) {
+                    if (std::isnan(qref[i])) continue;
+                    ratios[i] = normalize_features::ratio_norm(qref[i], grefA);
+                    if (!std::isnan(ratios[i])) finite.push_back(ratios[i]);
+                }
+                // p2 / p98 of this channel's own ratio distribution.
+                double p2 = std::nan(""), p98 = std::nan("");
+                if (finite.size() >= 2) {
+                    std::sort(finite.begin(), finite.end());
+                    auto pctl = [&](double q) {
+                        const double idx = (q / 100.0) * (finite.size() - 1);
+                        const size_t lo = static_cast<size_t>(std::floor(idx));
+                        const size_t hi = static_cast<size_t>(std::ceil(idx));
+                        const double fr = idx - lo;
+                        return finite[lo] * (1.0 - fr) + finite[hi] * fr;
+                        };
+                    p2 = pctl(2.0);
+                    p98 = pctl(98.0);
+                }
+                for (size_t i = 0; i < ratios.size(); ++i) {
+                    f << subj << ",CH" << (ch + 1) << ',' << i << ',';
+                    if (!std::isnan(ratios[i])) f << ratios[i];
+                    f << ',';
+                    const double fn = normalize_features::pct_scale(ratios[i], p2, p98);
+                    if (!std::isnan(fn)) f << fn;
+                    f << '\n';
+                }
+            }
+        }
     }
 }
 

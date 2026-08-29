@@ -26,6 +26,11 @@ public:
         m_boundaryLog = boundary_training::BoundaryTrainingLog(dir.toStdString());
     }
     void setVcgOutputDir(const QString& dir) { m_vcgOutputPath = dir; }
+    // Where <id>_feature_norm.csv and <id>_cv_check.csv are written when
+    // computeGlobalRefs() runs. Set from cfg (bin_archive_path or a
+    // dedicated norm dir) at viewer setup, same as setVcgOutputDir. Empty =
+    // don't write.
+    void setNormOutputDir(const QString& dir) { m_normOutputPath = dir; }
 
     void loadSubject(const QString& templatePath, const QString& markingPath,
         const QString& subjectId, double sampleRateHz,
@@ -147,6 +152,7 @@ private:
     QString m_markingPath;
     QString m_templateDir;   // folder containing templates.bin/.csv (screenshot target)
     QString m_vcgOutputPath;   // cfg.vcg_output; <id>_vcg.csv lands here
+    QString m_normOutputPath;  // feature_norm / cv_check CSVs land here
     QString m_subjectId;
     double  m_sampleRate = 0.0;    // ECG rate; also feeds ECG-only feature/ms code below
     double  m_ppgRateHz = 0.0;
@@ -202,6 +208,10 @@ private:
     double m_ecgGlobalRef[3] = { std::nan(""), std::nan(""), std::nan("") };
     double m_pulseGlobalRef[4] = { std::nan(""), std::nan(""), std::nan(""), std::nan("") };
     void computeGlobalRefs();
+    // Sections 5.2-5.4: writes <id>_cv_check.csv and <id>_feature_norm.csv
+    // into m_normOutputPath. Called by computeGlobalRefs when that path is
+    // set. No-op target otherwise.
+    void writeNormalizationCsvs();
     // Copies the persisted per-bin marker fields (everything a user can
     // drag/toggle -- NOT r_peak_ch, which is always auto-derived from that
     // pass's own template r_col) from a previously-saved

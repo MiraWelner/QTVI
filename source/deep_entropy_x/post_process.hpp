@@ -334,6 +334,22 @@ namespace post_process_detail {
             else
                 std::cerr << "  [bin_archive] " << stem << ": wrote checkpoint ("
                 << job.tmpl.bins.size() << " bins)\n";
+
+            // Section 5.5 length/area/volume time series, from the SAME
+            // pre-deformation R-pass data. job.peakResults still holds the
+            // raw per-channel ECG + detected R-peaks the proportional
+            // segmenter needs (job.tmpl has only averaged templates, which
+            // can't be re-segmented), so it is computed here rather than in
+            // the viewer.
+            const std::string ftsPath =
+                cfg.bin_archive_path + "/" + stem + "_feature_timeseries.csv";
+            const bool okf = normalize_features::writeFeatureTimeSeriesCsv(
+                ftsPath, stem, job.peakResults, cfg.ecg_upsample_rate);
+            if (!okf)
+                std::cerr << "  [feature_ts] " << stem
+                << ": could not write " << ftsPath << "\n";
+            else
+                std::cerr << "  [feature_ts] " << stem << ": wrote length/area/volume series\n";
         }
         template_io::write_template_binfile(provisionalPath.string(), job.tmpl);
         job.viewerTemplatePath = provisionalPath;

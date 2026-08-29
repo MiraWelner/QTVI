@@ -154,6 +154,11 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
         // <id>_vcg.csv (and vcg_basis, if it shares this directory) landed
         // wherever the executable was launched from.
         viewer.setVcgOutputDir(QString::fromStdString(cfg.vcg_output));
+        // Sections 5.2-5.4 normalization CSVs (<id>_feature_norm.csv,
+        // <id>_cv_check.csv) land alongside the bin archive. Same
+        // "setter must actually be called or the path stays empty and
+        // nothing writes" lesson as setVcgOutputDir above.
+        viewer.setNormOutputDir(QString::fromStdString(cfg.bin_archive_path));
         // pass 0 = R (anchorStep -1); pass k>0 shows anchorSequence()[k-1].
         {
             const auto& seq = post_process_detail::anchorSequence();
@@ -293,7 +298,7 @@ int main(int argc, char* argv[]) {
     std::filesystem::create_directories(cfg.qtvi_marker_path);
     std::filesystem::create_directories(cfg.quality_metric);
     std::filesystem::create_directories(cfg.training_log);
-	std::filesystem::create_directories(cfg.bin_archive_path);
+    std::filesystem::create_directories(cfg.bin_archive_path);
 
 
     const std::vector<std::filesystem::path> binFiles = load_binfiles(cfg);
