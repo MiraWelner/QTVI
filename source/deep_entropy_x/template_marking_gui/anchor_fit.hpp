@@ -345,7 +345,7 @@ namespace anchor_fit {
     // {-2, -1, -0.5, 0(=ln), 0.5, 1, 2, 3}. Fit by linear least-squares
     // for each power pair, keep the best by RSS. 3 parameters per pair.
 
-    inline FitResult fitFractionalPolynomial(const std::vector<double>& y, int lo, int hi) {
+    inline FitResult fitFractionalPolynomial(const std::vector<double>& y, int lo, int hi, double poorRssThreshold = -1.0) {
         static const double powers[] = { -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 3.0 };
         static const int npow = 8;
 
@@ -363,15 +363,27 @@ namespace anchor_fit {
             return std::pow(t_shifted, p);
             };
 
+        // Precompute each of the 8 powers' basis vector over the window ONCE
+        // (change #3): fp_basis is a pow/log, and every power reappears in
+        // many pairs, so evaluating it per-pair repeats the same 8 vectors
+        // ~36x. basisByPow[pi][k] is fp_basis(powers[pi], k+1) for sample
+        // lo+k. The linear_ls basis lambda then just indexes into these.
+        std::vector<std::vector<double>> basisByPow(npow, std::vector<double>(n));
+        for (int pi = 0; pi < npow; ++pi)
+            for (int k = 0; k < n; ++k)
+                basisByPow[pi][k] = fp_basis(powers[pi], static_cast<double>(k) + 1.0);
+
         for (int pi = 0; pi < npow; ++pi) {
             for (int pj = pi; pj < npow; ++pj) {
                 const double p1 = powers[pi], p2 = powers[pj];
 
+                // t is a sample index in [lo, hi]; k = t - lo indexes the
+                // precomputed vectors. (Same ts = (t-lo)+1 convention as
+                // fp_basis was called with above.)
                 auto basis = [&](double t, int j) -> double {
-                    const double ts = (t - lo) + 1.0;
                     if (j == 0) return 1.0;
-                    if (j == 1) return fp_basis(p1, ts);
-                    return fp_basis(p2, ts);
+                    const int k = static_cast<int>(t) - lo;
+                    return (j == 1) ? basisByPow[pi][k] : basisByPow[pj][k];
                     };
 
                 std::vector<double> coeffs;
@@ -390,8 +402,18 @@ namespace anchor_fit {
                         return c0 + c1 * b1 + c2 * b2;
                         };
                 }
+
+                // Early-out (change #1): once a pair fits to the caller's
+                // "good enough" threshold, no later pair can change the
+                // selectAnchorModel outcome (it only accepts fp if it beats
+                // the current winner, and this already clears POOR), so stop
+                // grinding through the remaining pairs -- this is exactly the
+                // hard-landmark case that was slow.
+                if (poorRssThreshold >= 0.0 && best.rss <= poorRssThreshold)
+                    return best;
             }
         }
+        return best;
         return best;
     }
 
@@ -427,7 +449,7 @@ namespace anchor_fit {
         // Per spec: POOR = 0.05 * n (tune from clean-template residuals).
         const double POOR = POOR_FIT_FACTOR * n;
         if (best.rss > POOR) {
-            FitResult fp = fitFractionalPolynomial(y, lo, hi);
+            FitResult fp = fitFractionalPolynomial(y, lo, hi, POOR);
             if (bic(fp.rss, n, fp.nparams) < bic(best.rss, n, best.nparams))
                 best = fp;
         }

@@ -70,9 +70,31 @@ public:
     enum class PlotMode { Line, Scatter };
     void setBeatLog(beat_log* log) { m_beatLog = log; }
     bool invertedForSignal(const QString& label) const;
+    // Measures, rather than asks, which (if any) of ECG1/ECG2/ECG3 is
+    // polarity-inverted relative to the other two (Einthoven's law -- see
+    // vcg::checkLimbLeadPolarity in vcg.hpp), and PRE-SETS the corresponding
+    // ecg_N_reverse checkbox to match. The checkbox remains the visible,
+    // overridable source of truth -- invertedForSignal() and everything
+    // downstream of it still just reads whatever the checkbox says, exactly
+    // as before; this only changes what the checkbox defaults to. Leaves
+    // the checkboxes untouched (at whatever they already were) when no sign
+    // combination is consistent with limb leads at all -- forcing a "best
+    // of 8" answer onto channels this measurement cannot adjudicate would
+    // be a different kind of guess, not a fix. Call ONCE per newly opened
+    // file, on the first loaded chunk -- NOT once per chunk -- since lead
+    // polarity is a property of the recording, not of a time window.
+    void autoDetectLeadPolarity();
+    // Re-reads the live ecg_N_reverse checkbox state into m_vcgCfg, clears
+    // m_vcg/m_vcgRaw, and calls vcg_lead::rebuild(). Shared by
+    // loadChunkFromFile (runs on every chunk load) and the ecg_N_reverse
+    // toggled connection (runs on every checkbox click) -- a click must
+    // recompute the SAME way a chunk load does, not just redraw stale data.
+    // Does NOT call handle_data_plot() itself; callers that need an
+    // immediate redraw (the checkbox handler) must call it afterward.
+    void refreshVcgFromLeadFlags();
     void set_params_to_config_defaults(const config_entry& cfg) {
         m_cfg = cfg;        // Set the default values for the threshold and blanking period spinboxes based on the config entry.
-		ui->notch_filter->setEnabled(m_cfg.notch_filter_hz != 0); //enable notch filter checkbox if the config entry has a non-zero notch filter frequency
+        ui->notch_filter->setEnabled(m_cfg.notch_filter_hz != 0); //enable notch filter checkbox if the config entry has a non-zero notch filter frequency
     }
 
 protected:
@@ -251,7 +273,7 @@ private:
 
     QVector<QPointF> get_bpm(const QString& label, double& outDuration) const;
 
-	// --- VCG (vectorcardiogram) ---
+    // --- VCG (vectorcardiogram) ---
     QVector<double>      m_vcg;         // upsampled, ECG1's grid
     QVector<QPointF>     m_vcgRaw;      // (chunk-local seconds, value)
     ChannelMarkingState  mark_state_vcg;
@@ -291,5 +313,5 @@ private:
     double thresholdAt(const QString& label, double globalTime) const;
     double blankingAt(const QString& label, double globalTime) const;
 
-    
+
 };

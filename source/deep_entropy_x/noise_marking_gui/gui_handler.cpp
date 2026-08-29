@@ -12,6 +12,7 @@
 #include "logging/user_mark_log.hpp"
 #include "annotation_eraser.h"
 #include "annotation_types.hpp"
+#include <algorithm>
 
 #include <QCheckBox>
 #include <QScrollBar>
@@ -213,6 +214,71 @@ bool noise_marking_gui::invertedForSignal(const QString& label) const {
     else if (label == "ECG2") c = ui->ecg_2_reverse;
     else if (label == "ECG3") c = ui->ecg_3_reverse;
     return c && c->isChecked();   // PPG/ABP have no reverse box -> never inverted
+}
+
+void noise_marking_gui::autoDetectLeadPolarity() {
+    // Measured, not asked. Kirchhoff's voltage law gives II = I + III
+    // exactly for genuine limb leads, regardless of any shared DC offset --
+    // see vcg::checkLimbLeadPolarity's own header comment in vcg.hpp for the
+    // full reasoning (it also covers why a global flip of all three is
+    // undetectable here, and why a large residual at every one of the 8 sign
+    // combinations means "not limb leads" rather than "still wrong sign").
+    const int n = static_cast<int>(std::min({ m_ecg1.size(), m_ecg2.size(), m_ecg3.size() }));
+    if (n < 2) return;
+
+    vcg::OrthoAccumulator acc;
+    for (int i = 0; i < n; ++i) {
+        const double v[3] = { m_ecg1[i], m_ecg2[i], m_ecg3[i] };
+        acc.addSample(v);
+    }
+
+    const vcg::PolarityCheckResult pc = vcg::checkLimbLeadPolarity(acc);
+    if (!pc.consistentWithLimbLeads) {
+        // No sign combination brings the residual down -- either these
+        // three channels are not limb leads at all, or there is a
+        // magnitude/calibration mismatch a sign flip cannot fix either way.
+        // Leave the checkboxes exactly as they already were rather than
+        // force a "best of 8" answer this measurement cannot actually give.
+        return;
+    }
+
+    // Pre-set the checkbox to the measured answer. The checkbox stays the
+    // visible, overridable source of truth: invertedForSignal() (and every
+    // caller of it) still just reads whatever the checkbox says, so the
+    // operator can uncheck this immediately if it is ever wrong.
+    if (ui->ecg_1_reverse) ui->ecg_1_reverse->setChecked(pc.sign[0] < 0);
+    if (ui->ecg_2_reverse) ui->ecg_2_reverse->setChecked(pc.sign[1] < 0);
+    if (ui->ecg_3_reverse) ui->ecg_3_reverse->setChecked(pc.sign[2] < 0);
+}
+
+void noise_marking_gui::refreshVcgFromLeadFlags() {
+    // Fresh every call, per vcg_lead::rebuild()'s own docstring: a box the
+    // operator just checked (or unchecked) must withhold (or restore) the
+    // VCG on the VERY NEXT rebuild, whether that rebuild was triggered by a
+    // chunk load or by this checkbox click directly.
+    m_vcgCfg.leadFlaggedInverted[0] = invertedForSignal("ECG1");
+    m_vcgCfg.leadFlaggedInverted[1] = invertedForSignal("ECG2");
+    m_vcgCfg.leadFlaggedInverted[2] = invertedForSignal("ECG3");
+    // rebuild() leaves m_vcg/m_vcgRaw UNTOUCHED on failure (by design, so a
+    // failed rebuild can't half-overwrite a good one) -- which would
+    // otherwise leave the PREVIOUS (still-checked-out) trace on screen when
+    // this call is withheld. Clear first, so "no VCG" actually shows no VCG.
+    m_vcg.clear();
+    m_vcgRaw.clear();
+    vcg_lead::rebuild(m_ecg1Raw, m_ecg2Raw, m_ecg3Raw,
+        m_ecg1.size(), m_vcgCfg, m_vcg, m_vcgRaw, m_vcgStatus);
+
+    // markActive's chart-visibility half (loadChunkFromFile's own
+    // markActive lambda isn't reachable from here). Without this, the
+    // series data gets wiped on the next handle_data_plot(), but the VCG
+    // CHART VIEW WIDGET's setVisible() state doesn't move until something
+    // else -- a chunk reload, a resize -- happens to touch it, which is
+    // exactly the "goes away eventually, needs a resize" symptom. Setting
+    // it here, synchronously with the data clear, removes that lag.
+    const bool missing = is_missing_signal(m_vcg);
+    if (auto* cv = chartViewForSignalLabel("VCG")) cv->setVisible(!missing);
+    if (missing) m_activeChannels.remove("VCG");
+    else m_activeChannels.insert("VCG");
 }
 
 // ============================================================================
@@ -551,7 +617,10 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         });
     for (QCheckBox* c : { ui->ecg_1_reverse, ui->ecg_2_reverse, ui->ecg_3_reverse }) {
         c->setFocusPolicy(Qt::NoFocus);
-        connect(c, &QCheckBox::toggled, this, [this](bool) { handle_data_plot(); });
+        connect(c, &QCheckBox::toggled, this, [this](bool) {
+            refreshVcgFromLeadFlags();   // recompute -- handle_data_plot() alone only redraws
+            handle_data_plot();
+            });
     }
 
     // Flush the beat log to disk every 30 s: merge the pending buffer into
@@ -587,7 +656,7 @@ GenExcStruct noise_marking_gui::getMarkings() const {
 }
 
 QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
-	//get all markings - both annotations and threshold/invert overrides
+    //get all markings - both annotations and threshold/invert overrides
     QMap<QString, GenExcStruct> all = m_fileMarkings;
     GenExcStruct current = m_genExc;
     current.filePath = m_binFilePath;

@@ -316,8 +316,9 @@ namespace vcg {
     // mean the same linear combination in the next chunk, or the mark refers to a
     // signal that no longer exists.
     //
-    //   Sign: fixed by convention -- each axis is flipped so its dominant
-    //         deflection is positive, which also keeps R upright for the detector.
+    //   Sign: fixed by convention -- each axis is flipped so it correlates
+    //         positively with the sum of the three leads over the whole
+    //         trace, which also keeps R generally upright for the detector.
     //         See fixSigns().
     //   Order: unstable when two singular values are close. degeneracy() reports
     //         the separation; alignTo() locks a new basis onto a previous one by
@@ -456,9 +457,35 @@ namespace vcg {
         std::ofstream f(path, std::ios::trunc);
         if (!f) { why = "cannot open " + path; return false; }
 
+        // Einthoven's triangle closure check: for genuine limb leads
+        // (ECG1=I, ECG2=II, ECG3=III), III is defined as II - I, so
+        // L3 - (L2 - L1) should be ~0 at the DC level. Computed from the
+        // SAME per-channel means (b.mean[]) the basis itself was built from
+        // (OrthoAccumulator::finish()'s mean over every instant with all
+        // three channels present).
+        //
+        // The common-mode pedestal (the three channels' shared average) is
+        // removed FIRST. Without that, a raw ADC-count offset that is nearly
+        // IDENTICAL across all three channels (e.g. an unsigned ADC's
+        // half-scale zero, un-converted to calibrated mV) mostly cancels
+        // between L2 and L1 but leaves one uncancelled copy behind in L3 --
+        // so the "closure" reads as roughly the pedestal itself (thousands)
+        // instead of the genuine cross-lead residual (a fraction of a unit).
+        // Subtracting the common mode from each channel first cancels that
+        // shared pedestal exactly, leaving only the actual Einthoven-law
+        // violation, whatever preprocessing produced it.
+        //
+        // A single basis-wide scalar, so it is repeated on every row, the
+        // same convention n_instants and planarity_s3_over_s1 already use.
+        const double commonMode = (b.mean[0] + b.mean[1] + b.mean[2]) / 3.0;
+        const double l1 = b.mean[0] - commonMode;
+        const double l2 = b.mean[1] - commonMode;
+        const double l3 = b.mean[2] - commonMode;
+        const double einthovenClosure = l3 - (l2 - l1);
+
         f << "subject,axis,ecg1_coeff,ecg2_coeff,ecg3_coeff,"
             "singular_value,rms_per_sample,mean_removed,"
-            "n_instants,planarity_s3_over_s1\n";
+            "n_instants,planarity_s3_over_s1,l3_minus_l2_minus_l1\n";
         f.setf(std::ios::fixed);
         f.precision(9);
         // sigma is the singular value of the CENTRED matrix, so it scales with
@@ -471,7 +498,8 @@ namespace vcg {
             f << subject << ",PC" << (k + 1) << ','
             << b.mat.m[k][0] << ',' << b.mat.m[k][1] << ',' << b.mat.m[k][2] << ','
             << b.sigma[k] << ',' << (b.sigma[k] / rootN) << ','
-            << b.mean[k] << ',' << b.nUsed << ',' << b.planarity() << '\n';
+            << b.mean[k] << ',' << b.nUsed << ',' << b.planarity() << ','
+            << einthovenClosure << '\n';
         return static_cast<bool>(f);
     }
 
@@ -584,19 +612,126 @@ namespace vcg {
     };
 
     /**
+     * @brief Measures, rather than asks, whether the three recorded leads
+     *        are consistent with limb leads (ECG1=I, ECG2=II, ECG3=III) and,
+     *        if so, which (if any) is polarity-inverted.
+     *
+     *        Kirchhoff's voltage law gives II = I + III exactly for genuine
+     *        limb leads, i.e. L3 - (L2 - L1) = 0, REGARDLESS of any shared DC
+     *        offset -- it is already a property of differences of electrode
+     *        potentials. A single inverted lead breaks that identity. Trying
+     *        every one of the 2^3 = 8 sign combinations and keeping the one
+     *        with the smallest residual finds exactly which lead(s), if any,
+     *        need flipping -- a measurement, not a checkbox.
+     *
+     *        If even the BEST of the 8 combinations has a large residual,
+     *        the three channels are not limb leads at all (e.g. one is a
+     *        precordial lead), or have a magnitude/calibration mismatch a
+     *        sign flip cannot fix -- no sign flip corrects a wrong lead SET
+     *        or a wrong per-channel GAIN, only a wrong lead SIGN.
+     *
+     *        A global flip of all three signs leaves the residual unchanged
+     *        (it cancels algebraically), so this cannot detect "all three
+     *        inverted together" -- that is a separate, harmless convention
+     *        question fixSigns() already handles.
+     *
+     *        Uses only the covariance the SVD basis already accumulates (no
+     *        second pass over the raw samples, and callable on the SAME
+     *        OrthoAccumulator mid-accumulation): the RMS residual for signs
+     *        (s1,s2,s3) is sqrt(w^T * Cov * w) with w = (s1, -s2, s3), since
+     *        residual(t) = s1*L1(t) - s2*L2(t) + s3*L3(t). This is the AC
+     *        content only (the covariance is already mean-removed) -- the
+     *        DC-level equivalent of this same check is the
+     *        l3_minus_l2_minus_l1 column writeBasisCsv
+     *        already writes.
+     *
+     * @param thresh  Normalized-residual cutoff below which the leads are
+     *                declared consistent with limb leads. 0.1 is a starting
+     *                point, not a validated clinical threshold.
+     */
+    struct PolarityCheckResult {
+        int    sign[3] = { 1, 1, 1 };   ///< best combination found: {ECG1, ECG2, ECG3}; -1 = should be inverted
+        double normalizedResidual = std::numeric_limits<double>::quiet_NaN();  ///< for the best combination
+        bool   consistentWithLimbLeads = false;
+        std::string why;                ///< populated when the check could not run at all
+    };
+
+    inline PolarityCheckResult checkLimbLeadPolarity(const OrthoAccumulator& acc, double thresh = 0.10) {
+        PolarityCheckResult out;
+        if (acc.n < 2) { out.why = "fewer than 2 accumulated instants"; return out; }
+
+        const double inv = 1.0 / static_cast<double>(acc.n);
+        double mean[3];
+        for (int i = 0; i < 3; ++i) mean[i] = acc.s1[i] * inv;
+
+        const double invDof = 1.0 / static_cast<double>(acc.n - 1);
+        double cov[3][3];
+        for (int i = 0; i < 3; ++i)
+            for (int j = i; j < 3; ++j) {
+                const double c = (acc.s2[i][j] - static_cast<double>(acc.n) * mean[i] * mean[j]) * invDof;
+                cov[i][j] = c;
+                cov[j][i] = c;
+            }
+
+        const double totalVar = cov[0][0] + cov[1][1] + cov[2][2];
+        if (!(totalVar > 0.0)) { out.why = "channels are flat (zero variance)"; return out; }
+
+        out.normalizedResidual = std::numeric_limits<double>::infinity();
+        for (int s1 = -1; s1 <= 1; s1 += 2)
+            for (int s2 = -1; s2 <= 1; s2 += 2)
+                for (int s3 = -1; s3 <= 1; s3 += 2) {
+                    const double w[3] = { static_cast<double>(s1), static_cast<double>(-s2), static_cast<double>(s3) };
+                    double var = 0.0;
+                    for (int i = 0; i < 3; ++i)
+                        for (int j = 0; j < 3; ++j)
+                            var += w[i] * w[j] * cov[i][j];
+                    const double normalized = std::sqrt(std::max(0.0, var) / totalVar);
+                    if (normalized < out.normalizedResidual) {
+                        out.normalizedResidual = normalized;
+                        out.sign[0] = s1; out.sign[1] = s2; out.sign[2] = s3;
+                    }
+                }
+        out.consistentWithLimbLeads = out.normalizedResidual < thresh;
+
+        // Global negation of all three signs leaves the residual unchanged
+        // (it cancels algebraically), so the winning combination is only
+        // ever meaningful up to that symmetry. Report whichever of the two
+        // equivalent representatives has fewer negative signs (always 0 or
+        // 1 -- every combo and its global flip have negative-counts that
+        // sum to 3, so the smaller of the pair is always <= 1), so the
+        // result reads as "at most one lead is inverted" rather than an
+        // arbitrary tie-break between two equally-valid descriptions of the
+        // same finding.
+        const int nNeg = (out.sign[0] < 0) + (out.sign[1] < 0) + (out.sign[2] < 0);
+        if (nNeg > 1)
+            for (int i = 0; i < 3; ++i) out.sign[i] = -out.sign[i];
+
+        return out;
+    }
+
+    /**
      * @brief Apply the sign convention: each axis is flipped, if needed, so
-     *        that its largest excursion from the projected median is POSITIVE.
+     *        that it moves in the SAME direction as the leads it is built
+     *        from, measured over the whole trace rather than guessed from a
+     *        single extreme sample.
      *
-     *        Rationale: the largest excursion in an ECG lead is the QRS, so
-     *        this puts R upright, which is what the existing peak detector and
-     *        the operator both expect. It is a convention, not a measurement --
-     *        the SVD has no opinion about which end of an axis is "up".
+     *        There is no "correct" sign for a PCA axis the way there is a
+     *        correct sign for a limb lead: Einthoven's law gives limb leads
+     *        a real right/wrong answer (see checkLimbLeadPolarity()); an
+     *        orthonormal rotation has no such constraint, so this remains a
+     *        CONVENTION, not a correctness measurement. It is, however, a
+     *        more ROBUST convention than "the single biggest sample is
+     *        positive": correlating against the sum of all three leads over
+     *        every sample is far less sensitive to one large T-wave, noise
+     *        spike, or biphasic QRS than looking at one extreme point, and it
+     *        ties the derived axis's orientation to leads whose own polarity
+     *        has (when possible) already been measured and corrected by
+     *        checkLimbLeadPolarity(), rather than to an arbitrary
+     *        "which sample happens to be biggest" rule.
      *
-     *        It is also morphology-dependent: a chunk where the T wave
-     *        outgrows the R (or a lead whose QRS is genuinely biphasic) can
-     *        flip relative to another chunk. That is the reason to build ONE
-     *        basis per file rather than one per chunk, and the reason alignTo()
-     *        exists for the case where a rebuild is unavoidable.
+     *        Still morphology-dependent in the sense any whole-trace summary
+     *        is: build ONE basis per file rather than one per chunk, and use
+     *        alignTo() where a rebuild is unavoidable, same as before.
      *
      * @param lanes  The same three lanes the basis was accumulated from.
      */
@@ -609,10 +744,13 @@ namespace vcg {
                                            lanes[2]->size() });
         if (len == 0) return;
 
-        // Project, collect per-axis values, take the median as baseline, then
-        // the signed extreme relative to it.
+        // Project each axis AND build the reference trace (the mean-removed
+        // SUM of the three leads) over the same samples, so both line up
+        // index-for-index for the dot product below.
         std::vector<double> proj[3];
+        std::vector<double> ref;
         for (int k = 0; k < 3; ++k) proj[k].reserve(len);
+        ref.reserve(len);
         for (std::size_t i = 0; i < len; ++i) {
             const double v[3] = { (*lanes[0])[i], (*lanes[1])[i], (*lanes[2])[i] };
             if (std::isnan(v[0]) || std::isnan(v[1]) || std::isnan(v[2])) continue;
@@ -621,22 +759,20 @@ namespace vcg {
                 proj[k].push_back(b.mat.m[k][0] * c[0]
                     + b.mat.m[k][1] * c[1]
                     + b.mat.m[k][2] * c[2]);
+            ref.push_back(c[0] + c[1] + c[2]);
         }
 
         for (int k = 0; k < 3; ++k) {
-            if (proj[k].empty()) continue;
-            std::vector<double> tmp = proj[k];
-            const auto mid = tmp.begin() + tmp.size() / 2;
-            std::nth_element(tmp.begin(), mid, tmp.end());
-            const double med = *mid;
-
-            double lo = 0.0, hi = 0.0;
-            for (double x : proj[k]) {
-                const double d = x - med;
-                if (d > hi) hi = d;
-                if (d < lo) lo = d;
-            }
-            if (-lo > hi)                                  // dominant deflection is negative
+            if (proj[k].size() != ref.size() || proj[k].empty()) continue;
+            // Sign of the dot product over the WHOLE trace -- equivalent to
+            // the sign of the correlation (the normalizing denominator is
+            // always positive), so this measures "does this axis move with
+            // or against the combined leads, on average", integrated over
+            // every sample rather than decided by whichever single sample
+            // happens to be largest.
+            double dot = 0.0;
+            for (std::size_t i = 0; i < proj[k].size(); ++i) dot += proj[k][i] * ref[i];
+            if (dot < 0.0)
                 for (int i = 0; i < 3; ++i) b.mat.m[k][i] = -b.mat.m[k][i];
         }
     }

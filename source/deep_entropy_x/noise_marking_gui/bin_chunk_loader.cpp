@@ -140,6 +140,9 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     // markable channel whose meaning drifts as the operator scrolls.
     m_vcgCfg.ortho = vcg::OrthoBasis{};
     m_vcgCfg.orthoAcc.reset();
+    // Same reasoning for the cached lead-polarity correction: a sign flip
+    // decided for the PREVIOUS file must not leak into this one.
+    m_vcgCfg.leadSign[0] = m_vcgCfg.leadSign[1] = m_vcgCfg.leadSign[2] = 1;
     {
         const QString stem = QFileInfo(filePath).completeBaseName();
         const QString dir = QString::fromStdString(m_cfg.vcg_output);
@@ -173,6 +176,13 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
 
     setWindowTitle("Marking: " + QFileInfo(filePath).fileName());
     loadChunkFromFile(0);
+
+    // Measured, not asked: now that m_ecg1/m_ecg2/m_ecg3 hold this file's
+    // first chunk, check whether any of the three is polarity-inverted
+    // relative to the other two and pre-set the corresponding checkbox.
+    // Once per FILE (here), not once per chunk (loadChunkFromFile) --
+    // lead polarity is a property of the recording, not of a time window.
+    autoDetectLeadPolarity();
 }
 
 void noise_marking_gui::handleBrowseFile() {
@@ -399,9 +409,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
     markActive("ECG1", m_ecg1);
     markActive("ECG2", m_ecg2);
     markActive("ECG3", m_ecg3);
-    vcg_lead::rebuild(m_ecg1Raw, m_ecg2Raw, m_ecg3Raw,
-        m_ecg1.size(), m_vcgCfg, m_vcg, m_vcgRaw, m_vcgStatus);
-    markActive("VCG", m_vcg);
+    refreshVcgFromLeadFlags();   // shared with the ecg_N_reverse toggled handler; sets VCG's chart visibility itself
     markActive("PPG", m_ppg);
     markActive("ACCEL", m_accelX);
     markActive("ART", m_art);

@@ -22,9 +22,13 @@ The PPG Normalization algorithm is as follows:
 */
 
 #include "template_marking_gui\template_marking_bin_io.hpp"
+#include "template_marking_gui\global_intervals.hpp"
+#include "template_marking_gui\vcg_signal_average.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace normalize_features {
@@ -169,22 +173,34 @@ namespace normalize_features {
     }
 
     // ------------------------------------------------------------------
-    // Cross-beat IQR (Q3-Q1) helpers, computed once at template-build
-    // time from the raw aligned beats -- NOT from individual beats
-    // retained downstream (that overlay-beat machinery has been removed;
-    // these summary statistics are all that's kept).
+    // Cross-beat spread helpers, computed once at template-build time from
+    // the raw aligned beats -- NOT from individual beats retained downstream
+    // (that overlay-beat machinery has been removed; these summary
+    // statistics are all that's kept).
+    //
+    // NOTE: despite the name/callers still saying "iqr" (raw_amplitude_iqr,
+    // local_ratio_iqr, ecg_template_iqr, *_iqr columns in the CSV/bin
+    // export), this now computes per-sample STD (ddof=1), not a true
+    // interquartile range -- made consistent with the ECG side's step-7
+    // change in create_ecg_templates.hpp, so every channel's "*_iqr" column
+    // holds the same statistic. Renaming these identifiers throughout the
+    // codebase (TemplateTypes.hpp, BinPlotWidget, TemplateBinIO,
+    // template_io, TemplateViewerWindow's CSV header, ...) is a separate,
+    // larger follow-up; left as-is here to keep this change to the
+    // computation only.
     // ------------------------------------------------------------------
 
     // ECG: pulse_norm-equivalent step is a plain scalar divide, so taking
-    // the IQR of raw amplitudes and dividing by ref later (scale_array_by_ref)
-    // is exact -- no restructuring needed relative to the raw computation.
+    // the spread of raw amplitudes and dividing by ref later
+    // (scale_array_by_ref) is exact -- no restructuring needed relative to
+    // the raw computation.
     // (Kept here only as a named entry point so build-time code doesn't
-    // need to hand-roll the quartile loop.)
+    // need to hand-roll the loop.)
     inline std::vector<double> raw_amplitude_iqr(const std::vector<std::vector<double>>& rawBeats) {
         if (rawBeats.empty()) return {};
         size_t maxLen = 0;
         for (const auto& bt : rawBeats) maxLen = std::max(maxLen, bt.size());
-        std::vector<double> iqr(maxLen, 0.0);
+        std::vector<double> sd(maxLen, 0.0);
         std::vector<double> col;
         col.reserve(rawBeats.size());
         for (size_t c = 0; c < maxLen; ++c) {
@@ -193,24 +209,24 @@ namespace normalize_features {
                 if (c < bt.size() && !std::isnan(bt[c])) col.push_back(bt[c]);
             const size_t n = col.size();
             if (n < 2) continue;
-            const size_t q1i = n / 4, q3i = (3 * n) / 4;
-            std::nth_element(col.begin(), col.begin() + q1i, col.end());
-            const double q1 = col[q1i];
-            std::nth_element(col.begin() + q1i, col.begin() + q3i, col.end());
-            const double q3 = col[q3i];
-            iqr[c] = q3 - q1;
+            double mean = 0.0;
+            for (double v : col) mean += v;
+            mean /= static_cast<double>(n);
+            double sumsq = 0.0;
+            for (double v : col) sumsq += (v - mean) * (v - mean);
+            sd[c] = std::sqrt(sumsq / static_cast<double>(n - 1));   // ddof = 1
         }
-        return iqr;
+        return sd;
     }
 
     // Pulse: unlike ECG, the per-sample transform's slope varies beat-to-
-    // beat (each beat has its own foot_y), so taking the IQR of raw values
-    // and dividing by a single factor afterward is NOT equivalent to the
-    // documented algorithm. Convert each beat to its own local-ratio trace
-    // FIRST (own foot, no global/median foot), take the cross-beat IQR of
-    // that, and defer only the final /Global_Ref_person to
+    // beat (each beat has its own foot_y), so taking the spread of raw
+    // values and dividing by a single factor afterward is NOT equivalent to
+    // the documented algorithm. Convert each beat to its own local-ratio
+    // trace FIRST (own foot, no global/median foot), take the cross-beat
+    // spread of that, and defer only the final /Global_Ref_person to
     // scale_array_by_ref() at display/export time -- exactly mirroring how
-    // the ECG IQR defers its /ref step.
+    // the ECG spread defers its /ref step.
     inline std::vector<double> local_ratio_iqr(const std::vector<std::vector<double>>& rawBeats, int footIdx) {
         if (rawBeats.empty()) return {};
         std::vector<std::vector<double>> ratioBeats;
@@ -221,7 +237,370 @@ namespace normalize_features {
             for (size_t i = 0; i < bt.size(); ++i) r[i] = calculate_perfusion_index(bt[i], footY);
             ratioBeats.push_back(std::move(r));
         }
-        return raw_amplitude_iqr(ratioBeats);   // same cross-beat quartile mechanics, different input units
+        return raw_amplitude_iqr(ratioBeats);   // same cross-beat STD mechanics, different input units
+    }
+
+    // ==================================================================
+    // Length / area / volume triad
+    // ==================================================================
+    // Three summary statistics over one feature's sample window [lo, hi],
+    // all in raw sample-index units (no fs or amplitude-scale conversion
+    // applied here -- same "defer the unit conversion to the caller"
+    // convention as scale_array_by_ref / the *_iqr fields above). Multiply
+    // by 1/fs and/or an amplitude scale afterward if physical units are
+    // needed.
+    //
+    // Placed here, ahead of Section 5.2, because Option B/C below call
+    // segment_area/segment_volume directly -- C++ has no forward
+    // declaration for free functions used before their definition in the
+    // same translation unit, so these must come first textually.
+
+    // Curve length: cumulative Euclidean distance between consecutive
+    // samples, one sample-index unit of run per step. A NaN sample breaks
+    // the run at that step (a gap contributes nothing, rather than a
+    // phantom straight line jumping across it).
+    inline double segment_length(const std::vector<double>& v, int lo, int hi) {
+        lo = std::max(0, lo);
+        hi = std::min(hi, static_cast<int>(v.size()) - 1);
+        if (hi <= lo) return std::nan("");
+        double len = 0.0;
+        bool any = false;
+        for (int i = lo; i < hi; ++i) {
+            if (std::isnan(v[i]) || std::isnan(v[i + 1])) continue;
+            const double dy = v[i + 1] - v[i];
+            len += std::sqrt(1.0 + dy * dy);
+            any = true;
+        }
+        return any ? len : std::nan("");
+    }
+
+    // Trapezoidal area under v over [lo, hi]. `absolute` rectifies before
+    // integrating -- the conventional way to report QRS/T-wave area, since a
+    // biphasic complex would otherwise partially cancel itself in a signed
+    // integral. NaN samples are skipped (that trapezoid contributes nothing,
+    // rather than propagating NaN across the whole sum).
+    inline double segment_area(const std::vector<double>& v, int lo, int hi, bool absolute = true) {
+        lo = std::max(0, lo);
+        hi = std::min(hi, static_cast<int>(v.size()) - 1);
+        if (hi <= lo) return std::nan("");
+        double area = 0.0;
+        bool any = false;
+        for (int i = lo; i < hi; ++i) {
+            double a = v[i], b = v[i + 1];
+            if (std::isnan(a) || std::isnan(b)) continue;
+            if (absolute) { a = std::abs(a); b = std::abs(b); }
+            area += 0.5 * (a + b);   // trapezoid, unit width
+            any = true;
+        }
+        return any ? area : std::nan("");
+    }
+
+    // Spatial "volume": trapezoidal integral, over [lo, hi], of the 3-lead
+    // vector magnitude sqrt(ch1^2+ch2^2+ch3^2) -- the 3-D analogue of
+    // segment_area, one level up from Option C's peak-magnitude reference.
+    // ch1/ch2/ch3 MUST already be on the shared R-relative axis (same
+    // length, same offset origin) before calling this -- exactly the axis
+    // vcg_signal_average.hpp's loopFromTemplates/perBeatLoops already
+    // produce. This function does not align them; it only integrates.
+    inline double segment_volume(const std::vector<double>& ch1, const std::vector<double>& ch2,
+        const std::vector<double>& ch3, int lo, int hi) {
+        const int n = static_cast<int>(std::min({ ch1.size(), ch2.size(), ch3.size() }));
+        lo = std::max(0, lo);
+        hi = std::min(hi, n - 1);
+        if (hi <= lo) return std::nan("");
+        auto mag = [&](int i) -> double {
+            const double x = ch1[i], y = ch2[i], z = ch3[i];
+            if (std::isnan(x) || std::isnan(y) || std::isnan(z)) return std::nan("");
+            return std::sqrt(x * x + y * y + z * z);
+            };
+        double vol = 0.0;
+        bool any = false;
+        for (int i = lo; i < hi; ++i) {
+            const double a = mag(i), b = mag(i + 1);
+            if (std::isnan(a) || std::isnan(b)) continue;
+            vol += 0.5 * (a + b);
+            any = true;
+        }
+        return any ? vol : std::nan("");
+    }
+
+    // ==================================================================
+    // Section 5.2 -- Global reference, Options A/B/C, and the CV check
+    // ==================================================================
+    //
+    // Three ways to reduce one subject's beats to a single scalar
+    // Global_Ref_person, all median-across-bins the same way Option A
+    // (compute_ecg_global_ref, above) always has:
+    //
+    //   A (existing, above) : median(|R_peak| + |S_peak|)      -- two samples
+    //   B (below)           : median(QRS area, Q-onset..J-point) -- integrates
+    //                         the whole complex, so a wide-but-modest QRS and
+    //                         a narrow-but-tall one sharing |R|+|S| are no
+    //                         longer equivalent.
+    //   C (below)           : median(peak spatial vector magnitude) -- fuses
+    //                         all three ECG leads into one 3-D vector first
+    //                         (reusing the SAME cross-channel R-relative
+    //                         alignment vcg_signal_average.hpp already solves
+    //                         for the VCG loop -- see global_intervals.hpp's
+    //                         "ALIGNMENT" note on why raw column indices from
+    //                         different channels cannot be combined directly),
+    //                         so cardiac-axis rotation is controlled for by
+    //                         geometry rather than by a |R|+|S| proxy.
+    //
+    // ASSUMPTION (flagged, not silently decided): the spec names Options B
+    // and C without defining their measurement window. B integrates
+    // Q-onset..J-point (the QRS complex) because that is the same window
+    // Option A samples from (R and S both fall inside it). C's window is a
+    // fixed pre/post sample margin around R (preSamples/postSamples,
+    // defaulted below), because the spatial loop needs a window before any
+    // per-bin QRS onset/offset can be measured FROM it (global_intervals.hpp
+    // reduces per-lead onsets that are not yet known when the vector is being
+    // built for that measurement's own reference). Widen the defaults if a
+    // program's QRS is unusually broad.
+
+    // Option B: area-based Global_Ref_person for ONE channel. Mirrors
+    // compute_ecg_global_ref's per-channel shape and bad_r_ch/bad_segment
+    // gating exactly, swapping the |R|+|S| reduction for the QRS's
+    // rectified area (Q-onset -> J-point / s_end).
+    inline double compute_ecg_global_ref_area(const std::vector<TemplateBin>& bins, int ch, double sampleRateHz)
+    {
+        std::vector<double> vals;
+        vals.reserve(bins.size());
+        for (const auto& b : bins) {
+            if (b.bad_segment) continue;
+            if (b.bad_r_ch[ch]) continue;
+            const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
+            const auto& ecg = chs[ch]->ecgTemplate_raw;
+            if (ecg.empty()) continue;
+
+            // Same rule as Option A: the reference is a stable per-subject
+            // quantity, so it always reads the R-pass markers.
+            const TemplateBin::MarkerSet& rmk = b.marks(AnchorType::R_PEAK);
+            const int qBegin = rmk.q_begin_ch[ch];
+            const int jPoint = rmk.s_end_ch[ch];   // S_END == J_POINT (AnchorType comment)
+            if (qBegin < 0 || jPoint <= qBegin) continue;
+            const double area = segment_area(ecg, qBegin, jPoint, /*absolute=*/true);
+            if (!std::isnan(area)) vals.push_back(area);
+        }
+        return median_finite(std::move(vals));
+    }
+
+    // Option C: spatial vector-magnitude Global_Ref_person, fusing all three
+    // ECG channels. Builds the R-relative 3-lead loop the SAME way
+    // vcg_signal_average.hpp's save-time path does (each channel read at ITS
+    // OWN r_col + offset -- see vcg_signal_average.hpp's "AXIS" note), so this
+    // does not re-derive cross-channel alignment; it reuses the one already
+    // proven for the VCG loop. Global_Ref_person is the median, across bins,
+    // of each bin's peak spatial magnitude sqrt(x^2+y^2+z^2).
+    inline double compute_ecg_global_ref_spatial(const std::vector<TemplateBin>& bins,
+        int preSamples = 40, int postSamples = 60)
+    {
+        std::vector<double> peaks;
+        peaks.reserve(bins.size());
+        for (const auto& b : bins) {
+            if (b.bad_segment) continue;
+            const vcg_avg::Loop loop = vcg_avg::loopFromTemplates(b, preSamples, postSamples);
+            if (loop.pts.empty()) continue;
+            double peak = 0.0;
+            bool any = false;
+            for (const auto& p : loop.pts) {
+                if (std::isnan(p.x) || std::isnan(p.y) || std::isnan(p.z)) continue;
+                const double mag = std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+                if (mag > peak) peak = mag;
+                any = true;
+            }
+            if (any) peaks.push_back(peak);
+        }
+        return median_finite(std::move(peaks));
+    }
+
+    // Median absolute deviation, NaN-skipping, matching median_finite's
+    // convention (used only by cvFlag below, so kept local to this file
+    // rather than promoted to stats_utils.hpp).
+    inline double mad_of(const std::vector<double>& x) {
+        const double m = median_finite(x);
+        if (std::isnan(m)) return std::nan("");
+        std::vector<double> absdev;
+        absdev.reserve(x.size());
+        for (double v : x) if (!std::isnan(v)) absdev.push_back(std::abs(v - m));
+        return median_finite(std::move(absdev));
+    }
+
+    // CV check (5.2): flags a subject/bin whose QRS-reference values are too
+    // dispersed relative to their own Global_Ref_person to trust the ratio
+    // normalization below -- CV = MAD / Global_Ref_person, flagged above
+    // 0.15. false (not flagged) when gref is unusable, since there is then
+    // nothing to compare the dispersion against.
+    inline bool cv_flag(const std::vector<double>& qrsRef, double gref) {
+        if (!(gref > 0.0) || std::isnan(gref)) return false;
+        const double m = mad_of(qrsRef);
+        if (std::isnan(m)) return false;
+        return (m / gref) > 0.15;
+    }
+
+    // ==================================================================
+    // Section 5.3 -- Ratio normalization
+    // ==================================================================
+    // Feature_peak_norm_abs = Feature_peak / Global_Ref_person. This is
+    // exactly ecg_norm's single-value form (same guards: an unusable ref or
+    // a NaN feature passes the raw value through unchanged rather than
+    // dividing by something meaningless) -- named separately here because
+    // Section 5.3 refers to it as its own step, applied to whichever
+    // Global_Ref_person Option A/B/C above produced.
+    inline double ratio_norm(double featurePeak, double gref) { return ecg_norm(featurePeak, gref); }
+
+    // ==================================================================
+    // Section 5.4 -- Percentile scaling
+    // ==================================================================
+    // Maps a ratio-normalized value onto 0-100 using the subject's OWN 2nd
+    // and 98th percentile ratio values (p2/p98), clamped at both ends so an
+    // outlier beyond the calibration range saturates rather than escaping
+    // the scale. NaN when the calibration range itself is degenerate
+    // (p98 <= p2) or the input ratio is NaN -- there is no meaningful
+    // position on a zero-width or undefined scale.
+    inline double pct_scale(double ratio, double p2, double p98) {
+        const double range = p98 - p2;
+        if (std::isnan(ratio) || !(range > 0.0)) return std::nan("");
+        return std::clamp((ratio - p2) / range * 100.0, 0.0, 100.0);
+    }
+
+    // ==================================================================
+    // Section 5.5 -- SQI-weighted signal average
+    // ==================================================================
+    // Per-sample weighted mean of `beats`, each weighted by its own SQI
+    // score, so a handful of low-quality beats can no longer pull the
+    // average as hard as a high-quality one. This is the WEIGHTED
+    // alternative to the plain per-sample median create_ecg_templates.hpp
+    // uses for the displayed template (that one is unweighted by design --
+    // a robust order statistic, not a quality-aware mean); the two serve
+    // different purposes and neither replaces the other.
+    //
+    // Hardened relative to the literal 5.5 draft: beats are allowed to be
+    // ragged (indexed only up to their own length, not a hardcoded W) and
+    // both NaN samples and non-positive/NaN weights are skipped rather than
+    // propagating into every column of the average.
+    inline std::vector<double> sqi_weighted_average(
+        const std::vector<std::vector<double>>& beats, const std::vector<double>& sqi)
+    {
+        const size_t nBeats = beats.size();
+        if (nBeats == 0 || sqi.size() != nBeats) return {};
+        size_t W = 0;
+        for (const auto& bt : beats) W = std::max(W, bt.size());
+        if (W == 0) return {};
+
+        std::vector<double> num(W, 0.0), den(W, 0.0);
+        for (size_t t = 0; t < nBeats; ++t) {
+            const double w = sqi[t];
+            if (!(w > 0.0) || std::isnan(w)) continue;
+            const auto& bt = beats[t];
+            for (size_t j = 0; j < bt.size(); ++j) {
+                if (std::isnan(bt[j])) continue;
+                num[j] += w * bt[j];
+                den[j] += w;
+            }
+        }
+        std::vector<double> out(W, std::nan(""));
+        for (size_t j = 0; j < W; ++j) if (den[j] > 0.0) out[j] = num[j] / den[j];
+        return out;
+    }
+
+    // ==================================================================
+    // Heart-rate-proportional beat segmentation, PQ-zeroed
+    // ==================================================================
+    // Distinct from alignment.hpp's extract_beats_and_align: that function
+    // slices at FIXED proportions (0.3 RR before / 1.5 RR after, see its
+    // percent_interval_preceeding_rpeak / percent_interval_following_rpeak
+    // constants) baked in for template building, and prefers the TP segment
+    // over PQ for its two-stage DC leveling. This slicer is a separate,
+    // purpose-built segmenter for the length/area/volume feature work above:
+    // 0.25 RR before R / 0.75 RR after (per spec), PQ ONLY as the vertical
+    // zero (never TP), and an explicit minimum-yield gate the template
+    // slicer does not have.
+    //
+    // PQ baseline reuses FeatureMarks' own P/Q detectors directly (P-end via
+    // detect_p_peak + detect_p_end, Q-onset via detect_q_begin) rather than
+    // re-deriving isoelectric detection -- the same P-end -> Q-onset window
+    // alignment.hpp's Stage-2 PQ leveling comment describes.
+    struct ProportionalBeat {
+        std::vector<double> samples;   // R at column rCol; PQ-zeroed when pqBaseline is not NaN
+        int    rCol = -1;
+        int    rrLen = -1;             // this beat's own RR, in samples
+        double pqBaseline = std::numeric_limits<double>::quiet_NaN();   // subtracted DC level; NaN if PQ unavailable
+    };
+
+    struct ProportionalBeatSet {
+        std::vector<ProportionalBeat> beats;
+        int  nExpected = 0;     // record duration / the record's own median RR, +1
+        bool sufficient = false;   // beats.size() >= 0.5 * nExpected (the "at least 50%" gate)
+    };
+
+    inline ProportionalBeatSet segment_beats_proportional(
+        const std::vector<double>& ecg, const std::vector<size_t>& rPeaks, double fs,
+        double beforeFrac = 0.25, double afterFrac = 0.75)
+    {
+        ProportionalBeatSet out;
+        const int64_t N = static_cast<int64_t>(ecg.size());
+        if (N == 0 || rPeaks.size() < 2 || !(fs > 0.0)) return out;
+
+        // Expected beat count from the record's own median RR -- the same
+        // "one number per record" role median_finite plays everywhere else
+        // in this file, just over RR instead of an amplitude/ratio.
+        std::vector<double> rrAll;
+        rrAll.reserve(rPeaks.size() - 1);
+        for (size_t i = 0; i + 1 < rPeaks.size(); ++i)
+            rrAll.push_back(static_cast<double>(rPeaks[i + 1] - rPeaks[i]));
+        const double medRR = median_finite(rrAll);
+        if (!(medRR > 0.0)) return out;
+        const double durationSamples =
+            static_cast<double>(rPeaks.back() - rPeaks.front());
+        out.nExpected = static_cast<int>(std::lround(durationSamples / medRR)) + 1;
+
+        out.beats.reserve(rPeaks.size());
+        for (size_t i = 0; i < rPeaks.size(); ++i) {
+            const int64_t r0 = static_cast<int64_t>(rPeaks[i]);
+            // This beat's OWN RR: to the next R, or (last beat only) reused
+            // from the previous interval, since there is no "next" for it.
+            const int64_t rr = (i + 1 < rPeaks.size())
+                ? static_cast<int64_t>(rPeaks[i + 1]) - r0
+                : (i > 0 ? r0 - static_cast<int64_t>(rPeaks[i - 1]) : -1);
+            if (rr <= 3) continue;
+
+            const int64_t before = static_cast<int64_t>(beforeFrac * rr);
+            const int64_t after = static_cast<int64_t>(afterFrac * rr);
+            const int64_t len = before + after;
+            const int64_t start = r0 - before, end = r0 + after;
+            if (len <= 0) continue;
+
+            ProportionalBeat pb;
+            pb.samples.assign(static_cast<size_t>(len), std::numeric_limits<double>::quiet_NaN());
+            const int64_t cs = std::max<int64_t>(0, start);
+            const int64_t ce = std::min<int64_t>(N, end);
+            for (int64_t k = cs; k < ce; ++k)
+                pb.samples[static_cast<size_t>(k - start)] = ecg[static_cast<size_t>(k)];
+            pb.rCol = static_cast<int>(before);
+            pb.rrLen = static_cast<int>(rr);
+
+            // PQ isoelectric zero, in this beat's own local (sliced)
+            // coordinates. detect_p_peak/detect_p_end/detect_q_begin all
+            // take an r_idx relative to the array they're handed, which
+            // pb.rCol already is.
+            const double pPeakD = FeatureMarks::detect_p_peak(pb.samples, pb.rCol, fs);
+            const int pEnd = FeatureMarks::detect_p_end(pb.samples, pb.rCol, fs, pPeakD);
+            const int qBegin = FeatureMarks::detect_q_begin(pb.samples, pb.rCol);
+            if (pEnd >= 0 && qBegin > pEnd) {
+                std::vector<double> pq(pb.samples.begin() + pEnd, pb.samples.begin() + qBegin);
+                const double base = median_finite(pq);
+                if (!std::isnan(base)) {
+                    for (double& s : pb.samples) if (!std::isnan(s)) s -= base;
+                    pb.pqBaseline = base;
+                }
+            }
+            out.beats.push_back(std::move(pb));
+        }
+
+        out.sufficient = out.nExpected > 0
+            && static_cast<double>(out.beats.size()) >= 0.5 * out.nExpected;
+        return out;
     }
 
 }   // namespace normalize_features

@@ -4,7 +4,6 @@
  */
 
 #include "post_process.hpp"
-#include "five_category_classification/five_category_output.hpp"
 #include "config_file_handling/config_loader.hpp"
 #include "noise_marking_gui/gui_handler.h"
 #include "noise_marking_gui/user_annotation_handler.h"
@@ -149,6 +148,12 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
     for (size_t pass = 0; pass < nAnchorPasses; ++pass) {
         TemplateViewerWindow viewer;
         viewer.setBoundaryTrainingDir(QString::fromStdString(cfg.training_log));
+        // Was never wired up: m_vcgOutputPath defaulted to an empty QString,
+        // so QDir(m_vcgOutputPath) in save_bin_and_csv() resolved to the
+        // process's current working directory instead of cfg.vcg_output --
+        // <id>_vcg.csv (and vcg_basis, if it shares this directory) landed
+        // wherever the executable was launched from.
+        viewer.setVcgOutputDir(QString::fromStdString(cfg.vcg_output));
         // pass 0 = R (anchorStep -1); pass k>0 shows anchorSequence()[k-1].
         {
             const auto& seq = post_process_detail::anchorSequence();
@@ -287,7 +292,6 @@ int main(int argc, char* argv[]) {
     std::filesystem::create_directories(cfg.template_path);
     std::filesystem::create_directories(cfg.qtvi_marker_path);
     std::filesystem::create_directories(cfg.quality_metric);
-    std::filesystem::create_directories(cfg.five_category_output);
     std::filesystem::create_directories(cfg.training_log);
 
 
@@ -411,56 +415,6 @@ int main(int argc, char* argv[]) {
         // joined later (reaped when finished, or drained at shutdown), so the
         // job data always outlives the worker.
         auto job = std::make_shared<post_process_detail::ViewerJob>(std::move(*jobOpt));
-
-        // ---- Task C: five-category classification (Sections 4.5-4.7) ----
-        // Deliberately NOT inside the needsFinalize block below.
-        // finalizeViewerJob only runs when squared/absval R-peak
-        // detection was deferred, so on a record that already has wave
-        // markings it never runs at all -- and Task C would silently
-        // produce nothing, which is exactly what happened. Task C needs
-        // only job->beats and job->tmpl, both filled by
-        // prepareViewerJob above, so it runs here for every record.
-        // REAL RR INTERVALS ARE NOT OPTIONAL HERE. Without them runBin falls
-        // back to rrFromSliceWidths, which hands every beat in a bin the SAME
-        // interval -- and isPremature then compares a constant against the
-        // median of ten identical constants, which is never below 0.80 of it.
-        // The prematurity filter cannot fire, the 5-of-8 vote has nothing to
-        // count, every beat reads NORMAL, _substituted.csv comes out empty and
-        // pvc_burden_pct reads 0 on a record full of ectopy. Meanwhile the
-        // ectopic mask in create_ecg_templates.hpp IS excluding those beats,
-        // because alignment handed it real rr_lens -- so the two halves of the
-        // pipeline disagreed for no reason other than this argument being
-        // omitted.
-        //
-        // ch1.raw is the R-peak vector that drove the slicing for every
-        // channel (Patch B), so its consecutive differences are the intervals
-        // the beats were actually cut at.
-        // RR is used only for the rate-proportional geometry (ms-per-column,
-        // the QRS-width scale). The rhythm verdict is NOT derived here: it is
-        // assigned in alignment.hpp after the slice and before the pruning and
-        // travels with the beats in BeatsFile::per_channel_rhythm, because the
-        // peak vector and the kept-beat matrix stop corresponding once the
-        // Tukey passes have run.
-        std::vector<std::vector<double>> rrPerBin;
-        {
-            const five_category_output::BeatSource bsrc =
-                five_category_output::pickBeatSource(job->beats);
-            rrPerBin.assign(bsrc.beats ? bsrc.beats->size() : 0,
-                std::vector<double>{});
-            const double msPerSample = (job->cfg.ecg_upsample_rate > 0.0)
-                ? 1000.0 / job->cfg.ecg_upsample_rate : 0.0;
-            for (size_t b = 0; b < rrPerBin.size(); ++b) {
-                if (msPerSample <= 0.0 || b >= job->peakResults.size()) break;
-                const auto& pk = job->peakResults[b].ch1.raw;
-                rrPerBin[b].reserve(pk.size());
-                for (size_t k = 1; k < pk.size(); ++k)
-                    rrPerBin[b].push_back(
-                        (static_cast<double>(pk[k]) - static_cast<double>(pk[k - 1]))
-                        * msPerSample);
-            }
-        }
-        five_category_output::runAll(job->cfg, job->beats, job->tmpl,
-            job->stem, rrPerBin);
 
         auto done = std::make_shared<std::atomic<bool>>(false);
         std::thread worker;

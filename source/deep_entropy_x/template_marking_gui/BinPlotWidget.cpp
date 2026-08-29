@@ -798,12 +798,6 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // nothing (including the ~4px X/O glyphs at edge samples) draws past
     // the frame boundary.
     p.save();
-
-
-    // Clip marker bars, labels, and fiducial glyphs to the plot area so
-    // nothing (including the ~4px X/O glyphs at edge samples) draws past
-    // the frame boundary.
-    p.save();
     p.setClipRect(QRectF(margin_left, margin_top,
         w - margin_left - margin_right, ph));
 

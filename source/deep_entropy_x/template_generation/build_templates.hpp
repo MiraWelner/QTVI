@@ -184,19 +184,22 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
         // the TemplateInfo's own counts -- no fallback needed here.)
     }
 
-    // Arterial background-context templates (ABP / ART / ART_PULM),
-    // FOOT-anchored per spec: self-detected pulses on each channel's own
-    // waveform, no borrowed ECG R-peaks (contrast with PPG above, which
-    // stays R-anchored via CreatePulseTemplates). Present-only; a channel
-    // with rate=0 in SignalRates yields an empty result and is silently
-    // skipped when packed into the bins.
+    // Arterial background-context templates (ABP / ART / ART_PULM). All
+    // three are now R-anchored, same as PPG (CreatePulseTemplates --
+    // borrows ch1.raw ECG R-peaks, same [R_i-pad, R_{i+1}+pad] slicer).
+    // The old foot-anchored self-detection path (build_arterial_template_
+    // foot_anchored / CreateArterialTemplates) is no longer called from
+    // here for any pulse channel; it's kept in create_arterial_templates.hpp
+    // only in case a future channel still needs self-detected anchoring.
+    // Present-only; a channel with rate=0 in SignalRates yields an empty
+    // result and is silently skipped when packed into the bins.
     {
-        auto abp = CreateArterialTemplates(
-            peakResults, &output_binfile_data::abpSignal, rates.abp);
-        auto art = CreateArterialTemplates(
-            peakResults, &output_binfile_data::artSignal, rates.art);
-        auto artp = CreateArterialTemplates(
-            peakResults, &output_binfile_data::artPulmSignal, rates.artPulm);
+        auto abp = CreatePulseTemplates(
+            peakResults, &output_binfile_data::abpSignal, rates.ecg, rates.abp);
+        auto art = CreatePulseTemplates(
+            peakResults, &output_binfile_data::artSignal, rates.ecg, rates.art);
+        auto artp = CreatePulseTemplates(
+            peakResults, &output_binfile_data::artPulmSignal, rates.ecg, rates.artPulm);
         for (size_t i = 0; i < out.tmpl.bins.size(); ++i) {
             if (out.tmpl.bins[i].bad_segment) continue;
             if (i < abp.templates.size()) {

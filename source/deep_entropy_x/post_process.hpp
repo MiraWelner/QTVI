@@ -20,12 +20,12 @@
 #include "config_file_handling/config_entry.hpp"
 #include "peak_finding/create_ecg_ppg_pairs.hpp"
 #include "template_generation/build_templates.hpp"
+#include "template_generation/pulse_matched_filter.hpp"
 #include "peak_finding/run_find_r_peaks.hpp"
 #include "template_generation/template_io.hpp"
 #include "template_marking_gui/alignment.hpp"
 #include "logging/sqi_ecg.hpp"
 #include "template_generation/premark_beats.hpp"
-#include "five_category_classification/five_category_output.hpp"
 
 namespace post_process_detail {
 
@@ -165,42 +165,119 @@ namespace post_process_detail {
 
         AnnealedData annealedData = read_input_binfile(annealedPath.string());
 
-        // ---- shift PPG due to hardware lag----------
-        // The lag needs R peaks and PPG feet, both produced by
-        // create_ecg_ppg_pairs_raw -- but the shift has to land BEFORE that
-        // call, so SegmentPPG, ppgMinAmps, R-pairing and every template
-        // derive from the shifted signal. Nothing then needs renumbering and
-        // nothing can fall out of sync. So: measure on a 5-minute truncated
-        // COPY, shift the real segments, and let the normal pass proceed.
+        // ---- shift PPG, and separately ABP/ART/ART_PULM, due to ----------
+        // ---- hardware lag -------------------------------------------------
+        // The lag needs R peaks and foot events, both produced from a probe
+        // pass -- but the shift has to land BEFORE the REAL
+        // create_ecg_ppg_pairs_raw call, so SegmentPPG, ppgMinAmps,
+        // R-pairing and every template derive from the shifted signal.
+        // Nothing then needs renumbering and nothing can fall out of sync.
+        // So: measure on a truncated COPY, shift the real segments, and let
+        // the normal pass proceed.
+        //
+        // PPG and the arterial group (ABP/ART/ART_PULM) are measured and
+        // applied INDEPENDENTLY -- they are different acquisition paths
+        // with different hardware delays, not assumed to share a lag.
+        // Within the arterial group, ABP is the representative channel
+        // measured (it has no precomputed foot-index field the way PPG's
+        // ppgMinAmps does, so its pulse locations are detected fresh here
+        // via the same derivative-upstroke detector create_arterial_
+        // templates.hpp uses); the resulting ONE lag is applied to all
+        // three arterial channels together, since they share one
+        // acquisition path.
+        //
+        // CHAOS ONLY: the hardware lag this measures and corrects is a
+        // property of CHAOS's acquisition path specifically. MESA and
+        // BITTIUM don't have it, so measuring and shifting on them would
+        // apply a correction for a lag that isn't actually there.
         channel_offset::set(cfg.quality_metric, stem);
-        channel_offset::Result chOff;
-        {
-            auto _cot0 = std::chrono::steady_clock::now();
-            auto probeSegs = channel_offset::make_probe(
-                annealedData.bins, cfg.ecg_upsample_rate, cfg.ppg_upsample_rate);
-            if (!probeSegs.empty()) {
-                auto probeResults = create_ecg_ppg_pairs_raw(
-                    std::move(probeSegs), true, stem, cfg,
-                    annealedData.ecg1_inverted, annealedData.ecg2_inverted,
-                    annealedData.ecg3_inverted);
-                chOff = channel_offset::measure(probeResults,
-                    cfg.ecg_upsample_rate, cfg.ppg_upsample_rate);
+        channel_offset::Result chOffPpg, chOffArt;
+        const bool wantChannelOffset = (cfg.dataset_type == "CHAOS");
+        if (wantChannelOffset) {
+            {
+                auto _cot0 = std::chrono::steady_clock::now();
+                auto probeSegs = channel_offset::make_probe(
+                    annealedData.bins, cfg.ecg_upsample_rate, cfg.ppg_upsample_rate);
+                if (!probeSegs.empty()) {
+                    auto probeResults = create_ecg_ppg_pairs_raw(
+                        std::move(probeSegs), true, stem, cfg,
+                        annealedData.ecg1_inverted, annealedData.ecg2_inverted,
+                        annealedData.ecg3_inverted);
+
+                    // PPG group: foot events are already on the bin
+                    // (ppgMinAmps, filled in by create_ecg_ppg_pairs_raw's
+                    // SegmentPPG call above).
+                    std::vector<std::vector<std::size_t>> ppgFeet;
+                    ppgFeet.reserve(probeResults.size());
+                    for (const auto& b : probeResults) ppgFeet.push_back(b.ppgMinAmps);
+                    chOffPpg = channel_offset::measure(probeResults,
+                        cfg.ecg_upsample_rate, cfg.ppg_upsample_rate, ppgFeet);
+
+                    // Arterial group: create_ecg_ppg_pairs_raw does NOT
+                    // populate b.abpSignal on this in-memory probe path (it
+                    // only carries all_upsampled through wholesale; abpSignal
+                    // only gets rehydrated from disk by read_output_binfile's
+                    // two-arg overload, which this probe deliberately
+                    // bypasses to stay fast). So ABP's raw samples are read
+                    // straight out of the pass-through slot (33), and its
+                    // pulse locations detected fresh -- same detector
+                    // create_arterial_templates.hpp's foot-anchored builder
+                    // uses -- purely as a repeatable per-pulse fiducial for
+                    // this correlation, not a true "foot".
+                    std::vector<std::vector<std::size_t>> abpFeet;
+                    abpFeet.reserve(probeResults.size());
+                    if (cfg.abp_upsample_rate > 0.0) {
+                        const int minSep = std::max(1,
+                            static_cast<int>(std::llround(0.25 * cfg.abp_upsample_rate)));
+                        for (const auto& b : probeResults) {
+                            std::vector<std::size_t> feet;
+                            if (b.all_upsampled.size() > 33 && !b.all_upsampled[33].empty()) {
+                                const std::vector<int> locs =
+                                    pulse_matched_filter::derivativePulseLocations(
+                                        b.all_upsampled[33], minSep);
+                                feet.assign(locs.begin(), locs.end());
+                            }
+                            abpFeet.push_back(std::move(feet));
+                        }
+                        chOffArt = channel_offset::measure(probeResults,
+                            cfg.ecg_upsample_rate, cfg.abp_upsample_rate, abpFeet);
+                    }
+                }
+                auto _cot1 = std::chrono::steady_clock::now();
+                std::cerr << "  [timing] channel_offset probe: "
+                    << std::chrono::duration_cast<std::chrono::milliseconds>(_cot1 - _cot0).count()
+                    << " ms\n";
             }
-            auto _cot1 = std::chrono::steady_clock::now();
-            std::cerr << "  [timing] channel_offset probe: "
-                << std::chrono::duration_cast<std::chrono::milliseconds>(_cot1 - _cot0).count()
-                << " ms\n";
-        }
-        channel_offset::apply(annealedData.bins, chOff, cfg.ppg_upsample_rate);
-        channel_offset::write_log(chOff);
-        if (chOff.ambiguous) {
-            std::cerr << "  [channel_offset] " << stem
-                << ": ambiguous, PPG NOT shifted (ratio=" << chOff.ratio
-                << ", lag would have been " << chOff.lag_ms << " ms)\n";
+            channel_offset::apply(annealedData.bins,
+                chOffPpg, cfg.ppg_upsample_rate,
+                chOffArt, cfg.abp_upsample_rate,
+                cfg.art_upsample_rate, cfg.art_pulm_upsample_rate);
+            channel_offset::write_log(chOffPpg, "PPG", /*append=*/false);
+            channel_offset::write_log(chOffArt, "ARTERIAL", /*append=*/true);
+
+            if (chOffPpg.ambiguous) {
+                std::cerr << "  [channel_offset] " << stem
+                    << ": ambiguous, PPG NOT shifted (ratio=" << chOffPpg.ratio
+                    << ", lag would have been " << chOffPpg.lag_ms << " ms)\n";
+            }
+            else {
+                std::cerr << "  [channel_offset] " << stem << ": PPG shifted "
+                    << chOffPpg.lag_ms << " ms (ratio=" << chOffPpg.ratio << ")\n";
+            }
+            if (chOffArt.ambiguous) {
+                std::cerr << "  [channel_offset] " << stem
+                    << ": ambiguous, ABP/ART/ART_PULM NOT shifted (ratio=" << chOffArt.ratio
+                    << ", lag would have been " << chOffArt.lag_ms << " ms)\n";
+            }
+            else {
+                std::cerr << "  [channel_offset] " << stem << ": ABP/ART/ART_PULM shifted "
+                    << chOffArt.lag_ms << " ms (ratio=" << chOffArt.ratio << ")\n";
+            }
         }
         else {
-            std::cerr << "  [channel_offset] " << stem << ": PPG shifted "
-                << chOff.lag_ms << " ms (ratio=" << chOff.ratio << ")\n";
+            std::cerr << "  [channel_offset] " << stem << ": dataset_type="
+                << cfg.dataset_type
+                << " -- correction only runs for CHAOS; skipped\n";
         }
 
         // Grab arterial pass-through slots BEFORE the move consumes the bins.

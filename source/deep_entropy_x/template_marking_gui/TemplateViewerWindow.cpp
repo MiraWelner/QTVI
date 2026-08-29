@@ -980,16 +980,16 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     // interpolated upslope crossings (t50/t80), the arterial channels do not.
     static const char* PPG_MARKERS[] = {
         "ppg_onset", "ppg_t50", "ppg_peak",
-        "ppg_dicrotic", "ppg_peak2", "ppg_t80", "ppg_end"
+        "ppg_dicr", "ppg_peak2", "ppg_t80", "ppg_end"
     };
     static const char* ABP_MARKERS[] = {
-        "abp_onset", "abp_peak", "abp_dicrotic", "abp_peak2", "abp_end"
+        "abp_onset", "abp_peak", "abp_dicr", "abp_peak2", "abp_end"
     };
     static const char* ART_MARKERS[] = {
-        "art_onset", "art_peak", "art_dicrotic", "art_peak2", "art_end"
+        "art_onset", "art_peak", "art_dicr", "art_peak2", "art_end"
     };
     static const char* ARTP_MARKERS[] = {
-        "art_pulm_onset", "art_pulm_peak", "art_pulm_dicrotic",
+        "art_pulm_onset", "art_pulm_peak", "art_plm_dicr",
         "art_pulm_peak2", "art_pulm_end"
     };
     constexpr int kNumPpgMarkers = static_cast<int>(std::size(PPG_MARKERS));
@@ -1004,21 +1004,21 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     f << "file_id,bin_num,x_ms";
     for (const char* n : CHANS) {
         f << ',' << n << "_raw_mv"
-            << ',' << n << "_Normalized"
-            << ',' << n << "_raw_iqr"
-            << ',' << n << "_normalized_iqr";
+            << ',' << n << "_norm"
+            << ',' << n << "_raw_std"
+            << ',' << n << "_norm_std";
     }
     for (int c = 1; c <= 3; ++c) {
         for (int k = 0; k < kNumEcgMarkers; ++k) {
-            f << ',' << ECG_MARKERS[k] << "_ch" << c << "_location_autodetect";
+            f << ',' << ECG_MARKERS[k] << "_ch" << c << "_auto";
             if (k != kRPeak)
-                f << ',' << ECG_MARKERS[k] << "_ch" << c << "_location_user";
+                f << ',' << ECG_MARKERS[k] << "_ch" << c << "_auto";
         }
     }
     auto emitPulseHeaderGroup = [&](auto const& group) {
         for (const char* m : group)
-            f << ',' << m << "_location_autodetect"
-            << ',' << m << "_location_user";
+            f << ',' << m << "_auto"
+            << ',' << m << "_user";
         };
     emitPulseHeaderGroup(PPG_MARKERS);
     emitPulseHeaderGroup(ABP_MARKERS);
@@ -1030,7 +1030,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         char gb[64];
         for (const char* g : ECG_GLYPHS) {
             std::snprintf(gb, sizeof gb, "%s_ch%d", g, gc);
-            f << ',' << gb << "_autodetect_location";
+            f << ',' << gb << "_auto";
         }
     }
     // Driven off ppg_and_artpulse_automated_markers, the same table the row
@@ -1039,7 +1039,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     // unnamed columns and every header-keyed reader was reading the wrong
     // field from here to the end of the row.
     for (const auto& gl : ppg_and_artpulse_automated_markers)
-        f << ',' << gl.name << "_autodetect_location";
+        f << ',' << gl.name << "_auto";
     f << '\n';
 
     f << std::setprecision(10);

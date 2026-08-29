@@ -119,13 +119,13 @@ namespace alignment {
         int n_premature_presliced = 0;
         int n_voted_presliced = 0;
 
-        // Parallel to `beats`: PQ_level - TP_level whenever BOTH stage
+        // Parallel to `beats`: PQ_level - TP_level whenever BOTH pass
         // estimates succeeded for that beat (NaN otherwise). QC metric per
         // spec I-1; not used to drive any decision, just recorded.
         std::vector<double> tp_pq_delta;
-        // Parallel to `beats`: the per-stage vertical DC shifts applied by the
-        // two-stage leveling. tp_shift = Stage 1 (TP) amount; pq_shift =
-        // Stage 2 (PQ finalize) amount. NaN where that stage didn't apply.
+        // Parallel to `beats`: the per-pass vertical DC shifts applied by the
+        // two-pass leveling. tp_shift = Pass 2 (TP) amount; pq_shift =
+        // Pass 3 (PQ finalize) amount. NaN where that pass didn't apply.
         // Returned for the per-beat move log.
         std::vector<double> tp_shift;
         std::vector<double> pq_shift;
@@ -189,11 +189,30 @@ namespace alignment {
             if (haveFlags) { out.premature = std::move(kp); out.voted = std::move(kv); }
             };
 
+        // Hard drop: a beat whose RR exceeds 4 s is not a real beat, it's a
+        // dropout/detection gap between R-peaks (missed beats, noise,
+        // signal loss) -- and unlike the PPG/pulse alignment above, THIS
+        // loop had no cap on RR-derived window size at all: window =
+        // 1.8*rr with no ceiling, and the bin's shared width is sized off
+        // the MAXIMUM rr_len across all its beats, so a single such outlier
+        // silently ballooned the whole bin's window (a sparse bin with only
+        // 1-3 real detections could produce a many-hundred-second template).
+        const int64_t kMaxBeatSamplesEcg = (fs > 0.0) ? static_cast<int64_t>(4.0 * fs) : 0;
+        {
+            static bool printedOnce = false;
+            if (!printedOnce) {
+                fprintf(stderr, "[ALIGN-4S-CAP-ACTIVE] kMaxBeatSamplesEcg=%lld fs=%f\n",
+                    static_cast<long long>(kMaxBeatSamplesEcg), fs);
+                printedOnce = true;
+            }
+        }
+
         // ---- slice every beat ------------------------------------------
         for (size_t i = 0; i + 1 < rPeaks.size(); ++i) {
             const int64_t r0 = static_cast<int64_t>(rPeaks[i]);
             const int64_t rr = static_cast<int64_t>(rPeaks[i + 1]) - r0;
             if (rr <= 3) continue;
+            if (kMaxBeatSamplesEcg > 0 && rr > kMaxBeatSamplesEcg) continue;
 
             const int64_t before = rr_before_samples(rr);
             const int64_t after = rr_after_samples(rr);
@@ -333,9 +352,54 @@ namespace alignment {
         out.beats = std::move(aligned);
         out.r_aligned_col = R_anchor;
 
-        // ---- Pass 3: two-stage TP-then-PQ vertical DC alignment --------
-        // Stage 1 (TP): this beat's own T-end -> the NEXT beat's P-onset.
-        // Stage 2 (PQ): this beat's own P-end -> this beat's own Q-onset.
+        // ---- Intermediate Tukey rejection: actual R location -----------
+        // Pass 1 placed every beat's ASSUMED R at R_anchor by pure RR
+        // arithmetic (rr_before_samples(rr_lens[i])) -- it never looked at
+        // the signal itself to check that the assumption held. Now that
+        // every beat shares one axis, search each beat's own trace for
+        // where its R actually is (largest-magnitude sample in a window
+        // around R_anchor) and reject on the SPREAD of (actual column -
+        // R_anchor) across the bin -- same 1.5*IQR convention as the RR-
+        // length and amplitude Tukey passes above. This catches a beat
+        // whose RR-derived placement was wrong for THAT beat specifically
+        // (an upstream detection glitch), which a length or amplitude
+        // outlier test would not: the beat can have a perfectly ordinary
+        // RR and amplitude while still being shifted relative to its peers
+        // because the peak that anchored it was mislocated.
+        {
+            constexpr double kRLocationSearchSec = 0.05;   // +/- 50 ms; a starting point, not a validated jitter bound
+            const int halfWin = std::max(1, static_cast<int>(std::lround(kRLocationSearchSec * fs)));
+            std::vector<double> rOffset(out.beats.size(), std::numeric_limits<double>::quiet_NaN());
+            for (size_t i = 0; i < out.beats.size(); ++i) {
+                const auto& b = out.beats[i];
+                const int lo = std::max(0, R_anchor - halfWin);
+                const int hi = std::min(static_cast<int>(b.size()) - 1, R_anchor + halfWin);
+                if (hi <= lo) continue;   // beat too short to search around R_anchor at all
+                int bestCol = -1;
+                double bestAbs = -1.0;
+                for (int c = lo; c <= hi; ++c) {
+                    const double v = b[c];
+                    if (std::isnan(v)) continue;
+                    // Largest MAGNITUDE, not largest value: R can be the
+                    // negative-going deflection on a channel whose polarity
+                    // this pass has no separate way to know, and this stays
+                    // self-contained rather than depending on that decision
+                    // having already been made correctly upstream.
+                    const double av = std::fabs(v);
+                    if (av > bestAbs) { bestAbs = av; bestCol = c; }
+                }
+                if (bestCol >= 0) rOffset[i] = static_cast<double>(bestCol - R_anchor);
+            }
+            auto keepR = keep_within_tukey(rOffset, 1.5);
+            for (size_t i = 0; i < keepR.size(); ++i)
+                if (std::isnan(rOffset[i])) keepR[i] = false;   // no data to check -> can't vouch for it
+            apply_mask(keepR);
+        }
+        if (out.beats.empty()) return out;
+
+        // ---- Passes 2 and 3: two-pass TP-then-PQ vertical DC alignment --
+        // Pass 2 (TP): this beat's own T-end -> the NEXT beat's P-onset.
+        // Pass 3 (PQ): this beat's own P-end -> this beat's own Q-onset.
         // PQ is the higher-priority reference (spec): when BOTH estimates
         // are available, the beat is shifted using PQ's level, not TP's --
         // TP is used only when PQ's landmarks aren't usable. Both are always
@@ -412,7 +476,7 @@ namespace alignment {
                     return { med, true };
                 };
 
-            /* Stage 1: TP Window. The baseline segment is the TP window ESTIMATED
+            /* Pass 2: TP Window. The baseline segment is the TP window ESTIMATED
             * by range:
             * lo = R_anchor + 0.55 · RR
             * hi = R_anchor + 0.85 · RR
@@ -430,7 +494,7 @@ namespace alignment {
                 return { clo, chi };
                 };
 
-            // Stage 2, PQ window:Segment is always 80 ms before R to 20 ms before R
+            // Pass 3, PQ window: Segment is always 80 ms before R to 20 ms before R
             auto pq_window = [&](size_t i) -> std::pair<int, int> {
                 const int N = static_cast<int>(out.beats[i].size());
                 const int lo = R_anchor - static_cast<int>(std::lround(kPqPreRMs * 0.001 * fs));
@@ -441,7 +505,7 @@ namespace alignment {
                 return { clo, chi };
                 };
 
-            // Compute both stage estimates for beat i (never short-circuited,
+            // Compute both pass estimates for beat i (never short-circuited,
             // so the delta can be recorded even when PQ will be used).
             auto both_levels = [&](size_t i) -> std::tuple<double, bool, double, bool> {
                 double tpLvl = std::numeric_limits<double>::quiet_NaN(), pqLvl = tpLvl;
@@ -456,9 +520,9 @@ namespace alignment {
             const auto [refTp, refTpOk, refPq, refPqOk] = both_levels(static_cast<size_t>(out.ref_beat_index));
             BaselineSource refSrc = BaselineSource::NONE;
 
-            /*Two-stage vertical alignment. - Stage 1: level each beat on the TP segment (end of T to just before onset of
-            next P). Estimate level with median over the flattest sub-window bounded by fitted landmarks. - Stage
-            2: finalize the zero on the PQ segment (end of P to immediately before Q onset). PQ is the higher-priority reference.*/
+            /*Two-pass vertical alignment. - Pass 2: level each beat on the TP segment (end of T to just before onset of
+            next P). Estimate level with median over the flattest sub-window bounded by fitted landmarks. - Pass
+            3: finalize the zero on the PQ segment (end of P to immediately before Q onset). PQ is the higher-priority reference.*/
             double refTpTarget = refTpOk ? refTp : std::numeric_limits<double>::quiet_NaN();
             double refPqTarget = refPqOk ? refPq : std::numeric_limits<double>::quiet_NaN();
             if (std::isnan(refTpTarget) || std::isnan(refPqTarget)) {
@@ -486,7 +550,7 @@ namespace alignment {
                     const auto [tpLvl, tpOk, pqLvl, pqOk] = both_levels(i);
                     if (tpOk && pqOk) out.tp_pq_delta[i] = pqLvl - tpLvl;
 
-                    // Stage 1 (TP): coarse level, applied only if BOTH this
+                    // Pass 2 (TP): coarse level, applied only if BOTH this
                     // beat and the reference have a usable TP.
                     double applied = 0.0;
                     bool leveled = false;
@@ -496,8 +560,8 @@ namespace alignment {
                         applied += d; leveled = true;
                         out.tp_shift[i] = d;
                     }
-                    // Stage 2 (PQ finalize): authoritative zero. Recompute PQ
-                    // level AFTER stage 1 shift, match it to the reference PQ.
+                    // Pass 3 (PQ finalize): authoritative zero. Recompute PQ
+                    // level AFTER pass 2's shift, match it to the reference PQ.
                     if (!std::isnan(refPqTarget)) {
                         const auto [plo, phi] = pq_window(i);
                         if (plo >= 0) {
@@ -864,11 +928,18 @@ namespace alignment {
         // the Tukey RR rejection see the true interval.
         const int64_t rr_cap = (fs > 0.0) ? static_cast<int64_t>(3.0 * fs) : 0;
 
+        // Hard drop, distinct from rr_cap above: a beat whose RR exceeds
+        // 4 s is not "a long beat to window-clamp", it's not a real beat at
+        // all (a dropout/artifact gap between R-peaks) and is excluded
+        // entirely rather than sliced-and-clamped.
+        const int64_t kMaxBeatSamples = (fs > 0.0) ? static_cast<int64_t>(4.0 * fs) : 0;
+
         // ---- slice + per-beat peak/foot --------------------------------
         for (size_t i = 0; i + 1 < rPeaks.size(); ++i) {
             const int64_t r0 = static_cast<int64_t>(rPeaks[i]);
             const int64_t rr = static_cast<int64_t>(rPeaks[i + 1]) - r0;
             if (rr <= 3) continue;
+            if (kMaxBeatSamples > 0 && rr > kMaxBeatSamples) continue;
 
             const int64_t rr_w = (rr_cap > 0) ? std::min(rr, rr_cap) : rr;
             const int64_t before = rr_before_samples(rr_w);
