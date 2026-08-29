@@ -135,6 +135,7 @@ namespace {
         cfg.training_log = sub("training_log");
         cfg.snapshot_path = sub("snapshot_path");
         cfg.vcg_output = sub("vcg_output");
+        cfg.bin_archive_path = sub("bin_archive");
     }
 
     bool manually_select_folder(config_entry& cfg) {
@@ -211,6 +212,7 @@ bool load_config(int dataType, config_entry& out) {
         out.main_file_extention = cell("main_file_extention");
         out.sleep_file_extention = cell("sleep_file_extention");
 
+		out.bin_archive_path = cell("bin_archive");
         out.ecg_raw_rate = stod_or_zero(cell("ecg_raw_rate"));
         out.ecg_upsample_rate = stod_or_zero(cell("ecg_upsampled_rate"));
         out.ppg_raw_rate = stod_or_zero(cell("ppg_raw_rate"));

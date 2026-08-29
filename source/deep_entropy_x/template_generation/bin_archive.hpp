@@ -1,60 +1,63 @@
 #pragma once
-/*
-* bin_archive.hpp
-* Builds and writes one checkpoint
-*  row per bin (PQRST morphology, QRS-specific parameters, and the 22 bin
-*  quality parameters) to disk BEFORE any template deformation pass
-*  (Section 9.6) runs, so bin-level results survive even if deformation
-*  never runs, or fails partway through, on a later file.
-
-* ---------------------------------------------------------------------------
-* Two input models, matching how the rest of this codebase already splits
-* them
-* ---------------------------------------------------------------------------
-   - TemplateBin (template_marking_gui/template_marking_bin_io.hpp) -- the
-     viewer's marker-aware model. Morphology, intervals, ST level, and the
-     area/spatial-volume features are all read from here, the same way
-     global_intervals.hpp and vcg_signal_average.hpp already do.
-   - template_io::TemplateFile / BeatsFile -- the lower-level per-beat data
-     sqi_ecg.hpp's own driver (writeEcgSQICsv) consumes. Quality
-     aggregation reuses sqi_ecg.hpp's buildSegments/computeEcgSQI directly
-     (no re-derivation of per-beat scoring) and reduces it to bin level
-     here -- mean+std across kept beats -- which sqi_ecg.hpp itself does
-     not do.
-
- ASSUMPTION (flagged, not silently decided): `bins[i]` (viewer model) and
- `tmpl.bins[i]` / `beats.per_channel_beats[ch][i]` (template_io model) are
- assumed to be the SAME bin, by position -- the same positional
- correspondence sqi_ecg.hpp's own writeEcgSQICsv loop already relies on.
- If a caller's two inputs were ever built in different orders this breaks
- silently; nothing in the data itself can detect that.
-
- "22 bin quality parameters": the spec names this count without
- enumerating it. sqi_ecg.hpp's BeatSQI scores 10 numeric components per
- beat (templateCorr, chiSq0, chiSqAbs, chiSq0_P, chiSq0_QRS, chiSq0_ST,
- baseline, noise, motion, composite); adding the fraction of a bin's beats
- classified INCLUDE gives 11 measures, and mean+std of each -- pooled
-* across every kept beat on every ECG channel in the bin, since the spec
-* names ONE set of 22 per bin rather than one set per channel -- gives
-* exactly 22. That pairing is this file's interpretation: swap
-* kSqiFieldNames / poolBinQuality below if a different 22 was intended.
-
-* "JT interval": global_intervals.hpp carries PR/QRS/QT but not JT
-* directly. ASSUMPTION: JT here means QT minus QRS duration (the ST+T
-* segment), the conventional definition, computed once QT and QRS are both
-* available.
-
-* "ST level": ASSUMPTION: measured AT this channel's own J point (s_end),
-* not at a fixed offset past it (J+60ms / J+80ms is a common alternate
-* convention in other protocols) -- flagged so a reviewer can shift it
-* without re-deriving anything else here.
-*/
+//
+// bin_archive.hpp
+//
+// Section 5.5.1 -- bin feature archival. Builds and writes one checkpoint
+// row per bin (PQRST morphology, QRS-specific parameters, and the 22 bin
+// quality parameters) to disk BEFORE any template deformation pass
+// (Section 9.6) runs, so bin-level results survive even if deformation
+// never runs, or fails partway through, on a later file.
+//
+// ---------------------------------------------------------------------------
+// Input model: template_io::TemplateFile (its .bins is a
+// std::vector<template_io::BinTemplates>) + template_io::BeatsFile.
+// ---------------------------------------------------------------------------
+// This is the data that EXISTS at the checkpoint the spec asks for -- the
+// R-pass template build in prepareViewerJob, before the interactive anchor
+// cycle / deferred deformation. The viewer's marker-aware TemplateBin model
+// does NOT exist yet at that stage (it's built later, after wave-marking),
+// so nothing here reads pre-placed markers.
+//
+// Instead, every fiducial (P/Q/R/S/T peaks and P-onset/Q-onset/J/T-begin/
+// T-end) is AUTO-DETECTED on the channel's own averaged template waveform
+// (BinTemplates::chN_raw.ecgTemplate) anchored at its r_col, via the SAME
+// FeatureMarks::detect_*/compute_* finders the rest of the pipeline uses to
+// place those landmarks. So the morphology written here is the automatic
+// placement -- exactly what would be shown before any operator adjustment.
+//
+// Consequences of running this early, stated plainly:
+//   - Intervals (PR/QRS/QT/JT) are measured PER CHANNEL from that channel's
+//     own auto-detected onsets/offsets -- NOT the cross-lead "global"
+//     union-of-leads intervals (those need the TemplateBin/global_intervals
+//     machinery, absent here). Each channel's row carries its own.
+//   - qrs_area_spatial is a 3-lead vector-magnitude integral built directly
+//     from the three chN_raw waveforms aligned on their r_col, NOT the full
+//     VCG-basis loop (vcg_signal_average.hpp, TemplateBin-only). It's a
+//     defensible per-bin spatial-QRS-area proxy at this stage; flagged as
+//     such rather than presented as the SVD-basis quantity.
+//
+// ASSUMPTION (flagged): bins[i] and beats.per_channel_beats[ch][i] are the
+// SAME bin, by position -- the positional correspondence the rest of the
+// pipeline already relies on.
+//
+// "22 bin quality parameters": the spec names the count without enumerating
+// it. sqi_ecg.hpp's BeatSQI scores 10 numeric components per beat
+// (templateCorr, chiSq0, chiSqAbs, chiSq0_P, chiSq0_QRS, chiSq0_ST,
+// baseline, noise, motion, composite); adding the fraction of a bin's beats
+// classified INCLUDE gives 11 measures, and mean+std of each -- pooled
+// across every kept beat on every ECG channel in the bin -- gives exactly
+// 22. Swap kSqiFieldNames / poolBinQuality if a different 22 was intended.
+//
+// "JT interval": QT minus QRS duration (the ST+T segment), the conventional
+// definition, computed once QT and QRS are both available.
+//
+// "ST level": measured AT this channel's own auto-detected J point (== S_end
+// crossing), not at a fixed J+60/J+80 ms offset.
+//
 
 #include "NormalizeFeatures.hpp"          // same folder (template_generation/)
 #include "template_io.hpp"                // same folder
-#include "template_marking_gui\template_marking_bin_io.hpp"
-#include "template_marking_gui\global_intervals.hpp"
-#include "template_marking_gui\vcg_signal_average.hpp"
+#include "template_marking_gui\feature_marks.hpp"   // FeatureMarks auto-detectors
 #include "logging\sqi_ecg.hpp"
 
 #include <cmath>
@@ -73,25 +76,23 @@ namespace bin_archive {
     // Per-channel morphology block
     // ---------------------------------------------------------------------
     struct ChannelArchive {
-        // Amplitudes, in whatever units the template carries (raw mV if the
-        // caller passes the un-normalized ecgTemplate_raw, as buildBinArchive
-        // below does).
+        // Amplitudes, in the template's own units (raw mV -- chN_raw.ecgTemplate).
         double p_amp = kNaN, q_amp = kNaN, r_amp = kNaN, s_amp = kNaN, t_amp = kNaN;
 
-        // Intervals (ms), GLOBAL (union-of-leads, global_intervals.hpp) --
-        // duplicated onto every channel's row for a flat CSV, not re-measured
-        // per channel. See the JT ASSUMPTION note above.
+        // Intervals (ms), PER CHANNEL, from this channel's own auto-detected
+        // onsets/offsets (see header note -- not the cross-lead global set).
+        // See the JT note above.
         double pr_ms = kNaN, qrs_ms = kNaN, qt_ms = kNaN, jt_ms = kNaN;
 
-        // See the ST-level ASSUMPTION note above.
+        // Measured at this channel's own auto-detected J point.
         double st_level = kNaN;
 
         double t_wave_area = kNaN;   // segment_area, |ecg|, [t_begin, t_end]
-        double qrs_area = kNaN;      // segment_area, |ecg|, [q_begin, s_end]
+        double qrs_area = kNaN;      // segment_area, |ecg|, [q_onset, j_point]
 
-        // Per-sample STD (ddof=1) of the beats behind this channel's
-        // template -- see NormalizeFeatures.hpp's note on the *_iqr naming;
-        // archived here under its true statistical name.
+        // Per-sample STD (ddof=1) across the beats behind this channel's
+        // template -- chN_raw.ecg_template_iqr, which despite the name holds
+        // a STD (see NormalizeFeatures.hpp / create_ecg_templates.hpp step 7).
         std::vector<double> per_sample_std;
 
         // QRS-specific (5.5.1)
@@ -123,7 +124,7 @@ namespace bin_archive {
     struct BinArchiveRow {
         int binIndex = -1;
         ChannelArchive ch[kNumEcgCh];
-        double qrs_area_spatial = kNaN;   // segment_volume over the 3-lead vector magnitude, QRS window (Option C machinery)
+        double qrs_area_spatial = kNaN;   // 3-lead vector-magnitude integral over the QRS window (proxy; see header note)
 
         double sqi_mean[kNumSqiFields];
         double sqi_std[kNumSqiFields];
@@ -135,57 +136,66 @@ namespace bin_archive {
     };
 
     // ---------------------------------------------------------------------
-    // Build: morphology
+    // Build: morphology -- all fiducials AUTO-DETECTED on the channel's own
+    // averaged template waveform (bt.chN_raw.ecgTemplate), anchored at its
+    // own r_col. No pre-placed markers (none exist at this pipeline stage).
     // ---------------------------------------------------------------------
-    inline ChannelArchive buildChannelArchive(const TemplateBin& b, int ch, AnchorType anchor,
-        double fs, const global_intervals::GlobalIntervals& g) {
+    inline ChannelArchive buildChannelArchive(const template_io::ChannelMethodTemplate& chRaw,
+        double fs) {
         ChannelArchive out;
-        const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-        const auto& ecg = chs[ch]->ecgTemplate_raw;
-        if (ecg.empty()) return out;
+        const std::vector<double>& ecg = chRaw.ecgTemplate;
+        const int rPeak = chRaw.r_col;
+        if (ecg.empty() || rPeak < 0 || fs <= 0.0) return out;
 
-        const TemplateBin::MarkerSet& umk = b.marks(anchor);
-        const int pPeak = umk.p_peak_ch[ch];
-        const int qBegin = umk.q_begin_ch[ch];
-        const int rPeak = b.r_peak_ch[ch];      // auto-only, flat -- TemplateBin's own convention
-        const int sEnd = umk.s_end_ch[ch];      // == J point (AnchorType::J_POINT comment)
-        const int tBegin = umk.t_begin_ch[ch];
-        const int tEnd = umk.t_end_ch[ch];
-
-        out.p_amp = normalize_features::sample_y(ecg, pPeak);
-        out.r_amp = normalize_features::sample_y(ecg, rPeak);
-
-        // Q/S peaks inside the QRS: the SAME reactive finders
-        // computeEcgFeatures uses for Option A's |R|+|S|, so this amplitude
-        // and Option A's reference stay consistent with each other.
+        // Peaks (all reactive finders, same ones the marking path uses).
         const double qIdxD = FeatureMarks::compute_q_peak(ecg, rPeak, fs);
         const double sIdxD = FeatureMarks::compute_s_peak(ecg, rPeak, fs);
+        const double pPeakD = FeatureMarks::detect_p_peak(ecg, rPeak, fs);
+
+        // Onsets / offsets (auto-detected -- these were the fields that used
+        // to come from TemplateBin's marker set).
+        const double qOnsetD = FeatureMarks::compute_q_onset(ecg, fs, rPeak);
+        const double jPointD = FeatureMarks::compute_j_point(ecg, fs, rPeak);   // == S_end
+        const double tBeginD = FeatureMarks::compute_t_begin(ecg, fs, rPeak);
+        const double tEndD = FeatureMarks::compute_t_end(ecg, fs, rPeak);
+        const double pBeginD = FeatureMarks::compute_p_begin(ecg, fs, rPeak, pPeakD);
+        const double tPeakD = FeatureMarks::compute_t_peak(ecg, tBeginD, tEndD);
+
+        // Amplitudes.
+        out.r_amp = FeatureMarks::sample_at(ecg, static_cast<double>(rPeak));
         out.q_amp = FeatureMarks::sample_at(ecg, qIdxD);
         out.s_amp = FeatureMarks::sample_at(ecg, sIdxD);
-
-        // T peak: reactive, the same finder the CSV export / GUI glyph use.
-        const double tPeakD = FeatureMarks::compute_t_peak(ecg, tBegin, tEnd);
+        out.p_amp = FeatureMarks::sample_at(ecg, pPeakD);
         out.t_amp = FeatureMarks::sample_at(ecg, tPeakD);
+        out.st_level = FeatureMarks::sample_at(ecg, jPointD);
+        out.j_point_amp = out.st_level;
 
-        out.pr_ms = g.prInterval_ms;
-        out.qrs_ms = g.qrsDuration_ms;
-        out.qt_ms = g.qtInterval_ms;
+        // Per-channel intervals (ms) from this channel's own landmarks.
+        auto ms = [&](double a, double b) -> double {
+            if (std::isnan(a) || std::isnan(b) || b <= a) return kNaN;
+            return (b - a) / fs * 1000.0;
+            };
+        out.pr_ms = ms(pBeginD, qOnsetD);
+        out.qrs_ms = ms(qOnsetD, jPointD);
+        out.qt_ms = ms(qOnsetD, tEndD);
         if (!std::isnan(out.qt_ms) && !std::isnan(out.qrs_ms))
             out.jt_ms = out.qt_ms - out.qrs_ms;
 
-        out.st_level = normalize_features::sample_y(ecg, sEnd);
-        out.j_point_amp = out.st_level;
-
+        // Areas (rounded fiducials for the integer window bounds).
+        auto idx = [](double d) { return std::isnan(d) ? -1 : static_cast<int>(std::lround(d)); };
+        const int qOnset = idx(qOnsetD), jPoint = idx(jPointD);
+        const int tBegin = idx(tBeginD), tEnd = idx(tEndD);
         if (tBegin >= 0 && tEnd > tBegin)
             out.t_wave_area = normalize_features::segment_area(ecg, tBegin, tEnd, /*absolute=*/true);
-        if (qBegin >= 0 && sEnd > qBegin)
-            out.qrs_area = normalize_features::segment_area(ecg, qBegin, sEnd, /*absolute=*/true);
+        if (qOnset >= 0 && jPoint > qOnset)
+            out.qrs_area = normalize_features::segment_area(ecg, qOnset, jPoint, /*absolute=*/true);
 
-        if (!std::isnan(qIdxD) && rPeak >= 0 && rPeak > qIdxD && fs > 0.0) {
+        // Slopes (mV/s) across the QRS limbs.
+        if (!std::isnan(qIdxD) && qIdxD < rPeak) {
             const double dt = (rPeak - qIdxD) / fs;
             if (dt > 0.0) out.upstroke_slope_mv_per_s = (out.r_amp - out.q_amp) / dt;
         }
-        if (!std::isnan(sIdxD) && rPeak >= 0 && sIdxD > rPeak && fs > 0.0) {
+        if (!std::isnan(sIdxD) && sIdxD > rPeak) {
             const double dt = (sIdxD - rPeak) / fs;
             if (dt > 0.0) out.downstroke_slope_mv_per_s = (out.s_amp - out.r_amp) / dt;
         }
@@ -194,35 +204,54 @@ namespace bin_archive {
         if (!std::isnan(out.s_amp) && !std::isnan(out.r_amp) && out.r_amp != 0.0)
             out.s_to_r_ratio = std::abs(out.s_amp) / std::abs(out.r_amp);
 
-        // Already STD, ddof=1 -- see NormalizeFeatures.hpp's note on the
-        // *_iqr naming.
-        out.per_sample_std = chs[ch]->ecg_template_raw_iqr;
+        // Per-sample STD (chN_raw.ecg_template_iqr holds a STD despite the name).
+        out.per_sample_std = chRaw.ecg_template_iqr;
         return out;
     }
 
-    // 3-lead spatial "volume" over the QRS window, reusing the SAME
-    // cross-channel R-relative alignment vcg_signal_average.hpp's save-time
-    // path already solves (loopFromTemplates), and NormalizeFeatures.hpp's
-    // segment_volume for the actual trapezoidal integration.
-    inline double computeQrsAreaSpatial(const TemplateBin& b,
-        const global_intervals::GlobalIntervals& g, double fs, int marginSamples = 10) {
-        if (!g.valid) return kNaN;
-        int pre = static_cast<int>(std::ceil(-g.qrsOnset)) + marginSamples;
-        int post = static_cast<int>(std::ceil(g.qrsOffset)) + marginSamples;
-        if (pre <= 0)  pre = 40 + marginSamples;
-        if (post <= 0) post = 60 + marginSamples;
+    // 3-lead vector-magnitude integral over the QRS window, built directly
+    // from the three chN_raw template waveforms aligned on their own r_col.
+    // A proxy for the SVD-basis spatial QRS area (see header note): the true
+    // VCG loop needs the TemplateBin/vcg_signal_average machinery, which does
+    // not exist at this checkpoint. Uses ch1's auto-detected Q-onset/J-point
+    // as the window and each channel's r_col to co-register the three traces.
+    inline double computeQrsAreaSpatial(const template_io::BinTemplates& bt, double fs) {
+        const template_io::ChannelMethodTemplate* chs[3] = { &bt.ch1_raw, &bt.ch2_raw, &bt.ch3_raw };
+        for (int c = 0; c < 3; ++c)
+            if (chs[c]->ecgTemplate.empty() || chs[c]->r_col < 0) return kNaN;
+        if (fs <= 0.0) return kNaN;
 
-        const vcg_avg::Loop loop = vcg_avg::loopFromTemplates(b, pre, post);
-        if (loop.pts.empty()) return kNaN;
-        const int qLo = loop.indexForOffset(g.qrsOnset);
-        const int qHi = loop.indexForOffset(g.qrsOffset);
-        if (qLo < 0 || qHi <= qLo) return kNaN;
+        // Window from ch1's auto-detected QRS onset/offset.
+        const int r0 = chs[0]->r_col;
+        const double qOnsetD = FeatureMarks::compute_q_onset(chs[0]->ecgTemplate, fs, r0);
+        const double jPointD = FeatureMarks::compute_j_point(chs[0]->ecgTemplate, fs, r0);
+        if (std::isnan(qOnsetD) || std::isnan(jPointD) || jPointD <= qOnsetD) return kNaN;
 
-        std::vector<double> x(loop.pts.size()), y(loop.pts.size()), z(loop.pts.size());
-        for (size_t i = 0; i < loop.pts.size(); ++i) {
-            x[i] = loop.pts[i].x; y[i] = loop.pts[i].y; z[i] = loop.pts[i].z;
+        // Integrate sqrt(sum ch_c(t)^2) over the window, each channel sampled
+        // at the SAME offset-from-its-own-R so the three are co-registered.
+        const int steps = static_cast<int>(std::lround(jPointD)) - static_cast<int>(std::lround(qOnsetD));
+        if (steps < 1) return kNaN;
+        const int off0 = static_cast<int>(std::lround(qOnsetD)) - r0;   // window start, relative to R
+
+        double area = 0.0;
+        bool any = false;
+        auto magAt = [&](int rel) -> double {
+            double sumsq = 0.0;
+            for (int c = 0; c < 3; ++c) {
+                const auto& w = chs[c]->ecgTemplate;
+                const int k = chs[c]->r_col + rel;
+                if (k < 0 || k >= static_cast<int>(w.size()) || std::isnan(w[k])) return kNaN;
+                sumsq += w[k] * w[k];
+            }
+            return std::sqrt(sumsq);
+            };
+        for (int s = 0; s < steps; ++s) {
+            const double a = magAt(off0 + s), b = magAt(off0 + s + 1);
+            if (std::isnan(a) || std::isnan(b)) continue;
+            area += 0.5 * (a + b);
+            any = true;
         }
-        return normalize_features::segment_volume(x, y, z, qLo, qHi);
+        return any ? area : kNaN;
     }
 
     // ---------------------------------------------------------------------
@@ -231,7 +260,7 @@ namespace bin_archive {
     // (sqi_ecg.hpp) directly -- the per-beat scoring itself is not
     // re-derived here, only reduced to bin level.
     // ---------------------------------------------------------------------
-    inline void poolBinQuality(BinArchiveRow& row, const template_io::TemplateFile& tmpl,
+    inline void poolBinQuality(BinArchiveRow& row, const template_io::BinTemplates& bt,
         const template_io::BeatsFile& beats, double ecgFs) {
         struct ChannelSpec {
             const char* key;
@@ -246,9 +275,7 @@ namespace bin_archive {
         };
         constexpr int motionFlag = -1;   // same "unavailable at this pipeline stage" convention as sqi_ecg.hpp
 
-        if (row.binIndex < 0 || static_cast<size_t>(row.binIndex) >= tmpl.bins.size()) return;
-        const auto& bt = tmpl.bins[row.binIndex];
-        if (bt.bad_segment) return;
+        if (row.binIndex < 0 || bt.bad_segment) return;
 
         double accSum[kNumSqiFields] = { 0.0 };
         double accSumSq[kNumSqiFields] = { 0.0 };
@@ -297,41 +324,36 @@ namespace bin_archive {
     }
 
     // ---------------------------------------------------------------------
-    // One bin's full archive row. `tmpl`/`beats` are optional: pass both to
-    // get the 22 quality parameters populated, or neither to archive
-    // morphology/intervals/areas only (e.g. before SQI has been computed for
-    // this file yet).
+    // One bin's full archive row. `beats` is optional: pass it to populate
+    // the 22 quality parameters; omit it to archive morphology/intervals/
+    // areas only. All morphology is auto-detected on the bin's own R-pass
+    // template waveforms (bt.chN_raw), so no anchor/marker input is needed.
     // ---------------------------------------------------------------------
-    inline BinArchiveRow buildBinArchiveRow(const std::vector<TemplateBin>& bins, int i,
-        AnchorType anchor, double fs,
-        const template_io::TemplateFile* tmpl = nullptr,
-        const template_io::BeatsFile* beats = nullptr) {
+    inline BinArchiveRow buildBinArchiveRow(const std::vector<template_io::BinTemplates>& bins, int i,
+        double fs, const template_io::BeatsFile* beats = nullptr) {
         BinArchiveRow row;
         row.binIndex = i;
         if (i < 0 || static_cast<size_t>(i) >= bins.size()) return row;
-        const TemplateBin& b = bins[static_cast<size_t>(i)];
+        const template_io::BinTemplates& bt = bins[static_cast<size_t>(i)];
+        if (bt.bad_segment) return row;
 
-        const global_intervals::GlobalIntervals g =
-            global_intervals::computeGlobalIntervals(b, anchor, fs, global_intervals::MarkerSource::USER);
-
+        const template_io::ChannelMethodTemplate* chs[3] = { &bt.ch1_raw, &bt.ch2_raw, &bt.ch3_raw };
         for (int c = 0; c < kNumEcgCh; ++c)
-            row.ch[c] = buildChannelArchive(b, c, anchor, fs, g);
+            row.ch[c] = buildChannelArchive(*chs[c], fs);
 
-        row.qrs_area_spatial = computeQrsAreaSpatial(b, g, fs);
+        row.qrs_area_spatial = computeQrsAreaSpatial(bt, fs);
 
-        if (tmpl && beats) poolBinQuality(row, *tmpl, *beats, fs);
+        if (beats) poolBinQuality(row, bt, *beats, fs);
 
         return row;
     }
 
-    inline std::vector<BinArchiveRow> buildBinArchive(const std::vector<TemplateBin>& bins,
-        AnchorType anchor, double fs,
-        const template_io::TemplateFile* tmpl = nullptr,
-        const template_io::BeatsFile* beats = nullptr) {
+    inline std::vector<BinArchiveRow> buildBinArchive(const std::vector<template_io::BinTemplates>& bins,
+        double fs, const template_io::BeatsFile* beats = nullptr) {
         std::vector<BinArchiveRow> rows;
         rows.reserve(bins.size());
         for (size_t i = 0; i < bins.size(); ++i)
-            rows.push_back(buildBinArchiveRow(bins, static_cast<int>(i), anchor, fs, tmpl, beats));
+            rows.push_back(buildBinArchiveRow(bins, static_cast<int>(i), fs, beats));
         return rows;
     }
 
@@ -416,21 +438,19 @@ namespace bin_archive {
      *
      *        Call this BEFORE any template deformation pass (Section 9.6)
      *        runs, so bin-level results are on disk even if deformation
-     *        never runs, or fails partway through -- the same
-     *        "checkpoint before the next stage" placement sqi_ecg.hpp's
-     *        writeEcgSQICsv already has relative to finalizeViewerJob's
-     *        later steps.
+     *        never runs, or fails partway through.
      *
-     * @param tmpl/beats  Optional. Pass both to populate the 22 quality
-     *                    parameters; pass neither to archive morphology /
-     *                    intervals / areas only.
+     * @param bins        job.tmpl.bins (the R-pass template build).
+     * @param anchorLabel filename suffix only (e.g. "R") -- NOT a marker
+     *                    source; all fiducials are auto-detected here.
+     * @param beats       Optional. Pass to populate the 22 quality params;
+     *                    omit for morphology / intervals / areas only.
      */
     inline bool writeBinFeatureArchive(const std::string& dir, const std::string& subjectId,
-        const std::vector<TemplateBin>& bins, AnchorType anchor, double fs,
+        const std::vector<template_io::BinTemplates>& bins, double fs,
         const std::string& anchorLabel,
-        const template_io::TemplateFile* tmpl = nullptr,
         const template_io::BeatsFile* beats = nullptr) {
-        const std::vector<BinArchiveRow> rows = buildBinArchive(bins, anchor, fs, tmpl, beats);
+        const std::vector<BinArchiveRow> rows = buildBinArchive(bins, fs, beats);
         return writeBinArchiveCsv(dir, subjectId, anchorLabel, rows);
     }
 

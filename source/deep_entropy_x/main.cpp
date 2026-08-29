@@ -293,7 +293,7 @@ int main(int argc, char* argv[]) {
     std::filesystem::create_directories(cfg.qtvi_marker_path);
     std::filesystem::create_directories(cfg.quality_metric);
     std::filesystem::create_directories(cfg.training_log);
-
+	std::filesystem::create_directories(cfg.bin_archive_path);
 
 
     const std::vector<std::filesystem::path> binFiles = load_binfiles(cfg);

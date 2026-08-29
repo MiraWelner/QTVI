@@ -71,6 +71,7 @@ struct config_entry {
     std::string log_path;
     std::string training_log;
     std::string vcg_output;
+    std::string bin_archive_path;
 
     /*
     Different filetypes have different terms for the same type of signal,

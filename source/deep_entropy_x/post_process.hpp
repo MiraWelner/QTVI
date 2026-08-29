@@ -15,17 +15,20 @@
 #include <omp.h>
 
 #include "peak_finding/channel_offset.hpp"
-#include "annealing/anneal_handler.hpp"
-#include "peak_finding/peakfinding_io.hpp"
-#include "config_file_handling/config_entry.hpp"
-#include "peak_finding/create_ecg_ppg_pairs.hpp"
-#include "template_generation/build_templates.hpp"
-#include "template_generation/pulse_matched_filter.hpp"
 #include "peak_finding/run_find_r_peaks.hpp"
+#include "peak_finding/create_ecg_ppg_pairs.hpp"
+#include "peak_finding/peakfinding_io.hpp"
+
+#include "template_generation/bin_archive.hpp"
 #include "template_generation/template_io.hpp"
+#include "template_generation/pulse_matched_filter.hpp"
+#include "template_generation/build_templates.hpp"
+#include "template_generation/premark_beats.hpp"
+
+#include "annealing/anneal_handler.hpp"
+#include "config_file_handling/config_entry.hpp"
 #include "template_marking_gui/alignment.hpp"
 #include "logging/sqi_ecg.hpp"
-#include "template_generation/premark_beats.hpp"
 
 namespace post_process_detail {
 
@@ -320,6 +323,18 @@ namespace post_process_detail {
         job.beats = std::move(fast.beats);
         job.info = std::move(fast.info);
         job.tmplR = job.tmpl;      // snapshot R frame (one copy, at prep time)
+
+        if (!cfg.bin_archive_path.empty()) {
+            const bool ok = bin_archive::writeBinFeatureArchive(
+                cfg.bin_archive_path, stem, job.tmpl.bins,
+                cfg.ecg_upsample_rate, "R", &job.beats);
+            if (!ok)
+                std::cerr << "  [bin_archive] " << stem
+                << ": could not write checkpoint to " << cfg.bin_archive_path << "\n";
+            else
+                std::cerr << "  [bin_archive] " << stem << ": wrote checkpoint ("
+                << job.tmpl.bins.size() << " bins)\n";
+        }
         template_io::write_template_binfile(provisionalPath.string(), job.tmpl);
         job.viewerTemplatePath = provisionalPath;
         job.needsFinalize = true;
