@@ -156,7 +156,54 @@ namespace morphology_csv {
         // spawn_seq is used rather than the template's current position because
         // a merge erases an element and shifts everything after it, which would
         // otherwise renumber templates between runs.
-        inline std::string templateName(const tbank::BankTemplate& t) {
+        // `letter` is the contiguous rank from letterRanks(); pass -1 to fall
+        // back to spawn_seq, which is only correct when no merge has happened
+        // and is kept solely so a caller without a bank in hand still compiles.
+        // CONTIGUOUS, BY RANK AMONG SURVIVORS. This used to return
+        // spawn_seq % 26 for an unlabeled template, which produced A, C, E on a
+        // bank whose B and D had been merged away -- and with 460 merges in a
+        // single bin the surviving letters were effectively arbitrary.
+        //
+        // The old comment defended spawn_seq as stable across runs, unlike bank
+        // position which shifts when a merge erases an element. That argument
+        // does not survive the merge counts actually observed: spawn_seq is a
+        // running total of every template ever created in the bin, so any change
+        // to the metric or the beat set renumbers it wholesale. Neither scheme
+        // is stable across runs, and only one of them reads correctly.
+        //
+        // Rank is taken over spawn_seq rather than over bank position, so the
+        // letters follow ORDER OF FIRST APPEARANCE among the templates that
+        // survived -- which is what the spec means by "in order of first
+        // appearance" -- and a merge that erases an earlier slot does not
+        // reorder the survivors relative to each other.
+        //
+        // A CONFIRMED template still uses its subtype: that index was issued by
+        // the bank at confirmation time, the operator has seen it, and it must
+        // not be renumbered by a later merge elsewhere in the bin.
+        inline std::vector<uint8_t> letterRanks(const tbank::TemplateBank& bank) {
+            const int n = bank.size();
+            std::vector<int> order;
+            order.reserve(n);
+            for (int i = 0; i < n; ++i)
+                if (!bank.templates[i].tmpl.empty()) order.push_back(i);
+            std::sort(order.begin(), order.end(), [&](int a, int b) {
+                return bank.templates[a].spawn_seq < bank.templates[b].spawn_seq;
+                });
+
+            std::vector<uint8_t> letter(n, 0);
+            int rank = 0;
+            for (int i : order) {
+                const tbank::BankTemplate& t = bank.templates[i];
+                const int idx = (t.label_code != tbank::kUnlabeled && t.subtype > 0)
+                    ? t.subtype - 1 : rank;
+                letter[i] = static_cast<uint8_t>(idx % 26);
+                ++rank;
+            }
+            return letter;
+        }
+
+        inline std::string templateName(const tbank::BankTemplate& t,
+            int letter_rank = -1) {
             std::string cls = "PQRST";
             int letterIdx = -1;
 
@@ -170,7 +217,13 @@ namespace morphology_csv {
                 }
                 if (t.subtype > 0) letterIdx = t.subtype - 1;
             }
-            if (letterIdx < 0) letterIdx = static_cast<int>(t.spawn_seq);
+            // Ranked letter when the caller supplied one; spawn_seq only as a
+            // last resort. spawn_seq counts every template ever created in the
+            // bin, so on a bank that merged 460 times it names surviving
+            // templates A, C, E, ... with the gaps being the merged ones.
+            if (letterIdx < 0)
+                letterIdx = (letter_rank >= 0) ? letter_rank
+                    : static_cast<int>(t.spawn_seq);
             const char letter = static_cast<char>('A' + (letterIdx % 26));
             return cls + "_" + std::string(1, letter);
         }
@@ -405,6 +458,9 @@ namespace morphology_csv {
 
             for (size_t b = 0; b < blk.per_bin->size(); ++b) {
                 const bin_pipeline::ChannelOutput& out = (*blk.per_bin)[b];
+                // Letters for this bin's bank, contiguous over the surviving
+                // templates. Computed once per bin, not per template.
+                const std::vector<uint8_t> letters = detail::letterRanks(out.bank);
                 for (int t = 0; t < out.bank.size(); ++t) {
                     const tbank::BankTemplate& tp = out.bank.templates[t];
                     if (tp.tmpl.empty()) continue;
@@ -417,7 +473,7 @@ namespace morphology_csv {
                     Col c;
                     c.category = detail::categoryWord(tp.presumedCategory());
                     c.bin = std::to_string(b);
-                    c.name = detail::templateName(tp);
+                    c.name = detail::templateName(tp, letters[t]);
                     c.premature = detail::prematureWordAgg(tp);
                     c.tukey = detail::tukeyWordAgg(tp, out);
                     c.confirmed = tp.confirmed() ? "confirmed" : "presumed";
@@ -583,11 +639,6 @@ namespace morphology_csv {
         // appearance -- and spawn_seq is used rather than bank position because a
         // merge erases an element and shifts everything after it, which would
         // otherwise renumber templates between runs.
-        inline uint8_t letterOf(const tbank::BankTemplate& t) {
-            int idx = (t.label_code != tbank::kUnlabeled && t.subtype > 0)
-                ? t.subtype - 1 : static_cast<int>(t.spawn_seq);
-            return static_cast<uint8_t>(idx % 26);
-        }
 
         inline uint8_t prematureCode(const std::string& word) {
             if (word == "premature") return 3;
@@ -635,6 +686,9 @@ namespace morphology_csv {
                 // ONE inversion per bin, reused by every beat in it.
                 const detail::SlotMap slotOf = detail::buildSlotMap(blk, b);
                 const bin_pipeline::ChannelOutput& out = (*blk.per_bin)[b];
+                // Letters for this bin's bank, contiguous over the surviving
+                // templates. Computed once per bin, not per template.
+                const std::vector<uint8_t> letters = detail::letterRanks(out.bank);
                 for (size_t i = 0; i < out.flags.size(); ++i) {
                     BeatRecord rec;
                     rec.bin = static_cast<uint32_t>(b);
@@ -650,7 +704,7 @@ namespace morphology_csv {
                     if (t >= 0 && t < out.bank.size()) {
                         const tbank::BankTemplate& tp = out.bank.templates[t];
                         rec.label_code = tp.label_code;
-                        rec.letter = detail::letterOf(tp);
+                        rec.letter = letters[t];
                         rec.confirmed = tp.confirmed() ? 1 : 0;
                     }
                     else {
@@ -719,6 +773,9 @@ namespace morphology_csv {
             const double nan = std::numeric_limits<double>::quiet_NaN();
             for (size_t b = 0; b < blk.per_bin->size(); ++b) {
                 const bin_pipeline::ChannelOutput& out = (*blk.per_bin)[b];
+                // Letters for this bin's bank, contiguous over the surviving
+                // templates. Computed once per bin, not per template.
+                const std::vector<uint8_t> letters = detail::letterRanks(out.bank);
                 for (int t = 0; t < out.bank.size(); ++t) {
                     const tbank::BankTemplate& tp = out.bank.templates[t];
                     if (tp.tmpl.empty()) continue;
@@ -731,7 +788,7 @@ namespace morphology_csv {
                     rec.tukey = detail::tukeyAggCode(detail::tukeyWordAgg(tp, out));
                     rec.confirmed = tp.confirmed() ? 1 : 0;
                     rec.label_code = tp.label_code;
-                    rec.letter = detail::letterOf(tp);
+                    rec.letter = letters[t];
                     rec.landmark_marked = tp.wantsLandmarkMarking() ? 1 : 0;
                     rec.template_id = t;
                     rec.r_col = (blk.r_col && b < blk.r_col->size())

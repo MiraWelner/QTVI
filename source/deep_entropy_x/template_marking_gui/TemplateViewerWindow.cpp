@@ -263,7 +263,7 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
     return out;
 }
 
-// Pack bins into pages so that no page exceeds m_maxColsPerPage COLUMNS.
+// Pack bins into pages so no page exceeds m_maxColsPerPage COLUMNS.
 //
 // WHY BY COLUMNS AND NOT BY BINS. A page used to hold a fixed m_binsPerPage
 // bins, and each bin contributes one column per markable template, so the panel
@@ -278,9 +278,6 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
 // the only case that still compresses. Splitting one bin across two pages would
 // avoid even that, but a bin's panels are edited and snapshotted as a unit
 // (captureCurrentPage), so half a bin per page would mean half a snapshot.
-// Being asked to mark three or more normal templates in one bin is itself the
-// over-segmentation signal markingSlotsForBin documents; the fix there is
-// upstream, not in the layout.
 //
 // Called again whenever eligibility changes -- confirming a class can add or
 // remove a column and therefore move every later boundary.
@@ -307,9 +304,6 @@ void TemplateViewerWindow::buildPages() {
     }
     m_totalPages = static_cast<int>(m_pages.size());
 
-    // Worth seeing once per record: if pages are consistently one bin each, the
-    // banks are producing several markable templates per bin and the paging is
-    // absorbing a problem rather than the record being unusual.
     int widest = 0;
     for (const auto& pg : m_pages) {
         int cols = 0;
@@ -806,7 +800,7 @@ void TemplateViewerWindow::showPage() {
     lap("clearPlots");
 
     // Page bounds come from the packed table, not from multiplication: pages
-    // hold a variable number of bins so that the COLUMN count stays bounded.
+    // hold a variable number of bins so the COLUMN count stays bounded.
     if (m_pages.empty()) buildPages();
     m_currentPage = std::clamp(m_currentPage, 0, (int)m_pages.size() - 1);
     int start = m_pages[m_currentPage].first;
@@ -1043,7 +1037,17 @@ void TemplateViewerWindow::showPage() {
             // BankMarkerSet (tbank::BankTemplate::markers_by_anchor); until the
             // marking path is threaded through to them, an ectopic column shows
             // its waveform with no bars, which is honest.
+            // Slot 0 gets the bin's marker set, which describes the sinus
+            // template. Every other slot gets its OWN BankMarkerSet, seeded
+            // from its own median waveform -- not a copy of the bin's, because a
+            // PVC's Q-onset sits at a different column than sinus's and drawing
+            // sinus's bars there would be wrong in a way a drag would then
+            // persist. That was the reason sub-templates had no bars at all.
             if (ti == 0) applyBinToWidget(pw, b);
+            // m_bins[gi] rather than `b`: the loop binds `b` as const, and the
+            // lazy seed writes the marker set it just computed back into the
+            // template so the next repaint and any drag see the same positions.
+            else         applyBankTemplateToWidget(pw, m_bins[gi], c, ti);
 
             pw->setReferenceLines(global_interval_lines::forChannel(b, gi_intervals, c));
 
@@ -1052,8 +1056,8 @@ void TemplateViewerWindow::showPage() {
             else if (b.bad_r_ch[c])
                 pw->setState(BinPlotWidget::State::BadR);
 
-            connect(pw, &BinPlotWidget::markerMoved,
-                this, &TemplateViewerWindow::onMarkerMoved);
+            connect(pw, &BinPlotWidget::markerMovedOnTemplate,
+                this, &TemplateViewerWindow::onMarkerMovedOnTemplate);
             connect(pw, &BinPlotWidget::markerDragStarted,
                 this, &TemplateViewerWindow::onMarkerDragStarted);
             connect(pw, &BinPlotWidget::landmarkSelected,
@@ -1710,6 +1714,48 @@ void TemplateViewerWindow::onClassConfirmRequested(int binIndex, int leadIndex,
     showPage();
 }
 
+// Bars for a bank template column, from the template's own BankMarkerSet.
+//
+// Seeded LAZILY, on first display, rather than during the build: the anchor is
+// an interactive choice, so a template needs a marker set per anchor and the
+// build has no idea which ones the operator will visit. Seeding on demand also
+// means an existing archive gains bars without being regenerated.
+//
+// ECG ONLY. A bank template is a per-channel ECG median; it has no PPG or
+// arterial waveform of its own, so those markers stay at -1 and their bars are
+// simply absent -- which is honest, and better than showing the bin's PPG bars
+// against an ECG-only column.
+void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
+    TemplateBin& b, int channel, int templateIdx)
+{
+    if (channel < 0 || channel > 2) return;
+    tbank::TemplateBank& bank = b.ecg_bank[channel];
+    if (templateIdx < 0 || templateIdx >= bank.size()) return;
+    tbank::BankTemplate& tp = bank.templates[templateIdx];
+    if (tp.tmpl.empty()) return;
+
+    const int anchor = static_cast<int>(currentAnchor());
+    if (tp.markers_by_anchor.find(anchor) == tp.markers_by_anchor.end()) {
+        // r_col comes from the template when it has one, otherwise from the
+        // bin's channel: every beat in the bank was aligned on the same R
+        // column by construction, so the bin's value is correct rather than a
+        // guess when the template's own field was never filled.
+        const int rc = (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel];
+        FeatureMarks::seed_bank_template(tp.tmpl, rc, m_sampleRate,
+            tp.marks(anchor));
+    }
+    const tbank::BankMarkerSet& mk = tp.marks(anchor);
+
+    pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
+    pw->setMarker(BinPlotWidget::EcgPPeak, mk.p_peak);
+    pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_begin);
+    pw->setMarker(BinPlotWidget::EcgRPeak,
+        (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel]);
+    pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
+    pw->setMarker(BinPlotWidget::EcgTBegin, mk.t_begin);
+    pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
+}
+
 void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin& b) {
     const int c = pw->leadIndex();
     const TemplateBin::MarkerSet& mk = b.marks(currentAnchor());
@@ -1770,6 +1816,36 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
         if (li < (int)m_pageTemplateIdx.size() && m_pageTemplateIdx[li] != 0)
             continue;
         for (auto* pw : m_binPlots[li]) applyBinToWidget(pw, m_bins[binIdx]);
+    }
+}
+
+// Slot-aware entry point. A drag on a sub-template column must land in that
+// template's BankMarkerSet, not in the bin's -- the bin's set describes sinus,
+// and writing a PVC's Q-onset into it would corrupt the sinus landmarks for
+// every other panel showing the same bin.
+void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
+    int templateIdx, int marker, int newIdx)
+{
+    if (templateIdx == 0) { onMarkerMoved(binIdx, leadIdx, marker, newIdx); return; }
+    if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
+    if (leadIdx < 0 || leadIdx > 2) return;
+    if (!BinPlotWidget::markerIsEcg(marker)) return;   // bank templates are ECG only
+
+    tbank::TemplateBank& bank = m_bins[binIdx].ecg_bank[leadIdx];
+    if (templateIdx < 0 || templateIdx >= bank.size()) return;
+    tbank::BankMarkerSet& mk =
+        bank.templates[templateIdx].marks(static_cast<int>(currentAnchor()));
+
+    switch (marker) {
+    case BinPlotWidget::EcgPBegin: mk.p_begin = newIdx; break;
+    case BinPlotWidget::EcgPPeak:  mk.p_peak = newIdx; break;
+    case BinPlotWidget::EcgQBegin: mk.q_begin = newIdx; break;
+    case BinPlotWidget::EcgSEnd:   mk.s_end = newIdx; break;
+    case BinPlotWidget::EcgTBegin: mk.t_begin = newIdx; break;
+    case BinPlotWidget::EcgTEnd:   mk.t_end = newIdx; break;
+        // EcgRPeak has no bar and is not draggable: it is the alignment anchor,
+        // and moving it would invalidate every other landmark's coordinate.
+    default: return;
     }
 }
 
@@ -2065,9 +2141,17 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
             switch (m) {
             case BinPlotWidget::PpgOnset:    return QStringLiteral("Foot");
             case BinPlotWidget::PpgT50:      return QStringLiteral("T50");
-            case BinPlotWidget::PpgPeak:     return QStringLiteral("Diastolic Peak");
+            // SWAPPED. PpgPeak is the SYSTOLIC peak -- the forward-wave maximum
+            // the whole pulse is anchored on -- and PpgPeak2 is the DIASTOLIC
+            // peak, the reflected wave arriving after the dicrotic notch. Every
+            // other reference in the tree agrees: ppg_peak2_color is commented
+            // "(2nd/diastolic peak)", and feature_marks builds peak2 as "first
+            // local max after the notch". Only these two labels disagreed, and
+            // they disagreed with each other in a way that made the diastolic
+            // bar look like a missing systolic one.
+            case BinPlotWidget::PpgPeak:     return QStringLiteral("Systolic Peak");
             case BinPlotWidget::PpgDicrotic: return QStringLiteral("Dicrotic Notch");
-            case BinPlotWidget::PpgPeak2:    return QStringLiteral("Systolic Peak");
+            case BinPlotWidget::PpgPeak2:    return QStringLiteral("Diastolic Peak");
             case BinPlotWidget::PpgT80:      return QStringLiteral("T80");
             case BinPlotWidget::PpgEnd:      return QStringLiteral("End");
             case BinPlotWidget::AbpOnset: case BinPlotWidget::ArtOnset: case BinPlotWidget::ArtPulmOnset:       return QStringLiteral("onset");

@@ -956,7 +956,12 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     // ECG, PPG, and all arterial channels).
     s = std::clamp(s, 0, std::max(0, visN - 1));
     m_markers[m_dragMarker] = s;
-    emit markerMoved(m_binIndex, m_leadIndex, m_dragMarker, s);
+    // TEMPLATE-AWARE signal only. markerMoved carried no slot, so a drag on a
+    // sub-template column was indistinguishable from one on slot 0 and wrote
+    // into the bin's marker set either way -- which is why sub-templates could
+    // not safely have bars at all. The receiver routes on templateIdx.
+    emit markerMovedOnTemplate(m_binIndex, m_leadIndex, m_templateIndex,
+        m_dragMarker, s);
     // No snapshot recapture: the snapshot holds only frozen autodetect
     // columns, which a drag cannot affect. The reactive glyphs (T-peak,
     // T50/T80) are recomputed inside the repaint this update() triggers, so

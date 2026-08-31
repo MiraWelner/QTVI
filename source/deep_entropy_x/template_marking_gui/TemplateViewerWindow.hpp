@@ -118,6 +118,18 @@ private:
     void onClassConfirmRequested(int binIndex, int leadIndex, int templateIdx,
         int annotationCode);
 
+    // Bars for a bank-template column, from that template's own
+    // BankMarkerSet (seeded lazily from its own median). Sub-templates had no
+    // bars at all before this: applyBinToWidget draws the BIN's marker set,
+    // which describes sinus, so it was correctly applied to slot 0 only.
+    void applyBankTemplateToWidget(BinPlotWidget* pw, TemplateBin& b,
+        int channel, int templateIdx);
+
+    // Slot-aware marker write-back. Routes to the bin's marker set for slot 0
+    // and to the bank template's for every other column.
+    void onMarkerMovedOnTemplate(int binIdx, int leadIdx, int templateIdx,
+        int marker, int newIdx);
+
     void showPage();
     void clearPlots();
     // Save a PNG of the CURRENT page (markers are hidden by default) into the

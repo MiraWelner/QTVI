@@ -777,12 +777,32 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         // accommodate it -- so a bad notch displaced a good peak, and the tier
         // and confidence recorded in the archive described a landmark that had
         // been overruled.
+        // ---- FALLBACK POSITIONS: THIRDS BETWEEN PEAK AND END ---------------
+        //
+        // Both landmarks lie between the systolic peak and the pulse end, in a
+        // fixed order: notch first, then the reflected wave. When a detector
+        // finds nothing there is still a bar to place, and placing them at 1/3
+        // and 2/3 of (peak, end) puts each one in the region it belongs to and
+        // keeps notch < peak2 by construction.
+        //
+        // This replaces two different midpoints -- peak2 fell back to the middle
+        // of (peak, hi) and the notch to the middle of (lo, hi), where lo/hi are
+        // the amp15/amp90 spline bounds rather than the pulse itself. Those two
+        // could land in either order and neither respected the pulse end, so a
+        // fallback bar could sit past the point where the pulse stops.
+        //
+        // These are PLACEHOLDERS, and *_found stays false for them: the glyph
+        // layer draws a hollow circle rather than an X, and nothing downstream
+        // should treat a thirds position as a measurement.
+        const double _span = g.end - g.peak;
+        const double guess_notch = cld(g.peak + _span / 3.0);
+        const double guess_peak2 = cld(g.peak + 2.0 * _span / 3.0);
+
         int splineDiastolic = -1;
         subsample_refine::cubicSplineNotch(v, lo, hi, &splineDiastolic);
         const bool splineOk = (splineDiastolic > lo && splineDiastolic < hi);
         g.peak2_found = splineOk;
-        g.peak2 = splineOk ? static_cast<double>(splineDiastolic)
-            : cld(0.5 * (g.peak + hi));
+        g.peak2 = splineOk ? static_cast<double>(splineDiastolic) : guess_peak2;
 
         // Notch: three-tier detector. The template spans ~one cardiac cycle, so
         // RR is its visible duration. Enhancement is left off (gain 0) pending
@@ -808,7 +828,7 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         g.dicrotic = g.notch_found
             ? (std::isfinite(dn.subSample) ? dn.subSample
                 : static_cast<double>(dn.index))
-            : cld(0.5 * (lo + hi));
+            : guess_notch;
         g.dn_tier = static_cast<int>(dn.tier);
         g.dn_confidence = dn.confidence;
 
@@ -1543,9 +1563,20 @@ bool FeatureMarks::order_notch_before_peak2(const std::vector<double>& pulse,
         }
     }
 
-    // No maximum after the notch. Absent, and said so.
-    peak2 = -1.0;
+    // No maximum after the notch. NOT FOUND, but keep a POSITION.
+    //
+    // Setting peak2 = -1 here is what removed the diastolic-peak bar from the
+    // PPG panels: seed_all copies ppg_peak2_auto into ppg_peak2 and reads a
+    // negative as "no marker", so the operator lost the handle instead of being
+    // given a placeholder to drag. found=false is what the glyph layer reads to
+    // draw a hollow circle instead of an X, so absence stays visible either way.
+    //
+    // 2/3 of the way from the notch to the end -- the same thirds rule the
+    // fiducial path uses over (peak, end), and it cannot violate the ordering
+    // this function exists to enforce.
     peak2_found = false;
+    const double guess = notch + 2.0 * (hi - notch) / 3.0;
+    peak2 = (guess > notch) ? guess : notch + 1.0;
     return false;
 }
 
@@ -1558,4 +1589,49 @@ bool FeatureMarks::order_notch_before_peak2(const std::vector<double>& pulse,
         p2, found, static_cast<double>(hi));
     peak2 = (p2 >= 0.0) ? static_cast<int>(std::lround(p2)) : -1;
     return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Per-bank-template landmark seeding. See the header for why this exists.
+// ---------------------------------------------------------------------------
+void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col,
+    double sampleRate, tbank::BankMarkerSet& out)
+{
+    out = tbank::BankMarkerSet{};          // all -1
+    if (tmpl.empty() || r_col < 0 || r_col >= (int)tmpl.size() || sampleRate <= 0.0)
+        return;
+
+    auto cl = [&](double x) {
+        const int n = (int)tmpl.size();
+        int i = (int)std::lround(x);
+        return (i < 0) ? -1 : (i >= n ? n - 1 : i);
+        };
+
+    // Same call order and the same seed reuse as seed_all's ECG block: the
+    // J-point feeds T-onset, T-onset feeds T-offset, and the P-peak feeds
+    // P-onset. Duplicating the order matters as much as duplicating the calls --
+    // each of those parameters exists to avoid a second, slightly different
+    // search for the same landmark.
+    const double j = FeatureMarks::compute_j_point(tmpl, sampleRate, r_col);
+    const double tb = FeatureMarks::compute_t_begin(tmpl, sampleRate, r_col, j);
+    const double te = FeatureMarks::compute_t_end(tmpl, sampleRate, r_col, tb);
+    const double pp = FeatureMarks::detect_p_peak(tmpl, r_col, sampleRate);
+    const double pb = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_col, pp);
+    const double q = FeatureMarks::compute_q_onset(tmpl, sampleRate, r_col);
+
+    out.q_begin = cl(q);
+    out.s_end = cl(j);
+    out.t_begin = cl(tb);
+    out.t_end = cl(te);
+    out.p_peak = cl(pp);
+    out.p_begin = cl(pb);
+
+    // A VENTRICULAR TEMPLATE HAS NO P WAVE, and -1 is the correct answer there.
+    // template_bank.hpp's comment on markers_by_anchor says so outright: every
+    // P-dependent feature must come out NaN rather than 0, and downstream has to
+    // treat -1 as a valid state. So a negative from detect_p_peak is passed
+    // through rather than substituted -- the detectors already return -1 when
+    // they find nothing, and cl() maps that to -1.
+    if (pp < 0.0) out.p_peak = -1;
+    if (pb < 0.0) out.p_begin = -1;
 }

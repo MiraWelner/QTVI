@@ -21,6 +21,7 @@
 
 #include <utility>
 #include <vector>
+#include "template_morphology_grouping/template_bank.hpp"
 #include <functional>
 #include <cmath>
 #include <cstdint>
@@ -102,6 +103,29 @@ public:
     static double compute_t_begin(const std::vector<double>& v, double fs, int r_idx,
         double jPointIn = -1.0);
     static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0);
+
+    // ---------------------------------------------------------------
+    // Per-BANK-TEMPLATE landmark seeding
+    // ---------------------------------------------------------------
+    //
+    // Fills one BankMarkerSet from a template's OWN waveform. Until this
+    // existed, only slot 0 got bars: TemplateViewerWindow applied
+    // TemplateBin::marks() -- which describes the bin's sinus template -- and
+    // skipped every other column, because a PVC's Q-onset sits at a different
+    // column than sinus's and drawing sinus's bars there would be simply
+    // wrong, with a drag writing the wrong value back.
+    //
+    // The fix is not to copy the bin's marks but to RUN THE SAME DETECTORS on
+    // the template's own median. Every landmark function below already takes
+    // (waveform, fs, r_col) and holds no per-bin state, so a bank template is
+    // just another waveform to them. That is why this is a dozen lines rather
+    // than a second implementation.
+    //
+    // r_col is the template's own R column. A template whose r_col is < 0 gets
+    // an all -1 marker set: no anchor means no landmark is locatable, and -1 is
+    // the established "absent" value the drawing layer already understands.
+    static void seed_bank_template(const std::vector<double>& tmpl, int r_col,
+        double sampleRate, tbank::BankMarkerSet& out);
 
     // the x, o, |, || or ||| markers for to mark the ppg and to be output in the csv
     struct PpgFiducials {

@@ -249,6 +249,13 @@ signals:
     // the QRS and JT panels).
     void landmarkSelected(int binIndex, int leadIndex, int marker, int col);
 
+    // TEMPLATE INDEX ADDED to the marker signals. A panel is a (bin, template)
+    // pair now, and without the slot the receiver cannot tell whether a drag
+    // belongs to the bin's own marker set or to a bank template's -- so every
+    // drag on a sub-template column would have written into slot 0's landmarks.
+    void markerMovedOnTemplate(int binIndex, int leadIndex, int templateIdx,
+        int marker, int newIdx);
+
     void badRToggled(int binIndex, int leadIndex, bool bad);
     void badPPGToggled(int binIndex, bool bad);
 
