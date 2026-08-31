@@ -161,11 +161,25 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
                 if (!std::isnan(v)) col.push_back(v);
             }
             if (col.empty()) continue;
-            std::sort(col.begin(), col.end());
+            // nth_element, NOT sort. This is the hottest loop in the whole
+            // template build: it runs once per column, per method, per channel,
+            // per bin -- for a 1.8*RR axis that is ~1800 columns, times two fast
+            // methods, times three channels, times every bin. A full sort per
+            // column is O(n log n) to extract ONE order statistic, and partial
+            // selection gets it in O(n).
+            //
+            // The even case needs the element below the midpoint too, and
+            // nth_element has already partitioned everything below imid to the
+            // left of it -- so max_element over that prefix finds it with no
+            // second selection. Same construction as template_assign.hpp's
+            // recomputeTemplate, which measured ~2.3x on this shape.
             const size_t nc = col.size();
+            const size_t imid = nc / 2;
+            std::nth_element(col.begin(), col.begin() + imid, col.end());
+            const double hi_mid = col[imid];
             tmpl[c] = (nc % 2 == 0)
-                ? 0.5 * (col[nc / 2 - 1] + col[nc / 2])
-                : col[nc / 2];
+                ? 0.5 * (*std::max_element(col.begin(), col.begin() + imid) + hi_mid)
+                : hi_mid;
         }
         return tmpl;
         };
@@ -211,6 +225,27 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
                 bi.baseline_ok[i] =
                 (aligned.baseline_source[i] == alignment::BaselineSource::NONE)
                 ? 0u : 1u;
+
+        // ---- THE SINGLE TUKEY'S VERDICT, handed through ------------------
+        //
+        // bin_pipeline used to run a Tukey of its own over the seed pool, which
+        // meant every beat passed through a fence twice: four passes here, in
+        // alignment, over the sliced beats, and one more there over the
+        // survivors of those four. Two populations, two sets of quartiles, and
+        // no rule for which one a downstream reader was looking at. It is gone;
+        // these four fields are what it needed and could not otherwise get.
+        //
+        // original_index is not optional. aligned.beats is the KEPT set, so its
+        // indices do not match tukey_outcome's -- which is indexed by original
+        // slice index precisely so it can describe beats that were pruned. The
+        // map has to travel with the verdict or the lookup silently reads some
+        // other beat's outcome.
+        bi.original_index = aligned.original_index;
+        bi.tukey_outcome = aligned.tukey_outcome;
+        bi.tukey_rr = aligned.tukey_rr;
+        bi.tukey_amplitude = aligned.tukey_amplitude;
+        bi.tukey_r_location = aligned.tukey_r_location;
+        bi.tukey_wave_score = aligned.tukey_wave_score;
 
         res.bank_out = bin_pipeline::runChannel(bi);
     }
@@ -474,7 +509,6 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
     // category / bin / template / premature / tukey rows. Replaces the earlier
     // pair of bank_*.csv dumps -- two files split by accident of what was
     // convenient to compute, not by anything a reader wanted separately.
-    morphology_csv::set(ecg_move_log::g_dir, ecg_move_log::g_stem);
     const std::vector<morphology_csv::ChannelBlock> blocks = {
         { "CH1", &res.ch1.bank_out_raw, &res.ch1.kept_beats_raw, &res.ch1.r_col_raw },
         { "CH2", &res.ch2.bank_out_raw, &res.ch2.kept_beats_raw, &res.ch2.r_col_raw },

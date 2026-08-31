@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 //
 // alignment.hpp
 //
@@ -47,13 +47,45 @@ namespace alignment {
         return static_cast<int64_t>(percent_interval_following_rpeak * rr);
     }
 
+    // Quartiles, fences and rejection count for ONE Tukey pass. Reported out
+    // rather than recomputed downstream: bin_pipeline used to run its own Tukey
+    // over the RR values purely to obtain these numbers, which meant the beats
+    // went through a Tukey fence TWICE -- once here, once there -- over
+    // different populations (this one over all sliced beats, that one over the
+    // survivors), so the two disagreed by construction and the diagnostics
+    // described a pass that never decided anything.
+    //
+    // The counts matter more than they look. bin_pipeline's header argues that
+    // the signature to watch is LOW REJECTION RATE WITH WIDE IQR, which is
+    // indistinguishable from "this bin is genuinely clean" if you only have the
+    // rejection count -- so the quartiles have to travel with it. There is one
+    // Tukey in this codebase and it is here; everything else consumes what it
+    // decided.
+    struct TukeyStats {
+        uint32_t beats_in = 0;
+        uint32_t beats_out = 0;
+        uint32_t rejected = 0;
+        double   q1 = std::numeric_limits<double>::quiet_NaN();
+        double   q3 = std::numeric_limits<double>::quiet_NaN();
+        double   fence_lo = std::numeric_limits<double>::quiet_NaN();
+        double   fence_hi = std::numeric_limits<double>::quiet_NaN();
+        double   iqr() const { return q3 - q1; }
+    };
+
     // Tukey outlier mask. keep[i] = false iff values[i] falls outside
     // [Q1 - k*IQR, Q3 + k*IQR]. NaN entries are left keep=true; callers
-    // must skip them explicitly when needed.
+    // must skip them explicitly when needed. `stats`, when non-null, receives
+    // the pass's quartiles, fences and counts.
     inline std::vector<bool> keep_within_tukey(
-        const std::vector<double>& values, double k)
+        const std::vector<double>& values, double k,
+        TukeyStats* stats = nullptr)
     {
         std::vector<bool> keep(values.size(), true);
+        if (stats) {
+            *stats = TukeyStats{};
+            stats->beats_in = static_cast<uint32_t>(values.size());
+            stats->beats_out = stats->beats_in;
+        }
         if (values.size() < 4) return keep;
 
         std::vector<double> sorted;
@@ -76,12 +108,33 @@ namespace alignment {
 
         const double lo_b = q1 - k * iqr;
         const double hi_b = q3 + k * iqr;
+        uint32_t rejected = 0;
         for (size_t i = 0; i < values.size(); ++i) {
             if (std::isnan(values[i])) continue;
-            if (values[i] < lo_b || values[i] > hi_b) keep[i] = false;
+            if (values[i] < lo_b || values[i] > hi_b) { keep[i] = false; ++rejected; }
+        }
+        if (stats) {
+            stats->q1 = q1;  stats->q3 = q3;
+            stats->fence_lo = lo_b;  stats->fence_hi = hi_b;
+            stats->rejected = rejected;
+            stats->beats_out = stats->beats_in - rejected;
         }
         return keep;
     }
+
+    // Which pass rejected a beat, or that it survived all of them. Mirrors
+    // tbank::TukeyOutcome value for value; kept as its own enum because
+    // alignment.hpp is upstream of template_bank.hpp and must not depend on it.
+    // bin_pipeline converts, and annotation_code_check's lesson applies -- the
+    // mirror is checked rather than trusted (see the static_assert there).
+    enum class TukeyOutcome : uint8_t {
+        NOT_ELIGIBLE = 0,
+        KEPT = 1,
+        REJ_RR_LENGTH = 2,
+        REJ_AMPLITUDE = 3,
+        REJ_R_LOCATION = 4,
+        REJ_WAVE_SCORE = 5
+    };
     struct ecg_beat_set {
         //a set of individually-aligned beats that will become a template.
         std::vector<std::vector<double>> beats;
@@ -114,6 +167,30 @@ namespace alignment {
         //            gone short so the beat stops reading as premature alone.
         std::vector<char> premature;
         std::vector<char> voted;
+
+        // ---- THE SINGLE TUKEY'S VERDICT, per ORIGINAL sliced beat ----------
+        //
+        // NEVER COMPACTED. Every other parallel vector here is squeezed by
+        // apply_mask alongside `beats`, which is why nothing downstream could
+        // ask what happened to a beat that did not survive -- only survivors
+        // existed, so "was this beat a Tukey outlier" could only be answered
+        // about beats that were not. That is the gap bin_pipeline filled by
+        // running its own Tukey over the survivors, and it is why the beats went
+        // through a fence twice.
+        //
+        // Indexed by the beat's index at SLICE time, so it stays valid across
+        // every compaction. Length is total_beats. Downstream consumers read
+        // this instead of re-deriving anything.
+        std::vector<TukeyOutcome> tukey_outcome;
+
+        // Per-pass quartiles, fences and counts, in pass order. Reported so the
+        // low-rejection-with-wide-IQR signature is visible without recomputing
+        // the pass that produced it.
+        TukeyStats tukey_rr, tukey_amplitude, tukey_r_location, tukey_wave_score;
+
+        // Beat index at slice time, parallel to `beats` and compacted with it.
+        // The bridge between a surviving beat and its entry in tukey_outcome.
+        std::vector<size_t> original_index;
         // Counts as they stood BEFORE pruning, so the flag survivors can be
         // compared against what the record actually contained.
         int n_premature_presliced = 0;
@@ -142,6 +219,24 @@ namespace alignment {
 
         // Compact the parallel (beats, r_indices, rr_lens) vectors, keeping
         // only entries where keep[i] is true.
+        // RECORD BEFORE COMPACTING. apply_mask is about to discard the rejected
+        // beats, so this is the only moment at which "beat i was rejected by
+        // this pass" can be written down. `which` names the pass; the verdict
+        // lands in out.tukey_outcome at the beat's ORIGINAL slice index, which
+        // survives every later compaction.
+        //
+        // A beat already carrying a rejection keeps it: the first pass to reject
+        // a beat is the one that describes it, and a later pass never saw it.
+        auto record_tukey = [&](const std::vector<bool>& keep, TukeyOutcome which) {
+            if (out.original_index.size() != out.beats.size()) return;
+            for (size_t i = 0; i < keep.size() && i < out.original_index.size(); ++i) {
+                const size_t orig = out.original_index[i];
+                if (orig >= out.tukey_outcome.size()) continue;
+                if (out.tukey_outcome[orig] != TukeyOutcome::KEPT) continue;
+                if (!keep[i]) out.tukey_outcome[orig] = which;
+            }
+            };
+
         auto apply_mask = [&](const std::vector<bool>& keep) {
             std::vector<std::vector<double>> kb;
             std::vector<size_t> kr;
@@ -149,6 +244,7 @@ namespace alignment {
             std::vector<BaselineSource> ks;
             std::vector<double> kd;
             std::vector<char> kp, kv;
+            std::vector<size_t> ko;
             const bool haveSrc = out.baseline_source.size() == out.beats.size();
             const bool haveDelta = out.tp_pq_delta.size() == out.beats.size();
             const bool haveFlags = out.premature.size() == out.beats.size()
@@ -173,6 +269,7 @@ namespace alignment {
                 if (!keep[i] && !flagged) continue;   // rejected, discarded
                 kb.push_back(std::move(out.beats[i]));
                 kr.push_back(out.r_indices[i]);
+                if (i < out.original_index.size()) ko.push_back(out.original_index[i]);
                 km.push_back(out.rr_lens[i]);
                 if (haveSrc) ks.push_back(out.baseline_source[i]);
                 if (haveDelta) kd.push_back(out.tp_pq_delta[i]);
@@ -180,6 +277,7 @@ namespace alignment {
             }
             out.beats = std::move(kb);
             out.r_indices = std::move(kr);
+            out.original_index = std::move(ko);
             out.rr_lens = std::move(km);
             if (haveSrc) out.baseline_source = std::move(ks);
             if (haveDelta) out.tp_pq_delta = std::move(kd);
@@ -198,8 +296,6 @@ namespace alignment {
         {
             static bool printedOnce = false;
             if (!printedOnce) {
-                fprintf(stderr, "[ALIGN-4S-CAP-ACTIVE] kMaxBeatSamplesEcg=%lld fs=%f\n",
-                    static_cast<long long>(kMaxBeatSamplesEcg), fs);
                 printedOnce = true;
             }
         }
@@ -239,6 +335,13 @@ namespace alignment {
         {
             const size_t nb = out.beats.size();
             out.premature.assign(nb, 0);
+            // Seeded once, alongside the rhythm flags, for the same reason: this is
+            // after slicing and before any pruning, so every sliced beat gets an
+            // entry and it survives whatever the pruning does next. KEPT is the
+            // starting state -- a beat is kept until a pass rejects it.
+            out.original_index.resize(out.beats.size());
+            for (size_t i = 0; i < out.original_index.size(); ++i) out.original_index[i] = i;
+            out.tukey_outcome.assign(out.beats.size(), TukeyOutcome::KEPT);
             out.voted.assign(nb, 0);
             if (nb >= 12) {
                 // Beat t is premature when the interval BEFORE it is short.
@@ -275,7 +378,12 @@ namespace alignment {
         //Tukey rejection: R-R interval (1.5*IQR)
         {
             std::vector<double> lens_d(out.rr_lens.begin(), out.rr_lens.end());
-            apply_mask(keep_within_tukey(lens_d, 1.5));
+            {
+                const std::vector<bool> keep =
+                    keep_within_tukey(lens_d, 1.5, &out.tukey_rr);
+                record_tukey(keep, TukeyOutcome::REJ_RR_LENGTH);
+                apply_mask(keep);
+            }
         }
         if (out.beats.empty()) return out;
         //Tukey rejection: R peak from template min distance (1.5*IQR)
@@ -298,9 +406,10 @@ namespace alignment {
                     ? beat[r_col] - min_val
                     : std::numeric_limits<double>::quiet_NaN());
             }
-            auto keepA = keep_within_tukey(amps, 1.5);
+            auto keepA = keep_within_tukey(amps, 1.5, &out.tukey_amplitude);
             for (size_t i = 0; i < keepA.size(); ++i)
                 if (std::isnan(amps[i])) keepA[i] = false;
+            record_tukey(keepA, TukeyOutcome::REJ_AMPLITUDE);
             apply_mask(keepA);
         }
         out.total_beats = out.beats.size();
@@ -387,9 +496,10 @@ namespace alignment {
                 }
                 if (bestCol >= 0) rOffset[i] = static_cast<double>(bestCol - R_anchor);
             }
-            auto keepR = keep_within_tukey(rOffset, 1.5);
+            auto keepR = keep_within_tukey(rOffset, 1.5, &out.tukey_r_location);
             for (size_t i = 0; i < keepR.size(); ++i)
                 if (std::isnan(rOffset[i])) keepR[i] = false;   // no data to check -> can't vouch for it
+            record_tukey(keepR, TukeyOutcome::REJ_R_LOCATION);
             apply_mask(keepR);
         }
         if (out.beats.empty()) return out;
@@ -466,10 +576,17 @@ namespace alignment {
                         if (!std::isnan(beat[k])) win.push_back(beat[k]);
                     if (win.empty())
                         return { std::numeric_limits<double>::quiet_NaN(), false };
-                    std::sort(win.begin(), win.end());
+                    // Called three times per beat (both_levels twice, then the
+                    // PQ re-measure after pass 2's shift), so per bin per method
+                    // per channel this is ~3x the beat count. One order
+                    // statistic, so nth_element.
                     const size_t m = win.size() / 2;
+                    std::nth_element(win.begin(), win.begin() + m, win.end());
+                    const double hi_mid = win[m];
                     const double med = (win.size() % 2 == 0)
-                        ? 0.5 * (win[m - 1] + win[m]) : win[m];
+                        ? 0.5 * (*std::max_element(win.begin(), win.begin() + m)
+                            + hi_mid)
+                        : hi_mid;
                     return { med, true };
                 };
 
@@ -631,11 +748,18 @@ namespace alignment {
                     for (const auto& b : beats)
                         if (!std::isnan(b[c])) col.push_back(b[c]);
                     if (col.empty()) continue;
-                    std::sort(col.begin(), col.end());
+                    // nth_element, not sort -- one order statistic per column
+                    // does not need the whole column ordered. Same reasoning and
+                    // the same shape as create_ecg_templates.hpp's medianOver;
+                    // this one runs per method per channel per bin as well.
                     const size_t nc = col.size();
+                    const size_t imid = nc / 2;
+                    std::nth_element(col.begin(), col.begin() + imid, col.end());
+                    const double hi_mid = col[imid];
                     tmpl[c] = (nc % 2 == 0)
-                        ? 0.5 * (col[nc / 2 - 1] + col[nc / 2])
-                        : col[nc / 2];
+                        ? 0.5 * (*std::max_element(col.begin(), col.begin() + imid)
+                            + hi_mid)
+                        : hi_mid;
                 }
                 return tmpl;
                 };
@@ -705,6 +829,7 @@ namespace alignment {
                         const double rms = (n > 0) ? std::sqrt(sumsq / n) : 0.0;
                         keep[i] = (r >= corr_min) && (rms <= sdThresh * frozenSD);
                     }
+                    record_tukey(keep, TukeyOutcome::REJ_WAVE_SCORE);
                     apply_mask(keep);
                 }
             }

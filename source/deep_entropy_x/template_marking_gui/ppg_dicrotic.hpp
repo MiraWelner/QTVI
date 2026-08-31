@@ -46,6 +46,29 @@ namespace ppg_dicrotic {
         double iemTol = 1e-4;   // iem_tol
         double dnWindowLoMs = 120.0;  // dn_window_lo_ms
         double dnWindowHiRrFrac = 0.70;   // dn_window_hi_rr_frac
+
+        // UPPER BOUND FROM THE DIASTOLIC PEAK, when the caller knows it.
+        //
+        // dnWindowHiRrFrac puts the window's high edge at a fixed 70% of the RR
+        // after the systolic peak, which is a proxy for "before the diastolic
+        // peak" and a loose one: at a long RR it reaches well past the peak, so
+        // the notch search sees the diastolic upstroke, its shoulder, and the
+        // trough beyond it. Any local minimum of the IEM residual in that region
+        // is a candidate, and one past the diastolic peak scores on prominence
+        // just as well as the real notch -- so the detector could return a notch
+        // AFTER the peak it is supposed to precede, and did.
+        //
+        // A caller that has already located the diastolic peak should pass it
+        // here. The window then ends where the physiology says it ends, and the
+        // notch-before-peak2 invariant holds by construction rather than by
+        // correction afterwards. -1 (the default) keeps the RR-fraction
+        // behaviour, so the detector is unchanged for callers that have no peak2
+        // -- which includes anything calling it before the spline fit runs.
+        //
+        // Both bounds still apply: the effective high edge is the MINIMUM of
+        // this and the RR fraction. Passing a peak2 can only narrow the window,
+        // never widen it past what the RR allows.
+        int dnWindowHiSample = -1;
     };
 
     struct IemResult {

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file   anneal_handler.cpp
  * @brief  Step 3 of the QTVi pipeline. Reads a v2 data .bin (from
  *         file_to_bin) plus an optional noise-markings .bin (from the
@@ -29,6 +29,7 @@
  */
 
 #include "anneal_handler.hpp"
+#include "../noise_marking_gui/user_annotation_handler.h"
 
 #include <algorithm>
 #include <cmath>
@@ -661,14 +662,59 @@ namespace {
         std::ifstream f(path, std::ios::binary);
         if (!f.is_open()) return m;
 
+        // ---- FORMAT: magic, version, count, rows of kColumns doubles -------
+        //
+        // THIS READER WAS MISSED when the noise-markings binary gained its magic
+        // header and its threshold/blanking columns, and the failure mode was
+        // the worst available one. The old code read the first 8 bytes as the
+        // row count; those bytes are now the ASCII magic, which as a uint64 is
+        // about 5.6e18. It then looped that many times reading 48 bytes each
+        // WITHOUT CHECKING THE STREAM, so past EOF every read failed silently,
+        // `row` kept its stale values, and an interval was pushed on nearly
+        // every iteration. Not a crash and not an error -- an effectively
+        // infinite loop that also grew four vectors without bound, which
+        // presents as the program hanging immediately after the anneal starts.
+        //
+        // The stream check inside the loop is not incidental to the fix. Without
+        // it, ANY future format change turns into a hang instead of a message,
+        // which is exactly how one missed reader cost a day.
+        char magic[sizeof(noise_markings::kMagic)] = {};
+        f.read(magic, sizeof(magic));
+        if (!f || std::memcmp(magic, noise_markings::kMagic, sizeof(magic)) != 0) {
+            std::cerr << "  noise markings " << path
+                << " has no magic header (pre-versioned file); ignoring it and "
+                "annealing with no exclusions\n";
+            return m;
+        }
+
+        uint32_t version = 0;
+        f.read(reinterpret_cast<char*>(&version), sizeof(version));
+        if (!f) return m;
+        if (version != noise_markings::kVersion) {
+            std::cerr << "  noise markings " << path << " is version " << version
+                << "; this build reads version " << noise_markings::kVersion
+                << " only -- annealing with no exclusions\n";
+            return m;
+        }
+
         uint64_t count = 0;
         f.read(reinterpret_cast<char*>(&count), 8);
+        if (!f) return m;
 
         for (uint64_t i = 0; i < count; ++i) {
-            double row[6];
-            f.read(reinterpret_cast<char*>(row), 48);
-            std::pair<double, double> iv = { row[2], row[3] };
-            switch (static_cast<int>(row[4])) {
+            double row[noise_markings::kColumns];
+            f.read(reinterpret_cast<char*>(row), sizeof(row));
+            if (!f) {
+                std::cerr << "  noise markings " << path << " ended after " << i
+                    << " of " << count << " rows\n";
+                break;
+            }
+            // Columns kThreshold and kBlankingMs are deliberately unread here.
+            // The anneal excises noisy regions; a threshold override is an
+            // instruction to the peak detector and means nothing to it.
+            std::pair<double, double> iv = { row[noise_markings::kStartSec],
+                                             row[noise_markings::kEndSec] };
+            switch (static_cast<int>(row[noise_markings::kChannelCode])) {
             case 1: m.ppg.push_back(iv);      break;
             case 2: m.ecg1.push_back(iv);     break;
             case 3: m.ecg2.push_back(iv);     break;

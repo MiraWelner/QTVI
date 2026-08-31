@@ -133,7 +133,12 @@ namespace tbank {
         out.n_overlap = n;
         if (n < kMinOverlapColumns) return out;
         out.score = static_cast<double>(inside) / static_cast<double>(n);
-        out.r = correlate(beat, t.tmpl).r;   // reported alongside, never routed on
+        // r IS NOT COMPUTED HERE. It is a reporting field that nothing routes
+        // on, and computing it inside the scorer meant a full second pass over
+        // the overlap -- five accumulators per comparable column -- for every
+        // beat against every template in the bank, in both passes. That roughly
+        // doubled the cost of the assignment sweep to fill a column in a CSV.
+        // assignBeat computes it once, for the winning template only.
         return out;
     }
 
@@ -220,22 +225,41 @@ namespace tbank {
             t.tmpl_iqr[c] = q3 - q1;
 
             // --- the 2.5/97.5 corridor -------------------------------------
+            //
+            // nth_element, NOT sort -- for the reason stated above, which the
+            // first version of this block ignored and paid for. A std::sort here
+            // sits inside the single hottest loop in the pass: it runs per
+            // column, per template, per recompute, and pass 1 recomputes on
+            // every assignment. On a 991-member slot 0 across a 200-column axis
+            // that turned an O(n) column into an O(n log n) one and made the
+            // whole bank build visibly slower.
+            //
+            // Only four more order statistics are needed, and the calls are
+            // ordered ascending so each partitions only the range the previous
+            // one left -- the same discipline the median/Q1/Q3 calls above use.
             if (own_corridor) {
-                // Percentiles by position with linear interpolation, over the
-                // column's values. col is only partially ordered by the
-                // nth_element calls above, so this sorts -- it runs only for
-                // templates that have earned their own corridor, and slot 0
-                // dominates the cost either way.
-                std::sort(col.begin(), col.end());
-                auto pct = [&](double p) {
-                    const double x = p * (static_cast<double>(n) - 1.0) / 100.0;
-                    const size_t i0 = static_cast<size_t>(std::floor(x));
-                    const size_t i1 = std::min(n - 1, i0 + 1);
-                    const double f = x - static_cast<double>(i0);
-                    return col[i0] * (1.0 - f) + col[i1] * f;
-                    };
-                const double mid = 0.5 * (pct(2.5) + pct(97.5));
-                const double half = 0.5 * (pct(97.5) - pct(2.5))
+                const double x_lo = 0.025 * (static_cast<double>(n) - 1.0);
+                const double x_hi = 0.975 * (static_cast<double>(n) - 1.0);
+                const size_t i_lo = static_cast<size_t>(std::floor(x_lo));
+                const size_t i_lo1 = std::min(n - 1, i_lo + 1);
+                const size_t i_hi = static_cast<size_t>(std::floor(x_hi));
+                const size_t i_hi1 = std::min(n - 1, i_hi + 1);
+                const double f_lo = x_lo - static_cast<double>(i_lo);
+                const double f_hi = x_hi - static_cast<double>(i_hi);
+
+                std::nth_element(col.begin(), col.begin() + i_lo, col.end());
+                const double p2a = col[i_lo];
+                std::nth_element(col.begin() + i_lo, col.begin() + i_lo1, col.end());
+                const double p2b = col[i_lo1];
+                std::nth_element(col.begin() + i_lo1, col.begin() + i_hi, col.end());
+                const double p97a = col[i_hi];
+                std::nth_element(col.begin() + i_hi, col.begin() + i_hi1, col.end());
+                const double p97b = col[i_hi1];
+
+                const double p2 = p2a * (1.0 - f_lo) + p2b * f_lo;
+                const double p97 = p97a * (1.0 - f_hi) + p97b * f_hi;
+                const double mid = 0.5 * (p2 + p97);
+                const double half = 0.5 * (p97 - p2)
                     * corridorInflation(t.memberCount());
                 t.band_lo[c] = mid - half;
                 t.band_hi[c] = mid + half;
@@ -427,10 +451,12 @@ namespace tbank {
             const BandResult br = bandMatch(beat, bank.templates[i]);
             if (!br.scorable()) continue;
             any_scorable = true;
-            if (br.score > best_score) {
-                best_score = br.score; best_r = br.r; best = i;
-            }
+            if (br.score > best_score) { best_score = br.score; best = i; }
         }
+
+        // Pearson r for the WINNER only, and only for the archive. See the note
+        // in bandMatch: computing it per candidate doubled the sweep.
+        if (best >= 0) best_r = correlate(beat, bank.templates[best].tmpl).r;
 
         // Unscorable against everything: too little axis overlap for r to mean
         // anything. Do NOT spawn -- a beat that cannot be compared is not

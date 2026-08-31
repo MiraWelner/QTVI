@@ -149,6 +149,48 @@ public:
     static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate,
         double heightMeters = NAN);
 
+    // ---------------------------------------------------------------
+    // ORDERING INVARIANT: the notch precedes the diastolic peak
+    // ---------------------------------------------------------------
+    //
+    // The dicrotic notch is aortic valve closure; the diastolic peak is the
+    // reflected wave that arrives after it. notch < peak2, always, on every
+    // pulse channel. Nothing enforced it, and the two are found by SEPARATE
+    // detectors, so nothing made it true either:
+    //
+    //   PPG (detect_ppg_fiducials): peak2_found required splineDiastolic to be
+    //   past the notch -- but when that test FAILED, peak2 fell back to the
+    //   midpoint 0.5*(peak + hi) with no comparison against the notch at all.
+    //   A late notch and an early midpoint put peak2 before the notch, marked
+    //   not-found, and still written to ppg_peak2_auto and still drawn.
+    //
+    //   ABP / ART / ART_PULM (seed_pulse_channel): no test in either direction.
+    //   The notch comes from detect_ppg_dicrotic on the cycle and peak2 from
+    //   detect_ppg_peak2 on the same cycle, independently, and whichever the
+    //   two searches land on is what gets stored.
+    //
+    // Enforced in ONE place so the channels cannot disagree about it. The notch
+    // wins ties and is never moved: it has a three-tier detector with recorded
+    // provenance and a confidence (E-5), while peak2 is a local-maximum search
+    // with neither. Given a contradiction, the measurement that can say how it
+    // was obtained is the one to keep.
+    //
+    // A violated pair is NOT silently swapped. Swapping would produce two
+    // plausible landmarks in the right order and destroy the evidence that a
+    // detector failed. peak2 is re-sought strictly after the notch, and if
+    // nothing is there it is reported ABSENT -- which is a true statement, and
+    // one the archive already knows how to carry (peak2_found).
+    //
+    // hi is the search bound (pulse end); returns false when the invariant
+    // could not be satisfied and peak2 was cleared.
+    static bool order_notch_before_peak2(const std::vector<double>& pulse,
+        double notch, double& peak2, bool& peak2_found, double hi);
+
+    // Integer overload for the arterial seeding path, which works in whole
+    // samples. Same policy; -1 out means absent.
+    static bool order_notch_before_peak2(const std::vector<double>& pulse,
+        int notch, int& peak2, int hi);
+
     // Sample whose AMPLITUDE is frac of the way from v[a] to v[b] (NOT frac
     // of the sample-index distance). Shared by detect_ppg_fiducials (t80/
     // p50) and the GUI's reactive T80/P50 glyphs, so both always agree.

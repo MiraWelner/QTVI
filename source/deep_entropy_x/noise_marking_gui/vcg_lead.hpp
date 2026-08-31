@@ -236,11 +236,7 @@ namespace vcg_lead {
             vcg::OrthoAccumulator probeAcc;
             probeAcc.addLanes(chans);
             const vcg::PolarityCheckResult pc = vcg::checkLimbLeadPolarity(probeAcc);
-            if (!pc.why.empty()) {
-                fprintf(stderr, "[vcg] polarity check skipped: %s -- leaving "
-                    "lead signs as recorded\n", pc.why.c_str());
-            }
-            else if (!pc.consistentWithLimbLeads) {
+            if (!pc.consistentWithLimbLeads && pc.why.empty()) {
                 fprintf(stderr, "[vcg] polarity check: best sign combo "
                     "ECG1=%+d ECG2=%+d ECG3=%+d still has normalized residual "
                     "%.4f (threshold 0.10) -- not explainable by a sign flip "
@@ -248,7 +244,7 @@ namespace vcg_lead {
                     "mismatch); leaving lead signs as recorded\n",
                     pc.sign[0], pc.sign[1], pc.sign[2], pc.normalizedResidual);
             }
-            else {
+            else if (pc.why.empty()) {
                 for (int c = 0; c < 3; ++c) cfg.leadSign[c] = pc.sign[c];
                 if (pc.sign[0] < 0 || pc.sign[1] < 0 || pc.sign[2] < 0) {
                     fprintf(stderr, "[vcg] auto-corrected polarity: ECG%d is "

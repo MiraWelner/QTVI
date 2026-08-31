@@ -54,6 +54,7 @@
 #include "template_assign.hpp"
 #include "pvc_filter.hpp"
 #include "seed_pool.hpp"
+#include "template_marking_gui/alignment.hpp"
 
 namespace bin_pipeline {
 
@@ -118,54 +119,58 @@ namespace bin_pipeline {
     }
 
     // ---------------------------------------------------------------------
-    // Step 4a: Tukey, restricted to a pool
+    // Step 4a: Tukey -- CONSUMED, NOT RUN
     // ---------------------------------------------------------------------
+    //
+    // tukeyInPool() USED TO LIVE HERE AND IS GONE. It computed quartiles and
+    // fences over the seed pool and rejected on RR length, which meant every
+    // beat passed through a Tukey fence twice: once in alignment.hpp, which runs
+    // four passes (RR length, amplitude, R location, wave score) over the sliced
+    // beats, and again here over the survivors of those four. Two fences, two
+    // populations, two answers, and no rule for which one a downstream reader
+    // was looking at.
+    //
+    // It existed for a reason that was real: apply_mask() discards rejected
+    // beats, so nothing downstream could ask what happened to a beat that did
+    // not survive -- only survivors existed. Re-running the fence was the only
+    // way to obtain a per-beat verdict. That gap is now closed at the source:
+    // alignment records its verdict against each beat's ORIGINAL slice index in
+    // a vector it never compacts, and reports each pass's quartiles and fences
+    // alongside. There is one Tukey in this codebase, it is in alignment.hpp,
+    // and this file reads what it decided.
+    //
+    // The two enums are mirrored rather than shared, because alignment.hpp is
+    // upstream of template_bank.hpp and must not depend on it. Mirroring is the
+    // failure annotation_types.hpp exists to prevent, so it is checked rather
+    // than trusted -- exactly as annotation_code_check.hpp argued, but at
+    // compile time.
+    static_assert(static_cast<uint8_t>(alignment::TukeyOutcome::NOT_ELIGIBLE)
+        == static_cast<uint8_t>(tbank::TukeyOutcome::NOT_ELIGIBLE), "TukeyOutcome drift");
+    static_assert(static_cast<uint8_t>(alignment::TukeyOutcome::KEPT)
+        == static_cast<uint8_t>(tbank::TukeyOutcome::KEPT), "TukeyOutcome drift");
+    static_assert(static_cast<uint8_t>(alignment::TukeyOutcome::REJ_RR_LENGTH)
+        == static_cast<uint8_t>(tbank::TukeyOutcome::REJ_RR_LENGTH), "TukeyOutcome drift");
+    static_assert(static_cast<uint8_t>(alignment::TukeyOutcome::REJ_AMPLITUDE)
+        == static_cast<uint8_t>(tbank::TukeyOutcome::REJ_AMPLITUDE), "TukeyOutcome drift");
+    static_assert(static_cast<uint8_t>(alignment::TukeyOutcome::REJ_R_LOCATION)
+        == static_cast<uint8_t>(tbank::TukeyOutcome::REJ_R_LOCATION), "TukeyOutcome drift");
+    static_assert(static_cast<uint8_t>(alignment::TukeyOutcome::REJ_WAVE_SCORE)
+        == static_cast<uint8_t>(tbank::TukeyOutcome::REJ_WAVE_SCORE), "TukeyOutcome drift");
 
-    struct TukeyPassResult {
-        tbank::TukeyPassCounts counts;
-        std::vector<uint8_t>   rejected;   // parallel to `pool`
-    };
+    inline tbank::TukeyOutcome fromAlignment(alignment::TukeyOutcome o) {
+        return static_cast<tbank::TukeyOutcome>(static_cast<uint8_t>(o));
+    }
 
-    // Quartiles and fences computed over `pool` ONLY. Beats outside the pool
-    // are neither tested nor counted -- they were never eligible, which is a
-    // different state from "tested and kept" and is recorded as such in
-    // BeatFlags::tukey.
-    inline TukeyPassResult tukeyInPool(const std::vector<double>& values,
-        const std::vector<uint32_t>& pool,
-        double k = 1.5)
-    {
-        TukeyPassResult out;
-        out.rejected.assign(pool.size(), 0u);
-        out.counts.beats_in = static_cast<uint32_t>(pool.size());
-
-        std::vector<double> v;
-        v.reserve(pool.size());
-        for (uint32_t i : pool)
-            if (i < values.size() && !std::isnan(values[i])) v.push_back(values[i]);
-
-        if (v.size() < 4) {          // too few order statistics to fence on
-            out.counts.beats_out = out.counts.beats_in;
-            return out;
-        }
-        std::sort(v.begin(), v.end());
-        const size_t n = v.size();
-        out.counts.q1 = v[n / 4];
-        out.counts.q3 = v[std::min(n - 1, (3 * n) / 4)];
-        const double iqr = out.counts.q3 - out.counts.q1;
-        out.counts.fence_lo = out.counts.q1 - k * iqr;
-        out.counts.fence_hi = out.counts.q3 + k * iqr;
-
-        for (size_t j = 0; j < pool.size(); ++j) {
-            const uint32_t i = pool[j];
-            if (i >= values.size() || std::isnan(values[i])) continue;
-            const double x = values[i];
-            if (x < out.counts.fence_lo || x > out.counts.fence_hi) {
-                out.rejected[j] = 1u;
-                ++out.counts.rejected;
-            }
-        }
-        out.counts.beats_out = out.counts.beats_in - out.counts.rejected;
-        return out;
+    inline tbank::TukeyPassCounts fromAlignment(const alignment::TukeyStats& s) {
+        tbank::TukeyPassCounts c;
+        c.beats_in = s.beats_in;
+        c.beats_out = s.beats_out;
+        c.rejected = s.rejected;
+        c.q1 = s.q1;
+        c.q3 = s.q3;
+        c.fence_lo = s.fence_lo;
+        c.fence_hi = s.fence_hi;
+        return c;
     }
 
     // ---------------------------------------------------------------------
@@ -196,6 +201,30 @@ namespace bin_pipeline {
         bool     is_ppg = false;
         uint64_t bin_index = 0;
         int      channel = 0;
+
+        // ---- TWO INDEX SPACES, AND THE MAP BETWEEN THEM -------------------
+        //
+        // `beats` is alignment's KEPT set, so everything in this struct that is
+        // parallel to it -- rr_after, baseline_ok, assignment, flags -- lives in
+        // ALIGNED space. tukey_outcome cannot: it has to describe beats that
+        // were pruned, and a pruned beat has no aligned index. It is therefore
+        // indexed by ORIGINAL SLICE index, and original_index is the map.
+        //
+        // Getting this wrong is silent. An aligned index used directly against
+        // tukey_outcome reads some other beat's verdict, and the further into
+        // the bin you go the further off it is -- every flag plausible, all of
+        // them wrong. Hence the map rather than an assumption that the two
+        // spaces coincide (they only do when nothing was pruned).
+        //
+        // Note what this makes visible: aligned.beats DOES contain rejected
+        // beats, because apply_mask exempts rhythm-flagged ones. A beat that is
+        // both premature and a Tukey RR outlier is retained, and this is the
+        // only path by which the archive can say so -- pvc_filter.hpp calls that
+        // the most interesting row in the file.
+        std::vector<size_t> original_index;             // parallel to *beats
+        std::vector<alignment::TukeyOutcome> tukey_outcome;   // by ORIGINAL index
+        alignment::TukeyStats tukey_rr, tukey_amplitude,
+            tukey_r_location, tukey_wave_score;
 
         // THE PHASE 1 SINUS TEMPLATE, which seeds slot 0. Section 4.6: "Seed
         // the bank with the sinus template from Phase 1."
@@ -286,21 +315,41 @@ namespace bin_pipeline {
         out.seed = seed_pool::selectSeedPool(candidates, rhythm, cat);
         out.assignment.assign(n, -1);
 
-        const TukeyPassResult t_rr =
-            tukeyInPool(in.rr_after, out.seed.members, 1.5);
-        out.counts.tukey_rr = t_rr.counts;
+        // ---- step 4a: read alignment's Tukey verdict --------------------
+        //
+        // NOT RECOMPUTED. in.tukey_outcome is what alignment's four passes
+        // decided about each beat, indexed by its original slice index and
+        // never compacted, and in.tukey_* carry those passes' quartiles and
+        // fences. Copied through, not re-derived, so the flags in the archive
+        // and the beats in the templates were decided by the same fence.
+        //
+        // A beat with no verdict (an input that predates the recording of one)
+        // reads NOT_ELIGIBLE, which is honest: no pass tested it here. It is
+        // NOT silently promoted to KEPT -- that would assert a decision nobody
+        // made, and is the direction that hides a missing plumbing step.
+        out.counts.tukey_rr = fromAlignment(in.tukey_rr);
+        out.counts.tukey_amplitude = fromAlignment(in.tukey_amplitude);
+        out.counts.tukey_r_location = fromAlignment(in.tukey_r_location);
+        out.counts.tukey_wave_score = fromAlignment(in.tukey_wave_score);
 
         std::vector<uint32_t> seeded;
         seeded.reserve(out.seed.members.size());
         for (size_t j = 0; j < out.seed.members.size(); ++j) {
             const uint32_t bi = out.seed.members[j];
-            if (t_rr.rejected[j]) {
-                out.flags[bi].tukey = tbank::TukeyOutcome::REJ_RR_LENGTH;
-                if (out.flags[bi].category == tbank::Category::REGULAR)
+            // Aligned index -> original slice index -> verdict. Never index
+            // tukey_outcome with bi directly; see ChannelInput.
+            const size_t orig = (bi < in.original_index.size())
+                ? in.original_index[bi] : static_cast<size_t>(bi);
+            const alignment::TukeyOutcome verdict =
+                (orig < in.tukey_outcome.size()) ? in.tukey_outcome[orig]
+                : alignment::TukeyOutcome::NOT_ELIGIBLE;
+            out.flags[bi].tukey = fromAlignment(verdict);
+            if (verdict != alignment::TukeyOutcome::KEPT) {
+                if (verdict == alignment::TukeyOutcome::REJ_RR_LENGTH
+                    && out.flags[bi].category == tbank::Category::REGULAR)
                     ++out.counts.n_regular_rejected_on_rr;
                 continue;
             }
-            out.flags[bi].tukey = tbank::TukeyOutcome::KEPT;
             seeded.push_back(bi);
         }
 
@@ -464,6 +513,30 @@ namespace bin_pipeline {
         // max_templates_per_bin, from cfg. 0 = use the built-in default.
         int32_t max_templates_per_bin = 0;
 
+        // ---- THE SINGLE TUKEY'S VERDICT, from alignment.hpp ---------------
+        // Per beat, indexed by ORIGINAL slice index, uncompacted -- copy
+        // ecg_beat_set::tukey_outcome straight in. Empty means no verdict was
+        // supplied, and every beat then reads NOT_ELIGIBLE rather than being
+        // promoted to KEPT: asserting a decision nobody made is the direction
+        // that hides a missing plumbing step.
+        std::vector<alignment::TukeyOutcome> tukey_outcome;
+
+        // Map from aligned index to original slice index, per channel, parallel
+        // to beats[c]. See ChannelInput for why tukey_outcome needs it.
+        std::array<std::vector<size_t>, 3> original_index;
+
+        // The four passes' quartiles, fences and counts, copied from the same
+        // ecg_beat_set. Nothing here recomputes them.
+        alignment::TukeyStats tukey_rr, tukey_amplitude,
+            tukey_r_location, tukey_wave_score;
+
+        // R column on the shared axis, per channel. Every beat's detected R
+        // sits here by construction (alignment put it there), so it is a
+        // property of the bin rather than of any beat. ChannelInput already
+        // carried this; BinInput did not, which is one reason the morphology
+        // writers had no way to emit their r_col descriptor row.
+        std::array<int, 3> r_col = { -1, -1, -1 };
+
         uint64_t bin_index = 0;
     };
 
@@ -528,29 +601,45 @@ namespace bin_pipeline {
             // section is silently inert.
             cr.seed = seed_pool::selectSeedPool(candidates, rhythm, cat);
 
-            // Tukey INSIDE the seed pool. Only the RR-length pass is shown
-            // here; the amplitude and R-location passes take the same shape
-            // with their own value vectors, and each keeps its own fence state.
-            const TukeyPassResult t_rr =
-                tukeyInPool(in.rr_after, cr.seed.members, 1.5);
-            res.counts.tukey_rr = t_rr.counts;
+            // ---- step 4a: read alignment's Tukey verdict ----------------
+            //
+            // NOT RECOMPUTED. All four passes ran once, in alignment.hpp, over
+            // the sliced beats; in.tukey_outcome is what they decided, indexed
+            // by original slice index and never compacted. Running a fence again
+            // here -- which is what tukeyInPool did -- put every beat through
+            // two fences over two different populations, so the flags in the
+            // archive and the beats in the templates were decided by different
+            // quartiles.
+            //
+            // The counts are copied from the passes that made the decisions, so
+            // the low-rejection-with-wide-IQR signature this file's header is
+            // about now describes a pass that actually pruned something.
+            res.counts.tukey_rr = fromAlignment(in.tukey_rr);
+            res.counts.tukey_amplitude = fromAlignment(in.tukey_amplitude);
+            res.counts.tukey_r_location = fromAlignment(in.tukey_r_location);
+            res.counts.tukey_wave_score = fromAlignment(in.tukey_wave_score);
 
             std::vector<uint32_t> seeded;
             seeded.reserve(cr.seed.members.size());
             for (size_t j = 0; j < cr.seed.members.size(); ++j) {
                 const uint32_t bi = cr.seed.members[j];
-                if (t_rr.rejected[j]) {
-                    res.flags[bi].tukey = tbank::TukeyOutcome::REJ_RR_LENGTH;
+                const size_t orig = (bi < in.original_index[c].size())
+                    ? in.original_index[c][bi] : static_cast<size_t>(bi);
+                const alignment::TukeyOutcome verdict =
+                    (orig < in.tukey_outcome.size()) ? in.tukey_outcome[orig]
+                    : alignment::TukeyOutcome::NOT_ELIGIBLE;
+                res.flags[bi].tukey = fromAlignment(verdict);
+                if (verdict != alignment::TukeyOutcome::KEPT) {
                     // A REGULAR beat rejected for being SHORT is the cheapest
                     // estimate of classifier recall available: very likely
                     // ectopy that classification missed. This count rising
                     // while total rejections fall is the high-burden failure
                     // announcing itself.
-                    if (res.flags[bi].category == tbank::Category::REGULAR)
+                    if (verdict == alignment::TukeyOutcome::REJ_RR_LENGTH
+                        && res.flags[bi].category == tbank::Category::REGULAR)
                         ++res.counts.n_regular_rejected_on_rr;
                     continue;
                 }
-                res.flags[bi].tukey = tbank::TukeyOutcome::KEPT;
                 seeded.push_back(bi);
             }
 
@@ -638,5 +727,70 @@ namespace bin_pipeline {
 
         return res;
     }
+
+
+    // ---------------------------------------------------------------------
+    // Record accumulator
+    // ---------------------------------------------------------------------
+    //
+    // WHY THIS EXISTS. morphology_csv's ChannelBlock wants, per channel, a
+    // vector of ChannelOutput over the whole record plus the beat matrices and
+    // R columns. runChannel() produces a ChannelOutput; runBin() does not -- it
+    // produces ChannelResult per channel (bank, assignment, seed, cap_raises)
+    // and keeps flags, pvc and counts at the BIN level, because the
+    // classification and the PVC filter run once over all beats and not three
+    // times. So the two sides never fit together and nothing could call the
+    // writers. That is the whole reason no _beats.csv or _templates.csv has ever
+    // been produced: the writers are complete and were unreachable.
+    //
+    // WHY THE BIN-LEVEL FIELDS ARE COPIED INTO ALL THREE CHANNELS rather than
+    // split. Category, prematurity and the Tukey verdict are per BEAT, and a
+    // beat is one event recorded on three leads -- it is premature or it is not,
+    // regardless of which lead you look at. Copying is therefore not
+    // duplication of unrelated data, it is the same fact stated in each
+    // channel's view, and the writer needs it in that view because it emits one
+    // column block per channel. What genuinely differs per channel -- bank,
+    // assignment, cap raises, seed -- comes from ChannelResult.
+    //
+    // Beat matrices are COPIED, not referenced. The caller's BinInput is
+    // typically a loop variable that is refilled for the next bin, so holding
+    // pointers into it would leave the writers reading the last bin's samples
+    // for every column. That is a real cost -- a full record of aligned beats
+    // in memory at once -- and it is the reason to call writeAll() per record
+    // and then clear(), not to accumulate across an entire study.
+    struct RecordAccumulator {
+        std::array<std::vector<ChannelOutput>, 3> per_bin;
+        std::array<std::vector<std::vector<std::vector<double>>>, 3> beats;
+        std::array<std::vector<int>, 3> r_col;
+
+        void addBin(const BinInput& in, const BinResult& res) {
+            for (int c = 0; c < 3; ++c) {
+                if (!in.channel_present[c]) continue;
+
+                ChannelOutput out;
+                out.bank = res.ecg[c].bank;
+                out.assignment = res.ecg[c].assignment;
+                out.seed = res.ecg[c].seed;
+                out.cap_raises = res.ecg[c].cap_raises;
+                out.flags = res.flags;     // per beat, shared across leads
+                out.pvc = res.pvc;
+                out.counts = res.counts;
+
+                per_bin[c].push_back(std::move(out));
+                beats[c].push_back(in.beats[c]);
+                r_col[c].push_back(in.r_col[c]);
+            }
+        }
+
+        // A channel with no bins is omitted from the output rather than emitted
+        // empty, so a two-lead record does not produce a CH3 block of nothing.
+        bool has(int c) const { return c >= 0 && c < 3 && !per_bin[c].empty(); }
+
+        void clear() {
+            for (int c = 0; c < 3; ++c) {
+                per_bin[c].clear(); beats[c].clear(); r_col[c].clear();
+            }
+        }
+    };
 
 }  // namespace bin_pipeline

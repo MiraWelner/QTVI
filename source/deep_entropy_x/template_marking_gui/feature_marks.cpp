@@ -1,4 +1,4 @@
-﻿/*feature_marks.cpp -- implementations for FeatureMarks.
+/*feature_marks.cpp -- implementations for FeatureMarks.
 See feature_marks.hpp for the public interface*/
 
 #include "feature_marks.hpp"
@@ -759,12 +759,45 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         const int lo = cl(amp15);
         const int hi = std::clamp(amp90, lo, Wc - 1);
 
+        // ---- DIASTOLIC PEAK FIRST, then the notch bounded by it ------------
+        //
+        // THE ORDER HERE IS REVERSED from what it was, and the dependency it
+        // used to imply was never real. The comment said peak2 was "first local
+        // max AFTER the notch", but cubicSplineNotch(v, lo, hi, ...) fits over
+        // [amp15, amp90] and the notch is not an input to it -- the notch
+        // appeared only in the ACCEPTANCE TEST afterwards. So peak2 was always
+        // computable first, and computing it first is what lets it bound the
+        // notch search.
+        //
+        // Why that is better than correcting afterwards. Bounding the search
+        // means a notch past the diastolic peak is never a candidate: the IEM
+        // residual's local minima beyond the peak are not examined at all.
+        // Correcting afterwards meant the detector could return such a point,
+        // report a tier and a confidence for it, and then have peak2 moved to
+        // accommodate it -- so a bad notch displaced a good peak, and the tier
+        // and confidence recorded in the archive described a landmark that had
+        // been overruled.
+        int splineDiastolic = -1;
+        subsample_refine::cubicSplineNotch(v, lo, hi, &splineDiastolic);
+        const bool splineOk = (splineDiastolic > lo && splineDiastolic < hi);
+        g.peak2_found = splineOk;
+        g.peak2 = splineOk ? static_cast<double>(splineDiastolic)
+            : cld(0.5 * (g.peak + hi));
+
         // Notch: three-tier detector. The template spans ~one cardiac cycle, so
         // RR is its visible duration. Enhancement is left off (gain 0) pending
         // real-record validation -- the 0.15 default fills clear notches.
+        //
+        // dnWindowHiSample carries the diastolic peak in as the search ceiling.
+        // Only when the spline actually found one: the midpoint fallback above
+        // is a placeholder, not a measurement, and bounding a real detector by a
+        // placeholder would let a fabricated position suppress a genuine notch.
+        // With no peak2, the detector keeps its 70%-of-RR ceiling and the
+        // post-hoc invariant below is what holds the ordering.
         const double rrSeconds = double(Wc) / ppgRate;
         ppg_dicrotic::PpgConfig dnCfg;
         dnCfg.dnEnhanceGain = 0.0;
+        if (splineOk) dnCfg.dnWindowHiSample = splineDiastolic;
         const ppg_dicrotic::DnResult dn =
             ppg_dicrotic::detectDicroticNotch(v, ppgRate, peakCol, rrSeconds, dnCfg);
 
@@ -779,12 +812,15 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         g.dn_tier = static_cast<int>(dn.tier);
         g.dn_confidence = dn.confidence;
 
-        // Diastolic peak (peak2): first local max after the notch from the spline fit.
-        int splineDiastolic = -1;
-        subsample_refine::cubicSplineNotch(v, lo, hi, &splineDiastolic);
-        g.peak2_found = (splineDiastolic > g.dicrotic && splineDiastolic < hi);
-        g.peak2 = g.peak2_found ? static_cast<double>(splineDiastolic)
-            : cld(0.5 * (g.peak + hi));
+        // Belt and braces, and not redundant. The bound above constrains the
+        // TIER 1/2 search, but the not-found path still assigns a midpoint
+        // placeholder 0.5*(lo + hi) that is computed from the window and not
+        // from peak2, and can therefore land past it. This catches that case,
+        // and any future path that sets g.dicrotic without going through the
+        // bounded search. It should now be a no-op on real data -- if the
+        // notch_found counter shows it firing, the bound is not being applied.
+        order_notch_before_peak2(v, g.dicrotic, g.peak2, g.peak2_found,
+            static_cast<double>(hi));
     }
 
     // ---- T80 / P50: amplitude crossings (the same helper the GUI's reactive
@@ -1157,14 +1193,11 @@ namespace {
 
         peak = cl(static_cast<int>(std::lround(subsample_refine::symmetricExtremum(v, peak, 8.0))));
 
-        if (dicrotic < 0 && cl(end) > cl(onset) + 2) {
-            const int base = cl(onset);
-            std::vector<double> cyc(v.begin() + base, v.begin() + cl(end) + 1);
-            const int peakInCyc = std::clamp(peak - base, 0, (int)cyc.size() - 1);
-            const int seed = FeatureMarks::detect_ppg_dicrotic(cyc, peakInCyc);
-            const double refined = subsample_refine::asymmetricExtremum(cyc, seed, 10.0);
-            dicrotic = cl(base + static_cast<int>(std::lround(refined)));
-        }
+        // DIASTOLIC PEAK FIRST HERE TOO, so it can bound the notch search --
+        // matching the PPG path exactly. These two were previously found by
+        // independent searches over the same cycle in the other order, with no
+        // ordering test between them, so an arterial pulse could carry a notch
+        // after its diastolic peak and nothing anywhere would notice.
         if (peak2 < 0 && end > onset) {
             const int base = cl(onset);
             std::vector<double> cyc(v.begin() + base, v.begin() + cl(end) + 1);
@@ -1172,6 +1205,25 @@ namespace {
             const double refined = subsample_refine::asymmetricExtremum(cyc, seed, 10.0);
             peak2 = cl(base + static_cast<int>(std::lround(refined)));
         }
+        if (dicrotic < 0 && cl(end) > cl(onset) + 2) {
+            const int base = cl(onset);
+            // Truncate the cycle AT the diastolic peak. detect_ppg_dicrotic
+            // takes no window argument, so the bound is expressed by shortening
+            // its input -- the same effect as dnWindowHiSample on the PPG side,
+            // reached the only way this detector allows.
+            int top = cl(end);
+            if (peak2 > base + 2 && peak2 < top) top = peak2;
+            std::vector<double> cyc(v.begin() + base, v.begin() + top + 1);
+            const int peakInCyc = std::clamp(peak - base, 0, (int)cyc.size() - 1);
+            const int seed = FeatureMarks::detect_ppg_dicrotic(cyc, peakInCyc);
+            const double refined = subsample_refine::asymmetricExtremum(cyc, seed, 10.0);
+            dicrotic = cl(base + static_cast<int>(std::lround(refined)));
+        }
+        // Same backstop as the PPG path, same function, so the channels cannot
+        // drift apart on the invariant. Covers the case where dicrotic or peak2
+        // arrived pre-set from a caller rather than from the searches above.
+        if (dicrotic >= 0 && peak2 >= 0)
+            FeatureMarks::order_notch_before_peak2(v, dicrotic, peak2, cl(end));
         //the ppg foot is transition anchor
         onset = cl(static_cast<int>(std::lround(subsample_refine::transitionAnchor(v, onset, 0.0, 40, std::numeric_limits<double>::quiet_NaN(),
             onset, std::min(onset + 40, n - 1)))));
@@ -1455,4 +1507,55 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         b.art_pulm_peak2, b.art_pulm_end,
         b.art_pulm_onset_auto, b.art_pulm_peak_auto, b.art_pulm_dicrotic_auto,
         b.art_pulm_peak2_auto, b.art_pulm_end_auto);
+}
+
+// ---------------------------------------------------------------------------
+// Ordering invariant: notch before diastolic peak. See feature_marks.hpp.
+// ---------------------------------------------------------------------------
+bool FeatureMarks::order_notch_before_peak2(const std::vector<double>& pulse,
+    double notch, double& peak2, bool& peak2_found, double hi)
+{
+    // Nothing to enforce if either is absent. An absent notch does not
+    // invalidate a diastolic peak: the notch is damped to nothing in stiff
+    // vessels (E-5 tier 3 records exactly that) while the reflected wave
+    // remains, so the pair {absent, present} is a real observation.
+    if (notch < 0.0 || peak2 < 0.0) return true;
+    if (peak2 > notch) return true;
+
+    // Violated. Re-search for the first local maximum strictly after the notch,
+    // in whole samples, then hand the seed back to the same sub-sample
+    // refinement the original finder used so the returned position is of the
+    // same kind as the one it replaces.
+    const int n = static_cast<int>(pulse.size());
+    const int lo = static_cast<int>(std::floor(notch)) + 1;
+    const int top = std::min(n - 2, static_cast<int>(std::floor(hi)));
+    for (int i = std::max(1, lo); i <= top; ++i) {
+        if (std::isnan(pulse[i - 1]) || std::isnan(pulse[i]) || std::isnan(pulse[i + 1]))
+            continue;
+        if (pulse[i] >= pulse[i - 1] && pulse[i] >= pulse[i + 1]) {
+            const double refined = subsample_refine::asymmetricExtremum(pulse, i, 10.0);
+            // The refinement can pull the position back across the notch. If it
+            // does, keep the integer seed rather than reintroduce the violation
+            // this function exists to remove.
+            peak2 = (refined > notch) ? refined : static_cast<double>(i);
+            peak2_found = true;
+            return true;
+        }
+    }
+
+    // No maximum after the notch. Absent, and said so.
+    peak2 = -1.0;
+    peak2_found = false;
+    return false;
+}
+
+bool FeatureMarks::order_notch_before_peak2(const std::vector<double>& pulse,
+    int notch, int& peak2, int hi)
+{
+    double p2 = (peak2 >= 0) ? static_cast<double>(peak2) : -1.0;
+    bool found = (peak2 >= 0);
+    const bool ok = order_notch_before_peak2(pulse, static_cast<double>(notch),
+        p2, found, static_cast<double>(hi));
+    peak2 = (p2 >= 0.0) ? static_cast<int>(std::lround(p2)) : -1;
+    return ok;
 }

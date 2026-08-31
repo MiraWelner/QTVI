@@ -101,7 +101,7 @@
 
 #include <algorithm>
 #include <array>
-#include "annotation_types.hpp"
+#include "noise_marking_gui/annotation_types.hpp"
 
 #include <cmath>
 #include <cstdint>

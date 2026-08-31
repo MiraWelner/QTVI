@@ -131,7 +131,6 @@ namespace {
         cfg.template_path = sub("template_outputs");
         cfg.qtvi_marker_path = sub("qtvi_marker_path");
         cfg.quality_metric = sub("quality_metric");
-        cfg.five_category_output = sub("five_category_output");
         cfg.training_log = sub("training_log");
         cfg.snapshot_path = sub("snapshot_path");
         cfg.vcg_output = sub("vcg_output");

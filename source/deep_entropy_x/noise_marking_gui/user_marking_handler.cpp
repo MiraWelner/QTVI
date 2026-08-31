@@ -34,9 +34,11 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX, const Q
     m_noiseManager->addSegment(
         static_cast<int>(snappedS * sr), static_cast<int>(snappedE * sr),
         signalLabel.toStdString(), m_currentMarkingType.toStdString(), sr);
-    m_genExc.noiseExc.append({ snappedS, snappedE });
-    m_genExc.data_type.append(signalLabel);
-    m_genExc.marking_type.append(m_currentMarkingType);
+    // appendMarking rather than three appends: the struct now carries five
+    // parallel vectors and keeping them in step by hand at every call site is
+    // how one gets dropped. An ordinary annotation has no threshold or blanking
+    // value, so both default to NaN.
+    m_genExc.appendMarking(snappedS, snappedE, signalLabel, m_currentMarkingType);
 
     if (m_beatLog) {
         

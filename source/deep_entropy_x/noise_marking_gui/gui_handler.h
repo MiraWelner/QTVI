@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file    gui_handler.hpp
  * @brief   Main dialog for viewing ECG/PPG signals and annotating noise,
  *          arrhythmias, and artifacts. Loads data in 8-hour chunks from a
@@ -24,6 +24,7 @@
 #include <QTimer>
 #include <memory>
 #include <vector>
+#include <limits>
 
 #include "ui_noise_marking_gui.h"
 #include "user_annotation_handler.h"
@@ -37,6 +38,41 @@ struct GenExcStruct {
     QVector<QPair<double, double>> noiseExc;   ///< [start, end] in global seconds.
     QStringList data_type;                     ///< "ECG1", "ECG2", "ECG3", "PPG", or "ABP".
     QStringList marking_type;                  ///< "Noise/Artifact", "AF", "SVT", ...
+
+    /// Detection threshold and blanking period that apply INSIDE each span, or
+    /// NaN where the marking type carries neither. Parallel to noiseExc, so an
+    /// append to that vector must append here too -- appendMarking() below does
+    /// all four at once precisely so they cannot come apart.
+    ///
+    /// These exist because a parameter-edit span is an instruction, not an
+    /// observation: it says "use this threshold here". Carrying the extent
+    /// without the values reloaded the highlight and lost its meaning, and the
+    /// R peaks inside it moved back to the config defaults with nothing
+    /// reporting it.
+    QVector<double> threshold;
+    QVector<double> blanking;
+
+    /// Append one marking with all four vectors kept in step. Every call site
+    /// used to append to three vectors by hand, which is three chances to drop
+    /// one and no way to notice until an index went out of range somewhere else.
+    void appendMarking(double start, double end, const QString& channel,
+        const QString& type,
+        double thr = std::numeric_limits<double>::quiet_NaN(),
+        double blk = std::numeric_limits<double>::quiet_NaN()) {
+        noiseExc.append({ start, end });
+        data_type.append(channel);
+        marking_type.append(type);
+        threshold.append(thr);
+        blanking.append(blk);
+    }
+
+    /// True when every parallel vector agrees on length. Cheap, and the one
+    /// invariant the whole struct rests on.
+    bool consistent() const {
+        const int n = noiseExc.size();
+        return data_type.size() == n && marking_type.size() == n
+            && threshold.size() == n && blanking.size() == n;
+    }
 };
 
 struct markable_data_series {

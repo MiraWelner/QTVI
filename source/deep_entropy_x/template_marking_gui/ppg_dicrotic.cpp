@@ -189,7 +189,26 @@ namespace ppg_dicrotic {
         int sysPeak, double rrSeconds, const PpgConfig& cfg) {
         const int N = static_cast<int>(pulse.size());
         const int winLo = sysPeak + (int)(cfg.dnWindowLoMs * 1e-3 * fs);
-        const int winHi = std::min(N, sysPeak + (int)(cfg.dnWindowHiRrFrac * rrSeconds * fs));
+        int winHi = std::min(N, sysPeak + (int)(cfg.dnWindowHiRrFrac * rrSeconds * fs));
+
+        // The diastolic peak, when the caller supplied it, is the true upper
+        // bound: the notch is aortic valve closure and the diastolic peak is the
+        // reflected wave that follows, so a notch at or past the peak is not a
+        // notch. MIN of the two bounds, so an explicit peak2 can only narrow the
+        // window -- a peak2 further out than the RR fraction allows is more
+        // likely a bad peak2 than a reason to search further.
+        //
+        // Strictly BELOW the peak, not up to it: winHi is exclusive of the last
+        // testable sample anyway (the loop runs to winHi - 1 and needs i + 1),
+        // and a "notch" sitting on the peak itself is a degenerate answer.
+        if (cfg.dnWindowHiSample >= 0)
+            winHi = std::min(winHi, cfg.dnWindowHiSample);
+
+        // Too narrow to hold a local minimum. Returning absent here is the
+        // correct answer and is NOT a new failure mode introduced by the bound:
+        // a diastolic peak within 5 samples of winLo means there is no room for
+        // a notch between the systolic peak and it, so there is nothing to find.
+        // Tier 3 (ABSENT) is a recorded outcome, not an error.
         if (winHi - winLo < 5) return {};
 
         // ---- Tier 1: IEM ----

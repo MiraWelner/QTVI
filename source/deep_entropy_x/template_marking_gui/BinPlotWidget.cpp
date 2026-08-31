@@ -71,7 +71,7 @@
 */
 
 #include "BinPlotWidget.hpp"
-#include "annotation_types.hpp"
+#include "noise_marking_gui/annotation_types.hpp"
 #include <QMenu>
 #include <QAction>
 #include "feature_marks.hpp"

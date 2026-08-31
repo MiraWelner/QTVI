@@ -29,6 +29,7 @@
 #include "config_file_handling/config_entry.hpp"
 #include "template_marking_gui/alignment.hpp"
 #include "logging/sqi_ecg.hpp"
+#include "template_morphology_grouping/morphology_csv.hpp"
 
 namespace post_process_detail {
 
@@ -138,7 +139,17 @@ namespace post_process_detail {
         const std::filesystem::path provisionalPath = std::filesystem::path(cfg.template_path) / (stem + "_templates.partial.bin");
 
         // ---- Step 1: Anneal (always -- freshness check removed) ----
+        //
+        // TIMED AND ANNOUNCED, because this step prints nothing of its own and
+        // sits between "Saved Noise Markings" and the first [timing] line. A
+        // stall here was indistinguishable from a hang: no output, no progress,
+        // and the two existing instrumentation lines both live downstream of it.
+        const auto _a0 = std::chrono::steady_clock::now();
+        std::cerr << "[stage] anneal " << stem << " ...\n" << std::flush;
         annealOneFile(binPath, noisePath, annealedPath, cfg.bin_size_minutes, ecg1_inverted, ecg2_inverted, ecg3_inverted);
+        const auto _a1 = std::chrono::steady_clock::now();
+        std::cerr << "[stage] anneal " << stem << " done in "
+            << std::chrono::duration<double>(_a1 - _a0).count() << " s\n" << std::flush;
 
         ViewerJob job;
         job.stem = stem;
@@ -313,11 +324,10 @@ namespace post_process_detail {
 
         std::cerr << "  Processing Raw Templates (fast stage): " << stem << "\n";
         ecg_move_log::set(cfg.quality_metric, stem);   // per-beat vertical move log
-        ecg_move_log::set(cfg.quality_metric, stem);   // per-beat vertical move log
+        morphology_csv::set(cfg.template_path, stem);
         FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
         if (fast.tmpl.bins.empty()) {
-            std::cerr << "  no bins for " << stem
-                << " (recording shorter than one bin?); skipping.\n";
+            std::cerr << "  no bins for " << stem  << " (recording shorter than one bin?); skipping.\n";
             return std::nullopt;   // main.cpp prints "prep failed or skipped"
         }
         job.tmpl = std::move(fast.tmpl);

@@ -694,16 +694,42 @@ QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
     // a retitled table row would leave these spans resolving to nothing and
     // exporting as code 0, with no error anywhere. Resolved at compile time; see
     // the static_asserts in annotation_types.hpp.
+    // THE VALUES TRAVEL WITH THE SPAN. applyParamOverrides() writes a threshold
+    // and a blanking period for the same extent on the same channel, so the two
+    // vectors hold matched entries and one output row can carry both. Pairing
+    // them here by (channel, start, end) rather than by index is deliberate:
+    // editParamOverrideAt() can replace one vector's entry without the other's,
+    // so equal indices are not a safe assumption.
+    //
+    // m_blankingOverrides was previously never written out at all -- only the
+    // threshold spans were, and only as extents. So a reloaded file lost both
+    // numbers and every override reverted to the config defaults, moving the R
+    // peaks inside it with nothing to indicate why.
+    const QString paramLabel = QString::fromUtf8(annotation_types::kParamEditLabel);
     for (const ParamOverride& o : m_thresholdOverrides) {
-        current.noiseExc.append({ o.start, o.end });
-        current.data_type.append(o.channel);
-        current.marking_type.append(
-            QString::fromUtf8(annotation_types::kParamEditLabel));
+        double blk = std::numeric_limits<double>::quiet_NaN();
+        for (const ParamOverride& b : m_blankingOverrides)
+            if (b.channel == o.channel && b.start == o.start && b.end == o.end) {
+                blk = b.value; break;
+            }
+        current.appendMarking(o.start, o.end, o.channel, paramLabel, o.value, blk);
+    }
+    // A blanking override with no matching threshold override. Should not happen
+    // -- applyParamOverrides always writes both -- but a file that ends up with
+    // one would otherwise drop the span entirely on save, and losing an operator
+    // edit silently is worse than emitting a row whose threshold reads NaN.
+    for (const ParamOverride& b : m_blankingOverrides) {
+        bool paired = false;
+        for (const ParamOverride& o : m_thresholdOverrides)
+            if (o.channel == b.channel && o.start == b.start && o.end == b.end) {
+                paired = true; break;
+            }
+        if (!paired)
+            current.appendMarking(b.start, b.end, b.channel, paramLabel,
+                std::numeric_limits<double>::quiet_NaN(), b.value);
     }
     for (const ParamOverride& o : m_invertOverrides) {
-        current.noiseExc.append({ o.start, o.end });
-        current.data_type.append(o.channel);
-        current.marking_type.append(
+        current.appendMarking(o.start, o.end, o.channel,
             QString::fromUtf8(annotation_types::kInvertEditLabel));
     }
 

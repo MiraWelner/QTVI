@@ -290,7 +290,14 @@ std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) 
     // morphology. Do not raise the match threshold to hide it -- that merges the
     // fragments and removes the symptom while leaving the cause. Check
     // normalization, baseline drift, and false R detections first.
-    std::vector<int> slots{ 0 };   // slot 0 always, even on a bank-less bin
+    // NOT NAMED `slots`. Qt's qobjectdefs.h defines `slots` as an empty macro
+    // unless QT_NO_KEYWORDS is set, so a local of that name vanishes at
+    // preprocess time: the declaration becomes `std::vector<int> { 0 };` and
+    // every use becomes a bare `.push_back(...)`. MSVC reports it as
+    // "C2059: syntax error: '.'" several lines from the actual cause, plus a
+    // spurious "function must return a value" because `return slots;` collapses
+    // to `return ;`. `signals`, `emit` and `foreach` are the same trap.
+    std::vector<int> eligible{ 0 };   // slot 0 always, even on a bank-less bin
     for (int t = 1; t < tbank::kDefaultMaxTemplatesPerBin * 4; ++t) {
         bool wanted = false;
         for (int c = 0; c < 3 && !wanted; ++c) {
@@ -299,9 +306,9 @@ std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) 
             const tbank::BankTemplate& tp = bank.templates[t];
             wanted = !tp.tmpl.empty() && tp.wantsLandmarkMarking();
         }
-        if (wanted) slots.push_back(t);
+        if (wanted) eligible.push_back(t);
     }
-    return slots;
+    return eligible;
 }
 
 std::pair<int, int> TemplateViewerWindow::compactGrid(int n) {

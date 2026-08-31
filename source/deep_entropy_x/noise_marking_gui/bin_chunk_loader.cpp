@@ -8,6 +8,7 @@
 #include "chart_utils.hpp"
 #include "annotation_types.hpp"
 #include "notch_filter.hpp"
+#include "user_annotation_handler.h"
 #include "vcg_lead.hpp"
 
 #include <QDir>
@@ -20,6 +21,7 @@
 #include <QEventLoop>
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
 #include <cstdint>
 #include <fstream>
 #include <filesystem>
@@ -31,37 +33,91 @@ void noise_marking_gui::setFileSource(const QString& filePath) {
 }
 
 namespace {
-    // Rebuild a GenExcStruct from a saved noise-markings .bin (count + 6 doubles/
-    // row: start/end sample, start/end sec, channel code, annotation code).
-    // Numeric codes are reverse-mapped to channel label + marking-type string.
+    // Read a noise-markings .bin. ONE format: magic, version, count, then rows
+    // of noise_markings::kColumns doubles indexed by the Column enum. See
+    // noise_markings in user_annotation_handler.h, which the writer shares.
+    //
+    // A file without the magic is REFUSED, not parsed. Those are pre-versioned
+    // files whose rows are six bare doubles and which carry no threshold or
+    // blanking values, so reading one would restore every parameter-edit span at
+    // the config defaults and move the R peaks inside it -- looking entirely
+    // correct while being wrong about the one thing the span existed to record.
     GenExcStruct readNoiseMarkingsBin(const std::filesystem::path& path,
         const QString& filePath) {
+        namespace nm = noise_markings;
         GenExcStruct g;
         g.filePath = filePath;
         std::ifstream f(path, std::ios::binary);
         if (!f.is_open()) return g;
+
+        char magic[sizeof(nm::kMagic)] = {};
+        f.read(magic, sizeof(magic));
+        if (!f || std::memcmp(magic, nm::kMagic, sizeof(magic)) != 0) {
+            std::fprintf(stderr,
+                "[noise-markings] %s has no magic header, so it predates "
+                "parameter storage; refusing to read it. Those files carry no "
+                "threshold or blanking values -- re-save from the CSV or "
+                "re-mark.\n", path.string().c_str());
+            return g;
+        }
+
+        uint32_t version = 0;
+        f.read(reinterpret_cast<char*>(&version), sizeof(version));
+        if (!f) return g;
+        // A version mismatch is a hard stop, not a best-effort read: guessing
+        // the row stride is how spans land at the wrong times while looking
+        // plausible.
+        if (version != nm::kVersion) {
+            std::fprintf(stderr,
+                "[noise-markings] %s is version %u; this build reads version %u "
+                "only.\n", path.string().c_str(), version, nm::kVersion);
+            return g;
+        }
+
         uint64_t count = 0;
-        f.read(reinterpret_cast<char*>(&count), 8);
-        auto channelLabel = [](int code) -> QString {
-            switch (code) {
-            case 1: return "PPG";  case 2: return "ECG1"; case 3: return "ECG2";
-            case 4: return "ECG3"; case 5: return "ABP";  case 6: return "ACCEL";
-            case 7: return "ART";  case 8: return "ART_PULM"; default: return QString();
-            }
-            };
+        f.read(reinterpret_cast<char*>(&count), sizeof(count));
+        if (!f) return g;
+
         for (uint64_t i = 0; i < count; ++i) {
-            double row[6];
+            double row[nm::kColumns];
             f.read(reinterpret_cast<char*>(row), sizeof(row));
-            if (!f) break;
-            const QString label = channelLabel(static_cast<int>(row[4]));
-            if (label.isEmpty()) continue;                 // unknown channel code
-            QString type;
+            if (!f) {
+                std::fprintf(stderr,
+                    "[noise-markings] %s ended after %llu of %llu rows\n",
+                    path.string().c_str(),
+                    static_cast<unsigned long long>(i),
+                    static_cast<unsigned long long>(count));
+                break;
+            }
+
+            // Both lookups read the tables the writer wrote from, so a miss here
+            // means the file names something this build does not know. Worth a
+            // line each rather than a silent skip -- silent skipping is what hid
+            // the writer/reader channel-map divergence before the tables were
+            // unified.
+            const char* chan = nm::channel_for_code(
+                static_cast<uint8_t>(row[nm::kChannelCode]));
+            if (!chan) {
+                std::fprintf(stderr, "[noise-markings] row %llu: unknown channel "
+                    "code %d, skipped\n", static_cast<unsigned long long>(i),
+                    static_cast<int>(row[nm::kChannelCode]));
+                continue;
+            }
+            const char* type = nullptr;
             for (const auto& t : annotation_types::noise_types)
-                if (t.code == static_cast<int>(row[5])) { type = QString::fromLatin1(t.label); break; }
-            if (type.isEmpty()) continue;                   // unknown annotation code
-            g.noiseExc.append({ row[2], row[3] });          // start_sec, end_sec
-            g.data_type.append(label);
-            g.marking_type.append(type);
+                if (t.code == static_cast<int>(row[nm::kAnnotationCode])) {
+                    type = t.label; break;
+                }
+            if (!type) {
+                std::fprintf(stderr, "[noise-markings] row %llu: unknown marking "
+                    "code %d, skipped\n", static_cast<unsigned long long>(i),
+                    static_cast<int>(row[nm::kAnnotationCode]));
+                continue;
+            }
+
+            g.appendMarking(row[nm::kStartSec], row[nm::kEndSec],
+                QString::fromLatin1(chan), QString::fromLatin1(type),
+                row[nm::kThreshold], row[nm::kBlankingMs]);
         }
         return g;
     }
