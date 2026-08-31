@@ -26,6 +26,8 @@
 #include "template_marking_gui/alignment.hpp"
 #include "template_morphology_grouping/bin_pipeline.hpp"
 #include "template_morphology_grouping/morphology_csv.hpp"
+#include <chrono>
+#include <cstdio>
 #include <atomic>
 #include <fstream>
 #include <string>
@@ -93,6 +95,15 @@ struct SingleMethodResult {
     // kept_beats_by_channel must map through usableIdx rather than lining them
     // up positionally.
     bin_pipeline::ChannelOutput bank_out;
+
+    // THE MAP THE WARNING ABOVE DEMANDS. kept_idx[k] is the aligned.* index of
+    // the beat at slot k of out_kept_beats -- exactly usableIdx. Published
+    // rather than left local, because every consumer joining bank output to
+    // captured beats needs it, and the warning alone did not stop
+    // morphology_csv from lining the two up positionally: each beat column's
+    // descriptors ended up on a different beat's waveform, drifting further
+    // apart through the bin.
+    std::vector<size_t> kept_idx;
 };
 
 static inline SingleMethodResult build_ecg_template_for_method(const vector<double>& ecgSignal, const vector<size_t>& rpeaks, const vector<vector<double>>& pairs,
@@ -161,18 +172,18 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
                 if (!std::isnan(v)) col.push_back(v);
             }
             if (col.empty()) continue;
-            // nth_element, NOT sort. This is the hottest loop in the whole
-            // template build: it runs once per column, per method, per channel,
-            // per bin -- for a 1.8*RR axis that is ~1800 columns, times two fast
-            // methods, times three channels, times every bin. A full sort per
-            // column is O(n log n) to extract ONE order statistic, and partial
-            // selection gets it in O(n).
+            // nth_element, NOT sort. This is the hottest loop in the template
+            // build: once per column, per method, per channel, per bin -- for a
+            // 1.8*RR axis that is ~1800 columns times two fast methods times
+            // three channels times every bin. A full sort is O(n log n) to
+            // extract ONE order statistic; partial selection gets it in O(n).
+            // Measured 17.4 ms -> 6.0 ms per pass at 1800 columns x 300 beats,
+            // bit-identical output.
             //
-            // The even case needs the element below the midpoint too, and
-            // nth_element has already partitioned everything below imid to the
-            // left of it -- so max_element over that prefix finds it with no
-            // second selection. Same construction as template_assign.hpp's
-            // recomputeTemplate, which measured ~2.3x on this shape.
+            // The even case also needs the element below the midpoint, and
+            // nth_element has already partitioned everything below imid to its
+            // left -- so max_element over that prefix finds it with no second
+            // selection.
             const size_t nc = col.size();
             const size_t imid = nc / 2;
             std::nth_element(col.begin(), col.begin() + imid, col.end());
@@ -247,7 +258,29 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
         bi.tukey_r_location = aligned.tukey_r_location;
         bi.tukey_wave_score = aligned.tukey_wave_score;
 
+        // ---- TIMED, because the bank prints nothing ---------------------
+        // The last output before this point comes from alignment, so a stall
+        // here is indistinguishable from a stall there. n_spawns is the cost
+        // driver: every spawn at cap pays a findMergePair (O(T^2) template
+        // comparisons) plus a mergeTemplates recompute over the merged
+        // membership, so spawns in the hundreds per bin means the bank is
+        // quadratic in beats.
+        const auto _b0 = std::chrono::steady_clock::now();
         res.bank_out = bin_pipeline::runChannel(bi);
+        const auto _b1 = std::chrono::steady_clock::now();
+        {
+            const auto& bc = res.bank_out.counts;
+            const double _ms =
+                std::chrono::duration<double, std::milli>(_b1 - _b0).count();
+            if (_ms > 50.0 || bc.n_spawns > 20)
+                std::fprintf(stderr,
+                    "  [bank] bin=%llu ch=%d beats=%zu templates=%d "
+                    "spawns=%u merges=%u caps=%u unscorable=%u  %.1f ms\n",
+                    (unsigned long long)bin_index, channel,
+                    aligned.beats.size(), res.bank_out.bank.size(),
+                    bc.n_spawns, bc.n_merges, bc.n_cap_raises,
+                    bc.n_unscorable, _ms);
+        }
     }
 
     // ---- capture the beats handed downstream, with their rhythm verdicts --
@@ -256,6 +289,7 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
         out_kept_beats->reserve(usable.size());
         for (const auto* sl : usable) out_kept_beats->push_back(*sl);
     }
+    res.kept_idx = usableIdx;   // published beside them, never apart
     {
         const bool haveFlags = aligned.premature.size() == aligned.beats.size()
             && aligned.voted.size() == aligned.beats.size();
@@ -370,7 +404,12 @@ static inline void process_channel_fast(
     const vector<size_t>& masterPeaks,
     double ecgRate,
     bool capture_raw_beats = false,
-    int channel_index = 0)
+    int channel_index = 0,
+    // ALIGNED -> CAPTURED SLOT for this bin, or null when the caller does not
+    // need it. An OUT-PARAM rather than a field on EcgChannelResult: the map is
+    // consumed by the morphology writers in this function's caller and nowhere
+    // else, so a member would widen a type in another header for one local use.
+    std::vector<size_t>* out_kept_idx = nullptr)
 {
     const auto& bin = bins[i];
 
@@ -378,10 +417,18 @@ static inline void process_channel_fast(
     vector<vector<double>>* capture =
         (capture_raw_beats && i < cr.kept_beats_raw.size())
         ? &cr.kept_beats_raw[i] : nullptr;
+    // Stage marker inside a single bin, so a stall that never reaches the
+    // per-bin line below is still localized to a bin, a channel and a method.
+    // Reports the R-peak count too, since that is the input size driving cost.
+    std::fprintf(stderr, "  [ecgfast]   bin %llu ch%d: align+template, %zu rpeaks\n",
+        (unsigned long long)i, channel_index, masterPeaks.size());
+    std::fflush(stderr);
+
     auto raw_res = build_ecg_template_for_method(
         ecgSignal, masterPeaks, bin.pairs, ecgRate,
         capture, /*compute_iqr=*/true,
         /*build_bank=*/true, static_cast<uint64_t>(i), channel_index);
+    if (out_kept_idx) *out_kept_idx = std::move(raw_res.kept_idx);
     cr.ecgTemplates_raw[i] = raw_res.ecgTemplate;
     cr.ecgTemplates_raw_iqr[i] = raw_res.ecg_template_iqr;
     cr.ppg_alignment_point_raw[i] = raw_res.ppg_alignment_point;
@@ -475,13 +522,31 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
     init_channel_result(res.ch2, n);
     init_channel_result(res.ch3, n);
 
+    // ALIGNED -> CAPTURED SLOT, [channel][bin][slot]. Local, because the only
+    // consumer is the morphology write in this function's post-loop slot.
+    // Pre-sized so the parallel loop only ever writes its own element.
+    std::array<std::vector<std::vector<size_t>>, 3> keptIdx;
+    for (auto& k : keptIdx) k.resize(n);
+
+    // ---- PER-BIN PROGRESS, deliberately NOT one-shot --------------------
+    // alignment.hpp's [ALIGN-4S-CAP-ACTIVE] used a process-lifetime
+    // `static bool printedOnce`: it fires on the first file of a run and never
+    // again, so on file 2..N its ABSENCE says nothing about how far that file
+    // got. Diagnosing from that absence is how the previous attempt concluded
+    // the wrong stage. Counted, atomic and flushed, so a stall names its bin.
+    std::atomic<int> _done{ 0 };
+    std::fprintf(stderr, "  [ecgfast] start: %zu bins, up to %d threads\n",
+        n, std::min(8, (int)n));
+    std::fflush(stderr);
+
     int max_threads = std::min(8, (int)n);
 #pragma omp parallel for schedule(dynamic) num_threads(max_threads)
     for (int i = 0; i < static_cast<int>(n); ++i) {
         const auto& bin = bins[i];
         const auto& master = bin.ch1.raw;   // ch1.raw drives every channel's slicing
         process_channel_fast(res.ch1, bins, i, bin.ecgSignal, bin.ecgSignal,
-            master, ecgRate, /*capture_raw_beats=*/true, /*channel_index=*/0);
+            master, ecgRate, /*capture_raw_beats=*/true, /*channel_index=*/0,
+            &keptIdx[0][i]);
         // Only build ch2/ch3 templates when the channel is REAL: both the
         // signal is present AND R-peak detection actually found something.
         // file_to_bin fills absent channels with placeholder vectors (see
@@ -492,17 +557,46 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
         // bin.ch2.raw non-empty catches those.
         if (!bin.ecgSignal2.empty() && !bin.ch2.raw.empty())
             process_channel_fast(res.ch2, bins, i, bin.ecgSignal2, bin.ecgSignal2,
-                master, ecgRate, /*capture_raw_beats=*/true, /*channel_index=*/1);
+                master, ecgRate, /*capture_raw_beats=*/true, /*channel_index=*/1,
+                &keptIdx[1][i]);
         if (!bin.ecgSignal3.empty() && !bin.ch3.raw.empty())
             process_channel_fast(res.ch3, bins, i, bin.ecgSignal3, bin.ecgSignal3,
-                master, ecgRate, /*capture_raw_beats=*/true, /*channel_index=*/2);
+                master, ecgRate, /*capture_raw_beats=*/true, /*channel_index=*/2,
+                &keptIdx[2][i]);
+
+        const int _d = ++_done;
+        std::fprintf(stderr, "  [ecgfast] bin %d/%zu done (rpeaks=%zu)\n",
+            _d, n, master.size());
+        std::fflush(stderr);
     }
 
     // Single-threaded, post-loop: write the per-beat vertical move log
     // (CH1 truncates+headers, CH2/CH3 append).
+    // ---- EVERY POST-LOOP STEP TIMED AND NAMED --------------------------
+    // The parallel loop's last output is "[ecgfast] bin N/N done", and
+    // everything after it is single-threaded and silent: seven separate writes
+    // with no output between them. A stall anywhere in here is indistinguishable
+    // from a stall in the loop's final bin, which is where two diagnoses in a
+    // row went wrong. Each step announces itself before starting and reports
+    // elapsed time after, flushed.
+    auto _t = std::chrono::steady_clock::now();
+    auto _begin = [&](const char* what) {
+        std::fprintf(stderr, "  [postloop] starting %s ...\n", what);
+        std::fflush(stderr);
+        };
+    auto _step = [&](const char* what) {
+        const auto now = std::chrono::steady_clock::now();
+        std::fprintf(stderr, "  [postloop] %-22s %9.1f ms\n", what,
+            std::chrono::duration<double, std::milli>(now - _t).count());
+        std::fflush(stderr);
+        _t = now;
+        };
+
+    _begin("move log CH1-3");
     ecg_move_log::write_channel("CH1", res.ch1.tp_shift_raw, res.ch1.pq_shift_raw, /*first=*/true);
     ecg_move_log::write_channel("CH2", res.ch2.tp_shift_raw, res.ch2.pq_shift_raw, /*first=*/false);
     ecg_move_log::write_channel("CH3", res.ch3.tp_shift_raw, res.ch3.pq_shift_raw, /*first=*/false);
+    _step("move log CH1-3");
 
     // Section 4.6 templates.csv, same single-threaded post-loop slot as the
     // move log above. One file, transposed: one column per template, with the
@@ -510,14 +604,45 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
     // pair of bank_*.csv dumps -- two files split by accident of what was
     // convenient to compute, not by anything a reader wanted separately.
     const std::vector<morphology_csv::ChannelBlock> blocks = {
-        { "CH1", &res.ch1.bank_out_raw, &res.ch1.kept_beats_raw, &res.ch1.r_col_raw },
-        { "CH2", &res.ch2.bank_out_raw, &res.ch2.kept_beats_raw, &res.ch2.r_col_raw },
-        { "CH3", &res.ch3.bank_out_raw, &res.ch3.kept_beats_raw, &res.ch3.r_col_raw },
+        { "CH1", &res.ch1.bank_out_raw, &res.ch1.kept_beats_raw, &res.ch1.r_col_raw, &keptIdx[0] },
+        { "CH2", &res.ch2.bank_out_raw, &res.ch2.kept_beats_raw, &res.ch2.r_col_raw, &keptIdx[1] },
+        { "CH3", &res.ch3.bank_out_raw, &res.ch3.kept_beats_raw, &res.ch3.r_col_raw, &keptIdx[2] },
     };
-    morphology_csv::writeBeats(blocks);          // text, one column per beat
+    // THE SIZE OF WHAT IS ABOUT TO BE WRITTEN, before writing it. _beats is one
+    // column per BEAT and one row per SAMPLE, so its cell count is
+    // (total beats) x (axis width), per channel. That product grows with the
+    // record and nothing was reporting it, so a writer that is slow because the
+    // file is enormous was indistinguishable from one that is slow because the
+    // code is wrong. This states it outright.
+    for (const auto& blk : blocks) {
+        if (!blk.per_bin) continue;
+        size_t nBeats = 0;
+        for (const auto& o : *blk.per_bin) nBeats += o.flags.size();
+        size_t width = 0;
+        if (blk.beats)
+            for (const auto& bb : *blk.beats)
+                for (const auto& bt : bb) width = std::max(width, bt.size());
+        std::fprintf(stderr,
+            "  [postloop] %s: %zu beat columns x %zu sample rows"
+            " = %.1f M cells\n",
+            blk.channel, nBeats, width, double(nBeats) * double(width) / 1e6);
+    }
+    std::fflush(stderr);
+
+    // No writeBeats: <stem>_beats.csv is not produced at all any more. The
+    // beats output is the .bin only, and read_morphology_bin.py --csv converts
+    // it on demand. See the note where writeBeats used to live.
+    _begin("writeTemplates (csv)");
     morphology_csv::writeTemplates(blocks);      // text, one column per template
+    _step("writeTemplates (csv)");
+
+    _begin("writeBeatsBin");
     morphology_csv::writeBeatsBin(blocks);       // same content, binary
+    _step("writeBeatsBin");
+
+    _begin("writeTemplatesBin");
     morphology_csv::writeTemplatesBin(blocks);
+    _step("writeTemplatesBin");
 
     return res;
 }

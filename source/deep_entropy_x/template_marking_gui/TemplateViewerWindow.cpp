@@ -263,6 +263,66 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
     return out;
 }
 
+// Pack bins into pages so that no page exceeds m_maxColsPerPage COLUMNS.
+//
+// WHY BY COLUMNS AND NOT BY BINS. A page used to hold a fixed m_binsPerPage
+// bins, and each bin contributes one column per markable template, so the panel
+// count was whatever the banks happened to produce -- four bins with five
+// markable templates each is twenty panels sharing the window, a few pixels
+// apiece and unreadable. Panel width is what makes a template markable at all,
+// so it is the page COUNT that gives way: bins per page falls until the columns
+// fit, and a clean record still shows m_binsPerPage bins because its bins
+// contribute one column each.
+//
+// A bin whose own column count exceeds the budget gets a page to itself and is
+// the only case that still compresses. Splitting one bin across two pages would
+// avoid even that, but a bin's panels are edited and snapshotted as a unit
+// (captureCurrentPage), so half a bin per page would mean half a snapshot.
+// Being asked to mark three or more normal templates in one bin is itself the
+// over-segmentation signal markingSlotsForBin documents; the fix there is
+// upstream, not in the layout.
+//
+// Called again whenever eligibility changes -- confirming a class can add or
+// remove a column and therefore move every later boundary.
+void TemplateViewerWindow::buildPages() {
+    m_pages.clear();
+    const int nBins = static_cast<int>(m_bins.size());
+    if (nBins == 0) { m_pages.push_back({ 0, 0 }); m_totalPages = 1; return; }
+
+    const int budget = std::max(1, m_maxColsPerPage);
+    int i = 0;
+    while (i < nBins) {
+        int cols = 0, taken = 0;
+        while (i + taken < nBins && taken < m_binsPerPage) {
+            const int c = static_cast<int>(
+                markingSlotsForBin(m_bins[i + taken]).size());
+            // Always take at least one bin, even if it alone blows the budget:
+            // a page must make progress or paging never terminates.
+            if (taken > 0 && cols + c > budget) break;
+            cols += c;
+            ++taken;
+        }
+        m_pages.push_back({ i, taken });
+        i += taken;
+    }
+    m_totalPages = static_cast<int>(m_pages.size());
+
+    // Worth seeing once per record: if pages are consistently one bin each, the
+    // banks are producing several markable templates per bin and the paging is
+    // absorbing a problem rather than the record being unusual.
+    int widest = 0;
+    for (const auto& pg : m_pages) {
+        int cols = 0;
+        for (int k = 0; k < pg.second; ++k)
+            cols += static_cast<int>(markingSlotsForBin(m_bins[pg.first + k]).size());
+        widest = std::max(widest, cols);
+    }
+    std::fprintf(stderr,
+        "  [pages] %d bins -> %d pages (budget %d cols/page, widest %d)\n",
+        nBins, m_totalPages, budget, widest);
+    std::fflush(stderr);
+}
+
 std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) const {
     // ONLY CATEGORY 1 TEMPLATES GET A COLUMN. Landmark marking exists to feed
     // feature extraction, and only category 1 beats do that -- a P-onset on a
@@ -390,10 +450,11 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
         if (nl > m_maxLeads) m_maxLeads = nl;
     }
     m_binsPerPage = (m_maxLeads <= 1) ? 16 : 4;
+    // Compact mode packs single-lead bins tightly, so it affords more columns.
+    m_maxColsPerPage = (m_maxLeads <= 1) ? 16 : 8;
 
     m_currentPage = 0;
-    m_totalPages = std::max(1, static_cast<int>(
-        std::ceil(static_cast<double>(m_bins.size()) / m_binsPerPage)));
+    buildPages();
 
     // Seed markers for every bin so per-subject global refs (which need
     // R/S and foot/peak positions across all bins) can be computed once
@@ -744,9 +805,13 @@ void TemplateViewerWindow::showPage() {
     clearPlots();
     lap("clearPlots");
 
-    int start = m_currentPage * m_binsPerPage;
-    int end = std::min(start + m_binsPerPage, static_cast<int>(m_bins.size()));
-    int count = end - start;
+    // Page bounds come from the packed table, not from multiplication: pages
+    // hold a variable number of bins so that the COLUMN count stays bounded.
+    if (m_pages.empty()) buildPages();
+    m_currentPage = std::clamp(m_currentPage, 0, (int)m_pages.size() - 1);
+    int start = m_pages[m_currentPage].first;
+    int count = m_pages[m_currentPage].second;
+    int end = start + count;
 
     bool compact = (m_maxLeads <= 1);
 
@@ -1640,6 +1705,8 @@ void TemplateViewerWindow::onClassConfirmRequested(int binIndex, int leadIndex,
     // operator's hands. Snapshot first, as page navigation does, or the marker
     // edits made on this page are lost to the rebuild.
     captureCurrentPage();
+    // Eligibility changed, so column counts changed, so page boundaries moved.
+    buildPages();
     showPage();
 }
 

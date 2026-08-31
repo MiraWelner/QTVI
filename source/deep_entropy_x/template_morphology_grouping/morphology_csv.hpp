@@ -132,21 +132,18 @@ namespace morphology_csv {
 
     namespace detail {
 
-        // EVERY enumerator named explicitly, no catch-all. The `default:
-        // return "pqrst"` this replaces mapped anything unrecognised to the
-        // word for NORMAL, so when Category gained UNCONFIRMED every
-        // unconfirmed template began writing itself into the archive as pqrst
-        // -- the exact inference Section 4.6 forbids, arriving through a switch
-        // default rather than through a decision anyone made. A missing case is
-        // now a compiler warning instead of a plausible-looking column.
+        // EVERY enumerator named explicitly, no catch-all. `default: return
+        // "pqrst"` would map any future enumerator to the word for NORMAL,
+        // silently, so a new category would enter the archive as sinus without
+        // anyone deciding that. A missing case is now a compiler warning instead
+        // of a plausible-looking column.
         inline const char* categoryWord(tbank::Category c) {
             switch (c) {
             case tbank::Category::REGULAR:     return "pqrst";
             case tbank::Category::ECTOPIC:     return "ectopic";
             case tbank::Category::NOISE:       return "noise";
-            case tbank::Category::UNCONFIRMED: return "unconfirmed";
             }
-            return "unconfirmed";   // unreachable; the safe direction if reached
+            return "pqrst";   // unreachable; every enumerator is named above
         }
 
         // Row 3: the class, then an underscore and the letter the ALGORITHM
@@ -210,147 +207,98 @@ namespace morphology_csv {
         const char* channel = "CH1";
         const std::vector<bin_pipeline::ChannelOutput>* per_bin = nullptr;
 
-        // Aligned beat matrices, [bin][beat][sample], on the shared axis. Same
-        // indexing as per_bin[bin].flags, so column k of bin b is
-        // beats[b][k] described by flags[k]. Null writes descriptors only.
+        // Captured beat matrices, [bin][slot][sample], on the shared axis.
+        // Null writes descriptors only.
+        //
+        // NOT THE SAME INDEXING AS per_bin[bin].flags, despite what this comment
+        // used to claim. These are `usable` beats (baseline-filtered) while
+        // flags and assignment index aligned.beats (all of them) --
+        // create_ecg_templates.hpp's INDEX SPACE WARNING says so explicitly.
+        // Treating column k as beats[b][k] attaches each beat's descriptors to a
+        // different beat's waveform, drifting further apart through the bin.
+        // Go through kept_idx.
         const std::vector<std::vector<std::vector<double>>>* beats = nullptr;
 
         // R column on the shared axis, per bin. Emitted as a descriptor row so
         // a reader can align columns to a fiducial without re-detecting it --
         // every beat's detected R sits at this column by construction.
         const std::vector<int>* r_col = nullptr;
+
+        // ALIGNED -> CAPTURED SLOT. kept_idx[bin][slot] is the aligned index of
+        // the beat at that slot of beats[bin]; inverting it gives the slot for a
+        // beat column. Null means "the two spaces coincide", true only when no
+        // beat failed the baseline filter -- treated as identity so a caller
+        // without a map gets the old behaviour rather than no waveforms.
+        const std::vector<std::vector<size_t>>* kept_idx = nullptr;
     };
 
     // One column per beat. Channels are emitted as successive row blocks, each
     // preceded by a `channel` row naming it, so a reader can split on that row
     // rather than parsing three files.
-    inline bool writeBeats(const std::vector<ChannelBlock>& blocks) {
-        if (g_dir.empty() || g_stem.empty()) return false;
-        std::ofstream f(g_dir + "/" + g_stem + "_beats.csv", std::ios::trunc);
-        if (!f) return false;
+    namespace detail {
+        // Slot in blk.beats[bin] holding the beat whose ALIGNED index is
+        // `alignedBeat`, or npos when that beat was not captured -- a real
+        // outcome, not an error: a beat dropped by the baseline filter has
+        // descriptors (including why) but no waveform in this container, and the
+        // caller writes empty cells for it.
+        // WAS A LINEAR SEARCH, CALLED PER SAMPLE. That is the mistake this
+        // replaces, and it was not a small one: the sample loop runs `width`
+        // times per column (~1800 on a 1.8*RR axis at 1 kHz) and this scanned
+        // the whole bin's slot map (~1000 entries) on every one of them. Across
+        // three channels and every beat in a record that is on the order of
+        // 10^11 comparisons to write one CSV -- the writers ran after the last
+        // bin finished, which is exactly where the run stopped making progress.
+        //
+        // Inverted ONCE per bin instead: aligned index -> slot, O(1) lookup.
+        // Built lazily because a block with no kept_idx never needs one, and
+        // sized to the largest aligned index actually present rather than to the
+        // beat count, so a sparse map costs nothing extra.
+        struct SlotMap {
+            std::vector<size_t> slot_of;      // aligned index -> slot, or npos
+            bool identity = false;            // no kept_idx: spaces coincide
 
-        for (const auto& blk : blocks) {
-            if (!blk.per_bin || blk.per_bin->empty()) continue;
-
-            struct Col {
-                std::string category, bin, name, premature, tukey, confirmed;
-            };
-            // Column -> (bin, beat) so the waveform rows below can find the
-            // samples for the same column the descriptors describe.
-            struct ColSrc { size_t bin; size_t beat; };
-            std::vector<Col> cols;
-            std::vector<ColSrc> colSrc;
-
-            for (size_t b = 0; b < blk.per_bin->size(); ++b) {
-                const bin_pipeline::ChannelOutput& out = (*blk.per_bin)[b];
-                const size_t n = out.flags.size();
-                for (size_t i = 0; i < n; ++i) {
-                    Col c;
-                    c.category = detail::categoryWord(out.flags[i].category);
-                    c.bin = std::to_string(b);
-                    c.premature = detail::prematureWord(out.flags[i].pvc);
-                    c.tukey = detail::tukeyWord(out.flags[i].tukey);
-
-                    // Assignment. kUnscorable (-2) means the beat had too little
-                    // axis overlap for a correlation to mean anything -- it was
-                    // deliberately NOT given a template, because a beat that
-                    // cannot be compared is not evidence of a new morphology.
-                    const int32_t t = (i < out.assignment.size())
-                        ? out.assignment[i] : -1;
-                    if (t == tbank::kUnscorable) {
-                        c.name = "unscorable";
-                        c.confirmed = "na";
-                    }
-                    else if (t >= 0 && t < out.bank.size()) {
-                        const tbank::BankTemplate& tp = out.bank.templates[t];
-                        c.name = detail::templateName(tp);
-                        c.confirmed = tp.confirmed() ? "confirmed" : "presumed";
-                    }
-                    else {
-                        c.name = "unassigned";
-                        c.confirmed = "na";
-                    }
-                    cols.push_back(std::move(c));
-                    colSrc.push_back({ b, i });
-                }
+            size_t operator()(size_t alignedBeat) const {
+                if (identity) return alignedBeat;
+                return (alignedBeat < slot_of.size())
+                    ? slot_of[alignedBeat] : std::string::npos;
             }
-            if (cols.empty()) continue;
+        };
 
-            auto row = [&](const char* label, std::string Col::* field) {
-                f << label;
-                for (auto& c : cols) f << ',' << (c.*field);
-                f << '\n';
-                };
-
-            f << "channel";
-            for (size_t k = 0; k < cols.size(); ++k) f << ',' << blk.channel;
-            f << '\n';
-
-            if (blk.r_col) {
-                f << "r_col";
-                for (const auto& src : colSrc)
-                    f << ',' << ((src.bin < blk.r_col->size())
-                        ? (*blk.r_col)[src.bin] : -1);
-                f << '\n';
-            }
-
-            row("category", &Col::category);
-            row("bin", &Col::bin);
-            row("template", &Col::name);
-            row("premature", &Col::premature);
-            row("tukey", &Col::tukey);
-            // Confirmation in its OWN row, separate from the class name in row
-            // 3: PQRST_A is a presumed class, and only confirmed labels are
-            // usable as training data.
-            row("confirmed", &Col::confirmed);
-
-            // ---- waveform: one row per sample index, one column per beat ----
-            // Below the descriptors the same columns continue, so a reader can
-            // slice a beat by column and get its descriptors and its samples
-            // together. Row label is the sample index on the shared axis; the
-            // r_col descriptor row above says where R sits, so the axis needs no
-            // separate time column.
-            //
-            // NaN is written as an empty cell. The shared axis is NaN-padded at
-            // both ends -- alignment lays every beat on one axis and fills the
-            // overhang -- and writing "nan" or 0 would both be wrong: 0 is a
-            // real amplitude, and a literal makes every consumer special-case a
-            // string in a numeric column.
-            if (blk.beats) {
-                size_t width = 0;
-                for (const auto& binBeats : *blk.beats)
-                    for (const auto& bt : binBeats) width = std::max(width, bt.size());
-
-                for (size_t sIdx = 0; sIdx < width; ++sIdx) {
-                    f << sIdx;
-                    for (const auto& col : colSrc) {
-                        f << ',';
-                        if (col.bin < blk.beats->size()) {
-                            const auto& binBeats = (*blk.beats)[col.bin];
-                            if (col.beat < binBeats.size()
-                                && sIdx < binBeats[col.beat].size()) {
-                                const double v = binBeats[col.beat][sIdx];
-                                if (!std::isnan(v)) f << v;
-                            }
-                        }
-                    }
-                    f << '\n';
-                }
-            }
+        inline SlotMap buildSlotMap(const ChannelBlock& blk, size_t bin) {
+            SlotMap m;
+            if (!blk.kept_idx) { m.identity = true; return m; }
+            if (bin >= blk.kept_idx->size()) return m;   // all npos
+            const auto& fwd = (*blk.kept_idx)[bin];
+            size_t hi = 0;
+            for (size_t a : fwd) hi = std::max(hi, a);
+            m.slot_of.assign(hi + 1, std::string::npos);
+            for (size_t slot = 0; slot < fwd.size(); ++slot)
+                m.slot_of[fwd[slot]] = slot;
+            return m;
         }
-        return true;
-    }
+    }  // namespace detail
 
-    // ---------------------------------------------------------------------
-    // <stem>_templates.csv -- one column per TEMPLATE
+    // ---- writeBeats() IS GONE --------------------------------------------
     //
-    // Same rows, but every descriptor is now a SUMMARY over the template's
-    // members rather than a verdict on one beat, and the distinction is real:
-    // `premature` on a template row means a majority of its members were
-    // flagged, not that the template is premature. Thresholded at a majority
-    // rather than at any, because a sinus template picks up the occasional
-    // premature beat and one such beat must not relabel eight hundred others.
-    // ---------------------------------------------------------------------
+    // It wrote <stem>_beats.csv: descriptor rows, then one row per SAMPLE with
+    // one cell per BEAT. That is (total beats) x (axis width) cells, measured at
+    // 33,384 x 3,160 = 105.5 MILLION on one real record -- a ~1 GB text file
+    // emitted one `ostream <<` at a time, after the last bin, with no output
+    // while it ran, which is why it presented as a hang.
+    //
+    // <stem>_beats.bin is now the ONLY beats output. Same content, raw
+    // little-endian doubles, one pass, memory-mappable. read_morphology_bin.py
+    // converts it to the identical CSV on demand:
+    //
+    //     python read_morphology_bin.py --csv SUBJ_beats.bin
+    //
+    // Generating the CSV outside the pipeline is the point. It costs nothing on
+    // every run of every record, and the one time somebody actually wants to
+    // look at 105 million cells they can pay for it then -- or, far more
+    // likely, slice the .bin in numpy and never make the CSV at all.
+    //
+    // writeTemplates() stays: one column per TEMPLATE is a few dozen columns,
+    // not tens of thousands, and it is the file a person reads.
 
     namespace detail {
 
@@ -392,6 +340,50 @@ namespace morphology_csv {
             return "partial";
         }
 
+        // -----------------------------------------------------------------
+        // Does this template belong in the TEMPLATES file?
+        // -----------------------------------------------------------------
+        //
+        // Two exclusions, both on the templates file ONLY. The beats file still
+        // carries every one of these beats with its full descriptors, so nothing
+        // is lost -- the question here is narrower: is this row a MORPHOLOGY
+        // worth a column, or is it a record of beats the pipeline already
+        // decided against?
+        //
+        //   entirely Tukey-removed  every eligible member failed a Tukey pass.
+        //                           The pipeline excluded all of them, so the
+        //                           median is an average of rejected beats and
+        //                           has no standing as a template.
+        //
+        //   entirely premature      every member is premature. Not majority --
+        //                           ENTIRELY. A majority-premature template is
+        //                           already reported as ectopic and denied
+        //                           landmarks, and it is a real morphology worth
+        //                           a column; one whose every member is
+        //                           premature is a run, not a shape the operator
+        //                           needs to see averaged here.
+        //
+        // Slot 0 is exempt. It is the Phase 1 sinus seed and the reference every
+        // other column is implicitly compared against, so dropping it would
+        // leave a bin's templates file describing a bin with no sinus template
+        // -- which reads as "this bin had no normal beats" rather than "the seed
+        // had a bad night".
+        inline bool belongsInTemplatesFile(const tbank::BankTemplate& tp,
+            const bin_pipeline::ChannelOutput& out, const char** why)
+        {
+            if (tp.isSeed()) return true;
+            if (tukeyWordAgg(tp, out) == "removed") {
+                if (why) *why = "all members Tukey-removed";
+                return false;
+            }
+            const uint32_t n = static_cast<uint32_t>(tp.members.size());
+            if (n > 0 && tp.n_premature_members == n) {
+                if (why) *why = "all members premature";
+                return false;
+            }
+            return true;
+        }
+
     }  // namespace detail
 
     inline bool writeTemplates(const std::vector<ChannelBlock>& blocks) {
@@ -409,12 +401,19 @@ namespace morphology_csv {
                 size_t binIdx = 0;
             };
             std::vector<Col> cols;
+            size_t dropped = 0;   // reported, so a thin block is explicable
 
             for (size_t b = 0; b < blk.per_bin->size(); ++b) {
                 const bin_pipeline::ChannelOutput& out = (*blk.per_bin)[b];
                 for (int t = 0; t < out.bank.size(); ++t) {
                     const tbank::BankTemplate& tp = out.bank.templates[t];
                     if (tp.tmpl.empty()) continue;
+                    // Excluded from THIS file only; the beats file keeps them.
+                    const char* why = nullptr;
+                    if (!detail::belongsInTemplatesFile(tp, out, &why)) {
+                        ++dropped;
+                        continue;
+                    }
                     Col c;
                     c.category = detail::categoryWord(tp.presumedCategory());
                     c.bin = std::to_string(b);
@@ -434,6 +433,11 @@ namespace morphology_csv {
                     cols.push_back(std::move(c));
                 }
             }
+            if (dropped)
+                std::fprintf(stderr,
+                    "  [morphology] %s: %zu template(s) omitted from "
+                    "_templates (all members Tukey-removed or all premature); "
+                    "their beats remain in _beats\n", blk.channel, dropped);
             if (cols.empty()) continue;
 
             auto row = [&](const char* label, std::string Col::* field) {
@@ -538,6 +542,22 @@ namespace morphology_csv {
         double   beat_share = 0.0;
     };
 
+    // THE RECORDS ARE WRITTEN RAW, so their padding is part of the on-disk
+    // format. Both are pinned here: a compiler that packs them differently
+    // fails the build instead of silently emitting a file no reader can parse.
+    // read_morphology_bin.py hardcodes these same layouts, and the padding
+    // offsets are the reason it must -- see the struct format strings there.
+    //
+    //   BeatRecord      uint32 bin, 6x uint8, 2 pad, int32 template_id,
+    //                   int32 r_col                                      = 20
+    //   TemplateRecord  uint32 bin, 7x uint8, 1 pad, int32 template_id,
+    //                   int32 r_col, uint32 n_members, 4 pad,
+    //                   double beat_share                                = 32
+    static_assert(sizeof(BeatRecord) == 20,
+        "BeatRecord layout changed; update read_morphology_bin.py and bump kBinVersion");
+    static_assert(sizeof(TemplateRecord) == 32,
+        "TemplateRecord layout changed; update read_morphology_bin.py and bump kBinVersion");
+
     namespace detail {
 
         inline void w(std::ofstream& f, const void* p, size_t n) {
@@ -612,6 +632,8 @@ namespace morphology_csv {
 
             const double nan = std::numeric_limits<double>::quiet_NaN();
             for (size_t b = 0; b < blk.per_bin->size(); ++b) {
+                // ONE inversion per bin, reused by every beat in it.
+                const detail::SlotMap slotOf = detail::buildSlotMap(blk, b);
                 const bin_pipeline::ChannelOutput& out = (*blk.per_bin)[b];
                 for (size_t i = 0; i < out.flags.size(); ++i) {
                     BeatRecord rec;
@@ -636,13 +658,21 @@ namespace morphology_csv {
                     }
                     detail::w(f, &rec, sizeof(rec));
 
+                    // Slot resolved ONCE per beat, outside the sample loop. It
+                    // used to be re-derived on every one of `width` samples by a
+                    // linear scan of the bin's map -- same mistake, same place,
+                    // as the CSV writer above.
+                    const size_t slot = slotOf(i);
+                    const std::vector<std::vector<double>>* binBeats =
+                        (blk.beats && b < blk.beats->size())
+                        ? &(*blk.beats)[b] : nullptr;
+                    const std::vector<double>* bt =
+                        (binBeats && slot != std::string::npos
+                            && slot < binBeats->size())
+                        ? &(*binBeats)[slot] : nullptr;
+
                     for (uint32_t s = 0; s < width; ++s) {
-                        double v = nan;
-                        if (blk.beats && b < blk.beats->size()) {
-                            const auto& binBeats = (*blk.beats)[b];
-                            if (i < binBeats.size() && s < binBeats[i].size())
-                                v = binBeats[i][s];
-                        }
+                        const double v = (bt && s < bt->size()) ? (*bt)[s] : nan;
                         detail::w(f, &v, 8);
                     }
                 }
@@ -667,14 +697,22 @@ namespace morphology_csv {
         for (const auto& blk : blocks) {
             if (!blk.per_bin || blk.per_bin->empty()) continue;
 
+            // COUNT AND WRITE MUST APPLY THE SAME FILTER. nCols goes in the
+            // block header, so a template excluded from the payload but counted
+            // here leaves the reader expecting one record more than exists --
+            // it then reads the next block's header as a record and produces
+            // plausible garbage rather than an error. Identical predicate,
+            // identical order, both loops.
             uint32_t width = 0;
             uint64_t nCols = 0;
             for (const auto& out : *blk.per_bin)
                 for (int t = 0; t < out.bank.size(); ++t) {
-                    if (out.bank.templates[t].tmpl.empty()) continue;
+                    const tbank::BankTemplate& tp = out.bank.templates[t];
+                    if (tp.tmpl.empty()) continue;
+                    if (!detail::belongsInTemplatesFile(tp, out, nullptr)) continue;
                     ++nCols;
                     width = std::max(width,
-                        static_cast<uint32_t>(out.bank.templates[t].tmpl.size()));
+                        static_cast<uint32_t>(tp.tmpl.size()));
                 }
             detail::writeBlockHeader(f, blk.channel, width, nCols);
 
@@ -684,6 +722,7 @@ namespace morphology_csv {
                 for (int t = 0; t < out.bank.size(); ++t) {
                     const tbank::BankTemplate& tp = out.bank.templates[t];
                     if (tp.tmpl.empty()) continue;
+                    if (!detail::belongsInTemplatesFile(tp, out, nullptr)) continue;
 
                     TemplateRecord rec;
                     rec.bin = static_cast<uint32_t>(b);

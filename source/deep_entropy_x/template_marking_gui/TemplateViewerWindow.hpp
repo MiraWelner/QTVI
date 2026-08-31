@@ -2,6 +2,7 @@
 
 #include <QMainWindow>
 #include <vector>
+#include <utility>
 #include <map>
 #include <cmath>
 #include <QString>
@@ -196,7 +197,26 @@ private:
     std::vector<int> m_pageTemplateIdx;
 
     int m_maxLeads = 1;
+    // Bins per page is now a CEILING, not the page size. Pages are packed by
+    // COLUMN COUNT instead -- see buildPages(). A bin contributes one column per
+    // markable template, so a record with several morphologies per bin used to
+    // put 20+ panels on a page and squeeze each to a few pixels wide. The panel
+    // width is what makes a template readable, so the page count gives way
+    // instead: more pages, each with panels the same size as on a clean record.
     int m_binsPerPage = 16;
+
+    // Columns a page may hold. Chosen so a panel keeps a usable width at the
+    // window sizes this tool is used at; a bin whose own column count exceeds
+    // it gets a page to itself and is the only case that still compresses,
+    // which is also the case the columnsForBin diagnostic is about (three or
+    // more markable templates in one bin means the bank over-segmented).
+    int m_maxColsPerPage = 8;
+
+    // (first bin, bin count) per page, packed by column budget. Rebuilt whenever
+    // marking eligibility changes, because confirming a template's class can add
+    // or remove a column and therefore move every later page boundary.
+    std::vector<std::pair<int, int>> m_pages;
+    void buildPages();
 
     int m_currentPage = 0;
     int m_totalPages = 1;

@@ -280,20 +280,7 @@ namespace tbank {
         REGULAR = 1,   // unmarked; also 6) Cond. Delay, 7) AF, 8) SVT for now
         ECTOPIC = 2,   // marks 4) PVC, 5) PAC, 9) VT, and the postEligible
         //   beat following each of them
-        NOISE = 3,   // mark 2) Minor Noise
-
-        // No class, because none has been established. Section 4.6: "A template
-        // with no confirmed member stays unlabeled. Unlabeled means not yet
-        // confirmed, not unknown class. Do not infer a label from morphological
-        // similarity to a labeled template, because that is the judgment the
-        // operator is being asked to make."
-        //
-        // This is the value a template's category takes before an operator
-        // confirms a beat in it. It is NOT a per-beat category and is never
-        // written into BeatFlags::category -- beat categories come from mark
-        // codes and only ever take the three values above. Appended last so the
-        // three serialized values keep their numbers.
-        UNCONFIRMED = 4
+        NOISE = 3    // mark 2) Minor Noise
     };
 
     // The two paths are recorded separately because their competence is
@@ -516,29 +503,29 @@ namespace tbank {
         uint32_t n_voted_members = 0;
         uint32_t n_noise_members = 0;
 
-        // The template's class, which exists only when something established
-        // it. Two things can: an operator confirmation, and Phase 1 for slot 0.
-        // Nothing else, and in particular NOT the per-member timing census
-        // below, which is why that census no longer feeds this.
+        // Presumed, NOT confirmed. Decides which templates go in front of an
+        // operator for landmark marking: only category 1 templates get
+        // landmarks, because only category 1 beats feed feature extraction -- a
+        // P-onset on a PVC template has nothing downstream that consumes it,
+        // and a PVC's QT is not comparable to a sinus QT.
         //
-        // WHAT WAS HERE BEFORE AND WHY IT WENT. This used to derive a category
-        // from member count and prematurity share, falling through to REGULAR.
-        // That is the inference Section 4.6 forbids -- not by the letter, since
-        // it read timing rather than morphological similarity, but by the
-        // principle the clause states outright: it is the operator's judgment.
-        // It also failed in the worst available direction. The fallthrough was
-        // REGULAR, so an unconfirmed 2-beat noise fragment was presumed sinus,
-        // became eligible for landmark marking, and demanded a panel. A bin
-        // holding one sinus morphology and five noise fragments presented six
-        // markable columns, and the operator could not tell which of the six
-        // the algorithm actually had evidence for -- because it had evidence
-        // for one and had asserted all six.
+        // UNLABELED IS PQRST, NOT A THIRD STATE. Section 4.6: "A template with
+        // no confirmed member stays unlabeled. Unlabeled means not yet
+        // confirmed, NOT unknown class." That second sentence forbids exactly
+        // what an UNCONFIRMED category would be -- an unknown bucket that gets
+        // withheld from display. A template is displayed as PQRST until an
+        // operator marks it otherwise; being unconfirmed is a statement about
+        // the operator's progress, not about the morphology.
         //
-        // The census fields are kept. They are still written, still archived,
-        // and still worth reading: a template whose members are 90% premature
-        // is very probably ectopic, and that is a useful thing for an operator
-        // to SEE next to the waveform. It is not a useful thing for the
-        // algorithm to act on before the operator has looked.
+        // What the clause DOES forbid is inferring a label from morphological
+        // similarity to a labeled template, and that prohibition is enforced
+        // where the inference actually happened: mergeTemplates() no longer
+        // copies a confirmed label onto the template it absorbs, and
+        // findMergePair() blocks any pair containing a confirmed template. That
+        // is the operation the spec names. This function is not it.
+        //
+        // A confirmed label overrides the presumption outright; the operator's
+        // verdict is not a hypothesis to be re-derived.
         Category presumedCategory() const {
             if (confirmed_by_operator) {
                 if (label_code == kCodeMinorNoise) return Category::NOISE;
@@ -546,30 +533,28 @@ namespace tbank {
                     || label_code == kCodeVt) return Category::ECTOPIC;
                 return Category::REGULAR;
             }
-            // Slot 0 is the Phase 1 sinus template, seeded as such by the
-            // pipeline before any beat is scored. That it is sinus is an input
-            // to this section, not a conclusion drawn inside it, so reporting
-            // REGULAR here infers nothing. Every other slot was opened by a
-            // beat that matched nothing, which establishes only that the beat
-            // was different -- never what it was.
-            if (isSeed()) return Category::REGULAR;
-            return Category::UNCONFIRMED;
+            // Never reproduced. A member-count test, not a class inference:
+            // it says nothing about what the beat was, only that one beat is
+            // not a morphology. This is the gate that keeps single-beat noise
+            // fragments out of the marking grid.
+            if (!earnsColumn()) return Category::NOISE;
+            const uint32_t n = static_cast<uint32_t>(members.size());
+            if (n == 0) return Category::NOISE;
+            const uint32_t ect = n_premature_members + n_voted_members;
+            // Majority-premature membership is the timing evidence for an
+            // ectopic morphology. Deliberately a majority and not any: a sinus
+            // template picks up the occasional premature beat, and one such beat
+            // must not reclassify 800 others.
+            if (ect * 2 > n) return Category::ECTOPIC;
+            return Category::REGULAR;
         }
 
         // The Phase 1 sinus seed. spawn_seq 0 is issued once, to slot 0, by the
         // pipeline before pass 1 begins, and mergeTemplates() keeps the LOWER
-        // spawn_seq of a merged pair, so this survives merge history without
-        // needing a stored flag -- which also keeps the serialized layout
-        // byte-identical (a new field there is a format bump).
+        // spawn_seq of a merged pair, so this survives merge history without a
+        // stored flag -- which also keeps the serialized layout byte-identical.
         bool isSeed() const { return spawn_seq == 0; }
 
-        // Landmark marking is for category 1 only. With the inference removed,
-        // that means the Phase 1 seed plus any template an operator has
-        // confirmed as normal -- so a bin presents ONE markable column until
-        // the operator says otherwise, which is the workload Section 4.6
-        // describes. Ectopic and noise templates take a class label from the
-        // operator's markers and nothing more; unconfirmed templates take
-        // nothing at all yet.
         bool wantsLandmarkMarking() const {
             return presumedCategory() == Category::REGULAR;
         }

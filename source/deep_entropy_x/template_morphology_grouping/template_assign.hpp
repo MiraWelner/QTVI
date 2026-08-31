@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -133,12 +134,11 @@ namespace tbank {
         out.n_overlap = n;
         if (n < kMinOverlapColumns) return out;
         out.score = static_cast<double>(inside) / static_cast<double>(n);
-        // r IS NOT COMPUTED HERE. It is a reporting field that nothing routes
-        // on, and computing it inside the scorer meant a full second pass over
-        // the overlap -- five accumulators per comparable column -- for every
-        // beat against every template in the bank, in both passes. That roughly
-        // doubled the cost of the assignment sweep to fill a column in a CSV.
-        // assignBeat computes it once, for the winning template only.
+        // r IS NOT COMPUTED HERE. It is a reporting field nothing routes on, and
+        // computing it inside the scorer meant a second full pass over the
+        // overlap -- five accumulators per comparable column -- for every beat
+        // against every template, in both passes. Measured 1.6x on the sweep.
+        // assignBeat computes it once, for the winner only.
         return out;
     }
 
@@ -168,6 +168,33 @@ namespace tbank {
         t.band_hi.assign(width, NaN);
         t.corridor_inherited = false;
         if (t.members.empty() || width <= 0) return;
+
+        // ---- TEMPORARY DIAGNOSTIC: why does a template come out all-NaN? ----
+        // Remove once the empty-waveform question is settled. Two mechanisms
+        // produce a template whose median is NaN at every column, and the CSV
+        // renders both as blank cells, so they are indistinguishable from the
+        // outside:
+        //   out_of_range  a member index past beats.size() -- an index-space
+        //                 bug, and the one to fix here.
+        //   all_nan       the member beat is entirely NaN -- align_beat_matrix
+        //                 allocates each slice NaN-filled and pushes it even
+        //                 when the copy window lay outside the signal, so the
+        //                 bank is faithfully averaging nothing. Fix belongs
+        //                 upstream, by dropping such a slice instead of keeping
+        //                 it.
+        {
+            size_t oor = 0, allnan = 0;
+            for (uint32_t m : t.members) {
+                if (m >= beats.size()) { ++oor; continue; }
+                bool any = false;
+                for (double v : beats[m]) if (!std::isnan(v)) { any = true; break; }
+                if (!any) ++allnan;
+            }
+            if (oor || allnan)
+                std::fprintf(stderr,
+                    "  [tmpl] members=%d out_of_range=%zu all_nan=%zu beats=%zu\n",
+                    t.memberCount(), oor, allnan, beats.size());
+        }
 
         // Own corridor only when there are enough members for percentiles to
         // mean something; otherwise widths come from the floor below.
@@ -225,19 +252,18 @@ namespace tbank {
             t.tmpl_iqr[c] = q3 - q1;
 
             // --- the 2.5/97.5 corridor -------------------------------------
-            //
-            // nth_element, NOT sort -- for the reason stated above, which the
-            // first version of this block ignored and paid for. A std::sort here
-            // sits inside the single hottest loop in the pass: it runs per
-            // column, per template, per recompute, and pass 1 recomputes on
-            // every assignment. On a 991-member slot 0 across a 200-column axis
-            // that turned an O(n) column into an O(n log n) one and made the
-            // whole bank build visibly slower.
-            //
-            // Only four more order statistics are needed, and the calls are
-            // ordered ascending so each partitions only the range the previous
-            // one left -- the same discipline the median/Q1/Q3 calls above use.
             if (own_corridor) {
+                // Percentiles by position with linear interpolation, over the
+                // column's values. col is only partially ordered by the
+                // nth_element calls above, so this sorts -- it runs only for
+                // templates that have earned their own corridor, and slot 0
+                // dominates the cost either way.
+                // nth_element, NOT sort -- for the reason the median block
+                // above states and which the first version of this block
+                // ignored. A std::sort here runs per column, per template, per
+                // recompute, inside the hottest loop in the pass. Four extra
+                // order statistics, ordered ascending so each partitions only
+                // what the previous left.
                 const double x_lo = 0.025 * (static_cast<double>(n) - 1.0);
                 const double x_hi = 0.975 * (static_cast<double>(n) - 1.0);
                 const size_t i_lo = static_cast<size_t>(std::floor(x_lo));
@@ -246,7 +272,6 @@ namespace tbank {
                 const size_t i_hi1 = std::min(n - 1, i_hi + 1);
                 const double f_lo = x_lo - static_cast<double>(i_lo);
                 const double f_hi = x_hi - static_cast<double>(i_hi);
-
                 std::nth_element(col.begin(), col.begin() + i_lo, col.end());
                 const double p2a = col[i_lo];
                 std::nth_element(col.begin() + i_lo, col.begin() + i_lo1, col.end());
@@ -255,7 +280,6 @@ namespace tbank {
                 const double p97a = col[i_hi];
                 std::nth_element(col.begin() + i_hi, col.begin() + i_hi1, col.end());
                 const double p97b = col[i_hi1];
-
                 const double p2 = p2a * (1.0 - f_lo) + p2b * f_lo;
                 const double p97 = p97a * (1.0 - f_hi) + p97b * f_hi;
                 const double mid = 0.5 * (p2 + p97);
@@ -454,8 +478,7 @@ namespace tbank {
             if (br.score > best_score) { best_score = br.score; best = i; }
         }
 
-        // Pearson r for the WINNER only, and only for the archive. See the note
-        // in bandMatch: computing it per candidate doubled the sweep.
+        // Pearson r for the WINNER only, for the archive. See bandMatch.
         if (best >= 0) best_r = correlate(beat, bank.templates[best].tmpl).r;
 
         // Unscorable against everything: too little axis overlap for r to mean
