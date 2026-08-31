@@ -1,4 +1,6 @@
-﻿#include "TemplateViewerWindow.hpp"
+#include "TemplateViewerWindow.hpp"
+#include <QStatusBar>
+#include <QStringList>
 #include "ui_TemplateViewerWindow.h"
 #include "feature_marks.hpp"
 #include "anchor_fit.hpp"
@@ -193,6 +195,113 @@ TemplateViewerWindow::leadsForBin(const TemplateBin& b) const {
     if (!b.ch3.ecgTemplate_raw.empty())
         out.push_back({ &b.ch3.ecgTemplate_raw, 2, "Ch3" });
     return out;
+}
+
+std::vector<TemplateViewerWindow::Lead>
+TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
+    int templateIdx) const {
+    std::vector<Lead> out;
+    static const char* kNames[3] = { "Ch1", "Ch2", "Ch3" };
+
+    for (int c = 0; c < 3; ++c) {
+        const tbank::TemplateBank& bank = b.ecg_bank[c];
+
+        // Slot 0 falls back to the chN_raw template when no bank reached this
+        // bin, so a pre-bank file renders exactly as it always did.
+        const std::vector<double>* trace = nullptr;
+        int nMembers = 0;
+        uint8_t labelCode = tbank::kUnlabeled;
+        int subtype = -1;
+
+        if (templateIdx < bank.size()
+            && !bank.templates[templateIdx].tmpl.empty()
+            && (templateIdx == 0
+                || bank.templates[templateIdx].wantsLandmarkMarking())) {
+            const tbank::BankTemplate& t = bank.templates[templateIdx];
+            trace = &t.tmpl;
+            nMembers = t.memberCount();
+            labelCode = t.label_code;
+            subtype = t.subtype;
+        }
+        else if (templateIdx == 0) {
+            const std::vector<double>* raw =
+                (c == 0) ? &b.ch1.ecgTemplate_raw
+                : (c == 1) ? &b.ch2.ecgTemplate_raw : &b.ch3.ecgTemplate_raw;
+            if (raw->empty()) continue;
+            trace = raw;
+        }
+        else {
+            continue;   // ragged: this channel's bank is shorter
+        }
+
+        // NAMING. Bin, then the class, then an underscore and the letter the
+        // ALGORITHM assigned when it separated the morphologies: A, B, C in
+        // bank order. PQRST is the name for a template no operator has
+        // confirmed yet -- it says "an ordinary complex", not "this is normal
+        // and not ectopic", which is still the operator's call. Once a beat in
+        // the template is confirmed, the class replaces PQRST and the letter
+        // tracks the subtype index the bank issued (PVC_A, PVC_B).
+        QString cls = "PQRST";
+        int letterIdx = templateIdx;
+        if (labelCode != tbank::kUnlabeled) {
+            switch (labelCode) {
+            case tbank::kCodePvc:       cls = "PVC";   break;
+            case tbank::kCodePac:       cls = "PAC";   break;
+            case tbank::kCodeVt:        cls = "VT";    break;
+            case tbank::kCodeMinorNoise:cls = "NOISE"; break;
+            default: cls = QString("CODE%1").arg(labelCode); break;
+            }
+            if (subtype > 0) letterIdx = subtype - 1;
+        }
+        const QChar letter = QChar('A' + (letterIdx % 26));
+
+        QString lbl = QString("%1 %2_%3").arg(kNames[c]).arg(cls).arg(letter);
+        if (nMembers > 0) lbl += QString(" n=%1").arg(nMembers);
+
+        out.push_back({ trace, c, lbl });
+    }
+    return out;
+}
+
+std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) const {
+    // ONLY CATEGORY 1 TEMPLATES GET A COLUMN. Landmark marking exists to feed
+    // feature extraction, and only category 1 beats do that -- a P-onset on a
+    // PVC template has nothing downstream to consume it, and a PVC's QT is not
+    // comparable to a sinus QT, so putting them in one feature column would be
+    // worse than leaving it empty. Ectopic and noise templates take a class
+    // label from the operator and are not landmark-marked at all.
+    //
+    // Category 1 now means what Section 4.6 says it means: slot 0, which is the
+    // Phase 1 sinus template by construction, plus any template an operator has
+    // CONFIRMED as normal. Nothing is presumed. So a bin presents one markable
+    // column until an operator says otherwise, and the six-column pages came
+    // from the presumption, not from the bank.
+    //
+    // RETURNS THE ELIGIBLE SLOTS, NOT A COUNT. This used to return an int, and a
+    // count can only describe a contiguous prefix 0..n-1: `cols = max(cols, t+1)`
+    // meant one eligible slot 5 created columns for slots 1-4 as well, whatever
+    // the per-slot test had said about them. leadsForBinTemplate() then correctly
+    // refused to supply a lead for those slots, so they rendered as empty panels
+    // -- the gate was being applied one layer too late to affect layout. A sparse
+    // list cannot express the wrong thing.
+    //
+    // TREAT THREE OR MORE AS A DIAGNOSTIC. Being asked to mark three or more
+    // normal templates in one bin means the bank has over-segmented a single
+    // morphology. Do not raise the match threshold to hide it -- that merges the
+    // fragments and removes the symptom while leaving the cause. Check
+    // normalization, baseline drift, and false R detections first.
+    std::vector<int> slots{ 0 };   // slot 0 always, even on a bank-less bin
+    for (int t = 1; t < tbank::kDefaultMaxTemplatesPerBin * 4; ++t) {
+        bool wanted = false;
+        for (int c = 0; c < 3 && !wanted; ++c) {
+            const tbank::TemplateBank& bank = b.ecg_bank[c];
+            if (t >= bank.size()) continue;
+            const tbank::BankTemplate& tp = bank.templates[t];
+            wanted = !tp.tmpl.empty() && tp.wantsLandmarkMarking();
+        }
+        if (wanted) slots.push_back(t);
+    }
+    return slots;
 }
 
 std::pair<int, int> TemplateViewerWindow::compactGrid(int n) {
@@ -601,6 +710,7 @@ void TemplateViewerWindow::clearPlots() {
     }
     m_allPlots.clear();
     m_binPlots.clear();
+    m_pageTemplateIdx.clear();
     m_pageGlobalIdx.clear();
 
     // Drop stretch factors left over from a previous (possibly larger) page
@@ -655,17 +765,61 @@ void TemplateViewerWindow::showPage() {
         lap("anyVcg probe");
     }
 
-    m_binPlots.resize(count);
-    m_pageGlobalIdx.resize(count);
+    // ---- expand this page's bins into (bin, template) COLUMNS -------------
+    // A column used to be a bin. It is now a bin plus a bank member, so a bin
+    // holding three morphologies occupies three adjacent columns and the sinus
+    // seed stays leftmost. Columns per page therefore floats with the record's
+    // ectopy: pages stay bin-aligned rather than column-count-aligned, because
+    // splitting a bin across a page boundary would put its sinus template on
+    // one page and its PVC template on the next.
+    std::vector<std::pair<int, int>> cols;   // (global bin index, template index)
+    for (int i = 0; i < count; ++i) {
+        const int gi = start + i;
+        for (int t : markingSlotsForBin(m_bins[gi])) cols.push_back({ gi, t });
+    }
+    const int nCols = static_cast<int>(cols.size());
+
+    // Says out loud whether the banks survived the trip from generation to the
+    // viewer. nCols == count means every bin resolved to a single column, which
+    // is what an EMPTY bank looks like -- and an empty bank is indistinguishable
+    // on screen from a record with no ectopy, so the distinction has to be
+    // printed rather than inferred from the plots.
+    {
+        int withBanks = 0;
+        for (int i = 0; i < count; ++i)
+            for (int c = 0; c < 3; ++c)
+                if (m_bins[start + i].ecg_bank[c].size() > 1) { ++withBanks; break; }
+        std::fprintf(stderr, "[bank-view] page bins=%d columns=%d "
+            "bins_with_multi_template_bank=%d\n", count, nCols, withBanks);
+    }
+
+    m_binPlots.resize(nCols);
+    m_pageGlobalIdx.resize(nCols);
+    m_pageTemplateIdx.resize(nCols);
 
     int usedRows = 0, usedCols = 0;
 
-    for (int i = 0; i < count; ++i) {
-        int gi = start + i;
+    for (int i = 0; i < nCols; ++i) {
+        int gi = cols[i].first;
+        const int ti = cols[i].second;
         m_pageGlobalIdx[i] = gi;
+        m_pageTemplateIdx[i] = ti;
 
         const TemplateBin& b = m_bins[gi];
-        auto leads = leadsForBin(b);
+        auto leads = leadsForBinTemplate(b, ti);
+
+        // Only shout when no bank arrived at all: an empty bank and a genuinely
+        // single-morphology bin render identically, so the difference has to be
+        // written somewhere visible rather than inferred from the plots.
+        if (ti == 0)
+            for (auto& L : leads)
+                if (L.channelIndex >= 0 && L.channelIndex < 3
+                    && b.ecg_bank[L.channelIndex].size() == 0)
+                    L.label += " bank=0";
+
+        // PPG is a property of the BIN, not of a bank member: there is one PPG
+        // template per bin regardless of how many ECG morphologies the bank
+        // separated, so every column of a bin draws the same one.
         bool hasPPG = !b.ppgTemplate.empty();
 
         if (leads.empty())
@@ -808,7 +962,16 @@ void TemplateViewerWindow::showPage() {
 
             // Seed every bar + every autodetect column, in one call, after all
             // traces are in place (the glyph capture needs them).
-            applyBinToWidget(pw, b);
+            //
+            // SLOT 0 ONLY. TemplateBin::marks() holds one MarkerSet per anchor
+            // for the bin, which describes the sinus template. A PVC's Q-onset
+            // sits at a different column than sinus's, so applying those bars to
+            // a bank column would draw landmarks that are simply wrong -- and a
+            // drag would then write them back. Bank members carry their own
+            // BankMarkerSet (tbank::BankTemplate::markers_by_anchor); until the
+            // marking path is threaded through to them, an ectopic column shows
+            // its waveform with no bars, which is honest.
+            if (ti == 0) applyBinToWidget(pw, b);
 
             pw->setReferenceLines(global_interval_lines::forChannel(b, gi_intervals, c));
 
@@ -825,6 +988,9 @@ void TemplateViewerWindow::showPage() {
                 this, &TemplateViewerWindow::onLandmarkSelected);
             connect(pw, &BinPlotWidget::badRToggled,
                 this, &TemplateViewerWindow::onBadRToggled);
+            pw->setTemplateIndex(ti);
+            connect(pw, &BinPlotWidget::classConfirmRequested,
+                this, &TemplateViewerWindow::onClassConfirmRequested);
             connect(pw, &BinPlotWidget::badPPGToggled,
                 this, &TemplateViewerWindow::onBadPPGToggled);
 
@@ -1405,9 +1571,79 @@ void TemplateViewerWindow::applyMarkerVisibility() {
 // setAuto() MUST stay last: it performs the glyph capture, and the frozen
 // snapshot reads the R bar.
 // ============================================================================
+void TemplateViewerWindow::onClassConfirmRequested(int binIndex, int leadIndex,
+    int templateIdx, int annotationCode)
+{
+    if (binIndex < 0 || binIndex >= (int)m_bins.size()) return;
+    TemplateBin& b = m_bins[binIndex];
+    if (leadIndex < 0 || leadIndex >= 3) return;
+
+    // KEYED ON A BEAT, NOT A TEMPLATE INDEX, because the three channels' banks
+    // are built independently and disagree about which slot a morphology
+    // occupies -- propagateLabel() says so explicitly. A representative member
+    // of the clicked template is the bridge: whatever slot each channel put
+    // that beat in is the slot that gets labeled there.
+    //
+    // The FIRST member, deliberately. Any member identifies the same
+    // morphology, and "first" is reproducible across runs, so re-confirming the
+    // same panel twice cannot address two different beats and mint two subtype
+    // indices for one class.
+    const tbank::TemplateBank& bank = b.ecg_bank[leadIndex];
+    if (templateIdx < 0 || templateIdx >= bank.size()) return;
+    const auto& members = bank.templates[templateIdx].members;
+    if (members.empty()) {
+        // A seeded slot 0 with no assigned beats has no beat to key on. That is
+        // a real state (an empty bin), not an error, and silently doing nothing
+        // would look like a dead menu item.
+        statusBar()->showMessage(
+            tr("No beats assigned to this template yet - nothing to confirm."),
+            4000);
+        return;
+    }
+
+    const uint32_t beat = members.front();
+    const uint8_t code = static_cast<uint8_t>(annotationCode);
+
+    const tbank::PropagationResult pr =
+        tbank::propagateLabel(b.ecg_bank, beat, code);
+
+    // Say what happened, per channel. A confirmation that reached one channel
+    // and not the others means that beat was unscorable in those channels --
+    // worth knowing at the moment of the click, not later from a CSV.
+    QStringList reached;
+    for (int c = 0; c < 3; ++c)
+        if (pr.labeled_template[c] >= 0)
+            reached << tr("CH%1 slot %2 (subtype %3)")
+            .arg(c + 1).arg(pr.labeled_template[c]).arg(pr.subtype[c]);
+
+    if (reached.isEmpty()) {
+        statusBar()->showMessage(
+            tr("Confirmation did not reach any bank - beat %1 is unassigned.")
+            .arg(beat), 5000);
+        return;
+    }
+    statusBar()->showMessage(
+        tr("Confirmed: %1 beats relabeled across %2")
+        .arg(pr.beats_relabeled).arg(reached.join(", ")), 6000);
+
+    // The label changes marking eligibility -- a template confirmed as PVC
+    // stops wanting landmarks, one confirmed as normal starts -- and
+    // markingSlotsForBin() reads exactly that. So the page is rebuilt rather than
+    // repainted, and the column count can legitimately change under the
+    // operator's hands. Snapshot first, as page navigation does, or the marker
+    // edits made on this page are lost to the rebuild.
+    captureCurrentPage();
+    showPage();
+}
+
 void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin& b) {
     const int c = pw->leadIndex();
     const TemplateBin::MarkerSet& mk = b.marks(currentAnchor());
+
+    // Bank members are their own COLUMNS now (see the (bin, template) expansion
+    // in the layout loop), so nothing is overlaid here -- drawing them again as
+    // dashed traces under slot 0 would duplicate what the neighbouring columns
+    // already show.
 
     // ---- draggable bars ----------------------------------------------------
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin_ch[c]);
@@ -1450,8 +1686,16 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
     for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
         if (m_pageGlobalIdx[li] != binIdx) continue;
+
+        // Only slot-0 columns carry the bin's MarkerSet, so bank columns are
+        // skipped here for the same reason showPage() skips them.
+        //
+        // And no `break`: a bin now owns one column per bank member, and the
+        // original loop stopped after the first match -- which would silently
+        // refresh only the sinus column of a polymorphic bin.
+        if (li < (int)m_pageTemplateIdx.size() && m_pageTemplateIdx[li] != 0)
+            continue;
         for (auto* pw : m_binPlots[li]) applyBinToWidget(pw, m_bins[binIdx]);
-        break;
     }
 }
 

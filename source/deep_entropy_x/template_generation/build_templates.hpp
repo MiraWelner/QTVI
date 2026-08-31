@@ -43,6 +43,21 @@ namespace template_generation_detail {
         dst.r_col = rCol;
     }
 
+    // Lift the per-channel banks out of TemplateInfo's string-keyed map into
+    // BinTemplates' fixed array. The map keys mirror kept_beats_by_channel
+    // ("CH1"/"CH2"/"CH3"); a channel absent from the map leaves an empty bank,
+    // which reads downstream as "no bank for this channel" -- the same thing a
+    // pre-v3 file produces, so nothing needs to distinguish the two cases.
+    inline void copyBanks(template_io::BinTemplates& bt, const TemplateInfo& info)
+    {
+        static const char* kKeys[3] = { "CH1", "CH2", "CH3" };
+        for (int c = 0; c < 3; ++c) {
+            auto it = info.bank_by_channel.find(kKeys[c]);
+            if (it != info.bank_by_channel.end())
+                bt.ecg_bank[c] = it->second.bank;
+        }
+    }
+
     inline void packBin(template_io::BinTemplates& bt,
         const TemplateInfo& info, bool bad_segment)
     {
@@ -93,6 +108,17 @@ namespace template_generation_detail {
         bt.ppg_n_beats = info.ppg_n_beats;
         bt.ppg_peak_col = info.ppg_peak_col;
         bt.ppg_onset_col = info.ppg_onset_col;
+
+        // ---- Section 4.6 template banks ---------------------------------
+        // TemplateInfo carries a whole ChannelOutput per channel (bank plus the
+        // per-beat flags and assignment vectors); only the BANK reaches disk,
+        // because the viewer needs templates and the per-beat vectors would
+        // multiply the file size for data nothing in the GUI reads.
+        //
+        // Copied, not moved: packBin() and packBinFast() take info by const
+        // reference, and the same TemplateInfo is also consumed by
+        // bin_archive::writeBinFeatureArchive().
+        copyBanks(bt, info);
     }
 
     // FAST pack: raw + unfiltered ECG blocks + PPG. Leaves the squared and
@@ -131,6 +157,17 @@ namespace template_generation_detail {
         bt.ppg_n_beats = info.ppg_n_beats;
         bt.ppg_peak_col = info.ppg_peak_col;
         bt.ppg_onset_col = info.ppg_onset_col;
+
+        // ---- Section 4.6 template banks ---------------------------------
+        // TemplateInfo carries a whole ChannelOutput per channel (bank plus the
+        // per-beat flags and assignment vectors); only the BANK reaches disk,
+        // because the viewer needs templates and the per-beat vectors would
+        // multiply the file size for data nothing in the GUI reads.
+        //
+        // Copied, not moved: packBin() and packBinFast() take info by const
+        // reference, and the same TemplateInfo is also consumed by
+        // bin_archive::writeBinFeatureArchive().
+        copyBanks(bt, info);
     }
 
     // SLOW pack: squared + absval blocks onto an already fast-packed bin.

@@ -13,8 +13,10 @@
  * @date   2026-03-26
  */
 #pragma once
-#include <map>
 #include "template_io.hpp"
+#include "template_morphology_grouping/bin_pipeline.hpp"
+
+#include <map>
 #include <vector>
 #include <string>
 #include <cmath>
@@ -94,6 +96,7 @@ struct TemplateInfo {
     // vector and the kept-beat matrix stop corresponding the moment the Tukey
     // passes run.
     std::map<std::string, std::vector<uint8_t>> kept_rhythm_by_channel;
+    std::map<std::string, bin_pipeline::ChannelOutput> bank_by_channel;
 };
 
 struct AlignWavesResult {
@@ -133,6 +136,7 @@ struct EcgChannelResult {
     vector<size_t> n_beats_raw;//the viewer displays the number of beats contributing to template for each channel
 
     vector<vector<vector<double>>> kept_beats_raw;
+    vector<bin_pipeline::ChannelOutput> bank_out_raw;
 
     // Rhythm verdict per kept beat, [bin][beat]: 0 NORMAL, 1 PVC, 2 VOTED_PVC.
     vector<vector<uint8_t>> kept_rhythm_raw;

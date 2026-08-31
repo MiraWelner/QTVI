@@ -563,7 +563,23 @@ FeatureMarks::ReactivePpg FeatureMarks::reactive_ppg(
     ReactivePpg r;
     if (static_cast<int>(ppg.size()) < 3) return r;
     if (onset >= 0 && peak > onset) r.t50 = amplitude_crossing(ppg, onset, peak, 0.50);
-    if (peak >= 0 && end > peak)    r.t80 = amplitude_crossing(ppg, peak, end, 0.80);
+    if (peak >= 0 && end > peak) {
+        r.t80 = amplitude_crossing(ppg, peak, end, 0.80);
+        // T80_rise / PW80 at t80's OWN absolute level (see detect_ppg_
+        // fiducials for the rationale): upslope crossing of the same value.
+        if (onset >= 0 && peak > onset) {
+            const double vp = sample_at(ppg, static_cast<double>(peak));
+            const double ve = sample_at(ppg, static_cast<double>(end));
+            if (std::isfinite(vp) && std::isfinite(ve)) {
+                const double target = vp + 0.80 * (ve - vp);
+                const double xr = crossing_at_level(ppg, onset, peak, target);
+                if (xr >= 0.0) {
+                    r.t80_rise = xr;
+                    if (r.t80 >= 0.0 && r.t80 > r.t80_rise) r.pw80 = r.t80 - r.t80_rise;
+                }
+            }
+        }
+    }
     return r;
 }
 
@@ -601,6 +617,24 @@ double FeatureMarks::amplitude_crossing(const std::vector<double>& v, int a, int
         if (d < bestDiff) { bestDiff = d; best = i; }
     }
     return static_cast<double>(best);
+}
+
+double FeatureMarks::crossing_at_level(const std::vector<double>& v, int a, int b, double target) {
+    const int N = static_cast<int>(v.size());
+    if (a < 0 || b < 0 || b <= a || b >= N) return -1.0;
+    const double va = v[a], vb = v[b];
+    if (std::isnan(va) || std::isnan(vb) || std::isnan(target)) return -1.0;
+    const bool rising = (vb >= va);
+    for (int i = a + 1; i <= b; ++i) {
+        if (std::isnan(v[i]) || std::isnan(v[i - 1])) continue;
+        const bool crossed = rising ? (v[i] >= target && v[i - 1] < target)
+            : (v[i] <= target && v[i - 1] > target);
+        if (!crossed) continue;
+        const double den = v[i] - v[i - 1];
+        const double f = (den != 0.0) ? (target - v[i - 1]) / den : 0.0;
+        return (i - 1) + std::clamp(f, 0.0, 1.0);
+    }
+    return -1.0;
 }
 
 double FeatureMarks::first_crossing(const std::vector<double>& v, int a, int b, double frac) {
@@ -757,6 +791,25 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     // T80/P50 glyphs call, so the two can't disagree). ----------------------
     g.t80 = amplitude_crossing(v, iFloor(g.peak), iCeil(g.end), 0.80);
     if (g.t80 < 0) g.t80 = cld(0.5 * (g.peak + g.end));
+
+    // T80_rise: the UPSLOPE (onset->peak) point at the SAME absolute
+    // amplitude t80 sits at -- i.e. the 80%-downslope level, measured on the
+    // way up, NOT an 80% of onset->peak crossing (which would be a different
+    // level). Width pw80 = t80 (downslope) - t80_rise (upslope) at that one
+    // shared level. Uses the peak/end anchors amplitude_crossing used for
+    // t80, so the level is identical by construction.
+    {
+        const double vp = sample_at(v, g.peak);
+        const double ve = sample_at(v, g.end);
+        if (std::isfinite(vp) && std::isfinite(ve)) {
+            g.t80_rise_y = vp + 0.80 * (ve - vp);   // == t80's own amplitude
+            const double xr = crossing_at_level(v, iFloor(g.onset), iCeil(g.peak), g.t80_rise_y);
+            if (xr >= 0.0) {
+                g.t80_rise = xr;
+                if (g.t80 >= 0.0 && g.t80 > g.t80_rise) g.pw80 = g.t80 - g.t80_rise;
+            }
+        }
+    }
     g.p50 = amplitude_crossing(v, iFloor(g.onset), iCeil(g.peak), 0.50);
     if (g.p50 < 0) g.p50 = cld(0.5 * (g.onset + g.peak));
 
@@ -1227,6 +1280,11 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
             b.ppg_agi_auto = pf.agi;  b.ppg_ri_auto = pf.ri;  b.ppg_si_auto = pf.si;
             b.ppg_found_mask_auto = pf.foundMask;
             b.ppg_dn_tier_auto = pf.dn_tier;  b.ppg_dn_confidence_auto = pf.dn_confidence;
+            // Derived doubles (no glyph, not movable): the upslope point at
+            // the 80%-downslope level and the width between them. Set here,
+            // inside the pf scope, alongside the other pf-derived values.
+            b.ppg_t80_rise = pf.t80_rise;
+            b.ppg_pw80 = pf.pw80;
         }
 
         // ---- seed the movable bars once (only when unset) ------------------

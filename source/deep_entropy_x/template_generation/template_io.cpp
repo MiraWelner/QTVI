@@ -4,6 +4,7 @@
  */
 
 #include "template_io.hpp"
+#include "template_morphology_grouping/template_bank_serialize.hpp"
 
 #include <cmath>
 #include <fstream>
@@ -103,6 +104,40 @@ namespace template_io {
                 }
             }
         }
+
+        // ---- v3: Section 4.6 template bank, per bin, per ECG channel -------
+        // Another TRAILING OPTIONAL SECTION, on exactly the contract the v2
+        // anchors block above established: a v1/v2 reader stops at end-of-file,
+        // and a v3 reader that finds nothing here leaves the banks empty. No
+        // magic, no version byte, no migration -- an absent bank reads correctly
+        // as "one template per channel", which is a bank of size one.
+        //
+        // MUST come after the anchors count, unconditionally. The reader walks
+        // these sections in order, so skipping or reordering either one makes it
+        // parse the bank count as an anchor count and produce plausible garbage.
+        //
+        // Layout: [uint64 nBinsWithBanks], then per such bin
+        //         [uint64 binIndex][bank CH1][bank CH2][bank CH3].
+        // Bins with no bank at all are skipped rather than written as zeros, so
+        // a clean record costs almost nothing.
+        {
+            uint64_t nWithBanks = 0;
+            for (const auto& b : data.bins)
+                for (int c = 0; c < 3; ++c)
+                    if (!b.ecg_bank[c].templates.empty()) { ++nWithBanks; break; }
+            f.write(reinterpret_cast<const char*>(&nWithBanks), 8);
+
+            for (uint64_t i = 0; i < data.bins.size(); ++i) {
+                const auto& b = data.bins[i];
+                bool any = false;
+                for (int c = 0; c < 3; ++c)
+                    if (!b.ecg_bank[c].templates.empty()) { any = true; break; }
+                if (!any) continue;
+                f.write(reinterpret_cast<const char*>(&i), 8);
+                for (int c = 0; c < 3; ++c)
+                    tbank_ser::writeBankToStream(f, b.ecg_bank[c]);
+            }
+        }
     }
 
 
@@ -170,6 +205,28 @@ namespace template_io {
                 }
                 if (!ok) break;   // truncated anchor section: keep what parsed cleanly
                 out.raw_anchors[static_cast<int>(tag)] = std::move(perBin);
+            }
+        }
+
+        // ---- v3: template bank (trailing, optional) ------------------------
+        // A v1/v2 file simply ends here, so a failed read of the count means
+        // "no banks" rather than an error -- the same contract as the anchors
+        // section above. Anything already parsed stands.
+        {
+            uint64_t nWithBanks = 0;
+            if (f.read(reinterpret_cast<char*>(&nWithBanks), 8)) {
+                for (uint64_t k = 0; k < nWithBanks; ++k) {
+                    uint64_t bi = 0;
+                    if (!f.read(reinterpret_cast<char*>(&bi), 8)) break;
+                    bool ok = true;
+                    for (int c = 0; c < 3 && ok; ++c) {
+                        tbank::TemplateBank bank;
+                        ok = tbank_ser::readBankFromStream(f, bank);
+                        if (ok && bi < out.bins.size())
+                            out.bins[bi].ecg_bank[c] = std::move(bank);
+                    }
+                    if (!ok) break;   // truncated: keep what parsed cleanly
+                }
             }
         }
 

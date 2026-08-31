@@ -313,6 +313,7 @@ namespace post_process_detail {
 
         std::cerr << "  Processing Raw Templates (fast stage): " << stem << "\n";
         ecg_move_log::set(cfg.quality_metric, stem);   // per-beat vertical move log
+        ecg_move_log::set(cfg.quality_metric, stem);   // per-beat vertical move log
         FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
         if (fast.tmpl.bins.empty()) {
             std::cerr << "  no bins for " << stem

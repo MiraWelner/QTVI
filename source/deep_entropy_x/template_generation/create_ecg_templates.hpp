@@ -24,6 +24,8 @@
 
 #include "template_structs.hpp"
 #include "template_marking_gui/alignment.hpp"
+#include "template_morphology_grouping/bin_pipeline.hpp"
+#include "template_morphology_grouping/morphology_csv.hpp"
 #include <atomic>
 #include <fstream>
 #include <string>
@@ -76,10 +78,26 @@ struct SingleMethodResult {
     // two-stage leveling, surfaced for the move log.
     vector<double> tp_shift;
     vector<double> pq_shift;
+
+    // Section 4.6 template bank for this channel/bin. Populated only when
+    // build_bank is requested -- see the gate in build_ecg_template_for_method.
+    // bank_out.bank.templates[0] is the sinus seed and corresponds to
+    // ecgTemplate, except that it excludes ectopy; the difference between the
+    // two is the contamination the ectopic mask was meant to remove.
+    //
+    // INDEX SPACE WARNING: bank_out.assignment and bank_out.flags are indexed
+    // into aligned.beats (ALL beats), while kept_rhythm above and
+    // out_kept_beats are indexed into usableIdx (baseline-filtered beats).
+    // Those two index spaces differ by however many beats had
+    // baseline_source == NONE. Anything joining bank output to
+    // kept_beats_by_channel must map through usableIdx rather than lining them
+    // up positionally.
+    bin_pipeline::ChannelOutput bank_out;
 };
 
 static inline SingleMethodResult build_ecg_template_for_method(const vector<double>& ecgSignal, const vector<size_t>& rpeaks, const vector<vector<double>>& pairs,
-    double ecgRate, vector<vector<double>>* out_kept_beats = nullptr, bool compute_iqr = false) {
+    double ecgRate, vector<vector<double>>* out_kept_beats = nullptr, bool compute_iqr = false,
+    bool build_bank = false, uint64_t bin_index = 0, int channel = 0) {
     SingleMethodResult res;
     res.ecgTemplate = {};
     res.ecg_template_iqr = {};
@@ -153,6 +171,49 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
         };
 
     res.ecgTemplate = medianOver(usable);
+
+    // ---- Section 4.6 template bank ----------------------------------------
+    // RAW METHOD ONLY. This function runs four times per channel per bin
+    // (raw / unfiltered / squared / absval) and the bank is the most expensive
+    // thing in it: pass 1 recomputes a column-wise median on every assignment.
+    // The other three methods are never displayed and nothing consumes their
+    // banks, so building them would quadruple the cost for nothing -- inside an
+    // OpenMP loop, where it is least affordable.
+    //
+    // The bank is handed aligned.beats, the FULL set, not `usable`. The
+    // baseline filter is reproduced inside the bank via baseline_ok so that
+    // assignment indices stay aligned to aligned.* throughout. See the index
+    // space warning on SingleMethodResult::bank_out.
+    //
+    // NOTE ON MARKS. No operator marks exist at build time, so every beat
+    // classifies as REGULAR and the seed pool rests on the rhythm flags alone.
+    // That is the design working, not a gap: morphology does the sorting and
+    // marks only ever supply labels. The bank separates the PVC morphology
+    // before anyone has called it a PVC.
+    if (build_bank) {
+        bin_pipeline::ChannelInput bi;
+        bi.beats = &aligned.beats;
+        bi.width = static_cast<int>(maxLen);
+        bi.r_col = aligned.r_aligned_col;
+        bi.bin_index = bin_index;
+        bi.channel = channel;
+        bi.is_ppg = false;
+
+        // rr_lens is in SAMPLES; the prematurity test is a ratio so units
+        // cancel there, but NSVT run rates need real milliseconds.
+        bi.rr_after.resize(aligned.rr_lens.size());
+        for (size_t i = 0; i < aligned.rr_lens.size(); ++i)
+            bi.rr_after[i] = 1000.0 * static_cast<double>(aligned.rr_lens[i]) / ecgRate;
+
+        bi.baseline_ok.assign(aligned.beats.size(), 1u);
+        if (haveSrc)
+            for (size_t i = 0; i < aligned.beats.size(); ++i)
+                bi.baseline_ok[i] =
+                (aligned.baseline_source[i] == alignment::BaselineSource::NONE)
+                ? 0u : 1u;
+
+        res.bank_out = bin_pipeline::runChannel(bi);
+    }
 
     // ---- capture the beats handed downstream, with their rhythm verdicts --
     if (out_kept_beats) {
@@ -238,6 +299,7 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
 
     cr.kept_beats_raw.resize(n);
     cr.kept_rhythm_raw.resize(n);
+    cr.bank_out_raw.resize(n);
     cr.tp_shift_raw.resize(n);
     cr.pq_shift_raw.resize(n);
 }
@@ -272,7 +334,8 @@ static inline void process_channel_fast(
     const vector<double>& origSignal,
     const vector<size_t>& masterPeaks,
     double ecgRate,
-    bool capture_raw_beats = false)
+    bool capture_raw_beats = false,
+    int channel_index = 0)
 {
     const auto& bin = bins[i];
 
@@ -282,7 +345,8 @@ static inline void process_channel_fast(
         ? &cr.kept_beats_raw[i] : nullptr;
     auto raw_res = build_ecg_template_for_method(
         ecgSignal, masterPeaks, bin.pairs, ecgRate,
-        capture, /*compute_iqr=*/true);
+        capture, /*compute_iqr=*/true,
+        /*build_bank=*/true, static_cast<uint64_t>(i), channel_index);
     cr.ecgTemplates_raw[i] = raw_res.ecgTemplate;
     cr.ecgTemplates_raw_iqr[i] = raw_res.ecg_template_iqr;
     cr.ppg_alignment_point_raw[i] = raw_res.ppg_alignment_point;
@@ -290,6 +354,8 @@ static inline void process_channel_fast(
     cr.n_beats_raw[i] = raw_res.n_beats;
     if (i < cr.kept_rhythm_raw.size())
         cr.kept_rhythm_raw[i] = std::move(raw_res.kept_rhythm);
+    if (i < cr.bank_out_raw.size())
+        cr.bank_out_raw[i] = std::move(raw_res.bank_out);
     cr.ref_index_raw[i] = raw_res.ref_beat_index;
     if (i < cr.tp_shift_raw.size()) {
         cr.tp_shift_raw[i] = std::move(raw_res.tp_shift);   // distinct i -> race-free
@@ -353,10 +419,11 @@ static inline void process_channel(
     const ChannelRPeaks& ch,
     const vector<size_t>& masterPeaks,
     double ecgRate,
-    bool capture_raw_beats = false)
+    bool capture_raw_beats = false,
+    int channel_index = 0)
 {
     process_channel_fast(cr, bins, i, ecgSignal, origSignal, masterPeaks,
-        ecgRate, capture_raw_beats);
+        ecgRate, capture_raw_beats, channel_index);
     process_channel_slow(cr, bins, i, ecgSignal, ch, masterPeaks,
         ecgRate);
 }
@@ -379,7 +446,7 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
         const auto& bin = bins[i];
         const auto& master = bin.ch1.raw;   // ch1.raw drives every channel's slicing
         process_channel_fast(res.ch1, bins, i, bin.ecgSignal, bin.ecgSignal,
-            master, ecgRate, /*capture_raw_beats=*/true);
+            master, ecgRate, /*capture_raw_beats=*/true, /*channel_index=*/0);
         // Only build ch2/ch3 templates when the channel is REAL: both the
         // signal is present AND R-peak detection actually found something.
         // file_to_bin fills absent channels with placeholder vectors (see
@@ -390,10 +457,10 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
         // bin.ch2.raw non-empty catches those.
         if (!bin.ecgSignal2.empty() && !bin.ch2.raw.empty())
             process_channel_fast(res.ch2, bins, i, bin.ecgSignal2, bin.ecgSignal2,
-                master, ecgRate, /*capture_raw_beats=*/true);
+                master, ecgRate, /*capture_raw_beats=*/true, /*channel_index=*/1);
         if (!bin.ecgSignal3.empty() && !bin.ch3.raw.empty())
             process_channel_fast(res.ch3, bins, i, bin.ecgSignal3, bin.ecgSignal3,
-                master, ecgRate, /*capture_raw_beats=*/true);
+                master, ecgRate, /*capture_raw_beats=*/true, /*channel_index=*/2);
     }
 
     // Single-threaded, post-loop: write the per-beat vertical move log
@@ -401,6 +468,22 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
     ecg_move_log::write_channel("CH1", res.ch1.tp_shift_raw, res.ch1.pq_shift_raw, /*first=*/true);
     ecg_move_log::write_channel("CH2", res.ch2.tp_shift_raw, res.ch2.pq_shift_raw, /*first=*/false);
     ecg_move_log::write_channel("CH3", res.ch3.tp_shift_raw, res.ch3.pq_shift_raw, /*first=*/false);
+
+    // Section 4.6 templates.csv, same single-threaded post-loop slot as the
+    // move log above. One file, transposed: one column per template, with the
+    // category / bin / template / premature / tukey rows. Replaces the earlier
+    // pair of bank_*.csv dumps -- two files split by accident of what was
+    // convenient to compute, not by anything a reader wanted separately.
+    morphology_csv::set(ecg_move_log::g_dir, ecg_move_log::g_stem);
+    const std::vector<morphology_csv::ChannelBlock> blocks = {
+        { "CH1", &res.ch1.bank_out_raw, &res.ch1.kept_beats_raw, &res.ch1.r_col_raw },
+        { "CH2", &res.ch2.bank_out_raw, &res.ch2.kept_beats_raw, &res.ch2.r_col_raw },
+        { "CH3", &res.ch3.bank_out_raw, &res.ch3.kept_beats_raw, &res.ch3.r_col_raw },
+    };
+    morphology_csv::writeBeats(blocks);          // text, one column per beat
+    morphology_csv::writeTemplates(blocks);      // text, one column per template
+    morphology_csv::writeBeatsBin(blocks);       // same content, binary
+    morphology_csv::writeTemplatesBin(blocks);
 
     return res;
 }

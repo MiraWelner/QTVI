@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file   template_io.hpp
  * @brief  Data structures and I/O for the template-generation output
  *         file. Independent of peak_finding's binfile_handling.hpp:
@@ -59,6 +59,7 @@
 #include <map>
 #include <array>
 #include <vector>
+#include "template_morphology_grouping/template_bank.hpp"
 namespace template_io {
 
     struct ChannelMethodTemplate {
@@ -102,6 +103,14 @@ namespace template_io {
         int                   ppg_peak_col = -1;   // construction-time fiducials
         int                   ppg_onset_col = -1;
         bool                  bad_segment = false;
+
+        // Section 4.6 template bank per ECG channel, raw method only. Slot 0 is
+        // the sinus seed and corresponds to chN_raw.ecgTemplate, except that it
+        // excludes ectopy -- the difference between the two is the contamination
+        // the ectopic mask was meant to remove. Empty on a v1/v2 file, which
+        // reads correctly as "one template per channel", i.e. a bank of size
+        // one.
+        std::array<tbank::TemplateBank, 3> ecg_bank;
 
     };
 

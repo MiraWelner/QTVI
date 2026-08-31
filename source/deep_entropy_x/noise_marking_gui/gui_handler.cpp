@@ -589,6 +589,33 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     m_hypnoCursorBar->setPen(QPen(QColor(255, 140, 0), 2));
     hypnoChart->addSeries(m_hypnoCursorBar);
 
+    // THE DROPDOWN IS POPULATED FROM THE TABLE, in table order. The 13 items
+    // used to be typed into noise_marking_gui.ui, which made the labels exist in
+    // two places that had to be matched by hand -- and matched silently, because
+    // find() returns nullptr on a miss and every helper degrades quietly: a
+    // retitled item would have exported as code 0, stopped suppressing R-peak
+    // detection in its spans, and drawn in the fallback grey, with a missing
+    // colour swatch as the only visible symptom.
+    //
+    // The <item> blocks are gone from the .ui, so this is now the only list. Row
+    // order in annotation_types.hpp is therefore the operator's dropdown order,
+    // and the table was reordered once to reproduce exactly what the .ui showed
+    // (Invert/Noninvert tenth) so nobody's muscle memory moved.
+    //
+    // setCurrentIndex(0) rather than leaving it: an empty combo has index -1 and
+    // currentText() returns an empty string, which m_currentMarkingType would
+    // then hold until the operator touched the control.
+    {
+        QSignalBlocker block(ui->marking_type);
+        ui->marking_type->clear();
+        for (const auto& t : annotation_types::noise_types)
+            ui->marking_type->addItem(QString::fromUtf8(t.label));
+        ui->marking_type->setCurrentIndex(0);
+    }
+
+    // The swatch loop below is unchanged and still keyed on itemText(i), but it
+    // can no longer fail to resolve -- every item came from the table it looks
+    // up in. The `if (!t) continue;` is kept as a guard, not as a live path.
     for (int i = 0; i < ui->marking_type->count(); ++i) {
         const QString itemText = ui->marking_type->itemText(i);
         const auto* t = annotation_types::find(itemText);
@@ -660,15 +687,24 @@ QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
     QMap<QString, GenExcStruct> all = m_fileMarkings;
     GenExcStruct current = m_genExc;
     current.filePath = m_binFilePath;
+    // marking_type comes from the annotation table, looked up by the FLAG that
+    // defines each of these override kinds -- paramEdit for threshold/blanking,
+    // invertEdit for inversion. The labels used to be typed here as literals,
+    // which made this function a second place the strings lived and a silent one:
+    // a retitled table row would leave these spans resolving to nothing and
+    // exporting as code 0, with no error anywhere. Resolved at compile time; see
+    // the static_asserts in annotation_types.hpp.
     for (const ParamOverride& o : m_thresholdOverrides) {
         current.noiseExc.append({ o.start, o.end });
         current.data_type.append(o.channel);
-        current.marking_type.append("3) Blank.+Thresh.");
+        current.marking_type.append(
+            QString::fromUtf8(annotation_types::kParamEditLabel));
     }
     for (const ParamOverride& o : m_invertOverrides) {
         current.noiseExc.append({ o.start, o.end });
         current.data_type.append(o.channel);
-        current.marking_type.append("Invert/Noninvert");
+        current.marking_type.append(
+            QString::fromUtf8(annotation_types::kInvertEditLabel));
     }
 
     all[m_binFilePath] = current;

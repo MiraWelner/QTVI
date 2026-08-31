@@ -167,10 +167,7 @@ namespace alignment {
                 // still had.
                 //
                 // 4.6 requires these beats "excluded from the reference
-                // template but RETAINED with flags". Excluding them is the
-                // ectopic mask's job (create_ecg_templates.hpp), and it keeps
-                // a record; dropping them here leaves nothing to retain.
-                // Pruning is for detector errors, not for real ectopy.
+                // template but RETAINED with flags".
                 const bool flagged = haveFlags
                     && (out.premature[i] || out.voted[i]);
                 if (!keep[i] && !flagged) continue;   // rejected, discarded

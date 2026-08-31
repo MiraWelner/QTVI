@@ -6,6 +6,8 @@
 
 #include <QtCharts/QChart>
 #include <QtCharts/QValueAxis>
+#include "annotation_types.hpp"
+
 #include <QString>
 #include <QVector>
 
@@ -25,6 +27,45 @@ inline const QColor COLOR_RAW_SCATTER{ 0, 0, 0 };   // black
 inline const QColor COLOR_ART{ 150, 40, 40 };       // dark red
 inline const QColor COLOR_ART_PULM{ 40, 60, 150 };  // dark blue
 inline const QColor COLOR_VCG{ 75, 0, 130 };        // dark indigo
+
+// ---------------------------------------------------------------------------
+// Qt-side lookups into the annotation table
+// ---------------------------------------------------------------------------
+//
+// The table itself is in annotation_types.hpp, which is Qt-free so the Qt-free
+// template-generation side can read it directly. These five helpers are the only
+// parts that ever needed QString or QColor, and they live here because this is
+// already the Qt color-helper header and is already included by every
+// translation unit that calls them (gui_handler.cpp, signal_renderer.cpp,
+// user_marking_handler.cpp). Reopening the namespace is deliberate: call sites
+// keep saying annotation_types::colorFor(...) and nothing had to change.
+namespace annotation_types {
+
+    inline const AnnotationType* find(const QString& label) {
+        return find(label.toStdString());
+    }
+
+    // Highlight color for a type; default translucent black if unknown
+    // (matches the old updateNoiseHighlights fallback).
+    inline QColor colorFor(const QString& label) {
+        if (const auto* t = find(label)) return QColor(t->r, t->g, t->b, t->a);
+        return QColor(0, 0, 0, 100);
+    }
+
+    inline bool isParamEdit(const QString& label) {
+        const auto* t = find(label);
+        return t && t->paramEdit;
+    }
+    inline bool isInvertEdit(const QString& label) {
+        const auto* t = find(label);
+        return t && t->invertEdit;
+    }
+    inline bool includeInThreshold(const QString& label) {
+        const auto* t = find(label);
+        return t && t->includeInThreshold;
+    }
+
+}  // namespace annotation_types
 
 inline void wipe_chart(QChart* chart, const QList<QAbstractSeries*>& keep = {}) {
     /*

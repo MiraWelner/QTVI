@@ -1,4 +1,4 @@
-﻿/*
+/*
 * @brief BinPlotWidget.cpp
 *
 * ECG and PPG are drawn at a single per-paint pixels-per-sample scale
@@ -71,6 +71,9 @@
 */
 
 #include "BinPlotWidget.hpp"
+#include "annotation_types.hpp"
+#include <QMenu>
+#include <QAction>
 #include "feature_marks.hpp"
 #include <QPainter>
 #include <QPainterPath>
@@ -441,7 +444,12 @@ void BinPlotWidget::setBackgroundTraces(
     const std::vector<std::pair<std::vector<double>, QColor>>& traces)
 {
     m_bgTraces = traces;
-    update();
+}
+
+void BinPlotWidget::setBankTraces(
+    const std::vector<std::pair<std::vector<double>, QColor>>& traces) {
+    m_bankTraces = traces;
+    update();   // repaint now; otherwise the overlay waits for an unrelated one
 }
 
 int BinPlotWidget::visibleN(bool isEcg) const {
@@ -768,6 +776,24 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // -------- ECG (left axis) --------
     if (m_showEcgTrace) {
         draw_iqr_band(p, m_ecg, m_ecgIqr, margin_left, margin_top, ph, pps, m_ecgVisibleN, yLo, yHi, color_iqrband_ecg);
+
+        // ---- Section 4.6 bank overlay ----------------------------------
+        // Every template in this bin's bank beyond slot 0, drawn UNDER the
+        // sinus trace on the same axis and the same scale. They share slot 0's
+        // scale legitimately: alignment puts every beat's detected R at
+        // r_aligned_col on one shared axis regardless of morphology, so
+        // yLo/yHi/pps need no adjustment.
+        //
+        // Dashed and thinner so slot 0 still reads as the primary trace. No
+        // label is drawn: an unconfirmed template must not display a class,
+        // because showing a guessed one would be the display making the very
+        // judgment the operator is being asked to make.
+        for (const auto& bg : m_bankTraces) {
+            if (static_cast<int>(bg.first.size()) < 3) continue;
+            draw_trace_fixed_scale(p, bg.first, margin_left, margin_top, ph, pps,
+                QPen(with_trace_alpha(bg.second), 1.1, Qt::DashLine),
+                m_ecgVisibleN, yLo, yHi);
+        }
         draw_trace_fixed_scale(p, m_ecg, margin_left, margin_top, ph, pps,
             QPen(with_trace_alpha(ecg_trace_color), 1.5), m_ecgVisibleN, yLo, yHi);
     }
@@ -857,6 +883,37 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
             emit landmarkSelected(m_binIndex, m_leadIndex, m, m_markers[m]);
             return;
         }
+    }
+
+    // Ctrl+right-click: confirm this template's CLASS (Section 4.6 bullet 3).
+    //
+    // Interim gesture, and it is worth saying why rather than leaving it to be
+    // discovered. A class confirmation is a deliberate clinical judgment and
+    // deserves a visible control -- a combo box or a toolbar -- not a modifier
+    // chord. It lives here because the .ui files are generated and were not in
+    // reach when this was wired, and because plain right-click is already spoken
+    // for by the Good/BadR/BadPPG cycle that operators use constantly. Move it
+    // to a real control at the first opportunity; the signal and everything
+    // downstream of it stay exactly as they are.
+    if (e->button() == Qt::RightButton
+        && (e->modifiers() & Qt::ControlModifier)) {
+        QMenu menu(this);
+        menu.addAction(tr("Confirm class for this template"))->setEnabled(false);
+        menu.addSeparator();
+        for (const auto& t : annotation_types::noise_types) {
+            if (t.paramEdit || t.invertEdit) continue;   // not classes
+            QAction* a = menu.addAction(QString::fromUtf8(t.label));
+            a->setData(t.code);
+        }
+        menu.addSeparator();
+        QAction* normal = menu.addAction(tr("Normal / sinus (confirm as regular)"));
+        normal->setData(0);   // kUnlabeled means "confirmed, no abnormal class"
+
+        if (QAction* picked = menu.exec(e->globalPosition().toPoint())) {
+            emit classConfirmRequested(m_binIndex, m_leadIndex,
+                m_templateIndex, picked->data().toInt());
+        }
+        return;
     }
 
     if (e->button() == Qt::RightButton) {

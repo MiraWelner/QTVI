@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 //
 // Adapter layer: reads the template_io binary format and projects it into
 // the TemplateBin shape the viewer expects. Also writes/reads the
@@ -16,6 +16,7 @@
 // trace without a gray band.
 //
 
+#include <array>
 #include <vector>
 #include <string>
 #include <map>
@@ -31,6 +32,7 @@
 
 #include "template_generation\template_io.hpp"
 #include "template_marking_gui\feature_marks.hpp"
+#include "template_morphology_grouping\template_bank.hpp"
 
 
 // ---------------------------------------------------------------------------
@@ -51,6 +53,13 @@ struct ChannelTemplateData {
 };
 
 struct TemplateBin {
+    // Section 4.6 template bank per ECG channel, index 0..2 == CH1..CH3.
+    // Slot 0 of each is the sinus seed and corresponds to that channel's
+    // ecgTemplate, except that it excludes ectopy. Channels are allowed to
+    // disagree on template count -- a morphology separable on one lead may not
+    // be on another -- so these are NOT parallel across the array.
+    std::array<tbank::TemplateBank, 3> ecg_bank;
+
     uint64_t index = 0;
     std::vector<std::pair<uint64_t, uint64_t>> ppg_bin_indexs;
     std::vector<std::pair<uint64_t, uint64_t>> ecg_bin_indexs;
@@ -127,6 +136,13 @@ struct TemplateBin {
     int ppg_onset = -1;
     int ppg_t50 = -1;   // 50% up the upslope, foot -> systolic peak
     int ppg_t80 = -1; // 80% up the upslope, foot -> systolic peak
+    // T80_rise: upslope position at the SAME absolute amplitude as the 80%
+    // DOWNSLOPE crossing (not an 80%-of-onset->peak level). pw80 = t80 -
+    // t80_rise, the pulse width at that level. Stored as doubles (sub-sample
+    // / fractional ms), unlike the int marker fields, because a width has no
+    // integer sample home and t80_rise is an interpolated crossing. No glyph.
+    double ppg_t80_rise = -1.0;
+    double ppg_pw80 = -1.0;
     int ppg_peak = -1;
     int ppg_dicrotic = -1;
     int ppg_peak2 = -1;
@@ -213,6 +229,12 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
         dst.ppg_onset_construct = src.ppg_onset_col;
         dst.ppgTemplate = src.ppgTemplate;
         dst.ppg_template_iqr = src.ppg_template_iqr;
+
+        // Section 4.6 banks. Empty on a pre-v3 templates file, which is the
+        // correct reading: one template per channel IS a bank of size one, and
+        // slot 0 of an absent bank is the chN_raw template already copied
+        // above.
+        dst.ecg_bank = src.ecg_bank;
         dst.abpTemplate = src.abpTemplate;
         dst.artTemplate = src.artTemplate;
         dst.artPulmTemplate = src.artPulmTemplate;
@@ -263,6 +285,8 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
 //     int32   p_peak_ch1..3, q_begin_ch1..3, r_peak_ch1..3,
 //             s_end_ch1..3, t_begin_ch1..3, t_end_ch1..3
 //     int32   ppg_onset, ppg_p50, ppg_peak, ppg_dicrotic, ppg_peak2, ppg_end, ppg_t80
+//     float64 ppg_t80_rise, ppg_pw80   (doubles; t80_rise = upslope point at
+//             the 80%-downslope level, pw80 = t80 - t80_rise)
 //     -- arterial, one block each for ABP, ART, ART_PULM: --
 //     uint8   <chan>_issue
 //     int32   <chan>_onset, _peak, _dicrotic, _peak2, _end
@@ -281,6 +305,7 @@ inline void writeTemplateMarkingsBin(const std::string& path,
 
     auto w8 = [&](uint8_t v) { f.write(reinterpret_cast<const char*>(&v), 1); };
     auto w32 = [&](int v) { int32_t i = v; f.write(reinterpret_cast<const char*>(&i), 4); };
+    auto w64d = [&](double v) { f.write(reinterpret_cast<const char*>(&v), 8); };
 
     for (const auto& b : bins) {
         uint64_t idx = b.index;
@@ -313,6 +338,8 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         w32(b.ppg_peak2);
         w32(b.ppg_end);
         w32(b.ppg_t80);
+        w64d(b.ppg_t80_rise);   // double, 8 bytes -- see struct note
+        w64d(b.ppg_pw80);
 
         // Arterial block: ABP, ART, ART_PULM (issue + 5 indices each).
         w8(b.abp_issue);
@@ -369,10 +396,10 @@ static const EcgColSpec ecgCols[] = {
     {"s_end",   true,  false}, {"t_begin", true,  false}, {"t_end",  true,  false},
     {"qrs",     false, true},  {"qt",      false, true},
 };
-inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_p50","ppg_peak","ppg_dicrotic","ppg_peak2","ppg_t80","ppg_end" };
-inline constexpr const char* abpCols[] = { "abp_onset","abp_peak","abp_dicrotic","abp_peak2","abp_end" };
-inline constexpr const char* artCols[] = { "art_onset","art_peak","art_dicrotic","art_peak2","art_end" };
-inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak","art_pulm_dicrotic","art_pulm_peak2","art_pulm_end" };
+inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_p50","ppg_peak","ppg_dicr","ppg_peak2","ppg_t80","ppg_t80_rise","ppg_end" };
+inline constexpr const char* abpCols[] = { "abp_onset","abp_peak","abp_dicr","abp_peak2","abp_end" };
+inline constexpr const char* artCols[] = { "art_onset","art_peak","art_dicr","art_peak2","art_end" };
+inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak","art_pulm_dicr","art_pulm_peak2","art_pulm_end" };
 
 
 //one unifornm table for pp autodetected pulses
@@ -385,7 +412,7 @@ struct PulseAutoGlyph {
 inline constexpr PulseAutoGlyph ppg_and_artpulse_automated_markers[] = {
     { "ppg_foot",          &TemplateBin::ppg_onset_auto,    nullptr,                                 nullptr },
     { "ppg_systolic_peak", &TemplateBin::ppg_peak_auto,     nullptr,                                 nullptr },
-    { "ppg_dicrotic",      &TemplateBin::ppg_dicrotic_auto, &TemplateBin::ppg_dicrotic_found_auto,   "ppg_notch_found" },
+    { "ppg_dicr",          &TemplateBin::ppg_dicrotic_auto, &TemplateBin::ppg_dicrotic_found_auto,   "ppg_notch_found" },
     { "ppg_end",           &TemplateBin::ppg_end_auto,      nullptr,                                 nullptr },
     { "vpg_u",             &TemplateBin::ppg_u_auto,        nullptr,                                 nullptr },
     { "vpg_v",             &TemplateBin::ppg_v_auto,        nullptr,                                 nullptr },
@@ -530,29 +557,29 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
         // user one is what the operator sees on screen. Keep this rule and the
         // row loop's `k != 3` test in step -- they are the same rule.
         const bool userToo = (std::strcmp(name, "r_peak") != 0);
-        f << ',' << name << "_ch" << c << "_y_normalized_autodetect";
-        if (userToo) f << ',' << name << "_ch" << c << "_y_normalized_user";
-        f << ',' << name << "_ch" << c << "_y_mv_raw_autodetect";
-        if (userToo) f << ',' << name << "_ch" << c << "_y_mv_raw_user";
-        f << ',' << name << "_ch" << c << "_x_ms_autodetect";
+        f << ',' << name << "_ch" << c << "_y_norm_auto";
+        if (userToo) f << ',' << name << "_ch" << c << "_y_norm_user";
+        f << ',' << name << "_ch" << c << "_y_mv_auto";
+        if (userToo) f << ',' << name << "_ch" << c << "_y_mv_user";
+        f << ',' << name << "_ch" << c << "_x_ms_auto";
         if (userToo) f << ',' << name << "_ch" << c << "_x_ms_user";
         };
     auto emitIntervalHeader = [&](const char* name, int c) {
-        f << ',' << name << "_ch" << c << "_ms_autodetect"
+        f << ',' << name << "_ch" << c << "_ms_auto"
             << ',' << name << "_ch" << c << "_ms_user";
         };
     // Pulse: 6 cols per marker.
     auto emitPulsePointHeader = [&](const char* name) {
-        f << ',' << name << "_y_normalized_autodetect"
-            << ',' << name << "_y_normalized_user"
-            << ',' << name << "_y_mv_raw_autodetect"
-            << ',' << name << "_y_mv_raw_user"
-            << ',' << name << "_x_ms_autodetect"
+        f << ',' << name << "_y_norm_auto"
+            << ',' << name << "_y_norm_user"
+            << ',' << name << "_y_mv_auto"
+            << ',' << name << "_y_mv_user"
+            << ',' << name << "_x_ms_auto"
             << ',' << name << "_x_ms_user";
         };
-    // Autodetected computed features (no user bar; derived from AUTODETECT markers).
+    // Autodetected computed features (no user bar; derived from AUTO markers).
     auto emitAutoFeatHeader = [&](const char* name) {
-        f << ',' << name << "_x_ms" << ',' << name << "_y_mv_raw";
+        f << ',' << name << "_x_ms" << ',' << name << "_y_mv";
         };
 
     if (wantEcg) {
@@ -561,8 +588,8 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
         }
         for (int c = 1; c <= 3; ++c) {
             char b[64];
-            for (const char* g : { "p_wave_autodetect", "q_onset_autodetect",
-                                   "r_wave_autodetect", "t_peak_autodetect" }) {
+            for (const char* g : { "p_wave_auto", "q_onset_auto",
+                                   "r_wave_auto", "t_peak_auto" }) {
                 std::snprintf(b, sizeof b, "%s_ch%d", g, c);
                 emitAutoFeatHeader(b);
             }
@@ -571,6 +598,10 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
 
     if (wantPulse) {
         for (const char* n : ppgCols)     emitPulsePointHeader(n);
+        // PW80 width (t80 - t80_rise), in ms. Single value per bar-set, not a
+        // pulse point -- a width has no y/position, so it gets its own two
+        // columns rather than the 6-subcolumn pulse layout.
+        f << ",ppg_pw80_ms_auto";
         f << ",abp_issue";
         for (const char* n : abpCols)     emitPulsePointHeader(n);
         f << ",art_issue";
@@ -579,11 +610,11 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
         for (const char* n : artPulmCols) emitPulsePointHeader(n);
         for (const auto& gl : ppg_and_artpulse_automated_markers) {
             char nb[64];
-            std::snprintf(nb, sizeof nb, "%s_autodetect", gl.name);
+            std::snprintf(nb, sizeof nb, "%s_auto", gl.name);
             emitAutoFeatHeader(nb);
             if (gl.foundName) f << ',' << gl.foundName;
         }
-        for (const char* g : { "vpg_u_autodetect", "vpg_v_autodetect", "vpg_w_autodetect" })
+        for (const char* g : { "vpg_u_auto", "vpg_v_auto", "vpg_w_auto" })
             emitAutoFeatHeader(g);
     }
     f << '\n';
@@ -768,8 +799,15 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
             emitPulsePoint(b.ppgTemplate, rxAuto.t80, rxUser.t80,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
+            // T80_rise: upslope point at t80's level (a position, like t80).
+            emitPulsePoint(b.ppgTemplate, rxAuto.t80_rise, rxUser.t80_rise,
+                b.ppg_onset_auto, b.ppg_onset, refPpg);
             emitPulsePoint(b.ppgTemplate, b.ppg_end_auto, b.ppg_end,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
+            // PW80 width, ms only, autodetect bracketing (t80 - t80_rise).
+            // Single value; blank when unavailable. Matches the one
+            // ppg_pw80_ms_auto header column.
+            f << ',';  if (rxAuto.pw80 >= 0.0) f << (rxAuto.pw80 * toMs);
 
             f << ',' << static_cast<int>(b.abp_issue);
             emitPulsePoint(b.abpTemplate, b.abp_onset_auto, b.abp_onset,
@@ -846,6 +884,9 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
     auto r32 = [&]() -> int {
         int32_t v = 0; f.read(reinterpret_cast<char*>(&v), 4); return v;
         };
+    auto r64d = [&]() -> double {
+        double v = 0.0; f.read(reinterpret_cast<char*>(&v), 8); return v;
+        };
 
     //read header - it tells you how many bins to expect
     uint64_t n = 0;
@@ -885,6 +926,8 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         b.ppg_peak2 = r32();
         b.ppg_end = r32();
         b.ppg_t80 = r32();
+        b.ppg_t80_rise = r64d();   // double, mirrors write order
+        b.ppg_pw80 = r64d();
 
         b.abp_issue = r8();
         b.abp_onset = r32(); b.abp_peak = r32(); b.abp_dicrotic = r32();

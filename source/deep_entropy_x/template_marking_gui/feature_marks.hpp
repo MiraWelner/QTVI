@@ -24,6 +24,7 @@
 #include <functional>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 struct TemplateBin;   // forward-declare -- full definition in TemplateBinIO.hpp
 
@@ -80,7 +81,7 @@ public:
     static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
     struct ReactiveEcg { double t_peak = -1.0; };
     static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, int t_begin, int t_end);
-    struct ReactivePpg { double t50 = -1.0, t80 = -1.0; };   // sub-sample
+    struct ReactivePpg { double t50 = -1.0, t80 = -1.0, t80_rise = -1.0, pw80 = -1.0; };   // sub-sample
     static ReactivePpg reactive_ppg(const std::vector<double>& ppg,
         int onset, int peak, int end);
 
@@ -116,6 +117,12 @@ public:
         double peak2 = -1.0;      bool peak2_found = false;
         double dicrotic = -1.0;   bool notch_found = false;
         double t80 = -1.0, p50 = -1.0;
+        // T80_rise: upslope position at the SAME absolute amplitude as t80
+        // (the 80%-downslope level), NOT an 80%-of-onset->peak crossing.
+        // t80_rise_y is that amplitude; pw80 = t80 - t80_rise (the width).
+        double t80_rise = -1.0;
+        double t80_rise_y = std::numeric_limits<double>::quiet_NaN();
+        double pw80 = -1.0;
         double u = -1.0, v = -1.0, w = -1.0;
         double a = -1.0, b = -1.0, c = -1.0, d = -1.0, e = -1.0, f = -1.0;
         double p1 = -1.0, p2 = -1.0;
@@ -146,6 +153,12 @@ public:
     // of the sample-index distance). Shared by detect_ppg_fiducials (t80/
     // p50) and the GUI's reactive T80/P50 glyphs, so both always agree.
     static double amplitude_crossing(const std::vector<double>& v, int a, int b, double frac);
+
+    // Position on [a, b] where v crosses the ABSOLUTE amplitude `target`
+    // (interpolated between the straddling samples). Direction inferred from
+    // v[a] vs v[b], same as amplitude_crossing. -1 if it never straddles.
+    // Used for T80_rise: the upslope point at t80's own absolute level.
+    static double crossing_at_level(const std::vector<double>& v, int a, int b, double target);
 
     // Index of the minimum sample on [lo, hi], NaN-skipping; -1 if none.
     static int trough_in(const std::vector<double>& v, int lo, int hi);

@@ -90,6 +90,33 @@ private:
 
     std::vector<Lead> leadsForBin(const TemplateBin& b) const;
 
+    // Leads for one BANK MEMBER of a bin. templateIdx 0 is the sinus seed and
+    // returns the chN_raw templates exactly as leadsForBin() does, so a bin
+    // with no bank behaves identically to before. Higher indices return that
+    // channel's bank template, and a channel whose bank is shorter contributes
+    // no lead -- channels are allowed to disagree on template count, so the
+    // grid is ragged by design.
+    std::vector<Lead> leadsForBinTemplate(const TemplateBin& b,
+        int templateIdx) const;
+
+    // Number of grid columns a bin needs: 1 + the highest bank index that earns
+    // a column on any channel. Both pagination and layout must call this same
+    // function or the two disagree about where a bin's columns end.
+    // Bank slots in this bin that want landmark marking, sparse and ascending,
+    // always starting with slot 0. Replaces columnsForBin(), which returned a
+    // count and could therefore only describe a contiguous prefix.
+    std::vector<int> markingSlotsForBin(const TemplateBin& b) const;
+
+    // Section 4.6 class confirmation, from BinPlotWidget::classConfirmRequested.
+    // Turns one operator click into tbank::propagateLabel() across all three
+    // channels' banks, then rebuilds the page so the label, the subtype the
+    // bank issued, and the changed marking eligibility all become visible at
+    // once. This is the call site Section 4.6 bullets 3 and 4 were written for
+    // and which did not previously exist -- propagateLabel() was reachable from
+    // nowhere, so no template in any record had ever been confirmed.
+    void onClassConfirmRequested(int binIndex, int leadIndex, int templateIdx,
+        int annotationCode);
+
     void showPage();
     void clearPlots();
     // Save a PNG of the CURRENT page (markers are hidden by default) into the
@@ -163,6 +190,10 @@ private:
     std::vector<BinPlotWidget*> m_allPlots;
     std::vector<std::vector<BinPlotWidget*>> m_binPlots;
     std::vector<int> m_pageGlobalIdx;
+    // Parallel to m_pageGlobalIdx: which bank member each column shows. A
+    // column is now a (bin, template) pair, so every lookup that used to key on
+    // the bin index alone has to consult both.
+    std::vector<int> m_pageTemplateIdx;
 
     int m_maxLeads = 1;
     int m_binsPerPage = 16;

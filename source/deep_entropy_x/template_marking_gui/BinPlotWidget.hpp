@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // BinPlotWidget.hpp - One ECG lead + optional PPG overlay + draggable markers
 //
 // Markers:
@@ -124,6 +124,9 @@ public:
         return std::max(nFull, 2);
     }
 
+    void setTemplateIndex(int t) { m_templateIndex = t; }
+    int  templateIndex() const { return m_templateIndex; }
+
     explicit BinPlotWidget(int binIndex, int leadIndex,
         const QString& leadLabel, QWidget* parent = nullptr);
 
@@ -211,6 +214,17 @@ public:
     void setBackgroundTraces(const std::vector<std::pair<std::vector<double>, QColor>>& traces);
     std::vector<std::pair<std::vector<double>, QColor>> m_bgTraces;
 
+    // Section 4.6 bank overlay: templates 1..N-1 of this (bin, channel)'s bank,
+    // drawn on the ECG axis under the slot 0 trace.
+    //
+    // Deliberately NOT reusing m_bgTraces. That one carries the arterial
+    // context traces (ABP / ART / ART_PULM), which are foot-anchored and belong
+    // on a different axis -- and it is set from the plot-construction path,
+    // which runs BEFORE applyBinToWidget(), so sharing the member would mean
+    // whichever wrote last silently erased the other.
+    void setBankTraces(const std::vector<std::pair<std::vector<double>, QColor>>& traces);
+    std::vector<std::pair<std::vector<double>, QColor>> m_bankTraces;
+
     int  binIndex()  const { return m_binIndex; }
     int  leadIndex() const { return m_leadIndex; }
 
@@ -238,6 +252,22 @@ signals:
     void badRToggled(int binIndex, int leadIndex, bool bad);
     void badPPGToggled(int binIndex, bool bad);
 
+    // Section 4.6 class confirmation. The operator picks ONE class from the
+    // annotation_types table for the template shown in this panel; the owner
+    // turns that into tbank::propagateLabel(), which attaches the label to the
+    // template and from there to every beat assigned to it.
+    //
+    // Carries a class code only. No subtype: "the operator never types a
+    // subtype index and never sees one until the bank produces it", so the
+    // widget has no business knowing one exists.
+    //
+    // Ctrl+right-click opens the menu, because plain right-click already cycles
+    // Good/BadR/BadPPG and that gesture is in operators' hands already. A
+    // toolbar combo is the better home for this once the .ui file can be
+    // edited -- see the note in BinPlotWidget.cpp.
+    void classConfirmRequested(int binIndex, int leadIndex, int templateIdx,
+        int annotationCode);
+
 protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
@@ -245,7 +275,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
 
 private:
-	std::vector<global_interval_lines::Line> m_refLines; //global refernce lines eg. earliest Q-onset 
+    std::vector<global_interval_lines::Line> m_refLines; //global refernce lines eg. earliest Q-onset 
     int    sampleFromX(double x, double startSample, double ratio) const;
     // s is a sub-sample position: glyph landmarks are fractional.
     double xFromSample(double s, double startSample, double ratio) const;
@@ -277,6 +307,10 @@ private:
 
     int m_binIndex;
     int m_leadIndex;
+    // Which bank slot this panel is showing. Needed because a class
+    // confirmation names a TEMPLATE, and one bin now occupies several panels.
+    // Defaults to 0 so a pre-bank file behaves as it always did.
+    int m_templateIndex = 0;
     QString m_leadLabel;
     std::vector<double> m_ppg;
     std::vector<double> m_ppgIqr;
