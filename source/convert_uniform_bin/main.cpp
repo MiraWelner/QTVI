@@ -45,10 +45,12 @@ int main(int argc, char* argv[]) {
         << "  1) MESA\n"
         << "  2) BITTIUM\n"
         << "  3) CHAOS\n"
-        << "Enter number (1-3): " << std::flush;
+        << "  4) SHHS1\n"
+        << "  5) SHHS2\n"
+        << "Enter number (1-5): " << std::flush;
 
     int choice = 0;
-    if (!(std::cin >> choice) || choice < 1 || choice > 3) {
+    if (!(std::cin >> choice) || choice < 1 || choice > 5) {
         std::cerr << "Invalid choice.\n";
         return 1;
     }

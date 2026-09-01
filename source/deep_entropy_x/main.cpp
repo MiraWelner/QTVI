@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file   main.cpp
  * @brief  Entry point for the noise marking and template marking pipeline. Handles user input for dataset selection, initials, and file processing.
  */
@@ -35,13 +35,20 @@
 #include <theme/theme.h>
 
 
+// Ask the user which dataset to load. The number returned here IS the dataType
+// that load_config() maps to a data_type row in config.csv, so this menu and the
+// mapping in config_loader.cpp have to be edited together. SHHS1/SHHS2 already
+// had channel labels in apply_dataset_specific_channel_labels() and rows in the
+// config, but this menu was still pinned to three datasets, so there was no way
+// to select them.
 static int get_dataset_choice() {
-    /* Ask the user to select a MESA, Bittium, or CHAOS dataset. */
-    std::cout << "Select Dataset:\n1: MESA\n2: Bittium\n3: CHAOS\nChoice: ";
+    static constexpr int kDatasetCount = 5;
+    std::cout << "Select Dataset:\n1: MESA\n2: Bittium\n3: CHAOS\n"
+                 "4: SHHS1\n5: SHHS2\nChoice: ";
     int choice;
     if (!(std::cin >> choice)) return -1;
-    while (choice < 1 || choice > 3) {
-        std::cout << "Please enter 1, 2, or 3: ";
+    while (choice < 1 || choice > kDatasetCount) {
+        std::cout << "Please enter 1-" << kDatasetCount << ": ";
         if (!(std::cin >> choice)) return -1;
     }
     return choice;

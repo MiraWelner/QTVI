@@ -101,6 +101,24 @@ namespace {
             cfg.eeg_2_label = "NLS_EEG_NAMES_EEG_CHAN2";
             cfg.eeg_3_label = "NLS_EEG_NAMES_EEG_CHAN3";
         }
+        else if (cfg.dataset_type == "SHHS1" || cfg.dataset_type == "SHHS2") {
+            cfg.ecg_1_label = "ECG";
+            cfg.eeg_1_label = "EEG";          // C4-A1
+            cfg.eeg_2_label = "EEG(sec)";     // C3-A2
+            cfg.eog_l_label = "EOG(L)";
+            cfg.eog_r_label = "EOG(R)";
+            cfg.emg_label = "EMG";
+            cfg.flow_label = "AIRFLOW";
+            cfg.thor_label = "THOR RES";
+            cfg.abdo_label = "ABDO RES";
+            cfg.pos_label = "POSITION";
+            cfg.oxstatus_label = "OX STAT";
+            cfg.spo2_label = "SaO2";
+            cfg.hr_label = "PR";
+            cfg.ecg_2_label.clear();
+            cfg.ecg_3_label.clear();
+            cfg.ppg_label.clear();
+        }
     }
 
 
@@ -170,7 +188,9 @@ namespace {
 bool load_config(int dataType, config_entry& out) {
     /*
         Take a pointer to a config_entry and fill it with the values from the config.csv file. The return
-        bool indicates if it happened correctly, the dataType is an int that indicates which dataset to load (1 = MESA, 2 = BITTIUM, 3 = CHAOS)
+        bool indicates if it happened correctly, the dataType is an int that indicates which dataset to load
+        (1 = MESA, 2 = BITTIUM, 3 = CHAOS, 4 = SHHS1, 5 = SHHS2). This mapping is mirrored by the menu in
+        get_dataset_choice() in main.cpp -- adding a dataset means editing both.
     */
     std::ifstream file(CONFIG_PATH);
     if (!file.is_open()) {
@@ -179,7 +199,17 @@ bool load_config(int dataType, config_entry& out) {
     }
     std::string user_selected_dataset = (dataType == 1) ? "MESA"
         : (dataType == 2) ? "BITTIUM"
-        : (dataType == 3) ? "CHAOS" : "";
+        : (dataType == 3) ? "CHAOS"
+        : (dataType == 4) ? "SHHS1"
+        : (dataType == 5) ? "SHHS2" : "";
+    if (user_selected_dataset.empty()) {
+        // An out-of-range dataType (including the -1 get_dataset_choice returns
+        // on EOF or non-numeric input) used to just match no row and surface as
+        // "Error Loading config.csv", which points at the file rather than at
+        // the selection that was actually wrong.
+        std::cerr << "ERROR: unknown dataset selection " << dataType << "\n";
+        return false;
+    }
 
     // Read the header row so column names can be mapped to indices.
     std::string header;
@@ -308,5 +338,10 @@ bool load_config(int dataType, config_entry& out) {
         // the config or the manual prompt
         return ok;
     }
+    // Fell off the end of the file without matching: the dataset is known to
+    // the code but has no row in the config. Say which one, otherwise this is
+    // indistinguishable from a malformed config.
+    std::cerr << "ERROR: no row with data_type=" << user_selected_dataset
+        << " in " << CONFIG_PATH << "\n";
     return false;
 }

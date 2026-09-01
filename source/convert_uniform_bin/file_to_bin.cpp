@@ -380,6 +380,42 @@ namespace {
         return m;
     }
 
+    void repair_edf_startdate(const std::filesystem::path& path) {
+        /* SHHS EDFs exported by Compumedics wrote the start date as mm.dd.yy, so
+        "05.29.01" (29 May 2001) fails edflib's dd.mm.yy validation with
+        "startdate of recording is invalid: expected dd.mm.yy where mm should be
+        more than 00 and less than 13". edfopen_file_readonly refuses the file, so
+        nothing downstream ever runs.*/
+        std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
+        if (!f) return;   // unreadable or read-only; edfopen will say so
+
+        char raw[8] = {};
+        f.seekg(168);
+        f.read(raw, 8);
+        if (!f) return;
+
+        int a = 0, b = 0, c = 0;
+        if (std::sscanf(std::string(raw, 8).c_str(), "%d.%d.%d", &a, &b, &c) != 3)
+            return;
+
+        const bool ddmm = (a >= 1 && a <= 31) && (b >= 1 && b <= 12);
+        const bool mmdd = (b >= 1 && b <= 31) && (a >= 1 && a <= 12);
+
+        if (ddmm) return;    // already conforming (covers the ambiguous case too)
+        if (!mmdd) return;   // not a date either way; let edflib report it
+
+        char fixed[16];
+        std::snprintf(fixed, sizeof(fixed), "%02d.%02d.%02d", b, a, c);
+        f.seekp(168);
+        f.write(fixed, 8);
+        f.flush();
+
+        std::cerr << "  [edf] repaired mm.dd.yy start date in "
+            << path.filename().string() << ": "
+            << std::string(raw, 8) << " -> " << std::string(fixed, 8) << "\n";
+    }
+
+
     double edf_channel_rate(const edf_hdr_struct* hdr, int idx) {
         if (idx < 0) return 0.0;
         return (double)hdr->signalparam[idx].smp_in_datarecord /
@@ -407,13 +443,35 @@ namespace {
         std::string want = sleepExt;
         std::transform(want.begin(), want.end(), want.begin(), ::toupper);
         std::string stem = src.stem().string();
+
+        std::filesystem::path profusion, other;
         for (const auto& f :
             std::filesystem::directory_iterator(src.parent_path())) {
             std::string e = f.path().extension().string();
             std::transform(e.begin(), e.end(), e.begin(), ::toupper);
-            if (e == want && f.path().stem().string().find(stem) != std::string::npos)
-                return f.path();
+            if (e != want) continue;
+            if (f.path().stem().string().find(stem) == std::string::npos) continue;
+
+            if (contains(f.path().stem().string(), "profusion")) {
+                profusion = f.path();           // the one the parser can read
+            }
+            else if (!contains(f.path().stem().string(), "nsrr")) {
+                // Neither Profusion nor NSRR: a dataset with one unqualified XML
+                // (MESA), which is Profusion-schema anyway. Kept as the fallback
+                // so this stays a no-op for every existing dataset.
+                if (other.empty()) other = f.path();
+            }
         }
+
+        if (!profusion.empty()) return profusion;
+        if (!other.empty())     return other;
+
+        // Only an -nsrr.xml exists. Say so rather than hand back a file whose
+        // schema the caller cannot parse and let it look like "no stages".
+        std::cerr << "WARNING: only an NSRR-schema XML found for "
+            << src.filename().string()
+            << "; its <ScoredEvent> stages are not readable by the "
+            "//SleepStage parser, so no hypnogram will be written\n";
         return {};
     }
 
@@ -705,10 +763,7 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
 // outPath lets a caller name the segment (e.g. <stem>_0.bin). Every channel is
 // sliced to the same wall-clock window on its own native grid, so the two time
 // axes (native raw / upsampled) stay identical across the segment set.
-void make_binfile_edf_window(const std::filesystem::path& path,
-    const config_entry& cfg,
-    const std::filesystem::path& outPath,
-    double winStartSec, double winEndSec)
+void make_binfile_edf_window(const std::filesystem::path& path, const config_entry& cfg, const std::filesystem::path& outPath,  double winStartSec, double winEndSec)
 {
     char filebuf[1 << 16];
     std::ofstream out;
@@ -723,9 +778,11 @@ void make_binfile_edf_window(const std::filesystem::path& path,
     out.write(zeroes.data(), HEADER_SIZE);
 
     auto hdr = std::make_unique<edf_hdr_struct>();
+    repair_edf_startdate(path);
     if (edfopen_file_readonly(path.string().c_str(), hdr.get(),
         EDFLIB_READ_ALL_ANNOTATIONS)) {
-        std::cerr << "ERROR: cannot open EDF " << path << "\n";
+        std::cerr << "ERROR: cannot open EDF " << path
+            << " (edflib code " << hdr->filetype << ")\n";
         out.close();
         std::filesystem::remove(outPath);
         return;

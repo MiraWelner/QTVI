@@ -27,6 +27,13 @@ inline const QColor COLOR_RAW_SCATTER{ 0, 0, 0 };   // black
 inline const QColor COLOR_ART{ 150, 40, 40 };       // dark red
 inline const QColor COLOR_ART_PULM{ 40, 60, 150 };  // dark blue
 inline const QColor COLOR_VCG{ 75, 0, 130 };        // dark indigo
+// SHHS respiratory / oximetry traces. AIRFLOW, THOR and ABDO share one chart,
+// so these only need to be distinguishable from each other -- they are never
+// drawn alongside the ECG/PPG palette above.
+inline const QColor COLOR_FLOW{ 0, 100, 130 };      // dark teal-blue
+inline const QColor COLOR_THOR{ 120, 70, 0 };       // dark amber
+inline const QColor COLOR_ABDO{ 90, 0, 120 };       // dark purple
+inline const QColor COLOR_SPO2{ 0, 90, 60 };        // dark green
 
 // ---------------------------------------------------------------------------
 // Qt-side lookups into the annotation table
@@ -106,8 +113,9 @@ inline bool is_missing_signal(const QVector<double>& data) {
 
 inline bool sleep_data_present(const QVector<double>& sleepStages) {
     /*
-    * Currently, sleep data is only in the MESA, and in all MESA files. This is just an extra check
-    * in case there is a broken MESA file.
+    * Sleep staging comes from the dataset's annotation file: MESA and SHHS1/SHHS2 both ship
+    * one, Bittium and CHAOS do not. This is the check for a file whose staging is absent or
+    * was written as the missing-channel placeholder.
     */
     return  !sleepStages.isEmpty() && !(sleepStages.size() == 1 && sleepStages[0] == -1.0);
 }

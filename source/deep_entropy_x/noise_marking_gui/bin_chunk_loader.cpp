@@ -407,6 +407,8 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
     loadSignal(m_art, CH_ART); loadSignal(m_artPulm, CH_ART_PULM);
     loadSignal(m_temp, CH_TEMP);    loadSignal(m_marker, CH_MARKER);
     loadSignal(m_pacemaker, CH_PACEMAKER_EVENT);
+    loadSignal(m_flow, CH_FLOW);    loadSignal(m_thor, CH_THOR);
+    loadSignal(m_abdo, CH_ABDO);    loadSignal(m_spo2, CH_SPO2);
 
     // Powerline notch (config-driven Hz, toggled by the repurposed "Notch
     // Filter" checkbox). Applied once per chunk load, zero-phase, so both the
@@ -435,6 +437,8 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
     loadRaw(m_artRaw, CH_ART); loadRaw(m_artPulmRaw, CH_ART_PULM);
     loadRaw(m_tempRaw, CH_TEMP);   loadRaw(m_markerRaw, CH_MARKER);
     loadRaw(m_pacemakerRaw, CH_PACEMAKER_EVENT);
+    loadRaw(m_flowRaw, CH_FLOW);   loadRaw(m_thorRaw, CH_THOR);
+    loadRaw(m_abdoRaw, CH_ABDO);   loadRaw(m_spo2Raw, CH_SPO2);
 
     // The raw (t, v) block is stored with x = row-index time (row index /
     // grid rate), the same clock the upsampled block uses, so the raw scatter
@@ -461,6 +465,9 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
         if (!missing) m_activeChannels.insert(label);
         };
     const bool bittium = (m_cfg.dataset_type == "BITTIUM");
+    // SHHS1 and SHHS2 differ in channel content and rates, never in chart
+    // layout, so every layout check for them is this pair.
+    const bool shhs = (m_cfg.dataset_type == "SHHS1" || m_cfg.dataset_type == "SHHS2");
 
     markActive("ECG1", m_ecg1);
     markActive("ECG2", m_ecg2);
@@ -476,6 +483,13 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
 
     if (ui->abp_axis)
         ui->abp_axis->setVisible(!bittium && !is_missing_signal(m_abp));
+    // SaO2 has its own chart at the bottom of the main plot column. It is set
+    // here rather than inside the per-dataset branches below because it is the
+    // one non-markable chart that is NOT a shared slot: no other dataset has
+    // anything to put in it, so leaving it visible would cost a stretch slot in
+    // main_plots and show an empty chart.
+    if (ui->sao2_axis)
+        ui->sao2_axis->setVisible(shhs && !is_missing_signal(m_spo2));
     if (ui->ppg_ampogram_axis)
         ui->ppg_ampogram_axis->setVisible(!is_missing_signal(m_ppg));
 
@@ -486,6 +500,19 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
             ui->hyp_resp_axis->setVisible(!is_missing_signal(m_marker));
         if (ui->pacemaker_axis)
             ui->pacemaker_axis->setVisible(!is_missing_signal(m_pacemaker));
+    }
+    else if (shhs) {
+        // SHHS has no CVP, RESP, marker or ABP channel, and its sleep staging
+        // owns hyp_resp_axis, so the two remaining non-markable slots carry the
+        // PSG context a reviewer wants while marking ECG noise: cvp_eeg_axis
+        // takes AIRFLOW/THOR/ABDO together, pacemaker_axis takes SaO2. The chart
+        // titles come from determine_which_nonmarkable_charts_to_plot, so the
+        // slot NAMES are the only thing still saying CVP/EEG and PACEMAKER.
+        const bool anyResp = !is_missing_signal(m_flow)
+            || !is_missing_signal(m_thor) || !is_missing_signal(m_abdo);
+        if (ui->cvp_eeg_axis)   ui->cvp_eeg_axis->setVisible(anyResp);
+        if (ui->pacemaker_axis) ui->pacemaker_axis->setVisible(false);   // BITTIUM-only chart
+        if (ui->hyp_resp_axis)  ui->hyp_resp_axis->setVisible(sleep_data_present(m_sleepStages));
     }
     else {
         if (!anyAccel) markActive("ABP", m_abp);

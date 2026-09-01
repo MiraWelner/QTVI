@@ -643,6 +643,31 @@ void noise_marking_gui::setupHypnogram() {
         m_hypnoStageSeries.append(s);
     }
 
+    // The five rows above are the AASM collapse (N3 and N4 merged, REM last),
+    // which is what MESA bins already carry. Compumedics staging -- what the
+    // SHHS annotation XML actually contains -- numbers the stages 0=Wake,
+    // 1=N1, 2=N2, 3=N3, 4=N4, 5=REM, 9=unscored. A file whose staging was NOT
+    // collapsed on the way into the .bin therefore loses every REM epoch here
+    // and draws N4 on the row LABELLED REM, which looks plausible rather than
+    // broken. The collapse belongs in file_to_bin next to the XML parse, so
+    // this reports the mismatch instead of guessing a remap at draw time.
+    // (Codes below 0 are placeholder padding and are not counted.)
+    {
+        int unplotted = 0;
+        int firstCode = 0;
+        for (double v : m_sleepStages) {
+            const int code = static_cast<int>(v);
+            if (code > 4) {
+                if (unplotted++ == 0) firstCode = code;
+            }
+        }
+        if (unplotted > 0)
+            std::cerr << "[hypnogram] " << m_cfg.dataset_type << ": " << unplotted
+            << " of " << m_sleepStages.size() << " epochs in this chunk carry a "
+            "stage code above 4 (first: " << firstCode << ") and are not drawn -- "
+            "staging may not be collapsed to Wake/N1/N2/N3/REM\n";
+    }
+
     for (QAbstractAxis* axis : chart->axes()) {
         chart->removeAxis(axis);
     }
@@ -828,7 +853,17 @@ void noise_marking_gui::plot_nonmarkable(QChartView* view, const QString& title,
 
 void noise_marking_gui::determine_which_nonmarkable_charts_to_plot() {
     /**
-    * @brief Plot non-markable signals (CVP, RESP, PACEMAKER) based on dataset type.
+    * @brief Fill the three shared non-markable slots (cvp_eeg_axis, hyp_resp_axis,
+    *        pacemaker_axis), choosing what goes in each by dataset:
+    *        BITTIUM -> temperature / marker / pacemaker events,
+    *        CHAOS   -> CVP / RESP,
+    *        SHHS1|SHHS2 -> AIRFLOW+THOR+ABDO / (hypnogram) / -- ,
+    *        MESA    -> (hypnogram) only.
+    *        SHHS's SaO2 is NOT one of these three: it has its own sao2_axis at
+    *        the bottom of the main plot column and is plotted here too, at the
+    *        end of the SHHS branch.
+    *        Visibility for the same slots is set in loadChunkFromFile; the two
+    *        must agree or a chart is shown empty (or hidden with data in it).
     */
     if (m_cfg.dataset_type == "BITTIUM") {
         if (ui->cvp_eeg_axis && !is_missing_signal(m_temp))
@@ -848,6 +883,39 @@ void noise_marking_gui::determine_which_nonmarkable_charts_to_plot() {
         if (ui->hyp_resp_axis && !is_missing_signal(m_resp))
             plot_nonmarkable(ui->hyp_resp_axis, "RESP",
                 { { &m_resp, COLOR_RESP, &m_respRaw } }, channel_upsampled_rates[CH_RESP]);
+    }
+    if (m_cfg.dataset_type == "SHHS1" || m_cfg.dataset_type == "SHHS2") {
+        // AIRFLOW, THOR RES and ABDO RES share cvp_eeg_axis. They are all in
+        // arbitrary units, so one y axis is not a unit clash -- the shape is
+        // what a reviewer reads off this chart -- but they must share a TIME
+        // base, because plot_nonmarkable takes a single rate for the whole
+        // chart. Config gives the three the same upsample rate in every SHHS
+        // row so far; a channel that disagrees is left out rather than drawn
+        // at the wrong times.
+        const float respRate = (channel_upsampled_rates[CH_THOR] > 0.0f)
+            ? channel_upsampled_rates[CH_THOR]
+            : channel_upsampled_rates[CH_FLOW];
+        QList<markable_data_series> resp;
+        auto addResp = [&](const QVector<double>& sig, const QVector<QPointF>& raw,
+            int ch, const QColor& color) {
+                if (is_missing_signal(sig)) return;
+                if (channel_upsampled_rates[ch] != respRate) {
+                    std::cerr << "[shhs] channel " << ch << " upsampled to "
+                        << channel_upsampled_rates[ch] << " Hz but the respiratory "
+                        "chart is on " << respRate << " Hz; not plotted\n";
+                    return;
+                }
+                resp.append({ &sig, color, &raw });
+            };
+        addResp(m_flow, m_flowRaw, CH_FLOW, COLOR_FLOW);
+        addResp(m_thor, m_thorRaw, CH_THOR, COLOR_THOR);
+        addResp(m_abdo, m_abdoRaw, CH_ABDO, COLOR_ABDO);
+        if (ui->cvp_eeg_axis && !resp.isEmpty() && respRate > 0.0f)
+            plot_nonmarkable(ui->cvp_eeg_axis, "AIRFLOW / THOR / ABDO", resp, respRate);
+
+        if (ui->sao2_axis && !is_missing_signal(m_spo2))
+            plot_nonmarkable(ui->sao2_axis, "SaO2",
+                { { &m_spo2, COLOR_SPO2, &m_spo2Raw } }, channel_upsampled_rates[CH_SPO2]);
     }
 }
 
@@ -915,6 +983,10 @@ void noise_marking_gui::handle_data_plot() {
         wipe_chart(ui->cvp_eeg_axis->chart(), keepFor(ui->cvp_eeg_axis));
     if (ui->pacemaker_axis)
         wipe_chart(ui->pacemaker_axis->chart(), keepFor(ui->pacemaker_axis));
+    // Every chart redrawn per window has to be wiped here or its series pile up
+    // across redraws and the trace stops tracking the scroll position.
+    if (ui->sao2_axis)
+        wipe_chart(ui->sao2_axis->chart(), keepFor(ui->sao2_axis));
 
     auto plotMarkable = [&](const QString& label) {
         if (!isChannelActive(label)) return;

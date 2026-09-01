@@ -247,11 +247,17 @@ private:
     // --- Signal data (upsampled, 1 kHz unless otherwise noted) ---
     QVector<double> m_ecg1, m_ecg2, m_ecg3, m_ppg, m_accelX, m_accelY, m_accelZ, m_resp;
     QVector<double> m_cvp, m_abp, m_temp, m_marker, m_pacemaker, m_sleepStages, m_art, m_artPulm;
+    // SHHS respiratory effort / airflow / oximetry. Non-markable context
+    // channels: loaded for every dataset (an absent channel comes back as the
+    // missing-channel placeholder and costs one read), but only plotted on the
+    // SHHS branch of determine_which_nonmarkable_charts_to_plot().
+    QVector<double> m_flow, m_thor, m_abdo, m_spo2;
 
 
     QVector<QPointF> m_ecg1Raw, m_ecg2Raw, m_ecg3Raw, m_ppgRaw, m_abpRaw;
     QVector<QPointF> m_accelXRaw, m_accelYRaw, m_accelZRaw, m_respRaw, m_cvpRaw;
     QVector<QPointF> m_tempRaw, m_markerRaw, m_pacemakerRaw, m_artRaw, m_artPulmRaw;
+    QVector<QPointF> m_flowRaw, m_thorRaw, m_abdoRaw, m_spo2Raw;
     QString m_binFilePath;
 
     static constexpr uint32_t BIN_HEADER_VERSION = 1;   // header format version (offset 0)

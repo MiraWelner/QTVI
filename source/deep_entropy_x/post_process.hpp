@@ -201,9 +201,11 @@ namespace post_process_detail {
         // acquisition path.
         //
         // CHAOS ONLY: the hardware lag this measures and corrects is a
-        // property of CHAOS's acquisition path specifically. MESA and
-        // BITTIUM don't have it, so measuring and shifting on them would
-        // apply a correction for a lag that isn't actually there.
+        // property of CHAOS's acquisition path specifically. MESA,
+        // BITTIUM and SHHS don't have it, so measuring and shifting on
+        // them would apply a correction for a lag that isn't actually
+        // there. (SHHS additionally has no PPG or arterial channel to
+        // measure a lag against, so there is nothing here for it to do.)
         channel_offset::set(cfg.quality_metric, stem);
         channel_offset::Result chOffPpg, chOffArt;
         const bool wantChannelOffset = (cfg.dataset_type == "CHAOS");

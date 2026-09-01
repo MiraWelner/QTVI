@@ -70,6 +70,27 @@ void apply_dataset_specific_channel_labels(config_entry& cfg) {
         cfg.eeg_2_label = "NLS_EEG_NAMES_EEG_CHAN2";
         cfg.eeg_3_label = "NLS_EEG_NAMES_EEG_CHAN3";
     }
+    else if (cfg.dataset_type == "SHHS1" || cfg.dataset_type == "SHHS2") {
+        // EDF labels from the NSRR montage pages. Identical across both visits;
+        // only the sampling rates differ, and those come from config.csv.
+        cfg.ecg_1_label = "ECG";
+        cfg.eeg_1_label = "EEG";          // C4-A1
+        cfg.eeg_2_label = "EEG(sec)";     // C3-A2
+        cfg.eog_l_label = "EOG(L)";
+        cfg.eog_r_label = "EOG(R)";
+        cfg.emg_label = "EMG";
+        cfg.flow_label = "AIRFLOW";
+        cfg.thor_label = "THOR RES";
+        cfg.abdo_label = "ABDO RES";
+        cfg.pos_label = "POSITION";
+        cfg.oxstatus_label = "OX STAT";
+        cfg.spo2_label = "SaO2";
+        cfg.hr_label = "PR";
+        cfg.ecg_2_label.clear();
+        cfg.ecg_3_label.clear();
+        cfg.ppg_label.clear();
+    }
+
 }
 
 
@@ -85,7 +106,9 @@ bool load_config(int dataType, config_entry& out) {
     }
     std::string user_selected_dataset = (dataType == 1) ? "MESA"
         : (dataType == 2) ? "BITTIUM"
-        : (dataType == 3) ? "CHAOS" : "";
+        : (dataType == 3) ? "CHAOS"
+        : (dataType == 4) ? "SHHS1"
+        : (dataType == 5) ? "SHHS2" : "";
 
     // Read the header row so column names can be mapped to indices.
     std::string header;
