@@ -30,6 +30,23 @@
 #include <chrono>
 #include <cstdio>
 
+// ---- Panel grid caps for one page --------------------------------------
+// A page shows at most kMaxGridCols panels across and kMaxGridRows panels
+// down, so never more than kMaxPanelsPerPage templates at once. Both layout
+// paths obey them, because they lay panels out differently and only one of
+// them wraps:
+//   - compact (single-lead) wraps its panels into the kMaxGridRows x
+//     kMaxGridCols box, so its page budget is the PANEL count.
+//   - lead-per-row uses one row per lead (plus the VCG row), so its page
+//     budget is the COLUMN count, capped at kMaxGridCols, and kMaxGridRows
+//     bounds the row stack.
+// Changing the numbers here changes both paths; nothing else needs editing.
+namespace {
+    constexpr int kMaxGridCols = 5;
+    constexpr int kMaxGridRows = 4;
+    constexpr int kMaxPanelsPerPage = kMaxGridCols * kMaxGridRows;   // 20
+}
+
 // ========================================================================
 // Construction
 // ========================================================================
@@ -211,7 +228,6 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         const std::vector<double>* trace = nullptr;
         int nMembers = 0;
         uint8_t labelCode = tbank::kUnlabeled;
-        int subtype = -1;
 
         if (templateIdx < bank.size()
             && !bank.templates[templateIdx].tmpl.empty()
@@ -221,7 +237,8 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             trace = &t.tmpl;
             nMembers = t.memberCount();
             labelCode = t.label_code;
-            subtype = t.subtype;
+            // subtype is no longer read here: tbank::letterRanks applies the
+            // confirmed-subtype rule itself, from the same BankTemplate.
         }
         else if (templateIdx == 0) {
             const std::vector<double>* raw =
@@ -242,7 +259,6 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         // the template is confirmed, the class replaces PQRST and the letter
         // tracks the subtype index the bank issued (PVC_A, PVC_B).
         QString cls = "PQRST";
-        int letterIdx = templateIdx;
         if (labelCode != tbank::kUnlabeled) {
             switch (labelCode) {
             case tbank::kCodePvc:       cls = "PVC";   break;
@@ -251,14 +267,32 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             case tbank::kCodeMinorNoise:cls = "NOISE"; break;
             default: cls = QString("CODE%1").arg(labelCode); break;
             }
-            if (subtype > 0) letterIdx = subtype - 1;
+        }
+
+        // THE LETTER COMES FROM tbank::letterRanks, the same function the
+        // morphology CSV/bin writers use. It used to be the raw bank slot
+        // (`letterIdx = templateIdx`), which skipped letters whenever a lower
+        // slot was empty -- a bin showing slots 0, 1, 5 read A, B, F while the
+        // CSV called that third template C. One template, two names. The
+        // shared function also handles the confirmed-subtype case, so the
+        // local subtype override is gone with it.
+        int letterIdx = 0;
+        if (templateIdx < bank.size()) {
+            const std::vector<uint8_t> letters = tbank::letterRanks(bank);
+            if (static_cast<size_t>(templateIdx) < letters.size())
+                letterIdx = letters[static_cast<size_t>(templateIdx)];
         }
         const QChar letter = QChar('A' + (letterIdx % 26));
 
-        QString lbl = QString("%1 %2_%3").arg(kNames[c]).arg(cls).arg(letter);
-        if (nMembers > 0) lbl += QString(" n=%1").arg(nMembers);
+        // The count is NOT appended to the label any more. It used to read
+        // "Ch1 PQRST_A n=365", which put a per-TEMPLATE number inside the
+        // name and left the panel's separate beat figure to report the whole
+        // bin -- two counts of different things, one line, neither labelled
+        // as to which. The name is now just the name; the count travels on
+        // Lead::nMembers and the widget prints it as the ECG beat count.
+        const QString lbl = QString("%1 %2_%3").arg(kNames[c]).arg(cls).arg(letter);
 
-        out.push_back({ trace, c, lbl });
+        out.push_back({ trace, c, lbl, nMembers });
     }
     return out;
 }
@@ -365,11 +399,19 @@ std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) 
     return eligible;
 }
 
+// Rows x columns for n compact panels, inside the kMaxGridRows x kMaxGridCols
+// box. Fill widthwise first (a row of 5 before a second row starts), so a page
+// with few panels stays one wide row rather than a tall thin stack.
+//
+// RETURNS ROWS FIRST, AND THE CALLER USES THE ROW COUNT. This used to be a
+// square-ish grid that put the LARGER dimension second and showPage() then
+// read that second value as the row count -- so a 16-panel page laid out 4x4
+// either way and the mislabelling never showed. It shows the moment the box
+// stops being square, hence the explicit note.
 std::pair<int, int> TemplateViewerWindow::compactGrid(int n) {
     if (n <= 0) return { 1, 1 };
-    int cols = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n))));
-    int rows = static_cast<int>(std::ceil(static_cast<double>(n) / cols));
-    if (rows > cols) std::swap(rows, cols);
+    const int cols = std::min(kMaxGridCols, n);
+    const int rows = std::min(kMaxGridRows, (n + cols - 1) / cols);
     return { rows, cols };
 }
 
@@ -443,9 +485,12 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
         int nl = (int)leadsForBin(b).size();
         if (nl > m_maxLeads) m_maxLeads = nl;
     }
-    m_binsPerPage = (m_maxLeads <= 1) ? 16 : 4;
-    // Compact mode packs single-lead bins tightly, so it affords more columns.
-    m_maxColsPerPage = (m_maxLeads <= 1) ? 16 : 8;
+    // Compact mode wraps its panels, so a page may hold the whole box
+    // (kMaxGridRows x kMaxGridCols panels). Lead-per-row mode spends a whole
+    // column on each bin and stacks its leads down the rows, so its budget is
+    // the column cap itself.
+    m_binsPerPage = (m_maxLeads <= 1) ? kMaxPanelsPerPage : kMaxGridCols;
+    m_maxColsPerPage = (m_maxLeads <= 1) ? kMaxPanelsPerPage : kMaxGridCols;
 
     m_currentPage = 0;
     buildPages();
@@ -809,28 +854,6 @@ void TemplateViewerWindow::showPage() {
 
     bool compact = (m_maxLeads <= 1);
 
-    int gridRows;
-    if (compact) {
-        auto [r, c] = compactGrid(count);
-        (void)r;
-        gridRows = c;
-    }
-    else {
-        // One extra row for the VCG panel, but only if some bin on this page
-        // can actually produce one (all three ECG channels present with an R
-        // column). Without this the row count equals the lead count and there
-        // is no row index left for the VCG to occupy.
-        bool anyVcg = false;
-        for (int k = start; k < end && !anyVcg; ++k)
-            anyVcg = !vcg_avg::derivedTraceOnChannelAxis(
-                m_bins[k], 0, vcg::DerivedLead::VectorMagnitude).empty();
-        gridRows = m_maxLeads + (anyVcg ? 1 : 0);
-        // Note: this probe throws its trace away and the per-bin loop below
-        // recomputes the same thing for the same bins. If this lap is large,
-        // that duplication is the first thing to remove.
-        lap("anyVcg probe");
-    }
-
     // ---- expand this page's bins into (bin, template) COLUMNS -------------
     // A column used to be a bin. It is now a bin plus a bank member, so a bin
     // holding three morphologies occupies three adjacent columns and the sinus
@@ -857,6 +880,38 @@ void TemplateViewerWindow::showPage() {
                 if (m_bins[start + i].ecg_bank[c].size() > 1) { ++withBanks; break; }
         std::fprintf(stderr, "[bank-view] page bins=%d columns=%d "
             "bins_with_multi_template_bank=%d\n", count, nCols, withBanks);
+    }
+
+    // ---- row count -------------------------------------------------------
+    // Computed HERE, not before the expansion above, because compact mode
+    // wraps PANELS and a bin can contribute several. Sizing the wrap from the
+    // bin count let a page with banks overflow past kMaxGridCols columns while
+    // still reporting a legal grid.
+    int gridRows;
+    if (compact) {
+        // Not `auto [rows, cols]`: `cols` is already the (bin, template)
+        // vector above, and a structured binding would shadow it.
+        const std::pair<int, int> rc = compactGrid(nCols);
+        gridRows = std::max(1, rc.first);   // .second is implied by the wrap
+    }
+    else {
+        // One extra row for the VCG panel, but only if some bin on this page
+        // can actually produce one (all three ECG channels present with an R
+        // column). Without this the row count equals the lead count and there
+        // is no row index left for the VCG to occupy.
+        bool anyVcg = false;
+        for (int k = start; k < end && !anyVcg; ++k)
+            anyVcg = !vcg_avg::derivedTraceOnChannelAxis(
+                m_bins[k], 0, vcg::DerivedLead::VectorMagnitude).empty();
+        // Capped like the compact path. Three leads plus VCG already sits at
+        // the cap; a fourth lead would drop the VCG row rather than grow the
+        // stack, and vcgRowWanted below (gridRows > m_maxLeads) agrees with
+        // that on its own, so the two cannot disagree about which row exists.
+        gridRows = std::min(kMaxGridRows, m_maxLeads + (anyVcg ? 1 : 0));
+        // Note: this probe throws its trace away and the per-bin loop below
+        // recomputes the same thing for the same bins. If this lap is large,
+        // that duplication is the first thing to remove.
+        lap("anyVcg probe");
     }
 
     m_binPlots.resize(nCols);
@@ -934,12 +989,21 @@ void TemplateViewerWindow::showPage() {
             const std::vector<double> ppgIqr = hasPPG
                 ? normalize_features::scale_array_by_ref(b.ppg_template_iqr, m_pulseGlobalRef[0])
                 : empty;
-            // Per-channel beat count for this widget's lead + the bin's
-            // PPG count. Both are 0 when the channel is absent, which
-            // suppresses that half of the title suffix.
-            const uint64_t nEcgBeats = (c == 0) ? b.ch1_n_beats_raw
+            // ECG beats for THIS TEMPLATE, not for the bin. Lead::nMembers is
+            // the bank member's own beat count; it is 0 only on the pre-bank
+            // fallback path (slot 0 of a bin whose bank never arrived), where
+            // the bin total is the only count that exists and the template IS
+            // the whole bin, so the two agree.
+            //
+            // The PPG count stays per-bin because there is only one PPG
+            // template per bin -- the bank separates ECG morphologies, not
+            // pulses -- so every column of a bin reports the same one.
+            const uint64_t nEcgBinTotal = (c == 0) ? b.ch1_n_beats_raw
                 : (c == 1) ? b.ch2_n_beats_raw
                 : b.ch3_n_beats_raw;
+            const uint64_t nEcgBeats = (leads[li].nMembers > 0)
+                ? static_cast<uint64_t>(leads[li].nMembers)
+                : nEcgBinTotal;
 
             // Per-subject normalized traces for on-screen display.
             // ECG:   sample / Global_Ref_ecg(ch)
@@ -999,11 +1063,43 @@ void TemplateViewerWindow::showPage() {
                 ? normalize_ppg_or_similar(artPSrc, b.art_pulm_onset, 3)
                 : artPSrc;
 
+            // PLOT WIDTH BEFORE THE TRACES. setData derives the drawn width
+            // from this, so it has to be set first. The median RR comes from
+            // alignment via the template file's in-memory struct; the beat
+            // matrix itself stays framed on the bin's longest RR so that no
+            // beat is ever clipped, and this only narrows what is DRAWN.
+            {
+                const ChannelTemplateData* src[3] = { &b.ch1, &b.ch2, &b.ch3 };
+                const int ci = (c >= 0 && c <= 2) ? c : 0;
+                pw->setMedianRr(src[ci]->median_rr_samples);
+            }
+
             // Traces only. Every marker and autodetect column arrives via the
             // single applyBinToWidget() call below.
+            // PPG COUNT COMES FROM THE GROUP, NOT THE BIN.
+            //
+            // b.ppg_n_beats is a relic of the per-channel split: one bin-wide
+            // pulse count, so every column of a bin reported the same number
+            // and a split looked as though it had ignored PPG entirely. Under
+            // the joint partition the pulse cohort belongs to the GROUP -- an
+            // ECG split carries its PPG beats with it -- and siblings differ.
+            //
+            // n_ppg_members is -1 on a bank that was not built jointly, and the
+            // bin field is used then. That fallback is the LAST reader of
+            // b.ppg_n_beats and goes away with it once every path is joint.
+            int nPpgForColumn = -1;
+            {
+                const int ti = (li < (int)m_pageTemplateIdx.size())
+                    ? m_pageTemplateIdx[li] : 0;
+                const tbank::TemplateBank& bk = b.ecg_bank[(c >= 0 && c <= 2) ? c : 0];
+                if (ti >= 0 && ti < bk.size())
+                    nPpgForColumn = bk.templates[ti].n_ppg_members;
+            }
+            if (nPpgForColumn < 0)
+                nPpgForColumn = static_cast<int>(b.ppg_n_beats);
+
             pw->setData(ppgN, ppgIqr, ecgN, ecgIqr, rPeak,
-                static_cast<int>(nEcgBeats),
-                static_cast<int>(b.ppg_n_beats));
+                static_cast<int>(nEcgBeats), nPpgForColumn);
 
             pw->setHasPPG(hasPPG);
 
@@ -1735,7 +1831,17 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
     if (tp.tmpl.empty()) return;
 
     const int anchor = static_cast<int>(currentAnchor());
-    if (tp.markers_by_anchor.find(anchor) == tp.markers_by_anchor.end()) {
+    // SEEDED ON CONTENT, NOT ON KEY PRESENCE. This used to test
+    // markers_by_anchor.find(anchor) == end(). But marks() is operator[], so
+    // any read of this template's marker set -- from the subsequent-move
+    // propagation loop, or anywhere else that touches a bin it is not
+    // displaying -- inserted an empty all -1 entry, this test then reported
+    // "already seeded", and auto-detection never ran. The template drew with no
+    // fiducial bars at all and serialization persisted the empty set, so a
+    // reload did not recover. Slot 0 was unaffected because it draws from the
+    // BIN's marker set, which seed_all always populates -- which is exactly why
+    // this only ever showed up on the non-_A columns.
+    if (!tp.hasDetectedMarks(anchor)) {
         // r_col comes from the template when it has one, otherwise from the
         // bin's channel: every beat in the bank was aligned on the same R
         // column by construction, so the bin's value is correct rather than a
@@ -1745,6 +1851,23 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
             tp.marks(anchor));
     }
     const tbank::BankMarkerSet& mk = tp.marks(anchor);
+
+    // ---- EVERY NON-ECG MARKER COMES FROM THE BIN --------------------------
+    // applyBinToWidget FIRST, then the seven ECG bars are overridden below.
+    //
+    // This function used to set the ECG markers and nothing else, so a bank
+    // column got no PPG markers at all -- no onset, peak, dicrotic, notch or
+    // end -- and none of the arterial ones either. Only slot 0 went through
+    // applyBinToWidget, which is why the fiducials appeared on the _A column
+    // and nowhere else. The PPG trace was drawn on every column the whole time;
+    // it was only the markers that were missing.
+    //
+    // Delegating rather than duplicating the list matters: there is ONE PPG
+    // template per bin, so every column of a bin must show the SAME pulse
+    // markers. Copying the twenty-odd setMarker lines here would let the two
+    // lists drift, and a bin whose columns disagreed about where its own
+    // dicrotic notch sits would be worse than one with no notch at all.
+    applyBinToWidget(pw, b);
 
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
     pw->setMarker(BinPlotWidget::EcgPPeak, mk.p_peak);
@@ -1819,6 +1942,27 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
     }
 }
 
+// The bank-column counterpart of refreshBinMarkers. Repaints only the columns
+// showing (binIdx, templateIdx), because a bank slot's bars live in that
+// template's own BankMarkerSet and applyBinToWidget would draw the BIN's set
+// over them -- the sinus landmarks, on an ectopic waveform.
+void TemplateViewerWindow::refreshBankMarkers(int binIdx, int templateIdx) {
+    if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
+    if (templateIdx <= 0) { refreshBinMarkers(binIdx); return; }
+
+    for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
+        if (m_pageGlobalIdx[li] != binIdx) continue;
+        if (li >= (int)m_pageTemplateIdx.size()) continue;
+        if (m_pageTemplateIdx[li] != templateIdx) continue;
+        // Each widget in the column is one lead, and a bank is per lead, so the
+        // widget's own leadIndex() selects the bank to draw from -- not the
+        // dragged lead, which would paint lead 1's bars onto lead 2's panel.
+        for (auto* pw : m_binPlots[li])
+            applyBankTemplateToWidget(pw, m_bins[binIdx],
+                pw->leadIndex(), templateIdx);
+    }
+}
+
 // Slot-aware entry point. A drag on a sub-template column must land in that
 // template's BankMarkerSet, not in the bin's -- the bin's set describes sinus,
 // and writing a PVC's Q-onset into it would corrupt the sinus landmarks for
@@ -1833,19 +1977,120 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
 
     tbank::TemplateBank& bank = m_bins[binIdx].ecg_bank[leadIdx];
     if (templateIdx < 0 || templateIdx >= bank.size()) return;
-    tbank::BankMarkerSet& mk =
-        bank.templates[templateIdx].marks(static_cast<int>(currentAnchor()));
 
+    const int anchor = static_cast<int>(currentAnchor());
+
+    // Read/write one landmark of one bank slot. Taken as lambdas over the bank
+    // rather than written inline, because the subsequent-move loop below has to
+    // perform the same access on a DIFFERENT bin's bank and the two must not
+    // drift -- the same shape onMarkerMoved uses for the bin's marker set.
+    auto bankGet = [&](tbank::TemplateBank& bk) -> int {
+        tbank::BankMarkerSet& m = bk.templates[templateIdx].marks(anchor);
+        switch (marker) {
+        case BinPlotWidget::EcgPBegin: return m.p_begin;
+        case BinPlotWidget::EcgPPeak:  return m.p_peak;
+        case BinPlotWidget::EcgQBegin: return m.q_begin;
+        case BinPlotWidget::EcgSEnd:   return m.s_end;
+        case BinPlotWidget::EcgTBegin: return m.t_begin;
+        case BinPlotWidget::EcgTEnd:   return m.t_end;
+        }
+        return -1;
+        };
+    auto bankSet = [&](tbank::TemplateBank& bk, int v) {
+        tbank::BankMarkerSet& m = bk.templates[templateIdx].marks(anchor);
+        switch (marker) {
+        case BinPlotWidget::EcgPBegin: m.p_begin = v; break;
+        case BinPlotWidget::EcgPPeak:  m.p_peak = v; break;
+        case BinPlotWidget::EcgQBegin: m.q_begin = v; break;
+        case BinPlotWidget::EcgSEnd:   m.s_end = v; break;
+        case BinPlotWidget::EcgTBegin: m.t_begin = v; break;
+        case BinPlotWidget::EcgTEnd:   m.t_end = v; break;
+            // EcgRPeak has no bar and is not draggable: it is the alignment
+            // anchor, and moving it would invalidate every other landmark's
+            // coordinate.
+        }
+        };
+
+    // Anything not in the six cases above is not a bank-draggable landmark, so
+    // return before writing rather than silently no-op'ing inside bankSet and
+    // then running the propagation loop for a marker nobody moved.
     switch (marker) {
-    case BinPlotWidget::EcgPBegin: mk.p_begin = newIdx; break;
-    case BinPlotWidget::EcgPPeak:  mk.p_peak = newIdx; break;
-    case BinPlotWidget::EcgQBegin: mk.q_begin = newIdx; break;
-    case BinPlotWidget::EcgSEnd:   mk.s_end = newIdx; break;
-    case BinPlotWidget::EcgTBegin: mk.t_begin = newIdx; break;
-    case BinPlotWidget::EcgTEnd:   mk.t_end = newIdx; break;
-        // EcgRPeak has no bar and is not draggable: it is the alignment anchor,
-        // and moving it would invalidate every other landmark's coordinate.
+    case BinPlotWidget::EcgPBegin:
+    case BinPlotWidget::EcgPPeak:
+    case BinPlotWidget::EcgQBegin:
+    case BinPlotWidget::EcgSEnd:
+    case BinPlotWidget::EcgTBegin:
+    case BinPlotWidget::EcgTEnd:  break;
     default: return;
+    }
+
+    const int oldIdx = bankGet(bank);
+    bankSet(bank, newIdx);
+
+    // ---- subsequent-move, BY SLOT INDEX ---------------------------------
+    // Bank columns used to ignore m_moveMode entirely: this handler wrote one
+    // field and returned, so only slot-0 drags ever propagated and a drag on a
+    // B or C column moved exactly one bar. It now follows the same two modes
+    // the bin's markers do.
+    //
+    // READ THIS BEFORE TRUSTING IT ACROSS BINS. "The same template" here means
+    // THE SAME SLOT NUMBER, and slot numbers are assigned per bin in spawn
+    // order. Bin 5's slot B is not guaranteed to be the morphology bin 4's slot
+    // B holds -- the banks are built independently, and a bin where the second
+    // morphology appeared earlier or later numbers it differently. So this can
+    // apply a PVC's Q-onset delta to whatever occupies slot B in a later bin.
+    //
+    // That is a deliberate choice of behaviour over correctness, made because
+    // the alternative on offer was to leave the feature not working at all. The
+    // correct rule is to propagate to the later bin's BAND-MATCHING template
+    // (bandMatch against tbank::kMatchFloorEcg, which this file already links),
+    // and it should replace this loop once bank identity across bins is settled
+    // -- the same underlying gap as bank letters not being stable between bins.
+    if (m_moveMode != MoveMode::Individual && oldIdx >= 0) {
+        const int delta = newIdx - oldIdx;
+        const int nDragged =
+            static_cast<int>(bank.templates[templateIdx].tmpl.size());
+        const double pct = (nDragged > 1)
+            ? static_cast<double>(newIdx) / (nDragged - 1) : 0.0;
+
+        for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
+            if (m_bins[i].bad_r_ch[leadIdx]) continue;
+            tbank::TemplateBank& bk = m_bins[i].ecg_bank[leadIdx];
+            // Ragged by design: a later bin's bank may be shorter, or hold an
+            // empty slot. Skipped rather than clamped to the last slot, which
+            // would pile every deep-slot drag onto one template.
+            if (templateIdx >= bk.size()) continue;
+            const int n = static_cast<int>(bk.templates[templateIdx].tmpl.size());
+            if (n <= 0) continue;
+
+            // SEED BEFORE READING. bankGet goes through marks(), which
+            // inserts, so reading an unseeded template here is what used to
+            // suppress its auto-detection forever. Seeding first makes the read
+            // harmless and gives the propagated delta a real bar to move.
+            //
+            // hasDetectedMarks is on the TEMPLATE, not the bank: marker sets
+            // are per template, so there is no bank-wide answer to "are the
+            // marks detected".
+            tbank::BankTemplate& tgt = bk.templates[templateIdx];
+            if (!tgt.hasDetectedMarks(anchor)) {
+                const int rc = (tgt.r_col >= 0)
+                    ? tgt.r_col : m_bins[i].r_peak_ch[leadIdx];
+                FeatureMarks::seed_bank_template(tgt.tmpl, rc, m_sampleRate,
+                    tgt.marks(anchor));
+            }
+            const int cur = bankGet(bk);
+            if (cur < 0) continue;   // this landmark was not found on this one
+
+            const int target = (m_moveMode == MoveMode::SubsequentDelta)
+                ? cur + delta
+                : (n > 1 ? (int)std::lround(pct * (n - 1)) : 0);
+            bankSet(bk, std::clamp(target, 0, n - 1));
+        }
+
+        for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
+            const int gi = m_pageGlobalIdx[li];
+            if (gi > binIdx) refreshBankMarkers(gi, templateIdx);
+        }
     }
 }
 

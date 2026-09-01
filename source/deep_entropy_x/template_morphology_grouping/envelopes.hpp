@@ -134,6 +134,28 @@ namespace envelopes {
             std::numeric_limits<double>::quiet_NaN(),
             std::numeric_limits<double>::quiet_NaN() };
 
+        // ---- INTERMEDIATES ------------------------------------------------
+        // The quantities the fractions above are fractions OF, kept so a
+        // reported value can be audited without re-running the math. Every
+        // fraction hides its denominator, and two beats with identical
+        // band_frac can have total powers an order of magnitude apart -- which
+        // is the difference between a shape change and a quiet stretch. Filled
+        // by measure(); nothing routes on them.
+        //
+        // Recorded rather than recomputed on purpose: a second copy of the
+        // spectral/wavelet math in a reporting path would drift from this one.
+        int    n_samples = 0;     // non-NaN samples the segment contributed
+        double spectral_total_power = std::numeric_limits<double>::quiet_NaN();
+        double band_power[kSpectralBands] = {
+            std::numeric_limits<double>::quiet_NaN(),
+            std::numeric_limits<double>::quiet_NaN(),
+            std::numeric_limits<double>::quiet_NaN() };
+        double wave_energy[kWaveletLevels] = {
+            std::numeric_limits<double>::quiet_NaN(),
+            std::numeric_limits<double>::quiet_NaN(),
+            std::numeric_limits<double>::quiet_NaN() };
+        double wave_total_energy = std::numeric_limits<double>::quiet_NaN();
+
         bool valid = false;   // false when the segment was absent or too short
     };
 
@@ -171,13 +193,46 @@ namespace envelopes {
 
             const int nb = n / 2;
             mag.resize(nb, 0.0);
+
+            // ---- TWIDDLE TABLE, CACHED BY LENGTH ---------------------------
+            // This loop is still O(n^2), but it no longer calls std::cos and
+            // std::sin inside it. That mattered enormously: measure() runs per
+            // segment per channel per beat, so a night at 40 bins is on the
+            // order of a million calls here, each previously doing n^2/2
+            // transcendental PAIRS. At n ~ 200 that is ~10^10 trig evaluations
+            // for one subject -- tens of minutes, indistinguishable from a hang.
+            //
+            // cos(w*k*t) depends only on (k*t) mod n, so one table of n entries
+            // serves every k and t. Segment lengths repeat constantly (beats in
+            // a bin are near-identical in span), so the table is rebuilt only
+            // when the length actually changes.
+            //
+            // thread_local, not static: measure() is callable from parallel
+            // per-bin loops, and a shared mutable table would be a race that
+            // corrupts spectra rather than crashing -- the failure mode that
+            // produces plausible numbers.
+            thread_local std::vector<double> tw_cos, tw_sin;
+            thread_local int tw_n = -1;
+            if (tw_n != n) {
+                tw_cos.resize(n);
+                tw_sin.resize(n);
+                const double base = -2.0 * 3.14159265358979323846 / n;
+                for (int j = 0; j < n; ++j) {
+                    tw_cos[j] = std::cos(base * j);
+                    tw_sin[j] = std::sin(base * j);
+                }
+                tw_n = n;
+            }
+
             for (int k = 1; k <= nb; ++k) {
                 double re = 0.0, im = 0.0;
-                const double w = -2.0 * 3.14159265358979323846 * k / n;
+                int idx = 0;                  // (k*t) mod n, advanced by k
                 for (int t = 0; t < n; ++t) {
                     const double xt = x[t] - mean;   // DC removed
-                    re += xt * std::cos(w * t);
-                    im += xt * std::sin(w * t);
+                    re += xt * tw_cos[idx];
+                    im += xt * tw_sin[idx];
+                    idx += k;
+                    if (idx >= n) idx -= n;   // cheaper than a modulo per sample
                 }
                 mag[k - 1] = std::sqrt(re * re + im * im);
             }
@@ -231,6 +286,7 @@ namespace envelopes {
             lo = std::min(lo, v); hi = std::max(hi, v);
         }
         const double n = static_cast<double>(x.size());
+        m.n_samples = static_cast<int>(x.size());
         m.mean = sum / n;
         m.amplitude = hi - lo;
         m.area = absum / n;
@@ -244,6 +300,7 @@ namespace envelopes {
                 total += p;
                 weighted += p * static_cast<double>(k + 1);
             }
+            m.spectral_total_power = total;
             if (total > 0.0) {
                 double bandPow[kSpectralBands] = { 0.0, 0.0, 0.0 };
                 for (size_t k = 0; k < mag.size(); ++k) {
@@ -251,8 +308,10 @@ namespace envelopes {
                     b = std::min(b, kSpectralBands - 1);
                     bandPow[b] += mag[k] * mag[k];
                 }
-                for (int b = 0; b < kSpectralBands; ++b)
+                for (int b = 0; b < kSpectralBands; ++b) {
+                    m.band_power[b] = bandPow[b];
                     m.band_frac[b] = bandPow[b] / total;
+                }
                 // Centroid normalised to [0,1] of Nyquist so it is comparable
                 // across segments of different lengths -- a QRS span and a T
                 // span do not have the same frequency resolution.
@@ -266,6 +325,8 @@ namespace envelopes {
         double wtot = 0.0;
         for (int L = 0; L < kWaveletLevels; ++L)
             if (!std::isnan(we[L])) wtot += we[L];
+        for (int L = 0; L < kWaveletLevels; ++L) m.wave_energy[L] = we[L];
+        m.wave_total_energy = wtot;
         if (wtot > 0.0)
             for (int L = 0; L < kWaveletLevels; ++L)
                 if (!std::isnan(we[L])) m.wave_frac[L] = we[L] / wtot;

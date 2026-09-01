@@ -71,6 +71,17 @@ struct SingleMethodResult {
     vector<double> ecg_template_iqr;   // empty for methods that don't compute std
     double ppg_alignment_point;
     int r_col = -1;   // true R column (alignment's r_aligned_col)
+
+    // MEDIAN RR of the beats this template was built from, in samples.
+    //
+    // A DISPLAY WIDTH, NOT A STORAGE WIDTH. The beat matrix is framed on the
+    // bin's LONGEST RR so that no beat ever loses a sample -- that part must
+    // not change. But one 2.8 s pause then makes the array 5.6 s wide, and the
+    // viewer sized its x-axis from the array length, so a normal 0.9 s beat was
+    // drawn into a sixth of the panel. This is the number the axis should use
+    // instead. It is carried in memory only and is NOT serialized: the viewer
+    // receives TemplateBin directly, so no file format changes.
+    int median_rr_samples = -1;
     // Verdict per beat handed downstream, parallel to out_kept_beats:
     //   0 NORMAL     1 PVC (premature)     2 VOTED_PVC (5-of-8 vote)
     std::vector<uint8_t> kept_rhythm;
@@ -159,6 +170,7 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
     // from alignment (every beat's detected R lands at r_aligned_col). Passed
     // through as-is -- no re-detection (a window search would grab Q or S).
     res.r_col = aligned.r_aligned_col;
+    res.median_rr_samples = aligned.median_length;   // display width; see struct
     res.ref_beat_index = aligned.ref_beat_index;
 
     // Column-wise NaN-skipping median over the aligned beats => template.
@@ -603,6 +615,11 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
     // category / bin / template / premature / tukey rows. Replaces the earlier
     // pair of bank_*.csv dumps -- two files split by accident of what was
     // convenient to compute, not by anything a reader wanted separately.
+    // Surfaced before the writers use it, so the joint bank and the morphology
+    // archive read the SAME map rather than two copies that can drift. Moved,
+    // not copied: keptIdx dies with this function otherwise.
+    for (int c = 0; c < 3; ++c) res.kept_index[c] = keptIdx[c];
+
     const std::vector<morphology_csv::ChannelBlock> blocks = {
         { "CH1", &res.ch1.bank_out_raw, &res.ch1.kept_beats_raw, &res.ch1.r_col_raw, &keptIdx[0] },
         { "CH2", &res.ch2.bank_out_raw, &res.ch2.kept_beats_raw, &res.ch2.r_col_raw, &keptIdx[1] },

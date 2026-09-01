@@ -50,6 +50,15 @@ struct ChannelTemplateData {
     int r_col_raw = -1;
     int r_col_squared = -1;
     int r_col_absval = -1;
+
+    // Median RR of this channel's beats, in samples. THE PLOT WIDTH, and only
+    // that: the beat matrix behind the template is framed on the bin's LONGEST
+    // RR so that no beat is ever clipped, which leaves the array several times
+    // wider than a normal beat whenever the bin contains a pause or a missed R
+    // detection. The panel used to take its x-axis from that array length, so a
+    // 0.9 s beat was drawn into a sixth of the frame. -1 means unknown, and the
+    // panel then falls back to the array length.
+    int median_rr_samples = -1;
 };
 
 struct TemplateBin {
@@ -258,16 +267,19 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
         dst.ch1.ecg_template_raw_iqr = c1.ecg_template_iqr;
         dst.ch1.alignment_point_raw = c1.alignment_point;
         dst.ch1.r_col_raw = c1.r_col;
+        dst.ch1.median_rr_samples = c1.median_rr_samples;
 
         dst.ch2.ecgTemplate_raw = c2.ecgTemplate;
         dst.ch2.ecg_template_raw_iqr = c2.ecg_template_iqr;
         dst.ch2.alignment_point_raw = c2.alignment_point;
         dst.ch2.r_col_raw = c2.r_col;
+        dst.ch2.median_rr_samples = c2.median_rr_samples;
 
         dst.ch3.ecgTemplate_raw = c3.ecgTemplate;
         dst.ch3.ecg_template_raw_iqr = c3.ecg_template_iqr;
         dst.ch3.alignment_point_raw = c3.alignment_point;
         dst.ch3.r_col_raw = c3.r_col;
+        dst.ch3.median_rr_samples = c3.median_rr_samples;
     }
     return bins;
 }

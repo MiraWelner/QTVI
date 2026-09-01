@@ -1386,100 +1386,48 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
             continue;
         }
 
-        // Was `const double visN` -- a typo: every use is an int parameter
-        // (clampToVisible takes int), so it narrowed on every call.
-        const int visN = std::max(static_cast<int>(ecg.size()), 2);
-        auto cl = [&](int x) { return clampToVisible(x, visN); };
-        auto cld = [&](double d) { return std::clamp(d, 0.0, static_cast<double>(visN - 1)); };
+        // ONE DETECTOR, shared with the bank templates and the archive. This
+        // block used to inline the six finder calls and was the only one of the
+        // three copies that refined the R anchor first -- which is why the
+        // viewer, the bank columns and bin_archive reported three different
+        // answers for the same bin. detect_template_landmarks does the
+        // refinement and the ordered calls; see feature_marks.hpp.
+        const FeatureMarks::TemplateLandmarks lm =
+            FeatureMarks::detect_template_landmarks(
+                ecg, chs[c]->r_col_raw, sampleRate);
 
-        //The R peak which defines the template is the baseline for every other 
-        const double r_peak_location = cld(subsample_refine::symmetricExtremum(ecg, cl(chs[c]->r_col_raw), 5.0));
-        // The finders below take an INTEGER search anchor (their r_idx walks
-        // the sample grid); the positions they return are doubles and are kept
-        // as such. Truncating here is explicit so it is not mistaken for a
-        // rounded RESULT.
-        const int r_anchor = static_cast<int>(r_peak_location);
-
-        // No shared band table or shared B_iso here any more: every landmark
-        // below comes from its own canonical finder, each of which establishes
-        // its own window and baseline internally. (compute_q_peak computes the
-        // PQ isoelectric median itself, for its 0.1 mV depth test.)
-
-        // Q-onset: single canonical finder (same one the movable bar uses via
-        // the Q_ONSET locator). detect_q_begin supplies the seed; compute_q_onset
-        // does the Q-peak search + sigma=4 refine + I-3 transitionAnchor
-        // refinement internally.
-        const double q_auto = cld(FeatureMarks::compute_q_onset(
-            ecg, sampleRate, r_anchor));
-
-        // S-end: mirror of Q-onset. Cap the LEFT bound at the S peak (first
-        // turning point walking right from R = the S extremum) so E is the S,
-        // not the R tail. Then follow the spec crossing over [S peak, ST
-        // baseline]. To land at the END of the S wave -- the J-point, where the
-        // wave has recovered to baseline (the spec's "80-100% of an offset") --
-        // the target sits near baseline. In the literal formula L = B + f*(E-B)
-        // that is f = 0.10 (== 90% recovered from the extremum), NOT 0.90 which
-        // would sit at the trough. Recovery is monotonic S -> baseline, so the
-        // forward crossing lands at the J-point.
-        // S-end / J-point: single canonical finder (same one the movable bar
-        // uses via the J_POINT locator). detect_s_end supplies the seed;
-        // compute_s_end does the S-peak-capped window + fit-and-select + I-3
-        // transitionAnchor refinement internally.
-        const double s_auto = cld(FeatureMarks::compute_j_point(
-            ecg, sampleRate, r_anchor));
-        // T-onset: single canonical finder, same onset algorithm as Q-onset and
-        // the J-point. s_auto IS this channel's J-point, so it bounds the window
-        // and no second compute_j_point call is needed.
-        const double tp_auto = cld(FeatureMarks::compute_t_begin(
-            ecg, sampleRate, r_anchor, s_auto));
-
-        // T-end: mirror of S-end. Use the shared T peak as the LEFT bound so E
-        // is the T, then the spec crossing over [T peak, post-T baseline] with a
-        // near-baseline target so the forward crossing lands where the T returns
-        // to baseline = the actual T offset (not up at the T peak). Literal
-        // L = B + f*(E-B) with f=0.10 == 90% recovered = "80-100% of an offset".
-        // T-end: single canonical finder (same one the movable bar uses via
-        // the T_PEAK-pass T-end locator). Window bounded by T-begin;
-        // compute_t_end does the fit-and-select + I-3 transitionAnchor
-        // refinement internally. Identical to the bar path.
-        // tp_auto IS this channel's T-begin, so it bounds the window directly.
-        const double te_auto = cld(FeatureMarks::compute_t_end(
-            ecg, sampleRate, r_anchor, tp_auto));
-        // P-peak: single canonical finder (asymmetric-extremum refinement,
-        // sigma=12, folded into detect_p_peak). Same source the P-onset seed
-        // uses below, so the reported peak and the onset seed are identical.
-        // ONE detect_p_peak call: the reported peak and the P-onset seed are the
-        // same value, so calling it twice was pure duplication (it also runs
-        // detect_q_begin internally, so each call was two searches).
-        const double p_auto_refined = cld(FeatureMarks::detect_p_peak(ecg, r_anchor, sampleRate));
-        // P-begin: single canonical finder (same one the movable bar uses via
-        // the P_ONSET locator). The peak above supplies the seed; compute_p_begin
-        // does the window + fit-and-select + I-3 transitionAnchor refinement
-        // internally. Identical to the bar path.
-        const double pb_auto = cld(FeatureMarks::compute_p_begin(
-            ecg, sampleRate, r_anchor, p_auto_refined));
-
-        // Auto fields always updated.
-        b.p_peak_auto_ch[c] = p_auto_refined;
-        b.q_begin_auto_ch[c] = q_auto;
-        b.r_peak_auto_ch[c] = r_peak_location;
-        b.s_end_auto_ch[c] = s_auto;
-        b.t_begin_auto_ch[c] = tp_auto;
-        b.t_end_auto_ch[c] = te_auto;
-        b.p_begin_auto_ch[c] = pb_auto;
+        // Auto fields always updated. Sub-sample doubles, as before.
+        //
+        // -1 NOW SURVIVES instead of being clamped into range. The old `cld`
+        // pinned an out-of-range result to [0, n-1], so a P wave that was not
+        // there came out as column 0 and every P-dependent feature integrated a
+        // window that does not exist. -1 is what markers_by_anchor already
+        // means by absent, so both paths now say absent the same way.
+        b.p_peak_auto_ch[c] = lm.p_peak;
+        b.q_begin_auto_ch[c] = lm.q_begin;
+        b.r_peak_auto_ch[c] = lm.r_peak;
+        b.s_end_auto_ch[c] = lm.s_end;
+        b.t_begin_auto_ch[c] = lm.t_begin;
+        b.t_end_auto_ch[c] = lm.t_end;
+        b.p_begin_auto_ch[c] = lm.p_begin;
 
         // User fields (per-anchor): only seed when unset for THIS anchor.
         // R peak is auto-only (flat) so it's always overwritten with fresh auto.
-        // MarkerSet stores integer sample indices, so the double auto values
-        // are rounded here (display/storage stays int; the *_auto_ch fields
-        // above keep the sub-sample doubles).
-        if (mk.p_peak_ch[c] < 0)  mk.p_peak_ch[c] = (int)std::lround(p_auto_refined);
-        if (mk.q_begin_ch[c] < 0) mk.q_begin_ch[c] = (int)std::lround(q_auto);
-        b.r_peak_ch[c] = (int)std::lround(r_peak_location);
-        if (mk.s_end_ch[c] < 0)   mk.s_end_ch[c] = (int)std::lround(s_auto);
-        if (mk.t_begin_ch[c] < 0) mk.t_begin_ch[c] = (int)std::lround(tp_auto);
-        if (mk.t_end_ch[c] < 0)   mk.t_end_ch[c] = (int)std::lround(te_auto);
-        if (mk.p_begin_ch[c] < 0) mk.p_begin_ch[c] = (int)std::lround(pb_auto);
+        // MarkerSet stores integer sample indices, so the doubles are rounded
+        // here; the *_auto_ch fields above keep the sub-sample values.
+        auto ix = [](double v) { return (v < 0.0) ? -1 : (int)std::lround(v); };
+        if (mk.p_peak_ch[c] < 0)  mk.p_peak_ch[c] = ix(lm.p_peak);
+        if (mk.q_begin_ch[c] < 0) mk.q_begin_ch[c] = ix(lm.q_begin);
+        // R falls back to the unrefined column rather than -1: it is the
+        // alignment anchor every other landmark is expressed against, so the
+        // bin needs SOME R even when refinement could not run.
+        b.r_peak_ch[c] = (lm.r_peak >= 0.0)
+            ? (int)std::lround(lm.r_peak)
+            : std::clamp(chs[c]->r_col_raw, 0, (int)ecg.size() - 1);
+        if (mk.s_end_ch[c] < 0)   mk.s_end_ch[c] = ix(lm.s_end);
+        if (mk.t_begin_ch[c] < 0) mk.t_begin_ch[c] = ix(lm.t_begin);
+        if (mk.t_end_ch[c] < 0)   mk.t_end_ch[c] = ix(lm.t_end);
+        if (mk.p_begin_ch[c] < 0) mk.p_begin_ch[c] = ix(lm.p_begin);
     }
 
 
@@ -1594,44 +1542,74 @@ bool FeatureMarks::order_notch_before_peak2(const std::vector<double>& pulse,
 // ---------------------------------------------------------------------------
 // Per-bank-template landmark seeding. See the header for why this exists.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// THE canonical ECG landmark detector -- see the long note in feature_marks.hpp
+// for why there is exactly one of these now.
+// ---------------------------------------------------------------------
+FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
+    const std::vector<double>& tmpl, int nominal_r_col, double sampleRate)
+{
+    TemplateLandmarks out;
+    const int n = static_cast<int>(tmpl.size());
+    if (n < 2 || nominal_r_col < 0 || nominal_r_col >= n || sampleRate <= 0.0)
+        return out;
+
+    // R REFINED AGAINST THIS WAVEFORM, not inherited. This is the step the bank
+    // and archive paths were missing, and it is the search origin for all six
+    // finders below -- so omitting it moved every landmark, not just R.
+    const int seed = std::clamp(nominal_r_col, 0, n - 1);
+    double r = subsample_refine::symmetricExtremum(tmpl, seed, 5.0);
+    if (std::isnan(r) || r < 0.0 || r > static_cast<double>(n - 1))
+        r = static_cast<double>(seed);   // refinement failed; nominal stands
+    const int r_anchor = static_cast<int>(r);
+
+    // CALL ORDER IS LOAD-BEARING: the J-point feeds T-onset, T-onset feeds
+    // T-offset, and the P-peak feeds P-onset. Each of those parameters exists
+    // to stop a second, slightly different search for the same landmark, so
+    // reordering these lines changes the answers even though every call looks
+    // independent.
+    const double j = FeatureMarks::compute_j_point(tmpl, sampleRate, r_anchor);
+    const double tb = FeatureMarks::compute_t_begin(tmpl, sampleRate, r_anchor, j);
+    const double te = FeatureMarks::compute_t_end(tmpl, sampleRate, r_anchor, tb);
+    const double pp = FeatureMarks::detect_p_peak(tmpl, r_anchor, sampleRate);
+    const double pb = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_anchor, pp);
+    const double q = FeatureMarks::compute_q_onset(tmpl, sampleRate, r_anchor);
+
+    // Out-of-range is folded to -1 (absent), NOT clamped to an edge column. A
+    // landmark pinned to column 0 is indistinguishable from one genuinely found
+    // there, and downstream would integrate over a window that does not exist.
+    auto keep = [&](double x) {
+        if (std::isnan(x) || x < 0.0 || x > static_cast<double>(n - 1))
+            return -1.0;
+        return x;
+        };
+
+    out.r_peak = r;
+    out.q_begin = keep(q);
+    out.s_end = keep(j);
+    out.t_begin = keep(tb);
+    out.t_end = keep(te);
+    out.p_peak = keep(pp);   // -1 on a ventricular template is the RIGHT answer
+    out.p_begin = keep(pb);
+    out.valid = true;
+    return out;
+}
+
 void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col,
     double sampleRate, tbank::BankMarkerSet& out)
 {
     out = tbank::BankMarkerSet{};          // all -1
-    if (tmpl.empty() || r_col < 0 || r_col >= (int)tmpl.size() || sampleRate <= 0.0)
-        return;
+    const TemplateLandmarks lm =
+        FeatureMarks::detect_template_landmarks(tmpl, r_col, sampleRate);
+    if (!lm.valid) return;
 
-    auto cl = [&](double x) {
-        const int n = (int)tmpl.size();
-        int i = (int)std::lround(x);
-        return (i < 0) ? -1 : (i >= n ? n - 1 : i);
-        };
-
-    // Same call order and the same seed reuse as seed_all's ECG block: the
-    // J-point feeds T-onset, T-onset feeds T-offset, and the P-peak feeds
-    // P-onset. Duplicating the order matters as much as duplicating the calls --
-    // each of those parameters exists to avoid a second, slightly different
-    // search for the same landmark.
-    const double j = FeatureMarks::compute_j_point(tmpl, sampleRate, r_col);
-    const double tb = FeatureMarks::compute_t_begin(tmpl, sampleRate, r_col, j);
-    const double te = FeatureMarks::compute_t_end(tmpl, sampleRate, r_col, tb);
-    const double pp = FeatureMarks::detect_p_peak(tmpl, r_col, sampleRate);
-    const double pb = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_col, pp);
-    const double q = FeatureMarks::compute_q_onset(tmpl, sampleRate, r_col);
-
-    out.q_begin = cl(q);
-    out.s_end = cl(j);
-    out.t_begin = cl(tb);
-    out.t_end = cl(te);
-    out.p_peak = cl(pp);
-    out.p_begin = cl(pb);
-
-    // A VENTRICULAR TEMPLATE HAS NO P WAVE, and -1 is the correct answer there.
-    // template_bank.hpp's comment on markers_by_anchor says so outright: every
-    // P-dependent feature must come out NaN rather than 0, and downstream has to
-    // treat -1 as a valid state. So a negative from detect_p_peak is passed
-    // through rather than substituted -- the detectors already return -1 when
-    // they find nothing, and cl() maps that to -1.
-    if (pp < 0.0) out.p_peak = -1;
-    if (pb < 0.0) out.p_begin = -1;
+    // BankMarkerSet stores integers; the sub-sample doubles stay in lm for any
+    // caller that wants them. -1 survives rounding, so absent stays absent.
+    auto ix = [](double v) { return (v < 0.0) ? -1 : (int)std::lround(v); };
+    out.q_begin = ix(lm.q_begin);
+    out.s_end = ix(lm.s_end);
+    out.t_begin = ix(lm.t_begin);
+    out.t_end = ix(lm.t_end);
+    out.p_peak = ix(lm.p_peak);
+    out.p_begin = ix(lm.p_begin);
 }

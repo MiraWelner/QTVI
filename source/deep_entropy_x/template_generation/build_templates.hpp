@@ -56,6 +56,14 @@ namespace template_generation_detail {
             if (it != info.bank_by_channel.end())
                 bt.ecg_bank[c] = it->second.bank;
         }
+        // The PPG bank rides the SAME string-keyed map, under "PPG". Lifted
+        // here rather than left in TemplateInfo for the same reason the ECG
+        // banks are: a bank that never reaches BinTemplates dies with the
+        // in-memory build, and nothing downstream can tell that apart from a
+        // record with a single pulse morphology.
+        auto pit = info.bank_by_channel.find("PPG");
+        if (pit != info.bank_by_channel.end())
+            bt.ppg_bank = pit->second.bank;
     }
 
     inline void packBin(template_io::BinTemplates& bt,

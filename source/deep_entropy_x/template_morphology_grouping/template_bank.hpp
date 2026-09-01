@@ -16,11 +16,27 @@
  *         Design decisions settled before this file was written, recorded here
  *         because none of them are recoverable from the spec text alone:
  *
- *          1. THE METRIC IS THE BAND-MATCH SCORE, as Section 4.6 states it: the
- *             fraction of a beat's samples falling inside the template's
- *             2.5/97.5 per-column corridor. Compared against 0.85 (ECG) and
- *             0.80 (PPG), the same two numbers used for assignment and for
- *             spawning.
+ *          1. THE METRIC IS THE BAND-MATCH SCORE. Section 4.6 names the score
+ *             and gives its thresholds -- 0.85 (ECG) and 0.80 (PPG), the same
+ *             two numbers used for assignment and for spawning -- and those
+ *             parts are spec.
+ *
+ *             THE BAND ITSELF IS NOT SPECIFIED. 4.6 says "band-match score"
+ *             without saying what the band is. The 2.5/97.5 per-column
+ *             corridor used here is a LOCAL CHOICE, made to agree with
+ *             morphology_envelope.hpp, which builds 2.5/97.5 corridors for the
+ *             envelope sections. Min/max, +/- 2 SD, or an IQR band would all
+ *             satisfy the clause as written and would all move the score.
+ *
+ *             Flagged rather than left implicit because a threshold is
+ *             meaningless without the quantity it compares, and this file used
+ *             to present the corridor as though 4.6 stated it. Several
+ *             constants below hang off the choice -- kMinMembersForCorridor is
+ *             justified by the percentiles needing two distinct order
+ *             statistics, and the corridor inflation and inheritance in
+ *             template_assign.hpp exist because a small-N percentile band is a
+ *             poor estimate -- so if the band is ever defined differently, all
+ *             of that has to be rederived rather than retuned.
  *
  *             AS A FRACTION, NOT A PERCENTAGE. morphology_envelope.hpp scores
  *             on 0-100, which does not compare to 0.85. Read as a fraction the
@@ -434,6 +450,29 @@ namespace tbank {
         int s_end = -1;
         int t_begin = -1;
         int t_end = -1;
+
+        // TRUE WHEN NOTHING HAS BEEN DETECTED OR PLACED YET.
+        //
+        // This exists because the seeding guard cannot safely ask the map
+        // whether it has a key. marks(a) is markers_by_anchor[a] -- operator[]
+        // -- so merely READING a marker set inserts a default all -1 entry. Any
+        // read that happens before the first paint therefore made
+        // "markers_by_anchor.find(anchor) != end()" true, the viewer concluded
+        // the template was already seeded, and auto-detection never ran for it.
+        // The template then drew with no fiducial bars at all, permanently, and
+        // serialization persisted the empty set so a reload did not recover.
+        //
+        // Presence of a KEY is not evidence of detection; presence of a VALUE
+        // is. Callers should seed on isUnset(), not on find().
+        //
+        // A template where every finder legitimately failed is also unset, so
+        // it gets re-detected on each paint. That is the right trade: repeating
+        // a cheap detection that returns nothing costs a few microseconds, and
+        // the alternative is what this comment describes.
+        bool isUnset() const {
+            return p_begin < 0 && p_peak < 0 && q_begin < 0
+                && s_end < 0 && t_begin < 0 && t_end < 0;
+        }
     };
 
     struct BankTemplate {
@@ -479,6 +518,46 @@ namespace tbank {
         // runs.
         uint32_t spawn_seq = 0;
 
+        // PPG members of THIS template, when the template is a projection of a
+        // joint (four-channel) group. -1 = unknown, which is what a
+        // per-channel-built bank leaves it as.
+        //
+        // Exists because the pulse cohort is a property of the GROUP, not of the
+        // bin. Every column of a bin used to report the same bin-wide
+        // ppg_n_beats, which made a split look like it had ignored PPG
+        // entirely. A group's PPG members are the members it actually has on
+        // that channel, and they differ between siblings.
+        int32_t n_ppg_members = -1;
+
+        // ---- TWO MEMBER LISTS, AND BOTH ARE REQUIRED --------------------
+        //
+        // `members` is EVERY beat the partition assigned to this template. It
+        // is what the archive writes: a premature or Tukey-rejected beat is
+        // still this template's beat, and the output has to say so and say why.
+        // Dropping it from here would delete the record instead of marking it.
+        //
+        // `members_clean` is members minus the premature and minus the
+        // Tukey-rejected. It is what the averaged waveform is built from, what
+        // is drawn and marked on screen, and what "kept" means in the outputs.
+        //
+        // Empty means "not yet computed" -- the post-partition stage in
+        // bin_pipeline fills it -- and consumers should fall back to `members`
+        // in that case rather than treat it as an empty template.
+        //
+        // The exclusion REASON is not stored here. It is per beat, on
+        // BeatFlags::pvc and BeatFlags::tukey, and duplicating it per template
+        // would give two places to disagree about the same beat.
+        std::vector<uint32_t> members_clean;
+
+        int cleanCount() const {
+            return static_cast<int>(members_clean.empty()
+                ? members.size() : members_clean.size());
+        }
+        int excludedCount() const {
+            return static_cast<int>(members_clean.empty()
+                ? 0 : members.size() - members_clean.size());
+        }
+
         // Landmarks per alignment anchor. A ventricular template has no P
         // wave, so p_begin/p_peak stay -1 legitimately and every P-dependent
         // feature must come out NaN rather than 0. Downstream extraction has
@@ -486,7 +565,16 @@ namespace tbank {
         // a PR interval measured from a P wave that does not exist.
         std::map<int32_t, BankMarkerSet> markers_by_anchor;   // key: AnchorType
 
+        // NOTE: INSERTS. markers_by_anchor[a] default-constructs an all -1 set
+        // when the key is absent, so a read through this overload is a write.
+        // Use hasDetectedMarks() to ask whether a set is populated.
         BankMarkerSet& marks(int32_t a) { return markers_by_anchor[a]; }
+
+        // Non-inserting, and asks about CONTENT rather than key presence.
+        bool hasDetectedMarks(int32_t a) const {
+            auto it = markers_by_anchor.find(a);
+            return it != markers_by_anchor.end() && !it->second.isUnset();
+        }
         const BankMarkerSet& marks(int32_t a) const {
             static const BankMarkerSet kEmpty;
             auto it = markers_by_anchor.find(a);
@@ -734,6 +822,14 @@ namespace tbank {
         std::array<int32_t, 3> labeled_template = { -1, -1, -1 };
         std::array<int32_t, 3> subtype = { -1, -1, -1 };
         int beats_relabeled = 0;
+
+        // The PPG bank's outcome, kept separate from the ECG array rather than
+        // appended to it: a fourth entry in `labeled_template` would be read as
+        // a fourth ECG lead by anything that iterates the array, and several
+        // things do.
+        int32_t ppg_labeled_template = -1;
+        int32_t ppg_subtype = -1;
+        int     ppg_beats_relabeled = 0;
     };
 
     inline PropagationResult propagateLabel(std::array<TemplateBank, 3>& banks,
@@ -764,6 +860,66 @@ namespace tbank {
             out.subtype[c] = t.subtype;
             out.beats_relabeled += t.memberCount();
         }
+        return out;
+    }
+
+    // ---------------------------------------------------------------------
+    // ONE BANK, for PPG. The rule -- "the class label propagates to the
+    // template that beat is assigned to, and from there to every other beat
+    // assigned to the same template" -- says nothing about ECG, and the PPG
+    // bank obeys it or it has confirmed members that no operator ever
+    // confirmed. Split out of the three-bank version rather than duplicated:
+    // subtype issuance and the confirmation flag are the two things that must
+    // not diverge between channel types.
+    //
+    // TAKES A PPG BEAT INDEX, WHICH IS NOT AN ECG BEAT INDEX. The PPG kept set
+    // is filtered independently, so beat k of CH1 and beat k of PPG are
+    // different beats. The caller has to map the operator's click into PPG
+    // space before calling this; passing an ECG index would label a pulse
+    // morphology chosen at random.
+    // ---------------------------------------------------------------------
+    inline void propagateLabelToBank(TemplateBank& bank,
+        uint32_t beat_idx,
+        uint8_t label_code,
+        int32_t* out_template = nullptr,
+        int32_t* out_subtype = nullptr,
+        int* out_beats = nullptr)
+    {
+        if (label_code == kUnlabeled) return;
+        const int ti = bank.findByBeat(beat_idx);
+        if (ti < 0) return;
+
+        BankTemplate& t = bank.templates[ti];
+
+        // Subtype is issued once and then immutable, exactly as in the ECG
+        // path: a re-confirmation, or a confirmation of a different beat in an
+        // already-labeled template, must not mint a new index.
+        if (t.subtype < 0 || t.label_code != label_code) {
+            if (t.label_code != label_code)
+                t.subtype = bank.nextSubtypeFor(label_code);
+            t.label_code = label_code;
+        }
+        t.confirmed_by_operator = true;
+
+        if (out_template) *out_template = ti;
+        if (out_subtype)  *out_subtype = t.subtype;
+        if (out_beats)    *out_beats = t.memberCount();
+    }
+
+    // Three ECG banks plus the PPG bank, for a confirmation the caller has
+    // already mapped into both index spaces. ecg_beat_idx and ppg_beat_idx are
+    // separate parameters precisely because they are separate index spaces --
+    // see propagateLabelToBank.
+    inline PropagationResult propagateLabel(std::array<TemplateBank, 3>& banks,
+        TemplateBank& ppg_bank,
+        uint32_t ecg_beat_idx,
+        uint32_t ppg_beat_idx,
+        uint8_t label_code)
+    {
+        PropagationResult out = propagateLabel(banks, ecg_beat_idx, label_code);
+        propagateLabelToBank(ppg_bank, ppg_beat_idx, label_code,
+            &out.ppg_labeled_template, &out.ppg_subtype,
+            &out.ppg_beats_relabeled);
         return out;
     }
 
@@ -813,6 +969,20 @@ namespace tbank {
         int    b = -1;
         double closeness = -std::numeric_limits<double>::infinity();
         bool   both_confirmed = false;   // true => raise the cap instead
+
+        // MISNAMED, DELIBERATELY NOT RENAMED YET. This reads true whenever the
+        // closest pair contained a confirmed template, not only when BOTH were
+        // confirmed. findMergePair blocks any pair touching a confirmed
+        // template -- stricter than 4.6's literal "both", because merging a
+        // confirmed template into an unconfirmed one would absorb unlabelled
+        // beats into a labelled class, which is the label-by-similarity
+        // inference the section forbids elsewhere. The consequence is more cap
+        // raises than the literal rule produces, which is the safe direction.
+        //
+        // Anyone reading a CapRaiseEvent should treat this as
+        // "confirmed_involved". Renaming it touches template_assign.hpp,
+        // bin_pipeline.hpp and joint_bank.hpp together and is left for a change
+        // that can be compiled and run, not folded into a comment fix.
         bool   garbage_pair = false;   // both below the column threshold
         bool   valid() const { return a >= 0 && b >= 0; }
     };
@@ -879,6 +1049,48 @@ namespace tbank {
         }
         if (best_any.valid()) return best_any;   // the spec's rule
         return best_blocked;   // only confirmed-touching pairs remain
+    }
+
+    // ---------------------------------------------------------------------
+    // Display letter per bank slot: A, B, C ... contiguous over the
+    // templates that actually exist.
+    //
+    // THE ONE DEFINITION. The viewer and the morphology CSV/bin writers both
+    // name templates, and they used to letter them independently -- the CSV
+    // ranked non-empty templates, the viewer used the raw slot index. They
+    // agree only when no lower slot is empty and spawn order matches slot
+    // order, so the same template could appear as PQRST_C in one place and
+    // PQRST_F in the other. Both now call this.
+    //
+    // ORDERED BY spawn_seq, NOT BY SLOT. A merge erases an element and shifts
+    // everything after it, so slot position is not stable between runs while
+    // spawn order is. Empty slots are skipped rather than consuming a letter,
+    // which is what keeps the sequence contiguous.
+    //
+    // A CONFIRMED template takes its letter from the subtype the bank issued
+    // (PVC_A, PVC_B are per-class), so its letter tracks the class rather than
+    // the bank-wide rank. Returns one entry per slot, indexed by slot.
+    // ---------------------------------------------------------------------
+    inline std::vector<uint8_t> letterRanks(const TemplateBank& bank) {
+        const int n = bank.size();
+        std::vector<int> order;
+        order.reserve(n);
+        for (int i = 0; i < n; ++i)
+            if (!bank.templates[i].tmpl.empty()) order.push_back(i);
+        std::sort(order.begin(), order.end(), [&](int a, int b) {
+            return bank.templates[a].spawn_seq < bank.templates[b].spawn_seq;
+            });
+
+        std::vector<uint8_t> letter(n, 0);
+        int rank = 0;
+        for (int i : order) {
+            const BankTemplate& t = bank.templates[i];
+            const int idx = (t.label_code != kUnlabeled && t.subtype > 0)
+                ? t.subtype - 1 : rank;
+            letter[i] = static_cast<uint8_t>(idx % 26);
+            ++rank;
+        }
+        return letter;
     }
 
 }  // namespace tbank

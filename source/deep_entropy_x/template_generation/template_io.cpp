@@ -138,6 +138,36 @@ namespace template_io {
                     tbank_ser::writeBankToStream(f, b.ecg_bank[c]);
             }
         }
+
+        // ---- v4: Section 4.6 PPG bank, per bin -----------------------------
+        // A FOURTH TRAILING OPTIONAL SECTION, on the contract the v2 anchors and
+        // v3 ECG banks established: a v1/v2/v3 reader stops at end-of-file, and
+        // a v4 reader that finds nothing here leaves ppg_bank empty -- which
+        // reads correctly as "one pulse template per bin", exactly what a v3
+        // file holds.
+        //
+        // MUST come after the ECG bank section, unconditionally, for the same
+        // reason that one had to follow the anchors: the reader walks these in
+        // order, so reordering or conditionally skipping either makes it parse
+        // one section's count as another's and produce plausible garbage.
+        //
+        // Layout: [uint64 nBinsWithPpgBank], then per such bin
+        //         [uint64 binIndex][bank].
+        // Bins with no PPG bank are skipped rather than written as zeros, so a
+        // record with no PPG costs 8 bytes total.
+        {
+            uint64_t nWithPpg = 0;
+            for (const auto& b : data.bins)
+                if (!b.ppg_bank.templates.empty()) ++nWithPpg;
+            f.write(reinterpret_cast<const char*>(&nWithPpg), 8);
+
+            for (uint64_t i = 0; i < data.bins.size(); ++i) {
+                const auto& b = data.bins[i];
+                if (b.ppg_bank.templates.empty()) continue;
+                f.write(reinterpret_cast<const char*>(&i), 8);
+                tbank_ser::writeBankToStream(f, b.ppg_bank);
+            }
+        }
     }
 
 
@@ -226,6 +256,24 @@ namespace template_io {
                             out.bins[bi].ecg_bank[c] = std::move(bank);
                     }
                     if (!ok) break;   // truncated: keep what parsed cleanly
+                }
+            }
+        }
+
+        // ---- v4: PPG bank (trailing, optional) -----------------------------
+        // A v1/v2/v3 file ends here, so a failed read of the count means "no
+        // PPG bank" rather than an error -- the same contract as the two
+        // sections above. Anything already parsed stands.
+        {
+            uint64_t nWithPpg = 0;
+            if (f.read(reinterpret_cast<char*>(&nWithPpg), 8)) {
+                for (uint64_t k = 0; k < nWithPpg; ++k) {
+                    uint64_t bi = 0;
+                    if (!f.read(reinterpret_cast<char*>(&bi), 8)) break;
+                    tbank::TemplateBank bank;
+                    if (!tbank_ser::readBankFromStream(f, bank)) break;
+                    if (bi < out.bins.size())
+                        out.bins[bi].ppg_bank = std::move(bank);
                 }
             }
         }

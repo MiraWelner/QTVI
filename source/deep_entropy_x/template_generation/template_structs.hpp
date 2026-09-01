@@ -15,8 +15,10 @@
 #pragma once
 #include "template_io.hpp"
 #include "template_morphology_grouping/bin_pipeline.hpp"
+#include "template_morphology_grouping/joint_bank.hpp"
 
 #include <map>
+#include <array>
 #include <vector>
 #include <string>
 #include <cmath>
@@ -97,6 +99,19 @@ struct TemplateInfo {
     // passes run.
     std::map<std::string, std::vector<uint8_t>> kept_rhythm_by_channel;
     std::map<std::string, bin_pipeline::ChannelOutput> bank_by_channel;
+
+    // THE SECTION 4.6 PARTITION FOR THIS BIN: one grouping of the beats, with
+    // every channel's average taken over the same members. This is what
+    // replaces the per-channel banks above -- an ECG split now carries its PPG
+    // beats with it, so each group's PPG cohort differs from its siblings'
+    // instead of every column of a bin reporting the same bin-wide pulse count.
+    //
+    // bank_by_channel is kept alongside during the transition because the
+    // viewer, the serializer and the morphology writers still read it. It must
+    // NOT be treated as a second opinion: when both are present this one is the
+    // partition and those are a per-channel view of an older one.
+    jbank::BinBankOutput joint;
+    bool joint_valid = false;
 };
 
 struct AlignWavesResult {
@@ -151,4 +166,21 @@ struct EcgTemplateResult {
     EcgChannelResult ch1;
     EcgChannelResult ch2;
     EcgChannelResult ch3;
+
+    // ALIGNED ROW -> R-PAIR SLICE, per channel per bin. kept_index[c][bin][row]
+    // is the slice that row of kept_beats_raw[bin] was cut from.
+    //
+    // THIS IS THE JOIN KEY BETWEEN THE CHANNELS. Each channel prunes
+    // independently, so row k of CH1 and row k of CH2 and row k of PPG are
+    // three different heartbeats. The Section 4.6 partition has to be ONE
+    // partition across all four channels -- an ECG split must carry its PPG
+    // beats with it -- and that is impossible without a shared key. The slice
+    // ordinal is that key, because every slicer is driven by the same ch1.raw
+    // R-peaks.
+    //
+    // It was already computed inside CreateEcgTemplatesFast (as the local
+    // keptIdx, for the morphology writers) and thrown away at the end of the
+    // function. Surfaced here instead of recomputed, so the partition and the
+    // archive cannot disagree about which beat is which.
+    std::array<std::vector<std::vector<size_t>>, 3> kept_index;
 };

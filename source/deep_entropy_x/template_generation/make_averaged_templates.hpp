@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file   make_averaged_templates.hpp
  * @brief  Orchestrate the full template generation pipeline.
  *         Port of GenerateTemplates.m
@@ -24,6 +24,8 @@
 #include "template_structs.hpp"
 #include "create_arterial_templates.hpp"
 #include "create_ecg_templates.hpp"
+#include "template_morphology_grouping/joint_bank.hpp"
+#include "template_morphology_grouping/bin_pipeline.hpp"
 #include <iostream>
 #include <chrono>
 #include <cstdio>
@@ -58,6 +60,10 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     vector<vector<vector<double>>> ppg_kept(n);
     vector<int> ppg_peak_cols(n, -1);
     vector<int> ppg_onset_cols(n, -1);
+    // R-pair ordinals of the retained pulses, per bin. Hoisted out of the
+    // ppg_res scope below because the joint bank needs them: without the
+    // ordinal there is no way to say a pulse and a QRS are the same heartbeat.
+    vector<vector<uint32_t>> ppg_kept_slices(n);
     vector<bool> template_good(n, false);
 
     const auto _ppg0 = std::chrono::steady_clock::now();
@@ -68,6 +74,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         ppg_kept = std::move(ppg_res.kept);
         ppg_peak_cols = std::move(ppg_res.peakCol);
         ppg_onset_cols = std::move(ppg_res.footCol);
+        ppg_kept_slices = std::move(ppg_res.keptSlices);
 
         for (size_t i = 0; i < n; ++i)
             for (double v : ppg_templates[i])
@@ -141,6 +148,76 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         // bad_segment, so we use that here.
         const bool ecg_good = (i < wave_data.size()) && !wave_data[i].bad_segment;
 
+        // ---- SECTION 4.6: ONE PARTITION FOR THIS BIN ----------------------
+        // Built BEFORE the per-channel fills below move their beat vectors out,
+        // because it reads them. Every channel is keyed by the R-pair slice
+        // ordinal, so an ECG split carries its PPG beats with it and each
+        // group's pulse cohort differs from its siblings'. That is the point:
+        // the per-channel banks gave every column of a bin the same bin-wide
+        // PPG count, which is what made the split look like it ignored PPG.
+        //
+        // n_slices is the R-PAIR COUNT, the shared denominator for all four
+        // channels. ch1.raw drives both slicers, so rPeaks.size() - 1 is the
+        // one number every forward map indexes into; a per-channel beat count
+        // would line up for one channel and be silently wrong for the rest.
+        if (ecg_good) {
+            const size_t nR = (i < wave_data.size()) ? wave_data[i].ch1.raw.size() : 0;
+            if (nR >= 2) {
+                jbank::BinBankInput ji;
+                ji.n_slices = static_cast<uint32_t>(nR - 1);
+                ji.bin_index = static_cast<uint64_t>(i);
+
+                const EcgChannelResult* ec[3] =
+                    { &ecg_res.ch1, &ecg_res.ch2, &ecg_res.ch3 };
+                for (int c = 0; c < 3; ++c) {
+                    if (i >= ec[c]->kept_beats_raw.size()) continue;
+                    if (i >= ecg_res.kept_index[c].size()) continue;
+                    ji.ecg_beats[c] = &ec[c]->kept_beats_raw[i];
+                    ji.ecg_forward[c] = &ecg_res.kept_index[c][i];
+                    ji.ecg_r_col[c] = (i < ec[c]->r_col_raw.size())
+                        ? ec[c]->r_col_raw[i] : -1;
+                }
+                if (ppg_template_good && i < ppg_kept.size()
+                    && i < ppg_kept_slices.size()) {
+                    ji.ppg_beats = &ppg_kept[i];
+                    ji.ppg_forward = &ppg_kept_slices[i];
+                    ji.ppg_peak_col = ppg_peak_cols[i];
+                    ji.ppg_phase1 = ppg_templates[i];
+                }
+
+                info.joint = jbank::buildBinBank(ji);
+                info.joint_valid = true;
+
+                // PROJECT IT INTO bank_by_channel, so the joint partition is
+                // the ONLY partition. Nothing computes a per-channel bank
+                // independently any more: these entries are channel views of
+                // info.joint, template i of each being group i. Two independent
+                // partitions of the same beats is the state that must not
+                // exist, and this is what prevents it while the viewer and the
+                // serializer still read the per-channel type.
+                jbank::ChannelSet cs;
+                for (int c = 0; c < 3; ++c)
+                    if (ji.ecg_beats[c] && ji.ecg_forward[c])
+                        jbank::setChannel(cs, c, *ji.ecg_beats[c],
+                            *ji.ecg_forward[c], ji.n_slices, ji.ecg_r_col[c]);
+                if (ji.ppg_beats && ji.ppg_forward)
+                    jbank::setChannel(cs, jbank::kPpg, *ji.ppg_beats,
+                        *ji.ppg_forward, ji.n_slices, ji.ppg_peak_col);
+
+                static const char* kKeys[4] = { "CH1", "CH2", "CH3", "PPG" };
+                for (int c = 0; c < 4; ++c) {
+                    bin_pipeline::ChannelOutput co;
+                    co.bank = jbank::projectToChannel(info.joint.bank, cs, c);
+                    co.assignment = info.joint.group_of_slice;
+                    co.counts.n_spawns = info.joint.counts.n_spawns;
+                    co.counts.n_merges = info.joint.counts.n_merges;
+                    co.counts.n_cap_raises = info.joint.counts.n_cap_raises;
+                    co.counts.n_unscorable = info.joint.counts.n_unscorable;
+                    info.bank_by_channel[kKeys[c]] = std::move(co);
+                }
+            }
+        }
+
         if (ecg_good) {
             fill_channel(info.ch1, ecg_res.ch1, i);
             fill_channel(info.ch2, ecg_res.ch2, i);
@@ -203,6 +280,62 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
             info.ppg_onset_col = ppg_onset_cols[i];
             if (i < ppg_kept.size()) {
                 info.ppg_n_beats = ppg_kept[i].size();
+
+                // ---- Section 4.6 bank, ON PPG -------------------------
+                // The spec names two morphology thresholds, 0.85 for ECG and
+                // 0.80 for PPG, so it asks for a bank on BOTH channel types.
+                // Only the ECG banks were ever built: tbank::kMatchFloorPpg,
+                // TemplateBank::matchFloorFor(is_ppg) and BeatFlags::
+                // template_id_ppg all existed, and every caller passed
+                // is_ppg = false, so the 0.80 floor was unreachable and a PPG
+                // that changed morphology averaged into one template per bin --
+                // the exact variance inflation 4.6 exists to remove, on the one
+                // channel nobody split.
+                //
+                // NOTHING IN bin_pipeline::runChannel IS ECG-SPECIFIC. It takes
+                // is_ppg and threads it to the floor, so seeding, best-match
+                // assignment, spawn-at-floor, the cap, the merge, the
+                // confirmed-member cap raise and the census are the SAME code
+                // for both. That is why this is a call site rather than a
+                // second implementation -- a parallel PPG bank would be a
+                // second place for the seven rules to drift.
+                bin_pipeline::ChannelInput pin;
+                pin.beats = &ppg_kept[i];
+                pin.width = ppg_kept[i].empty()
+                    ? 0 : static_cast<int>(ppg_kept[i].front().size());
+                // Column of the systolic peak on the shared axis. The pulse
+                // slicer anchors every beat the same way, so one column serves
+                // the whole bin -- the same contract r_col carries for ECG.
+                pin.r_col = ppg_peak_cols[i];
+                pin.is_ppg = true;                 // <- selects kMatchFloorPpg
+                pin.bin_index = static_cast<uint64_t>(i);
+                // NOT 0..2. Those index BeatFlags::template_id_ecg, and a PPG
+                // assignment written into an ECG slot would read downstream as
+                // an ECG template id. runChannel writes template_id_ppg from
+                // is_ppg instead, and skips the ECG array when channel is out
+                // of 0..2, so 3 is the value that keeps the two apart.
+                pin.channel = 3;
+                pin.max_templates_per_bin = 0;     // 0 => kDefaultMaxTemplatesPerBin
+                // Seed slot 0 with the Phase 1 pulse template for this bin,
+                // which is what ppg_templates[i] is. Same caveat as the ECG
+                // seed and for the same reason: it is a column-wise median with
+                // no rhythm test, so it is the sinus pulse by name rather than
+                // by content -- hence not claiming otherwise here.
+                pin.phase1_template = ppg_templates[i];
+                pin.phase1_is_verified_sinus = false;
+                // rr_after LEFT EMPTY, deliberately. The PVC filter is a timing
+                // test on consecutive RR, and the PPG kept set is filtered
+                // independently of the ECG kept set, so a beat at PPG index k
+                // is not in general the beat at ECG index k. Supplying ECG RR
+                // here would attach one beat's timing to another's morphology
+                // and every premature verdict in the bin would be plausible and
+                // wrong. Absent RR makes n_premature_members 0, so a PPG
+                // template's presumed category rests on reproducibility alone,
+                // which is honest about what is actually known.
+
+                bin_pipeline::ChannelOutput pout = bin_pipeline::runChannel(pin);
+                info.bank_by_channel["PPG"] = std::move(pout);
+
                 info.kept_beats_by_channel["PPG"] = std::move(ppg_kept[i]);
             }
         }

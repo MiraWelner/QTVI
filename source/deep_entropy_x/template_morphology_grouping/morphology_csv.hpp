@@ -180,26 +180,12 @@ namespace morphology_csv {
         // A CONFIRMED template still uses its subtype: that index was issued by
         // the bank at confirmation time, the operator has seen it, and it must
         // not be renumbered by a later merge elsewhere in the bin.
+        // MOVED TO tbank::letterRanks (template_bank.hpp). The viewer names
+        // templates too and had its own scheme, which disagreed with this one
+        // whenever a lower slot was empty -- one template, two names. Kept as a
+        // forwarder so the call sites below read unchanged.
         inline std::vector<uint8_t> letterRanks(const tbank::TemplateBank& bank) {
-            const int n = bank.size();
-            std::vector<int> order;
-            order.reserve(n);
-            for (int i = 0; i < n; ++i)
-                if (!bank.templates[i].tmpl.empty()) order.push_back(i);
-            std::sort(order.begin(), order.end(), [&](int a, int b) {
-                return bank.templates[a].spawn_seq < bank.templates[b].spawn_seq;
-                });
-
-            std::vector<uint8_t> letter(n, 0);
-            int rank = 0;
-            for (int i : order) {
-                const tbank::BankTemplate& t = bank.templates[i];
-                const int idx = (t.label_code != tbank::kUnlabeled && t.subtype > 0)
-                    ? t.subtype - 1 : rank;
-                letter[i] = static_cast<uint8_t>(idx % 26);
-                ++rank;
-            }
-            return letter;
+            return tbank::letterRanks(bank);
         }
 
         inline std::string templateName(const tbank::BankTemplate& t,

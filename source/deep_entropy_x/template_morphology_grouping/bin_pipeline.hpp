@@ -292,17 +292,26 @@ namespace bin_pipeline {
             }
         }
 
-        // ---- step 3: PVC filter across ALL beats ------------------------
+        // ---- step 3: PVC filter -- MEASURED NOW, APPLIED AFTER PARTITIONING
+        //
+        // ORDER: align -> partition and merge -> remove and flag premature ->
+        // Tukey on the clean beats. The filter is computed here because it is
+        // pure arithmetic on rr_after and cheap, but its verdicts must NOT
+        // shape the partition: a premature beat is a beat, and excluding it
+        // before the bank runs is what deleted the ectopic morphologies before
+        // they could be separated. out.pvc holds the verdicts; they are written
+        // onto the flags and acted on in the post-partition stage below.
         out.pvc = pvc_filter::runFilter(in.rr_after);
         for (size_t i = 0; i < n && i < out.pvc.verdict.size(); ++i)
             out.flags[i].pvc = out.pvc.verdict[i];
         out.counts.n_premature = out.pvc.n_premature;
         out.counts.n_vote_only = out.pvc.n_vote_only;
 
+        // SEED POOL WITHOUT RHYTHM OR TUKEY. Both used to steer it, and both
+        // are now decided after the partition exists. Seeding on category and
+        // baseline alone is the only self-consistent choice: anything else
+        // would reintroduce the inversion this reordering removes.
         std::vector<uint8_t> rhythm(n, 0u);
-        for (size_t i = 0; i < n; ++i)
-            rhythm[i] = (out.flags[i].pvc == tbank::PvcFilter::PREMATURE) ? 1u
-            : (out.flags[i].pvc == tbank::PvcFilter::VOTE) ? 2u : 0u;
 
         // ---- step 4: seed from category 1, Tukey inside that group ------
         std::vector<uint32_t> candidates;
@@ -433,6 +442,244 @@ namespace bin_pipeline {
         tbank::recomputeAll(out.bank, *in.beats, in.width);
         tbank::refinePass(out.bank, *in.beats, out.assignment,
             in.width, in.is_ppg, &out.counts);
+
+        // ==================================================================
+        // POST-PARTITION: REMOVE AND FLAG PREMATURE, THEN TUKEY PER GROUP
+        //
+        // This is the stage the pipeline was missing. The order is align ->
+        // partition and merge -> remove and flag premature beats -> Tukey on
+        // the clean beats, and both of the last two steps happen HERE, after
+        // the bank exists, because both are judgements about a beat relative to
+        // ITS OWN morphology.
+        //
+        // Tukey used to run inside align_beat_matrix, before any partition. Its
+        // amplitude and wave-score passes reject beats that do not resemble the
+        // population, and before partitioning the population is every
+        // morphology at once -- so an ectopic beat is an outlier by
+        // construction and was deleted before the bank could separate it.
+        // alignment.hpp now measures and records without pruning
+        // (kTukeyPrunesInAlignment == false) and this stage does the excluding.
+        //
+        // EXCLUDED FROM THE TEMPLATE, RETAINED WITH FLAGS. A flagged beat keeps
+        // its membership record in out.assignment and its verdict on
+        // out.flags -- it is still that group's beat and the archive must be
+        // able to say so -- but it is dropped from the member list the waveform
+        // is averaged from. Deleting it instead would make the count
+        // unreconstructable; leaving it in the average is the contamination the
+        // section exists to prevent.
+        {
+            const double NaN = std::numeric_limits<double>::quiet_NaN();
+
+            for (int t = 0; t < out.bank.size(); ++t) {
+                tbank::BankTemplate& tp = out.bank.templates[t];
+
+                // ---- 1: premature removal, per group --------------------
+                std::vector<uint32_t> clean;
+                clean.reserve(tp.members.size());
+                for (const uint32_t m : tp.members) {
+                    const bool premature = (m < out.flags.size())
+                        && (out.flags[m].pvc != tbank::PvcFilter::NONE);
+                    if (!premature) clean.push_back(m);
+                }
+
+                // A GROUP THAT IS ENTIRELY PREMATURE IS NOT CLEANED, IT IS
+                // KEPT AS IT IS. That is the ectopic morphology itself, and
+                // emptying it would delete exactly what 4.6 exists to
+                // preserve -- the template would lose its waveform and the
+                // operator would have nothing to confirm.
+                if (clean.empty()) clean = tp.members;
+
+                // ---- 2: Tukey INSIDE the group, THREE PASSES ------------
+                //
+                // R-LOCATION, AMPLITUDE, WAVE-SCORE. All three measured on the
+                // SAME post-premature set and rejected as a union, NOT
+                // sequentially. alignment.hpp ran them in series, each pass
+                // computing its quartiles over the previous pass's survivors,
+                // which is far more aggressive: three sequential 1.5*IQR passes
+                // on a 12-member group can cascade to almost nothing, and small
+                // groups are exactly what this pipeline produces. Simultaneous
+                // fences are also order-independent, so nobody has to know
+                // which pass ran first to interpret the result.
+                //
+                // RR-LENGTH IS NOT ONE OF THEM. It is a rhythm test, not a
+                // morphology test, and premature removal above has already
+                // taken the short intervals. What would be left for it to
+                // reject is mostly long ones -- post-ectopic pauses and dropped
+                // detections -- and inside a group of ectopics it would compute
+                // ectopic RR fences and reject on those, which is a different
+                // statement again. It stays a bin-level rhythm flag.
+                //
+                // Wave-score is the pass that gains most from the reorder: it
+                // now scores a beat against ITS OWN group's template instead of
+                // against a template built from every morphology at once, which
+                // is what the test was always supposed to mean.
+                std::vector<double> ampV(clean.size(), NaN);
+                std::vector<double> rLoc(clean.size(), NaN);
+                std::vector<double> wave(clean.size(), NaN);
+
+                for (size_t k = 0; k < clean.size(); ++k) {
+                    const uint32_t m = clean[k];
+                    if (m >= in.beats->size()) continue;
+                    const std::vector<double>& b = (*in.beats)[m];
+
+                    double lo = std::numeric_limits<double>::infinity();
+                    double hi = -std::numeric_limits<double>::infinity();
+                    int argmax = -1; double peak = -1.0;
+                    for (size_t j = 0; j < b.size(); ++j) {
+                        const double v = b[j];
+                        if (std::isnan(v)) continue;
+                        lo = std::min(lo, v);
+                        hi = std::max(hi, v);
+                        const double a = std::abs(v);
+                        if (a > peak) { peak = a; argmax = static_cast<int>(j); }
+                    }
+                    if (hi >= lo) ampV[k] = hi - lo;
+
+                    // Offset of this beat's own dominant deflection from the
+                    // frame's R column. A beat whose R did not land where the
+                    // frame says it did corrupts every shape measurement made
+                    // on it, which is why this is measured rather than assumed.
+                    if (argmax >= 0 && tp.r_col >= 0)
+                        rLoc[k] = static_cast<double>(argmax - tp.r_col);
+
+                    // Shape against this group's own template. NaN when the
+                    // template has no waveform yet; correlate() returns NaN r
+                    // for a flat vector, which keep_within_tukey treats as
+                    // unjudgeable rather than as an outlier.
+                    if (!tp.tmpl.empty())
+                        wave[k] = tbank::correlate(b, tp.tmpl).r;
+                }
+
+                std::vector<uint32_t> kept = clean;
+                if (clean.size() >= 8) {
+                    alignment::TukeyStats sA, sR, sW;
+                    const std::vector<bool> keepA =
+                        alignment::keep_within_tukey(ampV, 1.5, &sA);
+                    const std::vector<bool> keepR =
+                        alignment::keep_within_tukey(rLoc, 1.5, &sR);
+                    const std::vector<bool> keepW =
+                        alignment::keep_within_tukey(wave, 1.5, &sW);
+
+                    std::vector<uint32_t> k2;
+                    k2.reserve(clean.size());
+                    for (size_t k = 0; k < clean.size(); ++k) {
+                        // A metric that could not be measured does NOT reject.
+                        // NaN means unjudgeable, and rejecting on it would prune
+                        // beats for being unmeasurable rather than for being
+                        // outliers -- the same conflation bandMatch avoids by
+                        // excluding incomparable columns from its denominator.
+                        const bool okA = std::isnan(ampV[k])
+                            || (k < keepA.size() && keepA[k]);
+                        const bool okR = std::isnan(rLoc[k])
+                            || (k < keepR.size() && keepR[k]);
+                        const bool okW = std::isnan(wave[k])
+                            || (k < keepW.size() && keepW[k]);
+                        if (okA && okR && okW) { k2.push_back(clean[k]); continue; }
+
+                        const uint32_t m = clean[k];
+                        if (m < out.flags.size()) {
+                            // FIRST failing pass wins the label, so the reason
+                            // is a single value. Ordered R-location, amplitude,
+                            // wave-score: an R that landed wrong explains a bad
+                            // amplitude and a bad shape, so it is the more
+                            // informative attribution when several fire.
+                            // fromAlignment(), not a direct assignment:
+                            // BeatFlags::tukey is tbank::TukeyOutcome while the
+                            // reason names here are alignment::TukeyOutcome. The
+                            // two enumerations share values today, which is
+                            // exactly why the conversion is explicit -- a
+                            // static_cast would keep compiling if either list
+                            // ever gained a member.
+                            out.flags[m].tukey = fromAlignment(
+                                !okR ? alignment::TukeyOutcome::REJ_R_LOCATION
+                                : (!okA ? alignment::TukeyOutcome::REJ_AMPLITUDE
+                                    : alignment::TukeyOutcome::REJ_WAVE_SCORE));
+                        }
+                    }
+                    if (!k2.empty()) kept = std::move(k2);   // never empty a group
+
+                    // out.counts.tukey_* are tbank::TukeyPassCounts, not
+                    // alignment::TukeyStats. Accumulating COUNTS across groups
+                    // is meaningful; accumulating FENCES is not -- q1/q3 and the
+                    // fences describe one group's distribution, and summing or
+                    // overwriting them across groups yields a quartile that
+                    // describes nothing. Only the three counts are added; the
+                    // fence fields stay NaN at bin level.
+                    auto acc = [&](tbank::TukeyPassCounts& dst,
+                        const alignment::TukeyStats& src) {
+                            dst.beats_in += src.beats_in;
+                            dst.beats_out += src.beats_out;
+                            dst.rejected += src.rejected;
+                        };
+                    acc(out.counts.tukey_amplitude, sA);
+                    acc(out.counts.tukey_r_location, sR);
+                    acc(out.counts.tukey_wave_score, sW);
+                }
+
+                // ---- 3: record the clean subset, KEEP the full membership
+                // members is NOT overwritten. An excluded beat stays this
+                // template's beat so the archive can write it with its reason;
+                // members_clean is what the waveform and the screen use.
+                tp.members_clean = std::move(kept);
+            }
+
+            // ---- rebuild the waveforms from the CLEAN members ------------
+            // recomputeAll averages over `members`, so the clean lists are
+            // swapped in for the duration and swapped back after. Swapped
+            // rather than passed as a parameter because recomputeTemplate is
+            // shared with the pre-partition paths and changing its signature
+            // would silently alter what those average over.
+            //
+            // Corridors depend on membership, so this happens once after every
+            // group is cleaned rather than per group -- slot 0's corridor is
+            // what the young groups inherit and must be final first.
+            std::vector<std::vector<uint32_t>> full(out.bank.size());
+            for (int t = 0; t < out.bank.size(); ++t) {
+                full[t] = out.bank.templates[t].members;
+                if (!out.bank.templates[t].members_clean.empty())
+                    out.bank.templates[t].members = out.bank.templates[t].members_clean;
+            }
+            tbank::recomputeAll(out.bank, *in.beats, in.width);
+
+            // ---- SEED-QUALITY CORRECTION: reassign against clean templates --
+            //
+            // The seed pool can no longer be steered by rhythm or Tukey
+            // verdicts, because under this order neither exists when it runs --
+            // both are decided after the partition. Slot 0's initial corridor
+            // is therefore derived from a less filtered population than before,
+            // and the first pass assigned beats against it.
+            //
+            // Fixed by reassigning now, against templates rebuilt from the
+            // CLEAN members. This is the first moment a group's waveform
+            // reflects only the beats that belong in it, so it is the first
+            // moment assignment can be trusted -- doing it earlier would just
+            // repeat the first pass against the same unfiltered reference.
+            //
+            // Runs with the clean lists still swapped in, deliberately: the
+            // corridors a beat is scored against must be the clean ones. New
+            // members land in `members`, which at this instant IS the clean
+            // list, and the union with the full list is taken below so no beat
+            // is lost from the archive.
+            tbank::refinePass(out.bank, *in.beats, out.assignment,
+                in.width, in.is_ppg, &out.counts);
+            tbank::recomputeAll(out.bank, *in.beats, in.width);
+
+            for (int t = 0; t < out.bank.size(); ++t) {
+                tbank::BankTemplate& tp = out.bank.templates[t];
+                // What refinePass produced is the clean membership.
+                tp.members_clean = tp.members;
+                // The archive keeps everything: the pre-clean membership plus
+                // anything reassignment moved in. Union, not replacement -- a
+                // beat excluded from this group's average is still a beat this
+                // group is responsible for reporting.
+                std::vector<uint32_t>& f = full[t];
+                f.insert(f.end(), tp.members_clean.begin(), tp.members_clean.end());
+                std::sort(f.begin(), f.end());
+                f.erase(std::unique(f.begin(), f.end()), f.end());
+                tp.members = std::move(f);
+            }
+        }
+
 
         // ---- per-template census ----------------------------------------
         // Aggregate the per-beat verdicts onto the templates their beats landed

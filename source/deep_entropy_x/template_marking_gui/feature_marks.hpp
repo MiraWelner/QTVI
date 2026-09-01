@@ -124,6 +124,49 @@ public:
     // r_col is the template's own R column. A template whose r_col is < 0 gets
     // an all -1 marker set: no anchor means no landmark is locatable, and -1 is
     // the established "absent" value the drawing layer already understands.
+    // ---------------------------------------------------------------------
+    // THE canonical ECG landmark detector. One waveform in, six landmarks out.
+    //
+    // EVERY TEMPLATE IS ITS OWN TEMPLATE. There used to be three copies of this
+    // logic -- seed_all's per-channel block, seed_bank_template, and
+    // bin_archive's buildChannelArchive -- and they disagreed. seed_all refined
+    // the R anchor with subsample_refine::symmetricExtremum before running the
+    // finders; the other two passed the stored r_col through untouched. Since
+    // the R anchor is the search origin for all six finders, a one-sample
+    // difference there walked through every landmark, so the archive's numbers
+    // did not match what the viewer displayed for the same bin. Worse, a bank
+    // template with no r_col of its own borrowed the BIN's refined R -- a value
+    // refined against a different waveform, which is most wrong exactly where
+    // the morphologies differ most.
+    //
+    // The R anchor is refined HERE, against the waveform being measured. A
+    // PVC's peak genuinely sits elsewhere than the sinus median's, so a bank
+    // template's refined R may differ from its bin's. That is intended: the
+    // bank exists because these are different morphologies.
+    //
+    // CONVENTION: -1 MEANS ABSENT, never clamped to an edge column. A
+    // ventricular template has no P wave, and template_bank.hpp's contract on
+    // markers_by_anchor requires every P-dependent feature to come out NaN
+    // rather than 0. Callers must treat -1 as a valid state.
+    //
+    // Positions are sub-sample doubles. Callers that store integers round at
+    // the point of storage rather than here, so the sub-sample values stay
+    // available to whoever wants them.
+    // ---------------------------------------------------------------------
+    struct TemplateLandmarks {
+        double r_peak = -1.0;    // refined from nominal_r_col, sub-sample
+        double q_begin = -1.0;
+        double s_end = -1.0;    // == J-point
+        double t_begin = -1.0;
+        double t_end = -1.0;
+        double p_peak = -1.0;
+        double p_begin = -1.0;
+        bool   valid = false;    // false => waveform or anchor unusable
+    };
+
+    static TemplateLandmarks detect_template_landmarks(
+        const std::vector<double>& tmpl, int nominal_r_col, double sampleRate);
+
     static void seed_bank_template(const std::vector<double>& tmpl, int r_col,
         double sampleRate, tbank::BankMarkerSet& out);
 

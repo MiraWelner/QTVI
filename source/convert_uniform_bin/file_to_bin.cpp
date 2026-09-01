@@ -1121,7 +1121,7 @@ std::filesystem::path make_binfile(const std::filesystem::path& path, const conf
         // as its own valid .bin named <stem>_0.bin, <stem>_1.bin, ... The final
         // segment shorter than 8 h is kept as-is. All other EDF datasets write
         // a single whole-recording .bin.
-        if (cfg.dataset_type == "BITTIUM") {
+        if (cfg.dataset_type == "BITTIUM" || cfg.dataset_type == "SHHS1" || cfg.dataset_type == "SHHS2") {
             double dur = edf_duration_seconds(path, cfg);
             if (dur <= 0.0) {
                 std::cerr << "ERROR: could not determine duration of "

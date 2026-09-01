@@ -71,6 +71,13 @@ namespace template_io {
         std::vector<double> ecg_template_iqr;
         double alignment_point = 0.0;
         int    r_col = -1;   // true R column in the template (was avg_r_expand)
+
+        // Median RR of the beats behind this template, in samples. A DISPLAY
+        // width for the viewer's x-axis -- the beat matrix stays framed on the
+        // bin's longest RR so no beat is ever clipped. NOT serialized: -1 after
+        // a read, and the viewer falls back to the array length, which is
+        // exactly today's behaviour.
+        int    median_rr_samples = -1;
     };
 
     struct BinTemplates {
@@ -112,6 +119,16 @@ namespace template_io {
         // one.
         std::array<tbank::TemplateBank, 3> ecg_bank;
 
+        // Section 4.6 template bank for PPG. ONE bank, not three: there is one
+        // pulse channel. Slot 0 is seeded from ppgTemplate, and the bank was
+        // built against kMatchFloorPpg (0.80) rather than the ECG floor -- the
+        // spec names two thresholds because it wants a bank on both channel
+        // types, and this is the PPG one.
+        //
+        // Serialized as its own trailing section (v4), so a v3 file reads back
+        // with it empty and that reads correctly as "one pulse template for
+        // this bin", which is what a v3 file actually contains.
+        tbank::TemplateBank ppg_bank;
     };
 
     struct AveragedTemplate {

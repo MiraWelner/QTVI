@@ -237,7 +237,41 @@ namespace alignment {
             }
             };
 
+        // ==================================================================
+        // TUKEY MEASURES HERE; IT NO LONGER PRUNES HERE.
+        //
+        // The correct order is: align -> partition and merge -> remove and flag
+        // premature beats -> Tukey on the CLEAN beats. Tukey used to run last
+        // in this function, which put it FIRST overall, and that inverts its
+        // meaning: the amplitude and wave-score passes reject beats that do not
+        // resemble the population, and before partitioning the population is
+        // every morphology mixed together. A PVC is then an outlier by
+        // construction and is deleted before the bank can ever see it, so the
+        // bank partitions a set from which the genuinely distinct morphologies
+        // have already been removed.
+        //
+        // That one ordering error accounts for the two-member templates, the
+        // over-segmentation into _B/_C/_D, and the ECG and PPG survivor counts
+        // disagreeing by a factor of ninety on the same R-peaks.
+        //
+        // Every pass below still COMPUTES its fences and still RECORDS its
+        // verdict per beat through record_tukey -- those numbers are wanted for
+        // reporting, and the bank needs the verdicts at its own later stage.
+        // Nothing is discarded. tukey_outcome becomes advisory output rather
+        // than a description of what was thrown away.
+        //
+        // CONSEQUENCE FOR EVERY CONSUMER: `beats` is now the FULL aligned set,
+        // not a kept set. Anything that treated it as pre-filtered has to filter
+        // on the flags instead. original_index is consequently the identity,
+        // which is what the joint bank's slice mapping wants anyway.
+        //
+        // kTukeyPrunesInAlignment restores the old behaviour for a side-by-side
+        // comparison only. It is not a supported mode.
+        // ==================================================================
+        constexpr bool kTukeyPrunesInAlignment = false;
+
         auto apply_mask = [&](const std::vector<bool>& keep) {
+            if (!kTukeyPrunesInAlignment) return;   // measure, record, keep
             std::vector<std::vector<double>> kb;
             std::vector<size_t> kr;
             std::vector<int>    km;
@@ -432,6 +466,29 @@ namespace alignment {
             }
         }
         // ---- Pass 1: R-align on shared axis ----------------------------
+        // FRAMED ON THE MAXIMUM RR. This is a STORAGE width, and it is sized so
+        // that NO BEAT LOSES A SAMPLE: the longest beat in the bin has to fit,
+        // or its tail is gone from the matrix and from every template built
+        // from it.
+        //
+        // I briefly changed this to the median and it was wrong. Roughly half
+        // of any distribution sits above its median, so a median-width matrix
+        // clipped about 48% of beats -- on the left where their own R sits past
+        // R_anchor, and on the right where their tail runs past shared_w. Small
+        // templates showed it worst, because a 2-member template is often built
+        // from exactly the long beats that got cut, so it appeared trimmed at
+        // BOTH ends.
+        //
+        // THE SQUASHED PLOTS ARE NOT THIS. They are a DISPLAY problem:
+        // BinPlotWidget sets m_ecgVisibleN from the trace length, so the view
+        // width is the storage width, and one 2.8 s pause therefore stretched
+        // the axis of every panel in the bin. The fix belongs in the viewer --
+        // draw a median-wide window into a max-wide array -- not here. Narrowing
+        // the array to fix the axis destroys data to change a scale.
+        //
+        // out.median_length (set just above) is the value that display window
+        // should be built from; it is already carried on the beat set for
+        // whoever plumbs it through to the viewer.
         int max_rr_len = 0;
         for (int L : out.rr_lens)
             if (L > max_rr_len) max_rr_len = L;
@@ -439,6 +496,7 @@ namespace alignment {
 
         const int R_anchor = static_cast<int>(rr_before_samples(max_rr_len));
         const int shared_w = R_anchor + static_cast<int>(rr_after_samples(max_rr_len));
+        if (shared_w <= 0) return out;
 
         const double NaND = std::numeric_limits<double>::quiet_NaN();
         std::vector<std::vector<double>> aligned;
@@ -1004,6 +1062,22 @@ namespace alignment {
         std::vector<std::vector<double>> beats;   // NaN-padded, 50%-upslope-aligned
         std::vector<int> peak_cols;               // per-beat systolic peak column (varies)
         std::vector<int> foot_cols;               // per-beat foot column (varies)
+
+        // R-PAIR ORDINAL of each surviving beat, parallel to `beats`.
+        //
+        // WHY IT HAS TO BE CARRIED. This set is pruned twice -- beats with no
+        // detectable peak/foot/up50 are skipped at slice time, and peak-column
+        // outliers are removed in pass 1 -- so row k of `beats` is NOT R-pair k.
+        // Every consumer that needs to say "this pulse and that QRS are the same
+        // heartbeat" needs the ordinal, and it was being discarded here, which
+        // is why a partition shared between ECG and PPG could not be built at
+        // all: there was no key to join them on.
+        //
+        // The ordinal is the index i of the R-pair (rPeaks[i], rPeaks[i+1]) this
+        // beat was sliced from, so it indexes the SAME R-peak vector the ECG
+        // slicer is driven by. That is what makes it a shared key rather than
+        // just another local index.
+        std::vector<uint32_t> original_index;
         int    median_length = -1;
         size_t total_beats = 0;
         int    up50_aligned_col = -1;             // shared column all half-height points land on
@@ -1021,6 +1095,8 @@ namespace alignment {
         struct Raw { std::vector<double> data; int peak; int foot; int up50; };
         std::vector<Raw> raw;
         std::vector<int> rr_lens;
+        // R-pair ordinals, parallel to `raw`. See PpgBeatSet::original_index.
+        std::vector<uint32_t> raw_slice;
         raw.reserve(rPeaks.size());
 
         // Compact the parallel (raw, rr_lens) vectors, keeping only entries
@@ -1132,6 +1208,12 @@ namespace alignment {
             // are recomputed independently from the final median template.
             raw.push_back({ std::move(beat), peak, foot, up50 });
             rr_lens.push_back(static_cast<int>(rr));
+            // Pushed HERE, in the same statement group as the beat itself, and
+            // after every `continue` above. A beat and its ordinal have to be
+            // appended together or the two vectors silently desynchronise at
+            // the first dropped beat -- and the result still looks like a valid
+            // parallel pair.
+            raw_slice.push_back(static_cast<uint32_t>(i));
         }
         if (raw.empty()) return out;
 
@@ -1171,7 +1253,10 @@ namespace alignment {
         out.beats.reserve(raw.size());
         out.peak_cols.reserve(raw.size());
         out.foot_cols.reserve(raw.size());
-        for (const auto& b : raw) {
+        out.original_index.reserve(raw.size());
+        for (size_t ri = 0; ri < raw.size(); ++ri) {
+            const auto& b = raw[ri];
+            if (ri < raw_slice.size()) out.original_index.push_back(raw_slice[ri]);
             const int prepend = up50_anchor - b.up50;   // may be < 0 now
             std::vector<double> a(shared_w, NaND);
             for (int k = 0; k < (int)b.data.size(); ++k) {
@@ -1210,6 +1295,7 @@ namespace alignment {
 
             std::vector<std::vector<double>> fBeats;
             std::vector<int> fPeak, fFoot, fRr;
+            std::vector<uint32_t> fSlice;   // kept parallel to fBeats
             fBeats.reserve(out.beats.size());
             fPeak.reserve(out.beats.size());
             fFoot.reserve(out.beats.size());
@@ -1220,10 +1306,16 @@ namespace alignment {
                 fPeak.push_back(out.peak_cols[i]);
                 fFoot.push_back(out.foot_cols[i]);
                 fRr.push_back(rr_lens[i]);
+                // Filtered with the rest. Omitting it here is the same
+                // desynchronisation as omitting it at slice time, just one pass
+                // later and harder to see.
+                if (i < out.original_index.size())
+                    fSlice.push_back(out.original_index[i]);
             }
             out.beats.swap(fBeats);
             out.peak_cols.swap(fPeak);
             out.foot_cols.swap(fFoot);
+            out.original_index.swap(fSlice);
             rr_lens.swap(fRr);
 
             // Re-anchor ref_beat_index to the filtered set (same

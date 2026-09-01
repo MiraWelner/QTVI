@@ -340,7 +340,40 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_ecgIqr = ecgIqr;
     m_rPeakSample = rPeakSample;
     m_hasPPG = !ppg.empty();
+    // ---- DISPLAY WIDTH, DERIVED FROM THE WAVEFORM ------------------------
+    // The stored array is framed on the bin's LONGEST RR, so that no beat loses
+    // a sample. Using its length as the view width made one 2.8 s pause stretch
+    // the axis of every panel in the bin -- a typical beat then occupied a sixth
+    // of the frame, which is the squashed template look. Storage width and view
+    // width are different questions and this is where they stop being the same
+    // variable.
+    //
+    // THE TEMPLATE ITSELF CARRIES THE ANSWER. It is a column-wise median over
+    // the bin's beats, so the NEXT beat's R appears in it at the MEDIAN RR --
+    // the very number the frame should be sized from. No new field, no plumbing,
+    // no file-format change: read it off the trace.
+    // ---- VIEW WIDTH: THE MEDIAN BEAT, NOT THE ARRAY ----------------------
+    // The stored array is framed on the bin's LONGEST RR, because no beat may
+    // ever lose a sample to framing. That makes it several times wider than a
+    // normal beat whenever the bin holds a pause or a missed R detection, and
+    // taking the axis from its length is what squashed every template into a
+    // corner of its panel.
+    //
+    // m_medianRrSamples is the median RR of the beats behind this template,
+    // measured in alignment.hpp and handed down in memory. The window is the
+    // same geometry the slicer uses -- 0.5 RR before R, 1.5 RR after -- so a
+    // panel shows one beat plus the start of the next, at every heart rate,
+    // regardless of the worst interval in the bin.
+    //
+    // NOTHING IS DISCARDED. The samples past the window are still in m_ecg and
+    // are simply outside the drawn range.
     m_ecgVisibleN = std::max(static_cast<int>(m_ecg.size()), 2);
+    if (m_medianRrSamples > 2) {
+        const int r = static_cast<int>(std::llround(m_rPeakSample));
+        const int want = std::max(4, (r >= 0 ? r : 0)
+            + static_cast<int>(1.5 * m_medianRrSamples));
+        m_ecgVisibleN = std::min(m_ecgVisibleN, want);
+    }
     m_ppgVisibleN = visiblePpgCount(static_cast<int>(m_ppg.size()));
     updateGeometry();
     update();
@@ -482,6 +515,9 @@ int BinPlotWidget::pulseClipN() const {
     return std::max(0, clip);
 }
 
+// Median RR read off the template, converted to a view width. Returns the full
+// trace length whenever it cannot find a second R, so a sparse or noisy
+// template degrades to today's behaviour instead of to a wrong window.
 double BinPlotWidget::pxPerSample() const {
     // ONE scale shared by ECG and all pulse traces, so the R->foot offset is
     // a true horizontal distance. The frame spans the widest trace; every
@@ -578,25 +614,33 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     const double pps = pxPerSample();
     p.fillRect(rect(), Qt::white);
 
-    //title: channel, bin number, and number of beats in the bin
+    // TITLE, TWO LINES: identity first, counts second. One line did not fit a
+    // panel at page width -- "Bin 1  [Ch1 PQRST_A n=365]  401 ECG beats" ran
+    // past the frame and clipped mid-number, which is worse than wrapping
+    // because a truncated count still looks like a count.
+    //
+    // The counts are now BOTH labelled and both come from the caller, which
+    // resolves them per template (ECG) and per bin (PPG). The old "n=" inside
+    // the label was the per-template number and the trailing figure was the
+    // per-bin one; nothing on screen said so.
     p.setPen(QColor(150, 150, 150));
     { QFont f = p.font(); f.setPointSize(8); p.setFont(f); }
-    QString beatSuffix;
-    if (m_nEcgBeats > 0 || m_nPpgBeats > 0) {
-        QStringList parts;
-        if (m_nEcgBeats > 0) parts << QString("%1 ECG beats").arg(m_nEcgBeats);
-        if (m_nPpgBeats > 0) parts << QString("%1 PPG beats").arg(m_nPpgBeats);
-        beatSuffix = "  " + parts.join(", ");
-    }
-    if (m_binIndex == 0)
-        p.drawText(QRectF(margin_left, 0, w - margin_left, 2.0 * margin_top),
-            Qt::AlignBottom | Qt::AlignLeft,
-            QString("  Bin %1  [%2 over time in seconds]\n%3")
-            .arg(m_binIndex).arg(m_leadLabel).arg(beatSuffix));
-    else
-        p.drawText(margin_left, 11,
-            QString("  Bin %1  [%2]%3")
-            .arg(m_binIndex).arg(m_leadLabel).arg(beatSuffix));
+
+    QString titleLine = QString("Bin %1  %2").arg(m_binIndex).arg(m_leadLabel);
+    // Bin 0 carries the x-axis units hint, since it is the panel whose axis is
+    // labelled for the page.
+    if (m_binIndex == 0) titleLine += "  (time in seconds)";
+
+    QStringList counts;
+    if (m_nEcgBeats > 0) counts << QString("ECG beats %1").arg(m_nEcgBeats);
+    if (m_nPpgBeats > 0) counts << QString("PPG beats %1").arg(m_nPpgBeats);
+
+    // Baselines rather than a rect: margin_top is 20 px and two 8 pt lines are
+    // ~22, so an AlignBottom rect would push the second line into the plot
+    // frame. 9 and 19 keep both clear of it.
+    p.drawText(margin_left, 9, titleLine);
+    if (!counts.isEmpty())
+        p.drawText(margin_left, 19, counts.join("   "));
 
     // Y-axis rules for the normalized traces:
     //   Y-max is FIXED at 1.0 (one decimal) for every panel so bins share

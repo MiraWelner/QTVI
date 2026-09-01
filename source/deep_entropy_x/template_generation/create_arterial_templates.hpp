@@ -43,6 +43,16 @@ struct PPGTemplatesResult {
     vector<vector<vector<double>>> kept; // [bin][beat][sample] retained snips
     vector<int> peakCol;                // [bin] systolic peak column (R1..R2)
     vector<int> footCol;                // [bin] foot column (R1..peak)
+
+    // R-PAIR ORDINAL of each retained snip: keptSlices[bin][beat] is the index
+    // of the R-pair that snip was sliced from, parallel to kept[bin].
+    //
+    // This is the join key between a pulse and a QRS. `kept` is pruned twice in
+    // the aligner and once more by the fit-error filter here, so kept[bin][k] is
+    // NOT R-pair k, and without the ordinal there is no way to say a PPG beat
+    // and an ECG beat are the same heartbeat. Any consumer treating the two
+    // channels as views of one beat needs it.
+    vector<vector<uint32_t>> keptSlices;
 };
 
 /**
@@ -74,11 +84,13 @@ static inline void build_pulse_template_pair_windowed(
     std::vector<double>& outIqr,
     std::vector<std::vector<double>>& outKeptBeats,
     int& outPeakCol,
-    int& outFootCol)
+    int& outFootCol,
+    std::vector<uint32_t>* outKeptSlices)
 {
     outTemplate.clear();
     outIqr.clear();
     outKeptBeats.clear();
+    if (outKeptSlices) outKeptSlices->clear();
     outPeakCol = -1;
     outFootCol = -1;
 
@@ -188,27 +200,72 @@ static inline void build_pulse_template_pair_windowed(
             };
 
         // (b) per-pulse accept/reject on the foot-to-foot error.
-        filteredBeats.reserve(aligned.beats.size());
+        // SURVIVORS ARE TRACKED BY ROW INDEX, not by copying waveforms. The
+        // row index is what carries the R-pair ordinal
+        // (aligned.original_index), so a filter that only accumulates
+        // waveforms discards the join key -- which is what this loop used to
+        // do, and the reason a partition shared with the ECG channels could
+        // not be built at all.
+        std::vector<size_t> survivorRows;
+        survivorRows.reserve(aligned.beats.size());
         diag_all_errs.reserve(aligned.beats.size());
-        for (const auto& bt : aligned.beats) {
-            const double err = footToFootError(bt);
+        for (size_t k = 0; k < aligned.beats.size(); ++k) {
+            const double err = footToFootError(aligned.beats[k]);
             diag_all_errs.push_back(err);
             if (std::isfinite(err)) {
                 if (err < diag_err_min) diag_err_min = err;
                 if (err > diag_err_max) diag_err_max = err;
             }
-            if (err < 0.1) filteredBeats.push_back(bt);
+            if (err < 0.1) survivorRows.push_back(k);
         }
         // If fewer than 3 beats passed the tight threshold, escalate
         // 10% -> 20% -> 50%, taking the first tier that yields >= 3.
         // Each tier rebuilds from scratch (clear first) so tiers don't
         // double-count beats already added by a stricter tier.
         for (const double thr : { 0.10, 0.20, 0.50 }) {
-            if (filteredBeats.size() >= 3) break;
-            filteredBeats.clear();
+            if (survivorRows.size() >= 3) break;
+            survivorRows.clear();
             for (size_t k = 0; k < aligned.beats.size(); ++k)
-                if (diag_all_errs[k] < thr) filteredBeats.push_back(aligned.beats[k]);
+                if (diag_all_errs[k] < thr) survivorRows.push_back(k);
         }
+
+        // DEGENERATE REFERENCE -> KEEP ALL, the same fallback the arterial
+        // twin has at the bottom of this file. All three tiers can come back
+        // empty when footToFootError() is non-finite for every candidate, which
+        // happens when the reference template is all-NaN or the pulse signal is
+        // flat or dead. The original accumulation loop happened never to leave
+        // filteredBeats empty, so the unguarded beatsForTemplate.front() below
+        // was latently wrong; tracking survivor ROWS made it reachable and it
+        // faulted. Keeping all candidates preserves the old outcome -- a
+        // template built from everything, which the QC diagnostics then report
+        // as low quality -- rather than dropping the bin entirely.
+        if (survivorRows.empty()) {
+            survivorRows.reserve(aligned.beats.size());
+            for (size_t k = 0; k < aligned.beats.size(); ++k)
+                survivorRows.push_back(k);
+        }
+
+        // Waveform and ordinal appended in the SAME loop, so they cannot fall
+        // out of step.
+        filteredBeats.reserve(survivorRows.size());
+        if (outKeptSlices) outKeptSlices->reserve(survivorRows.size());
+        const bool ordinalsUsable =
+            aligned.original_index.size() == aligned.beats.size();
+        for (const size_t k : survivorRows) {
+            filteredBeats.push_back(aligned.beats[k]);
+            if (outKeptSlices)
+                outKeptSlices->push_back(ordinalsUsable
+                    ? aligned.original_index[k] : static_cast<uint32_t>(k));
+        }
+        // Said out loud rather than papered over. Falling back to the row index
+        // produces a mapping of the right SHAPE and the wrong CONTENT, and every
+        // consumer downstream would treat it as a valid join key.
+        if (outKeptSlices && !ordinalsUsable)
+            std::fprintf(stderr,
+                "  [pulse] aligner supplied %zu ordinals for %zu beats; the "
+                "PPG/ECG join key is NOT reliable for this bin\n",
+                aligned.original_index.size(), aligned.beats.size());
+
         diag_survivors = static_cast<int>(filteredBeats.size());
     }
     const auto& beatsForTemplate = filteredBeats;
@@ -248,6 +305,33 @@ static inline void build_pulse_template_pair_windowed(
             diag_err_median = tmp[tmp.size() / 2];
         }
     }
+    // EMPTY IS REACHABLE, AND .front() ON IT IS AN ACCESS VIOLATION.
+    //
+    // Every survivor tier (0.10 / 0.20 / 0.50) can come back empty when the
+    // reference template is degenerate -- an all-NaN column set, or a flat or
+    // dead stretch of pulse signal -- because footToFootError() then returns
+    // non-finite for every candidate and no threshold admits anything. The old
+    // accumulation happened to leave something behind in practice, so this
+    // dereference was latently wrong rather than actively wrong, and the
+    // survivor-row rewrite made it fire.
+    //
+    // Returning here leaves exactly the state the callers already handle: the
+    // out-params were cleared at function entry and the columns are -1, which
+    // is the same thing the catch(...) in CreatePulseTemplates produces and
+    // which the viewer reads as "no pulse template for this bin".
+    // Belt and braces. The keep-all fallback above means this is now
+    // unreachable whenever aligned.beats was non-empty (checked at entry), but
+    // an unguarded .front() on a filtered container is a bug independent of
+    // whether any current path reaches it -- that is precisely how this one got
+    // here. Out-params were cleared at entry and the columns are -1, which the
+    // callers already read as "no pulse template for this bin".
+    if (beatsForTemplate.empty()) {
+        std::fprintf(stderr,
+            "  [pulse] no beat survived QC (%d candidates, err median %.4g); "
+            "no template for this bin\n", diag_input_beats, diag_err_median);
+        return;
+    }
+
     const size_t maxLen = beatsForTemplate.front().size();
 
     // Column-wise NaN-skipping median => template.
@@ -355,6 +439,7 @@ inline PPGTemplatesResult CreatePulseTemplates(
     out.templates.assign(n, {});
     out.iqrs.assign(n, {});
     out.kept.assign(n, {});
+    out.keptSlices.assign(n, {});
     out.peakCol.assign(n, -1);
     out.footCol.assign(n, -1);
 
@@ -372,12 +457,16 @@ inline PPGTemplatesResult CreatePulseTemplates(
                 b.ch1.raw, ecgRate,
                 padSeconds,
                 out.templates[i], out.iqrs[i], out.kept[i],
-                out.peakCol[i], out.footCol[i]);
+                out.peakCol[i], out.footCol[i], &out.keptSlices[i]);
         }
         catch (...) {
             out.templates[i] = {};
             out.iqrs[i] = {};
             out.kept[i] = {};
+            // Cleared WITH kept, not separately: a bin whose waveforms were
+            // discarded but whose ordinals survived would present a join key
+            // pointing at beats that are no longer there.
+            out.keptSlices[i] = {};
             out.peakCol[i] = -1;
             out.footCol[i] = -1;
         }

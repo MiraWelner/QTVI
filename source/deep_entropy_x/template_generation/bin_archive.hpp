@@ -147,22 +147,42 @@ namespace bin_archive {
         const int rPeak = chRaw.r_col;
         if (ecg.empty() || rPeak < 0 || fs <= 0.0) return out;
 
-        // Peaks (all reactive finders, same ones the marking path uses).
-        const double qIdxD = FeatureMarks::compute_q_peak(ecg, rPeak, fs);
-        const double sIdxD = FeatureMarks::compute_s_peak(ecg, rPeak, fs);
-        const double pPeakD = FeatureMarks::detect_p_peak(ecg, rPeak, fs);
+        // ONE DETECTOR, the same one the viewer and the bank columns use.
+        //
+        // This block used to call the six finders itself, and differed from the
+        // viewer in TWO ways at once, so the archived landmarks did not match
+        // what an operator saw for the same bin:
+        //   1. it passed chRaw.r_col straight through, with no
+        //      subsample_refine::symmetricExtremum refinement -- and the R
+        //      anchor is the search origin for all six, so every one moved;
+        //   2. it called compute_t_begin and compute_t_end WITHOUT their seed
+        //      arguments, so each re-derived the J-point and T-onset internally
+        //      by its own slightly different search instead of reusing the ones
+        //      already computed here.
+        // detect_template_landmarks does the refinement and the chained calls.
+        const FeatureMarks::TemplateLandmarks lm =
+            FeatureMarks::detect_template_landmarks(ecg, rPeak, fs);
+        if (!lm.valid) return out;
 
-        // Onsets / offsets (auto-detected -- these were the fields that used
-        // to come from TemplateBin's marker set).
-        const double qOnsetD = FeatureMarks::compute_q_onset(ecg, fs, rPeak);
-        const double jPointD = FeatureMarks::compute_j_point(ecg, fs, rPeak);   // == S_end
-        const double tBeginD = FeatureMarks::compute_t_begin(ecg, fs, rPeak);
-        const double tEndD = FeatureMarks::compute_t_end(ecg, fs, rPeak);
-        const double pBeginD = FeatureMarks::compute_p_begin(ecg, fs, rPeak, pPeakD);
+        const double rPeakD = lm.r_peak;
+        const double qOnsetD = lm.q_begin;
+        const double jPointD = lm.s_end;
+        const double tBeginD = lm.t_begin;
+        const double tEndD = lm.t_end;
+        const double pPeakD = lm.p_peak;
+        const double pBeginD = lm.p_begin;
+
+        // Q-peak, S-peak and T-peak are not part of the shared six (nothing in
+        // the marking path stores them), so they stay here -- but anchored on
+        // the REFINED R and the shared T window, not on the raw r_col, or they
+        // would reintroduce the same discrepancy one level down.
+        const int rAnchor = static_cast<int>(rPeakD);
+        const double qIdxD = FeatureMarks::compute_q_peak(ecg, rAnchor, fs);
+        const double sIdxD = FeatureMarks::compute_s_peak(ecg, rAnchor, fs);
         const double tPeakD = FeatureMarks::compute_t_peak(ecg, tBeginD, tEndD);
 
         // Amplitudes.
-        out.r_amp = FeatureMarks::sample_at(ecg, static_cast<double>(rPeak));
+        out.r_amp = FeatureMarks::sample_at(ecg, rPeakD);   // refined R, not r_col
         out.q_amp = FeatureMarks::sample_at(ecg, qIdxD);
         out.s_amp = FeatureMarks::sample_at(ecg, sIdxD);
         out.p_amp = FeatureMarks::sample_at(ecg, pPeakD);
@@ -191,12 +211,15 @@ namespace bin_archive {
             out.qrs_area = normalize_features::segment_area(ecg, qOnset, jPoint, /*absolute=*/true);
 
         // Slopes (mV/s) across the QRS limbs.
-        if (!std::isnan(qIdxD) && qIdxD < rPeak) {
-            const double dt = (rPeak - qIdxD) / fs;
+        // Measured against the REFINED R, consistent with r_amp and the
+        // landmarks above. Mixing rPeakD into some intervals and the raw r_col
+        // into others is how a table becomes internally inconsistent.
+        if (!std::isnan(qIdxD) && qIdxD < rPeakD) {
+            const double dt = (rPeakD - qIdxD) / fs;
             if (dt > 0.0) out.upstroke_slope_mv_per_s = (out.r_amp - out.q_amp) / dt;
         }
-        if (!std::isnan(sIdxD) && sIdxD > rPeak) {
-            const double dt = (sIdxD - rPeak) / fs;
+        if (!std::isnan(sIdxD) && sIdxD > rPeakD) {
+            const double dt = (sIdxD - rPeakD) / fs;
             if (dt > 0.0) out.downstroke_slope_mv_per_s = (out.s_amp - out.r_amp) / dt;
         }
         if (!std::isnan(out.q_amp) && !std::isnan(out.r_amp) && out.r_amp != 0.0)

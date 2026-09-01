@@ -87,6 +87,13 @@ private:
         const std::vector<double>* ecg;
         int channelIndex;
         QString label;
+        // Beats in THIS bank member, not in the bin. The panel title reports
+        // it, so it has to travel with the lead rather than being looked up
+        // from the bin later -- a bin-level count is a different number and
+        // showing one where the other is meant is not visibly wrong.
+        // 0 means "unknown": the pre-bank fallback path, where only the bin
+        // total exists.
+        int nMembers = 0;
     };
 
     std::vector<Lead> leadsForBin(const TemplateBin& b) const;
@@ -154,6 +161,12 @@ private:
     // written from the same TemplateBin in the same call.
     void applyBinToWidget(BinPlotWidget* pw, const TemplateBin& b);
     void refreshBinMarkers(int binIdx);
+
+    // Bank-column counterpart of refreshBinMarkers. Repaints only the columns
+    // showing (binIdx, templateIdx), from that template's own BankMarkerSet.
+    // templateIdx 0 forwards to refreshBinMarkers, since slot 0 is the one
+    // column that does carry the bin's marker set.
+    void refreshBankMarkers(int binIdx, int templateIdx);
 
     // B2 focus mode. Two panels: the QRS view and the JT view. The J-point
     // (S-end) is shared between them (spec I-4), so a J-point selection or

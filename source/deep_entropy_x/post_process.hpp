@@ -30,6 +30,7 @@
 #include "template_marking_gui/alignment.hpp"
 #include "logging/sqi_ecg.hpp"
 #include "template_morphology_grouping/morphology_csv.hpp"
+#include "template_morphology_grouping/envelope_report.hpp"
 
 namespace post_process_detail {
 
@@ -363,6 +364,32 @@ namespace post_process_detail {
                 << ": could not write " << ftsPath << "\n";
             else
                 std::cerr << "  [feature_ts] " << stem << ": wrote length/area/volume series\n";
+
+            // Section 4.7 dynamic envelopes, per beat per segment per channel.
+            // Placed here, next to the other R-pass checkpoints, because it
+            // needs exactly the same two objects they do -- job.tmpl.bins for
+            // the segment bounds and job.beats for the beats -- and because
+            // both are still the R pass at this point. It CANNOT move below
+            // augment_ecg_ppg_pairs_sqabs, which overwrites the beat lists.
+            //
+            // Serial by construction (see envelope_report.hpp): the rolling
+            // windows are sequential per channel, so this is the one checkpoint
+            // here that must not be parallelised over bins.
+            // ALWAYS WRITTEN. This is expensive -- a spectrum and a wavelet per
+            // segment per channel per beat -- and it is written anyway. A report
+            // that only appears when someone remembers a flag is a report that
+            // is missing from the runs that matter, and "nothing downstream
+            // reads it yet" is not a reason to withhold the record of what the
+            // pipeline computed. The cost is answered by making it fast (the
+            // twiddle table in envelopes.hpp, and the per-channel parallelism in
+            // envelope_report.hpp), not by skipping it.
+            const bool oke = envelope_report::writeEnvelopeReport(
+                cfg.bin_archive_path, stem, job.tmpl.bins, job.beats,
+                cfg.ecg_upsample_rate);
+            if (!oke)
+                std::cerr << "  [envelopes] " << stem
+                << ": could not write envelope report to "
+                << cfg.bin_archive_path << "\n";
         }
         template_io::write_template_binfile(provisionalPath.string(), job.tmpl);
         job.viewerTemplatePath = provisionalPath;

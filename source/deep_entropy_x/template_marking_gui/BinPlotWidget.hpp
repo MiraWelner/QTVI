@@ -230,6 +230,10 @@ public:
 
     int  ecgVisibleN() const { return m_ecgVisibleN; }
 
+    // Median RR in ECG samples. Call BEFORE setData: setData computes the drawn
+    // width from it. -1 restores the old behaviour (axis = array length).
+    void setMedianRr(int samples) { m_medianRrSamples = samples; }
+
     // The widget no longer dictates its width from the trace length.
     // It advertises a modest preferred width and a small minimum so the
     // grid can hand every cell an equal share of the window; the trace is
@@ -302,6 +306,14 @@ private:
     // pixels-per-sample that makes that extent fill the drawable width.
     int    totalSampleSpan() const;
     double pxPerSample() const;
+
+    // View width in ECG samples, derived from the trace: the next beat's R in a
+    // median template sits at the median RR, which is what the frame should be
+    // sized from. The STORED array is framed on the longest RR so that no beat
+    // is clipped, so without this the axis of every panel is stretched by the
+    // single worst interval in the bin. Falls back to the full length when no
+    // second R is identifiable.
+
     double ppgStartSample() const;
     // Pulse-trace samples that fit before the ECG's right edge (clip point).
     int    pulseClipN() const;
@@ -326,6 +338,11 @@ private:
 
     int m_ecgVisibleN = 0;
     int m_ppgVisibleN = 0;
+
+    // Median RR of the beats behind this template, in samples; -1 = unknown.
+    // Sets the DRAWN width only -- see the note in setData. Never used to trim
+    // m_ecg itself.
+    int m_medianRrSamples = -1;
     int m_markers[MarkerCount];   // all -1 until seeded (filled in the ctor)
 
     // Hz per channel (indexed by Channel); 0 = unknown -> rateRatio()

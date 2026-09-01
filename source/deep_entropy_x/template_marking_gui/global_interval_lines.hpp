@@ -67,10 +67,8 @@ namespace global_interval_lines {
      *         offset in this channel's columns, and a line drawn at the raw
      *         offset would land near sample 0 and look like a real boundary.
      */
-    inline std::vector<Line> forChannel(const TemplateBin& b,
-        const global_intervals::GlobalIntervals& g,
-        int ch,
-        bool withLabels = true) {
+    inline std::vector<Line> forChannel(const TemplateBin& b,  const global_intervals::GlobalIntervals& g, int ch) {
+        //creates the dotted line boundries representing the min onset and max offset of QRS for once plot box
         std::vector<Line> out;
         if (!g.valid) return out;
         const double rc = rColumnFor(b, ch);
@@ -78,16 +76,14 @@ namespace global_interval_lines {
 
         if (!std::isnan(g.qrsOnset)) {
             Line l;
-            l.column = g.qrsOnset + rc;      // R-relative -> this channel's columns
+            l.column = g.qrsOnset + rc;
             l.color = onsetColor();
-            if (withLabels) l.label = QStringLiteral("QRS on");
             out.push_back(l);
         }
         if (!std::isnan(g.qrsOffset)) {
             Line l;
             l.column = g.qrsOffset + rc;
             l.color = offsetColor();
-            if (withLabels) l.label = QStringLiteral("QRS off");
             out.push_back(l);
         }
         return out;
@@ -121,18 +117,16 @@ namespace global_interval_lines {
             const double x = xForColumn(l.column);
 
             QPen pen(l.color);
-            pen.setWidthF(1.0);
-            pen.setStyle(Qt::DashLine);
+            pen.setWidthF(0.7);
+            pen.setStyle(Qt::DotLine);
             p.setPen(pen);
             p.drawLine(QPointF(x, topPx), QPointF(x, bottomPx));
 
             if (!l.label.isEmpty()) {
                 QFont f = p.font();
-                f.setPointSize(7);
+                f.setPointSize(5);
                 p.setFont(f);
                 p.setPen(l.color);
-                // Drawn just inside the top of the plot area, nudged right of
-                // the line so the text never sits on top of it.
                 p.drawText(QPointF(x + 2.0, topPx + 9.0), l.label);
             }
         }
