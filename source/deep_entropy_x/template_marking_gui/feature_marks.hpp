@@ -1,23 +1,16 @@
 #pragma once
-//
-// feature_marks.hpp
-//
-// Every marker/landmark computation lives in this single class. Three
-// categories:
-//
-//   Fixed     -- auto-detected, NOT user-editable. Currently R peak.
-//   Reactive  -- computed from movable markers' current positions;
-//                drawn as X glyphs, no draggable bar. Q peak / S peak
-//                inside the QRS, plus the PPG glyph bundle used by the
-//                overlay.
-//   Movable   -- draggable bars in the GUI; auto-detect provides the
-//                initial seed, user can then drag.
-//
-// Also provides seed_all() -- one call that runs every auto-detector
-// for one TemplateBin (across all channels + PPG + arterial), copies
-// the results into the bin's *_auto_ch fields, and seeds any unset
-// user fields with the fresh auto values.
-//
+/*
+* feature_marks.hpp
+* This class represents the 3 types of markers on an ECG or PPG beat:
+*   Fixed     -- auto-detected, NOT user-editable.
+*   Reactive  -- computed from movable markers' current positions  drawn as X glyphs, no draggable bar.
+*    Movable   -- draggable bars in the GUI; auto-detect provides the initial seed, user can then drag.
+*
+*  Also provides seed_all() -- one call that runs every auto-detector
+* for one TemplateBin (across all channels + PPG + arterial), copies
+* the results into the bin's *_auto_ch fields, and seeds any unset
+* user fields with the fresh auto values.
+*/
 
 #include <utility>
 #include <vector>
@@ -31,26 +24,10 @@ struct TemplateBin;   // forward-declare -- full definition in TemplateBinIO.hpp
 
 enum class AnchorType { P_ONSET, P_PEAK, Q_ONSET, R_PEAK, J_POINT, T_PEAK };//J_POINT = S_END
 
-// Returns the landmark sample index for one beat, or -1 if not found.
-// Anchor locators return SUB-SAMPLE positions. This was
-// std::function<int(...)>, which forced every locator lambda to lround the
-// landmark its finder had just refined -- the note that used to sit in
-// make_anchor_locator ("Rounded only because AnchorLocator is declared
-// int-returning; AnchorLocatorD is the sub-sample form and is still
-// unimplemented") described exactly that. AnchorLocatorD was the intended
-// replacement and is now what AnchorLocator is.
+// Returns the landmark subsample index for one beat, or -1 if not found.
 using AnchorLocator = std::function<double(const std::vector<double>& beat)>;
 
-// Returns the landmark as a sub-sample (floating-point) position, per spec
-// I-3. Built on top of make_anchor_locator's already-tested integer result:
-// the integer locator supplies the seed (including its own fallback logic,
-// reused as-is, not duplicated), and a subsample_refine method appropriate
-// to that anchor type -- Gaussian-weighted quadratic for R (symmetric),
-// cubic-with-analytic-derivative for P/T (asymmetric), or 4x-upsample-then-
-// fit-and-select for the transition anchors (Q-onset, P-onset, J-point) --
-// refines it to double precision.
-// Retained as an alias so existing references keep compiling; AnchorLocator
-// is now the same type.
+// Returns the landmark as a sub-sample (floating-point) position
 using AnchorLocatorD = AnchorLocator;
 
 // Build the per-beat locator for one anchor. Binds r_col/fs into the detector.
@@ -87,21 +64,10 @@ public:
         int onset, int peak, int end);
 
     // Individual reactive computes (all track user markers live).
-    static double compute_t_peak(const std::vector<double>& ecg, double tBegin, double tEnd);
     static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col); //ONE j-point calculation
     static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx);
-    // T-offset. Window [T-begin + 100 ms, T-begin + 200 ms] -- bounded by
-    // T-begin, so no T-end seed is needed and the old circular bound (a T-end
-    // estimate bounding the search for T-end) is gone. tBeginIn avoids
-    // recomputing T-begin.
-    static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col,
-        double tBeginIn = -1.0);
-    // T-onset. Same onset algorithm as Q-onset / P-onset / the J-point: window
-    // [J-point, J-point + 100 ms], baseline at the left edge (the recovered ST
-    // level), anchor at 10% of the rise, 4x-upsampled fit-and-select. Has a
-    // draggable bar and NO glyph. jPointIn avoids recomputing the J-point.
-    static double compute_t_begin(const std::vector<double>& v, double fs, int r_idx,
-        double jPointIn = -1.0);
+    static double compute_t_peak(const std::vector<double>& ecg, double tBegin, double tEnd);
+    static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col,  double tBeginIn = -1.0);
     static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0);
 
     // ---------------------------------------------------------------

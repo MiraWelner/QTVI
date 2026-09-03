@@ -81,29 +81,17 @@ namespace premark {
     {
         SegmentCols s;
         if (tmpl.empty() || rCol < 0 || fs <= 0.0) return s;
-        const double qOn = FeatureMarks::compute_q_onset(tmpl, fs, rCol);
-        const double jPt = FeatureMarks::compute_j_point(tmpl, fs, rCol);
-        const double tBeg = FeatureMarks::compute_t_begin(tmpl, fs, rCol, jPt);
-        const double tEnd = FeatureMarks::compute_t_end(tmpl, fs, rCol, tBeg);
+        const double q_onset = FeatureMarks::compute_q_onset(tmpl, fs, rCol);
+        const double j_point = FeatureMarks::compute_j_point(tmpl, fs, rCol);
+        const double t_end = FeatureMarks::compute_t_end(tmpl, fs, rCol, j_point);
         const int    pEnd = FeatureMarks::detect_p_end(tmpl, rCol, fs);
 
-        s.qrsStart = (qOn >= 0.0) ? (int)std::lround(qOn) : -1;
-        s.qrsEnd = (jPt >= 0.0) ? (int)std::lround(jPt) : -1;
-        s.tEnd = (tEnd >= 0.0) ? (int)std::lround(tEnd) : -1;
-        // T onset was previously computed only to feed compute_t_end and then
-        // thrown away, which left the ST band covering J-point..T-end and the
-        // "T" band covering the isoelectric tail. Undetected T onset falls
-        // back to the J point: the ST band then reads NaN (nothing to score)
-        // and the T band spans what the ST band used to, which is the old
-        // behaviour rather than a silently wrong one.
-        // Clamped into [qrsEnd, tEnd] so a detector returning a T onset outside
-        // the ST..T span cannot produce a negative-width band.
-        s.tBegin = (tBeg >= 0.0) ? (int)std::lround(tBeg) : s.qrsEnd;
+        s.qrsStart = (q_onset >= 0.0) ? (int)std::lround(q_onset) : -1;
+        s.qrsEnd = (j_point >= 0.0) ? (int)std::lround(j_point) : -1;
+        s.tEnd = (t_end >= 0.0) ? (int)std::lround(t_end) : -1;
+        
         if (s.qrsEnd >= 0 && s.tEnd >= 0)
             s.tBegin = std::max(s.qrsEnd, std::min(s.tBegin, s.tEnd));
-        // No P-end detected (absent or flat P) -- fall back to the QRS onset,
-        // which makes the P band the whole pre-QRS span rather than dropping
-        // the band entirely.
         s.pEnd = (pEnd >= 0) ? pEnd : s.qrsStart;
         // ...and CLAMP to the QRS onset even when detection "succeeded".
         // detect_p_end's last resort returns p_peak + 59 samples when the

@@ -71,9 +71,7 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     const int qBegin = FeatureMarks::detect_q_begin(ecg, r_col);
     const double jPointD = FeatureMarks::compute_j_point(ecg, fs, r_col);   // QRS end / J point
     const int jPoint = (int)std::lround(jPointD);
-    const double tBeginD = FeatureMarks::compute_t_begin(ecg, fs, r_col, jPointD);   // T onset
-    const int tBegin = (int)std::lround(tBeginD);
-    const int tEnd = (int)std::lround(FeatureMarks::compute_t_end(ecg, fs, r_col, tBeginD));
+    const int tEnd = (int)std::lround(FeatureMarks::compute_t_end(ecg, fs, r_col, jPointD));
 
     auto clampIdx = [&](int v) { return std::max(0, std::min(n - 1, v)); };
 
@@ -82,7 +80,7 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     s.qrsLo = clampIdx(qBegin >= 0 ? qBegin : r_col);
     s.qrsHi = clampIdx(jPoint >= 0 ? jPoint : r_col);
     s.stLo = s.qrsHi;
-    s.stHi = clampIdx(tBegin >= 0 ? tBegin : s.qrsHi);
+    s.stHi = tEnd;;
     // Isoelectric window for the noise metric: THIS beat's T-end -> the
     // NEXT beat's P-onset -- the TP segment, the true baseline between
     // consecutive beats.

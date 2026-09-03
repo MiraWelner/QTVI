@@ -288,7 +288,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                         std::chrono::steady_clock::now() - _j0).count();
                     const jbank::BankCounts& bc = info.joint.counts;
                     std::fprintf(stderr,
-                        "  [joint] bin %zu/%zu slices=%u groups=%d spawns=%u "
+                        "[set n bin to morphology template split] bin %zu/%zu slices=%u groups=%d spawns=%u "
                         "merges=%u caps=%u unscorable=%u "
                         "rejby=%u/%u/%u/%u  %.1f ms\n",
                         i + 1, n, ji.n_slices, info.joint.bank.size(),

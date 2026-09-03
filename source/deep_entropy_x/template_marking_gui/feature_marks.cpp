@@ -395,21 +395,16 @@ double FeatureMarks::compute_q_onset(const std::vector<double>& v, double fs, in
 // J-point -> T-begin -> T-end, each bounding the next. Previously the window was
 // seed +- 100 ms around a downhill-walk T-end estimate: the search for
 // T-end was bounded by a guess at T-end.
-double FeatureMarks::compute_t_end(const std::vector<double>& v, double fs, int r_col,
-    double tBeginIn) {
+double FeatureMarks::compute_t_end(const std::vector<double>& v, double fs, int r_col, double j_point) {
     const int N = static_cast<int>(v.size());
     if (N < 4 || r_col < 0 || r_col >= N) return -1.0;
     auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
     auto cld = [&](double d) { return std::clamp(d, 0.0, static_cast<double>(N - 1)); };
 
-    const double t_begin = (tBeginIn >= 0.0) ? tBeginIn
-        : compute_t_begin(v, fs, r_col);
-    if (t_begin < 0.0) return -1.0;
-
     // Window: [T-begin + 100 ms, T-begin + 350 ms].
-    const int lo0 = cl(static_cast<int>(std::lround(t_begin + 0.100 * fs)));
-    const int hi = cl(static_cast<int>(std::lround(t_begin + 0.350 * fs)));
-    if (hi <= lo0 + 3) return cld(t_begin);
+    const int lo0 = cl(static_cast<int>(std::lround(j_point + 0.100 * fs)));
+    const int hi = cl(static_cast<int>(std::lround(j_point + 0.350 * fs)));
+    if (hi <= lo0 + 3) return cld(j_point);
 
     // B = post-T baseline at the right edge. E = the extremum in the window, by
     // |distance| so an inverted T behaves the same.
@@ -462,40 +457,6 @@ double FeatureMarks::compute_p_begin(const std::vector<double>& v, double fs, in
         0.0, static_cast<double>(N - 1));
 }
 
-// T-onset: the T wave's foot. Same shape as Q-onset and the J-point -- window
-// bounded by an adjacent landmark, baseline from the window edge the wave
-// departs from, anchor at 10% of the rise, then the 4x-upsampled
-// fit-and-select. Window is [J-point, J-point + 100 ms].
-double FeatureMarks::compute_t_begin(const std::vector<double>& v, double fs, int r_idx,
-    double jPointIn) {
-    const int N = static_cast<int>(v.size());
-    if (N < 4 || r_idx < 0 || r_idx >= N) return -1.0;
-    auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
-    auto cld = [&](double d) { return std::clamp(d, 0.0, static_cast<double>(N - 1)); };
-
-    // The J-point bounds the window: T-begin is always after it. Reuse the
-    // caller's value when given -- recomputing costs a whole transitionAnchor.
-    const double j_point = (jPointIn >= 0.0) ? jPointIn
-        : compute_j_point(v, fs, r_idx);
-    if (j_point < 0.0) return -1.0;
-
-    const bool is_positive = FeatureMarks::qrs_positive_at(v, r_idx);
-    std::vector<double> u = v;
-    if (!is_positive) for (auto& x : u) x = -x;
-
-    // Window: [J-point, J-point + 100 ms].
-    const int lo = cl(static_cast<int>(std::ceil(j_point)));
-    const int hi = cl(lo + static_cast<int>(std::lround(0.100 * fs)));
-    if (hi - lo < 4) return cld(j_point);
-
-    // B = recovered ST level at the left edge: the level the T departs FROM.
-    const double baseline = u[lo];
-
-    // 4x cubic-upsample transition fit-and-select; onset anchor at 10% of the
-    // rise (baseline side), matching every other onset and offset here.
-    return cld(subsample_refine::transitionAnchor(u, lo, 0.10, 40, baseline, lo, hi));
-}
-
 AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
     switch (type) {
     case AnchorType::R_PEAK:  return [r_col](const std::vector<double>&) {
@@ -526,11 +487,8 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
         // One chain, each landmark bounding the next: J-point -> T-begin ->
         // T-end, then T-peak as the extremum between the two.
         return [r_col, fs](const std::vector<double>& b) {
-            const double j = FeatureMarks::compute_j_point(b, fs, r_col);
-            const double tbD = FeatureMarks::compute_t_begin(b, fs, r_col, j);
-            const double teD = FeatureMarks::compute_t_end(b, fs, r_col, tbD);
-            // The brackets stay fractional: compute_t_peak takes doubles.
-            return FeatureMarks::compute_t_peak(b, tbD, teD);
+            const double j_point = FeatureMarks::compute_j_point(b, fs, r_col);
+            return FeatureMarks::compute_t_peak(b, j_point, FeatureMarks::compute_t_end(b, fs, r_col, j_point));
             };
     }
     return [](const std::vector<double>&) { return -1.0; };
@@ -1569,8 +1527,7 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     // reordering these lines changes the answers even though every call looks
     // independent.
     const double j = FeatureMarks::compute_j_point(tmpl, sampleRate, r_anchor);
-    const double tb = FeatureMarks::compute_t_begin(tmpl, sampleRate, r_anchor, j);
-    const double te = FeatureMarks::compute_t_end(tmpl, sampleRate, r_anchor, tb);
+    const double te = FeatureMarks::compute_t_end(tmpl, sampleRate, r_anchor, j);
     const double pp = FeatureMarks::detect_p_peak(tmpl, r_anchor, sampleRate);
     const double pb = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_anchor, pp);
     const double q = FeatureMarks::compute_q_onset(tmpl, sampleRate, r_anchor);
@@ -1587,7 +1544,6 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     out.r_peak = r;
     out.q_begin = keep(q);
     out.s_end = keep(j);
-    out.t_begin = keep(tb);
     out.t_end = keep(te);
     out.p_peak = keep(pp);   // -1 on a ventricular template is the RIGHT answer
     out.p_begin = keep(pb);

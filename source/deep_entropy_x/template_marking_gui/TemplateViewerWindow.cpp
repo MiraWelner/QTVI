@@ -42,7 +42,7 @@
 //     bounds the row stack.
 // Changing the numbers here changes both paths; nothing else needs editing.
 namespace {
-    constexpr int kMaxGridCols = 5;
+    constexpr int kMaxGridCols = 3;
     constexpr int kMaxGridRows = 4;
     constexpr int kMaxPanelsPerPage = kMaxGridCols * kMaxGridRows;   // 20
 }
