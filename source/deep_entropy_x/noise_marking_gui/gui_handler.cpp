@@ -463,7 +463,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
        ui->art_axis, ui->art_pulm_axis,
        ui->ecg_ampogram_axis, ui->ppg_ampogram_axis,
        ui->hyp_resp_axis, ui->cvp_eeg_axis, ui->pacemaker_axis,
-       ui->sao2_axis
+       ui->spo2_shhs_plot
     };
 
     for (auto* view : allCharts) {

@@ -25,6 +25,8 @@
 #include "template_structs.hpp"
 #include "template_marking_gui/alignment.hpp"
 #include "template_morphology_grouping/bin_pipeline.hpp"
+// selectSeedPool: the ectopic mask on the Phase 1 reference.
+#include "template_morphology_grouping/seed_pool.hpp"
 #include "template_morphology_grouping/morphology_csv.hpp"
 #include <chrono>
 #include <cstdio>
@@ -85,6 +87,13 @@ struct SingleMethodResult {
     // Verdict per beat handed downstream, parallel to out_kept_beats:
     //   0 NORMAL     1 PVC (premature)     2 VOTED_PVC (5-of-8 vote)
     std::vector<uint8_t> kept_rhythm;
+
+    // How the Phase 1 reference pool was chosen, and what it cost: the counts
+    // excluded for prematurity and for the vote, and the ectopic fraction of the
+    // candidates BEFORE the fallback ladder. A bin whose basis is not
+    // SINUS_ONLY has a reference that is not purely sinus, and that has to be
+    // visible rather than inferred later.
+    seed_pool::SeedSelection seed;
     int ref_beat_index = -1;
     size_t n_beats = 0;
     // Per-beat per-stage vertical DC shifts (TP stage, PQ stage) from the
@@ -92,34 +101,34 @@ struct SingleMethodResult {
     vector<double> tp_shift;
     vector<double> pq_shift;
 
-    // Section 4.6 template bank for this channel/bin. Populated only when
-    // build_bank is requested -- see the gate in build_ecg_template_for_method.
-    // bank_out.bank.templates[0] is the sinus seed and corresponds to
-    // ecgTemplate, except that it excludes ectopy; the difference between the
-    // two is the contamination the ectopic mask was meant to remove.
-    //
-    // INDEX SPACE WARNING: bank_out.assignment and bank_out.flags are indexed
-    // into aligned.beats (ALL beats), while kept_rhythm above and
-    // out_kept_beats are indexed into usableIdx (baseline-filtered beats).
-    // Those two index spaces differ by however many beats had
-    // baseline_source == NONE. Anything joining bank output to
-    // kept_beats_by_channel must map through usableIdx rather than lining them
-    // up positionally.
-    bin_pipeline::ChannelOutput bank_out;
 
-    // THE MAP THE WARNING ABOVE DEMANDS. kept_idx[k] is the aligned.* index of
-    // the beat at slot k of out_kept_beats -- exactly usableIdx. Published
-    // rather than left local, because every consumer joining bank output to
-    // captured beats needs it, and the warning alone did not stop
-    // morphology_csv from lining the two up positionally: each beat column's
-    // descriptors ended up on a different beat's waveform, drifting further
-    // apart through the bin.
+
+    // THE JOIN KEY: kept_idx[k] is the R-PAIR SLICE that produced the beat at
+    // slot k of out_kept_beats.
+    //
+    // IT USED TO BE THE ALIGNED ROW (exactly usableIdx), and the difference is
+    // silent. Each channel prunes independently, so slot k of CH1 and slot k of
+    // PPG are different heartbeats and joining them needs an index they share;
+    // the aligned row is not one, because the slicer SKIPS R-pairs (rr <= 3
+    // samples, and rr > 4 s, which is a dropout gap rather than a beat) before
+    // anything is pushed. On a bin where nothing was skipped the row and the
+    // ordinal coincide; on a bin with one gap every later beat's ordinal is
+    // short by one, and the error grows with each skip -- so a partition keyed
+    // on it pairs each QRS with a later heartbeat's pulse, further off the
+    // deeper into the bin you go.
+    //
+    // The aligned row has no consumer left: it existed for the morphology
+    // writers, whose columns are now slices, and they resolve a waveform
+    // through jbank's slice -> row map instead. One map, one meaning.
     std::vector<size_t> kept_idx;
 };
 
 static inline SingleMethodResult build_ecg_template_for_method(const vector<double>& ecgSignal, const vector<size_t>& rpeaks, const vector<vector<double>>& pairs,
     double ecgRate, vector<vector<double>>* out_kept_beats = nullptr, bool compute_iqr = false,
-    bool build_bank = false, uint64_t bin_index = 0, int channel = 0) {
+    // build_bank / bin_index / channel went with the per-channel bank. Left
+    // unnamed rather than deleted so the existing call sites keep compiling,
+    // and so passing `true` cannot quietly rebuild it.
+    bool = false, uint64_t = 0, int = 0) {
     SingleMethodResult res;
     res.ecgTemplate = {};
     res.ecg_template_iqr = {};
@@ -207,93 +216,85 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
         return tmpl;
         };
 
-    res.ecgTemplate = medianOver(usable);
-
-    // ---- Section 4.6 template bank ----------------------------------------
-    // RAW METHOD ONLY. This function runs four times per channel per bin
-    // (raw / unfiltered / squared / absval) and the bank is the most expensive
-    // thing in it: pass 1 recomputes a column-wise median on every assignment.
-    // The other three methods are never displayed and nothing consumes their
-    // banks, so building them would quadruple the cost for nothing -- inside an
-    // OpenMP loop, where it is least affordable.
+    // ---- THE ECTOPIC MASK, WHICH HAD NO CALLER UNTIL NOW -----------------
     //
-    // The bank is handed aligned.beats, the FULL set, not `usable`. The
-    // baseline filter is reproduced inside the bank via baseline_ok so that
-    // assignment indices stay aligned to aligned.* throughout. See the index
-    // space warning on SingleMethodResult::bank_out.
+    // seed_pool.hpp exists to select the beats allowed to form the reference,
+    // and nothing called it. The median above was over `usable`, filtered on
+    // exactly one condition -- baseline_source != NONE -- with no rhythm test,
+    // while alignment.hpp EXEMPTS flagged beats from its pruning specifically so
+    // that "the ectopic mask (create_ecg_templates.hpp)" could exclude them
+    // here. The net effect was the opposite of the intent: the flags rescued
+    // ectopic beats from RR-length pruning and then nothing kept them out of the
+    // reference.
     //
-    // NOTE ON MARKS. No operator marks exist at build time, so every beat
-    // classifies as REGULAR and the seed pool rests on the rhythm flags alone.
-    // That is the design working, not a gap: morphology does the sorting and
-    // marks only ever supply labels. The bank separates the PVC morphology
-    // before anyone has called it a PVC.
-    if (build_bank) {
-        bin_pipeline::ChannelInput bi;
-        bi.beats = &aligned.beats;
-        bi.width = static_cast<int>(maxLen);
-        bi.r_col = aligned.r_aligned_col;
-        bi.bin_index = bin_index;
-        bi.channel = channel;
-        bi.is_ppg = false;
-
-        // rr_lens is in SAMPLES; the prematurity test is a ratio so units
-        // cancel there, but NSVT run rates need real milliseconds.
-        bi.rr_after.resize(aligned.rr_lens.size());
-        for (size_t i = 0; i < aligned.rr_lens.size(); ++i)
-            bi.rr_after[i] = 1000.0 * static_cast<double>(aligned.rr_lens[i]) / ecgRate;
-
-        bi.baseline_ok.assign(aligned.beats.size(), 1u);
-        if (haveSrc)
-            for (size_t i = 0; i < aligned.beats.size(); ++i)
-                bi.baseline_ok[i] =
-                (aligned.baseline_source[i] == alignment::BaselineSource::NONE)
-                ? 0u : 1u;
-
-        // ---- THE SINGLE TUKEY'S VERDICT, handed through ------------------
-        //
-        // bin_pipeline used to run a Tukey of its own over the seed pool, which
-        // meant every beat passed through a fence twice: four passes here, in
-        // alignment, over the sliced beats, and one more there over the
-        // survivors of those four. Two populations, two sets of quartiles, and
-        // no rule for which one a downstream reader was looking at. It is gone;
-        // these four fields are what it needed and could not otherwise get.
-        //
-        // original_index is not optional. aligned.beats is the KEPT set, so its
-        // indices do not match tukey_outcome's -- which is indexed by original
-        // slice index precisely so it can describe beats that were pruned. The
-        // map has to travel with the verdict or the lookup silently reads some
-        // other beat's outcome.
-        bi.original_index = aligned.original_index;
-        bi.tukey_outcome = aligned.tukey_outcome;
-        bi.tukey_rr = aligned.tukey_rr;
-        bi.tukey_amplitude = aligned.tukey_amplitude;
-        bi.tukey_r_location = aligned.tukey_r_location;
-        bi.tukey_wave_score = aligned.tukey_wave_score;
-
-        // ---- TIMED, because the bank prints nothing ---------------------
-        // The last output before this point comes from alignment, so a stall
-        // here is indistinguishable from a stall there. n_spawns is the cost
-        // driver: every spawn at cap pays a findMergePair (O(T^2) template
-        // comparisons) plus a mergeTemplates recompute over the merged
-        // membership, so spawns in the hundreds per bin means the bank is
-        // quadratic in beats.
-        const auto _b0 = std::chrono::steady_clock::now();
-        res.bank_out = bin_pipeline::runChannel(bi);
-        const auto _b1 = std::chrono::steady_clock::now();
-        {
-            const auto& bc = res.bank_out.counts;
-            const double _ms =
-                std::chrono::duration<double, std::milli>(_b1 - _b0).count();
-            if (_ms > 50.0 || bc.n_spawns > 20)
-                std::fprintf(stderr,
-                    "  [bank] bin=%llu ch=%d beats=%zu templates=%d "
-                    "spawns=%u merges=%u caps=%u unscorable=%u  %.1f ms\n",
-                    (unsigned long long)bin_index, channel,
-                    aligned.beats.size(), res.bank_out.bank.size(),
-                    bc.n_spawns, bc.n_merges, bc.n_cap_raises,
-                    bc.n_unscorable, _ms);
-        }
+    // "Exclude PVCs and artifact from reference calculations while retaining
+    // them with flags" is the 4.5 clause, and this is the reference. The beats
+    // are all still captured, still partitioned, still written.
+    //
+    // THIS IS ALSO WHERE THE ORDER RULE PUTS IT. The rhythm flags may gate what
+    // the Phase 1 REFERENCE is built from; they may not gate the partition. The
+    // bank is seeded with this waveform and then scores every beat against it
+    // rhythm-blind, so a PVC still gets compared, still fails 0.85, and still
+    // opens its own template -- which it cannot do if the thing it is compared
+    // against is half PVC.
+    //
+    // ASYMMETRIC COSTS, so the gate is strict. A misclassified beat is one wrong
+    // number. A contaminated reference damages the template, the corridor built
+    // from the same pool, and every feature in the bin, and it compounds: a
+    // wider corridor admits the next ectopic beat more easily.
+    std::vector<uint8_t> rhythm_of_slot;
+    {
+        const bool haveFlags = aligned.premature.size() == aligned.beats.size()
+            && aligned.voted.size() == aligned.beats.size();
+        rhythm_of_slot.assign(usableIdx.size(), 0);
+        if (haveFlags)
+            for (size_t k = 0; k < usableIdx.size(); ++k) {
+                const size_t ai = usableIdx[k];
+                rhythm_of_slot[k] = aligned.premature[ai] ? 1u
+                    : (aligned.voted[ai] ? 2u : 0u);
+            }
     }
+    std::vector<uint32_t> slotIdx(usableIdx.size());
+    for (uint32_t k = 0; k < slotIdx.size(); ++k) slotIdx[k] = k;
+
+    // No operator marks exist at build time, so `category` is left empty and
+    // every beat reads REGULAR: the selection rests on the rhythm flags alone.
+    // That is the design working -- morphology does the sorting, marks only
+    // supply labels later.
+    const seed_pool::SeedSelection sel =
+        seed_pool::selectSeedPool(slotIdx, rhythm_of_slot, {});
+    res.seed = sel;
+
+    std::vector<const std::vector<double>*> reference;
+    reference.reserve(sel.members.size());
+    for (const uint32_t k : sel.members)
+        if (k < usable.size()) reference.push_back(usable[k]);
+
+    // selectSeedPool never returns an empty pool when candidates exist, and its
+    // fallback ladder LABELS a contaminated pool rather than hiding it -- so a
+    // bin where ectopy is the majority still gets a reference, and
+    // SeedSelection::basis says it is not a clean one.
+    res.ecgTemplate = medianOver(reference.empty() ? usable : reference);
+
+    // ---- NO PER-CHANNEL BANK IS BUILT HERE ----------------------------
+    //
+    // build_ecg_template_for_method used to run bin_pipeline::runChannel over
+    // aligned.beats and hand the result out as SingleMethodResult::bank_out,
+    // which became EcgChannelResult::bank_out_raw. That was a partition of ONE
+    // channel's beats, and Section 4.6 has exactly one partition, shared by the
+    // three ECG leads and the pulse: jbank::buildBinBank, driven per bin from
+    // make_averaged_templates.hpp.
+    //
+    // Its last consumer was the morphology archive, and that archive now reads
+    // the joint projection. Keeping it would leave a second grouping of the same
+    // beats in memory with nothing marking it as the stale one -- which is how
+    // the screen and the files came to describe different partitions.
+    //
+    // IT WAS ALSO THE LAST PLACE THE ORDER RAN BACKWARDS. Its slot 0 came from
+    // seed_pool::selectSeedPool filtered by the Tukey verdict, so prematurity
+    // and Tukey steered the partition. The required order is partition first,
+    // then remove premature, then Tukey on what is left, and with this gone
+    // there is no code left that does it the other way.
 
     // ---- capture the beats handed downstream, with their rhythm verdicts --
     if (out_kept_beats) {
@@ -301,7 +302,20 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
         out_kept_beats->reserve(usable.size());
         for (const auto* sl : usable) out_kept_beats->push_back(*sl);
     }
-    res.kept_idx = usableIdx;   // published beside them, never apart
+    // Composed HERE, the one place aligned.slice_index and usableIdx are both
+    // in scope: slot -> aligned row -> R-pair slice. usableIdx stays local,
+    // because the aligned row is only needed to index aligned.* inside this
+    // function (kept_rhythm below does exactly that).
+    //
+    // Falls back to the aligned row when alignment supplied no slice map at all
+    // -- an input predating the map -- which keeps the old behaviour rather than
+    // emitting zeros that would read as "every beat is slice 0".
+    res.kept_idx.resize(usableIdx.size());
+    for (size_t k = 0; k < usableIdx.size(); ++k) {
+        const size_t ai = usableIdx[k];
+        res.kept_idx[k] = (ai < aligned.slice_index.size())
+            ? static_cast<size_t>(aligned.slice_index[ai]) : ai;
+    }
     {
         const bool haveFlags = aligned.premature.size() == aligned.beats.size()
             && aligned.voted.size() == aligned.beats.size();
@@ -328,12 +342,19 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
     // template_io, ...) is a separate, larger follow-up; left as-is here
     // to keep this change to the computation only.
     if (compute_iqr) {
+        // OVER THE MASKED REFERENCE POOL, the same set the median above used.
+        // Computed over `usable` it described the spread of sinus AND ectopy
+        // while the median described sinus alone, so the band drawn under the
+        // template was the wrong width for the line it was drawn under -- and in
+        // bigeminy it was roughly the distance between the two morphologies.
+        const std::vector<const std::vector<double>*>& spreadSet =
+            reference.empty() ? usable : reference;
         res.ecg_template_iqr.assign(maxLen, 0.0);
         std::vector<double> col;
-        col.reserve(usable.size());
+        col.reserve(spreadSet.size());
         for (size_t c = 0; c < maxLen; ++c) {
             col.clear();
-            for (const auto* sl : usable)
+            for (const auto* sl : spreadSet)
                 if (!std::isnan((*sl)[c])) col.push_back((*sl)[c]);
             const size_t nc = col.size();
             if (nc < 2) continue;
@@ -380,7 +401,7 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
 
     cr.kept_beats_raw.resize(n);
     cr.kept_rhythm_raw.resize(n);
-    cr.bank_out_raw.resize(n);
+    cr.seed_basis_raw.assign(n, static_cast<uint8_t>(seed_pool::SeedBasis::EMPTY));
     cr.tp_shift_raw.resize(n);
     cr.pq_shift_raw.resize(n);
 }
@@ -421,6 +442,8 @@ static inline void process_channel_fast(
     // need it. An OUT-PARAM rather than a field on EcgChannelResult: the map is
     // consumed by the morphology writers in this function's caller and nowhere
     // else, so a member would widen a type in another header for one local use.
+    // CAPTURED SLOT -> R-PAIR SLICE for this bin, or null when the caller does
+    // not need it.
     std::vector<size_t>* out_kept_idx = nullptr)
 {
     const auto& bin = bins[i];
@@ -439,7 +462,7 @@ static inline void process_channel_fast(
     auto raw_res = build_ecg_template_for_method(
         ecgSignal, masterPeaks, bin.pairs, ecgRate,
         capture, /*compute_iqr=*/true,
-        /*build_bank=*/true, static_cast<uint64_t>(i), channel_index);
+        /*unused*/false, static_cast<uint64_t>(i), channel_index);
     if (out_kept_idx) *out_kept_idx = std::move(raw_res.kept_idx);
     cr.ecgTemplates_raw[i] = raw_res.ecgTemplate;
     cr.ecgTemplates_raw_iqr[i] = raw_res.ecg_template_iqr;
@@ -448,8 +471,8 @@ static inline void process_channel_fast(
     cr.n_beats_raw[i] = raw_res.n_beats;
     if (i < cr.kept_rhythm_raw.size())
         cr.kept_rhythm_raw[i] = std::move(raw_res.kept_rhythm);
-    if (i < cr.bank_out_raw.size())
-        cr.bank_out_raw[i] = std::move(raw_res.bank_out);
+    if (i < cr.seed_basis_raw.size())
+        cr.seed_basis_raw[i] = static_cast<uint8_t>(raw_res.seed.basis);
     cr.ref_index_raw[i] = raw_res.ref_beat_index;
     if (i < cr.tp_shift_raw.size()) {
         cr.tp_shift_raw[i] = std::move(raw_res.tp_shift);   // distinct i -> race-free
@@ -537,6 +560,8 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
     // ALIGNED -> CAPTURED SLOT, [channel][bin][slot]. Local, because the only
     // consumer is the morphology write in this function's post-loop slot.
     // Pre-sized so the parallel loop only ever writes its own element.
+    // Per channel per bin: capturedSlot -> R-pair slice. The join key the
+    // Section 4.6 partition is built on.
     std::array<std::vector<std::vector<size_t>>, 3> keptIdx;
     for (auto& k : keptIdx) k.resize(n);
 
@@ -547,9 +572,6 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
     // got. Diagnosing from that absence is how the previous attempt concluded
     // the wrong stage. Counted, atomic and flushed, so a stall names its bin.
     std::atomic<int> _done{ 0 };
-    std::fprintf(stderr, "  [ecgfast] start: %zu bins, up to %d threads\n",
-        n, std::min(8, (int)n));
-    std::fflush(stderr);
 
     int max_threads = std::min(8, (int)n);
 #pragma omp parallel for schedule(dynamic) num_threads(max_threads)
@@ -610,56 +632,25 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
     ecg_move_log::write_channel("CH3", res.ch3.tp_shift_raw, res.ch3.pq_shift_raw, /*first=*/false);
     _step("move log CH1-3");
 
-    // Section 4.6 templates.csv, same single-threaded post-loop slot as the
-    // move log above. One file, transposed: one column per template, with the
-    // category / bin / template / premature / tukey rows. Replaces the earlier
-    // pair of bank_*.csv dumps -- two files split by accident of what was
-    // convenient to compute, not by anything a reader wanted separately.
-    // Surfaced before the writers use it, so the joint bank and the morphology
-    // archive read the SAME map rather than two copies that can drift. Moved,
-    // not copied: keptIdx dies with this function otherwise.
+    // The join key, surfaced so the partition and the archive read the SAME map
+    // rather than two copies that can drift. Moved, not copied: keptIdx dies
+    // with this function otherwise.
     for (int c = 0; c < 3; ++c) res.kept_index[c] = keptIdx[c];
 
-    const std::vector<morphology_csv::ChannelBlock> blocks = {
-        { "CH1", &res.ch1.bank_out_raw, &res.ch1.kept_beats_raw, &res.ch1.r_col_raw, &keptIdx[0] },
-        { "CH2", &res.ch2.bank_out_raw, &res.ch2.kept_beats_raw, &res.ch2.r_col_raw, &keptIdx[1] },
-        { "CH3", &res.ch3.bank_out_raw, &res.ch3.kept_beats_raw, &res.ch3.r_col_raw, &keptIdx[2] },
-    };
-    // THE SIZE OF WHAT IS ABOUT TO BE WRITTEN, before writing it. _beats is one
-    // column per BEAT and one row per SAMPLE, so its cell count is
-    // (total beats) x (axis width), per channel. That product grows with the
-    // record and nothing was reporting it, so a writer that is slow because the
-    // file is enormous was indistinguishable from one that is slow because the
-    // code is wrong. This states it outright.
-    for (const auto& blk : blocks) {
-        if (!blk.per_bin) continue;
-        size_t nBeats = 0;
-        for (const auto& o : *blk.per_bin) nBeats += o.flags.size();
-        size_t width = 0;
-        if (blk.beats)
-            for (const auto& bb : *blk.beats)
-                for (const auto& bt : bb) width = std::max(width, bt.size());
-        std::fprintf(stderr,
-            "  [postloop] %s: %zu beat columns x %zu sample rows"
-            " = %.1f M cells\n",
-            blk.channel, nBeats, width, double(nBeats) * double(width) / 1e6);
-    }
-    std::fflush(stderr);
-
-    // No writeBeats: <stem>_beats.csv is not produced at all any more. The
-    // beats output is the .bin only, and read_morphology_bin.py --csv converts
-    // it on demand. See the note where writeBeats used to live.
-    _begin("writeTemplates (csv)");
-    morphology_csv::writeTemplates(blocks);      // text, one column per template
-    _step("writeTemplates (csv)");
-
-    _begin("writeBeatsBin");
-    morphology_csv::writeBeatsBin(blocks);       // same content, binary
-    _step("writeBeatsBin");
-
-    _begin("writeTemplatesBin");
-    morphology_csv::writeTemplatesBin(blocks);
-    _step("writeTemplatesBin");
+    // ---- THE MORPHOLOGY WRITERS ARE NOT CALLED HERE ANY MORE -------------
+    //
+    // writeTemplates / writeBeatsBin / writeTemplatesBin ran in this post-loop
+    // slot, from blocks built on EcgChannelResult::bank_out_raw. They cannot
+    // stay: the archive has to describe the JOINT partition, and the joint bank
+    // does not exist yet at this point in the run -- it is built per bin in
+    // make_averaged_templates.hpp, after this function returns. Writing here
+    // meant the archive described a per-channel partition while the screen and
+    // the serialized templates described the joint one, with nothing in either
+    // file saying they were different partitions of the same beats.
+    //
+    // They now run at the end of GenerateTemplatesFast, from the projection,
+    // and they include a PPG block -- which this call site could not produce at
+    // all, because the pulse channel is not an EcgChannelResult.
 
     return res;
 }

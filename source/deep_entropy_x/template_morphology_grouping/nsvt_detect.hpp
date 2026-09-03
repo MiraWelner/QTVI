@@ -55,7 +55,12 @@ namespace nsvt {
     // that correlate at 0.85 are the same morphology across bins. Using a
     // different number here would mean the record-level and bin-level notions
     // of "same shape" disagree.
-    inline constexpr double kGlobalMatchFloor = tbank::kMatchFloorEcg;
+    // Deliberately the bank's own ECG floor, whatever it has been set to: two
+    // beats that correlate at the floor are the same morphology inside a bin,
+    // so two templates that correlate at the floor are the same morphology
+    // across bins. A separate constant here would let the record-level and
+    // bin-level notions of "same shape" drift apart the moment either moved.
+    inline double globalMatchFloor() { return tbank::matchFloorEcg(); }
 
     // ---------------------------------------------------------------------
     // Cross-bin template identity
@@ -86,6 +91,103 @@ namespace nsvt {
         }
     };
 
+    // ---------------------------------------------------------------------
+    // JOINT VERSION: global identity over GROUPS, not over three banks
+    // ---------------------------------------------------------------------
+    //
+    // The array-of-three version below predates the joint partition. It walked
+    // each channel's bank separately and produced a per-channel global id, so
+    // one morphology got up to three global identities and a run had to be
+    // detected in whichever channel happened to hold it. There is one partition
+    // now: group i of bin b is one morphology across all four channels, and its
+    // global identity is a single number.
+    //
+    // WHICH FACE IS MATCHED ACROSS BINS. CH1's, because cross-bin identity has
+    // to be decided on ONE channel or the floor becomes a conjunction over
+    // channels whose beats differ between the two bins -- and CH1 is the lead
+    // whose R-peaks define the slices in the first place. The other faces come
+    // along with the group, exactly as they do inside a bin.
+    struct GroupRef {
+        std::vector<double> tmpl;     // the CH1 face
+        uint8_t  label_code = tbank::kUnlabeled;
+        int32_t  subtype = -1;
+        bool     confirmed = false;
+        uint32_t n_members = 0;
+    };
+
+    struct JointGlobalMap {
+        std::vector<GlobalTemplate> morphologies;
+        std::vector<std::vector<int32_t>> id;   // [bin][group] -> global id
+
+        int32_t globalIdOf(size_t bin, int group) const {
+            if (bin >= id.size()) return -1;
+            if (group < 0 || group >= static_cast<int>(id[bin].size())) return -1;
+            return id[bin][group];
+        }
+    };
+
+    inline JointGlobalMap globalizeGroups(
+        const std::vector<std::vector<GroupRef>>& per_bin,
+        double floor = globalMatchFloor())
+    {
+        JointGlobalMap gm;
+        gm.id.resize(per_bin.size());
+
+        for (size_t b = 0; b < per_bin.size(); ++b) {
+            gm.id[b].assign(per_bin[b].size(), -1);
+            for (size_t t = 0; t < per_bin[b].size(); ++t) {
+                const GroupRef& lt = per_bin[b][t];
+                if (lt.tmpl.empty()) continue;
+
+                int    best = -1;
+                double best_r = -std::numeric_limits<double>::infinity();
+                for (size_t g = 0; g < gm.morphologies.size(); ++g) {
+                    const tbank::CorrResult cr =
+                        tbank::correlate(lt.tmpl, gm.morphologies[g].tmpl);
+                    if (!cr.scorable()) continue;
+                    if (cr.r > best_r) { best_r = cr.r; best = static_cast<int>(g); }
+                }
+
+                int32_t gid;
+                if (best >= 0 && best_r >= floor) {
+                    gid = best;
+                    GlobalTemplate& g = gm.morphologies[gid];
+                    ++g.n_bins_seen;
+                    g.n_beats_total += lt.n_members;
+                    // Adopt a label only if this group carries one and the
+                    // global id does not. NEVER overwrite: two different
+                    // confirmed labels on one global id is a finding for the
+                    // operator, not something to resolve silently.
+                    if (g.label_code == tbank::kUnlabeled && lt.confirmed) {
+                        g.label_code = lt.label_code;
+                        g.subtype = lt.subtype;
+                    }
+                }
+                else {
+                    GlobalTemplate g;
+                    g.tmpl = lt.tmpl;
+                    g.label_code = lt.confirmed ? lt.label_code : tbank::kUnlabeled;
+                    g.subtype = lt.confirmed ? lt.subtype : -1;
+                    g.first_bin = static_cast<uint32_t>(b);
+                    g.n_bins_seen = 1;
+                    g.n_beats_total = lt.n_members;
+                    gid = static_cast<int32_t>(gm.morphologies.size());
+                    gm.morphologies.push_back(std::move(g));
+                }
+                gm.id[b][t] = gid;
+            }
+        }
+        return gm;
+    }
+
+    // detectRuns takes a GlobalMap; this adapts the joint one, which differs
+    // only in how the ids were derived.
+    inline GlobalMap asGlobalMap(const JointGlobalMap& jm) {
+        GlobalMap gm;
+        gm.morphologies = jm.morphologies;
+        return gm;
+    }
+
     // Walks bins in order and assigns each local template either an existing
     // global id (best correlation at or above the floor) or a new one.
     //
@@ -100,7 +202,7 @@ namespace nsvt {
     // has not yet looked at another.
     inline GlobalMap globalizeTemplates(
         const std::vector<std::array<tbank::TemplateBank, 3>>& per_bin,
-        double floor = kGlobalMatchFloor)
+        double floor = globalMatchFloor())
     {
         GlobalMap gm;
         gm.id.resize(per_bin.size());

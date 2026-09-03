@@ -328,6 +328,86 @@ namespace post_process_detail {
         std::cerr << "  Processing Raw Templates (fast stage): " << stem << "\n";
         ecg_move_log::set(cfg.quality_metric, stem);   // per-beat vertical move log
         morphology_csv::set(cfg.template_path, stem);
+
+        // ---- SECTION 4.6 MORPHOLOGY THRESHOLDS, FROM config.csv ----------
+        //
+        // Applied here, once, before anything partitions. Every spawn and every
+        // merge in the record turns on these two numbers, so they must be in
+        // force before the first bin is built -- setting them later would leave
+        // earlier bins partitioned against the defaults, with nothing on disk
+        // saying which bins used which floor.
+        //
+        // EACH ONE FALLS BACK INDEPENDENTLY. A blank cell reaches here as 0.0,
+        // and pairing it with a configured value would fail validation and
+        // refuse BOTH -- so setting only the PPG floor, which is the likelier
+        // thing to want, would silently do nothing. Each unset floor keeps its
+        // own current value instead.
+        //
+        // AN UNUSABLE VALUE IS REFUSED, NOT CLAMPED. A floor of 0 accepts every
+        // beat against every template: one morphology per bin, no ectopy ever
+        // separated, and no error anywhere to explain it. Above 1 is the mirror
+        // image -- correlation cannot exceed 1, so everything spawns. Either
+        // way the defaults stand and the line below says so.
+        {
+            const bool have_ecg = (cfg.ecg_match_floor != 0.0);
+            const bool have_ppg = (cfg.ppg_match_floor != 0.0);
+            const double fe = have_ecg ? cfg.ecg_match_floor
+                : tbank::matchFloorEcg();
+            const double fp = have_ppg ? cfg.ppg_match_floor
+                : tbank::matchFloorPpg();
+
+            const char* src_ecg = have_ecg ? "config" : "default";
+            const char* src_ppg = have_ppg ? "config" : "default";
+
+            if (!tbank::setMatchFloors(fe, fp)) {
+                std::cerr << "  [4.6] REFUSED match floors ECG " << fe
+                    << " / PPG " << fp
+                    << " -- both must be in (0, 1]. Keeping ECG "
+                    << tbank::matchFloorEcg() << " / PPG "
+                    << tbank::matchFloorPpg() << "\n";
+            }
+            else {
+                std::cerr << "  [4.6] match floors ECG "
+                    << tbank::matchFloorEcg() << " (" << src_ecg
+                    << ")  PPG " << tbank::matchFloorPpg()
+                    << " (" << src_ppg << ")\n";
+            }
+
+            // Minimum beats per template. 0 is a legal, meaningful value --
+            // "no minimum" -- so unlike the floors there is nothing to refuse
+            // except a negative, and the loader has already clamped that.
+            if (tbank::setMinBeats(cfg.min_beats_template_ecg,
+                cfg.min_beats_template_ppg)) {
+                if (tbank::minBeatsEcg() > 0 || tbank::minBeatsPpg() > 0)
+                    std::cerr << "  [4.6] min beats per template: ECG "
+                        << tbank::minBeatsEcg() << "  PPG "
+                        << tbank::minBeatsPpg()
+                        << " -- templates below this are flagged "
+                           "too_few_beats and not displayed\n";
+                else
+                    std::cerr << "  [4.6] no minimum beats per template "
+                        "(min_beats_template_ecg/ppg unset)\n";
+            }
+
+            // Pulse QC threshold, same treatment: unset keeps the default,
+            // unusable is refused rather than clamped.
+            if (cfg.ppg_fit_error_pct == 0.0) {
+                std::cerr << "  [pulseqc] ppg_fit_error_pct absent from "
+                    "config.csv; using default "
+                    << 100.0 * pulse_qc::fitErrorFraction() << "%\n";
+            }
+            else if (!pulse_qc::setFitErrorPct(cfg.ppg_fit_error_pct)) {
+                std::cerr << "  [pulseqc] REFUSED ppg_fit_error_pct="
+                    << cfg.ppg_fit_error_pct << " -- must be in (0, 100]. "
+                    "Keeping " << 100.0 * pulse_qc::fitErrorFraction()
+                    << "%\n";
+            }
+            else {
+                std::cerr << "  [pulseqc] pulse fit error threshold "
+                    << 100.0 * pulse_qc::fitErrorFraction()
+                    << "% (config)\n";
+            }
+        }
         FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
         if (fast.tmpl.bins.empty()) {
             std::cerr << "  no bins for " << stem  << " (recording shorter than one bin?); skipping.\n";

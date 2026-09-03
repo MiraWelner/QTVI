@@ -924,7 +924,8 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
         if (m >= 0) {
             m_dragMarker = m;
             emit markerDragStarted(m_binIndex, m_leadIndex, m);
-            emit landmarkSelected(m_binIndex, m_leadIndex, m, m_markers[m]);
+            emit landmarkSelected(m_binIndex, m_leadIndex, m_templateIndex,
+                m, m_markers[m]);
             return;
         }
     }
@@ -964,22 +965,22 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
         switch (m_state) {
         case State::Good:
             m_state = State::BadR;
-            emit badRToggled(m_binIndex, m_leadIndex, true);
+            emit badRToggled(m_binIndex, m_leadIndex, m_templateIndex, true);
             break;
         case State::BadR:
             if (m_hasPPG) {
                 m_state = State::BadPPG;
-                emit badRToggled(m_binIndex, m_leadIndex, false);
-                emit badPPGToggled(m_binIndex, true);
+                emit badRToggled(m_binIndex, m_leadIndex, m_templateIndex, false);
+                emit badPPGToggled(m_binIndex, m_templateIndex, true);
             }
             else {
                 m_state = State::Good;
-                emit badRToggled(m_binIndex, m_leadIndex, false);
+                emit badRToggled(m_binIndex, m_leadIndex, m_templateIndex, false);
             }
             break;
         case State::BadPPG:
             m_state = State::Good;
-            emit badPPGToggled(m_binIndex, false);
+            emit badPPGToggled(m_binIndex, m_templateIndex, false);
             break;
         }
         update();

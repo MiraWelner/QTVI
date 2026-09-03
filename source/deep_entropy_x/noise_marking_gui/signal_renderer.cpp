@@ -857,11 +857,15 @@ void noise_marking_gui::determine_which_nonmarkable_charts_to_plot() {
     *        pacemaker_axis), choosing what goes in each by dataset:
     *        BITTIUM -> temperature / marker / pacemaker events,
     *        CHAOS   -> CVP / RESP,
-    *        SHHS1|SHHS2 -> AIRFLOW+THOR+ABDO / (hypnogram) / -- ,
+    *        SHHS -> AIRFLOW+THOR+ABDO / (hypnogram) / -- ,
     *        MESA    -> (hypnogram) only.
-    *        SHHS's SaO2 is NOT one of these three: it has its own sao2_axis at
-    *        the bottom of the main plot column and is plotted here too, at the
-    *        end of the SHHS branch.
+    *        SHHS's SaO2 is NOT one of these three: it has its own chart,
+    *        spo2_shhs_plot, below the main plot column, and is plotted here
+    *        too, at the end of the SHHS branch. (The code called that widget
+    *        sao2_axis, which the .ui has never declared -- the form names it
+    *        spo2_shhs_plot, alongside spo2_check and spo2_gain. Every other
+    *        name in this data path is spo2: m_spo2, CH_SPO2,
+    *        config.spo2_label. Only SHHS's EDF label is SaO2.)
     *        Visibility for the same slots is set in loadChunkFromFile; the two
     *        must agree or a chart is shown empty (or hidden with data in it).
     */
@@ -884,7 +888,7 @@ void noise_marking_gui::determine_which_nonmarkable_charts_to_plot() {
             plot_nonmarkable(ui->hyp_resp_axis, "RESP",
                 { { &m_resp, COLOR_RESP, &m_respRaw } }, channel_upsampled_rates[CH_RESP]);
     }
-    if (m_cfg.dataset_type == "SHHS1" || m_cfg.dataset_type == "SHHS2") {
+    if (m_cfg.dataset_type == "SHHS") {
         // AIRFLOW, THOR RES and ABDO RES share cvp_eeg_axis. They are all in
         // arbitrary units, so one y axis is not a unit clash -- the shape is
         // what a reviewer reads off this chart -- but they must share a TIME
@@ -913,8 +917,8 @@ void noise_marking_gui::determine_which_nonmarkable_charts_to_plot() {
         if (ui->cvp_eeg_axis && !resp.isEmpty() && respRate > 0.0f)
             plot_nonmarkable(ui->cvp_eeg_axis, "AIRFLOW / THOR / ABDO", resp, respRate);
 
-        if (ui->sao2_axis && !is_missing_signal(m_spo2))
-            plot_nonmarkable(ui->sao2_axis, "SaO2",
+        if (ui->spo2_shhs_plot && !is_missing_signal(m_spo2))
+            plot_nonmarkable(ui->spo2_shhs_plot, "SaO2",
                 { { &m_spo2, COLOR_SPO2, &m_spo2Raw } }, channel_upsampled_rates[CH_SPO2]);
     }
 }
@@ -985,8 +989,8 @@ void noise_marking_gui::handle_data_plot() {
         wipe_chart(ui->pacemaker_axis->chart(), keepFor(ui->pacemaker_axis));
     // Every chart redrawn per window has to be wiped here or its series pile up
     // across redraws and the trace stops tracking the scroll position.
-    if (ui->sao2_axis)
-        wipe_chart(ui->sao2_axis->chart(), keepFor(ui->sao2_axis));
+    if (ui->spo2_shhs_plot)
+        wipe_chart(ui->spo2_shhs_plot->chart(), keepFor(ui->spo2_shhs_plot));
 
     auto plotMarkable = [&](const QString& label) {
         if (!isChannelActive(label)) return;

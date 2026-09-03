@@ -191,6 +191,31 @@ namespace alignment {
         // Beat index at slice time, parallel to `beats` and compacted with it.
         // The bridge between a surviving beat and its entry in tukey_outcome.
         std::vector<size_t> original_index;
+
+        // ---- THE R-PAIR ORDINAL, parallel to `beats` ----------------------
+        //
+        // slice_index[k] is the value of the slicing loop counter that produced
+        // beat k: the ordinal of the pair (rPeaks[i], rPeaks[i+1]). It is the
+        // ONLY quantity in this struct that means the same thing on every
+        // channel, because every channel's slicer is driven by the same
+        // ch1.raw R-peak vector.
+        //
+        // NOT THE SAME AS original_index, and the difference is silent. The
+        // slicing loop SKIPS pairs -- rr <= 3 samples, and rr > 4 s, which is a
+        // dropout gap rather than a beat -- with `continue`, before anything is
+        // pushed. So `beats` is already compacted against the R-pair list by
+        // the time original_index is seeded as the identity over it. On a bin
+        // where nothing was skipped the two coincide; on a bin with one dropout
+        // gap every later beat's ordinal is short by one, and the error grows
+        // with each skip.
+        //
+        // That is exactly the quantity jbank::ChannelSet keys on, and using
+        // original_index in its place pairs an ECG complex with an unrelated
+        // pulse, progressively further through the bin. The pulse slicer below
+        // has always recorded this (PpgBeatSet::original_index, from
+        // raw_slice); the ECG path did not, which is why the two could not
+        // actually be joined on a bin containing a gap.
+        std::vector<uint32_t> slice_index;
         // Counts as they stood BEFORE pruning, so the flag survivors can be
         // compared against what the record actually contained.
         int n_premature_presliced = 0;
@@ -279,6 +304,7 @@ namespace alignment {
             std::vector<double> kd;
             std::vector<char> kp, kv;
             std::vector<size_t> ko;
+            std::vector<uint32_t> kslice;
             const bool haveSrc = out.baseline_source.size() == out.beats.size();
             const bool haveDelta = out.tp_pq_delta.size() == out.beats.size();
             const bool haveFlags = out.premature.size() == out.beats.size()
@@ -304,6 +330,11 @@ namespace alignment {
                 kb.push_back(std::move(out.beats[i]));
                 kr.push_back(out.r_indices[i]);
                 if (i < out.original_index.size()) ko.push_back(out.original_index[i]);
+                // Compacted with the beat, like every other parallel vector.
+                // Only reachable in the unsupported prune mode, and it has to
+                // hold even there: a slice map that survives one compaction and
+                // not the next is worse than no map at all.
+                if (i < out.slice_index.size()) kslice.push_back(out.slice_index[i]);
                 km.push_back(out.rr_lens[i]);
                 if (haveSrc) ks.push_back(out.baseline_source[i]);
                 if (haveDelta) kd.push_back(out.tp_pq_delta[i]);
@@ -312,6 +343,7 @@ namespace alignment {
             out.beats = std::move(kb);
             out.r_indices = std::move(kr);
             out.original_index = std::move(ko);
+            out.slice_index = std::move(kslice);
             out.rr_lens = std::move(km);
             if (haveSrc) out.baseline_source = std::move(ks);
             if (haveDelta) out.tp_pq_delta = std::move(kd);
@@ -327,13 +359,6 @@ namespace alignment {
         // silently ballooned the whole bin's window (a sparse bin with only
         // 1-3 real detections could produce a many-hundred-second template).
         const int64_t kMaxBeatSamplesEcg = (fs > 0.0) ? static_cast<int64_t>(4.0 * fs) : 0;
-        {
-            static bool printedOnce = false;
-            if (!printedOnce) {
-                printedOnce = true;
-            }
-        }
-
         // ---- slice every beat ------------------------------------------
         for (size_t i = 0; i + 1 < rPeaks.size(); ++i) {
             const int64_t r0 = static_cast<int64_t>(rPeaks[i]);
@@ -357,6 +382,12 @@ namespace alignment {
             out.beats.push_back(std::move(beat));
             out.r_indices.push_back(rPeaks[i]);
             out.rr_lens.push_back(static_cast<int>(rr));
+            // Pushed in the SAME statement group as the beat and after every
+            // `continue` above -- the pulse slicer's raw_slice carries the same
+            // note for the same reason: a beat and its ordinal appended
+            // separately desynchronise at the first skipped pair, and the
+            // result still looks like a valid parallel pair.
+            out.slice_index.push_back(static_cast<uint32_t>(i));
         }
         if (out.beats.empty()) return out;
         out.baseline_source.assign(out.beats.size(), BaselineSource::NONE);
@@ -1080,6 +1111,49 @@ namespace alignment {
         std::vector<uint32_t> original_index;
         int    median_length = -1;
         size_t total_beats = 0;
+
+        // ---- WHY THE SURVIVORS ARE FEWER THAN THE R-PAIRS -----------------
+        //
+        // This set is pruned before the pulse QC filter downstream ever sees
+        // it, and the prunes were uncounted -- so a channel retaining 7.5% of
+        // its pulses gave no way to tell whether the loss happened HERE, at a
+        // fiducial that could not be found, or later at the fit-error
+        // threshold. Two different fixes, and no evidence for choosing.
+        //
+        // Each counter names the exact `continue` that dropped the beat:
+        //   n_dropped_rr    the R-pair was unusable -- too short, or over the
+        //                   4 s hard cap, which is a dropout gap not a beat
+        //   n_dropped_peak  no systolic upstroke peak in the search window
+        //   n_dropped_foot  no trough between the window start and that peak
+        //   n_dropped_up50  no clean 50% crossing on [foot, peak]
+        //
+        // n_slices is the denominator they are all against: R-pairs offered,
+        // which is what "how much of the channel survived" has to be measured
+        // over. total_beats above counts what made it through, not what was
+        // tried.
+        size_t n_slices = 0;
+        size_t n_dropped_rr = 0;
+        size_t n_dropped_peak = 0;
+        size_t n_dropped_foot = 0;
+        size_t n_dropped_up50 = 0;
+        //   n_dropped_peak_col  the peak-column rejection below: this pulse's
+        //                   systolic peak sits 5% of its own RR or further from
+        //                   the median peak column of the first 100 beats.
+        //
+        // THIS ONE IS USUALLY THE LARGEST AND WAS THE ONE NOT COUNTED. A
+        // report showing rr=0 peak=0 foot=0 up50=0 next to "kept 614 of 1223"
+        // says every drop was accounted for and none of them were, which is
+        // worse than no report: it sent the investigation to the fiducial
+        // detectors, which turned out to be finding everything.
+        size_t n_dropped_peak_col = 0;
+
+        // The fence the peak-column rejection actually used, so the width is
+        // reportable rather than inferred from how many it rejected. A wide
+        // fence on a bin that still lost most of its pulses means the peak
+        // timing is genuinely scattered; a narrow one means it is not, and the
+        // losses are outliers.
+        double peak_col_fence_lo = std::numeric_limits<double>::quiet_NaN();
+        double peak_col_fence_hi = std::numeric_limits<double>::quiet_NaN();
         int    up50_aligned_col = -1;             // shared column all half-height points land on
         int    foot_aligned_col = -1;             // feet scatter (per-beat); not a shared column
         int    peak_aligned_col = -1;             // peaks scatter (per-beat); not a shared column
@@ -1133,11 +1207,16 @@ namespace alignment {
         const int64_t kMaxBeatSamples = (fs > 0.0) ? static_cast<int64_t>(4.0 * fs) : 0;
 
         // ---- slice + per-beat peak/foot --------------------------------
+        // n_slices is the R-pair count this loop was OFFERED, recorded before
+        // any drop, so every counter below has a denominator.
+        out.n_slices = (rPeaks.size() > 1) ? rPeaks.size() - 1 : 0;
         for (size_t i = 0; i + 1 < rPeaks.size(); ++i) {
             const int64_t r0 = static_cast<int64_t>(rPeaks[i]);
             const int64_t rr = static_cast<int64_t>(rPeaks[i + 1]) - r0;
-            if (rr <= 3) continue;
-            if (kMaxBeatSamples > 0 && rr > kMaxBeatSamples) continue;
+            if (rr <= 3) { ++out.n_dropped_rr; continue; }
+            if (kMaxBeatSamples > 0 && rr > kMaxBeatSamples) {
+                ++out.n_dropped_rr; continue;
+            }
 
             const int64_t rr_w = (rr_cap > 0) ? std::min(rr, rr_cap) : rr;
             const int64_t before = rr_before_samples(rr_w);
@@ -1176,7 +1255,7 @@ namespace alignment {
             // so those beats were dropped, and the surviving count collapsed.
             const int peak = FeatureMarks::detect_ppg_upstroke_peak(beat, r_col + 1,
                 peakSearchEnd);
-            if (peak < 0) continue;
+            if (peak < 0) { ++out.n_dropped_peak; continue; }
 
             // Foot and up50 through the SAME primitives the display fiducials
             // use (FeatureMarks::trough_in / amplitude_crossing), so the
@@ -1184,7 +1263,7 @@ namespace alignment {
             // identically. Both were hand-rolled here, which is why a fix to
             // one never reached the other.
             const int foot = FeatureMarks::trough_in(beat, 0, peak);
-            if (foot < 0) continue;
+            if (foot < 0) { ++out.n_dropped_foot; continue; }
 
             // 50%-upslope (half-height) crossing on [foot, peak]. This is the
             // horizontal alignment fiducial: it sits on the steep upstroke, so
@@ -1197,7 +1276,7 @@ namespace alignment {
             const double up50D = FeatureMarks::first_crossing(beat, foot, peak, 0.50);
             const int up50 = (up50D >= 0.0)
                 ? static_cast<int>(std::lround(up50D)) : -1;
-            if (up50 < 0) continue;   // no clean upslope crossing; drop beat
+            if (up50 < 0) { ++out.n_dropped_up50; continue; }   // no upslope
 
             // NOTE: peak/foot are stored raw (no subsample_refine call) --
             // they only feed the peak-position rejection check below and
@@ -1269,28 +1348,71 @@ namespace alignment {
         }
         out.up50_aligned_col = up50_anchor;
 
-        // ---- Rejection: peak-column distance from the median peak column,
-        // measured HERE (after alignment) rather than in each beat's own
-        // local frame, because peak/foot/r_col all scale with that beat's
-        // own RR before alignment -- raw column values aren't comparable
-        // across beats until they share this common up50-anchored axis.
+        // ---- Rejection: TUKEY FENCE ON THE PEAK COLUMN ------------------
         //
-        // The first 100 beats (or all, if fewer are available) seed the
-        // reference median peak column and are kept unconditionally --
-        // there's no reference to reject them against yet. Every beat after
-        // that is rejected once its peak sits 5% of its own RR or further
-        // from that median column. This guarantees at least
-        // min(100, total_beats) beats always survive.
+        // Measured HERE (after alignment) rather than in each beat's own local
+        // frame, because peak/foot/r_col all scale with that beat's own RR
+        // before alignment -- raw column values are not comparable across
+        // beats until they share this common up50-anchored axis.
+        //
+        // WHAT THIS REPLACED, and why. It was a fixed tolerance: the first 100
+        // beats seeded a median peak column, were kept unconditionally, and
+        // every later beat was rejected once its peak sat 5% of its own RR or
+        // further from that column. Two things were wrong with it.
+        //
+        // THE TOLERANCE WAS TOO TIGHT AND HAD NO RELATION TO THE DATA. At a
+        // one-second RR, 5% is a 50 ms window on where the systolic peak may
+        // sit relative to the upstroke. Pulse transit time and peak timing vary
+        // with vascular tone by more than that beat to beat, so it discarded
+        // 20-60% of pulses on real records -- and then the reference median was
+        // built from survivors that were still misaligned, so it was not a
+        // pulse shape, so the downstream fit filter scored every candidate at
+        // 0.4 to 1.9 against it and kept nothing. One tolerance, two stages of
+        // failure.
+        //
+        // AND THE REFERENCE CAME FROM THE FIRST 100 BEATS. Kept unconditionally
+        // because there was nothing yet to judge them against -- which means a
+        // bin whose first hundred pulses are noisy anchors every later
+        // rejection to a wrong column. That is why retention was bimodal per
+        // bin rather than gradual: 13 bins worked, 25 failed completely.
+        //
+        // A Tukey fence has neither property. Its width comes from the bin's
+        // OWN peak-column spread (1.5 x IQR, the same fence and the same k as
+        // every other Tukey in this codebase), so a bin with consistent timing
+        // gets a narrow fence and a bin with genuinely variable timing gets a
+        // wide one. And it is computed over the whole distribution, so no
+        // prefix of beats is privileged.
+        //
+        // NO GUARANTEED SURVIVORS. The old rule kept min(100, n) beats come
+        // what may. A fence keeps what is inside it, and if that is nothing
+        // then this bin has no usable pulse -- which is a fact about the bin,
+        // not something to paper over. keep_within_tukey returns all-keep below
+        // four values, so a short bin is not rejected for being short.
         {
-            const size_t nSeed = std::min<size_t>(100, out.peak_cols.size());
-            std::vector<int> seedPeaks(out.peak_cols.begin(), out.peak_cols.begin() + nSeed);
-            std::sort(seedPeaks.begin(), seedPeaks.end());
-            const int medianPeakCol = seedPeaks[seedPeaks.size() / 2];
+            const double NaN = std::numeric_limits<double>::quiet_NaN();
+            std::vector<double> pk(out.peak_cols.size(), NaN);
+            for (size_t i = 0; i < out.peak_cols.size(); ++i) {
+                // A NEGATIVE PEAK COLUMN IS NOT AN OUTLIER, IT IS OFF THE
+                // AXIS. peak_cols may be < 0 for a clipped beat, and feeding
+                // that into the quartiles would drag the fence toward a value
+                // no real peak can take. Left NaN so it does not enter the
+                // distribution, and rejected explicitly below -- a beat whose
+                // fiducial is not on the frame cannot be aligned on it.
+                if (out.peak_cols[i] >= 0)
+                    pk[i] = static_cast<double>(out.peak_cols[i]);
+            }
+
+            TukeyStats pkStats;
+            const std::vector<bool> inFence = keep_within_tukey(pk, 1.5, &pkStats);
+            out.peak_col_fence_lo = pkStats.fence_lo;
+            out.peak_col_fence_hi = pkStats.fence_hi;
 
             std::vector<bool> keep(out.peak_cols.size(), true);
-            for (size_t i = nSeed; i < out.peak_cols.size(); ++i) {
-                const double dist = std::abs(out.peak_cols[i] - medianPeakCol);
-                keep[i] = (rr_lens[i] > 0) && (dist < 0.05 * rr_lens[i]);
+            for (size_t i = 0; i < out.peak_cols.size(); ++i) {
+                const bool offAxis = (out.peak_cols[i] < 0) || (rr_lens[i] <= 0);
+                keep[i] = !offAxis
+                    && (i >= inFence.size() ? true : inFence[i]);
+                if (!keep[i]) ++out.n_dropped_peak_col;
             }
 
             std::vector<std::vector<double>> fBeats;

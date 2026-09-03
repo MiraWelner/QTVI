@@ -42,13 +42,13 @@
 // config, but this menu was still pinned to three datasets, so there was no way
 // to select them.
 static int get_dataset_choice() {
-    static constexpr int kDatasetCount = 5;
+    static constexpr int n_valid_datasets = 4;
     std::cout << "Select Dataset:\n1: MESA\n2: Bittium\n3: CHAOS\n"
-                 "4: SHHS1\n5: SHHS2\nChoice: ";
+                 "4: SHHS\nChoice: ";
     int choice;
     if (!(std::cin >> choice)) return -1;
-    while (choice < 1 || choice > kDatasetCount) {
-        std::cout << "Please enter 1-" << kDatasetCount << ": ";
+    while (choice < 1 || choice > n_valid_datasets) {
+        std::cout << "Please enter 1-" << n_valid_datasets << ": ";
         if (!(std::cin >> choice)) return -1;
     }
     return choice;

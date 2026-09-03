@@ -77,10 +77,15 @@ public slots:
 private slots:
     void onMarkerMoved(int binIdx, int leadIdx, int marker, int newIdx);
     void onMarkerDragStarted(int binIdx, int leadIdx, int marker);
-    void onBadRToggled(int binIdx, int leadIdx, bool bad);
-    void onBadPPGToggled(int binIdx, bool bad);
+    void onBadRToggled(int binIdx, int leadIdx, int templateIdx, bool bad);
+    // Helpers for the two above; declared here so both can find them.
+    tbank::BankTemplate* slotFor(int binIdx, int leadIdx, int templateIdx);
+    void repaintPanel(int binIdx, int leadIdx, int templateIdx,
+        BinPlotWidget::State st);
+    void onBadPPGToggled(int binIdx, int templateIdx, bool bad);
     // B2 focus mode: operator selected a landmark in some bin/lead.
-    void onLandmarkSelected(int binIdx, int leadIdx, int marker, int col);
+    void onLandmarkSelected(int binIdx, int leadIdx, int templateIdx,
+        int marker, int col);
 
 private:
     struct Lead {
@@ -174,7 +179,8 @@ private:
     // panel it belongs to. refreshFocus() rebuilds a panel from the current
     // bin/lead template stats (mean = ecgTemplate_raw, sd = ecgTemplate_raw_iqr
     // [ddof=1 std], n = n_beats_raw) around the given landmark column.
-    void refreshFocus(int binIdx, int leadIdx, int marker, int col);
+    void refreshFocus(int binIdx, int leadIdx, int templateIdx,
+        int marker, int col);
     FocusPanelWidget* m_focusQrs = nullptr;
     FocusPanelWidget* m_focusJt = nullptr;
     // Remember the last J-point column per (bin,lead) so a QRS-side or

@@ -50,7 +50,11 @@ namespace beat_substitute {
     // borderline, it is bad, and substituting it would smuggle an artifact into
     // the series wearing the average's shape.
     inline constexpr double kBorderlineLo = 0.60;
-    inline constexpr double kBorderlineHi = 0.85;   // the 4.6 morphology threshold
+    // The top of the band IS the 4.6 morphology threshold, so it tracks the
+    // configured ECG floor rather than restating 0.85. Above the floor a beat
+    // is a good match and needs no substitution; the band runs from the reject
+    // floor up to it.
+    inline double borderlineHi() { return tbank::matchFloorEcg(); }
 
     // ---------------------------------------------------------------------
     // Section 4.6, VERBATIM from the specification.
@@ -123,7 +127,7 @@ namespace beat_substitute {
         std::vector<tbank::BeatFlags>* flags = nullptr,
         double alpha = kAlpha,
         double lo = kBorderlineLo,
-        double hi = kBorderlineHi)
+        double hi = borderlineHi())
     {
         SubstitutionResult out;
 

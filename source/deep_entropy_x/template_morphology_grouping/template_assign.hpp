@@ -93,13 +93,43 @@ namespace tbank {
     // ---------------------------------------------------------------------
 
     struct BandResult {
-        double score = std::numeric_limits<double>::quiet_NaN();  // fraction in [0,1]
+        // THE CORRELATION, in [-1, 1]. This is what every floor is compared
+        // against; see bandMatch below for why it stopped being a fraction.
+        double score = std::numeric_limits<double>::quiet_NaN();
         int    n_overlap = 0;
-        double r = std::numeric_limits<double>::quiet_NaN();      // reported only
+        double r = std::numeric_limits<double>::quiet_NaN();      // == score
+        // Fraction of comparable columns inside the corridor: what `score`
+        // used to be. Kept as a DIAGNOSTIC and filled only for the winning
+        // template, by assignBeat. Nothing routes on it.
+        double frac_in_band = std::numeric_limits<double>::quiet_NaN();
         bool   scorable() const {
             return n_overlap >= kMinOverlapColumns && !std::isnan(score);
         }
     };
+
+    // The old score, kept as a report. A beat well inside its group's corridor
+    // and a beat that correlates well but sits at twice the amplitude are
+    // different situations, and after the change below only this number can
+    // tell them apart -- so it is still computed, once per beat instead of once
+    // per beat per template.
+    inline double fracInBand(const std::vector<double>& beat,
+        const BankTemplate& t)
+    {
+        if (t.band_lo.empty() || t.band_hi.empty())
+            return std::numeric_limits<double>::quiet_NaN();
+        const size_t w = std::min(beat.size(),
+            std::min(t.band_lo.size(), t.band_hi.size()));
+        int n = 0, inside = 0;
+        for (size_t k = 0; k < w; ++k) {
+            const double lo = t.band_lo[k], hi = t.band_hi[k];
+            if (std::isnan(beat[k]) || std::isnan(lo) || std::isnan(hi)) continue;
+            ++n;
+            if (beat[k] >= lo && beat[k] <= hi) ++inside;
+        }
+        if (n < kMinOverlapColumns)
+            return std::numeric_limits<double>::quiet_NaN();
+        return static_cast<double>(inside) / static_cast<double>(n);
+    }
 
     // Fraction of the beat's comparable samples lying inside the template's
     // per-column corridor. This is the quantity Section 4.6 thresholds at 0.85
@@ -116,29 +146,64 @@ namespace tbank {
     // unscorable rather than scored 0. kUnscorable and "matched nothing" have to
     // stay distinct or an incomparable beat spawns a template, which is the same
     // trap correlate() documents.
+    // ---- THE SCORE IS A CORRELATION AGAINST THE TEMPLATE -----------------
+    //
+    // "Morphology correlation thresholds for exclusion: r < 0.85 (ECG), r <
+    // 0.80 (PPG)" -- the spec's own words, and now the metric.
+    //
+    // IT USED TO BE THE FRACTION OF COLUMNS INSIDE THE CORRIDOR, and that
+    // fraction cannot distinguish two morphologies. A beat frame is ~1.8 RR
+    // wide -- on a 1000 Hz record, over seven thousand columns -- and a QRS
+    // occupies eighty of them. Everything else is baseline, T wave and
+    // diastole, where a sinus beat and a ventricular beat sit in the same place
+    // and both fall inside the corridor. An ectopic beat missing the corridor
+    // on EVERY QRS column still scores 7080/7160 = 0.989, so it could not fail
+    // an 0.85 floor -- and raising the floor did not help: it still could not
+    // fail, while ordinary sinus beats began to. On a real record this showed
+    // up as ectopic beats assigned to the sinus template and then removed
+    // afterwards for prematurity: separated by the RHYTHM, which the bank is
+    // supposed to be blind to, instead of by their shape.
+    //
+    // Correlation measures deviations about the mean, so a long flat stretch
+    // contributes almost no variance and the QRS excursion dominates on its
+    // own -- with no threshold on which columns count. Measured on a synthetic
+    // record holding two morphologies: r = 0.14 between them, 0.996 and 0.998
+    // within each.
+    //
+    // WHAT THIS GIVES UP. r is invariant to scale and offset, so a beat of the
+    // same shape at twice the amplitude scores 1.0 and joins, where the
+    // corridor would have rejected it. A real loss, and a deliberate one: the
+    // alternative is a second assignment criterion, which the spec forbids in
+    // as many words -- "Do not introduce a second, looser assignment
+    // threshold". The amplitude Tukey fence runs after the partition and
+    // catches a grossly mis-scaled beat as an outlier inside its own group.
+    //
+    // THE CORRIDOR STILL MATTERS, just not here. It is what the seeded slot 0
+    // carries over from Phase 1, what young groups inherit, what is drawn as
+    // the band under a template, and what fracInBand reports. It no longer
+    // decides membership.
+    //
+    // AND IT NO LONGER GATES SCORABILITY. The old version returned unscorable
+    // when a template had no corridor -- the state of every one-member group --
+    // so a freshly spawned group could not accept its own second beat and
+    // spawned again. Correlation needs only the waveform.
     inline BandResult bandMatch(const std::vector<double>& beat,
         const BankTemplate& t)
     {
         BandResult out;
-        if (t.band_lo.empty() || t.band_hi.empty()) return out;
+        if (t.tmpl.empty()) return out;
 
-        const size_t w = std::min(beat.size(),
-            std::min(t.band_lo.size(), t.band_hi.size()));
-        int n = 0, inside = 0;
-        for (size_t k = 0; k < w; ++k) {
-            const double lo = t.band_lo[k], hi = t.band_hi[k];
-            if (std::isnan(beat[k]) || std::isnan(lo) || std::isnan(hi)) continue;
-            ++n;
-            if (beat[k] >= lo && beat[k] <= hi) ++inside;
-        }
-        out.n_overlap = n;
-        if (n < kMinOverlapColumns) return out;
-        out.score = static_cast<double>(inside) / static_cast<double>(n);
-        // r IS NOT COMPUTED HERE. It is a reporting field nothing routes on, and
-        // computing it inside the scorer meant a second full pass over the
-        // overlap -- five accumulators per comparable column -- for every beat
-        // against every template, in both passes. Measured 1.6x on the sweep.
-        // assignBeat computes it once, for the winner only.
+        // Through the single correlate() every other consumer already uses --
+        // cleanGroups, NSVT's cross-bin identity, the substitution band. A
+        // second implementation here would be a second definition of "the same
+        // shape", and they would disagree first on the beats that matter.
+        const CorrResult cr = correlate(beat, t.tmpl);
+        out.n_overlap = cr.n_overlap;
+        out.score = cr.r;
+        out.r = cr.r;
+        // frac_in_band stays NaN: it costs another pass over the overlap for
+        // every beat against every template, and only the winner's value is
+        // ever read. assignBeat fills it there.
         return out;
     }
 
@@ -168,33 +233,6 @@ namespace tbank {
         t.band_hi.assign(width, NaN);
         t.corridor_inherited = false;
         if (t.members.empty() || width <= 0) return;
-
-        // ---- TEMPORARY DIAGNOSTIC: why does a template come out all-NaN? ----
-        // Remove once the empty-waveform question is settled. Two mechanisms
-        // produce a template whose median is NaN at every column, and the CSV
-        // renders both as blank cells, so they are indistinguishable from the
-        // outside:
-        //   out_of_range  a member index past beats.size() -- an index-space
-        //                 bug, and the one to fix here.
-        //   all_nan       the member beat is entirely NaN -- align_beat_matrix
-        //                 allocates each slice NaN-filled and pushes it even
-        //                 when the copy window lay outside the signal, so the
-        //                 bank is faithfully averaging nothing. Fix belongs
-        //                 upstream, by dropping such a slice instead of keeping
-        //                 it.
-        {
-            size_t oor = 0, allnan = 0;
-            for (uint32_t m : t.members) {
-                if (m >= beats.size()) { ++oor; continue; }
-                bool any = false;
-                for (double v : beats[m]) if (!std::isnan(v)) { any = true; break; }
-                if (!any) ++allnan;
-            }
-            if (oor || allnan)
-                std::fprintf(stderr,
-                    "  [tmpl] members=%d out_of_range=%zu all_nan=%zu beats=%zu\n",
-                    t.memberCount(), oor, allnan, beats.size());
-        }
 
         // Own corridor only when there are enough members for percentiles to
         // mean something; otherwise widths come from the floor below.
@@ -410,12 +448,18 @@ namespace tbank {
 
     struct AssignOutcome {
         int32_t template_id = kNoMatch;
-        // The band-match score this assignment was decided on, and Pearson r
-        // alongside it for reporting only. Both are kept because they disagree
-        // informatively: r is blind to amplitude and the corridor is not, so
-        // high r with low score is an amplitude outlier of a known shape.
+        // The score this assignment was decided on, which IS Pearson r since
+        // the metric changed -- both fields are kept and carry the same value,
+        // because dropping `r` would break every consumer that reads it and
+        // dropping `score` would break every consumer that reads that.
+        // frac_in_band below is the quantity score used to be, and the two
+        // disagree informatively: r is blind to amplitude and the corridor is
+        // not, so high r with a low fraction is an amplitude outlier of a
+        // known shape.
         double  score = std::numeric_limits<double>::quiet_NaN();
         double  r = std::numeric_limits<double>::quiet_NaN();
+        // Corridor fraction for the winning template, reporting only.
+        double  frac_in_band = std::numeric_limits<double>::quiet_NaN();
         bool    spawned = false;
         bool    merged = false;
         bool    cap_raised = false;
@@ -478,8 +522,16 @@ namespace tbank {
             if (br.score > best_score) { best_score = br.score; best = i; }
         }
 
-        // Pearson r for the WINNER only, for the archive. See bandMatch.
-        if (best >= 0) best_r = correlate(beat, bank.templates[best].tmpl).r;
+        // score IS r now, so no second correlate() is needed. What is computed
+        // for the winner only is the CORRIDOR FRACTION -- the quantity score
+        // used to be -- because it costs a second pass over the overlap and
+        // only the winner's is ever read. High r with a low fraction is an
+        // amplitude outlier of a known shape, which r alone cannot say.
+        double best_frac = std::numeric_limits<double>::quiet_NaN();
+        if (best >= 0) {
+            best_r = best_score;
+            best_frac = fracInBand(beat, bank.templates[best]);
+        }
 
         // Unscorable against everything: too little axis overlap for r to mean
         // anything. Do NOT spawn -- a beat that cannot be compared is not
@@ -502,6 +554,7 @@ namespace tbank {
             out.template_id = best;
             out.score = best_score;
             out.r = best_r;
+            out.frac_in_band = best_frac;
             return out;
         }
 
@@ -574,6 +627,11 @@ namespace tbank {
         out.spawned = true;
         out.score = (best >= 0) ? best_score : std::numeric_limits<double>::quiet_NaN();
         out.r = best_r;
+        // The rejected winner's corridor fraction, on a spawn: it says whether
+        // the beat was a different SHAPE or the same shape at a different
+        // amplitude, which is the first thing to ask about a spawn that looks
+        // wrong.
+        out.frac_in_band = best_frac;
         if (counts) ++counts->n_spawns;
         return out;
     }

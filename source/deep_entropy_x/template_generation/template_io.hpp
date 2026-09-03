@@ -121,7 +121,7 @@ namespace template_io {
 
         // Section 4.6 template bank for PPG. ONE bank, not three: there is one
         // pulse channel. Slot 0 is seeded from ppgTemplate, and the bank was
-        // built against kMatchFloorPpg (0.80) rather than the ECG floor -- the
+        // built against tbank::matchFloorPpg() (0.80 by default) rather than the ECG floor -- the
         // spec names two thresholds because it wants a bank on both channel
         // types, and this is the PPG one.
         //

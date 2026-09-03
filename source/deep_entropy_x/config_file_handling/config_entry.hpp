@@ -56,6 +56,57 @@ struct config_entry {
     double threshold = 0.0;
     double bin_size_minutes = 0.0;
 
+    // --- Section 4.6 morphology thresholds, as CORRELATIONS ---------------
+    //
+    // The floor a beat must clear against a template to join it, per channel.
+    // Used for assignment AND for spawning -- a beat that clears no template
+    // opens a new one -- so these two numbers decide the whole partition:
+    // every split, every merge, and therefore every template on screen.
+    //
+    // 0.0 means "not configured", and the pipeline keeps the spec defaults
+    // (0.85 ECG / 0.80 PPG) rather than treating it as a floor of zero, which
+    // would accept every beat against every template and collapse each bin to
+    // one morphology with nothing to say why. Valid range is (0, 1]; anything
+    // else is refused with a message and the defaults stand.
+    //
+    // The PPG floor is the looser of the two by design: a pulse is a smoother,
+    // lower-bandwidth waveform than a QRS and two genuinely different pulse
+    // morphologies correlate higher than two different QRS complexes do.
+    double ecg_match_floor = 0.0;
+    double ppg_match_floor = 0.0;
+
+    // Pulse QC: the fit-error threshold for keeping a candidate pulse, AS A
+    // PERCENT. A pulse is kept when || beat - reference || / || reference ||
+    // over its foot-to-foot window is below this, so 10 means "within 10% of
+    // the bin's median pulse by RMS".
+    //
+    // 0.0 means "not configured" and the default (10) is used. Valid range is
+    // (0, 100]; a threshold of 0 admits no pulse at all and would make the
+    // channel vanish with no other symptom.
+    //
+    // THIS REPLACED AN ESCALATION LADDER of 10% -> 20% -> 50% that fired only
+    // when a bin's survivor COUNT fell too low. It hid the real behaviour (a
+    // MESA record was retaining 7.5% of its pulses with the ladder never
+    // firing) and, when it did fire, left two bins in one record fitted to
+    // populations selected by different standards.
+    //
+    // The error is scale-sensitive, so this number also sets tolerance to
+    // normal respiratory and vasomotor amplitude modulation, not only to shape.
+    double ppg_fit_error_pct = 0.0;
+
+    // --- Minimum beats for a template to be written or drawn --------------
+    //
+    // A template whose CLEAN beat count (members minus premature minus
+    // Tukey-rejected) is below this is flagged too_few_beats in
+    // <stem>_templates.csv and _templates.bin, and gets no column in the
+    // viewer at all.
+    //
+    // 0 = no minimum, which is the default: a config without these columns
+    // suppresses nothing. Measured per channel kind because a pulse cohort is
+    // legitimately smaller than its ECG one -- the pulse QC rejects more.
+    int min_beats_template_ecg = 0;
+    int min_beats_template_ppg = 0;
+
     // Output subpaths used by the marking / viewer pipeline. output_path is
     // the user-set parent; the rest are derived from it by deriveSubpaths()
     // in config_loader. Ignored by the bin maker.

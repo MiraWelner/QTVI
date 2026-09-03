@@ -74,6 +74,54 @@ struct PPGTemplatesResult {
  *         Shared by CreatePulseTemplates for every channel (PPG, ABP, ART,
  *         ART_PULM) via a member-pointer for the signal.
  */
+// ==========================================================================
+// PULSE QC: ONE ERROR THRESHOLD, FROM config.csv
+// ==========================================================================
+//
+// A candidate pulse is kept when its normalized foot-to-foot fit error against
+// the bin's median reference is below this fraction:
+//
+//     err = || beat - reference || / || reference ||   over the f2f window
+//
+// So 0.10 means "within 10% of the reference by RMS". Set from config.csv as a
+// PERCENT (ppg_fit_error_pct), converted once here.
+//
+// WHY IT IS A RUNTIME VALUE. It is the single number that decides how much of
+// the pulse channel survives, and it needs to differ by dataset: an arterial
+// line is far more repeatable than a sleep-study pulse-ox, and a threshold
+// tuned on one throws away most of the other. On a MESA record 10% retained
+// 7.5% of the channel.
+//
+// WORTH KNOWING WHAT THE METRIC IS BLIND TO. This error is SCALE-SENSITIVE: a
+// pulse of identical shape with 15% more amplitude scores 0.15 and is rejected
+// at a 10% threshold. Pulse amplitude modulates with respiration and vasomotion
+// as a matter of course, so part of what this threshold controls is tolerance
+// to normal amplitude variation rather than to shape. The ECG side judges shape
+// by correlation, which is immune to exactly that. Raising the percentage is a
+// workaround for the metric, not a fix to it.
+namespace pulse_qc {
+
+    inline constexpr double kDefaultFitErrorFraction = 0.10;   // 10%
+
+    namespace detail { inline double g_fit_error = kDefaultFitErrorFraction; }
+
+    inline double fitErrorFraction() { return detail::g_fit_error; }
+
+    // `pct` is a PERCENT: 10 means 10%. Returns false and changes nothing when
+    // it is outside (0, 100].
+    //
+    // A blank config cell parses to 0.0 through the loader, and a threshold of
+    // 0 admits no pulse at all -- every bin degenerate, no pulse template
+    // anywhere, and the only symptom a channel that quietly vanished. So an
+    // unusable value leaves the default in place.
+    inline bool setFitErrorPct(double pct) {
+        if (!(pct > 0.0 && pct <= 100.0)) return false;
+        detail::g_fit_error = pct / 100.0;
+        return true;
+    }
+
+}  // namespace pulse_qc
+
 static inline void build_pulse_template_pair_windowed(
     const std::vector<double>& signal,
     double channelRate,
@@ -85,7 +133,11 @@ static inline void build_pulse_template_pair_windowed(
     std::vector<std::vector<double>>& outKeptBeats,
     int& outPeakCol,
     int& outFootCol,
-    std::vector<uint32_t>* outKeptSlices)
+    std::vector<uint32_t>* outKeptSlices,
+    // For the [pulseqc] line only. Passed rather than inferred because this
+    // function has no other way to name the bin it is working on, and a
+    // retention report that cannot say WHICH bin is nearly useless.
+    size_t bin_index = 0)
 {
     outTemplate.clear();
     outIqr.clear();
@@ -216,18 +268,28 @@ static inline void build_pulse_template_pair_windowed(
                 if (err < diag_err_min) diag_err_min = err;
                 if (err > diag_err_max) diag_err_max = err;
             }
-            if (err < 0.1) survivorRows.push_back(k);
+            if (err < pulse_qc::fitErrorFraction()) survivorRows.push_back(k);
         }
-        // If fewer than 3 beats passed the tight threshold, escalate
-        // 10% -> 20% -> 50%, taking the first tier that yields >= 3.
-        // Each tier rebuilds from scratch (clear first) so tiers don't
-        // double-count beats already added by a stricter tier.
-        for (const double thr : { 0.10, 0.20, 0.50 }) {
-            if (survivorRows.size() >= 3) break;
-            survivorRows.clear();
-            for (size_t k = 0; k < aligned.beats.size(); ++k)
-                if (diag_all_errs[k] < thr) survivorRows.push_back(k);
-        }
+        // THE ESCALATION LADDER IS GONE. It ran 10% -> 20% -> 50%, taking the
+        // first tier that reached a survivor floor, and it was the wrong shape
+        // of fix twice over.
+        //
+        // It hid the problem. The tiers only fired when survivors fell below a
+        // COUNT, so a bin keeping 64 pulses of 820 cleared the floor and
+        // reported success -- and on a real MESA record this filter was
+        // retaining 7.5% of the channel overall, 2030 pulses of 26970, with the
+        // ladder never firing anywhere.
+        //
+        // And when it did fire it made the result worse quietly. A bin relaxed
+        // to 50% builds its reference from pulses that failed the 10% test, so
+        // two bins in the same record could have templates fitted to
+        // populations selected by different standards, with nothing written down
+        // to say which.
+        //
+        // One threshold now, from config.csv (ppg_fit_error_pct), applied
+        // uniformly to every bin. A bin that keeps very few pulses keeps very
+        // few, and says so on the line below rather than being rescued into
+        // looking fine.
 
         // DEGENERATE REFERENCE -> KEEP ALL, the same fallback the arterial
         // twin has at the bottom of this file. All three tiers can come back
@@ -239,10 +301,46 @@ static inline void build_pulse_template_pair_windowed(
         // faulted. Keeping all candidates preserves the old outcome -- a
         // template built from everything, which the QC diagnostics then report
         // as low quality -- rather than dropping the bin entirely.
+        // ---- ZERO SURVIVORS MEANS ZERO, NOT EVERYTHING -------------------
+        //
+        // This used to refill survivorRows with every candidate when the
+        // threshold rejected them all. It INVERTED THE FILTER: the worse the
+        // bin, the more pulses it kept. On a real record the bins reporting
+        // "100.0% kept" had error medians of 0.27, 0.36, 0.52, even 1.12 --
+        // every one of them a bin where nothing passed and the guard then
+        // admitted the lot, garbage included, while a healthy bin next to it
+        // kept 12% and reported an error median of 0.105.
+        //
+        // A bin that fails the filter now produces no pulse template. The
+        // out-params were cleared at entry and the columns are -1, which is
+        // exactly the state the callers already read as "no pulse for this
+        // bin" -- the same state the catch(...) in CreatePulseTemplates
+        // produces. The [pulseqc] line above says how many were offered and
+        // how many passed, so the bin is accounted for rather than silently
+        // absent.
         if (survivorRows.empty()) {
-            survivorRows.reserve(aligned.beats.size());
-            for (size_t k = 0; k < aligned.beats.size(); ++k)
-                survivorRows.push_back(k);
+            // Median computed here rather than reused: the shared
+            // diag_err_median is declared after this block, and returning
+            // early means it is never reached.
+            double medHere = std::numeric_limits<double>::quiet_NaN();
+            {
+                std::vector<double> fin;
+                fin.reserve(diag_all_errs.size());
+                for (const double e : diag_all_errs)
+                    if (std::isfinite(e)) fin.push_back(e);
+                if (!fin.empty()) {
+                    std::sort(fin.begin(), fin.end());
+                    medHere = fin[fin.size() / 2];
+                }
+            }
+            std::fprintf(stderr,
+                "  [pulseqc] no pulse cleared %.1f%% error in this bin "
+                "(%d candidates, err min %.3f median %.3f); "
+                "NO pulse template\n",
+                100.0 * pulse_qc::fitErrorFraction(),
+                diag_input_beats, diag_err_min, medHere);
+            std::fflush(stderr);
+            return;
         }
 
         // Waveform and ordinal appended in the SAME loop, so they cannot fall
@@ -267,6 +365,7 @@ static inline void build_pulse_template_pair_windowed(
                 aligned.original_index.size(), aligned.beats.size());
 
         diag_survivors = static_cast<int>(filteredBeats.size());
+
     }
     const auto& beatsForTemplate = filteredBeats;
 
@@ -305,9 +404,50 @@ static inline void build_pulse_template_pair_windowed(
             diag_err_median = tmp[tmp.size() / 2];
         }
     }
+
+    // ---- WHERE THE PULSES WENT, EVERY BIN, UNGATED -----------------------
+    //
+    // TWO STAGES DROP PULSES AND THE REPORT HAS TO SEPARATE THEM. This filter
+    // runs on aligned.beats -- what the ALIGNER already passed -- so measuring
+    // survivors against that number describes the second stage while hiding the
+    // first. A first version of this line did exactly that, and would have
+    // reported 93% retention on a channel that had already lost most of its
+    // pulses upstream at a fiducial it could not find.
+    //
+    // So: slices offered, what the aligner kept and why it dropped the rest,
+    // then what this threshold kept of those, and the end-to-end figure. The
+    // last number is the only one that answers "how much of the pulse channel
+    // survived", and the middle ones say which stage to go and fix.
+    {
+        const size_t slices = aligned.n_slices;
+        const size_t alignedKept = aligned.beats.size();
+        const double pctAligned = slices
+            ? 100.0 * double(alignedKept) / double(slices) : 0.0;
+        const double pctQc = alignedKept
+            ? 100.0 * double(diag_survivors) / double(alignedKept) : 0.0;
+        const double pctEnd = slices
+            ? 100.0 * double(diag_survivors) / double(slices) : 0.0;
+        std::fprintf(stderr,
+            "  [pulseqc] bin %llu: %zu slices -> aligner kept %zu (%.1f%%; "
+            "dropped rr=%zu peak=%zu foot=%zu up50=%zu "
+            "peakcol=%zu[fence %.0f..%.0f]) "
+            "-> fit<%.1f%% kept %d "
+            "(%.1f%% of aligned, %.1f%% end to end); err min %.3f med %.3f "
+            "max %.3f\n",
+            static_cast<unsigned long long>(bin_index),
+            slices, alignedKept, pctAligned,
+            aligned.n_dropped_rr, aligned.n_dropped_peak,
+            aligned.n_dropped_foot, aligned.n_dropped_up50,
+            aligned.n_dropped_peak_col,
+            aligned.peak_col_fence_lo, aligned.peak_col_fence_hi,
+            100.0 * pulse_qc::fitErrorFraction(), diag_survivors,
+            pctQc, pctEnd,
+            diag_err_min, diag_err_median, diag_err_max);
+        std::fflush(stderr);
+    }
     // EMPTY IS REACHABLE, AND .front() ON IT IS AN ACCESS VIOLATION.
     //
-    // Every survivor tier (0.10 / 0.20 / 0.50) can come back empty when the
+    // The survivor set can come back empty at any threshold when the
     // reference template is degenerate -- an all-NaN column set, or a flat or
     // dead stretch of pulse signal -- because footToFootError() then returns
     // non-finite for every candidate and no threshold admits anything. The old
@@ -457,7 +597,7 @@ inline PPGTemplatesResult CreatePulseTemplates(
                 b.ch1.raw, ecgRate,
                 padSeconds,
                 out.templates[i], out.iqrs[i], out.kept[i],
-                out.peakCol[i], out.footCol[i], &out.keptSlices[i]);
+                out.peakCol[i], out.footCol[i], &out.keptSlices[i], i);
         }
         catch (...) {
             out.templates[i] = {};

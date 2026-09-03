@@ -176,38 +176,6 @@ namespace tbank {
     // an unusable value leaves the default in place rather than being applied.
     // A floor above 1.0 is the opposite failure: correlation cannot exceed 1,
     // so every beat spawns and the bank fills with singletons.
-    // ---- MINIMUM BEATS FOR A TEMPLATE TO EXIST AT ALL --------------------
-    //
-    // A template built from too few beats is a median over too few
-    // contributors to be a reference for anything. On a real record 44 of 162
-    // columns held a single beat and 25 landmark columns held fewer than four,
-    // so the operator was being asked to place fiducials on 2-beat waveforms.
-    //
-    // SEPARATE FROM kMinMembersForColumn, which is the junk/noise CATEGORY
-    // gate and stays where it is. This one is set per dataset from config.csv
-    // and decides whether the column is written and drawn at all.
-    //
-    // 0 MEANS NO MINIMUM, and it is the default, so a config without these
-    // columns suppresses nothing.
-    inline constexpr int kDefaultMinBeatsEcg = 0;
-    inline constexpr int kDefaultMinBeatsPpg = 0;
-
-    namespace detail_minbeats {
-        inline int g_ecg = kDefaultMinBeatsEcg;
-        inline int g_ppg = kDefaultMinBeatsPpg;
-    }
-
-    inline int minBeatsEcg() { return detail_minbeats::g_ecg; }
-    inline int minBeatsPpg() { return detail_minbeats::g_ppg; }
-
-    // Negative is refused and changes nothing.
-    inline bool setMinBeats(int ecg, int ppg) {
-        if (ecg < 0 || ppg < 0) return false;
-        detail_minbeats::g_ecg = ecg;
-        detail_minbeats::g_ppg = ppg;
-        return true;
-    }
-
     inline bool setMatchFloors(double ecg, double ppg) {
         if (!(ecg > 0.0 && ecg <= 1.0)) return false;
         if (!(ppg > 0.0 && ppg <= 1.0)) return false;
@@ -711,21 +679,6 @@ namespace tbank {
         int excludedCount() const {
             return static_cast<int>(members_clean.empty()
                 ? 0 : members.size() - members_clean.size());
-        }
-
-        // TOO FEW BEATS TO BE A TEMPLATE, against the configured minimum for
-        // this channel kind (tbank::minBeatsEcg / minBeatsPpg). Reported in the
-        // archive and used to suppress the column entirely.
-        //
-        // ON cleanCount(), not memberCount(): the question is how many beats
-        // are actually behind the drawn waveform, and premature or
-        // Tukey-rejected members are not.
-        //
-        // A zero minimum returns false for everything, which is the default --
-        // nothing is suppressed unless the operator configured a threshold.
-        bool tooFewBeats(bool is_ppg) const {
-            const int lim = is_ppg ? minBeatsPpg() : minBeatsEcg();
-            return lim > 0 && cleanCount() < lim;
         }
 
         // Landmarks per alignment anchor. A ventricular template has no P

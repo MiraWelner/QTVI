@@ -251,7 +251,12 @@ signals:
     // on the same click but carries the intent "show this landmark's focus
     // view," and the owner decides what to do (e.g. J-point refreshes both
     // the QRS and JT panels).
-    void landmarkSelected(int binIndex, int leadIndex, int marker, int col);
+    // TEMPLATE INDEX INCLUDED, like the marker and quality signals. A panel
+    // is a (bin, template) pair, and the focus view reads mean/sd/n for the
+    // waveform under the landmark -- without the slot it read the BIN's
+    // waveform whichever panel was clicked.
+    void landmarkSelected(int binIndex, int leadIndex, int templateIdx,
+        int marker, int col);
 
     // TEMPLATE INDEX ADDED to the marker signals. A panel is a (bin, template)
     // pair now, and without the slot the receiver cannot tell whether a drag
@@ -260,8 +265,13 @@ signals:
     void markerMovedOnTemplate(int binIndex, int leadIndex, int templateIdx,
         int marker, int newIdx);
 
-    void badRToggled(int binIndex, int leadIndex, bool bad);
-    void badPPGToggled(int binIndex, bool bad);
+    // TEMPLATE INDEX ADDED, for the same reason the marker signals carry it. A
+    // panel is a (bin, template) pair, and without the slot the receiver could
+    // only record the verdict against the BIN -- so one right-click on one
+    // column crossed out every column of that bin, including morphologies the
+    // operator had not looked at.
+    void badRToggled(int binIndex, int leadIndex, int templateIdx, bool bad);
+    void badPPGToggled(int binIndex, int templateIdx, bool bad);
 
     // Section 4.6 class confirmation. The operator picks ONE class from the
     // annotation_types table for the template shown in this panel; the owner

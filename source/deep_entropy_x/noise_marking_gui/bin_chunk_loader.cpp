@@ -465,9 +465,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
         if (!missing) m_activeChannels.insert(label);
         };
     const bool bittium = (m_cfg.dataset_type == "BITTIUM");
-    // SHHS1 and SHHS2 differ in channel content and rates, never in chart
-    // layout, so every layout check for them is this pair.
-    const bool shhs = (m_cfg.dataset_type == "SHHS1" || m_cfg.dataset_type == "SHHS2");
+    const bool shhs = (m_cfg.dataset_type == "SHHS");
 
     markActive("ECG1", m_ecg1);
     markActive("ECG2", m_ecg2);
@@ -488,8 +486,8 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
     // one non-markable chart that is NOT a shared slot: no other dataset has
     // anything to put in it, so leaving it visible would cost a stretch slot in
     // main_plots and show an empty chart.
-    if (ui->sao2_axis)
-        ui->sao2_axis->setVisible(shhs && !is_missing_signal(m_spo2));
+    if (ui->spo2_shhs_plot)
+        ui->spo2_shhs_plot->setVisible(shhs && !is_missing_signal(m_spo2));
     if (ui->ppg_ampogram_axis)
         ui->ppg_ampogram_axis->setVisible(!is_missing_signal(m_ppg));
 

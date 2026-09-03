@@ -199,6 +199,85 @@ namespace tbank_ser {
             return t;
         }
 
+        // ---- PER-TEMPLATE EXTRAS -----------------------------------------
+        //
+        // A SEPARATE BLOCK, appended after the banks, rather than fields added
+        // to writeTemplate(). writeTemplate's record has no length prefix and
+        // _templates.bin has no version field anywhere in it -- the whole format
+        // rests on "old readers stop at end of file" -- so widening that record
+        // makes new files misparse under the current reader and old files
+        // misparse under the new one, in the middle of a section, with nothing
+        // to detect it by. Appended, both directions degrade to defaults.
+        //
+        // WHAT IS IN HERE AND WHY EACH ONE MATTERS ON RELOAD:
+        //
+        //   confirmed_by_operator -- was persisted NOWHERE. A confirmed
+        //     template reloaded with label_code set and confirmed() false, and
+        //     confirmed() is what blocks a merge from collapsing two
+        //     morphologies, what countLabeled counts, and what makes
+        //     presumedCategory honour the operator's verdict over the
+        //     algorithm's presumption. The operator's work survived the file
+        //     only as a label nothing treated as authoritative.
+        //
+        //   members_clean -- which beats the waveform was averaged over. Absent,
+        //     cleanCount() falls back to members.size(), excludedCount() reads
+        //     zero, and a reader that honours kTemplatesAreCache and rebuilds
+        //     averages the premature and Tukey-rejected beats back in.
+        //
+        //   operator_state -- the right-click quality verdict on this panel.
+        //     Per template, unlike TemplateBin::bad_r_ch which is per bin. It
+        //     goes in the extras rather than beside bad_r_ch because it is a new
+        //     field on a record with no length prefix; see the header note.
+        //
+        //   the census counts -- n_premature_members and friends. Absent,
+        //     presumedCategory() sees zero premature members and calls an
+        //     ectopic template REGULAR, which hands it a landmark column it did
+        //     not have when it was built.
+        //
+        // Nothing derived is stored: these are decisions and observations, not
+        // recomputable from the templates.
+        inline void writeTemplateExtras(std::ofstream& f,
+            const tbank::BankTemplate& t) {
+            w8(f, t.confirmed_by_operator ? 1u : 0u);
+            wvecu32(f, t.members_clean);
+            w32(f, t.n_premature_members);
+            w32(f, t.n_voted_members);
+            w32(f, t.n_noise_members);
+            w32(f, t.n_tukey_members);
+            w32(f, t.n_ppg_members);
+            w8(f, t.operator_state);
+        }
+
+        inline void readTemplateExtras(std::ifstream& f,
+            tbank::BankTemplate& t) {
+            t.confirmed_by_operator = (r8(f) != 0);
+            t.members_clean = rvecu32(f);
+            t.n_premature_members = r32(f);
+            t.n_voted_members = r32(f);
+            t.n_noise_members = r32(f);
+            t.n_tukey_members = r32(f);
+            t.n_ppg_members = r32(f);
+            t.operator_state = r8(f);
+        }
+
+        // Count-prefixed, and the count is checked against the bank rather than
+        // trusted: an extras block whose length disagrees with the bank it
+        // belongs to is a mismatched pair of sections, and applying it anyway
+        // would attach one template's exclusions to another.
+        inline void writeBankExtras(std::ofstream& f,
+            const tbank::TemplateBank& b) {
+            wu32(f, static_cast<uint32_t>(b.templates.size()));
+            for (const auto& t : b.templates) writeTemplateExtras(f, t);
+        }
+
+        inline bool readBankExtras(std::ifstream& f, tbank::TemplateBank& b) {
+            const uint32_t nt = readLen(f);
+            if (nt != b.templates.size()) return false;
+            for (uint32_t i = 0; i < nt; ++i)
+                readTemplateExtras(f, b.templates[i]);
+            return static_cast<bool>(f);
+        }
+
         inline void writeBank(std::ofstream& f, const tbank::TemplateBank& b) {
             wu32(f, static_cast<uint32_t>(b.templates.size()));
             for (const auto& t : b.templates) writeTemplate(f, t);
@@ -335,6 +414,17 @@ namespace tbank_ser {
 
         detail::writeCounts(f, st.counts);
 
+        // ---- APPENDED, INSIDE THE LENGTH PREFIX --------------------------
+        // No version bump for this. The block already carries body_bytes and
+        // the reader below trusts it over its own field walk, which is exactly
+        // the case this was built for: an OLD reader on a NEW block walks the
+        // fields it knows, finds bytes left over, and seeks past them. Bumping
+        // tbank_io::kVersionCurrent instead would make requireSupported() throw
+        // on those files -- turning a format that degrades gracefully into one
+        // that refuses to open.
+        for (int c = 0; c < 3; ++c) detail::writeBankExtras(f, st.ecg[c]);
+        detail::writeBankExtras(f, st.ppg);
+
         const std::streampos end = f.tellp();
         const uint32_t body_bytes =
             static_cast<uint32_t>(end - body_start);
@@ -363,6 +453,21 @@ namespace tbank_ser {
 
         st.counts = detail::readCounts(f);
 
+        // ---- EXTRAS, IF THIS FILE HAS THEM -------------------------------
+        // Guarded on the length prefix rather than on a version, so a block
+        // written before the extras existed reads correctly and leaves every
+        // template's members_clean empty and confirmed_by_operator false -- the
+        // same state such a file has always produced. A mismatched template
+        // count aborts the extras and leaves the banks alone rather than
+        // attaching one template's exclusions to another.
+        if (f.tellg() - body_start
+            < static_cast<std::streamoff>(body_bytes)) {
+            bool ok = true;
+            for (int c = 0; c < 3 && ok; ++c)
+                ok = detail::readBankExtras(f, st.ecg[c]);
+            if (ok) detail::readBankExtras(f, st.ppg);
+        }
+
         // Trust the length prefix over the field-by-field walk. If a future
         // revision appended fields this reader does not know, the walk stops
         // short and the prefix carries it to the true end of the block; if the
@@ -387,6 +492,20 @@ namespace tbank_ser {
     // caller's contract is "a v1/v2 file simply ends here" -- a short read is
     // an expected outcome, not an error.
     // ---------------------------------------------------------------------
+
+    // Public wrappers for the extras, for _templates.bin's trailing section.
+    // That file has no version field anywhere and no length prefixes, so the
+    // extras go in a section of their own after every existing one; see
+    // template_io.cpp.
+    inline void writeBankExtrasToStream(std::ofstream& f,
+        const tbank::TemplateBank& b) {
+        detail::writeBankExtras(f, b);
+    }
+    inline bool readBankExtrasFromStream(std::ifstream& f,
+        tbank::TemplateBank& b) {
+        try { return detail::readBankExtras(f, b); }
+        catch (...) { return false; }
+    }
 
     inline void writeBankToStream(std::ofstream& f, const tbank::TemplateBank& b) {
         detail::writeBank(f, b);

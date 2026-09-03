@@ -229,8 +229,29 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         int nMembers = 0;
         uint8_t labelCode = tbank::kUnlabeled;
 
-        if (templateIdx < bank.size()
+        // tooFewBeats agrees with markingSlotsForBin, which already refused
+        // this template a column. Repeated here because the two are reached
+        // independently -- refreshBankMarkers and the focus path call this
+        // function directly -- and a lead supplied for a slot with no column
+        // would draw a trace nothing else on the page accounts for.
+        // The pulse side of the same gate. markingSlotsForBin has already
+        // refused this slot a column; repeated because this function is also
+        // reached directly by refreshBankMarkers and the focus path, and a lead
+        // supplied for a slot with no column would draw a trace nothing else on
+        // the page accounts for.
+        bool pulseThin = false;
+        {
+            bool anyPulse = false;
+            for (const auto& pt : b.ppg_bank.templates)
+                if (pt.memberCount() > 0) { anyPulse = true; break; }
+            if (anyPulse)
+                pulseThin = (templateIdx >= b.ppg_bank.size())
+                || b.ppg_bank.templates[templateIdx].tooFewBeats(true);
+        }
+        if (!pulseThin
+            && templateIdx < bank.size()
             && !bank.templates[templateIdx].tmpl.empty()
+            && !bank.templates[templateIdx].tooFewBeats(/*is_ppg=*/false)
             && (templateIdx == 0
                 || bank.templates[templateIdx].wantsLandmarkMarking())) {
             const tbank::BankTemplate& t = bank.templates[templateIdx];
@@ -328,8 +349,11 @@ void TemplateViewerWindow::buildPages() {
             const int c = static_cast<int>(
                 markingSlotsForBin(m_bins[i + taken]).size());
             // Always take at least one bin, even if it alone blows the budget:
-            // a page must make progress or paging never terminates.
-            if (taken > 0 && cols + c > budget) break;
+            // a page must make progress or paging never terminates. A bin
+            // contributing ZERO columns (every template below the configured
+            // minimum) is taken for the same reason -- skipping it would leave
+            // `taken` at 0 and the outer loop would never advance.
+            if (taken > 0 && c > 0 && cols + c > budget) break;
             cols += c;
             ++taken;
         }
@@ -385,17 +409,63 @@ std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) 
     // "C2059: syntax error: '.'" several lines from the actual cause, plus a
     // spurious "function must return a value" because `return slots;` collapses
     // to `return ;`. `signals`, `emit` and `foreach` are the same trap.
-    std::vector<int> eligible{ 0 };   // slot 0 always, even on a bank-less bin
-    for (int t = 1; t < tbank::kDefaultMaxTemplatesPerBin * 4; ++t) {
-        bool wanted = false;
-        for (int c = 0; c < 3 && !wanted; ++c) {
-            const tbank::TemplateBank& bank = b.ecg_bank[c];
+    // ---- AND NOT IF IT HAS TOO FEW BEATS ------------------------------
+    //
+    // tbank::minBeatsEcg(), from config.csv. A template below it is flagged
+    // too_few_beats in _templates.csv and _templates.bin and gets no column
+    // here -- the archive keeps it, the operator is not asked to mark it.
+    //
+    // THIS APPLIES TO SLOT 0 TOO. A seed built from three beats is no more
+    // markable than a spawned template built from three, and exempting it
+    // would be the same "it is slot 0 so it must be fine" assumption that
+    // put 2-beat waveforms in front of the operator in the first place. So a
+    // bin can now contribute ZERO columns, and the callers have to tolerate
+    // that: buildPages takes a bin with no columns without stalling, and
+    // showPage reports which bins vanished rather than letting them disappear
+    // quietly.
+    // EITHER CHANNEL BEING THIN INVALIDATES THE TEMPLATE. A group is one set
+    // of beats seen on four channels, so a slot whose pulse cohort is below
+    // min_beats_template_ppg is not a half-good template -- it is a template
+    // whose PPG face rests on too few beats to be a reference, and marking its
+    // ECG face would attach landmarks to a group that cannot be measured
+    // jointly. The two minimums are one gate.
+    //
+    // A CHANNEL WITH NO DATA IN THIS BIN DOES NOT VOTE. If the pulse filter
+    // produced no template for the bin at all, its pulse bank holds no members
+    // anywhere -- that is the channel being ABSENT, not thin, and it must not
+    // suppress ECG columns that are perfectly markable. The test is therefore
+    // conditional on the bin having some pulse cohort to speak of; the same
+    // rule an absent CH2 or CH3 already gets by having no bank.
+    auto shown = [](const TemplateBin& bb, int t) {
+        bool anyPulse = false;
+        for (const auto& pt : bb.ppg_bank.templates)
+            if (pt.memberCount() > 0) { anyPulse = true; break; }
+        if (anyPulse) {
+            if (t >= bb.ppg_bank.size()) return false;
+            if (bb.ppg_bank.templates[t].tooFewBeats(/*is_ppg=*/true))
+                return false;
+        }
+        for (int c = 0; c < 3; ++c) {
+            const tbank::TemplateBank& bank = bb.ecg_bank[c];
             if (t >= bank.size()) continue;
             const tbank::BankTemplate& tp = bank.templates[t];
-            wanted = !tp.tmpl.empty() && tp.wantsLandmarkMarking();
+            if (tp.tmpl.empty()) continue;
+            if (tp.tooFewBeats(/*is_ppg=*/false)) continue;
+            if (t == 0 || tp.wantsLandmarkMarking()) return true;
         }
-        if (wanted) eligible.push_back(t);
-    }
+        return false;
+        };
+
+    std::vector<int> eligible;
+    // Slot 0 on a bank-less bin has no BankTemplate to measure, so there is
+    // nothing to suppress and it keeps its column: the chN_raw template IS
+    // the whole bin, and its beat count is the bin's.
+    bool anyBank = false;
+    for (int c = 0; c < 3; ++c) if (b.ecg_bank[c].size() > 0) anyBank = true;
+    if (!anyBank || shown(b, 0)) eligible.push_back(0);
+
+    for (int t = 1; t < tbank::kDefaultMaxTemplatesPerBin * 4; ++t)
+        if (shown(b, t)) eligible.push_back(t);
     return eligible;
 }
 
@@ -868,6 +938,24 @@ void TemplateViewerWindow::showPage() {
     }
     const int nCols = static_cast<int>(cols.size());
 
+    // WHICH BINS HAVE NO COLUMNS AT ALL. With a minimum-beats threshold set,
+    // every template in a bin can fall below it, and that bin then shows
+    // nothing. Printed rather than left to be noticed, because a bin that
+    // silently has no panel is indistinguishable from a paging bug.
+    if (tbank::minBeatsEcg() > 0 || tbank::minBeatsPpg() > 0) {
+        std::string gone;
+        for (int i = 0; i < count; ++i) {
+            const int gi = start + i;
+            if (markingSlotsForBin(m_bins[gi]).empty())
+                gone += (gone.empty() ? "" : ",") + std::to_string(gi);
+        }
+        if (!gone.empty())
+            std::fprintf(stderr,
+                "  [min-beats] bins with NO displayable template "
+                "(every slot below ECG %d or PPG %d clean beats): %s\n",
+                tbank::minBeatsEcg(), tbank::minBeatsPpg(), gone.c_str());
+    }
+
     // Says out loud whether the banks survived the trip from generation to the
     // viewer. nCols == count means every bin resolved to a single column, which
     // is what an EMPTY bank looks like -- and an empty bank is indistinguishable
@@ -938,10 +1026,40 @@ void TemplateViewerWindow::showPage() {
                     && b.ecg_bank[L.channelIndex].size() == 0)
                     L.label += " bank=0";
 
-        // PPG is a property of the BIN, not of a bank member: there is one PPG
-        // template per bin regardless of how many ECG morphologies the bank
-        // separated, so every column of a bin draws the same one.
-        bool hasPPG = !b.ppgTemplate.empty();
+        // ---- THE PULSE WAVEFORM, ITS BAND AND ITS COUNT ARE ALL PER GROUP -
+        //
+        // ppg_bank slot i IS group i: projectToChannel walks the joint groups
+        // in order for every channel, so the pulse face is parallel to the
+        // three ECG faces and sits on the same axis as the bin's own pulse
+        // template (both are built from the same foot-anchored ppg_kept
+        // beats). The bin's pulse marker columns stay valid against it.
+        //
+        // ALL THREE USED TO COME FROM THE BIN -- b.ppgTemplate, its
+        // b.ppg_template_iqr, and b.ppg_n_beats -- drawn identically under
+        // every column. So a panel could report one group's pulse count beside
+        // a band computed from the whole bin, both morphologies and the full
+        // respiratory amplitude swing, which is why a column with no pulses of
+        // its own still showed a wide band.
+        //
+        // THERE IS NO FALLBACK. Not to the bin's template, not to its count,
+        // not on a file whose ppg_bank is absent. A group with no pulse cohort
+        // draws no pulse: no trace, no band, no count. Substituting the bin's
+        // numbers is what made an unmeasured value look measured.
+        //
+        // ONE SOURCE FOR THE COUNT AND THE TRACE: the number printed is the
+        // member count of the very template the drawn waveform is the median
+        // of, so the two cannot disagree.
+        //
+        // tooFewBeats carries the PPG minimum from config.csv, so a cohort
+        // below it is not drawn either -- a band fitted to two pulses is as
+        // meaningless as a waveform built from two beats.
+        const tbank::BankTemplate* ppgSlot =
+            (ti >= 0 && ti < b.ppg_bank.size())
+            ? &b.ppg_bank.templates[ti] : nullptr;
+        const bool hasPPG = ppgSlot && !ppgSlot->tmpl.empty()
+            && ppgSlot->memberCount() > 0
+            && !ppgSlot->tooFewBeats(/*is_ppg=*/true);
+        const int nPpgForColumn = hasPPG ? ppgSlot->memberCount() : -1;
 
         if (leads.empty())
             leads.push_back({ nullptr, 0, "No ECG" });
@@ -970,7 +1088,7 @@ void TemplateViewerWindow::showPage() {
 
             static const std::vector<double> empty;
             const auto& ecg = leads[li].ecg ? *leads[li].ecg : empty;
-            const auto& ppg = hasPPG ? b.ppgTemplate : empty;
+            const auto& ppg = hasPPG ? ppgSlot->tmpl : empty;
 
             int c = leads[li].channelIndex;
             const double rPeak = static_cast<double>(b.r_peak_ch[c]);
@@ -986,8 +1104,13 @@ void TemplateViewerWindow::showPage() {
             // scalar /ref used for the mean trace -- normalization lives only
             // in NormalizeFeatures.hpp, this is just calling it.
             const std::vector<double> ecgIqr = normalize_features::scale_array_by_ref(ecgIqrRaw, ecgRef);
+            // The GROUP's own spread. b.ppg_template_iqr is the interquartile
+            // range across every pulse in the bin, so under a group holding one
+            // morphology it drew a band sized by the difference BETWEEN
+            // morphologies.
             const std::vector<double> ppgIqr = hasPPG
-                ? normalize_features::scale_array_by_ref(b.ppg_template_iqr, m_pulseGlobalRef[0])
+                ? normalize_features::scale_array_by_ref(ppgSlot->tmpl_iqr,
+                    m_pulseGlobalRef[0])
                 : empty;
             // ECG beats for THIS TEMPLATE, not for the bin. Lead::nMembers is
             // the bank member's own beat count; it is 0 only on the pre-bank
@@ -995,9 +1118,8 @@ void TemplateViewerWindow::showPage() {
             // the bin total is the only count that exists and the template IS
             // the whole bin, so the two agree.
             //
-            // The PPG count stays per-bin because there is only one PPG
-            // template per bin -- the bank separates ECG morphologies, not
-            // pulses -- so every column of a bin reports the same one.
+            // The pulse count is per group too, resolved above from the pulse
+            // bank slot. Nothing on this line derives it.
             const uint64_t nEcgBinTotal = (c == 0) ? b.ch1_n_beats_raw
                 : (c == 1) ? b.ch2_n_beats_raw
                 : b.ch3_n_beats_raw;
@@ -1044,7 +1166,8 @@ void TemplateViewerWindow::showPage() {
                 return out;
                 };
             const std::vector<double> ecgSrc = maybeNotch(ecg, m_sampleRate, -1);   // ECG uses /ref, not a foot; no rebase needed
-            const std::vector<double> ppgSrc = hasPPG ? maybeNotch(b.ppgTemplate, m_ppgRateHz, b.ppg_onset) : empty;
+            const std::vector<double> ppgSrc = hasPPG
+                ? maybeNotch(ppgSlot->tmpl, m_ppgRateHz, b.ppg_onset) : empty;
             const std::vector<double> abpSrc = !b.abpTemplate.empty() ? maybeNotch(b.abpTemplate, m_abpRateHz, b.abp_onset) : b.abpTemplate;
             const std::vector<double> artSrc = !b.artTemplate.empty() ? maybeNotch(b.artTemplate, m_artRateHz, b.art_onset) : b.artTemplate;
             const std::vector<double> artPSrc = !b.artPulmTemplate.empty() ? maybeNotch(b.artPulmTemplate, m_artPulmRateHz, b.art_pulm_onset) : b.artPulmTemplate;
@@ -1075,28 +1198,8 @@ void TemplateViewerWindow::showPage() {
             }
 
             // Traces only. Every marker and autodetect column arrives via the
-            // single applyBinToWidget() call below.
-            // PPG COUNT COMES FROM THE GROUP, NOT THE BIN.
-            //
-            // b.ppg_n_beats is a relic of the per-channel split: one bin-wide
-            // pulse count, so every column of a bin reported the same number
-            // and a split looked as though it had ignored PPG entirely. Under
-            // the joint partition the pulse cohort belongs to the GROUP -- an
-            // ECG split carries its PPG beats with it -- and siblings differ.
-            //
-            // n_ppg_members is -1 on a bank that was not built jointly, and the
-            // bin field is used then. That fallback is the LAST reader of
-            // b.ppg_n_beats and goes away with it once every path is joint.
-            int nPpgForColumn = -1;
-            {
-                const int ti = (li < (int)m_pageTemplateIdx.size())
-                    ? m_pageTemplateIdx[li] : 0;
-                const tbank::TemplateBank& bk = b.ecg_bank[(c >= 0 && c <= 2) ? c : 0];
-                if (ti >= 0 && ti < bk.size())
-                    nPpgForColumn = bk.templates[ti].n_ppg_members;
-            }
-            if (nPpgForColumn < 0)
-                nPpgForColumn = static_cast<int>(b.ppg_n_beats);
+            // single applyBinToWidget() call below. nPpgForColumn was resolved
+            // once per column above, from the pulse bank slot this panel draws.
 
             pw->setData(ppgN, ppgIqr, ecgN, ecgIqr, rPeak,
                 static_cast<int>(nEcgBeats), nPpgForColumn);
@@ -1147,10 +1250,26 @@ void TemplateViewerWindow::showPage() {
 
             pw->setReferenceLines(global_interval_lines::forChannel(b, gi_intervals, c));
 
-            if (b.bad_ppg == 1)
-                pw->setState(BinPlotWidget::State::BadPPG);
-            else if (b.bad_r_ch[c])
-                pw->setState(BinPlotWidget::State::BadR);
+            // ---- RESTORE THIS PANEL'S OWN MARK -----------------------
+            // operator_state is per template. It used to read b.bad_ppg and
+            // b.bad_r_ch[c], which are per BIN, so a rebuild painted every
+            // panel of a marked bin -- the marks spread on a page turn.
+            //
+            // Slot 0 falls back to the bin flags when it has no state of its
+            // own, so a record marked before operator_state existed, or one
+            // whose flags feature_marks set automatically, still shows them.
+            {
+                uint8_t st = 0;
+                const tbank::TemplateBank& bkq =
+                    (c >= 0 && c <= 2) ? b.ecg_bank[c] : b.ppg_bank;
+                if (ti >= 0 && ti < bkq.size())
+                    st = bkq.templates[ti].operator_state;
+                if (st == 0 && ti == 0)
+                    st = (b.bad_ppg == 1) ? 2u
+                    : ((c >= 0 && c <= 2 && b.bad_r_ch[c]) ? 1u : 0u);
+                if (st == 2)      pw->setState(BinPlotWidget::State::BadPPG);
+                else if (st == 1) pw->setState(BinPlotWidget::State::BadR);
+            }
 
             connect(pw, &BinPlotWidget::markerMovedOnTemplate,
                 this, &TemplateViewerWindow::onMarkerMovedOnTemplate);
@@ -1750,16 +1869,19 @@ void TemplateViewerWindow::onClassConfirmRequested(int binIndex, int leadIndex,
     TemplateBin& b = m_bins[binIndex];
     if (leadIndex < 0 || leadIndex >= 3) return;
 
-    // KEYED ON A BEAT, NOT A TEMPLATE INDEX, because the three channels' banks
-    // are built independently and disagree about which slot a morphology
-    // occupies -- propagateLabel() says so explicitly. A representative member
-    // of the clicked template is the bridge: whatever slot each channel put
-    // that beat in is the slot that gets labeled there.
+    // KEYED ON THE SLOT, because there is one partition now. These banks come
+    // from jbank::projectToChannel, which walks the joint groups in order, so
+    // template i is group i on all three leads AND on PPG -- the slot is the
+    // shared handle.
     //
-    // The FIRST member, deliberately. Any member identifies the same
-    // morphology, and "first" is reproducible across runs, so re-confirming the
-    // same panel twice cannot address two different beats and mint two subtype
-    // indices for one class.
+    // IT USED TO BE KEYED ON A BEAT, because three independently built banks
+    // disagreed about which slot held which morphology. That is now not just
+    // unnecessary but wrong: the beat index it passed was a member of the
+    // clicked lead's bank, and the projection fills `members` with CHANNEL
+    // LOCAL ROW indices. Row 12 of CH1 and row 12 of CH2 are different
+    // heartbeats, so the lookup labeled whichever unrelated morphology happened
+    // to occupy that row number on the other leads. It also never touched the
+    // pulse bank, so a confirmed PVC left its PPG cohort unlabeled.
     const tbank::TemplateBank& bank = b.ecg_bank[leadIndex];
     if (templateIdx < 0 || templateIdx >= bank.size()) return;
     const auto& members = bank.templates[templateIdx].members;
@@ -1773,11 +1895,10 @@ void TemplateViewerWindow::onClassConfirmRequested(int binIndex, int leadIndex,
         return;
     }
 
-    const uint32_t beat = members.front();
     const uint8_t code = static_cast<uint8_t>(annotationCode);
 
     const tbank::PropagationResult pr =
-        tbank::propagateLabel(b.ecg_bank, beat, code);
+        tbank::propagateLabelBySlot(b.ecg_bank, b.ppg_bank, templateIdx, code);
 
     // Say what happened, per channel. A confirmation that reached one channel
     // and not the others means that beat was unscorable in those channels --
@@ -1788,10 +1909,14 @@ void TemplateViewerWindow::onClassConfirmRequested(int binIndex, int leadIndex,
             reached << tr("CH%1 slot %2 (subtype %3)")
             .arg(c + 1).arg(pr.labeled_template[c]).arg(pr.subtype[c]);
 
+    if (pr.ppg_labeled_template >= 0)
+        reached << tr("PPG slot %1 (subtype %2)")
+        .arg(pr.ppg_labeled_template).arg(pr.ppg_subtype);
+
     if (reached.isEmpty()) {
         statusBar()->showMessage(
-            tr("Confirmation did not reach any bank - beat %1 is unassigned.")
-            .arg(beat), 5000);
+            tr("Confirmation did not reach any bank - slot %1 is empty "
+                "on every channel.").arg(templateIdx), 5000);
         return;
     }
     statusBar()->showMessage(
@@ -2163,7 +2288,9 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         // J-point (S-end) this refreshes BOTH the QRS and JT panels; other
         // landmarks refresh their single panel. refreshFocus() handles the
         // routing.
-        refreshFocus(binIdx, leadIdx, marker, newIdx);
+        // Slot 0: onMarkerMovedOnTemplate routes every other slot to its own
+        // handler, so a drag reaching here is by definition on the seed column.
+        refreshFocus(binIdx, leadIdx, 0, marker, newIdx);
         return;
     }
 
@@ -2314,14 +2441,14 @@ void TemplateViewerWindow::onMarkerDragStarted(int, int, int) {}
 // B2 focus mode --------------------------------------------------------------
 
 void TemplateViewerWindow::onLandmarkSelected(int binIdx, int leadIdx,
-    int marker, int col)
+    int templateIdx, int marker, int col)
 {
     // Focus activation = the operator clicked this bar. Record it as "touched"
     // at position col; logBoundaryTrainingAtSave reads this to fill
     // confirmedIndex for the matching landmark.
     if (binIdx >= 0 && leadIdx >= 0 && col >= 0)
         m_touchedMarks[touchKey(binIdx, leadIdx, marker)] = col;
-    refreshFocus(binIdx, leadIdx, marker, col);
+    refreshFocus(binIdx, leadIdx, templateIdx, marker, col);
 }
 
 // Rebuild the focus panel(s) for one landmark from the current bin/lead's
@@ -2334,7 +2461,7 @@ void TemplateViewerWindow::onLandmarkSelected(int binIdx, int leadIdx,
 // it refreshes BOTH panels; every other landmark refreshes its own single
 // panel.
 void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
-    int marker, int col)
+    int templateIdx, int marker, int col)
 {
     if (!m_focusQrs && !m_focusJt) return;   // panels not created (nothing to do)
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
@@ -2350,10 +2477,35 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         const std::vector<double>* meanRaw = nullptr;
         const std::vector<double>* iqrRaw = nullptr;
         int pulseChan = -1;   // index into m_pulseGlobalRef: PPG=0,ABP=1,ART=2,ART_PULM=3
+        // -1 until a branch sets it. The arterial channels have no bank, so
+        // they keep the bin-wide pulse beat count, which for them IS the whole
+        // population -- there is no per-group arterial cohort to get wrong.
+        int nPulseBeats = -1;
         int footIdx = -1;     // this channel's foot/onset column (perfusion-index baseline)
         QString chLabel;
         if (BinPlotWidget::markerIsPpg(marker)) {
-            meanRaw = &b.ppgTemplate;      iqrRaw = &b.ppg_template_iqr;      pulseChan = 0; footIdx = b.ppg_onset;      chLabel = "PPG";
+            // THE GROUP'S PULSE, NOT THE BIN'S. ppg_bank slot i is group i, on
+            // the same axis as the bin's pulse template. This path read
+            // b.ppgTemplate / b.ppg_template_iqr / b.ppg_n_beats
+            // unconditionally, so clicking a pulse landmark on ANY column
+            // showed the bin's mean, its bin-wide spread and its bin-wide beat
+            // count -- the same defect the main panel had, one layer over.
+            //
+            // NO FALLBACK. A group with no pulse cohort has no focus view:
+            // both panels are cleared and the function returns. Showing the
+            // bin's waveform there would be a measurement attributed to beats
+            // that are not in this template.
+            const tbank::BankTemplate* ps =
+                (templateIdx >= 0 && templateIdx < b.ppg_bank.size())
+                ? &b.ppg_bank.templates[templateIdx] : nullptr;
+            if (!ps || ps->tmpl.empty() || ps->memberCount() <= 0) {
+                if (m_focusQrs) m_focusQrs->clearFocus();
+                if (m_focusJt)  m_focusJt->clearFocus();
+                return;
+            }
+            meanRaw = &ps->tmpl;           iqrRaw = &ps->tmpl_iqr;
+            pulseChan = 0; footIdx = b.ppg_onset;  chLabel = "PPG";
+            nPulseBeats = ps->memberCount();
         }
         else if (BinPlotWidget::markerIsAbp(marker)) {
             meanRaw = &b.abpTemplate;      iqrRaw = &b.abpTemplate_iqr;      pulseChan = 1; footIdx = b.abp_onset;      chLabel = "ABP";
@@ -2380,7 +2532,8 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         std::vector<double> sd = normalize_features::scale_array_by_ref(*iqrRaw, ref);
         for (double& s : sd) if (!std::isnan(s)) s /= 1.349;
 
-        const int nBeats = static_cast<int>(b.ppg_n_beats);
+        const int nBeats = (nPulseBeats >= 0)
+            ? nPulseBeats : static_cast<int>(b.ppg_n_beats);
 
         auto pulseLabel = [](int m) -> QString {
             switch (m) {
@@ -2429,10 +2582,36 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // CI directly, NO IQR->SD conversion (unlike the pulse channels, whose
     // *_iqr is a true interquartile range).
     const double eref = m_ecgGlobalRef[leadIdx];
-    const std::vector<double> mean = normalize_features::scale_array_by_ref(ch.ecgTemplate_raw, eref);
-    const std::vector<double> sd = normalize_features::scale_array_by_ref(ch.ecg_template_raw_iqr, eref);
+
+    // ---- WHICH WAVEFORM THIS PANEL IS SHOWING --------------------------
+    // Slot 0 is the bin's chN template. Every other slot is a bank member with
+    // its own median, its own spread and its own beat count, and this path used
+    // ch.ecgTemplate_raw and the bin's chN_n_beats_raw regardless -- so the
+    // focus view for a PVC column plotted the sinus average and reported the
+    // whole bin's beat count under it.
+    //
+    // NO FALLBACK for a slot that exists but is empty: the panels are cleared
+    // and the function returns, because a focus view of the wrong morphology is
+    // worse than none.
+    const std::vector<double>* meanRawEcg = &ch.ecgTemplate_raw;
+    const std::vector<double>* sdRawEcg = &ch.ecg_template_raw_iqr;
     const uint64_t nb[3] = { b.ch1_n_beats_raw, b.ch2_n_beats_raw, b.ch3_n_beats_raw };
-    const int nBeats = static_cast<int>(nb[leadIdx]);
+    int nBeats = static_cast<int>(nb[leadIdx]);
+    if (templateIdx > 0) {
+        const tbank::TemplateBank& bank = b.ecg_bank[leadIdx];
+        if (templateIdx >= bank.size()
+            || bank.templates[templateIdx].tmpl.empty()) {
+            if (m_focusQrs) m_focusQrs->clearFocus();
+            if (m_focusJt)  m_focusJt->clearFocus();
+            return;
+        }
+        const tbank::BankTemplate& tp = bank.templates[templateIdx];
+        meanRawEcg = &tp.tmpl;
+        sdRawEcg = &tp.tmpl_iqr;
+        nBeats = tp.cleanCount();
+    }
+    const std::vector<double> mean = normalize_features::scale_array_by_ref(*meanRawEcg, eref);
+    const std::vector<double> sd = normalize_features::scale_array_by_ref(*sdRawEcg, eref);
     if (mean.empty()) return;
 
     m_lastFocusBin = binIdx;
@@ -2479,30 +2658,91 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
 // BadR / BadPPG
 // ========================================================================
 
-void TemplateViewerWindow::onBadRToggled(int binIdx, int leadIdx, bool bad) {
-    if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
-    if (leadIdx < 0 || leadIdx > 2) return;
-    m_bins[binIdx].bad_r_ch[leadIdx] = bad;
+// ============================================================================
+// QUALITY MARKS: PER PANEL, WITH SLOT 0 OWNING THE BIN
+//
+// A right-click marks the panel it was made on and nothing else. It used to
+// record against the BIN, so with a bin occupying one panel per morphology, one
+// click crossed out up to six columns -- and the extra ones appeared on the next
+// page rebuild rather than at the moment of the click, which made it look like
+// the click had landed somewhere else entirely.
+//
+// WHY THE BIN-LEVEL FLAGS SURVIVE. TemplateBin::bad_r_ch and bad_ppg are
+// consumed: NormalizeFeatures skips a bin's channel on bad_r_ch when building
+// the global reference, template_marking_bin_io serializes them and exports them
+// per bin, and feature_marks sets them automatically. They have to keep meaning
+// "this bin's lead is untrustworthy", so the SEED panel owns them and a
+// sub-template panel does not touch them. Marking a 2-beat junk column must not
+// exclude a whole bin from the feature reference.
+// ============================================================================
+
+// The bank slot behind a panel, for a given bin and lead. Null when the slot is
+// out of range, which is a real state -- a bin whose bank did not survive the
+// trip from generation has one panel and no templates.
+tbank::BankTemplate* TemplateViewerWindow::slotFor(int binIdx, int leadIdx,
+    int templateIdx)
+{
+    if (binIdx < 0 || binIdx >= (int)m_bins.size()) return nullptr;
+    if (templateIdx < 0) return nullptr;
+    TemplateBin& b = m_bins[binIdx];
+    tbank::TemplateBank& bk = (leadIdx >= 0 && leadIdx <= 2)
+        ? b.ecg_bank[leadIdx] : b.ppg_bank;
+    if (templateIdx >= bk.size()) return nullptr;
+    return &bk.templates[templateIdx];
 }
 
-void TemplateViewerWindow::onBadPPGToggled(int binIdx, bool bad) {
+// Repaints exactly the panel that was clicked.
+void TemplateViewerWindow::repaintPanel(int binIdx, int leadIdx, int templateIdx,
+    BinPlotWidget::State st)
+{
+    for (size_t ci = 0; ci < m_pageGlobalIdx.size(); ++ci) {
+        if (m_pageGlobalIdx[ci] != binIdx) continue;
+        if (ci >= m_pageTemplateIdx.size() || m_pageTemplateIdx[ci] != templateIdx)
+            continue;
+        if (ci >= m_binPlots.size()) continue;
+        for (auto* pw : m_binPlots[ci])
+            if (pw && (leadIdx < 0 || pw->leadIndex() == leadIdx))
+                pw->setState(st);
+        return;
+    }
+}
+
+void TemplateViewerWindow::onBadRToggled(int binIdx, int leadIdx,
+    int templateIdx, bool bad) {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
-    m_bins[binIdx].bad_ppg = bad ? 1 : 0;
+    if (leadIdx < 0 || leadIdx > 2) return;
 
-    if (bad) {
-        for (int c = 0; c < 3; ++c)
-            m_bins[binIdx].bad_r_ch[c] = false;
+    if (tbank::BankTemplate* t = slotFor(binIdx, leadIdx, templateIdx))
+        t->operator_state = bad ? 1u : 0u;
+
+    // SLOT 0 ONLY writes the bin-level flag. See the header note above.
+    if (templateIdx == 0) m_bins[binIdx].bad_r_ch[leadIdx] = bad;
+
+    repaintPanel(binIdx, leadIdx, templateIdx,
+        bad ? BinPlotWidget::State::BadR : BinPlotWidget::State::Good);
+}
+
+void TemplateViewerWindow::onBadPPGToggled(int binIdx, int templateIdx,
+    bool bad) {
+    if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
+
+    // The pulse verdict is recorded on the PULSE bank's slot, not on the ECG
+    // lead's -- it is a statement about the pulse waveform in this panel.
+    if (tbank::BankTemplate* t = slotFor(binIdx, -1, templateIdx))
+        t->operator_state = bad ? 2u : 0u;
+
+    if (templateIdx == 0) {
+        m_bins[binIdx].bad_ppg = bad ? 1 : 0;
+        // bad_ppg supersedes bad_r on the same bin, as before: the two are
+        // alternatives in the right-click cycle, not independent flags.
+        if (bad)
+            for (int c = 0; c < 3; ++c) m_bins[binIdx].bad_r_ch[c] = false;
     }
 
-    for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
-        if (m_pageGlobalIdx[li] == binIdx) {
-            auto s = bad ? BinPlotWidget::State::BadPPG
-                : BinPlotWidget::State::Good;
-            for (auto* pw : m_binPlots[li])
-                pw->setState(s);
-            break;
-        }
-    }
+    // Every lead of THIS panel: a bad pulse is not a per-lead judgement, and the
+    // panel shows the same pulse trace under each lead.
+    repaintPanel(binIdx, -1, templateIdx,
+        bad ? BinPlotWidget::State::BadPPG : BinPlotWidget::State::Good);
 }
 
 // AnchorType -> short name for the boundary log's `anchor` column.

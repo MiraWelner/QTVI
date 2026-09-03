@@ -69,6 +69,21 @@ struct TemplateBin {
     // be on another -- so these are NOT parallel across the array.
     std::array<tbank::TemplateBank, 3> ecg_bank;
 
+    // ---- AND THE PULSE BANK ---------------------------------------------
+    //
+    // template_io::BinTemplates has carried ppg_bank since v4 and this struct
+    // did not, so `dst.ecg_bank = src.ecg_bank` in fromTemplateFile() loaded the
+    // pulse partition off disk and then dropped it. The consequences were all
+    // downstream and all silent: the viewer had no pulse bank to label, so a
+    // class confirmation could not reach the PPG cohort of the morphology it
+    // confirmed, and a right-click had nowhere to record a pulse verdict.
+    //
+    // Slot i is group i, the same group ECG slot i is -- the projection walks
+    // the joint groups in order for every channel, so the four banks are
+    // parallel by construction. That is what makes labelling and marking by
+    // slot correct across all of them.
+    tbank::TemplateBank ppg_bank;
+
     uint64_t index = 0;
     std::vector<std::pair<uint64_t, uint64_t>> ppg_bin_indexs;
     std::vector<std::pair<uint64_t, uint64_t>> ecg_bin_indexs;
@@ -244,6 +259,7 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
         // slot 0 of an absent bank is the chN_raw template already copied
         // above.
         dst.ecg_bank = src.ecg_bank;
+        dst.ppg_bank = src.ppg_bank;
         dst.abpTemplate = src.abpTemplate;
         dst.artTemplate = src.artTemplate;
         dst.artPulmTemplate = src.artPulmTemplate;

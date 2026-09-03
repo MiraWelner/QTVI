@@ -168,6 +168,52 @@ namespace template_io {
                 tbank_ser::writeBankToStream(f, b.ppg_bank);
             }
         }
+
+        // ---- v5: per-template extras, per bin ------------------------------
+        // A FIFTH TRAILING OPTIONAL SECTION, on the same contract as the v2
+        // anchors, the v3 ECG banks and the v4 PPG bank: a v1-v4 reader stops at
+        // end of file, and a v5 reader that finds nothing leaves every
+        // template's extras at their defaults -- which is precisely the state a
+        // v4 file has always loaded into.
+        //
+        // WHY A NEW SECTION RATHER THAN WIDER TEMPLATE RECORDS. This file has no
+        // version field and no length prefixes; the entire format rests on old
+        // readers hitting EOF. Adding fields to the bank records themselves
+        // would make new files misparse under the current reader and old files
+        // misparse under the new one, part-way through a section, with nothing
+        // in either file able to detect it.
+        //
+        // WHAT IS IN IT: confirmed_by_operator -- which was persisted nowhere,
+        // so every operator confirmation was lost on reload and with it the
+        // merge protection, the polymorphy count and the operator's override of
+        // presumedCategory -- plus members_clean and the per-template census.
+        //
+        // MUST come after the v4 count, unconditionally. The reader walks these
+        // in order, so a conditional or reordered section makes it read one
+        // section's count as another's.
+        //
+        // Layout: [uint64 nBinsWithExtras], then per such bin
+        //         [uint64 binIndex][extras CH1][extras CH2][extras CH3][extras PPG].
+        {
+            auto hasBank = [](const template_io::BinTemplates& b) {
+                for (int c = 0; c < 3; ++c)
+                    if (!b.ecg_bank[c].templates.empty()) return true;
+                return !b.ppg_bank.templates.empty();
+                };
+
+            uint64_t nWithExtras = 0;
+            for (const auto& b : data.bins) if (hasBank(b)) ++nWithExtras;
+            f.write(reinterpret_cast<const char*>(&nWithExtras), 8);
+
+            for (uint64_t i = 0; i < data.bins.size(); ++i) {
+                const auto& b = data.bins[i];
+                if (!hasBank(b)) continue;
+                f.write(reinterpret_cast<const char*>(&i), 8);
+                for (int c = 0; c < 3; ++c)
+                    tbank_ser::writeBankExtrasToStream(f, b.ecg_bank[c]);
+                tbank_ser::writeBankExtrasToStream(f, b.ppg_bank);
+            }
+        }
     }
 
 
@@ -274,6 +320,36 @@ namespace template_io {
                     if (!tbank_ser::readBankFromStream(f, bank)) break;
                     if (bi < out.bins.size())
                         out.bins[bi].ppg_bank = std::move(bank);
+                }
+            }
+        }
+
+        // ---- v5: per-template extras (trailing, optional) ------------------
+        // A v1-v4 file ends here, so a failed read of the count means "no
+        // extras" rather than an error, on the same contract as the three
+        // sections above. Anything already parsed stands.
+        //
+        // The extras are applied ONTO the banks read above, so this must run
+        // after both bank sections. A template-count mismatch inside
+        // readBankExtrasFromStream stops the section rather than applying it:
+        // extras that do not line up with their bank would attach one
+        // template's exclusions and confirmation to another, which is worse
+        // than not having them.
+        {
+            uint64_t nWithExtras = 0;
+            if (f.read(reinterpret_cast<char*>(&nWithExtras), 8)) {
+                for (uint64_t k = 0; k < nWithExtras; ++k) {
+                    uint64_t bi = 0;
+                    if (!f.read(reinterpret_cast<char*>(&bi), 8)) break;
+                    if (bi >= out.bins.size()) break;
+                    bool ok = true;
+                    for (int c = 0; c < 3 && ok; ++c)
+                        ok = tbank_ser::readBankExtrasFromStream(
+                            f, out.bins[bi].ecg_bank[c]);
+                    if (ok)
+                        ok = tbank_ser::readBankExtrasFromStream(
+                            f, out.bins[bi].ppg_bank);
+                    if (!ok) break;
                 }
             }
         }

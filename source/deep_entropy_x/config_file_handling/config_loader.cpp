@@ -302,6 +302,51 @@ bool load_config(int dataType, config_entry& out) {
         out.blanking_period = stod_or_zero(cell("blanking_period"));
         out.threshold = stod_or_zero(cell("threshold"));
         out.bin_size_minutes = stod_or_zero(cell("bin_size_minutes"));
+
+        // Section 4.6 morphology floors. stod_or_zero, NOT stod_or_default:
+        // a blank cell has to arrive downstream as 0.0 so post_process can
+        // tell "not configured" from "configured to something unusable" and
+        // report the two differently. Defaulting to 0.85/0.80 here instead
+        // would silently swallow a typo'd cell.
+        out.ecg_match_floor = stod_or_zero(cell("ecg_match_floor"));
+        out.ppg_match_floor = stod_or_zero(cell("ppg_match_floor"));
+        out.ppg_fit_error_pct = stod_or_zero(cell("ppg_fit_error_pct"));
+        out.min_beats_template_ecg = stoi_or_default(cell("min_beats_template_ecg"), 0);
+        out.min_beats_template_ppg = stoi_or_default(cell("min_beats_template_ppg"), 0);
+        if (out.min_beats_template_ecg < 0 || out.min_beats_template_ppg < 0) {
+            std::cerr << "WARNING: min_beats_template_ecg/ppg must be >= 0 ("
+                << out.min_beats_template_ecg << "/"
+                << out.min_beats_template_ppg
+                << "); no minimum will be applied\n";
+            out.min_beats_template_ecg = 0;
+            out.min_beats_template_ppg = 0;
+        }
+        if (out.ppg_fit_error_pct != 0.0 &&
+            !(out.ppg_fit_error_pct > 0.0 && out.ppg_fit_error_pct <= 100.0)) {
+            std::cerr << "WARNING: ppg_fit_error_pct=" << out.ppg_fit_error_pct
+                << " is not in (0, 100]; the default will be used\n";
+        }
+        else if (out.ppg_fit_error_pct != 0.0 && out.ppg_fit_error_pct < 1.0) {
+            // 0.1 in a PERCENT column is 0.1%, which admits essentially no
+            // pulse. Almost certainly a fraction typed where a percent was
+            // wanted, so it is called out -- but applied, because refusing a
+            // deliberate 0.5% would be worse than obeying it loudly.
+            std::cerr << "WARNING: ppg_fit_error_pct=" << out.ppg_fit_error_pct
+                << " is a PERCENT, so this means "
+                << out.ppg_fit_error_pct << "% and will reject nearly every "
+                "pulse. Did you mean " << (out.ppg_fit_error_pct * 100.0)
+                << "?\n";
+        }
+        if (out.ecg_match_floor != 0.0 &&
+            !(out.ecg_match_floor > 0.0 && out.ecg_match_floor <= 1.0)) {
+            std::cerr << "WARNING: ecg_match_floor=" << out.ecg_match_floor
+                << " is not in (0, 1]; the Section 4.6 defaults will be used\n";
+        }
+        if (out.ppg_match_floor != 0.0 &&
+            !(out.ppg_match_floor > 0.0 && out.ppg_match_floor <= 1.0)) {
+            std::cerr << "WARNING: ppg_match_floor=" << out.ppg_match_floor
+                << " is not in (0, 1]; the Section 4.6 defaults will be used\n";
+        }
         out.input_path = cell("original_file_path");
         out.output_path = cell("output_folder");
         out.use_consensus_rpeak = parseBool(cell("use_consensus_rpeak"), true);
