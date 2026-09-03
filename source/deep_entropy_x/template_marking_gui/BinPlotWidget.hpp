@@ -181,8 +181,10 @@ public:
     // rounded the refined T-peak and the interpolated T50/T80 crossings on the
     // way into the paint path -- so the glyph drew up to half a sample away
     // from the value the CSV reported for the same landmark.
-    struct Reactive { double ecgTPeak = -1.0, ppgT50 = -1.0, ppgT80 = -1.0; };
-    Reactive reactiveGlyphs() const;
+    struct Reactive {
+        double ecgTPeak = -1.0, ppgT50 = -1.0, ppgT80 = -1.0,
+            ppgPeak2 = -1.0;
+    };    Reactive reactiveGlyphs() const;
 
     // Per-trace marker visibility. When false, that group's markers
     // are neither drawn nor hit-testable (drag-pick ignores them).
@@ -288,6 +290,8 @@ signals:
     // edited -- see the note in BinPlotWidget.cpp.
     void classConfirmRequested(int binIndex, int leadIndex, int templateIdx,
         int annotationCode);
+    void overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm);
+
 
 protected:
     void paintEvent(QPaintEvent*) override;

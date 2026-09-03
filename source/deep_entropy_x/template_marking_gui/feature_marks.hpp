@@ -59,9 +59,8 @@ public:
     static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
     struct ReactiveEcg { double t_peak = -1.0; };
     static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, int t_begin, int t_end);
-    struct ReactivePpg { double t50 = -1.0, t80 = -1.0, t80_rise = -1.0, pw80 = -1.0; };   // sub-sample
-    static ReactivePpg reactive_ppg(const std::vector<double>& ppg,
-        int onset, int peak, int end);
+    struct ReactivePpg { double t50 = -1.0, t80 = -1.0, t80_rise = -1.0, pw80 = -1.0, peak2 = -1.0;  };
+    static ReactivePpg reactive_ppg(const std::vector<double>& ppg, int onset, int peak, int dicrotic, int end);
 
     // Individual reactive computes (all track user markers live).
     static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col); //ONE j-point calculation
@@ -123,7 +122,6 @@ public:
         double r_peak = -1.0;    // refined from nominal_r_col, sub-sample
         double q_begin = -1.0;
         double s_end = -1.0;    // == J-point
-        double t_begin = -1.0;
         double t_end = -1.0;
         double p_peak = -1.0;
         double p_begin = -1.0;
@@ -138,21 +136,12 @@ public:
 
     // the x, o, |, || or ||| markers for to mark the ppg and to be output in the csv
     struct PpgFiducials {
-        // SUB-SAMPLE POSITIONS. Every one of these is produced by a refinement
-        // -- symmetricExtremum, asymmetricExtremum, a spline notch, a
-        // fractional-crossing search -- so they are doubles and nothing inside
-        // FeatureMarks rounds them. Rounding happens once, at the boundary
-        // where a position enters TemplateBin's int fields (a versioned
-        // on-disk format); see the note at that call site.
         double onset = -1.0;
         double peak = -1.0;
         double end = -1.0;
         double peak2 = -1.0;      bool peak2_found = false;
         double dicrotic = -1.0;   bool notch_found = false;
-        double t80 = -1.0, p50 = -1.0;
-        // T80_rise: upslope position at the SAME absolute amplitude as t80
-        // (the 80%-downslope level), NOT an 80%-of-onset->peak crossing.
-        // t80_rise_y is that amplitude; pw80 = t80 - t80_rise (the width).
+        double t80 = -1.0, t50 = -1.0;
         double t80_rise = -1.0;
         double t80_rise_y = std::numeric_limits<double>::quiet_NaN();
         double pw80 = -1.0;
@@ -182,51 +171,9 @@ public:
     static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate,
         double heightMeters = NAN);
 
-    // ---------------------------------------------------------------
-    // ORDERING INVARIANT: the notch precedes the diastolic peak
-    // ---------------------------------------------------------------
-    //
-    // The dicrotic notch is aortic valve closure; the diastolic peak is the
-    // reflected wave that arrives after it. notch < peak2, always, on every
-    // pulse channel. Nothing enforced it, and the two are found by SEPARATE
-    // detectors, so nothing made it true either:
-    //
-    //   PPG (detect_ppg_fiducials): peak2_found required splineDiastolic to be
-    //   past the notch -- but when that test FAILED, peak2 fell back to the
-    //   midpoint 0.5*(peak + hi) with no comparison against the notch at all.
-    //   A late notch and an early midpoint put peak2 before the notch, marked
-    //   not-found, and still written to ppg_peak2_auto and still drawn.
-    //
-    //   ABP / ART / ART_PULM (seed_pulse_channel): no test in either direction.
-    //   The notch comes from detect_ppg_dicrotic on the cycle and peak2 from
-    //   detect_ppg_peak2 on the same cycle, independently, and whichever the
-    //   two searches land on is what gets stored.
-    //
-    // Enforced in ONE place so the channels cannot disagree about it. The notch
-    // wins ties and is never moved: it has a three-tier detector with recorded
-    // provenance and a confidence (E-5), while peak2 is a local-maximum search
-    // with neither. Given a contradiction, the measurement that can say how it
-    // was obtained is the one to keep.
-    //
-    // A violated pair is NOT silently swapped. Swapping would produce two
-    // plausible landmarks in the right order and destroy the evidence that a
-    // detector failed. peak2 is re-sought strictly after the notch, and if
-    // nothing is there it is reported ABSENT -- which is a true statement, and
-    // one the archive already knows how to carry (peak2_found).
-    //
-    // hi is the search bound (pulse end); returns false when the invariant
-    // could not be satisfied and peak2 was cleared.
-    static bool order_notch_before_peak2(const std::vector<double>& pulse,
-        double notch, double& peak2, bool& peak2_found, double hi);
-
-    // Integer overload for the arterial seeding path, which works in whole
-    // samples. Same policy; -1 out means absent.
-    static bool order_notch_before_peak2(const std::vector<double>& pulse,
-        int notch, int& peak2, int hi);
-
     // Sample whose AMPLITUDE is frac of the way from v[a] to v[b] (NOT frac
     // of the sample-index distance). Shared by detect_ppg_fiducials (t80/
-    // p50) and the GUI's reactive T80/P50 glyphs, so both always agree.
+    // t50) and the GUI's reactive T80/t50 glyphs, so both always agree.
     static double amplitude_crossing(const std::vector<double>& v, int a, int b, double frac);
 
     // Position on [a, b] where v crosses the ABSOLUTE amplitude `target`
@@ -238,24 +185,17 @@ public:
     // Index of the minimum sample on [lo, hi], NaN-skipping; -1 if none.
     static int trough_in(const std::vector<double>& v, int lo, int hi);
 
+    static double steepest_rise_in(const std::vector<double>& v, int lo, int hi);
+
     // FIRST crossing of the frac-of-amplitude level on [a, b], linearly
     // interpolated between the bracketing samples and rounded.
     static double first_crossing(const std::vector<double>& v, int a, int b, double frac);
 
-    //movable ecg bars
     static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
     static double detect_p_peak(const std::vector<double>& ecg_signal, int r_idx, double fs);
     static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double pPeakIn = -1.0);
-    static int detect_q_begin(const std::vector<double>& ecg_signal, int r_idx);
 
-    // PPG landmarks
-    //
-    // Systolic peak located from the UPSTROKE, on [lo, hi) (hi <= 0 => whole
-    // vector). Returns -1 when no upstroke is present (flat, all-NaN, too
-    // short) -- callers must handle that rather than substituting index 0.
-
-    static int detect_ppg_upstroke_peak(const std::vector<double>& v,
-        int lo = 0, int hi = -1);
+    static int detect_ppg_upstroke_peak(const std::vector<double>& v, int lo = 0, int hi = -1);
     static int detect_ppg_onset(const std::vector<double>& pulse);
     static double detect_ppg_peak(const std::vector<double>& pulse);
     static int detect_ppg_dicrotic(const std::vector<double>& pulse, int peak);
@@ -264,7 +204,7 @@ public:
 
     static void seed_all(TemplateBin& bin, double sampleRate, double ppgRate, AnchorType anchor,
         double heightMeters = NAN);
-private:
-    // Internal helpers.
-    static std::vector<double> first_derivative(const std::vector<double>& v);
+
+    static void seed_pulse_bank_template(const std::vector<double>& tmpl,
+        double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters = NAN); 
 };

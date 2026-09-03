@@ -7,53 +7,6 @@
 // quality parameters) to disk BEFORE any template deformation pass
 // (Section 9.6) runs, so bin-level results survive even if deformation
 // never runs, or fails partway through, on a later file.
-//
-// ---------------------------------------------------------------------------
-// Input model: template_io::TemplateFile (its .bins is a
-// std::vector<template_io::BinTemplates>) + template_io::BeatsFile.
-// ---------------------------------------------------------------------------
-// This is the data that EXISTS at the checkpoint the spec asks for -- the
-// R-pass template build in prepareViewerJob, before the interactive anchor
-// cycle / deferred deformation. The viewer's marker-aware TemplateBin model
-// does NOT exist yet at that stage (it's built later, after wave-marking),
-// so nothing here reads pre-placed markers.
-//
-// Instead, every fiducial (P/Q/R/S/T peaks and P-onset/Q-onset/J/T-begin/
-// T-end) is AUTO-DETECTED on the channel's own averaged template waveform
-// (BinTemplates::chN_raw.ecgTemplate) anchored at its r_col, via the SAME
-// FeatureMarks::detect_*/compute_* finders the rest of the pipeline uses to
-// place those landmarks. So the morphology written here is the automatic
-// placement -- exactly what would be shown before any operator adjustment.
-//
-// Consequences of running this early, stated plainly:
-//   - Intervals (PR/QRS/QT/JT) are measured PER CHANNEL from that channel's
-//     own auto-detected onsets/offsets -- NOT the cross-lead "global"
-//     union-of-leads intervals (those need the TemplateBin/global_intervals
-//     machinery, absent here). Each channel's row carries its own.
-//   - qrs_area_spatial is a 3-lead vector-magnitude integral built directly
-//     from the three chN_raw waveforms aligned on their r_col, NOT the full
-//     VCG-basis loop (vcg_signal_average.hpp, TemplateBin-only). It's a
-//     defensible per-bin spatial-QRS-area proxy at this stage; flagged as
-//     such rather than presented as the SVD-basis quantity.
-//
-// ASSUMPTION (flagged): bins[i] and beats.per_channel_beats[ch][i] are the
-// SAME bin, by position -- the positional correspondence the rest of the
-// pipeline already relies on.
-//
-// "22 bin quality parameters": the spec names the count without enumerating
-// it. sqi_ecg.hpp's BeatSQI scores 10 numeric components per beat
-// (templateCorr, chiSq0, chiSqAbs, chiSq0_P, chiSq0_QRS, chiSq0_ST,
-// baseline, noise, motion, composite); adding the fraction of a bin's beats
-// classified INCLUDE gives 11 measures, and mean+std of each -- pooled
-// across every kept beat on every ECG channel in the bin -- gives exactly
-// 22. Swap kSqiFieldNames / poolBinQuality if a different 22 was intended.
-//
-// "JT interval": QT minus QRS duration (the ST+T segment), the conventional
-// definition, computed once QT and QRS are both available.
-//
-// "ST level": measured AT this channel's own auto-detected J point (== S_end
-// crossing), not at a fixed J+60/J+80 ms offset.
-//
 
 #include "NormalizeFeatures.hpp"          // same folder (template_generation/)
 #include "template_io.hpp"                // same folder
@@ -103,12 +56,6 @@ namespace bin_archive {
         double j_point_amp = kNaN;                // == st_level; named separately per spec wording
     };
 
-    // ---------------------------------------------------------------------
-    // 22 bin quality parameters
-    // ---------------------------------------------------------------------
-    // Indices into sqi_mean/sqi_std, matching BeatSQI's fields (sqi_ecg.hpp,
-    // global namespace -- that header has no namespace wrapper) plus the
-    // derived "fraction INCLUDE".
     enum SqiField {
         SQI_TEMPLATE_CORR = 0, SQI_CHISQ0, SQI_CHISQ_ABS,
         SQI_CHISQ0_P, SQI_CHISQ0_QRS, SQI_CHISQ0_ST,
@@ -164,10 +111,9 @@ namespace bin_archive {
             FeatureMarks::detect_template_landmarks(ecg, rPeak, fs);
         if (!lm.valid) return out;
 
-        const double rPeakD = lm.r_peak;
+        const double r_peak = lm.r_peak;
         const double qOnsetD = lm.q_begin;
-        const double jPointD = lm.s_end;
-        const double tBeginD = lm.t_begin;
+        const double j_point = lm.s_end;
         const double tEndD = lm.t_end;
         const double pPeakD = lm.p_peak;
         const double pBeginD = lm.p_begin;
@@ -176,18 +122,18 @@ namespace bin_archive {
         // the marking path stores them), so they stay here -- but anchored on
         // the REFINED R and the shared T window, not on the raw r_col, or they
         // would reintroduce the same discrepancy one level down.
-        const int rAnchor = static_cast<int>(rPeakD);
+        const int rAnchor = static_cast<int>(r_peak);
         const double qIdxD = FeatureMarks::compute_q_peak(ecg, rAnchor, fs);
         const double sIdxD = FeatureMarks::compute_s_peak(ecg, rAnchor, fs);
-        const double tPeakD = FeatureMarks::compute_t_peak(ecg, tBeginD, tEndD);
+        const double tPeakD = FeatureMarks::compute_t_peak(ecg, j_point, tEndD);
 
         // Amplitudes.
-        out.r_amp = FeatureMarks::sample_at(ecg, rPeakD);   // refined R, not r_col
+        out.r_amp = FeatureMarks::sample_at(ecg, r_peak);   // refined R, not r_col
         out.q_amp = FeatureMarks::sample_at(ecg, qIdxD);
         out.s_amp = FeatureMarks::sample_at(ecg, sIdxD);
         out.p_amp = FeatureMarks::sample_at(ecg, pPeakD);
         out.t_amp = FeatureMarks::sample_at(ecg, tPeakD);
-        out.st_level = FeatureMarks::sample_at(ecg, jPointD);
+        out.st_level = FeatureMarks::sample_at(ecg, j_point);
         out.j_point_amp = out.st_level;
 
         // Per-channel intervals (ms) from this channel's own landmarks.
@@ -196,30 +142,28 @@ namespace bin_archive {
             return (b - a) / fs * 1000.0;
             };
         out.pr_ms = ms(pBeginD, qOnsetD);
-        out.qrs_ms = ms(qOnsetD, jPointD);
+        out.qrs_ms = ms(qOnsetD, j_point);
         out.qt_ms = ms(qOnsetD, tEndD);
         if (!std::isnan(out.qt_ms) && !std::isnan(out.qrs_ms))
             out.jt_ms = out.qt_ms - out.qrs_ms;
 
         // Areas (rounded fiducials for the integer window bounds).
         auto idx = [](double d) { return std::isnan(d) ? -1 : static_cast<int>(std::lround(d)); };
-        const int qOnset = idx(qOnsetD), jPoint = idx(jPointD);
-        const int tBegin = idx(tBeginD), tEnd = idx(tEndD);
-        if (tBegin >= 0 && tEnd > tBegin)
-            out.t_wave_area = normalize_features::segment_area(ecg, tBegin, tEnd, /*absolute=*/true);
-        if (qOnset >= 0 && jPoint > qOnset)
-            out.qrs_area = normalize_features::segment_area(ecg, qOnset, jPoint, /*absolute=*/true);
+        const int qOnset = idx(qOnsetD), jPoint = idx(j_point);
+        const int tEnd = idx(tEndD);
+        out.t_wave_area = normalize_features::segment_area(ecg, j_point, tEnd, /*absolute=*/true);
+        out.qrs_area = normalize_features::segment_area(ecg, qOnset, jPoint, /*absolute=*/true);
 
         // Slopes (mV/s) across the QRS limbs.
         // Measured against the REFINED R, consistent with r_amp and the
         // landmarks above. Mixing rPeakD into some intervals and the raw r_col
         // into others is how a table becomes internally inconsistent.
-        if (!std::isnan(qIdxD) && qIdxD < rPeakD) {
-            const double dt = (rPeakD - qIdxD) / fs;
+        if (!std::isnan(qIdxD) && qIdxD < r_peak) {
+            const double dt = (r_peak - qIdxD) / fs;
             if (dt > 0.0) out.upstroke_slope_mv_per_s = (out.r_amp - out.q_amp) / dt;
         }
-        if (!std::isnan(sIdxD) && sIdxD > rPeakD) {
-            const double dt = (sIdxD - rPeakD) / fs;
+        if (!std::isnan(sIdxD) && sIdxD > r_peak) {
+            const double dt = (sIdxD - r_peak) / fs;
             if (dt > 0.0) out.downstroke_slope_mv_per_s = (out.s_amp - out.r_amp) / dt;
         }
         if (!std::isnan(out.q_amp) && !std::isnan(out.r_amp) && out.r_amp != 0.0)

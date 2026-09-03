@@ -99,16 +99,6 @@ namespace {
 // Private helpers
 // =========================================================================
 
-std::vector<double> FeatureMarks::first_derivative(const std::vector<double>& v) {
-    const int N = static_cast<int>(v.size());
-    std::vector<double> d1(N, 0.0);
-    if (N < 2) return d1;
-    for (int i = 1; i < N - 1; ++i) d1[i] = 0.5 * (v[i + 1] - v[i - 1]);
-    d1[0] = v[1] - v[0];
-    d1[N - 1] = v[N - 1] - v[N - 2];
-    return d1;
-}
-
 // QRS polarity from the KNOWN R column: positive if the R sample sits above
 // the trace baseline (median), negative otherwise. Replaces the old r_peak()
 // geometric guesser -- callers now pass the true R column (r_col).
@@ -516,7 +506,7 @@ FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(
 }
 
 FeatureMarks::ReactivePpg FeatureMarks::reactive_ppg(
-    const std::vector<double>& ppg, int onset, int peak, int end)
+    const std::vector<double>& ppg, int onset, int peak, int dicrotic, int end)
 {
     ReactivePpg r;
     if (static_cast<int>(ppg.size()) < 3) return r;
@@ -538,6 +528,16 @@ FeatureMarks::ReactivePpg FeatureMarks::reactive_ppg(
             }
         }
     }
+
+    // Diastolic peak: steepest rise between the DN bar and the end bar, so it
+    // tracks a DN drag live. Same primitive detect_ppg_fiducials uses, so the
+    // screen and the writers cannot disagree. Bracketed on the notch rather
+    // than the systolic peak because the reflected wave arrives after valve
+    // closure -- searching from the peak would let the systolic downstroke's
+    // own shoulder win.
+    if (dicrotic >= 0 && end > dicrotic)
+        r.peak2 = steepest_rise_in(ppg, dicrotic, end);
+
     return r;
 }
 
@@ -629,6 +629,38 @@ int FeatureMarks::trough_in(const std::vector<double>& v, int lo, int hi) {
     return best;
 }
 
+double FeatureMarks::steepest_rise_in(const std::vector<double>& v, int lo, int hi) {
+    const int N = static_cast<int>(v.size());
+    lo = std::max(0, lo);
+    hi = std::min(hi, N - 1);
+    if (hi - lo < 2) return -1.0;
+
+    // Forward difference. NaN on either side of a step makes that step absent
+    // rather than zero -- a zero slope is a measurement, a gap is not.
+    int best = -1; double bestD = 0.0;
+    for (int i = lo; i < hi; ++i) {
+        if (std::isnan(v[i]) || std::isnan(v[i + 1])) continue;
+        const double d = v[i + 1] - v[i];
+        if (d > bestD) { bestD = d; best = i; }
+    }
+    if (best < 0) return -1.0;      // monotonically falling or flat: no rise
+
+    // Sub-sample: parabola through the three derivative samples around best.
+    // Guarded so a boundary hit or a NaN neighbour returns the integer answer
+    // rather than a vertex computed from a fabricated third point.
+    if (best > lo && best + 2 <= hi
+        && !std::isnan(v[best - 1]) && !std::isnan(v[best + 2])) {
+        const double dm = v[best] - v[best - 1];
+        const double d0 = v[best + 1] - v[best];
+        const double dp = v[best + 2] - v[best + 1];
+        const double den = dm - 2.0 * d0 + dp;
+        if (std::abs(den) > 1e-12) {
+            const double off = 0.5 * (dm - dp) / den;
+            if (std::abs(off) <= 1.0) return static_cast<double>(best) + off;
+        }
+    }
+    return static_cast<double>(best);
+}
 FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate,
     double heightMeters)
 {
@@ -696,113 +728,68 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         g.end = refine_end(seed >= 0 ? seed : Wc - 1);
     }
 
-    // ---- DICROTIC NOTCH (three-tier, E-5) + DIASTOLIC PEAK -----------------
-    // The notch comes from ppg_dicrotic::detectDicroticNotch (Tier 1 IEM ->
-    // Tier 2 Windkessel -> Tier 3 absent), recording which tier answered. The
-    // detector returns only the notch, so the diastolic peak (peak2) still comes
-    // from the 4-knot cubic-spline fit over [amp15, amp90]. A not-found notch
-    // leaves a midpoint placeholder flagged not-found (draws "o" not "x").
+    // ---- DICROTIC NOTCH (placeholder) + DIASTOLIC PEAK ---------------------
+     //
+     // ORDER: NOTCH FIRST, THEN PEAK2 BOUNDED BY IT. This is now a real
+     // dependency, unlike the arrangement it replaces. The old comment claimed
+     // peak2 was "first local max AFTER the notch", but cubicSplineNotch fit over
+     // [amp15, amp90] and the notch was not an input to it -- it appeared only in
+     // the acceptance test afterwards. peak2 is now the steepest rise on
+     // [notch, end], so the notch genuinely is its left bound and computing it
+     // second is required, not merely convenient.
+     //
+     // Everything the old block needed is gone with it: the amp15/amp90 spline
+     // bounds (cubicSplineNotch was a stub returning `lo`), the thirds
+     // placeholders, and the post-hoc notch-vs-peak2 ordering correction. The
+     // ordering invariant now holds by construction -- peak2 is searched strictly
+     // to the right of the notch and cannot be found left of it.
     {
-        // amplitude_crossing and cubicSplineNotch work on columns, so the
-        // BOUNDS are floored/ceiled from the fractional positions. The values
-        // they produce are kept as-is; only the search grid is integral.
-        const int peakCol = iFloor(g.peak), endCol = iCeil(g.end);
-        // Column bounds for the spline search: the crossing itself is fractional,
-        // but cubicSplineNotch needs integer knots, so these two are floored
-        // explicitly rather than by implicit conversion.
-        int amp15 = iFloor(amplitude_crossing(v, peakCol, endCol, 0.15));
-        if (amp15 < 0) amp15 = peakCol;
-        int amp90 = iFloor(amplitude_crossing(v, peakCol, endCol, 0.90));
-        if (amp90 < 0) amp90 = cl(iFloor(0.5 * (g.peak + g.end)));
-        const int lo = cl(amp15);
-        const int hi = std::clamp(amp90, lo, Wc - 1);
+        const int peakCol = iFloor(g.peak);
 
-        // ---- DIASTOLIC PEAK FIRST, then the notch bounded by it ------------
+        // ---- NOTCH: PLACEHOLDER PENDING THE THREE-TIER DETECTOR ------------
         //
-        // THE ORDER HERE IS REVERSED from what it was, and the dependency it
-        // used to imply was never real. The comment said peak2 was "first local
-        // max AFTER the notch", but cubicSplineNotch(v, lo, hi, ...) fits over
-        // [amp15, amp90] and the notch is not an input to it -- the notch
-        // appeared only in the ACCEPTANCE TEST afterwards. So peak2 was always
-        // computable first, and computing it first is what lets it bound the
-        // notch search.
+        // A fixed 10 ms after the systolic peak. Deliberately NOT a
+        // physiological estimate -- the real notch is aortic valve closure at
+        // end-systole, 150-350 ms out -- so it reads as obviously provisional on
+        // screen rather than as a plausible wrong answer.
         //
-        // Why that is better than correcting afterwards. Bounding the search
-        // means a notch past the diastolic peak is never a candidate: the IEM
-        // residual's local minima beyond the peak are not examined at all.
-        // Correcting afterwards meant the detector could return such a point,
-        // report a tier and a confidence for it, and then have peak2 moved to
-        // accommodate it -- so a bad notch displaced a good peak, and the tier
-        // and confidence recorded in the archive described a landmark that had
-        // been overruled.
-        // ---- FALLBACK POSITIONS: THIRDS BETWEEN PEAK AND END ---------------
+        // notch_found stays FALSE, so the glyph layer draws a hollow circle and
+        // nothing downstream treats it as a measurement. dn_tier 0 is
+        // PLACEHOLDER, distinct from 3 (ABSENT): absent means a tier ran and
+        // found nothing, which is a finding; placeholder means no tier ran.
         //
-        // Both landmarks lie between the systolic peak and the pulse end, in a
-        // fixed order: notch first, then the reflected wave. When a detector
-        // finds nothing there is still a bar to place, and placing them at 1/3
-        // and 2/3 of (peak, end) puts each one in the region it belongs to and
-        // keeps notch < peak2 by construction.
-        //
-        // This replaces two different midpoints -- peak2 fell back to the middle
-        // of (peak, hi) and the notch to the middle of (lo, hi), where lo/hi are
-        // the amp15/amp90 spline bounds rather than the pulse itself. Those two
-        // could land in either order and neither respected the pulse end, so a
-        // fallback bar could sit past the point where the pulse stops.
-        //
-        // These are PLACEHOLDERS, and *_found stays false for them: the glyph
-        // layer draws a hollow circle rather than an X, and nothing downstream
-        // should treat a thirds position as a measurement.
-        const double _span = g.end - g.peak;
-        const double guess_notch = cld(g.peak + _span / 3.0);
-        const double guess_peak2 = cld(g.peak + 2.0 * _span / 3.0);
+        // ppg_dicrotic.hpp/.cpp is intact and unreferenced. THIS IS THE CALL
+        // SITE: to re-enable, build a PpgConfig, call detectDicroticNotch(v,
+        // ppgRate, peakCol, double(Wc)/ppgRate, cfg), take notch_found from
+        // dn.measured(), and pass g.peak2 as cfg.dnWindowHiSample ONLY once
+        // peak2 is itself a measurement -- bounding a real detector by a
+        // placeholder lets a fabricated position suppress a genuine notch.
+        g.dicrotic = cld(g.peak + 0.010 * ppgRate);
+        g.notch_found = false;
+        g.dn_tier = 0;              // PLACEHOLDER
+        g.dn_confidence = 0.0;
 
-        int splineDiastolic = -1;
-        subsample_refine::cubicSplineNotch(v, lo, hi, &splineDiastolic);
-        const bool splineOk = (splineDiastolic > lo && splineDiastolic < hi);
-        g.peak2_found = splineOk;
-        g.peak2 = splineOk ? static_cast<double>(splineDiastolic) : guess_peak2;
-
-        // Notch: three-tier detector. The template spans ~one cardiac cycle, so
-        // RR is its visible duration. Enhancement is left off (gain 0) pending
-        // real-record validation -- the 0.15 default fills clear notches.
+        // ---- DIASTOLIC PEAK: STEEPEST RISE ON [NOTCH, PULSE END] -----------
         //
-        // dnWindowHiSample carries the diastolic peak in as the search ceiling.
-        // Only when the spline actually found one: the midpoint fallback above
-        // is a placeholder, not a measurement, and bounding a real detector by a
-        // placeholder would let a fabricated position suppress a genuine notch.
-        // With no peak2, the detector keeps its 70%-of-RR ceiling and the
-        // post-hoc invariant below is what holds the ordering.
-        const double rrSeconds = double(Wc) / ppgRate;
-        ppg_dicrotic::PpgConfig dnCfg;
-        dnCfg.dnEnhanceGain = 0.0;
-        if (splineOk) dnCfg.dnWindowHiSample = splineDiastolic;
-        const ppg_dicrotic::DnResult dn =
-            ppg_dicrotic::detectDicroticNotch(v, ppgRate, peakCol, rrSeconds, dnCfg);
-
-        g.notch_found = (dn.tier != ppg_dicrotic::DnResult::ABSENT) && dn.index > 0;
-        // DnResult carries a sub-sample refinement of its own (subSample, from
-        // Phase 1 I-3). It was being discarded in favour of the integer index;
-        // use it when finite.
-        g.dicrotic = g.notch_found
-            ? (std::isfinite(dn.subSample) ? dn.subSample
-                : static_cast<double>(dn.index))
-            : guess_notch;
-        g.dn_tier = static_cast<int>(dn.tier);
-        g.dn_confidence = dn.confidence;
-
-        // Belt and braces, and not redundant. The bound above constrains the
-        // TIER 1/2 search, but the not-found path still assigns a midpoint
-        // placeholder 0.5*(lo + hi) that is computed from the window and not
-        // from peak2, and can therefore land past it. This catches that case,
-        // and any future path that sets g.dicrotic without going through the
-        // bounded search. It should now be a no-op on real data -- if the
-        // notch_found counter shows it firing, the bound is not being applied.
-        order_notch_before_peak2(v, g.dicrotic, g.peak2, g.peak2_found,
-            static_cast<double>(hi));
+        // The reflected wave arrives after valve closure, and its upstroke is
+        // the only sustained positive slope in diastole -- so the derivative
+        // maximum locates it with no spline fit and no knot choice. -1 when
+        // diastole never rises, which is absent rather than a guess.
+        //
+        // NOTE this is the UPSTROKE, not the crest. It is repeatable, which the
+        // crest of a damped reflected wave is not; but `ri` = amp(p2)/amp(p1)
+        // now samples the rise and will read lower than a crest-based RI.
+        //
+        // While the notch is a placeholder sitting 10 ms after the peak, this
+        // window is effectively [peak, end] and the bound barely constrains
+        // anything. It tightens on its own when the tiers land.
+        const double p2 = steepest_rise_in(v, iCeil(g.dicrotic), iFloor(g.end));
+        g.peak2_found = (p2 >= 0.0);
+        g.peak2 = p2;
     }
 
-    // ---- T80 / P50: amplitude crossings (the same helper the GUI's reactive
-    // T80/P50 glyphs call, so the two can't disagree). ----------------------
+    // ---- T80 / T50: amplitude crossings (the same helper the GUI's reactive
+    // T80/T50 glyphs call, so the two can't disagree). ----------------------
     g.t80 = amplitude_crossing(v, iFloor(g.peak), iCeil(g.end), 0.80);
     if (g.t80 < 0) g.t80 = cld(0.5 * (g.peak + g.end));
 
@@ -824,8 +811,8 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
             }
         }
     }
-    g.p50 = amplitude_crossing(v, iFloor(g.onset), iCeil(g.peak), 0.50);
-    if (g.p50 < 0) g.p50 = cld(0.5 * (g.onset + g.peak));
+    g.t50 = amplitude_crossing(v, iFloor(g.onset), iCeil(g.peak), 0.50);
+    if (g.t50 < 0) g.t50 = cld(0.5 * (g.onset + g.peak));
 
     // ---- Derivative fiducials: VPG u/v/w, APG a-f, JPG p1/p2. One call;
     // the definitions cross-reference each other, so detect() owns the
@@ -856,58 +843,27 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
 // Movable (auto-detected seeds)
 // =========================================================================
 
-int FeatureMarks::detect_q_begin(const std::vector<double>& ecg_signal, int r_idx) {
-    const int N = static_cast<int>(ecg_signal.size());
-    const bool is_positive = FeatureMarks::qrs_positive_at(ecg_signal, r_idx);
-
-    std::vector<double> upright_signal = ecg_signal;
-    if (!is_positive) for (auto& x : upright_signal) x = -x;
-
-    int search_lim = std::min(r_idx - 1, N);
-    const auto d1 = first_derivative(upright_signal);
-
-    int qTrough = 0;
-    double qVal = upright_signal[0];
-    for (int i = 1; i <= search_lim; ++i) {
-        if (upright_signal[i] < qVal) { qVal = upright_signal[i]; qTrough = i; }
-    }
-    if (qTrough < 1) return std::max(0, r_idx - 20);
-
-    for (int i = qTrough - 1; i >= 0; --i) {
-        if (d1[i] >= 0.0) return i;
-    }
-    return qTrough;
-}
-
-// P peak, sub-sample refined. Coarse seed = argmax over the PR-region window
-// (bounded below); refined with the asymmetric-extremum method (cubic fit on
-// Gaussian-weighted samples, analytic derivative, sigma = 12, the P-peak
-// sigma). Returns a FLOAT so callers that report/seed off the P peak inherit
-// the sub-sample position (int-index callers round).
 double FeatureMarks::detect_p_peak(const std::vector<double>& ecg_signal, int r_idx, double fs) {
+    /* P peak, sub-sample refined. Coarse seed = argmax over the PR-region window;
+    * refined with the asymmetric-extremum method (cubic fit on Gaussian-weighted
+    * samples, analytic derivative, sigma = 12, the P-peak sigma). Returns a FLOAT
+    * so callers that report/seed off the P peak inherit the sub-sample position
+    * (int-index callers round). Returns -1 when no p peak to report */
     const int N = static_cast<int>(ecg_signal.size());
-    if (N < 3) return 0.0;
-
+    if (N < 3 || r_idx <= 0 || r_idx >= N || fs <= 0.0) return -1.0;
     const bool is_positive = FeatureMarks::qrs_positive_at(ecg_signal, r_idx);
     std::vector<double> upright = ecg_signal;
     if (!is_positive) for (auto& x : upright) x = -x;
-
-    // P-peak search window = [Q-begin - 200 ms, Q-begin]. Q-begin (detect_q_begin
-    // is r_idx-relative, ~50 ms before R) is the right bound; the P wave sits in
-    // the 200 ms preceding it (a full PR interval). Bounding the left edge this
-    // way also stops the argmax from reaching back across an earlier beat's much-
-    // larger QRS spike when called with a later r_idx on a multi-beat array.
-    const int q_est = detect_q_begin(ecg_signal, r_idx);
-    const int win = std::max(1, static_cast<int>(std::lround(0.200 * fs)));
-    const int lo = std::max(0, q_est - win);
-    const int hi = std::max(lo + 1, std::min(q_est, N));
+    const int lo = std::max(0, r_idx - static_cast<int>(std::lround(0.260 * fs)));
+    const int hi = std::min(N, r_idx - static_cast<int>(std::lround(0.060 * fs)));
+    if (hi - lo < 3) return -1.0;
     int best = -1; double bv = -std::numeric_limits<double>::infinity();
     for (int i = lo; i < hi; ++i)
         if (!std::isnan(upright[i]) && upright[i] > bv) { bv = upright[i]; best = i; }
-    const int seed = (best >= 0) ? best : lo;
-    // Refine: asymmetric extremum on the UPRIGHT signal (cubic on Gaussian-
-    // weighted samples, analytic derivative), sigma = 12.
-    return subsample_refine::asymmetricExtremum(upright, seed, 12.0);
+    if (best < 0) return -1.0;
+    const double p = subsample_refine::asymmetricExtremum(upright, best, 12.0);
+    if (!std::isfinite(p)) return -1.0;
+    return std::clamp(p, static_cast<double>(lo), static_cast<double>(hi - 1));
 }
 
 // P-end: walk forward from the P peak until the signal recovers to within
@@ -1197,11 +1153,6 @@ namespace {
             const double refined = subsample_refine::asymmetricExtremum(cyc, seed, 10.0);
             dicrotic = cl(base + static_cast<int>(std::lround(refined)));
         }
-        // Same backstop as the PPG path, same function, so the channels cannot
-        // drift apart on the invariant. Covers the case where dicrotic or peak2
-        // arrived pre-set from a caller rather than from the searches above.
-        if (dicrotic >= 0 && peak2 >= 0)
-            FeatureMarks::order_notch_before_peak2(v, dicrotic, peak2, cl(end));
         //the ppg foot is transition anchor
         onset = cl(static_cast<int>(std::lround(subsample_refine::transitionAnchor(v, onset, 0.0, 40, std::numeric_limits<double>::quiet_NaN(),
             onset, std::min(onset + 40, n - 1)))));
@@ -1293,7 +1244,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
             b.ppg_end_auto = rnd(pf.end);
             b.ppg_dicrotic_auto = rnd(pf.dicrotic);     b.ppg_dicrotic_found_auto = pf.notch_found;
             b.ppg_t80_auto = rnd(pf.t80);
-            b.ppg_t50_auto = rnd(pf.p50);
+            b.ppg_t50_auto = rnd(pf.t50);
             b.ppg_u_auto = rnd(pf.u);
             b.ppg_v_auto = rnd(pf.v);
             b.ppg_w_auto = rnd(pf.w);
@@ -1365,7 +1316,6 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         b.q_begin_auto_ch[c] = lm.q_begin;
         b.r_peak_auto_ch[c] = lm.r_peak;
         b.s_end_auto_ch[c] = lm.s_end;
-        b.t_begin_auto_ch[c] = lm.t_begin;
         b.t_end_auto_ch[c] = lm.t_end;
         b.p_begin_auto_ch[c] = lm.p_begin;
 
@@ -1374,7 +1324,6 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // MarkerSet stores integer sample indices, so the doubles are rounded
         // here; the *_auto_ch fields above keep the sub-sample values.
         auto ix = [](double v) { return (v < 0.0) ? -1 : (int)std::lround(v); };
-        if (mk.p_peak_ch[c] < 0)  mk.p_peak_ch[c] = ix(lm.p_peak);
         if (mk.q_begin_ch[c] < 0) mk.q_begin_ch[c] = ix(lm.q_begin);
         // R falls back to the unrefined column rather than -1: it is the
         // alignment anchor every other landmark is expressed against, so the
@@ -1383,7 +1332,6 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
             ? (int)std::lround(lm.r_peak)
             : std::clamp(chs[c]->r_col_raw, 0, (int)ecg.size() - 1);
         if (mk.s_end_ch[c] < 0)   mk.s_end_ch[c] = ix(lm.s_end);
-        if (mk.t_begin_ch[c] < 0) mk.t_begin_ch[c] = ix(lm.t_begin);
         if (mk.t_end_ch[c] < 0)   mk.t_end_ch[c] = ix(lm.t_end);
         if (mk.p_begin_ch[c] < 0) mk.p_begin_ch[c] = ix(lm.p_begin);
     }
@@ -1434,69 +1382,6 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         b.art_pulm_onset_auto, b.art_pulm_peak_auto, b.art_pulm_dicrotic_auto,
         b.art_pulm_peak2_auto, b.art_pulm_end_auto);
 }
-
-// ---------------------------------------------------------------------------
-// Ordering invariant: notch before diastolic peak. See feature_marks.hpp.
-// ---------------------------------------------------------------------------
-bool FeatureMarks::order_notch_before_peak2(const std::vector<double>& pulse,
-    double notch, double& peak2, bool& peak2_found, double hi)
-{
-    // Nothing to enforce if either is absent. An absent notch does not
-    // invalidate a diastolic peak: the notch is damped to nothing in stiff
-    // vessels (E-5 tier 3 records exactly that) while the reflected wave
-    // remains, so the pair {absent, present} is a real observation.
-    if (notch < 0.0 || peak2 < 0.0) return true;
-    if (peak2 > notch) return true;
-
-    // Violated. Re-search for the first local maximum strictly after the notch,
-    // in whole samples, then hand the seed back to the same sub-sample
-    // refinement the original finder used so the returned position is of the
-    // same kind as the one it replaces.
-    const int n = static_cast<int>(pulse.size());
-    const int lo = static_cast<int>(std::floor(notch)) + 1;
-    const int top = std::min(n - 2, static_cast<int>(std::floor(hi)));
-    for (int i = std::max(1, lo); i <= top; ++i) {
-        if (std::isnan(pulse[i - 1]) || std::isnan(pulse[i]) || std::isnan(pulse[i + 1]))
-            continue;
-        if (pulse[i] >= pulse[i - 1] && pulse[i] >= pulse[i + 1]) {
-            const double refined = subsample_refine::asymmetricExtremum(pulse, i, 10.0);
-            // The refinement can pull the position back across the notch. If it
-            // does, keep the integer seed rather than reintroduce the violation
-            // this function exists to remove.
-            peak2 = (refined > notch) ? refined : static_cast<double>(i);
-            peak2_found = true;
-            return true;
-        }
-    }
-
-    // No maximum after the notch. NOT FOUND, but keep a POSITION.
-    //
-    // Setting peak2 = -1 here is what removed the diastolic-peak bar from the
-    // PPG panels: seed_all copies ppg_peak2_auto into ppg_peak2 and reads a
-    // negative as "no marker", so the operator lost the handle instead of being
-    // given a placeholder to drag. found=false is what the glyph layer reads to
-    // draw a hollow circle instead of an X, so absence stays visible either way.
-    //
-    // 2/3 of the way from the notch to the end -- the same thirds rule the
-    // fiducial path uses over (peak, end), and it cannot violate the ordering
-    // this function exists to enforce.
-    peak2_found = false;
-    const double guess = notch + 2.0 * (hi - notch) / 3.0;
-    peak2 = (guess > notch) ? guess : notch + 1.0;
-    return false;
-}
-
-bool FeatureMarks::order_notch_before_peak2(const std::vector<double>& pulse,
-    int notch, int& peak2, int hi)
-{
-    double p2 = (peak2 >= 0) ? static_cast<double>(peak2) : -1.0;
-    bool found = (peak2 >= 0);
-    const bool ok = order_notch_before_peak2(pulse, static_cast<double>(notch),
-        p2, found, static_cast<double>(hi));
-    peak2 = (p2 >= 0.0) ? static_cast<int>(std::lround(p2)) : -1;
-    return ok;
-}
-
 // ---------------------------------------------------------------------------
 // Per-bank-template landmark seeding. See the header for why this exists.
 // ---------------------------------------------------------------------------
@@ -1564,8 +1449,30 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
     auto ix = [](double v) { return (v < 0.0) ? -1 : (int)std::lround(v); };
     out.q_begin = ix(lm.q_begin);
     out.s_end = ix(lm.s_end);
-    out.t_begin = ix(lm.t_begin);
     out.t_end = ix(lm.t_end);
     out.p_peak = ix(lm.p_peak);
     out.p_begin = ix(lm.p_begin);
+}
+void FeatureMarks::seed_pulse_bank_template(const std::vector<double>& tmpl,
+    double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters)
+{
+    out = tbank::BankPulseMarkerSet{};
+    const int W = static_cast<int>(tmpl.size());
+    if (W < 3 || ppgRate <= 0.0) return;
+
+    // SAME DETECTOR, THIS TEMPLATE'S OWN WAVEFORM. seed_all runs this on
+    // b.ppgTemplate; the viewer draws ppg_bank slots. Those are different
+    // pulses, so a foot measured on one is not a minimum on the other -- which
+    // is why the foot glyph sat nowhere near a trough.
+    const PpgFiducials pf = detect_ppg_fiducials(tmpl, W, ppgRate, heightMeters);
+
+    auto ix = [](double v) { return (v < 0.0) ? -1 : (int)std::lround(v); };
+    out.onset_auto = pf.onset;     out.onset = ix(pf.onset);
+    out.peak_auto = pf.peak;      out.peak = ix(pf.peak);
+    out.dicrotic_auto = pf.dicrotic;  out.dicrotic = ix(pf.dicrotic);
+    out.peak2_auto = pf.peak2;     out.peak2 = ix(pf.peak2);
+    out.end_auto = pf.end;       out.end = ix(pf.end);
+    out.t50 = ix(pf.t50);             out.t80 = ix(pf.t80);
+    out.notch_found = pf.notch_found;
+    out.peak2_found = pf.peak2_found;
 }

@@ -574,27 +574,19 @@ namespace tbank {
         int t_begin = -1;
         int t_end = -1;
 
-        // TRUE WHEN NOTHING HAS BEEN DETECTED OR PLACED YET.
-        //
-        // This exists because the seeding guard cannot safely ask the map
-        // whether it has a key. marks(a) is markers_by_anchor[a] -- operator[]
-        // -- so merely READING a marker set inserts a default all -1 entry. Any
-        // read that happens before the first paint therefore made
-        // "markers_by_anchor.find(anchor) != end()" true, the viewer concluded
-        // the template was already seeded, and auto-detection never ran for it.
-        // The template then drew with no fiducial bars at all, permanently, and
-        // serialization persisted the empty set so a reload did not recover.
-        //
-        // Presence of a KEY is not evidence of detection; presence of a VALUE
-        // is. Callers should seed on isUnset(), not on find().
-        //
-        // A template where every finder legitimately failed is also unset, so
-        // it gets re-detected on each paint. That is the right trade: repeating
-        // a cheap detection that returns nothing costs a few microseconds, and
-        // the alternative is what this comment describes.
         bool isUnset() const {
             return p_begin < 0 && p_peak < 0 && q_begin < 0
                 && s_end < 0 && t_begin < 0 && t_end < 0;
+        }
+    };
+    struct BankPulseMarkerSet {
+        int onset = -1, peak = -1, dicrotic = -1, peak2 = -1, end = -1;
+        int t50 = -1, t80 = -1;
+        double onset_auto = -1.0, peak_auto = -1.0, dicrotic_auto = -1.0;
+        double peak2_auto = -1.0, end_auto = -1.0;
+        bool notch_found = false, peak2_found = false;
+        bool isUnset() const {
+            return onset < 0 && peak < 0 && dicrotic < 0 && peak2 < 0 && end < 0;
         }
     };
 
@@ -734,6 +726,8 @@ namespace tbank {
         // to treat -1 here as a valid state, not an error, or it will report
         // a PR interval measured from a P wave that does not exist.
         std::map<int32_t, BankMarkerSet> markers_by_anchor;   // key: AnchorType
+        BankPulseMarkerSet pulse_marks;   // meaningful only on ppg_bank slots
+        bool hasDetectedPulseMarks() const { return !pulse_marks.isUnset(); }
 
         // NOTE: INSERTS. markers_by_anchor[a] default-constructs an all -1 set
         // when the key is absent, so a read through this overload is a write.

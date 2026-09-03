@@ -9,39 +9,6 @@
  *              3. Run the PVC filter across all beats. Flag category 2.
  *              4. Build templates from category 1 only. Apply Tukey INSIDE
  *                 that group.
- *
- *         WHY STEP 4 IS THE WHOLE POINT. Tukey assumes one dominant
- *         population. Run over sinus + ectopic + noise it computes an IQR over
- *         a MIXTURE, which fattens it, which makes the fences too wide to catch
- *         anything. Restricted to category 1 the IQR describes sinus beats
- *         only, so the fences mean "unusual for a sinus beat".
- *
- *         alignment.hpp currently runs its three Tukey passes over all sliced
- *         beats and exempts flagged beats from rejection at line 175. Exemption
- *         is NOT the same thing as restriction: an exempted beat is still in
- *         the sample that computes the IQR, so it widens the fences it is then
- *         excused from. That is why the exemption becomes unnecessary once the
- *         passes move inside the pool -- ectopic beats were never in the sample
- *         to begin with.
- *
- *         AND WHY MOVING IT IS NOT A FIX, ONLY A RELOCATION. With ectopy in the
- *         minority both quartiles sit in the sinus cluster and every ectopic
- *         beat falls outside the fence. As ectopy approaches half the bin the
- *         IQR widens across both clusters and Tukey stops rejecting anything,
- *         including real artifact. Restricting the pool does not remove that
- *         failure; it makes Tukey's correctness CONDITIONAL ON CLASSIFICATION
- *         RECALL, one layer deeper and quieter, with no backstop behind it --
- *         Tukey WAS the backstop. The two mechanisms also degrade together
- *         rather than independently: at high burden the trailing-ten median is
- *         dragged down by ectopic RRs, so the prematurity test fires less often
- *         at exactly the burden where the fences have widened past usefulness.
- *
- *         Hence every pass reports its Q1, Q3 and fences alongside its
- *         rejection count. Counts give the outcome; the IQR gives the cause,
- *         and it is continuous where counts are discrete. The signature to
- *         watch is LOW REJECTION RATE WITH WIDE IQR, which is
- *         indistinguishable from "this bin is genuinely clean" if you only
- *         have the counts. This defect class produces output that looks fine.
  */
 
 #include <algorithm>
@@ -128,29 +95,6 @@ namespace bin_pipeline {
         c.fence_hi = s.fence_hi;
         return c;
     }
-    // ---------------------------------------------------------------------
-    // runChannel() AND ChannelInput ARE GONE.
-    //
-    // runChannel(ChannelInput) -> ChannelOutput built a bank over ONE channel's
-    // aligned beats: seed pool, slot-0 seeding, both assignment passes, the
-    // merge, the cap and the census. Section 4.6 has exactly one partition,
-    // shared by the three ECG leads and the pulse, and it is
-    // jbank::buildBinBank -- driven per bin from make_averaged_templates.hpp.
-    //
-    // Its last two consumers are gone with it: the morphology archive now reads
-    // the joint projection, and envelope_database.hpp was a stale copy of
-    // create_ecg_templates.hpp that nothing included.
-    //
-    // IT WAS THE LAST PLACE THE ORDER RAN BACKWARDS. Slot 0 came from
-    // seed_pool::selectSeedPool filtered by the Tukey verdict, so prematurity
-    // and Tukey chose the seed the whole partition was scored against. The
-    // required order is partition, then remove premature, then Tukey on what is
-    // left, and there is now no code that does it the other way.
-    //
-    // ChannelOutput STAYS. It is the type the viewer, the serializer and the
-    // morphology writers read, and jbank::projectToChannel fills it -- a channel
-    // VIEW of the one partition rather than a partition of its own.
-    // ---------------------------------------------------------------------
 
     struct ChannelOutput {
         tbank::TemplateBank      bank;
@@ -161,23 +105,5 @@ namespace bin_pipeline {
         std::vector<tbank::BeatFlags> flags;
         pvc_filter::FilterResult pvc;
     };
-
-
-    // ---------------------------------------------------------------------
-    // WHAT USED TO BE HERE: runBin() AND ITS TYPES. Deleted as unreachable.
-    //
-    // runBin(BinInput) -> BinResult was a THREE-CHANNEL entry point that did the
-    // same job as runChannel three times over, with its own copies of the seed
-    // pool, the Tukey read, the slot-0 seeding, both bank passes and the census,
-    // plus ChannelResult, BinResult, BinInput and RecordAccumulator. Nothing
-    // outside this header ever called any of them -- the whole external surface
-    // of this file is runChannel, ChannelInput and ChannelOutput -- so it was a
-    // second implementation of the partition that no record was ever built by,
-    // and it could not be kept correct by anything except reading it.
-    //
-    // It is also where tbank::polymorphicVerdict was computed, as a max over
-    // three per-channel banks. That verdict has to be rebuilt on the joint
-    // groups, where there is one partition to count, rather than restored here.
-    // ---------------------------------------------------------------------
 
 }  // namespace bin_pipeline

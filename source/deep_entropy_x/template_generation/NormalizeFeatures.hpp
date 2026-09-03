@@ -589,7 +589,7 @@ namespace normalize_features {
             // pb.rCol already is.
             const double pPeakD = FeatureMarks::detect_p_peak(pb.samples, pb.rCol, fs);
             const int pEnd = FeatureMarks::detect_p_end(pb.samples, pb.rCol, fs, pPeakD);
-            const int qBegin = FeatureMarks::detect_q_begin(pb.samples, pb.rCol);
+            const int qBegin = FeatureMarks::compute_q_onset(pb.samples, fs, pb.rCol);
             if (pEnd >= 0 && qBegin > pEnd) {
                 std::vector<double> pq(pb.samples.begin() + pEnd, pb.samples.begin() + qBegin);
                 const double base = median_finite(pq);

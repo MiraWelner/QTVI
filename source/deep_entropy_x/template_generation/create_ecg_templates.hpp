@@ -452,13 +452,6 @@ static inline void process_channel_fast(
     vector<vector<double>>* capture =
         (capture_raw_beats && i < cr.kept_beats_raw.size())
         ? &cr.kept_beats_raw[i] : nullptr;
-    // Stage marker inside a single bin, so a stall that never reaches the
-    // per-bin line below is still localized to a bin, a channel and a method.
-    // Reports the R-peak count too, since that is the input size driving cost.
-    std::fprintf(stderr, "  [ecgfast]   bin %llu ch%d: align+template, %zu rpeaks\n",
-        (unsigned long long)i, channel_index, masterPeaks.size());
-    std::fflush(stderr);
-
     auto raw_res = build_ecg_template_for_method(
         ecgSignal, masterPeaks, bin.pairs, ecgRate,
         capture, /*compute_iqr=*/true,
@@ -599,59 +592,17 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
                 &keptIdx[2][i]);
 
         const int _d = ++_done;
-        std::fprintf(stderr, "  [ecgfast] bin %d/%zu done (rpeaks=%zu)\n",
-            _d, n, master.size());
         std::fflush(stderr);
     }
 
-    // Single-threaded, post-loop: write the per-beat vertical move log
-    // (CH1 truncates+headers, CH2/CH3 append).
-    // ---- EVERY POST-LOOP STEP TIMED AND NAMED --------------------------
-    // The parallel loop's last output is "[ecgfast] bin N/N done", and
-    // everything after it is single-threaded and silent: seven separate writes
-    // with no output between them. A stall anywhere in here is indistinguishable
-    // from a stall in the loop's final bin, which is where two diagnoses in a
-    // row went wrong. Each step announces itself before starting and reports
-    // elapsed time after, flushed.
-    auto _t = std::chrono::steady_clock::now();
-    auto _begin = [&](const char* what) {
-        std::fprintf(stderr, "  [postloop] starting %s ...\n", what);
-        std::fflush(stderr);
-        };
-    auto _step = [&](const char* what) {
-        const auto now = std::chrono::steady_clock::now();
-        std::fprintf(stderr, "  [postloop] %-22s %9.1f ms\n", what,
-            std::chrono::duration<double, std::milli>(now - _t).count());
-        std::fflush(stderr);
-        _t = now;
-        };
-
-    _begin("move log CH1-3");
     ecg_move_log::write_channel("CH1", res.ch1.tp_shift_raw, res.ch1.pq_shift_raw, /*first=*/true);
     ecg_move_log::write_channel("CH2", res.ch2.tp_shift_raw, res.ch2.pq_shift_raw, /*first=*/false);
     ecg_move_log::write_channel("CH3", res.ch3.tp_shift_raw, res.ch3.pq_shift_raw, /*first=*/false);
-    _step("move log CH1-3");
 
     // The join key, surfaced so the partition and the archive read the SAME map
     // rather than two copies that can drift. Moved, not copied: keptIdx dies
     // with this function otherwise.
     for (int c = 0; c < 3; ++c) res.kept_index[c] = keptIdx[c];
-
-    // ---- THE MORPHOLOGY WRITERS ARE NOT CALLED HERE ANY MORE -------------
-    //
-    // writeTemplates / writeBeatsBin / writeTemplatesBin ran in this post-loop
-    // slot, from blocks built on EcgChannelResult::bank_out_raw. They cannot
-    // stay: the archive has to describe the JOINT partition, and the joint bank
-    // does not exist yet at this point in the run -- it is built per bin in
-    // make_averaged_templates.hpp, after this function returns. Writing here
-    // meant the archive described a per-channel partition while the screen and
-    // the serialized templates described the joint one, with nothing in either
-    // file saying they were different partitions of the same beats.
-    //
-    // They now run at the end of GenerateTemplatesFast, from the projection,
-    // and they include a PPG block -- which this call site could not produce at
-    // all, because the pulse channel is not an EcgChannelResult.
-
     return res;
 }
 

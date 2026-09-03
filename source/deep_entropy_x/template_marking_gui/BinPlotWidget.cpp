@@ -1,29 +1,14 @@
 /*
 * @brief BinPlotWidget.cpp
 *
-* ECG and PPG are drawn at a single per-paint pixels-per-sample scale
-* (BinPlotWidget::pxPerSample()), chosen so the widest trace fills the
-* cell the layout gives this widget. Every bin window therefore comes out
-* the same on-screen length; the full PPG tail stays visible and shares
-* the ECG's time axis within the widget.
+* Signals are drawn such that the widest trace fills the  cell the layout gives this widget. 
+* They have the same on screen length
 *
 * ECG/PPG alignment (Patch B/C):
 *   Every channel's template is sliced from the SAME real-time window --
-*   [t_R_i - pad, t_R_{i+1} + pad], driven by ch1.raw -- at that channel's
-*   own sample rate. Sample 0 of the ECG, PPG, and every arterial channel
-*   all correspond to the same real-time instant (pad seconds before the
-*   first R). So they overlay by construction: ppgStartSample() = 0, no
-*   R->foot delay adjustment needed. R sits at column pad*channelRate in
-*   every template.
-
-* Every channel may run at its OWN sample rate (set via setChannelRate).
-*   Geometry never assumes rates match: xFromSample/sampleFromX take a
-*   (startSample, ratio) pair, where ratio = rateRatio(Channel) rescales
-*   that channel's own sample index into ECG-equivalent sample units --
-*   the frame's reference space (see px_per_sample/totalSampleSpan, both
-*   sized from ECG alone). ratio is 1.0 whenever a rate is unknown or
-*   matches ECG's, so this is a no-op for the historical case where every
-*   channel happened to share one rate.
+*   [t_R_i - pad, t_R_{i+1} + pad], driven by ch1.raw. Sample 0 of the ECG, PPG, and every
+*   arterial channel all correspond to the same real-time instant (pad seconds before the
+*   first R).
 *
 * ============================================================================
 * Glyphs and bars
@@ -52,22 +37,13 @@
 *           VPG blue, APG green, JPG amber.
 *
 * Marks drawn:
-*   ECG  - P begin, P peak, Q onset, R peak, S end, T peak (reactive), T end.
-*          All X.
-*   PPG  - foot, T50 (reactive), systolic peak, dicrotic notch, diastolic
-*          peak, pulse end, T80 (reactive). X, except notch and diastolic
-*          peak which fall back to O.
+*   ECG  - User control: P begin, Q onset, S end, T end. Automatic: P peak, R peak, T peak
+
+*   PPG  - User control: Onset, Dicrotic Notch. Automatic: 50% Rise, 80% rise, T80, Foot, Systolic Peak, Diastolic Peak
 *   VPG  - u, v, w                      | dashes, behind the
 *   APG  - a, b, c, d, e, f             | "Show PPG Derivative Markers"
 *   JPG  - p1, p2                       | checkbox
 *
-* A derivative landmark reads -1 when it genuinely does not exist in the
-* pulse (c, d and p2 are the common cases), and -1 simply draws nothing --
-* there is no placeholder and no flag.
-*
-* ECG glyphs use the left-axis (yLo,yHi) scale + ECG x-geometry; PPG and
-* derivative glyphs use the shared right-axis (pLo,pHi) scale + the pulse
-* x-geometry.
 */
 
 #include "BinPlotWidget.hpp"
@@ -85,18 +61,6 @@
 namespace {
 
     // ------------------------------------------------------------------
-    // Colors
-    //
-    // Trace colors:
-    //   ECG  - dark blue
-    //   PPG  - dark red
-    //
-    // Marker colors are grouped by trace and lightened/darkened to
-    // disambiguate the individual landmarks within each group:
-    //   ECG markers - shades of black / dark blue
-    //   PPG markers - shades of red
-    //
-    // Edit these constants in one place; marker_color() does the lookup.
     // ------------------------------------------------------------------
     constexpr QColor ecg_trace_color{ 10,  20,  90 };   // dark navy blue
     constexpr QColor ppg_trace_color{ 130,  10,  20 };   // dark red
@@ -115,7 +79,8 @@ namespace {
 
 
     // ECG markers (P peak, Q begin, R peak, S end, T peak, T end).
-    constexpr QColor ecg_p_peak_color{ 0,   0,   0 };
+    constexpr QColor ecg_p_begin_color{ 150, 80, 180 };
+    constexpr QColor ecg_p_peak_color{ 180, 100, 210 };
     constexpr QColor ecg_q_begin_color{ 20,  20,  60 };
     constexpr QColor ecg_r_peak_color{ 15,  15,  40 };
     constexpr QColor ecg_s_color{ 30, 35, 85 };
@@ -124,7 +89,7 @@ namespace {
 
     // PPG bar markers - shades of red, darkest to lightest.
     constexpr QColor ppg_onset_color{ 110,   0,   0 };  // dark red
-    constexpr QColor p50_color{ 150,  20,  20 };  // dark red variant
+    constexpr QColor t50_color{ 150,  20,  20 };  // dark red variant
     constexpr QColor ppg_peak_color{ 180,   0,   0 };  // red
     constexpr QColor ppg_dicrotic_color{ 220,  50,  50 };  // medium red
     constexpr QColor ppg_peak2_color{ 235, 100, 100 };  // light red (2nd/diastolic peak)
@@ -155,6 +120,7 @@ namespace {
 
     QColor marker_color(int m) {
         switch (m) {
+        case BinPlotWidget::EcgPBegin:   return ecg_p_begin_color;
         case BinPlotWidget::EcgPPeak:    return ecg_p_peak_color;
         case BinPlotWidget::EcgQBegin:   return ecg_q_begin_color;
         case BinPlotWidget::EcgRPeak:    return ecg_r_peak_color;
@@ -162,7 +128,7 @@ namespace {
         case BinPlotWidget::EcgTBegin:    return ecg_t_begin_color;
         case BinPlotWidget::EcgTEnd:     return ecg_t_end_color;
         case BinPlotWidget::PpgOnset:    return ppg_onset_color;
-        case BinPlotWidget::PpgT50:      return p50_color;
+        case BinPlotWidget::PpgT50:      return t50_color;
         case BinPlotWidget::PpgPeak:     return ppg_peak_color;
         case BinPlotWidget::PpgDicrotic: return ppg_dicrotic_color;
         case BinPlotWidget::PpgPeak2:    return ppg_peak2_color;
@@ -201,6 +167,25 @@ namespace {
         case BinPlotWidget::ArtPulmEnd: return "APul End";
         }
         return "?";
+    }
+
+    double marker_text_y_offset(int m)
+    {
+        switch (m) {
+        case BinPlotWidget::EcgPBegin:   return 10.0;
+        case BinPlotWidget::EcgPPeak:    return 20.0;
+        case BinPlotWidget::EcgQBegin:   return 28.0;
+        case BinPlotWidget::EcgSEnd:     return 38.0;
+        case BinPlotWidget::EcgTBegin:   return 48.0;
+        case BinPlotWidget::EcgTEnd:     return 58.0;
+
+        case BinPlotWidget::PpgOnset:    return 8.0;
+        case BinPlotWidget::PpgDicrotic: return 18.0;
+        case BinPlotWidget::PpgPeak2:    return 28.0;
+        case BinPlotWidget::PpgEnd:      return 38.0;
+
+        default:                         return 8.0;
+        }
     }
 
     void compute_visible_range(const std::vector<double>& v, const std::vector<double>& /*sd*/, int visN, double& lo, double& hi) {
@@ -340,40 +325,49 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_ecgIqr = ecgIqr;
     m_rPeakSample = rPeakSample;
     m_hasPPG = !ppg.empty();
-    // ---- DISPLAY WIDTH, DERIVED FROM THE WAVEFORM ------------------------
-    // The stored array is framed on the bin's LONGEST RR, so that no beat loses
-    // a sample. Using its length as the view width made one 2.8 s pause stretch
-    // the axis of every panel in the bin -- a typical beat then occupied a sixth
-    // of the frame, which is the squashed template look. Storage width and view
-    // width are different questions and this is where they stop being the same
-    // variable.
+
+    // ---- VIEW WIDTH: THE DRAWN EXTENT, NOT THE ARRAY ---------------------
+    // Storage width and view width are different questions, and this is where
+    // they stop being the same variable.
     //
-    // THE TEMPLATE ITSELF CARRIES THE ANSWER. It is a column-wise median over
-    // the bin's beats, so the NEXT beat's R appears in it at the MEDIAN RR --
-    // the very number the frame should be sized from. No new field, no plumbing,
-    // no file-format change: read it off the trace.
-    // ---- VIEW WIDTH: THE MEDIAN BEAT, NOT THE ARRAY ----------------------
-    // The stored array is framed on the bin's LONGEST RR, because no beat may
-    // ever lose a sample to framing. That makes it several times wider than a
-    // normal beat whenever the bin holds a pause or a missed R detection, and
-    // taking the axis from its length is what squashed every template into a
-    // corner of its panel.
+    // The array is framed on the bin's LONGEST RR, because no beat may lose a
+    // sample to framing. Pass 1 sizes it that way, then the outlier filters
+    // drop the pause beats that justified the width -- so the tail is all-NaN
+    // and the axis was several times wider than anything drawn on it. That is
+    // the squashed-template look.
     //
-    // m_medianRrSamples is the median RR of the beats behind this template,
-    // measured in alignment.hpp and handed down in memory. The window is the
-    // same geometry the slicer uses -- 0.5 RR before R, 1.5 RR after -- so a
-    // panel shows one beat plus the start of the next, at every heart rate,
-    // regardless of the worst interval in the bin.
-    //
-    // NOTHING IS DISCARDED. The samples past the window are still in m_ecg and
-    // are simply outside the drawn range.
-    m_ecgVisibleN = std::max(static_cast<int>(m_ecg.size()), 2);
-    if (m_medianRrSamples > 2) {
-        const int r = static_cast<int>(std::llround(m_rPeakSample));
-        const int want = std::max(4, (r >= 0 ? r : 0)
-            + static_cast<int>(1.5 * m_medianRrSamples));
-        m_ecgVisibleN = std::min(m_ecgVisibleN, want);
-    }
+    // The padding is measurable, so measure it. No median-RR field, no
+    // plumbing, no file-format question: the frame is the extent of the widest
+    // trace actually present. Nothing is discarded -- samples past the window
+    // would be NaN anyway.
+    auto lastFinite = [](const std::vector<double>& v) {
+        for (int i = static_cast<int>(v.size()) - 1; i >= 0; --i)
+            if (!std::isnan(v[i])) return i;
+        return -1;
+        };
+    // Pulse channels sample at their own rate; their extent converts to
+    // ECG-equivalent columns through the same ratio xFromSample uses.
+    auto pulseExtent = [&](const std::vector<double>& v, Channel ch) {
+        const int last = lastFinite(v);
+        return (last < 0) ? 0
+            : static_cast<int>(std::ceil((last + 1) * rateRatio(ch)));
+        };
+
+    // A column is finite wherever at least ONE beat had data there, so a single
+    // surviving pause beat would re-inflate the frame. align_beat_matrix only
+    // writes ecg_template_iqr when nc >= 2, so a one-beat column reads exactly
+    // 0.0 -- trim those off the tail. Only ever trims the FRAME, never m_ecg.
+    int last = lastFinite(m_ecg);
+    if (static_cast<int>(m_ecgIqr.size()) == static_cast<int>(m_ecg.size()))
+        while (last > 0 && m_ecgIqr[last] == 0.0) --last;
+
+    int span = last + 1;
+    if (m_hasPPG) span = std::max(span, pulseExtent(m_ppg, Channel::Ppg));
+    span = std::max(span, pulseExtent(m_abp, Channel::Abp));
+    span = std::max(span, pulseExtent(m_art, Channel::Art));
+    span = std::max(span, pulseExtent(m_artPulm, Channel::ArtPulm));
+    m_ecgVisibleN = std::max(span, 2);
+
     m_ppgVisibleN = visiblePpgCount(static_cast<int>(m_ppg.size()));
     updateGeometry();
     update();
@@ -463,12 +457,14 @@ void BinPlotWidget::setMarker(Marker m, int idx) {
 BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
     Reactive r;
     r.ecgTPeak = FeatureMarks::reactive_ecg(
-        m_ecg, m_markers[EcgTBegin], m_markers[EcgTEnd]).t_peak;
+        m_ecg, m_markers[EcgSEnd], m_markers[EcgTEnd]).t_peak;
     if (m_hasPPG) {
         const FeatureMarks::ReactivePpg p = FeatureMarks::reactive_ppg(
-            m_ppg, m_markers[PpgOnset], m_markers[PpgPeak], m_markers[PpgEnd]);
+            m_ppg, m_markers[PpgOnset], m_markers[PpgPeak],
+            m_markers[PpgDicrotic], m_markers[PpgEnd]);
         r.ppgT50 = p.t50;
         r.ppgT80 = p.t80;
+        r.ppgPeak2 = p.peak2;
     }
     return r;
 }
@@ -583,10 +579,7 @@ int BinPlotWidget::markerAtX(double x) const {
     for (int m = 0; m < MarkerCount; ++m) {
         int idx = m_markers[m];
         if (idx < 0) continue;
-        if (m == EcgRPeak) continue;   // R is auto-only: no draggable bar
-        if (m == PpgPeak) continue;    // systolic peak is auto-only (shown as X)
-        if (m == PpgT80) continue;     // t80 is a reactive glyph now, not draggable
-        if (m == PpgT50) continue;      // p50 is a reactive glyph now, not draggable
+        if (m == EcgRPeak || m == PpgPeak || m == PpgT80 || m == PpgT50 || m == PpgPeak2 || m == EcgPPeak) continue;   // R is auto-only: no draggable bar
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;
@@ -875,10 +868,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     for (int m = 0; m < MarkerCount; ++m) {
         int idx = m_markers[m];
         if (idx < 0) continue;
-        if (m == EcgRPeak) continue;   // R is auto-only: no draggable bar
-        if (m == PpgPeak) continue;    // systolic peak is auto-only (shown as X)
-        if (m == PpgT80) continue;     // t80 is a reactive glyph now, not draggable
-        if (m == PpgT50) continue;      // p50 is a reactive glyph now, not draggable
+        if (m == EcgRPeak || m == PpgPeak || m == PpgT80 || m == PpgT50 || m == PpgPeak2 || m == EcgPPeak) continue;
         const std::vector<double>* vec = nullptr;
         bool isEcg = false, visible = false;
         int visN = 0;
@@ -892,7 +882,10 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         pen.setStyle(markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine);
         p.setPen(pen);
         p.drawLine(QPointF(mx, margin_top), QPointF(mx, h - margin_bottom));
-        p.drawText(QPointF(mx + 2, margin_top + 8), marker_short_label(m));
+        p.drawText(
+            QPointF(mx + 2, margin_top + marker_text_y_offset(m)),
+            marker_short_label(m)
+        );
     }
 
     drawFeatureGlyphs(p, yLo, yHi, pLo, pHi, ph);
@@ -1070,6 +1063,23 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
     }
 }
 
+// Replace the BIN's pulse glyphs with this bank slot's own. captureGlyphSnapshot
+// reads b.ppg_*_auto, which describes b.ppgTemplate -- the wrong waveform for
+// every slot the panel actually draws. Called AFTER captureGlyphSnapshot.
+void BinPlotWidget::overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm) {
+    if ((int)m_ppg.size() < 3) return;
+    const int N = (int)m_ppg.size();
+    auto froz = [&](double v) {
+        return (v >= 0.0 && v <= (double)(N - 1)) ? v : -1.0;
+        };
+    m_glyphs.ppgFoot = froz(pm.onset_auto);
+    m_glyphs.ppgP1 = froz(pm.peak_auto);
+    m_glyphs.ppgDic = froz(pm.dicrotic_auto);  m_glyphs.ppgNotchFound = pm.notch_found;
+    m_glyphs.ppgP2 = froz(pm.peak2_auto);     m_glyphs.ppgPeak2Found = pm.peak2_found;
+    m_glyphs.ppgEnd = froz(pm.end_auto);
+    update();
+}
+
 void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
     double yLo, double yHi, double pLo, double pHi, int ph) const
 {
@@ -1169,7 +1179,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         cross(rx.ppgT50);            // reactive: 50% onset->peak
         cross(m_glyphs.ppgP1);       // systolic peak
         found(m_glyphs.ppgDic, m_glyphs.ppgNotchFound);
-        found(m_glyphs.ppgP2, m_glyphs.ppgPeak2Found);
+        cross(m_glyphs.ppgP2);
         cross(m_glyphs.ppgEnd);
         cross(rx.ppgT80);            // reactive: 80% peak->end
         // Derivative landmarks: auto-only, no draggable bar, so a horizontal

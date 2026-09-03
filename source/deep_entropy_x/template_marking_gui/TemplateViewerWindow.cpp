@@ -30,21 +30,10 @@
 #include <chrono>
 #include <cstdio>
 
-// ---- Panel grid caps for one page --------------------------------------
-// A page shows at most kMaxGridCols panels across and kMaxGridRows panels
-// down, so never more than kMaxPanelsPerPage templates at once. Both layout
-// paths obey them, because they lay panels out differently and only one of
-// them wraps:
-//   - compact (single-lead) wraps its panels into the kMaxGridRows x
-//     kMaxGridCols box, so its page budget is the PANEL count.
-//   - lead-per-row uses one row per lead (plus the VCG row), so its page
-//     budget is the COLUMN count, capped at kMaxGridCols, and kMaxGridRows
-//     bounds the row stack.
-// Changing the numbers here changes both paths; nothing else needs editing.
 namespace {
-    constexpr int kMaxGridCols = 3;
-    constexpr int kMaxGridRows = 4;
-    constexpr int kMaxPanelsPerPage = kMaxGridCols * kMaxGridRows;   // 20
+    constexpr int n_template_cols = 3;
+    constexpr int n_template_rows = 4;
+    constexpr int max_templates_per_page = n_template_cols * n_template_rows;
 }
 
 // ========================================================================
@@ -480,8 +469,8 @@ std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) 
 // stops being square, hence the explicit note.
 std::pair<int, int> TemplateViewerWindow::compactGrid(int n) {
     if (n <= 0) return { 1, 1 };
-    const int cols = std::min(kMaxGridCols, n);
-    const int rows = std::min(kMaxGridRows, (n + cols - 1) / cols);
+    const int cols = std::min(n_template_cols, n);
+    const int rows = std::min(n_template_rows, (n + cols - 1) / cols);
     return { rows, cols };
 }
 
@@ -559,8 +548,8 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     // (kMaxGridRows x kMaxGridCols panels). Lead-per-row mode spends a whole
     // column on each bin and stacks its leads down the rows, so its budget is
     // the column cap itself.
-    m_binsPerPage = (m_maxLeads <= 1) ? kMaxPanelsPerPage : kMaxGridCols;
-    m_maxColsPerPage = (m_maxLeads <= 1) ? kMaxPanelsPerPage : kMaxGridCols;
+    m_binsPerPage = (m_maxLeads <= 1) ? max_templates_per_page : n_template_cols;
+    m_maxColsPerPage = (m_maxLeads <= 1) ? max_templates_per_page : n_template_cols;
 
     m_currentPage = 0;
     buildPages();
@@ -995,7 +984,7 @@ void TemplateViewerWindow::showPage() {
         // the cap; a fourth lead would drop the VCG row rather than grow the
         // stack, and vcgRowWanted below (gridRows > m_maxLeads) agrees with
         // that on its own, so the two cannot disagree about which row exists.
-        gridRows = std::min(kMaxGridRows, m_maxLeads + (anyVcg ? 1 : 0));
+        gridRows = std::min(n_template_rows, m_maxLeads + (anyVcg ? 1 : 0));
         // Note: this probe throws its trace away and the per-bin loop below
         // recomputes the same thing for the same bins. If this lap is large,
         // that duplication is the first thing to remove.
@@ -1743,14 +1732,12 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         const int artpUser[kNumArterialMarkers] = { b.art_pulm_onset, b.art_pulm_peak,
             b.art_pulm_dicrotic, b.art_pulm_peak2, b.art_pulm_end };
 
-        // Derived T peak for the autodetect glyph group, bracketed by the AUTO
-        // T-begin/T-end so it matches that group's name. Brackets stay
-        // fractional; compute_t_peak takes doubles.
+        // Derived T peak for the autodetect glyph group, bracketed by the AUTO J-point and T-end. The J-point is the left bracket because no T-onset
         double tPeakAutoGlyph[3];
         for (int gc = 0; gc < 3; ++gc)
             tPeakAutoGlyph[gc] = FeatureMarks::compute_t_peak(
                 chs[gc]->ecgTemplate_raw,
-                b.t_begin_auto_ch[gc], b.t_end_auto_ch[gc]);
+                b.s_end_auto_ch[gc], b.t_end_auto_ch[gc]);
 
         auto emitVal = [&](const std::vector<double>& v, int j) {
             f << ',';
@@ -1976,23 +1963,34 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
             tp.marks(anchor));
     }
     const tbank::BankMarkerSet& mk = tp.marks(anchor);
-
-    // ---- EVERY NON-ECG MARKER COMES FROM THE BIN --------------------------
-    // applyBinToWidget FIRST, then the seven ECG bars are overridden below.
+    // Bin first, for the arterial markers (a bank slot has no ABP/ART waveform
+    // of its own). The seven ECG bars are overridden below; the PULSE bars and
+    // glyphs are overridden here, from this slot's own waveform.
     //
-    // This function used to set the ECG markers and nothing else, so a bank
-    // column got no PPG markers at all -- no onset, peak, dicrotic, notch or
-    // end -- and none of the arterial ones either. Only slot 0 went through
-    // applyBinToWidget, which is why the fiducials appeared on the _A column
-    // and nowhere else. The PPG trace was drawn on every column the whole time;
-    // it was only the markers that were missing.
-    //
-    // Delegating rather than duplicating the list matters: there is ONE PPG
-    // template per bin, so every column of a bin must show the SAME pulse
-    // markers. Copying the twenty-odd setMarker lines here would let the two
-    // lists drift, and a bin whose columns disagreed about where its own
-    // dicrotic notch sits would be worse than one with no notch at all.
+    // The old comment claimed "there is ONE PPG template per bin, so every
+    // column must show the SAME pulse markers." That stopped being true when
+    // ppg_bank arrived: showPage draws ppg_bank.templates[templateIdx], so the
+    // bin's marks were indices into a different pulse. That is why the foot sat
+    // nowhere near a minimum.
     applyBinToWidget(pw, b);
+
+    if (templateIdx >= 0 && templateIdx < b.ppg_bank.size()) {
+        tbank::BankTemplate& ps = b.ppg_bank.templates[templateIdx];
+        if (!ps.tmpl.empty()) {
+            if (!ps.hasDetectedPulseMarks())
+                FeatureMarks::seed_pulse_bank_template(ps.tmpl, m_ppgRateHz,
+                    ps.pulse_marks);
+            const tbank::BankPulseMarkerSet& pm = ps.pulse_marks;
+            pw->setMarker(BinPlotWidget::PpgOnset, pm.onset);
+            pw->setMarker(BinPlotWidget::PpgPeak, pm.peak);
+            pw->setMarker(BinPlotWidget::PpgDicrotic, pm.dicrotic);
+            pw->setMarker(BinPlotWidget::PpgPeak2, pm.peak2);
+            pw->setMarker(BinPlotWidget::PpgEnd, pm.end);
+            pw->setMarker(BinPlotWidget::PpgT50, pm.t50);
+            pw->setMarker(BinPlotWidget::PpgT80, pm.t80);
+            pw->overridePulseGlyphs(pm);
+        }
+    }
 
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
     pw->setMarker(BinPlotWidget::EcgPPeak, mk.p_peak);

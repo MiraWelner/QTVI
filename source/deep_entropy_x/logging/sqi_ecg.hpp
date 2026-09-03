@@ -68,7 +68,7 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     const double pPeakD = FeatureMarks::detect_p_peak(ecg, r_col, fs);
     const int pPeak = (int)std::lround(pPeakD);
     const int pEnd = FeatureMarks::detect_p_end(ecg, r_col, fs, pPeakD);
-    const int qBegin = FeatureMarks::detect_q_begin(ecg, r_col);
+    const int qBegin = FeatureMarks::compute_q_onset(ecg, fs, r_col);
     const double jPointD = FeatureMarks::compute_j_point(ecg, fs, r_col);   // QRS end / J point
     const int jPoint = (int)std::lround(jPointD);
     const int tEnd = (int)std::lround(FeatureMarks::compute_t_end(ecg, fs, r_col, jPointD));
