@@ -5,8 +5,8 @@
 // separate template_markings.bin produced by the viewer.
 //
 // Marker set per bin:
-//   ECG (per channel):  P-onset, Q-begin, T-begin, T-end
-//   PPG (shared):       Onset, Peak, Dicrotic notch, 50% recovery, End
+//   ECG (per channel):  P-onset, Q-begin,  T-end
+//   PPG (shared):       Onset, Dicrotic notch, End
 //
 // All marker sample indices use -1 as the "unmarked / not applicable"
 // sentinel.
@@ -120,24 +120,61 @@ struct TemplateBin {
     // markers, because a marker's sample column is only meaningful relative to
     // the alignment it was placed on. Keyed by AnchorType; a missing anchor
     // means "not marked yet for that anchor" (seed fresh on load). Use marks().
-    struct MarkerSet {
-        int p_begin_ch[3] = { -1, -1, -1 };
-        int p_peak_ch[3] = { -1, -1, -1 };
-        int q_begin_ch[3] = { -1, -1, -1 };
-        int s_end_ch[3] = { -1, -1, -1 };
-        int t_begin_ch[3] = { -1, -1, -1 };
-        int t_end_ch[3] = { -1, -1, -1 };
-    };
-    std::map<AnchorType, MarkerSet> markers_by_anchor;
+    // ---- ONE HOME FOR EVERY LANDMARK: THE BANK TEMPLATE ------------------
+    //
+    // There used to be two. A bin-level MarkerSet held slot 0's landmarks as
+    // per-lead arrays of 3, while slots 1..N held theirs as scalars in
+    // BankTemplate::markers_by_anchor. Same landmark, two shapes, two homes --
+    // and the consequences were not cosmetic:
+    //
+    //   * onMarkerMoved (the slot-0 drag path) propagated through the BIN's set
+    //     and so had no slot dimension at all. It could not move a sub-template
+    //     column no matter what, which is why dragging _A never moved _E.
+    //   * Three functions disagreed about what slot 0 was: markingSlotsForBin
+    //     treated it as a bank slot, leadsForBinTemplate fell back to chN_raw
+    //     for it, onMarkerMoved wrote it to the bin.
+    //   * Every operation spanning both had to know which storage applied, and
+    //     there were four propagation loops between them.
+    //
+    // Now slot 0 is a slot like any other. The bank is ALREADY per lead, so the
+    // array of 3 was itself a leftover from before banks existed; BankMarkerSet
+    // is the correct shape and is the only one.
+    //
+    // Reach them through slotMarks(). Nothing outside this struct should index
+    // ecg_bank[...].templates[...].markers_by_anchor directly.
 
-    // Accessor: returns the marker set for `a`, creating an all-unmarked one
-    // on first access. Every read/write of a per-anchor ECG user marker goes
-    // through here.
-    MarkerSet& marks(AnchorType a) { return markers_by_anchor[a]; }
-    const MarkerSet& marks(AnchorType a) const {
-        static const MarkerSet kEmpty;
-        auto it = markers_by_anchor.find(a);
-        return (it == markers_by_anchor.end()) ? kEmpty : it->second;
+    // Writable, and CREATES THE SLOT if the bank is shorter -- which is what the
+    // markings reader needs, since it builds bins with no banks and has to put
+    // the saved landmarks somewhere before the merge. A created slot carries
+    // marks and nothing else: no tmpl, no members, so it earns no column and
+    // draws nothing until the real bank arrives.
+    tbank::BankMarkerSet& slotMarks(int lead, int slot, AnchorType a) {
+        static tbank::BankMarkerSet kScratch;
+        if (lead < 0 || lead > 2 || slot < 0) { kScratch = {}; return kScratch; }
+        tbank::TemplateBank& bk = ecg_bank[lead];
+        if (slot >= static_cast<int>(bk.templates.size()))
+            bk.templates.resize(static_cast<size_t>(slot) + 1);
+        return bk.templates[slot].marks(static_cast<int32_t>(a));
+    }
+
+    // Read-only, and NEVER creates. Returns an all -1 set for a slot that does
+    // not exist, because BankTemplate::marks() is operator[] on a map and a read
+    // through it inserts -- the trap that used to suppress a template's
+    // auto-detection permanently.
+    const tbank::BankMarkerSet& slotMarks(int lead, int slot, AnchorType a) const {
+        static const tbank::BankMarkerSet kEmpty;
+        if (lead < 0 || lead > 2 || slot < 0) return kEmpty;
+        const tbank::TemplateBank& bk = ecg_bank[lead];
+        if (slot >= static_cast<int>(bk.templates.size())) return kEmpty;
+        return bk.templates[slot].marks(static_cast<int32_t>(a));
+    }
+
+    // Slots that carry a saved marker set, for the writer and the merge. Not
+    // the bank's size: a bin read from the markings file has only the slots the
+    // operator's session had.
+    int markedSlotCount(int lead) const {
+        if (lead < 0 || lead > 2) return 0;
+        return static_cast<int>(ecg_bank[lead].templates.size());
     }
 
     // R peak column: auto-only, re-derived each pass from the template r_col;
@@ -346,19 +383,43 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         w8(b.bad_r_ch[2] ? 1 : 0);
         w8(b.bad_ppg);
 
-        // Per-anchor ECG user markers: [uint32 count] then, per anchor,
-        // [int32 anchorTag][6 marker fields x 3 channels]. R peak is auto-only
-        // and re-derived each pass, so it is NOT written here.
-        w32(static_cast<int>(b.markers_by_anchor.size()));
-        for (const auto& kv : b.markers_by_anchor) {
-            w32(static_cast<int>(kv.first));           // AnchorType tag
-            const TemplateBin::MarkerSet& m = kv.second;
-            for (int c = 0; c < 3; ++c) w32(m.p_begin_ch[c]);
-            for (int c = 0; c < 3; ++c) w32(m.p_peak_ch[c]);
-            for (int c = 0; c < 3; ++c) w32(m.q_begin_ch[c]);
-            for (int c = 0; c < 3; ++c) w32(m.s_end_ch[c]);
-            for (int c = 0; c < 3; ++c) w32(m.t_begin_ch[c]);
-            for (int c = 0; c < 3; ++c) w32(m.t_end_ch[c]);
+        // ECG user landmarks, PER LEAD, PER SLOT, PER ANCHOR:
+        //
+        //   per lead 0..2:
+        //     int32  slotCount
+        //     per slot:
+        //       int32  anchorCount
+        //       per anchor:
+        //         int32  anchorTag
+        //         int32  p_begin, p_peak, q_begin, s_end, t_begin, t_end
+        //
+        // THE SLOT DIMENSION IS THE POINT. The old layout was per anchor only,
+        // with each field an array of 3 leads -- it could store slot 0 and
+        // nothing else, so a sub-template column's landmarks had nowhere to go
+        // in this file and were kept in _templates.bin instead, where the
+        // pipeline overwrote them on the next anchor pass.
+        //
+        // LEAD IS THE OUTER LOOP because a bank is per lead and the leads
+        // legitimately disagree on slot count: a morphology separable on CH1 may
+        // not be on CH2. A single shared slotCount would have to be the max and
+        // pad the rest.
+        //
+        // R peak is auto-only, re-derived from each template's own r_col every
+        // pass, and is not written here.
+        for (int lead = 0; lead < 3; ++lead) {
+            const int nSlots = b.markedSlotCount(lead);
+            w32(nSlots);
+            for (int slot = 0; slot < nSlots; ++slot) {
+                const auto& byAnchor =
+                    b.ecg_bank[lead].templates[slot].markers_by_anchor;
+                w32(static_cast<int>(byAnchor.size()));
+                for (const auto& kv : byAnchor) {
+                    w32(kv.first);                      // AnchorType tag
+                    const tbank::BankMarkerSet& m = kv.second;
+                    w32(m.p_begin); w32(m.p_peak); w32(m.q_begin);
+                    w32(m.s_end);   w32(m.t_begin);  w32(m.t_end);
+                }
+            }
         }
 
         w32(b.ppg_onset);
@@ -758,10 +819,12 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                     (int)std::lround(b.p_peak_auto_ch[c]), (int)std::lround(b.q_begin_auto_ch[c]), (int)std::lround(b.r_peak_auto_ch[c]),
                     (int)std::lround(b.s_end_auto_ch[c]), (int)std::lround(b.t_end_auto_ch[c]),
                     sampleRateHz);
-                const TemplateBin::MarkerSet& umk = b.marks(anchor);
+                // Slot 0's set for this lead. slotMarks selects the lead, so
+                // the per-lead subscripts on every field below are gone.
+                const tbank::BankMarkerSet& umk = b.slotMarks(c, 0, anchor);
                 EcgFeatures ftUser = computeEcgFeatures(ecg,
-                    umk.p_peak_ch[c], umk.q_begin_ch[c], b.r_peak_ch[c],
-                    umk.s_end_ch[c], umk.t_end_ch[c],
+                    umk.p_peak, umk.q_begin, b.r_peak_ch[c],
+                    umk.s_end, umk.t_end,
                     sampleRateHz);
 
                 // T-peak is reactive: there's no T-peak bar, it's the extremum
@@ -776,8 +839,8 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 const double tPeakAuto = FeatureMarks::compute_t_peak(ecg,
                     b.t_begin_auto_ch[c], b.t_end_auto_ch[c]);
                 const double tPeakUser = FeatureMarks::compute_t_peak(ecg,
-                    static_cast<double>(umk.t_begin_ch[c]),
-                    static_cast<double>(umk.t_end_ch[c]));
+                    static_cast<double>(umk.t_begin),
+                    static_cast<double>(umk.t_end));
 
                 // Order MUST match ecgPointNames:
                 //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
@@ -788,15 +851,15 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 // columns carry sub-sample positions.
                 struct P { double a; double u; };
                 const P pts[] = {
-                    { b.p_peak_auto_ch[c],  (double)umk.p_peak_ch[c]  },
-                    { b.q_begin_auto_ch[c], (double)umk.q_begin_ch[c] },
+                    { b.p_peak_auto_ch[c],  (double)umk.p_peak  },
+                    { b.q_begin_auto_ch[c], (double)umk.q_begin },
                     { ftAuto.q_idx,         ftUser.q_idx             },
                     { b.r_peak_auto_ch[c],  (double)b.r_peak_ch[c]    },
                     { ftAuto.s_idx,         ftUser.s_idx             },
-                    { b.s_end_auto_ch[c],   (double)umk.s_end_ch[c]   },
+                    { b.s_end_auto_ch[c],   (double)umk.s_end   },
                     { tPeakAuto,            tPeakUser                },   // reactive, both sides
-                    { b.t_begin_auto_ch[c], (double)umk.t_begin_ch[c] },
-                    { b.t_end_auto_ch[c],   (double)umk.t_end_ch[c]   }
+                    { b.t_begin_auto_ch[c], (double)umk.t_begin },
+                    { b.t_end_auto_ch[c],   (double)umk.t_end   }
                 };
                 for (int k = 0; k < 9; ++k) {
                     // r_peak (index 3) is the only autodetect-only column --
@@ -814,7 +877,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             // glyph makes. The stored ppg_t50/ppg_t80 fields are the detector's
             // originals and are deliberately not used for these columns.
             const FeatureMarks::ReactivePpg rxAuto = FeatureMarks::reactive_ppg(
-                b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto,b.ppg_dicrotic_auto, b.ppg_end_auto);
+                b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_dicrotic_auto, b.ppg_end_auto);
             const FeatureMarks::ReactivePpg rxUser = FeatureMarks::reactive_ppg(
                 b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_dicrotic, b.ppg_end);
             emitPulsePoint(b.ppgTemplate, b.ppg_onset_auto, b.ppg_onset,
@@ -932,20 +995,25 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         b.bad_r_ch[2] = (r8() != 0);
         b.bad_ppg = r8();
 
-        // Per-anchor ECG user markers: [count] then (tag, 6x3 fields) each.
-        // Mirrors the write order. R peak is not stored (auto-only per pass).
-        {
-            const int nAnchors = r32();
-            for (int a = 0; a < nAnchors; ++a) {
-                const int tag = r32();
-                TemplateBin::MarkerSet m;
-                for (int c = 0; c < 3; ++c) m.p_begin_ch[c] = r32();
-                for (int c = 0; c < 3; ++c) m.p_peak_ch[c] = r32();
-                for (int c = 0; c < 3; ++c) m.q_begin_ch[c] = r32();
-                for (int c = 0; c < 3; ++c) m.s_end_ch[c] = r32();
-                for (int c = 0; c < 3; ++c) m.t_begin_ch[c] = r32();
-                for (int c = 0; c < 3; ++c) m.t_end_ch[c] = r32();
-                b.markers_by_anchor[static_cast<AnchorType>(tag)] = m;
+        // Mirrors the write order exactly: lead, slot, anchor.
+        //
+        // The bins this function returns have NO BANKS -- it reads a marking
+        // file, not a template file. slotMarks() therefore creates each slot as
+        // it goes, carrying marks and nothing else: no tmpl, no members, so a
+        // created slot earns no column and draws nothing. The caller merges
+        // these onto the real bins built from _templates.bin, bounds-checking
+        // every position against that template's own length.
+        for (int lead = 0; lead < 3; ++lead) {
+            const int nSlots = r32();
+            for (int slot = 0; slot < nSlots; ++slot) {
+                const int nAnchors = r32();
+                for (int a = 0; a < nAnchors; ++a) {
+                    const int tag = r32();
+                    tbank::BankMarkerSet& m =
+                        b.slotMarks(lead, slot, static_cast<AnchorType>(tag));
+                    m.p_begin = r32(); m.p_peak = r32(); m.q_begin = r32();
+                    m.s_end = r32();   m.t_begin = r32();  m.t_end = r32();
+                }
             }
         }
 

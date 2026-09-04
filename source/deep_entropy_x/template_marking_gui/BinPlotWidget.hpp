@@ -191,7 +191,12 @@ public:
     // rounded the refined T-peak and the interpolated T50/T80 crossings on the
     // way into the paint path -- so the glyph drew up to half a sample away
     // from the value the CSV reported for the same landmark.
-    struct Reactive { double ecgTPeak = -1.0, ppgT50 = -1.0, ppgT80 = -1.0, ppgPeak2 = -1.0; };    Reactive reactiveGlyphs() const;
+    struct Reactive {
+        double ecgPPeak = -1.0;   // between the P-onset and Q-onset bars
+        double ecgTPeak = -1.0;   // between the S-end and T-end bars
+        double ppgT50 = -1.0, ppgT80 = -1.0, ppgPeak2 = -1.0;
+    };
+    Reactive reactiveGlyphs() const;
 
     // Per-trace marker visibility. When false, that group's markers
     // are neither drawn nor hit-testable (drag-pick ignores them).
@@ -377,7 +382,10 @@ private:
     // All sub-sample. Every one of these comes from a refined finder, so an
     // int field here re-quantised what the refinement had resolved.
     struct GlyphSnapshot {
-        double ecgPBegin = -1.0, ecgPPeak = -1.0, ecgQPeak = -1.0, ecgQ = -1.0, ecgRPeak = -1.0, ecgS = -1.0, ecgTend = -1.0;
+        // ecgPPeak is NOT here: the P peak is reactive, bracketed by the
+        // P-onset and Q-onset bars, so a frozen copy would go stale on a drag.
+        double ecgPBegin = -1.0, ecgQPeak = -1.0, ecgQ = -1.0,
+            ecgRPeak = -1.0, ecgS = -1.0, ecgTend = -1.0;
         bool ecgQFound = false;
         double ppgFoot = -1.0;    // = ppgOnset auto
         double ppgP1 = -1.0;      // = ppgPeak auto

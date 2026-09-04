@@ -61,7 +61,6 @@
 #include <QStringList>
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <limits>
 
 namespace {
@@ -558,24 +557,15 @@ void BinPlotWidget::setMarker(Marker m, int idx) {
 BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
     Reactive r;
 
-    // TEMPORARY. Splits the two calls and prints every input, because these
-    // markers are NOT bounds-checked against their traces anywhere in this
-    // widget before FeatureMarks receives them -- and reactive_ecg's bracket
-    // changed from EcgTBegin (permanently -1, so compute_t_peak returned at its
-    // first guard and its body never ran) to EcgSEnd, which is real. So this
-    // path is being exercised for the first time.
-    fprintf(stderr, "[rx] bin=%d lead=%d tmpl=%d ecgN=%zu ppgN=%zu | "
-        "sEnd=%d tEnd=%d | on=%d pk=%d dn=%d end=%d\n",
-        m_binIndex, m_leadIndex, m_templateIndex, m_ecg.size(), m_ppg.size(),
-        m_markers[EcgSEnd], m_markers[EcgTEnd],
-        m_markers[PpgOnset], m_markers[PpgPeak],
-        m_markers[PpgDicrotic], m_markers[PpgEnd]);
-    fflush(stderr);
-
-    r.ecgTPeak = FeatureMarks::reactive_ecg(
-        m_ecg, m_markers[EcgSEnd], m_markers[EcgTEnd]).t_peak;
-
-    fprintf(stderr, "[rx] ecg ok, tPeak=%.2f\n", r.ecgTPeak); fflush(stderr);
+    // P peak between the P-onset and Q-onset bars, T peak between S-end and
+    // T-end. Both track a drag of any of the four, and both come from the
+    // same FeatureMarks call the CSV/bin writers use, so the screen and the
+    // files cannot disagree about where a landmark is.
+    const FeatureMarks::ReactiveEcg e = FeatureMarks::reactive_ecg(
+        m_ecg, m_markers[EcgPBegin], m_markers[EcgQBegin],
+        m_markers[EcgSEnd], m_markers[EcgTEnd]);
+    r.ecgPPeak = e.p_peak;
+    r.ecgTPeak = e.t_peak;
 
     if (m_hasPPG) {
         const FeatureMarks::ReactivePpg p = FeatureMarks::reactive_ppg(
@@ -584,9 +574,6 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
         r.ppgT50 = p.t50;
         r.ppgT80 = p.t80;
         r.ppgPeak2 = p.peak2;
-        fprintf(stderr, "[rx] ppg ok, t50=%.2f t80=%.2f p2=%.2f\n",
-            p.t50, p.t80, p.peak2);
-        fflush(stderr);
     }
     return r;
 }
@@ -660,18 +647,6 @@ int BinPlotWidget::markerAtX(double x) const {
 }
 
 void BinPlotWidget::paintEvent(QPaintEvent*) {
-    // TEMPORARY STAGE MARKERS. 0xc000041d is what Windows reports when an
-    // exception OR an access violation escapes a Qt event handler: the process
-    // dies with no message and no stack. The LAST line printed names the block
-    // that failed. Delete this lambda and its calls once the fault is found.
-    int _stage = 0;
-    auto mark = [&](const char* what) {
-        fprintf(stderr, "[paint] bin=%d lead=%d tmpl=%d  %d %s\n",
-            m_binIndex, m_leadIndex, m_templateIndex, ++_stage, what);
-        fflush(stderr);
-        };
-    mark("enter");
-
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
@@ -714,7 +689,6 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     //   Y-min is autoscaled from the data, but always clipped at <=0.0 so
     //   the 0.0 major tick is always inside the frame.
     // Left axis (ECG) and right axis (pulse) each follow this rule.
-    mark("ranges");
     double yLo = 0, yHi = 0;
     compute_visible_range(m_ecg, yLo, yHi);
     if (yLo > 0.0) yLo = 0.0;
@@ -737,7 +711,6 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     if (pLo > pHi) { pLo = 0.0; pHi = 1.0; }
     if (pLo > 0.0) pLo = 0.0;
 
-    mark("axes");
     // ---- Axes: frame + ticks + dual labeled Y-axes ----
     {
         const double xAxisY = margin_top + ph;       // == h - kMB
@@ -845,7 +818,6 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     p.setClipRect(QRectF(margin_left, margin_top,
         w - margin_left - margin_right, ph));
 
-    mark("arterial");
     // -------- Arterial traces (ABP/ART/ART_PULM) --------
     // Drawn on the SHARED right-axis range (pLo,pHi) so every pulse tracing
     // sits on one scale. Each channel supplies its own x0/dx, which carry its
@@ -880,7 +852,6 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         }
     }
 
-    mark("ecg");
     // -------- ECG (left axis) --------
     if (m_showEcgTrace) {
         const int n = static_cast<int>(m_ecg.size());
@@ -911,7 +882,6 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             QPen(with_trace_alpha(ecg_trace_color), 1.5), n, yLo, yHi);
     }
 
-    mark("ppg");
     // -------- PPG (right/shared axis) --------
     if (m_showPpgTrace && m_hasPPG && m_ppg.size() >= 2) {
         const int n = static_cast<int>(m_ppg.size());
@@ -925,7 +895,6 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     }
     p.restore();
 
-    mark("reflines");
     global_interval_lines::paint(p, m_refLines,
         [this](double s) { return xFromSample(Channel::Ecg, s); },
         margin_top, h - margin_bottom, (int)m_ecg.size());
@@ -937,7 +906,6 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     p.setClipRect(QRectF(margin_left, margin_top,
         w - margin_left - margin_right, ph));
 
-    mark("bars");
     QFont smallF = p.font(); smallF.setPointSize(7); p.setFont(smallF);
     for (int m = 0; m < MarkerCount; ++m) {
         int idx = m_markers[m];
@@ -961,13 +929,11 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         );
     }
 
-    mark("glyphs");
     drawFeatureGlyphs(p, yLo, yHi, pLo, pHi, ph);
 
     p.restore();
 
 
-    mark("done");
     if (m_state == State::BadPPG) {
         p.setPen(QPen(Qt::red, 4));
         p.drawLine(margin_left, margin_top, w - margin_right, h - margin_bottom);
@@ -1102,7 +1068,8 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
             };
         auto froz = frozen;
         m_glyphs.ecgPBegin = froz(b.p_begin_auto_ch[c]);
-        m_glyphs.ecgPPeak = froz(b.p_peak_auto_ch[c]);
+        // (no ecgPPeak: the P peak is REACTIVE now, bracketed by the P-onset
+        //  and Q-onset bars -- see reactiveGlyphs.)
         m_glyphs.ecgQ = froz(b.q_begin_auto_ch[c]);
         m_glyphs.ecgQFound = b.q_begin_found_auto_ch[c];
         m_glyphs.ecgS = froz(b.s_end_auto_ch[c]);
@@ -1160,17 +1127,8 @@ void BinPlotWidget::overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm) {
 void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
     double yLo, double yHi, double pLo, double pHi, int ph) const
 {
-    // TEMPORARY, same purpose as paintEvent's markers one level up.
-    auto gmark = [&](const char* what) {
-        fprintf(stderr, "[glyph] bin=%d lead=%d tmpl=%d  %s\n",
-            m_binIndex, m_leadIndex, m_templateIndex, what);
-        fflush(stderr);
-        };
-    gmark("reactive-in");
-
     // Reactive columns, recomputed every paint from the current bars.
     const Reactive rx = reactiveGlyphs();
-    gmark("reactive-out");
 
     auto plot_y = [&](double val, double lo, double hi) {
         const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
@@ -1203,7 +1161,6 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         p.drawLine(QPointF(x - dash_half_width, y), QPointF(x + dash_half_width, y));
         };
 
-    gmark("ecg-block");
     // ---- ECG --------------------------------------------------------------
     if (m_showEcgTrace && (int)m_ecg.size() >= 3) {
         const std::vector<double>& v = m_ecg;
@@ -1236,7 +1193,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         auto found = [&](double idx, bool ok) { ok ? cross(idx) : circle(idx); };
 
         cross(m_glyphs.ecgPBegin);   // P begin
-        cross(m_glyphs.ecgPPeak);    // P wave
+        cross(rx.ecgPPeak);          // reactive: P-onset bar -> Q-onset bar
         found(m_glyphs.ecgQ, m_glyphs.ecgQFound);
         cross(m_glyphs.ecgQPeak);
         cross(m_glyphs.ecgRPeak);    // R wave
@@ -1244,7 +1201,6 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         cross(rx.ecgTPeak);          // reactive: between the S-end/T-end bars
         cross(m_glyphs.ecgTend);     // T end
     }
-    gmark("ppg-block");
     // ---- PPG --------------------------------------------------------------
     if (m_showPpgTrace && m_hasPPG && (int)m_ppg.size() >= 3) {
         const std::vector<double>& v = m_ppg;
@@ -1294,5 +1250,4 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             dash(m_glyphs.jpgP2, jpg_mark_color);
         }
     }
-    gmark("glyph-done");
 }

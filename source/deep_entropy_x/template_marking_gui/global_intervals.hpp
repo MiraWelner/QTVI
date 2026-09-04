@@ -2,50 +2,8 @@
 //
 // global_intervals.hpp
 //
-// GLOBAL (across-lead) ECG intervals, reduced from the per-channel landmarks
-// already carried on a TemplateBin.
-//
-// Why global rather than per-lead: a single ECG lead is a projection of the
-// heart's electrical vector onto one axis, so a wavefront moving nearly
-// perpendicular to that axis produces almost no deflection in it. The first
-// few milliseconds of depolarization are therefore invisible in some leads and
-// the last few are invisible in others, and EVERY lead reports a QRS that is
-// too short by a lead-specific amount. The standard measurement takes the
-// union: QRS onset is the EARLIEST onset seen in any lead, QRS offset is the
-// LATEST offset seen in any lead. No single lead is trusted to contain the
-// whole complex. Per-lead values are kept beside the global ones so a lead
-// that disagrees wildly (usually a bad fiducial, not physiology) is visible.
-//
-// ---------------------------------------------------------------------------
-// ALIGNMENT: the reason this is not a min/max over raw columns
-// ---------------------------------------------------------------------------
-// Each channel is aligned independently -- ch1/ch2/ch3 each get their own
-// r_col_raw out of their own alignment pass -- so a sample column means
-// something different in each channel's template. Column 100 in ch1 and
-// column 100 in ch2 are NOT the same instant. Taking min/max of q_begin_ch[]
-// directly would be comparing three different clocks, and the answer would
-// silently absorb the inter-channel R-column offset.
-//
-// Everything here is therefore reduced in R-RELATIVE sample offsets
-// (landmark - that channel's own R column). R is the one landmark all three
-// channels share by construction, so it is the common origin. Onsets come out
-// negative (before R), offsets positive.
-//
-// ---------------------------------------------------------------------------
-// Conventions, matching the rest of the marking code
-// ---------------------------------------------------------------------------
-//   Positions : sample columns / offsets, sub-sample doubles. -1 = not found,
-//               so a negative RAW column must never be arithmetic'd on before
-//               checking. (R-relative offsets are legitimately negative --
-//               those use the `valid` flags, not a sign test.)
-//   Intervals : milliseconds, NAN when not computable. Same as
-//               EcgFeatures::qrs_ms / qt_ms.
-//   Channels  : 0..2 == ch1/ch2/ch3, the same indexing as the *_auto_ch[]
-//               arrays and MarkerSet::*_ch[].
-//
-// Landmark names follow this codebase: q_begin is the QRS onset, s_end is the
-// J point (AnchorType::J_POINT == S_END), p_begin is the P onset, t_end is the
-// T offset.
+//this calculates the earliest onset and latest offset for the QRS complex across all three leads, and returns the result as a GlobalIntervals struct.  The caller can then use that to draw vertical lines on 
+// each lead's template panel, so the earliest onset and latest offset are visible in every lead.
 //
 
 #include "template_marking_bin_io.hpp"   // TemplateBin, AnchorType
@@ -117,11 +75,15 @@ namespace global_intervals {
             m.tOffset = bin.t_end_auto_ch[ch];
         }
         else {
-            const TemplateBin::MarkerSet& u = bin.marks(anchor);
-            m.pOnset = static_cast<double>(u.p_begin_ch[ch]);
-            m.qOnset = static_cast<double>(u.q_begin_ch[ch]);
-            m.jPoint = static_cast<double>(u.s_end_ch[ch]);
-            m.tOffset = static_cast<double>(u.t_end_ch[ch]);
+            // Slot 0. Global intervals are the earliest onset and latest offset
+            // across LEADS on the sinus morphology; a sub-template's boundaries
+            // are not comparable to it, and the reference lines drawn from this
+            // are drawn on every panel including the ectopic ones.
+            const tbank::BankMarkerSet& u = bin.slotMarks(ch, 0, anchor);
+            m.pOnset = static_cast<double>(u.p_begin);
+            m.qOnset = static_cast<double>(u.q_begin);
+            m.jPoint = static_cast<double>(u.s_end);
+            m.tOffset = static_cast<double>(u.t_end);
         }
         return m;
     }

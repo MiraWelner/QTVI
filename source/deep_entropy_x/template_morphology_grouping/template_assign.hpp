@@ -295,29 +295,31 @@ namespace tbank {
                 // DOES NOT GO SILENT.
                 //
                 // own_corridor is a MEMBER count. n is this COLUMN's finite
-                // count, and those are different numbers: beats are
-                // NaN-padded, so a 900-member template still has edge
-                // columns reached by two or three of them.
+                // count, and those are different numbers: beats are NaN-padded,
+                // so a 900-member template still has edge columns reached by two
+                // or three of them.
                 //
-                // The four order statistics below run in ascending order so
-                // each partitions only what the previous left, which needs
+                // The four order statistics below run in ascending order so each
+                // partitions only what the previous left, which requires
                 //     i_lo <= i_lo1 <= i_hi <= i_hi1
-                // and at n == 2 that inverts: i_lo1 is 1 while i_hi is 0, so
-                // the third nth_element gets first > nth. Debug asserts
-                // "vector iterator range transposed"; Release is undefined
-                // and the introselect loop need not terminate.
+                // and at n == 2 that inverts -- i_lo1 is 1 while i_hi is 0, so
+                // the third nth_element gets first > nth. Debug asserts "vector
+                // iterator range transposed"; Release is undefined and the
+                // introselect loop need not terminate. It presented as a hang
+                // partway through the per-bin split.
                 //
-                // SKIPPING THE COLUMN IS NOT THE FIX. band_lo/band_hi are
-                // initialised to NaN above, and the inheritance block at the
-                // bottom of this function only runs for a young TEMPLATE --
-                // so a skipped column inside a mature template keeps NaN,
+                // SKIPPING THE COLUMN IS NOT THE FIX, and was tried: band_lo and
+                // band_hi are initialised to NaN above, and the inheritance block
+                // at the bottom of this function only runs for a young TEMPLATE.
+                // So a skipped column inside a mature template keeps NaN,
                 // bandMatch cannot score it, and beats stop matching on the
-                // padded edges. They spawn instead of joining, and the
-                // cohorts fragment into slots too thin to draw.
+                // padded edges -- they spawn instead of joining, and the cohorts
+                // fragment into slots too thin to draw. That is what emptied the
+                // pulse panels.
                 //
                 // So the column takes the same inherited half-width a young
-                // template takes: slot 0's spread where there is one, a
-                // fraction of this template's own peak-to-peak otherwise.
+                // template takes: slot 0's spread where there is one, a fraction
+                // of this template's own peak-to-peak otherwise.
                 // corridorInflation gets the COLUMN's n, because it is this
                 // column's centre that was estimated from n values.
                 if (n < static_cast<size_t>(kMinMembersForCorridor)) {

@@ -12,7 +12,6 @@
 #include "peak_finding/FilterUtils.hpp"
 #include <QMessageBox>
 #include <QColor>
-#include <QTimer>
 #include <QPixmap>
 #include <QDir>
 #include <QFileInfo>
@@ -702,16 +701,39 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath,
             // Copy every anchor's saved marker set (each independent), bounds-
             // checked per channel. R is NOT copied (auto-only, re-derived).
             if (ecg) {
-                for (const auto& kv : s.markers_by_anchor) {
-                    const TemplateBin::MarkerSet& sm = kv.second;
-                    TemplateBin::MarkerSet& dm = d.marks(kv.first);
-                    for (int c = 0; c < 3; ++c) {
-                        dm.p_begin_ch[c] = safeIdx(sm.p_begin_ch[c], dm.p_begin_ch[c], ecgLen[c]);
-                        dm.p_peak_ch[c] = safeIdx(sm.p_peak_ch[c], dm.p_peak_ch[c], ecgLen[c]);
-                        dm.q_begin_ch[c] = safeIdx(sm.q_begin_ch[c], dm.q_begin_ch[c], ecgLen[c]);
-                        dm.s_end_ch[c] = safeIdx(sm.s_end_ch[c], dm.s_end_ch[c], ecgLen[c]);
-                        dm.t_begin_ch[c] = safeIdx(sm.t_begin_ch[c], dm.t_begin_ch[c], ecgLen[c]);
-                        dm.t_end_ch[c] = safeIdx(sm.t_end_ch[c], dm.t_end_ch[c], ecgLen[c]);
+                // LEAD, SLOT, ANCHOR -- the shape the marking file now has.
+                //
+                // The saved bins carry their marks on placeholder bank slots
+                // (see readTemplateMarkingsBin), so the walk is over the SAVED
+                // slot count and each position is bounds-checked against the
+                // DESTINATION template's own length. A saved slot with no
+                // counterpart in this pass's bank is dropped: the bank is
+                // rebuilt every run and its slot count can shrink, and a
+                // landmark has no meaning without the waveform it sat on.
+                for (int c = 0; c < 3; ++c) {
+                    const int nSaved = s.markedSlotCount(c);
+                    const int nNow =
+                        static_cast<int>(d.ecg_bank[c].templates.size());
+                    for (int slot = 0; slot < nSaved && slot < nNow; ++slot) {
+                        // Slot 0's length is the bin's own template; a deeper
+                        // slot's is its bank template's, which can be shorter.
+                        // Using the bin's for both would admit a position past a
+                        // sub-template's end.
+                        const size_t len = (slot == 0)
+                            ? ecgLen[c]
+                            : d.ecg_bank[c].templates[slot].tmpl.size();
+                        for (const auto& kv :
+                            s.ecg_bank[c].templates[slot].markers_by_anchor) {
+                            const tbank::BankMarkerSet& sm = kv.second;
+                            tbank::BankMarkerSet& dm =
+                                d.ecg_bank[c].templates[slot].marks(kv.first);
+                            dm.p_begin = safeIdx(sm.p_begin, dm.p_begin, len);
+                            dm.p_peak = safeIdx(sm.p_peak, dm.p_peak, len);
+                            dm.q_begin = safeIdx(sm.q_begin, dm.q_begin, len);
+                            dm.s_end = safeIdx(sm.s_end, dm.s_end, len);
+                            dm.t_begin = safeIdx(sm.t_begin, dm.t_begin, len);
+                            dm.t_end = safeIdx(sm.t_end, dm.t_end, len);
+                        }
                     }
                 }
                 for (int c = 0; c < 3; ++c) d.bad_r_ch[c] = s.bad_r_ch[c];
@@ -807,10 +829,13 @@ void TemplateViewerWindow::writeNormalizationCsvs() {
             const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
             const auto& ecg = chs[ch]->ecgTemplate_raw;
             if (ecg.empty()) continue;
-            const TemplateBin::MarkerSet& rmk = b.marks(AnchorType::R_PEAK);
+            // slotMarks selects the lead, so the per-lead subscripts below
+            // are gone. Slot 0: the reference is measured on the sinus seed.
+            const tbank::BankMarkerSet& rmk =
+                b.slotMarks(ch, 0, AnchorType::R_PEAK);
             EcgFeatures f = computeEcgFeatures(
-                ecg, rmk.p_peak_ch[ch], rmk.q_begin_ch[ch], b.r_peak_ch[ch],
-                rmk.s_end_ch[ch], rmk.t_end_ch[ch], m_sampleRate);
+                ecg, rmk.p_peak, rmk.q_begin, b.r_peak_ch[ch],
+                rmk.s_end, rmk.t_end, m_sampleRate);
             const double ry = normalize_features::sample_y(ecg, f.r_idx);
             const double sy = normalize_features::sample_y(ecg, f.s_idx);
             if (std::isnan(ry) || std::isnan(sy)) continue;
@@ -1682,7 +1707,6 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     // ---- Row loop ----------------------------------------------------------
     for (size_t bi = 0; bi < m_bins.size(); ++bi) {
         const TemplateBin& b = m_bins[bi];
-        const TemplateBin::MarkerSet& umk = b.marks(currentAnchor());
 
         // One description per value column, in CHANS order. The seven channels
         // differ only in which normalizer they take and which global reference
@@ -1733,9 +1757,13 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
                 (int)std::lround(b.p_peak_auto_ch[c]), (int)std::lround(b.q_begin_auto_ch[c]),
                 (int)std::lround(b.r_peak_auto_ch[c]), (int)std::lround(b.s_end_auto_ch[c]),
                 (int)std::lround(b.t_end_auto_ch[c]), m_sampleRate);
+            // Per lead, because slotMarks selects the lead -- the old bin-wide
+            // MarkerSet held all three leads in one object and was fetched once
+            // per bin.
+            const tbank::BankMarkerSet& umk = b.slotMarks(c, 0, currentAnchor());
             ftUser[c] = computeEcgFeatures(ecg,
-                umk.p_peak_ch[c], umk.q_begin_ch[c], b.r_peak_ch[c],
-                umk.s_end_ch[c], umk.t_end_ch[c], m_sampleRate);
+                umk.p_peak, umk.q_begin, b.r_peak_ch[c],
+                umk.s_end, umk.t_end, m_sampleRate);
         }
 
         // ECG marker positions, indices aligned with ECG_MARKERS.
@@ -1750,15 +1778,16 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             ecgAuto[c][6] = b.s_end_auto_ch[c];
             ecgAuto[c][7] = b.t_begin_auto_ch[c];
             ecgAuto[c][8] = b.t_end_auto_ch[c];
-            ecgUser[c][0] = umk.p_begin_ch[c];
-            ecgUser[c][1] = umk.p_peak_ch[c];
-            ecgUser[c][2] = umk.q_begin_ch[c];
+            const tbank::BankMarkerSet& umk = b.slotMarks(c, 0, currentAnchor());
+            ecgUser[c][0] = umk.p_begin;
+            ecgUser[c][1] = umk.p_peak;
+            ecgUser[c][2] = umk.q_begin;
             ecgUser[c][3] = ftUser[c].q_idx;
             ecgUser[c][4] = b.r_peak_ch[c];
             ecgUser[c][5] = ftUser[c].s_idx;
-            ecgUser[c][6] = umk.s_end_ch[c];
-            ecgUser[c][7] = umk.t_begin_ch[c];
-            ecgUser[c][8] = umk.t_end_ch[c];
+            ecgUser[c][6] = umk.s_end;
+            ecgUser[c][7] = umk.t_begin;
+            ecgUser[c][8] = umk.t_end;
         }
 
         // Pulse marker positions, order matching the *_MARKERS arrays.
@@ -2064,7 +2093,7 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
 
 void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin& b) {
     const int c = pw->leadIndex();
-    const TemplateBin::MarkerSet& mk = b.marks(currentAnchor());
+    const tbank::BankMarkerSet& mk = b.slotMarks(c, 0, currentAnchor());
 
     // Bank members are their own COLUMNS now (see the (bin, template) expansion
     // in the layout loop), so nothing is overlaid here -- drawing them again as
@@ -2072,13 +2101,13 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     // already show.
 
     // ---- draggable bars ----------------------------------------------------
-    pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin_ch[c]);
-    pw->setMarker(BinPlotWidget::EcgPPeak, mk.p_peak_ch[c]);
-    pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_begin_ch[c]);
+    pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
+    pw->setMarker(BinPlotWidget::EcgPPeak, mk.p_peak);
+    pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_begin);
     pw->setMarker(BinPlotWidget::EcgRPeak, b.r_peak_ch[c]);   // auto-only, no bar drawn
-    pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end_ch[c]);
-    pw->setMarker(BinPlotWidget::EcgTBegin, mk.t_begin_ch[c]);
-    pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end_ch[c]);
+    pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
+    pw->setMarker(BinPlotWidget::EcgTBegin, mk.t_begin);
+    pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
 
     pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
     pw->setMarker(BinPlotWidget::PpgPeak, b.ppg_peak);
@@ -2167,8 +2196,12 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     // rather than written inline, because the subsequent-move loop below has to
     // perform the same access on a DIFFERENT bin's bank and the two must not
     // drift -- the same shape onMarkerMoved uses for the bin's marker set.
-    auto bankGet = [&](tbank::TemplateBank& bk) -> int {
-        tbank::BankMarkerSet& m = bk.templates[templateIdx].marks(anchor);
+    // SLOT IS A PARAMETER, not templateIdx captured. The propagation loop below
+    // targets the later bin's BAND-MATCHING slot, which is generally a different
+    // number from the dragged one -- so these two hardcoding templateIdx was
+    // half of why propagation only ever touched same-numbered columns.
+    auto bankGet = [&](tbank::TemplateBank& bk, int slot) -> int {
+        tbank::BankMarkerSet& m = bk.templates[slot].marks(anchor);
         switch (marker) {
         case BinPlotWidget::EcgPBegin: return m.p_begin;
         case BinPlotWidget::EcgPPeak:  return m.p_peak;
@@ -2179,8 +2212,8 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
         }
         return -1;
         };
-    auto bankSet = [&](tbank::TemplateBank& bk, int v) {
-        tbank::BankMarkerSet& m = bk.templates[templateIdx].marks(anchor);
+    auto bankSet = [&](tbank::TemplateBank& bk, int slot, int v) {
+        tbank::BankMarkerSet& m = bk.templates[slot].marks(anchor);
         switch (marker) {
         case BinPlotWidget::EcgPBegin: m.p_begin = v; break;
         case BinPlotWidget::EcgPPeak:  m.p_peak = v; break;
@@ -2207,8 +2240,8 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     default: return;
     }
 
-    const int oldIdx = bankGet(bank);
-    bankSet(bank, newIdx);
+    const int oldIdx = bankGet(bank, templateIdx);
+    bankSet(bank, templateIdx, newIdx);
 
     // ---- subsequent-move, BY SLOT INDEX ---------------------------------
     // Bank columns used to ignore m_moveMode entirely: this handler wrote one
@@ -2216,35 +2249,55 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     // B or C column moved exactly one bar. It now follows the same two modes
     // the bin's markers do.
     //
-    // READ THIS BEFORE TRUSTING IT ACROSS BINS. "The same template" here means
-    // THE SAME SLOT NUMBER, and slot numbers are assigned per bin in spawn
-    // order. Bin 5's slot B is not guaranteed to be the morphology bin 4's slot
-    // B holds -- the banks are built independently, and a bin where the second
-    // morphology appeared earlier or later numbers it differently. So this can
-    // apply a PVC's Q-onset delta to whatever occupies slot B in a later bin.
+    // SUBSEQUENT MEANS EVERY PANEL AFTER THIS ONE ON THE PAGE, ALL LETTERS.
     //
-    // That is a deliberate choice of behaviour over correctness, made because
-    // the alternative on offer was to leave the feature not working at all. The
-    // correct rule is to propagate to the later bin's BAND-MATCHING template
-    // (bandMatch against tbank::kMatchFloorEcg, which this file already links),
-    // and it should replace this loop once bank identity across bins is settled
-    // -- the same underlying gap as bank letters not being stable between bins.
+    // The set is exactly the columns on screen, in the order they are drawn:
+    // m_pageGlobalIdx and m_pageTemplateIdx are parallel and ARE the page. So a
+    // drag on _A moves _E, and it moves nothing the operator cannot see.
+    //
+    // TWO THINGS THIS FIXES.
+    //
+    // It used to propagate by slot INDEX -- bk.templates[templateIdx] in each
+    // later bin -- so a drag on _A touched nothing but other _A columns, and a
+    // drag on a deep slot touched nothing at all in any bin whose bank was
+    // shorter than that index. That is the "only moves ones of the same letter"
+    // symptom.
+    //
+    // And it used to walk EVERY BIN IN THE RECORD, not the page. Bins beyond the
+    // page have no panel, the operator never saw them, and markers_by_anchor IS
+    // serialized -- so a single drag persisted landmarks across the whole record
+    // and exported them as though someone had placed each one. Walking the page
+    // is what makes "subsequent" mean what the button says.
+    //
+    // Iterating the page also removes the need to re-test what a column is:
+    // markingSlotsForBin already applied every eligibility rule to build it, so
+    // there is no second copy of those tests here to fall out of step.
     if (m_moveMode != MoveMode::Individual && oldIdx >= 0) {
-        const int delta = newIdx - oldIdx;
         const int nDragged =
             static_cast<int>(bank.templates[templateIdx].tmpl.size());
-        const double pct = (nDragged > 1)
+
+        // BOTH MODES ARE FRACTIONAL. A raw sample delta is the wrong unit across
+        // bins: each bin's frame is its own width (alignment frames on that bin's
+        // longest RR), so the same +12 samples is a different physical shift in
+        // every one, and a much smaller fraction of the beat on a bin holding a
+        // pause. A drag of "10% later" should stay 10% later.
+        //
+        //   Delta : cur + deltaFrac * (n - 1)   -- a relative nudge
+        //   Raw   : posFrac  * (n - 1)          -- an absolute position
+        const double deltaFrac = (nDragged > 1)
+            ? static_cast<double>(newIdx - oldIdx) / (nDragged - 1) : 0.0;
+        const double posFrac = (nDragged > 1)
             ? static_cast<double>(newIdx) / (nDragged - 1) : 0.0;
 
-        for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
-            if (m_bins[i].bad_r_ch[leadIdx]) continue;
-            tbank::TemplateBank& bk = m_bins[i].ecg_bank[leadIdx];
-            // Ragged by design: a later bin's bank may be shorter, or hold an
-            // empty slot. Skipped rather than clamped to the last slot, which
-            // would pile every deep-slot drag onto one template.
-            if (templateIdx >= bk.size()) continue;
-            const int n = static_cast<int>(bk.templates[templateIdx].tmpl.size());
-            if (n <= 0) continue;
+        // One body, applied to a (bin, slot) pair drawn from the page.
+        auto applyTo = [&](int binI, int slot) {
+            if (binI < 0 || binI >= (int)m_bins.size()) return;
+            if (m_bins[binI].bad_r_ch[leadIdx]) return;
+            tbank::TemplateBank& bk = m_bins[binI].ecg_bank[leadIdx];
+            if (slot < 0 || slot >= bk.size()) return;
+            if (bk.templates[slot].tmpl.empty()) return;
+            const int n = static_cast<int>(bk.templates[slot].tmpl.size());
+            if (n <= 0) return;
 
             // SEED BEFORE READING. bankGet goes through marks(), which
             // inserts, so reading an unseeded template here is what used to
@@ -2254,25 +2307,44 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
             // hasDetectedMarks is on the TEMPLATE, not the bank: marker sets
             // are per template, so there is no bank-wide answer to "are the
             // marks detected".
-            tbank::BankTemplate& tgt = bk.templates[templateIdx];
+            tbank::BankTemplate& tgt = bk.templates[slot];
             if (!tgt.hasDetectedMarks(anchor)) {
                 const int rc = (tgt.r_col >= 0)
-                    ? tgt.r_col : m_bins[i].r_peak_ch[leadIdx];
-                FeatureMarks::seed_bank_template(tgt.tmpl, rc, m_sampleRate, currentAnchor(), tgt.marks(anchor));
+                    ? tgt.r_col : m_bins[binI].r_peak_ch[leadIdx];
+                FeatureMarks::seed_bank_template(tgt.tmpl, rc, m_sampleRate,
+                    currentAnchor(), tgt.marks(anchor));
             }
-            const int cur = bankGet(bk);
-            if (cur < 0) continue;   // this landmark was not found on this one
+            const int cur = bankGet(bk, slot);
+            if (cur < 0) return;   // this landmark was not found on this one
 
             const int target = (m_moveMode == MoveMode::SubsequentDelta)
-                ? cur + delta
-                : (n > 1 ? (int)std::lround(pct * (n - 1)) : 0);
-            bankSet(bk, std::clamp(target, 0, n - 1));
-        }
+                ? cur + (int)std::lround(deltaFrac * (n - 1))
+                : (int)std::lround(posFrac * (n - 1));
+            bankSet(bk, slot, std::clamp(target, 0, n - 1));
+            };
 
-        for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
-            const int gi = m_pageGlobalIdx[li];
-            if (gi > binIdx) refreshBankMarkers(gi, templateIdx);
+        // Walk the PAGE from the column after the dragged one to the end. The
+        // two arrays are parallel, so index li identifies a panel; the dragged
+        // panel is found by matching both halves, because a bin contributes
+        // several columns and a slot number recurs across bins.
+        int dragCol = -1;
+        for (int li = 0; li < (int)m_pageGlobalIdx.size()
+            && li < (int)m_pageTemplateIdx.size(); ++li) {
+            if (m_pageGlobalIdx[li] == binIdx
+                && m_pageTemplateIdx[li] == templateIdx) {
+                dragCol = li; break;
+            }
         }
+        for (int li = dragCol + 1; li < (int)m_pageGlobalIdx.size()
+            && li < (int)m_pageTemplateIdx.size(); ++li)
+            applyTo(m_pageGlobalIdx[li], m_pageTemplateIdx[li]);
+
+        // Refresh exactly the panels that were written, by the same page walk.
+        // This used to refresh (gi > binIdx, templateIdx) -- the wrong slot on
+        // the wrong set of bins, now that propagation is per column.
+        for (int li = dragCol + 1; li < (int)m_pageGlobalIdx.size()
+            && li < (int)m_pageTemplateIdx.size(); ++li)
+            refreshBankMarkers(m_pageGlobalIdx[li], m_pageTemplateIdx[li]);
     }
 }
 
@@ -2284,62 +2356,118 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
 
     if (BinPlotWidget::markerIsEcg(marker)) {
         if (leadIdx < 0 || leadIdx > 2) return;
-        auto ecgGet = [&](TemplateBin& tb) -> int {
+        // SLOT IS A PARAMETER NOW, AND THAT IS THE WHOLE POINT.
+        //
+        // This function used to have no slot dimension at all: it read and wrote
+        // the bin's own MarkerSet, which held slot 0 and nothing else. It is also
+        // the function a slot-0 drag runs (onMarkerMovedOnTemplate routes
+        // templateIdx == 0 here). So a drag on _A could not move _E however the
+        // propagation loop was written -- the storage it reached had nowhere to
+        // put a sub-template's landmark. One home fixed that; this is where it
+        // pays off.
+        auto ecgGet = [&](TemplateBin& tb, int slot) -> int {
+            if (marker == BinPlotWidget::EcgRPeak) return tb.r_peak_ch[leadIdx];
+            const tbank::BankMarkerSet& m =
+                tb.slotMarks(leadIdx, slot, currentAnchor());
             switch (marker) {
-            case BinPlotWidget::EcgPBegin: return tb.marks(currentAnchor()).p_begin_ch[leadIdx];
-            case BinPlotWidget::EcgPPeak:  return tb.marks(currentAnchor()).p_peak_ch[leadIdx];
-            case BinPlotWidget::EcgQBegin: return tb.marks(currentAnchor()).q_begin_ch[leadIdx];
-            case BinPlotWidget::EcgRPeak:  return tb.r_peak_ch[leadIdx];
-            case BinPlotWidget::EcgSEnd:   return tb.marks(currentAnchor()).s_end_ch[leadIdx];
-            case BinPlotWidget::EcgTBegin:  return tb.marks(currentAnchor()).t_begin_ch[leadIdx];
-            case BinPlotWidget::EcgTEnd:   return tb.marks(currentAnchor()).t_end_ch[leadIdx];
+            case BinPlotWidget::EcgPBegin: return m.p_begin;
+            case BinPlotWidget::EcgPPeak:  return m.p_peak;
+            case BinPlotWidget::EcgQBegin: return m.q_begin;
+            case BinPlotWidget::EcgSEnd:   return m.s_end;
+            case BinPlotWidget::EcgTBegin: return m.t_begin;
+            case BinPlotWidget::EcgTEnd:   return m.t_end;
             }
             return -1;
             };
-        auto ecgSet = [&](TemplateBin& tb, int v) {
+        auto ecgSet = [&](TemplateBin& tb, int slot, int v) {
+            // R is the alignment anchor: auto-only, and per BIN rather than per
+            // slot, because every template in the bank is aligned on it.
+            if (marker == BinPlotWidget::EcgRPeak) { tb.r_peak_ch[leadIdx] = v; return; }
+            tbank::BankMarkerSet& m = tb.slotMarks(leadIdx, slot, currentAnchor());
             switch (marker) {
-            case BinPlotWidget::EcgPBegin: tb.marks(currentAnchor()).p_begin_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgPPeak:  tb.marks(currentAnchor()).p_peak_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgQBegin: tb.marks(currentAnchor()).q_begin_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgRPeak:  tb.r_peak_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgSEnd:   tb.marks(currentAnchor()).s_end_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgTBegin:  tb.marks(currentAnchor()).t_begin_ch[leadIdx] = v; break;
-            case BinPlotWidget::EcgTEnd:   tb.marks(currentAnchor()).t_end_ch[leadIdx] = v; break;
+            case BinPlotWidget::EcgPBegin: m.p_begin = v; break;
+            case BinPlotWidget::EcgPPeak:  m.p_peak = v; break;
+            case BinPlotWidget::EcgQBegin: m.q_begin = v; break;
+            case BinPlotWidget::EcgSEnd:   m.s_end = v; break;
+            case BinPlotWidget::EcgTBegin: m.t_begin = v; break;
+            case BinPlotWidget::EcgTEnd:   m.t_end = v; break;
             }
             };
 
-        const int oldIdx = ecgGet(b);
-        ecgSet(b, newIdx);
+        const int oldIdx = ecgGet(b, 0);
+        ecgSet(b, 0, newIdx);
         // Track the drag: the touched store follows the bar to its final
         // position so confirmedIndex reflects where the operator left it.
         if (newIdx >= 0)
             m_touchedMarks[touchKey(binIdx, leadIdx, marker)] = newIdx;
-        const int delta = newIdx - oldIdx;
-
         if (m_moveMode != MoveMode::Individual && oldIdx >= 0) {
+            // ONE PROPAGATION LOOP, OVER THE PAGE'S OWN COLUMNS.
+            //
+            // Subsequent means every panel after this one in drawing order, all
+            // letters. m_pageGlobalIdx and m_pageTemplateIdx are parallel and ARE
+            // the page, so _A moves _E -- and nothing off-page is touched, which
+            // matters because landmarks are serialized and this loop used to run
+            // to the end of the record, persisting marks into bins the operator
+            // never saw and exporting them as though someone had placed each one.
+            //
+            // BOTH MODES ARE FRACTIONAL. A raw sample delta is the wrong unit
+            // across bins: each bin's frame is its own width, so the same +12
+            // samples is a different physical shift in every one, and a much
+            // smaller fraction of the beat on a bin holding a pause. A drag of
+            // "10% later" stays 10% later.
             ChannelTemplateData* bchs[3] = { &b.ch1, &b.ch2, &b.ch3 };
             const int nDragged = (int)bchs[leadIdx]->ecgTemplate_raw.size();
-            const double pct = (nDragged > 1) ? double(newIdx) / (nDragged - 1) : 0.0;
+            const double deltaFrac = (nDragged > 1)
+                ? double(newIdx - oldIdx) / (nDragged - 1) : 0.0;
+            const double posFrac = (nDragged > 1)
+                ? double(newIdx) / (nDragged - 1) : 0.0;
 
-            for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
-                ChannelTemplateData* chs[3] = {
-                    &m_bins[i].ch1, &m_bins[i].ch2, &m_bins[i].ch3
+            // Slot 0's length is the bin's own template; a deeper slot's is its
+            // bank template's, which can be shorter.
+            auto lenOf = [&](int binI, int slot) -> int {
+                if (slot == 0) {
+                    ChannelTemplateData* chs[3] = {
+                        &m_bins[binI].ch1, &m_bins[binI].ch2, &m_bins[binI].ch3
+                    };
+                    return (int)chs[leadIdx]->ecgTemplate_raw.size();
+                }
+                const tbank::TemplateBank& bk = m_bins[binI].ecg_bank[leadIdx];
+                if (slot >= (int)bk.templates.size()) return 0;
+                return (int)bk.templates[slot].tmpl.size();
                 };
-                if (chs[leadIdx]->ecgTemplate_raw.empty()) continue;
-                if (m_bins[i].bad_r_ch[leadIdx]) continue;
-                const int cur = ecgGet(m_bins[i]);
+
+            // The dragged panel, matched on BOTH halves: a slot number recurs
+            // across bins and a bin contributes several columns, so matching
+            // either alone lands on the wrong one.
+            int dragCol = -1;
+            for (int li = 0; li < (int)m_pageGlobalIdx.size()
+                && li < (int)m_pageTemplateIdx.size(); ++li) {
+                if (m_pageGlobalIdx[li] == binIdx
+                    && m_pageTemplateIdx[li] == 0) {
+                    dragCol = li; break;
+                }
+            }
+
+            for (int li = dragCol + 1; li < (int)m_pageGlobalIdx.size()
+                && li < (int)m_pageTemplateIdx.size(); ++li) {
+                const int gi = m_pageGlobalIdx[li];
+                const int slot = m_pageTemplateIdx[li];
+                if (gi < 0 || gi >= (int)m_bins.size()) continue;
+                if (m_bins[gi].bad_r_ch[leadIdx]) continue;
+                const int n = lenOf(gi, slot);
+                if (n <= 0) continue;
+                const int cur = ecgGet(m_bins[gi], slot);
                 if (cur < 0) continue;
-                const int n = (int)chs[leadIdx]->ecgTemplate_raw.size();
 
                 const int target = (m_moveMode == MoveMode::SubsequentDelta)
-                    ? cur + delta
-                    : (n > 1 ? (int)std::lround(pct * (n - 1)) : 0);
-                ecgSet(m_bins[i], std::clamp(target, 0, n - 1));
+                    ? cur + (int)std::lround(deltaFrac * (n - 1))
+                    : (int)std::lround(posFrac * (n - 1));
+                ecgSet(m_bins[gi], slot, std::clamp(target, 0, n - 1));
             }
-            for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
-                int gi = m_pageGlobalIdx[li];
-                if (gi > binIdx) refreshBinMarkers(gi);
-            }
+            // Refresh exactly the columns that were written.
+            for (int li = dragCol + 1; li < (int)m_pageGlobalIdx.size()
+                && li < (int)m_pageTemplateIdx.size(); ++li)
+                refreshBankMarkers(m_pageGlobalIdx[li], m_pageTemplateIdx[li]);
         }
         // B2: an edit to this landmark updates its focus view. For the
         // J-point (S-end) this refreshes BOTH the QRS and JT panels; other

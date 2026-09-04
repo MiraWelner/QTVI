@@ -174,11 +174,17 @@ namespace tbank_ser {
             w32(f, t.subtype);
             wu32(f, t.spawn_seq);
 
-            wu32(f, static_cast<uint32_t>(t.markers_by_anchor.size()));
-            for (const auto& kv : t.markers_by_anchor) {
-                w32(f, kv.first);                        // AnchorType tag
-                writeMarkerSet(f, kv.second);
-            }
+            // markers_by_anchor IS DELIBERATELY NOT WRITTEN HERE.
+            //
+            // This file is _templates.bin, and the PIPELINE owns it: it is
+            // rewritten by prepareViewerJob, again by finalizeViewerJob, and
+            // once per anchor by regenerateWithAnchor. Operator landmarks stored
+            // in it were therefore destroyed by the next "Finish and Next" --
+            // silently, because the rewrite is a normal part of the anchor cycle.
+            //
+            // Landmarks are operator judgement and live in _template_markings.bin,
+            // which nothing but the marking session writes. This file carries
+            // morphology: the waveform, its spread, its members, its class.
         }
 
         inline tbank::BankTemplate readTemplate(std::ifstream& f) {
@@ -191,11 +197,9 @@ namespace tbank_ser {
             t.subtype = r32(f);
             t.spawn_seq = ru32(f);
 
-            const uint32_t na = readLen(f);
-            for (uint32_t k = 0; k < na; ++k) {
-                const int32_t a = r32(f);
-                t.markers_by_anchor[a] = readMarkerSet(f);
-            }
+            // No marker block to read -- see writeTemplate. markers_by_anchor is
+            // left empty here and filled by readTemplateMarkingsBin, or seeded
+            // fresh by seed_bank_template when no marking file exists.
             return t;
         }
 

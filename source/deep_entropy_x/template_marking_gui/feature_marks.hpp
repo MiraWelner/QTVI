@@ -57,16 +57,27 @@ public:
 
     static double compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs);
     static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
-    struct ReactiveEcg { double t_peak = -1.0; };
-    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, int t_begin, int t_end);
-    struct ReactivePpg { double t50 = -1.0, t80 = -1.0, t80_rise = -1.0, pw80 = -1.0, peak2 = -1.0;  };
+    struct ReactiveEcg { double t_peak = -1.0, p_peak = -1.0; };
+    // Both reactive ECG glyphs, from the four bars that bracket them:
+    // P-peak between P-onset and Q-onset, T-peak between S-end and T-end.
+    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg,
+        int p_begin, int q_begin, int t_begin, int t_end);
+
+    // P peak: the extremum between the P-onset and Q-onset bars, refined.
+    // BRACKETED, not searched from R. seed_p_peak's fixed [R-260ms, R-60ms]
+    // window finds the largest sample in a GUESSED region -- on a long PR it
+    // lands in the PQ segment, on a short one it clips the P -- whereas the
+    // operator's own bars say where the P wave is.
+    static double compute_p_peak(const std::vector<double>& ecg,
+        double pBegin, double qBegin);
+    struct ReactivePpg { double t50 = -1.0, t80 = -1.0, t80_rise = -1.0, pw80 = -1.0, peak2 = -1.0; };
     static ReactivePpg reactive_ppg(const std::vector<double>& ppg, int onset, int peak, int dicrotic, int end);
 
     // Individual reactive computes (all track user markers live).
     static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col);
     static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr);
     static double compute_t_peak(const std::vector<double>& ecg, double tBegin, double tEnd);
-    static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col,  double tBeginIn = -1.0);
+    static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col, double tBeginIn = -1.0);
     static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0);
 
     // ---------------------------------------------------------------
@@ -121,7 +132,7 @@ public:
     struct TemplateLandmarks {
         double r_peak = -1.0;    // refined from nominal_r_col, sub-sample
         double q_begin = -1.0;  bool q_begin_found = false;
-        double q_peak = -1.0;   
+        double q_peak = -1.0;
         double s_end = -1.0;    // == J-point
         double t_end = -1.0;
         double p_peak = -1.0;
@@ -192,7 +203,16 @@ public:
     static double first_crossing(const std::vector<double>& v, int a, int b, double frac);
 
     static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
-    static double detect_p_peak(const std::vector<double>& ecg_signal, int r_idx, double fs);
+    // A SEED, NOT THE LANDMARK. Rough P locator over a fixed window before R,
+    // whose only job is to open compute_p_begin's search window -- the onset is
+    // bracketed on the peak, so it cannot be found without one.
+    //
+    // Named seed_ rather than detect_ deliberately: detect_q_begin was a window
+    // helper named after a landmark it did not produce, two unrelated callers
+    // picked it up as though it did, and one of them archived its fabricated
+    // fallback as a Q-onset. The REPORTED P peak is compute_p_peak, bracketed by
+    // the settled bars.
+    static double seed_p_peak(const std::vector<double>& ecg_signal, int r_idx, double fs);
     static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double pPeakIn = -1.0);
 
     static int detect_ppg_upstroke_peak(const std::vector<double>& v, int lo = 0, int hi = -1);
@@ -206,5 +226,5 @@ public:
         double heightMeters = NAN);
 
     static void seed_pulse_bank_template(const std::vector<double>& tmpl,
-        double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters = NAN); 
+        double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters = NAN);
 };

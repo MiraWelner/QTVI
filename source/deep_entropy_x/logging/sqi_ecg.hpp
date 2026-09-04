@@ -63,12 +63,21 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     if (n == 0 || r_col < 0) return s;
 
     // Each landmark computed ONCE and reused: detect_p_end would otherwise
-    // re-run detect_p_peak, and the two T detectors would each re-run
+    // re-run the P seed, and the two T detectors would each re-run
     // compute_j_point (a full transitionAnchor fit).
-    const double pPeakD = FeatureMarks::detect_p_peak(ecg, r_col, fs);
+    //
+    // seed_p_peak, NOT the P landmark. The reported P peak is compute_p_peak,
+    // bracketed by the P-onset and Q-onset bars -- but there are no bars here:
+    // this scores a template with no operator marks, and all that is wanted is
+    // the rough position that opens detect_p_end's search. Renamed from
+    // detect_p_peak so a call site cannot mistake a seed for a measurement.
+    const double pPeakD = FeatureMarks::seed_p_peak(ecg, r_col, fs);
     const int pPeak = (int)std::lround(pPeakD);
     const int pEnd = FeatureMarks::detect_p_end(ecg, r_col, fs, pPeakD);
-    const int qBegin = FeatureMarks::compute_q_onset(ecg, fs, r_col);
+    // compute_q_onset returns a sub-sample double and has an out-param this
+    // caller does not need; -1 means no Q-onset and the fallback below applies.
+    const double qBeginD = FeatureMarks::compute_q_onset(ecg, fs, r_col);
+    const int qBegin = (qBeginD >= 0.0) ? (int)std::lround(qBeginD) : -1;
     const double jPointD = FeatureMarks::compute_j_point(ecg, fs, r_col);   // QRS end / J point
     const int jPoint = (int)std::lround(jPointD);
     const int tEnd = (int)std::lround(FeatureMarks::compute_t_end(ecg, fs, r_col, jPointD));
@@ -80,7 +89,7 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     s.qrsLo = clampIdx(qBegin >= 0 ? qBegin : r_col);
     s.qrsHi = clampIdx(jPoint >= 0 ? jPoint : r_col);
     s.stLo = s.qrsHi;
-    s.stHi = tEnd;;
+    s.stHi = tEnd;
     // Isoelectric window for the noise metric: THIS beat's T-end -> the
     // NEXT beat's P-onset -- the TP segment, the true baseline between
     // consecutive beats.

@@ -94,10 +94,15 @@ namespace normalize_features {
 
             // Normalization reference is a stable per-subject quantity, so it
             // always reads the R-pass markers, never the current anchor's.
-            const TemplateBin::MarkerSet& rmk = b.marks(AnchorType::R_PEAK);
+            // Slot 0's marks, through the one accessor -- which selects the
+            // lead, so the old per-lead subscripts are gone. The reference is a
+            // per-subject quantity measured on the sinus seed, so slot 0 is the
+            // right slot as well as the only one this ever read.
+            const tbank::BankMarkerSet& rmk =
+                b.slotMarks(ch, 0, AnchorType::R_PEAK);
             EcgFeatures f = computeEcgFeatures(ecg,
-                rmk.p_peak_ch[ch], rmk.q_begin_ch[ch], b.r_peak_ch[ch],
-                rmk.s_end_ch[ch], rmk.t_end_ch[ch], sampleRateHz);
+                rmk.p_peak, rmk.q_begin, b.r_peak_ch[ch],
+                rmk.s_end, rmk.t_end, sampleRateHz);
             const double ry = sample_y(ecg, f.r_idx);
             const double sy = sample_y(ecg, f.s_idx);
             if (std::isnan(ry) || std::isnan(sy)) continue;
@@ -163,8 +168,8 @@ namespace normalize_features {
     // Spread (IQR, sd) in RAW pulse units -> normalized units.
 
 
-    inline std::vector<double> scale_pulse_spread_by_ref( const std::vector<double>& raw, double foot_y, double ref) {
-		//this scales things so the std band in the ppg is visible in the viewer.
+    inline std::vector<double> scale_pulse_spread_by_ref(const std::vector<double>& raw, double foot_y, double ref) {
+        //this scales things so the std band in the ppg is visible in the viewer.
         //The spread is computed in raw units, then scaled to normalized units by dividing by the global reference (median PI) and the local foot value.
         std::vector<double> out(raw.size());
         const bool ok = std::isfinite(ref) && ref != 0.0
@@ -392,9 +397,10 @@ namespace normalize_features {
 
             // Same rule as Option A: the reference is a stable per-subject
             // quantity, so it always reads the R-pass markers.
-            const TemplateBin::MarkerSet& rmk = b.marks(AnchorType::R_PEAK);
-            const int qBegin = rmk.q_begin_ch[ch];
-            const int jPoint = rmk.s_end_ch[ch];   // S_END == J_POINT (AnchorType comment)
+            const tbank::BankMarkerSet& rmk =
+                b.slotMarks(ch, 0, AnchorType::R_PEAK);
+            const int qBegin = rmk.q_begin;
+            const int jPoint = rmk.s_end;   // S_END == J_POINT (AnchorType comment)
             if (qBegin < 0 || jPoint <= qBegin) continue;
             const double area = segment_area(ecg, qBegin, jPoint, /*absolute=*/true);
             if (!std::isnan(area)) vals.push_back(area);
@@ -535,7 +541,7 @@ namespace normalize_features {
     // slicer does not have.
     //
     // PQ baseline reuses FeatureMarks' own P/Q detectors directly (P-end via
-    // detect_p_peak + detect_p_end, Q-onset via detect_q_begin) rather than
+    // seed_p_peak + detect_p_end, Q-onset via compute_q_onset) rather than
     // re-deriving isoelectric detection -- the same P-end -> Q-onset window
     // alignment.hpp's Stage-2 PQ leveling comment describes.
     struct ProportionalBeat {
@@ -598,13 +604,25 @@ namespace normalize_features {
             pb.rrLen = static_cast<int>(rr);
 
             // PQ isoelectric zero, in this beat's own local (sliced)
-            // coordinates. detect_p_peak/detect_p_end/detect_q_begin all
-            // take an r_idx relative to the array they're handed, which
-            // pb.rCol already is.
-            const double pPeakD = FeatureMarks::detect_p_peak(pb.samples, pb.rCol, fs);
+            // coordinates: seed_p_peak / detect_p_end / compute_q_onset all take
+            // an r_idx relative to the array they are handed, which pb.rCol
+            // already is.
+            //
+            // seed_p_peak, NOT the landmark. The reported P peak is
+            // compute_p_peak, bracketed by the P-onset and Q-onset bars -- but
+            // there are no bars here, this is a per-beat slice with no operator
+            // marks, and all that is wanted is the rough position that opens
+            // detect_p_end's search. The seed is exactly that and nothing else
+            // reads it.
+            const double pPeakD = FeatureMarks::seed_p_peak(pb.samples, pb.rCol, fs);
             const int pEnd = FeatureMarks::detect_p_end(pb.samples, pb.rCol, fs, pPeakD);
-            const int qBegin = FeatureMarks::compute_q_onset(pb.samples, fs, pb.rCol);
-            if (pEnd >= 0 && qBegin > pEnd) {
+            const double qOnD = FeatureMarks::compute_q_onset(pb.samples, fs, pb.rCol);
+            // compute_q_onset's monophasic-R path can return r_idx itself, which
+            // would run the PQ window into the R upstroke. Require a real gap.
+            const int qGuard = pb.rCol - static_cast<int>(std::lround(0.020 * fs));
+            const int qBegin = (qOnD >= 0.0)
+                ? static_cast<int>(std::lround(qOnD)) : -1;
+            if (pEnd >= 0 && qBegin > pEnd && qBegin <= qGuard) {
                 std::vector<double> pq(pb.samples.begin() + pEnd, pb.samples.begin() + qBegin);
                 const double base = median_finite(pq);
                 if (!std::isnan(base)) {
