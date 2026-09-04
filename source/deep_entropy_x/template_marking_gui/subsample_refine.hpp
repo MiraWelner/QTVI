@@ -12,7 +12,7 @@
 #include <vector>
 #include <array>
 #include <algorithm>
-#include "anchor_fit.hpp"
+#include "template_anchoring\anchor_fit.hpp"
 
 namespace subsample_refine {
 

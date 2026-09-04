@@ -41,7 +41,10 @@
 *           VPG blue, APG green, JPG amber.
 *
 * Marks drawn:
-*   ECG  - User control: P begin, Q onset, S end, T end. Automatic: P peak, R peak, T peak
+*   ECG  - Bars (user control): P begin, Q onset, S end, T end -- one per
+*          ALIGNMENT, see anchor_view.hpp. Glyphs (automatic): P peak, R peak,
+*          T peak. A bar's column belongs to the alignment its close-up shows
+*          and is reported only there; a glyph is measured on all four.
 
 *   PPG  - User control: Onset, Dicrotic Notch. Automatic: 50% Rise, 80% rise, T80, Foot, Systolic Peak, Diastolic Peak
 *   VPG  - u, v, w                      | dashes, behind the
@@ -51,6 +54,7 @@
 */
 
 #include "BinPlotWidget.hpp"
+#include "template_anchoring\anchor_view.hpp"
 #include "noise_marking_gui/annotation_types.hpp"
 #include <QMenu>
 #include <QAction>
@@ -62,6 +66,25 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+
+// anchor_view.hpp mirrors these ids as literals because it cannot include this
+// header back (BinPlotWidget.hpp -> template_marking_bin_io.hpp ->
+// anchor_view.hpp). Drift between the two would route a drag to the wrong
+// alignment silently, so it is a build error instead.
+static_assert(BinPlotWidget::EcgPBegin == anchor_view::kPBegin, "anchor_view marker id drift");
+static_assert(BinPlotWidget::EcgPPeak == anchor_view::kPPeak, "anchor_view marker id drift");
+static_assert(BinPlotWidget::EcgQBegin == anchor_view::kQBegin, "anchor_view marker id drift");
+static_assert(BinPlotWidget::EcgRPeak == anchor_view::kRPeak, "anchor_view marker id drift");
+static_assert(BinPlotWidget::EcgSEnd == anchor_view::kSEnd, "anchor_view marker id drift");
+static_assert(BinPlotWidget::EcgTEnd == anchor_view::kTEnd, "anchor_view marker id drift");
+// Every marker anchor_view calls a bar must be one markerAtX will actually
+// hit-test, or an alignment would own a landmark the operator cannot reach.
+static_assert(anchor_view::isBar(BinPlotWidget::EcgPBegin), "");
+static_assert(anchor_view::isBar(BinPlotWidget::EcgQBegin), "");
+static_assert(anchor_view::isBar(BinPlotWidget::EcgSEnd), "");
+static_assert(anchor_view::isBar(BinPlotWidget::EcgTEnd), "");
+static_assert(anchor_view::isGlyph(BinPlotWidget::EcgRPeak), "");
+static_assert(anchor_view::isGlyph(BinPlotWidget::EcgPPeak), "");
 
 namespace {
 
@@ -99,7 +122,6 @@ namespace {
     constexpr QColor ecg_q_begin_color{ 20,  20,  60 };
     constexpr QColor ecg_r_peak_color{ 15,  15,  40 };
     constexpr QColor ecg_s_color{ 30, 35, 85 };
-    constexpr QColor ecg_t_begin_color{ 50,  60, 130 };
     constexpr QColor ecg_t_end_color{ 70,  90, 160 };
 
     // PPG bar markers - shades of red, darkest to lightest.
@@ -140,7 +162,6 @@ namespace {
         case BinPlotWidget::EcgQBegin:   return ecg_q_begin_color;
         case BinPlotWidget::EcgRPeak:    return ecg_r_peak_color;
         case BinPlotWidget::EcgSEnd:     return ecg_s_color;
-        case BinPlotWidget::EcgTBegin:    return ecg_t_begin_color;
         case BinPlotWidget::EcgTEnd:     return ecg_t_end_color;
         case BinPlotWidget::PpgOnset:    return ppg_onset_color;
         case BinPlotWidget::PpgT50:      return t50_color;
@@ -162,7 +183,6 @@ namespace {
         case BinPlotWidget::EcgQBegin:   return "Q beg";
         case BinPlotWidget::EcgRPeak:    return "R peak";
         case BinPlotWidget::EcgSEnd:     return "S end";
-        case BinPlotWidget::EcgTBegin:    return "T begin";
         case BinPlotWidget::EcgTEnd:     return "T end";
         case BinPlotWidget::PpgOnset:    return "PPG On";
         case BinPlotWidget::PpgT50:      return "PPG 50%";
@@ -191,7 +211,6 @@ namespace {
         case BinPlotWidget::EcgPPeak:    return 20.0;
         case BinPlotWidget::EcgQBegin:   return 28.0;
         case BinPlotWidget::EcgSEnd:     return 38.0;
-        case BinPlotWidget::EcgTBegin:   return 48.0;
         case BinPlotWidget::EcgTEnd:     return 58.0;
 
         case BinPlotWidget::PpgOnset:    return 8.0;

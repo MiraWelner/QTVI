@@ -35,16 +35,16 @@
 #include <theme/theme.h>
 
 
-// Ask the user which dataset to load. The number returned here IS the dataType
-// that load_config() maps to a data_type row in config.csv, so this menu and the
-// mapping in config_loader.cpp have to be edited together. SHHS1/SHHS2 already
-// had channel labels in apply_dataset_specific_channel_labels() and rows in the
-// config, but this menu was still pinned to three datasets, so there was no way
-// to select them.
+ // Ask the user which dataset to load. The number returned here IS the dataType
+ // that load_config() maps to a data_type row in config.csv, so this menu and the
+ // mapping in config_loader.cpp have to be edited together. SHHS1/SHHS2 already
+ // had channel labels in apply_dataset_specific_channel_labels() and rows in the
+ // config, but this menu was still pinned to three datasets, so there was no way
+ // to select them.
 static int get_dataset_choice() {
     static constexpr int n_valid_datasets = 4;
     std::cout << "Select Dataset:\n1: MESA\n2: Bittium\n3: CHAOS\n"
-                 "4: SHHS\nChoice: ";
+        "4: SHHS\nChoice: ";
     int choice;
     if (!(std::cin >> choice)) return -1;
     while (choice < 1 || choice > n_valid_datasets) {
@@ -139,20 +139,84 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
 }
 
 // ---------------------------------------------------------------------------
-// Stage 3: template marking. Opens TemplateViewerWindow on the templates file
-// produced by Stage 2 and blocks (local event loop) until the viewer finishes.
+// Stage 3: template marking. Builds every anchor alignment, then opens ONE
+// TemplateViewerWindow on the templates file and blocks (local event loop)
+// until the viewer finishes. It used to open one window per alignment.
 // ---------------------------------------------------------------------------
 static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_process_detail::ViewerJob> job, const QString& fileId, std::function<void()> ensureWorkerDone) {
     const QString displayId = fileId;
 
-    // Anchor cycle: pass 0 = R-aligned (the primary build), then one pass per
-    // entry in anchorSequence() (Q, J-point, T-peak, ...). On "Finish and Next"
-    // the viewer emits requestQAlignReload(); we tear the window down, rebuild
-    // the templates re-anchored on the next landmark (worker joined first so the
-    // peakResults read can't race it), and open a fresh viewer on the result.
-    // job.anchorStep is the cursor: 0 before the first reload, N after the last.
-    const size_t nAnchorPasses = post_process_detail::anchorSequence().size() + 1;   // +1 for the R pass
-    for (size_t pass = 0; pass < nAnchorPasses; ++pass) {
+    // ---- EVERY ALIGNMENT BUILT ONCE, BEFORE THE WINDOW OPENS ----------
+    //
+    // This was a LOOP over nAnchorPasses = anchorSequence().size() + 1: open a
+    // viewer on the R templates, wait for "Finish and Next", tear the window
+    // down, re-align on the next landmark, open a fresh viewer, repeat. Four
+    // windows to mark one subject, with a rebuild between each.
+    //
+    // The viewer now loads all four alignments from one file and switches
+    // between them per landmark (see anchor_view.hpp), so the alignments are
+    // built up front and the window opens once. job->anchorStep is unused.
+    //
+    // Still off the GUI thread behind a modal busy dialog, for the same reason
+    // as before: the align work is seconds, not milliseconds, and a frozen
+    // window looks like a crash. And the finalize worker is still joined first
+    // -- buildAllAnchors folds every block into job->tmpl and writes the
+    // canonical file, which needs finalize's squared/absval done and job->tmpl
+    // race-free. The old code could defer that join for the non-final steps
+    // because they staged into job->anchorAccum; with one call there is no
+    // staging, so the join is unconditional.
+    {
+        QProgressDialog busy(QStringLiteral("Building anchor alignments\xE2\x80\xA6"),
+            QString(), 0, 0, nullptr);
+        busy.setWindowModality(Qt::ApplicationModal);
+        busy.setCancelButton(nullptr);
+        busy.setMinimumDuration(0);
+        busy.show();
+
+        bool ok = false;
+        QEventLoop waitLoop;
+        std::thread build([&ok, job, &waitLoop, ensureWorkerDone]() {
+            // The wait loop below blocks until this thread posts quit. Guard
+            // the whole body so quit is ALWAYS posted -- if ensureWorkerDone()
+            // or the build throws, we must still wake waitLoop or the GUI
+            // thread hangs forever in waitLoop.exec().
+            try {
+                if (ensureWorkerDone) ensureWorkerDone();
+                ok = post_process_detail::buildAllAnchors(*job);
+            }
+            catch (const std::exception& e) {
+                ok = false;
+                if (job->error.empty()) job->error = e.what();
+            }
+            catch (...) {
+                ok = false;
+                if (job->error.empty()) job->error = "unknown exception building anchor alignments";
+            }
+            QMetaObject::invokeMethod(&waitLoop, &QEventLoop::quit,
+                Qt::QueuedConnection);   // guaranteed reached: no path skips it
+            });
+        waitLoop.exec();     // GUI stays alive; dialog animates
+        build.join();
+        busy.close();
+
+        // NOT FATAL. job->viewerTemplatePath still points at a readable
+        // templates file carrying the R base, and marking on R alone is what
+        // this tool did before the anchor passes existed. The operator is told
+        // because the consequence is invisible otherwise: TemplateBin::chFor
+        // falls back to the R base for a missing alignment, so every bar's
+        // close-up would silently show the R template and the per-alignment
+        // CSV columns would be four copies of it.
+        if (!ok) {
+            QMessageBox::warning(nullptr, "Anchor alignments",
+                QString("Could not build the anchor alignments:\n%1\n\n"
+                    "Marking will continue on the R alignment only -- the "
+                    "close-up panel will show the R template under every "
+                    "landmark.")
+                .arg(QString::fromStdString(job->error)));
+        }
+    }
+
+    {
         TemplateViewerWindow viewer;
         viewer.setBoundaryTrainingDir(QString::fromStdString(cfg.training_log));
         // Was never wired up: m_vcgOutputPath defaulted to an empty QString,
@@ -166,33 +230,19 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
         // "setter must actually be called or the path stays empty and
         // nothing writes" lesson as setVcgOutputDir above.
         viewer.setNormOutputDir(QString::fromStdString(cfg.bin_archive_path));
-        // pass 0 = R (anchorStep -1); pass k>0 shows anchorSequence()[k-1].
-        {
-            const auto& seq = post_process_detail::anchorSequence();
-            viewer.setAnchorPassCount(int(seq.size()) + 1);   // R + anchors
-            viewer.setAnchorStep(int(job->anchorStep) - 1);
-            viewer.setAnchorLabel(job->anchorStep == 0
-                ? QStringLiteral("R")
-                : QString::fromLatin1(
-                    post_process_detail::anchorName(seq[job->anchorStep - 1])));
-        }
+        // (setAnchorPassCount / setAnchorStep / setAnchorLabel are gone with the
+        //  cycle -- there is no pass, no step, and no single alignment to name
+        //  in the title bar. The focus panel names the alignment it is showing.)
 
         QEventLoop loop;
-        bool reloadRequested = false;
 
         // Queued connection so that even if loadSubject() emits finished()
         // synchronously (its read-error / empty-bins path), the quit is still
         // delivered once exec() starts.
         QObject::connect(&viewer, &TemplateViewerWindow::finished,
             &loop, &QEventLoop::quit, Qt::QueuedConnection);
-        // First finish: request the Q-aligned pass. Just close this window;
-        // the rebuild + reopen happens after the event loop returns, so the
-        // user never stares at a frozen window during the rebuild.
-        QObject::connect(&viewer, &TemplateViewerWindow::requestQAlignReload,
-            &loop, [&loop, &reloadRequested]() {
-                reloadRequested = true;
-                loop.quit();
-            }, Qt::QueuedConnection);
+        // (requestQAlignReload is gone: one save writes every alignment, so
+        //  there is nothing to reload and the button always reads "Finish".)
 
         viewer.show();
         viewer.loadSubject(QString::fromStdString(job->viewerTemplatePath.string()),
@@ -202,75 +252,14 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
             cfg.art_upsample_rate, cfg.art_pulm_upsample_rate,
             cfg.notch_filter_hz);
         loop.exec();
-        // viewer is destroyed here (window closes) before we rebuild.
-
-        if (!reloadRequested) break;   // user clicked the final "Finish"
-
-        // Rebuild the Q-aligned templates OFF the GUI thread so the app does
-        // not freeze. The finalize worker is joined inside the same thread
-        // (keeps the peakResults read race-free), and a modal busy dialog
-        // keeps the UI responsive until the rebuild finishes.
-        QProgressDialog busy(QStringLiteral("Aligning around new anchor\xE2\x80\xA6"),
-            QString(), 0, 0, nullptr);
-        busy.setWindowModality(Qt::ApplicationModal);
-        busy.setCancelButton(nullptr);
-        busy.setMinimumDuration(0);
-        busy.show();
-
-        bool ok = false;
-        QEventLoop waitLoop;
-        std::thread rebuild([&ok, job, &waitLoop, ensureWorkerDone]() {
-            // The wait loop below blocks until this thread posts quit. Guard the
-            // whole body so quit is ALWAYS posted -- if ensureWorkerDone() or the
-            // rebuild throws (or returns early), we must still wake waitLoop or
-            // the GUI thread hangs forever in waitLoop.exec() (freeze on close).
-            try {
-                const auto& seq = post_process_detail::anchorSequence();
-                if (job->anchorStep < seq.size()) {
-                    // Join the finalize worker ONLY before the final anchor:
-                    // that's the step that folds anchors into job.tmpl and
-                    // writes/promotes the canonical, which needs finalize's
-                    // squared/absval done and job.tmpl race-free. Earlier steps
-                    // accumulate into job.anchorAccum (separate from job.tmpl)
-                    // and read only job.tmplR/job.beatsR, so they don't need
-                    // finalize -- no more R->Q wait on the squared build.
-                    const bool finalStep = (job->anchorStep + 1 == seq.size());
-                    if (finalStep && ensureWorkerDone) ensureWorkerDone();
-
-                    ok = post_process_detail::regenerateWithAnchor(
-                        *job, seq[job->anchorStep]);
-                    if (ok) job->anchorStep++;
-                }
-                else {
-                    ok = false;   // past the last anchor: viewer shouldn't emit reload
-                }
-            }
-            catch (const std::exception& e) {
-                ok = false;
-                if (job->error.empty()) job->error = e.what();
-            }
-            catch (...) {
-                ok = false;
-                if (job->error.empty()) job->error = "unknown exception in Q-align rebuild";
-            }
-            QMetaObject::invokeMethod(&waitLoop, &QEventLoop::quit,
-                Qt::QueuedConnection);   // guaranteed reached: no path skips it
-            });
-        waitLoop.exec();     // GUI stays alive; dialog animates
-        rebuild.join();
-        busy.close();
-
-        if (!ok) {
-            QMessageBox::warning(nullptr, "Q-align",
-                QString("Could not build Q-aligned templates:\n%1")
-                .arg(QString::fromStdString(job->error)));
-            break;
-        }
-        // loop: reopen a fresh viewer on job->viewerTemplatePath (now qalign).
+        // viewer is destroyed here (window closes).
     }
 
-    // The interactively-reviewed job never enters `outstanding`, so its
-    // Q-align provisional (.qalign.partial.bin) is not cleaned by reap/finishJob.
+    // The interactively-reviewed job never enters `outstanding`, so the
+    // provisional (.qalign.partial.bin -- named for the old Q-align pass) is
+    // not cleaned by reap/finishJob. buildAllAnchors writes it and renames it
+    // over the canonical, so it is usually already gone; this covers the paths
+    // where the rename failed.
     // The viewer read it fully and closed the handle in loadSubject (no mmap,
     // no deferred delete), so it is safe to remove now. Best-effort: never throw
     // on this path so a failed delete can't stall shutdown.
@@ -438,18 +427,31 @@ int main(int argc, char* argv[]) {
                 });
         }
 
-        // ---- Stage 3: template marking (runs concurrently with worker) ----
-        // Q-align reload (first "Finish and Next") needs the finalize worker
-        // joined so its peakResults mutation can't race the rebuild.
+        // ---- Stage 3: template marking --------------------------------
+        // buildAllAnchors (called at the top of runTemplateMarking, before the
+        // window opens) needs the finalize worker joined: it folds every
+        // alignment into job->tmpl and writes the canonical templates file, so
+        // finalize's squared/absval must already be done and job->tmpl must be
+        // race-free.
+        //
+        // THIS NOW HAPPENS ON EVERY FILE, not just the ones where the operator
+        // reached the final anchor. The old cycle staged the non-final anchors
+        // into job->anchorAccum precisely so the join could be deferred and the
+        // R pass could open while the squared build was still running; with one
+        // build up front there is nothing to stage, so the marking window waits
+        // for finalize. The parking below therefore almost always takes the
+        // second branch.
         auto ensureWorkerDone = [&worker]() { if (worker.joinable()) worker.join(); };
         runTemplateMarking(cfg, job, QString::fromStdString(job->stem), ensureWorkerDone);
 
-        // Do NOT join here. Park the worker and advance to the next file so
-        // the next file loads while this file's squared/absval work finishes.
+        // The worker is normally already joined by the line above, so this
+        // usually finishes the job here rather than parking it. Both branches
+        // are kept: needsFinalize == false means no worker ever started, and a
+        // build that threw before ensureWorkerDone() could leave one running.
         if (worker.joinable())
             outstanding.push_back(Outstanding{ std::move(worker), job, done });
         else if (job->needsFinalize)
-            finishJob(job);   // worker was joined early by the Q-align reload
+            finishJob(job);   // worker was joined by buildAllAnchors
 
         // Clean up any background jobs that have already finished (non-blocking).
         reap(/*force=*/false);

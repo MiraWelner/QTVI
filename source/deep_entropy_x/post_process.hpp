@@ -34,9 +34,15 @@
 
 namespace post_process_detail {
 
-    // Second-pass anchor sequence, one applied per "Finish and Next".
-    // R is the primary build (already in job.tmpl), so it is NOT in this list;
-    // the cycle is R (shown first) -> each of these in order.
+    // The non-R alignments. R is the primary build (already in job.tmpl), so
+    // it is NOT in this list.
+    //
+    // NO LONGER A CYCLE. These used to be applied one per "Finish and Next",
+    // each step regenerating a provisional templates file and reloading the
+    // viewer on a different alignment -- four windows to mark one subject.
+    // buildAllAnchors() now aligns all of them up front and writes ONE file
+    // carrying every block, and the viewer holds all four at once (see
+    // anchor_view.hpp). The order here is only the order they are built in.
     inline const std::vector<AnchorType>& anchorSequence() {
         static const std::vector<AnchorType> seq = {
             AnchorType::P_ONSET, AnchorType::Q_ONSET, AnchorType::J_POINT,
@@ -377,13 +383,13 @@ namespace post_process_detail {
                 cfg.min_beats_template_ppg)) {
                 if (tbank::minBeatsEcg() > 0 || tbank::minBeatsPpg() > 0)
                     std::cerr << "  [4.6] min beats per template: ECG "
-                        << tbank::minBeatsEcg() << "  PPG "
-                        << tbank::minBeatsPpg()
-                        << " -- templates below this are flagged "
-                           "too_few_beats and not displayed\n";
+                    << tbank::minBeatsEcg() << "  PPG "
+                    << tbank::minBeatsPpg()
+                    << " -- templates below this are flagged "
+                    "too_few_beats and not displayed\n";
                 else
                     std::cerr << "  [4.6] no minimum beats per template "
-                        "(min_beats_template_ecg/ppg unset)\n";
+                    "(min_beats_template_ecg/ppg unset)\n";
             }
 
             // Pulse QC threshold, same treatment: unset keeps the default,
@@ -407,7 +413,7 @@ namespace post_process_detail {
         }
         FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
         if (fast.tmpl.bins.empty()) {
-            std::cerr << "  no bins for " << stem  << " (recording shorter than one bin?); skipping.\n";
+            std::cerr << "  no bins for " << stem << " (recording shorter than one bin?); skipping.\n";
             return std::nullopt;   // main.cpp prints "prep failed or skipped"
         }
         job.tmpl = std::move(fast.tmpl);
@@ -593,6 +599,97 @@ namespace post_process_detail {
     // the pristine R snapshot (job.tmplR / job.beatsR), never the previous
     // anchor. At the final anchor the accumulated set is folded into job.tmpl
     // and promoted to the canonical _templates.bin.
+    // ONE CALL, EVERY ALIGNMENT. Replaces the per-step regenerateWithAnchor
+    // cycle: aligns each anchor from the pristine R snapshot, folds every block
+    // into job.tmpl, writes the full file once, promotes it, and runs the
+    // deferred per-anchor QC.
+    //
+    // MUST be called AFTER the finalize worker is joined -- it touches
+    // job.tmpl, which that worker mutates to pack the squared/absval scalars.
+    // The old anchorAccum staging existed purely so the interactive steps could
+    // run concurrently with finalize; with one call at one point there is
+    // nothing to stage, so job.anchorAccum and job.anchorStep are unused.
+    //
+    // Each anchor aligns FROM job.tmplR, never from the previous anchor:
+    // alignTemplatesFromCache leaves the R base untouched between calls, so the
+    // four compose. Returns false if nothing could be built.
+    inline bool buildAllAnchors(ViewerJob& job)
+    {
+        try {
+            const auto& seq = anchorSequence();
+            auto _tAll = std::chrono::steady_clock::now();
+
+            for (AnchorType anchor : seq) {
+                auto _t0 = std::chrono::steady_clock::now();
+                // Copy of the R base to align from -- cheap next to the beats,
+                // which are passed by reference and not mutated in the default
+                // non-scoring mode.
+                template_io::TemplateFile atmpl = job.tmplR;
+                alignTemplatesFromCache(atmpl, job.beats, job.rates, anchor);
+
+                const int anchorTag = static_cast<int>(anchor);
+                auto it = atmpl.raw_anchors.find(anchorTag);
+                if (it != atmpl.raw_anchors.end())
+                    job.tmpl.raw_anchors[anchorTag] = std::move(it->second);
+
+                auto _t1 = std::chrono::steady_clock::now();
+                std::cerr << "  [timing] anchor " << anchorName(anchor) << ": align="
+                    << std::chrono::duration_cast<std::chrono::milliseconds>(_t1 - _t0).count()
+                    << "ms\n";
+            }
+
+            // ONE WRITE. The old per-step write was trimmed to the R base plus
+            // the single anchor the viewer was about to open, because the viewer
+            // read exactly one; it now reads all four, so the file has to carry
+            // all four.
+            template_io::write_template_binfile(job.provisionalPath.string(), job.tmpl);
+            job.viewerTemplatePath = job.provisionalPath;
+            {
+                std::error_code ec;
+                std::filesystem::remove(job.templatePath, ec);
+                std::filesystem::rename(job.provisionalPath, job.templatePath, ec);
+                if (ec) {
+                    std::cerr << "[templates] WARNING: could not promote "
+                        << job.provisionalPath.string() << " -> "
+                        << job.templatePath.string() << ": " << ec.message() << "\n";
+                }
+                else {
+                    job.viewerTemplatePath = job.templatePath;
+                }
+
+                // ---- per-anchor QC over every alignment (R + the sequence) --
+                // For each: a fresh copy of the finalized base (job.tmpl, which
+                // carries absval in its scalars) and a fresh copy of the R
+                // beats, aligned in SCORING mode so the raw scalars and the
+                // beats are put in that anchor's frame. Copies, because scoring
+                // mode is destructive to both.
+                writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK",
+                    job.tmpl, job.beats, job.samplingRate);
+
+                for (AnchorType a : seq) {
+                    template_io::TemplateFile scoreT = job.tmpl;
+                    template_io::BeatsFile scoreB = job.beats;
+                    alignTemplatesFromCache(scoreT, scoreB, job.rates, a, /*forScoring=*/true);
+                    writeEcgSQICsv(job.cfg, job.stem + "_" + anchorName(a),
+                        scoreT, scoreB, job.samplingRate);
+                }
+            }
+            std::cerr << "  [timing] all anchors + QC: "
+                << std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - _tAll).count() << "ms\n";
+            return true;
+        }
+        catch (const std::exception& e) { job.error = e.what(); return false; }
+    }
+
+    // DEPRECATED, kept only so an un-migrated call site still builds. Aligns
+    // ONE anchor and writes a provisional carrying just that block -- which the
+    // viewer no longer reads, because it opens every alignment at once. Calling
+    // this instead of buildAllAnchors leaves three of the four blocks absent,
+    // TemplateBin::chFor falls back to the R base for them, and every bar's
+    // close-up shows the R template: the feature silently not working rather
+    // than an error. Delete once main.cpp is migrated.
+    [[deprecated("use buildAllAnchors(job); the viewer reads every alignment at once")]]
     inline bool regenerateWithAnchor(ViewerJob& job, AnchorType anchor)
     {
         try {

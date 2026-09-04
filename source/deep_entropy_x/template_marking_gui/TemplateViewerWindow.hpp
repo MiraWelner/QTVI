@@ -9,6 +9,7 @@
 #include "template_marking_bin_io.hpp"
 #include "BinPlotWidget.hpp"
 #include "FocusPanelWidget.hpp"
+#include "template_anchoring\anchor_view.hpp"
 #include "logging/boundary_training_log.hpp"
 
 namespace Ui { class TemplateViewerWindow; }
@@ -47,26 +48,26 @@ public:
         // (or would have been) applied at build time.
         int notchFilterHz = 0);
 
-    // Anchor cycle state. m_anchorStep: -1 = R pass; 0..N-1 index into the
-    // controller's anchor sequence. m_qAlignPass is kept as a derived flag
-    // (true for any non-R pass) so existing pass-dependent code still works.
-    void setAnchorStep(int s) { m_anchorStep = s; m_qAlignPass = (s >= 0); }
-    void setAnchorLabel(const QString& s);
-    // Total passes in the cycle (R + all anchors); controller sets this so the
-    // finish handler knows when to stop emitting reloads. Default 2 = old R/Q.
-    void setAnchorPassCount(int n) { m_anchorPassCount = n; }
-    // Which AnchorType this pass is marking. Controller sets it before
-    // loadSubject; all per-anchor marker reads/writes use it. Defaults to R.
-    void setCurrentAnchor(AnchorType a) { m_currentAnchor = a; }
-    AnchorType currentAnchor() const { return m_currentAnchor; }
+    // ---- THE ANCHOR CYCLE IS GONE ---------------------------------------
+    //
+    // setAnchorStep / setAnchorPassCount / setCurrentAnchor / currentAnchor and
+    // the requestQAlignReload signal are all deleted. They existed so a
+    // controller could drive this window four times, once per alignment,
+    // regenerating _templates.bin between openings. The window now loads every
+    // alignment at once (TemplateBin::anchored) and each bar reads and writes
+    // its own (anchor_view::anchorFor), so there is no pass, no step and no
+    // reload.
+    //
+    // CALLERS MUST BE UPDATED. Whatever owns regenerateWithAnchor /
+    // prepareViewerJob must call alignTemplatesFromCache once per
+    // anchor_view::kAllAnchors entry BEFORE writing _templates.bin, then open
+    // this window once. If it keeps the old sequence, the reload connection
+    // simply never fires -- but raw_anchors will hold only the one alignment
+    // that run generated, chFor falls back to R for the rest, and every bar's
+    // close-up shows the R template. That is the symptom to look for.
 
 signals:
     void finished();
-    // Emitted after the FIRST finish (R-aligned pass). The controller should
-    // re-run template generation with Q-alignment enabled and reload the
-    // viewer; the button then reads "Finish" and the next click emits
-    // finished().
-    void requestQAlignReload();
 
 public slots:
     // Wired in Designer via <connections>
@@ -154,7 +155,10 @@ private:
     // so PPG/arterial rows are shifted relative to ECG exactly as displayed.
     // One shared x_ms column (0 at ch1 R) plus a per-signal *_x_peak_ms column
     // (0 at that signal's own peak). Written once per subject.
-    void writeAlignedTemplateCsv();
+    // ONE SIDECAR PER ALIGNMENT, called once per anchor_view::kAllAnchors
+    // entry inside a single save. Writes that alignment's own averages and
+    // names the file from anchor_view::label(anchor).
+    void writeAlignedTemplateCsv(AnchorType anchor);
     void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
 
@@ -173,16 +177,19 @@ private:
     // column that does carry the bin's marker set.
     void refreshBankMarkers(int binIdx, int templateIdx);
 
-    // B2 focus mode. Two panels: the QRS view and the JT view. The J-point
-    // (S-end) is shared between them (spec I-4), so a J-point selection or
-    // edit refreshes BOTH; any other landmark refreshes whichever single
-    // panel it belongs to. refreshFocus() rebuilds a panel from the current
-    // bin/lead template stats (mean = ecgTemplate_raw, sd = ecgTemplate_raw_iqr
-    // [ddof=1 std], n = n_beats_raw) around the given landmark column.
+    // Focus mode: ONE panel, showing the clicked landmark's OWN alignment
+    // magnified around it -- P-aligned under the P-onset bar, Q under Q-onset,
+    // R under the J point, T under T-end (anchor_view::anchorFor). Stats come
+    // from that alignment's average via TemplateBin::chFor: mean =
+    // ecgTemplate_raw, sd = ecg_template_raw_iqr [ddof=1 std], n = n_beats_raw.
+    //
+    // There were two panels (QRS above, JT below) because the J point had to
+    // appear in both, framed to opposite edges: with only one alignment on
+    // screen, neither panel alone could show both of its neighbourhoods. That
+    // is what the alignment switch replaces.
     void refreshFocus(int binIdx, int leadIdx, int templateIdx,
         int marker, int col);
-    FocusPanelWidget* m_focusQrs = nullptr;
-    FocusPanelWidget* m_focusJt = nullptr;
+    FocusPanelWidget* m_focus = nullptr;
     // Remember the last J-point column per (bin,lead) so a QRS-side or
     // JT-side edit can refresh the other view against the same landmark.
     int m_lastFocusBin = -1, m_lastFocusLead = -1;
@@ -254,14 +261,13 @@ private:
 
     enum class MoveMode { Individual, SubsequentDelta, SubsequentRaw };
     MoveMode m_moveMode = MoveMode::SubsequentDelta;
-    // false = first (R-aligned) pass, button reads "Finish and Next";
-    // true  = any anchor pass, button reads per remaining-anchor logic.
-    // Derived from m_anchorStep via setAnchorStep; kept for pass-dependent code.
-    bool m_qAlignPass = false;
-    int  m_anchorStep = -1;        // -1 = R pass; 0..N-1 = anchor index
-    int  m_anchorPassCount = 2;    // R + anchors; controller overrides
-    QString m_anchorLabel = "R";   // shown in the top bar next to the subject id
-    AnchorType m_currentAnchor = AnchorType::R_PEAK;   // which anchor's markers this pass edits
+    // (m_qAlignPass / m_anchorStep / m_anchorPassCount / m_anchorLabel /
+    //  m_currentAnchor removed with the cycle. No member holds "the current
+    //  alignment" any more, deliberately: whichever alignment a read or write
+    //  concerns is a property of the MARKER, answered by
+    //  anchor_view::anchorFor, and a member shadowing that is exactly how a
+    //  drag on one bar used to land in another alignment's set.)
+    void setTitleForSubject();
     bool m_showEcgMarkers = false;
     bool m_showPpgMarkers = false;
     bool m_showAbpMarkers = false;

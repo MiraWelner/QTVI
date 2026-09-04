@@ -33,6 +33,7 @@
 #include "template_generation\template_io.hpp"
 #include "template_marking_gui\feature_marks.hpp"
 #include "template_morphology_grouping\template_bank.hpp"
+#include "template_anchoring\anchor_view.hpp"
 
 
 // ---------------------------------------------------------------------------
@@ -98,6 +99,139 @@ struct TemplateBin {
     uint64_t ppg_n_beats = 0;
 
     ChannelTemplateData ch1, ch2, ch3;
+
+    // ====================================================================
+    // ALL FOUR ALIGNMENTS, LOADED AT ONCE
+    //
+    // ch1/ch2/ch3 above stay the R-aligned base: the grid draws them, every
+    // existing reference to them keeps meaning what it meant, and R is the
+    // frame every other alignment's columns are translated into. The other
+    // three live here, keyed by (int)AnchorType.
+    //
+    // readTemplateInfoBin used to project ONE anchor block into ch1..3, which
+    // is why seeing a second alignment meant regenerating the templates file
+    // and reopening the window. Four sequential screens were a consequence of
+    // this one field being a scalar.
+    // ====================================================================
+    std::map<int, std::array<ChannelTemplateData, 3>> anchored;
+
+    // Glyph positions for ONE alignment. Glyphs are measurements, not
+    // judgements, so every alignment detects all of them on its own average
+    // and all four are reported -- <landmark>_auto_P through _auto_T are four
+    // measurements of one landmark on four waveforms. The flat *_auto_ch
+    // fields are R's copy, kept flat so the grid's glyph drawing and every
+    // existing consumer are untouched; this map carries the other three.
+    struct AnchorAuto {
+        double p_begin[3] = { -1, -1, -1 };
+        double p_peak[3] = { -1, -1, -1 };
+        double q_begin[3] = { -1, -1, -1 };
+        double q_peak[3] = { -1, -1, -1 };
+        double r_peak[3] = { -1, -1, -1 };
+        double s_end[3] = { -1, -1, -1 };
+        double t_end[3] = { -1, -1, -1 };
+        bool   q_begin_found[3] = { false, false, false };
+    };
+    std::map<int, AnchorAuto> auto_by_anchor;
+
+    // This alignment's template for one lead. Falls back to the R base when
+    // the anchor block is absent -- a templates file built before this change
+    // has none, and every bar's close-up then shows the R template, which is
+    // the old single-pass behaviour rather than a failure.
+    const ChannelTemplateData& chFor(int lead, AnchorType a) const {
+        const ChannelTemplateData* base[3] = { &ch1, &ch2, &ch3 };
+        if (lead < 0 || lead > 2) return ch1;
+        if (a == AnchorType::R_PEAK) return *base[lead];
+        auto it = anchored.find(static_cast<int>(a));
+        if (it == anchored.end()) return *base[lead];
+        const ChannelTemplateData& c = it->second[lead];
+        return c.ecgTemplate_raw.empty() ? *base[lead] : c;
+    }
+
+    // This alignment's glyphs. Absent anchor -> the flat (R) fields, which is
+    // also how loadSubject captures each pass's result on the way past.
+    AnchorAuto autoFor(AnchorType a) const {
+        auto it = auto_by_anchor.find(static_cast<int>(a));
+        if (it != auto_by_anchor.end()) return it->second;
+        AnchorAuto out;
+        for (int c = 0; c < 3; ++c) {
+            out.p_begin[c] = p_begin_auto_ch[c];
+            out.p_peak[c] = p_peak_auto_ch[c];
+            out.q_begin[c] = q_begin_auto_ch[c];
+            out.q_peak[c] = q_peak_auto_ch[c];
+            out.r_peak[c] = r_peak_auto_ch[c];
+            out.s_end[c] = s_end_auto_ch[c];
+            out.t_end[c] = t_end_auto_ch[c];
+            out.q_begin_found[c] = q_begin_found_auto_ch[c];
+        }
+        return out;
+    }
+
+    // Samples to ADD to a column measured in `from`'s frame to express it in
+    // `to`'s. Both alignments put the same beat's R on their own r_col, so the
+    // difference of the two r_cols is the whole conversion. Normally 0 or a
+    // sample or two: alignTemplatesFromCache aligns each anchor against the
+    // median-length snippet, which does not move, so R lands near the base
+    // column -- near, not exactly, which is why this is a function and not an
+    // assumption. 0 when either r_col is unknown.
+    int frameShift(int lead, AnchorType from, AnchorType to) const {
+        const int a = chFor(lead, from).r_col_raw;
+        const int b = chFor(lead, to).r_col_raw;
+        return (a < 0 || b < 0) ? 0 : (b - a);
+    }
+
+    // ---- THE BAR SET THE OPERATOR ACTUALLY PLACED ------------------------
+    //
+    // Each bar lives in its owning alignment's set, so no single
+    // markers_by_anchor entry holds a whole beat any more. Anything needing
+    // P-onset AND Q-onset AND J-point AND T-end together -- QRS duration, QT,
+    // the reactive P and T peaks, the global interval lines, the VCG rows --
+    // assembles them here, each translated into `frame`'s columns on the way.
+    //
+    // Bars only. p_peak is a glyph and is filled by syncReactiveGlyphs from
+    // the two bars that bracket it.
+    tbank::BankMarkerSet userMarks(int lead, int slot,
+        AnchorType frame = AnchorType::R_PEAK) const
+    {
+        tbank::BankMarkerSet out;   // all -1
+        auto pull = [&](int marker, int tbank::BankMarkerSet::* field) {
+            const AnchorType owner = anchor_view::anchorFor(marker);
+            const int v = slotMarks(lead, slot, owner).*field;
+            if (v < 0) return;
+            out.*field = v + frameShift(lead, owner, frame);
+            };
+        pull(anchor_view::kPBegin, &tbank::BankMarkerSet::p_begin);
+        pull(anchor_view::kQBegin, &tbank::BankMarkerSet::q_begin);
+        pull(anchor_view::kSEnd, &tbank::BankMarkerSet::s_end);
+        pull(anchor_view::kTEnd, &tbank::BankMarkerSet::t_end);
+        return out;
+    }
+
+    // ---- THE ONE STORED GLYPH --------------------------------------------
+    //
+    // p_peak is written to both the markings CSV and the markings bin, so it
+    // has to exist as a stored value -- but it is a REACTIVE glyph, bracketed
+    // by the P-onset and Q-onset bars, and those two bars live on DIFFERENT
+    // alignments (_P and _Q). So it is recomputed from the assembled bar set
+    // once per alignment, in that alignment's own frame and against that
+    // alignment's own average, and written into each alignment's marker set.
+    // Four stored values, matching the four *_user columns a glyph gets.
+    //
+    // Called after every bar edit and once after seeding. reactive_ecg is the
+    // same function BinPlotWidget::reactiveGlyphs calls, so the stored value,
+    // the CSV column and the X on screen cannot disagree.
+    void syncReactiveGlyphs(int lead, int slot, double /*unused*/ = 0.0) {
+        if (lead < 0 || lead > 2 || slot < 0) return;
+        for (AnchorType a : anchor_view::kAllAnchors) {
+            const tbank::BankMarkerSet bars = userMarks(lead, slot, a);
+            const std::vector<double>& ecg = chFor(lead, a).ecgTemplate_raw;
+            if (ecg.empty()) continue;
+            const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
+                ecg, bars.p_begin, bars.q_begin, bars.s_end, bars.t_end);
+            tbank::BankMarkerSet& dst = slotMarks(lead, slot, a);
+            dst.p_peak = (rx.p_peak >= 0.0)
+                ? static_cast<int>(std::lround(rx.p_peak)) : -1;
+        }
+    }
     std::vector<double> ppgTemplate;
     std::vector<double> ppg_template_iqr;
 
@@ -190,7 +324,8 @@ struct TemplateBin {
     double q_begin_auto_ch[3] = { -1, -1, -1 };
     double r_peak_auto_ch[3] = { -1, -1, -1 };
     double s_end_auto_ch[3] = { -1, -1, -1 };
-    double t_begin_auto_ch[3] = { -1, -1, -1 };
+    // (t_begin_auto_ch removed with the marker -- see BankMarkerSet. The
+    //  T-peak bracket is s_end/t_end on both the auto and the bar side.)
     double t_end_auto_ch[3] = { -1, -1, -1 };
     double p_begin_auto_ch[3] = { -1, -1, -1 };
     bool q_begin_found_auto_ch[3] = { false, false, false };
@@ -266,16 +401,14 @@ struct TemplateBin {
 // Read: convert template_io::TemplateFile -> std::vector<TemplateBin>
 // ---------------------------------------------------------------------------
 inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
-    AnchorType anchor = AnchorType::R_PEAK) {
+    AnchorType /*anchor*/ = AnchorType::R_PEAK) {
     template_io::TemplateFile tf = template_io::read_template_binfile(path);
 
-    // Non-R anchors live in tf.raw_anchors (per-bin 3-channel raw). R_PEAK
-    // (and any anchor not present in the file) uses the scalar base in
-    // bins[i].chN_raw. Look the requested anchor up once.
-    const int anchorTag = static_cast<int>(anchor);
-    const auto anchorIt = tf.raw_anchors.find(anchorTag);
-    const bool useAnchor = (anchor != AnchorType::R_PEAK)
-        && (anchorIt != tf.raw_anchors.end());
+    // EVERY ANCHOR, NOT ONE. This used to take an anchor and project that one
+    // block into chN, which is what made a second alignment cost a template
+    // regeneration and a window reload. The parameter is vestigial -- there is
+    // nothing left to select -- and is kept only so existing call sites
+    // compile; delete it once they are all updated.
 
     std::vector<TemplateBin> bins(tf.bins.size());
     for (size_t i = 0; i < tf.bins.size(); ++i) {
@@ -306,35 +439,31 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
         dst.artTemplate_iqr = src.artTemplate_iqr;
         dst.artPulmTemplate_iqr = src.artPulmTemplate_iqr;
 
-        // Pick the raw ECG source: the requested anchor's block if present
-        // and non-R, else the scalar base (R_PEAK). Guard the per-bin index
-        // in case an anchor block is shorter than the base (shouldn't happen,
-        // but never index past it).
-        const bool anchorHasBin = useAnchor && (i < anchorIt->second.size());
-        const template_io::ChannelMethodTemplate& c1 =
-            anchorHasBin ? anchorIt->second[i][0] : src.ch1_raw;
-        const template_io::ChannelMethodTemplate& c2 =
-            anchorHasBin ? anchorIt->second[i][1] : src.ch2_raw;
-        const template_io::ChannelMethodTemplate& c3 =
-            anchorHasBin ? anchorIt->second[i][2] : src.ch3_raw;
+        // chN is ALWAYS the R base: what the grid draws, and the frame every
+        // other alignment's columns are translated into.
+        auto project = [](const template_io::ChannelMethodTemplate& c,
+            ChannelTemplateData& d) {
+                d.ecgTemplate_raw = c.ecgTemplate;
+                d.ecg_template_raw_iqr = c.ecg_template_iqr;
+                d.alignment_point_raw = c.alignment_point;
+                d.r_col_raw = c.r_col;
+                d.median_rr_samples = c.median_rr_samples;
+            };
+        project(src.ch1_raw, dst.ch1);
+        project(src.ch2_raw, dst.ch2);
+        project(src.ch3_raw, dst.ch3);
 
-        dst.ch1.ecgTemplate_raw = c1.ecgTemplate;
-        dst.ch1.ecg_template_raw_iqr = c1.ecg_template_iqr;
-        dst.ch1.alignment_point_raw = c1.alignment_point;
-        dst.ch1.r_col_raw = c1.r_col;
-        dst.ch1.median_rr_samples = c1.median_rr_samples;
-
-        dst.ch2.ecgTemplate_raw = c2.ecgTemplate;
-        dst.ch2.ecg_template_raw_iqr = c2.ecg_template_iqr;
-        dst.ch2.alignment_point_raw = c2.alignment_point;
-        dst.ch2.r_col_raw = c2.r_col;
-        dst.ch2.median_rr_samples = c2.median_rr_samples;
-
-        dst.ch3.ecgTemplate_raw = c3.ecgTemplate;
-        dst.ch3.ecg_template_raw_iqr = c3.ecg_template_iqr;
-        dst.ch3.alignment_point_raw = c3.alignment_point;
-        dst.ch3.r_col_raw = c3.r_col;
-        dst.ch3.median_rr_samples = c3.median_rr_samples;
+        // Every alignment block the file carries, R included if it is in
+        // there (chFor short-circuits R to the base regardless, so a
+        // duplicate costs nothing and an absent one costs nothing either).
+        // Guard the per-bin index: an anchor block shorter than the base
+        // shouldn't happen, but never index past it.
+        for (const auto& kv : tf.raw_anchors) {
+            if (i >= kv.second.size()) continue;
+            std::array<ChannelTemplateData, 3> trio;
+            for (int c = 0; c < 3; ++c) project(kv.second[i][c], trio[c]);
+            dst.anchored[kv.first] = std::move(trio);
+        }
     }
     return bins;
 }
@@ -350,7 +479,7 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
 //     uint8   bad_r_ch1, bad_r_ch2, bad_r_ch3
 //     uint8   ppg_issue          (0 = ok, 1 = bad, 2 = no ppg)
 //     int32   p_peak_ch1..3, q_begin_ch1..3, r_peak_ch1..3,
-//             s_end_ch1..3, t_begin_ch1..3, t_end_ch1..3
+//             s_end_ch1..3, t_end_ch1..3
 //     int32   ppg_onset, ppg_p50, ppg_peak, ppg_dicrotic, ppg_peak2, ppg_end, ppg_t80
 //     float64 ppg_t80_rise, ppg_pw80   (doubles; t80_rise = upslope point at
 //             the 80%-downslope level, pw80 = t80 - t80_rise)
@@ -391,7 +520,7 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         //       int32  anchorCount
         //       per anchor:
         //         int32  anchorTag
-        //         int32  p_begin, p_peak, q_begin, s_end, t_begin, t_end
+        //         int32  p_begin, p_peak, q_begin, s_end, t_end
         //
         // THE SLOT DIMENSION IS THE POINT. The old layout was per anchor only,
         // with each field an array of 3 leads -- it could store slot 0 and
@@ -417,7 +546,12 @@ inline void writeTemplateMarkingsBin(const std::string& path,
                     w32(kv.first);                      // AnchorType tag
                     const tbank::BankMarkerSet& m = kv.second;
                     w32(m.p_begin); w32(m.p_peak); w32(m.q_begin);
-                    w32(m.s_end);   w32(m.t_begin);  w32(m.t_end);
+                    // FIVE FIELDS, NOT SIX: t_begin is gone from the record,
+                    // not reserved in it. This file has no version field --
+                    // the header is a bare bin count -- so a markings file
+                    // written before this change misparses from its first
+                    // marker set onward. Re-mark rather than migrate.
+                    w32(m.s_end);   w32(m.t_end);
                 }
             }
         }
@@ -473,20 +607,11 @@ inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, int p_peak
     return f;
 }
 
-// Per-channel ECG column order. isUser => straight off a marker (gets _user).
-// isInterval => qrs/qt, ms only (no y, no x/user).
-// Under v4, the six ECG markers are ALL user-placed:
-//   p_peak, q_begin, r_peak, s_end, t_peak, t_end.
-// Q peak and S peak inside the QRS complex are still computed
-// (argmin/max between q_begin and s_end); QRS and QT intervals derive
-// from q_begin and t_end as before.
-struct EcgColSpec { const char* name; bool isUser; bool isInterval; };
-static const EcgColSpec ecgCols[] = {
-    {"p_peak",  true,  false}, {"q_begin", true,  false},
-    {"q_peak",  false, false}, {"r_peak",  true,  false}, {"s_peak", false, false},
-    {"s_end",   true,  false}, {"t_begin", true,  false}, {"t_end",  true,  false},
-    {"qrs",     false, true},  {"qt",      false, true},
-};
+// (EcgColSpec / ecgCols deleted: declared, never referenced, and wrong --
+//  it claimed all six ECG markers were user-placed, which was never true and
+//  is emphatically not true now that four bars and a set of glyphs are
+//  distinguished. The live column order is ecgPointNames, inside
+//  writeTemplateMarkingsCsv.)
 inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_p50","ppg_peak","ppg_dicr","ppg_peak2","ppg_t80","ppg_t80_rise","ppg_end" };
 inline constexpr const char* abpCols[] = { "abp_onset","abp_peak","abp_dicr","abp_peak2","abp_end" };
 inline constexpr const char* artCols[] = { "art_onset","art_peak","art_dicr","art_peak2","art_end" };
@@ -577,12 +702,19 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             std::vector<double> vals;
             for (const auto& b : bins) {
                 if (b.bad_segment || b.bad_r_ch[c]) continue;
-                const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-                const auto& ecg = chs[c]->ecgTemplate_raw;
+                // THE R ALIGNMENT, DELIBERATELY, even when this sidecar is a
+                // non-R one. The ref divides every normalized amplitude in the
+                // file, so computing it per alignment would make
+                // p_begin_ch1_y_norm_auto_P and ..._R two different units and
+                // silently un-comparable. One subject, one ref per channel.
+                const std::vector<double>& ecg =
+                    b.chFor(c, AnchorType::R_PEAK).ecgTemplate_raw;
                 if (ecg.empty()) continue;
+                const auto aaR = b.autoFor(AnchorType::R_PEAK);
                 EcgFeatures ft = computeEcgFeatures(ecg,
-                    (int)std::lround(b.p_peak_auto_ch[c]), (int)std::lround(b.q_begin_auto_ch[c]), (int)std::lround(b.r_peak_auto_ch[c]),
-                    (int)std::lround(b.s_end_auto_ch[c]), (int)std::lround(b.t_end_auto_ch[c]),
+                    (int)std::lround(aaR.p_peak[c]), (int)std::lround(aaR.q_begin[c]),
+                    (int)std::lround(aaR.r_peak[c]), (int)std::lround(aaR.s_end[c]),
+                    (int)std::lround(aaR.t_end[c]),
                     sampleRateHz);
                 if (ft.r_idx < 0 || ft.s_idx < 0.0) continue;
                 if (ft.r_idx >= (int)ecg.size() || ft.s_idx > (double)(ecg.size() - 1))
@@ -634,20 +766,34 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     f << "file_id,bin_index,bad_r_ch1,bad_r_ch2,bad_r_ch3";
     if (wantPulse) f << ",ppg_issue";
 
-    // ECG 8 point columns + 2 interval columns per channel.
+    // ECG point columns + 2 interval columns per channel.
+    //
+    // p_begin ADDED. It was absent: the list started at p_peak, so the P-onset
+    // bar -- one of the four the operator places, and the entire reason the P
+    // alignment exists -- had no column in this file at all. (The aligned-
+    // template CSV did emit it, so the gap was here only.)
+    //
+    // t_begin REMOVED with the marker. Nothing ever set it, so its columns
+    // were structurally blank, and the T-peak bracket that referenced it
+    // reported nothing while the on-screen X sat correctly between the J-point
+    // and T-end bars.
     static const char* ecgPointNames[] = {
-        "p_peak", "q_begin", "q_peak", "r_peak", "s_peak",
-        "s_end",  "t_peak", "t_begin",  "t_end"
+        "p_begin", "p_peak", "q_begin", "q_peak", "r_peak", "s_peak",
+        "s_end",   "t_peak", "t_end"
     };
     static const char* ecgIntervalNames[] = { "qrs", "qt" };
 
     auto emitEcgPointHeader = [&](const char* name, int c) {
-        // r_peak is the only autodetect-only column (R is never user-placed).
-        // t_peak DOES get a user column: it's reactive, so it has a distinct
-        // value under the auto brackets and under the user brackets, and the
-        // user one is what the operator sees on screen. Keep this rule and the
-        // row loop's `k != 3` test in step -- they are the same rule.
-        const bool userToo = (std::strcmp(name, "r_peak") != 0);
+        // r_peak is the only column with no user variant anywhere: it is the
+        // alignment anchor, re-derived from r_col every load, never placed, and
+        // it holds no BankMarkerSet field. Every other glyph DOES get a user
+        // column -- p_peak and t_peak are reactive, so they have a distinct
+        // value under the detector's brackets and under the operator's bars,
+        // and the bar-bracketed one is the X on screen.
+        //
+        // ONE SOURCE for this rule: the row loop asks anchor_view too, so the
+        // header and the body cannot disagree about column count.
+        const bool userToo = anchor_view::hasUserColumn(name);
         f << ',' << name << "_ch" << c << "_y_norm_auto";
         if (userToo) f << ',' << name << "_ch" << c << "_y_norm_user";
         f << ',' << name << "_ch" << c << "_y_mv_auto";
@@ -808,64 +954,99 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             << (b.bad_r_ch[2] ? 1 : 0);
         if (wantPulse) f << ',' << static_cast<int>(b.bad_ppg);
 
-        const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
+        // (the chs[3] local is gone: every ECG lookup below goes through
+        //  b.chFor(lead, anchor), which selects this block's alignment.)
 
         if (wantEcg)
             for (int c = 0; c < 3; ++c) {
-                const auto& ecg = chs[c]->ecgTemplate_raw;
+                // EVERYTHING ECG IN THIS BLOCK IS MEASURED ON THIS ALIGNMENT.
+                // Its own average supplies the amplitudes, its own detections
+                // supply the glyph columns, and only the one bar it owns gets a
+                // user column. Four blocks, four frames.
+                const std::vector<double>& ecg = b.chFor(c, anchor).ecgTemplate_raw;
                 const double ref = ecgRef[c];
+                const auto aa = b.autoFor(anchor);
+
+                // ---- BARS: ONE ALIGNMENT EACH ------------------------------
+                // slotMarks(c, 0, anchor) already holds only the bar this
+                // alignment owns (maskFor seeds nothing else into it), but the
+                // filter is explicit because the column's MEANING depends on
+                // it: a P onset measured against the P-aligned average is a
+                // different number from one measured against R, so reporting
+                // it under another suffix would attribute it to a waveform it
+                // was never compared to.
+                tbank::BankMarkerSet umk;
+                {
+                    const tbank::BankMarkerSet& own = b.slotMarks(c, 0, anchor);
+                    if (anchor_view::owns(anchor, anchor_view::kPBegin)) umk.p_begin = own.p_begin;
+                    if (anchor_view::owns(anchor, anchor_view::kQBegin)) umk.q_begin = own.q_begin;
+                    if (anchor_view::owns(anchor, anchor_view::kSEnd))   umk.s_end = own.s_end;
+                    if (anchor_view::owns(anchor, anchor_view::kTEnd))   umk.t_end = own.t_end;
+                }
+
+                // ---- GLYPHS: EVERY ALIGNMENT -------------------------------
+                // A glyph is a measurement, not a judgement, so all four
+                // alignments report all of them. The reactive ones need the
+                // WHOLE bar set, which spans three alignments, so they are
+                // assembled and translated into THIS alignment's frame -- the
+                // same bars the operator placed, re-measured on this waveform.
+                //
+                // reactive_ecg is the function BinPlotWidget::reactiveGlyphs
+                // calls, with the same bracket bars (P peak between P-onset and
+                // Q-onset; T peak between S-END and T-end). The T-peak bracket
+                // used to be umk.t_begin here, and NOTHING EVER SET t_begin --
+                // so this column reported blank while the X on screen sat in
+                // the right place, in direct contradiction of BinPlotWidget's
+                // promise that screen and files cannot disagree.
+                const tbank::BankMarkerSet whole = b.userMarks(c, 0, anchor);
+                const FeatureMarks::ReactiveEcg rxUser = FeatureMarks::reactive_ecg(
+                    ecg, whole.p_begin, whole.q_begin, whole.s_end, whole.t_end);
+                const FeatureMarks::ReactiveEcg rxAuto = FeatureMarks::reactive_ecg(
+                    ecg, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
+                    (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]));
 
                 EcgFeatures ftAuto = computeEcgFeatures(ecg,
-                    (int)std::lround(b.p_peak_auto_ch[c]), (int)std::lround(b.q_begin_auto_ch[c]), (int)std::lround(b.r_peak_auto_ch[c]),
-                    (int)std::lround(b.s_end_auto_ch[c]), (int)std::lround(b.t_end_auto_ch[c]),
+                    (int)std::lround(aa.p_peak[c]), (int)std::lround(aa.q_begin[c]),
+                    (int)std::lround(aa.r_peak[c]), (int)std::lround(aa.s_end[c]),
+                    (int)std::lround(aa.t_end[c]),
                     sampleRateHz);
-                // Slot 0's set for this lead. slotMarks selects the lead, so
-                // the per-lead subscripts on every field below are gone.
-                const tbank::BankMarkerSet& umk = b.slotMarks(c, 0, anchor);
+                // Derived from the assembled bars, not from `umk`: q_peak,
+                // s_peak and the QRS/QT intervals need a whole beat's
+                // brackets, and no single alignment's marker set holds one any
+                // more. The two intervals come out identical in all four
+                // blocks (a duration is frame-free); the two positions differ
+                // between blocks by the frame shift.
                 EcgFeatures ftUser = computeEcgFeatures(ecg,
-                    umk.p_peak, umk.q_begin, b.r_peak_ch[c],
-                    umk.s_end, umk.t_end,
+                    (int)std::lround(rxUser.p_peak), whole.q_begin, b.r_peak_ch[c],
+                    whole.s_end, whole.t_end,
                     sampleRateHz);
-
-                // T-peak is reactive: there's no T-peak bar, it's the extremum
-                // between the T-begin and T-end bars. So it has two honest
-                // values, and both are emitted through the one shared
-                // FeatureMarks::reactive_ecg -- the autodetect column bracketed
-                // by the *_auto_ch columns, the user column bracketed by the
-                // operator's own bars (i.e. exactly the X drawn on screen).
-                // The autodetect brackets are already sub-sample, so they are
-                // passed through unrounded -- the lround here was discarding
-                // precision on the way IN as well as on the way out.
-                const double tPeakAuto = FeatureMarks::compute_t_peak(ecg,
-                    b.t_begin_auto_ch[c], b.t_end_auto_ch[c]);
-                const double tPeakUser = FeatureMarks::compute_t_peak(ecg,
-                    static_cast<double>(umk.t_begin),
-                    static_cast<double>(umk.t_end));
 
                 // Order MUST match ecgPointNames:
-                //   p_peak, q_begin, q_peak(computed), r_peak, s_peak(computed),
-                //   s_end,  t_peak(reactive), t_begin, t_end
-                // Autodetect side keeps its sub-sample precision; the user side
-                // is int because MarkerSet stores integer sample indices.
-                // q_peak/s_peak/t_peak now return double, so all nine autodetect
-                // columns carry sub-sample positions.
-                struct P { double a; double u; };
+                //   p_begin(bar), p_peak(glyph), q_begin(bar), q_peak(computed),
+                //   r_peak(glyph), s_peak(computed), s_end(bar),
+                //   t_peak(glyph), t_end(bar)
+                // Autodetect side keeps its sub-sample precision; the bar side
+                // is int because BankMarkerSet stores whole sample indices.
+                struct P { const char* name; double a; double u; };
                 const P pts[] = {
-                    { b.p_peak_auto_ch[c],  (double)umk.p_peak  },
-                    { b.q_begin_auto_ch[c], (double)umk.q_begin },
-                    { ftAuto.q_idx,         ftUser.q_idx             },
-                    { b.r_peak_auto_ch[c],  (double)b.r_peak_ch[c]    },
-                    { ftAuto.s_idx,         ftUser.s_idx             },
-                    { b.s_end_auto_ch[c],   (double)umk.s_end   },
-                    { tPeakAuto,            tPeakUser                },   // reactive, both sides
-                    { b.t_begin_auto_ch[c], (double)umk.t_begin },
-                    { b.t_end_auto_ch[c],   (double)umk.t_end   }
+                    { "p_begin", aa.p_begin[c],   (double)umk.p_begin },
+                    { "p_peak",  rxAuto.p_peak, rxUser.p_peak      },   // reactive glyph, both sides
+                    { "q_begin", aa.q_begin[c],   (double)umk.q_begin },
+                    { "q_peak",  ftAuto.q_idx, ftUser.q_idx        },
+                    { "r_peak",  aa.r_peak[c],    -1.0                },   // no user column at all
+                    { "s_peak",  ftAuto.s_idx, ftUser.s_idx        },
+                    { "s_end",   aa.s_end[c],     (double)umk.s_end   },
+                    { "t_peak",  rxAuto.t_peak, rxUser.t_peak      },   // reactive glyph, both sides
+                    { "t_end",   aa.t_end[c],     (double)umk.t_end   }
                 };
-                for (int k = 0; k < 9; ++k) {
-                    // r_peak (index 3) is the only autodetect-only column --
-                    // same rule as emitEcgPointHeader's userToo above.
-                    const bool userToo = (k != 3);
-                    emitEcgPoint(ecg, pts[k].a, pts[k].u, ref, userToo);
+                for (const P& pt : pts) {
+                    // SAME FUNCTION the header emitter called, so the two
+                    // cannot disagree about how many columns this point has.
+                    // This was a bare `k != 3` index test, which meant adding a
+                    // point column silently shifted which one lost its user
+                    // variant.
+                    emitEcgPoint(ecg, pt.a, pt.u, ref,
+                        anchor_view::hasUserColumn(pt.name));
                 }
             }
 
@@ -940,20 +1121,25 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
         } // end if (wantPulse) pulse point groups
 
         // Autodetected ECG glyph columns (p_wave, q_onset, r_wave, t_peak).
-        // p_wave/q_onset/r_wave ARE the stored autodetect columns -- emitted
-        // straight, with no parallel recompute that could disagree with them.
-        // (r_wave in particular: R has exactly one definition, r_peak_auto_ch
-        // from alignment. It is never re-derived by an argmax here.) Only
-        // t_peak is reactive, bracketed by the auto T-begin/T-end to match this
-        // group's "_autodetect" name.
+        // p_wave/q_onset/r_wave ARE this alignment's stored detections --
+        // emitted straight, with no parallel recompute that could disagree
+        // with them. (r_wave in particular: R has exactly one definition, the
+        // alignment's own r_peak. It is never re-derived by an argmax here.)
+        // p_wave and t_peak are reactive, bracketed here by the DETECTOR's
+        // bars to match this group's "_auto" name -- t_peak by s_end/t_end,
+        // which is the bracket reactiveGlyphs uses, not the t_begin this line
+        // used to pass and nothing ever set.
         if (wantEcg)
             for (int c = 0; c < 3; ++c) {
-                const auto& ecg = chs[c]->ecgTemplate_raw;
-                emitAutoFeatPt(ecg, b.p_peak_auto_ch[c]);
-                emitAutoFeatPt(ecg, b.q_begin_auto_ch[c]);
-                emitAutoFeatPt(ecg, b.r_peak_auto_ch[c]);
-                emitAutoFeatPt(ecg, FeatureMarks::compute_t_peak(ecg,
-                    b.t_begin_auto_ch[c], b.t_end_auto_ch[c]));
+                const std::vector<double>& ecg = b.chFor(c, anchor).ecgTemplate_raw;
+                const auto aa = b.autoFor(anchor);
+                const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
+                    ecg, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
+                    (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]));
+                emitAutoFeatPt(ecg, rx.p_peak);
+                emitAutoFeatPt(ecg, aa.q_begin[c]);
+                emitAutoFeatPt(ecg, aa.r_peak[c]);
+                emitAutoFeatPt(ecg, rx.t_peak);
             }
         if (wantPulse) {
             for (const auto& gl : ppg_and_artpulse_automated_markers) {
@@ -1012,7 +1198,7 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
                     tbank::BankMarkerSet& m =
                         b.slotMarks(lead, slot, static_cast<AnchorType>(tag));
                     m.p_begin = r32(); m.p_peak = r32(); m.q_begin = r32();
-                    m.s_end = r32();   m.t_begin = r32();  m.t_end = r32();
+                    m.s_end = r32();   m.t_end = r32();
                 }
             }
         }

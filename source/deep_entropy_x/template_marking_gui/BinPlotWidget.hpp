@@ -51,22 +51,27 @@ public:
         EcgQBegin = 2,
         EcgRPeak = 3,
         EcgSEnd = 4,
-        EcgTBegin = 5,
-        EcgTEnd = 6,
+        // T begin removed and the numbering CLOSED UP, not left as a hole.
+        // Nothing persists a marker id -- m_touchedMarks is keyed within a
+        // session and every file format stores landmarks by field, not by enum
+        // value -- so the renumbering is invisible outside this process.
+        // anchor_view.hpp mirrors these values and BinPlotWidget.cpp
+        // static_asserts them, so a missed shift is a build error.
+        EcgTEnd = 5,
         // --- PPG markers (contiguous, immediately after ECG) ---
-        PpgOnset = 7,
-        PpgT50 = 8,
-        PpgPeak = 9,
-        PpgDicrotic = 10,
-        PpgPeak2 = 11,
-        PpgT80 = 12,
-        PpgEnd = 13,
+        PpgOnset = 6,
+        PpgT50 = 7,
+        PpgPeak = 8,
+        PpgDicrotic = 9,
+        PpgPeak2 = 10,
+        PpgT80 = 11,
+        PpgEnd = 12,
         // --- Arterial markers ---
-        AbpOnset = 14, AbpPeak = 15, AbpDicrotic = 16, AbpPeak2 = 17, AbpEnd = 18,
-        ArtOnset = 19, ArtPeak = 20, ArtDicrotic = 21, ArtPeak2 = 22, ArtEnd = 23,
-        ArtPulmOnset = 24, ArtPulmPeak = 25, ArtPulmDicrotic = 26,
-        ArtPulmPeak2 = 27, ArtPulmEnd = 28,
-        MarkerCount = 29
+        AbpOnset = 13, AbpPeak = 14, AbpDicrotic = 15, AbpPeak2 = 16, AbpEnd = 17,
+        ArtOnset = 18, ArtPeak = 19, ArtDicrotic = 20, ArtPeak2 = 21, ArtEnd = 22,
+        ArtPulmOnset = 23, ArtPulmPeak = 24, ArtPulmDicrotic = 25,
+        ArtPulmPeak2 = 26, ArtPulmEnd = 27,
+        MarkerCount = 28
     };
 
     static bool markerIsEcg(int m) { return m >= EcgPBegin && m <= EcgTEnd; }
@@ -81,7 +86,7 @@ public:
     // "Begin"/onset markers are drawn dashed; everything else (incl. "end")
     // solid.
     static bool markerIsBegin(int m) {
-        return m == EcgPBegin || m == EcgQBegin || m == EcgTBegin
+        return m == EcgPBegin || m == EcgQBegin
             || m == PpgOnset || m == AbpOnset || m == ArtOnset || m == ArtPulmOnset;
     }
     double m_rPeakSample = 0.0;   // R-peak sample index within the ECG template

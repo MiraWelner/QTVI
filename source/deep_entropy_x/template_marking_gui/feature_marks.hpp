@@ -14,6 +14,7 @@
 
 #include <utility>
 #include <vector>
+#include "template_anchoring\anchor_type.hpp"   // AnchorType (re-exported for existing users)
 #include "template_morphology_grouping/template_bank.hpp"
 #include <functional>
 #include <cmath>
@@ -22,7 +23,10 @@
 
 struct TemplateBin;   // forward-declare -- full definition in TemplateBinIO.hpp
 
-enum class AnchorType { P_ONSET, Q_ONSET, R_PEAK, J_POINT };//J_POINT = S_END
+// AnchorType moved to its own dependency-free header so that code which only
+// needs to NAME an alignment does not have to include this one (and through it
+// template_bank.hpp, annotation_types.hpp and the FeatureMarks class).
+// Re-exported here by the include below, so every existing user is unaffected.
 
 // Returns the landmark subsample index for one beat, or -1 if not found.
 using AnchorLocator = std::function<double(const std::vector<double>& beat)>;
@@ -61,7 +65,7 @@ public:
     // Both reactive ECG glyphs, from the four bars that bracket them:
     // P-peak between P-onset and Q-onset, T-peak between S-end and T-end.
     static ReactiveEcg reactive_ecg(const std::vector<double>& ecg,
-        int p_begin, int q_begin, int t_begin, int t_end);
+        int p_begin, int q_begin, int s_end, int t_end);
 
     // P peak: the extremum between the P-onset and Q-onset bars, refined.
     // BRACKETED, not searched from R. seed_p_peak's fixed [R-260ms, R-60ms]
@@ -76,8 +80,17 @@ public:
     // Individual reactive computes (all track user markers live).
     static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col);
     static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr);
-    static double compute_t_peak(const std::vector<double>& ecg, double tBegin, double tEnd);
-    static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col, double tBeginIn = -1.0);
+    // T peak: the extremum between the S-END and T-END bars. Named for the
+    // brackets it takes; the old `tBegin` name referred to a marker that was
+    // never set, and one caller believed it and passed that empty field.
+    static double compute_t_peak(const std::vector<double>& ecg,
+        double bracketSEnd, double bracketTEnd);
+    // j_point: the J-point bar, sub-sample, as the start of the T-end search;
+    // -1 lets the finder derive its own window from r_col. NAMED TO MATCH THE
+    // DEFINITION, which has always called it j_point -- the header said
+    // tBeginIn, so the declaration and the definition disagreed about which
+    // landmark this is, and t_begin never fed it.
+    static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0);
     static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0);
 
     // ---------------------------------------------------------------

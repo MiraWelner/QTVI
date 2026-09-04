@@ -51,11 +51,14 @@ namespace global_intervals {
      * @brief Extract one channel's landmarks from a bin.
      *
      * @param ch      0..2.
-     * @param anchor  Which per-anchor user MarkerSet to read. Marker columns
-     *                are only meaningful relative to the alignment they were
-     *                placed on, so the anchor is not optional even for AUTO
-     *                (it selects nothing there, but keeping one signature
-     *                stops the two paths from drifting apart).
+     * @param anchor  The FRAME the returned columns are expressed in, not the
+     *                set to read from. Marker columns are only meaningful
+     *                relative to an alignment, and the bars now live on four
+     *                different ones, so the USER path assembles them and
+     *                translates into this frame. Callers pass R_PEAK: global
+     *                intervals compare landmarks across LEADS on one axis, and
+     *                the reference lines drawn from them are drawn on the
+     *                R-aligned panels.
      */
     inline LeadMarkers leadMarkersFor(const TemplateBin& bin, int ch,
         AnchorType anchor, MarkerSource src) {
@@ -69,6 +72,11 @@ namespace global_intervals {
             : static_cast<double>(bin.r_peak_ch[ch]);
 
         if (src == MarkerSource::AUTO) {
+            // Glyph side: these flat fields hold the R alignment's detections
+            // (loadSubject seeds R last), which matches the `anchor` this is
+            // called with everywhere -- R, the frame the reference lines are
+            // drawn in. A per-alignment AUTO variant would read
+            // bin.autoFor(anchor) instead.
             m.pOnset = bin.p_begin_auto_ch[ch];
             m.qOnset = bin.q_begin_auto_ch[ch];
             m.jPoint = bin.s_end_auto_ch[ch];
@@ -79,7 +87,13 @@ namespace global_intervals {
             // across LEADS on the sinus morphology; a sub-template's boundaries
             // are not comparable to it, and the reference lines drawn from this
             // are drawn on every panel including the ectopic ones.
-            const tbank::BankMarkerSet& u = bin.slotMarks(ch, 0, anchor);
+            // ASSEMBLED ACROSS ALIGNMENTS, then expressed in `anchor`'s frame.
+            // This read one alignment's marker set, and no single set holds a
+            // whole beat any more: the P onset lives on the P alignment, the Q
+            // onset on Q, the J point on R and T-end on T. Fetching one would
+            // now return one landmark and three -1s, and every global interval
+            // would come out invalid.
+            const tbank::BankMarkerSet u = bin.userMarks(ch, 0, anchor);
             m.pOnset = static_cast<double>(u.p_begin);
             m.qOnset = static_cast<double>(u.q_begin);
             m.jPoint = static_cast<double>(u.s_end);

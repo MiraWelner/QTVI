@@ -154,14 +154,19 @@ namespace tbank_ser {
 
     namespace detail {
 
+        // FIVE FIELDS, NOT SIX. t_begin is gone from BankMarkerSet and gone
+        // from the record with it -- no reserved slot. This record has no
+        // length prefix and no version of its own, so a _templates.bin written
+        // before this change will misparse from the first bank marker set
+        // onward. Regenerate rather than migrate.
         inline void writeMarkerSet(std::ofstream& f, const tbank::BankMarkerSet& m) {
             w32(f, m.p_begin); w32(f, m.p_peak); w32(f, m.q_begin);
-            w32(f, m.s_end);   w32(f, m.t_begin); w32(f, m.t_end);
+            w32(f, m.s_end);   w32(f, m.t_end);
         }
         inline tbank::BankMarkerSet readMarkerSet(std::ifstream& f) {
             tbank::BankMarkerSet m;
             m.p_begin = r32(f); m.p_peak = r32(f); m.q_begin = r32(f);
-            m.s_end = r32(f); m.t_begin = r32(f); m.t_end = r32(f);
+            m.s_end = r32(f); m.t_end = r32(f);
             return m;
         }
 

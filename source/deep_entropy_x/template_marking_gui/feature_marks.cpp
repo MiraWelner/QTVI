@@ -10,8 +10,8 @@ See feature_marks.hpp for the public interface*/
 #include <numeric>
 #include <vector>
 #include <functional>
-#include "anchor_fit.hpp"
-#include "template_marking_gui\landmark_admissibility.hpp"
+#include "template_anchoring\anchor_fit.hpp"
+#include "template_anchoring\landmark_admissibility.hpp"
 #include "subsample_refine.hpp"
 #include "ppg_derivative.hpp"
 #include "ppg_dicrotic.hpp"
@@ -242,17 +242,23 @@ double FeatureMarks::compute_s_peak(const std::vector<double>& ecg, int r_idx, d
 // so per spec it is placed at the fitted peak and refined as an ASYMMETRIC
 // EXTREMUM -- cubic fit on Gaussian-weighted samples with the derivative
 // solved analytically, sigma = 15 -- NOT via the transition-upsample path used
-// for onsets/offsets. Bracketed by t_begin/t_end (the T-wave's position varies
+// for onsets/offsets. Bracketed by the S-end and T-end bars (the T-wave's position varies
 // with heart rate, so it can't be derived from R alone). Both the movable bar
 // (T_PEAK locator) and the auto glyph call this; the sigma=15 refinement is
 // folded in here so neither caller re-refines.
-double FeatureMarks::compute_t_peak(const std::vector<double>& v, double tBegin, double tEnd) {
+// Parameters named for what they ARE -- the two bars bracketing the search --
+// not for a t_begin landmark that no longer exists and never held a value. The
+// order does not matter; they are min/max'd below.
+double FeatureMarks::compute_t_peak(const std::vector<double>& v,
+    double bracketSEnd, double bracketTEnd) {
     const int N = static_cast<int>(v.size());
-    if (!(tBegin >= 0.0) || !(tEnd >= 0.0) || tBegin >= N || tEnd >= N) return -1.0;
+    if (!(bracketSEnd >= 0.0) || !(bracketTEnd >= 0.0)
+        || bracketSEnd >= N || bracketTEnd >= N) return -1.0;
     // The bracket bars are themselves sub-sample, so the search runs over the
     // integer columns strictly inside them and the RESULT is clamped to the
     // fractional bracket -- the seed search needs samples, the answer does not.
-    const double loD = std::min(tBegin, tEnd), hiD = std::max(tBegin, tEnd);
+    const double loD = std::min(bracketSEnd, bracketTEnd);
+    const double hiD = std::max(bracketSEnd, bracketTEnd);
     const int lo = static_cast<int>(std::ceil(loD));
     const int hi = static_cast<int>(std::floor(hiD));
     if (hi <= lo) return loD;
@@ -580,7 +586,7 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
 
 FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(
     const std::vector<double>& ecg,
-    int p_begin, int q_begin, int t_begin, int t_end)
+    int p_begin, int q_begin, int s_end, int t_end)
 {
     ReactiveEcg r;
     if (static_cast<int>(ecg.size()) < 3) return r;
@@ -588,7 +594,12 @@ FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(
     // bar path and the glyph path cannot re-refine differently.
     r.p_peak = compute_p_peak(ecg, static_cast<double>(p_begin),
         static_cast<double>(q_begin));
-    r.t_peak = compute_t_peak(ecg, static_cast<double>(t_begin),
+    // THE T-PEAK BRACKET IS s_end/t_end. The parameter was named t_begin,
+    // and every caller already passed the S-end bar into it (reactiveGlyphs
+    // does, and the auto path does) -- but the CSV writer passed the actual
+    // t_begin marker field, which nothing anywhere ever set. So the name
+    // invited exactly one wrong call and got it. Renamed to what it is.
+    r.t_peak = compute_t_peak(ecg, static_cast<double>(s_end),
         static_cast<double>(t_end));
     return r;
 }
@@ -1333,7 +1344,8 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
             b.slotMarks(c, 0, anchor) = tbank::BankMarkerSet{};
             b.r_peak_ch[c] = -1;
             b.p_peak_auto_ch[c] = b.q_begin_auto_ch[c] = b.r_peak_auto_ch[c] = -1;
-            b.s_end_auto_ch[c] = b.t_begin_auto_ch[c] = b.t_end_auto_ch[c] = -1;
+            b.s_end_auto_ch[c] = b.t_end_auto_ch[c] = -1;
+            b.p_begin_auto_ch[c] = -1;
             b.q_peak_auto_ch[c] = -1;
             b.q_begin_found_auto_ch[c] = false;
             continue;
@@ -1369,14 +1381,24 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // there came out as column 0 and every P-dependent feature integrated a
         // window that does not exist. -1 is what markers_by_anchor already
         // means by absent, so both paths now say absent the same way.
-        b.p_peak_auto_ch[c] = lm.p_peak;
-        b.q_peak_auto_ch[c] = lm.q_peak;
-        b.q_begin_auto_ch[c] = lm.q_begin;
-        b.q_begin_found_auto_ch[c] = lm.q_begin_found;
-        b.r_peak_auto_ch[c] = lm.r_peak;
-        b.s_end_auto_ch[c] = lm.s_end;
-        b.t_end_auto_ch[c] = lm.t_end;
-        b.p_begin_auto_ch[c] = lm.p_begin;
+        // UNMASKED, DELIBERATELY -- lmRaw, not lm. A glyph is a measurement,
+        // not a judgement: every alignment detects every landmark on its own
+        // average and all four are reported, because comparing
+        // <landmark>_auto_P against ..._auto_Q is how the effect of an
+        // alignment on a landmark becomes visible. Masking these blanked three
+        // quarters of that comparison.
+        //
+        // The mask below still governs the BARS, which is where "this
+        // alignment smeared it, don't ask the operator to place it here"
+        // belongs. See landmark_admissibility.hpp and anchor_view.hpp.
+        b.p_peak_auto_ch[c] = lmRaw.p_peak;
+        b.q_peak_auto_ch[c] = lmRaw.q_peak;
+        b.q_begin_auto_ch[c] = lmRaw.q_begin;
+        b.q_begin_found_auto_ch[c] = lmRaw.q_begin_found;
+        b.r_peak_auto_ch[c] = lmRaw.r_peak;
+        b.s_end_auto_ch[c] = lmRaw.s_end;
+        b.t_end_auto_ch[c] = lmRaw.t_end;
+        b.p_begin_auto_ch[c] = lmRaw.p_begin;
 
         // User fields (per-anchor): only seed when unset for THIS anchor.
         // R peak is auto-only (flat) so it's always overwritten with fresh auto.
@@ -1529,10 +1551,14 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
     // BankMarkerSet stores integers; the sub-sample doubles stay in lm for any
     // caller that wants them. -1 survives rounding, so absent stays absent.
     auto ix = [](double v) { return (v < 0.0) ? -1 : (int)std::lround(v); };
+    // BARS ONLY. p_peak is not seeded here any more: it is a reactive glyph,
+    // bracketed by the P-onset and Q-onset bars, and TemplateBin::
+    // syncReactiveGlyphs is the one thing that assigns it. A detector-sourced
+    // copy stored alongside is a second answer that drifts from the X on
+    // screen the moment either bracket bar moves.
     if (msk.q_begin) out.q_begin = ix(lm.q_begin);
     if (msk.s_end)   out.s_end = ix(lm.s_end);
     if (msk.t_end)   out.t_end = ix(lm.t_end);
-    if (msk.p_peak)  out.p_peak = ix(lm.p_peak);
     if (msk.p_begin) out.p_begin = ix(lm.p_begin);
 }
 

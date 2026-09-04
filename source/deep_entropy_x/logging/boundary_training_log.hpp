@@ -28,7 +28,7 @@
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
-#include "anchor_fit.hpp"   // anchor_fit::FitType
+#include "template_anchoring\anchor_fit.hpp"   // anchor_fit::FitType
 
 namespace boundary_training {
 

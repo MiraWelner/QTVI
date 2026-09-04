@@ -126,11 +126,11 @@
 #include <string>
 #include <vector>
 
-// NO PROJECT INCLUDES ON PURPOSE. Anchors are keyed as int32_t rather than
-// AnchorType so this header pulls in nothing from the tree: template_io.hpp
-// stores anchor tags as int for the same reason ("to keep this header free of
-// the feature_marks dependency"), and the bank has to be storable from there.
-// Cast with static_cast<int32_t>(AnchorType::...) at call sites that have it.
+ // NO PROJECT INCLUDES ON PURPOSE. Anchors are keyed as int32_t rather than
+ // AnchorType so this header pulls in nothing from the tree: template_io.hpp
+ // stores anchor tags as int for the same reason ("to keep this header free of
+ // the feature_marks dependency"), and the bank has to be storable from there.
+ // Cast with static_cast<int32_t>(AnchorType::...) at call sites that have it.
 
 namespace tbank {
 
@@ -567,16 +567,45 @@ namespace tbank {
     // Per-template marker sets are mandatory, not a refinement: a PVC's
     // Q-onset is at a different column than sinus's, so they cannot share.
     struct BankMarkerSet {
+        // FOUR BARS AND ONE STORED GLYPH.
+        //
+        // p_begin / q_begin / s_end / t_end are the bars: the four positions
+        // the operator drags, each belonging to exactly one alignment (see
+        // anchor_view.hpp). p_peak is the one glyph kept here rather than
+        // recomputed at every use, because it is written to both the markings
+        // CSV and the markings bin and downstream consumers read it from the
+        // file. It is REFRESHED FROM THE BARS, never detected independently --
+        // FeatureMarks::reactive_ecg brackets it with p_begin and q_begin, and
+        // TemplateBin::syncReactiveGlyphs is the only thing that assigns it. A
+        // second, detector-sourced answer stored here is what made the
+        // on-screen X and the CSV column disagree.
+        //
+        // t_begin REMOVED, RECORD AND ALL. It was a marker field nothing set
+        // and nothing drew: maskFor had no entry for it, seed_all seeded
+        // q_begin / s_end / t_end / p_begin only, and markerAtX never
+        // hit-tested it -- so it sat at -1 for the life of every template while
+        // the CSV's t_peak_*_user column bracketed T-peak against it and
+        // therefore reported nothing, even though the on-screen X was bracketed
+        // by s_end and t_end and sat in the right place.
+        //
+        // Both binary records drop the field rather than reserving its four
+        // bytes, so FILES WRITTEN BEFORE THIS CHANGE DO NOT PARSE: neither
+        // _template_markings.bin nor tbank_ser::detail::writeMarkerSet carries
+        // a version, so there is nothing to branch on. Regenerate templates and
+        // re-mark; do not attempt to read an old pair.
+        //
+        // The T-wave onset that morphology_envelope, premark_beats and
+        // beat_classifier band on is a DIFFERENT quantity, computed from the
+        // signal, and is untouched by this removal.
         int p_begin = -1;
         int p_peak = -1;
         int q_begin = -1;
         int s_end = -1;
-        int t_begin = -1;
         int t_end = -1;
 
         bool isUnset() const {
             return p_begin < 0 && p_peak < 0 && q_begin < 0
-                && s_end < 0 && t_begin < 0 && t_end < 0;
+                && s_end < 0 && t_end < 0;
         }
     };
     struct BankPulseMarkerSet {

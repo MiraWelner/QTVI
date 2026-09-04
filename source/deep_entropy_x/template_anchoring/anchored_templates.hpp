@@ -1,5 +1,5 @@
 #pragma once
-#include "feature_marks.hpp"   // AnchorType, AnchorLocator, make_anchor_locator
+#include "template_marking_gui\feature_marks.hpp"   // AnchorType, AnchorLocator, make_anchor_locator
 #include <algorithm>
 #include <cmath>
 #include <limits>

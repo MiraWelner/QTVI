@@ -3,7 +3,9 @@
 #include <QStringList>
 #include "ui_TemplateViewerWindow.h"
 #include "feature_marks.hpp"
-#include "anchor_fit.hpp"
+#include "template_anchoring\anchor_view.hpp"
+#include <cassert>
+#include "template_anchoring\anchor_fit.hpp"
 #include "alignment.hpp"
 #include "global_intervals.hpp" 
 #include "global_interval_lines.hpp"
@@ -141,10 +143,10 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
             });
     }
 
-    // B2 focus mode: two stacked panels (QRS and JT views) in a right-side
-    // dock. The J-point (S-end) is shared between them, so a J-point
-    // selection/edit refreshes both (see refreshFocus). Created in code (not
-    // the .ui) so the existing Designer layout is untouched.
+    // Focus mode: one panel in a right-side dock, showing the clicked
+    // landmark's own alignment magnified around it (see refreshFocus).
+    // Created in code (not the .ui) so the existing Designer layout is
+    // untouched.
     {
         auto* dock = new QDockWidget(QStringLiteral("Focus"), this);
         dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
@@ -152,10 +154,10 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
         auto* vlay = new QVBoxLayout(holder);
         vlay->setContentsMargins(4, 4, 4, 4);
         vlay->setSpacing(6);
-        m_focusQrs = new FocusPanelWidget(holder);
-        m_focusJt = new FocusPanelWidget(holder);
-        vlay->addWidget(m_focusQrs);
-        vlay->addWidget(m_focusJt);
+        // ONE PANEL. Was two (QRS above, JT below) so the J point could appear
+        // in both; see refreshFocus for why that split is no longer needed.
+        m_focus = new FocusPanelWidget(holder);
+        vlay->addWidget(m_focus);
         holder->setLayout(vlay);
         dock->setWidget(holder);
         addDockWidget(Qt::RightDockWidgetArea, dock);
@@ -164,13 +166,15 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
 
 TemplateViewerWindow::~TemplateViewerWindow() { delete ui; }
 
-void TemplateViewerWindow::setAnchorLabel(const QString& s) {
-    m_anchorLabel = s;
-    // Anchor shown in the window title bar (the UI's top bar).
+// The title used to carry the pass's alignment, because the window WAS one
+// alignment. It now holds all four at once, so there is nothing to name here:
+// the alignment on show is whichever bar was last clicked, and the focus panel
+// header says which that is.
+void TemplateViewerWindow::setTitleForSubject() {
     if (!m_subjectId.isEmpty())
-        setWindowTitle(QString("Template Marking - %1  [%2]").arg(m_subjectId, s));
+        setWindowTitle(QString("Template Marking - %1").arg(m_subjectId));
     else
-        setWindowTitle(QString("Template Marking  [%1]").arg(s));
+        setWindowTitle(QStringLiteral("Template Marking"));
 }
 
 // ========================================================================
@@ -551,16 +555,15 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     m_artRateHz = artRateHz;
     m_artPulmRateHz = artPulmRateHz;
     m_notchFilterHz = notchFilterHz;
-    setWindowTitle(QString("Template Marking - %1  [%2]").arg(subjectId, m_anchorLabel));
+    setTitleForSubject();
     ui->subjectLabel->setText(subjectId);
-    // Button reads "Finish" only on the final pass of the anchor cycle;
-    // every earlier pass reads "Finish and Next".
-    const int currentPassIndex = m_anchorStep + 1;
-    const bool lastPass = (currentPassIndex + 1 >= m_anchorPassCount);
-    ui->finishButton->setText(lastPass ? "Finish" : "Finish and Next");
+    // ONE PASS. The button used to read "Finish and Next" for three of four
+    // openings, each one regenerating templates and reloading the window on a
+    // different alignment.
+    ui->finishButton->setText("Finish");
 
     try {
-        m_bins = readTemplateInfoBin(templatePath.toStdString(), m_currentAnchor);
+        m_bins = readTemplateInfoBin(templatePath.toStdString());
     }
     catch (const std::exception& e) {
         QMessageBox::critical(this, "Read error",
@@ -594,7 +597,41 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     // Seed markers for every bin so per-subject global refs (which need
     // R/S and foot/peak positions across all bins) can be computed once
     // and stay stable across paging.
-    for (auto& b : m_bins) FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, currentAnchor());
+    // ---- FOUR SEEDING PASSES, ONE LOAD --------------------------------
+    //
+    // seed_all detects on ch1..3, so each alignment's templates take that slot
+    // for the length of its own call, and R goes last -- leaving the flat
+    // ch1..3 and the flat *_auto_ch fields holding R, which is what the grid
+    // draws and what every existing consumer of those fields expects.
+    //
+    // Every alignment's glyphs are kept (auto_by_anchor) because a glyph is
+    // reported on all four; every alignment's bar is seeded into its own
+    // markers_by_anchor entry, and the exclusive mask in maskFor means each
+    // pass seeds only the one bar it owns.
+    //
+    // This loop is what four separate windows used to be.
+    for (auto& b : m_bins) {
+        const std::array<ChannelTemplateData, 3> savedR = { b.ch1, b.ch2, b.ch3 };
+        for (AnchorType a : anchor_view::kAllAnchors) {
+            if (a == AnchorType::R_PEAK) {
+                b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
+            }
+            else {
+                auto it = b.anchored.find(static_cast<int>(a));
+                if (it == b.anchored.end()) continue;   // no block -> nothing to seed
+                b.ch1 = it->second[0]; b.ch2 = it->second[1]; b.ch3 = it->second[2];
+            }
+            FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, a);
+            // Captures the flat fields seed_all just wrote: autoFor falls back
+            // to them when this alignment has no entry yet, which is exactly
+            // the capture wanted.
+            b.auto_by_anchor[static_cast<int>(a)] = b.autoFor(a);
+        }
+        // R last so the flat state the grid reads is R's.
+        b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
+        FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK);
+        for (int c = 0; c < 3; ++c) b.syncReactiveGlyphs(c, 0);
+    }
 
     // If this subject was already marked in a previous session, restore
     // those marker positions from the single canonical marking file. If
@@ -602,24 +639,27 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     // stands unchanged.
     const QDir markingDir(m_markingPath);
     const QString canonical = markingDir.filePath(m_subjectId + "_template_markings.bin");
-    const QString partial = canonical + ".partial";
 
-    // Source + modality by cycle state:
-    //  - mid-cycle (.partial present): restore PULSE only; ECG stays at this
-    //    anchor's fresh auto-seed (seed_all above).
-    //  - finished subject re-opened (canonical present, no partial): restore
-    //    everything.
-    //  - neither: fresh auto-seed stands.
+    // ONE SOURCE. The .partial branch is gone with the cycle: mid-cycle used to
+    // be a real state -- three of four openings of this window found a partial
+    // file and had to restore PULSE only, leaving ECG at that alignment's fresh
+    // auto-seed, because the partial's ECG marks belonged to a DIFFERENT
+    // alignment than the one about to be shown. Every alignment is present at
+    // once now, so a marking file is either a finished subject's (restore
+    // everything) or absent (the fresh auto-seed stands).
+    //
+    // A leftover .partial from a pre-change session is deliberately ignored
+    // rather than migrated: its ECG marks are keyed by anchor tag and would
+    // restore correctly, but it may hold a half-finished cycle whose later
+    // alignments were never marked, and silently presenting that as a restored
+    // subject hides which bars are actually the operator's.
     bool markersReloaded = false;
-    if (QFile::exists(partial)) {
-        markersReloaded = restoreMarkersFrom(partial, /*ecg=*/false, /*pulse=*/true);
-    }
-    else if (QFile::exists(canonical)) {
+    if (QFile::exists(canonical)) {
         markersReloaded = restoreMarkersFrom(canonical, /*ecg=*/true, /*pulse=*/true);
     }
-    fprintf(stderr, "[markers] %s for subject %s (%s pass)\n",
+    fprintf(stderr, "[markers] %s for subject %s (all %zu alignments)\n",
         markersReloaded ? "RELOADED prior markers" : "using FRESH auto-seed (no prior markers applied)",
-        m_subjectId.toStdString().c_str(), m_anchorLabel.toStdString().c_str());
+        m_subjectId.toStdString().c_str(), anchor_view::kAllAnchors.size());
 
     // ---- TEMPORARY INSTRUMENTATION ------------------------------------
     // Everything above this point has already printed by the time the
@@ -731,7 +771,6 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath,
                             dm.p_peak = safeIdx(sm.p_peak, dm.p_peak, len);
                             dm.q_begin = safeIdx(sm.q_begin, dm.q_begin, len);
                             dm.s_end = safeIdx(sm.s_end, dm.s_end, len);
-                            dm.t_begin = safeIdx(sm.t_begin, dm.t_begin, len);
                             dm.t_end = safeIdx(sm.t_end, dm.t_end, len);
                         }
                     }
@@ -826,6 +865,11 @@ void TemplateViewerWindow::writeNormalizationCsvs() {
         for (size_t i = 0; i < m_bins.size(); ++i) {
             const auto& b = m_bins[i];
             if (b.bad_segment || b.bad_r_ch[ch]) continue;
+            // THE R BASE, and this function has no alignment parameter to
+            // choose otherwise. The per-bin QRS reference divides normalized
+            // amplitudes subject-wide, so it must be one alignment for the
+            // whole file -- the same reason writeTemplateMarkingsCsv pins its
+            // ecgRef to R even inside a non-R sidecar.
             const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
             const auto& ecg = chs[ch]->ecgTemplate_raw;
             if (ecg.empty()) continue;
@@ -1139,8 +1183,11 @@ void TemplateViewerWindow::showPage() {
         const bool vcgRowWanted = !compact && !vcgTrace.empty()
             && gridRows > m_maxLeads;
 
+        // R frame: the reference lines these produce are drawn on the
+        // R-aligned panels, and leadMarkersFor's USER path assembles the bars
+        // from all four alignments into that frame.
         const auto gi_intervals = global_intervals::computeGlobalIntervals(
-            b, m_currentAnchor, m_sampleRate,
+            b, AnchorType::R_PEAK, m_sampleRate,
             global_intervals::MarkerSource::USER);
 
         std::vector<BinPlotWidget*> group;
@@ -1448,12 +1495,12 @@ void TemplateViewerWindow::captureCurrentPage() {
     QDir outDir(m_templateDir);
     const int page = m_currentPage;
     const QPixmap shot = ui->scrollContents->grab();
-    const QString pass = "_" + m_anchorLabel;   // per-anchor: _R, _Q_ONSET, ...
+    // No alignment suffix: there is one screenshot per page now, not one per
+    // page per pass. The grid it captures is R-aligned on every panel.
     const QString fn = outDir.filePath(
-        QString("%1_templates_page%2%3.png")
+        QString("%1_templates_page%2.png")
         .arg(m_subjectId)
-        .arg(page + 1, 2, 10, QChar('0'))
-        .arg(pass));
+        .arg(page + 1, 2, 10, QChar('0')));
     shot.save(fn, "PNG");
 }
 
@@ -1595,7 +1642,7 @@ static bool zipCanonicalWithQ(const std::string& canonicalPath,
     return out.good();
 }
 
-void TemplateViewerWindow::writeAlignedTemplateCsv() {
+void TemplateViewerWindow::writeAlignedTemplateCsv(AnchorType anchor) {
     // One row per sample column per bin. Every value column is emitted twice,
     // raw and normalized, plus its IQR band in both forms; marker positions
     // ride along as one-hot flags on the row matching their sample index.
@@ -1622,13 +1669,23 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     // a literal, because the index was previously hardcoded as `4` in two
     // places and inserting a marker ahead of it would have silently moved the
     // auto-only column onto the wrong landmark.
+    // t_begin removed with the marker (see BankMarkerSet): its two columns
+    // were structurally blank, because nothing ever set it.
     static const char* ECG_MARKERS[] = {
         "p_begin", "p_peak", "q_begin", "q_peak", "r_peak", "s_peak",
-        "s_end",   "t_begin", "t_end"
+        "s_end",   "t_end"
     };
     constexpr int kNumEcgMarkers = static_cast<int>(std::size(ECG_MARKERS));
     constexpr int kRPeak = 4;
-    static_assert(kNumEcgMarkers == 9, "ECG marker count changed; check kRPeak");
+    static_assert(kNumEcgMarkers == 8, "ECG marker count changed; check kRPeak");
+    // kRPeak cannot be pinned by static_assert: anchor_view::hasUserColumn
+    // compares strings with std::strcmp and ECG_MARKERS is an array of
+    // pointers, so neither is a constant expression. The count assert above is
+    // the guard -- inserting a marker changes it, which forces a look at
+    // kRPeak. (writeTemplateMarkingsCsv has no such gap: it keys off the
+    // column NAME through hasUserColumn at run time, so it needs no index.)
+    assert(!anchor_view::hasUserColumn(ECG_MARKERS[kRPeak])
+        && "kRPeak must index the one marker with no user column");
 
     // Pulse marker groups. Counts differ by channel: PPG carries the two
     // interpolated upslope crossings (t50/t80), the arterial channels do not.
@@ -1665,8 +1722,11 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     for (int c = 1; c <= 3; ++c) {
         for (int k = 0; k < kNumEcgMarkers; ++k) {
             f << ',' << ECG_MARKERS[k] << "_ch" << c << "_auto";
+            // WAS "_auto" A SECOND TIME -- a copy-paste that gave every
+            // landmark two identically-named columns and no user column at
+            // all, so a reader keying on name got whichever pandas kept.
             if (k != kRPeak)
-                f << ',' << ECG_MARKERS[k] << "_ch" << c << "_auto";
+                f << ',' << ECG_MARKERS[k] << "_ch" << c << "_user";
         }
     }
     auto emitPulseHeaderGroup = [&](auto const& group) {
@@ -1722,9 +1782,13 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
             int    onset;    ///< pulse channels only: alignment onset
         };
         const Src src[num_chans] = {
-            { &b.ch1.ecgTemplate_raw, &b.ch1.ecg_template_raw_iqr, m_ecgGlobalRef[0],   0, true,  0 },
-            { &b.ch2.ecgTemplate_raw, &b.ch2.ecg_template_raw_iqr, m_ecgGlobalRef[1],   1, true,  0 },
-            { &b.ch3.ecgTemplate_raw, &b.ch3.ecg_template_raw_iqr, m_ecgGlobalRef[2],   2, true,  0 },
+            // THIS SIDECAR'S ALIGNMENT. One file per alignment, each holding
+            // that alignment's own averages -- which is what makes the merged
+            // <id>_template.csv four aligned views of the same subject rather
+            // than four copies of one.
+            { &b.chFor(0, anchor).ecgTemplate_raw, &b.chFor(0, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[0],   0, true,  0 },
+            { &b.chFor(1, anchor).ecgTemplate_raw, &b.chFor(1, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[1],   1, true,  0 },
+            { &b.chFor(2, anchor).ecgTemplate_raw, &b.chFor(2, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[2],   2, true,  0 },
             { &b.ppgTemplate,         &b.ppg_template_iqr,         m_pulseGlobalRef[0], 0, false, b.ppg_onset },
             { &b.abpTemplate,         &b.abpTemplate_iqr,          m_pulseGlobalRef[1], 1, false, b.abp_onset },
             { &b.artTemplate,         &b.artTemplate_iqr,          m_pulseGlobalRef[2], 2, false, b.art_onset },
@@ -1749,45 +1813,65 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
 
         // Computed Q/S peaks per ECG channel, from the auto bars and the user
         // bars separately.
-        const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
+        // THIS SIDECAR'S ALIGNMENT, matching the traces above. Reading
+        // ch1..3 here would measure this alignment's landmarks against the
+        // R-aligned average.
+        const ChannelTemplateData* chs[3] = {
+            &b.chFor(0, anchor), &b.chFor(1, anchor), &b.chFor(2, anchor) };
         EcgFeatures ftAuto[3], ftUser[3];
         for (int c = 0; c < 3; ++c) {
             const auto& ecg = chs[c]->ecgTemplate_raw;
+            const auto aaF = b.autoFor(anchor);
             ftAuto[c] = computeEcgFeatures(ecg,
-                (int)std::lround(b.p_peak_auto_ch[c]), (int)std::lround(b.q_begin_auto_ch[c]),
-                (int)std::lround(b.r_peak_auto_ch[c]), (int)std::lround(b.s_end_auto_ch[c]),
-                (int)std::lround(b.t_end_auto_ch[c]), m_sampleRate);
+                (int)std::lround(aaF.p_peak[c]), (int)std::lround(aaF.q_begin[c]),
+                (int)std::lround(aaF.r_peak[c]), (int)std::lround(aaF.s_end[c]),
+                (int)std::lround(aaF.t_end[c]), m_sampleRate);
             // Per lead, because slotMarks selects the lead -- the old bin-wide
             // MarkerSet held all three leads in one object and was fetched once
             // per bin.
-            const tbank::BankMarkerSet& umk = b.slotMarks(c, 0, currentAnchor());
+            const tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
+            // userMarks returns BARS ONLY, so umk.p_peak is -1 by
+            // construction: P peak is a glyph. Recompute it from the two bars
+            // that bracket it rather than passing the -1 through, which would
+            // have handed computeEcgFeatures an absent P on every lead.
+            const FeatureMarks::ReactiveEcg rxF = FeatureMarks::reactive_ecg(
+                ecg, umk.p_begin, umk.q_begin, umk.s_end, umk.t_end);
             ftUser[c] = computeEcgFeatures(ecg,
-                umk.p_peak, umk.q_begin, b.r_peak_ch[c],
+                (int)std::lround(rxF.p_peak), umk.q_begin, b.r_peak_ch[c],
                 umk.s_end, umk.t_end, m_sampleRate);
         }
 
         // ECG marker positions, indices aligned with ECG_MARKERS.
         double ecgAuto[3][kNumEcgMarkers], ecgUser[3][kNumEcgMarkers];
         for (int c = 0; c < 3; ++c) {
-            ecgAuto[c][0] = b.p_begin_auto_ch[c];
-            ecgAuto[c][1] = b.p_peak_auto_ch[c];
-            ecgAuto[c][2] = b.q_begin_auto_ch[c];
+            // Glyphs from THIS alignment's detections; bars assembled across
+            // all four alignments and expressed in this one's frame, because
+            // no single alignment's marker set holds a whole beat any more.
+            const auto aa = b.autoFor(anchor);
+            const tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
+            const std::vector<double>& ecgA = b.chFor(c, anchor).ecgTemplate_raw;
+            const FeatureMarks::ReactiveEcg rxA = FeatureMarks::reactive_ecg(
+                ecgA, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
+                (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]));
+            const FeatureMarks::ReactiveEcg rxU = FeatureMarks::reactive_ecg(
+                ecgA, umk.p_begin, umk.q_begin, umk.s_end, umk.t_end);
+
+            ecgAuto[c][0] = aa.p_begin[c];
+            ecgAuto[c][1] = rxA.p_peak;          // reactive glyph, detector brackets
+            ecgAuto[c][2] = aa.q_begin[c];
             ecgAuto[c][3] = ftAuto[c].q_idx;
-            ecgAuto[c][4] = b.r_peak_auto_ch[c];
+            ecgAuto[c][4] = aa.r_peak[c];
             ecgAuto[c][5] = ftAuto[c].s_idx;
-            ecgAuto[c][6] = b.s_end_auto_ch[c];
-            ecgAuto[c][7] = b.t_begin_auto_ch[c];
-            ecgAuto[c][8] = b.t_end_auto_ch[c];
-            const tbank::BankMarkerSet& umk = b.slotMarks(c, 0, currentAnchor());
+            ecgAuto[c][6] = aa.s_end[c];
+            ecgAuto[c][7] = aa.t_end[c];
             ecgUser[c][0] = umk.p_begin;
-            ecgUser[c][1] = umk.p_peak;
+            ecgUser[c][1] = rxU.p_peak;          // reactive glyph, operator brackets
             ecgUser[c][2] = umk.q_begin;
             ecgUser[c][3] = ftUser[c].q_idx;
             ecgUser[c][4] = b.r_peak_ch[c];
             ecgUser[c][5] = ftUser[c].s_idx;
             ecgUser[c][6] = umk.s_end;
-            ecgUser[c][7] = umk.t_begin;
-            ecgUser[c][8] = umk.t_end;
+            ecgUser[c][7] = umk.t_end;
         }
 
         // Pulse marker positions, order matching the *_MARKERS arrays.
@@ -1892,7 +1976,9 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
     }
     const std::string header = content.substr(0, nl);
     const std::string body = content.substr(nl);   // includes the leading '\n'
-    const std::string suffix = "_" + m_anchorLabel.toStdString();
+    // From the ARGUMENT, not from window state: this function is called once
+    // per alignment inside a single save.
+    const std::string suffix = std::string("_") + anchor_view::label(anchor);
 
     const QString sidecar = outDir.filePath(
         m_subjectId + "_template" + suffix.c_str() + ".csv");
@@ -2032,26 +2118,45 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
     tbank::BankTemplate& tp = bank.templates[templateIdx];
     if (tp.tmpl.empty()) return;
 
-    const int anchor = static_cast<int>(currentAnchor());
-    // SEEDED ON CONTENT, NOT ON KEY PRESENCE. This used to test
-    // markers_by_anchor.find(anchor) == end(). But marks() is operator[], so
-    // any read of this template's marker set -- from the subsequent-move
-    // propagation loop, or anywhere else that touches a bin it is not
-    // displaying -- inserted an empty all -1 entry, this test then reported
-    // "already seeded", and auto-detection never ran. The template drew with no
-    // fiducial bars at all and serialization persisted the empty set, so a
-    // reload did not recover. Slot 0 was unaffected because it draws from the
-    // BIN's marker set, which seed_all always populates -- which is exactly why
-    // this only ever showed up on the non-_A columns.
-    if (!tp.hasDetectedMarks(anchor)) {
-        // r_col comes from the template when it has one, otherwise from the
-        // bin's channel: every beat in the bank was aligned on the same R
-        // column by construction, so the bin's value is correct rather than a
-        // guess when the template's own field was never filled.
-        const int rc = (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel];
-        FeatureMarks::seed_bank_template(tp.tmpl, rc, m_sampleRate, currentAnchor(), tp.marks(anchor));
+    // Retained only to key marks() below for the *display* fetch; every
+    // alignment is seeded above and the bars are assembled from all four.
+    // SEED EVERY ALIGNMENT, not just the one this window was opened for.
+    //
+    // SEEDED ON CONTENT, NOT ON KEY PRESENCE. hasDetectedMarks tests for a
+    // VALUE; testing markers_by_anchor.find(tag) == end() does not work,
+    // because marks() is operator[] and so any read of this template's marker
+    // set -- from the subsequent-move propagation loop, or anywhere else that
+    // touches a bin it is not displaying -- inserts an empty all -1 entry. That
+    // test then reported "already seeded", auto-detection never ran, the
+    // template drew with no bars at all, and serialization persisted the empty
+    // set so a reload did not recover. Slot 0 was unaffected because it draws
+    // from the bin's marker set, which seed_all always populates -- which is
+    // exactly why it only ever showed up on the non-_A columns. With four
+    // alignments per slot there are now four chances to trip it, so the guard
+    // matters more, not less.
+    //
+    // All four are seeded from this slot's ONE R-aligned waveform: raw_anchors
+    // is per (bin, channel), not per (bin, channel, slot), so a sub-template
+    // has no aligned averages of its own to detect on, and its close-up falls
+    // back to the bin's alignment template via chFor. Per-slot alignments would
+    // mean teaching alignTemplatesFromCache to walk the banks -- a separate job.
+    //
+    // r_col comes from the template when it has one, otherwise from the bin's
+    // channel: every beat in the bank was aligned on the same R column by
+    // construction, so the bin's value is correct rather than a guess when the
+    // template's own field was never filled.
+    for (AnchorType a4 : anchor_view::kAllAnchors) {
+        const int tag4 = static_cast<int>(a4);
+        if (tp.hasDetectedMarks(tag4)) continue;
+        const int rc4 = (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel];
+        FeatureMarks::seed_bank_template(tp.tmpl, rc4, m_sampleRate, a4, tp.marks(tag4));
     }
-    const tbank::BankMarkerSet& mk = tp.marks(anchor);
+    b.syncReactiveGlyphs(channel, templateIdx);
+    // ASSEMBLED, NOT FETCHED. Each bar lives in its owning alignment's set;
+    // userMarks pulls all four and translates them into the R frame the panel
+    // draws in. Fetching one alignment's set here is what limited a session to
+    // editing one alignment's bars.
+    const tbank::BankMarkerSet mk = b.userMarks(channel, templateIdx, AnchorType::R_PEAK);
     // Bin first, for the arterial markers (a bank slot has no ABP/ART waveform
     // of its own). The seven ECG bars are overridden below; the PULSE bars and
     // glyphs are overridden here, from this slot's own waveform.
@@ -2087,13 +2192,15 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
     pw->setMarker(BinPlotWidget::EcgRPeak,
         (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel]);
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
-    pw->setMarker(BinPlotWidget::EcgTBegin, mk.t_begin);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
 }
 
 void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin& b) {
     const int c = pw->leadIndex();
-    const tbank::BankMarkerSet& mk = b.slotMarks(c, 0, currentAnchor());
+    // ALL FOUR BARS, EACH FROM ITS OWN ALIGNMENT, translated into the R frame
+    // this widget draws in. The grid is R-aligned on every panel; only the
+    // close-up switches waveform.
+    const tbank::BankMarkerSet mk = b.userMarks(c, 0, AnchorType::R_PEAK);
 
     // Bank members are their own COLUMNS now (see the (bin, template) expansion
     // in the layout loop), so nothing is overlaid here -- drawing them again as
@@ -2106,7 +2213,6 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_begin);
     pw->setMarker(BinPlotWidget::EcgRPeak, b.r_peak_ch[c]);   // auto-only, no bar drawn
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
-    pw->setMarker(BinPlotWidget::EcgTBegin, mk.t_begin);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
 
     pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
@@ -2190,7 +2296,12 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     tbank::TemplateBank& bank = m_bins[binIdx].ecg_bank[leadIdx];
     if (templateIdx < 0 || templateIdx >= bank.size()) return;
 
-    const int anchor = static_cast<int>(currentAnchor());
+    // THE BAR CHOOSES THE ALIGNMENT, not the pass. This was
+    // static_cast<int>(currentAnchor()) -- whichever alignment the window had
+    // been opened for -- so a drag could only ever land in one alignment's set
+    // and the other three were reachable only by restarting the session.
+    const AnchorType ownerAnchor = anchor_view::anchorFor(marker);
+    const int anchor = static_cast<int>(ownerAnchor);
 
     // Read/write one landmark of one bank slot. Taken as lambdas over the bank
     // rather than written inline, because the subsequent-move loop below has to
@@ -2207,7 +2318,6 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
         case BinPlotWidget::EcgPPeak:  return m.p_peak;
         case BinPlotWidget::EcgQBegin: return m.q_begin;
         case BinPlotWidget::EcgSEnd:   return m.s_end;
-        case BinPlotWidget::EcgTBegin: return m.t_begin;
         case BinPlotWidget::EcgTEnd:   return m.t_end;
         }
         return -1;
@@ -2219,7 +2329,6 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
         case BinPlotWidget::EcgPPeak:  m.p_peak = v; break;
         case BinPlotWidget::EcgQBegin: m.q_begin = v; break;
         case BinPlotWidget::EcgSEnd:   m.s_end = v; break;
-        case BinPlotWidget::EcgTBegin: m.t_begin = v; break;
         case BinPlotWidget::EcgTEnd:   m.t_end = v; break;
             // EcgRPeak has no bar and is not draggable: it is the alignment
             // anchor, and moving it would invalidate every other landmark's
@@ -2230,15 +2339,10 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     // Anything not in the six cases above is not a bank-draggable landmark, so
     // return before writing rather than silently no-op'ing inside bankSet and
     // then running the propagation loop for a marker nobody moved.
-    switch (marker) {
-    case BinPlotWidget::EcgPBegin:
-    case BinPlotWidget::EcgPPeak:
-    case BinPlotWidget::EcgQBegin:
-    case BinPlotWidget::EcgSEnd:
-    case BinPlotWidget::EcgTBegin:
-    case BinPlotWidget::EcgTEnd:  break;
-    default: return;
-    }
+    // Bars only. P peak used to be in this list, which let a drag write a
+    // stored P peak that the reactive recompute then contradicted; it is a
+    // glyph and markerAtX does not hand it out in the first place.
+    if (!anchor_view::isBar(marker)) return;
 
     const int oldIdx = bankGet(bank, templateIdx);
     bankSet(bank, templateIdx, newIdx);
@@ -2312,7 +2416,7 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
                 const int rc = (tgt.r_col >= 0)
                     ? tgt.r_col : m_bins[binI].r_peak_ch[leadIdx];
                 FeatureMarks::seed_bank_template(tgt.tmpl, rc, m_sampleRate,
-                    currentAnchor(), tgt.marks(anchor));
+                    ownerAnchor, tgt.marks(anchor));
             }
             const int cur = bankGet(bk, slot);
             if (cur < 0) return;   // this landmark was not found on this one
@@ -2365,16 +2469,25 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         // propagation loop was written -- the storage it reached had nowhere to
         // put a sub-template's landmark. One home fixed that; this is where it
         // pays off.
+        // THE BAR CHOOSES THE ALIGNMENT. This was currentAnchor() -- the
+        // pass -- so a drag could only ever land in one alignment's set, and
+        // the other three were reachable only by finishing the window and
+        // reopening it on the next alignment.
+        //
+        // Reads and writes are in the OWNER'S frame; the widget hands us a
+        // column in the R frame, so the caller converts. P peak is gone from
+        // these switches: it is a glyph, recomputed by syncReactiveGlyphs from
+        // the two bars that bracket it, so a drag must not write it.
+        if (!anchor_view::isBar(marker) && marker != BinPlotWidget::EcgRPeak) return;
+        const AnchorType owner = anchor_view::anchorFor(marker);
         auto ecgGet = [&](TemplateBin& tb, int slot) -> int {
             if (marker == BinPlotWidget::EcgRPeak) return tb.r_peak_ch[leadIdx];
             const tbank::BankMarkerSet& m =
-                tb.slotMarks(leadIdx, slot, currentAnchor());
+                tb.slotMarks(leadIdx, slot, owner);
             switch (marker) {
             case BinPlotWidget::EcgPBegin: return m.p_begin;
-            case BinPlotWidget::EcgPPeak:  return m.p_peak;
             case BinPlotWidget::EcgQBegin: return m.q_begin;
             case BinPlotWidget::EcgSEnd:   return m.s_end;
-            case BinPlotWidget::EcgTBegin: return m.t_begin;
             case BinPlotWidget::EcgTEnd:   return m.t_end;
             }
             return -1;
@@ -2383,19 +2496,25 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             // R is the alignment anchor: auto-only, and per BIN rather than per
             // slot, because every template in the bank is aligned on it.
             if (marker == BinPlotWidget::EcgRPeak) { tb.r_peak_ch[leadIdx] = v; return; }
-            tbank::BankMarkerSet& m = tb.slotMarks(leadIdx, slot, currentAnchor());
+            tbank::BankMarkerSet& m = tb.slotMarks(leadIdx, slot, owner);
             switch (marker) {
             case BinPlotWidget::EcgPBegin: m.p_begin = v; break;
-            case BinPlotWidget::EcgPPeak:  m.p_peak = v; break;
             case BinPlotWidget::EcgQBegin: m.q_begin = v; break;
             case BinPlotWidget::EcgSEnd:   m.s_end = v; break;
-            case BinPlotWidget::EcgTBegin: m.t_begin = v; break;
             case BinPlotWidget::EcgTEnd:   m.t_end = v; break;
             }
             };
 
+        // newIdx is a column the WIDGET measured, and the grid is R-aligned on
+        // every panel. The bar is stored in its own alignment's frame, so the
+        // column converts here -- a no-op for the J point (owner is R) and a
+        // sample or two for the other three.
+        const int stored = newIdx + b.frameShift(leadIdx, AnchorType::R_PEAK, owner);
         const int oldIdx = ecgGet(b, 0);
-        ecgSet(b, 0, newIdx);
+        ecgSet(b, 0, stored);
+        // P peak follows its brackets. Recomputed for every alignment, so the
+        // value written to the bin and the CSV is the one drawn on screen.
+        b.syncReactiveGlyphs(leadIdx, 0);
         // Track the drag: the touched store follows the bar to its final
         // position so confirmedIndex reflects where the operator left it.
         if (newIdx >= 0)
@@ -2648,7 +2767,7 @@ void TemplateViewerWindow::onLandmarkSelected(int binIdx, int leadIdx,
 void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     int templateIdx, int marker, int col)
 {
-    if (!m_focusQrs && !m_focusJt) return;   // panels not created (nothing to do)
+    if (!m_focus) return;   // panel not created (nothing to do)
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
     TemplateBin& b = m_bins[binIdx];
 
@@ -2684,8 +2803,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                 (templateIdx >= 0 && templateIdx < b.ppg_bank.size())
                 ? &b.ppg_bank.templates[templateIdx] : nullptr;
             if (!ps || ps->tmpl.empty() || ps->memberCount() <= 0) {
-                if (m_focusQrs) m_focusQrs->clearFocus();
-                if (m_focusJt)  m_focusJt->clearFocus();
+                if (m_focus) m_focus->clearFocus();
                 return;
             }
             meanRaw = &ps->tmpl;           iqrRaw = &ps->tmpl_iqr;
@@ -2746,20 +2864,32 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
             return QStringLiteral("landmark");
             };
 
-        if (m_focusQrs)
-            m_focusQrs->setFocus(mean, sd, nBeats, col,
+        // Pulse channels have no alignment dimension: they are foot-anchored,
+        // once, and raw_anchors is ECG-only. One panel, no suffix.
+        if (m_focus)
+            m_focus->setFocus(mean, sd, nBeats, col,
                 chLabel + " " + pulseLabel(marker));
-        // A pulse landmark has nothing to do with the JT (T-wave) view; clear
-        // it so a previously-shown J-point view doesn't stay stuck there.
-        if (m_focusJt) m_focusJt->clearFocus();
         return;
     }
 
     // ---- ECG landmarks ---------------------------------------------------
     if (leadIdx < 0 || leadIdx > 2) return;
 
-    ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-    const ChannelTemplateData& ch = *chs[leadIdx];
+    // ================= THE ALIGNMENT SWITCH =============================
+    //
+    // This is the whole feature. The grid draws the R-aligned average on every
+    // panel; this panel draws the alignment the clicked landmark is measured
+    // on -- P-aligned under the P-onset bar, Q-aligned under Q-onset,
+    // R-aligned under the J point, T-aligned under T-end. Same alignment the
+    // bar is stored in and reported under, so what the operator is looking at
+    // while placing a bar is the waveform its column is a column OF.
+    //
+    // A glyph has no alignment of its own (it is measured on all four), so a
+    // click that resolves to one shows the R-aligned average -- the same
+    // waveform the grid does, magnified. markerAtX does not hand out glyphs
+    // anyway; this is just what anchorFor returns for them.
+    const AnchorType focusAnchor = anchor_view::anchorFor(marker);
+    const ChannelTemplateData& ch = b.chFor(leadIdx, focusAnchor);
     // Templates + iqr are stored PRE-reference-division; scale by the same
     // per-lead ref the displayed ECG trace uses (main plot ~line 484). The
     // ECG *_iqr field already holds a STD (ddof=1) -- CreateEcgTemplates step
@@ -2786,8 +2916,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         const tbank::TemplateBank& bank = b.ecg_bank[leadIdx];
         if (templateIdx >= bank.size()
             || bank.templates[templateIdx].tmpl.empty()) {
-            if (m_focusQrs) m_focusQrs->clearFocus();
-            if (m_focusJt)  m_focusJt->clearFocus();
+            if (m_focus) m_focus->clearFocus();
             return;
         }
         const tbank::BankTemplate& tp = bank.templates[templateIdx];
@@ -2802,41 +2931,45 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     m_lastFocusBin = binIdx;
     m_lastFocusLead = leadIdx;
 
-    auto labelFor = [](int m, const char* side) -> QString {
+    // No `side` argument any more: "J-point (QRS)" vs "(JT)" was the
+    // two-panel distinction, and the panel now names the ALIGNMENT instead,
+    // which is the thing that actually differs between views.
+    auto labelFor = [](int m) -> QString {
         switch (m) {
         case BinPlotWidget::EcgPBegin: return QStringLiteral("P onset");
         case BinPlotWidget::EcgPPeak:  return QStringLiteral("P peak");
         case BinPlotWidget::EcgQBegin: return QStringLiteral("Q onset");
         case BinPlotWidget::EcgRPeak:  return QStringLiteral("R peak");
-        case BinPlotWidget::EcgSEnd:   return QStringLiteral("J-point (%1)").arg(side);
-        case BinPlotWidget::EcgTBegin: return QStringLiteral("T onset");
+        case BinPlotWidget::EcgSEnd:   return QStringLiteral("J-point");
         case BinPlotWidget::EcgTEnd:   return QStringLiteral("T end");
         }
         return QStringLiteral("landmark");
         };
 
-    if (marker == BinPlotWidget::EcgSEnd) {
-        // J-point: shared landmark, but framed differently per panel so the
-        // two views aren't identical -- QRS shows it at the RIGHT edge (it
-        // ENDS the QRS), JT shows it at the LEFT edge (it STARTS the JT).
-        if (m_focusQrs) m_focusQrs->setFocus(mean, sd, nBeats, col, labelFor(marker, "QRS"), 30, -1);
-        if (m_focusJt)  m_focusJt->setFocus(mean, sd, nBeats, col, labelFor(marker, "JT"), 30, +1);
-        return;
-    }
+    // `col` arrived in the R frame -- the widget's, because the grid is
+    // R-aligned. This panel plots THIS alignment's average, so the bar has to
+    // be placed in its columns. Same conversion and same direction as the drag
+    // path in onMarkerMoved, so a bar dragged on the grid lands under the
+    // crosshair here.
+    const int colHere = col + b.frameShift(leadIdx, AnchorType::R_PEAK, focusAnchor);
 
-    // Non-J-point ECG landmarks: route to the panel for their segment, and
-    // CLEAR the other panel so a stale J-point view (which had set both)
-    // doesn't stay stuck when the next selection isn't a J-point.
-    const bool isJtSide = (marker == BinPlotWidget::EcgTBegin
-        || marker == BinPlotWidget::EcgTEnd);
-    if (isJtSide) {
-        if (m_focusJt) m_focusJt->setFocus(mean, sd, nBeats, col, labelFor(marker, "JT"));
-        if (m_focusQrs) m_focusQrs->clearFocus();
-    }
-    else {
-        if (m_focusQrs) m_focusQrs->setFocus(mean, sd, nBeats, col, labelFor(marker, "QRS"));
-        if (m_focusJt) m_focusJt->clearFocus();
-    }
+    // ONE PANEL. There were two -- QRS above, JT below -- because the J point
+    // had to appear in both, framed right-edge in one and left-edge in the
+    // other. That split existed to compensate for a single-alignment view: the
+    // J point is where the QRS view ends and the T view begins, so neither
+    // panel alone could show both of its neighbourhoods. With the alignment
+    // switching per bar there is one waveform per landmark and nothing to
+    // reconcile.
+    //
+    // Onsets frame toward the LEFT edge (they start their segment), offsets
+    // toward the RIGHT (they end it).
+    const int bias = BinPlotWidget::markerIsBegin(marker) ? +1 : -1;
+
+    if (m_focus)
+        m_focus->setFocus(mean, sd, nBeats, colHere,
+            QString("%1  [%2-aligned]").arg(labelFor(marker),
+                QString::fromLatin1(anchor_view::label(focusAnchor))),
+            30, bias);
 }
 
 // ========================================================================
@@ -3042,7 +3175,12 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
                 rec.qrsDurationMs = qrsMs;
                 if (boundary_training::logBoundary(
                     m_boundaryLog,
-                    anchorName_boundary(currentAnchor()),// anchor = this template's alignment
+                    // PER LANDMARK, not per session. This column records which
+                    // alignment the expert mark was placed on, and that is now
+                    // a property of the landmark: the P onset was placed on the
+                    // P-aligned average, the J point on the R-aligned one. It
+                    // was constant for a whole file when a file was one pass.
+                    anchorName_boundary(anchor_view::anchorFor(markerIdOf(tgt.lm))),
                     tgt.lm, rec)) ++written; else ++failed;
             }
         }
@@ -3059,18 +3197,16 @@ void TemplateViewerWindow::save_bin_and_csv() {
     QDir csvDir(m_markingPath);
     QDir vcgDir(m_vcgOutputPath);
     const QString canonicalBin = QDir(m_markingPath).filePath(m_subjectId + "_template_markings.bin");
-    const QString partialBin = canonicalBin + ".partial";
-
-    // currentPassIndex: 0 for R, anchor step + 1 for the anchor passes.
-    const int currentPassIndex = m_anchorStep + 1;
-    const bool finalPass = (currentPassIndex + 1 >= m_anchorPassCount);
 
     try {
-        // Markings .bin: written to a PARTIAL every pass so pulse markers (and
-        // in-progress state) carry across anchor reloads. Promoted to the
-        // canonical name on the final pass only.
-        writeTemplateMarkingsBin(partialBin.toStdString(), m_bins);
-        std::cout << "Saved: " << partialBin.toStdString() << "\n";
+        // STRAIGHT TO THE CANONICAL NAME. There used to be a .partial written
+        // on every pass and promoted on the last one, because the window was
+        // torn down and rebuilt between alignments and the pulse markers (which
+        // have no alignment dimension) had to survive the gap. One session, one
+        // write: the file already carries every alignment's marker set, keyed
+        // by anchor tag, so there is nothing in flight to stage.
+        writeTemplateMarkingsBin(canonicalBin.toStdString(), m_bins);
+        std::cout << "Saved: " << canonicalBin.toStdString() << "\n";
         logBoundaryTrainingAtSave();
 
         // ECG markings CSV: each pass writes its OWN per-anchor sidecar
@@ -3091,13 +3227,17 @@ void TemplateViewerWindow::save_bin_and_csv() {
                 // the features are still measurable, and the source is
                 // recorded so a row is never ambiguous about where its
                 // boundaries came from.
+                // R frame: global intervals compare landmarks ACROSS leads on
+                // one axis, and the reference lines drawn from them are drawn
+                // on the R-aligned panels. leadMarkersFor's USER path assembles
+                // the bars from all four alignments into this frame.
                 auto vgi = global_intervals::computeGlobalIntervals(
-                    m_bins[vi], currentAnchor(), m_sampleRate,
+                    m_bins[vi], AnchorType::R_PEAK, m_sampleRate,
                     global_intervals::MarkerSource::USER);
                 bool fromAuto = false;
                 if (!vgi.valid) {
                     vgi = global_intervals::computeGlobalIntervals(
-                        m_bins[vi], currentAnchor(), m_sampleRate,
+                        m_bins[vi], AnchorType::R_PEAK, m_sampleRate,
                         global_intervals::MarkerSource::AUTO);
                     fromAuto = vgi.valid;
                 }
@@ -3114,81 +3254,68 @@ void TemplateViewerWindow::save_bin_and_csv() {
                 << m_subjectId.toStdString() << "_vcg.csv\n";
         }
 
+        // ---- FOUR SIDECARS, ONE SAVE ----------------------------------
+        //
+        // Each sidecar holds one alignment's glyph columns and the one bar it
+        // owns, with its value columns suffixed _R / _P / _Q / _T; the merge
+        // joins them on (file_id, bin_index) exactly as it did when the four
+        // were written one window apart. Pulse last, un-suffixed, once -- it
+        // has no alignment dimension.
+        //
+        // The glob-discovery this replaces existed only to find sidecars left
+        // by PREVIOUS sessions of the same subject. There is one session now,
+        // so the order is kAllAnchors, and a stale sidecar from an older build
+        // can no longer sneak into the merge.
         const QString csvPath = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings.csv";
-        const QString tsuffix = "_" + m_anchorLabel;
-        const QString ecgSidecar = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings" + tsuffix + ".csv";
-        {
-            const QString tmpPath = ecgSidecar + ".tmp";
-            writeTemplateMarkingsCsv(tmpPath.toStdString(), m_bins,
-                m_subjectId.toStdString(), m_sampleRate, currentAnchor(),
-                MarkingsCsvSection::EcgOnly);
-            std::ifstream tin(tmpPath.toStdString());
-            std::stringstream tbuf; tbuf << tin.rdbuf();
-            tin.close();
-            QFile::remove(tmpPath);
-            std::string tcontent = tbuf.str();
-            const size_t tnl = tcontent.find('\n');
-            if (tnl == std::string::npos)
-                throw std::runtime_error("markings CSV writer produced malformed content (no newline)");
-            const std::string tHeader = tcontent.substr(0, tnl);
-            const std::string tBody = tcontent.substr(tnl);
-            std::ofstream out(ecgSidecar.toStdString(), std::ios::trunc);
-            if (!out) throw std::runtime_error("cannot open for write: " + ecgSidecar.toStdString());
-            out << suffixValueColumns(tHeader, tsuffix.toStdString()) << tBody;
-            out.close();
+        const QString pulseSidecar = csvDir.absolutePath() + "/"
+            + m_subjectId + "_template_markings_PULSE.csv";
+
+        // Write one sidecar: CSV to a temp file, then re-emit with every value
+        // column suffixed. An empty suffix skips the renaming (pulse).
+        auto writeSidecar = [&](const QString& path, const QString& suffix,
+            AnchorType anchor, MarkingsCsvSection section) {
+                const QString tmpPath = path + ".tmp";
+                writeTemplateMarkingsCsv(tmpPath.toStdString(), m_bins,
+                    m_subjectId.toStdString(), m_sampleRate, anchor, section);
+                std::ifstream tin(tmpPath.toStdString());
+                std::stringstream tbuf; tbuf << tin.rdbuf();
+                tin.close();
+                QFile::remove(tmpPath);
+                const std::string tcontent = tbuf.str();
+                const size_t tnl = tcontent.find('\n');
+                if (tnl == std::string::npos)
+                    throw std::runtime_error("markings CSV writer produced malformed content (no newline)");
+                const std::string tHeader = tcontent.substr(0, tnl);
+                const std::string tBody = tcontent.substr(tnl);
+                std::ofstream out(path.toStdString(), std::ios::trunc);
+                if (!out) throw std::runtime_error("cannot open for write: " + path.toStdString());
+                out << (suffix.isEmpty()
+                    ? tHeader
+                    : suffixValueColumns(tHeader, suffix.toStdString()))
+                    << tBody;
+                out.close();
+                std::cout << "Saved sidecar: " << path.toStdString() << "\n";
+            };
+
+        std::vector<std::string> order;
+        for (AnchorType a : anchor_view::kAllAnchors) {
+            const QString suffix = QString("_") + anchor_view::label(a);
+            const QString sidecar = csvDir.absolutePath() + "/"
+                + m_subjectId + "_template_markings" + suffix + ".csv";
+            writeSidecar(sidecar, suffix, a, MarkingsCsvSection::EcgOnly);
+            order.push_back(sidecar.toStdString());
         }
-        std::cout << "Saved sidecar: " << ecgSidecar.toStdString() << "\n";
+        writeSidecar(pulseSidecar, QString(), AnchorType::R_PEAK,
+            MarkingsCsvSection::PulseOnly);
+        order.push_back(pulseSidecar.toStdString());
         std::cout.flush();
 
-        // Final pass: write the pulse sidecar (un-suffixed, once), then MERGE
-        // every per-anchor sidecar (R first, then the anchor sequence, then
-        // pulse) into the canonical markings CSV in one pass; delete sidecars.
-        if (finalPass) {
-            const QString pulseSidecar = csvDir.absolutePath() + "/"
-                + m_subjectId + "_template_markings_PULSE.csv";
-            {
-                const QString pulseTmp = pulseSidecar + ".tmp";
-                writeTemplateMarkingsCsv(pulseTmp.toStdString(), m_bins,
-                    m_subjectId.toStdString(), m_sampleRate, currentAnchor(),
-                    MarkingsCsvSection::PulseOnly);
-                std::ifstream pin(pulseTmp.toStdString());
-                std::stringstream pbuf; pbuf << pin.rdbuf();
-                pin.close();
-                QFile::remove(pulseTmp);
-                std::ofstream out(pulseSidecar.toStdString(), std::ios::trunc);
-                if (!out) throw std::runtime_error("cannot open for write: " + pulseSidecar.toStdString());
-                out << pbuf.str();   // pulse columns stay un-suffixed
-                out.close();
-            }
-
-            // Discover the per-anchor sidecars by glob (no dependency on the
-            // controller's anchor list). Order R first, then the rest
-            // alphabetically, then pulse last.
-            const QString stem = m_subjectId + "_template_markings_";
-            QDir scDir(csvDir.absolutePath());
-            QStringList found = scDir.entryList(
-                QStringList{ stem + "*.csv" }, QDir::Files, QDir::Name);
-            std::vector<std::string> order;
-            // R sidecar first if present.
-            const QString rName = stem + "R.csv";
-            if (found.contains(rName))
-                order.push_back(scDir.filePath(rName).toStdString());
-            for (const QString& fn : found) {
-                if (fn == rName) continue;
-                if (fn == QFileInfo(pulseSidecar).fileName()) continue;  // pulse added last
-                order.push_back(scDir.filePath(fn).toStdString());
-            }
-            order.push_back(pulseSidecar.toStdString());
-
+        {
             if (!mergeSidecarCsvs(csvPath.toStdString(), order))
                 throw std::runtime_error("could not merge markings sidecars into " + csvPath.toStdString());
             for (const auto& p : order) QFile::remove(QString::fromStdString(p));
             std::cout << "Merged markings CSV: " << csvPath.toStdString() << "\n";
 
-            QFile::remove(canonicalBin);
-            if (!QFile::rename(partialBin, canonicalBin))
-                fprintf(stderr, "[markers] WARNING: could not promote %s -> %s\n",
-                    partialBin.toStdString().c_str(), canonicalBin.toStdString().c_str());
         }
     }
     catch (const std::exception& e) {
@@ -3199,25 +3326,20 @@ void TemplateViewerWindow::save_bin_and_csv() {
         return;   // don't emit finished(); let the user retry
     }
 
-    // Aligned-template CSV: writes a per-anchor sidecar every pass; merge the
-    // sidecars into the canonical <id>_template.csv once, at the final pass.
-    writeAlignedTemplateCsv();
-    if (finalPass) {
+    // Aligned-template CSV: one sidecar per alignment, holding that
+    // alignment's own averages, merged into the canonical <id>_template.csv.
+    // Same restructuring as the markings sidecars above, same reason -- the
+    // glob was reading files left by earlier passes of the same subject, and
+    // there are no earlier passes now.
+    {
         QDir alignedDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
         const QString canonical = alignedDir.filePath(m_subjectId + "_template.csv");
-        const QString stem = m_subjectId + "_template_";
-        QStringList found = alignedDir.entryList(
-            QStringList{ stem + "*.csv" }, QDir::Files, QDir::Name);
-        // Exclude the canonical itself (<id>_template.csv doesn't match the
-        // trailing-underscore stem, but guard anyway) and order R first.
         std::vector<std::string> order;
-        const QString rName = stem + "R.csv";
-        if (found.contains(rName))
-            order.push_back(alignedDir.filePath(rName).toStdString());
-        for (const QString& fn : found) {
-            if (fn == rName) continue;
-            if (fn.startsWith(m_subjectId + "_template_markings")) continue;  // different family
-            order.push_back(alignedDir.filePath(fn).toStdString());
+        for (AnchorType a : anchor_view::kAllAnchors) {
+            writeAlignedTemplateCsv(a);
+            order.push_back(alignedDir.filePath(
+                m_subjectId + "_template_" + anchor_view::label(a) + ".csv")
+                .toStdString());
         }
         if (!order.empty() && mergeSidecarCsvs(canonical.toStdString(), order)) {
             for (const auto& p : order) QFile::remove(QString::fromStdString(p));
@@ -3225,11 +3347,8 @@ void TemplateViewerWindow::save_bin_and_csv() {
         }
     }
 
-    // Anchor cycle: emit reload until the last pass, then finish.
-    if (!finalPass) {
-        emit requestQAlignReload();
-        return;
-    }
-
+    // ONE SAVE, ONE FINISH. There is no cycle to advance: requestQAlignReload
+    // and the pass counter are gone, and the four alignments were all written
+    // above.
     emit finished();
 }
