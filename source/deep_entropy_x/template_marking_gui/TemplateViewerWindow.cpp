@@ -228,15 +228,24 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         // reached directly by refreshBankMarkers and the focus path, and a lead
         // supplied for a slot with no column would draw a trace nothing else on
         // the page accounts for.
-        bool pulseThin = false;
-        {
-            bool anyPulse = false;
-            for (const auto& pt : b.ppg_bank.templates)
-                if (pt.memberCount() > 0) { anyPulse = true; break; }
-            if (anyPulse)
-                pulseThin = (templateIdx >= b.ppg_bank.size())
-                || b.ppg_bank.templates[templateIdx].tooFewBeats(true);
-        }
+        // NO PULSE, NO LEAD. UNCONDITIONALLY.
+        //
+        // This used to be skipped whenever the bin had no pulse cohort ANYWHERE
+        // -- the reasoning being that an absent channel should not suppress
+        // markable ECG. That exemption is what put ECG-only panels on screen: a
+        // bin whose pulse filter produced nothing took the exemption and every
+        // one of its ECG columns was drawn with no pulse to mark.
+        //
+        // A panel is a (bin, template) pair for marking BOTH faces of a group.
+        // A group with no pulse is not markable, whether the pulse is missing
+        // because the cohort was thin or because there was none to begin with.
+        // The threshold is min_beats_template_ppg from config.csv, via
+        // tooFewBeats().
+        const bool pulseThin =
+            (templateIdx >= b.ppg_bank.size())
+            || b.ppg_bank.templates[templateIdx].tmpl.empty()
+            || b.ppg_bank.templates[templateIdx].memberCount() <= 0
+            || b.ppg_bank.templates[templateIdx].tooFewBeats(/*is_ppg=*/true);
         if (!pulseThin
             && templateIdx < bank.size()
             && !bank.templates[templateIdx].tmpl.empty()
@@ -250,7 +259,21 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             // subtype is no longer read here: tbank::letterRanks applies the
             // confirmed-subtype rule itself, from the same BankTemplate.
         }
-        else if (templateIdx == 0) {
+        else if (templateIdx == 0 && !pulseThin) {
+            // PRE-BANK FALLBACK, AND IT MUST STILL RESPECT THE PULSE MINIMUM.
+            //
+            // A file with no bank has no BankTemplate to measure, so slot 0
+            // renders from the bin's own chN_raw -- that is what this branch is
+            // for. But it was unconditional, so slot 0 also caught every bin
+            // whose bank DID exist and whose slot 0 the test above had just
+            // refused. pulseThin was computed and then bypassed here, which is
+            // why panels with no PPG kept appearing however tightly
+            // markingSlotsForBin and showPage were gated: the panel never
+            // reached those gates, it took this exit.
+            //
+            // pulseThin carries min_beats_template_ppg from config.csv via
+            // tooFewBeats(), and is false when the bin has no pulse cohort at
+            // all -- an ABSENT channel, which must not suppress markable ECG.
             const std::vector<double>* raw =
                 (c == 0) ? &b.ch1.ecgTemplate_raw
                 : (c == 1) ? &b.ch2.ecgTemplate_raw : &b.ch3.ecgTemplate_raw;
@@ -426,13 +449,28 @@ std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) 
     // conditional on the bin having some pulse cohort to speak of; the same
     // rule an absent CH2 or CH3 already gets by having no bank.
     auto shown = [](const TemplateBin& bb, int t) {
-        bool anyPulse = false;
-        for (const auto& pt : bb.ppg_bank.templates)
-            if (pt.memberCount() > 0) { anyPulse = true; break; }
-        if (anyPulse) {
+        {
+            // UNCONDITIONAL, for the reason given at leadsForBinTemplate's
+            // pulseThin: the "no pulse cohort anywhere is an ABSENT channel"
+            // exemption that used to wrap this is exactly what let ECG-only
+            // columns through.
             if (t >= bb.ppg_bank.size()) return false;
-            if (bb.ppg_bank.templates[t].tooFewBeats(/*is_ppg=*/true))
-                return false;
+            const tbank::BankTemplate& pt = bb.ppg_bank.templates[t];
+            // STRUCTURAL GATES FIRST, THEN THE CONFIGURED ONE. tooFewBeats
+            // compares cleanCount() against minBeatsPpg(), and returns FALSE
+            // when that minimum is 0 -- which is the default. So on a config
+            // without min_beats_template_ppg this branch tested nothing, and a
+            // slot with an EMPTY pulse template or ZERO members passed straight
+            // through to become an ECG-only panel.
+            //
+            // These two are not thresholds and are not configurable: a slot with
+            // no waveform and a slot with no members are not thin, they are
+            // absent, and the same three tests are what showPage's hasPPG
+            // applies at the draw site. The two must agree or a column is
+            // created that cannot draw its pulse.
+            if (pt.tmpl.empty()) return false;
+            if (pt.memberCount() <= 0) return false;
+            if (pt.tooFewBeats(/*is_ppg=*/true)) return false;
         }
         for (int c = 0; c < 3; ++c) {
             const tbank::TemplateBank& bank = bb.ecg_bank[c];
@@ -1042,13 +1080,28 @@ void TemplateViewerWindow::showPage() {
         // tooFewBeats carries the PPG minimum from config.csv, so a cohort
         // below it is not drawn either -- a band fitted to two pulses is as
         // meaningless as a waveform built from two beats.
-        const tbank::BankTemplate* ppgSlot =
+        tbank::BankTemplate* ppgSlot =
             (ti >= 0 && ti < b.ppg_bank.size())
-            ? &b.ppg_bank.templates[ti] : nullptr;
+            ? &m_bins[gi].ppg_bank.templates[ti] : nullptr;
         const bool hasPPG = ppgSlot && !ppgSlot->tmpl.empty()
             && ppgSlot->memberCount() > 0
             && !ppgSlot->tooFewBeats(/*is_ppg=*/true);
         const int nPpgForColumn = hasPPG ? ppgSlot->memberCount() : -1;
+
+        // NO PULSE, NO PANEL -- AND THE TEST HAS TO BE HERE, not only in
+        // markingSlotsForBin.
+        //
+        // shown() decides which slots are ELIGIBLE; this function builds and
+        // populates the widgets, and it did so regardless of what shown()
+        // returned. So tightening shown() alone left the same ECG-only panels on
+        // screen: the column had already been created by the time hasPPG came
+        // out false, and the only consequence was that no pulse trace was drawn.
+        //
+        // An ECG-only panel is worse than an absent one. It is
+        // indistinguishable from a bin whose record genuinely has no pulse
+        // channel, and the operator cannot place the pulse landmarks the panel
+        // exists to collect.
+        if (!hasPPG) continue;   // unconditional -- see leadsForBinTemplate
 
         if (leads.empty())
             leads.push_back({ nullptr, 0, "No ECG" });
@@ -1097,10 +1150,18 @@ void TemplateViewerWindow::showPage() {
             // range across every pulse in the bin, so under a group holding one
             // morphology it drew a band sized by the difference BETWEEN
             // morphologies.
-            const std::vector<double> ppgIqr = hasPPG
-                ? normalize_features::scale_array_by_ref(ppgSlot->tmpl_iqr,
-                    m_pulseGlobalRef[0])
-                : empty;
+            std::vector<double> ppgIqr = empty;
+            int ppgFootIdx = -1;
+            if (hasPPG) {
+                if (!ppgSlot->hasDetectedPulseMarks())
+                    FeatureMarks::seed_pulse_bank_template(ppgSlot->tmpl,
+                        m_ppgRateHz, ppgSlot->pulse_marks);
+                ppgFootIdx = ppgSlot->pulse_marks.onset;
+                ppgIqr = normalize_features::scale_pulse_spread_by_ref(
+                    ppgSlot->tmpl_iqr,
+                    normalize_features::sample_y(ppgSlot->tmpl, ppgFootIdx),
+                    m_pulseGlobalRef[0]);
+            };
             // ECG beats for THIS TEMPLATE, not for the bin. Lead::nMembers is
             // the bank member's own beat count; it is 0 only on the pre-bank
             // fallback path (slot 0 of a bin whose bank never arrived), where
@@ -1162,8 +1223,11 @@ void TemplateViewerWindow::showPage() {
             const std::vector<double> artPSrc = !b.artPulmTemplate.empty() ? maybeNotch(b.artPulmTemplate, m_artPulmRateHz, b.art_pulm_onset) : b.artPulmTemplate;
 
             const std::vector<double> ecgN = normalizeEcgTrace(ecgSrc, c);
+            // ppgFootIdx, not b.ppg_onset: the trace being normalized is
+            // ppgSlot->tmpl, and b.ppg_onset was measured on b.ppgTemplate. The
+            // band above uses this same foot, so the two agree by construction.
             const std::vector<double> ppgN = hasPPG
-                ? normalize_ppg_or_similar(ppgSrc, b.ppg_onset, 0)
+                ? normalize_ppg_or_similar(ppgSrc, ppgFootIdx, 0)
                 : empty;
             const std::vector<double> abpN = !abpSrc.empty()
                 ? normalize_ppg_or_similar(abpSrc, b.abp_onset, 1)
@@ -1175,16 +1239,13 @@ void TemplateViewerWindow::showPage() {
                 ? normalize_ppg_or_similar(artPSrc, b.art_pulm_onset, 3)
                 : artPSrc;
 
-            // PLOT WIDTH BEFORE THE TRACES. setData derives the drawn width
-            // from this, so it has to be set first. The median RR comes from
-            // alignment via the template file's in-memory struct; the beat
-            // matrix itself stays framed on the bin's longest RR so that no
-            // beat is ever clipped, and this only narrows what is DRAWN.
-            {
-                const ChannelTemplateData* src[3] = { &b.ch1, &b.ch2, &b.ch3 };
-                const int ci = (c >= 0 && c <= 2) ? c : 0;
-                pw->setMedianRr(src[ci]->median_rr_samples);
-            }
+            // (No plot-width call here any more. The frame is derived from the
+            // traces themselves in BinPlotWidget::recomputeFrame -- the union of
+            // every channel's own drawn extent, in seconds relative to R -- so
+            // there is no width to hand in ahead of setData. median_rr_samples
+            // was never populated anyway: copyMethod does not set it and
+            // readMethod does not deserialize it, which is why the widget had
+            // been falling back to the array length.)
 
             // Traces only. Every marker and autodetect column arrives via the
             // single applyBinToWidget() call below. nPpgForColumn was resolved
@@ -1706,9 +1767,9 @@ void TemplateViewerWindow::writeAlignedTemplateCsv() {
         // with the user bars, both through the same FeatureMarks::reactive_ppg
         // the on-screen glyph uses -- so what is plotted is what is exported.
         const FeatureMarks::ReactivePpg rxPpgAuto = FeatureMarks::reactive_ppg(
-            b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_end_auto);
+            b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_dicrotic_auto, b.ppg_end_auto);
         const FeatureMarks::ReactivePpg rxPpgUser = FeatureMarks::reactive_ppg(
-            b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_end);
+            b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_dicrotic, b.ppg_end);
         // double, not int: t50/t80 are interpolated crossings and the stored
         // fields promote without loss. Rounding happens once, in emitLoc.
         const double ppgAuto[kNumPpgMarkers] = {
@@ -1959,8 +2020,7 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
         // column by construction, so the bin's value is correct rather than a
         // guess when the template's own field was never filled.
         const int rc = (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel];
-        FeatureMarks::seed_bank_template(tp.tmpl, rc, m_sampleRate,
-            tp.marks(anchor));
+        FeatureMarks::seed_bank_template(tp.tmpl, rc, m_sampleRate, currentAnchor(), tp.marks(anchor));
     }
     const tbank::BankMarkerSet& mk = tp.marks(anchor);
     // Bin first, for the arterial markers (a bank slot has no ABP/ART waveform
@@ -2198,8 +2258,7 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
             if (!tgt.hasDetectedMarks(anchor)) {
                 const int rc = (tgt.r_col >= 0)
                     ? tgt.r_col : m_bins[i].r_peak_ch[leadIdx];
-                FeatureMarks::seed_bank_template(tgt.tmpl, rc, m_sampleRate,
-                    tgt.marks(anchor));
+                FeatureMarks::seed_bank_template(tgt.tmpl, rc, m_sampleRate, currentAnchor(), tgt.marks(anchor));
             }
             const int cur = bankGet(bk);
             if (cur < 0) continue;   // this landmark was not found on this one
@@ -2537,14 +2596,14 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
             switch (m) {
             case BinPlotWidget::PpgOnset:    return QStringLiteral("Foot");
             case BinPlotWidget::PpgT50:      return QStringLiteral("T50");
-            // SWAPPED. PpgPeak is the SYSTOLIC peak -- the forward-wave maximum
-            // the whole pulse is anchored on -- and PpgPeak2 is the DIASTOLIC
-            // peak, the reflected wave arriving after the dicrotic notch. Every
-            // other reference in the tree agrees: ppg_peak2_color is commented
-            // "(2nd/diastolic peak)", and feature_marks builds peak2 as "first
-            // local max after the notch". Only these two labels disagreed, and
-            // they disagreed with each other in a way that made the diastolic
-            // bar look like a missing systolic one.
+                // SWAPPED. PpgPeak is the SYSTOLIC peak -- the forward-wave maximum
+                // the whole pulse is anchored on -- and PpgPeak2 is the DIASTOLIC
+                // peak, the reflected wave arriving after the dicrotic notch. Every
+                // other reference in the tree agrees: ppg_peak2_color is commented
+                // "(2nd/diastolic peak)", and feature_marks builds peak2 as "first
+                // local max after the notch". Only these two labels disagreed, and
+                // they disagreed with each other in a way that made the diastolic
+                // bar look like a missing systolic one.
             case BinPlotWidget::PpgPeak:     return QStringLiteral("Systolic Peak");
             case BinPlotWidget::PpgDicrotic: return QStringLiteral("Dicrotic Notch");
             case BinPlotWidget::PpgPeak2:    return QStringLiteral("Diastolic Peak");
@@ -2747,11 +2806,9 @@ void TemplateViewerWindow::onBadPPGToggled(int binIdx, int templateIdx,
 static const char* anchorName_boundary(AnchorType a) {
     switch (a) {
     case AnchorType::P_ONSET: return "P_ONSET";
-    case AnchorType::P_PEAK:  return "P_PEAK";
     case AnchorType::Q_ONSET: return "Q_ONSET";
     case AnchorType::R_PEAK:  return "R_PEAK";
     case AnchorType::J_POINT: return "J_POINT";
-    case AnchorType::T_PEAK:  return "T_PEAK";
     }
     return "UNKNOWN";
 }

@@ -37,8 +37,6 @@ namespace alignment {
     constexpr double percent_interval_preceeding_rpeak = 0.3; //how far before the R peak the snip goes, in terms of percent of the RR interval length
     constexpr double percent_interval_following_rpeak = 1.5;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
 
-    enum class AnchorType { P_ONSET, P_PEAK, Q_ONSET, R_PEAK, J_POINT, T_PEAK };
-
     // Sample counts for a given RR (integer-truncated).
     inline int64_t rr_before_samples(int64_t rr) {
         return static_cast<int64_t>(percent_interval_preceeding_rpeak * rr);
@@ -502,24 +500,6 @@ namespace alignment {
         // or its tail is gone from the matrix and from every template built
         // from it.
         //
-        // I briefly changed this to the median and it was wrong. Roughly half
-        // of any distribution sits above its median, so a median-width matrix
-        // clipped about 48% of beats -- on the left where their own R sits past
-        // R_anchor, and on the right where their tail runs past shared_w. Small
-        // templates showed it worst, because a 2-member template is often built
-        // from exactly the long beats that got cut, so it appeared trimmed at
-        // BOTH ends.
-        //
-        // THE SQUASHED PLOTS ARE NOT THIS. They are a DISPLAY problem:
-        // BinPlotWidget sets m_ecgVisibleN from the trace length, so the view
-        // width is the storage width, and one 2.8 s pause therefore stretched
-        // the axis of every panel in the bin. The fix belongs in the viewer --
-        // draw a median-wide window into a max-wide array -- not here. Narrowing
-        // the array to fix the axis destroys data to change a scale.
-        //
-        // out.median_length (set just above) is the value that display window
-        // should be built from; it is already carried on the beat set for
-        // whoever plumbs it through to the viewer.
         int max_rr_len = 0;
         for (int L : out.rr_lens)
             if (L > max_rr_len) max_rr_len = L;

@@ -160,7 +160,21 @@ namespace normalize_features {
         for (size_t i = 0; i < raw.size(); ++i) out[i] = ecg_norm(raw[i], ref);
         return out;
     }
+    // Spread (IQR, sd) in RAW pulse units -> normalized units.
 
+
+    inline std::vector<double> scale_pulse_spread_by_ref( const std::vector<double>& raw, double foot_y, double ref) {
+		//this scales things so the std band in the ppg is visible in the viewer.
+        //The spread is computed in raw units, then scaled to normalized units by dividing by the global reference (median PI) and the local foot value.
+        std::vector<double> out(raw.size());
+        const bool ok = std::isfinite(ref) && ref != 0.0
+            && !std::isnan(foot_y) && std::abs(foot_y) >= 1e-12;
+        for (size_t i = 0; i < raw.size(); ++i)
+            out[i] = (ok && !std::isnan(raw[i]))
+            ? (100.0 * raw[i] / std::abs(foot_y)) / std::abs(ref)
+            : std::numeric_limits<double>::quiet_NaN();
+        return out;
+    }
     inline std::vector<double> normalize_ecg_trace(const std::vector<double>& raw, double ref) {
         return scale_array_by_ref(raw, ref);
     }

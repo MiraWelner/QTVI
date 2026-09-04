@@ -149,12 +149,14 @@ struct TemplateBin {
     // recomputed every loadSubject -- so widening to double is not a .bin
     // format change. Consumers that need an integer sample index round at use.
     double p_peak_auto_ch[3] = { -1, -1, -1 };
+    double q_peak_auto_ch[3] = { -1, -1, -1 };
     double q_begin_auto_ch[3] = { -1, -1, -1 };
     double r_peak_auto_ch[3] = { -1, -1, -1 };
     double s_end_auto_ch[3] = { -1, -1, -1 };
     double t_begin_auto_ch[3] = { -1, -1, -1 };
     double t_end_auto_ch[3] = { -1, -1, -1 };
     double p_begin_auto_ch[3] = { -1, -1, -1 };
+    bool q_begin_found_auto_ch[3] = { false, false, false };
 
     // PPG: sample indices into ppgTemplate. Shared across channels.
     int ppg_onset = -1;
@@ -812,9 +814,9 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             // glyph makes. The stored ppg_t50/ppg_t80 fields are the detector's
             // originals and are deliberately not used for these columns.
             const FeatureMarks::ReactivePpg rxAuto = FeatureMarks::reactive_ppg(
-                b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_end_auto);
+                b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto,b.ppg_dicrotic_auto, b.ppg_end_auto);
             const FeatureMarks::ReactivePpg rxUser = FeatureMarks::reactive_ppg(
-                b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_end);
+                b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_dicrotic, b.ppg_end);
             emitPulsePoint(b.ppgTemplate, b.ppg_onset_auto, b.ppg_onset,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
             emitPulsePoint(b.ppgTemplate, rxAuto.t50, rxUser.t50,

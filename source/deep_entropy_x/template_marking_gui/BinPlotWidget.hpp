@@ -9,14 +9,13 @@
 // Left-drag:           move whichever marker is closest to the click
 //
 // Drawing scale:
-//   The widget fills whatever width its layout cell gives it. The
-//   pixels-per-sample scale is computed at draw time (pxPerSample()) so
-//   that the widest trace exactly spans the drawable width -- i.e. every
-//   bin window is the SAME on-screen length regardless of how many
-//   samples it holds. ECG and PPG still share that single scale within a
-//   widget, so they stay temporally aligned with each other; only the
-//   scale differs from one bin to the next (which is fine -- bins don't
-//   need to share an x-axis, just a length).
+//   The widget fills whatever width its layout cell gives it, and every
+//   channel is drawn in SECONDS RELATIVE TO ITS OWN R -- so R lands at the
+//   same x on every trace by construction, whatever their sample rates. The
+//   frame is the union of every channel's own extent, scaled to the drawable
+//   width, so each bin window comes out the same on-screen length. See the
+//   geometry note in the class body for why this replaced sample-index
+//   drawing with per-channel offsets and ratios.
 //
 // Per-sample std (gray band):
 //   When std vectors matching the trace length are provided, the widget
@@ -89,40 +88,40 @@ public:
     // (m_ppgDelay / m_ppgFootIdx retired in Patch C: every channel is
     // real-time-aligned by construction under Patch B slicing.)
 
-    // Every trace this widget can draw, including ECG (the reference
-    // channel that defines the frame's sample-space -- see
-    // totalSampleSpan()/pxPerSample()). Add new channels here only, before
-    // Count; nothing else in the geometry code needs to change.
+    // Every trace this widget can draw. Add new channels here only, before
+    // Count; nothing else in the geometry code needs to change, because a
+    // channel is fully described by its rate and its R column (see the time
+    // model below).
     enum class Channel { Ecg, Ppg, Abp, Art, ArtPulm, Count };
 
     // ----------------------------------------------------------------------
-    // Visible-range rules.
+    // GEOMETRY: EVERY CHANNEL IS DRAWN IN SECONDS RELATIVE TO ITS OWN R.
     //
-    // PPG: always show the whole trace.
-    // ECG: cut off before the next beat's P-wave. The cutoff is derived
-    //      from the signal itself so it scales with sampling rate and
-    //      heart rate:
+    //     t(ch, i) = (i - anchor[ch]) / rate[ch]
+    //     x(t)     = margin_left + (t - tMin) / (tMax - tMin) * drawW
     //
-    //   1. Find this-beat R as the largest deviation from the front-half
-    //      mean within samples [0, N/2).
-    //   2. Find next-beat R the same way within [N/2, N).
-    //   3. RR = next_R - this_R.
-    //   4. Cut at next_R - kPMarginRRFrac * RR.
+    // R lands at t = 0 on every channel, so it lands at the same x on every
+    // trace by construction. There is nothing to subtract, no shared origin to
+    // assert, and no per-channel clip.
     //
-    // At normal heart rates the P-wave starts ~15-20% of RR before QRS;
-    // backing off 25% lands the cut firmly in the flat TP-segment before
-    // any P-bump. Because the margin is a fraction of RR (which scales
-    // linearly with sample rate), this is sample-rate independent.
+    // WHY IT IS DONE THIS WAY. Position used to be expressed four ways at once:
+    // a sample index, a per-channel start offset, a per-channel rate ratio, and
+    // a clip count. Every alignment fix added another correction term, and the
+    // terms disagreed -- the ECG's R column is 0.3 * the bin's LONGEST RR
+    // (alignment.hpp) while every pulse channel's is a fixed 0.3 s
+    // (create_arterial_templates.hpp), so asserting a shared sample 0 put the
+    // ECG most of a second ahead of the PPG on any bin holding a pause. Bands
+    // drifted from their own traces for the same reason: band and line reached
+    // the array through different terms.
+    //
+    // The frame [tMin, tMax] is the UNION of every present channel's own drawn
+    // extent. Because it is a union, no channel can have a tail outside it --
+    // which is what makes a clip count unnecessary rather than merely
+    // inconvenient, and why a marker inside its own array is on screen.
+    //
+    // A channel with no rate or no anchor is NOT DRAWN, deliberately: guessing
+    // an anchor is what produced the misalignment this replaces.
     // ----------------------------------------------------------------------
-    static constexpr double kPMarginRRFrac = 0.25;
-
-    // Pixels-per-sample is no longer fixed. It's derived per-paint from
-    // the widget's current width and the widest trace (see pxPerSample()),
-    // so each bin window comes out the same on-screen length.
-
-    static int visiblePpgCount(int nFull) {
-        return std::max(nFull, 2);
-    }
 
     void setTemplateIndex(int t) { m_templateIndex = t; }
     int  templateIndex() const { return m_templateIndex; }
@@ -150,16 +149,27 @@ public:
 
     void setChannelRate(Channel ch, double hz);
     double channelRate(Channel ch) const { return m_rates[static_cast<size_t>(ch)]; }
-    // Ratio that converts `ch`'s own sample index into ECG-equivalent
-    // sample units (the frame's reference space). 1.0 for ECG itself, and
-    // 1.0 whenever either rate is unknown -- the historical case, when
-    // every rate happened to match, so this never changes old behavior for
-    // a channel with no rate set.
-    double rateRatio(Channel ch) const {
-        const double r = m_rates[static_cast<size_t>(ch)];
-        const double ecgR = m_rates[static_cast<size_t>(Channel::Ecg)];
-        return (r > 0.0 && ecgR > 0.0) ? ecgR / r : 1.0;
+    // R column for a channel, in THAT channel's own samples. With
+    // channelRate() this is the channel's entire geometry. -1 = unknown, and an
+    // unknown anchor means the channel is not drawn.
+    //
+    // Callers normally do not touch this: setChannelRate derives the pulse
+    // channels' anchors (a fixed number of SECONDS into the template, so it
+    // follows the rate), and setData takes the ECG's as rPeakSample. It is
+    // exposed for a caller that needs to override.
+    void setChannelAnchor(Channel ch, double rColumn);
+    double channelAnchor(Channel ch) const {
+        return m_rAnchor[static_cast<size_t>(ch)];
     }
+
+    // Frame bounds in seconds relative to R; negative before it.
+    double frameTMin() const { return m_tMin; }
+    double frameTMax() const { return m_tMax; }
+
+    // Pixels per SECOND -- the one number describing how zoomed a panel is,
+    // shared by every channel. channelDx(ch) == pxPerSecond() / rate[ch], so a
+    // per-channel pixels-per-sample is still available where one is wanted.
+    double pxPerSecond() const;
 
     void setState(State s);
     State state() const { return m_state; }
@@ -181,10 +191,7 @@ public:
     // rounded the refined T-peak and the interpolated T50/T80 crossings on the
     // way into the paint path -- so the glyph drew up to half a sample away
     // from the value the CSV reported for the same landmark.
-    struct Reactive {
-        double ecgTPeak = -1.0, ppgT50 = -1.0, ppgT80 = -1.0,
-            ppgPeak2 = -1.0;
-    };    Reactive reactiveGlyphs() const;
+    struct Reactive { double ecgTPeak = -1.0, ppgT50 = -1.0, ppgT80 = -1.0, ppgPeak2 = -1.0; };    Reactive reactiveGlyphs() const;
 
     // Per-trace marker visibility. When false, that group's markers
     // are neither drawn nor hit-testable (drag-pick ignores them).
@@ -230,18 +237,14 @@ public:
     int  binIndex()  const { return m_binIndex; }
     int  leadIndex() const { return m_leadIndex; }
 
-    int  ecgVisibleN() const { return m_ecgVisibleN; }
-
-    // Median RR in ECG samples. Call BEFORE setData: setData computes the drawn
-    // width from it. -1 restores the old behaviour (axis = array length).
-    void setMedianRr(int samples) { m_medianRrSamples = samples; }
-
     // The widget no longer dictates its width from the trace length.
     // It advertises a modest preferred width and a small minimum so the
     // grid can hand every cell an equal share of the window; the trace is
     // then scaled to fill whatever width the cell receives.
     QSize sizeHint() const override { return QSize(220, 120); }
     QSize minimumSizeHint() const override { return QSize(40, 60); }
+    void overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm);
+
 
 signals:
     void markerMoved(int binIndex, int leadIndex, int marker, int newIdx);
@@ -290,7 +293,6 @@ signals:
     // edited -- see the note in BinPlotWidget.cpp.
     void classConfirmRequested(int binIndex, int leadIndex, int templateIdx,
         int annotationCode);
-    void overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm);
 
 
 protected:
@@ -301,36 +303,38 @@ protected:
 
 private:
     std::vector<global_interval_lines::Line> m_refLines; //global refernce lines eg. earliest Q-onset 
-    int    sampleFromX(double x, double startSample, double ratio) const;
-    // s is a sub-sample position: glyph landmarks are fractional.
-    double xFromSample(double s, double startSample, double ratio) const;
+    // Time of sample i on `ch`, in seconds relative to that channel's R.
+    // NaN when the channel has no rate or no anchor.
+    double timeAt(Channel ch, double i) const;
+
+    // The only place the frame becomes pixels.
+    double xFromTime(double t) const;
+
+    // x(i) is AFFINE in i, so a trace draw needs only these two numbers:
+    //     x(i) = channelX0(ch) + i * channelDx(ch)
+    // which is what lets the two draw helpers keep their existing form.
+    double channelX0(Channel ch) const;
+    double channelDx(Channel ch) const;
+
+    // Pixel x of (sub-sample) index i on `ch`, and the inverse.
+    double xFromSample(Channel ch, double i) const;
+    int    sampleFromX(Channel ch, double x) const;
+
     // The ONLY hit-test. Bars are clickable; glyphs are display-only and are
     // deliberately not hit-tested, so a click can never select or drag an
     // automated mark.
     int    markerAtX(double x) const;
-    int    visibleN(bool isEcg) const;
-    // Resolve a marker's trace vector, geometry, current visibility,
-    // visible-sample bound, and ECG-equivalent rate ratio. ECG, PPG, and
-    // all arterial channels resolve through one path so they behave
-    // identically.
+
+    // Resolve a marker to its channel, trace, and group visibility. No
+    // visible-sample bound and no ratio: the frame is the union of every
+    // channel's extent, so a marker inside its own array is on screen.
     bool   markerTrace(int m, const std::vector<double>*& vec,
-        bool& isEcg, bool& visible, int& visN, double& ratio) const;
+        Channel& ch, bool& visible) const;
 
-    // Widest sample extent any trace needs (in samples), and the
-    // pixels-per-sample that makes that extent fill the drawable width.
-    int    totalSampleSpan() const;
-    double pxPerSample() const;
-
-    // View width in ECG samples, derived from the trace: the next beat's R in a
-    // median template sits at the median RR, which is what the frame should be
-    // sized from. The STORED array is framed on the longest RR so that no beat
-    // is clipped, so without this the axis of every panel is stretched by the
-    // single worst interval in the bin. Falls back to the full length when no
-    // second R is identifiable.
-
-    double ppgStartSample() const;
-    // Pulse-trace samples that fit before the ECG's right edge (clip point).
-    int    pulseClipN() const;
+    // Recompute [m_tMin, m_tMax] from every present channel. Called by
+    // setData, setArterialTraces, setChannelRate and setChannelAnchor, so the
+    // frame can never be stale with respect to the traces.
+    void   recomputeFrame();
 
     // Feature-glyph QC marks (the black X's). Defined in BinPlotGlyphs.cpp.
     // Reads trace/marker state directly (member); takes the paint-local
@@ -350,18 +354,18 @@ private:
     std::vector<double> m_ecg;
     std::vector<double> m_ecgIqr;
 
-    int m_ecgVisibleN = 0;
-    int m_ppgVisibleN = 0;
-
-    // Median RR of the beats behind this template, in samples; -1 = unknown.
-    // Sets the DRAWN width only -- see the note in setData. Never used to trim
-    // m_ecg itself.
-    int m_medianRrSamples = -1;
     int m_markers[MarkerCount];   // all -1 until seeded (filled in the ctor)
 
-    // Hz per channel (indexed by Channel); 0 = unknown -> rateRatio()
-    // falls back to 1.0 for that channel.
+    // Hz per channel (indexed by Channel); 0 = unknown -> channel not drawn.
     std::array<double, static_cast<size_t>(Channel::Count)> m_rates{};
+
+    // R column per channel, in that channel's own samples; -1 = unknown.
+    // Filled in the ctor with -1 and set by setChannelRate / setData.
+    std::array<double, static_cast<size_t>(Channel::Count)> m_rAnchor{};
+
+    // Frame bounds in seconds relative to R. Recomputed by recomputeFrame().
+    double m_tMin = 0.0;
+    double m_tMax = 1.0;
 
     // FROZEN glyph columns only -- every field here is a copy of an m_auto
     // value (bounds-checked against the trace), so nothing in this struct can
@@ -373,8 +377,8 @@ private:
     // All sub-sample. Every one of these comes from a refined finder, so an
     // int field here re-quantised what the refinement had resolved.
     struct GlyphSnapshot {
-        double ecgPBegin = -1.0, ecgPPeak = -1.0, ecgQ = -1.0, ecgRPeak = -1.0,
-            ecgS = -1.0, ecgTend = -1.0;
+        double ecgPBegin = -1.0, ecgPPeak = -1.0, ecgQPeak = -1.0, ecgQ = -1.0, ecgRPeak = -1.0, ecgS = -1.0, ecgTend = -1.0;
+        bool ecgQFound = false;
         double ppgFoot = -1.0;    // = ppgOnset auto
         double ppgP1 = -1.0;      // = ppgPeak auto
         double ppgP2 = -1.0;      bool ppgPeak2Found = false;

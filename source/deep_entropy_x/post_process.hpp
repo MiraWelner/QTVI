@@ -39,8 +39,7 @@ namespace post_process_detail {
     // the cycle is R (shown first) -> each of these in order.
     inline const std::vector<AnchorType>& anchorSequence() {
         static const std::vector<AnchorType> seq = {
-            AnchorType::Q_ONSET, AnchorType::J_POINT, AnchorType::T_PEAK,
-            AnchorType::P_PEAK,  AnchorType::P_ONSET
+            AnchorType::P_ONSET, AnchorType::Q_ONSET, AnchorType::J_POINT,
         };
         return seq;
     }
@@ -49,11 +48,9 @@ namespace post_process_detail {
     inline const char* anchorName(AnchorType a) {
         switch (a) {
         case AnchorType::P_ONSET: return "P_ONSET";
-        case AnchorType::P_PEAK:  return "P_PEAK";
         case AnchorType::Q_ONSET: return "Q_ONSET";
         case AnchorType::R_PEAK:  return "R_PEAK";
         case AnchorType::J_POINT: return "J_POINT";
-        case AnchorType::T_PEAK:  return "T_PEAK";
         }
         return "?";
     }
@@ -418,59 +415,10 @@ namespace post_process_detail {
         job.info = std::move(fast.info);
         job.tmplR = job.tmpl;      // snapshot R frame (one copy, at prep time)
 
-        if (!cfg.bin_archive_path.empty()) {
-            const bool ok = bin_archive::writeBinFeatureArchive(
-                cfg.bin_archive_path, stem, job.tmpl.bins,
-                cfg.ecg_upsample_rate, "R", &job.beats);
-            if (!ok)
-                std::cerr << "  [bin_archive] " << stem
-                << ": could not write checkpoint to " << cfg.bin_archive_path << "\n";
-            else
-                std::cerr << "  [bin_archive] " << stem << ": wrote checkpoint ("
-                << job.tmpl.bins.size() << " bins)\n";
-
-            // Section 5.5 length/area/volume time series, from the SAME
-            // pre-deformation R-pass data. job.peakResults still holds the
-            // raw per-channel ECG + detected R-peaks the proportional
-            // segmenter needs (job.tmpl has only averaged templates, which
-            // can't be re-segmented), so it is computed here rather than in
-            // the viewer.
-            const std::string ftsPath =
-                cfg.bin_archive_path + "/" + stem + "_feature_timeseries.csv";
-            const bool okf = normalize_features::writeFeatureTimeSeriesCsv(
-                ftsPath, stem, job.peakResults, cfg.ecg_upsample_rate);
-            if (!okf)
-                std::cerr << "  [feature_ts] " << stem
-                << ": could not write " << ftsPath << "\n";
-            else
-                std::cerr << "  [feature_ts] " << stem << ": wrote length/area/volume series\n";
-
-            // Section 4.7 dynamic envelopes, per beat per segment per channel.
-            // Placed here, next to the other R-pass checkpoints, because it
-            // needs exactly the same two objects they do -- job.tmpl.bins for
-            // the segment bounds and job.beats for the beats -- and because
-            // both are still the R pass at this point. It CANNOT move below
-            // augment_ecg_ppg_pairs_sqabs, which overwrites the beat lists.
-            //
-            // Serial by construction (see envelope_report.hpp): the rolling
-            // windows are sequential per channel, so this is the one checkpoint
-            // here that must not be parallelised over bins.
-            // ALWAYS WRITTEN. This is expensive -- a spectrum and a wavelet per
-            // segment per channel per beat -- and it is written anyway. A report
-            // that only appears when someone remembers a flag is a report that
-            // is missing from the runs that matter, and "nothing downstream
-            // reads it yet" is not a reason to withhold the record of what the
-            // pipeline computed. The cost is answered by making it fast (the
-            // twiddle table in envelopes.hpp, and the per-channel parallelism in
-            // envelope_report.hpp), not by skipping it.
-            const bool oke = envelope_report::writeEnvelopeReport(
-                cfg.bin_archive_path, stem, job.tmpl.bins, job.beats,
-                cfg.ecg_upsample_rate);
-            if (!oke)
-                std::cerr << "  [envelopes] " << stem
-                << ": could not write envelope report to "
-                << cfg.bin_archive_path << "\n";
-        }
+        // The R-pass checkpoints (bin archive, feature time series, envelope
+        // report) used to run here. They are pure output and cost minutes, so
+        // they moved to finalizeViewerJob, which runs concurrently with
+        // marking -- see the note at their new home.
         template_io::write_template_binfile(provisionalPath.string(), job.tmpl);
         job.viewerTemplatePath = provisionalPath;
         job.needsFinalize = true;
@@ -516,6 +464,61 @@ namespace post_process_detail {
                 auto t_io1 = std::chrono::steady_clock::now();
 
             }
+            // ---- R-PASS CHECKPOINTS, moved off the critical path ----------
+            // These three were in prepareViewerJob, which BLOCKS the marking UI
+            // from opening. They are pure output -- nothing downstream in
+            // prepare reads them -- and poolBinQuality alone runs computeEcgSQI
+            // per beat, per channel, per bin, which on a 40-bin record with
+            // ~1000 beats a bin is ~120k evaluations. That was the wait.
+            //
+            // POSITION IS LOAD-BEARING: above augment_ecg_ppg_pairs_sqabs.
+            // All three describe the R pass, and augment overwrites the beat
+            // lists. Moving them below it would archive the squared/absval
+            // detection under the label "R".
+            if (!job.cfg.bin_archive_path.empty()) {
+                const bool ok = bin_archive::writeBinFeatureArchive(
+                    job.cfg.bin_archive_path, job.stem, job.tmpl.bins,
+                    job.rates.ecg, "R", &job.beats);
+                if (!ok)
+                    std::cerr << "  [bin_archive] " << job.stem
+                    << ": could not write checkpoint to "
+                    << job.cfg.bin_archive_path << "\n";
+                else
+                    std::cerr << "  [bin_archive] " << job.stem
+                    << ": wrote checkpoint (" << job.tmpl.bins.size() << " bins)\n";
+
+                // Section 5.5 length/area/volume time series, from the SAME
+                // pre-deformation R-pass data. job.peakResults still holds the
+                // raw per-channel ECG + detected R-peaks the proportional
+                // segmenter needs (job.tmpl has only averaged templates, which
+                // cannot be re-segmented).
+                const std::string ftsPath =
+                    job.cfg.bin_archive_path + "/" + job.stem + "_feature_timeseries.csv";
+                const bool okf = normalize_features::writeFeatureTimeSeriesCsv(
+                    ftsPath, job.stem, job.peakResults, job.rates.ecg);
+                if (!okf)
+                    std::cerr << "  [feature_ts] " << job.stem
+                    << ": could not write " << ftsPath << "\n";
+                else
+                    std::cerr << "  [feature_ts] " << job.stem
+                    << ": wrote length/area/volume series\n";
+
+                // Section 4.7 dynamic envelopes, per beat per segment per
+                // channel. Serial by construction (see envelope_report.hpp):
+                // the rolling windows are sequential per channel, so this is
+                // the one checkpoint here that must not be parallelised over
+                // bins. Always written -- a report that only appears when
+                // someone remembers a flag is missing from the runs that
+                // matter.
+                const bool oke = envelope_report::writeEnvelopeReport(
+                    job.cfg.bin_archive_path, job.stem, job.tmpl.bins, job.beats,
+                    job.rates.ecg);
+                if (!oke)
+                    std::cerr << "  [envelopes] " << job.stem
+                    << ": could not write envelope report to "
+                    << job.cfg.bin_archive_path << "\n";
+            }
+
 
             // Squared/absval R-peak detection on ECG channels, then slow
             // templating to pack the two extra per-bin blocks (squared,

@@ -22,7 +22,7 @@
 
 struct TemplateBin;   // forward-declare -- full definition in TemplateBinIO.hpp
 
-enum class AnchorType { P_ONSET, P_PEAK, Q_ONSET, R_PEAK, J_POINT, T_PEAK };//J_POINT = S_END
+enum class AnchorType { P_ONSET, Q_ONSET, R_PEAK, J_POINT };//J_POINT = S_END
 
 // Returns the landmark subsample index for one beat, or -1 if not found.
 using AnchorLocator = std::function<double(const std::vector<double>& beat)>;
@@ -63,8 +63,8 @@ public:
     static ReactivePpg reactive_ppg(const std::vector<double>& ppg, int onset, int peak, int dicrotic, int end);
 
     // Individual reactive computes (all track user markers live).
-    static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col); //ONE j-point calculation
-    static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx);
+    static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col);
+    static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr);
     static double compute_t_peak(const std::vector<double>& ecg, double tBegin, double tEnd);
     static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col,  double tBeginIn = -1.0);
     static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0);
@@ -120,7 +120,8 @@ public:
     // ---------------------------------------------------------------------
     struct TemplateLandmarks {
         double r_peak = -1.0;    // refined from nominal_r_col, sub-sample
-        double q_begin = -1.0;
+        double q_begin = -1.0;  bool q_begin_found = false;
+        double q_peak = -1.0;   
         double s_end = -1.0;    // == J-point
         double t_end = -1.0;
         double p_peak = -1.0;
@@ -128,18 +129,17 @@ public:
         bool   valid = false;    // false => waveform or anchor unusable
     };
 
-    static TemplateLandmarks detect_template_landmarks(
-        const std::vector<double>& tmpl, int nominal_r_col, double sampleRate);
+    static TemplateLandmarks detect_template_landmarks(const std::vector<double>& tmpl, int nominal_r_col, double sampleRate);
 
     static void seed_bank_template(const std::vector<double>& tmpl, int r_col,
-        double sampleRate, tbank::BankMarkerSet& out);
+        double sampleRate, AnchorType anchor, tbank::BankMarkerSet& out);
 
     // the x, o, |, || or ||| markers for to mark the ppg and to be output in the csv
     struct PpgFiducials {
         double onset = -1.0;
         double peak = -1.0;
         double end = -1.0;
-        double peak2 = -1.0;      bool peak2_found = false;
+        double peak2 = -1.0;
         double dicrotic = -1.0;   bool notch_found = false;
         double t80 = -1.0, t50 = -1.0;
         double t80_rise = -1.0;
@@ -185,7 +185,7 @@ public:
     // Index of the minimum sample on [lo, hi], NaN-skipping; -1 if none.
     static int trough_in(const std::vector<double>& v, int lo, int hi);
 
-    static double steepest_rise_in(const std::vector<double>& v, int lo, int hi);
+    static double steepest_slope_in(const std::vector<double>& v, int lo, int hi);
 
     // FIRST crossing of the frac-of-amplitude level on [a, b], linearly
     // interpolated between the bracketing samples and rounded.

@@ -116,6 +116,7 @@ namespace bin_archive {
         const double j_point = lm.s_end;
         const double tEndD = lm.t_end;
         const double pPeakD = lm.p_peak;
+        const double q_peak = lm.q_peak;
         const double pBeginD = lm.p_begin;
 
         // Q-peak, S-peak and T-peak are not part of the shared six (nothing in

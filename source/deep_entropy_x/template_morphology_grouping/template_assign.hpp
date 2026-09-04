@@ -291,6 +291,58 @@ namespace tbank {
 
             // --- the 2.5/97.5 corridor -------------------------------------
             if (own_corridor) {
+                // A COLUMN TOO THIN FOR ITS OWN PERCENTILES FALLS BACK; IT
+                // DOES NOT GO SILENT.
+                //
+                // own_corridor is a MEMBER count. n is this COLUMN's finite
+                // count, and those are different numbers: beats are
+                // NaN-padded, so a 900-member template still has edge
+                // columns reached by two or three of them.
+                //
+                // The four order statistics below run in ascending order so
+                // each partitions only what the previous left, which needs
+                //     i_lo <= i_lo1 <= i_hi <= i_hi1
+                // and at n == 2 that inverts: i_lo1 is 1 while i_hi is 0, so
+                // the third nth_element gets first > nth. Debug asserts
+                // "vector iterator range transposed"; Release is undefined
+                // and the introselect loop need not terminate.
+                //
+                // SKIPPING THE COLUMN IS NOT THE FIX. band_lo/band_hi are
+                // initialised to NaN above, and the inheritance block at the
+                // bottom of this function only runs for a young TEMPLATE --
+                // so a skipped column inside a mature template keeps NaN,
+                // bandMatch cannot score it, and beats stop matching on the
+                // padded edges. They spawn instead of joining, and the
+                // cohorts fragment into slots too thin to draw.
+                //
+                // So the column takes the same inherited half-width a young
+                // template takes: slot 0's spread where there is one, a
+                // fraction of this template's own peak-to-peak otherwise.
+                // corridorInflation gets the COLUMN's n, because it is this
+                // column's centre that was estimated from n values.
+                if (n < static_cast<size_t>(kMinMembersForCorridor)) {
+                    double half = std::numeric_limits<double>::quiet_NaN();
+                    if (floor_corridor && c < static_cast<int>(floor_corridor->size()))
+                        half = (*floor_corridor)[c];
+                    if (std::isnan(half) || half <= 0.0) {
+                        double plo = std::numeric_limits<double>::infinity();
+                        double phi = -std::numeric_limits<double>::infinity();
+                        for (int k = 0; k < width; ++k) {
+                            if (std::isnan(t.tmpl[k])) continue;
+                            plo = std::min(plo, t.tmpl[k]);
+                            phi = std::max(phi, t.tmpl[k]);
+                        }
+                        const double ptp = (phi > plo) ? (phi - plo) : 0.0;
+                        half = kFallbackCorridorFrac * ptp;
+                    }
+                    if (half > 0.0) {
+                        half *= corridorInflation(static_cast<int>(n));
+                        t.band_lo[c] = t.tmpl[c] - half;
+                        t.band_hi[c] = t.tmpl[c] + half;
+                    }
+                    continue;
+                }
+
                 // Percentiles by position with linear interpolation, over the
                 // column's values. col is only partially ordered by the
                 // nth_element calls above, so this sorts -- it runs only for

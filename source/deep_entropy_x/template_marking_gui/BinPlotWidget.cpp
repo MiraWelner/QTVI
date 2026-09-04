@@ -1,14 +1,16 @@
 /*
 * @brief BinPlotWidget.cpp
 *
-* Signals are drawn such that the widest trace fills the  cell the layout gives this widget. 
+* Signals are drawn such that the widest trace fills the  cell the layout gives this widget.
 * They have the same on screen length
 *
-* ECG/PPG alignment (Patch B/C):
-*   Every channel's template is sliced from the SAME real-time window --
-*   [t_R_i - pad, t_R_{i+1} + pad], driven by ch1.raw. Sample 0 of the ECG, PPG, and every
-*   arterial channel all correspond to the same real-time instant (pad seconds before the
-*   first R).
+* ECG/PPG alignment:
+*   Every channel is drawn in SECONDS RELATIVE TO ITS OWN R, so R lands at the
+*   same x on every trace by construction. Sample 0 is NOT a shared instant:
+*   the ECG's R column is 0.3 * the bin's LONGEST RR (alignment.hpp) while every
+*   pulse channel's is a fixed 0.3 s (create_arterial_templates.hpp), and
+*   treating them as equal is what put the ECG most of a second ahead of the
+*   PPG on any bin holding a pause. See the geometry note in BinPlotWidget.hpp.
 *
 * ============================================================================
 * Glyphs and bars
@@ -31,8 +33,10 @@
 * Three glyph shapes, three meanings:
 *
 *   X       the detector found a real landmark
-*   O       the detector fell back to a placeholder position (notch and
-*           diastolic peak only -- they are the two that carry a *_found flag)
+*   O       a fallback produced the position rather than the fit -- currently
+*           the Q onset alone, where the monophasic-R slope walk ran because
+*           there was no Q trough to fit against. A different measurement, not
+*           a worse version of the same one.
 *   dash    an auto-only derivative landmark, coloured by derivative order:
 *           VPG blue, APG green, JPG amber.
 *
@@ -57,8 +61,20 @@
 #include <QStringList>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <limits>
 
 namespace {
+
+    // The slicer's lead-in. Every pulse template is R-anchored with R1 at
+    // padSeconds * channelRate (create_arterial_templates.hpp:501), and all
+    // four CreatePulseTemplates call sites -- PPG in make_averaged_templates,
+    // ABP/ART/ART_PULM in build_templates -- omit the argument and so take its
+    // 0.3 default. Keep in step with that default.
+    //
+    // The ECG's R column is NOT this: alignment.hpp puts it at 0.3 * the bin's
+    // longest RR, which varies per bin, so it arrives through setData instead.
+    constexpr double kSlicePadSeconds = 0.3;
 
     // ------------------------------------------------------------------
     // ------------------------------------------------------------------
@@ -188,14 +204,13 @@ namespace {
         }
     }
 
-    void compute_visible_range(const std::vector<double>& v, const std::vector<double>& /*sd*/, int visN, double& lo, double& hi) {
-        /* Compute the visible range of the average template plot, ignoring the std band. 5% padding is added to accout for x marks
-        */
-        const int n = std::min(visN, static_cast<int>(v.size()));
+    // Vertical range of a trace, ignoring the std band, with room for the
+    // glyphs. No sample-count argument: every finite sample is inside the frame
+    // now, so the range is over the whole array.
+    void compute_visible_range(const std::vector<double>& v, double& lo, double& hi) {
         lo = 0.0; hi = 1.0;
         bool have = false;
-        for (int i = 0; i < n; ++i) {
-            const double m = v[i];
+        for (double m : v) {
             if (std::isnan(m)) continue;
             if (!have) { lo = m; hi = m; have = true; }
             else { lo = std::min(lo, m); hi = std::max(hi, m); }
@@ -211,6 +226,12 @@ namespace {
     void draw_iqr_band(QPainter& p, const std::vector<double>& v, const std::vector<double>& sd, double startPx, int mt, int ph,
         double px_per_sample, int visN, double lo, double hi, QColor color)
     {
+        // visN is a COUNT OF SAMPLES ON THIS TRACE, and the clamp keeps it one.
+        // Callers used to pass the frame width, which after the fit-to-extent
+        // change could exceed the array -- and the loops below index v[i] up to
+        // it. Clamping here rather than at each call site means no future caller
+        // can reintroduce that.
+        visN = std::min(visN, static_cast<int>(v.size()));
         if (visN < 2 || (int)v.size() < 2) return;
         if ((int)sd.size() < visN) return;          // empty/mismatched => no band
         const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
@@ -251,6 +272,7 @@ namespace {
         double px_per_sample, const QPen& pen, int visN,
         double lo, double hi)
     {
+        visN = std::min(visN, static_cast<int>(v.size()));   // see draw_iqr_band
         if (visN < 2 || (int)v.size() < 2) return;
         const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
 
@@ -283,12 +305,32 @@ BinPlotWidget::BinPlotWidget(int binIndex, int leadIndex,
     // Every marker starts unset. Anything the seeding pass doesn't provide
     // stays -1 and is simply not drawn -- never an indeterminate column.
     std::fill(std::begin(m_markers), std::end(m_markers), -1);
+    // Anchors start unknown for the same reason the markers do: a channel with
+    // no anchor is not drawn, rather than drawn at a guessed position.
+    std::fill(std::begin(m_rAnchor), std::end(m_rAnchor), -1.0);
 }
 
 void BinPlotWidget::setChannelRate(Channel ch, double hz) {
     const size_t i = static_cast<size_t>(ch);
     if (m_rates[i] == hz) return;
     m_rates[i] = hz;
+    // A pulse channel's R column is a fixed number of SECONDS into its
+    // template, so it follows the rate. Derived here rather than asked of the
+    // caller, because the caller would have to know kSlicePadSeconds and the
+    // two would drift apart. The ECG's anchor is not derivable this way -- it is
+    // 0.3 * the bin's longest RR, which only alignment knows -- so it comes in
+    // through setData as rPeakSample.
+    if (ch != Channel::Ecg && hz > 0.0)
+        m_rAnchor[i] = kSlicePadSeconds * hz;
+    recomputeFrame();
+    update();
+}
+
+void BinPlotWidget::setChannelAnchor(Channel ch, double rColumn) {
+    const size_t i = static_cast<size_t>(ch);
+    if (m_rAnchor[i] == rColumn) return;
+    m_rAnchor[i] = rColumn;
+    recomputeFrame();
     update();
 }
 
@@ -298,15 +340,107 @@ void BinPlotWidget::setReferenceLines(
     update();
 }
 
-int BinPlotWidget::sampleFromX(double x, double startSample, double ratio) const {
-    const double pps = pxPerSample();
-    const double basePx = margin_left + startSample * pps;
-    return static_cast<int>(std::round((x - basePx) / (pps * ratio)));
+// ---------------------------------------------------------------------------
+// The time model. Six small functions, and every position in the widget goes
+// through them. See the geometry note in the header for why.
+// ---------------------------------------------------------------------------
+
+double BinPlotWidget::timeAt(Channel ch, double i) const {
+    const size_t k = static_cast<size_t>(ch);
+    const double rate = m_rates[k], anchor = m_rAnchor[k];
+    if (!(rate > 0.0) || anchor < 0.0)
+        return std::numeric_limits<double>::quiet_NaN();
+    return (i - anchor) / rate;
 }
 
-double BinPlotWidget::xFromSample(double s, double startSample, double ratio) const {
-    const double pps = pxPerSample();
-    return margin_left + startSample * pps + s * ratio * pps;
+double BinPlotWidget::xFromTime(double t) const {
+    const double drawW = std::max(1, width() - margin_left - margin_right);
+    const double span = (m_tMax - m_tMin > 1e-9) ? (m_tMax - m_tMin) : 1.0;
+    return margin_left + (t - m_tMin) / span * drawW;
+}
+
+double BinPlotWidget::pxPerSecond() const {
+    const double drawW = std::max(1, width() - margin_left - margin_right);
+    const double span = (m_tMax - m_tMin > 1e-9) ? (m_tMax - m_tMin) : 1.0;
+    return drawW / span;
+}
+
+// x(i) is affine in i, so these two numbers are all a trace draw needs -- which
+// is what lets draw_iqr_band and draw_trace_fixed_scale keep their existing
+// (startPx + i * px_per_sample) form.
+double BinPlotWidget::channelX0(Channel ch) const {
+    const double t0 = timeAt(ch, 0.0);
+    return std::isnan(t0) ? static_cast<double>(margin_left) : xFromTime(t0);
+}
+
+double BinPlotWidget::channelDx(Channel ch) const {
+    const double rate = m_rates[static_cast<size_t>(ch)];
+    if (!(rate > 0.0)) return 0.0;   // no rate: not drawable, and the callers
+    // test dx > 0 rather than duplicating this
+    return pxPerSecond() / rate;     // pixels per sample on THIS channel
+}
+
+double BinPlotWidget::xFromSample(Channel ch, double i) const {
+    return channelX0(ch) + i * channelDx(ch);
+}
+
+int BinPlotWidget::sampleFromX(Channel ch, double x) const {
+    const double dx = channelDx(ch);
+    if (!(std::abs(dx) > 1e-12)) return 0;
+    return static_cast<int>(std::round((x - channelX0(ch)) / dx));
+}
+
+void BinPlotWidget::recomputeFrame() {
+    // FRAME = THE UNION OF EVERY PRESENT CHANNEL'S OWN DRAWN EXTENT, in seconds
+    // relative to R. Because it is a union, no channel can have a tail outside
+    // it, which is what makes a per-channel clip count unnecessary rather than
+    // merely inconvenient.
+    auto firstFinite = [](const std::vector<double>& v) {
+        for (int i = 0; i < static_cast<int>(v.size()); ++i)
+            if (!std::isnan(v[i])) return i;
+        return -1;
+        };
+    auto lastFinite = [](const std::vector<double>& v) {
+        for (int i = static_cast<int>(v.size()) - 1; i >= 0; --i)
+            if (!std::isnan(v[i])) return i;
+        return -1;
+        };
+
+    double lo = std::numeric_limits<double>::infinity();
+    double hi = -std::numeric_limits<double>::infinity();
+
+    auto add = [&](const std::vector<double>& v, Channel ch, int lastOverride) {
+        if (v.size() < 2) return;
+        const int f = firstFinite(v);
+        const int l = (lastOverride >= 0) ? lastOverride : lastFinite(v);
+        if (f < 0 || l <= f) return;
+        const double t0 = timeAt(ch, f), t1 = timeAt(ch, l);
+        if (std::isnan(t0) || std::isnan(t1)) return;   // no rate/anchor: not drawn
+        lo = std::min(lo, t0);
+        hi = std::max(hi, t1);
+        };
+
+    // The stored ECG array is framed on the bin's LONGEST RR, because no beat
+    // may lose a sample to framing -- then the outlier filters drop the pause
+    // beats that justified the width, leaving an all-NaN tail. lastFinite
+    // handles that. What it does not handle is a tail supported by one or two
+    // surviving beats: those columns are finite but are not a waveform.
+    // align_beat_matrix only writes ecg_template_iqr when nc >= 2, so a
+    // one-beat column reads exactly 0.0 -- trim those. Trims the FRAME only,
+    // never m_ecg.
+    int ecgLast = lastFinite(m_ecg);
+    if (m_ecgIqr.size() == m_ecg.size())
+        while (ecgLast > 0 && m_ecgIqr[ecgLast] == 0.0) --ecgLast;
+
+    add(m_ecg, Channel::Ecg, ecgLast);
+    if (m_hasPPG) add(m_ppg, Channel::Ppg, -1);
+    add(m_abp, Channel::Abp, -1);
+    add(m_art, Channel::Art, -1);
+    add(m_artPulm, Channel::ArtPulm, -1);
+
+    if (!(lo < hi)) { m_tMin = 0.0; m_tMax = 1.0; return; }   // nothing drawable
+    m_tMin = lo;
+    m_tMax = hi;
 }
 
 void BinPlotWidget::setData(const std::vector<double>& ppg,
@@ -326,49 +460,15 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_rPeakSample = rPeakSample;
     m_hasPPG = !ppg.empty();
 
-    // ---- VIEW WIDTH: THE DRAWN EXTENT, NOT THE ARRAY ---------------------
-    // Storage width and view width are different questions, and this is where
-    // they stop being the same variable.
-    //
-    // The array is framed on the bin's LONGEST RR, because no beat may lose a
-    // sample to framing. Pass 1 sizes it that way, then the outlier filters
-    // drop the pause beats that justified the width -- so the tail is all-NaN
-    // and the axis was several times wider than anything drawn on it. That is
-    // the squashed-template look.
-    //
-    // The padding is measurable, so measure it. No median-RR field, no
-    // plumbing, no file-format question: the frame is the extent of the widest
-    // trace actually present. Nothing is discarded -- samples past the window
-    // would be NaN anyway.
-    auto lastFinite = [](const std::vector<double>& v) {
-        for (int i = static_cast<int>(v.size()) - 1; i >= 0; --i)
-            if (!std::isnan(v[i])) return i;
-        return -1;
-        };
-    // Pulse channels sample at their own rate; their extent converts to
-    // ECG-equivalent columns through the same ratio xFromSample uses.
-    auto pulseExtent = [&](const std::vector<double>& v, Channel ch) {
-        const int last = lastFinite(v);
-        return (last < 0) ? 0
-            : static_cast<int>(std::ceil((last + 1) * rateRatio(ch)));
-        };
+    // The ECG's R column is the one anchor that cannot be derived from a rate:
+    // alignment.hpp puts it at 0.3 * the bin's LONGEST RR, so it varies per bin
+    // and only the caller knows it. Every other channel's follows its rate, in
+    // setChannelRate. recomputeFrame then does the rest -- there is no view
+    // width to compute here any more, because the frame is a time span over the
+    // union of the channels rather than a sample count over one of them.
+    m_rAnchor[static_cast<size_t>(Channel::Ecg)] = rPeakSample;
 
-    // A column is finite wherever at least ONE beat had data there, so a single
-    // surviving pause beat would re-inflate the frame. align_beat_matrix only
-    // writes ecg_template_iqr when nc >= 2, so a one-beat column reads exactly
-    // 0.0 -- trim those off the tail. Only ever trims the FRAME, never m_ecg.
-    int last = lastFinite(m_ecg);
-    if (static_cast<int>(m_ecgIqr.size()) == static_cast<int>(m_ecg.size()))
-        while (last > 0 && m_ecgIqr[last] == 0.0) --last;
-
-    int span = last + 1;
-    if (m_hasPPG) span = std::max(span, pulseExtent(m_ppg, Channel::Ppg));
-    span = std::max(span, pulseExtent(m_abp, Channel::Abp));
-    span = std::max(span, pulseExtent(m_art, Channel::Art));
-    span = std::max(span, pulseExtent(m_artPulm, Channel::ArtPulm));
-    m_ecgVisibleN = std::max(span, 2);
-
-    m_ppgVisibleN = visiblePpgCount(static_cast<int>(m_ppg.size()));
+    recomputeFrame();
     updateGeometry();
     update();
 }
@@ -443,6 +543,7 @@ void BinPlotWidget::setArterialTraces(const std::vector<double>& abp,
     m_abpIqr = abpIqr;
     m_artIqr = artIqr;
     m_artPulmIqr = artPulmIqr;
+    recomputeFrame();   // arterial extents are part of the frame
     update();
 }
 
@@ -456,8 +557,26 @@ void BinPlotWidget::setMarker(Marker m, int idx) {
 // reporting on, so the screen and the files agree by construction.
 BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
     Reactive r;
+
+    // TEMPORARY. Splits the two calls and prints every input, because these
+    // markers are NOT bounds-checked against their traces anywhere in this
+    // widget before FeatureMarks receives them -- and reactive_ecg's bracket
+    // changed from EcgTBegin (permanently -1, so compute_t_peak returned at its
+    // first guard and its body never ran) to EcgSEnd, which is real. So this
+    // path is being exercised for the first time.
+    fprintf(stderr, "[rx] bin=%d lead=%d tmpl=%d ecgN=%zu ppgN=%zu | "
+        "sEnd=%d tEnd=%d | on=%d pk=%d dn=%d end=%d\n",
+        m_binIndex, m_leadIndex, m_templateIndex, m_ecg.size(), m_ppg.size(),
+        m_markers[EcgSEnd], m_markers[EcgTEnd],
+        m_markers[PpgOnset], m_markers[PpgPeak],
+        m_markers[PpgDicrotic], m_markers[PpgEnd]);
+    fflush(stderr);
+
     r.ecgTPeak = FeatureMarks::reactive_ecg(
         m_ecg, m_markers[EcgSEnd], m_markers[EcgTEnd]).t_peak;
+
+    fprintf(stderr, "[rx] ecg ok, tPeak=%.2f\n", r.ecgTPeak); fflush(stderr);
+
     if (m_hasPPG) {
         const FeatureMarks::ReactivePpg p = FeatureMarks::reactive_ppg(
             m_ppg, m_markers[PpgOnset], m_markers[PpgPeak],
@@ -465,6 +584,9 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
         r.ppgT50 = p.t50;
         r.ppgT80 = p.t80;
         r.ppgPeak2 = p.peak2;
+        fprintf(stderr, "[rx] ppg ok, t50=%.2f t80=%.2f p2=%.2f\n",
+            p.t50, p.t80, p.peak2);
+        fflush(stderr);
     }
     return r;
 }
@@ -481,92 +603,34 @@ void BinPlotWidget::setBankTraces(
     update();   // repaint now; otherwise the overlay waits for an unrelated one
 }
 
-int BinPlotWidget::visibleN(bool isEcg) const {
-    return isEcg ? m_ecgVisibleN : m_ppgVisibleN;
-}
-
-double BinPlotWidget::ppgStartSample() const {
-    // Under Patch B, every channel is real-time-aligned by construction:
-    // PPG and all arterial channels share sample 0 with the ECG template.
-    // No shift needed.
-    return 0.0;
-}
-
-int BinPlotWidget::totalSampleSpan() const {
-    // Frame width is the ECG's visible extent. Pulse traces (PPG, ABP,
-    // ART, ART_PULM) that extend past this are visually clipped by the
-    // painter's clipRect. Their markers get their own visibility bound
-    // via markerTrace()->pulseClipN() so no marker can land in the
-    // clipped tail.
-    return std::max(m_ecgVisibleN, 2);
-}
-
-// Number of pulse-trace samples that fit before the ECG's right edge, at
-// the shared scale. Pulse sample i sits at shared position ppgStartSample()+i;
-// keep those with (ppgStartSample()+i) <= m_ecgVisibleN. Also serves as the
-// marker-visibility bound for pulse channels: markers past this can't be
-// drawn or dragged (see markerTrace).
-int BinPlotWidget::pulseClipN() const {
-    const int clip = m_ecgVisibleN - static_cast<int>(std::llround(ppgStartSample()));
-    return std::max(0, clip);
-}
-
-// Median RR read off the template, converted to a view width. Returns the full
-// trace length whenever it cannot find a second R, so a sparse or noisy
-// template degrades to today's behaviour instead of to a wrong window.
-double BinPlotWidget::pxPerSample() const {
-    // ONE scale shared by ECG and all pulse traces, so the R->foot offset is
-    // a true horizontal distance. The frame spans the widest trace; every
-    // trace is drawn at this same pps. Per-channel RATE differences are
-    // handled separately via rateRatio()/xFromSample's ratio argument, not
-    // here -- this stays purely a sample-count-to-pixel-width scale.
-    const int span = totalSampleSpan();
-    const double drawW = std::max(1, width() - margin_left - margin_right);
-    return (span > 1) ? (drawW / static_cast<double>(span - 1)) : 1.0;
-}
-
-// For a given marker, resolve which trace vector bounds it, whether its
-// group is currently visible, the visible-sample count that bounds its
-// markers, and the ECG-equivalent rate ratio for its geometry. ECG uses
-// its own visible window (ratio 1.0); PPG and all arterial channels are
-// foot-anchored and rescaled by their own rateRatio(). Pulse markers are
-// further capped at pulseClipN() so a marker sitting in the PPG (or
-// arterial) tail past the ECG's right edge is neither drawn nor draggable
-// -- the tail is visually clipped, and we don't want invisible markers
-// out there that the user can't see or reach. Returns false if the trace
-// is empty/absent.
+// Resolve a marker to its channel, trace, and group visibility.
+//
+// No visible-sample bound and no rate ratio: both existed only because the
+// frame used to be the ECG's own sample space, so a pulse marker needed
+// converting into it and clipping at its right edge. The frame is now the union
+// of every channel's extent in time, so a marker inside its own array is on
+// screen, and its x comes from xFromSample(ch, i).
 bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
-    bool& isEcg, bool& visible, int& visN, double& ratio) const
+    Channel& ch, bool& visible) const
 {
     if (markerIsEcg(m)) {
-        vec = &m_ecg; isEcg = true; visible = m_showEcgMarkers;
-        visN = m_ecgVisibleN; ratio = rateRatio(Channel::Ecg);
+        vec = &m_ecg; ch = Channel::Ecg; visible = m_showEcgMarkers;
         return !m_ecg.empty();
     }
-    isEcg = false;   // PPG and all arterial groups ride the foot-anchored geometry
-    const int pulseCap = pulseClipN();
     if (markerIsPpg(m)) {
-        vec = &m_ppg; visible = m_showPpgMarkers;
-        visN = std::min(visiblePpgCount(static_cast<int>(m_ppg.size())), pulseCap);
-        ratio = rateRatio(Channel::Ppg);
+        vec = &m_ppg; ch = Channel::Ppg; visible = m_showPpgMarkers;
         return m_hasPPG && !m_ppg.empty();
     }
     if (markerIsAbp(m)) {
-        vec = &m_abp; visible = m_showAbpMarkers;
-        visN = std::min(visiblePpgCount(static_cast<int>(m_abp.size())), pulseCap);
-        ratio = rateRatio(Channel::Abp);
+        vec = &m_abp; ch = Channel::Abp; visible = m_showAbpMarkers;
         return !m_abp.empty();
     }
     if (markerIsArt(m)) {
-        vec = &m_art; visible = m_showArtMarkers;
-        visN = std::min(visiblePpgCount(static_cast<int>(m_art.size())), pulseCap);
-        ratio = rateRatio(Channel::Art);
+        vec = &m_art; ch = Channel::Art; visible = m_showArtMarkers;
         return !m_art.empty();
     }
     if (markerIsArtPulm(m)) {
-        vec = &m_artPulm; visible = m_showArtPulmMarkers;
-        visN = std::min(visiblePpgCount(static_cast<int>(m_artPulm.size())), pulseCap);
-        ratio = rateRatio(Channel::ArtPulm);
+        vec = &m_artPulm; ch = Channel::ArtPulm; visible = m_showArtPulmMarkers;
         return !m_artPulm.empty();
     }
     return false;
@@ -577,34 +641,43 @@ int BinPlotWidget::markerAtX(double x) const {
     int best = -1;
     double bestDist = click_radius_around_marker + 1.0;
     for (int m = 0; m < MarkerCount; ++m) {
-        int idx = m_markers[m];
+        const int idx = m_markers[m];
         if (idx < 0) continue;
-        if (m == EcgRPeak || m == PpgPeak || m == PpgT80 || m == PpgT50 || m == PpgPeak2 || m == EcgPPeak) continue;   // R is auto-only: no draggable bar
+        // Auto-only marks: drawn as glyphs, never as draggable bars.
+        if (m == EcgRPeak || m == EcgPPeak || m == PpgPeak || m == PpgT80
+            || m == PpgT50 || m == PpgPeak2) continue;
         const std::vector<double>* vec = nullptr;
-        bool isEcg = false, visible = false;
-        int visN = 0;
-        double ratio = 1.0;
-        if (!markerTrace(m, vec, isEcg, visible, visN, ratio)) continue;
+        Channel ch = Channel::Ecg;
+        bool visible = false;
+        if (!markerTrace(m, vec, ch, visible)) continue;
         if (!visible) continue;
-        if (idx >= (int)vec->size()) continue;
-        // Every marker clamps to its trace's visible window (same rule for
-        // ECG, PPG, and all arterial channels).
-        if (idx >= visN) continue;
-        const double mx = xFromSample(idx, isEcg ? 0.0 : ppgStartSample(), ratio);
-        const double d = std::abs(x - mx);
+        // ARRAY BOUNDS ARE THE ONLY BOUND -- see markerTrace.
+        if (idx >= static_cast<int>(vec->size())) continue;
+        const double d = std::abs(x - xFromSample(ch, idx));
         if (d < bestDist) { bestDist = d; best = m; }
     }
     return best;
 }
 
 void BinPlotWidget::paintEvent(QPaintEvent*) {
+    // TEMPORARY STAGE MARKERS. 0xc000041d is what Windows reports when an
+    // exception OR an access violation escapes a Qt event handler: the process
+    // dies with no message and no stack. The LAST line printed names the block
+    // that failed. Delete this lambda and its calls once the fault is found.
+    int _stage = 0;
+    auto mark = [&](const char* what) {
+        fprintf(stderr, "[paint] bin=%d lead=%d tmpl=%d  %d %s\n",
+            m_binIndex, m_leadIndex, m_templateIndex, ++_stage, what);
+        fflush(stderr);
+        };
+    mark("enter");
+
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
     const int h = height();
     const int w = width();
     const int ph = h - margin_top - margin_bottom;
-    const double pps = pxPerSample();
     p.fillRect(rect(), Qt::white);
 
     // TITLE, TWO LINES: identity first, counts second. One line did not fit a
@@ -641,35 +714,30 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     //   Y-min is autoscaled from the data, but always clipped at <=0.0 so
     //   the 0.0 major tick is always inside the frame.
     // Left axis (ECG) and right axis (pulse) each follow this rule.
+    mark("ranges");
     double yLo = 0, yHi = 0;
-    compute_visible_range(m_ecg, m_ecgIqr, m_ecgVisibleN, yLo, yHi);
+    compute_visible_range(m_ecg, yLo, yHi);
     if (yLo > 0.0) yLo = 0.0;
 
     // Right axis range: shared by ALL pulse traces (PPG + arterial), so they
-    // sit on one common normalized scale shown on the right. Range only over
-    // the RETAINED samples (clipped at the ECG's right edge).
-    const int pulseClip = pulseClipN();
+    // sit on one common normalized scale shown on the right. Over the whole of
+    // each array -- there is no clip point now, because the frame is the union
+    // of the channels rather than the ECG's own extent, so nothing a channel
+    // holds falls outside it.
     double pLo = 1e300, pHi = -1e300;
-    auto merge_pulse = [&](const std::vector<double>& v,
-        const std::vector<double>& sd, int visN) {
-            const int n = std::min(visN, pulseClip);
-            if (n < 1) return;
-            double lo, hi; compute_visible_range(v, sd, n, lo, hi);
-            pLo = std::min(pLo, lo); pHi = std::max(pHi, hi);
+    auto merge_pulse = [&](const std::vector<double>& v) {
+        if (v.size() < 2) return;
+        double lo, hi; compute_visible_range(v, lo, hi);
+        pLo = std::min(pLo, lo); pHi = std::max(pHi, hi);
         };
-    if (m_hasPPG && !m_ppg.empty()) merge_pulse(m_ppg, m_ppgIqr, m_ppgVisibleN);
-    merge_pulse(m_abp, m_abpIqr, static_cast<int>(m_abp.size()));
-    merge_pulse(m_art, m_artIqr, static_cast<int>(m_art.size()));
-    merge_pulse(m_artPulm, m_artPulmIqr, static_cast<int>(m_artPulm.size()));
+    if (m_hasPPG) merge_pulse(m_ppg);
+    merge_pulse(m_abp);
+    merge_pulse(m_art);
+    merge_pulse(m_artPulm);
     if (pLo > pHi) { pLo = 0.0; pHi = 1.0; }
     if (pLo > 0.0) pLo = 0.0;
 
-    // Each axis keeps its own y-min (autoscaled from the DATA it displays,
-    // clipped at 0). The pulse axis already only considers samples up to
-    // pulseClipN() = m_ecgVisibleN via the merge_pulse lambda above, so the
-    // pulse range reflects only what's visible on-screen inside the ECG
-    // plot's right edge. Anything past the ECG width is ignored.
-
+    mark("axes");
     // ---- Axes: frame + ticks + dual labeled Y-axes ----
     {
         const double xAxisY = margin_top + ph;       // == h - kMB
@@ -683,20 +751,22 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
         QFont af = p.font(); af.setPointSize(7); p.setFont(af);
 
-        // X ticks: time across the full frame, at the shared scale.
-        const int span = totalSampleSpan();
+        // X ticks: SECONDS RELATIVE TO R, so 0.00 is the R peak on every
+        // channel and the labels left of it are negative. The old axis was
+        // samples-since-column-zero divided by the ECG rate, which meant one
+        // thing on the ECG and something else on the PPG.
         p.setPen(QColor(150, 150, 150));
         for (int t = 0; t <= 4; ++t) {
-            const int s = static_cast<int>(std::round((double)span * t / 4));
-            double x = margin_left + s * pps;
+            const double tsec = m_tMin + (m_tMax - m_tMin) * t / 4.0;
+            double x = xFromTime(tsec);
             if (x > yAxisR) x = yAxisR;
             p.drawLine(QPointF(x, xAxisY), QPointF(x, xAxisY + 3));
-            QString lbl = QString::number(s / channelRate(Channel::Ecg), 'f', 2);
+            const QString lbl = QString::number(tsec, 'f', 2);
             p.drawText(QPointF(x - 3.0 * lbl.size(), xAxisY + 12), lbl);
             // X-axis caption, centered under the tick numbers.
             if (m_binIndex == 0) {
                 p.drawText(QRectF(yAxisL, xAxisY + 13.0, yAxisR - yAxisL, 11.0),
-                    Qt::AlignHCenter | Qt::AlignTop, "time (s)");
+                    Qt::AlignHCenter | Qt::AlignTop, "time (s, 0 = R peak)");
             }
         }
 
@@ -775,51 +845,57 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     p.setClipRect(QRectF(margin_left, margin_top,
         w - margin_left - margin_right, ph));
 
+    mark("arterial");
     // -------- Arterial traces (ABP/ART/ART_PULM) --------
-    // Foot-anchored like the PPG, drawn on the SHARED right-axis range
-    // (pLo,pHi) so all pulse tracings sit on one mV scale. Each channel's
-    // OWN rate ratio rescales pps so a channel running at a different rate
-    // than ECG still draws at the correct real-time width.
+    // Drawn on the SHARED right-axis range (pLo,pHi) so every pulse tracing
+    // sits on one scale. Each channel supplies its own x0/dx, which carry its
+    // rate AND its R column -- so a channel running at a different rate than
+    // the ECG lands at the correct real time without a ratio applied here.
     {
-        const double startPx = margin_left + ppgStartSample() * pps;
         struct art_trace {
             const std::vector<double>* v;
             const std::vector<double>* sd;
             QColor line;
             QColor band;
             bool show;
-            double ratio;
+            Channel ch;
         };
         const art_trace arts[] = {
-            { &m_abp,     &m_abpIqr,     QColor(0, 115, 45),   QColor(80, 185, 120, 38),  m_showAbpTrace,     rateRatio(Channel::Abp) },     // green
-            { &m_art,     &m_artIqr,     QColor(140, 75, 185), QColor(180, 130, 215, 38), m_showArtTrace,     rateRatio(Channel::Art) },     // purple
-            { &m_artPulm, &m_artPulmIqr, QColor(215, 135, 45), QColor(235, 175, 100, 38), m_showArtPulmTrace, rateRatio(Channel::ArtPulm) }, // orange
+            { &m_abp,     &m_abpIqr,     QColor(0, 115, 45),   QColor(80, 185, 120, 38),  m_showAbpTrace,     Channel::Abp },     // green
+            { &m_art,     &m_artIqr,     QColor(140, 75, 185), QColor(180, 130, 215, 38), m_showArtTrace,     Channel::Art },     // purple
+            { &m_artPulm, &m_artPulmIqr, QColor(215, 135, 45), QColor(235, 175, 100, 38), m_showArtPulmTrace, Channel::ArtPulm }, // orange
         };
         for (const auto& a : arts) {
             if (!a.show) continue;
             const std::vector<double>& v = *a.v;
-            const int visN = std::min(static_cast<int>(v.size()), pulseClip);
-            if (visN < 2) continue;
-            const double effPps = pps * a.ratio;
+            const int n = static_cast<int>(v.size());
+            if (n < 2) continue;
+            const double x0 = channelX0(a.ch), dx = channelDx(a.ch);
+            if (!(dx > 0.0)) continue;          // no rate/anchor: not drawn
             const std::vector<double>& sd = *a.sd;
-            const bool haveStd = static_cast<int>(sd.size()) >= visN;
-            if (haveStd)
-                draw_iqr_band(p, v, sd, startPx, margin_top, ph, effPps, visN, pLo, pHi, a.band);
-            draw_trace_fixed_scale(p, v, startPx, margin_top, ph, effPps,
-                QPen(with_trace_alpha(a.line), 1.3), visN, pLo, pHi);
+            if (static_cast<int>(sd.size()) >= n)
+                draw_iqr_band(p, v, sd, x0, margin_top, ph, dx, n, pLo, pHi, a.band);
+            draw_trace_fixed_scale(p, v, x0, margin_top, ph, dx,
+                QPen(with_trace_alpha(a.line), 1.3), n, pLo, pHi);
         }
     }
 
+    mark("ecg");
     // -------- ECG (left axis) --------
     if (m_showEcgTrace) {
-        draw_iqr_band(p, m_ecg, m_ecgIqr, margin_left, margin_top, ph, pps, m_ecgVisibleN, yLo, yHi, color_iqrband_ecg);
+        const int n = static_cast<int>(m_ecg.size());
+        const double x0 = channelX0(Channel::Ecg), dx = channelDx(Channel::Ecg);
+        // BAND AND LINE TAKE THE SAME x0 AND dx, so they cannot drift apart --
+        // which they did when the band was reached through one set of
+        // correction terms and the line through another.
+        draw_iqr_band(p, m_ecg, m_ecgIqr, x0, margin_top, ph, dx, n,
+            yLo, yHi, color_iqrband_ecg);
 
         // ---- Section 4.6 bank overlay ----------------------------------
         // Every template in this bin's bank beyond slot 0, drawn UNDER the
         // sinus trace on the same axis and the same scale. They share slot 0's
-        // scale legitimately: alignment puts every beat's detected R at
-        // r_aligned_col on one shared axis regardless of morphology, so
-        // yLo/yHi/pps need no adjustment.
+        // geometry legitimately: alignment puts every beat's detected R at the
+        // same column regardless of morphology, so x0/dx need no adjustment.
         //
         // Dashed and thinner so slot 0 still reads as the primary trace. No
         // label is drawn: an unconfirmed template must not display a class,
@@ -827,34 +903,31 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         // judgment the operator is being asked to make.
         for (const auto& bg : m_bankTraces) {
             if (static_cast<int>(bg.first.size()) < 3) continue;
-            draw_trace_fixed_scale(p, bg.first, margin_left, margin_top, ph, pps,
+            draw_trace_fixed_scale(p, bg.first, x0, margin_top, ph, dx,
                 QPen(with_trace_alpha(bg.second), 1.1, Qt::DashLine),
-                m_ecgVisibleN, yLo, yHi);
+                static_cast<int>(bg.first.size()), yLo, yHi);
         }
-        draw_trace_fixed_scale(p, m_ecg, margin_left, margin_top, ph, pps,
-            QPen(with_trace_alpha(ecg_trace_color), 1.5), m_ecgVisibleN, yLo, yHi);
+        draw_trace_fixed_scale(p, m_ecg, x0, margin_top, ph, dx,
+            QPen(with_trace_alpha(ecg_trace_color), 1.5), n, yLo, yHi);
     }
 
+    mark("ppg");
     // -------- PPG (right/shared axis) --------
-    if (m_showPpgTrace && m_hasPPG && !m_ppg.empty() && m_ppgVisibleN > 0) {
-        const double startPx = margin_left + ppgStartSample() * pps;
-        const double effPps = pps * rateRatio(Channel::Ppg);
-        const int ppgN = std::min(m_ppgVisibleN, pulseClipN());
-        std::vector<double> ppgIqrReal;
-        if (static_cast<int>(m_ppgIqr.size()) >= ppgN)
-            ppgIqrReal.assign(m_ppgIqr.begin(), m_ppgIqr.begin() + ppgN);
-
-        if (ppgN >= 2) {
-            draw_iqr_band(p, m_ppg, ppgIqrReal, startPx, margin_top, ph, effPps,
-                ppgN, pLo, pHi, color_iqrband_ppg);
-            draw_trace_fixed_scale(p, m_ppg, startPx, margin_top, ph,
-                effPps, QPen(with_trace_alpha(ppg_trace_color), 1.5), ppgN, pLo, pHi);
+    if (m_showPpgTrace && m_hasPPG && m_ppg.size() >= 2) {
+        const int n = static_cast<int>(m_ppg.size());
+        const double x0 = channelX0(Channel::Ppg), dx = channelDx(Channel::Ppg);
+        if (dx > 0.0) {
+            draw_iqr_band(p, m_ppg, m_ppgIqr, x0, margin_top, ph, dx, n,
+                pLo, pHi, color_iqrband_ppg);
+            draw_trace_fixed_scale(p, m_ppg, x0, margin_top, ph, dx,
+                QPen(with_trace_alpha(ppg_trace_color), 1.5), n, pLo, pHi);
         }
     }
     p.restore();
 
+    mark("reflines");
     global_interval_lines::paint(p, m_refLines,
-        [this](double s) { return xFromSample(s, 0.0, 1.0); },
+        [this](double s) { return xFromSample(Channel::Ecg, s); },
         margin_top, h - margin_bottom, (int)m_ecg.size());
 
     // Clip marker bars, labels, and fiducial glyphs to the plot area so
@@ -864,20 +937,20 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     p.setClipRect(QRectF(margin_left, margin_top,
         w - margin_left - margin_right, ph));
 
+    mark("bars");
     QFont smallF = p.font(); smallF.setPointSize(7); p.setFont(smallF);
     for (int m = 0; m < MarkerCount; ++m) {
         int idx = m_markers[m];
         if (idx < 0) continue;
-        if (m == EcgRPeak || m == PpgPeak || m == PpgT80 || m == PpgT50 || m == PpgPeak2 || m == EcgPPeak) continue;
+        if (m == EcgRPeak || m == EcgPPeak || m == PpgPeak || m == PpgT80
+            || m == PpgT50 || m == PpgPeak2) continue;
         const std::vector<double>* vec = nullptr;
-        bool isEcg = false, visible = false;
-        int visN = 0;
-        double ratio = 1.0;
-        if (!markerTrace(m, vec, isEcg, visible, visN, ratio)) continue;
+        Channel ch = Channel::Ecg;
+        bool visible = false;
+        if (!markerTrace(m, vec, ch, visible)) continue;
         if (!visible) continue;
         if (idx >= (int)vec->size()) continue;
-        if (idx >= visN) continue;
-        double mx = xFromSample(idx, isEcg ? 0.0 : ppgStartSample(), ratio);
+        const double mx = xFromSample(ch, idx);
         QPen pen(marker_color(m), 2);
         pen.setStyle(markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine);
         p.setPen(pen);
@@ -888,11 +961,13 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         );
     }
 
+    mark("glyphs");
     drawFeatureGlyphs(p, yLo, yHi, pLo, pHi, ph);
 
     p.restore();
 
 
+    mark("done");
     if (m_state == State::BadPPG) {
         p.setPen(QPen(Qt::red, 4));
         p.drawLine(margin_left, margin_top, w - margin_right, h - margin_bottom);
@@ -984,15 +1059,14 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
 void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     if (m_dragMarker < 0) return;
     const std::vector<double>* vec = nullptr;
-    bool isEcg = false, visible = false;
-    int visN = 0;
-    double ratio = 1.0;
-    if (!markerTrace(m_dragMarker, vec, isEcg, visible, visN, ratio)) return;
+    Channel ch = Channel::Ecg;
+    bool visible = false;
+    if (!markerTrace(m_dragMarker, vec, ch, visible)) return;
     if (vec->empty()) return;
-    int s = sampleFromX(e->position().x(), isEcg ? 0.0 : ppgStartSample(), ratio);
-    // Every marker clamps to its trace's visible window (one rule for
-    // ECG, PPG, and all arterial channels).
-    s = std::clamp(s, 0, std::max(0, visN - 1));
+    // Clamped to the trace's own array, which is the only bound now -- see
+    // markerTrace.
+    int s = std::clamp(sampleFromX(ch, e->position().x()),
+        0, static_cast<int>(vec->size()) - 1);
     m_markers[m_dragMarker] = s;
     // TEMPLATE-AWARE signal only. markerMoved carried no slot, so a drag on a
     // sub-template column was indistinguishable from one on slot 0 and wrote
@@ -1030,7 +1104,9 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
         m_glyphs.ecgPBegin = froz(b.p_begin_auto_ch[c]);
         m_glyphs.ecgPPeak = froz(b.p_peak_auto_ch[c]);
         m_glyphs.ecgQ = froz(b.q_begin_auto_ch[c]);
+        m_glyphs.ecgQFound = b.q_begin_found_auto_ch[c];
         m_glyphs.ecgS = froz(b.s_end_auto_ch[c]);
+        m_glyphs.ecgQPeak = froz(b.q_peak_auto_ch[c]);
         m_glyphs.ecgTend = froz(b.t_end_auto_ch[c]);
         m_glyphs.ecgRPeak = frozen(m_markers[EcgRPeak]);
     }
@@ -1046,8 +1122,8 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
             };
         m_glyphs.ppgFoot = frozen(b.ppg_onset_auto);
         m_glyphs.ppgP1 = frozen(b.ppg_peak_auto);
-        m_glyphs.ppgP2 = frozen(b.ppg_peak2_auto);    m_glyphs.ppgPeak2Found = b.ppg_peak2_found_auto;
-        m_glyphs.ppgDic = frozen(b.ppg_dicrotic_auto); m_glyphs.ppgNotchFound = b.ppg_dicrotic_found_auto;
+        m_glyphs.ppgP2 = frozen(b.ppg_peak2_auto);
+        m_glyphs.ppgDic = frozen(b.ppg_dicrotic_auto);
         m_glyphs.ppgEnd = frozen(b.ppg_end_auto);
         m_glyphs.vpgU = frozen(b.ppg_u_auto);
         m_glyphs.vpgV = frozen(b.ppg_v_auto);
@@ -1060,6 +1136,7 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
         m_glyphs.apgF = frozen(b.ppg_f_auto);
         m_glyphs.jpgP1 = frozen(b.ppg_p1_auto);
         m_glyphs.jpgP2 = frozen(b.ppg_p2_auto);
+
     }
 }
 
@@ -1075,7 +1152,7 @@ void BinPlotWidget::overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm) {
     m_glyphs.ppgFoot = froz(pm.onset_auto);
     m_glyphs.ppgP1 = froz(pm.peak_auto);
     m_glyphs.ppgDic = froz(pm.dicrotic_auto);  m_glyphs.ppgNotchFound = pm.notch_found;
-    m_glyphs.ppgP2 = froz(pm.peak2_auto);     m_glyphs.ppgPeak2Found = pm.peak2_found;
+    m_glyphs.ppgP2 = froz(pm.peak2_auto);
     m_glyphs.ppgEnd = froz(pm.end_auto);
     update();
 }
@@ -1083,8 +1160,17 @@ void BinPlotWidget::overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm) {
 void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
     double yLo, double yHi, double pLo, double pHi, int ph) const
 {
+    // TEMPORARY, same purpose as paintEvent's markers one level up.
+    auto gmark = [&](const char* what) {
+        fprintf(stderr, "[glyph] bin=%d lead=%d tmpl=%d  %s\n",
+            m_binIndex, m_leadIndex, m_templateIndex, what);
+        fflush(stderr);
+        };
+    gmark("reactive-in");
+
     // Reactive columns, recomputed every paint from the current bars.
     const Reactive rx = reactiveGlyphs();
+    gmark("reactive-out");
 
     auto plot_y = [&](double val, double lo, double hi) {
         const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
@@ -1117,6 +1203,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         p.drawLine(QPointF(x - dash_half_width, y), QPointF(x + dash_half_width, y));
         };
 
+    gmark("ecg-block");
     // ---- ECG --------------------------------------------------------------
     if (m_showEcgTrace && (int)m_ecg.size() >= 3) {
         const std::vector<double>& v = m_ecg;
@@ -1138,21 +1225,26 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             if (idx < 0.0 || idx > static_cast<double>(N - 1)) return false;
             const double raw = FeatureMarks::sample_at(v, idx);
             const double val = std::isnan(raw) ? baseline : raw;
-            out = QPointF(xFromSample(idx, 0.0, rateRatio(Channel::Ecg)),
-                plot_y(val, yLo, yHi));
+            out = QPointF(xFromSample(Channel::Ecg, idx), plot_y(val, yLo, yHi));
             return true;
             };
         auto cross = [&](double idx) { QPointF q; if (point(idx, q)) x_glyph(q.x(), q.y()); };
+        auto circle = [&](double idx) { QPointF q; if (point(idx, q)) circle_glyph(q.x(), q.y()); };
+        // X when the landmark was fitted, O when a fallback produced the position.
+        // Same convention as the PPG block below, which has its own copy because
+        // each block's cross/circle close over its own axis and geometry.
+        auto found = [&](double idx, bool ok) { ok ? cross(idx) : circle(idx); };
 
         cross(m_glyphs.ecgPBegin);   // P begin
         cross(m_glyphs.ecgPPeak);    // P wave
-        cross(m_glyphs.ecgQ);        // Q onset
+        found(m_glyphs.ecgQ, m_glyphs.ecgQFound);
+        cross(m_glyphs.ecgQPeak);
         cross(m_glyphs.ecgRPeak);    // R wave
         cross(m_glyphs.ecgS);        // S end
-        cross(rx.ecgTPeak);          // reactive: between the T-begin/T-end bars
+        cross(rx.ecgTPeak);          // reactive: between the S-end/T-end bars
         cross(m_glyphs.ecgTend);     // T end
     }
-
+    gmark("ppg-block");
     // ---- PPG --------------------------------------------------------------
     if (m_showPpgTrace && m_hasPPG && (int)m_ppg.size() >= 3) {
         const std::vector<double>& v = m_ppg;
@@ -1163,8 +1255,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             if (idx < 0.0 || idx > static_cast<double>(N - 1)) return false;
             const double raw = FeatureMarks::sample_at(v, idx);
             const double val = std::isnan(raw) ? pLo : raw;
-            out = QPointF(xFromSample(idx, ppgStartSample(), rateRatio(Channel::Ppg)),
-                plot_y(val, pLo, pHi));
+            out = QPointF(xFromSample(Channel::Ppg, idx), plot_y(val, pLo, pHi));
             return true;
             };
         auto cross = [&](double idx) { QPointF q; if (point(idx, q)) x_glyph(q.x(), q.y()); };
@@ -1203,4 +1294,5 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
             dash(m_glyphs.jpgP2, jpg_mark_color);
         }
     }
+    gmark("glyph-done");
 }

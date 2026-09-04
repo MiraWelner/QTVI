@@ -584,7 +584,7 @@ namespace tbank {
         int t50 = -1, t80 = -1;
         double onset_auto = -1.0, peak_auto = -1.0, dicrotic_auto = -1.0;
         double peak2_auto = -1.0, end_auto = -1.0;
-        bool notch_found = false, peak2_found = false;
+        bool notch_found = false;
         bool isUnset() const {
             return onset < 0 && peak < 0 && dicrotic < 0 && peak2 < 0 && end < 0;
         }
