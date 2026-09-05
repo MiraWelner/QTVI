@@ -721,6 +721,7 @@ namespace jbank {
             ++counts->n_rejected_by[out.failing_channel];
 
         // ---- spawn ------------------------------------------------------
+        if (bank.next_spawn_seq > 200) { out.group_id = tbank::kUnscorable; return out; }
         if (bank.atCap()) {
             const MergeCandidate mc = findMergePair(bank);
             if (mc.valid() && !mc.both_confirmed) {

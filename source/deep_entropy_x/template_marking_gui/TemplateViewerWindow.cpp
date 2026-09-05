@@ -154,10 +154,18 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
         auto* vlay = new QVBoxLayout(holder);
         vlay->setContentsMargins(4, 4, 4, 4);
         vlay->setSpacing(6);
-        // ONE PANEL. Was two (QRS above, JT below) so the J point could appear
-        // in both; see refreshFocus for why that split is no longer needed.
-        m_focus = new FocusPanelWidget(holder);
-        vlay->addWidget(m_focus);
+        // TWO PANELS AND A SPACER, LAID OUT IN THIRDS. The J point needs both
+        // (see refreshFocus); every other landmark uses the top one and the
+        // spacer holds the rest, which is what makes a single view occupy the
+        // TOP THIRD instead of stretching over the whole dock.
+        m_focusTop = new FocusPanelWidget(holder);
+        m_focusBottom = new FocusPanelWidget(holder);
+        vlay->addWidget(m_focusTop, 1);
+        vlay->addWidget(m_focusBottom, 1);
+        vlay->addStretch(1);
+        m_focusLay = vlay;
+        m_focusBottom->hide();
+        setFocusSplit(false);
         holder->setLayout(vlay);
         dock->setWidget(holder);
         addDockWidget(Qt::RightDockWidgetArea, dock);
@@ -2764,10 +2772,27 @@ void TemplateViewerWindow::onLandmarkSelected(int binIdx, int leadIdx,
 // The J-point (S-end) is shared by the QRS and JT views, so selecting/editing
 // it refreshes BOTH panels; every other landmark refreshes its own single
 // panel.
+// Move the stretch between the second panel and the trailing spacer so the
+// panels always sit on the SAME third-height grid.
+//
+//   split=false -> panel 1/3, panel(hidden) 0, spacer 2/3
+//   split=true  -> panel 1/3, panel        1/3, spacer 1/3
+//
+// A hidden widget contributes no stretch, so without moving it into the spacer
+// a lone visible panel would expand to fill half the dock -- and the same
+// landmark would then be drawn at one scale on its own and another right after
+// the J point had been selected. The spacer holds the leftover.
+void TemplateViewerWindow::setFocusSplit(bool split) {
+    if (!m_focusLay || !m_focusBottom) return;
+    m_focusBottom->setVisible(split);
+    m_focusLay->setStretch(1, split ? 1 : 0);   // second panel
+    m_focusLay->setStretch(2, split ? 1 : 2);   // trailing spacer absorbs the rest
+}
+
 void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     int templateIdx, int marker, int col)
 {
-    if (!m_focus) return;   // panel not created (nothing to do)
+    if (!m_focusTop) return;   // panels not created (nothing to do)
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
     TemplateBin& b = m_bins[binIdx];
 
@@ -2803,7 +2828,9 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                 (templateIdx >= 0 && templateIdx < b.ppg_bank.size())
                 ? &b.ppg_bank.templates[templateIdx] : nullptr;
             if (!ps || ps->tmpl.empty() || ps->memberCount() <= 0) {
-                if (m_focus) m_focus->clearFocus();
+                setFocusSplit(false);
+        if (m_focusTop) m_focusTop->clearFocus();
+        if (m_focusBottom) m_focusBottom->clearFocus();
                 return;
             }
             meanRaw = &ps->tmpl;           iqrRaw = &ps->tmpl_iqr;
@@ -2866,8 +2893,11 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
 
         // Pulse channels have no alignment dimension: they are foot-anchored,
         // once, and raw_anchors is ECG-only. One panel, no suffix.
-        if (m_focus)
-            m_focus->setFocus(mean, sd, nBeats, col,
+        // Pulse landmarks bound one part of the wave: top third only.
+        setFocusSplit(false);
+        if (m_focusBottom) m_focusBottom->clearFocus();
+        if (m_focusTop)
+            m_focusTop->setFocus(mean, sd, nBeats, col,
                 chLabel + " " + pulseLabel(marker));
         return;
     }
@@ -2889,7 +2919,36 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // waveform the grid does, magnified. markerAtX does not hand out glyphs
     // anyway; this is just what anchorFor returns for them.
     const AnchorType focusAnchor = anchor_view::anchorFor(marker);
-    const ChannelTemplateData& ch = b.chFor(leadIdx, focusAnchor);
+    // NO FALLBACK. chForStrict returns nullptr when this alignment is not in
+    // the file, and the panel is cleared with a message saying so. It does NOT
+    // quietly show the R-aligned average under this bar's header, which is what
+    // chFor's fallback did and what made every bar look identical.
+    const ChannelTemplateData* chP = b.chForStrict(leadIdx, focusAnchor);
+    if (!chP) {
+        setFocusSplit(false);
+        if (m_focusTop) m_focusTop->clearFocus();
+        if (m_focusBottom) m_focusBottom->clearFocus();
+        fprintf(stderr, "[focus] bin=%d lead=%d marker=%d anchor=%s NOT IN FILE"
+            " -- regenerate templates\n",
+            binIdx, leadIdx, marker, anchor_view::label(focusAnchor));
+        return;
+    }
+    const ChannelTemplateData& ch = *chP;
+
+    // ---- DID chFor ACTUALLY RETURN THIS ALIGNMENT? ---------------------
+    //
+    // chFor SILENTLY returns the R base for any alignment the templates file
+    // does not carry, and the header said "[P-aligned]" either way. So a panel
+    // that looks the same under every bar had two indistinguishable causes --
+    // the switch not working, or the file having no anchor blocks to switch to
+    // -- and no way to tell them apart by eye.
+    //
+    // Exact, not inferred: chFor returns a reference INTO the bin, so if the
+    // address is the R base while a non-R alignment was requested, the fallback
+    // happened.
+    // (the fellBack detector is gone with the fallback -- chForStrict returned
+    //  non-null, so this IS focusAnchor's own template.)
+    const bool fellBack = false;
     // Templates + iqr are stored PRE-reference-division; scale by the same
     // per-lead ref the displayed ECG trace uses (main plot ~line 484). The
     // ECG *_iqr field already holds a STD (ddof=1) -- CreateEcgTemplates step
@@ -2910,19 +2969,49 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // worse than none.
     const std::vector<double>* meanRawEcg = &ch.ecgTemplate_raw;
     const std::vector<double>* sdRawEcg = &ch.ecg_template_raw_iqr;
+    // Set when a sub-template panel had to fall back to the slot's own
+    // unaligned average; changes the header so it cannot claim an alignment
+    // the data is not in.
+    bool slotUnaligned = false;
     const uint64_t nb[3] = { b.ch1_n_beats_raw, b.ch2_n_beats_raw, b.ch3_n_beats_raw };
     int nBeats = static_cast<int>(nb[leadIdx]);
     if (templateIdx > 0) {
         const tbank::TemplateBank& bank = b.ecg_bank[leadIdx];
         if (templateIdx >= bank.size()
             || bank.templates[templateIdx].tmpl.empty()) {
-            if (m_focus) m_focus->clearFocus();
+            setFocusSplit(false);
+            if (m_focusTop) m_focusTop->clearFocus();
+            if (m_focusBottom) m_focusBottom->clearFocus();
             return;
         }
         const tbank::BankTemplate& tp = bank.templates[templateIdx];
         meanRawEcg = &tp.tmpl;
         sdRawEcg = &tp.tmpl_iqr;
         nBeats = tp.cleanCount();
+
+        // ---- THIS SLOT'S OWN ALIGNED AVERAGE ---------------------------
+        //
+        // THIS IS THE BUG THIS BRANCH HAD. focusAnchor was computed and
+        // chFor fetched the right aligned waveform two dozen lines above --
+        // and then the two assignments right here threw both away, because
+        // tp.tmpl is the slot's single R-aligned average with no anchor
+        // dimension at all. So on an _A column the panel showed the same trace
+        // and the same spread under every bar, while the header named whichever
+        // alignment the bar belonged to.
+        //
+        // Per-slot aligned averages now exist (v6 section, computed in
+        // alignTemplatesFromCache as a reduction over the beats it already
+        // aligns). nullptr means the templates file predates that section, in
+        // which case the header says so rather than naming an alignment the
+        // data is not in.
+        if (const AnchoredBankSlot* asl =
+                b.bankSlotFor(leadIdx, templateIdx, focusAnchor)) {
+            meanRawEcg = &asl->tmpl;
+            sdRawEcg = &asl->tmpl_iqr;
+        }
+        else {
+            slotUnaligned = true;
+        }
     }
     const std::vector<double> mean = normalize_features::scale_array_by_ref(*meanRawEcg, eref);
     const std::vector<double> sd = normalize_features::scale_array_by_ref(*sdRawEcg, eref);
@@ -2949,7 +3038,17 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // be placed in its columns. Same conversion and same direction as the drag
     // path in onMarkerMoved, so a bar dragged on the grid lands under the
     // crosshair here.
-    const int colHere = col + b.frameShift(leadIdx, AnchorType::R_PEAK, focusAnchor);
+    // CLAMPED. frameShift returned 0 for the life of this code until
+    // sub-sample alignment landed -- every anchor shared one r_col, so the
+    // translation was a no-op. Now the anchors' r_cols genuinely differ, so
+    // this is the first build where colHere can fall outside the trace, and
+    // an out-of-range landmark column is not something the panel should be
+    // asked to render.
+    int colHere = col + b.frameShift(leadIdx, AnchorType::R_PEAK, focusAnchor);
+    if (mean.empty()) return;
+    if (colHere < 0) colHere = 0;
+    if (colHere >= static_cast<int>(mean.size()))
+        colHere = static_cast<int>(mean.size()) - 1;
 
     // ONE PANEL. There were two -- QRS above, JT below -- because the J point
     // had to appear in both, framed right-edge in one and left-edge in the
@@ -2963,11 +3062,67 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // toward the RIGHT (they end it).
     const int bias = BinPlotWidget::markerIsBegin(marker) ? +1 : -1;
 
-    if (m_focus)
-        m_focus->setFocus(mean, sd, nBeats, colHere,
-            QString("%1  [%2-aligned]").arg(labelFor(marker),
-                QString::fromLatin1(anchor_view::label(focusAnchor))),
-            30, bias);
+    if (m_focusTop)
+    {
+        // Mean SD over the same +/-30 window the panel draws, in the panel's
+        // own normalized units. THIS is the number that settles it: in a
+        // P-aligned average the T region is the most smeared part of the trace,
+        // so P-aligned-at-T must read clearly larger than T-aligned-at-T. Equal
+        // numbers mean the two panels are the same data, and the tag says which
+        // of the two reasons applies.
+        //
+        // On screen rather than only in the log because the panel autoscales y
+        // to the window it draws -- so the BAND always looks about the same
+        // width no matter how large the spread actually is, and in a narrow
+        // dock a 61-sample window renders as a near-vertical line where no band
+        // is visible at all.
+        double acc = 0.0; int cnt = 0;
+        for (int k = colHere - 30; k <= colHere + 30; ++k)
+            if (k >= 0 && k < (int)sd.size() && !std::isnan(sd[k])) { acc += sd[k]; ++cnt; }
+        const double sdMean = cnt
+            ? acc / cnt : std::numeric_limits<double>::quiet_NaN();
+
+        QString tag;
+        if (slotUnaligned)
+            tag = QStringLiteral(" [slot avg, NOT aligned]");
+        else if (fellBack)
+            tag = QStringLiteral(" [%1 MISSING -> R base]")
+                      .arg(QString::fromLatin1(anchor_view::label(focusAnchor)));
+        else
+            tag = QStringLiteral(" [%1-aligned]")
+                      .arg(QString::fromLatin1(anchor_view::label(focusAnchor)));
+
+        fprintf(stderr,
+            "[focus] bin=%d lead=%d marker=%d anchor=%s%s%s col=%d sd=%.5f n=%d\n",
+            binIdx, leadIdx, marker, anchor_view::label(focusAnchor),
+            fellBack ? " FELL-BACK-TO-R" : "",
+            slotUnaligned ? " SLOT-UNALIGNED" : "",
+            colHere, sdMean, nBeats);
+
+        // THE J POINT GETS BOTH PANELS. It is the one landmark bounding two
+        // segments, so a single framing always hides one neighbourhood: above
+        // it is framed to the RIGHT edge, where it ends the QRS; below to the
+        // LEFT, where it starts the JT. Same waveform in both -- differing
+        // only in which side of the landmark is shown.
+        const QString head = QString("%1%2  sd=%3")
+            .arg(labelFor(marker), tag, QString::number(sdMean, 'f', 5));
+        if (marker == BinPlotWidget::EcgSEnd) {
+            setFocusSplit(true);
+            if (m_focusTop)
+                m_focusTop->setFocus(mean, sd, nBeats, colHere,
+                    head + QStringLiteral("  (QRS)"), 30, -1);
+            if (m_focusBottom)
+                m_focusBottom->setFocus(mean, sd, nBeats, colHere,
+                    head + QStringLiteral("  (JT)"), 30, +1);
+        }
+        else {
+            // One segment -> top third only.
+            setFocusSplit(false);
+            if (m_focusBottom) m_focusBottom->clearFocus();
+            if (m_focusTop)
+                m_focusTop->setFocus(mean, sd, nBeats, colHere, head, 30, bias);
+        }
+    }
 }
 
 // ========================================================================

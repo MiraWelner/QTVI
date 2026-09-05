@@ -9,6 +9,10 @@
 #include "template_marking_bin_io.hpp"
 #include "BinPlotWidget.hpp"
 #include "FocusPanelWidget.hpp"
+
+// Pointer member only (m_focusLay); the dock is built in the .cpp,
+// which includes <QVBoxLayout> properly.
+class QVBoxLayout;
 #include "template_anchoring\anchor_view.hpp"
 #include "logging/boundary_training_log.hpp"
 
@@ -189,7 +193,25 @@ private:
     // is what the alignment switch replaces.
     void refreshFocus(int binIdx, int leadIdx, int templateIdx,
         int marker, int col);
-    FocusPanelWidget* m_focus = nullptr;
+    // TWO PANELS, USED FOR ONE LANDMARK.
+    //
+    // The J point (S end) is the boundary between the QRS and the JT segment,
+    // so it is the one landmark whose two neighbourhoods are both worth seeing:
+    // drawn top framed to the RIGHT edge (it ENDS the QRS) and bottom framed to
+    // the LEFT (it STARTS the JT). Same waveform in both -- the J point's
+    // alignment is R -- differing only in which side of the landmark is shown.
+    //
+    // Every other landmark bounds one segment and uses m_focusTop alone, in the
+    // TOP THIRD of the dock. m_focusLay is kept because setFocusSplit moves
+    // stretch on it: hiding the second panel is not enough, since a hidden
+    // widget contributes no stretch and the visible one would expand to fill
+    // half. A trailing spacer absorbs the difference so both panels always sit
+    // on the same thirds grid, and a landmark is drawn at the same scale
+    // whether or not the J point was selected before it.
+    FocusPanelWidget* m_focusTop = nullptr;
+    FocusPanelWidget* m_focusBottom = nullptr;   // J point only
+    QVBoxLayout* m_focusLay = nullptr;
+    void setFocusSplit(bool split);
     // (m_lastFocusBin / m_lastFocusLead removed. They remembered the last
     //  J-point's (bin, lead) so a QRS-side edit could refresh the JT panel
     //  against the same landmark -- state that only existed to keep two panels

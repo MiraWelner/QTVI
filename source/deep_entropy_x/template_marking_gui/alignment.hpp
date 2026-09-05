@@ -980,29 +980,66 @@ namespace alignment {
         std::vector<std::vector<double>> beats = beatsIn;
         const int Wsh = static_cast<int>(beats.front().size());
 
-        // Q marker = Q of the column-wise median of all beats (== the R
-        // template). Every snippet is then shifted so its own Q lands here.
-        // AnchorLocator returns a sub-sample position now; this path shifts by
-        // whole samples, so it rounds. Numerically identical to the previous
-        // int-returning locator, which rounded inside the finder.
-        const int marker = static_cast<int>(std::lround(
-            locate(ref_beat_of_median_length)));
+        // Anchor = the landmark on the column-wise median of all beats (for
+        // R_PEAK that is the R template's own R). Every snippet is then shifted
+        // so its own landmark lands there.
+        //
+        // ---- SUB-SAMPLE, AND THAT IS THE WHOLE POINT ---------------------
+        //
+        // This used to lround BOTH ends and shift by whole samples. The
+        // per-beat variability of P onset, Q onset or the J point RELATIVE TO R
+        // is a few milliseconds -- under one sample at typical rates -- so
+        // every shift rounded to zero, no beat moved, and all four anchor
+        // alignments came out bit-identical to the R one. The locators return
+        // genuine fractional positions (291.31, 302.916, ...); lround threw
+        // away exactly the precision that distinguishes the alignments.
+        //
+        // So the shift is a double and the resample is linear between the two
+        // straddling samples. Linear rather than cubic deliberately: the shifts
+        // are a fraction of a sample, where linear and cubic agree to within
+        // far less than the beat-to-beat spread being measured, and linear
+        // cannot overshoot -- it will not invent a taller R peak than the beat
+        // actually had.
+        const double markerD = locate(ref_beat_of_median_length);
+        const int marker = (markerD >= 0.0)
+            ? static_cast<int>(std::lround(markerD)) : -1;
         res.q_aligned_col = (marker >= 0) ? marker : R_anchor;
 
-        std::vector<int> shifts;   // per-beat Q-align shift (for R's new column)
-        if (marker >= 0) {
+        std::vector<int> shifts;   // per-beat shift, rounded, for R's new column
+        if (markerD >= 0.0) {
             const double NaNv = std::numeric_limits<double>::quiet_NaN();
             shifts.reserve(beats.size());
             for (size_t i = 0; i < beats.size(); ++i) {
-                const int mi = static_cast<int>(std::lround(locate(beats[i])));
-                if (mi < 0) continue;
-                const int shift = marker - mi;   // may be negative
-                shifts.push_back(shift);
-                if (shift == 0) continue;
+                const double mi = locate(beats[i]);
+                if (!(mi >= 0.0)) continue;
+                const double shiftD = markerD - mi;   // may be negative
+                shifts.push_back(static_cast<int>(std::lround(shiftD)));
+
+                // A shift under a thousandth of a sample is not worth a
+                // resample -- it would only add interpolation error.
+                if (std::abs(shiftD) < 1e-3) continue;
+
+                // dst = k + shiftD, so the value landing on integer column j
+                // comes from source position j - shiftD. Reading BACKWARDS from
+                // the destination is what makes this a resample rather than a
+                // scatter: every output column gets exactly one value, with no
+                // holes where a forward scatter would skip a column and no
+                // collisions where two sources would round to the same one.
                 std::vector<double> a(Wsh, NaNv);
-                for (int k = 0; k < Wsh; ++k) {
-                    const int dst = k + shift;
-                    if (dst >= 0 && dst < Wsh) a[dst] = beats[i][k];
+                for (int j = 0; j < Wsh; ++j) {
+                    const double src = static_cast<double>(j) - shiftD;
+                    const int s0 = static_cast<int>(std::floor(src));
+                    const int s1 = s0 + 1;
+                    if (s0 < 0 || s1 >= Wsh) continue;   // off the window: stays NaN
+                    const double v0 = beats[i][s0];
+                    const double v1 = beats[i][s1];
+                    // NaN-safe: a beat is NaN-padded at its edges, and
+                    // interpolating across that boundary would smear the pad
+                    // inward. Either neighbour missing leaves the column NaN,
+                    // which the column-wise median below already skips.
+                    if (std::isnan(v0) || std::isnan(v1)) continue;
+                    const double f = src - static_cast<double>(s0);
+                    a[j] = v0 + f * (v1 - v0);
                 }
                 beats[i] = std::move(a);
             }

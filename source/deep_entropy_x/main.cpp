@@ -29,7 +29,6 @@
 #include <thread>
 #include <functional>
 #include <QtWidgets/QMessageBox>
-#include <QtWidgets/QProgressDialog>
 #include <vector>
 
 #include <theme/theme.h>
@@ -147,74 +146,14 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
     const QString displayId = fileId;
 
     // ---- EVERY ALIGNMENT BUILT ONCE, BEFORE THE WINDOW OPENS ----------
+    // The anchor alignments are built in prepareViewerJob now -- all four are
+    // folded into job.tmpl before the provisional templates file is written,
+    // while job.beats is still the pristine R-pass matrix. So there is nothing
+    // to do here: the file the viewer is about to open already carries them.
     //
-    // This was a LOOP over nAnchorPasses = anchorSequence().size() + 1: open a
-    // viewer on the R templates, wait for "Finish and Next", tear the window
-    // down, re-align on the next landmark, open a fresh viewer, repeat. Four
-    // windows to mark one subject, with a rebuild between each.
-    //
-    // The viewer now loads all four alignments from one file and switches
-    // between them per landmark (see anchor_view.hpp), so the alignments are
-    // built up front and the window opens once. job->anchorStep is unused.
-    //
-    // Still off the GUI thread behind a modal busy dialog, for the same reason
-    // as before: the align work is seconds, not milliseconds, and a frozen
-    // window looks like a crash. And the finalize worker is still joined first
-    // -- buildAllAnchors folds every block into job->tmpl and writes the
-    // canonical file, which needs finalize's squared/absval done and job->tmpl
-    // race-free. The old code could defer that join for the non-final steps
-    // because they staged into job->anchorAccum; with one call there is no
-    // staging, so the join is unconditional.
-    {
-        QProgressDialog busy(QStringLiteral("Building anchor alignments\xE2\x80\xA6"),
-            QString(), 0, 0, nullptr);
-        busy.setWindowModality(Qt::ApplicationModal);
-        busy.setCancelButton(nullptr);
-        busy.setMinimumDuration(0);
-        busy.show();
-
-        bool ok = false;
-        QEventLoop waitLoop;
-        std::thread build([&ok, job, &waitLoop, ensureWorkerDone]() {
-            // The wait loop below blocks until this thread posts quit. Guard
-            // the whole body so quit is ALWAYS posted -- if ensureWorkerDone()
-            // or the build throws, we must still wake waitLoop or the GUI
-            // thread hangs forever in waitLoop.exec().
-            try {
-                if (ensureWorkerDone) ensureWorkerDone();
-                ok = post_process_detail::buildAllAnchors(*job);
-            }
-            catch (const std::exception& e) {
-                ok = false;
-                if (job->error.empty()) job->error = e.what();
-            }
-            catch (...) {
-                ok = false;
-                if (job->error.empty()) job->error = "unknown exception building anchor alignments";
-            }
-            QMetaObject::invokeMethod(&waitLoop, &QEventLoop::quit,
-                Qt::QueuedConnection);   // guaranteed reached: no path skips it
-            });
-        waitLoop.exec();     // GUI stays alive; dialog animates
-        build.join();
-        busy.close();
-
-        // NOT FATAL. job->viewerTemplatePath still points at a readable
-        // templates file carrying the R base, and marking on R alone is what
-        // this tool did before the anchor passes existed. The operator is told
-        // because the consequence is invisible otherwise: TemplateBin::chFor
-        // falls back to the R base for a missing alignment, so every bar's
-        // close-up would silently show the R template and the per-alignment
-        // CSV columns would be four copies of it.
-        if (!ok) {
-            QMessageBox::warning(nullptr, "Anchor alignments",
-                QString("Could not build the anchor alignments:\n%1\n\n"
-                    "Marking will continue on the R alignment only -- the "
-                    "close-up panel will show the R template under every "
-                    "landmark.")
-                .arg(QString::fromStdString(job->error)));
-        }
-    }
+    // The buildAllAnchors call that used to sit here (on its own thread, behind
+    // a progress dialog) is gone with the function; post_process.hpp does that
+    // work upstream instead.
 
     {
         TemplateViewerWindow viewer;
@@ -410,19 +349,9 @@ int main(int argc, char* argv[]) {
         }
 
         // ---- Stage 3: template marking --------------------------------
-        // buildAllAnchors (called at the top of runTemplateMarking, before the
-        // window opens) needs the finalize worker joined: it folds every
-        // alignment into job->tmpl and writes the canonical templates file, so
-        // finalize's squared/absval must already be done and job->tmpl must be
-        // race-free.
-        //
-        // THIS NOW HAPPENS ON EVERY FILE, not just the ones where the operator
-        // reached the final anchor. The old cycle staged the non-final anchors
-        // into job->anchorAccum precisely so the join could be deferred and the
-        // R pass could open while the squared build was still running; with one
-        // build up front there is nothing to stage, so the marking window waits
-        // for finalize. The parking below therefore almost always takes the
-        // second branch.
+        // ensureWorkerDone is kept for the parking logic below. The anchor
+        // build that used to need it has moved into prepareViewerJob, which
+        // runs before any worker starts.
         auto ensureWorkerDone = [&worker]() { if (worker.joinable()) worker.join(); };
         runTemplateMarking(cfg, job, QString::fromStdString(job->stem), ensureWorkerDone);
 
@@ -433,7 +362,7 @@ int main(int argc, char* argv[]) {
         if (worker.joinable())
             outstanding.push_back(Outstanding{ std::move(worker), job, done });
         else if (job->needsFinalize)
-            finishJob(job);   // worker was joined by buildAllAnchors
+            finishJob(job);   // no worker was ever started
 
         // Clean up any background jobs that have already finished (non-blocking).
         reap(/*force=*/false);

@@ -150,6 +150,32 @@ namespace template_io {
         // Serialized as a trailing section after the base bins, so old
         // (R-only) readers ignore it and old files read back with it empty.
         std::map<int, std::vector<std::array<ChannelMethodTemplate, 3>>> raw_anchors;
+
+        // ---- v6: PER-ANCHOR BANK SLOT TEMPLATES --------------------------
+        //
+        // raw_anchors above holds ONE aligned average per (anchor, bin,
+        // channel) -- the whole-channel template, which is what slot 0 draws.
+        // The BANK slots (the _A / _B columns) had no per-anchor variant, so
+        // refreshFocus computed the right alignment, fetched the right
+        // waveform, and then the templateIdx > 0 branch overwrote both with the
+        // slot's own R-aligned average -- same picture under every bar, with a
+        // header naming an alignment the data was not in.
+        //
+        // Cheap and exact: alignTemplatesFromCache already aligns the bin's
+        // whole beat matrix and align_beat_matrix hands back the shifted beats,
+        // which were being discarded. A slot's aligned average is the
+        // column-wise median of those SAME beats restricted to the slot's
+        // member rows -- a reduction, not a second alignment pass. Aligning
+        // each slot independently would give every slot its own frame, and the
+        // point of the panel is that the slots on it share one.
+        //
+        // Indexing: bank_anchors[anchorTag][bin][channel][slot].
+        struct BankSlotTemplate {
+            std::vector<double> tmpl;
+            std::vector<double> tmpl_iqr;
+            uint32_t n_members = 0;
+        };
+        std::map<int, std::vector<std::array<std::vector<BankSlotTemplate>, 3>>> bank_anchors;
     };
 
     struct BeatsFile {

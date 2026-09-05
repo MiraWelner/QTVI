@@ -214,6 +214,43 @@ namespace template_io {
                 tbank_ser::writeBankExtrasToStream(f, b.ppg_bank);
             }
         }
+
+        // ---- v6: PER-ANCHOR BANK SLOT TEMPLATES ----------------------------
+        // A SIXTH TRAILING OPTIONAL SECTION, on the contract every section
+        // since v2 has followed: an older reader stops at end-of-file, and a v6
+        // reader that finds nothing leaves bank_anchors empty -- which reads
+        // correctly as "the slots have no aligned variants".
+        //
+        // MUST come after the extras section, unconditionally: the reader walks
+        // these in order, so a skipped section makes it parse the next one's
+        // count as this one's.
+        //
+        // Layout: [uint64 nAnchors], then per anchor
+        //         [int32 tag][uint64 nBins], then per bin, per 3 channels
+        //         [uint32 nSlots], then per slot
+        //         [vecd tmpl][vecd tmpl_iqr][uint32 n_members].
+        {
+            uint64_t nAnchors = data.bank_anchors.size();
+            f.write(reinterpret_cast<const char*>(&nAnchors), 8);
+            for (const auto& kv : data.bank_anchors) {
+                int32_t tag = kv.first;
+                f.write(reinterpret_cast<const char*>(&tag), 4);
+                uint64_t nb = kv.second.size();
+                f.write(reinterpret_cast<const char*>(&nb), 8);
+                for (const auto& perBin : kv.second) {
+                    for (int c = 0; c < 3; ++c) {
+                        uint32_t nSlots = static_cast<uint32_t>(perBin[c].size());
+                        f.write(reinterpret_cast<const char*>(&nSlots), 4);
+                        for (const auto& st : perBin[c]) {
+                            writeVecD(f, st.tmpl);
+                            writeVecD(f, st.tmpl_iqr);
+                            uint32_t nm = st.n_members;
+                            f.write(reinterpret_cast<const char*>(&nm), 4);
+                        }
+                    }
+                }
+            }
+        }
     }
 
 
@@ -350,6 +387,42 @@ namespace template_io {
                         ok = tbank_ser::readBankExtrasFromStream(
                             f, out.bins[bi].ppg_bank);
                     if (!ok) break;
+                }
+            }
+        }
+
+        // ---- v6: per-anchor bank slot templates (trailing, optional) -------
+        // Same contract as above: a short read means "this file predates the
+        // section", not an error, and whatever parsed cleanly stands.
+        {
+            uint64_t nAnchors = 0;
+            if (f.read(reinterpret_cast<char*>(&nAnchors), 8)) {
+                for (uint64_t a = 0; a < nAnchors; ++a) {
+                    int32_t tag = 0;
+                    if (!f.read(reinterpret_cast<char*>(&tag), 4)) break;
+                    uint64_t nb = 0;
+                    if (!f.read(reinterpret_cast<char*>(&nb), 8)) break;
+                    std::vector<std::array<std::vector<TemplateFile::BankSlotTemplate>, 3>> perBin(nb);
+                    bool ok = true;
+                    for (uint64_t i = 0; i < nb && ok; ++i) {
+                        for (int c = 0; c < 3 && ok; ++c) {
+                            uint32_t nSlots = 0;
+                            if (!f.read(reinterpret_cast<char*>(&nSlots), 4)) { ok = false; break; }
+                            // Implausible-count guard: a corrupt length must
+                            // stop the walk, not make the reader allocate on it.
+                            if (nSlots > 4096u) { ok = false; break; }
+                            perBin[i][c].resize(nSlots);
+                            for (uint32_t sl = 0; sl < nSlots && ok; ++sl) {
+                                if (!readVecD(f, perBin[i][c][sl].tmpl)) { ok = false; break; }
+                                if (!readVecD(f, perBin[i][c][sl].tmpl_iqr)) { ok = false; break; }
+                                uint32_t nm = 0;
+                                if (!f.read(reinterpret_cast<char*>(&nm), 4)) { ok = false; break; }
+                                perBin[i][c][sl].n_members = nm;
+                            }
+                        }
+                    }
+                    if (!ok) break;   // truncated: keep what parsed cleanly
+                    out.bank_anchors[static_cast<int>(tag)] = std::move(perBin);
                 }
             }
         }

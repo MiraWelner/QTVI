@@ -62,6 +62,23 @@ struct ChannelTemplateData {
     int median_rr_samples = -1;
 };
 
+// One bank slot's average for one alignment.
+//
+// AT NAMESPACE SCOPE, NOT NESTED IN TemplateBin, and that is not a style
+// choice. As a nested type, every use had to be spelled
+// TemplateBin::AnchoredBankSlot, and MSVC failed to parse those declarations --
+// both `map<int, array<vector<...>,3>>` inside a member function and
+// `vector<TemplateBin::AnchoredBankSlot> slots(n)` in the loader. Once a
+// declarator fails, the following `slots[sl]` is read as an ATTRIBUTE or a
+// LAMBDA INTRODUCER, which is where "'sl': attribute not found" and
+// "expected a '{' introducing a lambda body" came from, plus a syntax error on
+// every `.member` after it. Flat name, no nesting, no lookup.
+struct AnchoredBankSlot {
+    std::vector<double> tmpl;
+    std::vector<double> tmpl_iqr;
+    uint32_t n_members = 0;
+};
+
 struct TemplateBin {
     // Section 4.6 template bank per ECG channel, index 0..2 == CH1..CH3.
     // Slot 0 of each is the sinus seed and corresponds to that channel's
@@ -123,20 +140,82 @@ struct TemplateBin {
     // existing consumer are untouched; this map carries the other three.
     struct AnchorAuto {
         double p_begin[3] = { -1, -1, -1 };
-        double p_peak[3] = { -1, -1, -1 };
+        double p_peak[3]  = { -1, -1, -1 };
         double q_begin[3] = { -1, -1, -1 };
-        double q_peak[3] = { -1, -1, -1 };
-        double r_peak[3] = { -1, -1, -1 };
-        double s_end[3] = { -1, -1, -1 };
-        double t_end[3] = { -1, -1, -1 };
+        double q_peak[3]  = { -1, -1, -1 };
+        double r_peak[3]  = { -1, -1, -1 };
+        double s_end[3]   = { -1, -1, -1 };
+        double t_end[3]   = { -1, -1, -1 };
         bool   q_begin_found[3] = { false, false, false };
     };
     std::map<int, AnchorAuto> auto_by_anchor;
+
+    // ---- PER-ANCHOR BANK SLOT AVERAGES --------------------------------
+    //
+    // anchored above holds one aligned average per (anchor, lead) -- the bin's
+    // whole-channel template, which is what slot 0 draws. The BANK slots (the
+    // _A / _B columns) had no aligned variant, so their focus panel showed the
+    // slot's own R-aligned average under whatever "[X-aligned]" header the
+    // clicked bar produced. The switch did nothing and the label was wrong.
+    //
+    // Keyed [anchor tag][lead][slot], mirroring template_io's bank_anchors.
+    // Produced offline in alignTemplatesFromCache as column-wise reductions
+    // over the SAME aligned beat matrix the whole-channel average comes from,
+    // so a slot and its bin share one frame.
+    // FLAT KEY: anchorTag * 4 + lead. Deliberately not
+    // map<int, array<vector<...>,3>>: MSVC could not parse a declaration of
+    // that nested type inside a member function, and once the declarator
+    // failed it read the following `(...)[lead]` as a LAMBDA INTRODUCER --
+    // producing "expected a '{' introducing a lambda body" and a cascade of
+    // syntax errors on the lines below. One level of nesting, no arrays.
+    std::map<int, std::vector<AnchoredBankSlot> > anchored_bank;
+    static int bankSlotKey(int lead, AnchorType a) {
+        return static_cast<int>(a) * 4 + lead;
+    }
+
+    // This slot's aligned average, or nullptr when the file has none -- a
+    // pre-v6 templates file, a bin the alignment skipped, or a slot with no
+    // members. Callers fall back to the slot's own unaligned average AND say so
+    // in the panel header: a header naming an alignment the data is not in is
+    // the defect this exists to fix, so silently falling back would reinstate
+    // it one level down.
+    const AnchoredBankSlot* bankSlotFor(int lead, int slot, AnchorType a) const
+    {
+        if (lead < 0 || lead > 2) return nullptr;
+        if (slot < 0) return nullptr;
+        auto it = anchored_bank.find(bankSlotKey(lead, a));
+        if (it == anchored_bank.end()) return nullptr;
+        if (static_cast<size_t>(slot) >= it->second.size()) return nullptr;
+        if (it->second[slot].tmpl.empty()) return nullptr;
+        return &it->second[slot];
+    }
 
     // This alignment's template for one lead. Falls back to the R base when
     // the anchor block is absent -- a templates file built before this change
     // has none, and every bar's close-up then shows the R template, which is
     // the old single-pass behaviour rather than a failure.
+    // STRICT: this alignment's template, or nullptr. NO FALLBACK.
+    //
+    // chFor below substitutes the R base when the anchor block is absent, which
+    // is right for the CSV writers -- an R-only file must still produce columns
+    // -- and WRONG for the focus panel, where it silently showed the R-aligned
+    // average under a "[P-aligned]" header. A view that claims an alignment it
+    // is not showing is worse than an empty view, because there is no way to
+    // tell the two apart by eye.
+    //
+    // So the panel uses this one and draws nothing when it returns nullptr.
+    const ChannelTemplateData* chForStrict(int lead, AnchorType a) const {
+        if (lead < 0 || lead > 2) return nullptr;
+        if (a == AnchorType::R_PEAK) {
+            const ChannelTemplateData* base[3] = { &ch1, &ch2, &ch3 };
+            return base[lead]->ecgTemplate_raw.empty() ? nullptr : base[lead];
+        }
+        auto it = anchored.find(static_cast<int>(a));
+        if (it == anchored.end()) return nullptr;
+        if (it->second[lead].ecgTemplate_raw.empty()) return nullptr;
+        return &it->second[lead];
+    }
+
     const ChannelTemplateData& chFor(int lead, AnchorType a) const {
         const ChannelTemplateData* base[3] = { &ch1, &ch2, &ch3 };
         if (lead < 0 || lead > 2) return ch1;
@@ -155,12 +234,12 @@ struct TemplateBin {
         AnchorAuto out;
         for (int c = 0; c < 3; ++c) {
             out.p_begin[c] = p_begin_auto_ch[c];
-            out.p_peak[c] = p_peak_auto_ch[c];
+            out.p_peak[c]  = p_peak_auto_ch[c];
             out.q_begin[c] = q_begin_auto_ch[c];
-            out.q_peak[c] = q_peak_auto_ch[c];
-            out.r_peak[c] = r_peak_auto_ch[c];
-            out.s_end[c] = s_end_auto_ch[c];
-            out.t_end[c] = t_end_auto_ch[c];
+            out.q_peak[c]  = q_peak_auto_ch[c];
+            out.r_peak[c]  = r_peak_auto_ch[c];
+            out.s_end[c]   = s_end_auto_ch[c];
+            out.t_end[c]   = t_end_auto_ch[c];
             out.q_begin_found[c] = q_begin_found_auto_ch[c];
         }
         return out;
@@ -198,11 +277,11 @@ struct TemplateBin {
             const int v = slotMarks(lead, slot, owner).*field;
             if (v < 0) return;
             out.*field = v + frameShift(lead, owner, frame);
-            };
+        };
         pull(anchor_view::kPBegin, &tbank::BankMarkerSet::p_begin);
         pull(anchor_view::kQBegin, &tbank::BankMarkerSet::q_begin);
-        pull(anchor_view::kSEnd, &tbank::BankMarkerSet::s_end);
-        pull(anchor_view::kTEnd, &tbank::BankMarkerSet::t_end);
+        pull(anchor_view::kSEnd,   &tbank::BankMarkerSet::s_end);
+        pull(anchor_view::kTEnd,   &tbank::BankMarkerSet::t_end);
         return out;
     }
 
@@ -442,13 +521,13 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
         // chN is ALWAYS the R base: what the grid draws, and the frame every
         // other alignment's columns are translated into.
         auto project = [](const template_io::ChannelMethodTemplate& c,
-            ChannelTemplateData& d) {
-                d.ecgTemplate_raw = c.ecgTemplate;
-                d.ecg_template_raw_iqr = c.ecg_template_iqr;
-                d.alignment_point_raw = c.alignment_point;
-                d.r_col_raw = c.r_col;
-                d.median_rr_samples = c.median_rr_samples;
-            };
+                          ChannelTemplateData& d) {
+            d.ecgTemplate_raw      = c.ecgTemplate;
+            d.ecg_template_raw_iqr = c.ecg_template_iqr;
+            d.alignment_point_raw  = c.alignment_point;
+            d.r_col_raw            = c.r_col;
+            d.median_rr_samples    = c.median_rr_samples;
+        };
         project(src.ch1_raw, dst.ch1);
         project(src.ch2_raw, dst.ch2);
         project(src.ch3_raw, dst.ch3);
@@ -463,6 +542,33 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
             std::array<ChannelTemplateData, 3> trio;
             for (int c = 0; c < 3; ++c) project(kv.second[i][c], trio[c]);
             dst.anchored[kv.first] = std::move(trio);
+        }
+
+        // Per-anchor BANK SLOT averages (v6 section). Absent on any file
+        // written before that section existed, in which case bankSlotFor
+        // returns nullptr and the sub-template panels keep their old,
+        // now-honestly-labelled behaviour.
+        // NO LOCAL DECLARATIONS IN THIS LOOP, deliberately. Every earlier form
+        // declared something whose type mentioned AnchoredBankSlot -- a local
+        // vector, a reference to a map element -- and MSVC failed to parse the
+        // declarator every time. Once that happens it reads the following
+        // `slots[sl]` as an attribute list or a lambda introducer, so the real
+        // error is buried under "'sl': attribute not found", "expected a '{'
+        // introducing a lambda body", and a syntax error on every `.member`
+        // after it. Written long-hand: subscripting and assignment only.
+        for (const auto& kv : tf.bank_anchors) {
+            if (i >= kv.second.size()) continue;
+            for (int c = 0; c < 3; ++c) {
+                dst.anchored_bank[kv.first * 4 + c].resize(kv.second[i][c].size());
+                for (size_t sl = 0; sl < kv.second[i][c].size(); ++sl) {
+                    dst.anchored_bank[kv.first * 4 + c][sl].tmpl =
+                        kv.second[i][c][sl].tmpl;
+                    dst.anchored_bank[kv.first * 4 + c][sl].tmpl_iqr =
+                        kv.second[i][c][sl].tmpl_iqr;
+                    dst.anchored_bank[kv.first * 4 + c][sl].n_members =
+                        kv.second[i][c][sl].n_members;
+                }
+            }
         }
     }
     return bins;
@@ -980,8 +1086,8 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                     const tbank::BankMarkerSet& own = b.slotMarks(c, 0, anchor);
                     if (anchor_view::owns(anchor, anchor_view::kPBegin)) umk.p_begin = own.p_begin;
                     if (anchor_view::owns(anchor, anchor_view::kQBegin)) umk.q_begin = own.q_begin;
-                    if (anchor_view::owns(anchor, anchor_view::kSEnd))   umk.s_end = own.s_end;
-                    if (anchor_view::owns(anchor, anchor_view::kTEnd))   umk.t_end = own.t_end;
+                    if (anchor_view::owns(anchor, anchor_view::kSEnd))   umk.s_end   = own.s_end;
+                    if (anchor_view::owns(anchor, anchor_view::kTEnd))   umk.t_end   = own.t_end;
                 }
 
                 // ---- GLYPHS: EVERY ALIGNMENT -------------------------------
@@ -1003,7 +1109,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                     ecg, whole.p_begin, whole.q_begin, whole.s_end, whole.t_end);
                 const FeatureMarks::ReactiveEcg rxAuto = FeatureMarks::reactive_ecg(
                     ecg, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
-                    (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]));
+                         (int)std::lround(aa.s_end[c]),   (int)std::lround(aa.t_end[c]));
 
                 EcgFeatures ftAuto = computeEcgFeatures(ecg,
                     (int)std::lround(aa.p_peak[c]), (int)std::lround(aa.q_begin[c]),
@@ -1135,7 +1241,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 const auto aa = b.autoFor(anchor);
                 const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
                     ecg, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
-                    (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]));
+                         (int)std::lround(aa.s_end[c]),   (int)std::lround(aa.t_end[c]));
                 emitAutoFeatPt(ecg, rx.p_peak);
                 emitAutoFeatPt(ecg, aa.q_begin[c]);
                 emitAutoFeatPt(ecg, aa.r_peak[c]);
