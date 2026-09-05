@@ -119,16 +119,40 @@ namespace normalize_features {
         int   foot_idx;
         int   peak_idx;
         uint8_t issue;   // 0 = ok, 1 = user-bad, 2 = absent
+        // Added for the area reference below, which needs the far bracket of
+        // the wave and not just its peak. dicrotic_idx is the systolic/
+        // diastolic divide, end_idx the end of the wave; both are -1 on
+        // channels or bins where the notch was not found, which the area
+        // reference treats as "fall back to end" and then "skip this bin".
+        int   dicrotic_idx;
+        int   peak2_idx;
+        int   end_idx;
     };
 
     inline PulseChannel pulseChan(const TemplateBin& b, int which) {
         switch (which) {
-        case 0: return { &b.ppgTemplate,     b.ppg_onset,    b.ppg_peak,    b.bad_ppg };
-        case 1: return { &b.abpTemplate,     b.abp_onset,    b.abp_peak,    b.abp_issue };
-        case 2: return { &b.artTemplate,     b.art_onset,    b.art_peak,    b.art_issue };
-        default: return { &b.artPulmTemplate, b.art_pulm_onset, b.art_pulm_peak, b.art_pulm_issue };
+        case 0: return { &b.ppgTemplate,     b.ppg_onset,    b.ppg_peak,    b.bad_ppg,
+                         b.ppg_dicrotic,     b.ppg_peak2,    b.ppg_end };
+        case 1: return { &b.abpTemplate,     b.abp_onset,    b.abp_peak,    b.abp_issue,
+                         b.abp_dicrotic,     b.abp_peak2,    b.abp_end };
+        case 2: return { &b.artTemplate,     b.art_onset,    b.art_peak,    b.art_issue,
+                         b.art_dicrotic,     b.art_peak2,    b.art_end };
+        default: return { &b.artPulmTemplate, b.art_pulm_onset, b.art_pulm_peak, b.art_pulm_issue,
+                         b.art_pulm_dicrotic, b.art_pulm_peak2, b.art_pulm_end };
         }
     }
+
+    // Column-name stem for the four pulse channels, so the archive and the CSV
+    // writers agree on spelling without each keeping its own switch.
+    inline const char* pulseChanName(int which) {
+        switch (which) {
+        case 0:  return "ppg";
+        case 1:  return "abp";
+        case 2:  return "art";
+        default: return "art_pulm";
+        }
+    }
+    inline constexpr int kNumPulseCh = 4;
 
     inline double compute_pulse_global_ref(const std::vector<TemplateBin>& bins, int which)
     {
@@ -437,6 +461,55 @@ namespace normalize_features {
         return median_finite(std::move(peaks));
     }
 
+    // ------------------------------------------------------------------
+    // Option B for the pulse channels: area-based Global_Ref_person
+    // ------------------------------------------------------------------
+    // The pulse analogue of compute_ecg_global_ref_area, and it differs from it
+    // in the one way that matters: the ECG version integrates a RECTIFIED
+    // signal, because the QRS is biphasic and a signed integral would let the
+    // Q and S deflections cancel the R. A pulse wave is monophasic above its
+    // own foot, so the foot is subtracted and the integral is SIGNED -- taking
+    // |y| here instead would fold diastolic undershoot back into the area as if
+    // it were more pulse.
+    //
+    // That foot subtraction is also what makes this a pulse reference rather
+    // than a scaled ECG one: pulse amplitude is only meaningful relative to the
+    // beat's own baseline (see pulse_norm / calculate_perfusion_index), and the
+    // absolute DC level of a PPG trace is an arbitrary function of LED gain.
+    //
+    // Brackets: foot -> end of wave. Falls back to the dicrotic notch when the
+    // wave end was not found, and skips the bin when neither is available --
+    // integrating to a guessed endpoint would make the reference a function of
+    // how far the guess ran.
+    inline double compute_pulse_global_ref_area(const std::vector<TemplateBin>& bins, int which)
+    {
+        std::vector<double> vals;
+        vals.reserve(bins.size());
+        for (const auto& b : bins) {
+            if (b.bad_segment) continue;
+            const PulseChannel pc = pulseChan(b, which);
+            if (pc.issue != 0) continue;
+            if (pc.trace->empty()) continue;
+            const int lo = pc.foot_idx;
+            int hi = (pc.end_idx > lo) ? pc.end_idx : pc.dicrotic_idx;
+            if (lo < 0 || hi <= lo) continue;
+            if (hi >= static_cast<int>(pc.trace->size())) hi = static_cast<int>(pc.trace->size()) - 1;
+            if (hi <= lo) continue;
+
+            // Foot-zeroed, then integrated. segment_area's absolute=true is
+            // deliberately NOT used -- see the note above.
+            const double footY = sample_y(*pc.trace, lo);
+            if (std::isnan(footY)) continue;
+            std::vector<double> zeroed(static_cast<size_t>(hi - lo + 1));
+            for (int k = lo; k <= hi; ++k)
+                zeroed[static_cast<size_t>(k - lo)] = sample_y(*pc.trace, k) - footY;
+            const double a = segment_area(zeroed, 0, static_cast<int>(zeroed.size()) - 1,
+                /*absolute=*/false);
+            if (!std::isnan(a)) vals.push_back(a);
+        }
+        return median_finite(std::move(vals));
+    }
+
     // Median absolute deviation, NaN-skipping, matching median_finite's
     // convention (used only by cvFlag below, so kept local to this file
     // rather than promoted to stats_utils.hpp).
@@ -471,6 +544,25 @@ namespace normalize_features {
     // Section 5.3 refers to it as its own step, applied to whichever
     // Global_Ref_person Option A/B/C above produced.
     inline double ratio_norm(double featurePeak, double gref) { return ecg_norm(featurePeak, gref); }
+
+    // THE PULSE FORM IS NOT THE SAME FUNCTION, and calling ratio_norm on a
+    // pulse feature is a silent error rather than a missing feature: it would
+    // return a plausible number computed without subtracting the foot.
+    //
+    // ECG is measured from an isoelectric baseline that is already ~0 after PQ
+    // leveling, so ratio normalization is a scalar divide. A pulse wave sits on
+    // an arbitrary DC offset -- LED gain for PPG, transducer zero for the
+    // arterial lines -- so its amplitude only means anything relative to that
+    // beat's own foot. This is the same asymmetry that makes pulse_norm take
+    // three arguments where ecg_norm takes two, and that makes
+    // local_ratio_iqr exist separately from raw_amplitude_iqr.
+    //
+    // footY is THIS beat's (or this trace's) own foot, not a per-subject
+    // constant: the foot drifts with respiration and vasomotion, and using a
+    // single subject-wide baseline would push that drift into the feature.
+    inline double pulse_ratio_norm(double featurePeak, double footY, double ref) {
+        return pulse_norm(featurePeak, footY, ref);
+    }
 
     // ==================================================================
     // Section 5.4 -- Percentile scaling
@@ -750,6 +842,264 @@ namespace normalize_features {
             const std::vector<double> v2 = shifted(ch2);
             const std::vector<double> v3 = shifted(ch3);
             out.volume.push_back(segment_volume(b1.samples, v2, v3, lo, hi));
+        }
+        return out;
+    }
+
+    // ==================================================================
+    // Pulse beat segmentation: foot-anchored, foot-zeroed, ALIGN AND
+    // NORMALIZE BEFORE ANY BEAT IS REMOVED
+    // ==================================================================
+    // The pulse counterpart to segment_beats_proportional, and it is a
+    // separate function rather than a parameterization of it for three
+    // reasons, none cosmetic:
+    //
+    //   1. THE ANCHOR IS THE FOOT, not R. Pulse transit time means the wave
+    //      for beat n arrives well after that beat's R -- 100-300 ms at the
+    //      finger, and it varies with vascular tone within one record. An
+    //      R-anchored window would put the systolic peak at a different
+    //      column in every beat, which is precisely the smearing the anchored
+    //      alignment work exists to remove.
+    //   2. THE ZERO IS THE FOOT, not a PQ isoelectric segment. There is no
+    //      isoelectric interval in a pulse wave; the foot IS the baseline,
+    //      which is why pulse_norm subtracts it per sample.
+    //   3. The window runs foot -> foot (one full pulse interval), so it needs
+    //      no before/after split of the beat interval.
+    //
+    // ---- ORDER OF OPERATIONS, WHICH IS THE POINT OF THIS FUNCTION ----
+    //
+    // Align, then normalize, THEN reject. Not any other order:
+    //
+    //   * Rejecting before ALIGNING compares samples that are not the same
+    //      phase of the wave. Two identical beats offset by 40 ms of transit
+    //      time look maximally different sample-for-sample, so a
+    //      shape-based outlier test rejects the beats whose transit time
+    //      moved, i.e. exactly the physiology being measured.
+    //   * Rejecting before NORMALIZING compares raw amplitudes across a
+    //      drifting DC baseline. A PPG foot wanders with respiration and with
+    //      any change in LED gain, so an amplitude test on un-zeroed traces
+    //      rejects on baseline position rather than on pulse size -- and it
+    //      does so periodically, at the respiratory rate, which looks like a
+    //      real signal in whatever survives.
+    //   * Both orderings also bias the SURVIVORS: the reference and the
+    //      average are then built from a subset chosen by drift, so the
+    //      reference moves with the artifact it was supposed to be immune to.
+    //
+    // So every beat is sliced, foot-aligned, foot-zeroed and (if a reference
+    // is supplied) PI-scaled first. Only then are the exclusion statistics
+    // computed, and they are computed on the NORMALIZED samples.
+    //
+    // Excluded beats are FLAGGED, NOT DROPPED. They stay in .beats, in order,
+    // with excluded=true and a reason, so a caller can audit what went and
+    // recompute with a different threshold without re-slicing. Anything
+    // consuming this for an average must skip excluded beats -- see
+    // sqi_weighted_average, which takes a weight per beat and is the intended
+    // consumer (weight 0 is the graceful way to express an exclusion).
+    struct PulseBeat {
+        std::vector<double> samples;   // foot at footCol; foot-zeroed, PI-scaled if ref supplied
+        int    footCol = -1;           // column of this beat's foot within samples
+        int    peakCol = -1;           // systolic peak, in the same local coordinates
+        int    ppLen = -1;             // this beat's own foot-to-foot interval, in samples
+        double footBaseline = std::numeric_limits<double>::quiet_NaN();  // the subtracted DC level
+        bool   excluded = false;
+        const char* exclusionReason = nullptr;   // static string, or nullptr when kept
+    };
+
+    struct PulseBeatSet {
+        std::vector<PulseBeat> beats;
+        int    nExpected = 0;     // record duration / the record's own median foot-to-foot, +1
+        int    nKept = 0;         // beats.size() minus the excluded ones
+        bool   sufficient = false;  // nKept >= 0.5 * nExpected -- the "at least 50%" gate,
+        // evaluated on KEPT beats after normalization, since a
+        // gate counting beats that normalization later discards
+        // would pass bins that have no usable data.
+        double refUsed = std::numeric_limits<double>::quiet_NaN();
+    };
+
+    // feet: detected pulse onsets, ascending, in samples (find_foot_pulseox /
+    // SegmentPPG output). peaks may be empty, in which case the systolic peak
+    // is taken as the maximum of the foot-zeroed upstroke.
+    //
+    // ref: the subject's Global_Ref_person for this channel
+    // (compute_pulse_global_ref for Option A, compute_pulse_global_ref_area for
+    // Option B). Pass NaN to skip the PI scaling and keep foot-zeroed raw
+    // units -- the alignment and zeroing still happen, so the ordering
+    // guarantee above holds either way.
+    //
+    // tukeyK: fence width for the post-normalization amplitude/area exclusion,
+    // in IQRs. 1.5 is the conventional Tukey fence and matches the pruning the
+    // template path uses.
+    inline PulseBeatSet segment_pulses_foot_anchored(
+        const std::vector<double>& pulse,
+        const std::vector<size_t>& feet,
+        const std::vector<size_t>& peaks,
+        double fs,
+        double ref = std::numeric_limits<double>::quiet_NaN(),
+        double tukeyK = 1.5)
+    {
+        PulseBeatSet out;
+        out.refUsed = ref;
+        const int64_t N = static_cast<int64_t>(pulse.size());
+        if (N == 0 || feet.size() < 2 || !(fs > 0.0)) return out;
+
+        // Expected beat count from the record's own median foot-to-foot, the
+        // pulse analogue of the median-RR expectation on the ECG side.
+        std::vector<double> pp;
+        pp.reserve(feet.size() - 1);
+        for (size_t i = 1; i < feet.size(); ++i)
+            pp.push_back(static_cast<double>(feet[i] - feet[i - 1]));
+        const double medPP = median_finite(pp);
+        if (!(medPP > 0.0)) return out;
+        out.nExpected = static_cast<int>(static_cast<double>(N) / medPP) + 1;
+
+        // Uniform window from the median interval, so every beat lands on the
+        // same column grid -- a per-beat window length would re-introduce the
+        // misalignment this function exists to remove. A short beat is
+        // zero-padded at the tail rather than stretched: resampling to a common
+        // length would change the wave's duration, which is a feature here.
+        const int W = static_cast<int>(std::lround(medPP));
+        if (W < 4) return out;
+
+        // ---- 1. SLICE AND ALIGN (foot at column 0) --------------------
+        for (size_t i = 0; i + 1 < feet.size(); ++i) {
+            const int64_t f0 = static_cast<int64_t>(feet[i]);
+            if (f0 < 0 || f0 >= N) continue;
+
+            PulseBeat pb;
+            pb.samples.assign(static_cast<size_t>(W), std::nan(""));
+            pb.footCol = 0;
+            pb.ppLen = static_cast<int>(feet[i + 1] - feet[i]);
+            for (int k = 0; k < W; ++k) {
+                const int64_t src = f0 + k;
+                if (src >= N) break;
+                pb.samples[static_cast<size_t>(k)] = pulse[static_cast<size_t>(src)];
+            }
+
+            // ---- 2. NORMALIZE (foot-zero, then PI-scale) --------------
+            const double footY = pb.samples[0];
+            if (std::isnan(footY)) {
+                pb.excluded = true;
+                pb.exclusionReason = "no foot sample";
+                out.beats.push_back(std::move(pb));
+                continue;
+            }
+            pb.footBaseline = footY;
+            for (double& y : pb.samples) if (!std::isnan(y)) y -= footY;
+            if (!std::isnan(ref) && ref != 0.0) {
+                // pulse_norm's own form, with the foot already removed above:
+                // dividing the zeroed wave by the reference is what makes the
+                // result comparable across bins and subjects.
+                for (double& y : pb.samples) if (!std::isnan(y)) y /= ref;
+            }
+
+            // Peak located AFTER zeroing, on the normalized samples, so the
+            // search is on the same data the exclusion test will see.
+            if (i < peaks.size() && peaks[i] >= feet[i]) {
+                const int64_t rel = static_cast<int64_t>(peaks[i]) - f0;
+                if (rel >= 0 && rel < W) pb.peakCol = static_cast<int>(rel);
+            }
+            if (pb.peakCol < 0) {
+                double best = -std::numeric_limits<double>::infinity();
+                for (int k = 0; k < W; ++k) {
+                    const double y = pb.samples[static_cast<size_t>(k)];
+                    if (!std::isnan(y) && y > best) { best = y; pb.peakCol = k; }
+                }
+            }
+            out.beats.push_back(std::move(pb));
+        }
+        if (out.beats.empty()) return out;
+
+        // ---- 3. ONLY NOW REJECT --------------------------------------
+        // Two statistics, both on the normalized, aligned samples: pulse
+        // amplitude (peak above the foot) and pulse area. Amplitude alone
+        // misses a beat with a normal peak and a collapsed or run-on
+        // downstroke, which is what a movement artifact usually looks like
+        // once the foot has been subtracted.
+        std::vector<double> amp, area;
+        amp.reserve(out.beats.size());
+        area.reserve(out.beats.size());
+        for (const PulseBeat& pb : out.beats) {
+            if (pb.excluded) continue;
+            const double a = (pb.peakCol >= 0)
+                ? pb.samples[static_cast<size_t>(pb.peakCol)] : std::nan("");
+            amp.push_back(a);
+            area.push_back(segment_area(pb.samples, 0, W - 1, /*absolute=*/false));
+        }
+        auto fences = [tukeyK](std::vector<double> v) {
+            std::vector<double> f;
+            for (double x : v) if (!std::isnan(x)) f.push_back(x);
+            if (f.size() < 4) return std::pair<double, double>{
+                -std::numeric_limits<double>::infinity(),
+                    std::numeric_limits<double>::infinity() };
+            std::sort(f.begin(), f.end());
+            const double q1 = f[f.size() / 4];
+            const double q3 = f[(3 * f.size()) / 4];
+            const double iqr = q3 - q1;
+            return std::pair<double, double>{ q1 - tukeyK * iqr, q3 + tukeyK * iqr };
+            };
+        const auto [ampLo, ampHi] = fences(amp);
+        const auto [arLo, arHi] = fences(area);
+
+        size_t j = 0;
+        for (PulseBeat& pb : out.beats) {
+            if (pb.excluded) continue;
+            const double a = amp[j];
+            const double ar = area[j];
+            ++j;
+            if (std::isnan(a)) { pb.excluded = true; pb.exclusionReason = "no systolic peak"; continue; }
+            if (a < ampLo || a > ampHi) { pb.excluded = true; pb.exclusionReason = "amplitude outlier"; continue; }
+            if (std::isnan(ar) || ar < arLo || ar > arHi) { pb.excluded = true; pb.exclusionReason = "area outlier"; continue; }
+        }
+
+        out.nKept = 0;
+        for (const PulseBeat& pb : out.beats) if (!pb.excluded) ++out.nKept;
+        out.sufficient = (out.nExpected > 0)
+            && (out.nKept >= static_cast<int>(0.5 * out.nExpected));
+        return out;
+    }
+
+    // Length + area series over the pulse wave, per beat.
+    //
+    // VOLUME IS DELIBERATELY ABSENT, and not because it was skipped. On the ECG
+    // side volume is a SPATIAL quantity: ch1/ch2/ch3 are three roughly
+    // orthogonal projections of one cardiac dipole, so the triple integral of
+    // (x,y,z) has a physical meaning -- that is the same construct
+    // compute_ecg_global_ref_spatial and vcg_avg::Loop rest on. PPG, ABP, ART
+    // and ART_PULM are four different arteries measured by different
+    // transducers, not three axes of one vector, so a product of them is
+    // dimensionally a number with no referent. If a cross-channel measure is
+    // wanted here it should be named for what it is (e.g. a transit-time or
+    // augmentation relationship between two named sites), not called a volume.
+    //
+    // Window: foot -> end of wave, which for a foot-anchored beat of uniform
+    // length is the whole slice. Excluded beats yield NaN so the series stays
+    // index-aligned with .beats, matching FeatureTimeSeries' convention.
+    struct PulseFeatureTimeSeries {
+        std::vector<double> length;   // arc length of the wave
+        std::vector<double> area;     // signed area above the foot
+        std::vector<double> amplitude;  // peak above foot; the PI-equivalent per beat
+        bool sufficient = false;
+    };
+
+    inline PulseFeatureTimeSeries build_pulse_feature_time_series(const PulseBeatSet& set)
+    {
+        PulseFeatureTimeSeries out;
+        out.sufficient = set.sufficient;
+        out.length.reserve(set.beats.size());
+        out.area.reserve(set.beats.size());
+        out.amplitude.reserve(set.beats.size());
+        for (const PulseBeat& pb : set.beats) {
+            if (pb.excluded || pb.samples.empty()) {
+                out.length.push_back(std::nan(""));
+                out.area.push_back(std::nan(""));
+                out.amplitude.push_back(std::nan(""));
+                continue;
+            }
+            const int hi = static_cast<int>(pb.samples.size()) - 1;
+            out.length.push_back(segment_length(pb.samples, 0, hi));
+            out.area.push_back(segment_area(pb.samples, 0, hi, /*absolute=*/false));
+            out.amplitude.push_back(pb.peakCol >= 0
+                ? pb.samples[static_cast<size_t>(pb.peakCol)] : std::nan(""));
         }
         return out;
     }

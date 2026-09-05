@@ -68,10 +68,165 @@ namespace bin_archive {
         "baseline", "noise", "motion", "composite", "frac_include"
     };
 
+    // ---------------------------------------------------------------------
+    // Pulse channels (5.5.1), all four: PPG / ABP / ART / ART_PULM
+    // ---------------------------------------------------------------------
+    // Same shape as ChannelArchive, different physiology. The fiducials come
+    // from FeatureMarks::detect_ppg_fiducials -- the SAME detector the viewer's
+    // pulse glyphs and the markings CSV use, for the same reason
+    // buildChannelArchive was changed to call detect_template_landmarks
+    // instead of the six finders directly: an archive whose landmarks disagree
+    // with what an operator sees for the same bin is worse than no archive.
+    //
+    // ALL AMPLITUDES ARE FOOT-REFERENCED. Every *_amp below is measured above
+    // this template's own onset sample, never as an absolute level. A raw PPG
+    // level is a function of LED gain and an arterial level of transducer zero,
+    // so absolute amplitudes are not comparable across bins, let alone
+    // subjects. This is the same rule that makes normalize_features::pulse_norm
+    // take a foot argument, and it is why there is no pulse equivalent of the
+    // ECG's st_level (an absolute offset from an isoelectric baseline that
+    // pulse waves do not have).
+    //
+    // The arterial channels carry no construction-time fiducials in
+    // BinTemplates -- only PPG has ppg_onset_col / ppg_peak_col -- so all four
+    // are detected here on the averaged template. That is consistent rather
+    // than a compromise: buildChannelArchive detects on the template too.
+    struct PulseArchive {
+        // Foot-referenced amplitudes, template units.
+        double systolic_amp = kNaN;      // peak - foot; the per-bin PI numerator
+        double dicrotic_amp = kNaN;      // notch - foot
+        double peak2_amp = kNaN;         // diastolic/reflected peak - foot
+        double perfusion_index = kNaN;   // 100 * (peak - foot) / |foot|, calculate_perfusion_index
+
+        // Intervals (ms), from this channel's own detected fiducials.
+        double foot_to_peak_ms = kNaN;   // systolic upstroke duration
+        double foot_to_notch_ms = kNaN;  // ~ejection duration
+        double pulse_width_ms = kNaN;    // foot -> end of wave
+        double pw80_ms = kNaN;           // width at 80% of systolic amplitude
+
+        // Shape. upstroke_slope is the pulse analogue of the QRS upstroke;
+        // downstroke runs peak -> notch (or peak -> end when the notch is
+        // absent), which is the interval a vasomotor change shows up in first.
+        double upstroke_slope_per_s = kNaN;
+        double downstroke_slope_per_s = kNaN;
+        double pulse_area = kNaN;        // signed area above the foot, foot -> end
+        double systolic_area = kNaN;     // foot -> notch
+        double diastolic_area = kNaN;    // notch -> end
+        double reflection_index = kNaN;  // amp(p2)/amp(p1), from the detector
+        double aging_index = kNaN;       // APG (b-c-d-e)/a, from the detector
+        int    dn_tier = 3;              // 1=IEM, 2=Windkessel, 3=absent
+        double dn_confidence = 0.0;
+
+        std::vector<double> per_sample_std;   // the channel's *Template_iqr
+        uint64_t n_beats = 0;
+    };
+
+    // which: 0=PPG, 1=ABP, 2=ART, 3=ART_PULM -- normalize_features::pulseChanName
+    // spells the column stems, so the two cannot drift.
+    inline PulseArchive buildPulseArchive(const std::vector<double>& wave,
+        const std::vector<double>& waveStd,
+        uint64_t nBeats, double fs) {
+        PulseArchive out;
+        out.per_sample_std = waveStd;
+        out.n_beats = nBeats;
+        if (wave.empty() || !(fs > 0.0)) return out;
+
+        const int W = static_cast<int>(wave.size());
+        const FeatureMarks::PpgFiducials fid =
+            FeatureMarks::detect_ppg_fiducials(wave, W, fs);
+
+        const int foot = (fid.onset >= 0.0) ? static_cast<int>(std::lround(fid.onset)) : -1;
+        if (foot < 0 || foot >= W) return out;
+        const double footY = wave[static_cast<size_t>(foot)];
+
+        auto ampAt = [&](double idx) -> double {
+            if (idx < 0.0) return kNaN;
+            const int k = static_cast<int>(std::lround(idx));
+            if (k < 0 || k >= W) return kNaN;
+            return wave[static_cast<size_t>(k)] - footY;   // FOOT-REFERENCED, always
+            };
+        auto msBetween = [&](double a, double b) -> double {
+            if (a < 0.0 || b < 0.0) return kNaN;
+            return (b - a) * 1000.0 / fs;
+            };
+
+        out.systolic_amp = ampAt(fid.peak);
+        out.dicrotic_amp = fid.notch_found ? ampAt(fid.dicrotic) : kNaN;
+        out.peak2_amp = ampAt(fid.peak2);
+        if (fid.peak >= 0.0) {
+            const int pk = static_cast<int>(std::lround(fid.peak));
+            if (pk >= 0 && pk < W)
+                out.perfusion_index =
+                normalize_features::calculate_perfusion_index(wave[static_cast<size_t>(pk)], footY);
+        }
+
+        out.foot_to_peak_ms = msBetween(fid.onset, fid.peak);
+        out.foot_to_notch_ms = fid.notch_found ? msBetween(fid.onset, fid.dicrotic) : kNaN;
+        out.pulse_width_ms = msBetween(fid.onset, fid.end);
+        out.pw80_ms = (fid.pw80 >= 0.0) ? fid.pw80 * 1000.0 / fs : kNaN;
+
+        if (!std::isnan(out.systolic_amp) && out.foot_to_peak_ms > 0.0)
+            out.upstroke_slope_per_s = out.systolic_amp / (out.foot_to_peak_ms / 1000.0);
+
+        // Downstroke: peak -> notch when the notch resolved, else peak -> end.
+        // Falling back to `end` keeps the column populated on the many bins
+        // where no notch exists (dn_tier 3), and dn_tier records which of the
+        // two definitions produced the number.
+        {
+            const double farIdx = fid.notch_found ? fid.dicrotic : fid.end;
+            const double farAmp = ampAt(farIdx);
+            const double dtMs = msBetween(fid.peak, farIdx);
+            if (!std::isnan(out.systolic_amp) && !std::isnan(farAmp) && dtMs > 0.0)
+                out.downstroke_slope_per_s = (farAmp - out.systolic_amp) / (dtMs / 1000.0);
+        }
+
+        // Areas, foot-zeroed and SIGNED -- not rectified. A pulse wave is
+        // monophasic above its own foot, so |y| would fold diastolic
+        // undershoot back in as if it were more pulse. (The ECG side rectifies
+        // for the opposite reason: the QRS is biphasic and would cancel.)
+        const int endIdx = (fid.end >= 0.0)
+            ? std::min(W - 1, static_cast<int>(std::lround(fid.end))) : (W - 1);
+        if (endIdx > foot) {
+            std::vector<double> zeroed(static_cast<size_t>(endIdx - foot + 1));
+            for (int k = foot; k <= endIdx; ++k)
+                zeroed[static_cast<size_t>(k - foot)] = wave[static_cast<size_t>(k)] - footY;
+            out.pulse_area = normalize_features::segment_area(
+                zeroed, 0, static_cast<int>(zeroed.size()) - 1, /*absolute=*/false);
+            if (fid.notch_found) {
+                const int nk = static_cast<int>(std::lround(fid.dicrotic)) - foot;
+                if (nk > 0 && nk < static_cast<int>(zeroed.size())) {
+                    out.systolic_area = normalize_features::segment_area(zeroed, 0, nk, false);
+                    out.diastolic_area = normalize_features::segment_area(
+                        zeroed, nk, static_cast<int>(zeroed.size()) - 1, false);
+                }
+            }
+        }
+
+        out.reflection_index = fid.ri;
+        out.aging_index = fid.agi;
+        out.dn_tier = fid.dn_tier;
+        out.dn_confidence = fid.dn_confidence;
+        return out;
+    }
+
+
     struct BinArchiveRow {
         int binIndex = -1;
         ChannelArchive ch[kNumEcgCh];
         double qrs_area_spatial = kNaN;   // 3-lead vector-magnitude integral over the QRS window (proxy; see header note)
+
+        // All four pulse channels, indexed by normalize_features::pulseChanName
+        // order (0=PPG, 1=ABP, 2=ART, 3=ART_PULM). A channel the recording does
+        // not have leaves every field NaN and n_beats 0 -- present as columns,
+        // empty as data, so the CSV's shape does not depend on which
+        // transducers a given subject wore.
+        //
+        // NO SPATIAL PULSE ANALOGUE of qrs_area_spatial. That column is a
+        // vector-magnitude integral over three orthogonal projections of one
+        // cardiac dipole; the four pulse channels are four different arteries,
+        // not three axes, so there is nothing to take a magnitude of. See the
+        // note on build_pulse_feature_time_series.
+        PulseArchive pulse[normalize_features::kNumPulseCh];
 
         double sqi_mean[kNumSqiFields];
         double sqi_std[kNumSqiFields];
@@ -311,6 +466,27 @@ namespace bin_archive {
 
         row.qrs_area_spatial = computeQrsAreaSpatial(bt, fs);
 
+        // ---- all four pulse channels ---------------------------------
+        // Rate: the pulse channels are resampled onto the ECG grid upstream
+        // (the templates are the same length as the ECG ones and share the
+        // bin's sample rate), so `fs` is correct for all four. If a channel is
+        // ever carried at its own native rate, this is the line that has to
+        // learn about it -- the ms intervals inside buildPulseArchive all
+        // divide by it.
+        {
+            const std::vector<double>* pw[normalize_features::kNumPulseCh] = {
+                &bt.ppgTemplate, &bt.abpTemplate, &bt.artTemplate, &bt.artPulmTemplate };
+            const std::vector<double>* ps[normalize_features::kNumPulseCh] = {
+                &bt.ppg_template_iqr, &bt.abpTemplate_iqr,
+                &bt.artTemplate_iqr, &bt.artPulmTemplate_iqr };
+            // Only PPG carries a beat count in BinTemplates; the arterial
+            // channels are foot-averaged over the same beats but their count
+            // is not stored, so it is left 0 rather than guessed from ppg_n_beats.
+            const uint64_t pn[normalize_features::kNumPulseCh] = { bt.ppg_n_beats, 0, 0, 0 };
+            for (int q = 0; q < normalize_features::kNumPulseCh; ++q)
+                row.pulse[q] = buildPulseArchive(*pw[q], *ps[q], pn[q], fs);
+        }
+
         if (beats) poolBinQuality(row, bt, *beats, fs);
 
         return row;
@@ -363,6 +539,18 @@ namespace bin_archive {
                 + p + "q_to_r_ratio," + p + "s_to_r_ratio,"
                 + p + "per_sample_std";
         }
+        for (int q = 0; q < normalize_features::kNumPulseCh; ++q) {
+            const std::string p = std::string(normalize_features::pulseChanName(q)) + "_";
+            h += "," + p + "systolic_amp," + p + "dicrotic_amp," + p + "peak2_amp,"
+                + p + "perfusion_index,"
+                + p + "foot_to_peak_ms," + p + "foot_to_notch_ms,"
+                + p + "pulse_width_ms," + p + "pw80_ms,"
+                + p + "upstroke_slope," + p + "downstroke_slope,"
+                + p + "pulse_area," + p + "systolic_area," + p + "diastolic_area,"
+                + p + "reflection_index," + p + "aging_index,"
+                + p + "dn_tier," + p + "dn_confidence,"
+                + p + "n_beats," + p + "per_sample_std";
+        }
         h += ",n_beats_scored";
         for (int k = 0; k < kNumSqiFields; ++k) h += std::string(",sqi_") + kSqiFieldNames[k] + "_mean";
         for (int k = 0; k < kNumSqiFields; ++k) h += std::string(",sqi_") + kSqiFieldNames[k] + "_std";
@@ -391,6 +579,20 @@ namespace bin_archive {
                     << ',' << num(a.upstroke_slope_mv_per_s) << ',' << num(a.downstroke_slope_mv_per_s)
                     << ',' << num(a.q_to_r_ratio) << ',' << num(a.s_to_r_ratio)
                     << ",\"" << stdvec(a.per_sample_std) << "\"";
+            }
+            for (int q = 0; q < normalize_features::kNumPulseCh; ++q) {
+                const PulseArchive& pa = r.pulse[q];
+                f << ',' << num(pa.systolic_amp) << ',' << num(pa.dicrotic_amp)
+                    << ',' << num(pa.peak2_amp) << ',' << num(pa.perfusion_index)
+                    << ',' << num(pa.foot_to_peak_ms) << ',' << num(pa.foot_to_notch_ms)
+                    << ',' << num(pa.pulse_width_ms) << ',' << num(pa.pw80_ms)
+                    << ',' << num(pa.upstroke_slope_per_s) << ',' << num(pa.downstroke_slope_per_s)
+                    << ',' << num(pa.pulse_area) << ',' << num(pa.systolic_area)
+                    << ',' << num(pa.diastolic_area)
+                    << ',' << num(pa.reflection_index) << ',' << num(pa.aging_index)
+                    << ',' << pa.dn_tier << ',' << num(pa.dn_confidence)
+                    << ',' << pa.n_beats
+                    << ",\"" << stdvec(pa.per_sample_std) << "\"";
             }
             f << ',' << r.n_beats_scored;
             for (int k = 0; k < kNumSqiFields; ++k) f << ',' << num(r.sqi_mean[k]);

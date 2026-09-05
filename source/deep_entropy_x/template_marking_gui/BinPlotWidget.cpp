@@ -79,12 +79,18 @@ static_assert(BinPlotWidget::EcgSEnd == anchor_view::kSEnd, "anchor_view marker 
 static_assert(BinPlotWidget::EcgTEnd == anchor_view::kTEnd, "anchor_view marker id drift");
 // Every marker anchor_view calls a bar must be one markerAtX will actually
 // hit-test, or an alignment would own a landmark the operator cannot reach.
-static_assert(anchor_view::isBar(BinPlotWidget::EcgPBegin), "");
-static_assert(anchor_view::isBar(BinPlotWidget::EcgQBegin), "");
-static_assert(anchor_view::isBar(BinPlotWidget::EcgSEnd), "");
-static_assert(anchor_view::isBar(BinPlotWidget::EcgTEnd), "");
-static_assert(anchor_view::isGlyph(BinPlotWidget::EcgRPeak), "");
-static_assert(anchor_view::isGlyph(BinPlotWidget::EcgPPeak), "");
+static_assert(anchor_view::isBar(BinPlotWidget::EcgPBegin),
+    "P-onset must be a bar: it is draggable and owns the P alignment");
+static_assert(anchor_view::isBar(BinPlotWidget::EcgQBegin),
+    "Q-onset must be a bar: it is draggable and owns the Q alignment");
+static_assert(anchor_view::isBar(BinPlotWidget::EcgSEnd),
+    "J-point must be a bar: it is draggable and owns the R alignment");
+static_assert(anchor_view::isBar(BinPlotWidget::EcgTEnd),
+    "T-end must be a bar: it is draggable and owns the T alignment");
+static_assert(anchor_view::isGlyph(BinPlotWidget::EcgRPeak),
+    "R-peak must be a glyph: it is the alignment anchor, never placed by hand");
+static_assert(anchor_view::isGlyph(BinPlotWidget::EcgPPeak),
+    "P-peak must be a glyph: reactive_ecg recomputes it from the P/Q bars");
 
 namespace {
 
