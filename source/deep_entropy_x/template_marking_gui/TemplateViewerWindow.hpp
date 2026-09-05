@@ -190,9 +190,10 @@ private:
     void refreshFocus(int binIdx, int leadIdx, int templateIdx,
         int marker, int col);
     FocusPanelWidget* m_focus = nullptr;
-    // Remember the last J-point column per (bin,lead) so a QRS-side or
-    // JT-side edit can refresh the other view against the same landmark.
-    int m_lastFocusBin = -1, m_lastFocusLead = -1;
+    // (m_lastFocusBin / m_lastFocusLead removed. They remembered the last
+    //  J-point's (bin, lead) so a QRS-side edit could refresh the JT panel
+    //  against the same landmark -- state that only existed to keep two panels
+    //  in step, and nothing ever read it once one panel drew both views.)
 
     // Operator-confirmed boundary training data (Section 9.10). Destination
     // set via setBoundaryTrainingDir (from cfg.training_log). logBoundary is

@@ -16,11 +16,16 @@
 // _raw_iqr [which holds STD, ddof=1] / n_beats_raw, and the PPG analogues),
 // so it needs no re-anchoring or beat matrix of its own.
 //
-// The J-point (S-end) is shared between the QRS and JT anchored views (spec
-// I-4 already models J-point as a single AnchorType). Because this panel is
-// driven by (marker, mean, sd, n), the owner can refresh BOTH the QRS and JT
-// focus panels from the same J-point edit simply by calling setFocus() on
-// each with the appropriate window -- see TemplateViewerWindow wiring.
+// ONE PANEL PER SELECTION. There used to be two -- a QRS view and a JT view --
+// with the J-point drawn in both, framed to opposite edges, because with a
+// single alignment on screen neither panel alone could show both of its
+// neighbourhoods. TemplateViewerWindow now switches this panel's WAVEFORM to
+// the clicked landmark's own alignment (anchor_view::anchorFor), so there is
+// one view per landmark and nothing to keep in step.
+//
+// This class needed no change for that: it is driven entirely by
+// (marker, mean, sd, n, column), so which alignment the mean came from is the
+// caller's business.
 //
 #include <QWidget>
 #include <QString>

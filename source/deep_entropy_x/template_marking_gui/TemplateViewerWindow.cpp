@@ -2928,8 +2928,6 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     const std::vector<double> sd = normalize_features::scale_array_by_ref(*sdRawEcg, eref);
     if (mean.empty()) return;
 
-    m_lastFocusBin = binIdx;
-    m_lastFocusLead = leadIdx;
 
     // No `side` argument any more: "J-point (QRS)" vs "(JT)" was the
     // two-panel distinction, and the panel now names the ALIGNMENT instead,

@@ -1367,10 +1367,9 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // See landmark_admissibility.hpp.
         const auto msk = landmark_admit::maskFor(anchor);
         FeatureMarks::TemplateLandmarks lm = lmRaw;
+       
         if (!msk.p_begin) lm.p_begin = -1.0;
-        if (!msk.p_peak)  lm.p_peak = -1.0;
         if (!msk.q_begin) { lm.q_begin = -1.0; lm.q_begin_found = false; }
-        if (!msk.q_peak)  lm.q_peak = -1.0;
         if (!msk.s_end)   lm.s_end = -1.0;
         if (!msk.t_end)   lm.t_end = -1.0;
 

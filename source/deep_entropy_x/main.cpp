@@ -254,20 +254,6 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
         loop.exec();
         // viewer is destroyed here (window closes).
     }
-
-    // The interactively-reviewed job never enters `outstanding`, so the
-    // provisional (.qalign.partial.bin -- named for the old Q-align pass) is
-    // not cleaned by reap/finishJob. buildAllAnchors writes it and renames it
-    // over the canonical, so it is usually already gone; this covers the paths
-    // where the rename failed.
-    // The viewer read it fully and closed the handle in loadSubject (no mmap,
-    // no deferred delete), so it is safe to remove now. Best-effort: never throw
-    // on this path so a failed delete can't stall shutdown.
-    if (!job->qAlignPath.empty()) {
-        std::error_code ec;
-        std::filesystem::remove(job->qAlignPath, ec);
-        job->qAlignPath.clear();
-    }
 }
 
 
@@ -324,10 +310,6 @@ int main(int argc, char* argv[]) {
         if (job->needsFinalize && job->provisionalPath != job->templatePath) {
             std::error_code ec;
             std::filesystem::remove(job->provisionalPath, ec);
-        }
-        if (!job->qAlignPath.empty()) {
-            std::error_code ec;
-            std::filesystem::remove(job->qAlignPath, ec);
         }
         };
 

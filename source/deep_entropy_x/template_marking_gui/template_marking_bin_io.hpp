@@ -219,7 +219,7 @@ struct TemplateBin {
     // Called after every bar edit and once after seeding. reactive_ecg is the
     // same function BinPlotWidget::reactiveGlyphs calls, so the stored value,
     // the CSV column and the X on screen cannot disagree.
-    void syncReactiveGlyphs(int lead, int slot, double /*unused*/ = 0.0) {
+    void syncReactiveGlyphs(int lead, int slot) {
         if (lead < 0 || lead > 2 || slot < 0) return;
         for (AnchorType a : anchor_view::kAllAnchors) {
             const tbank::BankMarkerSet bars = userMarks(lead, slot, a);
