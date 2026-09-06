@@ -13,6 +13,7 @@
 // Pointer member only (m_focusLay); the dock is built in the .cpp,
 // which includes <QVBoxLayout> properly.
 class QVBoxLayout;
+class QRadioButton;
 #include "template_anchoring\anchor_view.hpp"
 #include "logging/boundary_training_log.hpp"
 
@@ -32,11 +33,7 @@ public:
         m_boundaryLog = boundary_training::BoundaryTrainingLog(dir.toStdString());
     }
     void setVcgOutputDir(const QString& dir) { m_vcgOutputPath = dir; }
-    // Where <id>_feature_norm.csv and <id>_cv_check.csv are written when
-    // computeGlobalRefs() runs. Set from cfg (bin_archive_path or a
-    // dedicated norm dir) at viewer setup, same as setVcgOutputDir. Empty =
-    // don't write.
-    void setNormOutputDir(const QString& dir) { m_normOutputPath = dir; }
+    void setNormOutputDir(const QString& dir) { m_normOutputPath = dir; } //write <id>_feature_norm.csv and <id>_cv_check.csv 
 
     void loadSubject(const QString& templatePath, const QString& markingPath,
         const QString& subjectId, double sampleRateHz,
@@ -51,24 +48,6 @@ public:
         // cfg.notch_filter_hz so the display filter matches whatever was
         // (or would have been) applied at build time.
         int notchFilterHz = 0);
-
-    // ---- THE ANCHOR CYCLE IS GONE ---------------------------------------
-    //
-    // setAnchorStep / setAnchorPassCount / setCurrentAnchor / currentAnchor and
-    // the requestQAlignReload signal are all deleted. They existed so a
-    // controller could drive this window four times, once per alignment,
-    // regenerating _templates.bin between openings. The window now loads every
-    // alignment at once (TemplateBin::anchored) and each bar reads and writes
-    // its own (anchor_view::anchorFor), so there is no pass, no step and no
-    // reload.
-    //
-    // CALLERS MUST BE UPDATED. Whatever owns regenerateWithAnchor /
-    // prepareViewerJob must call alignTemplatesFromCache once per
-    // anchor_view::kAllAnchors entry BEFORE writing _templates.bin, then open
-    // this window once. If it keeps the old sequence, the reload connection
-    // simply never fires -- but raw_anchors will hold only the one alignment
-    // that run generated, chFor falls back to R for the rest, and every bar's
-    // close-up shows the R template. That is the symptom to look for.
 
 signals:
     void finished();
@@ -85,12 +64,9 @@ private slots:
     void onBadRToggled(int binIdx, int leadIdx, int templateIdx, bool bad);
     // Helpers for the two above; declared here so both can find them.
     tbank::BankTemplate* slotFor(int binIdx, int leadIdx, int templateIdx);
-    void repaintPanel(int binIdx, int leadIdx, int templateIdx,
-        BinPlotWidget::State st);
+    void repaintPanel(int binIdx, int leadIdx, int templateIdx, BinPlotWidget::State st);
     void onBadPPGToggled(int binIdx, int templateIdx, bool bad);
-    // B2 focus mode: operator selected a landmark in some bin/lead.
-    void onLandmarkSelected(int binIdx, int leadIdx, int templateIdx,
-        int marker, int col);
+    void onLandmarkSelected(int binIdx, int leadIdx, int templateIdx, int marker, int col); //focus mode - the focus is open in sidebar
 
 private:
     struct Lead {
@@ -132,20 +108,17 @@ private:
     // once. This is the call site Section 4.6 bullets 3 and 4 were written for
     // and which did not previously exist -- propagateLabel() was reachable from
     // nowhere, so no template in any record had ever been confirmed.
-    void onClassConfirmRequested(int binIndex, int leadIndex, int templateIdx,
-        int annotationCode);
+    void onClassConfirmRequested(int binIndex, int leadIndex, int templateIdx, int annotationCode);
 
     // Bars for a bank-template column, from that template's own
     // BankMarkerSet (seeded lazily from its own median). Sub-templates had no
     // bars at all before this: applyBinToWidget draws the BIN's marker set,
     // which describes sinus, so it was correctly applied to slot 0 only.
-    void applyBankTemplateToWidget(BinPlotWidget* pw, TemplateBin& b,
-        int channel, int templateIdx);
+    void applyBankTemplateToWidget(BinPlotWidget* pw, TemplateBin& b, int channel, int templateIdx);
 
     // Slot-aware marker write-back. Routes to the bin's marker set for slot 0
     // and to the bank template's for every other column.
-    void onMarkerMovedOnTemplate(int binIdx, int leadIdx, int templateIdx,
-        int marker, int newIdx);
+    void onMarkerMovedOnTemplate(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
 
     void showPage();
     void clearPlots();
@@ -154,15 +127,7 @@ private:
     // is captured once, when the user first scrolls to it. No flicker: the
     // page is already on screen and painted.
     void captureCurrentPage();
-    // Write templates.csv from the viewer at load time, using the SAME
-    // per-bin anchoring the widgets use to draw (rPeak, ppgDelay, ppg_onset),
-    // so PPG/arterial rows are shifted relative to ECG exactly as displayed.
-    // One shared x_ms column (0 at ch1 R) plus a per-signal *_x_peak_ms column
-    // (0 at that signal's own peak). Written once per subject.
-    // ONE SIDECAR PER ALIGNMENT, called once per anchor_view::kAllAnchors
-    // entry inside a single save. Writes that alignment's own averages and
-    // names the file from anchor_view::label(anchor).
-    void writeAlignedTemplateCsv(AnchorType anchor);
+    void writeAlignedTemplateCsv(AnchorType anchor); //write templates.csv 
     void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
 
@@ -180,42 +145,30 @@ private:
     // templateIdx 0 forwards to refreshBinMarkers, since slot 0 is the one
     // column that does carry the bin's marker set.
     void refreshBankMarkers(int binIdx, int templateIdx);
+    //if you don't refresh, after switching from j alingnment to another alignment, the focus panel will still show the j alignment
+	void refreshFocus(int binIdx, int leadIdx, int templateIdx, int marker, int col);
 
-    // Focus mode: ONE panel, showing the clicked landmark's OWN alignment
-    // magnified around it -- P-aligned under the P-onset bar, Q under Q-onset,
-    // R under the J point, T under T-end (anchor_view::anchorFor). Stats come
-    // from that alignment's average via TemplateBin::chFor: mean =
-    // ecgTemplate_raw, sd = ecg_template_raw_iqr [ddof=1 std], n = n_beats_raw.
-    //
-    // There were two panels (QRS above, JT below) because the J point had to
-    // appear in both, framed to opposite edges: with only one alignment on
-    // screen, neither panel alone could show both of its neighbourhoods. That
-    // is what the alignment switch replaces.
-    void refreshFocus(int binIdx, int leadIdx, int templateIdx,
-        int marker, int col);
-    // TWO PANELS, USED FOR ONE LANDMARK.
-    //
-    // The J point (S end) is the boundary between the QRS and the JT segment,
-    // so it is the one landmark whose two neighbourhoods are both worth seeing:
-    // drawn top framed to the RIGHT edge (it ENDS the QRS) and bottom framed to
-    // the LEFT (it STARTS the JT). Same waveform in both -- the J point's
-    // alignment is R -- differing only in which side of the landmark is shown.
-    //
-    // Every other landmark bounds one segment and uses m_focusTop alone, in the
-    // TOP THIRD of the dock. m_focusLay is kept because setFocusSplit moves
-    // stretch on it: hiding the second panel is not enough, since a hidden
-    // widget contributes no stretch and the visible one would expand to fill
-    // half. A trailing spacer absorbs the difference so both panels always sit
-    // on the same thirds grid, and a landmark is drawn at the same scale
-    // whether or not the J point was selected before it.
-    FocusPanelWidget* m_focusTop = nullptr;
-    FocusPanelWidget* m_focusBottom = nullptr;   // J point only
+    FocusPanelWidget* zoomed_in_section_top = nullptr; //for most close ups, they only use focus top
+    FocusPanelWidget* zoomed_in_section_bottom = nullptr;   // J point only - the bottom panel is used to show the JT segment (top is QRS)
+    // View-only override. When m_forceAlign is set the focus panel shows
+    // m_forcedAlign whichever bar is clicked; otherwise the alignment follows
+    // the bar. NOT read by any writer -- the CSVs iterate kAllAnchors on their
+    // own and a dragged bar is stored against anchor_view::anchorFor, so this
+    // cannot change an output value.
+    bool m_forceAlign = false;
+    AnchorType m_forcedAlign = AnchorType::R_PEAK;
+    void wireAlignButtons();
+
+    // Last focus selection, so a button press redraws the same landmark
+    // instead of waiting for the next click.
+    int m_lastFocusBinIdx = -1;
+    int m_lastFocusLeadIdx = -1;
+    int m_lastFocusTemplateIdx = 0;
+    int m_lastFocusMarker = -1;
+    int m_lastFocusCol = -1;
+
     QVBoxLayout* m_focusLay = nullptr;
     void setFocusSplit(bool split);
-    // (m_lastFocusBin / m_lastFocusLead removed. They remembered the last
-    //  J-point's (bin, lead) so a QRS-side edit could refresh the JT panel
-    //  against the same landmark -- state that only existed to keep two panels
-    //  in step, and nothing ever read it once one panel drew both views.)
 
     // Operator-confirmed boundary training data (Section 9.10). Destination
     // set via setBoundaryTrainingDir (from cfg.training_log). logBoundary is
@@ -258,12 +211,7 @@ private:
     std::vector<int> m_pageTemplateIdx;
 
     int m_maxLeads = 1;
-    // Bins per page is now a CEILING, not the page size. Pages are packed by
-    // COLUMN COUNT instead -- see buildPages(). A bin contributes one column per
-    // markable template, so a record with several morphologies per bin used to
-    // put 20+ panels on a page and squeeze each to a few pixels wide. The panel
-    // width is what makes a template readable, so the page count gives way
-    // instead: more pages, each with panels the same size as on a clean record.
+
     int m_binsPerPage = 16;
 
     // Columns a page may hold. Chosen so a panel keeps a usable width at the
@@ -284,6 +232,14 @@ private:
 
     enum class MoveMode { Individual, SubsequentDelta, SubsequentRaw };
     MoveMode m_moveMode = MoveMode::SubsequentDelta;
+    std::map<int, int> original_location_of_bar;//helps ensure that the subsequent bars are moved by the same delta as the first bar
+    int originFor(int col, int cur) const;
+    // The dragged bar's own position when the drag began, set on the first move
+    // event and reset by onMarkerDragStarted. The propagated shift is measured
+    // from this, not from the previous event, so the total percentage is
+    // computed and rounded once per drag instead of once per mouse-move.
+    int m_dragStartIdx = -1;
+
     // (m_qAlignPass / m_anchorStep / m_anchorPassCount / m_anchorLabel /
     //  m_currentAnchor removed with the cycle. No member holds "the current
     //  alignment" any more, deliberately: whichever alignment a read or write
@@ -303,33 +259,17 @@ private:
     bool m_showArtPulmTrace = true;
     bool m_showPpgDerivMarkers = false;
 
-    // Display-time notch filter toggle. When on, every template array is
-    // pushed through notch_filter() at draw time (in showPage) before it
-    // reaches normalize_* and the plot widget. Does NOT rebuild templates
-    // or touch saved files -- purely a viewing convenience. m_notchHz is
-    // seeded from cfg.notch_filter_hz at loadSubject; a value <= 0 also
-    // means "disabled" (the checkbox becomes a no-op).
     bool m_notchFilterOn = false;
     int  m_notchFilterHz = 0;
 
-    // Per-subject global references, computed once at loadSubject after
-    // marker seeding. Used to normalize traces both on-screen and in
-    // _templates.csv output. NaN => channel not usable / not normalizable
-    // (falls back to raw trace).
+    //Global references - earliest QRS onset, latest QRS offset, etc
     double m_ecgGlobalRef[3] = { std::nan(""), std::nan(""), std::nan("") };
     double m_pulseGlobalRef[4] = { std::nan(""), std::nan(""), std::nan(""), std::nan("") };
     void computeGlobalRefs();
-    // Sections 5.2-5.4: writes <id>_cv_check.csv and <id>_feature_norm.csv
-    // into m_normOutputPath. Called by computeGlobalRefs when that path is
-    // set. No-op target otherwise.
-    void writeNormalizationCsvs();
-    // Copies the persisted per-bin marker fields (everything a user can
-    // drag/toggle -- NOT r_peak_ch, which is always auto-derived from that
-    // pass's own template r_col) from a previously-saved
-    // _template_markings_*.bin into m_bins, when the bin counts match.
-    // Returns false (leaving m_bins untouched) if the file is missing,
-    // unreadable, or sized differently than the current template set.
-    bool restoreMarkersFrom(const QString& markingsBinPath, bool ecg, bool pulse);
+    
+    void writeNormalizationCsvs(); // Writes <id>_cv_check.csv and <id>_feature_norm.csv
+
+	bool restoreMarkersFrom(const QString& markingsBinPath, bool ecg, bool pulse); //attemps to reload markers from previous markings.bin file, returns true if successful, false otherwise
     // Normalize a copy of `raw` according to the rules in normalize_features.hpp.
     // ECG: sample / globalRef.
     // Pulse: 100*(sample - footY) / footY / globalRef.

@@ -23,125 +23,33 @@
 
 struct TemplateBin;   // forward-declare -- full definition in TemplateBinIO.hpp
 
-// AnchorType moved to its own dependency-free header so that code which only
-// needs to NAME an alignment does not have to include this one (and through it
-// template_bank.hpp, annotation_types.hpp and the FeatureMarks class).
-// Re-exported here by the include below, so every existing user is unaffected.
-
 // Returns the landmark subsample index for one beat, or -1 if not found.
 using AnchorLocator = std::function<double(const std::vector<double>& beat)>;
 
-// Returns the landmark as a sub-sample (floating-point) position
 using AnchorLocatorD = AnchorLocator;
 
 // Build the per-beat locator for one anchor. Binds r_col/fs into the detector.
 AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs);
 class FeatureMarks {
 public:
-    // =================================================================
-    // Fixed
-    // =================================================================
-
-    // (r_peak()/detect_r_peak() removed: R is the deterministic anchor column
-    //  r_col_raw carried on the template; QRS polarity is derived from the
-    //  known R inside each detector.)
-
-    // =================================================================
-    // Reactive
-    // =================================================================
-    // Sub-sample positions. These three used to return int, rounding away a
-    // refinement they had already computed; they now return the refined double
-    // and nothing downstream rounds it. Callers needing the trace value at the
-    // landmark use sample_at() rather than indexing a rounded column.
-    // Linear interpolation of a trace at a fractional position. NaN outside
-    // the array or across a gap. This is how an amplitude is read at a
-    // sub-sample landmark: a mark at 104.37 has a value, and it is not
-    // ecg[104].
-    static double sample_at(const std::vector<double>& v, double p);
-
-    static double compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs);
-    static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
+    static double sample_at(const std::vector<double>& v, double p);// Returns the landmark as a sub-sample (floating-point) position
     struct ReactiveEcg { double t_peak = -1.0, p_peak = -1.0; };
-    // Both reactive ECG glyphs, from the four bars that bracket them:
-    // P-peak between P-onset and Q-onset, T-peak between S-end and T-end.
-    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg,
-        int p_begin, int q_begin, int s_end, int t_end);
-
-    // P peak: the extremum between the P-onset and Q-onset bars, refined.
-    // BRACKETED, not searched from R. seed_p_peak's fixed [R-260ms, R-60ms]
-    // window finds the largest sample in a GUESSED region -- on a long PR it
-    // lands in the PQ segment, on a short one it clips the P -- whereas the
-    // operator's own bars say where the P wave is.
-    static double compute_p_peak(const std::vector<double>& ecg,
-        double pBegin, double qBegin);
+    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, int p_begin, int q_begin, int s_end, int t_end, double sampleRate);
     struct ReactivePpg { double t50 = -1.0, t80 = -1.0, t80_rise = -1.0, pw80 = -1.0, peak2 = -1.0; };
     static ReactivePpg reactive_ppg(const std::vector<double>& ppg, int onset, int peak, int dicrotic, int end);
 
-    // Individual reactive computes (all track user markers live).
-    static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col);
-    static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr);
-    // T peak: the extremum between the S-END and T-END bars. Named for the
-    // brackets it takes; the old `tBegin` name referred to a marker that was
-    // never set, and one caller believed it and passed that empty field.
-    static double compute_t_peak(const std::vector<double>& ecg,
-        double bracketSEnd, double bracketTEnd);
-    // j_point: the J-point bar, sub-sample, as the start of the T-end search;
-    // -1 lets the finder derive its own window from r_col. NAMED TO MATCH THE
-    // DEFINITION, which has always called it j_point -- the header said
-    // tBeginIn, so the declaration and the definition disagreed about which
-    // landmark this is, and t_begin never fed it.
+    static double compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs);
     static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0);
     static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0);
+    static double compute_t_peak(const std::vector<double>& ecg, double bracketSEnd, double bracketTEnd);
+    static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
+    static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col);
+    static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr);
+    static double compute_p_peak(const std::vector<double>& ecg, double pBegin, double qBegin, double fs);
+    static double seed_p_peak(const std::vector<double>& ecg_signal, int r_idx, double fs);
+    static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double pPeakIn = -1.0);
 
-    // ---------------------------------------------------------------
-    // Per-BANK-TEMPLATE landmark seeding
-    // ---------------------------------------------------------------
-    //
-    // Fills one BankMarkerSet from a template's OWN waveform. Until this
-    // existed, only slot 0 got bars: TemplateViewerWindow applied
-    // TemplateBin::marks() -- which describes the bin's sinus template -- and
-    // skipped every other column, because a PVC's Q-onset sits at a different
-    // column than sinus's and drawing sinus's bars there would be simply
-    // wrong, with a drag writing the wrong value back.
-    //
-    // The fix is not to copy the bin's marks but to RUN THE SAME DETECTORS on
-    // the template's own median. Every landmark function below already takes
-    // (waveform, fs, r_col) and holds no per-bin state, so a bank template is
-    // just another waveform to them. That is why this is a dozen lines rather
-    // than a second implementation.
-    //
-    // r_col is the template's own R column. A template whose r_col is < 0 gets
-    // an all -1 marker set: no anchor means no landmark is locatable, and -1 is
-    // the established "absent" value the drawing layer already understands.
-    // ---------------------------------------------------------------------
-    // THE canonical ECG landmark detector. One waveform in, six landmarks out.
-    //
-    // EVERY TEMPLATE IS ITS OWN TEMPLATE. There used to be three copies of this
-    // logic -- seed_all's per-channel block, seed_bank_template, and
-    // bin_archive's buildChannelArchive -- and they disagreed. seed_all refined
-    // the R anchor with subsample_refine::symmetricExtremum before running the
-    // finders; the other two passed the stored r_col through untouched. Since
-    // the R anchor is the search origin for all six finders, a one-sample
-    // difference there walked through every landmark, so the archive's numbers
-    // did not match what the viewer displayed for the same bin. Worse, a bank
-    // template with no r_col of its own borrowed the BIN's refined R -- a value
-    // refined against a different waveform, which is most wrong exactly where
-    // the morphologies differ most.
-    //
-    // The R anchor is refined HERE, against the waveform being measured. A
-    // PVC's peak genuinely sits elsewhere than the sinus median's, so a bank
-    // template's refined R may differ from its bin's. That is intended: the
-    // bank exists because these are different morphologies.
-    //
-    // CONVENTION: -1 MEANS ABSENT, never clamped to an edge column. A
-    // ventricular template has no P wave, and template_bank.hpp's contract on
-    // markers_by_anchor requires every P-dependent feature to come out NaN
-    // rather than 0. Callers must treat -1 as a valid state.
-    //
-    // Positions are sub-sample doubles. Callers that store integers round at
-    // the point of storage rather than here, so the sub-sample values stay
-    // available to whoever wants them.
-    // ---------------------------------------------------------------------
+
     struct TemplateLandmarks {
         double r_peak = -1.0;    // refined from nominal_r_col, sub-sample
         double q_begin = -1.0;  bool q_begin_found = false;
@@ -173,10 +81,8 @@ public:
         double a = -1.0, b = -1.0, c = -1.0, d = -1.0, e = -1.0, f = -1.0;
         double p1 = -1.0, p2 = -1.0;
 
-        // Three-tier dicrotic-notch provenance (E-5). Which tier produced the
-        // notch, and its normalized confidence. dn_tier: 1=IEM, 2=Windkessel,
-        // 3=absent (matches ppg_dicrotic::DnResult::Tier).
-        int    dn_tier = 3;         // ABSENT until a tier resolves it
+
+        int    dn_tier = 3;         //we have not implemented this yet
         double dn_confidence = 0.0;
 
         // Derived indices (DeepEntropyX Section 6.3). NaN when the points they
@@ -216,18 +122,7 @@ public:
     static double first_crossing(const std::vector<double>& v, int a, int b, double frac);
 
     static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
-    // A SEED, NOT THE LANDMARK. Rough P locator over a fixed window before R,
-    // whose only job is to open compute_p_begin's search window -- the onset is
-    // bracketed on the peak, so it cannot be found without one.
-    //
-    // Named seed_ rather than detect_ deliberately: detect_q_begin was a window
-    // helper named after a landmark it did not produce, two unrelated callers
-    // picked it up as though it did, and one of them archived its fabricated
-    // fallback as a Q-onset. The REPORTED P peak is compute_p_peak, bracketed by
-    // the settled bars.
-    static double seed_p_peak(const std::vector<double>& ecg_signal, int r_idx, double fs);
-    static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double pPeakIn = -1.0);
-
+   
     static int detect_ppg_upstroke_peak(const std::vector<double>& v, int lo = 0, int hi = -1);
     static int detect_ppg_onset(const std::vector<double>& pulse);
     static double detect_ppg_peak(const std::vector<double>& pulse);

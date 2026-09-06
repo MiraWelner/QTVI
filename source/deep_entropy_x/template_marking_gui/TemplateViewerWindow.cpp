@@ -1,18 +1,5 @@
-#include "TemplateViewerWindow.hpp"
-#include <QStatusBar>
-#include <QStringList>
-#include "ui_TemplateViewerWindow.h"
-#include "feature_marks.hpp"
-#include "template_anchoring\anchor_view.hpp"
-#include <cassert>
-#include "template_anchoring\anchor_fit.hpp"
-#include "alignment.hpp"
-#include "global_intervals.hpp" 
-#include "global_interval_lines.hpp"
-#include "vcg_signal_average.hpp"
-#include "template_generation/NormalizeFeatures.hpp"
-#include "peak_finding/FilterUtils.hpp"
 #include <QMessageBox>
+#include <QRadioButton>
 #include <QColor>
 #include <QPixmap>
 #include <QDir>
@@ -30,6 +17,22 @@
 #include <iostream>
 #include <chrono>
 #include <cstdio>
+#include <QRadioButton>
+#include <QStatusBar>
+#include <cassert>
+#include <QStringList>
+
+#include "TemplateViewerWindow.hpp"
+#include "ui_TemplateViewerWindow.h"
+#include "feature_marks.hpp"
+#include "template_anchoring\anchor_view.hpp"
+#include "template_anchoring\anchor_fit.hpp"
+#include "alignment.hpp"
+#include "global_intervals.hpp" 
+#include "global_interval_lines.hpp"
+#include "vcg_signal_average.hpp"
+#include "template_generation/NormalizeFeatures.hpp"
+#include "peak_finding/FilterUtils.hpp"
 
 namespace {
     constexpr int n_template_cols = 3;
@@ -158,18 +161,19 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
         // (see refreshFocus); every other landmark uses the top one and the
         // spacer holds the rest, which is what makes a single view occupy the
         // TOP THIRD instead of stretching over the whole dock.
-        m_focusTop = new FocusPanelWidget(holder);
-        m_focusBottom = new FocusPanelWidget(holder);
-        vlay->addWidget(m_focusTop, 1);
-        vlay->addWidget(m_focusBottom, 1);
+        zoomed_in_section_top = new FocusPanelWidget(holder);
+        zoomed_in_section_bottom = new FocusPanelWidget(holder);
+        vlay->addWidget(zoomed_in_section_top, 1);
+        vlay->addWidget(zoomed_in_section_bottom, 1);
         vlay->addStretch(1);
         m_focusLay = vlay;
-        m_focusBottom->hide();
+        zoomed_in_section_bottom->hide();
         setFocusSplit(false);
         holder->setLayout(vlay);
         dock->setWidget(holder);
         addDockWidget(Qt::RightDockWidgetArea, dock);
     }
+    wireAlignButtons();
 }
 
 TemplateViewerWindow::~TemplateViewerWindow() { delete ui; }
@@ -638,7 +642,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
         // R last so the flat state the grid reads is R's.
         b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
         FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK);
-        for (int c = 0; c < 3; ++c) b.syncReactiveGlyphs(c, 0);
+        for (int c = 0; c < 3; ++c) b.syncReactiveGlyphs(c, 0, m_sampleRate);
     }
 
     // If this subject was already marked in a previous session, restore
@@ -1843,7 +1847,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv(AnchorType anchor) {
             // that bracket it rather than passing the -1 through, which would
             // have handed computeEcgFeatures an absent P on every lead.
             const FeatureMarks::ReactiveEcg rxF = FeatureMarks::reactive_ecg(
-                ecg, umk.p_begin, umk.q_begin, umk.s_end, umk.t_end);
+                ecg, umk.p_begin, umk.q_begin, umk.s_end, umk.t_end, m_sampleRate);
             ftUser[c] = computeEcgFeatures(ecg,
                 (int)std::lround(rxF.p_peak), umk.q_begin, b.r_peak_ch[c],
                 umk.s_end, umk.t_end, m_sampleRate);
@@ -1860,9 +1864,8 @@ void TemplateViewerWindow::writeAlignedTemplateCsv(AnchorType anchor) {
             const std::vector<double>& ecgA = b.chFor(c, anchor).ecgTemplate_raw;
             const FeatureMarks::ReactiveEcg rxA = FeatureMarks::reactive_ecg(
                 ecgA, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
-                (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]));
-            const FeatureMarks::ReactiveEcg rxU = FeatureMarks::reactive_ecg(
-                ecgA, umk.p_begin, umk.q_begin, umk.s_end, umk.t_end);
+                (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]), m_sampleRate);
+            const FeatureMarks::ReactiveEcg rxU = FeatureMarks::reactive_ecg( ecgA, umk.p_begin, umk.q_begin, umk.s_end, umk.t_end, m_sampleRate);
 
             ecgAuto[c][0] = aa.p_begin[c];
             ecgAuto[c][1] = rxA.p_peak;          // reactive glyph, detector brackets
@@ -2159,7 +2162,7 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
         const int rc4 = (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel];
         FeatureMarks::seed_bank_template(tp.tmpl, rc4, m_sampleRate, a4, tp.marks(tag4));
     }
-    b.syncReactiveGlyphs(channel, templateIdx);
+    b.syncReactiveGlyphs(channel, templateIdx, m_sampleRate);
     // ASSEMBLED, NOT FETCHED. Each bar lives in its owning alignment's set;
     // userMarks pulls all four and translates them into the R frame the panel
     // draws in. Fetching one alignment's set here is what limited a session to
@@ -2353,6 +2356,7 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     if (!anchor_view::isBar(marker)) return;
 
     const int oldIdx = bankGet(bank, templateIdx);
+    if (m_dragStartIdx < 0) m_dragStartIdx = oldIdx;   // first move of this drag
     bankSet(bank, templateIdx, newIdx);
 
     // ---- subsequent-move, BY SLOT INDEX ---------------------------------
@@ -2396,8 +2400,13 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
         //
         //   Delta : cur + deltaFrac * (n - 1)   -- a relative nudge
         //   Raw   : posFrac  * (n - 1)          -- an absolute position
+        // FROM THE DRAG START, not the previous mouse-move. Per-event, each
+        // shift was rounded on its own, so a one-sample step scaled to a
+        // fraction and lround'd to ZERO -- dragging smoothly moved the other
+        // bars not at all, a fast sweep jumped them, and out-and-back never
+        // returned. One total shift, rounded once.
         const double deltaFrac = (nDragged > 1)
-            ? static_cast<double>(newIdx - oldIdx) / (nDragged - 1) : 0.0;
+            ? static_cast<double>(newIdx - m_dragStartIdx) / (nDragged - 1) : 0.0;
         const double posFrac = (nDragged > 1)
             ? static_cast<double>(newIdx) / (nDragged - 1) : 0.0;
 
@@ -2429,8 +2438,15 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
             const int cur = bankGet(bk, slot);
             if (cur < 0) return;   // this landmark was not found on this one
 
+            // This panel's own start. Keyed on (bin, slot): applyTo is a lambda
+            // over those two, and the page column index is not in scope here.
+            // After the cur < 0 guard, so an absent landmark never stores -1.
+            const int key = binI * 64 + slot;
+            if (!original_location_of_bar.count(key))
+                original_location_of_bar[key] = cur;
+
             const int target = (m_moveMode == MoveMode::SubsequentDelta)
-                ? cur + (int)std::lround(deltaFrac * (n - 1))
+                ? originFor(key, cur) + (int)std::lround(deltaFrac * (n - 1))
                 : (int)std::lround(posFrac * (n - 1));
             if (target < 0 || target > n - 1) return;
             bankSet(bk, slot, target);
@@ -2520,10 +2536,11 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         // sample or two for the other three.
         const int stored = newIdx + b.frameShift(leadIdx, AnchorType::R_PEAK, owner);
         const int oldIdx = ecgGet(b, 0);
+        if (m_dragStartIdx < 0) m_dragStartIdx = oldIdx;
         ecgSet(b, 0, stored);
         // P peak follows its brackets. Recomputed for every alignment, so the
         // value written to the bin and the CSV is the one drawn on screen.
-        b.syncReactiveGlyphs(leadIdx, 0);
+        b.syncReactiveGlyphs(leadIdx, 0, m_sampleRate);
         // Track the drag: the touched store follows the bar to its final
         // position so confirmedIndex reflects where the operator left it.
         if (newIdx >= 0)
@@ -2545,8 +2562,9 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             // "10% later" stays 10% later.
             ChannelTemplateData* bchs[3] = { &b.ch1, &b.ch2, &b.ch3 };
             const int nDragged = (int)bchs[leadIdx]->ecgTemplate_raw.size();
+            // From the drag start -- see the note in the bank handler.
             const double deltaFrac = (nDragged > 1)
-                ? double(newIdx - oldIdx) / (nDragged - 1) : 0.0;
+                ? double(newIdx - m_dragStartIdx) / (nDragged - 1) : 0.0;
             const double posFrac = (nDragged > 1)
                 ? double(newIdx) / (nDragged - 1) : 0.0;
 
@@ -2587,8 +2605,12 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 const int cur = ecgGet(m_bins[gi], slot);
                 if (cur < 0) continue;
 
+                // This panel's own start. `li` IS the page column here.
+                if (!original_location_of_bar.count(li))
+                    original_location_of_bar[li] = cur;
+
                 const int target = (m_moveMode == MoveMode::SubsequentDelta)
-                    ? cur + (int)std::lround(deltaFrac * (n - 1))
+                    ? originFor(li, cur) + (int)std::lround(deltaFrac * (n - 1))
                     : (int)std::lround(posFrac * (n - 1));
                 if (target < 0 || target > n - 1) continue;
                 ecgSet(m_bins[gi], slot, target);
@@ -2751,9 +2773,24 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         return;
     }
 }
+int TemplateViewerWindow::originFor(int col, int cur) const {
+    auto it = original_location_of_bar.find(col);
+    return (it != original_location_of_bar.end()) ? it->second : cur;
+}
 
-void TemplateViewerWindow::onMarkerDragStarted(int, int, int) {}
-
+// A drag begins. BinPlotWidget emits this once from mousePressEvent, so it is
+// the one place that can define "where the drag started".
+//
+// BOTH HALVES of the shift are anchored to that instant. The dragged bar has
+// moved a PERCENTAGE of its plot; applying that total percentage to a bar
+// already moved by earlier events in the same drag counts it twice. So the
+// numerator (how far the dragged bar has come) and the base (where each
+// propagated bar began) both date from here and hold for the whole drag --
+// which is what makes dragging back to the start put every bar back exactly.
+void TemplateViewerWindow::onMarkerDragStarted(int, int, int) {
+    m_dragStartIdx = -1;              // dragged bar's start; set on the first move
+    original_location_of_bar.clear(); // per-panel starts; filled lazily below
+}
 // B2 focus mode --------------------------------------------------------------
 
 void TemplateViewerWindow::onLandmarkSelected(int binIdx, int leadIdx,
@@ -2787,16 +2824,46 @@ void TemplateViewerWindow::onLandmarkSelected(int binIdx, int leadIdx,
 // landmark would then be drawn at one scale on its own and another right after
 // the J point had been selected. The spacer holds the leftover.
 void TemplateViewerWindow::setFocusSplit(bool split) {
-    if (!m_focusLay || !m_focusBottom) return;
-    m_focusBottom->setVisible(split);
+    if (!m_focusLay || !zoomed_in_section_bottom) return;
+    zoomed_in_section_bottom->setVisible(split);
     m_focusLay->setStretch(1, split ? 1 : 0);   // second panel
     m_focusLay->setStretch(2, split ? 1 : 2);   // trailing spacer absorbs the rest
+}
+// Radio group that pins the focus panel to one alignment.
+//
+// findChild rather than ui->r_align_button on purpose: a button that is not in
+// the .ui yet simply leaves that option unavailable instead of failing the
+// build, so they can be added one at a time.
+void TemplateViewerWindow::wireAlignButtons() {
+    struct Btn { const char* name; bool force; AnchorType a; };
+    static const Btn kBtns[] = {
+        { "r_align_button",         true,  AnchorType::R_PEAK  },
+        { "p_align_button",         true,  AnchorType::P_ONSET },
+        { "q_align_button",         true,  AnchorType::Q_ONSET },
+        { "j_point_align_button",         true,  AnchorType::J_POINT },
+        { "automatic_align_button", false, AnchorType::R_PEAK  },
+    };
+    for (const Btn& b : kBtns) {
+        QRadioButton* rb = findChild<QRadioButton*>(QString::fromLatin1(b.name));
+        if (!rb) continue;
+        const bool force = b.force;
+        const AnchorType a = b.a;
+        connect(rb, &QRadioButton::toggled, this, [this, force, a](bool on) {
+            if (!on) return;                  // only the newly-checked one acts
+            m_forceAlign = force;
+            m_forcedAlign = a;
+            if (m_lastFocusMarker >= 0)
+                refreshFocus(m_lastFocusBinIdx, m_lastFocusLeadIdx,
+                    m_lastFocusTemplateIdx, m_lastFocusMarker, m_lastFocusCol);
+            });
+        if (rb->isChecked()) { m_forceAlign = force; m_forcedAlign = a; }
+    }
 }
 
 void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     int templateIdx, int marker, int col)
 {
-    if (!m_focusTop) return;   // panels not created (nothing to do)
+    if (!zoomed_in_section_top) return;   // panels not created (nothing to do)
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
     TemplateBin& b = m_bins[binIdx];
 
@@ -2833,8 +2900,8 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                 ? &b.ppg_bank.templates[templateIdx] : nullptr;
             if (!ps || ps->tmpl.empty() || ps->memberCount() <= 0) {
                 setFocusSplit(false);
-        if (m_focusTop) m_focusTop->clearFocus();
-        if (m_focusBottom) m_focusBottom->clearFocus();
+                if (zoomed_in_section_top) zoomed_in_section_top->clearFocus();
+                if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
                 return;
             }
             meanRaw = &ps->tmpl;           iqrRaw = &ps->tmpl_iqr;
@@ -2899,9 +2966,9 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         // once, and raw_anchors is ECG-only. One panel, no suffix.
         // Pulse landmarks bound one part of the wave: top third only.
         setFocusSplit(false);
-        if (m_focusBottom) m_focusBottom->clearFocus();
-        if (m_focusTop)
-            m_focusTop->setFocus(mean, sd, nBeats, col,
+        if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
+        if (zoomed_in_section_top)
+            zoomed_in_section_top->setFocus(mean, sd, nBeats, col,
                 chLabel + " " + pulseLabel(marker));
         return;
     }
@@ -2922,16 +2989,23 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // click that resolves to one shows the R-aligned average -- the same
     // waveform the grid does, magnified. markerAtX does not hand out glyphs
     // anyway; this is just what anchorFor returns for them.
-    const AnchorType focusAnchor = anchor_view::anchorFor(marker);
-    // NO FALLBACK: chForStrict returns nullptr when this alignment is absent
+    m_lastFocusBinIdx = binIdx;
+    m_lastFocusLeadIdx = leadIdx;
+    m_lastFocusTemplateIdx = templateIdx;
+    m_lastFocusMarker = marker;
+    m_lastFocusCol = col;
+
+    const AnchorType focusAnchor = m_forceAlign
+        ? m_forcedAlign
+        : anchor_view::anchorFor(marker);    // NO FALLBACK: chForStrict returns nullptr when this alignment is absent
     // from the file, and the panel is cleared rather than showing the R-aligned
     // average under this bar's header. chFor's fallback did the latter, which
     // is what made every bar look identical.
     const ChannelTemplateData* chP = b.chForStrict(leadIdx, focusAnchor);
     if (!chP) {
         setFocusSplit(false);
-        if (m_focusTop) m_focusTop->clearFocus();
-        if (m_focusBottom) m_focusBottom->clearFocus();
+        if (zoomed_in_section_top) zoomed_in_section_top->clearFocus();
+        if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
         fprintf(stderr, "[focus] bin=%d lead=%d marker=%d anchor=%s NOT IN FILE"
             " -- regenerate templates\n",
             binIdx, leadIdx, marker, anchor_view::label(focusAnchor));
@@ -2971,8 +3045,8 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         if (templateIdx >= bank.size()
             || bank.templates[templateIdx].tmpl.empty()) {
             setFocusSplit(false);
-            if (m_focusTop) m_focusTop->clearFocus();
-            if (m_focusBottom) m_focusBottom->clearFocus();
+            if (zoomed_in_section_top) zoomed_in_section_top->clearFocus();
+            if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
             return;
         }
         const tbank::BankTemplate& tp = bank.templates[templateIdx];
@@ -2996,7 +3070,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         // which case the header says so rather than naming an alignment the
         // data is not in.
         if (const AnchoredBankSlot* asl =
-                b.bankSlotFor(leadIdx, templateIdx, focusAnchor)) {
+            b.bankSlotFor(leadIdx, templateIdx, focusAnchor)) {
             meanRawEcg = &asl->tmpl;
             sdRawEcg = &asl->tmpl_iqr;
         }
@@ -3053,7 +3127,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // toward the RIGHT (they end it).
     const int bias = BinPlotWidget::markerIsBegin(marker) ? +1 : -1;
 
-    if (m_focusTop)
+    if (zoomed_in_section_top)
     {
         // Mean SD over the same window the panel draws. On screen because the
         // panel autoscales y, so the BAND looks about the same width whatever
@@ -3075,7 +3149,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         const QString tag = slotUnaligned
             ? QStringLiteral(" [slot avg, NOT aligned]")
             : QStringLiteral(" [%1-aligned]")
-                  .arg(QString::fromLatin1(anchor_view::label(focusAnchor)));
+            .arg(QString::fromLatin1(anchor_view::label(focusAnchor)));
 
         // THE J POINT GETS BOTH PANELS. It is the one landmark bounding two
         // segments, so a single framing always hides one neighbourhood: above
@@ -3086,19 +3160,19 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
             .arg(labelFor(marker), tag, QString::number(sdMean, 'f', 5));
         if (marker == BinPlotWidget::EcgSEnd) {
             setFocusSplit(true);
-            if (m_focusTop)
-                m_focusTop->setFocus(mean, sd, nBeats, colHere,
+            if (zoomed_in_section_top)
+                zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere,
                     head + QStringLiteral("  (QRS)"), 30, -1);
-            if (m_focusBottom)
-                m_focusBottom->setFocus(mean, sd, nBeats, colHere,
+            if (zoomed_in_section_bottom)
+                zoomed_in_section_bottom->setFocus(mean, sd, nBeats, colHere,
                     head + QStringLiteral("  (JT)"), 30, +1);
         }
         else {
             // One segment -> top third only.
             setFocusSplit(false);
-            if (m_focusBottom) m_focusBottom->clearFocus();
-            if (m_focusTop)
-                m_focusTop->setFocus(mean, sd, nBeats, colHere, head, 30, bias);
+            if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
+            if (zoomed_in_section_top)
+                zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head, 30, bias);
         }
     }
 }
@@ -3463,7 +3537,7 @@ void TemplateViewerWindow::save_bin_and_csv() {
     // glob was reading files left by earlier passes of the same subject, and
     // there are no earlier passes now.
     {
-        QDir alignedDir(QDir(m_templateDir).absoluteFilePath("../csv_for_analysis"));
+        QDir alignedDir(m_templateDir);
         const QString canonical = alignedDir.filePath(m_subjectId + "_template.csv");
         std::vector<std::string> order;
         for (AnchorType a : anchor_view::kAllAnchors) {

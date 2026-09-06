@@ -298,14 +298,13 @@ struct TemplateBin {
     // Called after every bar edit and once after seeding. reactive_ecg is the
     // same function BinPlotWidget::reactiveGlyphs calls, so the stored value,
     // the CSV column and the X on screen cannot disagree.
-    void syncReactiveGlyphs(int lead, int slot) {
+    void syncReactiveGlyphs(int lead, int slot, int sampleRateHz) {
         if (lead < 0 || lead > 2 || slot < 0) return;
         for (AnchorType a : anchor_view::kAllAnchors) {
             const tbank::BankMarkerSet bars = userMarks(lead, slot, a);
             const std::vector<double>& ecg = chFor(lead, a).ecgTemplate_raw;
             if (ecg.empty()) continue;
-            const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
-                ecg, bars.p_begin, bars.q_begin, bars.s_end, bars.t_end);
+            const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg( ecg, bars.p_begin, bars.q_begin, bars.s_end, bars.t_end, sampleRateHz);
             tbank::BankMarkerSet& dst = slotMarks(lead, slot, a);
             dst.p_peak = (rx.p_peak >= 0.0)
                 ? static_cast<int>(std::lround(rx.p_peak)) : -1;
@@ -1106,10 +1105,10 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 // promise that screen and files cannot disagree.
                 const tbank::BankMarkerSet whole = b.userMarks(c, 0, anchor);
                 const FeatureMarks::ReactiveEcg rxUser = FeatureMarks::reactive_ecg(
-                    ecg, whole.p_begin, whole.q_begin, whole.s_end, whole.t_end);
+                    ecg, whole.p_begin, whole.q_begin, whole.s_end, whole.t_end, sampleRateHz);
                 const FeatureMarks::ReactiveEcg rxAuto = FeatureMarks::reactive_ecg(
                     ecg, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
-                         (int)std::lround(aa.s_end[c]),   (int)std::lround(aa.t_end[c]));
+                         (int)std::lround(aa.s_end[c]),   (int)std::lround(aa.t_end[c]),sampleRateHz);
 
                 EcgFeatures ftAuto = computeEcgFeatures(ecg,
                     (int)std::lround(aa.p_peak[c]), (int)std::lround(aa.q_begin[c]),
@@ -1122,10 +1121,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 // more. The two intervals come out identical in all four
                 // blocks (a duration is frame-free); the two positions differ
                 // between blocks by the frame shift.
-                EcgFeatures ftUser = computeEcgFeatures(ecg,
-                    (int)std::lround(rxUser.p_peak), whole.q_begin, b.r_peak_ch[c],
-                    whole.s_end, whole.t_end,
-                    sampleRateHz);
+                EcgFeatures ftUser = computeEcgFeatures(ecg,  (int)std::lround(rxUser.p_peak), whole.q_begin, b.r_peak_ch[c], whole.s_end, whole.t_end, sampleRateHz);
 
                 // Order MUST match ecgPointNames:
                 //   p_begin(bar), p_peak(glyph), q_begin(bar), q_peak(computed),
@@ -1241,7 +1237,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 const auto aa = b.autoFor(anchor);
                 const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
                     ecg, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
-                         (int)std::lround(aa.s_end[c]),   (int)std::lround(aa.t_end[c]));
+                         (int)std::lround(aa.s_end[c]),   (int)std::lround(aa.t_end[c]), sampleRateHz);
                 emitAutoFeatPt(ecg, rx.p_peak);
                 emitAutoFeatPt(ecg, aa.q_begin[c]);
                 emitAutoFeatPt(ecg, aa.r_peak[c]);

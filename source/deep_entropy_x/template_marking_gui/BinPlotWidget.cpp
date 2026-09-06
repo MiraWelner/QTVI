@@ -588,7 +588,7 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
     // files cannot disagree about where a landmark is.
     const FeatureMarks::ReactiveEcg e = FeatureMarks::reactive_ecg(
         m_ecg, m_markers[EcgPBegin], m_markers[EcgQBegin],
-        m_markers[EcgSEnd], m_markers[EcgTEnd]);
+        m_markers[EcgSEnd], m_markers[EcgTEnd], m_rates[static_cast<size_t>(Channel::Ecg)]);
     r.ecgPPeak = e.p_peak;
     r.ecgTPeak = e.t_peak;
 
