@@ -2432,7 +2432,8 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
             const int target = (m_moveMode == MoveMode::SubsequentDelta)
                 ? cur + (int)std::lround(deltaFrac * (n - 1))
                 : (int)std::lround(posFrac * (n - 1));
-            bankSet(bk, slot, std::clamp(target, 0, n - 1));
+            if (target < 0 || target > n - 1) return;
+            bankSet(bk, slot, target);
             };
 
         // Walk the PAGE from the column after the dragged one to the end. The
@@ -2589,7 +2590,8 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 const int target = (m_moveMode == MoveMode::SubsequentDelta)
                     ? cur + (int)std::lround(deltaFrac * (n - 1))
                     : (int)std::lround(posFrac * (n - 1));
-                ecgSet(m_bins[gi], slot, std::clamp(target, 0, n - 1));
+                if (target < 0 || target > n - 1) continue;
+                ecgSet(m_bins[gi], slot, target);
             }
             // Refresh exactly the columns that were written.
             for (int li = dragCol + 1; li < (int)m_pageGlobalIdx.size()
@@ -2649,7 +2651,8 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 const int target = (m_moveMode == MoveMode::SubsequentDelta)
                     ? cur + delta
                     : (n > 1 ? (int)std::lround(pct * (n - 1)) : 0);
-                ppgSet(m_bins[i], std::clamp(target, 0, n - 1));
+                if (target < 0 || target > n - 1) continue;
+                ppgSet(m_bins[i], target);
             }
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
                 int gi = m_pageGlobalIdx[li];
@@ -2737,7 +2740,8 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 const int target = (m_moveMode == MoveMode::SubsequentDelta)
                     ? cur + delta
                     : (n > 1 ? (int)std::lround(pct * (n - 1)) : 0);
-                assign(m_bins[i], marker, std::clamp(target, 0, n - 1));
+                if (target < 0 || target > n - 1) continue;
+                assign(m_bins[i], marker, target);
             }
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
                 int gi = m_pageGlobalIdx[li];
@@ -2919,10 +2923,10 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // waveform the grid does, magnified. markerAtX does not hand out glyphs
     // anyway; this is just what anchorFor returns for them.
     const AnchorType focusAnchor = anchor_view::anchorFor(marker);
-    // NO FALLBACK. chForStrict returns nullptr when this alignment is not in
-    // the file, and the panel is cleared with a message saying so. It does NOT
-    // quietly show the R-aligned average under this bar's header, which is what
-    // chFor's fallback did and what made every bar look identical.
+    // NO FALLBACK: chForStrict returns nullptr when this alignment is absent
+    // from the file, and the panel is cleared rather than showing the R-aligned
+    // average under this bar's header. chFor's fallback did the latter, which
+    // is what made every bar look identical.
     const ChannelTemplateData* chP = b.chForStrict(leadIdx, focusAnchor);
     if (!chP) {
         setFocusSplit(false);
@@ -2935,20 +2939,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     }
     const ChannelTemplateData& ch = *chP;
 
-    // ---- DID chFor ACTUALLY RETURN THIS ALIGNMENT? ---------------------
-    //
-    // chFor SILENTLY returns the R base for any alignment the templates file
-    // does not carry, and the header said "[P-aligned]" either way. So a panel
-    // that looks the same under every bar had two indistinguishable causes --
-    // the switch not working, or the file having no anchor blocks to switch to
-    // -- and no way to tell them apart by eye.
-    //
-    // Exact, not inferred: chFor returns a reference INTO the bin, so if the
-    // address is the R base while a non-R alignment was requested, the fallback
-    // happened.
-    // (the fellBack detector is gone with the fallback -- chForStrict returned
-    //  non-null, so this IS focusAnchor's own template.)
-    const bool fellBack = false;
+
     // Templates + iqr are stored PRE-reference-division; scale by the same
     // per-lead ref the displayed ECG trace uses (main plot ~line 484). The
     // ECG *_iqr field already holds a STD (ddof=1) -- CreateEcgTemplates step
@@ -3064,40 +3055,27 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
 
     if (m_focusTop)
     {
-        // Mean SD over the same +/-30 window the panel draws, in the panel's
-        // own normalized units. THIS is the number that settles it: in a
-        // P-aligned average the T region is the most smeared part of the trace,
-        // so P-aligned-at-T must read clearly larger than T-aligned-at-T. Equal
-        // numbers mean the two panels are the same data, and the tag says which
-        // of the two reasons applies.
-        //
-        // On screen rather than only in the log because the panel autoscales y
-        // to the window it draws -- so the BAND always looks about the same
-        // width no matter how large the spread actually is, and in a narrow
-        // dock a 61-sample window renders as a near-vertical line where no band
-        // is visible at all.
+        // Mean SD over the same window the panel draws. On screen because the
+        // panel autoscales y, so the BAND looks about the same width whatever
+        // the spread actually is -- the number is the only way to compare two
+        // alignments. In a P-aligned average the T region is the most smeared
+        // part of the trace, so P-aligned-at-T should read larger than
+        // T-aligned-at-T.
         double acc = 0.0; int cnt = 0;
         for (int k = colHere - 30; k <= colHere + 30; ++k)
             if (k >= 0 && k < (int)sd.size() && !std::isnan(sd[k])) { acc += sd[k]; ++cnt; }
         const double sdMean = cnt
             ? acc / cnt : std::numeric_limits<double>::quiet_NaN();
 
-        QString tag;
-        if (slotUnaligned)
-            tag = QStringLiteral(" [slot avg, NOT aligned]");
-        else if (fellBack)
-            tag = QStringLiteral(" [%1 MISSING -> R base]")
-                      .arg(QString::fromLatin1(anchor_view::label(focusAnchor)));
-        else
-            tag = QStringLiteral(" [%1-aligned]")
-                      .arg(QString::fromLatin1(anchor_view::label(focusAnchor)));
-
-        fprintf(stderr,
-            "[focus] bin=%d lead=%d marker=%d anchor=%s%s%s col=%d sd=%.5f n=%d\n",
-            binIdx, leadIdx, marker, anchor_view::label(focusAnchor),
-            fellBack ? " FELL-BACK-TO-R" : "",
-            slotUnaligned ? " SLOT-UNALIGNED" : "",
-            colHere, sdMean, nBeats);
+        // Two states only: this alignment's own template, or -- on a
+        // sub-template column whose file predates the per-slot section -- the
+        // slot's unaligned average, said plainly. chForStrict has already
+        // returned early if the alignment itself is absent, so the label can
+        // never name an alignment the data is not in.
+        const QString tag = slotUnaligned
+            ? QStringLiteral(" [slot avg, NOT aligned]")
+            : QStringLiteral(" [%1-aligned]")
+                  .arg(QString::fromLatin1(anchor_view::label(focusAnchor)));
 
         // THE J POINT GETS BOTH PANELS. It is the one landmark bounding two
         // segments, so a single framing always hides one neighbourhood: above

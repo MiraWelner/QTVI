@@ -18,6 +18,7 @@
 #include <random>
 #include <cstdlib>
 #include <iostream>
+#include <atomic>
 
 #include "template_io.hpp"
 #include "template_generation/make_averaged_templates.hpp"
@@ -325,6 +326,18 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
     return out;
 }
 
+// Anchor name for the summary line below. Local to this file: post_process.hpp
+// has its own anchorName, and this header must not depend on it.
+inline const char* anchorName_bt(AnchorType a) {
+    switch (a) {
+    case AnchorType::R_PEAK:  return "R_PEAK";
+    case AnchorType::P_ONSET: return "P_ONSET";
+    case AnchorType::Q_ONSET: return "Q_ONSET";
+    case AnchorType::J_POINT: return "J_POINT";
+    }
+    return "?";
+}
+
 inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io::BeatsFile& beats, const SignalRates& rates, AnchorType anchor, bool forScoring = false)
 {
     /* Re-align reuse PPG/arterial as-is; Re-align the R-pass beats.
@@ -361,6 +374,13 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
         tmpl.bank_anchors[anchorTag];
     if (slotStore.size() != tmpl.bins.size())
         slotStore.assign(tmpl.bins.size(), {});
+
+    // Per-anchor tallies, summarised in ONE line at the end instead of a
+    // message per bin. Declared out here because the summary is printed after
+    // the channel loop; atomic because the bin loop inside it is an omp
+    // parallel-for.
+    std::atomic<int> nRecovered{ 0 };   // target column taken from the template
+    std::atomic<int> nNoAlign{ 0 };     // nothing moved: this bin equals R
 
     for (const auto& ch : channels) {
         auto it = beats.per_channel_beats.find(ch.key);
@@ -423,57 +443,31 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
                 && blk.ecgTemplate.size() == refP->size()
                 && locate(blk.ecgTemplate) >= 0.0) {
                 refP = &blk.ecgTemplate;
-                std::cerr << "  [anchors] " << ch.key << " bin " << i
-                    << ": locator failed on the reference BEAT, using the"
-                    << " template instead\n";
+                ++nRecovered;   // recovered, not failed -- see the summary line
             }
             const std::vector<double>& ref_beat_of_median_length = *refP;
 
 
-            // ---- DID THE ANCHOR ACTUALLY MOVE ANY BEATS? ----------------
-            //
-            // align_beat_matrix computes `marker` by running the locator on the
-            // REFERENCE beat, and its entire shifting block is wrapped in
-            // `if (marker >= 0)`. So when the detector fails on that one beat,
-            // nothing is shifted, and the function still returns a perfectly
-            // valid template and IQR -- byte-identical to the R-aligned pair.
-            //
-            // That failure is invisible downstream: the anchor block gets
-            // written, the viewer loads it, chFor returns it, and the focus
-            // panel shows the R waveform under a "[P-aligned]" header with the
-            // same spread. Counting non-empty templates does NOT catch it,
-            // which is why the "n/n bins aligned" line reported success.
-            //
-            // So the locator is run here too, on the same reference, purely to
-            // report it.
-            const double _refMark = locate(ref_beat_of_median_length);
-            if (!(_refMark >= 0.0)) {
-                std::cerr << "  [anchors] " << ch.key << " bin " << i
-                    << ": locator FAILED on the reference beat -- this bin's"
-                    << " anchor template will be identical to R\n";
-            }
-
             alignment::aligned_beats q = alignment::align_beat_matrix(perBin[i], blk.r_col, fs, /*compute_iqr=*/true, ref_beat_of_median_length, locate);
             if (q.tmpl.empty()) continue;
 
-            // HOW MANY BEATS ACTUALLY MOVED. The previous message here keyed
-            // off a median shift of zero, which is a FALSE ALARM: the reference
-            // is the median-length snippet, so the median shift is zero by
-            // design and says nothing about whether the beats moved. What
-            // matters is the per-beat count, and a sub-sample shift never shows
-            // up in an integer median at all.
+            // DID ANY BEAT ACTUALLY MOVE? This is the only real failure
+            // signal. align_beat_matrix wraps its whole shift loop in
+            // `if (marker >= 0)`, and on failure still returns a valid-looking
+            // template that is byte-identical to R -- so counting non-empty
+            // templates cannot detect it.
+            //
+            // Not a median shift: the reference IS the median snippet, so the
+            // median shift is zero by design, and a sub-sample shift never
+            // appears in an integer median at all.
             {
-                size_t moved = 0;
                 const double m0 = locate(ref_beat_of_median_length);
+                bool anyMoved = false;
                 for (const auto& bt : perBin[i]) {
                     const double mi = locate(bt);
-                    if (mi >= 0.0 && std::abs(m0 - mi) >= 1e-3) ++moved;
+                    if (mi >= 0.0 && std::abs(m0 - mi) >= 1e-3) { anyMoved = true; break; }
                 }
-                if (moved == 0) {
-                    std::cerr << "  [anchors] " << ch.key << " bin " << i
-                        << ": 0/" << perBin[i].size() << " beats moved --"
-                        << " this alignment equals R\n";
-                }
+                if (!anyMoved) ++nNoAlign;
             }
 
             // ROUNDING BOUNDARY. q.r_col is sub-sample (the anchor locators and
@@ -591,6 +585,20 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
             dst.ecg_template_iqr = std::move(q.iqr);
         }
     }
+
+    // ---- ONE LINE PER ANCHOR --------------------------------------------
+    //
+    // recovered = the landmark was not findable on that bin's reference BEAT,
+    // so the target column came from its median template instead and the
+    // alignment ran normally. That is the fallback working, not a failure.
+    //
+    // no-align = nothing moved at all, so that bin's template is a copy of the
+    // R one. This is the only number that means something went wrong.
+    std::cerr << "  [anchors] " << anchorName_bt(anchor)
+        << ": " << tmpl.bins.size() << " bins";
+    if (nRecovered > 0) std::cerr << ", " << nRecovered << " recovered via template";
+    if (nNoAlign > 0)   std::cerr << ", " << nNoAlign << " NOT ALIGNED (copy of R)";
+    std::cerr << "\n";
 }
 
 // SLOW merge: fills the squared/absval per-bin blocks and their SAECG

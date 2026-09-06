@@ -36,7 +36,7 @@
 
  // Ask the user which dataset to load. The number returned here IS the dataType
  // that load_config() maps to a data_type row in config.csv, so this menu and the
- // mapping in config_loader.cpp have to be edited together. SHHS1/SHHS2 already
+ // mapping in config_loader.cpp have to be edited together. SHHS already
  // had channel labels in apply_dataset_specific_channel_labels() and rows in the
  // config, but this menu was still pinned to three datasets, so there was no way
  // to select them.

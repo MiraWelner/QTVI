@@ -113,7 +113,7 @@ inline bool is_missing_signal(const QVector<double>& data) {
 
 inline bool sleep_data_present(const QVector<double>& sleepStages) {
     /*
-    * Sleep staging comes from the dataset's annotation file: MESA and SHHS1/SHHS2 both ship
+    * Sleep staging comes from the dataset's annotation file: MESA and SHHS both ship
     * one, Bittium and CHAOS do not. This is the check for a file whose staging is absent or
     * was written as the missing-channel placeholder.
     */
