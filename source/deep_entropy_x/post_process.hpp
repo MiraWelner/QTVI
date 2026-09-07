@@ -23,7 +23,6 @@
 #include "template_generation/template_io.hpp"
 #include "template_generation/pulse_matched_filter.hpp"
 #include "template_generation/build_templates.hpp"
-#include "template_generation/beat_substitute.hpp"
 #include "template_generation/premark_beats.hpp"
 
 #include "annealing/anneal_handler.hpp"
@@ -32,6 +31,8 @@
 #include "logging/sqi_ecg.hpp"
 #include "template_morphology_grouping/morphology_csv.hpp"
 #include "template_morphology_grouping/envelope_report.hpp"
+#include "template_morphology_grouping/beat_substitute.hpp"
+
 
 namespace post_process_detail {
 

@@ -117,6 +117,13 @@ namespace morphology_csv {
                 100.0 * double(t.n_blended_members) / double(n)); return b;
         }
 
+        // Instantaneous rate implied by this template's member R-R intervals.
+        inline std::string bpmPerTemplate(const tbank::BankTemplate& t) {
+            if (t.mean_rr_ms <= 0.0) return "na";
+            char b[16]; std::snprintf(b, sizeof b, "%.1f", 60000.0 / t.mean_rr_ms);
+            return b;
+        }
+
 
         // Row 5. Tukey runs only on beats NOT flagged premature: a premature
         // beat is already excluded from the reference set, so there is nothing
@@ -923,12 +930,6 @@ namespace morphology_csv {
             }
         }
         return static_cast<bool>(f);
-    }
-
-    inline std::string bpmPerTemplate(const tbank::BankTemplate& t) {
-        if (t.mean_rr_ms <= 0.0) return "na";
-        char b[16]; std::snprintf(b, sizeof b, "%.1f", 60000.0 / t.mean_rr_ms);
-        return b;
     }
 
     inline bool writeTemplatesBin(const std::vector<ChannelBlock>& blocks) {

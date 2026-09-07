@@ -140,12 +140,12 @@ struct TemplateBin {
     // existing consumer are untouched; this map carries the other three.
     struct AnchorAuto {
         double p_begin[3] = { -1, -1, -1 };
-        double p_peak[3]  = { -1, -1, -1 };
+        double p_peak[3] = { -1, -1, -1 };
         double q_begin[3] = { -1, -1, -1 };
-        double q_peak[3]  = { -1, -1, -1 };
-        double r_peak[3]  = { -1, -1, -1 };
-        double s_end[3]   = { -1, -1, -1 };
-        double t_end[3]   = { -1, -1, -1 };
+        double q_peak[3] = { -1, -1, -1 };
+        double r_peak[3] = { -1, -1, -1 };
+        double s_end[3] = { -1, -1, -1 };
+        double t_end[3] = { -1, -1, -1 };
         bool   q_begin_found[3] = { false, false, false };
     };
     std::map<int, AnchorAuto> auto_by_anchor;
@@ -234,12 +234,12 @@ struct TemplateBin {
         AnchorAuto out;
         for (int c = 0; c < 3; ++c) {
             out.p_begin[c] = p_begin_auto_ch[c];
-            out.p_peak[c]  = p_peak_auto_ch[c];
+            out.p_peak[c] = p_peak_auto_ch[c];
             out.q_begin[c] = q_begin_auto_ch[c];
-            out.q_peak[c]  = q_peak_auto_ch[c];
-            out.r_peak[c]  = r_peak_auto_ch[c];
-            out.s_end[c]   = s_end_auto_ch[c];
-            out.t_end[c]   = t_end_auto_ch[c];
+            out.q_peak[c] = q_peak_auto_ch[c];
+            out.r_peak[c] = r_peak_auto_ch[c];
+            out.s_end[c] = s_end_auto_ch[c];
+            out.t_end[c] = t_end_auto_ch[c];
             out.q_begin_found[c] = q_begin_found_auto_ch[c];
         }
         return out;
@@ -277,11 +277,55 @@ struct TemplateBin {
             const int v = slotMarks(lead, slot, owner).*field;
             if (v < 0) return;
             out.*field = v + frameShift(lead, owner, frame);
-        };
+            };
         pull(anchor_view::kPBegin, &tbank::BankMarkerSet::p_begin);
         pull(anchor_view::kQBegin, &tbank::BankMarkerSet::q_begin);
-        pull(anchor_view::kSEnd,   &tbank::BankMarkerSet::s_end);
-        pull(anchor_view::kTEnd,   &tbank::BankMarkerSet::t_end);
+        pull(anchor_view::kSEnd, &tbank::BankMarkerSet::s_end);
+        pull(anchor_view::kTEnd, &tbank::BankMarkerSet::t_end);
+        return out;
+    }
+
+    // ---- THE GLYPH COUNTERPART OF userMarks() -----------------------------
+    //
+    // Same idea as userMarks(), but for the frozen auto-detect dot instead of
+    // the draggable bar: each landmark is read from ITS OWNING alignment via
+    // autoFor(), then frame-shifted into `frame`'s columns exactly the way
+    // userMarks() shifts the bar. Without this, a glyph reader that reaches
+    // into the flat *_auto_ch fields directly gets whatever alignment ran
+    // LAST in the seeding loop (R_PEAK) regardless of which alignment a given
+    // landmark actually belongs to -- so a T-end glyph would show R_PEAK's own
+    // T-end detection, unshifted, while the T-end bar correctly shows J_POINT's
+    // detection translated into R's frame. Two different measurements, not
+    // just two different rounding paths, and no additive shift reconciles
+    // them after the fact.
+    tbank::BankMarkerSet autoMarks(int lead, AnchorType frame = AnchorType::R_PEAK) const
+    {
+        tbank::BankMarkerSet out;   // all -1
+        // AnchorAuto stores each landmark as a double[3] (per lead), so this
+        // is spelled out per field rather than one generic lambda over a
+        // pointer-to-member -- you can't take a pointer-to-member to an
+        // array element the way userMarks() does for BankMarkerSet's scalar
+        // int fields.
+        {
+            const AnchorType owner = anchor_view::anchorFor(anchor_view::kPBegin);
+            const double v = autoFor(owner).p_begin[lead];
+            if (v >= 0.0) out.p_begin = (int)std::lround(v) + frameShift(lead, owner, frame);
+        }
+        {
+            const AnchorType owner = anchor_view::anchorFor(anchor_view::kQBegin);
+            const double v = autoFor(owner).q_begin[lead];
+            if (v >= 0.0) out.q_begin = (int)std::lround(v) + frameShift(lead, owner, frame);
+        }
+        {
+            const AnchorType owner = anchor_view::anchorFor(anchor_view::kSEnd);
+            const double v = autoFor(owner).s_end[lead];
+            if (v >= 0.0) out.s_end = (int)std::lround(v) + frameShift(lead, owner, frame);
+        }
+        {
+            const AnchorType owner = anchor_view::anchorFor(anchor_view::kTEnd);
+            const double v = autoFor(owner).t_end[lead];
+            if (v >= 0.0) out.t_end = (int)std::lround(v) + frameShift(lead, owner, frame);
+        }
         return out;
     }
 
@@ -304,7 +348,7 @@ struct TemplateBin {
             const tbank::BankMarkerSet bars = userMarks(lead, slot, a);
             const std::vector<double>& ecg = chFor(lead, a).ecgTemplate_raw;
             if (ecg.empty()) continue;
-            const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg( ecg, bars.p_begin, bars.q_begin, bars.s_end, bars.t_end, sampleRateHz);
+            const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(ecg, bars.p_begin, bars.q_begin, bars.s_end, bars.t_end, sampleRateHz);
             tbank::BankMarkerSet& dst = slotMarks(lead, slot, a);
             dst.p_peak = (rx.p_peak >= 0.0)
                 ? static_cast<int>(std::lround(rx.p_peak)) : -1;
@@ -520,13 +564,13 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
         // chN is ALWAYS the R base: what the grid draws, and the frame every
         // other alignment's columns are translated into.
         auto project = [](const template_io::ChannelMethodTemplate& c,
-                          ChannelTemplateData& d) {
-            d.ecgTemplate_raw      = c.ecgTemplate;
-            d.ecg_template_raw_iqr = c.ecg_template_iqr;
-            d.alignment_point_raw  = c.alignment_point;
-            d.r_col_raw            = c.r_col;
-            d.median_rr_samples    = c.median_rr_samples;
-        };
+            ChannelTemplateData& d) {
+                d.ecgTemplate_raw = c.ecgTemplate;
+                d.ecg_template_raw_iqr = c.ecg_template_iqr;
+                d.alignment_point_raw = c.alignment_point;
+                d.r_col_raw = c.r_col;
+                d.median_rr_samples = c.median_rr_samples;
+            };
         project(src.ch1_raw, dst.ch1);
         project(src.ch2_raw, dst.ch2);
         project(src.ch3_raw, dst.ch3);
@@ -1085,8 +1129,8 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                     const tbank::BankMarkerSet& own = b.slotMarks(c, 0, anchor);
                     if (anchor_view::owns(anchor, anchor_view::kPBegin)) umk.p_begin = own.p_begin;
                     if (anchor_view::owns(anchor, anchor_view::kQBegin)) umk.q_begin = own.q_begin;
-                    if (anchor_view::owns(anchor, anchor_view::kSEnd))   umk.s_end   = own.s_end;
-                    if (anchor_view::owns(anchor, anchor_view::kTEnd))   umk.t_end   = own.t_end;
+                    if (anchor_view::owns(anchor, anchor_view::kSEnd))   umk.s_end = own.s_end;
+                    if (anchor_view::owns(anchor, anchor_view::kTEnd))   umk.t_end = own.t_end;
                 }
 
                 // ---- GLYPHS: EVERY ALIGNMENT -------------------------------
@@ -1108,7 +1152,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                     ecg, whole.p_begin, whole.q_begin, whole.s_end, whole.t_end, sampleRateHz);
                 const FeatureMarks::ReactiveEcg rxAuto = FeatureMarks::reactive_ecg(
                     ecg, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
-                         (int)std::lround(aa.s_end[c]),   (int)std::lround(aa.t_end[c]),sampleRateHz);
+                    (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]), sampleRateHz);
 
                 EcgFeatures ftAuto = computeEcgFeatures(ecg,
                     (int)std::lround(aa.p_peak[c]), (int)std::lround(aa.q_begin[c]),
@@ -1121,7 +1165,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 // more. The two intervals come out identical in all four
                 // blocks (a duration is frame-free); the two positions differ
                 // between blocks by the frame shift.
-                EcgFeatures ftUser = computeEcgFeatures(ecg,  (int)std::lround(rxUser.p_peak), whole.q_begin, b.r_peak_ch[c], whole.s_end, whole.t_end, sampleRateHz);
+                EcgFeatures ftUser = computeEcgFeatures(ecg, (int)std::lround(rxUser.p_peak), whole.q_begin, b.r_peak_ch[c], whole.s_end, whole.t_end, sampleRateHz);
 
                 // Order MUST match ecgPointNames:
                 //   p_begin(bar), p_peak(glyph), q_begin(bar), q_peak(computed),
@@ -1237,7 +1281,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 const auto aa = b.autoFor(anchor);
                 const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
                     ecg, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
-                         (int)std::lround(aa.s_end[c]),   (int)std::lround(aa.t_end[c]), sampleRateHz);
+                    (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]), sampleRateHz);
                 emitAutoFeatPt(ecg, rx.p_peak);
                 emitAutoFeatPt(ecg, aa.q_begin[c]);
                 emitAutoFeatPt(ecg, aa.r_peak[c]);

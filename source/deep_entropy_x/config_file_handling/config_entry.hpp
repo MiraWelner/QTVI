@@ -55,9 +55,8 @@ struct config_entry {
     double blanking_period = 0.0;
     double threshold = 0.0;
     double bin_size_minutes = 0.0;
-	double ecg_match_floor = 0.0, ecg_match_ceil = 0.0, ppg_match_floor=0.0, ppg_match_ceil = 0.0;
+    double ecg_match_floor = 0.0;
     double ppg_match_floor = 0.0; // The band match score between 2 ppg signals to merge in the same template
-    double ecg_match_ceil = 0.0, ppg_match_ceil = 0.0;
     double ppg_fit_error_pct = 0.0; //percent similarity between a ppg signal and the ppg template for the ppg signal to be not thrown away
     int min_beats_template_ecg = 0;
     int min_beats_template_ppg = 0;
@@ -76,7 +75,6 @@ struct config_entry {
     std::string log_path;
     std::string training_log;
     std::string vcg_output;
-    std::string template_path;
 
     /*
     Different filetypes have different terms for the same type of signal,

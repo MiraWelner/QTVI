@@ -505,7 +505,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // cannot disagree. Everything here is arithmetic over what the pipeline
     // already produced -- no test re-runs any stage, because a test that
     // recomputes its own subject proves only that it agrees with itself.
-    std::vector<morphology_csv::AcceptanceRow> acceptanceRows;
     {
         auto num = [](double v, int dp = 2) {
             std::ostringstream o; o.setf(std::ios::fixed); o.precision(dp);
@@ -681,45 +680,46 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 
         return result;
     }
+}
 
-    // SLOW: fill the squared/absval ECG templates onto an existing
-    // vector<TemplateInfo> produced by GenerateTemplatesFast. Applies the same
-    // bad_segment gate as the fast pass, so squared/absval stay empty on bins
-    // the fast pass cleared.
-    inline void AugmentTemplatesSlow(const vector<output_binfile_data>&wave_data,
-        vector<TemplateInfo>&templates,
-        const SignalRates & rates)
-    {
-        size_t n = wave_data.size();
+// SLOW: fill the squared/absval ECG templates onto an existing
+// vector<TemplateInfo> produced by GenerateTemplatesFast. Applies the same
+// bad_segment gate as the fast pass, so squared/absval stay empty on bins
+// the fast pass cleared.
+inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
+    vector<TemplateInfo>& templates,
+    const SignalRates& rates)
+{
+    size_t n = wave_data.size();
 
-        EcgTemplateResult ecg_res;
-        init_channel_result(ecg_res.ch1, n);
-        init_channel_result(ecg_res.ch2, n);
-        init_channel_result(ecg_res.ch3, n);
-        CreateEcgTemplatesSlow(wave_data, rates.ecg, ecg_res);
+    EcgTemplateResult ecg_res;
+    init_channel_result(ecg_res.ch1, n);
+    init_channel_result(ecg_res.ch2, n);
+    init_channel_result(ecg_res.ch3, n);
+    CreateEcgTemplatesSlow(wave_data, rates.ecg, ecg_res);
 
-        auto fill_slow = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {
-            dst.ecgTemplate_squared = src.ecgTemplates_squared[i];
-            dst.ecgTemplate_absval = src.ecgTemplates_absval[i];
-            dst.alignment_point_squared = std::isnan(src.ppg_alignment_point_squared[i]) ? 0.0 : src.ppg_alignment_point_squared[i];
-            dst.alignment_point_absval = std::isnan(src.ppg_alignment_point_absval[i]) ? 0.0 : src.ppg_alignment_point_absval[i];
-            dst.r_col_squared = src.r_col_squared[i];
-            dst.r_col_absval = src.r_col_absval[i];
-            };
+    auto fill_slow = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {
+        dst.ecgTemplate_squared = src.ecgTemplates_squared[i];
+        dst.ecgTemplate_absval = src.ecgTemplates_absval[i];
+        dst.alignment_point_squared = std::isnan(src.ppg_alignment_point_squared[i]) ? 0.0 : src.ppg_alignment_point_squared[i];
+        dst.alignment_point_absval = std::isnan(src.ppg_alignment_point_absval[i]) ? 0.0 : src.ppg_alignment_point_absval[i];
+        dst.r_col_squared = src.r_col_squared[i];
+        dst.r_col_absval = src.r_col_absval[i];
+        };
 
-        for (size_t i = 0; i < n && i < templates.size(); ++i) {
-            const bool ecg_good = (i < wave_data.size()) && !wave_data[i].bad_segment;
-            if (!ecg_good) continue;
-            fill_slow(templates[i].ch1, ecg_res.ch1, i);
-            fill_slow(templates[i].ch2, ecg_res.ch2, i);
-            fill_slow(templates[i].ch3, ecg_res.ch3, i);
-        }
+    for (size_t i = 0; i < n && i < templates.size(); ++i) {
+        const bool ecg_good = (i < wave_data.size()) && !wave_data[i].bad_segment;
+        if (!ecg_good) continue;
+        fill_slow(templates[i].ch1, ecg_res.ch1, i);
+        fill_slow(templates[i].ch2, ecg_res.ch2, i);
+        fill_slow(templates[i].ch3, ecg_res.ch3, i);
     }
+}
 
-    // Original all-methods entry point, preserved by composition.
-    inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&wave_data,
-        const SignalRates & rates) {
-        vector<TemplateInfo> templates = GenerateTemplatesFast(wave_data, rates);
-        AugmentTemplatesSlow(wave_data, templates, rates);
-        return templates;
-    }
+// Original all-methods entry point, preserved by composition.
+inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>& wave_data,
+    const SignalRates& rates) {
+    vector<TemplateInfo> templates = GenerateTemplatesFast(wave_data, rates);
+    AugmentTemplatesSlow(wave_data, templates, rates);
+    return templates;
+}

@@ -152,7 +152,6 @@ namespace {
         cfg.training_log = sub("training_log");
         cfg.snapshot_path = sub("snapshot_path");
         cfg.vcg_output = sub("vcg_output");
-        cfg.template_path = sub("bin_archive");
     }
 
     bool manually_select_folder(config_entry& cfg) {

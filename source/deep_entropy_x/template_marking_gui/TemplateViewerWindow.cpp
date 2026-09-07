@@ -1866,7 +1866,7 @@ void TemplateViewerWindow::writeAlignedTemplateCsv(AnchorType anchor) {
             const FeatureMarks::ReactiveEcg rxA = FeatureMarks::reactive_ecg(
                 ecgA, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
                 (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]), m_sampleRate);
-            const FeatureMarks::ReactiveEcg rxU = FeatureMarks::reactive_ecg( ecgA, umk.p_begin, umk.q_begin, umk.s_end, umk.t_end, m_sampleRate);
+            const FeatureMarks::ReactiveEcg rxU = FeatureMarks::reactive_ecg(ecgA, umk.p_begin, umk.q_begin, umk.s_end, umk.t_end, m_sampleRate);
 
             ecgAuto[c][0] = aa.p_begin[c];
             ecgAuto[c][1] = rxA.p_peak;          // reactive glyph, detector brackets
@@ -3131,7 +3131,9 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // R-aligned. This panel plots THIS alignment's average, so the bar has to
     // be placed in its columns. Same conversion and same direction as the drag
     // path in onMarkerMoved, so a bar dragged on the grid lands under the
-    // crosshair here.
+    // crosshair here -- and, crucially, the panel FOLLOWS the bar as the
+    // operator drags it, because colHere is the live bar position (col), not a
+    // frozen auto-detected column.
     // CLAMPED. frameShift returned 0 for the life of this code until
     // sub-sample alignment landed -- every anchor shared one r_col, so the
     // translation was a no-op. Now the anchors' r_cols genuinely differ, so

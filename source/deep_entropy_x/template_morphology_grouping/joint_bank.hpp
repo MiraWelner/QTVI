@@ -1635,11 +1635,13 @@ namespace jbank {
                     if (bf.substituted) ++t.n_blended_members;
                 }
             }
-            // Mean R-R over the group's member SLICES (slice space, same as
-            // the census above -- not channel-local rows). rr_after_ms is
-            // per-slice, indexed by g.members directly. BEFORE the move: writing
-            // it after push_back(std::move(t)) set a moved-from husk and never
-            // reached the copy in out.templates.
+            // Mean R-R over the group's member SLICES (slice space, same as the
+            // census above -- not the channel-local rows). rr_after_ms is
+            // per-slice, so it is indexed by g.members directly.
+            //
+            // Computed BEFORE the move below: t is pushed into out.templates
+            // by value-move immediately after, so any write to t after that
+            // point would land on a moved-from object and be silently lost.
             t.mean_rr_ms = 0.0;
             if (rr_after_ms) {
                 double sum = 0.0; uint32_t k = 0;

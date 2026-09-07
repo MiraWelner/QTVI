@@ -22,13 +22,13 @@
 //   P onset          P-aligned            _P
 //   Q onset          Q-aligned            _Q
 //   J point (S end)  R-aligned            _R
-//   T end            T-aligned            _T
+//   T end            J-aligned            _J
 //
 // A GLYPH is a mark the widget draws and the operator cannot touch --
 // markerAtX() never hit-tests one, so a click can neither select nor move it.
 // It is a measurement, not a judgement, so it is measured independently on all
 // four aligned averages and all four are reported. <landmark>_auto_P through
-// _auto_T are four measurements of the same landmark on four waveforms, and
+// _auto_J are four measurements of the same landmark on four waveforms, and
 // comparing them is how the effect of an alignment on a landmark becomes
 // visible. That is why the admissibility mask governs bars only.
 //
@@ -51,11 +51,12 @@
 // BankMarkerSet field. Four auto columns, no user column anywhere. So is
 // P PEAK -- reactive, per above -- which is why neither appears in the table.
 //
-// WHY "T-ALIGNED" IS AnchorType::J_POINT. The enum names each alignment after
-// the landmark beats are shifted ONTO; the operator names it after the segment
-// it is FOR. Aligning on the J point is what makes the whole ST-T segment
-// sharp, and that pass exists for one reason: T-end is not measurable from any
-// earlier anchor. It is labelled "T" on screen and in the CSV.
+// THE T-END BAR IS MEASURED ON THE J_POINT ALIGNMENT. Aligning on the J point
+// is what makes the whole ST-T segment sharp, and that pass exists for one
+// reason: T-end is not measurable from any earlier anchor. The alignment is
+// named after its fiducial -- the J point -- so it is labelled "J" on screen
+// and carries the _J suffix in the CSV, even though the bar it serves is the
+// T-end bar.
 //
 // MARKER IDS ARE DUPLICATED HERE ON PURPOSE, and they were RENUMBERED when
 // T begin was removed -- 4 is S end, 5 is T end. Nothing persists a marker id,
@@ -88,14 +89,14 @@ namespace anchor_view {
     };
 
     // Operator-facing name. THIS IS THE CSV COLUMN SUFFIX -- the merged
-    // markings CSV gets <col>_R / _P / _Q / _T -- so changing a string here
+    // markings CSV gets <col>_R / _P / _Q / _J -- so changing a string here
     // renames columns in every downstream analysis script.
     inline constexpr const char* label(AnchorType a) {
         switch (a) {
         case AnchorType::R_PEAK:  return "R";
         case AnchorType::P_ONSET: return "P";
         case AnchorType::Q_ONSET: return "Q";
-        case AnchorType::J_POINT: return "T";
+        case AnchorType::J_POINT: return "J";
         }
         return "R";
     }

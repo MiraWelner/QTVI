@@ -484,7 +484,8 @@ namespace tbank {
 
         int32_t n_tukey_members = 0;// how many members were rejected due to tukey? this is the FINAL rejection step after morphology split and premature/voting split
         uint32_t n_blended_members = 0;//how many members were blended with the ones beside them due to being PVC or voted PVC
-        double mean_rr_ms = 0.0;// mean R-R over this template's member slices, ms; 0 = unknown. 60000/this = bpm
+        double mean_rr_ms = 0.0;// mean R-R over member slices, ms; 60000/this = bpm
+        bool marked_invalid_template = false;// operator/pipeline flagged this template as invalid
 
         // ---- THE OPERATOR'S QUALITY VERDICT ON THIS PANEL -----------------
         //

@@ -1092,14 +1092,22 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
             return (v >= 0.0 && v <= static_cast<double>(N - 1)) ? v : -1.0;
             };
         auto froz = frozen;
-        m_glyphs.ecgPBegin = froz(b.p_begin_auto_ch[c]);
+        // Each frozen glyph is read from its OWNING alignment and shifted into
+        // this widget's R frame, exactly the way userMarks() assembles the
+        // bars -- so the glyph and the bar for a landmark are the same
+        // measurement translated the same way. The flat *_auto_ch fields hold
+        // only whatever alignment ran LAST in loadSubject's seeding loop
+        // (R_PEAK), so reading them directly put the T-end glyph at R's T-end
+        // while its bar sat at J's, shifted -- two different positions.
+        const tbank::BankMarkerSet am = b.autoMarks(c);
+        m_glyphs.ecgPBegin = froz((double)am.p_begin);
         // (no ecgPPeak: the P peak is REACTIVE now, bracketed by the P-onset
         //  and Q-onset bars -- see reactiveGlyphs.)
-        m_glyphs.ecgQ = froz(b.q_begin_auto_ch[c]);
+        m_glyphs.ecgQ = froz((double)am.q_begin);
         m_glyphs.ecgQFound = b.q_begin_found_auto_ch[c];
-        m_glyphs.ecgS = froz(b.s_end_auto_ch[c]);
+        m_glyphs.ecgS = froz((double)am.s_end);
         m_glyphs.ecgQPeak = froz(b.q_peak_auto_ch[c]);
-        m_glyphs.ecgTend = froz(b.t_end_auto_ch[c]);
+        m_glyphs.ecgTend = froz((double)am.t_end);
         m_glyphs.ecgRPeak = frozen(m_markers[EcgRPeak]);
     }
 
