@@ -98,8 +98,7 @@ public:
 
     // heightMeters is the subject height from the demographics record, used
     // only for the stiffness index SI. Absent (default NaN) => SI is left NaN.
-    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate,
-        double heightMeters = NAN);
+    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN);
 
     // Sample whose AMPLITUDE is frac of the way from v[a] to v[b] (NOT frac
     // of the sample-index distance). Shared by detect_ppg_fiducials (t80/
@@ -127,7 +126,7 @@ public:
     static int detect_ppg_onset(const std::vector<double>& pulse);
     static double detect_ppg_peak(const std::vector<double>& pulse);
     static int detect_ppg_dicrotic(const std::vector<double>& pulse, int peak);
-    static int detect_ppg_peak2(const std::vector<double>& pulse);
+    static double detect_ppg_peak2(const std::vector<double>& v, int sysPeak, double t80, int end);
     static int detect_ppg_end(const std::vector<double>& pulse);
 
     static void seed_all(TemplateBin& bin, double sampleRate, double ppgRate, AnchorType anchor,

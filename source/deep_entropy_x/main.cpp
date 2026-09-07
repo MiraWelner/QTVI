@@ -168,7 +168,7 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
         // <id>_cv_check.csv) land alongside the bin archive. Same
         // "setter must actually be called or the path stays empty and
         // nothing writes" lesson as setVcgOutputDir above.
-        viewer.setNormOutputDir(QString::fromStdString(cfg.bin_archive_path));
+        viewer.setNormOutputDir(QString::fromStdString(cfg.template_path));
         // (setAnchorPassCount / setAnchorStep / setAnchorLabel are gone with the
         //  cycle -- there is no pass, no step, and no single alignment to name
         //  in the title bar. The focus panel names the alignment it is showing.)
@@ -219,7 +219,7 @@ int main(int argc, char* argv[]) {
     std::filesystem::create_directories(cfg.qtvi_marker_path);
     std::filesystem::create_directories(cfg.quality_metric);
     std::filesystem::create_directories(cfg.training_log);
-    std::filesystem::create_directories(cfg.bin_archive_path);
+    std::filesystem::create_directories(cfg.template_path);
 
 
     const std::vector<std::filesystem::path> binFiles = load_binfiles(cfg);

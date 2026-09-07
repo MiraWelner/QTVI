@@ -3,116 +3,10 @@
  * @file   template_bank.hpp
  * @brief  Multi-template morphology segregation (Spec Section 4.6).
  *
- *         One template per bin cannot represent a bin containing more than one
- *         beat morphology. Averaging sinus and ectopic beats produces a third
- *         shape matching neither and widens the per-sample corridor that every
- *         downstream feature is measured against -- so the damage is not
- *         confined to the ectopic beats, it degrades the sinus measurements
- *         too. This header holds the state for a small bank of templates per
- *         bin per channel, split by SHAPE and not by time: every template in a
- *         bank spans the bin's full 15 minutes, and a PVC at minute 2 shares a
- *         template with a PVC at minute 13.
+ *        This file handles the bank of templates which each new beat is compared to.
+ *        If it resembles an existing template, it is assigned to that template.
+ *        If it does not resemble any existing template, a new template is spawned.
  *
- *         Design decisions settled before this file was written, recorded here
- *         because none of them are recoverable from the spec text alone:
- *
- *          1. THE METRIC IS THE BAND-MATCH SCORE. Section 4.6 names the score
- *             and gives its thresholds -- 0.85 (ECG) and 0.80 (PPG), the same
- *             two numbers used for assignment and for spawning -- and those
- *             parts are spec.
- *
- *             THE BAND ITSELF IS NOT SPECIFIED. 4.6 says "band-match score"
- *             without saying what the band is. The 2.5/97.5 per-column
- *             corridor used here is a LOCAL CHOICE, made to agree with
- *             morphology_envelope.hpp, which builds 2.5/97.5 corridors for the
- *             envelope sections. Min/max, +/- 2 SD, or an IQR band would all
- *             satisfy the clause as written and would all move the score.
- *
- *             Flagged rather than left implicit because a threshold is
- *             meaningless without the quantity it compares, and this file used
- *             to present the corridor as though 4.6 stated it. Several
- *             constants below hang off the choice -- kMinMembersForCorridor is
- *             justified by the percentiles needing two distinct order
- *             statistics, and the corridor inflation and inheritance in
- *             template_assign.hpp exist because a small-N percentile band is a
- *             poor estimate -- so if the band is ever defined differently, all
- *             of that has to be rederived rather than retuned.
- *
- *             AS A FRACTION, NOT A PERCENTAGE. morphology_envelope.hpp scores
- *             on 0-100, which does not compare to 0.85. Read as a fraction the
- *             two are the same quantity and the threshold means "at least 85%
- *             of this beat's samples lie inside the corridor". That is the only
- *             self-consistent reading of the clause and it is what bandMatch()
- *             returns.
- *
- *             THE CORRIDOR OF A YOUNG TEMPLATE IS INHERITED, and this is the
- *             one thing the clause does not specify. A corridor is a spread
- *             estimate, and a template with one member has none:
- *             lo[c] == hi[c] at every column, so a second beat of the SAME
- *             morphology scores ~0 and spawns yet another template. Left alone
- *             that makes the spec's own metric unable to grow a template it
- *             just opened. So below kMinMembersForCorridor a template's
- *             corridor is widened to slot 0's spread at each column: "this
- *             morphology's variability is not yet known, and is assumed no
- *             tighter than sinus". The assumption is conservative in the right
- *             direction -- it can let a beat in, never keep one out -- and it
- *             introduces no second threshold, which the clause does forbid.
- *
- *             Pearson r is retained for ONE purpose only: reporting. It is
- *             written alongside the band-match score in the per-beat archive
- *             because the two disagree informatively -- r is blind to
- *             amplitude, the corridor is not, so a beat with high r and low
- *             band-match is an amplitude outlier of a known shape, which is a
- *             real finding and was invisible while r was the only number.
- *             Nothing routes on it.
- *
- *          2. ONE THRESHOLD, NOT TWO. The same floor decides "this beat
- *             belongs to that template" and "no new template is needed". The
- *             spec forbids a second looser assignment threshold, and the
- *             reason is worth keeping in view: a two-number scheme (assign at
- *             0.70, spawn below 0.85) files beats into templates they do not
- *             match, which is precisely the variance inflation this section
- *             exists to remove -- now hidden inside a cluster instead of
- *             visible as a bad median.
- *
- *          3. TEMPLATES UPDATE BY MEDIAN OVER MEMBERS. Column-wise
- *             NaN-skipping median, matching create_ecg_templates.hpp's
- *             medianOver(). NOT the alpha = 1/8 EWMA from the beat
- *             substitution section: an EWMA is a recursion whose result
- *             depends on arrival order, and pass 2 exists specifically to
- *             remove order dependence. Median-over-members also keeps the
- *             archive property that a template is exactly reconstructible
- *             from the per-beat flags -- anyone can recompute the median from
- *             the CSV and get the same numbers.
- *
- *          4. LABEL CODES ARE annotation_types CODES, NOT A PARALLEL ENUM.
- *             annotation_types.hpp is the stated single source of truth for
- *             marking codes; a BeatClass enum duplicating PVC/PAC/AF/SVT/VT
- *             here would be a second place for them to drift. label_code is
- *             the raw code, with 0 reserved for UNLABELED. Note that PVC is
- *             code 4 and PAC is code 5 in that table, while the addendum text
- *             says "PVC is annotation type 5" -- the table wins, or every PVC
- *             template gets labeled PAC.
- *
- *          5. SUBTYPE INDICES ARE STORED, NOT DERIVED FROM POSITION. Merging
- *             erases an element and shifts everything after it, so a subtype
- *             derived from bank position would silently renumber PVC-2 to
- *             PVC-1 and break comparability against previously archived
- *             features. Assigned once, on first confirmation, then immutable
- *             -- including across pass 2.
- *
- *          6. BANKS ARE PER CHANNEL, and channels are allowed to disagree on
- *             template count. The bin-level monomorphic/polymorphic verdict is
- *             the MAX over ECG channels of the confirmed-PVC-template count
- *             (see polymorphicVerdict). Because only CONFIRMED templates
- *             count, the algorithm can propose a second morphology but cannot
- *             declare polymorphy by itself -- it is an operator-gated finding.
- *
- *          7. LABELS PROPAGATE BY BEAT IDENTITY, not by template index.
- *             ch1's template 2 and ch2's template 2 are different beat sets,
- *             so confirming a beat must label whichever template contains that
- *             beat on EACH channel. propagateLabel() takes a beat index for
- *             this reason and not a template id.
  */
 
 #include <algorithm>
@@ -126,75 +20,18 @@
 #include <string>
 #include <vector>
 
- // NO PROJECT INCLUDES ON PURPOSE. Anchors are keyed as int32_t rather than
- // AnchorType so this header pulls in nothing from the tree: template_io.hpp
- // stores anchor tags as int for the same reason ("to keep this header free of
- // the feature_marks dependency"), and the bank has to be storable from there.
- // Cast with static_cast<int32_t>(AnchorType::...) at call sites that have it.
-
 namespace tbank {
-
-    // ---------------------------------------------------------------------
-    // Constants
-    // ---------------------------------------------------------------------
-
-    // Section 4.6 morphology thresholds, as CORRELATIONS. Used both for
-    // assignment and for spawning -- see design note 2.
-    // ---- SECTION 4.6 MORPHOLOGY THRESHOLDS, RUNTIME-SETTABLE -------------
-    //
-    // The spec's defaults. Used for assignment AND for spawning -- see design
-    // note 2; there is deliberately no second, looser assignment threshold.
-    inline constexpr double kDefaultMatchFloorEcg = 0.85;
-    inline constexpr double kDefaultMatchFloorPpg = 0.80;
-
-    // The values actually in force. Set once from config.csv at startup, via
-    // setMatchFloors(); read everywhere through the accessors below.
-    //
-    // WHY NOT constexpr ANY MORE. These were compile-time constants, which
-    // meant the only way to try 0.90 was to rebuild. They are the two numbers
-    // most likely to need tuning per dataset -- a pulse channel at 0.80 admits
-    // far more on a clean arterial line than on a sleep-study pulse-ox -- and
-    // the whole partition, every spawn and every merge, turns on them.
-    //
-    // READ THROUGH THE FUNCTIONS, never by capturing the variable. A caller
-    // that copies the value into its own constant at static-init time gets
-    // whatever was in force before the config was read, which is the default,
-    // silently.
     namespace detail_floors {
-        inline double g_ecg = kDefaultMatchFloorEcg;
-        inline double g_ppg = kDefaultMatchFloorPpg;
+        inline double g_ecg = 0.0;   //these are set later by the config
+        inline double g_ppg = 0.0;
     }
 
     inline double matchFloorEcg() { return detail_floors::g_ecg; }
     inline double matchFloorPpg() { return detail_floors::g_ppg; }
 
-    // Returns false and changes NOTHING if either value is outside (0, 1].
-    //
-    // A blank config cell parses to 0.0 through the loader's stod_or_zero, and
-    // a floor of 0.0 accepts every beat against every template -- one template
-    // per bin, no ectopy ever separated, and no error anywhere to say why. So
-    // an unusable value leaves the default in place rather than being applied.
-    // A floor above 1.0 is the opposite failure: correlation cannot exceed 1,
-    // so every beat spawns and the bank fills with singletons.
-    // ---- MINIMUM BEATS FOR A TEMPLATE TO EXIST AT ALL --------------------
-    //
-    // A template built from too few beats is a median over too few
-    // contributors to be a reference for anything. On a real record 44 of 162
-    // columns held a single beat and 25 landmark columns held fewer than four,
-    // so the operator was being asked to place fiducials on 2-beat waveforms.
-    //
-    // SEPARATE FROM kMinMembersForColumn, which is the junk/noise CATEGORY
-    // gate and stays where it is. This one is set per dataset from config.csv
-    // and decides whether the column is written and drawn at all.
-    //
-    // 0 MEANS NO MINIMUM, and it is the default, so a config without these
-    // columns suppresses nothing.
-    inline constexpr int kDefaultMinBeatsEcg = 0;
-    inline constexpr int kDefaultMinBeatsPpg = 0;
-
     namespace detail_minbeats {
-        inline int g_ecg = kDefaultMinBeatsEcg;
-        inline int g_ppg = kDefaultMinBeatsPpg;
+        inline int g_ecg = 0.0; //these are also set later by the config
+        inline int g_ppg = 0.0;
     }
 
     inline int minBeatsEcg() { return detail_minbeats::g_ecg; }
@@ -336,35 +173,7 @@ namespace tbank {
         return label_code == kCodePvc || label_code == kCodeVt;
     }
 
-    // ---------------------------------------------------------------------
-    // Per-beat flags. Three independent axes, written for EVERY beat.
-    //
-    // They are allowed to disagree, and each disagreement is informative:
-    //
-    //   REGULAR + pvc NONE  + rejected      subtle noise the classifier missed
-    //   REGULAR + pvc set   + kept          a PAC the classifier missed
-    //   ECTOPIC + pvc NONE  + not eligible  late ventricular beat, or a beat
-    //                                       mid-run where the trailing median
-    //                                       had already collapsed
-    //
-    // Because the PVC filter runs across ALL beats, not just category 1, the
-    // timing-vs-shape agreement matrix falls out of the archive for free.
-    // ---------------------------------------------------------------------
-
-    // Derived from operator marks, so this is always populated: the absence of
-    // a mark IS the regular verdict, and there is no moment at which a beat's
-    // category is unknown. REGULAR is therefore the default, not a sentinel.
-    //
-    // Do not confuse this with beat_classifier.hpp's UNKNOWN, which reports
-    // that the ONNX model is not wired. The category axis does not depend on
-    // that model.
-    //
-    // NOISE here means the operator's 2) Minor Noise mark. The bank will find
-    // additional noise the operator never marked -- artifact that slipped past
-    // detection, correlating with nothing and sitting alone in its own
-    // template. That is not an unset category; it is classification being
-    // wrong in a way the bank surfaces, and the per-beat flags are what make
-    // the disagreement visible.
+    //the only categories taken into account are regular - eventually there will be 5
     enum class Category : uint8_t {
         REGULAR = 1,   // unmarked; also 6) Cond. Delay, 7) AF, 8) SVT for now
         ECTOPIC = 2,   // marks 4) PVC, 5) PAC, 9) VT, and the postEligible
@@ -673,14 +482,9 @@ namespace tbank {
         // that channel, and they differ between siblings.
         int32_t n_ppg_members = -1;
 
-        // Members a Tukey pass rejected, counted where the flags are indexed
-        // the same way the group's membership is -- in the joint projection,
-        // over SLICES. It cannot be recounted downstream: BankTemplate::members
-        // is in the channel's own local row space and the flag vector is in
-        // slice space, so indexing one with the other silently reads another
-        // beat's verdict. Which is exactly what the aggregate helpers in
-        // morphology_csv used to do.
-        int32_t n_tukey_members = 0;
+        int32_t n_tukey_members = 0;// how many members were rejected due to tukey? this is the FINAL rejection step after morphology split and premature/voting split
+        uint32_t n_blended_members = 0;//how many members were blended with the ones beside them due to being PVC or voted PVC
+        double mean_rr_ms = 0.0;// mean R-R over this template's member slices, ms; 0 = unknown. 60000/this = bpm
 
         // ---- THE OPERATOR'S QUALITY VERDICT ON THIS PANEL -----------------
         //
@@ -734,16 +538,8 @@ namespace tbank {
                 ? 0 : members.size() - members_clean.size());
         }
 
-        // TOO FEW BEATS TO BE A TEMPLATE, against the configured minimum for
-        // this channel kind (tbank::minBeatsEcg / minBeatsPpg). Reported in the
-        // archive and used to suppress the column entirely.
-        //
-        // ON cleanCount(), not memberCount(): the question is how many beats
-        // are actually behind the drawn waveform, and premature or
-        // Tukey-rejected members are not.
-        //
-        // A zero minimum returns false for everything, which is the default --
-        // nothing is suppressed unless the operator configured a threshold.
+        //the minimum beats to be a template is stored in the config, i have it as 8 right now but it can change
+        //(I know this comment is terrible and begging to be stale but i don't think i'm changing it from 8)
         bool tooFewBeats(bool is_ppg) const {
             const int lim = is_ppg ? minBeatsPpg() : minBeatsEcg();
             return lim > 0 && cleanCount() < lim;

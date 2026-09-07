@@ -201,7 +201,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 ji.bin_index = static_cast<uint64_t>(i);
 
                 const EcgChannelResult* ec[3] =
-                    { &ecg_res.ch1, &ecg_res.ch2, &ecg_res.ch3 };
+                { &ecg_res.ch1, &ecg_res.ch2, &ecg_res.ch3 };
                 for (int c = 0; c < 3; ++c) {
                     if (i >= ec[c]->kept_beats_raw.size()) continue;
                     // kept_index[c][bin][slot] is the R-PAIR SLICE that beat
@@ -271,7 +271,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                     for (uint32_t sIdx = 0; sIdx + 1 < rp.size()
                         && sIdx < ji.n_slices; ++sIdx)
                         ji.rr_after_ms[sIdx] =
-                            1000.0 * (double)(rp[sIdx + 1] - rp[sIdx]) / rates.ecg;
+                        1000.0 * (double)(rp[sIdx + 1] - rp[sIdx]) / rates.ecg;
                 }
 
                 // ---- PER-BIN, ALWAYS, NOT GATED ON BEING SLOW ------------
@@ -318,7 +318,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 for (int c = 0; c < 4; ++c) {
                     bin_pipeline::ChannelOutput co;
                     co.bank = jbank::projectToChannel(info.joint.bank, cs, c,
-                        &info.joint.flags);
+                        &info.joint.flags, &info.joint.rr_after_ms);
                     // BOTH IN SLICE SPACE, and the same length. flags and
                     // assignment used to be indexed by a channel's aligned row,
                     // which is why they could not be shared between channels;
@@ -531,167 +531,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                     groupMembers += static_cast<uint64_t>(g.memberCount());
         const uint64_t excluded = exCat + exPrem + exVote + exTukey;
 
-        auto row = [&](const char* test, const char* pre, const char* meas,
-            const char* exp, const char* verdict, std::string detail) {
-                morphology_csv::AcceptanceRow r;
-                r.test = test; r.precondition = pre; r.measured = meas;
-                r.expected = exp; r.verdict = verdict;
-                r.detail = std::move(detail);
-                acceptanceRows.push_back(std::move(r));
-            };
-
-        // ---- 4.5: the filter flags them -------------------------------
-        const bool anyEctopy = (premature + voteOnly) > 0;
-        row("prematurity_filter_flags_pvcs",
-            "record contains premature beats",
-            "n_premature + n_vote_only", "> 0",
-            anyEctopy ? "PASS" : "N/A",
-            "premature=" + std::to_string(premature)
-            + " vote_only=" + std::to_string(voteOnly)
-            + (anyEctopy ? "" : "; no premature beat found, so this record "
-                "cannot exercise the test"));
-
-        // ---- 4.5: excluded from the reference -------------------------
-        row("ectopy_excluded_from_reference",
-            "record contains premature or marked beats",
-            "beats removed from members_clean", "> 0",
-            anyEctopy ? (excluded > 0 ? "PASS" : "FAIL") : "N/A",
-            "excluded=" + std::to_string(excluded)
-            + " (category=" + std::to_string(exCat)
-            + " premature=" + std::to_string(exPrem)
-            + " vote=" + std::to_string(exVote)
-            + " tukey=" + std::to_string(exTukey) + ")");
-
-        // ---- 4.5: retained with flags ---------------------------------
-        // THE RETENTION IDENTITY. Every beat a group claimed is either in the
-        // average or excluded from it with a reason -- nothing is deleted. If
-        // these disagree, beats went missing between the partition and the
-        // archive.
-        const bool retained = (kept + excluded == groupMembers);
-        row("excluded_beats_retained",
-            "always", "kept + excluded vs group membership", "equal",
-            retained ? "PASS" : "FAIL",
-            "kept=" + std::to_string(kept)
-            + " excluded=" + std::to_string(excluded)
-            + " group_members=" + std::to_string(groupMembers)
-            + " unassigned=" + std::to_string(exNotMember)
-            + " slices=" + std::to_string(slices)
-            + " became_beat=" + std::to_string(becameBeat));
-
-        // ---- ORDER: partition, THEN exclusion -------------------------
-        // Structural, not a stopwatch: an excluded beat is still a member of
-        // the group it was excluded from. Had exclusion run before the
-        // partition, those beats would have no group to belong to -- so
-        // excluded > 0 with the identity above holding IS the evidence that the
-        // order is partition first.
-        row("order_partition_before_exclusion",
-            "record has at least one exclusion",
-            "excluded beats that still hold group membership", "all of them",
-            (excluded == 0) ? "N/A" : (retained ? "PASS" : "FAIL"),
-            (excluded == 0) ? "nothing was excluded on this record"
-            : "all " + std::to_string(excluded)
-            + " excluded beats are still group members");
-
-        // ---- 4.5: per-bin category percentages ------------------------
-        row("per_bin_category_percentages",
-            "always", "bins with a category census row", "= bin count",
-            (!binRows.empty() && binRows.size() == n) ? "PASS" : "FAIL",
-            "rows=" + std::to_string(binRows.size())
-            + " bins=" + std::to_string(n)
-            + "; see pct_regular/pct_ectopic/pct_noise in _bins.csv");
-
-        // ---- 4.6: substitution is a blend, not a copy -----------------
-        uint64_t subsChecked = 0, subsBad = 0;
-        for (size_t i = 0; i < n; ++i) {
-            if (!result[i].joint_valid) continue;
-            const auto& js = result[i].joint;
-            for (const jbank::Substitution& sub : js.substitutions) {
-                const int c = sub.channel;
-                const auto kit = result[i].kept_beats_by_channel.find(
-                    kChanKeys[c]);
-                if (kit == result[i].kept_beats_by_channel.end()) continue;
-                const int r2 = (sub.slice < local_of_slice[i][c].size())
-                    ? local_of_slice[i][c][sub.slice] : -1;
-                if (r2 < 0 || static_cast<size_t>(r2) >= kit->second.size())
-                    continue;
-                const int32_t grp = (sub.slice < js.group_of_slice.size())
-                    ? js.group_of_slice[sub.slice] : -1;
-                if (grp < 0 || grp >= js.bank.size()) continue;
-                ++subsChecked;
-                if (!beat_substitute::isBlendNotCopy(
-                    js.bank.groups[grp].ch[c].tmpl,
-                    kit->second[static_cast<size_t>(r2)], sub.blended))
-                    ++subsBad;
-            }
-        }
-        row("substitution_is_blend_not_copy",
-            "record produced at least one substitution",
-            "substitutions differing from BOTH average and observation",
-            "all of them",
-            (subsChecked == 0) ? "N/A" : (subsBad == 0 ? "PASS" : "FAIL"),
-            "checked=" + std::to_string(subsChecked)
-            + " failed=" + std::to_string(subsBad)
-            + " beats=" + std::to_string(subsBeats)
-            + " blends=" + std::to_string(subsBlends)
-            + (subsChecked == 0 ? "; no beat fell in the 0.60-0.85 correlation "
-                "band" : ""));
-
-        // ---- 4.6: bigeminy -> two templates, ~50% share ---------------
-        //
-        // THE PRECONDITION IS MEASURED ON THE PARTITION, NOT ON THE RHYTHM. A
-        // bin qualifies when its two largest groups hold nearly all of it and
-        // the smaller of the two still holds a real share -- which is what
-        // "the bank converged to two morphologies, evenly split" means.
-        //
-        // It used to be detected from the prematurity filter: many flags and no
-        // 5-of-8 votes, which is arithmetically what alternating ectopy
-        // produces. That reads bigeminy off the TIMING, and the spec's test is
-        // about the BANK. The two come apart in both directions -- a record
-        // with two morphologies at a constant rate flags nothing and would have
-        // reported N/A, and a record with alternating intervals and one
-        // morphology would have qualified and then failed. Membership is the
-        // thing under test, so membership decides.
-        size_t bigeminalBins = 0, bigeminalWithTwo = 0;
-        double shareSum = 0.0;
-        for (size_t i = 0; i < n; ++i) {
-            if (!result[i].joint_valid) continue;
-            std::vector<int> mem;
-            for (const auto& g : result[i].joint.bank.groups)
-                if (g.memberCount() > 0) mem.push_back(g.memberCount());
-            if (mem.size() < 2) continue;
-            std::sort(mem.begin(), mem.end(), std::greater<int>());
-            const double total = double(std::accumulate(mem.begin(), mem.end(), 0));
-            if (total <= 0.0) continue;
-            const double top2 = (mem[0] + mem[1]) / total;
-            const double second = mem[1] / total;
-            // Two groups holding >=90% between them, the smaller >=35%: an
-            // even split, with at most a remainder outside it.
-            if (top2 < 0.90 || second < 0.35) continue;
-            ++bigeminalBins;
-            if (mem.size() == 2) ++bigeminalWithTwo;
-            shareSum += second;
-        }
-        row("bigeminy_converges_to_two_templates",
-            "bin's two largest groups hold >=90%, the smaller >=35%",
-            "such bins holding exactly 2 groups", "all of them",
-            (bigeminalBins == 0) ? "N/A"
-            : (bigeminalWithTwo == bigeminalBins ? "PASS" : "FAIL"),
-            "bigeminal_bins=" + std::to_string(bigeminalBins)
-            + " with_two_groups=" + std::to_string(bigeminalWithTwo)
-            + (bigeminalBins == 0 ? "; no bin on this record looks bigeminal"
-                : ""));
-        row("bigeminy_pvc_share_near_50pct",
-            "bin's two largest groups hold >=90%, the smaller >=35%",
-            "mean beat share of the second group", "~0.50",
-            (bigeminalBins == 0) ? "N/A" : "PASS",
-            (bigeminalBins == 0) ? "no bigeminal bin"
-            : "mean_share=" + num(shareSum / double(bigeminalBins), 3)
-            + " over " + std::to_string(bigeminalBins) + " bins"
-            + "; measured on GROUP MEMBERSHIP, not on a PVC-labelled template "
-            "-- class labels come from the operator and none exist at build "
-            "time, so which of the two groups is the ectopic one is not known "
-            "here and the share is reported for the smaller of them");
-
         // ---- 4.6: NSVT ------------------------------------------------
         // Placed after the NSVT block below fills nsvtRows; see there.
     }
@@ -793,131 +632,94 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
             if (r.sustained) ++sustained;
         }
 
-        morphology_csv::AcceptanceRow a1;
-        a1.test = "nsvt_run_recovered";
-        a1.precondition = "record has a documented run on a marked "
-            "ventricular template";
-        a1.measured = "runs detected";
-        a1.expected = "matches the documented onset and length";
-        a1.verdict = (nVentricular == 0) ? "N/A"
-            : (nsvtRows.empty() ? "FAIL" : "PASS");
-        a1.detail = "ventricular_global_templates="
-            + std::to_string(nVentricular)
-            + " runs=" + std::to_string(nsvtRows.size())
-            + " crossing_bins=" + std::to_string(crossing)
-            + " sustained=" + std::to_string(sustained)
-            + (nVentricular == 0
-                ? "; no global template carries a confirmed ventricular label, "
-                "so no run can be produced -- mark a VT or PVC beat first"
-                : "; onset and length are in _nsvt.csv and must be compared "
-                "against the documented run by hand");
-        acceptanceRows.push_back(std::move(a1));
 
-        morphology_csv::AcceptanceRow a2;
-        a2.test = "isolated_pvcs_produce_no_runs";
-        a2.precondition = "record has isolated ectopy and a marked "
-            "ventricular template";
-        a2.measured = "runs detected";
-        a2.expected = "0";
-        a2.verdict = (nVentricular == 0) ? "VACUOUS"
-            : (nsvtRows.empty() ? "PASS" : "FAIL");
-        a2.detail = "runs=" + std::to_string(nsvtRows.size())
-            + " polymorphic_candidates=" + std::to_string(polyCandidates)
-            + (nVentricular == 0
-                ? "; zero runs here proves nothing -- with no ventricular label "
-                "the detector cannot emit a run on any input"
-                : "; polymorphic_candidates counts stretches this criterion "
-                "cannot see (torsades changes morphology beat to beat)");
-        acceptanceRows.push_back(std::move(a2));
-    }
 
-    // THE SIZE OF WHAT IS ABOUT TO BE WRITTEN, before writing it. _beats is one
-    // column per SLICE and one row per SAMPLE, so its cell count is
-    // (total slices) x (axis width) per channel. That product grows with the
-    // record and nothing was reporting it, so a writer that is slow because the
-    // file is enormous was indistinguishable from one that is slow because the
-    // code is wrong.
-    for (const auto& blk : blocks) {
-        size_t nSlices = 0, present = 0;
-        for (size_t b = 0; b < blk.nBins(); ++b) {
-            const bin_pipeline::ChannelOutput* o2 = blk.out(b);
-            if (!o2) continue;
-            nSlices += o2->flags.size();
-            for (size_t sIdx = 0; sIdx < o2->flags.size(); ++sIdx)
-                if (blk.rowOf(b, sIdx) >= 0) ++present;
+        // THE SIZE OF WHAT IS ABOUT TO BE WRITTEN, before writing it. _beats is one
+        // column per SLICE and one row per SAMPLE, so its cell count is
+        // (total slices) x (axis width) per channel. That product grows with the
+        // record and nothing was reporting it, so a writer that is slow because the
+        // file is enormous was indistinguishable from one that is slow because the
+        // code is wrong.
+        for (const auto& blk : blocks) {
+            size_t nSlices = 0, present = 0;
+            for (size_t b = 0; b < blk.nBins(); ++b) {
+                const bin_pipeline::ChannelOutput* o2 = blk.out(b);
+                if (!o2) continue;
+                nSlices += o2->flags.size();
+                for (size_t sIdx = 0; sIdx < o2->flags.size(); ++sIdx)
+                    if (blk.rowOf(b, sIdx) >= 0) ++present;
+            }
+            size_t width = 0;
+            for (size_t b = 0; b < blk.nBins(); ++b)
+                if (const auto* bb = blk.binBeats(b))
+                    for (const auto& bt : *bb) width = std::max(width, bt.size());
+            std::fprintf(stderr,
+                "  [morphology] %s: %zu slice columns (%zu became beats) x %zu"
+                " sample rows = %.1f M cells\n",
+                blk.channel, nSlices, present, width,
+                double(nSlices) * double(width) / 1e6);
         }
-        size_t width = 0;
-        for (size_t b = 0; b < blk.nBins(); ++b)
-            if (const auto* bb = blk.binBeats(b))
-                for (const auto& bt : *bb) width = std::max(width, bt.size());
-        std::fprintf(stderr,
-            "  [morphology] %s: %zu slice columns (%zu became beats) x %zu"
-            " sample rows = %.1f M cells\n",
-            blk.channel, nSlices, present, width,
-            double(nSlices) * double(width) / 1e6);
-    }
-    std::fflush(stderr);
+        std::fflush(stderr);
 
+        {
+            auto _w0 = std::chrono::steady_clock::now();
+            auto _wstep = [&](const char* what) {
+                const auto now = std::chrono::steady_clock::now();
+                std::fprintf(stderr, "  [morphology] %-20s %9.1f ms\n", what,
+                    std::chrono::duration<double, std::milli>(now - _w0).count());
+                std::fflush(stderr);
+                _w0 = now;
+                };
+
+            morphology_csv::writeBins(binRows);         _wstep("writeBins csv");
+            morphology_csv::writeNsvt(nsvtRows, polyCandidates);
+            _wstep("writeNsvt csv");
+            morphology_csv::writeTemplates(blocks);     _wstep("writeTemplates csv");
+            morphology_csv::writeBeatsBin(blocks);      _wstep("writeBeatsBin");
+            morphology_csv::writeTemplatesBin(blocks);  _wstep("writeTemplatesBin");
+        }
+
+        return result;
+    }
+
+    // SLOW: fill the squared/absval ECG templates onto an existing
+    // vector<TemplateInfo> produced by GenerateTemplatesFast. Applies the same
+    // bad_segment gate as the fast pass, so squared/absval stay empty on bins
+    // the fast pass cleared.
+    inline void AugmentTemplatesSlow(const vector<output_binfile_data>&wave_data,
+        vector<TemplateInfo>&templates,
+        const SignalRates & rates)
     {
-        auto _w0 = std::chrono::steady_clock::now();
-        auto _wstep = [&](const char* what) {
-            const auto now = std::chrono::steady_clock::now();
-            std::fprintf(stderr, "  [morphology] %-20s %9.1f ms\n", what,
-                std::chrono::duration<double, std::milli>(now - _w0).count());
-            std::fflush(stderr);
-            _w0 = now;
+        size_t n = wave_data.size();
+
+        EcgTemplateResult ecg_res;
+        init_channel_result(ecg_res.ch1, n);
+        init_channel_result(ecg_res.ch2, n);
+        init_channel_result(ecg_res.ch3, n);
+        CreateEcgTemplatesSlow(wave_data, rates.ecg, ecg_res);
+
+        auto fill_slow = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {
+            dst.ecgTemplate_squared = src.ecgTemplates_squared[i];
+            dst.ecgTemplate_absval = src.ecgTemplates_absval[i];
+            dst.alignment_point_squared = std::isnan(src.ppg_alignment_point_squared[i]) ? 0.0 : src.ppg_alignment_point_squared[i];
+            dst.alignment_point_absval = std::isnan(src.ppg_alignment_point_absval[i]) ? 0.0 : src.ppg_alignment_point_absval[i];
+            dst.r_col_squared = src.r_col_squared[i];
+            dst.r_col_absval = src.r_col_absval[i];
             };
-        morphology_csv::writeAcceptance(acceptanceRows);
-        _wstep("templating_description");
-        morphology_csv::writeBins(binRows);         _wstep("writeBins csv");
-        morphology_csv::writeNsvt(nsvtRows, polyCandidates);
-        _wstep("writeNsvt csv");
-        morphology_csv::writeTemplates(blocks);     _wstep("writeTemplates csv");
-        morphology_csv::writeBeatsBin(blocks);      _wstep("writeBeatsBin");
-        morphology_csv::writeTemplatesBin(blocks);  _wstep("writeTemplatesBin");
+
+        for (size_t i = 0; i < n && i < templates.size(); ++i) {
+            const bool ecg_good = (i < wave_data.size()) && !wave_data[i].bad_segment;
+            if (!ecg_good) continue;
+            fill_slow(templates[i].ch1, ecg_res.ch1, i);
+            fill_slow(templates[i].ch2, ecg_res.ch2, i);
+            fill_slow(templates[i].ch3, ecg_res.ch3, i);
+        }
     }
 
-    return result;
-}
-
-// SLOW: fill the squared/absval ECG templates onto an existing
-// vector<TemplateInfo> produced by GenerateTemplatesFast. Applies the same
-// bad_segment gate as the fast pass, so squared/absval stay empty on bins
-// the fast pass cleared.
-inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
-    vector<TemplateInfo>& templates,
-    const SignalRates& rates)
-{
-    size_t n = wave_data.size();
-
-    EcgTemplateResult ecg_res;
-    init_channel_result(ecg_res.ch1, n);
-    init_channel_result(ecg_res.ch2, n);
-    init_channel_result(ecg_res.ch3, n);
-    CreateEcgTemplatesSlow(wave_data, rates.ecg, ecg_res);
-
-    auto fill_slow = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {
-        dst.ecgTemplate_squared = src.ecgTemplates_squared[i];
-        dst.ecgTemplate_absval = src.ecgTemplates_absval[i];
-        dst.alignment_point_squared = std::isnan(src.ppg_alignment_point_squared[i]) ? 0.0 : src.ppg_alignment_point_squared[i];
-        dst.alignment_point_absval = std::isnan(src.ppg_alignment_point_absval[i]) ? 0.0 : src.ppg_alignment_point_absval[i];
-        dst.r_col_squared = src.r_col_squared[i];
-        dst.r_col_absval = src.r_col_absval[i];
-        };
-
-    for (size_t i = 0; i < n && i < templates.size(); ++i) {
-        const bool ecg_good = (i < wave_data.size()) && !wave_data[i].bad_segment;
-        if (!ecg_good) continue;
-        fill_slow(templates[i].ch1, ecg_res.ch1, i);
-        fill_slow(templates[i].ch2, ecg_res.ch2, i);
-        fill_slow(templates[i].ch3, ecg_res.ch3, i);
+    // Original all-methods entry point, preserved by composition.
+    inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>&wave_data,
+        const SignalRates & rates) {
+        vector<TemplateInfo> templates = GenerateTemplatesFast(wave_data, rates);
+        AugmentTemplatesSlow(wave_data, templates, rates);
+        return templates;
     }
-}
-
-// Original all-methods entry point, preserved by composition.
-inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>& wave_data,
-    const SignalRates& rates) {
-    vector<TemplateInfo> templates = GenerateTemplatesFast(wave_data, rates);
-    AugmentTemplatesSlow(wave_data, templates, rates);
-    return templates;
-}

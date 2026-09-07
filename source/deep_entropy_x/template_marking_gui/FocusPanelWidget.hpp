@@ -56,7 +56,7 @@ public:
         int nBeats,
         int landmarkCol,
         const QString& label,
-        int halfWindowSamples = 30,
+        int halfWindowSamples = 100,
         int framingBias = 0);
 
     // Clear the panel (no landmark selected).

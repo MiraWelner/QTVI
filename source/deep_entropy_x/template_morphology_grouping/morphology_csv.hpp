@@ -1,104 +1,11 @@
 #pragma once
 /**
  * @file   morphology_csv.hpp
- * @brief  Section 4.5-4.6 outputs, two granularities x two encodings:
+ * @brief  The descriptions of the outputs, per tempalte and per bin. beats.csv was too large so its just beats.bin
  *
- *           <stem>_beats.csv      one column per BEAT       (text)
  *           <stem>_templates.csv  one column per TEMPLATE   (text)
  *           <stem>_beats.bin      the same, binary
  *           <stem>_templates.bin  the same, binary
- *
- *         The CSVs are descriptor rows on top, then waveform rows below,
- *         sharing one column layout so a column can be sliced and read whole.
- *         The .bin files carry identical content COLUMN-MAJOR: each column's
- *         descriptors immediately followed by its samples, so one seek reads one
- *         beat or one template whole.
- *
- *         WHY A BINARY FORM AT ALL. beats.csv is one column per beat, so a
- *         16-bin record runs to roughly 16,000 columns and every sample is
- *         written as decimal text -- the file is large, slow to parse, and past
- *         Excel's 16,384-column ceiling anyway. The .bin is a fifth the size,
- *         parses in one pass, and round-trips doubles exactly, which the CSV
- *         does not: text formatting loses low-order bits, so a CSV round-trip
- *         cannot reproduce a median bit-for-bit.
- *
- *         DESCRIPTORS ARE CODES, NOT STRINGS, in the binary form. The CSV spells
- *         out "premature" and "ectopic" for a human; the .bin stores the enum
- *         values those words came from. Nothing is lost -- the same enums
- *         generate both -- and it removes the parse step where a reader has to
- *         match strings that a later spelling change would silently break.
- *
- *         WHY TWO FILES AND NOT ONE. The descriptors mean different things at
- *         the two granularities and cannot be folded. Per BEAT, category /
- *         premature / tukey are the actual verdicts on that beat. Per TEMPLATE
- *         they can only be summaries of its members, which is a different claim:
- *         a template whose row 4 reads `premature` holds a majority of premature
- *         beats, not a premature beat. Putting both in one file would make row 4
- *         mean two things depending on which section you were in.
- *
- *         WHY THIS IS WRITTEN HERE AND NOT BY THE VIEWER. The viewer's
- *         writeAlignedTemplateCsv() previously produced this file, in long
- *         format: one row per SAMPLE per bin, columns being signals. It cannot
- *         produce a per-beat file, because the viewer has no beats -- it loads
- *         TemplateBin, which holds templates only, and there is no m_beats or
- *         BeatsFile anywhere in it. The beat matrices exist on the generation
- *         side (alignment's aligned.beats), so the writer lives here.
- *
- *         That makes the viewer's writeAlignedTemplateCsv() dead for this file
- *         and it must be retired, or the two writers will each clobber the
- *         other depending on run order.
- *
- *         Each column is one beat. Read top to bottom:
- *
- *           row 1  category    pqrst | ectopic | noise
- *           row 2  bin         bin index (bin length set by the config file)
- *           row 3  template    the template this beat was assigned to:
- *                              PQRST_A, PQRST_B ... or PVC_A, PVC_B ...
- *           row 4  premature   premature | vote | no
- *           row 5  tukey       removed | kept | not_eligible
- *
- *         WHY PER BEAT AND NOT PER TEMPLATE. Four of the five rows ARE per-beat
- *         verdicts. Category comes from the operator's mark on that beat,
- *         prematurity from the timing test on that beat's RR, and the Tukey
- *         outcome from that beat's position in the distribution. Only row 3 is a
- *         template property, and it is the assignment -- which template this
- *         beat landed in. Aggregating any of the other four to the template
- *         level would report a majority and discard the disagreements, and the
- *         disagreements are the informative part.
- *
- *         WHY ROWS 3 AND 4 MAY DISAGREE, AND MUST. 4.6 never reassigns a
- *         category; it only excludes. Row 3 is the CLASS -- what the beat is,
- *         which is the operator's judgment propagated through the template. Row
- *         4 is a REFERENCE-SET FLAG -- whether the timing filter excluded it
- *         from the sinus reference. A beat in PVC_A that reads `no` on row 4 is
- *         a late ventricular beat, or a beat inside a run where the trailing-ten
- *         median had already collapsed and the ratio stopped firing. A beat that
- *         reads `premature` but sits in a PQRST template is very likely a PAC:
- *         early, but conducted normally, so it looks like sinus. Reconciling the
- *         two rows would erase exactly these cases.
- *
- *         WHY ROW 1 IS THREE VALUES AND NOT FIVE. The five 4.5 categories come
- *         later; today the operator's markers support three. A `noise` column
- *         means the user marked that beat Minor Noise -- noise that does not
- *         disturb R-peak detection. Signal marked R Peak Noise cannot appear
- *         here at all: that mark suppresses detection, so no beats exist in
- *         those spans to have a column.
- *
- *         WHY ROW 3 SAYS PQRST WHEN NOTHING IS MARKED. Because it is not a
- *         label. "A template with no confirmed member stays unlabeled" -- PQRST
- *         is how an unlabeled template presents, and the letter after it is the
- *         algorithm's separation index, not a class. The `confirmed` row below
- *         keeps presumption and confirmation in separate fields, because only
- *         confirmed labels are usable as training data later and a training set
- *         that silently absorbed presumptions would be learning the algorithm's
- *         own guesses.
- *
- *         WIDTH WARNING. A 15-minute bin holds roughly a thousand beats, so a
- *         16-bin record is around 16,000 columns per channel. Excel stops at
- *         16,384 columns and will refuse or truncate; pandas, R and awk are
- *         fine. Channels are written as separate row BLOCKS rather than extra
- *         columns for this reason -- tripling the width would put every record
- *         past that limit.
  */
 
 #include <cmath>
@@ -146,44 +53,6 @@ namespace morphology_csv {
             return "pqrst";   // unreachable; every enumerator is named above
         }
 
-        // Row 3: the class, then an underscore and the letter the ALGORITHM
-        // assigned when it separated the morphologies.
-        //
-        // For a confirmed template the letter follows the subtype index the bank
-        // issued (PVC_A, PVC_B); for an unlabeled one it follows spawn order.
-        // The two differ because subtypes are issued per class in order of first
-        // confirmation, while spawn order is order of first appearance -- and
-        // spawn_seq is used rather than the template's current position because
-        // a merge erases an element and shifts everything after it, which would
-        // otherwise renumber templates between runs.
-        // `letter` is the contiguous rank from letterRanks(); pass -1 to fall
-        // back to spawn_seq, which is only correct when no merge has happened
-        // and is kept solely so a caller without a bank in hand still compiles.
-        // CONTIGUOUS, BY RANK AMONG SURVIVORS. This used to return
-        // spawn_seq % 26 for an unlabeled template, which produced A, C, E on a
-        // bank whose B and D had been merged away -- and with 460 merges in a
-        // single bin the surviving letters were effectively arbitrary.
-        //
-        // The old comment defended spawn_seq as stable across runs, unlike bank
-        // position which shifts when a merge erases an element. That argument
-        // does not survive the merge counts actually observed: spawn_seq is a
-        // running total of every template ever created in the bin, so any change
-        // to the metric or the beat set renumbers it wholesale. Neither scheme
-        // is stable across runs, and only one of them reads correctly.
-        //
-        // Rank is taken over spawn_seq rather than over bank position, so the
-        // letters follow ORDER OF FIRST APPEARANCE among the templates that
-        // survived -- which is what the spec means by "in order of first
-        // appearance" -- and a merge that erases an earlier slot does not
-        // reorder the survivors relative to each other.
-        //
-        // A CONFIRMED template still uses its subtype: that index was issued by
-        // the bank at confirmation time, the operator has seen it, and it must
-        // not be renumbered by a later merge elsewhere in the bin.
-        // MOVED TO tbank::letterRanks (template_bank.hpp). The viewer names
-        // templates too and had its own scheme, which disagreed with this one
-        // whenever a lower slot was empty -- one template, two names. Kept as a
-        // forwarder so the call sites below read unchanged.
         inline std::vector<uint8_t> letterRanks(const tbank::TemplateBank& bank) {
             return tbank::letterRanks(bank);
         }
@@ -209,7 +78,7 @@ namespace morphology_csv {
             // templates A, C, E, ... with the gaps being the merged ones.
             if (letterIdx < 0)
                 letterIdx = (letter_rank >= 0) ? letter_rank
-                    : static_cast<int>(t.spawn_seq);
+                : static_cast<int>(t.spawn_seq);
             const char letter = static_cast<char>('A' + (letterIdx % 26));
             return cls + "_" + std::string(1, letter);
         }
@@ -221,6 +90,33 @@ namespace morphology_csv {
             default:                          return "no";
             }
         }
+        inline std::string prematurePctAgg(const tbank::BankTemplate& t) {
+            const uint32_t n = (uint32_t)t.members.size();
+            if (n == 0) return "na";
+            char b[16]; std::snprintf(b, sizeof b, "%.1f",
+                100.0 * double(t.n_premature_members) / double(n)); return b;
+        }
+        inline std::string votedPctAgg(const tbank::BankTemplate& t) {
+            const uint32_t n = (uint32_t)t.members.size();
+            if (n == 0) return "na";
+            char b[16]; std::snprintf(b, sizeof b, "%.1f",
+                100.0 * double(t.n_voted_members) / double(n)); return b;
+        }
+        inline std::string tukeyPctAgg(const tbank::BankTemplate& t) {
+            const int32_t n = (int32_t)t.members.size();
+            const int32_t flagged = t.n_premature_members + t.n_voted_members;
+            const int32_t elig = (n > flagged) ? (n - flagged) : 0;
+            if (elig <= 0) return "na";
+            char b[16]; std::snprintf(b, sizeof b, "%.1f",
+                100.0 * double(t.n_tukey_members) / double(elig)); return b;
+        }
+        inline std::string blendPctAgg(const tbank::BankTemplate& t) {
+            const uint32_t n = (uint32_t)t.members.size();
+            if (n == 0) return "na";
+            char b[16]; std::snprintf(b, sizeof b, "%.1f",
+                100.0 * double(t.n_blended_members) / double(n)); return b;
+        }
+
 
         // Row 5. Tukey runs only on beats NOT flagged premature: a premature
         // beat is already excluded from the reference set, so there is nothing
@@ -506,82 +402,6 @@ namespace morphology_csv {
         return static_cast<bool>(f);
     }
 
-    // =====================================================================
-    // <stem>_templating_description.csv -- THE SPEC'S ACCEPTANCE TESTS,
-    // MEASURED
-    // =====================================================================
-    //
-    // One row per test, each carrying the numbers it was decided on, so a
-    // verdict can be disputed against its own evidence rather than trusted.
-    //
-    // THREE VERDICTS, NOT TWO. Several of these tests are conditional on the
-    // record: "on a record with known bigeminy the bank converges to exactly
-    // two templates" says nothing about a record without bigeminy, and
-    // "isolated unifocal PVCs produce no runs" is satisfied trivially by a
-    // detector that can never produce a run at all. A file that printed PASS
-    // for those would be worse than no file, so a test whose precondition is
-    // unmet reports N/A and says which precondition, and a test that passed
-    // only because nothing could have failed reports VACUOUS.
-    //
-    // Every quantity here is summed from the same per-bin counts that
-    // _bins.csv reports, so the two cannot disagree.
-    struct AcceptanceRow {
-        const char* test = "";
-        const char* precondition = "";
-        const char* measured = "";
-        const char* expected = "";
-        const char* verdict = "";      // PASS / FAIL / N/A / VACUOUS
-        std::string detail;
-    };
-
-    inline bool writeAcceptance(const std::vector<AcceptanceRow>& rows) {
-        if (g_dir.empty() || g_stem.empty()) return false;
-        // Same g_dir as _bins.csv and every other morphology output, and
-        // stem-prefixed for the same reason they are: several records are
-        // written to one folder, and an unprefixed name would have each run
-        // silently overwrite the last one's verdicts.
-        std::ofstream f(g_dir + "/" + g_stem + "_templating_description.csv",
-            std::ios::trunc);
-        if (!f) return false;
-        f << "test,precondition,measured,expected,verdict,detail\n";
-        auto q = [](const std::string& v) {   // std::string, so const char* converts
-            // Detail carries commas; quote it rather than inventing a
-            // separator no reader expects.
-            return "\"" + v + "\"";
-            };
-        // Every text field quoted, not just detail: a precondition or an
-        // expectation is prose and will acquire a comma the first time one is
-        // reworded, and a file that parses today and silently shifts columns
-        // after an edit is the worst of the available failures.
-        for (const AcceptanceRow& r : rows)
-            f << q(r.test) << ',' << q(r.precondition) << ','
-            << q(r.measured) << ',' << q(r.expected) << ','
-            << q(r.verdict) << ',' << q(r.detail) << '\n';
-        return static_cast<bool>(f);
-    }
-
-    // ---- writeBeats() IS GONE --------------------------------------------
-    //
-    // It wrote <stem>_beats.csv: descriptor rows, then one row per SAMPLE with
-    // one cell per BEAT. That is (total beats) x (axis width) cells, measured at
-    // 33,384 x 3,160 = 105.5 MILLION on one real record -- a ~1 GB text file
-    // emitted one `ostream <<` at a time, after the last bin, with no output
-    // while it ran, which is why it presented as a hang.
-    //
-    // <stem>_beats.bin is now the ONLY beats output. Same content, raw
-    // little-endian doubles, one pass, memory-mappable. read_morphology_bin.py
-    // converts it to the identical CSV on demand:
-    //
-    //     python read_morphology_bin.py --csv SUBJ_beats.bin
-    //
-    // Generating the CSV outside the pipeline is the point. It costs nothing on
-    // every run of every record, and the one time somebody actually wants to
-    // look at 105 million cells they can pay for it then -- or, far more
-    // likely, slice the .bin in numpy and never make the CSV at all.
-    //
-    // writeTemplates() stays: one column per TEMPLATE is a few dozen columns,
-    // not tens of thousands, and it is the file a person reads.
-
     namespace detail {
 
         // Row 4, aggregated. `vote` and `mixed` are kept distinct from
@@ -691,11 +511,12 @@ namespace morphology_csv {
                 (blk.channel && std::string(blk.channel) == "PPG");
 
             struct Col {
-                std::string category, bin, name, premature, tukey, confirmed,
-                    members, excluded, share, marking, too_few;
+                std::string category, bin, name, premature, voted, tukey, blended,
+                    bpm, confirmed, members, excluded, share, marking, too_few;
                 const std::vector<double>* wave = nullptr;
                 size_t binIdx = 0;
             };
+
             std::vector<Col> cols;
             size_t dropped = 0;   // reported, so a thin block is explicable
 
@@ -719,15 +540,19 @@ namespace morphology_csv {
                     c.category = detail::categoryWord(tp.presumedCategory());
                     c.bin = std::to_string(b);
                     c.name = detail::templateName(tp, letters[t]);
-                    c.premature = detail::prematureWordAgg(tp);
-                    c.tukey = detail::tukeyWordAgg(tp, out);
-                    c.confirmed = tp.confirmed() ? "confirmed" : "presumed";
-                    // The FULL membership, with the excluded count beside it.
-                    // n_members - excluded is what the waveform below was built
-                    // from; reporting only one of the two would either hide the
-                    // exclusions or hide the beats they belong to.
+                    c.premature = detail::prematurePctAgg(tp);
+                    c.voted = detail::votedPctAgg(tp);
+                    c.tukey = detail::tukeyPctAgg(tp);
+                    c.blended = detail::blendPctAgg(tp);
+                    //if it is never shown to the operator it is just presumed not confirmed
+                    c.confirmed = tp.confirmed() ? "confirmed"
+                        : (tp.tooFewBeats(isPpgBlock)
+                            || tp.presumedCategory() != tbank::Category::REGULAR)
+                        ? "presumed"
+                        : "not_confirmed";
                     c.members = std::to_string(tp.memberCount());
                     c.excluded = std::to_string(tp.excludedCount());
+                    c.bpm = detail::bpmPerTemplate(tp);
                     // FLAGGED, NOT OMITTED. The template stays in this file
                     // with its waveform and its counts -- suppressing the row
                     // would leave the beats unaccounted for and the reader
@@ -777,8 +602,11 @@ namespace morphology_csv {
             row("category", &Col::category);
             row("bin", &Col::bin);
             row("template", &Col::name);
-            row("premature", &Col::premature);
-            row("tukey", &Col::tukey);
+            row("premature_pct", &Col::premature);
+            row("voted_pvc_pct", &Col::voted);
+            row("bpm", &Col::bpm);
+            row("tukey_pct", &Col::tukey);
+            row("blended_pct", &Col::blended);
             row("confirmed", &Col::confirmed);
             row("marking", &Col::marking);
             row("too_few_beats", &Col::too_few);
@@ -1095,6 +923,12 @@ namespace morphology_csv {
             }
         }
         return static_cast<bool>(f);
+    }
+
+    inline std::string bpmPerTemplate(const tbank::BankTemplate& t) {
+        if (t.mean_rr_ms <= 0.0) return "na";
+        char b[16]; std::snprintf(b, sizeof b, "%.1f", 60000.0 / t.mean_rr_ms);
+        return b;
     }
 
     inline bool writeTemplatesBin(const std::vector<ChannelBlock>& blocks) {

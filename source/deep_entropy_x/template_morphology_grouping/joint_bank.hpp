@@ -4,92 +4,7 @@
  * @brief  Section 4.6 morphology segregation as ONE partition shared by all
  *         four channels (CH1, CH2, CH3, PPG), rather than four independent
  *         banks.
- *
- *         WHY THIS REPLACES THE PER-CHANNEL BANK. A beat has one morphology.
- *         Splitting each channel separately produces four unrelated groupings
- *         of the same beats, and then nothing in the record says which of CH1's
- *         templates corresponds to which of CH2's -- so a PVC is separated
- *         three times over with no link between the three, and its pulse is
- *         separated a fourth time for unrelated perfusion reasons. Slot B of
- *         CH1 and slot B of PPG were different sets of beats that happened to
- *         share an index. This file makes them the same set by construction:
- *         a template IS a group of beats, and every channel contributes its own
- *         average over that one group.
- *
- *         ------------------------------------------------------------------
- *         THE SHARED KEY IS THE SLICE INDEX, NOT A CHANNEL'S BEAT INDEX
- *         ------------------------------------------------------------------
- *         Each channel prunes independently -- alignment's Tukey pass on ECG,
- *         the fit-error threshold on PPG -- so beat 12 of CH1 and beat 12 of
- *         PPG are different beats. A group therefore holds SLICE indices (the
- *         R-pair ordinal every slicer is driven by), and each channel supplies
- *         `local_of_slice`, mapping a slice index to that channel's own row or
- *         -1 when the channel dropped it.
- *
- *         A MEMBER NEED NOT BE PRESENT ON EVERY CHANNEL, and this is the common
- *         case, not an edge case: a beat whose ECG survived pruning but whose
- *         PPG did not is a full member of its group with no PPG sample. Its
- *         ECG average includes it and its PPG average does not. Assuming
- *         otherwise -- dropping such beats, or treating absence as a mismatch
- *         -- would either discard most of the record or split it on pruning
- *         luck rather than morphology.
- *
- *         ------------------------------------------------------------------
- *         SPAWN RULE: EITHER CHANNEL FAILS
- *         ------------------------------------------------------------------
- *         A beat joins a group only if it clears the floor on EVERY channel
- *         where both it and the group are scorable -- 0.85 for the three ECG
- *         leads, 0.80 for PPG, the two numbers the spec names. One failing
- *         channel is enough to reject the group, and a beat that no group
- *         accepts opens a new one.
- *
- *         STILL ONE THRESHOLD PER CHANNEL. The spec forbids a second, looser
- *         assignment threshold, and there isn't one: the same floor decides
- *         "this beat belongs to that group" and "no new group is needed". What
- *         is new is the conjunction across channels, which adds no number.
- *
- *         UNSCORABLE IS NOT FAILURE. A channel with no corridor yet, or too
- *         little overlap, abstains rather than voting no -- kUnscorable and
- *         "matched nothing" have to stay distinct, or a beat that merely could
- *         not be compared spawns a template. A group is a candidate only if at
- *         least one channel actually scored it; a beat no channel can score is
- *         returned as unscorable and assigned nowhere.
- *
- *         Consequence worth stating plainly: the conjunction splits more
- *         readily than any single channel would, and PPG is the noisiest of the
- *         four. Expect the cap to be reached more often than it was with ECG
- *         alone, which means the merge path and the confirmed-member cap raise
- *         matter more here than they did before, not less.
- *
- *         ------------------------------------------------------------------
- *         WHAT IS REUSED RATHER THAN REWRITTEN
- *         ------------------------------------------------------------------
- *         tbank::bandMatch and tbank::recomputeTemplate are per-channel and
- *         already correct, so each channel's face of a group is carried as a
- *         tbank::BankTemplate purely to hold {tmpl, tmpl_iqr, band_lo, band_hi}
- *         and be fed to those two functions.
- *
- *         THE PER-CHANNEL BankTemplate's IDENTITY FIELDS ARE NOT AUTHORITATIVE.
- *         label_code, confirmed_by_operator, subtype and spawn_seq exist on it
- *         because it is a whole BankTemplate, but a group's class is a property
- *         of the GROUP -- there is one label for one morphology, not four.
- *         BeatGroup carries them, and nothing should read them off ch[i].
- *         Reading the copy is how the four channels would come to disagree
- *         about what class a beat is.
  */
-
-#include "template_bank.hpp"
-#include "template_assign.hpp"
-// keep_within_tukey and TukeyStats. THE ONLY TUKEY FENCE IN THE CODEBASE lives
-// in alignment.hpp and this file consumes it rather than reimplementing the
-// quartile arithmetic -- two fences would be two things to keep in agreement,
-// and they would disagree first on the small groups that matter most.
-#include "template_marking_gui/alignment.hpp"
-// runFilter: the verbatim isPremature + 5-of-8 vote. Driven here from the
-// per-slice RR series, so the verdict is indexed the same way the partition is.
-#include "pvc_filter.hpp"
-// substituteBeatNaNSafe + the 4.6 alpha and borderline band.
-#include "beat_substitute.hpp"
 
 #include <algorithm>
 #include <array>
@@ -98,6 +13,12 @@
 #include <limits>
 #include <map>
 #include <vector>
+
+#include "template_bank.hpp"
+#include "template_assign.hpp"
+#include "template_marking_gui/alignment.hpp"
+#include "pvc_filter.hpp"
+#include "beat_substitute.hpp"
 
 namespace jbank {
 
@@ -118,7 +39,7 @@ namespace jbank {
     // partition. A function cannot go stale that way.
     inline double floorFor(int channel) {
         return (channel == kPpg) ? tbank::matchFloorPpg()
-                                 : tbank::matchFloorEcg();
+            : tbank::matchFloorEcg();
     }
 
     inline const char* channelName(int c) {
@@ -1612,7 +1533,7 @@ namespace jbank {
         // applied one beat at a time.
         const std::vector<tbank::Category> cats =
             in.mark_code.empty() ? std::vector<tbank::Category>{}
-                                 : tbank::categoriesFromMarks(in.mark_code);
+        : tbank::categoriesFromMarks(in.mark_code);
         for (uint32_t s = 0; s < in.n_slices; ++s) {
             out.flags[s].category = (s < cats.size())
                 ? cats[s] : tbank::Category::REGULAR;
@@ -1647,34 +1568,7 @@ namespace jbank {
         return out;
     }
 
-    // ---------------------------------------------------------------------
-    // PROJECTION: the joint partition, expressed in the existing structures
-    // ---------------------------------------------------------------------
-    //
-    // THERE IS ONLY ONE MERGE, AND IT HAPPENS IN THIS FILE. The viewer, the
-    // serializer and the morphology writers all read tbank::TemplateBank per
-    // channel. Rather than migrate all of them at once -- and rather than leave
-    // two independent partitions coexisting, which is the thing that must not
-    // happen -- the joint groups are PROJECTED into those per-channel banks.
-    //
-    // So `ecg_bank[c]` keeps its type and every consumer keeps working, but it
-    // is no longer a partition in its own right: it is channel c's view of the
-    // one partition. Template i of every channel is group i. That is what makes
-    // the columns line up across channels, which independent per-channel banks
-    // never did.
-    //
-    // MEMBERS ARE IN THE CHANNEL'S OWN LOCAL INDEX SPACE, because that is what
-    // every existing consumer expects of BankTemplate::members. The group's
-    // slice membership is the authority; this is a translation of it, and a
-    // slice the channel dropped simply does not appear.
-    inline tbank::TemplateBank projectToChannel(const JointBank& bank,
-        const ChannelSet& chans, int channel,
-        // Per-SLICE flags, when available. Used only to fill the per-template
-        // census (n_premature_members and friends), which templates.csv reports
-        // beside the class row and presumedCategory() reads. Left null the
-        // census stays zero, and every template presents as non-ectopic -- so
-        // this is not optional in practice, only in signature.
-        const std::vector<tbank::BeatFlags>* flags = nullptr)
+    inline tbank::TemplateBank projectToChannel(const JointBank& bank, const ChannelSet& chans, int channel, const std::vector<tbank::BeatFlags>* flags = nullptr, const std::vector<double>* rr_after_ms = nullptr)
     {
         tbank::TemplateBank out;
         out.configured_cap = bank.configured_cap;
@@ -1722,6 +1616,7 @@ namespace jbank {
             // removed. 4.6 never reassigns a category, it only excludes, so the
             // premature row and the class row are reported side by side.
             t.n_premature_members = 0;
+            t.n_blended_members = 0;
             t.n_voted_members = 0;
             t.n_noise_members = 0;
             if (flags) {
@@ -1734,11 +1629,28 @@ namespace jbank {
                     default: break;
                     }
                     if (bf.category == tbank::Category::NOISE) ++t.n_noise_members;
-                    if (bf.tukey != tbank::TukeyOutcome::NOT_ELIGIBLE
-                        && bf.tukey != tbank::TukeyOutcome::KEPT)
+                    if (bf.tukey != tbank::TukeyOutcome::NOT_ELIGIBLE && bf.tukey != tbank::TukeyOutcome::KEPT) {
                         ++t.n_tukey_members;
+                    }
+                    if (bf.substituted) ++t.n_blended_members;
                 }
             }
+            // Mean R-R over the group's member SLICES (slice space, same as
+            // the census above -- not channel-local rows). rr_after_ms is
+            // per-slice, indexed by g.members directly. BEFORE the move: writing
+            // it after push_back(std::move(t)) set a moved-from husk and never
+            // reached the copy in out.templates.
+            t.mean_rr_ms = 0.0;
+            if (rr_after_ms) {
+                double sum = 0.0; uint32_t k = 0;
+                for (const uint32_t slice : g.members) {
+                    if (slice < rr_after_ms->size() && (*rr_after_ms)[slice] > 0.0) {
+                        sum += (*rr_after_ms)[slice]; ++k;
+                    }
+                }
+                if (k > 0) t.mean_rr_ms = sum / double(k);
+            }
+
             out.templates.push_back(std::move(t));
         }
         out.assigned_beats = bank.assigned_beats;
@@ -1750,11 +1662,12 @@ namespace jbank {
     // not match the ones the members were resolved from.
     inline std::array<tbank::TemplateBank, kNumChannels> projectAll(
         const JointBank& bank, const ChannelSet& chans,
-        const std::vector<tbank::BeatFlags>* flags = nullptr)
+        const std::vector<tbank::BeatFlags>* flags = nullptr,
+        const std::vector<double>* rr_after_ms = nullptr)
     {
         std::array<tbank::TemplateBank, kNumChannels> out;
         for (int c = 0; c < kNumChannels; ++c)
-            out[c] = projectToChannel(bank, chans, c, flags);
+            out[c] = projectToChannel(bank, chans, c, flags, rr_after_ms);
         return out;
     }
 

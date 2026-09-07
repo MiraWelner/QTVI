@@ -583,8 +583,7 @@ FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(const std::vector<double>& 
     return r;
 }
 
-FeatureMarks::ReactivePpg FeatureMarks::reactive_ppg(
-    const std::vector<double>& ppg, int onset, int peak, int dicrotic, int end)
+FeatureMarks::ReactivePpg FeatureMarks::reactive_ppg(const std::vector<double>& ppg, int onset, int peak, int dicrotic, int end)
 {
     ReactivePpg r;
     if (static_cast<int>(ppg.size()) < 3) return r;
@@ -607,12 +606,9 @@ FeatureMarks::ReactivePpg FeatureMarks::reactive_ppg(
         }
     }
     //diastolic peak - highest first dir between dn foot - 20ms
-    if (dicrotic >= 0 && end > dicrotic) {
-        const int margin = std::max(1, (end - dicrotic) / 20);
-        int lo = dicrotic;
-        int hi = end - margin;
-        if (hi - lo < 2) lo = std::max(peak + 1, hi - 2);
-        r.peak2 = steepest_slope_in(ppg, lo, hi);
+    if (peak >= 0 && end > peak) {
+        const double t80 = amplitude_crossing(ppg, peak, end, 0.80);
+        r.peak2 = detect_ppg_peak2(ppg, peak, t80, end);
     }
     return r;
 
@@ -788,7 +784,6 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         };
 
     //systolic foot end of cycle: asymmetric extremum (sigma = 8) after the peak
-    // (a dead `w20 = 0.020 * ppgRate` sat here, declared and never read)
     auto refine_end = [&](int seed) {
         return cld(subsample_refine::asymmetricExtremum(v, seed, 8.0));
         };
@@ -804,23 +799,22 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         const int seed = trough_in(v, std::min(iCeil(g.peak) + 1, Wc - 1), Wc - 1);
         g.end = refine_end(seed >= 0 ? seed : Wc - 1);
     }
-    {
-        const int peakCol = iFloor(g.peak);
-        g.dicrotic = cld(g.peak + 0.12 * ppgRate);
-        g.notch_found = false;
-        g.dn_tier = 0;              // PLACEHOLDER
-        g.dn_confidence = 0.0;
-        int p2lo = iCeil(g.dicrotic);
-        int p2hi = iFloor(g.end);
-        if (p2hi - p2lo < 2) p2lo = std::max(iCeil(g.peak) + 1, p2hi - 2);
-        g.peak2 = steepest_slope_in(v, p2lo, p2hi);
-    }
+
+    // Dicrotic notch (placeholder tier for now).
+    g.dicrotic = cld(g.peak + 0.12 * ppgRate);
+    g.notch_found = false;
+    g.dn_tier = 0;
+    g.dn_confidence = 0.0;
 
     // ---- T80 / T50: amplitude crossings (the same helper the GUI's reactive
     // T80/T50 glyphs call, so the two can't disagree). ----------------------
     g.t80 = amplitude_crossing(v, iFloor(g.peak), iCeil(g.end), 0.80);
     if (g.t80 < 0) g.t80 = cld(0.5 * (g.peak + g.end));
 
+    // Diastolic peak, bounded on the right by t80 -- so it must come AFTER t80
+    // is known. In the block above it read g.t80 while g.t80 was still default,
+    // so it always took the fraction-of-span fallback and never saw the bound.
+    g.peak2 = detect_ppg_peak2(v, iFloor(g.dicrotic), g.t80, iFloor(g.end));
     // T80_rise: the UPSLOPE (onset->peak) point at the SAME absolute
     // amplitude t80 sits at -- i.e. the 80%-downslope level, measured on the
     // way up, NOT an 80% of onset->peak crossing (which would be a different
@@ -1085,113 +1079,21 @@ int FeatureMarks::detect_ppg_dicrotic(const std::vector<double>& pulse, int peak
     return best;
 }
 
-// Diastolic peak (peak2): mirror of detect_ppg_dicrotic, searching for a
-// local MAXIMUM (the diastolic bump) instead of a minimum, starting after
-// the dicrotic notch (physiologically, diastolic peak follows the notch).
-int FeatureMarks::detect_ppg_peak2(const std::vector<double>& pulse) {
-    const int N = static_cast<int>(pulse.size());
-    const int sysPeak = std::clamp((int)std::lround(detect_ppg_peak(pulse)), 0, std::max(0, N - 1));
-    const int dic = detect_ppg_dicrotic(pulse, sysPeak);
-    const int end = detect_ppg_end(pulse);
-    if (dic < 0 || end < 0 || end - dic < 10)
-        return std::clamp((dic + end) / 2, 0, N - 1);
-
-    const int margin = std::max(2, (end - dic) / 10);
-    const int lo = dic + margin;
-    const int hi = end - 1;
-    if (hi - lo < 3)
-        return std::clamp(dic + (end - dic) / 3, 0, N - 1);
-
-    int best = -1;
-    double bestVal = -1e300;
-    for (int i = lo + 1; i < hi; ++i) {
-        if (pulse[i] >= pulse[i - 1] && pulse[i] >= pulse[i + 1]) {
-            if (pulse[i] > bestVal) { bestVal = pulse[i]; best = i; }
-        }
-    }
-    if (best < 0) return std::clamp(dic + (end - dic) / 3, 0, N - 1);
-    return best;
+double FeatureMarks::detect_ppg_peak2(const std::vector<double>& v, int sysPeak, double t80, int end)
+{
+    //highest first derivative between systolic peak and t80
+    const int N = static_cast<int>(v.size());
+    if (sysPeak < 0 || end <= sysPeak) return -1.0;
+    const int lo = sysPeak + std::max(1, (end - sysPeak) / 20);
+    int hi;
+    if (t80 >= 0.0)
+        hi = std::clamp(static_cast<int>(std::floor(t80)), lo + 1, std::min(end - 1, N - 1));
+    else
+        hi = std::clamp(lo + static_cast<int>(std::lround(0.4 * (end - sysPeak))),
+            lo + 1, std::min(end - 1, N - 1));
+    if (hi - lo < 3) return -1.0;
+    return steepest_slope_in(v, lo, hi);
 }
-
-// =========================================================================
-// Bin-level seed
-// =========================================================================
-// One entry point for auto-seeding an entire TemplateBin. Was
-// seedBinMarkers() in TemplateViewerWindow.cpp; moved here so all
-// marker code lives in one class.
-
-namespace {
-
-    // Seed a pulse's markers from the window BETWEEN THE TWO R PEAKS.
-    inline void seedPulse(const std::vector<double>& v, int rFirst, int rSecond,
-        int& onset, int& peak, int& dicrotic, int& peak2, int& end)
-    {
-        const int n = static_cast<int>(v.size());
-        if (n < 1) return;
-        auto cl = [&](int x) { return std::clamp(x, 0, n - 1); };
-
-        int lo = cl(rFirst), hi = cl(rSecond);
-        if (hi - lo < 3) { lo = 0; hi = n - 1; }
-
-        if (peak < 0) {
-            const int p = FeatureMarks::detect_ppg_upstroke_peak(v, lo, hi + 1);
-            if (p < 0) return;
-            peak = p;
-        }
-        if (onset < 0) {
-            int f = -1; double fv = std::numeric_limits<double>::infinity();
-            for (int i = 0; i <= peak; ++i)
-                if (!std::isnan(v[i]) && v[i] < fv) { fv = v[i]; f = i; }
-            if (f < 0) f = std::max(0, peak - 1);
-            onset = f;
-        }
-        if (end < 0) {
-            int e = -1; double ev = std::numeric_limits<double>::infinity();
-            for (int i = peak + 1; i < n; ++i)
-                if (!std::isnan(v[i]) && v[i] < ev) { ev = v[i]; e = i; }
-            if (e < 0) e = std::min(n - 1, peak + 1);
-            end = e;
-        }
-
-        peak = cl(static_cast<int>(std::lround(subsample_refine::symmetricExtremum(v, peak, 8.0))));
-
-        // DIASTOLIC PEAK FIRST HERE TOO, so it can bound the notch search --
-        // matching the PPG path exactly. These two were previously found by
-        // independent searches over the same cycle in the other order, with no
-        // ordering test between them, so an arterial pulse could carry a notch
-        // after its diastolic peak and nothing anywhere would notice.
-        if (peak2 < 0 && end > onset) {
-            const int base = cl(onset);
-            std::vector<double> cyc(v.begin() + base, v.begin() + cl(end) + 1);
-            const int seed = FeatureMarks::detect_ppg_peak2(cyc);
-            const double refined = subsample_refine::asymmetricExtremum(cyc, seed, 10.0);
-            peak2 = cl(base + static_cast<int>(std::lround(refined)));
-        }
-        if (dicrotic < 0 && cl(end) > cl(onset) + 2) {
-            const int base = cl(onset);
-            // Truncate the cycle AT the diastolic peak. detect_ppg_dicrotic
-            // takes no window argument, so the bound is expressed by shortening
-            // its input -- the same effect as dnWindowHiSample on the PPG side,
-            // reached the only way this detector allows.
-            int top = cl(end);
-            if (peak2 > base + 2 && peak2 < top) top = peak2;
-            std::vector<double> cyc(v.begin() + base, v.begin() + top + 1);
-            const int peakInCyc = std::clamp(peak - base, 0, (int)cyc.size() - 1);
-            const int seed = FeatureMarks::detect_ppg_dicrotic(cyc, peakInCyc);
-            const double refined = subsample_refine::asymmetricExtremum(cyc, seed, 10.0);
-            dicrotic = cl(base + static_cast<int>(std::lround(refined)));
-        }
-        //the ppg foot is transition anchor
-        onset = cl(static_cast<int>(std::lround(subsample_refine::transitionAnchor(v, onset, 0.0, 40, std::numeric_limits<double>::quiet_NaN(),
-            onset, std::min(onset + 40, n - 1)))));
-    }
-
-    inline int clampToVisible(int idx, int visN) {
-        return std::clamp(idx, 0, visN - 1);
-    }
-
-} // anonymous
-
 
 void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, AnchorType anchor,
     double heightMeters) {
@@ -1420,8 +1322,12 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
                 onset = peak = dicrotic = peak2 = end = -1;
                 return;
             }
-            int aOn = -1, aPk = -1, aDic = -1, aP2 = -1, aEnd = -1;
-            seedPulse(trace, rFirstArt, rSecondArt, aOn, aPk, aDic, aP2, aEnd);
+            const FeatureMarks::PpgFiducials pf =
+                FeatureMarks::detect_ppg_fiducials(
+                    trace, static_cast<int>(trace.size()), sampleRate, NAN);
+            auto rnd = [](double x) { return (x < 0.0) ? -1 : (int)std::lround(x); };
+            const int aOn = rnd(pf.onset), aPk = rnd(pf.peak), aDic = rnd(pf.dicrotic),
+                aP2 = rnd(pf.peak2), aEnd = rnd(pf.end);
             onset_auto = aOn; peak_auto = aPk; dic_auto = aDic;
             p2_auto = aP2; end_auto = aEnd;
             if (onset < 0) onset = aOn;

@@ -23,6 +23,7 @@
 #include "template_generation/template_io.hpp"
 #include "template_generation/pulse_matched_filter.hpp"
 #include "template_generation/build_templates.hpp"
+#include "template_generation/beat_substitute.hpp"
 #include "template_generation/premark_beats.hpp"
 
 #include "annealing/anneal_handler.hpp"
@@ -526,14 +527,14 @@ namespace post_process_detail {
             // All three describe the R pass, and augment overwrites the beat
             // lists. Moving them below it would archive the squared/absval
             // detection under the label "R".
-            if (!job.cfg.bin_archive_path.empty()) {
+            if (!job.cfg.template_path.empty()) {
                 const bool ok = bin_archive::writeBinFeatureArchive(
-                    job.cfg.bin_archive_path, job.stem, job.tmpl.bins,
+                    job.cfg.template_path, job.stem, job.tmpl.bins,
                     job.rates.ecg, "R", &job.beats);
                 if (!ok)
                     std::cerr << "  [bin_archive] " << job.stem
                     << ": could not write checkpoint to "
-                    << job.cfg.bin_archive_path << "\n";
+                    << job.cfg.template_path << "\n";
                 else
                     std::cerr << "  [bin_archive] " << job.stem
                     << ": wrote checkpoint (" << job.tmpl.bins.size() << " bins)\n";
@@ -544,7 +545,7 @@ namespace post_process_detail {
                 // segmenter needs (job.tmpl has only averaged templates, which
                 // cannot be re-segmented).
                 const std::string ftsPath =
-                    job.cfg.bin_archive_path + "/" + job.stem + "_feature_timeseries.csv";
+                    job.cfg.template_path + "/" + job.stem + "_feature_timeseries.csv";
                 const bool okf = normalize_features::writeFeatureTimeSeriesCsv(
                     ftsPath, job.stem, job.peakResults, job.rates.ecg);
                 if (!okf)
@@ -562,12 +563,12 @@ namespace post_process_detail {
                 // someone remembers a flag is missing from the runs that
                 // matter.
                 const bool oke = envelope_report::writeEnvelopeReport(
-                    job.cfg.bin_archive_path, job.stem, job.tmpl.bins, job.beats,
+                    job.cfg.template_path, job.stem, job.tmpl.bins, job.beats,
                     job.rates.ecg);
                 if (!oke)
                     std::cerr << "  [envelopes] " << job.stem
                     << ": could not write envelope report to "
-                    << job.cfg.bin_archive_path << "\n";
+                    << job.cfg.template_path << "\n";
             }
 
 

@@ -152,7 +152,7 @@ namespace {
         cfg.training_log = sub("training_log");
         cfg.snapshot_path = sub("snapshot_path");
         cfg.vcg_output = sub("vcg_output");
-        cfg.bin_archive_path = sub("bin_archive");
+        cfg.template_path = sub("bin_archive");
     }
 
     bool manually_select_folder(config_entry& cfg) {
@@ -240,7 +240,7 @@ bool load_config(int dataType, config_entry& out) {
         out.main_file_extention = cell("main_file_extention");
         out.sleep_file_extention = cell("sleep_file_extention");
 
-		out.bin_archive_path = cell("bin_archive");
+		out.template_path = cell("bin_archive");
         out.ecg_raw_rate = stod_or_zero(cell("ecg_raw_rate"));
         out.ecg_upsample_rate = stod_or_zero(cell("ecg_upsampled_rate"));
         out.ppg_raw_rate = stod_or_zero(cell("ppg_raw_rate"));
@@ -302,11 +302,7 @@ bool load_config(int dataType, config_entry& out) {
         out.threshold = stod_or_zero(cell("threshold"));
         out.bin_size_minutes = stod_or_zero(cell("bin_size_minutes"));
 
-        // Section 4.6 morphology floors. stod_or_zero, NOT stod_or_default:
-        // a blank cell has to arrive downstream as 0.0 so post_process can
-        // tell "not configured" from "configured to something unusable" and
-        // report the two differently. Defaulting to 0.85/0.80 here instead
-        // would silently swallow a typo'd cell.
+        // if a template match is below floor, it becomes 
         out.ecg_match_floor = stod_or_zero(cell("ecg_match_floor"));
         out.ppg_match_floor = stod_or_zero(cell("ppg_match_floor"));
         out.ppg_fit_error_pct = stod_or_zero(cell("ppg_fit_error_pct"));

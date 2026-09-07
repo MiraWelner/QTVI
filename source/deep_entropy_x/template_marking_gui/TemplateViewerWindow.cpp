@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstdio>
 #include <QRadioButton>
+#include <QShortcut>
 #include <QStatusBar>
 #include <cassert>
 #include <QStringList>
@@ -1397,7 +1398,7 @@ void TemplateViewerWindow::showPage() {
                 const tbank::TemplateBank& bkq =
                     (c >= 0 && c <= 2) ? b.ecg_bank[c] : b.ppg_bank;
                 if (ti >= 0 && ti < bkq.size())
-                    st = bkq.templates[ti].operator_state;
+                    st = bkq.templates[ti].marked_invalid_template;
                 if (st == 0 && ti == 0)
                     st = (b.bad_ppg == 1) ? 2u
                     : ((c >= 0 && c <= 2 && b.bad_r_ch[c]) ? 1u : 0u);
@@ -2858,6 +2859,34 @@ void TemplateViewerWindow::wireAlignButtons() {
             });
         if (rb->isChecked()) { m_forceAlign = force; m_forcedAlign = a; }
     }
+    // Hotkeys: same mapping as the radio buttons above.
+    struct Key { const char* seq; const char* btn; bool force; AnchorType a; };
+    static const Key kKeys[] = {
+        { "A", "automatic_align_button", false, AnchorType::R_PEAK  },
+        { "P", "p_align_button",         true,  AnchorType::P_ONSET },
+        { "Q", "q_align_button",         true,  AnchorType::Q_ONSET },
+        { "R", "r_align_button",         true,  AnchorType::R_PEAK  },
+        { "J", "j_point_align_button",   true,  AnchorType::J_POINT },
+    };
+    for (const Key& k : kKeys) {
+        const char* btn = k.btn;
+        const bool force = k.force;
+        const AnchorType a = k.a;
+        auto* sc = new QShortcut(QKeySequence(QString::fromLatin1(k.seq)),
+            this, nullptr, nullptr, Qt::WindowShortcut);
+        connect(sc, &QShortcut::activated, this, [this, btn, force, a]() {
+            if (QRadioButton* rb = findChild<QRadioButton*>(
+                QString::fromLatin1(btn))) {
+                rb->setChecked(true);
+                return;
+            }
+            m_forceAlign = force;
+            m_forcedAlign = a;
+            if (m_lastFocusMarker >= 0)
+                refreshFocus(m_lastFocusBinIdx, m_lastFocusLeadIdx,
+                    m_lastFocusTemplateIdx, m_lastFocusMarker, m_lastFocusCol);
+            });
+    }
 }
 
 void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
@@ -3162,17 +3191,17 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
             setFocusSplit(true);
             if (zoomed_in_section_top)
                 zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere,
-                    head + QStringLiteral("  (QRS)"), 30, -1);
+                    head + QStringLiteral("  (QRS)"), 100, -1);
             if (zoomed_in_section_bottom)
                 zoomed_in_section_bottom->setFocus(mean, sd, nBeats, colHere,
-                    head + QStringLiteral("  (JT)"), 30, +1);
+                    head + QStringLiteral("  (JT)"), 100, +1);
         }
         else {
-            // One segment -> top third only.
+            // One segment -> top third only.a
             setFocusSplit(false);
             if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
             if (zoomed_in_section_top)
-                zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head, 30, bias);
+                zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head, 100, bias);
         }
     }
 }
@@ -3236,7 +3265,7 @@ void TemplateViewerWindow::onBadRToggled(int binIdx, int leadIdx,
     if (leadIdx < 0 || leadIdx > 2) return;
 
     if (tbank::BankTemplate* t = slotFor(binIdx, leadIdx, templateIdx))
-        t->operator_state = bad ? 1u : 0u;
+        t->marked_invalid_template = bad ? 1u : 0u;
 
     // SLOT 0 ONLY writes the bin-level flag. See the header note above.
     if (templateIdx == 0) m_bins[binIdx].bad_r_ch[leadIdx] = bad;
@@ -3252,7 +3281,7 @@ void TemplateViewerWindow::onBadPPGToggled(int binIdx, int templateIdx,
     // The pulse verdict is recorded on the PULSE bank's slot, not on the ECG
     // lead's -- it is a statement about the pulse waveform in this panel.
     if (tbank::BankTemplate* t = slotFor(binIdx, -1, templateIdx))
-        t->operator_state = bad ? 2u : 0u;
+        t->marked_invalid_template = bad ? 2u : 0u;
 
     if (templateIdx == 0) {
         m_bins[binIdx].bad_ppg = bad ? 1 : 0;

@@ -254,7 +254,7 @@ namespace tbank_ser {
             w32(f, t.n_noise_members);
             w32(f, t.n_tukey_members);
             w32(f, t.n_ppg_members);
-            w8(f, t.operator_state);
+            w8(f, t.marked_invalid_template);
         }
 
         inline void readTemplateExtras(std::ifstream& f,
@@ -266,7 +266,7 @@ namespace tbank_ser {
             t.n_noise_members = r32(f);
             t.n_tukey_members = r32(f);
             t.n_ppg_members = r32(f);
-            t.operator_state = r8(f);
+            t.marked_invalid_template = r8(f);
         }
 
         // Count-prefixed, and the count is checked against the bank rather than
