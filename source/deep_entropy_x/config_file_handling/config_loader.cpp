@@ -147,7 +147,7 @@ namespace {
         cfg.noise_data_path = sub("noise_marking_output");
         cfg.r_peak_data_path = sub("r_peak_finding_output");
         cfg.template_path = sub("template_outputs");
-        cfg.qtvi_marker_path = sub("qtvi_marker_path");
+        cfg.fiducial_maker_locations = sub("qtvi_marker_path");
         cfg.quality_metric = sub("quality_metric");
         cfg.training_log = sub("training_log");
         cfg.snapshot_path = sub("snapshot_path");

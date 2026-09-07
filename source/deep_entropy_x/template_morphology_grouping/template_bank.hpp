@@ -370,61 +370,27 @@ namespace tbank {
     // One template in a bank
     // ---------------------------------------------------------------------
 
-    // Marker positions for ONE (channel, template) pair. TemplateBin's
-    // MarkerSet carries arrays of 3 because it predates per-channel banks;
-    // these are scalar, because a bank member belongs to exactly one channel.
-    // Per-template marker sets are mandatory, not a refinement: a PVC's
-    // Q-onset is at a different column than sinus's, so they cannot share.
     struct BankMarkerSet {
-        // FOUR BARS AND ONE STORED GLYPH.
-        //
-        // p_begin / q_begin / s_end / t_end are the bars: the four positions
-        // the operator drags, each belonging to exactly one alignment (see
-        // anchor_view.hpp). p_peak is the one glyph kept here rather than
-        // recomputed at every use, because it is written to both the markings
-        // CSV and the markings bin and downstream consumers read it from the
-        // file. It is REFRESHED FROM THE BARS, never detected independently --
-        // FeatureMarks::reactive_ecg brackets it with p_begin and q_begin, and
-        // TemplateBin::syncReactiveGlyphs is the only thing that assigns it. A
-        // second, detector-sourced answer stored here is what made the
-        // on-screen X and the CSV column disagree.
-        //
-        // t_begin REMOVED, RECORD AND ALL. It was a marker field nothing set
-        // and nothing drew: maskFor had no entry for it, seed_all seeded
-        // q_begin / s_end / t_end / p_begin only, and markerAtX never
-        // hit-tested it -- so it sat at -1 for the life of every template while
-        // the CSV's t_peak_*_user column bracketed T-peak against it and
-        // therefore reported nothing, even though the on-screen X was bracketed
-        // by s_end and t_end and sat in the right place.
-        //
-        // Both binary records drop the field rather than reserving its four
-        // bytes, so FILES WRITTEN BEFORE THIS CHANGE DO NOT PARSE: neither
-        // _template_markings.bin nor tbank_ser::detail::writeMarkerSet carries
-        // a version, so there is nothing to branch on. Regenerate templates and
-        // re-mark; do not attempt to read an old pair.
-        //
-        // The T-wave onset that morphology_envelope, premark_beats and
-        // beat_classifier band on is a DIFFERENT quantity, computed from the
-        // signal, and is untouched by this removal.
-        int p_begin = -1;
-        int p_peak = -1;
-        int q_begin = -1;
-        int s_end = -1;
-        int t_end = -1;
+        //the four ECG markers which are stored
+        double p_begin = -1, q_begin = -1, s_end = -1, t_end = -1;
 
         bool isUnset() const {
-            return p_begin < 0 && p_peak < 0 && q_begin < 0
-                && s_end < 0 && t_end < 0;
+            return p_begin < 0 && q_begin < 0  && s_end < 0 && t_end < 0;
         }
     };
     struct BankPulseMarkerSet {
-        int onset = -1, peak = -1, dicrotic = -1, peak2 = -1, end = -1;
-        int t50 = -1, t80 = -1;
+        // The three bars: the pulse markers markerAtX will hand out.
+        double onset = -1, dicrotic = -1, end = -1;
+
+        // Frozen detector output, straight from FeatureMarks::PpgFiducials.
+        // NOT derived from the bars and NOT persisted -- recomputed each load,
+        // and read by BinPlotWidget::overridePulseGlyphs to paint the glyphs.
         double onset_auto = -1.0, peak_auto = -1.0, dicrotic_auto = -1.0;
         double peak2_auto = -1.0, end_auto = -1.0;
         bool notch_found = false;
+
         bool isUnset() const {
-            return onset < 0 && peak < 0 && dicrotic < 0 && peak2 < 0 && end < 0;
+            return onset < 0 && dicrotic < 0 && end < 0;
         }
     };
 
@@ -434,36 +400,9 @@ namespace tbank {
         std::vector<double> tmpl;
         std::vector<double> tmpl_iqr;      // per-sample spread
         int                 r_col = -1;
-
-        // Bin-local beat indices. Needed for three things the spec requires
-        // and the addendum's TemplateBank struct cannot express: recomputing
-        // the median, propagating a label to "every other beat assigned to
-        // the same template", and cross-channel label propagation by beat
-        // identity.
-        std::vector<uint32_t> members;
-
-        // 0 = unlabeled. Unlabeled means NOT YET CONFIRMED, not unknown
-        // class -- a distinct state, and the difference carries information.
-        // Never infer this from morphological similarity to a labeled
-        // template: whether two close morphologies are one class or two IS
-        // the finding the operator is being asked to produce.
         uint8_t label_code = kUnlabeled;
-
-        // CONFIRMATION IS A SEPARATE FIELD FROM THE CLASS. label_code may hold a
-        // PRESUMED class -- an unmarked template presents as PQRST because that
-        // is the sensible default, not because anyone said so. Only a confirmed
-        // label is usable as training data later, and a training set that
-        // silently included presumptions would be training on the algorithm's
-        // own guesses with no way for a consumer to tell.
-        //
-        // So `confirmed` is never inferred from label_code being set. It is set
-        // only by propagateLabel(), i.e. only when an operator confirmed a beat.
         bool confirmed_by_operator = false;
-
-        // Appended by the bank in order of first appearance within the class:
-        // PVC-1, PVC-2. -1 until the first confirmation. The operator never
-        // types this and never sees it until the bank produces it.
-        int32_t subtype = -1;
+        int32_t subtype = -1; //PVC_2, etc
 
         // Spawn order within the bin, assigned in pass 1 and NOT recomputed
         // in pass 2. This is what "order of first appearance" resolves
@@ -489,46 +428,11 @@ namespace tbank {
 
         // ---- THE OPERATOR'S QUALITY VERDICT ON THIS PANEL -----------------
         //
-        // 0 = good, 1 = bad R detection, 2 = bad pulse. Mirrors
-        // BinPlotWidget::State, and it is PER TEMPLATE because a panel is a
-        // (bin, template) pair.
-        //
-        // TemplateBin::bad_r_ch[3] and bad_ppg already existed and are per BIN.
-        // That was right when a bin was one panel; a bin now occupies one panel
-        // per markable morphology, so recording a right-click against the bin
-        // crossed out every panel of that bin -- including morphologies the
-        // operator had never looked at, and after a page rebuild rather than at
-        // the moment of the click.
-        //
-        // THE BIN-LEVEL FLAGS STAY, AND SLOT 0 OWNS THEM. NormalizeFeatures
-        // skips a whole bin's channel on bad_r_ch, template_marking_bin_io
-        // serializes and exports it, and feature_marks sets it automatically --
-        // so it has to keep meaning "this bin's lead is untrustworthy". Marking
-        // the SEED panel sets it; marking a sub-template records the verdict
-        // here and does not. Otherwise one bad 2-beat junk column would exclude
-        // an entire bin from the feature reference, which is a much worse
-        // outcome than the one being fixed.
+        // 0 = good, 1 = bad R detection, 2 = bad pulse - determined by right click
         uint8_t operator_state = 0;
 
-        // ---- TWO MEMBER LISTS, AND BOTH ARE REQUIRED --------------------
-        //
-        // `members` is EVERY beat the partition assigned to this template. It
-        // is what the archive writes: a premature or Tukey-rejected beat is
-        // still this template's beat, and the output has to say so and say why.
-        // Dropping it from here would delete the record instead of marking it.
-        //
-        // `members_clean` is members minus the premature and minus the
-        // Tukey-rejected. It is what the averaged waveform is built from, what
-        // is drawn and marked on screen, and what "kept" means in the outputs.
-        //
-        // Empty means "not yet computed" -- the post-partition stage in
-        // bin_pipeline fills it -- and consumers should fall back to `members`
-        // in that case rather than treat it as an empty template.
-        //
-        // The exclusion REASON is not stored here. It is per beat, on
-        // BeatFlags::pvc and BeatFlags::tukey, and duplicating it per template
-        // would give two places to disagree about the same beat.
-        std::vector<uint32_t> members_clean;
+        std::vector<uint32_t> members;//the templates, including the ones excluded by the morphology split
+        std::vector<uint32_t> members_clean;//the templates, excluded the ones excluded by the morphology split
 
         int cleanCount() const {
             return static_cast<int>(members_clean.empty()

@@ -571,7 +571,7 @@ void BinPlotWidget::setArterialTraces(const std::vector<double>& abp,
     update();
 }
 
-void BinPlotWidget::setMarker(Marker m, int idx) {
+void BinPlotWidget::setMarker(Marker m, double idx) {
     m_markers[m] = idx;
     update();
 }
@@ -653,8 +653,8 @@ int BinPlotWidget::markerAtX(double x) const {
     int best = -1;
     double bestDist = click_radius_around_marker + 1.0;
     for (int m = 0; m < MarkerCount; ++m) {
-        const int idx = m_markers[m];
-        if (idx < 0) continue;
+        const double idx = m_markers[m];
+        if (idx < 0.0) continue;
         // Auto-only marks: drawn as glyphs, never as draggable bars.
         if (m == EcgRPeak || m == EcgPPeak || m == PpgPeak || m == PpgT80
             || m == PpgT50 || m == PpgPeak2) continue;
@@ -663,8 +663,10 @@ int BinPlotWidget::markerAtX(double x) const {
         bool visible = false;
         if (!markerTrace(m, vec, ch, visible)) continue;
         if (!visible) continue;
-        // ARRAY BOUNDS ARE THE ONLY BOUND -- see markerTrace.
-        if (idx >= static_cast<int>(vec->size())) continue;
+        // ARRAY BOUNDS ARE THE ONLY BOUND -- see markerTrace. Compared as a
+        // double against the LAST VALID COLUMN: casting a fractional index to
+        // int would truncate and let size()-0.5 through.
+        if (idx > static_cast<double>(vec->size()) - 1.0) continue;
         const double d = std::abs(x - xFromSample(ch, idx));
         if (d < bestDist) { bestDist = d; best = m; }
     }
@@ -933,8 +935,8 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
     QFont smallF = p.font(); smallF.setPointSize(7); p.setFont(smallF);
     for (int m = 0; m < MarkerCount; ++m) {
-        int idx = m_markers[m];
-        if (idx < 0) continue;
+        double idx = m_markers[m];
+        if (idx < 0.0) continue;
         if (m == EcgRPeak || m == EcgPPeak || m == PpgPeak || m == PpgT80
             || m == PpgT50 || m == PpgPeak2) continue;
         const std::vector<double>* vec = nullptr;
@@ -942,7 +944,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         bool visible = false;
         if (!markerTrace(m, vec, ch, visible)) continue;
         if (!visible) continue;
-        if (idx >= (int)vec->size()) continue;
+        if (idx > (double)vec->size() - 1.0) continue;
         const double mx = xFromSample(ch, idx);
         QPen pen(marker_color(m), 2);
         pen.setStyle(markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine);
@@ -1101,8 +1103,16 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
         // while its bar sat at J's, shifted -- two different positions.
         const tbank::BankMarkerSet am = b.autoMarks(c);
         m_glyphs.ecgPBegin = froz((double)am.p_begin);
-        // (no ecgPPeak: the P peak is REACTIVE now, bracketed by the P-onset
-        //  and Q-onset bars -- see reactiveGlyphs.)
+        // P PEAK FROM THE SEED CHAIN. detect_template_landmarks guesses the
+        // peak with seed_p_peak's fixed window before R, fits the P onset off
+        // that guess, then re-measures the peak between the settled bounds.
+        // Only that path reliably lands on the P bump. reactiveGlyphs() runs
+        // compute_p_peak on the two bars alone, with no guess to open the
+        // search, which is why the X drifted onto the PR baseline.
+        //
+        // R FRAME, like every other glyph here: autoFor(R_PEAK) is the flat
+        // p_peak_auto_ch field, which the R seeding pass wrote.
+        m_glyphs.ecgPPeak = froz(b.autoFor(AnchorType::R_PEAK).p_peak[c]);
         m_glyphs.ecgQ = froz((double)am.q_begin);
         m_glyphs.ecgQFound = b.q_begin_found_auto_ch[c];
         m_glyphs.ecgS = froz((double)am.s_end);
@@ -1226,7 +1236,10 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         auto found = [&](double idx, bool ok) { ok ? cross(idx) : circle(idx); };
 
         cross(m_glyphs.ecgPBegin);   // P begin
-        cross(rx.ecgPPeak);          // reactive: P-onset bar -> Q-onset bar
+        // SEED-CHAIN P PEAK, not rx.ecgPPeak. Falls back to the bracket search
+        // only when the seed chain reported nothing, so a bin whose P wave was
+        // never detected still shows whatever the bars can bracket.
+        cross(m_glyphs.ecgPPeak >= 0.0 ? m_glyphs.ecgPPeak : rx.ecgPPeak);
         found(m_glyphs.ecgQ, m_glyphs.ecgQFound);
         cross(m_glyphs.ecgQPeak);
         cross(m_glyphs.ecgRPeak);    // R wave

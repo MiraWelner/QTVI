@@ -4,12 +4,24 @@
 // the TemplateBin shape the viewer expects. Also writes/reads the
 // separate template_markings.bin produced by the viewer.
 //
-// Marker set per bin:
-//   ECG (per channel):  P-onset, Q-begin,  T-end
-//   PPG (shared):       Onset, Dicrotic notch, End
+// Marker set per bin -- THE HUMAN-MOVABLE BARS ONLY:
+//   ECG (per lead, per slot, per anchor):  P-onset, Q-onset, S-end, T-end
+//   PPG (shared):                          Onset, Dicrotic notch, End
+//   Arterial (ABP / ART / ART_PULM):       Onset, Peak, Dicrotic, Peak2, End
 //
-// All marker sample indices use -1 as the "unmarked / not applicable"
-// sentinel.
+// Nothing else is persisted. Every reactive glyph (ECG P-peak and T-peak,
+// PPG t50 / t80 / t80_rise / pw80 / peak2) and every detector output (the
+// *_auto fields) is recomputed from the bars or re-detected on load, because
+// a stored copy is a second answer that outlives the bars it came from.
+//
+// ALL MARKER POSITIONS ARE DOUBLES, in the file and in memory. The detectors
+// and the refine/fit stages produce sub-sample positions; rounding them into
+// int on the way into a bar threw that away and quantised every millisecond
+// column to the sample period. -1 remains the "unmarked / not applicable"
+// sentinel; test with `< 0`, not `== -1`.
+//
+// Structural integers in the file (slot counts, anchor counts, anchor tags,
+// bin index, issue flags) stay integers. Only positions are widened.
 //
 // IQR vectors (ecgTemplate_raw_iqr per channel, ppg_template_iqr) come
 // straight from the template file. Empty std => the widget renders the
@@ -25,15 +37,22 @@
 #include <cmath>
 #include <utility>
 #include <fstream>
+#include <ostream>
 #include <iomanip>
 #include <stdexcept>
-#include <algorithm> 
+#include <algorithm>
 #include <cstring>
 
 #include "template_generation\template_io.hpp"
 #include "template_marking_gui\feature_marks.hpp"
 #include "template_morphology_grouping\template_bank.hpp"
 #include "template_anchoring\anchor_view.hpp"
+
+
+// Which half of the markings CSV a call emits. Declared HERE, above every
+// function that names it in a parameter list -- it used to sit further down,
+// between the two writers, so the first one referenced it before declaration.
+enum class MarkingsCsvSection { EcgOnly, PulseOnly };
 
 
 // ---------------------------------------------------------------------------
@@ -48,6 +67,10 @@ struct ChannelTemplateData {
     double alignment_point_absval = 0;
     // True R column in the template (from alignment). Used directly as the R
     // fiducial; replaces the old avg_r_expand positioning constant.
+    //
+    // STAYS INT: this is a template_io file field, not a marker. It is the
+    // column the aligner placed R on, and frameShift differences two of them
+    // to get an integer column offset.
     int r_col_raw = -1;
     int r_col_squared = -1;
     int r_col_absval = -1;
@@ -252,6 +275,9 @@ struct TemplateBin {
     // median-length snippet, which does not move, so R lands near the base
     // column -- near, not exactly, which is why this is a function and not an
     // assumption. 0 when either r_col is unknown.
+    //
+    // STAYS INT. r_col is a file field and their difference is a whole-sample
+    // column offset; adding it to a double position is exact.
     int frameShift(int lead, AnchorType from, AnchorType to) const {
         const int a = chFor(lead, from).r_col_raw;
         const int b = chFor(lead, to).r_col_raw;
@@ -262,20 +288,21 @@ struct TemplateBin {
     //
     // Each bar lives in its owning alignment's set, so no single
     // markers_by_anchor entry holds a whole beat any more. Anything needing
-    // P-onset AND Q-onset AND J-point AND T-end together -- QRS duration, QT,
+    // P-onset AND Q-onset AND S-end AND T-end together -- QRS duration, QT,
     // the reactive P and T peaks, the global interval lines, the VCG rows --
     // assembles them here, each translated into `frame`'s columns on the way.
     //
-    // Bars only. p_peak is a glyph and is filled by syncReactiveGlyphs from
-    // the two bars that bracket it.
+    // BARS ONLY, and that is now the whole of BankMarkerSet: the reactive
+    // P-peak is no longer stored anywhere, so there is nothing else to pull.
     tbank::BankMarkerSet userMarks(int lead, int slot,
         AnchorType frame = AnchorType::R_PEAK) const
     {
         tbank::BankMarkerSet out;   // all -1
-        auto pull = [&](int marker, int tbank::BankMarkerSet::* field) {
+        // Pointer-to-member is DOUBLE now, matching BankMarkerSet's fields.
+        auto pull = [&](int marker, double tbank::BankMarkerSet::* field) {
             const AnchorType owner = anchor_view::anchorFor(marker);
-            const int v = slotMarks(lead, slot, owner).*field;
-            if (v < 0) return;
+            const double v = slotMarks(lead, slot, owner).*field;
+            if (v < 0.0) return;
             out.*field = v + frameShift(lead, owner, frame);
             };
         pull(anchor_view::kPBegin, &tbank::BankMarkerSet::p_begin);
@@ -298,6 +325,11 @@ struct TemplateBin {
     // detection translated into R's frame. Two different measurements, not
     // just two different rounding paths, and no additive shift reconciles
     // them after the fact.
+    //
+    // NO ROUNDING ON THE WAY IN any more. AnchorAuto is double and so is
+    // BankMarkerSet, so the detector's sub-sample position survives the
+    // frame shift intact; the lround these lines used to do was the last
+    // place a glyph got quantised.
     tbank::BankMarkerSet autoMarks(int lead, AnchorType frame = AnchorType::R_PEAK) const
     {
         tbank::BankMarkerSet out;   // all -1
@@ -305,55 +337,49 @@ struct TemplateBin {
         // is spelled out per field rather than one generic lambda over a
         // pointer-to-member -- you can't take a pointer-to-member to an
         // array element the way userMarks() does for BankMarkerSet's scalar
-        // int fields.
+        // fields.
         {
             const AnchorType owner = anchor_view::anchorFor(anchor_view::kPBegin);
             const double v = autoFor(owner).p_begin[lead];
-            if (v >= 0.0) out.p_begin = (int)std::lround(v) + frameShift(lead, owner, frame);
+            if (v >= 0.0) out.p_begin = v + frameShift(lead, owner, frame);
         }
         {
             const AnchorType owner = anchor_view::anchorFor(anchor_view::kQBegin);
             const double v = autoFor(owner).q_begin[lead];
-            if (v >= 0.0) out.q_begin = (int)std::lround(v) + frameShift(lead, owner, frame);
+            if (v >= 0.0) out.q_begin = v + frameShift(lead, owner, frame);
         }
         {
             const AnchorType owner = anchor_view::anchorFor(anchor_view::kSEnd);
             const double v = autoFor(owner).s_end[lead];
-            if (v >= 0.0) out.s_end = (int)std::lround(v) + frameShift(lead, owner, frame);
+            if (v >= 0.0) out.s_end = v + frameShift(lead, owner, frame);
         }
         {
             const AnchorType owner = anchor_view::anchorFor(anchor_view::kTEnd);
             const double v = autoFor(owner).t_end[lead];
-            if (v >= 0.0) out.t_end = (int)std::lround(v) + frameShift(lead, owner, frame);
+            if (v >= 0.0) out.t_end = v + frameShift(lead, owner, frame);
         }
         return out;
     }
 
-    // ---- THE ONE STORED GLYPH --------------------------------------------
+    // ---- NO STORED GLYPH ANY MORE ----------------------------------------
     //
-    // p_peak is written to both the markings CSV and the markings bin, so it
-    // has to exist as a stored value -- but it is a REACTIVE glyph, bracketed
-    // by the P-onset and Q-onset bars, and those two bars live on DIFFERENT
-    // alignments (_P and _Q). So it is recomputed from the assembled bar set
-    // once per alignment, in that alignment's own frame and against that
-    // alignment's own average, and written into each alignment's marker set.
-    // Four stored values, matching the four *_user columns a glyph gets.
+    // syncReactiveGlyphs lived here. It cached the reactive P-peak into
+    // BankMarkerSet::p_peak, and that field is gone: the bars fully determine
+    // it, so a stored copy was a second answer that could disagree with them,
+    // and persisting it made the disagreement survive a reload.
     //
-    // Called after every bar edit and once after seeding. reactive_ecg is the
-    // same function BinPlotWidget::reactiveGlyphs calls, so the stored value,
-    // the CSV column and the X on screen cannot disagree.
-    void syncReactiveGlyphs(int lead, int slot, int sampleRateHz) {
-        if (lead < 0 || lead > 2 || slot < 0) return;
-        for (AnchorType a : anchor_view::kAllAnchors) {
-            const tbank::BankMarkerSet bars = userMarks(lead, slot, a);
-            const std::vector<double>& ecg = chFor(lead, a).ecgTemplate_raw;
-            if (ecg.empty()) continue;
-            const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(ecg, bars.p_begin, bars.q_begin, bars.s_end, bars.t_end, sampleRateHz);
-            tbank::BankMarkerSet& dst = slotMarks(lead, slot, a);
-            dst.p_peak = (rx.p_peak >= 0.0)
-                ? static_cast<int>(std::lround(rx.p_peak)) : -1;
-        }
-    }
+    // Every reader now calls FeatureMarks::reactive_ecg on the bar set it
+    // already has. The markings CSV below does exactly that (rxUser / rxAuto),
+    // and BinPlotWidget::reactiveGlyphs does it per paint, so the X on screen
+    // and the CSV column come from one function with one set of brackets.
+    //
+    // CALLERS TO UPDATE: TemplateViewerWindow called this after every bar edit
+    // and once after seeding. Those calls should simply be deleted -- there is
+    // nothing left to sync -- but the marker get/set switches that read and
+    // wrote BankMarkerSet::p_peak for BinPlotWidget::EcgPPeak need to return
+    // reactive_ecg's result instead, and setMarker on EcgPPeak should be a
+    // no-op because a glyph is not draggable.
+
     std::vector<double> ppgTemplate;
     std::vector<double> ppg_template_iqr;
 
@@ -428,19 +454,24 @@ struct TemplateBin {
     // Slots that carry a saved marker set, for the writer and the merge. Not
     // the bank's size: a bin read from the markings file has only the slots the
     // operator's session had.
+    //
+    // NAME IS A MILD LIE and worth fixing separately: it returns
+    // templates.size(), i.e. EVERY slot, not only the marked ones. The writer
+    // is correct because it walks all of them; a future reader who trusts the
+    // name would wrongly assume unmarked slots are skipped.
     int markedSlotCount(int lead) const {
         if (lead < 0 || lead > 2) return 0;
         return static_cast<int>(ecg_bank[lead].templates.size());
     }
 
     // R peak column: auto-only, re-derived each pass from the template r_col;
-    // NOT per-anchor and NOT persisted. Kept flat.
-    int r_peak_ch[3] = { -1, -1, -1 };
+    // NOT per-anchor and NOT persisted. Kept flat, and now DOUBLE like every
+    // other position -- the refine stage produces a sub-sample R.
+    double r_peak_ch[3] = { -1, -1, -1 };
     //sample indicies for each of the 3 ECG channels, auto-detected. -1 = unmarked / not applicable.
     // Auto-detected ECG landmark positions, stored as DOUBLE (sub-sample
     // precision from the fit/refine stages; -1 = unset). NOT serialized --
-    // recomputed every loadSubject -- so widening to double is not a .bin
-    // format change. Consumers that need an integer sample index round at use.
+    // recomputed every loadSubject.
     double p_peak_auto_ch[3] = { -1, -1, -1 };
     double q_peak_auto_ch[3] = { -1, -1, -1 };
     double q_begin_auto_ch[3] = { -1, -1, -1 };
@@ -452,54 +483,70 @@ struct TemplateBin {
     double p_begin_auto_ch[3] = { -1, -1, -1 };
     bool q_begin_found_auto_ch[3] = { false, false, false };
 
-    // PPG: sample indices into ppgTemplate. Shared across channels.
-    int ppg_onset = -1;
-    int ppg_t50 = -1;   // 50% up the upslope, foot -> systolic peak
-    int ppg_t80 = -1; // 80% up the upslope, foot -> systolic peak
+    // ---- PPG -------------------------------------------------------------
+    //
+    // THE THREE BARS. Sub-sample positions into ppgTemplate, shared across
+    // channels. These are the only PPG values in template_markings.bin.
+    double ppg_onset = -1;
+    double ppg_dicrotic = -1;
+    double ppg_end = -1;
+
+    // REACTIVE, NOT PERSISTED. All five come back from
+    // FeatureMarks::reactive_ppg bracketed by the bars above plus the
+    // auto-detected systolic peak; ppg_peak itself is auto-only (markerAtX
+    // refuses to hand it out). They live here as a cache for consumers that
+    // want them without re-deriving, are rebuilt on every load, and appear in
+    // no binary format.
+    double ppg_peak = -1;
+    double ppg_peak2 = -1;
+    double ppg_t50 = -1;   // 50% up the upslope, foot -> systolic peak
+    double ppg_t80 = -1;   // 80% up the upslope, foot -> systolic peak
     // T80_rise: upslope position at the SAME absolute amplitude as the 80%
     // DOWNSLOPE crossing (not an 80%-of-onset->peak level). pw80 = t80 -
-    // t80_rise, the pulse width at that level. Stored as doubles (sub-sample
-    // / fractional ms), unlike the int marker fields, because a width has no
-    // integer sample home and t80_rise is an interpolated crossing. No glyph.
+    // t80_rise, the pulse width at that level. No glyph.
     double ppg_t80_rise = -1.0;
     double ppg_pw80 = -1.0;
-    int ppg_peak = -1;
-    int ppg_dicrotic = -1;
-    int ppg_peak2 = -1;
-    int ppg_end = -1;
 
     // Construction-time PPG fiducials (peak = max in [R1,R2], foot = min in
     // [R1,peak]), computed from the real R-pair interval at template build and
     // carried through the template file. seed_all uses these directly instead
     // of re-detecting the peak on the multi-pulse template. -1 if unavailable.
-    int ppg_peak_construct = -1;
-    int ppg_onset_construct = -1;
+    double ppg_peak_construct = -1;
+    double ppg_onset_construct = -1;
 
     // Arterial channels (ABP / ART / ART_PULM): same marker set as PPG
-    // (onset, peak, dicrotic, 50%, end) and same issue flag semantics
-    // (0 = ok, 1 = bad, 2 = channel absent). Indices are into the matching
-    // *Template vector above; -1 = unmarked / not applicable.
+    // (onset, peak, dicrotic, peak2, end) and same issue flag semantics
+    // (0 = ok, 1 = bad, 2 = channel absent). Positions are sub-sample indices
+    // into the matching *Template vector above; -1 = unmarked / not applicable.
+    //
+    // ALL FIVE ARE BARS on every arterial channel, unlike PPG: markerAtX
+    // excludes PpgPeak / PpgPeak2 / PpgT50 / PpgT80 but nothing in the
+    // Abp*/Art*/ArtPulm* range, because these channels have no detector to
+    // freeze a glyph from. So all fifteen are persisted.
     uint8_t abp_issue = 0;
-    int abp_onset = -1, abp_peak = -1, abp_dicrotic = -1, abp_peak2 = -1, abp_end = -1;
+    double abp_onset = -1, abp_peak = -1, abp_dicrotic = -1, abp_peak2 = -1, abp_end = -1;
 
     uint8_t art_issue = 0;
-    int art_onset = -1, art_peak = -1, art_dicrotic = -1, art_peak2 = -1, art_end = -1;
+    double art_onset = -1, art_peak = -1, art_dicrotic = -1, art_peak2 = -1, art_end = -1;
 
     uint8_t art_pulm_issue = 0;
-    int art_pulm_onset = -1, art_pulm_peak = -1, art_pulm_dicrotic = -1,
+    double art_pulm_onset = -1, art_pulm_peak = -1, art_pulm_dicrotic = -1,
         art_pulm_peak2 = -1, art_pulm_end = -1;
 
     /*these initialized autodetect values(none will actually spend their whole lives at - 1) represnt the initial
-    positions of movable markers and the permanant positions of nonmovable markers*/
-    int ppg_onset_auto = -1, ppg_peak_auto = -1, ppg_dicrotic_auto = -1, ppg_peak2_auto = -1, ppg_end_auto = -1;
-    int ppg_t80_auto = -1, ppg_t50_auto = -1;
-    int ppg_u_auto = -1, ppg_v_auto = -1, ppg_w_auto = -1;
-    int ppg_a_auto = -1, ppg_b_auto = -1, ppg_c_auto = -1, ppg_d_auto = -1, ppg_e_auto = -1, ppg_f_auto = -1;
+    positions of movable markers and the permanant positions of nonmovable markers.
+    DOUBLES: the pulse detectors (find_foot_pulseox, the dicrotic finder, the
+    VPG/APG derivative zero-crossings) all return interpolated positions, and
+    these used to round them on the way in.*/
+    double ppg_onset_auto = -1, ppg_peak_auto = -1, ppg_dicrotic_auto = -1, ppg_peak2_auto = -1, ppg_end_auto = -1;
+    double ppg_t80_auto = -1, ppg_t50_auto = -1;
+    double ppg_u_auto = -1, ppg_v_auto = -1, ppg_w_auto = -1;
+    double ppg_a_auto = -1, ppg_b_auto = -1, ppg_c_auto = -1, ppg_d_auto = -1, ppg_e_auto = -1, ppg_f_auto = -1;
     bool ppg_dicrotic_found_auto = false, ppg_peak2_found_auto = false;
-    int abp_onset_auto = -1, abp_peak_auto = -1, abp_dicrotic_auto = -1, abp_peak2_auto = -1, abp_end_auto = -1;
-    int art_onset_auto = -1, art_peak_auto = -1, art_dicrotic_auto = -1, art_peak2_auto = -1, art_end_auto = -1;
-    int ppg_p1_auto = -1, ppg_p2_auto = -1;
-    int art_pulm_onset_auto = -1, art_pulm_peak_auto = -1, art_pulm_dicrotic_auto = -1, art_pulm_peak2_auto = -1, art_pulm_end_auto = -1;
+    double abp_onset_auto = -1, abp_peak_auto = -1, abp_dicrotic_auto = -1, abp_peak2_auto = -1, abp_end_auto = -1;
+    double art_onset_auto = -1, art_peak_auto = -1, art_dicrotic_auto = -1, art_peak2_auto = -1, art_end_auto = -1;
+    double ppg_p1_auto = -1, ppg_p2_auto = -1;
+    double art_pulm_onset_auto = -1, art_pulm_peak_auto = -1, art_pulm_dicrotic_auto = -1, art_pulm_peak2_auto = -1, art_pulm_end_auto = -1;
 
     // Derived PPG indices (DeepEntropyX Section 6.3). Like every other *_auto
     // field these are recomputed by seed_all each pass and are NOT part of the
@@ -511,9 +558,35 @@ struct TemplateBin {
     uint16_t ppg_found_mask_auto = 0;
 
     // Three-tier dicrotic-notch provenance (E-5), recomputed by seed_all.
+    // A TIER AND A CONFIDENCE, not positions -- tier stays int.
     int    ppg_dn_tier_auto = 3;          // 1=IEM, 2=Windkessel, 3=absent
     double ppg_dn_confidence_auto = 0.0;
 
+    // ---- THE PPG COUNTERPART OF THE REMOVED syncReactiveGlyphs -----------
+    //
+    // The bars are the input, every reactive value is the output, and this is
+    // the ONLY thing that assigns them. ppg_peak is taken from ppg_peak_auto
+    // rather than trusted from wherever it currently sits, because it is
+    // auto-only and reactive_ppg needs it as a bracket.
+    //
+    // Call after seeding and after a markings-bin restore. The bin stores bars
+    // only, so on restore these have to be rederived or they keep whatever the
+    // auto-seed left while the bars come from the file.
+    //
+    // NOTE: reactive_ppg takes `dicrotic` but does not read it -- t50, t80,
+    // t80_rise, pw80 and peak2 are all derived from onset, peak and end. It is
+    // passed anyway so this call matches BinPlotWidget::reactiveGlyphs.
+    void syncReactivePpg() {
+        ppg_peak = ppg_peak_auto;
+        if (ppgTemplate.empty()) return;
+        const FeatureMarks::ReactivePpg rx = FeatureMarks::reactive_ppg(
+            ppgTemplate, ppg_onset, ppg_peak, ppg_dicrotic, ppg_end);
+        ppg_t50 = rx.t50;
+        ppg_t80 = rx.t80;
+        ppg_peak2 = rx.peak2;
+        ppg_t80_rise = rx.t80_rise;
+        ppg_pw80 = rx.pw80;
+    }
 };
 
 
@@ -543,6 +616,7 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
         dst.ch2_n_beats_raw = src.ch2_n_beats_raw;
         dst.ch3_n_beats_raw = src.ch3_n_beats_raw;
         dst.ppg_n_beats = src.ppg_n_beats;
+        // template_io carries these as whole columns; widening is exact.
         dst.ppg_peak_construct = src.ppg_peak_col;
         dst.ppg_onset_construct = src.ppg_onset_col;
         dst.ppgTemplate = src.ppgTemplate;
@@ -618,7 +692,7 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
 }
 
 // ---------------------------------------------------------------------------
-// template_markings.bin layout:
+// template_markings.bin layout -- BARS ONLY, POSITIONS AS FLOAT64:
 //
 //   header:
 //     uint64  numBins
@@ -627,16 +701,30 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
 //     uint64  index
 //     uint8   bad_r_ch1, bad_r_ch2, bad_r_ch3
 //     uint8   ppg_issue          (0 = ok, 1 = bad, 2 = no ppg)
-//     int32   p_peak_ch1..3, q_begin_ch1..3, r_peak_ch1..3,
-//             s_end_ch1..3, t_end_ch1..3
-//     int32   ppg_onset, ppg_p50, ppg_peak, ppg_dicrotic, ppg_peak2, ppg_end, ppg_t80
-//     float64 ppg_t80_rise, ppg_pw80   (doubles; t80_rise = upslope point at
-//             the 80%-downslope level, pw80 = t80 - t80_rise)
+//
+//     -- ECG bars, per lead 0..2: --
+//     int32   slotCount
+//       per slot:
+//         int32   anchorCount
+//           per anchor:
+//             int32   anchorTag
+//             float64 p_begin, q_begin, s_end, t_end
+//
+//     -- PPG bars: --
+//     float64 ppg_onset, ppg_dicrotic, ppg_end
+//
 //     -- arterial, one block each for ABP, ART, ART_PULM: --
 //     uint8   <chan>_issue
-//     int32   <chan>_onset, _peak, _dicrotic, _peak2, _end
+//     float64 <chan>_onset, _peak, _dicrotic, _peak2, _end
 //
-// All int32 fields use -1 as the "unmarked / not applicable" sentinel.
+// Positions use -1 as the "unmarked / not applicable" sentinel; test `< 0`.
+// Structural fields (counts, tags, index, issue flags) stay integral.
+//
+// NO VERSION FIELD EXISTS -- the header is a bare bin count -- so a markings
+// file written under any earlier layout misparses from its first marker set
+// onward. That covers the removal of t_begin, the removal of p_peak, the
+// removal of the six auto-only PPG values, and this widening to float64.
+// Re-mark rather than migrate.
 // ---------------------------------------------------------------------------
 inline void writeTemplateMarkingsBin(const std::string& path,
     const std::vector<TemplateBin>& bins) {
@@ -664,12 +752,17 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         // ECG user landmarks, PER LEAD, PER SLOT, PER ANCHOR:
         //
         //   per lead 0..2:
-        //     int32  slotCount
+        //     int32    slotCount
         //     per slot:
-        //       int32  anchorCount
+        //       int32    anchorCount
         //       per anchor:
-        //         int32  anchorTag
-        //         int32  p_begin, p_peak, q_begin, s_end, t_end
+        //         int32    anchorTag
+        //         float64  p_begin, q_begin, s_end, t_end
+        //
+        // FOUR FIELDS: THE BARS ONLY. p_peak left with t_begin -- it is a
+        // reactive glyph, fully determined by the bars that bracket it, so
+        // storing it only created a second answer that could disagree with
+        // them. Readers call FeatureMarks::reactive_ecg instead.
         //
         // THE SLOT DIMENSION IS THE POINT. The old layout was per anchor only,
         // with each field an array of 3 leads -- it could store slot 0 and
@@ -681,6 +774,8 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         // legitimately disagree on slot count: a morphology separable on CH1 may
         // not be on CH2. A single shared slotCount would have to be the max and
         // pad the rest.
+        //
+        // Counts and tags stay int32: they are structure, not position.
         //
         // R peak is auto-only, re-derived from each template's own r_col every
         // pass, and is not written here.
@@ -694,65 +789,65 @@ inline void writeTemplateMarkingsBin(const std::string& path,
                 for (const auto& kv : byAnchor) {
                     w32(kv.first);                      // AnchorType tag
                     const tbank::BankMarkerSet& m = kv.second;
-                    w32(m.p_begin); w32(m.p_peak); w32(m.q_begin);
-                    // FIVE FIELDS, NOT SIX: t_begin is gone from the record,
-                    // not reserved in it. This file has no version field --
-                    // the header is a bare bin count -- so a markings file
-                    // written before this change misparses from its first
-                    // marker set onward. Re-mark rather than migrate.
-                    w32(m.s_end);   w32(m.t_end);
+                    w64d(m.p_begin); w64d(m.q_begin);
+                    w64d(m.s_end);   w64d(m.t_end);
                 }
             }
         }
 
-        w32(b.ppg_onset);
-        w32(b.ppg_t50);
-        w32(b.ppg_peak);
-        w32(b.ppg_dicrotic);
-        w32(b.ppg_peak2);
-        w32(b.ppg_end);
-        w32(b.ppg_t80);
-        w64d(b.ppg_t80_rise);   // double, 8 bytes -- see struct note
-        w64d(b.ppg_pw80);
+        // PPG: THE THREE BARS ONLY. t50 / peak / peak2 / t80 / t80_rise /
+        // pw80 are auto-only glyphs -- markerAtX refuses to hand any of them
+        // out -- and all five reactive ones come back from reactive_ppg,
+        // bracketed by these bars. TemplateBin::syncReactivePpg rederives them
+        // after every load.
+        w64d(b.ppg_onset);
+        w64d(b.ppg_dicrotic);
+        w64d(b.ppg_end);
 
-        // Arterial block: ABP, ART, ART_PULM (issue + 5 indices each).
+        // Arterial block: ABP, ART, ART_PULM (issue + 5 positions each). All
+        // five ARE bars on these channels -- see the struct note.
         w8(b.abp_issue);
-        w32(b.abp_onset); w32(b.abp_peak); w32(b.abp_dicrotic); w32(b.abp_peak2); w32(b.abp_end);
+        w64d(b.abp_onset); w64d(b.abp_peak); w64d(b.abp_dicrotic); w64d(b.abp_peak2); w64d(b.abp_end);
         w8(b.art_issue);
-        w32(b.art_onset); w32(b.art_peak); w32(b.art_dicrotic); w32(b.art_peak2); w32(b.art_end);
+        w64d(b.art_onset); w64d(b.art_peak); w64d(b.art_dicrotic); w64d(b.art_peak2); w64d(b.art_end);
         w8(b.art_pulm_issue);
-        w32(b.art_pulm_onset); w32(b.art_pulm_peak); w32(b.art_pulm_dicrotic);
-        w32(b.art_pulm_peak2); w32(b.art_pulm_end);
+        w64d(b.art_pulm_onset); w64d(b.art_pulm_peak); w64d(b.art_pulm_dicrotic);
+        w64d(b.art_pulm_peak2); w64d(b.art_pulm_end);
     }
 }
 
 
 struct EcgFeatures {
-    // Sub-sample peak positions. q and s come from the refined finders in
-    // FeatureMarks and are no longer rounded; r is the detected R column and
-    // stays whole because that is what the detector produced.
+    // Sub-sample peak positions throughout. q and s come from the refined
+    // finders in FeatureMarks; r is now double as well, since r_peak_ch and
+    // AnchorAuto::r_peak both carry the refined column.
     double q_idx = -1.0, s_idx = -1.0;
-    int    r_idx = -1;
+    double r_idx = -1.0;
     double qrs_ms = NAN, qt_ms = NAN;
 };
 
-inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, int p_peak, int q_begin, int r_peak, int s_end, int t_end, double rateHz)
+// Every position in and out is a sub-sample double. The two FeatureMarks
+// finders below still take an int R column, so the rounding happens HERE, at
+// the one call that needs it, instead of at every caller.
+inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg,
+    double p_peak, double q_begin, double r_peak, double s_end, double t_end,
+    double rateHz)
 {
     EcgFeatures f;
-    const int N = static_cast<int>(ecg.size());
+    const double N = static_cast<double>(ecg.size());
     const double msPerSamp = (rateHz > 0.0) ? 1000.0 / rateHz : NAN;
-    auto inRange = [&](int i) { return i >= 0 && i < N; };
 
-    if (q_begin >= 0 && s_end >= q_begin) f.qrs_ms = (s_end - q_begin) * msPerSamp;
-    if (q_begin >= 0 && t_end >= q_begin) f.qt_ms = (t_end - q_begin) * msPerSamp;
+    if (q_begin >= 0.0 && s_end >= q_begin) f.qrs_ms = (s_end - q_begin) * msPerSamp;
+    if (q_begin >= 0.0 && t_end >= q_begin) f.qt_ms = (t_end - q_begin) * msPerSamp;
 
-    if (inRange(r_peak)) f.r_idx = r_peak;
+    if (r_peak >= 0.0 && r_peak <= N - 1.0) f.r_idx = r_peak;
+    const int rInt = (r_peak >= 0.0) ? static_cast<int>(std::lround(r_peak)) : -1;
     // Q for the q_peak column: same canonical finder compute_q_onset uses.
     // Mirrors compute_s_peak's signature below. -1 when there is no Q trough.
-    f.q_idx = FeatureMarks::compute_q_peak(ecg, r_peak, rateHz);   // sub-sample
+    f.q_idx = FeatureMarks::compute_q_peak(ecg, rInt, rateHz);   // sub-sample
     // S for |R|+|S| = first opposite-polarity trough after R (robust; not the
     // max over [R, s_end], which depends on where s_end sits).
-    f.s_idx = FeatureMarks::compute_s_peak(ecg, r_peak, rateHz);   // sub-sample
+    f.s_idx = FeatureMarks::compute_s_peak(ecg, rInt, rateHz);   // sub-sample
     return f;
 }
 
@@ -768,9 +863,10 @@ inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak",
 
 
 //one unifornm table for pp autodetected pulses
+// idx is a POINTER TO DOUBLE now, matching the widened *_auto fields.
 struct PulseAutoGlyph {
     const char* name;
-    int TemplateBin::* idx;
+    double TemplateBin::* idx;
     bool TemplateBin::* found;
     const char* foundName;
 };
@@ -795,6 +891,11 @@ inline constexpr PulseAutoGlyph ppg_and_artpulse_automated_markers[] = {
 // ---------------------------------------------------------------------------
 // writeTemplateMarkingsCsv
 //
+// TAKES A STREAM, NOT A PATH. The caller builds each alignment's part in an
+// ostringstream, suffixes its value columns and merges the set in one write,
+// so nothing is staged through a temp file. A path-taking wrapper follows at
+// the end of this header for callers outside the viewer.
+//
 // For every marker we emit six columns, in this order:
 //   {name}_y_normalized_autodetect
 //   {name}_y_normalized_user
@@ -812,24 +913,24 @@ inline constexpr PulseAutoGlyph ppg_and_artpulse_automated_markers[] = {
 // Both refs computed once per subject inside this function; they use the
 // autodetect positions so the "reference" is stable regardless of user edits.
 //
+// EVERY POSITION IS A DOUBLE END TO END, so every amplitude lookup goes
+// through FeatureMarks::sample_at and every _x_ms column carries its
+// fraction. The bar side is no longer widened-from-int at the call site --
+// BankMarkerSet is double -- so the "_user" millisecond columns are now as
+// precise as the "_auto" ones.
+//
 // Intervals (qrs_ms, qt_ms) emit as pairs: {name}_ms_autodetect, {name}_ms_user.
 // Q peak and S peak are computed inside the QRS -- their autodetect variant
 // uses (Q_begin_auto, R_peak_auto, S_end_auto); user variant uses the current
 // user markers.
 // ---------------------------------------------------------------------------
-enum class MarkingsCsvSection { EcgOnly, PulseOnly };
-
-inline void writeTemplateMarkingsCsv(const std::string& path,
+inline void writeTemplateMarkingsCsv(std::ostream& f,
     const std::vector<TemplateBin>& bins,
     const std::string& fileID,
     double sampleRateHz,
     AnchorType anchor,
     MarkingsCsvSection section)
 {
-    std::ofstream f(path);
-    if (!f.is_open())
-        throw std::runtime_error("cannot open for write: " + path);
-
     const bool wantEcg = (section == MarkingsCsvSection::EcgOnly);
     const bool wantPulse = (section == MarkingsCsvSection::PulseOnly);
 
@@ -851,27 +952,23 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             std::vector<double> vals;
             for (const auto& b : bins) {
                 if (b.bad_segment || b.bad_r_ch[c]) continue;
-                // THE R ALIGNMENT, DELIBERATELY, even when this sidecar is a
-                // non-R one. The ref divides every normalized amplitude in the
-                // file, so computing it per alignment would make
-                // p_begin_ch1_y_norm_auto_P and ..._R two different units and
-                // silently un-comparable. One subject, one ref per channel.
-                const std::vector<double>& ecg =
-                    b.chFor(c, AnchorType::R_PEAK).ecgTemplate_raw;
+
+                const std::vector<double>& ecg = b.chFor(c, AnchorType::R_PEAK).ecgTemplate_raw;
                 if (ecg.empty()) continue;
                 const auto aaR = b.autoFor(AnchorType::R_PEAK);
+                // NO ROUNDING: computeEcgFeatures takes doubles now.
                 EcgFeatures ft = computeEcgFeatures(ecg,
-                    (int)std::lround(aaR.p_peak[c]), (int)std::lround(aaR.q_begin[c]),
-                    (int)std::lround(aaR.r_peak[c]), (int)std::lround(aaR.s_end[c]),
-                    (int)std::lround(aaR.t_end[c]),
+                    aaR.p_peak[c], aaR.q_begin[c], aaR.r_peak[c],
+                    aaR.s_end[c], aaR.t_end[c],
                     sampleRateHz);
-                if (ft.r_idx < 0 || ft.s_idx < 0.0) continue;
-                if (ft.r_idx >= (int)ecg.size() || ft.s_idx > (double)(ecg.size() - 1))
-                    continue;
-                // |R| + |S| at the SUB-SAMPLE S position: interpolated, not
+                if (ft.r_idx < 0.0 || ft.s_idx < 0.0) continue;
+                const double last = static_cast<double>(ecg.size()) - 1.0;
+                if (ft.r_idx > last || ft.s_idx > last) continue;
+                // |R| + |S| at the SUB-SAMPLE positions: interpolated, not
                 // read from a rounded column. On a steep S limb the two differ
-                // by more than the amplitude tolerance this feeds.
-                const double ry = ecg[ft.r_idx];
+                // by more than the amplitude tolerance this feeds -- and R is
+                // now interpolated too, for the same reason.
+                const double ry = FeatureMarks::sample_at(ecg, ft.r_idx);
                 const double sy = FeatureMarks::sample_at(ecg, ft.s_idx);
                 if (std::isnan(ry) || std::isnan(sy)) continue;
                 vals.push_back(std::abs(ry) + std::abs(sy));
@@ -881,9 +978,11 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     }
     double refPpg = std::nan(""), refAbp = std::nan(""), refArt = std::nan(""), refArtPulm = std::nan("");
     if (wantPulse) {
+        // Pointer-to-member is double now; the foot/peak amplitudes are
+        // interpolated rather than subscripted.
         auto pulseRefAuto = [&](const std::vector<double> TemplateBin::* trace,
-            const int TemplateBin::* footAuto,
-            const int TemplateBin::* peakAuto,
+            double TemplateBin::* footAuto,
+            double TemplateBin::* peakAuto,
             bool checkPpgIssue) -> double
             {
                 std::vector<double> vals;
@@ -891,23 +990,21 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                     if (b.bad_segment) continue;
                     if (checkPpgIssue && b.bad_ppg != 0) continue;
                     const auto& v = b.*trace;
-                    const int fi = b.*footAuto;
-                    const int pi = b.*peakAuto;
-                    if (fi < 0 || pi < 0 || fi >= (int)v.size() || pi >= (int)v.size()) continue;
-                    const double fy = v[fi], py = v[pi];
+                    const double fi = b.*footAuto;
+                    const double pi = b.*peakAuto;
+                    const double last = static_cast<double>(v.size()) - 1.0;
+                    if (fi < 0.0 || pi < 0.0 || fi > last || pi > last) continue;
+                    const double fy = FeatureMarks::sample_at(v, fi);
+                    const double py = FeatureMarks::sample_at(v, pi);
                     if (std::isnan(fy) || std::isnan(py) || std::abs(fy) < 1e-12) continue;
                     vals.push_back(100.0 * (py - fy) / fy);
                 }
                 return medianFinite(std::move(vals));
             };
-        refPpg = pulseRefAuto(&TemplateBin::ppgTemplate,
-            &TemplateBin::ppg_onset_auto, &TemplateBin::ppg_peak_auto, true);
-        refAbp = pulseRefAuto(&TemplateBin::abpTemplate,
-            &TemplateBin::abp_onset_auto, &TemplateBin::abp_peak_auto, false);
-        refArt = pulseRefAuto(&TemplateBin::artTemplate,
-            &TemplateBin::art_onset_auto, &TemplateBin::art_peak_auto, false);
-        refArtPulm = pulseRefAuto(&TemplateBin::artPulmTemplate,
-            &TemplateBin::art_pulm_onset_auto, &TemplateBin::art_pulm_peak_auto, false);
+        refPpg = pulseRefAuto(&TemplateBin::ppgTemplate, &TemplateBin::ppg_onset_auto, &TemplateBin::ppg_peak_auto, true);
+        refAbp = pulseRefAuto(&TemplateBin::abpTemplate, &TemplateBin::abp_onset_auto, &TemplateBin::abp_peak_auto, false);
+        refArt = pulseRefAuto(&TemplateBin::artTemplate, &TemplateBin::art_onset_auto, &TemplateBin::art_peak_auto, false);
+        refArtPulm = pulseRefAuto(&TemplateBin::artPulmTemplate, &TemplateBin::art_pulm_onset_auto, &TemplateBin::art_pulm_peak_auto, false);
     }
 
     // ---- header ------------------------------------------------------------
@@ -971,6 +1068,10 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     if (wantEcg) {
         for (int c = 1; c <= 3; ++c) {
             for (const char* n : ecgPointNames)     emitEcgPointHeader(n, c);
+            // SAME LOOP as the points, so the two interval columns land
+            // immediately after this channel's nine point groups and the row
+            // loop below can mirror the order without a second pass.
+            for (const char* n : ecgIntervalNames)  emitIntervalHeader(n, c);
         }
         for (int c = 1; c <= 3; ++c) {
             char b[64];
@@ -1013,17 +1114,16 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
 
     // Emit one 6-column ECG point group: normalized (auto/user), raw
     // (auto/user), x_ms (auto/user). Any missing piece leaves that field blank.
-    // Positions arrive as sub-sample doubles (the *_auto_ch fields are double),
-    // so the _x_ms columns carry the fraction. Only the amplitude lookup needs
-    // an integer index, and it rounds locally.
+    // BOTH SIDES ARE SUB-SAMPLE now, so the amplitude is interpolated rather
+    // than read from a rounded column -- the local lround this used to do was
+    // the last quantisation left in the ECG path.
     auto emitEcgPoint = [&](const std::vector<double>& ecg,
         double idx_auto, double idx_user, double ref, bool userToo)
         {
             auto y_of = [&](double idx) -> double {
                 if (idx < 0.0) return std::nan("");
-                const int i = static_cast<int>(std::lround(idx));
-                if (i < 0 || i >= (int)ecg.size()) return std::nan("");
-                const double y = ecg[i];
+                if (idx > static_cast<double>(ecg.size()) - 1.0) return std::nan("");
+                const double y = FeatureMarks::sample_at(ecg, idx);
                 return std::isnan(y) ? std::nan("") : y;
                 };
             const double y_a = y_of(idx_auto);
@@ -1034,16 +1134,14 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
             if (userToo) { f << ','; if (std::isfinite(y_u) && refOk) f << (y_u / ref); }
             f << ',';   if (std::isfinite(y_a)) f << y_a;
             if (userToo) { f << ','; if (std::isfinite(y_u)) f << y_u; }
-            f << ',';   if (idx_auto >= 0) f << (idx_auto * toMs);
-            if (userToo) { f << ','; if (idx_user >= 0) f << (idx_user * toMs); }
+            f << ',';   if (idx_auto >= 0.0) f << (idx_auto * toMs);
+            if (userToo) { f << ','; if (idx_user >= 0.0) f << (idx_user * toMs); }
         };
 
     // Emit one 6-column pulse point group. footIdx_auto / footIdx_user are
     // the "onset" indices for their respective variants (used to compute the
     // local ratio (y - foot)/foot). ref is the channel's global PI median.
-    // Positions arrive as doubles: the autodetect landmarks are sub-sample and
-    // the user's markers are whole samples widened to double at the call. The
-    // amplitude at a fractional position is INTERPOLATED (FeatureMarks::
+    // The amplitude at a fractional position is INTERPOLATED (FeatureMarks::
     // sample_at) rather than read from a rounded column, and the millisecond
     // column carries the fraction, so T80 is no longer quantised to 3.9 ms at
     // 256 Hz -- which matters because Section 6.3's T80 entropy result turns on
@@ -1085,10 +1183,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
 
     // Autodetected computed feature point (used by both ECG and PPG glyph
     // blocks -- defined once here so it's in scope for both).
-    // Sub-sample position in, interpolated amplitude out. The autodetect
-    // landmarks in b.*_auto_ch are already doubles; this used to take an int,
-    // so every caller rounded on the way in and the CSV's millisecond column
-    // carried whole samples.
+    // Sub-sample position in, interpolated amplitude out.
     auto emitAutoFeatPt = [&](const std::vector<double>& sig, double idx) {
         f << ',';   if (idx >= 0.0) f << (idx * toMs);
         const double y = (idx >= 0.0) ? FeatureMarks::sample_at(sig, idx)
@@ -1142,22 +1237,19 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 //
                 // reactive_ecg is the function BinPlotWidget::reactiveGlyphs
                 // calls, with the same bracket bars (P peak between P-onset and
-                // Q-onset; T peak between S-END and T-end). The T-peak bracket
-                // used to be umk.t_begin here, and NOTHING EVER SET t_begin --
-                // so this column reported blank while the X on screen sat in
-                // the right place, in direct contradiction of BinPlotWidget's
-                // promise that screen and files cannot disagree.
+                // Q-onset; T peak between S-END and T-end). It is also now the
+                // ONLY source of p_peak anywhere -- the stored copy in
+                // BankMarkerSet is gone, so screen and file cannot diverge.
                 const tbank::BankMarkerSet whole = b.userMarks(c, 0, anchor);
                 const FeatureMarks::ReactiveEcg rxUser = FeatureMarks::reactive_ecg(
                     ecg, whole.p_begin, whole.q_begin, whole.s_end, whole.t_end, sampleRateHz);
                 const FeatureMarks::ReactiveEcg rxAuto = FeatureMarks::reactive_ecg(
-                    ecg, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
-                    (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]), sampleRateHz);
+                    ecg, aa.p_begin[c], aa.q_begin[c],
+                    aa.s_end[c], aa.t_end[c], sampleRateHz);
 
                 EcgFeatures ftAuto = computeEcgFeatures(ecg,
-                    (int)std::lround(aa.p_peak[c]), (int)std::lround(aa.q_begin[c]),
-                    (int)std::lround(aa.r_peak[c]), (int)std::lround(aa.s_end[c]),
-                    (int)std::lround(aa.t_end[c]),
+                    aa.p_peak[c], aa.q_begin[c], aa.r_peak[c],
+                    aa.s_end[c], aa.t_end[c],
                     sampleRateHz);
                 // Derived from the assembled bars, not from `umk`: q_peak,
                 // s_peak and the QRS/QT intervals need a whole beat's
@@ -1165,25 +1257,27 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 // more. The two intervals come out identical in all four
                 // blocks (a duration is frame-free); the two positions differ
                 // between blocks by the frame shift.
-                EcgFeatures ftUser = computeEcgFeatures(ecg, (int)std::lround(rxUser.p_peak), whole.q_begin, b.r_peak_ch[c], whole.s_end, whole.t_end, sampleRateHz);
+                EcgFeatures ftUser = computeEcgFeatures(ecg,
+                    rxUser.p_peak, whole.q_begin, b.r_peak_ch[c],
+                    whole.s_end, whole.t_end, sampleRateHz);
 
                 // Order MUST match ecgPointNames:
                 //   p_begin(bar), p_peak(glyph), q_begin(bar), q_peak(computed),
                 //   r_peak(glyph), s_peak(computed), s_end(bar),
                 //   t_peak(glyph), t_end(bar)
-                // Autodetect side keeps its sub-sample precision; the bar side
-                // is int because BankMarkerSet stores whole sample indices.
+                // BOTH SIDES ARE SUB-SAMPLE now -- the (double) casts on the
+                // bar side are gone with BankMarkerSet's int fields.
                 struct P { const char* name; double a; double u; };
                 const P pts[] = {
-                    { "p_begin", aa.p_begin[c],   (double)umk.p_begin },
-                    { "p_peak",  rxAuto.p_peak, rxUser.p_peak      },   // reactive glyph, both sides
-                    { "q_begin", aa.q_begin[c],   (double)umk.q_begin },
-                    { "q_peak",  ftAuto.q_idx, ftUser.q_idx        },
-                    { "r_peak",  aa.r_peak[c],    -1.0                },   // no user column at all
-                    { "s_peak",  ftAuto.s_idx, ftUser.s_idx        },
-                    { "s_end",   aa.s_end[c],     (double)umk.s_end   },
-                    { "t_peak",  rxAuto.t_peak, rxUser.t_peak      },   // reactive glyph, both sides
-                    { "t_end",   aa.t_end[c],     (double)umk.t_end   }
+                    { "p_begin", aa.p_begin[c],  umk.p_begin  },
+                    { "p_peak",  rxAuto.p_peak,  rxUser.p_peak },   // reactive glyph, both sides
+                    { "q_begin", aa.q_begin[c],  umk.q_begin  },
+                    { "q_peak",  ftAuto.q_idx,   ftUser.q_idx },
+                    { "r_peak",  aa.r_peak[c],   -1.0         },   // no user column at all
+                    { "s_peak",  ftAuto.s_idx,   ftUser.s_idx },
+                    { "s_end",   aa.s_end[c],    umk.s_end    },
+                    { "t_peak",  rxAuto.t_peak,  rxUser.t_peak },   // reactive glyph, both sides
+                    { "t_end",   aa.t_end[c],    umk.t_end    }
                 };
                 for (const P& pt : pts) {
                     // SAME FUNCTION the header emitter called, so the two
@@ -1194,15 +1288,34 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                     emitEcgPoint(ecg, pt.a, pt.u, ref,
                         anchor_view::hasUserColumn(pt.name));
                 }
+
+                // ---- INTERVALS: ecgIntervalNames ORDER, qrs THEN qt -------
+                // A duration is frame-free -- (s_end - q_begin) is the same
+                // number whichever alignment's columns it was measured in --
+                // so these two come out identical in all four blocks, unlike
+                // the positions above. They are emitted per block anyway
+                // because the column set has to be the same shape in every
+                // part for the sidecar merge to line up.
+                //
+                // Both come from computeEcgFeatures, which now takes doubles,
+                // so the user side is a sub-sample duration rather than a
+                // whole number of samples times the sample period.
+                emitIntervalPair(ftAuto.qrs_ms, ftUser.qrs_ms);
+                emitIntervalPair(ftAuto.qt_ms, ftUser.qt_ms);
             }
 
         if (wantPulse) {
-            // PPG: onset, p50, peak, dicrotic, peak2, t80, end (matches ppgCols).
-            // p50/t80 are reactive -- amplitude crossings bracketed by
-            // onset/peak/end -- so each side is derived from its own bar set via
-            // the shared FeatureMarks::reactive_ppg, the same call the on-screen
-            // glyph makes. The stored ppg_t50/ppg_t80 fields are the detector's
-            // originals and are deliberately not used for these columns.
+            // PPG: onset, p50, peak, dicrotic, peak2, t80, t80_rise, end
+            // (matches ppgCols). p50/t80/t80_rise/peak2 are reactive --
+            // bracketed by onset/peak/end -- so BOTH SIDES of all four come
+            // from the shared FeatureMarks::reactive_ppg, the same call the
+            // on-screen glyph makes: rxAuto under the detector's brackets,
+            // rxUser under the operator's. peak2's auto side used to read
+            // ppg_peak2_auto instead, which made it the only reactive column
+            // whose two halves came from different functions. The cached
+            // ppg_t50 / ppg_t80 / ppg_peak2 fields are deliberately not used
+            // for these columns: they are a convenience copy, and reading them
+            // here would let a stale cache disagree with the screen.
             const FeatureMarks::ReactivePpg rxAuto = FeatureMarks::reactive_ppg(
                 b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_dicrotic_auto, b.ppg_end_auto);
             const FeatureMarks::ReactivePpg rxUser = FeatureMarks::reactive_ppg(
@@ -1215,7 +1328,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
             emitPulsePoint(b.ppgTemplate, b.ppg_dicrotic_auto, b.ppg_dicrotic,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
-            emitPulsePoint(b.ppgTemplate, b.ppg_peak2_auto, b.ppg_peak2,
+            emitPulsePoint(b.ppgTemplate, rxAuto.peak2, rxUser.peak2,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
             emitPulsePoint(b.ppgTemplate, rxAuto.t80, rxUser.t80,
                 b.ppg_onset_auto, b.ppg_onset, refPpg);
@@ -1280,8 +1393,8 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
                 const std::vector<double>& ecg = b.chFor(c, anchor).ecgTemplate_raw;
                 const auto aa = b.autoFor(anchor);
                 const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
-                    ecg, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
-                    (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]), sampleRateHz);
+                    ecg, aa.p_begin[c], aa.q_begin[c],
+                    aa.s_end[c], aa.t_end[c], sampleRateHz);
                 emitAutoFeatPt(ecg, rx.p_peak);
                 emitAutoFeatPt(ecg, aa.q_begin[c]);
                 emitAutoFeatPt(ecg, aa.r_peak[c]);
@@ -1296,6 +1409,22 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
 
         f << '\n';
     }
+}
+
+// Path-taking wrapper, for callers outside the viewer's one-save merge. The
+// ostream overload above is what the viewer uses, so a save can build each
+// alignment's part in memory instead of staging it through a temp file.
+inline void writeTemplateMarkingsCsv(const std::string& path,
+    const std::vector<TemplateBin>& bins,
+    const std::string& fileID,
+    double sampleRateHz,
+    AnchorType anchor,
+    MarkingsCsvSection section)
+{
+    std::ofstream f(path);
+    if (!f.is_open())
+        throw std::runtime_error("cannot open for write: " + path);
+    writeTemplateMarkingsCsv(f, bins, fileID, sampleRateHz, anchor, section);
 }
 
 inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path) {
@@ -1327,7 +1456,8 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         b.bad_r_ch[2] = (r8() != 0);
         b.bad_ppg = r8();
 
-        // Mirrors the write order exactly: lead, slot, anchor.
+        // Mirrors the write order exactly: lead, slot, anchor. Counts and tags
+        // are int32; positions are float64.
         //
         // The bins this function returns have NO BANKS -- it reads a marking
         // file, not a template file. slotMarks() therefore creates each slot as
@@ -1343,31 +1473,30 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
                     const int tag = r32();
                     tbank::BankMarkerSet& m =
                         b.slotMarks(lead, slot, static_cast<AnchorType>(tag));
-                    m.p_begin = r32(); m.p_peak = r32(); m.q_begin = r32();
-                    m.s_end = r32();   m.t_end = r32();
+                    m.p_begin = r64d(); m.q_begin = r64d();
+                    m.s_end = r64d();   m.t_end = r64d();
+                    // p_peak deliberately absent: not in the record, not on
+                    // the struct. Readers call reactive_ecg on these bars.
                 }
             }
         }
 
-        b.ppg_onset = r32();
-        b.ppg_t50 = r32();
-        b.ppg_peak = r32();
-        b.ppg_dicrotic = r32();
-        b.ppg_peak2 = r32();
-        b.ppg_end = r32();
-        b.ppg_t80 = r32();
-        b.ppg_t80_rise = r64d();   // double, mirrors write order
-        b.ppg_pw80 = r64d();
+        // PPG bars only. The caller calls syncReactivePpg() after the merge to
+        // rederive t50 / t80 / t80_rise / pw80 / peak2 from these three plus
+        // the auto-detected systolic peak.
+        b.ppg_onset = r64d();
+        b.ppg_dicrotic = r64d();
+        b.ppg_end = r64d();
 
         b.abp_issue = r8();
-        b.abp_onset = r32(); b.abp_peak = r32(); b.abp_dicrotic = r32();
-        b.abp_peak2 = r32(); b.abp_end = r32();
+        b.abp_onset = r64d(); b.abp_peak = r64d(); b.abp_dicrotic = r64d();
+        b.abp_peak2 = r64d(); b.abp_end = r64d();
         b.art_issue = r8();
-        b.art_onset = r32(); b.art_peak = r32(); b.art_dicrotic = r32();
-        b.art_peak2 = r32(); b.art_end = r32();
+        b.art_onset = r64d(); b.art_peak = r64d(); b.art_dicrotic = r64d();
+        b.art_peak2 = r64d(); b.art_end = r64d();
         b.art_pulm_issue = r8();
-        b.art_pulm_onset = r32(); b.art_pulm_peak = r32(); b.art_pulm_dicrotic = r32();
-        b.art_pulm_peak2 = r32(); b.art_pulm_end = r32();
+        b.art_pulm_onset = r64d(); b.art_pulm_peak = r64d(); b.art_pulm_dicrotic = r64d();
+        b.art_pulm_peak2 = r64d(); b.art_pulm_end = r64d();
     }
     return bins;
 }

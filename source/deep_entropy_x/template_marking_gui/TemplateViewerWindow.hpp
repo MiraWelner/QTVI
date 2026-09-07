@@ -66,7 +66,10 @@ private slots:
     tbank::BankTemplate* slotFor(int binIdx, int leadIdx, int templateIdx);
     void repaintPanel(int binIdx, int leadIdx, int templateIdx, BinPlotWidget::State st);
     void onBadPPGToggled(int binIdx, int templateIdx, bool bad);
-    void onLandmarkSelected(int binIdx, int leadIdx, int templateIdx, int marker, int col); //focus mode - the focus is open in sidebar
+    // `col` IS A DOUBLE, matching BinPlotWidget::landmarkSelected. Qt connects
+    // a signal to a slot by parameter type; a mismatch here connects at runtime
+    // and then silently never fires, so the two must change together.
+    void onLandmarkSelected(int binIdx, int leadIdx, int templateIdx, int marker, double col); //focus mode - the focus is open in sidebar
 
 private:
     struct Lead {
@@ -127,7 +130,7 @@ private:
     // is captured once, when the user first scrolls to it. No flicker: the
     // page is already on screen and painted.
     void captureCurrentPage();
-    void writeAlignedTemplateCsv(AnchorType anchor); //write templates.csv 
+    std::string buildAlignedTemplateCsv(AnchorType anchor);
     void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
 
@@ -146,7 +149,7 @@ private:
     // column that does carry the bin's marker set.
     void refreshBankMarkers(int binIdx, int templateIdx);
     //if you don't refresh, after switching from j alingnment to another alignment, the focus panel will still show the j alignment
-	void refreshFocus(int binIdx, int leadIdx, int templateIdx, int marker, int col);
+    void refreshFocus(int binIdx, int leadIdx, int templateIdx, int marker, double col);
 
     FocusPanelWidget* zoomed_in_section_top = nullptr; //for most close ups, they only use focus top
     FocusPanelWidget* zoomed_in_section_bottom = nullptr;   // J point only - the bottom panel is used to show the JT segment (top is QRS)
@@ -165,7 +168,7 @@ private:
     int m_lastFocusLeadIdx = -1;
     int m_lastFocusTemplateIdx = 0;
     int m_lastFocusMarker = -1;
-    int m_lastFocusCol = -1;
+    double m_lastFocusCol = -1.0;
 
     QVBoxLayout* m_focusLay = nullptr;
     void setFocusSplit(bool split);
@@ -179,7 +182,10 @@ private:
     // packed into a single int, value = the bar position at the click. Filled
     // in onLandmarkSelected (focus activation = bar click). logBoundaryTrainingAtSave
     // reads this to fill confirmedIndex; landmarks never clicked stay blank.
-    std::map<long long, int> m_touchedMarks;
+    // VALUE IS A DOUBLE: the click position is sub-sample. Only
+    // logBoundaryTrainingAtSave rounds it, where the record needs a whole
+    // sample offset into its own segment.
+    std::map<long long, double> m_touchedMarks;
     static long long touchKey(int binIdx, int leadIdx, int marker) {
         return ((long long)binIdx * 100 + leadIdx) * 100 + marker;
     }
@@ -238,7 +244,7 @@ private:
     // event and reset by onMarkerDragStarted. The propagated shift is measured
     // from this, not from the previous event, so the total percentage is
     // computed and rounded once per drag instead of once per mouse-move.
-    int m_dragStartIdx = -1;
+    double m_dragStartIdx = -1.0;
 
     // (m_qAlignPass / m_anchorStep / m_anchorPassCount / m_anchorLabel /
     //  m_currentAnchor removed with the cycle. No member holds "the current
@@ -266,17 +272,17 @@ private:
     double m_ecgGlobalRef[3] = { std::nan(""), std::nan(""), std::nan("") };
     double m_pulseGlobalRef[4] = { std::nan(""), std::nan(""), std::nan(""), std::nan("") };
     void computeGlobalRefs();
-    
+
     void writeNormalizationCsvs(); // Writes <id>_cv_check.csv and <id>_feature_norm.csv
 
-	bool restoreMarkersFrom(const QString& markingsBinPath, bool ecg, bool pulse); //attemps to reload markers from previous markings.bin file, returns true if successful, false otherwise
+    bool restoreMarkersFrom(const QString& markingsBinPath, bool ecg, bool pulse); //attemps to reload markers from previous markings.bin file, returns true if successful, false otherwise
     // Normalize a copy of `raw` according to the rules in normalize_features.hpp.
     // ECG: sample / globalRef.
     // Pulse: 100*(sample - footY) / footY / globalRef.
     // If globalRef or footY is not usable, returns raw unchanged.
     std::vector<double> normalizeEcgTrace(const std::vector<double>& raw, int ch) const;
     std::vector<double> normalize_ppg_or_similar(const std::vector<double>& raw,
-        int footIdx, int pulseChan) const;
+        double footIdx, int pulseChan) const;
 
     // Push m_showEcgMarkers / m_showPpgMarkers into every visible plot.
     void applyMarkerVisibility();

@@ -34,9 +34,9 @@ class FeatureMarks {
 public:
     static double sample_at(const std::vector<double>& v, double p);// Returns the landmark as a sub-sample (floating-point) position
     struct ReactiveEcg { double t_peak = -1.0, p_peak = -1.0; };
-    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, int p_begin, int q_begin, int s_end, int t_end, double sampleRate);
     struct ReactivePpg { double t50 = -1.0, t80 = -1.0, t80_rise = -1.0, pw80 = -1.0, peak2 = -1.0; };
-    static ReactivePpg reactive_ppg(const std::vector<double>& ppg, int onset, int peak, int dicrotic, int end);
+    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_begin, double s_end, double t_end, double sampleRate);
+    static ReactivePpg reactive_ppg(const std::vector<double>& ppg, double onset, double peak, double dicrotic, double end);
 
     static double compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs);
     static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0);
@@ -100,6 +100,17 @@ public:
     // only for the stiffness index SI. Absent (default NaN) => SI is left NaN.
     static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN);
 
+    // ---- SEARCH WINDOWS TAKE INTEGER COLUMNS, DELIBERATELY ---------------
+    //
+    // Everything from here to detect_ppg_end brackets a search and returns a
+    // position inside it. The sub-sample precision is in the RETURN value --
+    // amplitude_crossing ends with `(i - 1) + clamp(f, 0, 1)`, interpolating
+    // between the two samples that straddle the target -- so a bracket half a
+    // sample either way changes nothing in the answer. Widening a and b to
+    // double would push fractional indices into every v[i] and loop bound in
+    // these bodies for no gain. Callers holding sub-sample bars round once, at
+    // the call, and reactive_ppg does exactly that.
+
     // Sample whose AMPLITUDE is frac of the way from v[a] to v[b] (NOT frac
     // of the sample-index distance). Shared by detect_ppg_fiducials (t80/
     // t50) and the GUI's reactive T80/t50 glyphs, so both always agree.
@@ -121,7 +132,7 @@ public:
     static double first_crossing(const std::vector<double>& v, int a, int b, double frac);
 
     static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
-   
+
     static int detect_ppg_upstroke_peak(const std::vector<double>& v, int lo = 0, int hi = -1);
     static int detect_ppg_onset(const std::vector<double>& pulse);
     static double detect_ppg_peak(const std::vector<double>& pulse);

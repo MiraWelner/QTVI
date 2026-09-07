@@ -51,10 +51,14 @@ namespace normalize_features {
         return 0.5 * (a + b);
     }
 
-    inline double sample_y(const std::vector<double>& v, int idx) {
-        // Look up sample y-value at marker index, NaN if unavailable.
-        if (idx < 0 || idx >= static_cast<int>(v.size())) return std::nan("");
-        const double y = v[idx];
+    inline double sample_y(const std::vector<double>& v, double idx) {
+        // Amplitude at a SUB-SAMPLE marker position, NaN if unavailable.
+        // INTERPOLATED, not subscripted: every marker reaching this is a double
+        // now, and rounding here would undo the widening. Callers passing a
+        // whole column (a loop index, an integer footIdx) convert implicitly
+        // and get that exact sample back.
+        if (idx < 0.0 || idx > static_cast<double>(v.size()) - 1.0) return std::nan("");
+        const double y = FeatureMarks::sample_at(v, idx);
         return std::isnan(y) ? std::nan("") : y;
     }
 
@@ -100,8 +104,13 @@ namespace normalize_features {
             // right slot as well as the only one this ever read.
             const tbank::BankMarkerSet& rmk =
                 b.slotMarks(ch, 0, AnchorType::R_PEAK);
+            // p_peak is no longer stored on BankMarkerSet: it is a reactive
+            // glyph, fully determined by the P-onset and Q-onset bars, so it is
+            // derived here from the same bars the screen and the CSV use.
+            const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
+                ecg, rmk.p_begin, rmk.q_begin, rmk.s_end, rmk.t_end, sampleRateHz);
             EcgFeatures f = computeEcgFeatures(ecg,
-                rmk.p_peak, rmk.q_begin, b.r_peak_ch[ch],
+                rx.p_peak, rmk.q_begin, b.r_peak_ch[ch],
                 rmk.s_end, rmk.t_end, sampleRateHz);
             const double ry = sample_y(ecg, f.r_idx);
             const double sy = sample_y(ecg, f.s_idx);
@@ -116,17 +125,20 @@ namespace normalize_features {
     // ------------------------------------------------------------------
     struct PulseChannel {
         const std::vector<double>* trace;
-        int   foot_idx;
-        int   peak_idx;
+        // SUB-SAMPLE POSITIONS, matching TemplateBin's widened pulse fields.
+        // pulseChan() brace-initialises these, and brace init refuses to
+        // narrow -- which is why one int here produced forty-odd errors.
+        double foot_idx;
+        double peak_idx;
         uint8_t issue;   // 0 = ok, 1 = user-bad, 2 = absent
         // Added for the area reference below, which needs the far bracket of
         // the wave and not just its peak. dicrotic_idx is the systolic/
         // diastolic divide, end_idx the end of the wave; both are -1 on
         // channels or bins where the notch was not found, which the area
         // reference treats as "fall back to end" and then "skip this bin".
-        int   dicrotic_idx;
-        int   peak2_idx;
-        int   end_idx;
+        double dicrotic_idx;
+        double peak2_idx;
+        double end_idx;
     };
 
     inline PulseChannel pulseChan(const TemplateBin& b, int which) {
@@ -490,9 +502,14 @@ namespace normalize_features {
             const PulseChannel pc = pulseChan(b, which);
             if (pc.issue != 0) continue;
             if (pc.trace->empty()) continue;
-            const int lo = pc.foot_idx;
-            int hi = (pc.end_idx > lo) ? pc.end_idx : pc.dicrotic_idx;
-            if (lo < 0 || hi <= lo) continue;
+            // ROUNDED DELIBERATELY: the integration below walks whole samples
+            // (`zeroed[k - lo]`), so the bounds round here, visibly, rather than
+            // truncating through a silent int conversion.
+            if (pc.foot_idx < 0.0) continue;
+            const double hiD = (pc.end_idx > pc.foot_idx) ? pc.end_idx : pc.dicrotic_idx;
+            const int lo = static_cast<int>(std::lround(pc.foot_idx));
+            int hi = (hiD < 0.0) ? -1 : static_cast<int>(std::lround(hiD));
+            if (hi <= lo) continue;
             if (hi >= static_cast<int>(pc.trace->size())) hi = static_cast<int>(pc.trace->size()) - 1;
             if (hi <= lo) continue;
 

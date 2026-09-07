@@ -179,8 +179,12 @@ public:
     void setState(State s);
     State state() const { return m_state; }
 
-    void setMarker(Marker m, int idx);
-    int  marker(Marker m) const { return m_markers[m]; }
+    // SUB-SAMPLE POSITIONS. Every marker the widget holds is a double: the
+    // bars come from BankMarkerSet (double) and the glyphs from the detectors
+    // and reactive_* (double). A drag still lands on a whole column, because
+    // sampleFromX maps a pixel to a sample -- but nothing else quantises.
+    void setMarker(Marker m, double idx);
+    double marker(Marker m) const { return m_markers[m]; }
 
     // Recaptures the frozen glyph snapshot and repaints. Call this LAST in a
     // seeding pass (see applyBinToWidget): m_glyphs.ecgRPeak reads the R bar,
@@ -270,8 +274,12 @@ signals:
     // is a (bin, template) pair, and the focus view reads mean/sd/n for the
     // waveform under the landmark -- without the slot it read the BIN's
     // waveform whichever panel was clicked.
+    // `col` IS A DOUBLE: it is the marker's position, and the focus panel
+    // measures against it. TemplateViewerWindow::onLandmarkSelected must
+    // match -- a Qt signal and slot with different parameter types connect at
+    // runtime and then silently never fire.
     void landmarkSelected(int binIndex, int leadIndex, int templateIdx,
-        int marker, int col);
+        int marker, double col);
 
     // TEMPLATE INDEX ADDED to the marker signals. A panel is a (bin, template)
     // pair now, and without the slot the receiver cannot tell whether a drag
@@ -364,7 +372,7 @@ private:
     std::vector<double> m_ecg;
     std::vector<double> m_ecgIqr;
 
-    int m_markers[MarkerCount];   // all -1 until seeded (filled in the ctor)
+    double m_markers[MarkerCount];   // all -1 until seeded (filled in the ctor)
 
     // Hz per channel (indexed by Channel); 0 = unknown -> channel not drawn.
     std::array<double, static_cast<size_t>(Channel::Count)> m_rates{};
@@ -387,8 +395,14 @@ private:
     // All sub-sample. Every one of these comes from a refined finder, so an
     // int field here re-quantised what the refinement had resolved.
     struct GlyphSnapshot {
-        // ecgPPeak is NOT here: the P peak is reactive, bracketed by the
-        // P-onset and Q-onset bars, so a frozen copy would go stale on a drag.
+        // ecgPPeak IS here, and it is the SEED-CHAIN answer, not a bracket
+        // search. detect_template_landmarks guesses the peak with
+        // seed_p_peak's fixed window before R, fits the onset off that guess,
+        // then re-measures the peak between the settled bounds -- and only
+        // that chain reliably lands on the P wave. reactiveGlyphs() runs
+        // compute_p_peak on the two BARS alone, with no guess to open the
+        // search, which is why the X drifted onto the PR baseline.
+        double ecgPPeak = -1.0;
         double ecgPBegin = -1.0, ecgQPeak = -1.0, ecgQ = -1.0,
             ecgRPeak = -1.0, ecgS = -1.0, ecgTend = -1.0;
         bool ecgQFound = false;

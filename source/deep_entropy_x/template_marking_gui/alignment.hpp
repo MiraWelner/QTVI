@@ -1006,12 +1006,14 @@ namespace alignment {
         res.q_aligned_col = (marker >= 0) ? marker : R_anchor;
 
         std::vector<int> shifts;   // per-beat shift, rounded, for R's new column
+        std::vector<double> locatedPos;   // DIAG: raw per-beat located landmark (sub-sample)
         if (markerD >= 0.0) {
             const double NaNv = std::numeric_limits<double>::quiet_NaN();
             shifts.reserve(beats.size());
             for (size_t i = 0; i < beats.size(); ++i) {
                 const double mi = locate(beats[i]);
                 if (!(mi >= 0.0)) continue;
+                locatedPos.push_back(mi);              // DIAG
                 const double shiftD = markerD - mi;   // may be negative
                 shifts.push_back(static_cast<int>(std::lround(shiftD)));
 
@@ -1101,6 +1103,7 @@ namespace alignment {
             if (!std::isnan(res.tmpl[i]) && res.tmpl[i] > rbest) { rbest = res.tmpl[i]; rc = i; }
         }
         res.r_col = rc;
+
         res.beats = std::move(beats);
         return res;
     }

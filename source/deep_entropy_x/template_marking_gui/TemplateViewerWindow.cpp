@@ -643,7 +643,11 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
         // R last so the flat state the grid reads is R's.
         b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
         FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK);
-        for (int c = 0; c < 3; ++c) b.syncReactiveGlyphs(c, 0, m_sampleRate);
+        // NO ECG GLYPH SYNC: p_peak is not stored any more, so there is
+        // nothing to cache. The PPG reactive values ARE cached (t50 / t80 /
+        // t80_rise / pw80 / peak2), so they are rederived here from the bars
+        // the seed just wrote plus the auto-detected systolic peak.
+        b.syncReactivePpg();
     }
 
     // If this subject was already marked in a previous session, restore
@@ -669,6 +673,13 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
     bool markersReloaded = false;
     if (QFile::exists(canonical)) {
         markersReloaded = restoreMarkersFrom(canonical, /*ecg=*/true, /*pulse=*/true);
+        // REDERIVE THE CACHED REACTIVE VALUES FROM THE RESTORED BARS. The
+        // markings bin holds bars only, so t50 / t80 / t80_rise / pw80 / peak2
+        // arrive at whatever the fresh auto-seed left while the bars come from
+        // the file -- a worse mismatch than the stored copy this replaced. The
+        // ECG side needs no equivalent: p_peak is derived at every read.
+        if (markersReloaded)
+            for (auto& b : m_bins) b.syncReactivePpg();
     }
     fprintf(stderr, "[markers] %s for subject %s (all %zu alignments)\n",
         markersReloaded ? "RELOADED prior markers" : "using FRESH auto-seed (no prior markers applied)",
@@ -732,7 +743,9 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath,
         // crash, not just a cosmetic misplacement). Rejected markers keep
         // whatever seed_all() already put there.
         size_t rejectedCount = 0;
-        auto safeIdx = [&](int savedVal, int currentVal, size_t len) -> int {
+        // DOUBLE, and the bound compared as one: casting a fractional saved
+        // position to size_t truncates, which would let len-0.5 through.
+        auto safeIdx = [&](double savedVal, double currentVal, size_t len) -> double {
             if (savedVal >= 0 && static_cast<size_t>(savedVal) < len) return savedVal;
             if (savedVal >= 0) ++rejectedCount;   // only count real (non-sentinel) rejections
             return currentVal;
@@ -780,8 +793,9 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath,
                             const tbank::BankMarkerSet& sm = kv.second;
                             tbank::BankMarkerSet& dm =
                                 d.ecg_bank[c].templates[slot].marks(kv.first);
+                            // BARS ONLY. p_peak is not in the record and not on
+                            // the struct: readers call reactive_ecg on these.
                             dm.p_begin = safeIdx(sm.p_begin, dm.p_begin, len);
-                            dm.p_peak = safeIdx(sm.p_peak, dm.p_peak, len);
                             dm.q_begin = safeIdx(sm.q_begin, dm.q_begin, len);
                             dm.s_end = safeIdx(sm.s_end, dm.s_end, len);
                             dm.t_end = safeIdx(sm.t_end, dm.t_end, len);
@@ -793,12 +807,12 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath,
 
             if (pulse) {
                 d.bad_ppg = s.bad_ppg;
+                // BARS ONLY. t50 / peak / peak2 / t80 are auto-only glyphs and
+                // are not in the record; the caller calls syncReactivePpg()
+                // once the merge is done. (ppg_t80_rise / ppg_pw80 were never
+                // merged here even when the file carried them.)
                 d.ppg_onset = safeIdx(s.ppg_onset, d.ppg_onset, ppgLen);
-                d.ppg_t50 = safeIdx(s.ppg_t50, d.ppg_t50, ppgLen);
-                d.ppg_t80 = safeIdx(s.ppg_t80, d.ppg_t80, ppgLen);
-                d.ppg_peak = safeIdx(s.ppg_peak, d.ppg_peak, ppgLen);
                 d.ppg_dicrotic = safeIdx(s.ppg_dicrotic, d.ppg_dicrotic, ppgLen);
-                d.ppg_peak2 = safeIdx(s.ppg_peak2, d.ppg_peak2, ppgLen);
                 d.ppg_end = safeIdx(s.ppg_end, d.ppg_end, ppgLen);
                 d.abp_issue = s.abp_issue;
                 d.abp_onset = safeIdx(s.abp_onset, d.abp_onset, abpLen);
@@ -882,17 +896,17 @@ void TemplateViewerWindow::writeNormalizationCsvs() {
             // choose otherwise. The per-bin QRS reference divides normalized
             // amplitudes subject-wide, so it must be one alignment for the
             // whole file -- the same reason writeTemplateMarkingsCsv pins its
-            // ecgRef to R even inside a non-R sidecar.
+            // ecgRef to R even inside a non-R part.
             const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
             const auto& ecg = chs[ch]->ecgTemplate_raw;
             if (ecg.empty()) continue;
             // slotMarks selects the lead, so the per-lead subscripts below
-            // are gone. Slot 0: the reference is measured on the sinus seed.
             const tbank::BankMarkerSet& rmk =
                 b.slotMarks(ch, 0, AnchorType::R_PEAK);
-            EcgFeatures f = computeEcgFeatures(
-                ecg, rmk.p_peak, rmk.q_begin, b.r_peak_ch[ch],
-                rmk.s_end, rmk.t_end, m_sampleRate);
+            const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
+                ecg, rmk.p_begin, rmk.q_begin, rmk.s_end, rmk.t_end, m_sampleRate);
+            EcgFeatures f = computeEcgFeatures(ecg, rx.p_peak, rmk.q_begin,
+                b.r_peak_ch[ch], rmk.s_end, rmk.t_end, m_sampleRate);
             const double ry = normalize_features::sample_y(ecg, f.r_idx);
             const double sy = normalize_features::sample_y(ecg, f.s_idx);
             if (std::isnan(ry) || std::isnan(sy)) continue;
@@ -981,7 +995,7 @@ std::vector<double> TemplateViewerWindow::normalizeEcgTrace(const std::vector<do
     return normalize_features::normalize_ecg_trace(raw, ref);
 }
 
-std::vector<double> TemplateViewerWindow::normalize_ppg_or_similar(const std::vector<double>& raw, int footIdx, int pulseChan) const {
+std::vector<double> TemplateViewerWindow::normalize_ppg_or_similar(const std::vector<double>& raw, double footIdx, int pulseChan) const {
     const double ref = (pulseChan >= 0 && pulseChan < 4) ? m_pulseGlobalRef[pulseChan] : std::nan("");
     return normalize_features::normalize_pulse_trace(raw, footIdx, ref);
 }
@@ -1537,28 +1551,28 @@ static std::string suffixValueColumns(const std::string& header, const std::stri
     return out;
 }
 
-// Zip the R canonical file with the just-produced Q content (both as raw CSV
-// text). Header line: R header with un-suffixed keys and _r on values, then
-// Q's non-key value columns with _q on them. Row lines: paired 1:1; each
-// zipped row uses R's file_id/bin_num/x_ms as the keys, then R's value
-// columns, then Q's value columns. Row counts must match -- if they don't we
-// abort and leave the R file untouched (worse to write a garbled file than
-// none). Returns true on success.
-// Merge an ordered list of sidecar CSV files into one canonical file.
-// files[0] is the base (kept whole, with its keys); each subsequent file
+// Merge an ordered list of in-memory CSV parts into one canonical file.
+// parts[0] is the base (kept whole, with its keys); each subsequent part
 // contributes only its value columns (first 3 key columns stripped), appended
-// to every row -- same column convention as zipCanonicalWithQ, generalized to
-// N inputs and done ONCE at the end instead of a growing read-modify-write per
-// pass. Row counts must match across all files. Returns true on success.
-static bool mergeSidecarCsvs(const std::string& canonicalPath,
-    const std::vector<std::string>& sidecarPaths)
-{
-    if (sidecarPaths.empty()) return false;
+// to every row. Done ONCE at the end over N parts, instead of the growing
+// read-modify-write per pass this replaced. Row counts must match across all
+// parts. Returns true on success.
+//
+// Each part is (label, content): the label names the alignment for diagnostics
+// only, since the parts are no longer files on disk. Previously each part was
+// staged as a temp file, re-read, rewritten as a sidecar, and read a third time
+// here; the whole save now happens in memory and only the canonical file is
+// written.
+struct CsvPart { std::string label; std::string content; };
 
-    auto readLines = [](const std::string& p) {
+static bool mergeCsvParts(const std::string& canonicalPath,
+    const std::vector<CsvPart>& parts)
+{
+    if (parts.empty()) return false;
+
+    auto splitLines = [](const std::string& s) {
         std::vector<std::string> lines; std::string ln;
-        std::ifstream in(p);
-        if (!in) return lines;
+        std::istringstream in(s);
         while (std::getline(in, ln)) {
             if (!ln.empty() && ln.back() == '\r') ln.pop_back();
             lines.push_back(ln);
@@ -1572,17 +1586,17 @@ static bool mergeSidecarCsvs(const std::string& canonicalPath,
         return {};
         };
 
-    std::vector<std::string> merged = readLines(sidecarPaths[0]);
+    std::vector<std::string> merged = splitLines(parts[0].content);
     if (merged.empty()) {
-        fprintf(stderr, "[tmplcsv] merge: base sidecar empty/missing: %s\n", sidecarPaths[0].c_str());
+        fprintf(stderr, "[tmplcsv] merge: base part empty: %s\n", parts[0].label.c_str());
         return false;
     }
-    for (size_t s = 1; s < sidecarPaths.size(); ++s) {
-        std::vector<std::string> next = readLines(sidecarPaths[s]);
+    for (size_t s = 1; s < parts.size(); ++s) {
+        std::vector<std::string> next = splitLines(parts[s].content);
         if (next.size() != merged.size()) {
             fprintf(stderr, "[tmplcsv] merge: row mismatch (%zu vs %zu) for %s -- skipping\n",
-                next.size(), merged.size(), sidecarPaths[s].c_str());
-            continue;   // skip a bad sidecar rather than abort the whole merge
+                next.size(), merged.size(), parts[s].label.c_str());
+            continue;   // skip a bad part rather than abort the whole merge
         }
         for (size_t i = 0; i < merged.size(); ++i) {
             const std::string tail = stripFirstThree(next[i]);
@@ -1599,76 +1613,9 @@ static bool mergeSidecarCsvs(const std::string& canonicalPath,
     return out.good();
 }
 
-static bool zipCanonicalWithQ(const std::string& canonicalPath,
-    const std::string& qContent)
-{
-    std::ifstream rf(canonicalPath);
-    if (!rf) {
-        fprintf(stderr, "[tmplcsv] zip: cannot open R canonical %s\n", canonicalPath.c_str());
-        return false;
-    }
-    auto readAll = [](std::istream& in) {
-        std::vector<std::string> lines; std::string ln;
-        while (std::getline(in, ln)) {
-            if (!ln.empty() && ln.back() == '\r') ln.pop_back();
-            lines.push_back(ln);
-        }
-        return lines;
-        };
-    std::vector<std::string> R = readAll(rf);
-    rf.close();
-    std::istringstream qs(qContent);
-    std::vector<std::string> Q = readAll(qs);
-    if (R.empty() || Q.empty()) {
-        fprintf(stderr, "[tmplcsv] zip: empty input (R=%zu Q=%zu)\n", R.size(), Q.size());
-        return false;
-    }
-    if (R.size() != Q.size()) {
-        fprintf(stderr, "[tmplcsv] zip: row count mismatch (R=%zu Q=%zu) -- keeping R file as-is\n",
-            R.size(), Q.size());
-        return false;
-    }
-
-    // Strip Q's first three columns (the shared keys) from every line so
-    // we don't duplicate them in the zipped output.
-    auto stripFirstThree = [](const std::string& line) -> std::string {
-        int commas = 0;
-        for (size_t i = 0; i < line.size(); ++i) {
-            if (line[i] == ',') {
-                if (++commas == 3) return line.substr(i + 1);
-            }
-        }
-        return {};   // fewer than 3 commas -- nothing to append
-        };
-
-    std::ofstream out(canonicalPath, std::ios::trunc);
-    if (!out) {
-        fprintf(stderr, "[tmplcsv] zip: cannot rewrite %s\n", canonicalPath.c_str());
-        return false;
-    }
-    for (size_t i = 0; i < R.size(); ++i) {
-        const std::string qTail = stripFirstThree(Q[i]);
-        out << R[i];
-        if (!qTail.empty()) out << ',' << qTail;
-        out << '\n';
-    }
-    return out.good();
-}
-
-void TemplateViewerWindow::writeAlignedTemplateCsv(AnchorType anchor) {
-    // One row per sample column per bin. Every value column is emitted twice,
-    // raw and normalized, plus its IQR band in both forms; marker positions
-    // ride along as one-hot flags on the row matching their sample index.
-    if (m_bins.empty()) return;
-
-    QDir outDir(m_templateDir);
-    if (!outDir.exists()) outDir.mkpath(".");
-    // Names the canonical merge target. Used only in the log/error messages
-    // below -- this function writes a per-anchor sidecar, never `path` itself.
-    const QString path = outDir.filePath(m_subjectId + "_template.csv");
-
+std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
+    if (m_bins.empty()) return {};
     std::ostringstream f;
-    const double toMs = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 1.0;
 
     // ---- Column lists (shared by the header pass and the row loop) ---------
     static const char* CHANS[] = {
@@ -1835,22 +1782,22 @@ void TemplateViewerWindow::writeAlignedTemplateCsv(AnchorType anchor) {
         for (int c = 0; c < 3; ++c) {
             const auto& ecg = chs[c]->ecgTemplate_raw;
             const auto aaF = b.autoFor(anchor);
+            // NO ROUNDING: computeEcgFeatures takes doubles, AnchorAuto is
+            // double, and the qrs/qt milliseconds this feeds are sub-sample.
             ftAuto[c] = computeEcgFeatures(ecg,
-                (int)std::lround(aaF.p_peak[c]), (int)std::lround(aaF.q_begin[c]),
-                (int)std::lround(aaF.r_peak[c]), (int)std::lround(aaF.s_end[c]),
-                (int)std::lround(aaF.t_end[c]), m_sampleRate);
+                aaF.p_peak[c], aaF.q_begin[c], aaF.r_peak[c],
+                aaF.s_end[c], aaF.t_end[c], m_sampleRate);
             // Per lead, because slotMarks selects the lead -- the old bin-wide
             // MarkerSet held all three leads in one object and was fetched once
             // per bin.
             const tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
-            // userMarks returns BARS ONLY, so umk.p_peak is -1 by
-            // construction: P peak is a glyph. Recompute it from the two bars
-            // that bracket it rather than passing the -1 through, which would
-            // have handed computeEcgFeatures an absent P on every lead.
+            // userMarks returns BARS ONLY, and BankMarkerSet no longer has a
+            // p_peak field at all: P peak is a glyph. It is recomputed from the
+            // two bars that bracket it, on this alignment's own waveform.
             const FeatureMarks::ReactiveEcg rxF = FeatureMarks::reactive_ecg(
                 ecg, umk.p_begin, umk.q_begin, umk.s_end, umk.t_end, m_sampleRate);
             ftUser[c] = computeEcgFeatures(ecg,
-                (int)std::lround(rxF.p_peak), umk.q_begin, b.r_peak_ch[c],
+                rxF.p_peak, umk.q_begin, b.r_peak_ch[c],
                 umk.s_end, umk.t_end, m_sampleRate);
         }
 
@@ -1901,21 +1848,24 @@ void TemplateViewerWindow::writeAlignedTemplateCsv(AnchorType anchor) {
             (double)b.ppg_onset_auto, rxPpgAuto.t50, (double)b.ppg_peak_auto,
             (double)b.ppg_dicrotic_auto, (double)b.ppg_peak2_auto, rxPpgAuto.t80,
             (double)b.ppg_end_auto };
+        // ALL DOUBLE. The (double) casts on the pulse bars are gone with
+        // TemplateBin's int fields, and the arterial arrays were narrowing
+        // fifteen sub-sample positions apiece.
         const double ppgUser[kNumPpgMarkers] = {
-            (double)b.ppg_onset, rxPpgUser.t50, (double)b.ppg_peak,
-            (double)b.ppg_dicrotic, (double)b.ppg_peak2, rxPpgUser.t80,
-            (double)b.ppg_end };
-        const int abpAuto[kNumArterialMarkers] = { b.abp_onset_auto, b.abp_peak_auto,
+            b.ppg_onset, rxPpgUser.t50, b.ppg_peak,
+            b.ppg_dicrotic, b.ppg_peak2, rxPpgUser.t80,
+            b.ppg_end };
+        const double abpAuto[kNumArterialMarkers] = { b.abp_onset_auto, b.abp_peak_auto,
             b.abp_dicrotic_auto, b.abp_peak2_auto, b.abp_end_auto };
-        const int abpUser[kNumArterialMarkers] = { b.abp_onset, b.abp_peak,
+        const double abpUser[kNumArterialMarkers] = { b.abp_onset, b.abp_peak,
             b.abp_dicrotic, b.abp_peak2, b.abp_end };
-        const int artAuto[kNumArterialMarkers] = { b.art_onset_auto, b.art_peak_auto,
+        const double artAuto[kNumArterialMarkers] = { b.art_onset_auto, b.art_peak_auto,
             b.art_dicrotic_auto, b.art_peak2_auto, b.art_end_auto };
-        const int artUser[kNumArterialMarkers] = { b.art_onset, b.art_peak,
+        const double artUser[kNumArterialMarkers] = { b.art_onset, b.art_peak,
             b.art_dicrotic, b.art_peak2, b.art_end };
-        const int artpAuto[kNumArterialMarkers] = { b.art_pulm_onset_auto, b.art_pulm_peak_auto,
+        const double artpAuto[kNumArterialMarkers] = { b.art_pulm_onset_auto, b.art_pulm_peak_auto,
             b.art_pulm_dicrotic_auto, b.art_pulm_peak2_auto, b.art_pulm_end_auto };
-        const int artpUser[kNumArterialMarkers] = { b.art_pulm_onset, b.art_pulm_peak,
+        const double artpUser[kNumArterialMarkers] = { b.art_pulm_onset, b.art_pulm_peak,
             b.art_pulm_dicrotic, b.art_pulm_peak2, b.art_pulm_end };
 
         // Derived T peak for the autodetect glyph group, bracketed by the AUTO J-point and T-end. The J-point is the left bracket because no T-onset
@@ -1930,17 +1880,12 @@ void TemplateViewerWindow::writeAlignedTemplateCsv(AnchorType anchor) {
             if (j >= 0 && j < (int)v.size() && !std::isnan(v[j])) f << v[j];
             };
         // Emit ",1" if the row is this marker's row, ",<blank>" otherwise.
-        //
-        // ROUNDING BOUNDARY, and an unavoidable one: this column is a one-hot
-        // flag per SAMPLE ROW, so a landmark at 104.37 has to be attributed to
-        // a row and the format has no fractional representation. Rounded to the
-        // nearest row explicitly, in one place, rather than truncated by
-        // implicit conversions at each call site. The millisecond columns
-        // elsewhere in this file carry the fraction.
+        //normally you don't want to round the marker, but in this case it is a 1 hot encoding so you have to 
         auto emitLoc = [&](double markerIdx, int row) {
             f << ',';
             if (markerIdx >= 0.0 && (int)std::lround(markerIdx) == row) f << '1';
             };
+        const double toMs = 1000.0 / m_sampleRate;
         for (int row = 0; row < hiRow; ++row) {
             f << m_subjectId.toStdString() << ',' << bi << ',' << (row * toMs);
             for (int k = 0; k < num_chans; ++k) {
@@ -1976,33 +1921,18 @@ void TemplateViewerWindow::writeAlignedTemplateCsv(AnchorType anchor) {
         }
     }
 
-    // Serialize, suffix the value columns with the pass tag, and write this
-    // pass's sidecar. Row-key columns (file_id/bin_num/x_ms) are never
-    // suffixed, so the sidecars line up on the merge in save_bin_and_csv.
+    // Serialize and suffix the value columns with the alignment tag. Row-key
+    // columns (file_id/bin_num/x_ms) are never suffixed, so the parts line up
+    // on the merge in save_bin_and_csv. Returned as a string -- the caller
+    // merges it directly instead of staging a sidecar file.
     std::string content = f.str();
     const size_t nl = content.find('\n');
-    if (nl == std::string::npos) {
-        fprintf(stderr, "[tmplcsv] malformed content (no newline) for %s\n",
-            path.toStdString().c_str());
-        return;
-    }
     const std::string header = content.substr(0, nl);
     const std::string body = content.substr(nl);   // includes the leading '\n'
     // From the ARGUMENT, not from window state: this function is called once
     // per alignment inside a single save.
     const std::string suffix = std::string("_") + anchor_view::label(anchor);
-
-    const QString sidecar = outDir.filePath(
-        m_subjectId + "_template" + suffix.c_str() + ".csv");
-    std::ofstream out(sidecar.toStdString(), std::ios::trunc);
-    if (!out) {
-        fprintf(stderr, "[tmplcsv] cannot open sidecar %s\n",
-            sidecar.toStdString().c_str());
-        return;
-    }
-    out << suffixValueColumns(header, suffix) << body;
-    out.close();
-    fprintf(stderr, "[tmplcsv] wrote sidecar %s\n", sidecar.toStdString().c_str());
+    return suffixValueColumns(header, suffix) + body;
 }
 
 void TemplateViewerWindow::applyMarkerVisibility() {
@@ -2163,7 +2093,8 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
         const int rc4 = (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel];
         FeatureMarks::seed_bank_template(tp.tmpl, rc4, m_sampleRate, a4, tp.marks(tag4));
     }
-    b.syncReactiveGlyphs(channel, templateIdx, m_sampleRate);
+    // (no glyph sync: p_peak is derived at every read now -- see the
+    //  reactive_ecg call in applyBankTemplateToWidget below.)
     // ASSEMBLED, NOT FETCHED. Each bar lives in its owning alignment's set;
     // userMarks pulls all four and translates them into the R frame the panel
     // draws in. Fetching one alignment's set here is what limited a session to
@@ -2187,19 +2118,31 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
                 FeatureMarks::seed_pulse_bank_template(ps.tmpl, m_ppgRateHz,
                     ps.pulse_marks);
             const tbank::BankPulseMarkerSet& pm = ps.pulse_marks;
+            // THREE BARS, THE REST DERIVED. peak / peak2 / t50 / t80 left
+            // BankPulseMarkerSet -- markerAtX hands none of them out, and all
+            // of them come back from reactive_ppg bracketed by the bars plus
+            // the detector's own systolic peak.
+            const FeatureMarks::ReactivePpg rp = FeatureMarks::reactive_ppg(
+                ps.tmpl, pm.onset, pm.peak_auto, pm.dicrotic, pm.end);
             pw->setMarker(BinPlotWidget::PpgOnset, pm.onset);
-            pw->setMarker(BinPlotWidget::PpgPeak, pm.peak);
+            pw->setMarker(BinPlotWidget::PpgPeak, pm.peak_auto);
             pw->setMarker(BinPlotWidget::PpgDicrotic, pm.dicrotic);
-            pw->setMarker(BinPlotWidget::PpgPeak2, pm.peak2);
+            pw->setMarker(BinPlotWidget::PpgPeak2, rp.peak2);
             pw->setMarker(BinPlotWidget::PpgEnd, pm.end);
-            pw->setMarker(BinPlotWidget::PpgT50, pm.t50);
-            pw->setMarker(BinPlotWidget::PpgT80, pm.t80);
+            pw->setMarker(BinPlotWidget::PpgT50, rp.t50);
+            pw->setMarker(BinPlotWidget::PpgT80, rp.t80);
             pw->overridePulseGlyphs(pm);
         }
     }
 
+    // P PEAK IS DERIVED, not stored: reactive_ecg on this slot's own bars,
+    // against this slot's own waveform. Same function BinPlotWidget::
+    // reactiveGlyphs calls, so the bar set, the X on screen and the CSV column
+    // cannot disagree.
+    const FeatureMarks::ReactiveEcg reBank = FeatureMarks::reactive_ecg(
+        tp.tmpl, mk.p_begin, mk.q_begin, mk.s_end, mk.t_end, m_sampleRate);
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
-    pw->setMarker(BinPlotWidget::EcgPPeak, mk.p_peak);
+    pw->setMarker(BinPlotWidget::EcgPPeak, reBank.p_peak);
     pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_begin);
     pw->setMarker(BinPlotWidget::EcgRPeak,
         (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel]);
@@ -2219,9 +2162,14 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     // dashed traces under slot 0 would duplicate what the neighbouring columns
     // already show.
 
+    // P PEAK IS DERIVED, not stored -- see applyBankTemplateToWidget.
+    const FeatureMarks::ReactiveEcg reBin = FeatureMarks::reactive_ecg(
+        b.chFor(c, AnchorType::R_PEAK).ecgTemplate_raw,
+        mk.p_begin, mk.q_begin, mk.s_end, mk.t_end, m_sampleRate);
+
     // ---- draggable bars ----------------------------------------------------
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
-    pw->setMarker(BinPlotWidget::EcgPPeak, mk.p_peak);
+    pw->setMarker(BinPlotWidget::EcgPPeak, reBin.p_peak);   // glyph, not a bar
     pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_begin);
     pw->setMarker(BinPlotWidget::EcgRPeak, b.r_peak_ch[c]);   // auto-only, no bar drawn
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
@@ -2323,28 +2271,27 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     // targets the later bin's BAND-MATCHING slot, which is generally a different
     // number from the dragged one -- so these two hardcoding templateIdx was
     // half of why propagation only ever touched same-numbered columns.
-    auto bankGet = [&](tbank::TemplateBank& bk, int slot) -> int {
+    auto bankGet = [&](tbank::TemplateBank& bk, int slot) -> double {
         tbank::BankMarkerSet& m = bk.templates[slot].marks(anchor);
         switch (marker) {
         case BinPlotWidget::EcgPBegin: return m.p_begin;
-        case BinPlotWidget::EcgPPeak:  return m.p_peak;
         case BinPlotWidget::EcgQBegin: return m.q_begin;
         case BinPlotWidget::EcgSEnd:   return m.s_end;
         case BinPlotWidget::EcgTEnd:   return m.t_end;
         }
-        return -1;
+        return -1.0;
         };
-    auto bankSet = [&](tbank::TemplateBank& bk, int slot, int v) {
+    auto bankSet = [&](tbank::TemplateBank& bk, int slot, double v) {
         tbank::BankMarkerSet& m = bk.templates[slot].marks(anchor);
         switch (marker) {
         case BinPlotWidget::EcgPBegin: m.p_begin = v; break;
-        case BinPlotWidget::EcgPPeak:  m.p_peak = v; break;
         case BinPlotWidget::EcgQBegin: m.q_begin = v; break;
         case BinPlotWidget::EcgSEnd:   m.s_end = v; break;
         case BinPlotWidget::EcgTEnd:   m.t_end = v; break;
-            // EcgRPeak has no bar and is not draggable: it is the alignment
-            // anchor, and moving it would invalidate every other landmark's
-            // coordinate.
+            // EcgRPeak and EcgPPeak have no bar and are not draggable: R is the
+            // alignment anchor, and P peak is a reactive glyph derived from the
+            // P-onset and Q-onset bars. markerAtX hands out neither, so neither
+            // case is reachable -- both fall through to the -1 above.
         }
         };
 
@@ -2502,11 +2449,12 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         //
         // Reads and writes are in the OWNER'S frame; the widget hands us a
         // column in the R frame, so the caller converts. P peak is gone from
-        // these switches: it is a glyph, recomputed by syncReactiveGlyphs from
-        // the two bars that bracket it, so a drag must not write it.
+        // these switches AND from BankMarkerSet: it is a glyph, derived at every
+        // read by FeatureMarks::reactive_ecg from the two bars that bracket it,
+        // so a drag must not write it and there is no stored copy to update.
         if (!anchor_view::isBar(marker) && marker != BinPlotWidget::EcgRPeak) return;
         const AnchorType owner = anchor_view::anchorFor(marker);
-        auto ecgGet = [&](TemplateBin& tb, int slot) -> int {
+        auto ecgGet = [&](TemplateBin& tb, int slot) -> double {
             if (marker == BinPlotWidget::EcgRPeak) return tb.r_peak_ch[leadIdx];
             const tbank::BankMarkerSet& m =
                 tb.slotMarks(leadIdx, slot, owner);
@@ -2516,9 +2464,9 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             case BinPlotWidget::EcgSEnd:   return m.s_end;
             case BinPlotWidget::EcgTEnd:   return m.t_end;
             }
-            return -1;
+            return -1.0;
             };
-        auto ecgSet = [&](TemplateBin& tb, int slot, int v) {
+        auto ecgSet = [&](TemplateBin& tb, int slot, double v) {
             // R is the alignment anchor: auto-only, and per BIN rather than per
             // slot, because every template in the bank is aligned on it.
             if (marker == BinPlotWidget::EcgRPeak) { tb.r_peak_ch[leadIdx] = v; return; }
@@ -2535,13 +2483,13 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         // every panel. The bar is stored in its own alignment's frame, so the
         // column converts here -- a no-op for the J point (owner is R) and a
         // sample or two for the other three.
-        const int stored = newIdx + b.frameShift(leadIdx, AnchorType::R_PEAK, owner);
-        const int oldIdx = ecgGet(b, 0);
+        const double stored = newIdx + b.frameShift(leadIdx, AnchorType::R_PEAK, owner);
+        const double oldIdx = ecgGet(b, 0);
         if (m_dragStartIdx < 0) m_dragStartIdx = oldIdx;
         ecgSet(b, 0, stored);
-        // P peak follows its brackets. Recomputed for every alignment, so the
-        // value written to the bin and the CSV is the one drawn on screen.
-        b.syncReactiveGlyphs(leadIdx, 0, m_sampleRate);
+        // NO GLYPH SYNC. P peak used to be cached here after every drag; it is
+        // now derived at each read from these same bars, so a drag updates it
+        // implicitly and there is no stored copy to fall out of step.
         // Track the drag: the touched store follows the bar to its final
         // position so confirmedIndex reflects where the operator left it.
         if (newIdx >= 0)
@@ -2632,30 +2580,33 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
     }
 
     if (BinPlotWidget::markerIsPpg(marker)) {
-        auto ppgGet = [&](TemplateBin& tb) -> int {
+        // THE THREE BARS ONLY. Peak / peak2 / t50 / t80 are auto-only glyphs
+        // that markerAtX never hands out, so those cases were unreachable --
+        // and writing one would now be writing a cache that syncReactivePpg
+        // overwrites from the bars on the next load.
+        auto ppgGet = [&](TemplateBin& tb) -> double {
             switch (marker) {
             case BinPlotWidget::PpgOnset:    return tb.ppg_onset;
-            case BinPlotWidget::PpgPeak:     return tb.ppg_peak;
             case BinPlotWidget::PpgDicrotic: return tb.ppg_dicrotic;
-            case BinPlotWidget::PpgPeak2:    return tb.ppg_peak2;
             case BinPlotWidget::PpgEnd:      return tb.ppg_end;
             }
-            return -1;
+            return -1.0;
             };
-        auto ppgSet = [&](TemplateBin& tb, int v) {
+        auto ppgSet = [&](TemplateBin& tb, double v) {
             switch (marker) {
             case BinPlotWidget::PpgOnset:    tb.ppg_onset = v; break;
-            case BinPlotWidget::PpgPeak:     tb.ppg_peak = v; break;
             case BinPlotWidget::PpgDicrotic: tb.ppg_dicrotic = v; break;
-            case BinPlotWidget::PpgPeak2:    tb.ppg_peak2 = v; break;
             case BinPlotWidget::PpgEnd:      tb.ppg_end = v; break;
             }
             };
 
-        const int oldIdx = ppgGet(b);
+        const double oldIdx = ppgGet(b);
         ppgSet(b, newIdx);
+        // A BAR MOVED, SO THE GLYPHS FOLLOW. t50 / t80 / t80_rise / pw80 /
+        // peak2 are all bracketed by these three bars plus the auto peak.
+        b.syncReactivePpg();
         refreshBinMarkers(binIdx);
-        const int delta = newIdx - oldIdx;
+        const double delta = newIdx - oldIdx;
 
         if (m_moveMode != MoveMode::Individual && oldIdx >= 0) {
             const int nDragged = (int)b.ppgTemplate.size();
@@ -2663,19 +2614,20 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
 
             for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
                 if (m_bins[i].bad_ppg != 0) continue;
-                const int cur = ppgGet(m_bins[i]);
-                if (cur < 0) continue;
+                const double cur = ppgGet(m_bins[i]);
+                if (cur < 0.0) continue;
 
                 const int rawLen = (int)m_bins[i].ppgTemplate.size();
                 const int ecgClip = ecgClipLenFor(m_bins[i]);
                 const int n = (ecgClip > 0) ? std::min(rawLen, ecgClip) : rawLen;
                 if (n <= 0) continue;
 
-                const int target = (m_moveMode == MoveMode::SubsequentDelta)
+                const double target = (m_moveMode == MoveMode::SubsequentDelta)
                     ? cur + delta
-                    : (n > 1 ? (int)std::lround(pct * (n - 1)) : 0);
-                if (target < 0 || target > n - 1) continue;
+                    : (n > 1 ? pct * (n - 1) : 0.0);
+                if (target < 0.0 || target > n - 1) continue;
                 ppgSet(m_bins[i], target);
+                m_bins[i].syncReactivePpg();
             }
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
                 int gi = m_pageGlobalIdx[li];
@@ -2690,7 +2642,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
     // propagate to subsequent bins when Move-Subsequent is on.
     if (BinPlotWidget::markerIsArterial(marker)) {
         // Select the channel's field pointers, issue flag, and trace by group.
-        auto assign = [&](TemplateBin& tb, int mk, int val) {
+        auto assign = [&](TemplateBin& tb, int mk, double val) {
             switch (mk) {
             case BinPlotWidget::AbpOnset:    tb.abp_onset = val; break;
             case BinPlotWidget::AbpPeak:     tb.abp_peak = val; break;
@@ -2709,7 +2661,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             case BinPlotWidget::ArtPulmEnd:      tb.art_pulm_end = val; break;
             }
             };
-        auto artGet = [&](TemplateBin& tb, int mk) -> int {
+        auto artGet = [&](TemplateBin& tb, int mk) -> double {
             switch (mk) {
             case BinPlotWidget::AbpOnset:    return tb.abp_onset;
             case BinPlotWidget::AbpPeak:     return tb.abp_peak;
@@ -2794,8 +2746,11 @@ void TemplateViewerWindow::onMarkerDragStarted(int, int, int) {
 }
 // B2 focus mode --------------------------------------------------------------
 
+// `col` IS A DOUBLE, matching BinPlotWidget::landmarkSelected. A Qt signal and
+// slot whose parameter types differ connect at runtime and then silently never
+// fire, so these two must be changed together.
 void TemplateViewerWindow::onLandmarkSelected(int binIdx, int leadIdx,
-    int templateIdx, int marker, int col)
+    int templateIdx, int marker, double col)
 {
     // Focus activation = the operator clicked this bar. Record it as "touched"
     // at position col; logBoundaryTrainingAtSave reads this to fill
@@ -2890,7 +2845,7 @@ void TemplateViewerWindow::wireAlignButtons() {
 }
 
 void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
-    int templateIdx, int marker, int col)
+    int templateIdx, int marker, double col)
 {
     if (!zoomed_in_section_top) return;   // panels not created (nothing to do)
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
@@ -3393,10 +3348,15 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
                 // confirmedIndex = the operator's clicked position (segment-
                 // relative) if this landmark was touched (focus activated on
                 // its bar), else -1 => blank. The row is logged either way.
+                // ROUNDED HERE, DELIBERATELY: the record's confirmedIndex is a
+                // sample offset into rec.segment, which has no fractional
+                // representation. The touched store keeps the sub-sample click
+                // position; only this one field quantises.
                 int confirmed = -1;
                 const int mid = markerIdOf(tgt.lm);
                 auto it = m_touchedMarks.find(touchKey(i, lead, mid));
-                if (it != m_touchedMarks.end()) confirmed = it->second - lo;
+                if (it != m_touchedMarks.end())
+                    confirmed = static_cast<int>(std::lround(it->second)) - lo;
 
                 boundary_training::BoundaryTrainingRecord rec;
                 rec.segment.assign(sig.begin() + lo, sig.begin() + hi);
@@ -3490,68 +3450,50 @@ void TemplateViewerWindow::save_bin_and_csv() {
                 << m_subjectId.toStdString() << "_vcg.csv\n";
         }
 
-        // ---- FOUR SIDECARS, ONE SAVE ----------------------------------
+        // ---- FOUR PARTS, ONE WRITE ------------------------------------
         //
-        // Each sidecar holds one alignment's glyph columns and the one bar it
+        // Each part holds one alignment's glyph columns and the one bar it
         // owns, with its value columns suffixed _R / _P / _Q / _T; the merge
         // joins them on (file_id, bin_index) exactly as it did when the four
         // were written one window apart. Pulse last, un-suffixed, once -- it
         // has no alignment dimension.
-        //
-        // The glob-discovery this replaces existed only to find sidecars left
-        // by PREVIOUS sessions of the same subject. There is one session now,
-        // so the order is kAllAnchors, and a stale sidecar from an older build
-        // can no longer sneak into the merge.
         const QString csvPath = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings.csv";
-        const QString pulseSidecar = csvDir.absolutePath() + "/"
-            + m_subjectId + "_template_markings_PULSE.csv";
+        const QString pulseSidecar = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings_PULSE.csv";
 
-        // Write one sidecar: CSV to a temp file, then re-emit with every value
-        // column suffixed. An empty suffix skips the renaming (pulse).
-        auto writeSidecar = [&](const QString& path, const QString& suffix,
-            AnchorType anchor, MarkingsCsvSection section) {
-                const QString tmpPath = path + ".tmp";
-                writeTemplateMarkingsCsv(tmpPath.toStdString(), m_bins,
+        // Build one part: serialize the CSV into a string, then re-emit with
+        // every value column suffixed. An empty suffix skips the renaming
+        // (pulse). Nothing touches the filesystem until the merge.
+        auto buildPart = [&](const QString& label, const QString& suffix,
+            AnchorType anchor, MarkingsCsvSection section) -> CsvPart {
+                std::ostringstream gen;
+                writeTemplateMarkingsCsv(gen, m_bins,
                     m_subjectId.toStdString(), m_sampleRate, anchor, section);
-                std::ifstream tin(tmpPath.toStdString());
-                std::stringstream tbuf; tbuf << tin.rdbuf();
-                tin.close();
-                QFile::remove(tmpPath);
-                const std::string tcontent = tbuf.str();
+                const std::string tcontent = gen.str();
                 const size_t tnl = tcontent.find('\n');
                 if (tnl == std::string::npos)
                     throw std::runtime_error("markings CSV writer produced malformed content (no newline)");
                 const std::string tHeader = tcontent.substr(0, tnl);
                 const std::string tBody = tcontent.substr(tnl);
-                std::ofstream out(path.toStdString(), std::ios::trunc);
-                if (!out) throw std::runtime_error("cannot open for write: " + path.toStdString());
-                out << (suffix.isEmpty()
+                std::string outContent = (suffix.isEmpty()
                     ? tHeader
-                    : suffixValueColumns(tHeader, suffix.toStdString()))
-                    << tBody;
-                out.close();
-                std::cout << "Saved sidecar: " << path.toStdString() << "\n";
+                    : suffixValueColumns(tHeader, suffix.toStdString()));
+                outContent += tBody;
+                return CsvPart{ label.toStdString(), std::move(outContent) };
             };
 
-        std::vector<std::string> order;
+        std::vector<CsvPart> parts;
         for (AnchorType a : anchor_view::kAllAnchors) {
             const QString suffix = QString("_") + anchor_view::label(a);
-            const QString sidecar = csvDir.absolutePath() + "/"
-                + m_subjectId + "_template_markings" + suffix + ".csv";
-            writeSidecar(sidecar, suffix, a, MarkingsCsvSection::EcgOnly);
-            order.push_back(sidecar.toStdString());
+            parts.push_back(buildPart(suffix, suffix, a,
+                MarkingsCsvSection::EcgOnly));
         }
-        writeSidecar(pulseSidecar, QString(), AnchorType::R_PEAK,
-            MarkingsCsvSection::PulseOnly);
-        order.push_back(pulseSidecar.toStdString());
-        std::cout.flush();
+        parts.push_back(buildPart("PULSE", QString(), AnchorType::R_PEAK,
+            MarkingsCsvSection::PulseOnly));
 
         {
-            if (!mergeSidecarCsvs(csvPath.toStdString(), order))
-                throw std::runtime_error("could not merge markings sidecars into " + csvPath.toStdString());
-            for (const auto& p : order) QFile::remove(QString::fromStdString(p));
-            std::cout << "Merged markings CSV: " << csvPath.toStdString() << "\n";
-
+            if (!mergeCsvParts(csvPath.toStdString(), parts))
+                throw std::runtime_error("could not merge markings parts into " + csvPath.toStdString());
+            std::cout << "Wrote markings CSV: " << csvPath.toStdString() << "\n";
         }
     }
     catch (const std::exception& e) {
@@ -3562,24 +3504,22 @@ void TemplateViewerWindow::save_bin_and_csv() {
         return;   // don't emit finished(); let the user retry
     }
 
-    // Aligned-template CSV: one sidecar per alignment, holding that
-    // alignment's own averages, merged into the canonical <id>_template.csv.
-    // Same restructuring as the markings sidecars above, same reason -- the
-    // glob was reading files left by earlier passes of the same subject, and
-    // there are no earlier passes now.
+    // Aligned-template CSV: one part per alignment, holding that alignment's
+// own averages, merged into the canonical <id>_template.csv in one write.
+// Same restructuring as the markings parts above, same reason -- the
+// sidecars only existed to survive window teardowns between passes.
     {
         QDir alignedDir(m_templateDir);
+        if (!alignedDir.exists()) alignedDir.mkpath(".");
         const QString canonical = alignedDir.filePath(m_subjectId + "_template.csv");
-        std::vector<std::string> order;
+        std::vector<CsvPart> parts;
         for (AnchorType a : anchor_view::kAllAnchors) {
-            writeAlignedTemplateCsv(a);
-            order.push_back(alignedDir.filePath(
-                m_subjectId + "_template_" + anchor_view::label(a) + ".csv")
-                .toStdString());
+            std::string content = buildAlignedTemplateCsv(a);
+            if (content.empty()) continue;
+            parts.push_back(CsvPart{ anchor_view::label(a), std::move(content) });
         }
-        if (!order.empty() && mergeSidecarCsvs(canonical.toStdString(), order)) {
-            for (const auto& p : order) QFile::remove(QString::fromStdString(p));
-            std::cout << "Merged aligned-template CSV: " << canonical.toStdString() << "\n";
+        if (!parts.empty() && mergeCsvParts(canonical.toStdString(), parts)) {
+            std::cout << "Wrote aligned-template CSV: " << canonical.toStdString() << "\n";
         }
     }
 

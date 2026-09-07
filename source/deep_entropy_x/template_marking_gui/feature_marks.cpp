@@ -566,38 +566,45 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
 // column, the user MarkerSet for a user column.
 // ============================================================================
 
-FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(const std::vector<double>& ecg, int p_begin, int q_begin, int s_end, int t_end, double sampleRate)
+FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_begin, double s_end, double t_end, double sampleRate)
 {
     ReactiveEcg r;
     if (static_cast<int>(ecg.size()) < 3) return r;
-    // Each folds in its own refinement -- sigma 12 for P, 15 for T -- so the
-    // bar path and the glyph path cannot re-refine differently.
-    r.p_peak = compute_p_peak(ecg, static_cast<double>(p_begin),  static_cast<double>(q_begin), sampleRate);
-    // THE T-PEAK BRACKET IS s_end/t_end. The parameter was named t_begin,
-    // and every caller already passed the S-end bar into it (reactiveGlyphs
-    // does, and the auto path does) -- but the CSV writer passed the actual
-    // t_begin marker field, which nothing anywhere ever set. So the name
-    // invited exactly one wrong call and got it. Renamed to what it is.
-    r.t_peak = compute_t_peak(ecg, static_cast<double>(s_end),
-        static_cast<double>(t_end));
+    r.p_peak = compute_p_peak(ecg, p_begin, q_begin, sampleRate);
+    r.t_peak = compute_t_peak(ecg, s_end, t_end);
     return r;
 }
 
-FeatureMarks::ReactivePpg FeatureMarks::reactive_ppg(const std::vector<double>& ppg, int onset, int peak, int dicrotic, int end)
+FeatureMarks::ReactivePpg FeatureMarks::reactive_ppg(const std::vector<double>& ppg, double onset, double peak, double dicrotic, double end)
 {
     ReactivePpg r;
     if (static_cast<int>(ppg.size()) < 3) return r;
-    if (onset >= 0 && peak > onset) r.t50 = amplitude_crossing(ppg, onset, peak, 0.50);
-    if (peak >= 0 && end > peak) {
-        r.t80 = amplitude_crossing(ppg, peak, end, 0.80);
+
+    // THE BRACKETS ROUND, THE RESULTS DO NOT. The bars arrive sub-sample, but
+    // amplitude_crossing and crossing_at_level take an integer search grid and
+    // return an interpolated position inside it, so a bracket half a sample
+    // either way does not move the answer. Rounding here, once, keeps those
+    // bodies integer-indexed instead of pushing fractional indices into every
+    // v[i] and loop bound inside them.
+    auto win = [](double x) {
+        return (x < 0.0) ? -1 : static_cast<int>(std::lround(x));
+        };
+    const int iOnset = win(onset), iPeak = win(peak), iEnd = win(end);
+
+    if (iOnset >= 0 && iPeak > iOnset)
+        r.t50 = amplitude_crossing(ppg, iOnset, iPeak, 0.50);
+    if (iPeak >= 0 && iEnd > iPeak) {
+        r.t80 = amplitude_crossing(ppg, iPeak, iEnd, 0.80);
         // T80_rise / PW80 at t80's OWN absolute level (see detect_ppg_
         // fiducials for the rationale): upslope crossing of the same value.
-        if (onset >= 0 && peak > onset) {
-            const double vp = sample_at(ppg, static_cast<double>(peak));
-            const double ve = sample_at(ppg, static_cast<double>(end));
+        // The two amplitudes come from the UNROUNDED bar positions -- a level
+        // is a measurement, not a window, and sample_at interpolates.
+        if (iOnset >= 0 && iPeak > iOnset) {
+            const double vp = sample_at(ppg, peak);
+            const double ve = sample_at(ppg, end);
             if (std::isfinite(vp) && std::isfinite(ve)) {
                 const double target = vp + 0.80 * (ve - vp);
-                const double xr = crossing_at_level(ppg, onset, peak, target);
+                const double xr = crossing_at_level(ppg, iOnset, iPeak, target);
                 if (xr >= 0.0) {
                     r.t80_rise = xr;
                     if (r.t80 >= 0.0 && r.t80 > r.t80_rise) r.pw80 = r.t80 - r.t80_rise;
@@ -606,9 +613,13 @@ FeatureMarks::ReactivePpg FeatureMarks::reactive_ppg(const std::vector<double>& 
         }
     }
     //diastolic peak - highest first dir between dn foot - 20ms
-    if (peak >= 0 && end > peak) {
-        const double t80 = amplitude_crossing(ppg, peak, end, 0.80);
-        r.peak2 = detect_ppg_peak2(ppg, peak, t80, end);
+    // `dicrotic` IS NOT READ by this function, and never was: every output
+    // above is bracketed by onset, peak and end. Dragging the dicrotic bar
+    // therefore changes no reactive value. Left in the signature so the call
+    // matches BinPlotWidget::reactiveGlyphs; worth revisiting separately.
+    if (iPeak >= 0 && iEnd > iPeak) {
+        const double t80 = amplitude_crossing(ppg, iPeak, iEnd, 0.80);
+        r.peak2 = detect_ppg_peak2(ppg, iPeak, t80, iEnd);
     }
     return r;
 
@@ -1155,40 +1166,32 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
 
             // THE ONE ROUNDING BOUNDARY.
             //
-            // pf carries sub-sample positions throughout. TemplateBin's
-            // ppg_*_auto fields are int, and they are reached by
-            // pointer-to-member tables typed `int TemplateBin::*` (the CSV
-            // emission table below) as well as by the GUI marker path, so
-            // widening them is a change to those tables and to the marking
-            // file's layout -- not a local edit. Until that happens the
-            // narrowing is done HERE, once, explicitly and visibly, rather
-            // than by silent implicit conversion at fifteen assignments.
-            //
-            // Everything computed from the fiducials before this point (the
-            // derived indices ba..si, the notch tier and confidence, and the
-            // T80/P50 intervals) uses the fractional positions, so the
-            // rounding costs marker DISPLAY precision, not feature precision.
-            auto rnd = [](double x) {
-                return (x < 0.0) ? -1 : static_cast<int>(std::lround(x));
-                };
-            b.ppg_peak_auto = rnd(pf.peak);
-            b.ppg_onset_auto = rnd(pf.onset);
-            b.ppg_peak2_auto = rnd(pf.peak2);
-            b.ppg_end_auto = rnd(pf.end);
-            b.ppg_dicrotic_auto = rnd(pf.dicrotic);     b.ppg_dicrotic_found_auto = pf.notch_found;
-            b.ppg_t80_auto = rnd(pf.t80);
-            b.ppg_t50_auto = rnd(pf.t50);
-            b.ppg_u_auto = rnd(pf.u);
-            b.ppg_v_auto = rnd(pf.v);
-            b.ppg_w_auto = rnd(pf.w);
-            b.ppg_a_auto = rnd(pf.a);
-            b.ppg_b_auto = rnd(pf.b);
-            b.ppg_c_auto = rnd(pf.c);
-            b.ppg_d_auto = rnd(pf.d);
-            b.ppg_e_auto = rnd(pf.e);
-            b.ppg_f_auto = rnd(pf.f);
-            b.ppg_p1_auto = rnd(pf.p1);
-            b.ppg_p2_auto = rnd(pf.p2);
+            // NO ROUNDING ANY MORE. pf carries sub-sample positions throughout
+            // and TemplateBin's ppg_*_auto fields are now double, as is the
+            // pointer-to-member table that reaches them (PulseAutoGlyph::idx is
+            // `double TemplateBin::*`), so the fiducials go in as measured. The
+            // rnd() that used to sit here was the last place the pulse
+            // detector's precision was thrown away -- and it cost marker
+            // display precision only, since the derived indices ba..si and the
+            // T80/P50 intervals were always computed on the fractional values.
+            b.ppg_peak_auto = pf.peak;
+            b.ppg_onset_auto = pf.onset;
+            b.ppg_peak2_auto = pf.peak2;
+            b.ppg_end_auto = pf.end;
+            b.ppg_dicrotic_auto = pf.dicrotic;     b.ppg_dicrotic_found_auto = pf.notch_found;
+            b.ppg_t80_auto = pf.t80;
+            b.ppg_t50_auto = pf.t50;
+            b.ppg_u_auto = pf.u;
+            b.ppg_v_auto = pf.v;
+            b.ppg_w_auto = pf.w;
+            b.ppg_a_auto = pf.a;
+            b.ppg_b_auto = pf.b;
+            b.ppg_c_auto = pf.c;
+            b.ppg_d_auto = pf.d;
+            b.ppg_e_auto = pf.e;
+            b.ppg_f_auto = pf.f;
+            b.ppg_p1_auto = pf.p1;
+            b.ppg_p2_auto = pf.p2;
             b.ppg_ba_auto = pf.ba;  b.ppg_ca_auto = pf.ca;  b.ppg_da_auto = pf.da;
             b.ppg_ea_auto = pf.ea;  b.ppg_fa_auto = pf.fa;
             b.ppg_agi_auto = pf.agi;  b.ppg_ri_auto = pf.ri;  b.ppg_si_auto = pf.si;
@@ -1248,7 +1251,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // See landmark_admissibility.hpp.
         const auto msk = landmark_admit::maskFor(anchor);
         FeatureMarks::TemplateLandmarks lm = lmRaw;
-       
+
         if (!msk.p_begin) lm.p_begin = -1.0;
         if (!msk.q_begin) { lm.q_begin = -1.0; lm.q_begin_found = false; }
         if (!msk.s_end)   lm.s_end = -1.0;
@@ -1282,23 +1285,25 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
 
         // User fields (per-anchor): only seed when unset for THIS anchor.
         // R peak is auto-only (flat) so it's always overwritten with fresh auto.
-        // MarkerSet stores integer sample indices, so the doubles are rounded
-        // here; the *_auto_ch fields above keep the sub-sample values.
-        auto ix = [](double v) { return (v < 0.0) ? -1 : (int)std::lround(v); };
+        // NO ROUNDING: BankMarkerSet is double, so the detector's sub-sample
+        // position lands in the bar intact. The ix() that used to sit here was
+        // where the refine stage's precision was thrown away.
+        //
         // Slot 0's set for THIS lead, fetched here because slotMarks selects the
         // lead. Sub-template slots are seeded separately by
         // seed_bank_template, against their own waveform.
         tbank::BankMarkerSet& mk = b.slotMarks(c, 0, anchor);
-        if (mk.q_begin < 0) mk.q_begin = ix(lm.q_begin);
+        if (mk.q_begin < 0) mk.q_begin = lm.q_begin;
         // R falls back to the unrefined column rather than -1: it is the
         // alignment anchor every other landmark is expressed against, so the
         // bin needs SOME R even when refinement could not run.
         b.r_peak_ch[c] = (lm.r_peak >= 0.0)
-            ? (int)std::lround(lm.r_peak)
-            : std::clamp(chs[c]->r_col_raw, 0, (int)ecg.size() - 1);
-        if (mk.s_end < 0)   mk.s_end = ix(lm.s_end);
-        if (mk.t_end < 0)   mk.t_end = ix(lm.t_end);
-        if (mk.p_begin < 0) mk.p_begin = ix(lm.p_begin);
+            ? lm.r_peak
+            : std::clamp(static_cast<double>(chs[c]->r_col_raw),
+                0.0, static_cast<double>(ecg.size()) - 1.0);
+        if (mk.s_end < 0)   mk.s_end = lm.s_end;
+        if (mk.t_end < 0)   mk.t_end = lm.t_end;
+        if (mk.p_begin < 0) mk.p_begin = lm.p_begin;
     }
 
 
@@ -1309,8 +1314,8 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         ? static_cast<int>(std::llround(0.75 * sampleRate)) : 0);
 
     auto seedArterial = [&](const std::vector<double>& trace, uint8_t& issue,
-        int& onset, int& peak, int& dicrotic, int& peak2, int& end,
-        int& onset_auto, int& peak_auto, int& dic_auto, int& p2_auto, int& end_auto)
+        double& onset, double& peak, double& dicrotic, double& peak2, double& end,
+        double& onset_auto, double& peak_auto, double& dic_auto, double& p2_auto, double& end_auto)
         {
             if (trace.empty()) {
                 issue = 2;
@@ -1322,19 +1327,14 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
                 onset = peak = dicrotic = peak2 = end = -1;
                 return;
             }
-            const FeatureMarks::PpgFiducials pf =
-                FeatureMarks::detect_ppg_fiducials(
-                    trace, static_cast<int>(trace.size()), sampleRate, NAN);
-            auto rnd = [](double x) { return (x < 0.0) ? -1 : (int)std::lround(x); };
-            const int aOn = rnd(pf.onset), aPk = rnd(pf.peak), aDic = rnd(pf.dicrotic),
-                aP2 = rnd(pf.peak2), aEnd = rnd(pf.end);
-            onset_auto = aOn; peak_auto = aPk; dic_auto = aDic;
-            p2_auto = aP2; end_auto = aEnd;
-            if (onset < 0) onset = aOn;
-            if (peak < 0) peak = aPk;
-            if (dicrotic < 0) dicrotic = aDic;
-            if (peak2 < 0) peak2 = aP2;
-            if (end < 0) end = aEnd;
+            const FeatureMarks::PpgFiducials pf = FeatureMarks::detect_ppg_fiducials(trace, static_cast<int>(trace.size()), sampleRate, NAN);
+            onset_auto = pf.onset; peak_auto = pf.peak; dic_auto = pf.dicrotic;
+            p2_auto = pf.peak2; end_auto = pf.end;
+            if (onset < 0) onset = pf.onset;
+            if (peak < 0) peak = pf.peak;
+            if (dicrotic < 0) dicrotic = pf.dicrotic;
+            if (peak2 < 0) peak2 = pf.peak2;
+            if (end < 0) end = pf.end;
         };
 
     seedArterial(b.abpTemplate, b.abp_issue,
@@ -1432,18 +1432,18 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
     // SAME MASK seed_all applies. See landmark_admissibility.hpp.
     const auto msk = landmark_admit::maskFor(anchor);
 
-    // BankMarkerSet stores integers; the sub-sample doubles stay in lm for any
-    // caller that wants them. -1 survives rounding, so absent stays absent.
-    auto ix = [](double v) { return (v < 0.0) ? -1 : (int)std::lround(v); };
-    // BARS ONLY. p_peak is not seeded here any more: it is a reactive glyph,
-    // bracketed by the P-onset and Q-onset bars, and TemplateBin::
-    // syncReactiveGlyphs is the one thing that assigns it. A detector-sourced
-    // copy stored alongside is a second answer that drifts from the X on
-    // screen the moment either bracket bar moves.
-    if (msk.q_begin) out.q_begin = ix(lm.q_begin);
-    if (msk.s_end)   out.s_end = ix(lm.s_end);
-    if (msk.t_end)   out.t_end = ix(lm.t_end);
-    if (msk.p_begin) out.p_begin = ix(lm.p_begin);
+    // BankMarkerSet is double, so lm's sub-sample positions go in as they are.
+    // -1 still means absent.
+    //
+    // BARS ONLY. p_peak is not seeded here, and no longer exists on
+    // BankMarkerSet at all: it is a reactive glyph bracketed by the P-onset and
+    // Q-onset bars, so every reader calls FeatureMarks::reactive_ecg on the bar
+    // set instead. A detector-sourced copy stored alongside was a second answer
+    // that drifted from the X on screen the moment either bracket bar moved.
+    if (msk.q_begin) out.q_begin = lm.q_begin;
+    if (msk.s_end)   out.s_end = lm.s_end;
+    if (msk.t_end)   out.t_end = lm.t_end;
+    if (msk.p_begin) out.p_begin = lm.p_begin;
 }
 
 
@@ -1460,12 +1460,15 @@ void FeatureMarks::seed_pulse_bank_template(const std::vector<double>& tmpl,
     // is why the foot glyph sat nowhere near a trough.
     const PpgFiducials pf = detect_ppg_fiducials(tmpl, W, ppgRate, heightMeters);
 
-    auto ix = [](double v) { return (v < 0.0) ? -1 : (int)std::lround(v); };
-    out.onset_auto = pf.onset;     out.onset = ix(pf.onset);
-    out.peak_auto = pf.peak;      out.peak = ix(pf.peak);
-    out.dicrotic_auto = pf.dicrotic;  out.dicrotic = ix(pf.dicrotic);
-    out.peak2_auto = pf.peak2;     out.peak2 = ix(pf.peak2);
-    out.end_auto = pf.end;       out.end = ix(pf.end);
-    out.t50 = ix(pf.t50);             out.t80 = ix(pf.t80);
+    // BARS AND FROZEN AUTOS ONLY, both sub-sample. peak / peak2 / t50 / t80
+    // left BankPulseMarkerSet with the int fields: they are auto-only glyphs
+    // that markerAtX never hands out, and the *_auto values below are what
+    // BinPlotWidget::overridePulseGlyphs paints. The ix() that used to round
+    // all of these is gone -- PpgFiducials is double throughout.
+    out.onset_auto = pf.onset;        out.onset = pf.onset;
+    out.peak_auto = pf.peak;
+    out.dicrotic_auto = pf.dicrotic;  out.dicrotic = pf.dicrotic;
+    out.peak2_auto = pf.peak2;
+    out.end_auto = pf.end;            out.end = pf.end;
     out.notch_found = pf.notch_found;
 }
