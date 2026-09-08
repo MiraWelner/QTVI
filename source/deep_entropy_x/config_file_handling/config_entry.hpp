@@ -69,7 +69,7 @@ struct config_entry {
     std::string annealed_data_path;
     std::string r_peak_data_path;
     std::string template_path;
-    std::string fiducial_maker_locations;
+    std::string fiducial_marker_locations;
 	std::string quality_metric;
     std::string snapshot_path;
     std::string log_path;

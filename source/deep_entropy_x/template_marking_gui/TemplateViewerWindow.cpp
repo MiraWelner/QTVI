@@ -2258,11 +2258,11 @@ void TemplateViewerWindow::refreshBankMarkers(int binIdx, int templateIdx) {
 //     frameShift(R -> owner) first. So a P-onset dragged on _B was stored a
 //     sample or two from where the same drag on _A stored it, and every reader
 //     added the shift again on the way out.
-//   * NO WALL. The bank path bounded targets by tmpl.size(). The array is
-//     framed on the bin's LONGEST RR and recomputeFrame trims the one-beat
-//     tail, so the array end is dozens of samples past the last DRAWN column
-//     -- which is how a propagated bar ended up off the plot with no trace
-//     under it.
+//   * NO WALL. The bank path bounded targets by tmpl.size(); the slot-0 path
+//     by ecgPlotWall(). The array is framed on the bin's LONGEST RR and
+//     recomputeFrame trims the one-beat tail, so the array end is dozens of
+//     samples past the last DRAWN column -- which is how a propagated bar
+//     ended up off the plot with no trace under it.
 //   * BAIL VS CLAMP. The bank path's out-of-range guard was `return` inside a
 //     per-column lambda, so one panel whose target landed past its own end
 //     abandoned every column after it and propagation stopped mid-page.
@@ -2331,24 +2331,15 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
         }
         };
 
-    // ---- the panel's DRAWN wall, FROM THE WIDGET --------------------------
-    //
-    // Not re-derived host-side. A host-side copy of recomputeFrame's trim
-    // agreed with the widget only when the widget's m_ecgIqr matched the bin's
-    // ecg_template_raw_iqr -- so a long beat with no IQR trimmed on one side
-    // and not the other, and the host permitted a column the widget draws
-    // outside its own frame. lastDrawnSample is computed from the same vectors
-    // recomputeFrame used, so it cannot disagree with what was drawn.
-    //
-    // BY PAGE COLUMN, because that is what indexes m_binPlots and both callers
-    // already have it.
-    //
-    // THE LEAD MATTERS: a column holds one widget per lead and a bank is per
-    // lead, so take the widget whose leadIndex() is the dragged lead --
-    // otherwise lead 1's wall bounds lead 2's bar.
-    //
-    // -1 when there is no widget or nothing drawable, which the callers treat
-    // as "skip this column" rather than "no bound".
+    // ---- the panel's waveform and its DRAWN wall --------------------------
+    // Slot 0 draws the bin's own channel template; a deeper slot draws its
+    // bank template, which can be shorter. Both go through ecgPlotWall,
+    // because tmpl.size()-1 is NOT the rightmost drawable column: the array is
+    // framed on the bin's longest RR, and recomputeFrame ends the extent at
+    // the last finite sample then trims back over the one-beat tail (columns
+    // where the IQR reads exactly 0.0, which align_beat_matrix leaves when a
+    // column had fewer than two beats). A column between the wall and the
+    // array end maps past m_tMax and draws outside the plot.
     auto wallAt = [&](int li) -> int {
         if (li < 0 || li >= (int)m_binPlots.size()) return -1;
         for (auto* pw : m_binPlots[li])
@@ -2356,6 +2347,15 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
                 return pw->lastDrawnSample(BinPlotWidget::Channel::Ecg);
         return -1;
         };
+
+    int dragCol = -1;
+    for (int li = 0; li < (int)m_pageGlobalIdx.size()
+        && li < (int)m_pageTemplateIdx.size(); ++li) {
+        if (m_pageGlobalIdx[li] == binIdx
+            && m_pageTemplateIdx[li] == templateIdx) {
+            dragCol = li; break;
+        }
+    }
 
     // SEED BEFORE READING, for every slot. marks() is operator[] on a map, so
     // a read through it INSERTS -- reading an unseeded slot is what used to
@@ -2380,20 +2380,6 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     // slot 5), and this one stays valid if the page is rebuilt mid-drag.
     auto originKey = [](int binI, int slot) { return binI * 64 + slot; };
 
-    // ---- the dragged panel's page column ----------------------------------
-    // FOUND FIRST, because wallAt() is keyed by page column and the dragged
-    // bar's own clamp needs it. Matched on BOTH halves: a slot number recurs
-    // across bins and a bin contributes several columns, so matching either
-    // alone lands on the wrong one.
-    int dragCol = -1;
-    for (int li = 0; li < (int)m_pageGlobalIdx.size()
-        && li < (int)m_pageTemplateIdx.size(); ++li) {
-        if (m_pageGlobalIdx[li] == binIdx
-            && m_pageTemplateIdx[li] == templateIdx) {
-            dragCol = li; break;
-        }
-    }
-
     // ---- the dragged bar --------------------------------------------------
     seedIfNeeded(binIdx, templateIdx);
     const double oldIdx = get(b, templateIdx);
@@ -2403,6 +2389,7 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     // owner's frame to store. The other order would compare a column in one
     // frame against a bound in another.
     const int dragWall = wallAt(dragCol);
+
     int placed = newIdx;
     if (dragWall > 0) placed = std::clamp(placed, 0, dragWall);
     set(b, templateIdx, placed + b.frameShift(leadIdx, AnchorType::R_PEAK, owner));
@@ -2451,6 +2438,8 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
         ? double(placed - m_dragStartIdx) / (nDragged - 1) : 0.0;
     const double posFrac = (nDragged > 1)
         ? double(placed) / (nDragged - 1) : 0.0;
+
+
 
     for (int li = dragCol + 1; li < (int)m_pageGlobalIdx.size()
         && li < (int)m_pageTemplateIdx.size(); ++li) {

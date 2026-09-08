@@ -83,12 +83,24 @@ namespace template_io {
             f.write(reinterpret_cast<const char*>(&bad), 1);
         }
 
-        // ---- trailing per-anchor section (v2) --------------------------
+        // ---- v1 SECTION 2: per-anchor aligned templates ------------------
         // [uint64 nAnchors] then per anchor:
         //   [int32 anchorTag][uint64 nBinsForAnchor] then, per bin, 3x
         //   ChannelMethodTemplate (ch1_raw, ch2_raw, ch3_raw) via writeMethod.
-        // Old readers stop after the bins loop above and never see this, so
-        // a v2 file still reads as R-only under the old reader.
+        //
+        // ONE FORMAT VERSION. This code has not shipped, so there are no files
+        // in the world written by an earlier layout and no reader that stops
+        // short of any section. Every section below is written unconditionally
+        // and must be read unconditionally.
+        //
+        // The section numbering that used to be here (v2..v6) described a
+        // migration history that never happened, and it did active harm: it
+        // justified soft `if (f.read(...))` guards on every count, which made a
+        // genuine DESYNC indistinguishable from "this file predates the
+        // section". The reader broke, the next section read garbage, and the
+        // failure surfaced as length_error("vector too long") from a vector
+        // constructor tens of kilobytes past the cause. Numbers are kept only
+        // as position labels, so writer and reader can be read side by side.
         {
             uint64_t nAnchors = data.raw_anchors.size();
             f.write(reinterpret_cast<const char*>(&nAnchors), 8);
@@ -105,51 +117,57 @@ namespace template_io {
             }
         }
 
-        // ---- v3: Section 4.6 template bank, per bin, per ECG channel -------
-        // Another TRAILING OPTIONAL SECTION, on exactly the contract the v2
-        // anchors block above established: a v1/v2 reader stops at end-of-file,
-        // and a v3 reader that finds nothing here leaves the banks empty. No
-        // magic, no version byte, no migration -- an absent bank reads correctly
-        // as "one template per channel", which is a bank of size one.
-        //
-        // MUST come after the anchors count, unconditionally. The reader walks
-        // these sections in order, so skipping or reordering either one makes it
-        // parse the bank count as an anchor count and produce plausible garbage.
+        // ---- v1 SECTION 3: Section 4.6 template bank, per bin, per lead ---
+        // MUST come after the anchors section, unconditionally. The reader walks
+        // these in order, so skipping or reordering one makes it parse this
+        // count as another section's and produce plausible garbage.
         //
         // Layout: [uint64 nBinsWithBanks], then per such bin
         //         [uint64 binIndex][bank CH1][bank CH2][bank CH3].
         // Bins with no bank at all are skipped rather than written as zeros, so
         // a clean record costs almost nothing.
         {
-            uint64_t nWithBanks = 0;
-            for (const auto& b : data.bins)
+            // THE SAME PREDICATE THE EXTRAS SECTION USES, and that is the fix
+            // for the reload failing outright.
+            //
+            // This section listed a bin only when some ECG bank was non-empty,
+            // while the extras section lists it when ANY of the four is -- PPG
+            // included. So a bin with a pulse bank and no ECG bank got extras
+            // written for ECG banks this section never wrote, the reader had
+            // nothing to attach them to, readBankExtras found the counts
+            // disagreed, and the stream desynchronised mid-section. On a record
+            // where CH2 and CH3 contribute no beats that is not a corner case,
+            // it is most of the file -- and the symptom was
+            // length_error("vector too long") thrown from the LAST section,
+            // dozens of kilobytes downstream of the cause.
+            //
+            // Listing the bin here writes three banks that may be empty --
+            // eight bytes each -- and in exchange every extras block has a bank
+            // to land on. Narrowing the extras section to ECG-only would also
+            // resynchronise the two, but it would silently drop the PPG
+            // confirmations for exactly those bins.
+            auto hasAnyBank = [](const template_io::BinTemplates& b) {
                 for (int c = 0; c < 3; ++c)
-                    if (!b.ecg_bank[c].templates.empty()) { ++nWithBanks; break; }
+                    if (!b.ecg_bank[c].templates.empty()) return true;
+                return !b.ppg_bank.templates.empty();
+                };
+
+            uint64_t nWithBanks = 0;
+            for (const auto& b : data.bins) if (hasAnyBank(b)) ++nWithBanks;
             f.write(reinterpret_cast<const char*>(&nWithBanks), 8);
 
             for (uint64_t i = 0; i < data.bins.size(); ++i) {
                 const auto& b = data.bins[i];
-                bool any = false;
-                for (int c = 0; c < 3; ++c)
-                    if (!b.ecg_bank[c].templates.empty()) { any = true; break; }
-                if (!any) continue;
+                if (!hasAnyBank(b)) continue;   // must match the count above
                 f.write(reinterpret_cast<const char*>(&i), 8);
                 for (int c = 0; c < 3; ++c)
                     tbank_ser::writeBankToStream(f, b.ecg_bank[c]);
             }
         }
 
-        // ---- v4: Section 4.6 PPG bank, per bin -----------------------------
-        // A FOURTH TRAILING OPTIONAL SECTION, on the contract the v2 anchors and
-        // v3 ECG banks established: a v1/v2/v3 reader stops at end-of-file, and
-        // a v4 reader that finds nothing here leaves ppg_bank empty -- which
-        // reads correctly as "one pulse template per bin", exactly what a v3
-        // file holds.
-        //
+        // ---- v1 SECTION 4: Section 4.6 PPG bank, per bin ------------------
         // MUST come after the ECG bank section, unconditionally, for the same
-        // reason that one had to follow the anchors: the reader walks these in
-        // order, so reordering or conditionally skipping either makes it parse
-        // one section's count as another's and produce plausible garbage.
+        // reason that one follows the anchors.
         //
         // Layout: [uint64 nBinsWithPpgBank], then per such bin
         //         [uint64 binIndex][bank].
@@ -169,26 +187,19 @@ namespace template_io {
             }
         }
 
-        // ---- v5: per-template extras, per bin ------------------------------
-        // A FIFTH TRAILING OPTIONAL SECTION, on the same contract as the v2
-        // anchors, the v3 ECG banks and the v4 PPG bank: a v1-v4 reader stops at
-        // end of file, and a v5 reader that finds nothing leaves every
-        // template's extras at their defaults -- which is precisely the state a
-        // v4 file has always loaded into.
-        //
-        // WHY A NEW SECTION RATHER THAN WIDER TEMPLATE RECORDS. This file has no
-        // version field and no length prefixes; the entire format rests on old
-        // readers hitting EOF. Adding fields to the bank records themselves
-        // would make new files misparse under the current reader and old files
-        // misparse under the new one, part-way through a section, with nothing
-        // in either file able to detect it.
+        // ---- v1 SECTION 5: per-template extras, per bin -------------------
+        // WHY A SEPARATE SECTION RATHER THAN WIDER TEMPLATE RECORDS. Nothing
+        // here is length-prefixed, so a reader cannot skip a field it does not
+        // know about. Keeping the extras in their own block means the bank
+        // records stay one fixed shape that writer and reader agree on
+        // literally, rather than two shapes that have to agree by convention.
         //
         // WHAT IS IN IT: confirmed_by_operator -- which was persisted nowhere,
         // so every operator confirmation was lost on reload and with it the
         // merge protection, the polymorphy count and the operator's override of
         // presumedCategory -- plus members_clean and the per-template census.
         //
-        // MUST come after the v4 count, unconditionally. The reader walks these
+        // MUST come after the PPG bank section, unconditionally. The reader walks
         // in order, so a conditional or reordered section makes it read one
         // section's count as another's.
         //
@@ -215,12 +226,7 @@ namespace template_io {
             }
         }
 
-        // ---- v6: PER-ANCHOR BANK SLOT TEMPLATES ----------------------------
-        // A SIXTH TRAILING OPTIONAL SECTION, on the contract every section
-        // since v2 has followed: an older reader stops at end-of-file, and a v6
-        // reader that finds nothing leaves bank_anchors empty -- which reads
-        // correctly as "the slots have no aligned variants".
-        //
+        // ---- v1 SECTION 6: per-anchor bank slot templates -----------------
         // MUST come after the extras section, unconditionally: the reader walks
         // these in order, so a skipped section makes it parse the next one's
         // count as this one's.
@@ -298,17 +304,33 @@ namespace template_io {
             b.bad_segment = (bad != 0);
         }
 
-        // ---- trailing per-anchor section (v2, optional) ----------------
-        // Old (v1) files end after the last bin, so a failed/short read here
-        // just means "no extra anchors" -- leave raw_anchors empty and return
-        // the R-only file. Only a CLEAN read of the count populates anchors.
+        // ---- v1 SECTION 2: per-anchor aligned templates ------------------
+        // FATAL ON A SHORT READ. There is one format version and this code has
+        // not shipped, so every section the writer emits is present in every
+        // file that exists. A count that will not read is a TRUNCATED OR
+        // CORRUPT file, and the soft `if (f.read(...))` this replaced treated
+        // it as "an older file that ends here" -- which is how a desync came to
+        // present as length_error from a vector constructor five sections
+        // later instead of as an error naming this one.
         uint64_t nAnchors = 0;
-        if (f.read(reinterpret_cast<char*>(&nAnchors), 8)) {
+        if (!f.read(reinterpret_cast<char*>(&nAnchors), 8))
+            throw std::runtime_error("template file truncated at anchor count: " + path);
+        if (nAnchors > 8)
+            throw std::runtime_error("template file has implausible anchor count: " + path);
+        {
             for (uint64_t a = 0; a < nAnchors; ++a) {
                 int32_t tag = 0;
                 if (!f.read(reinterpret_cast<char*>(&tag), 4)) break;
                 uint64_t nb = 0;
                 if (!f.read(reinterpret_cast<char*>(&nb), 8)) break;
+                // AN UNCHECKED COUNT IS NOT A COUNT. nb went straight from
+                // disk into a vector constructor, so a stream one byte out
+                // of position reached the allocator with garbage and threw
+                // length_error("vector too long") -- reaching the caller
+                // naming neither the cause nor the section. An anchor block
+                // is per bin, so it cannot exceed the bin count this file
+                // already declared.
+                if (nb == 0 || nb > out.bins.size()) break;
                 std::vector<std::array<ChannelMethodTemplate, 3>> perBin(nb);
                 bool ok = true;
                 for (uint64_t i = 0; i < nb && ok; ++i) {
@@ -321,13 +343,15 @@ namespace template_io {
             }
         }
 
-        // ---- v3: template bank (trailing, optional) ------------------------
-        // A v1/v2 file simply ends here, so a failed read of the count means
-        // "no banks" rather than an error -- the same contract as the anchors
-        // section above. Anything already parsed stands.
+        // ---- v1 SECTION 3: template bank, per bin, per lead ---------------
+        // Fatal on a short read, for the reason given at the anchors section.
         {
             uint64_t nWithBanks = 0;
-            if (f.read(reinterpret_cast<char*>(&nWithBanks), 8)) {
+            if (!f.read(reinterpret_cast<char*>(&nWithBanks), 8))
+                throw std::runtime_error("template file truncated at bank count: " + path);
+            if (nWithBanks > out.bins.size())
+                throw std::runtime_error("bank section lists more bins than the file has: " + path);
+            {
                 for (uint64_t k = 0; k < nWithBanks; ++k) {
                     uint64_t bi = 0;
                     if (!f.read(reinterpret_cast<char*>(&bi), 8)) break;
@@ -343,13 +367,14 @@ namespace template_io {
             }
         }
 
-        // ---- v4: PPG bank (trailing, optional) -----------------------------
-        // A v1/v2/v3 file ends here, so a failed read of the count means "no
-        // PPG bank" rather than an error -- the same contract as the two
-        // sections above. Anything already parsed stands.
+        // ---- v1 SECTION 4: PPG bank, per bin ------------------------------
         {
             uint64_t nWithPpg = 0;
-            if (f.read(reinterpret_cast<char*>(&nWithPpg), 8)) {
+            if (!f.read(reinterpret_cast<char*>(&nWithPpg), 8))
+                throw std::runtime_error("template file truncated at PPG bank count: " + path);
+            if (nWithPpg > out.bins.size())
+                throw std::runtime_error("PPG bank section lists more bins than the file has: " + path);
+            {
                 for (uint64_t k = 0; k < nWithPpg; ++k) {
                     uint64_t bi = 0;
                     if (!f.read(reinterpret_cast<char*>(&bi), 8)) break;
@@ -361,10 +386,7 @@ namespace template_io {
             }
         }
 
-        // ---- v5: per-template extras (trailing, optional) ------------------
-        // A v1-v4 file ends here, so a failed read of the count means "no
-        // extras" rather than an error, on the same contract as the three
-        // sections above. Anything already parsed stands.
+        // ---- v1 SECTION 5: per-template extras, per bin -------------------
         //
         // The extras are applied ONTO the banks read above, so this must run
         // after both bank sections. A template-count mismatch inside
@@ -391,17 +413,27 @@ namespace template_io {
             }
         }
 
-        // ---- v6: per-anchor bank slot templates (trailing, optional) -------
-        // Same contract as above: a short read means "this file predates the
-        // section", not an error, and whatever parsed cleanly stands.
+        // ---- v1 SECTION 6: per-anchor bank slot templates -----------------
         {
             uint64_t nAnchors = 0;
-            if (f.read(reinterpret_cast<char*>(&nAnchors), 8)) {
+            if (!f.read(reinterpret_cast<char*>(&nAnchors), 8))
+                throw std::runtime_error("template file truncated at slot-anchor count: " + path);
+            if (nAnchors > 8)
+                throw std::runtime_error("slot-anchor section has implausible count: " + path);
+            {
                 for (uint64_t a = 0; a < nAnchors; ++a) {
                     int32_t tag = 0;
                     if (!f.read(reinterpret_cast<char*>(&tag), 4)) break;
                     uint64_t nb = 0;
                     if (!f.read(reinterpret_cast<char*>(&nb), 8)) break;
+                    // AN UNCHECKED COUNT IS NOT A COUNT. nb went straight from
+                    // disk into a vector constructor, so a stream one byte out
+                    // of position reached the allocator with garbage and threw
+                    // length_error("vector too long") -- reaching the caller
+                    // naming neither the cause nor the section. An anchor block
+                    // is per bin, so it cannot exceed the bin count this file
+                    // already declared.
+                    if (nb == 0 || nb > out.bins.size()) break;
                     std::vector<std::array<std::vector<TemplateFile::BankSlotTemplate>, 3>> perBin(nb);
                     bool ok = true;
                     for (uint64_t i = 0; i < nb && ok; ++i) {

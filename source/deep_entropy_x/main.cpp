@@ -185,7 +185,7 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
 
         viewer.show();
         viewer.loadSubject(QString::fromStdString(job->viewerTemplatePath.string()),
-            QString::fromStdString(cfg.fiducial_maker_locations),
+            QString::fromStdString(cfg.fiducial_marker_locations),
             displayId, cfg.ecg_upsample_rate,
             cfg.ppg_upsample_rate, cfg.abp_upsample_rate,
             cfg.art_upsample_rate, cfg.art_pulm_upsample_rate,
@@ -216,7 +216,7 @@ int main(int argc, char* argv[]) {
     std::filesystem::create_directories(cfg.r_peak_data_path);
     std::filesystem::create_directories(cfg.noise_data_path);
     std::filesystem::create_directories(cfg.template_path);
-    std::filesystem::create_directories(cfg.fiducial_maker_locations);
+    std::filesystem::create_directories(cfg.fiducial_marker_locations);
     std::filesystem::create_directories(cfg.quality_metric);
     std::filesystem::create_directories(cfg.training_log);
     std::filesystem::create_directories(cfg.template_path);

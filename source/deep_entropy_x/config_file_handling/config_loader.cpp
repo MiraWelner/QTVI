@@ -27,17 +27,6 @@
 static const std::string CONFIG_PATH = "config.csv";
 
 namespace {
-    static double stod_or_zero(const std::string& s) {
-        if (s.empty()) return 0.0;
-        try { return std::stod(s); }
-        catch (...) { return 0.0; }
-    }
-
-    static int stoi_or_default(const std::string& s, int dflt) {
-        if (s.empty()) return dflt;
-        try { return std::stoi(s); }
-        catch (...) { return dflt; }
-    }
 
     static double stod_or_default(const std::string& s, double dflt) {
         if (s.empty()) return dflt;
@@ -147,7 +136,7 @@ namespace {
         cfg.noise_data_path = sub("noise_marking_output");
         cfg.r_peak_data_path = sub("r_peak_finding_output");
         cfg.template_path = sub("template_outputs");
-        cfg.fiducial_maker_locations = sub("fiducial_maker_locations");
+        cfg.fiducial_marker_locations = sub("fiducial_marker_locations");
         cfg.quality_metric = sub("quality_metric");
         cfg.training_log = sub("training_log");
         cfg.snapshot_path = sub("snapshot_path");
@@ -239,74 +228,73 @@ bool load_config(int dataType, config_entry& out) {
         out.main_file_extention = cell("main_file_extention");
         out.sleep_file_extention = cell("sleep_file_extention");
 
-		out.template_path = cell("bin_archive");
-        out.ecg_raw_rate = stod_or_zero(cell("ecg_raw_rate"));
-        out.ecg_upsample_rate = stod_or_zero(cell("ecg_upsampled_rate"));
-        out.ppg_raw_rate = stod_or_zero(cell("ppg_raw_rate"));
-        out.ppg_upsample_rate = stod_or_zero(cell("ppg_upsampled_rate"));
-        out.cvp_raw_rate = stod_or_zero(cell("cvp_raw_rate"));
-        out.cvp_upsample_rate = stod_or_zero(cell("cvp_upsampled_rate"));
-        out.pres_raw_rate = stod_or_zero(cell("pres_raw_rate"));
-        out.pres_upsample_rate = stod_or_zero(cell("pres_upsampled_rate"));
-        out.abp_raw_rate = stod_or_zero(cell("abp_raw_rate"));
-        out.abp_upsample_rate = stod_or_zero(cell("abp_upsampled_rate"));
-        out.art_raw_rate = stod_or_zero(cell("art_raw_rate"));
-        out.art_upsample_rate = stod_or_zero(cell("art_upsampled_rate"));
-        out.art_pulm_raw_rate = stod_or_zero(cell("art_pulm_raw_rate"));
-        out.art_pulm_upsample_rate = stod_or_zero(cell("art_pulm_upsampled_rate"));
-        out.accel_raw_rate = stod_or_zero(cell("accel_raw_rate"));
-        out.accel_upsample_rate = stod_or_zero(cell("accel_upsampled_rate"));
-        out.temp_raw_rate = stod_or_zero(cell("temp_raw_rate"));
-        out.temp_upsample_rate = stod_or_zero(cell("temp_upsampled_rate"));
-        out.marker_raw_rate = stod_or_zero(cell("marker_raw_rate"));
-        out.marker_upsample_rate = stod_or_zero(cell("marker_upsampled_rate"));
-        out.resp_raw_rate = stod_or_zero(cell("resp_raw_rate"));
-        out.resp_upsample_rate = stod_or_zero(cell("resp_upsampled_rate"));
-        out.pacemaker_raw_rate = stod_or_zero(cell("pacemaker_event_raw_rate"));
-        out.pacemaker_upsample_rate = stod_or_zero(cell("pacemaker_event_upsampled_rate"));
-        out.eeg_raw_rate = stod_or_zero(cell("eeg_raw_rate"));
-        out.eeg_upsample_rate = stod_or_zero(cell("eeg_upsampled_rate"));
-        out.eog_l_raw_rate = stod_or_zero(cell("eogl_raw_rate"));
-        out.eog_l_upsample_rate = stod_or_zero(cell("eogl_upsampled_rate"));
-        out.eog_r_raw_rate = stod_or_zero(cell("eogr_raw_rate"));
-        out.eog_r_upsample_rate = stod_or_zero(cell("eogr_upsampled_rate"));
-        out.emg_raw_rate = stod_or_zero(cell("emg_raw_rate"));
-        out.emg_upsample_rate = stod_or_zero(cell("emg_upsampled_rate"));
-        out.flow_raw_rate = stod_or_zero(cell("flow_raw_rate"));
-        out.flow_upsample_rate = stod_or_zero(cell("flow_upsampled_rate"));
-        out.snore_raw_rate = stod_or_zero(cell("snore_raw_rate"));
-        out.snore_upsample_rate = stod_or_zero(cell("snore_upsampled_rate"));
-        out.thor_raw_rate = stod_or_zero(cell("thor_raw_rate"));
-        out.thor_upsample_rate = stod_or_zero(cell("thor_upsampled_rate"));
-        out.abdo_raw_rate = stod_or_zero(cell("abdo_raw_rate"));
-        out.abdo_upsample_rate = stod_or_zero(cell("abdo_upsampled_rate"));
-        out.leg_raw_rate = stod_or_zero(cell("leg_raw_rate"));
-        out.leg_upsample_rate = stod_or_zero(cell("leg_upsampled_rate"));
-        out.auxac_raw_rate = stod_or_zero(cell("auxac_raw_rate"));
-        out.auxac_upsample_rate = stod_or_zero(cell("auxac_upsampled_rate"));
-        out.therm_raw_rate = stod_or_zero(cell("therm_raw_rate"));
-        out.therm_upsample_rate = stod_or_zero(cell("therm_upsampled_rate"));
-        out.pos_raw_rate = stod_or_zero(cell("pos_raw_rate"));
-        out.pos_upsample_rate = stod_or_zero(cell("pos_upsampled_rate"));
-        out.oxstatus_raw_rate = stod_or_zero(cell("oxstatus_raw_rate"));
-        out.oxstatus_upsample_rate = stod_or_zero(cell("oxstatus_upsampled_rate"));
-        out.spo2_raw_rate = stod_or_zero(cell("spo2_raw_rate"));
-        out.spo2_upsample_rate = stod_or_zero(cell("spo2_upsampled_rate"));
-        out.hr_raw_rate = stod_or_zero(cell("hr_raw_rate"));
-        out.hr_upsample_rate = stod_or_zero(cell("hr_upsampled_rate"));
-        out.dhr_raw_rate = stod_or_zero(cell("dhr_raw_rate"));
-        out.dhr_upsample_rate = stod_or_zero(cell("dhr_upsampled_rate"));
-        out.sleepstate_length = stod_or_zero(cell("sleepstate_length"));
-        out.blanking_period = stod_or_zero(cell("blanking_period"));
-        out.threshold = stod_or_zero(cell("threshold"));
-        out.bin_size_minutes = stod_or_zero(cell("bin_size_minutes"));
+        out.ecg_raw_rate = stod_or_default(cell("ecg_raw_rate"), 0.0);
+        out.ecg_upsample_rate = stod_or_default(cell("ecg_upsampled_rate"), 0.0);
+        out.ppg_raw_rate = stod_or_default(cell("ppg_raw_rate"), 0.0);
+        out.ppg_upsample_rate = stod_or_default(cell("ppg_upsampled_rate"), 0.0);
+        out.cvp_raw_rate = stod_or_default(cell("cvp_raw_rate"), 0.0);
+        out.cvp_upsample_rate = stod_or_default(cell("cvp_upsampled_rate"), 0.0);
+        out.pres_raw_rate = stod_or_default(cell("pres_raw_rate"), 0.0);
+        out.pres_upsample_rate = stod_or_default(cell("pres_upsampled_rate"), 0.0);
+        out.abp_raw_rate = stod_or_default(cell("abp_raw_rate"), 0.0);
+        out.abp_upsample_rate = stod_or_default(cell("abp_upsampled_rate"), 0.0);
+        out.art_raw_rate = stod_or_default(cell("art_raw_rate"), 0.0);
+        out.art_upsample_rate = stod_or_default(cell("art_upsampled_rate"), 0.0);
+        out.art_pulm_raw_rate = stod_or_default(cell("art_pulm_raw_rate"), 0.0);
+        out.art_pulm_upsample_rate = stod_or_default(cell("art_pulm_upsampled_rate"), 0.0);
+        out.accel_raw_rate = stod_or_default(cell("accel_raw_rate"), 0.0);
+        out.accel_upsample_rate = stod_or_default(cell("accel_upsampled_rate"), 0.0);
+        out.temp_raw_rate = stod_or_default(cell("temp_raw_rate"), 0.0);
+        out.temp_upsample_rate = stod_or_default(cell("temp_upsampled_rate"), 0.0);
+        out.marker_raw_rate = stod_or_default(cell("marker_raw_rate"), 0.0);
+        out.marker_upsample_rate = stod_or_default(cell("marker_upsampled_rate"), 0.0);
+        out.resp_raw_rate = stod_or_default(cell("resp_raw_rate"), 0.0);
+        out.resp_upsample_rate = stod_or_default(cell("resp_upsampled_rate"), 0.0);
+        out.pacemaker_raw_rate = stod_or_default(cell("pacemaker_event_raw_rate"), 0.0);
+        out.pacemaker_upsample_rate = stod_or_default(cell("pacemaker_event_upsampled_rate"), 0.0);
+        out.eeg_raw_rate = stod_or_default(cell("eeg_raw_rate"), 0.0);
+        out.eeg_upsample_rate = stod_or_default(cell("eeg_upsampled_rate"), 0.0);
+        out.eog_l_raw_rate = stod_or_default(cell("eogl_raw_rate"), 0.0);
+        out.eog_l_upsample_rate = stod_or_default(cell("eogl_upsampled_rate"), 0.0);
+        out.eog_r_raw_rate = stod_or_default(cell("eogr_raw_rate"), 0.0);
+        out.eog_r_upsample_rate = stod_or_default(cell("eogr_upsampled_rate"), 0.0);
+        out.emg_raw_rate = stod_or_default(cell("emg_raw_rate"), 0.0);
+        out.emg_upsample_rate = stod_or_default(cell("emg_upsampled_rate"), 0.0);
+        out.flow_raw_rate = stod_or_default(cell("flow_raw_rate"), 0.0);
+        out.flow_upsample_rate = stod_or_default(cell("flow_upsampled_rate"), 0.0);
+        out.snore_raw_rate = stod_or_default(cell("snore_raw_rate"), 0.0);
+        out.snore_upsample_rate = stod_or_default(cell("snore_upsampled_rate"), 0.0);
+        out.thor_raw_rate = stod_or_default(cell("thor_raw_rate"), 0.0);
+        out.thor_upsample_rate = stod_or_default(cell("thor_upsampled_rate"), 0.0);
+        out.abdo_raw_rate = stod_or_default(cell("abdo_raw_rate"), 0.0);
+        out.abdo_upsample_rate = stod_or_default(cell("abdo_upsampled_rate"), 0.0);
+        out.leg_raw_rate = stod_or_default(cell("leg_raw_rate"), 0.0);
+        out.leg_upsample_rate = stod_or_default(cell("leg_upsampled_rate"), 0.0);
+        out.auxac_raw_rate = stod_or_default(cell("auxac_raw_rate"), 0.0);
+        out.auxac_upsample_rate = stod_or_default(cell("auxac_upsampled_rate"), 0.0);
+        out.therm_raw_rate = stod_or_default(cell("therm_raw_rate"), 0.0);
+        out.therm_upsample_rate = stod_or_default(cell("therm_upsampled_rate"), 0.0);
+        out.pos_raw_rate = stod_or_default(cell("pos_raw_rate"), 0.0);
+        out.pos_upsample_rate = stod_or_default(cell("pos_upsampled_rate"), 0.0);
+        out.oxstatus_raw_rate = stod_or_default(cell("oxstatus_raw_rate"), 0.0);
+        out.oxstatus_upsample_rate = stod_or_default(cell("oxstatus_upsampled_rate"), 0.0);
+        out.spo2_raw_rate = stod_or_default(cell("spo2_raw_rate"), 0.0);
+        out.spo2_upsample_rate = stod_or_default(cell("spo2_upsampled_rate"), 0.0);
+        out.hr_raw_rate = stod_or_default(cell("hr_raw_rate"), 0.0);
+        out.hr_upsample_rate = stod_or_default(cell("hr_upsampled_rate"), 0.0);
+        out.dhr_raw_rate = stod_or_default(cell("dhr_raw_rate"), 0.0);
+        out.dhr_upsample_rate = stod_or_default(cell("dhr_upsampled_rate"), 0.0);
+        out.sleepstate_length = stod_or_default(cell("sleepstate_length"), 0.0);
+        out.blanking_period = stod_or_default(cell("blanking_period"), 0.0);
+        out.threshold = stod_or_default(cell("threshold"), 0.0);
+        out.bin_size_minutes = stod_or_default(cell("bin_size_minutes"), 0.0);
 
         // if a template match is below floor, it becomes 
-        out.ecg_match_floor = stod_or_zero(cell("ecg_match_floor"));
-        out.ppg_match_floor = stod_or_zero(cell("ppg_match_floor"));
-        out.ppg_fit_error_pct = stod_or_zero(cell("ppg_fit_error_pct"));
-        out.min_beats_template_ecg = stoi_or_default(cell("min_beats_template_ecg"), 0);
-        out.min_beats_template_ppg = stoi_or_default(cell("min_beats_template_ppg"), 0);
+        out.ecg_match_floor = stod_or_default(cell("ecg_match_floor"), 0.0);
+        out.ppg_match_floor = stod_or_default(cell("ppg_match_floor"), 0.0);
+        out.ppg_fit_error_pct = stod_or_default(cell("ppg_fit_error_pct"), 0.0);
+        out.min_beats_template_ecg = stod_or_default(cell("min_beats_template_ecg"), 0);
+        out.min_beats_template_ppg = stod_or_default(cell("min_beats_template_ppg"), 0);
         if (out.min_beats_template_ecg < 0 || out.min_beats_template_ppg < 0) {
             std::cerr << "WARNING: min_beats_template_ecg/ppg must be >= 0 ("
                 << out.min_beats_template_ecg << "/"
@@ -347,7 +335,7 @@ bool load_config(int dataType, config_entry& out) {
         // --- Filtering options ---
         // Notch: blank -> 0 (disabled). Only 0/50/60 are valid; anything else
         // warns and falls back to disabled.
-        out.notch_filter_hz = stoi_or_default(cell("notch_filter_hz"), 0);
+        out.notch_filter_hz = stod_or_default(cell("notch_filter_hz"), 0);
         if (out.notch_filter_hz != 0 &&
             out.notch_filter_hz != 50 &&
             out.notch_filter_hz != 60) {
@@ -363,12 +351,12 @@ bool load_config(int dataType, config_entry& out) {
         out.waveform_highpass_hz = stod_or_default(cell("waveform_highpass_hz"), 0.5);
 
         // --- Subject demographics (stored only, ignored downstream for now) ---
-        out.age = stoi_or_default(cell("age"), 0);
+        out.age = stod_or_default(cell("age"), 0);
         out.sex = cell("sex");                       // stored verbatim
         out.weight_kg = stod_or_default(cell("weight_kg"), 0.0);
         out.height_cm = stod_or_default(cell("height_cm"), 0.0);
-        out.hr_rest = stoi_or_default(cell("hr_rest"), 0);
-        out.hr_max = stoi_or_default(cell("hr_max"), 0);
+        out.hr_rest = stod_or_default(cell("hr_rest"), 0);
+        out.hr_max = stod_or_default(cell("hr_max"), 0);
 
         apply_dataset_specific_channel_labels(out);
 

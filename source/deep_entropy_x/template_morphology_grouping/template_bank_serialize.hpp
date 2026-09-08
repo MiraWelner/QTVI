@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <fstream>
 #include <stdexcept>
+#include <string>   // std::to_string, for the extras mismatch message
 #include <vector>
 
 #include "template_bank.hpp"
@@ -227,7 +228,29 @@ namespace tbank_ser {
 
         inline bool readBankExtras(std::ifstream& f, tbank::TemplateBank& b) {
             const uint32_t nt = readLen(f);
-            if (nt != b.templates.size()) return false;
+            // THROWS, RATHER THAN RETURNING false AFTER CONSUMING THE COUNT.
+            //
+            // This is where "vector too long" came from, several sections
+            // later. The old form read nt and then returned false, and the v5
+            // caller's `break` left the stream parked MID-SECTION rather than
+            // at a boundary. Everything after it parsed garbage, and v6 handed
+            // that garbage to a vector constructor.
+            //
+            // There is ONE format version, so a count that disagrees with its
+            // bank is a corrupt or inconsistently-written file, not an old one.
+            // Saying so at the point of detection is the whole difference
+            // between a message that names the problem and a length_error
+            // thrown from an allocator forty kilobytes downstream.
+            //
+            // Applying them anyway is not an option: extras carry
+            // confirmed_by_operator and members_clean, so a misaligned block
+            // attaches one template's operator confirmation to another.
+            if (nt != b.templates.size())
+                throw std::runtime_error(
+                    "bank extras count " + std::to_string(nt)
+                    + " does not match bank size "
+                    + std::to_string(b.templates.size())
+                    + " -- v3 and v5 disagree about which bins carry banks");
             for (uint32_t i = 0; i < nt; ++i)
                 readTemplateExtras(f, b.templates[i]);
             return static_cast<bool>(f);
