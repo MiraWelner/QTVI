@@ -67,8 +67,8 @@
 // and carries the _J suffix in the CSV, even though the bar it serves is the
 // T-end bar.
 //
-// INTERVALS ARE NOT COVERED BY ANY OF THIS. qrs needs q_begin and s_end; qt
-// needs q_begin and t_end -- bars from three different alignments -- so `owns`
+// INTERVALS ARE NOT COVERED BY ANY OF THIS. qrs needs q_onset and s_end; qt
+// needs q_onset and t_end -- bars from three different alignments -- so `owns`
 // cannot answer for one, and there is no function here that tries. A duration
 // is frame-free, so writeTemplateMarkingsCsv reports its user half once, under
 // R. If a fifth alignment ever arrives that changes nothing about that.
@@ -179,7 +179,7 @@ namespace anchor_view {
     // record is reporting an operator value that is not stored anywhere.
     inline int markerForPoint(const char* pointName) {
         if (std::strcmp(pointName, "p_begin") == 0) return kPBegin;
-        if (std::strcmp(pointName, "q_begin") == 0) return kQBegin;
+        if (std::strcmp(pointName, "q_onset") == 0) return kQBegin;
         if (std::strcmp(pointName, "s_end") == 0) return kSEnd;
         if (std::strcmp(pointName, "t_end") == 0) return kTEnd;
         return -1;

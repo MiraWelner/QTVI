@@ -535,7 +535,7 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
     case AnchorType::R_PEAK:  return [r_col](const std::vector<double>&) {
         return static_cast<double>(r_col); };
     case AnchorType::Q_ONSET:
-        // Single canonical finder: detect_q_begin supplies the seed;
+        // Single canonical finder: detect_q_onset supplies the seed;
         // compute_q_onset does the Q-peak search + sigma=4 refine + I-3
         // transitionAnchor refinement, and folds in the R-upstroke fallback
         // for monophasic-R (no-Q) beats. Same shape as J_POINT below.
@@ -567,11 +567,11 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
 // column, the user MarkerSet for a user column.
 // ============================================================================
 
-FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_begin, double s_end, double t_end, double sampleRate)
+FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_onset, double s_end, double t_end, double sampleRate)
 {
     ReactiveEcg r;
     if (static_cast<int>(ecg.size()) < 3) return r;
-    r.p_peak = compute_p_peak(ecg, p_begin, q_begin, sampleRate);
+    r.p_peak = compute_p_peak(ecg, p_begin, q_onset, sampleRate);
     r.t_peak = compute_t_peak(ecg, s_end, t_end);
     return r;
 }
@@ -1252,11 +1252,11 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
             // empty channel has no waveform for a landmark to sit on.
             b.slotMarks(c, 0, anchor) = tbank::BankMarkerSet{};
             b.r_peak_ch[c] = -1;
-            b.p_peak_auto_ch[c] = b.q_begin_auto_ch[c] = b.r_peak_auto_ch[c] = -1;
+            b.p_peak_auto_ch[c] = b.q_onset_auto_ch[c] = b.r_peak_auto_ch[c] = -1;
             b.s_end_auto_ch[c] = b.t_end_auto_ch[c] = -1;
             b.p_begin_auto_ch[c] = -1;
             b.q_peak_auto_ch[c] = -1;
-            b.q_begin_found_auto_ch[c] = false;
+            b.q_onset_found_auto_ch[c] = false;
             continue;
         }
 
@@ -1278,7 +1278,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         FeatureMarks::TemplateLandmarks lm = lmRaw;
 
         if (!msk.p_begin) lm.p_begin = -1.0;
-        if (!msk.q_begin) { lm.q_begin = -1.0; lm.q_begin_found = false; }
+        if (!msk.q_onset) { lm.q_onset = -1.0; lm.q_onset_found = false; }
         if (!msk.s_end)   lm.s_end = -1.0;
         if (!msk.t_end)   lm.t_end = -1.0;
 
@@ -1301,8 +1301,8 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // belongs. See landmark_admissibility.hpp and anchor_view.hpp.
         b.p_peak_auto_ch[c] = lmRaw.p_peak;
         b.q_peak_auto_ch[c] = lmRaw.q_peak;
-        b.q_begin_auto_ch[c] = lmRaw.q_begin;
-        b.q_begin_found_auto_ch[c] = lmRaw.q_begin_found;
+        b.q_onset_auto_ch[c] = lmRaw.q_onset;
+        b.q_onset_found_auto_ch[c] = lmRaw.q_onset_found;
         b.r_peak_auto_ch[c] = lmRaw.r_peak;
         b.s_end_auto_ch[c] = lmRaw.s_end;
         b.t_end_auto_ch[c] = lmRaw.t_end;
@@ -1326,7 +1326,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // while the X moved to the new answer, which is the Q-onset bar sitting
         // somewhere the X is not. The bar now follows the detector, so the two
         // are the same measurement by construction.
-        mk.q_begin = lm.q_begin;
+        mk.q_onset = lm.q_onset;
         // R falls back to the unrefined column rather than -1: it is the
         // alignment anchor every other landmark is expressed against, so the
         // bin needs SOME R even when refinement could not run.
@@ -1442,14 +1442,14 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
 
     out.r_peak = r;
     out.q_peak = keep(qp);   // -1 on a monophasic R is the RIGHT answer
-    out.q_begin = keep(q);
+    out.q_onset = keep(q);
     out.s_end = keep(j);
     out.t_end = keep(te);
     out.p_peak = keep(pp);   // -1 on a ventricular template is the RIGHT answer
     out.p_begin = keep(pb);
     // A flag that outlives its position would be a lie, so it is anded with the
     // position surviving keep().
-    out.q_begin_found = qFound && (out.q_begin >= 0.0);
+    out.q_onset_found = qFound && (out.q_onset >= 0.0);
     out.valid = true;
     return out;
 }
@@ -1473,7 +1473,7 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
     // Q-onset bars, so every reader calls FeatureMarks::reactive_ecg on the bar
     // set instead. A detector-sourced copy stored alongside was a second answer
     // that drifted from the X on screen the moment either bracket bar moved.
-    if (msk.q_begin) out.q_begin = lm.q_begin;
+    if (msk.q_onset) out.q_onset = lm.q_onset;
     if (msk.s_end)   out.s_end = lm.s_end;
     if (msk.t_end)   out.t_end = lm.t_end;
     if (msk.p_begin) out.p_begin = lm.p_begin;

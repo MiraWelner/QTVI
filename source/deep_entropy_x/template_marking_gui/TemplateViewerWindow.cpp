@@ -194,6 +194,15 @@ void TemplateViewerWindow::setTitleForSubject() {
 // Helpers
 // ========================================================================
 
+static int ecgPlotWall(const std::vector<double>& tmpl,
+    const std::vector<double>& iqr) {
+    int last = -1;
+    for (int i = static_cast<int>(tmpl.size()) - 1; i >= 0; --i)
+        if (!std::isnan(tmpl[i])) { last = i; break; }
+    if (iqr.size() == tmpl.size())
+        while (last > 0 && iqr[last] == 0.0) --last;
+    return last;
+}
 
 // Prevents PPG from going over the ECG window when dragged
 static int ecgClipLenFor(const TemplateBin& tb) {
@@ -796,7 +805,7 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath,
                             // BARS ONLY. p_peak is not in the record and not on
                             // the struct: readers call reactive_ecg on these.
                             dm.p_begin = safeIdx(sm.p_begin, dm.p_begin, len);
-                            dm.q_begin = safeIdx(sm.q_begin, dm.q_begin, len);
+                            dm.q_onset = safeIdx(sm.q_onset, dm.q_onset, len);
                             dm.s_end = safeIdx(sm.s_end, dm.s_end, len);
                             dm.t_end = safeIdx(sm.t_end, dm.t_end, len);
                         }
@@ -904,8 +913,8 @@ void TemplateViewerWindow::writeNormalizationCsvs() {
             const tbank::BankMarkerSet& rmk =
                 b.slotMarks(ch, 0, AnchorType::R_PEAK);
             const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
-                ecg, rmk.p_begin, rmk.q_begin, rmk.s_end, rmk.t_end, m_sampleRate);
-            EcgFeatures f = computeEcgFeatures(ecg, rx.p_peak, rmk.q_begin,
+                ecg, rmk.p_begin, rmk.q_onset, rmk.s_end, rmk.t_end, m_sampleRate);
+            EcgFeatures f = computeEcgFeatures(ecg, rx.p_peak, rmk.q_onset,
                 b.r_peak_ch[ch], rmk.s_end, rmk.t_end, m_sampleRate);
             const double ry = normalize_features::sample_y(ecg, f.r_idx);
             const double sy = normalize_features::sample_y(ecg, f.s_idx);
@@ -1632,7 +1641,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
     // t_begin removed with the marker (see BankMarkerSet): its two columns
     // were structurally blank, because nothing ever set it.
     static const char* ECG_MARKERS[] = {
-        "p_begin", "p_peak", "q_begin", "q_peak", "r_peak", "s_peak",
+        "p_begin", "p_peak", "q_onset", "q_peak", "r_peak", "s_peak",
         "s_end",   "t_end"
     };
     constexpr int kNumEcgMarkers = static_cast<int>(std::size(ECG_MARKERS));
@@ -1785,7 +1794,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // NO ROUNDING: computeEcgFeatures takes doubles, AnchorAuto is
             // double, and the qrs/qt milliseconds this feeds are sub-sample.
             ftAuto[c] = computeEcgFeatures(ecg,
-                aaF.p_peak[c], aaF.q_begin[c], aaF.r_peak[c],
+                aaF.p_peak[c], aaF.q_onset[c], aaF.r_peak[c],
                 aaF.s_end[c], aaF.t_end[c], m_sampleRate);
             // Per lead, because slotMarks selects the lead -- the old bin-wide
             // MarkerSet held all three leads in one object and was fetched once
@@ -1795,9 +1804,9 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // p_peak field at all: P peak is a glyph. It is recomputed from the
             // two bars that bracket it, on this alignment's own waveform.
             const FeatureMarks::ReactiveEcg rxF = FeatureMarks::reactive_ecg(
-                ecg, umk.p_begin, umk.q_begin, umk.s_end, umk.t_end, m_sampleRate);
+                ecg, umk.p_begin, umk.q_onset, umk.s_end, umk.t_end, m_sampleRate);
             ftUser[c] = computeEcgFeatures(ecg,
-                rxF.p_peak, umk.q_begin, b.r_peak_ch[c],
+                rxF.p_peak, umk.q_onset, b.r_peak_ch[c],
                 umk.s_end, umk.t_end, m_sampleRate);
         }
 
@@ -1811,13 +1820,13 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             const tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
             const std::vector<double>& ecgA = b.chFor(c, anchor).ecgTemplate_raw;
             const FeatureMarks::ReactiveEcg rxA = FeatureMarks::reactive_ecg(
-                ecgA, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_begin[c]),
+                ecgA, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_onset[c]),
                 (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]), m_sampleRate);
-            const FeatureMarks::ReactiveEcg rxU = FeatureMarks::reactive_ecg(ecgA, umk.p_begin, umk.q_begin, umk.s_end, umk.t_end, m_sampleRate);
+            const FeatureMarks::ReactiveEcg rxU = FeatureMarks::reactive_ecg(ecgA, umk.p_begin, umk.q_onset, umk.s_end, umk.t_end, m_sampleRate);
 
             ecgAuto[c][0] = aa.p_begin[c];
             ecgAuto[c][1] = rxA.p_peak;          // reactive glyph, detector brackets
-            ecgAuto[c][2] = aa.q_begin[c];
+            ecgAuto[c][2] = aa.q_onset[c];
             ecgAuto[c][3] = ftAuto[c].q_idx;
             ecgAuto[c][4] = aa.r_peak[c];
             ecgAuto[c][5] = ftAuto[c].s_idx;
@@ -1825,7 +1834,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             ecgAuto[c][7] = aa.t_end[c];
             ecgUser[c][0] = umk.p_begin;
             ecgUser[c][1] = rxU.p_peak;          // reactive glyph, operator brackets
-            ecgUser[c][2] = umk.q_begin;
+            ecgUser[c][2] = umk.q_onset;
             ecgUser[c][3] = ftUser[c].q_idx;
             ecgUser[c][4] = b.r_peak_ch[c];
             ecgUser[c][5] = ftUser[c].s_idx;
@@ -1911,7 +1920,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // Autodetect glyphs: per ECG channel, then the pulse table.
             for (int gc = 0; gc < 3; ++gc) {
                 emitLoc(b.p_peak_auto_ch[gc], row);
-                emitLoc(b.q_begin_auto_ch[gc], row);
+                emitLoc(b.q_onset_auto_ch[gc], row);
                 emitLoc(b.r_peak_auto_ch[gc], row);
                 emitLoc(tPeakAutoGlyph[gc], row);
             }
@@ -2140,10 +2149,10 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
     // reactiveGlyphs calls, so the bar set, the X on screen and the CSV column
     // cannot disagree.
     const FeatureMarks::ReactiveEcg reBank = FeatureMarks::reactive_ecg(
-        tp.tmpl, mk.p_begin, mk.q_begin, mk.s_end, mk.t_end, m_sampleRate);
+        tp.tmpl, mk.p_begin, mk.q_onset, mk.s_end, mk.t_end, m_sampleRate);
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
     pw->setMarker(BinPlotWidget::EcgPPeak, reBank.p_peak);
-    pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_begin);
+    pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_onset);
     pw->setMarker(BinPlotWidget::EcgRPeak,
         (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel]);
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
@@ -2165,12 +2174,12 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     // P PEAK IS DERIVED, not stored -- see applyBankTemplateToWidget.
     const FeatureMarks::ReactiveEcg reBin = FeatureMarks::reactive_ecg(
         b.chFor(c, AnchorType::R_PEAK).ecgTemplate_raw,
-        mk.p_begin, mk.q_begin, mk.s_end, mk.t_end, m_sampleRate);
+        mk.p_begin, mk.q_onset, mk.s_end, mk.t_end, m_sampleRate);
 
     // ---- draggable bars ----------------------------------------------------
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
     pw->setMarker(BinPlotWidget::EcgPPeak, reBin.p_peak);   // glyph, not a bar
-    pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_begin);
+    pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_onset);
     pw->setMarker(BinPlotWidget::EcgRPeak, b.r_peak_ch[c]);   // auto-only, no bar drawn
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
@@ -2275,7 +2284,7 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
         tbank::BankMarkerSet& m = bk.templates[slot].marks(anchor);
         switch (marker) {
         case BinPlotWidget::EcgPBegin: return m.p_begin;
-        case BinPlotWidget::EcgQBegin: return m.q_begin;
+        case BinPlotWidget::EcgQBegin: return m.q_onset;
         case BinPlotWidget::EcgSEnd:   return m.s_end;
         case BinPlotWidget::EcgTEnd:   return m.t_end;
         }
@@ -2285,7 +2294,7 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
         tbank::BankMarkerSet& m = bk.templates[slot].marks(anchor);
         switch (marker) {
         case BinPlotWidget::EcgPBegin: m.p_begin = v; break;
-        case BinPlotWidget::EcgQBegin: m.q_begin = v; break;
+        case BinPlotWidget::EcgQBegin: m.q_onset = v; break;
         case BinPlotWidget::EcgSEnd:   m.s_end = v; break;
         case BinPlotWidget::EcgTEnd:   m.t_end = v; break;
             // EcgRPeak and EcgPPeak have no bar and are not draggable: R is the
@@ -2460,7 +2469,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 tb.slotMarks(leadIdx, slot, owner);
             switch (marker) {
             case BinPlotWidget::EcgPBegin: return m.p_begin;
-            case BinPlotWidget::EcgQBegin: return m.q_begin;
+            case BinPlotWidget::EcgQBegin: return m.q_onset;
             case BinPlotWidget::EcgSEnd:   return m.s_end;
             case BinPlotWidget::EcgTEnd:   return m.t_end;
             }
@@ -2473,7 +2482,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             tbank::BankMarkerSet& m = tb.slotMarks(leadIdx, slot, owner);
             switch (marker) {
             case BinPlotWidget::EcgPBegin: m.p_begin = v; break;
-            case BinPlotWidget::EcgQBegin: m.q_begin = v; break;
+            case BinPlotWidget::EcgQBegin: m.q_onset = v; break;
             case BinPlotWidget::EcgSEnd:   m.s_end = v; break;
             case BinPlotWidget::EcgTEnd:   m.t_end = v; break;
             }
@@ -2517,18 +2526,21 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
             const double posFrac = (nDragged > 1)
                 ? double(newIdx) / (nDragged - 1) : 0.0;
 
-            // Slot 0's length is the bin's own template; a deeper slot's is its
-            // bank template's, which can be shorter.
-            auto lenOf = [&](int binI, int slot) -> int {
+            // The rightmost DRAWN column, not the array end. Slot 0's trace is
+            // the bin's own template; a deeper slot's is its bank template's,
+            // which can be shorter.
+            auto wallOf = [&](int binI, int slot) -> int {
                 if (slot == 0) {
-                    ChannelTemplateData* chs[3] = {
+                    const ChannelTemplateData* chs[3] = {
                         &m_bins[binI].ch1, &m_bins[binI].ch2, &m_bins[binI].ch3
                     };
-                    return (int)chs[leadIdx]->ecgTemplate_raw.size();
+                    return ecgPlotWall(chs[leadIdx]->ecgTemplate_raw,
+                        chs[leadIdx]->ecg_template_raw_iqr);
                 }
                 const tbank::TemplateBank& bk = m_bins[binI].ecg_bank[leadIdx];
-                if (slot >= (int)bk.templates.size()) return 0;
-                return (int)bk.templates[slot].tmpl.size();
+                if (slot >= (int)bk.templates.size()) return -1;
+                return ecgPlotWall(bk.templates[slot].tmpl,
+                    bk.templates[slot].tmpl_iqr);
                 };
 
             // The dragged panel, matched on BOTH halves: a slot number recurs
@@ -2549,7 +2561,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 const int slot = m_pageTemplateIdx[li];
                 if (gi < 0 || gi >= (int)m_bins.size()) continue;
                 if (m_bins[gi].bad_r_ch[leadIdx]) continue;
-                const int n = lenOf(gi, slot);
+                const int n = wallOf(gi, slot);
                 if (n <= 0) continue;
                 const int cur = ecgGet(m_bins[gi], slot);
                 if (cur < 0) continue;
@@ -3290,7 +3302,7 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
     // an integer segment window.
     auto autoPosOf = [](const TemplateBin& tb, Landmark lm, int lead) -> int {
         switch (lm) {
-        case Landmark::Q_ONSET:  return (int)std::lround(tb.q_begin_auto_ch[lead]);
+        case Landmark::Q_ONSET:  return (int)std::lround(tb.q_onset_auto_ch[lead]);
         case Landmark::J_POINT:  return (int)std::lround(tb.s_end_auto_ch[lead]);   // J-point == S-end field
         case Landmark::P_ONSET:  return (int)std::lround(tb.p_begin_auto_ch[lead]);
         case Landmark::T_OFFSET: return (int)std::lround(tb.t_end_auto_ch[lead]);
@@ -3330,10 +3342,10 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
                 const double rrMs = rrSamples / m_sampleRate * 1000.0;
                 if (rrMs > 0.0) heartRate = 60000.0 / rrMs;
             }
-            // QRS duration (ms) = distance between q_begin and s_end glyphs.
+            // QRS duration (ms) = distance between q_onset and s_end glyphs.
             double qrsMs = 0.0;
             {
-                const int q = (int)std::lround(b.q_begin_auto_ch[lead]);
+                const int q = (int)std::lround(b.q_onset_auto_ch[lead]);
                 const int s = (int)std::lround(b.s_end_auto_ch[lead]);
                 if (q >= 0 && s >= 0 && m_sampleRate > 0.0)
                     qrsMs = std::abs(s - q) / m_sampleRate * 1000.0;

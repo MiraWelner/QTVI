@@ -81,7 +81,7 @@ namespace landmark_admit {
         // call site reads as a one-to-one masking of it.
         bool p_begin = false;
         bool p_peak = false;
-        bool q_begin = false;
+        bool q_onset = false;
         bool q_peak = false;
         bool r_peak = false;
         bool s_end = false;
@@ -92,7 +92,7 @@ namespace landmark_admit {
             switch (lm) {
             case Landmark::P_ONSET: return p_begin;
             case Landmark::P_PEAK:  return p_peak;
-            case Landmark::Q_ONSET: return q_begin;
+            case Landmark::Q_ONSET: return q_onset;
             case Landmark::Q_PEAK:  return q_peak;
             case Landmark::R_PEAK:  return r_peak;
             case Landmark::S_END:   return s_end;
@@ -145,7 +145,7 @@ namespace landmark_admit {
     inline constexpr Mask maskFor(AnchorType a) {
         Mask m;
         m.p_begin = anchor_view::owns(a, anchor_view::kPBegin);
-        m.q_begin = anchor_view::owns(a, anchor_view::kQBegin);
+        m.q_onset = anchor_view::owns(a, anchor_view::kQBegin);
         m.s_end = anchor_view::owns(a, anchor_view::kSEnd);
         m.t_end = anchor_view::owns(a, anchor_view::kTEnd);
 
@@ -162,11 +162,11 @@ namespace landmark_admit {
     // The intended rows, pinned: one bar each, and no glyph admitted anywhere.
     // A careless edit above fails here rather than in a CSV weeks later.
     static_assert(maskFor(AnchorType::P_ONSET).p_begin, "");
-    static_assert(!maskFor(AnchorType::P_ONSET).q_begin, "");
+    static_assert(!maskFor(AnchorType::P_ONSET).q_onset, "");
     static_assert(!maskFor(AnchorType::P_ONSET).s_end, "");
     static_assert(!maskFor(AnchorType::P_ONSET).t_end, "");
 
-    static_assert(maskFor(AnchorType::Q_ONSET).q_begin, "");
+    static_assert(maskFor(AnchorType::Q_ONSET).q_onset, "");
     static_assert(!maskFor(AnchorType::Q_ONSET).p_begin, "");
     static_assert(!maskFor(AnchorType::Q_ONSET).s_end, "");
     static_assert(!maskFor(AnchorType::Q_ONSET).t_end, "");
@@ -177,14 +177,14 @@ namespace landmark_admit {
     // all a first pass produced) and J_POINT used to own s_end alongside t_end.
     static_assert(maskFor(AnchorType::R_PEAK).s_end, "");
     static_assert(!maskFor(AnchorType::R_PEAK).p_begin, "");
-    static_assert(!maskFor(AnchorType::R_PEAK).q_begin, "");
+    static_assert(!maskFor(AnchorType::R_PEAK).q_onset, "");
     static_assert(!maskFor(AnchorType::R_PEAK).t_end, "");
 
     // The J alignment exists to make T-end measurable, and T-end is what it
     // reports.
     static_assert(maskFor(AnchorType::J_POINT).t_end, "");
     static_assert(!maskFor(AnchorType::J_POINT).s_end, "");
-    static_assert(!maskFor(AnchorType::J_POINT).q_begin, "");
+    static_assert(!maskFor(AnchorType::J_POINT).q_onset, "");
     static_assert(!maskFor(AnchorType::J_POINT).p_begin, "");
 
     // No glyph is admitted on any alignment.

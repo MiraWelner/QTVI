@@ -35,7 +35,7 @@ public:
     static double sample_at(const std::vector<double>& v, double p);// Returns the landmark as a sub-sample (floating-point) position
     struct ReactiveEcg { double t_peak = -1.0, p_peak = -1.0; };
     struct ReactivePpg { double t50 = -1.0, t80 = -1.0, t80_rise = -1.0, pw80 = -1.0, peak2 = -1.0; };
-    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_begin, double s_end, double t_end, double sampleRate);
+    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_onset, double s_end, double t_end, double sampleRate);
     static ReactivePpg reactive_ppg(const std::vector<double>& ppg, double onset, double peak, double dicrotic, double end);
 
     static double compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs);
@@ -52,7 +52,7 @@ public:
 
     struct TemplateLandmarks {
         double r_peak = -1.0;    // refined from nominal_r_col, sub-sample
-        double q_begin = -1.0;  bool q_begin_found = false;
+        double q_onset = -1.0;  bool q_onset_found = false;
         double q_peak = -1.0;
         double s_end = -1.0;    // == J-point
         double t_end = -1.0;

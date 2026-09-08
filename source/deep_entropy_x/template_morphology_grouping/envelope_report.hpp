@@ -181,8 +181,8 @@ namespace envelope_report {
             };
 
         sp.p_begin = idx(lm.p_begin);
-        sp.p_end = idx(lm.q_begin);  // no P-offset finder exists; see header note
-        sp.qrs_begin = idx(lm.q_begin);
+        sp.p_end = idx(lm.q_onset);  // no P-offset finder exists; see header note
+        sp.qrs_begin = idx(lm.q_onset);
         sp.qrs_end = idx(lm.s_end);
         sp.t_end = idx(lm.t_end);
         return sp;

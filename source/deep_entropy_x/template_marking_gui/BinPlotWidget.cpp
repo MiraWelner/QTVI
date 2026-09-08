@@ -125,7 +125,7 @@ namespace {
     // ECG markers (P peak, Q begin, R peak, S end, T peak, T end).
     constexpr QColor ecg_p_begin_color{ 150, 80, 180 };
     constexpr QColor ecg_p_peak_color{ 180, 100, 210 };
-    constexpr QColor ecg_q_begin_color{ 20,  20,  60 };
+    constexpr QColor ecg_q_onset_color{ 20,  20,  60 };
     constexpr QColor ecg_r_peak_color{ 15,  15,  40 };
     constexpr QColor ecg_s_color{ 30, 35, 85 };
     constexpr QColor ecg_t_end_color{ 70,  90, 160 };
@@ -165,7 +165,7 @@ namespace {
         switch (m) {
         case BinPlotWidget::EcgPBegin:   return ecg_p_begin_color;
         case BinPlotWidget::EcgPPeak:    return ecg_p_peak_color;
-        case BinPlotWidget::EcgQBegin:   return ecg_q_begin_color;
+        case BinPlotWidget::EcgQBegin:   return ecg_q_onset_color;
         case BinPlotWidget::EcgRPeak:    return ecg_r_peak_color;
         case BinPlotWidget::EcgSEnd:     return ecg_s_color;
         case BinPlotWidget::EcgTEnd:     return ecg_t_end_color;
@@ -1136,8 +1136,8 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
         //  Q-onset bars -- see reactiveGlyphs. The onset it brackets on is now
         //  refit from the re-measured peak in detect_template_landmarks, so the
         //  bracket actually contains the P wave.)
-        m_glyphs.ecgQ = froz((double)am.q_begin);
-        m_glyphs.ecgQFound = b.q_begin_found_auto_ch[c];
+        m_glyphs.ecgQ = froz((double)am.q_onset);
+        m_glyphs.ecgQFound = b.q_onset_found_auto_ch[c];
         m_glyphs.ecgS = froz((double)am.s_end);
         m_glyphs.ecgQPeak = froz(b.q_peak_auto_ch[c]);
         m_glyphs.ecgTend = froz((double)am.t_end);

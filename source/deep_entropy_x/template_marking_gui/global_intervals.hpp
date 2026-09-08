@@ -78,7 +78,7 @@ namespace global_intervals {
             // drawn in. A per-alignment AUTO variant would read
             // bin.autoFor(anchor) instead.
             m.pOnset = bin.p_begin_auto_ch[ch];
-            m.qOnset = bin.q_begin_auto_ch[ch];
+            m.qOnset = bin.q_onset_auto_ch[ch];
             m.jPoint = bin.s_end_auto_ch[ch];
             m.tOffset = bin.t_end_auto_ch[ch];
         }
@@ -95,7 +95,7 @@ namespace global_intervals {
             // would come out invalid.
             const tbank::BankMarkerSet u = bin.userMarks(ch, 0, anchor);
             m.pOnset = static_cast<double>(u.p_begin);
-            m.qOnset = static_cast<double>(u.q_begin);
+            m.qOnset = static_cast<double>(u.q_onset);
             m.jPoint = static_cast<double>(u.s_end);
             m.tOffset = static_cast<double>(u.t_end);
         }

@@ -19,11 +19,11 @@
 #include "peak_finding/create_ecg_ppg_pairs.hpp"
 #include "peak_finding/peakfinding_io.hpp"
 
-#include "template_generation/bin_archive.hpp"
 #include "template_generation/template_io.hpp"
 #include "template_generation/pulse_matched_filter.hpp"
 #include "template_generation/build_templates.hpp"
 #include "template_generation/premark_beats.hpp"
+#include "template_generation/bank_reload.hpp"
 
 #include "annealing/anneal_handler.hpp"
 #include "config_file_handling/config_entry.hpp"
@@ -358,35 +358,6 @@ namespace post_process_detail {
             const char* src_ecg = have_ecg ? "config" : "default";
             const char* src_ppg = have_ppg ? "config" : "default";
 
-            if (!tbank::setMatchFloors(fe, fp)) {
-                std::cerr << "  [4.6] REFUSED match floors ECG " << fe
-                    << " / PPG " << fp
-                    << " -- both must be in (0, 1]. Keeping ECG "
-                    << tbank::matchFloorEcg() << " / PPG "
-                    << tbank::matchFloorPpg() << "\n";
-            }
-            else {
-                std::cerr << "  [4.6] match floors ECG "
-                    << tbank::matchFloorEcg() << " (" << src_ecg
-                    << ")  PPG " << tbank::matchFloorPpg()
-                    << " (" << src_ppg << ")\n";
-            }
-
-            // Minimum beats per template. 0 is a legal, meaningful value --
-            // "no minimum" -- so unlike the floors there is nothing to refuse
-            // except a negative, and the loader has already clamped that.
-            if (tbank::setMinBeats(cfg.min_beats_template_ecg,
-                cfg.min_beats_template_ppg)) {
-                if (tbank::minBeatsEcg() > 0 || tbank::minBeatsPpg() > 0)
-                    std::cerr << "  [4.6] min beats per template: ECG "
-                    << tbank::minBeatsEcg() << "  PPG "
-                    << tbank::minBeatsPpg()
-                    << " -- templates below this are flagged "
-                    "too_few_beats and not displayed\n";
-                else
-                    std::cerr << "  [4.6] no minimum beats per template "
-                    "(min_beats_template_ecg/ppg unset)\n";
-            }
 
             // Pulse QC threshold, same treatment: unset keeps the default,
             // unusable is refused rather than clamped.
@@ -415,6 +386,11 @@ namespace post_process_detail {
         job.tmpl = std::move(fast.tmpl);
         job.beats = std::move(fast.beats);
         job.info = std::move(fast.info);
+        //if there is a prior templates.bin (ie the morpohlogy has been split) reload it
+        if (std::filesystem::exists(templatePath)) {
+            const auto rep = bank_reload::reloadBanks(templatePath.string(), job.tmpl);
+            bank_reload::printReport(rep);
+        }
         job.tmplR = job.tmpl;      // snapshot R frame (one copy, at prep time)
 
         // The R-pass checkpoints (bin archive, feature time series, envelope
@@ -529,16 +505,6 @@ namespace post_process_detail {
             // lists. Moving them below it would archive the squared/absval
             // detection under the label "R".
             if (!job.cfg.template_path.empty()) {
-                const bool ok = bin_archive::writeBinFeatureArchive(
-                    job.cfg.template_path, job.stem, job.tmpl.bins,
-                    job.rates.ecg, "R", &job.beats);
-                if (!ok)
-                    std::cerr << "  [bin_archive] " << job.stem
-                    << ": could not write checkpoint to "
-                    << job.cfg.template_path << "\n";
-                else
-                    std::cerr << "  [bin_archive] " << job.stem
-                    << ": wrote checkpoint (" << job.tmpl.bins.size() << " bins)\n";
 
                 // Section 5.5 length/area/volume time series, from the SAME
                 // pre-deformation R-pass data. job.peakResults still holds the
@@ -546,7 +512,7 @@ namespace post_process_detail {
                 // segmenter needs (job.tmpl has only averaged templates, which
                 // cannot be re-segmented).
                 const std::string ftsPath =
-                    job.cfg.template_path + "/" + job.stem + "_feature_timeseries.csv";
+                    job.cfg.template_path + "/" + job.stem + "_pq_and_qrs_data.csv";
                 const bool okf = normalize_features::writeFeatureTimeSeriesCsv(
                     ftsPath, job.stem, job.peakResults, job.rates.ecg);
                 if (!okf)

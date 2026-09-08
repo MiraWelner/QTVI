@@ -833,21 +833,6 @@ namespace alignment {
                 return tmpl;
                 };
 
-            auto pearson = [&](const std::vector<double>& a, const std::vector<double>& b) -> double {
-                double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0; int n = 0;
-                for (size_t k = 0; k < a.size(); ++k) {
-                    if (std::isnan(a[k]) || std::isnan(b[k])) continue;
-                    sa += a[k]; sb += b[k]; saa += a[k] * a[k];
-                    sbb += b[k] * b[k]; sab += a[k] * b[k]; ++n;
-                }
-                if (n < 4) return 0.0;   // too few overlapping samples to trust
-                const double ma = sa / n, mb = sb / n;
-                const double cov = sab / n - ma * mb;
-                const double va = saa / n - ma * ma, vb = sbb / n - mb * mb;
-                if (va <= 0.0 || vb <= 0.0) return 0.0;
-                return cov / std::sqrt(va * vb);
-                };
-
             const double corr_min = 0.30;
             const double sd_thresholds[3] = { 4.0, 3.0, 2.5 };
 
@@ -882,18 +867,47 @@ namespace alignment {
 
                     std::vector<bool> keep(out.beats.size(), true);
                     for (size_t i = 0; i < out.beats.size(); ++i) {
-                        const double r = pearson(out.beats[i], tmpl);
-                        // RMS deviation over this beat's own overlapping columns --
-                        // NOT the single worst sample. With hundreds of columns the
-                        // max single-sample deviation is always several SDs out
-                        // (extreme-value statistics), regardless of whether the
-                        // beat is a good match; RMS is the well-behaved, standard
-                        // "how many SDs away is this beat" measure.
+                        // ONE PASS, TWO STATISTICS. pearson() walked the beat
+                        // and the template, then the RMS loop walked the same
+                        // two arrays again with the same NaN test -- and every
+                        // accumulator the correlation needs was already being
+                        // summed. Fused, so the dominant loop of this block runs
+                        // once per beat per pass instead of twice.
+                        //
+                        // pearson() iterated a.size() while the RMS loop
+                        // iterated shared_w. Those are the same here: pass 1
+                        // rewrote every beat onto the shared axis, so each row
+                        // is exactly shared_w wide. That equivalence is what
+                        // lets one loop do both, and it would stop holding if
+                        // this block ever ran before pass 1.
+                        //
+                        // RMS deviation over this beat's own overlapping columns
+                        // -- NOT the single worst sample. With hundreds of
+                        // columns the max single-sample deviation is always
+                        // several SDs out (extreme-value statistics), regardless
+                        // of whether the beat is a good match; RMS is the
+                        // well-behaved, standard "how many SDs away is this
+                        // beat" measure.
+                        const auto& b = out.beats[i];
+                        double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
                         double sumsq = 0.0; int n = 0;
                         for (int c = 0; c < shared_w; ++c) {
-                            const double v = out.beats[i][c], t = tmpl[c];
+                            const double v = b[c], t = tmpl[c];
                             if (std::isnan(v) || std::isnan(t)) continue;
+                            sa += v; sb += t; saa += v * v; sbb += t * t; sab += v * t;
                             sumsq += (v - t) * (v - t); ++n;
+                        }
+                        // The guards pearson() carried, unchanged: fewer than 4
+                        // overlapping samples, or a degenerate variance on
+                        // either side, scores 0 -- which fails corr_min and
+                        // drops the beat, rather than dividing by ~0 and
+                        // producing a correlation that reads as agreement.
+                        double r = 0.0;
+                        if (n >= 4) {
+                            const double ma = sa / n, mb = sb / n;
+                            const double va = saa / n - ma * ma, vb = sbb / n - mb * mb;
+                            if (va > 0.0 && vb > 0.0)
+                                r = (sab / n - ma * mb) / std::sqrt(va * vb);
                         }
                         const double rms = (n > 0) ? std::sqrt(sumsq / n) : 0.0;
                         keep[i] = (r >= corr_min) && (rms <= sdThresh * frozenSD);

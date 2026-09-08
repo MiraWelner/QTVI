@@ -372,10 +372,10 @@ namespace tbank {
 
     struct BankMarkerSet {
         //the four ECG markers which are stored
-        double p_begin = -1, q_begin = -1, s_end = -1, t_end = -1;
+        double p_begin = -1, q_onset = -1, s_end = -1, t_end = -1;
 
         bool isUnset() const {
-            return p_begin < 0 && q_begin < 0  && s_end < 0 && t_end < 0;
+            return p_begin < 0 && q_onset < 0  && s_end < 0 && t_end < 0;
         }
     };
     struct BankPulseMarkerSet {

@@ -102,15 +102,14 @@ namespace normalize_features {
             // lead, so the old per-lead subscripts are gone. The reference is a
             // per-subject quantity measured on the sinus seed, so slot 0 is the
             // right slot as well as the only one this ever read.
-            const tbank::BankMarkerSet& rmk =
-                b.slotMarks(ch, 0, AnchorType::R_PEAK);
+            const tbank::BankMarkerSet& rmk =  b.slotMarks(ch, 0, AnchorType::R_PEAK);
             // p_peak is no longer stored on BankMarkerSet: it is a reactive
             // glyph, fully determined by the P-onset and Q-onset bars, so it is
             // derived here from the same bars the screen and the CSV use.
             const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
-                ecg, rmk.p_begin, rmk.q_begin, rmk.s_end, rmk.t_end, sampleRateHz);
+                ecg, rmk.p_begin, rmk.q_onset, rmk.s_end, rmk.t_end, sampleRateHz);
             EcgFeatures f = computeEcgFeatures(ecg,
-                rx.p_peak, rmk.q_begin, b.r_peak_ch[ch],
+                rx.p_peak, rmk.q_onset, b.r_peak_ch[ch],
                 rmk.s_end, rmk.t_end, sampleRateHz);
             const double ry = sample_y(ecg, f.r_idx);
             const double sy = sample_y(ecg, f.s_idx);
@@ -435,7 +434,7 @@ namespace normalize_features {
             // quantity, so it always reads the R-pass markers.
             const tbank::BankMarkerSet& rmk =
                 b.slotMarks(ch, 0, AnchorType::R_PEAK);
-            const int qBegin = rmk.q_begin;
+            const int qBegin = rmk.q_onset;
             const int jPoint = rmk.s_end;   // S_END == J_POINT (AnchorType comment)
             if (qBegin < 0 || jPoint <= qBegin) continue;
             const double area = segment_area(ecg, qBegin, jPoint, /*absolute=*/true);
