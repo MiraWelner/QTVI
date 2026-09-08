@@ -644,16 +644,10 @@ struct TemplateBin {
 // ---------------------------------------------------------------------------
 // Read: convert template_io::TemplateFile -> std::vector<TemplateBin>
 // ---------------------------------------------------------------------------
-inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
-    AnchorType /*anchor*/ = AnchorType::R_PEAK) {
-    template_io::TemplateFile tf = template_io::read_template_binfile(path);
-
+inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::TemplateFile& tf) {
     // EVERY ANCHOR, NOT ONE. This used to take an anchor and project that one
     // block into chN, which is what made a second alignment cost a template
-    // regeneration and a window reload. The parameter is vestigial -- there is
-    // nothing left to select -- and is kept only so existing call sites
-    // compile; delete it once they are all updated.
-
+    // regeneration and a window reload.
     std::vector<TemplateBin> bins(tf.bins.size());
     for (size_t i = 0; i < tf.bins.size(); ++i) {
         const auto& src = tf.bins[i];
@@ -738,6 +732,15 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
         }
     }
     return bins;
+}
+
+// Path-taking wrapper, for callers that genuinely have a file: the standalone
+// template_marking tool, and a reload of a finished record. The anchor
+// parameter is vestigial -- nothing left to select -- and is kept only so
+// existing call sites compile.
+inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
+    AnchorType /*anchor*/ = AnchorType::R_PEAK) {
+    return binsFromTemplateFile(template_io::read_template_binfile(path));
 }
 
 // ---------------------------------------------------------------------------

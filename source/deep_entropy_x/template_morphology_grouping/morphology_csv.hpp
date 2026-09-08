@@ -507,7 +507,39 @@ namespace morphology_csv {
         std::ofstream f(g_dir + "/" + g_stem + "_templates.csv", std::ios::trunc);
         if (!f) return false;
 
-        for (const auto& blk : blocks) {
+        // ---- BLOCK ORDER: PPG DIRECTLY AFTER CH1 -------------------------
+        //
+        // The blocks arrive CH1, CH2, CH3, PPG, so the pulse table ended up at
+        // the bottom of the file, three tables away from the ECG face of the
+        // same groups. A group is ONE set of heartbeats seen on four channels,
+        // and the pair actually read together is CH1 and PPG -- so PPG is
+        // written second.
+        //
+        // THE BLOCKS THEMSELVES ARE UNCHANGED: each keeps its own channel row,
+        // its own column set and its own waveform rows. A channel with no
+        // usable beats in a bin contributes no column, so the blocks have
+        // different column counts and are joined by (bin, template) rather
+        // than by position -- which is what they always were.
+        //
+        // BY NAME, NOT BY INDEX. The caller decides the block order, so a
+        // positional rule here would silently move the wrong table if that
+        // order ever changed. A channel not named below keeps its given
+        // position, after the named ones.
+        std::vector<const ChannelBlock*> ordered;
+        ordered.reserve(blocks.size());
+        for (const char* want : { "CH1", "PPG" })
+            for (const auto& b0 : blocks)
+                if (b0.channel && std::strcmp(b0.channel, want) == 0)
+                    ordered.push_back(&b0);
+        for (const auto& b0 : blocks) {
+            bool already = false;
+            for (const ChannelBlock* q : ordered)
+                if (q == &b0) { already = true; break; }
+            if (!already) ordered.push_back(&b0);
+        }
+
+        for (const ChannelBlock* blkp : ordered) {
+            const ChannelBlock& blk = *blkp;
             if (blk.empty()) continue;
 
             // Which minimum applies. Compared on the block's channel name
@@ -519,7 +551,7 @@ namespace morphology_csv {
 
             struct Col {
                 std::string category, bin, name, premature, voted, tukey, blended,
-                    bpm, confirmed, members, excluded, share, marking, too_few;
+                    bpm, confirmed, members, excluded, share, too_few;
                 const std::vector<double>* wave = nullptr;
                 size_t binIdx = 0;
             };
@@ -552,33 +584,14 @@ namespace morphology_csv {
                     c.tukey = detail::tukeyPctAgg(tp);
                     c.blended = detail::blendPctAgg(tp);
                     //if it is never shown to the operator it is just presumed not confirmed
-                    c.confirmed = tp.confirmed() ? "confirmed"
-                        : (tp.tooFewBeats(isPpgBlock)
-                            || tp.presumedCategory() != tbank::Category::REGULAR)
-                        ? "presumed"
-                        : "not_confirmed";
+                    c.confirmed = (tp.marked_invalid_template != 0) ? "unconfirmed"
+                        : tp.confirmed_by_operator ? "confirmed"
+                        : "presumed";
                     c.members = std::to_string(tp.memberCount());
                     c.excluded = std::to_string(tp.excludedCount());
                     c.bpm = detail::bpmPerTemplate(tp);
-                    // FLAGGED, NOT OMITTED. The template stays in this file
-                    // with its waveform and its counts -- suppressing the row
-                    // would leave the beats unaccounted for and the reader
-                    // unable to tell a thin template from an absent one. The
-                    // viewer is what refuses to draw it.
-                    // FLAGGED IF EITHER CHANNEL IS THIN, in every block. The
-                    // viewer refuses a column when the ECG face or the pulse
-                    // face is below its own minimum, so a CH1 row reading "no"
-                    // while its PPG sibling read "yes" would describe a column
-                    // the operator never saw as valid. The blocks are written
-                    // independently, so the flag is computed per block on its
-                    // own channel and the reader joins them by (bin, template).
                     c.too_few = tp.tooFewBeats(isPpgBlock) ? "yes" : "no";
                     c.share = std::to_string(out.bank.beatShare(t));
-                    // Only category 1 templates are landmark-marked: only
-                    // category 1 beats feed feature extraction, so a P-onset on
-                    // a PVC template has nothing downstream to consume it and a
-                    // PVC's QT is not comparable to a sinus QT.
-                    c.marking = tp.wantsLandmarkMarking() ? "landmark" : "class_only";
                     c.wave = &tp.tmpl;
                     c.binIdx = b;
                     cols.push_back(std::move(c));
@@ -597,9 +610,6 @@ namespace morphology_csv {
                 f << '\n';
                 };
 
-            f << "channel";
-            for (size_t k = 0; k < cols.size(); ++k) f << ',' << blk.channel;
-            f << '\n';
             if (!blk.r_col.empty()) {
                 f << "r_col";
                 for (auto& c : cols) f << ',' << blk.rCol(c.binIdx);
@@ -615,11 +625,37 @@ namespace morphology_csv {
             row("tukey_pct", &Col::tukey);
             row("blended_pct", &Col::blended);
             row("confirmed", &Col::confirmed);
-            row("marking", &Col::marking);
             row("too_few_beats", &Col::too_few);
             row("n_members", &Col::members);
             row("n_excluded", &Col::excluded);
             row("beat_share", &Col::share);
+
+            // ---- THE CHANNEL ROWS, LAST OF THE METADATA -----------------
+            //
+            // AFTER beat_share and BEFORE the waveform, rather than at the
+            // head of the block. The metadata rows are the ones read together
+            // -- category, template, counts, then which channel they describe
+            // -- and the waveform below is thousands of rows tall, because an
+            // ECG axis is framed on the bin's LONGEST RR. A channel name at
+            // the top scrolls away long before the samples run out.
+            //
+            // At the bottom of the metadata it sits against the point where
+            // the columns are actually being compared, which is what makes an
+            // absent template distinguishable from a short one by eye.
+            f << "channel";
+            for (size_t k = 0; k < cols.size(); ++k) f << ',' << blk.channel;
+            f << '\n';
+            // ecg OR ppg. NOT redundant with `channel`: that names the LEAD
+            // (CH1/CH2/CH3/PPG), this names the KIND. Everything that has to
+            // treat the pulse differently -- which minimum-beats value
+            // applies, the perfusion-index normalization, which landmarks even
+            // exist -- was deciding it by string-matching "PPG" against the
+            // channel name, independently in several places. The file states
+            // it once, from the same isPpgBlock the rows above already use.
+            f << "channel_type";
+            for (size_t k = 0; k < cols.size(); ++k)
+                f << ',' << (isPpgBlock ? "ppg" : "ecg");
+            f << '\n';
 
             // Waveform: the template median, one row per sample index. Empty
             // cell for NaN -- the shared axis is NaN-padded at both ends, and 0

@@ -62,27 +62,30 @@ namespace post_process_detail {
     //
     // prepareViewerJob() does the minimum needed to open the viewer: anneal
     // (cached), raw R-peak detection, and raw/unfiltered/PPG templates. It
-    // writes a *provisional* template file (..._templates.partial.bin) for
-    // the viewer to open and returns the in-memory state.
+    // and returns the in-memory state. It writes NO template file: the viewer
+    // is handed job.tmpl directly.
     //
     // finalizeViewerJob() does the deferred squared/absval R-peak detection
     // and templating, then writes the CANONICAL wave_markings / templates /
     // beats files. Run it on a worker thread concurrently with manual
     // template marking, then join.
     //
-    // Only finalizeViewerJob writes the canonical files, and only once they
-    // are fully populated -- so the freshness checks in prepareViewerJob
-    // (annealed / wave / templates up-to-date) stay correct even if the app
-    // is killed mid-marking (canonical files just won't exist yet and
-    // regenerate next run). The worker touches only the canonical paths; the
-    // viewer reads only the provisional path; the two never collide.
+    // ONE WRITE, AT THE END. templates.bin is created once, by
+    // regenerateWithAnchor's final anchor -- after the finalize worker is
+    // joined, so job.tmpl carries squared/absval, and after every anchor has
+    // been folded in. Its existence therefore means COMPLETE, and a run killed
+    // mid-marking leaves nothing that could be mistaken for a finished record.
+    //
+    // That is what the _templates.partial.bin and its remove+rename promote
+    // were emulating: an early file for the viewer to open, renamed once it was
+    // whole. The viewer no longer opens a file at all during marking, so both
+    // the partial and the promote are gone.
     //
     // Callers MUST join the finalize worker before invoking
     // regenerateWithAnchor -- both mutate job.tmpl and would race if run
     // concurrently. (Also documented at each function's declaration below.)
     // ---------------------------------------------------------------------
     struct ViewerJob {
-        std::filesystem::path viewerTemplatePath;   // what the viewer opens
         bool needsFinalize = false;                 // false => everything already cached
 
         // Anchor cycle cursor. 0 = next reload builds anchorSequence()[0].
@@ -94,9 +97,11 @@ namespace post_process_detail {
         std::string fileID;
         double samplingRate = 0.0;   // ECG rate (used by non-template callers below)
         SignalRates rates;           // full per-channel rate set for template pipeline
-        std::filesystem::path rPeakPath, templatePath, beatsPath, provisionalPath;
+        std::filesystem::path rPeakPath, templatePath, beatsPath;
         std::filesystem::path annealedPath;   // for reloading peakResults on the Q-align pass
-        std::filesystem::path qAlignPath;      // Q-aligned provisional file (2nd pass)
+        // qAlignPath IS GONE. Declared, never assigned, never read -- the last
+        // trace of the two-pass Q-align design the four-alignment window
+        // replaced.
         bool needSqabsDetection = false;            // false when wave_markings already had them
 
         std::vector<output_binfile_data> peakResults;
@@ -136,7 +141,6 @@ namespace post_process_detail {
         const std::filesystem::path annealedPath = std::filesystem::path(cfg.annealed_data_path) / (stem + "_annealed.bin");
         const std::filesystem::path rPeakPath = std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
         const std::filesystem::path templatePath = std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
-        const std::filesystem::path provisionalPath = std::filesystem::path(cfg.template_path) / (stem + "_templates.partial.bin");
 
         // ---- Step 1: Anneal (always -- freshness check removed) ----
         //
@@ -174,7 +178,6 @@ namespace post_process_detail {
         job.ecg3_inverted = ecg3_inverted;
         job.rPeakPath = rPeakPath;
         job.templatePath = templatePath;
-        job.provisionalPath = provisionalPath;
         job.annealedPath = annealedPath;
 
         AnnealedData annealedData = read_input_binfile(annealedPath.string());
@@ -290,11 +293,6 @@ namespace post_process_detail {
                     << chOffArt.lag_ms << " ms (ratio=" << chOffArt.ratio << ")\n";
             }
         }
-        else {
-            std::cerr << "  [channel_offset] " << stem << ": dataset_type="
-                << cfg.dataset_type
-                << " -- correction only runs for CHAOS; skipped\n";
-        }
 
         // Grab arterial pass-through slots BEFORE the move consumes the bins.
         // Slots match file_to_bin / gui_handler: CH_ABP=33, CH_ART=34, CH_ART_PULM=35.
@@ -387,7 +385,7 @@ namespace post_process_detail {
                     << ": " << e.what() << "\n";
             }
         }
-        FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
+        FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates, noisePath.string());
         if (fast.tmpl.bins.empty()) {
             std::cerr << "  no bins for " << stem << " (recording shorter than one bin?); skipping.\n";
             return std::nullopt;   // main.cpp prints "prep failed or skipped"
@@ -412,9 +410,9 @@ namespace post_process_detail {
         // HERE, not in the anchor cycle, for two reasons. job.beats is still
         // the pristine R-pass beat matrix at this point -- augment_ecg_ppg_pairs_sqabs
         // in finalizeViewerJob OVERWRITES it, which is the same fact that forces
-        // the bin_archive "R" checkpoint above it -- and this runs before the
-        // provisional is written, so the viewer opens on a file that already has
-        // all four blocks and needs no reload.
+        // the bin_archive "R" checkpoint above it -- and it runs before the
+        // viewer is handed job.tmpl, so the operator opens on a state that
+        // already carries all four alignment blocks and needs no reload.
         //
         // Each anchor aligns FROM job.tmplR, never from the previous one:
         // alignTemplatesFromCache leaves the R base untouched, so the calls
@@ -452,8 +450,13 @@ namespace post_process_detail {
         }
         std::cerr.flush();
 
-        template_io::write_template_binfile(provisionalPath.string(), job.tmpl);
-        job.viewerTemplatePath = provisionalPath;
+        // NO WRITE HERE. This wrote the provisional file purely so the viewer
+        // had a path to open, and the viewer is handed job.tmpl instead -- the
+        // TemplateFile is already in memory in this process, so reading it back
+        // off disk was a round trip whose only product was a filename. It was
+        // also the reason a half-populated templates.bin had to exist: at this
+        // point squared/absval are empty and only the R anchor block is folded
+        // in.
         job.needsFinalize = true;
         return job;
     }
@@ -580,14 +583,9 @@ namespace post_process_detail {
             }
 
             // Base (R) templates now include squared/absval alongside
-            // raw/unfilt/ppg. Write them to the PROVISIONAL file -- the
-            // canonical _templates.bin is created only at the END of the
-            // anchor cycle (final "Finish"), once all anchors have been
-            // accumulated into it. Until then only the .partial.bin exists.
-            auto t_tw0 = std::chrono::steady_clock::now();
-            template_io::write_template_binfile(job.provisionalPath.string(), job.tmpl);
-            auto t_tw1 = std::chrono::steady_clock::now();
-            job.viewerTemplatePath = job.provisionalPath;
+            // raw/unfilt/ppg, in job.tmpl. NOT WRITTEN HERE: the file is
+            // created once, at the end of the anchor cycle, after every anchor
+            // has been folded in.
             std::cout << "Processing Squared and Absolute Value Templates (slow) for " << job.stem << "\n";
 
             // (No snips.csv: serializing every retained beat for every channel
@@ -602,12 +600,10 @@ namespace post_process_detail {
     }
 
     // Called by the controller when the viewer emits requestQAlignReload()
-    // (first "Finish and Next"). Q-aligns the cached R-pass templates in place
-    // (no rebuild), writes the result to a SEPARATE provisional file, and
-    // points the job's viewer path at it. Sets job.tmpl to the Q-aligned copy;
-    // call it after joining the finalize worker so the worker's canonical
-    // (R-pass) write has already completed. Returns false if nothing could be
-    // built.
+    // (first "Finish and Next"). Q-aligns the cached R-pass templates in place,
+    // with no rebuild and no intermediate file. Call it after joining the
+    // finalize worker, which mutates job.tmpl. Returns false if nothing could
+    // be built.
     //
     // Called by the controller when the viewer emits requestQAlignReload()
     // (each "Finish and Next"). Aligns the R-base templates to `anchor` and
@@ -615,7 +611,7 @@ namespace post_process_detail {
     // it can run concurrently with the finalize worker). Each step aligns FROM
     // the pristine R snapshot (job.tmplR / job.beatsR), never the previous
     // anchor. At the final anchor the accumulated set is folded into job.tmpl
-    // and promoted to the canonical _templates.bin.
+    // and written to _templates.bin -- the one and only write.
     inline bool regenerateWithAnchor(ViewerJob& job, AnchorType anchor)
     {
         try {
@@ -624,7 +620,7 @@ namespace post_process_detail {
             // and not mutated in the default non-scoring mode) and writes this
             // anchor's block into atmpl.raw_anchors. We then move that block
             // into the persistent job.tmpl so anchors accumulate across steps
-            // into the one growing provisional file.
+            // so anchors accumulate across steps.
             //
             // NOTE: per-anchor SQI is NOT written here -- it is deferred to the
             // final anchor (below), so the interactive steps stay fast.
@@ -638,38 +634,14 @@ namespace post_process_detail {
             if (it != atmpl.raw_anchors.end())
                 job.anchorAccum[anchorTag] = std::move(it->second);   // NOT job.tmpl -- avoids racing finalize
 
-            // Per-step write is TRIMMED: the viewer only reads the CURRENT
-            // anchor (readTemplateInfoBin(path, m_currentAnchor)), so the
-            // provisional it opens needs just the R scalar base + this one
-            // anchor's block -- NOT the whole accumulating set. This keeps the
-            // per-step write constant-size instead of growing each anchor.
-            // The full accumulated job.tmpl (all anchors) is written once, at
-            // the final promote below.
             const auto& seq = anchorSequence();
             const bool finalAnchor =
                 (!seq.empty() && anchor == seq.back());
 
             if (!finalAnchor) {
-                // Build the viewer's provisional from the SMALL R-only base
-                // (job.tmplR), not job.tmpl -- copying job.tmpl would deep-copy
-                // the whole growing accumulated set every step. tmplR carries
-                // the R scalar raw the viewer displays; we add just this
-                // anchor's block. (Squared/absval aren't in tmplR, but the
-                // viewer only draws raw, so the interactive provisional is
-                // fine without them.)
-                template_io::TemplateFile view = job.tmplR;   // constant-size, R only
-                view.raw_anchors.clear();
-                auto jt = job.anchorAccum.find(anchorTag);
-                if (jt != job.anchorAccum.end())
-                    view.raw_anchors[anchorTag] = jt->second;   // just this anchor
-                template_io::write_template_binfile(job.provisionalPath.string(), view);
-                job.viewerTemplatePath = job.provisionalPath;
-                auto _t2 = std::chrono::steady_clock::now();
                 std::cerr << "  [timing] anchor " << anchorName(anchor)
                     << ": align="
                     << std::chrono::duration_cast<std::chrono::milliseconds>(_t1 - _t0).count()
-                    << "ms write="
-                    << std::chrono::duration_cast<std::chrono::milliseconds>(_t2 - _t1).count()
                     << "ms\n";
                 return true;   // interactive step done -- fast path, no QC
             }
@@ -678,25 +650,13 @@ namespace post_process_detail {
             // controller joins it before the final step -- see main.cpp), so
             // job.tmpl carries the squared/absval scalars AND is safe to touch.
             // Fold the separately-accumulated anchors into it, write the FULL
-            // file (all anchors + absval), promote, then run deferred QC.
+            // file (all anchors + absval), then run deferred QC.
             for (auto& kv : job.anchorAccum)
                 job.tmpl.raw_anchors[kv.first] = std::move(kv.second);
             job.anchorAccum.clear();
 
-            template_io::write_template_binfile(job.provisionalPath.string(), job.tmpl);
-            job.viewerTemplatePath = job.provisionalPath;
+            template_io::write_template_binfile(job.templatePath.string(), job.tmpl);
             {
-                std::error_code ec;
-                std::filesystem::remove(job.templatePath, ec);
-                std::filesystem::rename(job.provisionalPath, job.templatePath, ec);
-                if (ec) {
-                    std::cerr << "[templates] WARNING: could not promote "
-                        << job.provisionalPath.string() << " -> "
-                        << job.templatePath.string() << ": " << ec.message() << "\n";
-                }
-                else {
-                    job.viewerTemplatePath = job.templatePath;
-                }
 
                 // ---- deferred QC over every anchor (R + the sequence) ----
                 // For each anchor: take a fresh copy of the FINALIZED base

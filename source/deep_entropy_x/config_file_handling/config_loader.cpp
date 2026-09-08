@@ -24,7 +24,7 @@
 #include <optional>
 
 
-static const std::string CONFIG_PATH = "config.csv";
+static const std::string CONFIG_PATH = "config.csv"; 
 
 namespace {
 

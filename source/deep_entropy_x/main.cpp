@@ -184,7 +184,8 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
         //  there is nothing to reload and the button always reads "Finish".)
 
         viewer.show();
-        viewer.loadSubject(QString::fromStdString(job->viewerTemplatePath.string()),
+        viewer.loadSubject(job->tmpl,
+            QString::fromStdString(cfg.template_path),
             QString::fromStdString(cfg.fiducial_marker_locations),
             displayId, cfg.ecg_upsample_rate,
             cfg.ppg_upsample_rate, cfg.abp_upsample_rate,
@@ -242,15 +243,9 @@ int main(int argc, char* argv[]) {
 
     auto finishJob = [](const std::shared_ptr<post_process_detail::ViewerJob>& job) {
         if (!job->error.empty()) {
-            std::cerr << "  ERROR (squared/absval finalize) " << job->stem << ": "
-                << job->error << "\n";
+            std::cerr << "  ERROR (squared/absval finalize) " << job->stem << ": "  << job->error << "\n";
         }
-        // Best-effort removal of that file's provisional viewer file.
-        if (job->needsFinalize && job->provisionalPath != job->templatePath) {
-            std::error_code ec;
-            std::filesystem::remove(job->provisionalPath, ec);
-        }
-        };
+    };
 
     // Reap completed background jobs. force==true joins everything (used at
     // shutdown); force==false only joins workers that have already finished,

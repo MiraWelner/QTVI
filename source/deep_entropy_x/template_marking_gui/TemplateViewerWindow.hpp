@@ -49,6 +49,30 @@ public:
         // (or would have been) applied at build time.
         int notchFilterHz = 0);
 
+    // ---- THE IN-MEMORY OVERLOAD ------------------------------------------
+    //
+    // Same as above but takes the TemplateFile directly instead of a path.
+    // The GUI uses this one: post_process already holds the TemplateFile in
+    // memory in the same process, so writing it to disk and reading it back
+    // was a round trip whose only product was a filename.
+    //
+    // AND THAT ROUND TRIP WAS THE REASON A HALF-POPULATED templates.bin HAD
+    // TO EXIST. prepareViewerJob wrote one before the squared/absval blocks
+    // were built, so the file on disk looked complete and was not -- which is
+    // what the _templates.partial.bin and its remove+rename promote were
+    // there to paper over. With this overload the file is written once, at
+    // the end, and its existence means complete.
+    //
+    // templateDir IS EXPLICIT. The path overload derives it from the
+    // filename; there is no filename here, and captureCurrentPage and the
+    // bins CSV both write into it.
+    void loadSubject(const template_io::TemplateFile& tf,
+        const QString& templateDir, const QString& markingPath,
+        const QString& subjectId, double sampleRateHz,
+        double ppgRateHz = 0.0, double abpRateHz = 0.0,
+        double artRateHz = 0.0, double artPulmRateHz = 0.0,
+        int notchFilterHz = 0);
+
 signals:
     void finished();
 
@@ -122,6 +146,13 @@ private:
     // Slot-aware marker write-back. Routes to the bin's marker set for slot 0
     // and to the bank template's for every other column.
     void onMarkerMovedOnTemplate(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
+
+    // Everything both loadSubject overloads do once m_bins is populated:
+    // the four-pass seeding loop, the markings restore, computeGlobalRefs and
+    // the first showPage. Factored out rather than duplicated, because the
+    // seeding loop is the one place all four alignments are detected and two
+    // copies of it could drift.
+    void initAfterBinsLoaded();
 
     void showPage();
     void clearPlots();

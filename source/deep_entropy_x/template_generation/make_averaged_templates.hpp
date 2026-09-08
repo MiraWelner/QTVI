@@ -28,6 +28,12 @@
 #include "template_morphology_grouping/morphology_csv.hpp"
 #include "template_morphology_grouping/nsvt_detect.hpp"
 #include "template_morphology_grouping/bin_pipeline.hpp"
+#include "noise_marking_gui/annotation_types.hpp"
+ // noise_markings::Span / LoadResult / loadSpans / code_for_channel. The
+ // operator class labels are an INPUT to template generation -- Section 4.6
+ // partitions the bank by class BEFORE clustering -- so this pass reads the
+ // noise-marking bin the GUI wrote.
+#include "noise_marking_gui/user_annotation_handler.h"
 #include <iostream>
 #include <chrono>
 #include <numeric>
@@ -75,9 +81,78 @@ namespace morphology_writer {
     }
 }
 
+// ---- OPERATOR CLASS PER SLICE ------------------------------------------
+//
+// MAPPED BY THE R PEAK, NOT BY OVERLAP. A slice is [R_i - pad, R_{i+1} + pad],
+// wider than a beat and overlapping its neighbours at both ends, so
+// "does this span overlap this slice" marks two or three beats per span -- and
+// a PVC span drawn tightly around one complex would drag the sinus beats either
+// side of it into the PVC partition. Same category error, different route. The
+// R peak is the one sample that belongs to exactly one beat.
+//
+// PPG rows are ignored: a mark on the pulse trace is a signal-quality
+// statement, not a rhythm class. paramEdit / invertEdit rows are ignored too --
+// "3) Blank.+Thresh." and "Invert/Noninvert" are instructions to the detector.
+//
+// A slice claimed by two classes takes the FIRST in file order and the conflict
+// is counted. Not a precedence ladder over the classes: the operator drew both,
+// and preferring one silently is a judgement this code has no basis for.
+// TEMPLATED ON THE PEAK CONTAINER. output_binfile_data's R-peak vector is
+// whatever integral type peak finding produces, and hard-coding uint64_t here
+// would either fail to compile or force a copy at every call site.
+template <class PeakVec>
+static std::vector<uint8_t> sliceMarkCodes(
+    const PeakVec& rPeaks, uint32_t n_slices,
+    const std::vector<noise_markings::Span>& spans,
+    uint64_t bin_index)
+{
+    std::vector<uint8_t> mark(n_slices, 0);
+    if (rPeaks.empty() || spans.empty()) return mark;
+
+    const uint8_t ppg = noise_markings::code_for_channel("PPG");
+    size_t nMarked = 0, nConflict = 0, nSpansUsed = 0;
+
+    for (const noise_markings::Span& s : spans) {
+        if (s.channel_code == ppg) continue;
+        // Scanned rather than testing codes 3 and 13 as literals: the whole
+        // point of annotation_types is that renumbering an annotation needs one
+        // edit, not two files.
+        const annotation_types::AnnotationType* t = nullptr;
+        for (const auto& row : annotation_types::noise_types)
+            if (row.code == static_cast<int>(s.annotation_code)) { t = &row; break; }
+        if (!t || t->paramEdit || t->invertEdit) continue;
+
+        bool used = false;
+        for (uint32_t k = 0; k < n_slices && k < rPeaks.size(); ++k) {
+            const int64_t r = static_cast<int64_t>(rPeaks[k]);
+            if (r < s.start_sample || r > s.end_sample) continue;
+            used = true;
+            if (mark[k] == 0) { mark[k] = s.annotation_code; ++nMarked; }
+            else if (mark[k] != s.annotation_code) ++nConflict;
+        }
+        if (used) ++nSpansUsed;
+    }
+
+    if (nMarked || nConflict) {
+        std::fprintf(stderr, "  [marks] bin %llu: %zu/%u slices carry an "
+            "operator class (%zu span(s) used)\n",
+            (unsigned long long)bin_index, nMarked, n_slices, nSpansUsed);
+        if (nConflict)
+            std::fprintf(stderr, "  [marks] bin %llu: WARNING %zu slice(s) "
+                "claimed by two different classes -- first in file order wins\n",
+                (unsigned long long)bin_index, nConflict);
+    }
+    return mark;
+}
+
 
 inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_data>& wave_data,
-    const SignalRates& rates) {
+    const SignalRates& rates,
+    // <stem>_noise.bin from the noise-marking phase. DEFAULTED EMPTY so every
+    // existing caller compiles and behaves exactly as before: no path means no
+    // operator classes, every slice reads kUnlabeled, and the bank has one
+    // partition -- which is the pre-partitioning behaviour.
+    const std::string& noise_bin_path = {}) {
     size_t n = wave_data.size();
     // ---- phase timing: which part of the "fast" build is slow ----------
     auto _ms = [](std::chrono::steady_clock::time_point a,
@@ -214,6 +289,31 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 
     // One row per bin for <stem>_bins.csv: the 4.5 category census, the
     // partition's shape, and why beats left their group's average.
+    // ---- OPERATOR CLASS LABELS, ONCE PER RECORD ------------------------
+    //
+    // Read here rather than per bin: the spans are record-wide and the file is
+    // small, and re-opening it forty times would make a missing file forty log
+    // lines instead of one.
+    //
+    // A MISSING FILE IS NOT AN ERROR. The record was never noise-marked, so
+    // mark_code stays empty for every bin, jbank sees kUnlabeled throughout,
+    // and the partition collapses to one -- exactly the behaviour before
+    // partitioning existed. Said out loud, because "no operator classes" and
+    // "the labels failed to load" produce the same partition and only one of
+    // them is intended.
+    noise_markings::LoadResult noiseSpans;
+    if (!noise_bin_path.empty()) {
+        noiseSpans = noise_markings::loadSpans(noise_bin_path);
+        if (!noiseSpans.read)
+            std::fprintf(stderr, "  [marks] no operator classes: %s (%s)"
+                " -- one partition\n",
+                noiseSpans.path.c_str(), noiseSpans.error.c_str());
+        else
+            std::fprintf(stderr, "  [marks] %zu span(s) from %s\n",
+                noiseSpans.spans.size(), noiseSpans.path.c_str());
+        std::fflush(stderr);
+    }
+
     std::vector<morphology_csv::BinRow> binRows;
     binRows.reserve(n);
 
@@ -320,6 +420,21 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                         ji.rr_after_ms[sIdx] =
                         1000.0 * (double)(rp[sIdx + 1] - rp[sIdx]) / rates.ecg;
                 }
+
+                // ---- THE PARTITION KEY -------------------------------
+                //
+                // OUTSIDE the rates.ecg guard above. An operator class is a
+                // statement about a heartbeat and does not depend on knowing
+                // the sample rate; nesting it there meant a record with no
+                // configured ECG rate silently lost every class label as well
+                // as its RR series.
+                //
+                // Empty when nothing was marked, which jbank reads as one
+                // partition. See BeatGroup::partition.
+                if (!noiseSpans.spans.empty())
+                    ji.mark_code = sliceMarkCodes(wave_data[i].ch1.raw,
+                        ji.n_slices, noiseSpans.spans, i);
+
 
                 // ---- PER-BIN, ALWAYS, NOT GATED ON BEING SLOW ------------
                 // The old per-channel line printed only when a bin took over
@@ -805,8 +920,10 @@ inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
 
 // Original all-methods entry point, preserved by composition.
 inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>& wave_data,
-    const SignalRates& rates) {
-    vector<TemplateInfo> templates = GenerateTemplatesFast(wave_data, rates);
+    const SignalRates& rates,
+    const std::string& noise_bin_path = {}) {
+    vector<TemplateInfo> templates =
+        GenerateTemplatesFast(wave_data, rates, noise_bin_path);
     AugmentTemplatesSlow(wave_data, templates, rates);
     return templates;
 }

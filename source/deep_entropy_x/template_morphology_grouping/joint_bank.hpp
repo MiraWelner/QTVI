@@ -168,6 +168,36 @@ namespace jbank {
 
         // ---- group identity: ONE class for ONE morphology ----------------
         uint8_t  label_code = tbank::kUnlabeled;
+
+        // ---- THE PARTITION KEY (Section 4.6 v3.7) --------------------
+        //
+        // WHICH OPERATOR CLASS THIS GROUP CLUSTERS WITHIN. Set at spawn from
+        // the spawning slice's mark code and NEVER changed, which is what
+        // makes cross-class assignment structurally impossible rather than
+        // merely blocked by a rule at merge time.
+        //
+        // DISTINCT FROM label_code. label_code is the class an operator
+        // CONFIRMED for this group's members, applied after the fact by
+        // propagateLabelBySlot. partition is the class the group was allowed
+        // to accept beats from in the first place. They agree for a group
+        // built from marked beats; an unmarked group has both kUnlabeled and
+        // can gain a label_code without its partition changing.
+        //
+        // WHY THIS EXISTS. Without it the order was: cluster on morphology,
+        // then propagate the operator's label to whichever group each beat
+        // landed in. Sinus and PVC correlate around 0.5-0.6, so at a floor
+        // below that the PVCs are ASSIGNED TO THE SINUS GROUP -- and the
+        // label then propagates to all 1200 sinus beats sharing it. The
+        // output stays well-formed and the census reports monomorphic, so
+        // nothing announces the error.
+        //
+        // It also takes one job away from the match floor. The floor was
+        // holding sinus and PVC apart AND deciding how finely one morphology
+        // subdivides, and those want different values. Under partitioning
+        // they cannot merge at any threshold, so the floor governs only
+        // subdivision within a class -- the worst a loose one can now do is
+        // fail to split PVC-1 from PVC-2.
+        uint8_t  partition = tbank::kUnlabeled;
         bool     confirmed_by_operator = false;   // never inferred from label_code
         int32_t  subtype = -1;
         uint32_t spawn_seq = 0;
@@ -454,6 +484,18 @@ namespace jbank {
         const int n = bank.size();
         for (int i = 0; i < n; ++i) {
             for (int j = i + 1; j < n; ++j) {
+                // CROSS-PARTITION PAIRS ARE NOT CANDIDATES, which subsumes
+                // the confirmed-member rule below: two groups carrying
+                // different confirmed classes are in different partitions and
+                // never reach it. That check stays for the case the spec names
+                // -- two groups of the SAME class, both confirmed.
+                //
+                // At cap with only cross-partition pairs available this
+                // returns invalid, and the caller raises the cap and logs a
+                // CapRaiseEvent. That is the escape the spec already
+                // specifies, reached by a new route.
+                if (bank.groups[i].partition != bank.groups[j].partition)
+                    continue;
                 const double s = groupCloseness(bank.groups[i], bank.groups[j]);
                 if (std::isnan(s)) continue;
                 if (bank.groups[i].confirmed() || bank.groups[j].confirmed()) {
@@ -595,6 +637,10 @@ namespace jbank {
 
     inline AssignOutcome assignSlice(JointBank& bank, uint32_t slice,
         const ChannelSet& chans,
+        // This slice's operator class, tbank::kUnlabeled when unmarked. The
+        // partition key; see BeatGroup::partition. Defaulted so existing
+        // callers compile and behave exactly as before -- one partition.
+        uint8_t slice_class = tbank::kUnlabeled,
         uint64_t bin_index = 0,
         std::vector<tbank::CapRaiseEvent>* events = nullptr,
         BankCounts* counts = nullptr)
@@ -607,6 +653,11 @@ namespace jbank {
         int anyScored = 0;
         JointScore bestRejected;
         for (int i = 0; i < bank.size(); ++i) {
+            // CLUSTER WITHIN CLASS, NEVER ACROSS. A beat is only ever
+            // compared against groups in its own partition, so a PVC-marked
+            // beat cannot be assigned to a group holding sinus-marked beats
+            // whatever their correlation. Not scored, so it cannot win.
+            if (bank.groups[i].partition != slice_class) continue;
             const JointScore js = scoreAgainst(bank.groups[i], slice, chans);
             if (js.n_scored > 0) ++anyScored;
             if (js.accepts()) {
@@ -684,6 +735,11 @@ namespace jbank {
 
         BeatGroup g;
         g.spawn_seq = bank.next_spawn_seq++;
+        // The new group belongs to the spawning slice's class, permanently.
+        // A class with no group yet gets its first one here: there is no
+        // separate per-partition seeding step, because only the unlabeled
+        // partition has a Phase 1 template to seed from.
+        g.partition = slice_class;
         g.members.push_back(slice);
         bank.groups.push_back(std::move(g));
         ++bank.assigned_beats;
@@ -801,11 +857,38 @@ namespace jbank {
             static_cast<uint32_t>(bank.groups[0].members.size());
     }
 
+    // ---- THE PARTITION KEY, WITH INHERITANCE ----------------------------
+    //
+    // tbank::categoriesFromMarks applies the post-ectopic inheritance rule --
+    // the beat AFTER a PVC/PAC/VT inherits ECTOPIC when it carries no mark of
+    // its own -- but returns tbank::Category, which collapses PVC, PAC and VT
+    // into one value. The spec partitions by CLASS, not by category: PVC and
+    // PAC must not cluster together any more than PVC and sinus must.
+    //
+    // So the same rule is applied to the CODES. Deliberately the same rule and
+    // not an approximation of it: categoryForLabelCode decides which codes are
+    // ectopic, and that decision stays in template_bank.hpp.
+    inline std::vector<uint8_t> partitionKeys(const std::vector<uint8_t>& mark_code)
+    {
+        std::vector<uint8_t> out = mark_code;
+        for (size_t i = 1; i < out.size(); ++i)
+            if (mark_code[i] == 0
+                && tbank::categoryForLabelCode(mark_code[i - 1])
+                == tbank::Category::ECTOPIC)
+                out[i] = mark_code[i - 1];
+        return out;
+    }
+
     // Every slice in order. `n_slices` is the R-pair count for the bin, which
     // is the length local_of_slice was sized to on every channel.
     inline void runBank(JointBank& bank, const ChannelSet& chans,
         uint32_t n_slices,
         std::vector<int32_t>& out_group_of_slice,
+        // Per-slice operator class, the partition key. EMPTY means no record
+        // was ever noise-marked: every slice reads kUnlabeled, there is one
+        // partition, and this behaves exactly as it did before partitioning
+        // existed. See BeatGroup::partition.
+        const std::vector<uint8_t>& slice_class = {},
         uint64_t bin_index = 0,
         std::vector<tbank::CapRaiseEvent>* events = nullptr,
         BankCounts* counts = nullptr)
@@ -825,7 +908,9 @@ namespace jbank {
                 if (chans[c].beatFor(s)) anyPresent = true;
             if (!anyPresent) continue;
 
-            const AssignOutcome ao = assignSlice(bank, s, chans,
+            const uint8_t sc = (s < slice_class.size())
+                ? slice_class[s] : tbank::kUnlabeled;
+            const AssignOutcome ao = assignSlice(bank, s, chans, sc,
                 bin_index, events, counts);
             // Recorded, but NOT trusted -- see the rebuild below.
             out_group_of_slice[s] = ao.group_id;
@@ -1514,9 +1599,52 @@ namespace jbank {
             if (any) seedSlices.push_back(s);
         }
 
+        // ---- THE PARTITION KEY, BEFORE ANY CLUSTERING -------------------
+        //
+        // Computed here rather than after runBank, which is the whole of the
+        // v3.7 ordering change. The marks used to be read only AFTER the
+        // partition was built, to fill out.flags[s].category -- so morphology
+        // did the sorting and the operator's class arrived too late to affect
+        // it. One vector now feeds both the partition and the flags, so they
+        // cannot describe different populations.
+        //
+        // EMPTY WHEN NOTHING WAS MARKED, and then everything below is a no-op:
+        // every slice reads kUnlabeled, one partition, previous behaviour.
+        const std::vector<uint8_t> pkeys = partitionKeys(in.mark_code);
+
+        // SLOT 0 IS THE UNLABELED PARTITION, so its seed pool must contain no
+        // marked beats. seedSlices is just the first kSeedTarget present
+        // slices, and on a bin whose ectopy happens to fall early that pool
+        // held PVCs -- which would put marked beats in an unlabeled group and
+        // make the partition a lie from the first line. This is the same
+        // reasoning seed_pool.hpp already applies to the Phase 1 reference.
+        if (!pkeys.empty()) {
+            std::vector<uint32_t> clean;
+            clean.reserve(seedSlices.size());
+            for (uint32_t sl : seedSlices)
+                if (sl >= pkeys.size() || pkeys[sl] == tbank::kUnlabeled)
+                    clean.push_back(sl);
+            // Not if it would empty the pool: a bin that is ALL marked has no
+            // unlabeled seed available, and an empty slot 0 is worse than an
+            // impure one. Reported, because a seed built from marked beats is
+            // exactly what the caller needs to know about.
+            if (clean.empty()) {
+                std::fprintf(stderr, "  [marks] bin %llu: every seed slice "
+                    "carries an operator class -- slot 0 seeded from marked "
+                    "beats\n", (unsigned long long)in.bin_index);
+            }
+            else if (clean.size() < seedSlices.size()) {
+                std::fprintf(stderr, "  [marks] bin %llu: %zu of %zu seed "
+                    "slices dropped as marked\n",
+                    (unsigned long long)in.bin_index,
+                    seedSlices.size() - clean.size(), seedSlices.size());
+                seedSlices = std::move(clean);
+            }
+        }
+
         seedBank(out.bank, chans, phase1, seedSlices, in.max_templates_per_bin,
             &spread);
-        runBank(out.bank, chans, in.n_slices, out.group_of_slice,
+        runBank(out.bank, chans, in.n_slices, out.group_of_slice, pkeys,
             in.bin_index, &out.cap_raises, &out.counts);
 
         // ---- PER-SLICE FLAGS --------------------------------------------
@@ -1531,9 +1659,18 @@ namespace jbank {
         // AFTER an ectopic one inherits ECTOPIC when it carries no mark of its
         // own, and that rule needs the neighbouring mark, so it cannot be
         // applied one beat at a time.
-        const std::vector<tbank::Category> cats =
-            in.mark_code.empty() ? std::vector<tbank::Category>{}
-        : tbank::categoriesFromMarks(in.mark_code);
+        // FROM pkeys, THE SAME VECTOR THE PARTITION USED. partitionKeys
+        // already applied the post-ectopic inheritance, so mapping each key
+        // through categoryForLabelCode reproduces categoriesFromMarks exactly
+        // -- with the guarantee that the flags and the partition describe one
+        // population rather than two computed from the same input by two
+        // functions that could drift.
+        std::vector<tbank::Category> cats;
+        if (!pkeys.empty()) {
+            cats.resize(pkeys.size());
+            for (size_t k = 0; k < pkeys.size(); ++k)
+                cats[k] = tbank::categoryForLabelCode(pkeys[k]);
+        }
         for (uint32_t s = 0; s < in.n_slices; ++s) {
             out.flags[s].category = (s < cats.size())
                 ? cats[s] : tbank::Category::REGULAR;

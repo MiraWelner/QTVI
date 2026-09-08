@@ -30,17 +30,19 @@ namespace template_io {
             f.write(reinterpret_cast<const char*>(&m.r_col), 4);
         }
 
-        bool readVecD(std::ifstream& f, std::vector<double>& v) {
+        bool read_template_vector(std::ifstream& f, std::vector<double>& v) {
             uint64_t sz;
             if (!f.read(reinterpret_cast<char*>(&sz), 8)) return false;
+            if (sz > (1ull << 24)) return false;
             v.resize(sz);
             if (sz > 0) f.read(reinterpret_cast<char*>(v.data()), sz * 8);
             return static_cast<bool>(f);
+        
         }
 
         bool readMethod(std::ifstream& f, ChannelMethodTemplate& m) {
-            if (!readVecD(f, m.ecgTemplate)) return false;
-            if (!readVecD(f, m.ecg_template_iqr)) return false;
+            if (!read_template_vector(f, m.ecgTemplate)) return false;
+            if (!read_template_vector(f, m.ecg_template_iqr)) return false;
             if (!f.read(reinterpret_cast<char*>(&m.alignment_point), 8)) return false;
             if (!f.read(reinterpret_cast<char*>(&m.r_col), 4)) return false;
             return true;
@@ -282,14 +284,14 @@ namespace template_io {
                 !readMethod(f, b.ch2_absval) || !readMethod(f, b.ch2_unfiltered) ||
                 !readMethod(f, b.ch3_raw) || !readMethod(f, b.ch3_squared) ||
                 !readMethod(f, b.ch3_absval) || !readMethod(f, b.ch3_unfiltered) ||
-                !readVecD(f, b.ppgTemplate) ||
-                !readVecD(f, b.ppg_template_iqr) ||
-                !readVecD(f, b.abpTemplate) ||
-                !readVecD(f, b.abpTemplate_iqr) ||
-                !readVecD(f, b.artTemplate) ||
-                !readVecD(f, b.artTemplate_iqr) ||
-                !readVecD(f, b.artPulmTemplate) ||
-                !readVecD(f, b.artPulmTemplate_iqr))
+                !read_template_vector(f, b.ppgTemplate) ||
+                !read_template_vector(f, b.ppg_template_iqr) ||
+                !read_template_vector(f, b.abpTemplate) ||
+                !read_template_vector(f, b.abpTemplate_iqr) ||
+                !read_template_vector(f, b.artTemplate) ||
+                !read_template_vector(f, b.artTemplate_iqr) ||
+                !read_template_vector(f, b.artPulmTemplate) ||
+                !read_template_vector(f, b.artPulmTemplate_iqr))
                 throw std::runtime_error("template file truncated mid-bin: " + path);
             if (!f.read(reinterpret_cast<char*>(&b.ch1_n_beats_raw), 8) ||
                 !f.read(reinterpret_cast<char*>(&b.ch2_n_beats_raw), 8) ||
@@ -445,8 +447,8 @@ namespace template_io {
                             if (nSlots > 4096u) { ok = false; break; }
                             perBin[i][c].resize(nSlots);
                             for (uint32_t sl = 0; sl < nSlots && ok; ++sl) {
-                                if (!readVecD(f, perBin[i][c][sl].tmpl)) { ok = false; break; }
-                                if (!readVecD(f, perBin[i][c][sl].tmpl_iqr)) { ok = false; break; }
+                                if (!read_template_vector(f, perBin[i][c][sl].tmpl)) { ok = false; break; }
+                                if (!read_template_vector(f, perBin[i][c][sl].tmpl_iqr)) { ok = false; break; }
                                 uint32_t nm = 0;
                                 if (!f.read(reinterpret_cast<char*>(&nm), 4)) { ok = false; break; }
                                 perBin[i][c][sl].n_members = nm;

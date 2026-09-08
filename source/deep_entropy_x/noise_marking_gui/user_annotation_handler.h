@@ -11,6 +11,12 @@
 #include <limits>
 #include <string>
 #include <vector>
+ // FOR loadSpans BELOW. Without <fstream> the std::ifstream is an incomplete
+ // type, which MSVC reports as "operator '!' cannot be applied to an operand
+ // of type std::basic_istream" and "read: function does not take 1 arguments"
+ // rather than as a missing include.
+#include <fstream>
+#include <algorithm>   // std::swap, for a span drawn right-to-left
 
 // ===========================================================================
 // Channel codes
@@ -125,6 +131,101 @@ namespace noise_markings {
         kBlankingMs,
         kColumns
     };
+
+
+    // =======================================================================
+    // Read
+    // =======================================================================
+    //
+    // The counterpart of annotation_handler::exportBinary, and INSIDE THIS
+    // NAMESPACE on purpose: the format is defined once, by the Column enum
+    // above, and both directions index by those names. A reader in another
+    // file is exactly the writer/reader divergence the channel-code table at
+    // the top of this header exists to prevent.
+    //
+    // WHY TEMPLATE GENERATION NEEDS IT. Section 4.6 partitions the morphology
+    // bank by operator class BEFORE clustering, so the classes are an INPUT to
+    // generation, not an annotation applied afterwards.
+    // jbank::BinBankInput::mark_code is the field that carries them, and
+    // nothing ever filled it -- because nothing read this file.
+    struct Span {
+        int64_t start_sample = 0;
+        int64_t end_sample = 0;
+        uint8_t channel_code = 0;
+        uint8_t annotation_code = 0;
+    };
+
+    struct LoadResult {
+        bool read = false;          // the file opened and its magic matched
+        std::string path;
+        std::string error;
+        std::vector<Span> spans;
+    };
+
+    // A MISSING FILE IS NOT AN ERROR: the record was never noise-marked, every
+    // slice stays unmarked, and the bank has one partition -- the behaviour
+    // before partitioning existed.
+    //
+    // WRONG MAGIC IS REFUSED rather than guessed at, for the reason given
+    // above kMagic: the pre-versioned layout carried no threshold or blanking
+    // values, so parsing one on a guess restores every parameter-edit span at
+    // the config defaults and silently moves the R peaks inside it.
+    inline LoadResult loadSpans(const std::string& path) {
+        LoadResult out;
+        out.path = path;
+
+        std::ifstream f(path, std::ios::binary);
+        if (!f) { out.error = "not found"; return out; }
+
+        char magic[sizeof(kMagic)] = {};
+        if (!f.read(magic, sizeof(magic))) {
+            out.error = "truncated header"; return out;
+        }
+        for (std::size_t i = 0; i < sizeof(kMagic); ++i)
+            if (magic[i] != kMagic[i]) {
+                out.error = "wrong magic -- not a noise-marking bin";
+                return out;
+            }
+
+        uint32_t version = 0;
+        uint64_t count = 0;
+        if (!f.read(reinterpret_cast<char*>(&version), sizeof(version))
+            || !f.read(reinterpret_cast<char*>(&count), sizeof(count))) {
+            out.error = "truncated header"; return out;
+        }
+        if (version != kVersion) {
+            out.error = "version " + std::to_string(version)
+                + " != " + std::to_string(kVersion);
+            return out;
+        }
+        // A COUNT OFF DISK IS NOT A COUNT UNTIL IT IS CHECKED. reserve() on an
+        // unchecked value turns a truncated file into length_error from an
+        // allocator instead of an error naming the file.
+        if (count > (1ull << 22)) {
+            out.error = "implausible row count"; return out;
+        }
+
+        out.read = true;
+        out.spans.reserve(static_cast<std::size_t>(count));
+        for (uint64_t r = 0; r < count; ++r) {
+            std::array<double, kColumns> row{};
+            if (!f.read(reinterpret_cast<char*>(row.data()),
+                sizeof(double) * kColumns)) {
+                out.error = "truncated at row " + std::to_string(r);
+                break;      // keep what parsed; the rest is unreadable
+            }
+            Span sp;
+            sp.start_sample = static_cast<int64_t>(row[kStartSample]);
+            sp.end_sample = static_cast<int64_t>(row[kEndSample]);
+            sp.channel_code = static_cast<uint8_t>(row[kChannelCode]);
+            sp.annotation_code = static_cast<uint8_t>(row[kAnnotationCode]);
+            // Drawn right-to-left: the GUI stores the drag as-is.
+            if (sp.end_sample < sp.start_sample)
+                std::swap(sp.start_sample, sp.end_sample);
+            out.spans.push_back(sp);
+        }
+        return out;
+    }
 
 }  // namespace noise_markings
 

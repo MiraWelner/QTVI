@@ -522,12 +522,6 @@ namespace tbank {
             if (!earnsColumn()) return Category::NOISE;
             const uint32_t n = static_cast<uint32_t>(members.size());
             if (n == 0) return Category::NOISE;
-            const uint32_t ect = n_premature_members + n_voted_members;
-            // Majority-premature membership is the timing evidence for an
-            // ectopic morphology. Deliberately a majority and not any: a sinus
-            // template picks up the occasional premature beat, and one such beat
-            // must not reclassify 800 others.
-            if (ect * 2 > n) return Category::ECTOPIC;
             return Category::REGULAR;
         }
 
