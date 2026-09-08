@@ -35,6 +35,45 @@
 #include <string>
 #include <cstdio>
 #include <utility>
+#include <functional>
+#include <memory>
+
+ // ---------------------------------------------------------------------------
+ // THE DEFERRED _beats.bin WRITE.
+ //
+ // _beats.bin is the largest artefact the morphology pass produces -- millions
+ // of cells, ~3.8 s of the ~4.7 s the three writers spend between them -- and
+ // nothing in the same run reads it. So GenerateTemplatesFast fills this slot
+ // instead of writing inline, and AugmentTemplatesSlow drains it: the write
+ // lands on whatever thread runs the squared/absval pass, and no new thread is
+ // created.
+ //
+ // THE CLOSURE OWNS WHAT IT NEEDS. `blocks` is a vector of non-owning
+ // ChannelBlocks, and exactly one of the things it points at used to die when
+ // GenerateTemplatesFast returned: local_of_slice, a function local. That is now
+ // heap-owned and captured through its shared_ptr. Everything else points into
+ // the returned TemplateInfo vector, which is sized once and never resized, so
+ // both maps hold their values at stable addresses.
+ //
+ // WHICH MEANS: THE TemplateInfo VECTOR MUST BE ALIVE AND UNMUTATED WHEN
+ // runPending() FIRES. AugmentTemplatesSlow takes it by reference, so that holds
+ // for the drain site below. Any other drain site has to satisfy it too.
+ //
+ // A PATH THAT NEVER DRAINS PRODUCES NO FILE. buildTemplatesAndBeatsFast is
+ // public and returns without the slow merge; if anything calls it directly,
+ // call runPending() at the end of that subject's processing. It is a no-op once
+ // drained, so a belt-and-braces call costs nothing.
+ // ---------------------------------------------------------------------------
+namespace morphology_writer {
+    inline std::function<void()>& pending() {
+        static std::function<void()> f;
+        return f;
+    }
+    inline void runPending() {
+        auto& f = pending();
+        if (f) { f(); f = nullptr; }
+    }
+}
 
 
 inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_data>& wave_data,
@@ -163,7 +202,15 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // slice -> local row per channel per bin, kept alive for the writers. The
     // ChannelSet that produced it is a loop local, so the maps are copied out of
     // it here; they are one int32 per slice, which is nothing beside the beats.
-    std::vector<std::array<std::vector<int32_t>, 4>> local_of_slice(n);
+    //
+    // HEAP-OWNED, because the beats writer now runs after this function
+    // returns. This is the ONE thing `blocks` points at that used to be a local
+    // -- everything else points into `result`, whose addresses are stable -- so
+    // the shared_ptr is the whole of what keeps the deferred closure valid. The
+    // reference below means no other line in this function changes.
+    auto local_of_slice_owned =
+        std::make_shared<std::vector<std::array<std::vector<int32_t>, 4>>>(n);
+    auto& local_of_slice = *local_of_slice_owned;
 
     // One row per bin for <stem>_bins.csv: the 4.5 category census, the
     // partition's shape, and why beats left their group's average.
@@ -484,6 +531,13 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // it they live in result[bin], and the blocks must point at wherever they
     // ended up. result is sized once up front and never resized, and both maps
     // hold their values at stable addresses, so these pointers stay valid.
+    //
+    // THAT STABILITY IS NOW LOAD-BEARING BEYOND THIS FUNCTION: the deferred
+    // beats write holds a copy of `blocks` and runs after this returns, so it
+    // reads through these same pointers. NRVO puts `result` in the caller's
+    // storage, and a vector move would transfer the buffer rather than relocate
+    // the elements, so the addresses survive either way -- but a caller that
+    // ERASES or REBUILDS entries before the write drains would invalidate them.
     for (size_t i = 0; i < n; ++i) {
         for (int c = 0; c < 4; ++c) {
             const auto bit = result[i].bank_by_channel.find(kChanKeys[c]);
@@ -674,7 +728,17 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
             morphology_csv::writeNsvt(nsvtRows, polyCandidates);
             _wstep("writeNsvt csv");
             morphology_csv::writeTemplates(blocks);     _wstep("writeTemplates csv");
-            morphology_csv::writeBeatsBin(blocks);      _wstep("writeBeatsBin");
+
+            // DEFERRED, NOT WRITTEN. The ~3.8 s this used to cost lands on the
+            // squared/absval pass instead -- see AugmentTemplatesSlow, which
+            // drains it. The timing line below measures the capture, so a
+            // number near zero here is the expected reading, not a sign the
+            // file got smaller.
+            morphology_writer::pending() = [blocks, local_of_slice_owned] {
+                morphology_csv::writeBeatsBin(blocks);
+                };
+            _wstep("writeBeatsBin deferred");
+
             morphology_csv::writeTemplatesBin(blocks);  _wstep("writeTemplatesBin");
         }
 
@@ -686,6 +750,13 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 // vector<TemplateInfo> produced by GenerateTemplatesFast. Applies the same
 // bad_segment gate as the fast pass, so squared/absval stay empty on bins
 // the fast pass cleared.
+//
+// AND IT WRITES _beats.bin, at the end. This is the abs/sqr pass --
+// CreateEcgTemplatesSlow below is the expensive part of it -- so draining the
+// deferred write here puts the file on whatever thread runs abs/sqr without
+// either caller having to know that happens. Both entry points reach it:
+// GenerateTemplates calls this directly, and mergeTemplatesSlow
+// (build_templates.hpp) calls it first thing.
 inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
     vector<TemplateInfo>& templates,
     const SignalRates& rates)
@@ -714,6 +785,22 @@ inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
         fill_slow(templates[i].ch2, ecg_res.ch2, i);
         fill_slow(templates[i].ch3, ecg_res.ch3, i);
     }
+
+    // ---- THE DEFERRED _beats.bin WRITE ---------------------------------
+    //
+    // `templates` is the vector the closure's `blocks` copy points into, and it
+    // arrives by reference, so it is alive for this whole call -- which is what
+    // makes those pointers safe here and is the reason the drain lives in this
+    // function rather than at the thread's launch site.
+    //
+    // AFTER the fill loop, not before. fill_slow only touches chN and never
+    // bank_by_channel or kept_beats_by_channel, so the pointers would hold
+    // either way, but draining last means the writer is not walking those maps
+    // while this function is still assigning into the same objects.
+    //
+    // No-op when nothing is pending: a record whose fast pass was skipped, or a
+    // second call on the same record.
+    morphology_writer::runPending();
 }
 
 // Original all-methods entry point, preserved by composition.

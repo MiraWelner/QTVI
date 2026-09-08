@@ -346,6 +346,21 @@ private:
     // Resolve a marker to its channel, trace, and group visibility. No
     // visible-sample bound and no ratio: the frame is the union of every
     // channel's extent, so a marker inside its own array is on screen.
+    // ---- THE PLOT WALL --------------------------------------------------
+    //
+    // Last sample of `ch` that is actually DRAWN, and therefore the rightmost
+    // column a bar may sit on. NOT vec.size()-1: recomputeFrame ends each
+    // channel's extent at its last FINITE sample, and additionally trims the
+    // ECG's one-beat tail (columns where ecg_template_iqr reads exactly 0.0,
+    // which align_beat_matrix leaves when a column had fewer than two beats).
+    // The stored ECG array is framed on the bin's LONGEST RR, so that tail is
+    // routinely dozens of samples wide.
+    //
+    // An index past this maps to a time past m_tMax, which is outside the
+    // frame -- the bar draws beyond the plot wall, and the trace it is
+    // supposed to annotate has already ended. -1 when nothing is drawable.
+    int    lastDrawnSample(Channel ch) const;
+
     bool   markerTrace(int m, const std::vector<double>*& vec,
         Channel& ch, bool& visible) const;
 
@@ -395,14 +410,17 @@ private:
     // All sub-sample. Every one of these comes from a refined finder, so an
     // int field here re-quantised what the refinement had resolved.
     struct GlyphSnapshot {
-        // ecgPPeak IS here, and it is the SEED-CHAIN answer, not a bracket
-        // search. detect_template_landmarks guesses the peak with
-        // seed_p_peak's fixed window before R, fits the onset off that guess,
-        // then re-measures the peak between the settled bounds -- and only
-        // that chain reliably lands on the P wave. reactiveGlyphs() runs
-        // compute_p_peak on the two BARS alone, with no guess to open the
-        // search, which is why the X drifted onto the PR baseline.
-        double ecgPPeak = -1.0;
+        // ecgPPeak is NOT here: the P peak is REACTIVE, bracketed by the
+        // P-onset and Q-onset bars, so a frozen copy would go stale the moment
+        // either bar moved. It stays reactive on purpose -- see reactiveGlyphs.
+        //
+        // What made the reactive X land on the PR baseline was the BRACKET, not
+        // the search: compute_p_begin fits the onset in a window centred on the
+        // rough seed, so a seed off the P wave produced an onset past the bump
+        // and the argmax between it and Q-onset had nothing but baseline to
+        // pick from. detect_template_landmarks now refits the onset from the
+        // re-measured peak, so the bracket contains the P wave and the reactive
+        // search finds it.
         double ecgPBegin = -1.0, ecgQPeak = -1.0, ecgQ = -1.0,
             ecgRPeak = -1.0, ecgS = -1.0, ecgTend = -1.0;
         bool ecgQFound = false;

@@ -32,6 +32,15 @@
 // comparing them is how the effect of an alignment on a landmark becomes
 // visible. That is why the admissibility mask governs bars only.
 //
+// AND THAT RULE NOW DECIDES CSV COLUMN COUNT, via hasUserColumn below. It used
+// to be stated as "everything except r_peak gets a user column", which
+// contradicted the paragraph above in two ways at once: a glyph got a _user
+// cell it had no value for, and because the reactive glyphs are derived from
+// the ASSEMBLED bar set, that cell carried one placed mark into all four
+// blocks -- three of them attributing it to a waveform it was never compared
+// to. A _user column now exists for a bar, in its owning block, and nowhere
+// else.
+//
 // GLYPHS COME IN THE TWO FLAVOURS BinPlotWidget ALREADY NAMES, and the rule
 // covers both the same way:
 //
@@ -58,6 +67,12 @@
 // and carries the _J suffix in the CSV, even though the bar it serves is the
 // T-end bar.
 //
+// INTERVALS ARE NOT COVERED BY ANY OF THIS. qrs needs q_begin and s_end; qt
+// needs q_begin and t_end -- bars from three different alignments -- so `owns`
+// cannot answer for one, and there is no function here that tries. A duration
+// is frame-free, so writeTemplateMarkingsCsv reports its user half once, under
+// R. If a fifth alignment ever arrives that changes nothing about that.
+//
 // MARKER IDS ARE DUPLICATED HERE ON PURPOSE, and they were RENUMBERED when
 // T begin was removed -- 4 is S end, 5 is T end. Nothing persists a marker id,
 // so the shift is invisible outside the process; the static_asserts in
@@ -76,7 +91,7 @@
 #include "anchor_type.hpp"
 
 #include <array>
-#include <cstring>   // std::strcmp, for hasUserColumn
+#include <cstring>   // std::strcmp, for markerForPoint / hasUserColumn
 
 namespace anchor_view {
 
@@ -152,24 +167,57 @@ namespace anchor_view {
 
     // ---- THE CSV COLUMN RULE -----------------------------------------------
     //
-    // Does this point emit a *_user column at all? Keyed by the CSV column
-    // name rather than a marker id because two of the points -- q_peak and
-    // s_peak -- are computed inside the QRS and have no marker id to key on.
+    // Which BAR a markings-CSV point name refers to, or -1 when the name is a
+    // glyph. Keyed by NAME rather than by id because two of the points --
+    // q_peak and s_peak -- are computed inside the QRS and have no marker id
+    // to key on, so the id-based predicates above cannot be asked about them.
     //
-    // Only r_peak answers false. It is the alignment anchor: re-derived from
-    // each template's own r_col at every load, never placed by hand, holding no
-    // BankMarkerSet field. Every other glyph gets a user column, because a
-    // reactive glyph has a real second value -- the same landmark measured
-    // between the operator's bars instead of between the detector's -- and that
-    // second value is the one drawn on screen.
+    // The four names here are exactly the four fields writeTemplateMarkingsBin
+    // persists per (lead, slot, anchor). That is the cross-check: a landmark
+    // absent from the .bin was never placed by hand, so it must not have a
+    // _user column, and any name added here without a matching field in that
+    // record is reporting an operator value that is not stored anywhere.
+    inline int markerForPoint(const char* pointName) {
+        if (std::strcmp(pointName, "p_begin") == 0) return kPBegin;
+        if (std::strcmp(pointName, "q_begin") == 0) return kQBegin;
+        if (std::strcmp(pointName, "s_end") == 0) return kSEnd;
+        if (std::strcmp(pointName, "t_end") == 0) return kTEnd;
+        return -1;
+    }
+
+    // Does this point emit a _user column IN THIS BLOCK?
     //
-    // writeTemplateMarkingsCsv's header emitter and its row loop BOTH call
-    // this. They used to encode the rule twice, as a strcmp against "r_peak"
-    // in one and a bare `k != 3` index test in the other, so adding a point
-    // column meant finding both or writing a header that did not match its
-    // rows.
-    inline bool hasUserColumn(const char* pointName) {
-        return std::strcmp(pointName, "r_peak") != 0;
+    // Two conditions, both necessary. It must be a BAR -- a glyph has no
+    // operator value at all, because markerAtX never hands one out for a drag
+    // -- and this must be the alignment that OWNS it, because a bar's column
+    // is a column of the average it was placed against.
+    //
+    // WHAT THIS REPLACED, and why the old form was wrong twice over:
+    //
+    //     return std::strcmp(pointName, "r_peak") != 0;
+    //
+    // That gave a _user column to every point except r_peak, in all four
+    // blocks. The glyph half was a value nobody placed: p_peak and t_peak ARE
+    // re-measured between the operator's bars, and that re-measurement is the
+    // X on screen, but it is not a placement and labelling it _user says it
+    // was. The alignment half was worse: the re-measurement comes from
+    // userMarks(), the bar set ASSEMBLED across all four alignments, so one
+    // bar placed once on the Q-aligned average reappeared in the P, R and J
+    // blocks through those columns -- four records of one mark, three of them
+    // under a waveform it was never compared to.
+    //
+    // ASKED IN EXACTLY TWO PLACES -- writeTemplateMarkingsCsv's header emitter
+    // and its row loop -- so the two cannot disagree about column count. The
+    // row loop previously used a bare `k != 3` index test, which meant adding
+    // a point silently shifted which one lost its user variant.
+    //
+    // CONSEQUENCE, stated here because this function causes it: the four ECG
+    // parts no longer have equal column counts. Each carries its own header,
+    // so the merged file stays self-describing, but anything joining the parts
+    // positionally rather than by name will break.
+    inline bool hasUserColumn(const char* pointName, AnchorType a) {
+        const int m = markerForPoint(pointName);
+        return m >= 0 && owns(a, m);
     }
 
 } // namespace anchor_view

@@ -2558,10 +2558,12 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 if (!original_location_of_bar.count(li))
                     original_location_of_bar[li] = cur;
 
-                const int target = (m_moveMode == MoveMode::SubsequentDelta)
+                int target = (m_moveMode == MoveMode::SubsequentDelta)
                     ? originFor(li, cur) + (int)std::lround(deltaFrac * (n - 1))
                     : (int)std::lround(posFrac * (n - 1));
-                if (target < 0 || target > n - 1) continue;
+                const int kEdgeBuffer = 5;
+                if (n <= 2 * kEdgeBuffer + 1) continue;   // too short to hold a bar safely
+                target = std::clamp(target, kEdgeBuffer, n - 1 - kEdgeBuffer);
                 ecgSet(m_bins[gi], slot, target);
             }
             // Refresh exactly the columns that were written.
@@ -3505,13 +3507,13 @@ void TemplateViewerWindow::save_bin_and_csv() {
     }
 
     // Aligned-template CSV: one part per alignment, holding that alignment's
-// own averages, merged into the canonical <id>_template.csv in one write.
-// Same restructuring as the markings parts above, same reason -- the
-// sidecars only existed to survive window teardowns between passes.
+    // own averages, merged into the canonical <id>_template.csv in one write.
+    // Same restructuring as the markings parts above, same reason -- the
+    // sidecars only existed to survive window teardowns between passes.
     {
         QDir alignedDir(m_templateDir);
         if (!alignedDir.exists()) alignedDir.mkpath(".");
-        const QString canonical = alignedDir.filePath(m_subjectId + "_template.csv");
+        const QString canonical = alignedDir.filePath(m_subjectId + "_bins.csv");
         std::vector<CsvPart> parts;
         for (AnchorType a : anchor_view::kAllAnchors) {
             std::string content = buildAlignedTemplateCsv(a);
@@ -3519,7 +3521,7 @@ void TemplateViewerWindow::save_bin_and_csv() {
             parts.push_back(CsvPart{ anchor_view::label(a), std::move(content) });
         }
         if (!parts.empty() && mergeCsvParts(canonical.toStdString(), parts)) {
-            std::cout << "Wrote aligned-template CSV: " << canonical.toStdString() << "\n";
+            std::cout << "Wrote bins CSV: " << canonical.toStdString() << "\n";
         }
     }
 

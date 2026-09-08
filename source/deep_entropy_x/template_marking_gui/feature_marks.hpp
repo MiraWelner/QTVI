@@ -132,7 +132,7 @@ public:
     static double first_crossing(const std::vector<double>& v, int a, int b, double frac);
 
     static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
-
+   
     static int detect_ppg_upstroke_peak(const std::vector<double>& v, int lo = 0, int hi = -1);
     static int detect_ppg_onset(const std::vector<double>& pulse);
     static double detect_ppg_peak(const std::vector<double>& pulse);

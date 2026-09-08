@@ -5,6 +5,7 @@ See feature_marks.hpp for the public interface*/
 #include "template_marking_gui\template_marking_bin_io.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <limits>
 #include <numeric>
@@ -887,13 +888,37 @@ double FeatureMarks::seed_p_peak(const std::vector<double>& ecg_signal, int r_id
     const bool is_positive = FeatureMarks::qrs_positive_at(ecg_signal, r_idx);
     std::vector<double> upright = ecg_signal;
     if (!is_positive) for (auto& x : upright) x = -x;
-    const int lo = std::max(0, r_idx - static_cast<int>(std::lround(0.260 * fs)));
     const int hi = std::min(N, r_idx - static_cast<int>(std::lround(0.060 * fs)));
+    if (hi < 3) return -1.0;
+
+    // LOW BOUND = THE MINIMUM ECG VALUE LEFT OF THE QRS.
+    //
+    // lo used to be 0, i.e. the first column of the template. The ECG lead-in
+    // is 0.3 * the bin's LONGEST RR (alignment.hpp), so on a bin holding a
+    // pause that span reaches back into the PREVIOUS beat and the argmax below
+    // returned the previous T wave as the P peak.
+    //
+    // The argmin is taken over [0, r_idx - 120 ms), NOT over [0, hi). The
+    // deepest sample anywhere left of R is the Q trough, so searching as far as
+    // hi puts lo a few samples short of hi and collapses the P window onto the
+    // R upstroke -- which is the same failure as before, just from the other
+    // side. 120 ms clears the QRS, leaving the TP/PR baseline minimum, which is
+    // the point the P wave actually rises from.
+    const int minHi = std::min(hi,
+        std::max(1, r_idx - static_cast<int>(std::lround(0.120 * fs))));
+    int lo = 0;
+    {
+        double mv = std::numeric_limits<double>::infinity();
+        for (int i = 0; i < minHi; ++i)
+            if (!std::isnan(upright[i]) && upright[i] < mv) { mv = upright[i]; lo = i; }
+    }
     if (hi - lo < 3) return -1.0;
+
     int best = -1; double bv = -std::numeric_limits<double>::infinity();
     for (int i = lo; i < hi; ++i)
         if (!std::isnan(upright[i]) && upright[i] > bv) { bv = upright[i]; best = i; }
     if (best < 0) return -1.0;
+
     const double p = subsample_refine::asymmetricExtremum(upright, best, 12.0);
     if (!std::isfinite(p)) return -1.0;
     return std::clamp(p, static_cast<double>(lo), static_cast<double>(hi - 1));
@@ -1293,7 +1318,15 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // lead. Sub-template slots are seeded separately by
         // seed_bank_template, against their own waveform.
         tbank::BankMarkerSet& mk = b.slotMarks(c, 0, anchor);
-        if (mk.q_begin < 0) mk.q_begin = lm.q_begin;
+        // NO `< 0` GUARD. The guard made the bar sticky: it took the detection
+        // only when unset, while the GLYPH (b.*_auto_ch, read by
+        // captureGlyphSnapshot via autoMarks) is rewritten on every pass. Any
+        // value already in the set -- from an earlier seeding pass, a restored
+        // marking file, or a previous detector build -- therefore stayed put
+        // while the X moved to the new answer, which is the Q-onset bar sitting
+        // somewhere the X is not. The bar now follows the detector, so the two
+        // are the same measurement by construction.
+        mk.q_begin = lm.q_begin;
         // R falls back to the unrefined column rather than -1: it is the
         // alignment anchor every other landmark is expressed against, so the
         // bin needs SOME R even when refinement could not run.

@@ -622,6 +622,26 @@ void BinPlotWidget::setBankTraces(
 // converting into it and clipping at its right edge. The frame is now the union
 // of every channel's extent in time, so a marker inside its own array is on
 // screen, and its x comes from xFromSample(ch, i).
+int BinPlotWidget::lastDrawnSample(Channel ch) const {
+    const std::vector<double>* v = nullptr;
+    switch (ch) {
+    case Channel::Ecg:     v = &m_ecg;      break;
+    case Channel::Ppg:     v = &m_ppg;      break;
+    case Channel::Abp:     v = &m_abp;      break;
+    case Channel::Art:     v = &m_art;      break;
+    case Channel::ArtPulm: v = &m_artPulm;  break;
+    default: return -1;
+    }
+    int last = -1;
+    for (int i = static_cast<int>(v->size()) - 1; i >= 0; --i)
+        if (!std::isnan((*v)[i])) { last = i; break; }
+    // SAME TRIM recomputeFrame applies, and it has to be the same or the wall
+    // this reports is not the wall that was drawn.
+    if (ch == Channel::Ecg && m_ecgIqr.size() == m_ecg.size())
+        while (last > 0 && m_ecgIqr[last] == 0.0) --last;
+    return last;
+}
+
 bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
     Channel& ch, bool& visible) const
 {
@@ -663,10 +683,13 @@ int BinPlotWidget::markerAtX(double x) const {
         bool visible = false;
         if (!markerTrace(m, vec, ch, visible)) continue;
         if (!visible) continue;
-        // ARRAY BOUNDS ARE THE ONLY BOUND -- see markerTrace. Compared as a
-        // double against the LAST VALID COLUMN: casting a fractional index to
-        // int would truncate and let size()-0.5 through.
-        if (idx > static_cast<double>(vec->size()) - 1.0) continue;
+        // BOUNDED BY THE PLOT WALL, not by the array. A marker in the NaN
+        // tail is inside vec but outside the drawn frame, so hit-testing it
+        // would hand out a bar the operator cannot see. Compared as a double:
+        // casting a fractional index to int would truncate and let the wall
+        // column plus a fraction through.
+        const int wall = lastDrawnSample(ch);
+        if (wall < 0 || idx > static_cast<double>(wall)) continue;
         const double d = std::abs(x - xFromSample(ch, idx));
         if (d < bestDist) { bestDist = d; best = m; }
     }
@@ -944,7 +967,10 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         bool visible = false;
         if (!markerTrace(m, vec, ch, visible)) continue;
         if (!visible) continue;
-        if (idx > (double)vec->size() - 1.0) continue;
+        // Same wall the drag clamps to, so a bar is drawn exactly where it
+        // can be grabbed.
+        const int wallP = lastDrawnSample(ch);
+        if (wallP < 0 || idx > (double)wallP) continue;
         const double mx = xFromSample(ch, idx);
         QPen pen(marker_color(m), 2);
         pen.setStyle(markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine);
@@ -1056,10 +1082,13 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     bool visible = false;
     if (!markerTrace(m_dragMarker, vec, ch, visible)) return;
     if (vec->empty()) return;
-    // Clamped to the trace's own array, which is the only bound now -- see
-    // markerTrace.
-    int s = std::clamp(sampleFromX(ch, e->position().x()),
-        0, static_cast<int>(vec->size()) - 1);
+    // CLAMPED TO THE PLOT WALL, not to the array. vec->size()-1 let a drag
+    // push a bar into the channel's NaN tail, past m_tMax, and the bar drew
+    // outside the frame with no trace under it. lastDrawnSample is the same
+    // bound recomputeFrame used to build that frame.
+    const int wall = lastDrawnSample(ch);
+    if (wall < 0) return;
+    int s = std::clamp(sampleFromX(ch, e->position().x()), 0, wall);
     m_markers[m_dragMarker] = s;
     // TEMPLATE-AWARE signal only. markerMoved carried no slot, so a drag on a
     // sub-template column was indistinguishable from one on slot 0 and wrote
@@ -1103,16 +1132,10 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
         // while its bar sat at J's, shifted -- two different positions.
         const tbank::BankMarkerSet am = b.autoMarks(c);
         m_glyphs.ecgPBegin = froz((double)am.p_begin);
-        // P PEAK FROM THE SEED CHAIN. detect_template_landmarks guesses the
-        // peak with seed_p_peak's fixed window before R, fits the P onset off
-        // that guess, then re-measures the peak between the settled bounds.
-        // Only that path reliably lands on the P bump. reactiveGlyphs() runs
-        // compute_p_peak on the two bars alone, with no guess to open the
-        // search, which is why the X drifted onto the PR baseline.
-        //
-        // R FRAME, like every other glyph here: autoFor(R_PEAK) is the flat
-        // p_peak_auto_ch field, which the R seeding pass wrote.
-        m_glyphs.ecgPPeak = froz(b.autoFor(AnchorType::R_PEAK).p_peak[c]);
+        // (no ecgPPeak: the P peak is REACTIVE, bracketed by the P-onset and
+        //  Q-onset bars -- see reactiveGlyphs. The onset it brackets on is now
+        //  refit from the re-measured peak in detect_template_landmarks, so the
+        //  bracket actually contains the P wave.)
         m_glyphs.ecgQ = froz((double)am.q_begin);
         m_glyphs.ecgQFound = b.q_begin_found_auto_ch[c];
         m_glyphs.ecgS = froz((double)am.s_end);
@@ -1236,10 +1259,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         auto found = [&](double idx, bool ok) { ok ? cross(idx) : circle(idx); };
 
         cross(m_glyphs.ecgPBegin);   // P begin
-        // SEED-CHAIN P PEAK, not rx.ecgPPeak. Falls back to the bracket search
-        // only when the seed chain reported nothing, so a bin whose P wave was
-        // never detected still shows whatever the bars can bracket.
-        cross(m_glyphs.ecgPPeak >= 0.0 ? m_glyphs.ecgPPeak : rx.ecgPPeak);
+        cross(rx.ecgPPeak);          // reactive: P-onset bar -> Q-onset bar
         found(m_glyphs.ecgQ, m_glyphs.ecgQFound);
         cross(m_glyphs.ecgQPeak);
         cross(m_glyphs.ecgRPeak);    // R wave
