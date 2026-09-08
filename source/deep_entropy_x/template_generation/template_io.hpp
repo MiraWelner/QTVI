@@ -118,16 +118,6 @@ namespace template_io {
         // reads correctly as "one template per channel", i.e. a bank of size
         // one.
         std::array<tbank::TemplateBank, 3> ecg_bank;
-
-        // Section 4.6 template bank for PPG. ONE bank, not three: there is one
-        // pulse channel. Slot 0 is seeded from ppgTemplate, and the bank was
-        // built against tbank::matchFloorPpg() (0.80 by default) rather than the ECG floor -- the
-        // spec names two thresholds because it wants a bank on both channel
-        // types, and this is the PPG one.
-        //
-        // Serialized as its own trailing section (v4), so a v3 file reads back
-        // with it empty and that reads correctly as "one pulse template for
-        // this bin", which is what a v3 file actually contains.
         tbank::TemplateBank ppg_bank;
     };
 
@@ -138,37 +128,7 @@ namespace template_io {
 
     struct TemplateFile {
         std::vector<BinTemplates> bins;
-
-        // Per-anchor ECG "raw" templates, accumulated as the interactive
-        // anchor cycle steps through Q/J/T/P_peak/P_onset. Key = AnchorType
-        // (stored as int to keep this header free of the feature_marks
-        // dependency). Value is parallel to `bins`: one entry per bin, each a
-        // 3-element array of {ch1_raw, ch2_raw, ch3_raw} aligned on that
-        // anchor. R_PEAK is NOT stored here -- it lives in bins[i].chN_raw
-        // (the scalar base). Empty for a plain R-only file.
-        //
-        // Serialized as a trailing section after the base bins, so old
-        // (R-only) readers ignore it and old files read back with it empty.
         std::map<int, std::vector<std::array<ChannelMethodTemplate, 3>>> raw_anchors;
-
-        // ---- v6: PER-ANCHOR BANK SLOT TEMPLATES --------------------------
-        //
-        // raw_anchors above holds ONE aligned average per (anchor, bin,
-        // channel) -- the whole-channel template, which is what slot 0 draws.
-        // The BANK slots (the _A / _B columns) had no per-anchor variant, so
-        // refreshFocus computed the right alignment, fetched the right
-        // waveform, and then the templateIdx > 0 branch overwrote both with the
-        // slot's own R-aligned average -- same picture under every bar, with a
-        // header naming an alignment the data was not in.
-        //
-        // Cheap and exact: alignTemplatesFromCache already aligns the bin's
-        // whole beat matrix and align_beat_matrix hands back the shifted beats,
-        // which were being discarded. A slot's aligned average is the
-        // column-wise median of those SAME beats restricted to the slot's
-        // member rows -- a reduction, not a second alignment pass. Aligning
-        // each slot independently would give every slot its own frame, and the
-        // point of the panel is that the slots on it share one.
-        //
         // Indexing: bank_anchors[anchorTag][bin][channel][slot].
         struct BankSlotTemplate {
             std::vector<double> tmpl;
