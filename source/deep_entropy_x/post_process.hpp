@@ -378,6 +378,15 @@ namespace post_process_detail {
                     << "% (config)\n";
             }
         }
+        //if there is a prior templates.bin (ie the morpohlogy has been split) reload it
+        std::optional<template_io::TemplateFile> priorSplit;
+        if (std::filesystem::exists(templatePath)) {
+            try { priorSplit = template_io::read_template_binfile(templatePath.string()); }
+            catch (const std::exception& e) {
+                std::cerr << "  [bank-reload] ignoring " << templatePath.string()
+                    << ": " << e.what() << "\n";
+            }
+        }
         FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates);
         if (fast.tmpl.bins.empty()) {
             std::cerr << "  no bins for " << stem << " (recording shorter than one bin?); skipping.\n";
@@ -386,11 +395,6 @@ namespace post_process_detail {
         job.tmpl = std::move(fast.tmpl);
         job.beats = std::move(fast.beats);
         job.info = std::move(fast.info);
-        //if there is a prior templates.bin (ie the morpohlogy has been split) reload it
-        if (std::filesystem::exists(templatePath)) {
-            const auto rep = bank_reload::reloadBanks(templatePath.string(), job.tmpl);
-            bank_reload::printReport(rep);
-        }
         job.tmplR = job.tmpl;      // snapshot R frame (one copy, at prep time)
 
         // The R-pass checkpoints (bin archive, feature time series, envelope

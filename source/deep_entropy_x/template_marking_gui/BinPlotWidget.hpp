@@ -40,6 +40,7 @@ class QPainter;
 class BinPlotWidget : public QWidget {
     Q_OBJECT
 public:
+
     enum class State { Good, BadR, BadPPG };
 
     // Each enum value MUST be unique (it's used as an array index into
@@ -98,6 +99,12 @@ public:
     // channel is fully described by its rate and its R column (see the time
     // model below).
     enum class Channel { Ecg, Ppg, Abp, Art, ArtPulm, Count };
+
+    // Resolve a marker to its channel, trace, and group visibility. No
+// visible-sample bound and no ratio: the frame is the union of every
+// channel's extent, so a marker inside its own array is on screen.
+    int    lastDrawnSample(Channel ch) const;
+
 
     // ----------------------------------------------------------------------
     // GEOMETRY: EVERY CHANNEL IS DRAWN IN SECONDS RELATIVE TO ITS OWN R.
@@ -342,24 +349,6 @@ private:
     // deliberately not hit-tested, so a click can never select or drag an
     // automated mark.
     int    markerAtX(double x) const;
-
-    // Resolve a marker to its channel, trace, and group visibility. No
-    // visible-sample bound and no ratio: the frame is the union of every
-    // channel's extent, so a marker inside its own array is on screen.
-    // ---- THE PLOT WALL --------------------------------------------------
-    //
-    // Last sample of `ch` that is actually DRAWN, and therefore the rightmost
-    // column a bar may sit on. NOT vec.size()-1: recomputeFrame ends each
-    // channel's extent at its last FINITE sample, and additionally trims the
-    // ECG's one-beat tail (columns where ecg_template_iqr reads exactly 0.0,
-    // which align_beat_matrix leaves when a column had fewer than two beats).
-    // The stored ECG array is framed on the bin's LONGEST RR, so that tail is
-    // routinely dozens of samples wide.
-    //
-    // An index past this maps to a time past m_tMax, which is outside the
-    // frame -- the bar draws beyond the plot wall, and the trace it is
-    // supposed to annotate has already ended. -1 when nothing is drawable.
-    int    lastDrawnSample(Channel ch) const;
 
     bool   markerTrace(int m, const std::vector<double>*& vec,
         Channel& ch, bool& visible) const;
