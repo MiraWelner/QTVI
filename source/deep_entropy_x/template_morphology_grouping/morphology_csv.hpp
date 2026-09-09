@@ -8,6 +8,7 @@
  *           <stem>_templates.bin  the same, binary
  */
 
+#include <algorithm>   // std::max, for the per-bin run length
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -507,170 +508,249 @@ namespace morphology_csv {
         std::ofstream f(g_dir + "/" + g_stem + "_templates.csv", std::ios::trunc);
         if (!f) return false;
 
-        // ---- BLOCK ORDER: PPG DIRECTLY AFTER CH1 -------------------------
+        // ---- ONE TABLE, A COLUMN PER (bin, template, channel) -------------
         //
-        // The blocks arrive CH1, CH2, CH3, PPG, so the pulse table ended up at
-        // the bottom of the file, three tables away from the ECG face of the
-        // same groups. A group is ONE set of heartbeats seen on four channels,
-        // and the pair actually read together is CH1 and PPG -- so PPG is
-        // written second.
+        // This wrote one BLOCK PER CHANNEL, stacked vertically: every CH1
+        // column, then a fresh `channel` row, then CH2, then CH3, then PPG at
+        // the bottom. Two things were wrong with that.
         //
-        // THE BLOCKS THEMSELVES ARE UNCHANGED: each keeps its own channel row,
-        // its own column set and its own waveform rows. A channel with no
-        // usable beats in a bin contributes no column, so the blocks have
-        // different column counts and are joined by (bin, template) rather
-        // than by position -- which is what they always were.
+        // A GROUP'S FOUR FACES WERE IN FOUR SEPARATE TABLES. A group is ONE set
+        // of heartbeats seen on three leads and the pulse, and reading one meant
+        // finding its column in each table and joining them by (bin, template)
+        // by hand -- and NOT by position, because the blocks had different
+        // column counts. A channel with no usable beats in a bin contributed no
+        // column at all, so the nth column of the CH1 block and the nth of the
+        // PPG block were generally different groups.
         //
-        // BY NAME, NOT BY INDEX. The caller decides the block order, so a
-        // positional rule here would silently move the wrong table if that
-        // order ever changed. A channel not named below keeps its given
-        // position, after the named ones.
-        std::vector<const ChannelBlock*> ordered;
-        ordered.reserve(blocks.size());
-        for (const char* want : { "CH1", "PPG" })
-            for (const auto& b0 : blocks)
-                if (b0.channel && std::strcmp(b0.channel, want) == 0)
-                    ordered.push_back(&b0);
-        for (const auto& b0 : blocks) {
-            bool already = false;
-            for (const ChannelBlock* q : ordered)
-                if (q == &b0) { already = true; break; }
-            if (!already) ordered.push_back(&b0);
-        }
+        // AND AN ABSENT CHANNEL VANISHED ENTIRELY. A block whose every template
+        // had an empty waveform produced no rows -- not even a header -- so
+        // "this record has no usable pulse" and "the pulse never got written"
+        // were indistinguishable in the file. On a record whose pulse filter
+        // rejected all but a few hundred beats that cost several rounds of
+        // looking in the wrong place.
+        //
+        // Now: columns are ordered by (bin, template, channel), so a group is a
+        // contiguous run -- CH1, CH2, CH3, PPG for bin 0 template A, then bin 0
+        // template B, and so on. EVERY channel gets a column in every run, even
+        // when it has no waveform: the metadata rows say what happened and the
+        // waveform rows are simply empty. A gap in a run is now a stated fact
+        // rather than a missing column.
+        struct Col {
+            std::string category, bin, name, premature, voted, tukey, blended,
+                bpm, members, excluded, share, too_few;
+            const std::vector<double>* wave = nullptr;   // null => no waveform
+            const char* channel = "";
+            const char* channel_type = "";              // "ecg" or "ppg"
+            int  r_col = -1;                            // -1 => none for this channel
+            size_t binIdx = 0;
+            int  tmplIdx = 0;
+            int  chOrder = 0;                           // block order, the tiebreak
+        };
 
-        for (const ChannelBlock* blkp : ordered) {
-            const ChannelBlock& blk = *blkp;
-            if (blk.empty()) continue;
+        std::vector<Col> cols;
+        size_t dropped = 0;   // reported, so a thin table is explicable
 
-            // Which minimum applies. Compared on the block's channel name
-            // rather than its index, because the caller decides the block
-            // order and a positional assumption here would silently apply the
-            // ECG minimum to the pulse channel on any reordering.
-            const bool isPpgBlock =
-                (blk.channel && std::string(blk.channel) == "PPG");
-
-            struct Col {
-                std::string category, bin, name, premature, voted, tukey, blended,
-                    bpm, confirmed, members, excluded, share, too_few;
-                const std::vector<double>* wave = nullptr;
-                size_t binIdx = 0;
-            };
-
-            std::vector<Col> cols;
-            size_t dropped = 0;   // reported, so a thin block is explicable
-
-            for (size_t b = 0; b < blk.nBins(); ++b) {
+        // How many templates any channel holds for a bin. The banks are allowed
+        // to disagree -- a morphology separable on CH1 may not be on CH2 -- so
+        // the run length for a bin is the widest of them, and a channel that
+        // runs short gets a placeholder column rather than the run going ragged.
+        auto slotsInBin = [&](size_t b) -> int {
+            int n = 0;
+            for (const ChannelBlock& blk : blocks) {
+                if (blk.empty()) continue;
                 const bin_pipeline::ChannelOutput* op = blk.out(b);
                 if (!op) continue;
-                const bin_pipeline::ChannelOutput& out = *op;
-                // Letters for this bin's bank, contiguous over the surviving
-                // templates. Computed once per bin, not per template.
-                const std::vector<uint8_t> letters = detail::letterRanks(out.bank);
-                for (int t = 0; t < out.bank.size(); ++t) {
-                    const tbank::BankTemplate& tp = out.bank.templates[t];
-                    if (tp.tmpl.empty()) continue;
-                    // Excluded from THIS file only; the beats file keeps them.
-                    const char* why = nullptr;
-                    if (!detail::belongsInTemplatesFile(tp, out, &why)) {
-                        ++dropped;
+                n = std::max(n, static_cast<int>(op->bank.size()));
+            }
+            return n;
+            };
+
+        size_t nBins = 0;
+        for (const ChannelBlock& blk : blocks)
+            if (!blk.empty()) nBins = std::max(nBins, blk.nBins());
+
+        for (size_t b = 0; b < nBins; ++b) {
+            const int nSlots = slotsInBin(b);
+            for (int t = 0; t < nSlots; ++t) {
+                for (size_t bi = 0; bi < blocks.size(); ++bi) {
+                    const ChannelBlock& blk = blocks[bi];
+                    // Which minimum applies. Compared on the block's channel
+                    // name rather than its index, because the caller decides
+                    // the block order and a positional assumption here would
+                    // silently apply the ECG minimum to the pulse channel on
+                    // any reordering.
+                    const bool isPpgBlock =
+                        (blk.channel && std::string(blk.channel) == "PPG");
+
+                    Col c;
+                    c.channel = blk.channel ? blk.channel : "";
+                    c.channel_type = isPpgBlock ? "ppg" : "ecg";
+                    c.chOrder = static_cast<int>(bi);
+                    c.binIdx = b;
+                    c.tmplIdx = t;
+                    c.bin = std::to_string(b);
+
+                    const bin_pipeline::ChannelOutput* op =
+                        blk.empty() ? nullptr : blk.out(b);
+
+                    // ---- THE PLACEHOLDER CASES -----------------------------
+                    // A column is emitted for every (bin, template, channel),
+                    // so the reasons a face is missing have to be stated rather
+                    // than implied by absence. Each `name` below is that
+                    // statement, and every other cell stays blank.
+                    if (!op) {
+                        c.name = "(no data this bin)";
+                        cols.push_back(std::move(c));
                         continue;
                     }
-                    Col c;
+                    if (t >= op->bank.size()) {
+                        c.name = "(no slot on this channel)";
+                        cols.push_back(std::move(c));
+                        continue;
+                    }
+                    const tbank::BankTemplate& tp = op->bank.templates[t];
+                    if (tp.tmpl.empty()) {
+                        // The case that used to make the whole PPG block
+                        // disappear: a slot that exists with no waveform, which
+                        // is what a bin whose pulse filter produced nothing
+                        // looks like.
+                        c.name = "(no waveform)";
+                        c.members = std::to_string(tp.memberCount());
+                        cols.push_back(std::move(c));
+                        continue;
+                    }
+                    const char* why = nullptr;
+                    if (!detail::belongsInTemplatesFile(tp, *op, &why)) {
+                        // Excluded from THIS file only; the beats file keeps
+                        // them. Stated in place rather than counted and
+                        // omitted, now that there is a column to state it in.
+                        ++dropped;
+                        c.name = why ? why : "(excluded)";
+                        c.members = std::to_string(tp.memberCount());
+                        cols.push_back(std::move(c));
+                        continue;
+                    }
+
+                    const std::vector<uint8_t> letters = detail::letterRanks(op->bank);
+                    c.r_col = blk.r_col.empty() ? -1 : blk.rCol(b);
                     c.category = detail::categoryWord(tp.presumedCategory());
-                    c.bin = std::to_string(b);
-                    c.name = detail::templateName(tp, letters[t]);
+                    c.name = detail::templateName(tp,
+                        (static_cast<size_t>(t) < letters.size()) ? letters[t] : 0);
                     c.premature = detail::prematurePctAgg(tp);
                     c.voted = detail::votedPctAgg(tp);
                     c.tukey = detail::tukeyPctAgg(tp);
                     c.blended = detail::blendPctAgg(tp);
-                    //if it is never shown to the operator it is just presumed not confirmed
-                    c.confirmed = (tp.marked_invalid_template != 0) ? "unconfirmed"
-                        : tp.confirmed_by_operator ? "confirmed"
-                        : "presumed";
                     c.members = std::to_string(tp.memberCount());
                     c.excluded = std::to_string(tp.excludedCount());
                     c.bpm = detail::bpmPerTemplate(tp);
+                    // FLAGGED, NOT OMITTED, and now flagged where the sibling
+                    // channels can be seen beside it: a CH1 column reading "no"
+                    // next to its PPG column reading "yes" describes a panel
+                    // the operator never saw as valid, and that disagreement
+                    // used to require joining two tables to notice.
                     c.too_few = tp.tooFewBeats(isPpgBlock) ? "yes" : "no";
-                    c.share = std::to_string(out.bank.beatShare(t));
+                    c.share = std::to_string(op->bank.beatShare(t));
                     c.wave = &tp.tmpl;
-                    c.binIdx = b;
                     cols.push_back(std::move(c));
                 }
             }
-            if (dropped)
-                std::fprintf(stderr,
-                    "  [morphology] %s: %zu template(s) omitted from "
-                    "_templates (all members Tukey-removed or all premature); "
-                    "their beats remain in _beats\n", blk.channel, dropped);
-            if (cols.empty()) continue;
+        }
 
-            auto row = [&](const char* label, std::string Col::* field) {
-                f << label;
-                for (auto& c : cols) f << ',' << (c.*field);
-                f << '\n';
-                };
+        if (dropped)
+            std::fprintf(stderr,
+                "  [morphology] %zu template(s) marked excluded in _templates "
+                "(all members Tukey-removed or all premature); their beats "
+                "remain in _beats\n", dropped);
 
-            if (!blk.r_col.empty()) {
+        if (cols.empty()) return true;
+
+        auto row = [&](const char* label, std::string Col::* field) {
+            f << label;
+            for (auto& c : cols) f << ',' << (c.*field);
+            f << '\n';
+            };
+
+        // r_col first: it is the axis every ECG column's samples are on, and
+        // blank for the pulse, which is foot-anchored and has no R column.
+        {
+            bool anyR = false;
+            for (auto& c : cols) if (c.r_col >= 0) { anyR = true; break; }
+            if (anyR) {
                 f << "r_col";
-                for (auto& c : cols) f << ',' << blk.rCol(c.binIdx);
+                for (auto& c : cols) { f << ','; if (c.r_col >= 0) f << c.r_col; }
                 f << '\n';
             }
+        }
 
-            row("category", &Col::category);
-            row("bin", &Col::bin);
-            row("template", &Col::name);
-            row("premature_pct", &Col::premature);
-            row("voted_pvc_pct", &Col::voted);
-            row("bpm", &Col::bpm);
-            row("tukey_pct", &Col::tukey);
-            row("blended_pct", &Col::blended);
-            row("confirmed", &Col::confirmed);
-            row("too_few_beats", &Col::too_few);
-            row("n_members", &Col::members);
-            row("n_excluded", &Col::excluded);
-            row("beat_share", &Col::share);
+        row("category", &Col::category);
+        row("bin", &Col::bin);
+        row("template", &Col::name);
+        row("premature_pct", &Col::premature);
+        row("voted_pvc_pct", &Col::voted);
+        row("bpm", &Col::bpm);
+        row("tukey_pct", &Col::tukey);
+        row("blended_pct", &Col::blended);
+        // NO `confirmed` ROW, AND NO `marking` ROW.
+        //
+        // confirmed could never be right here: this file is written by
+        // GenerateTemplatesFast, inside prepareViewerJob, BEFORE the marking
+        // window exists -- so every template read "presumed" in every record no
+        // matter how much marking followed, which looked like a bug in the
+        // confirmation logic rather than a promise this file cannot keep.
+        //
+        // Nor can it be fixed by rewriting afterwards: the ChannelBlocks this
+        // function takes hold raw pointers into local_of_slice,
+        // excluded_reason and TemplateInfo::bank_by_channel, all owned by
+        // GenerateTemplatesFast's own frame, so none of them exist once it
+        // returns.
+        //
+        // The VIEWER writes <id>_template_confirmations.csv instead, from the
+        // bins it owns and after the operator is done. Join on
+        // (bin, channel, template).
+        row("too_few_beats", &Col::too_few);
+        row("n_members", &Col::members);
+        row("n_excluded", &Col::excluded);
+        row("beat_share", &Col::share);
 
-            // ---- THE CHANNEL ROWS, LAST OF THE METADATA -----------------
-            //
-            // AFTER beat_share and BEFORE the waveform, rather than at the
-            // head of the block. The metadata rows are the ones read together
-            // -- category, template, counts, then which channel they describe
-            // -- and the waveform below is thousands of rows tall, because an
-            // ECG axis is framed on the bin's LONGEST RR. A channel name at
-            // the top scrolls away long before the samples run out.
-            //
-            // At the bottom of the metadata it sits against the point where
-            // the columns are actually being compared, which is what makes an
-            // absent template distinguishable from a short one by eye.
-            f << "channel";
-            for (size_t k = 0; k < cols.size(); ++k) f << ',' << blk.channel;
-            f << '\n';
-            // ecg OR ppg. NOT redundant with `channel`: that names the LEAD
-            // (CH1/CH2/CH3/PPG), this names the KIND. Everything that has to
-            // treat the pulse differently -- which minimum-beats value
-            // applies, the perfusion-index normalization, which landmarks even
-            // exist -- was deciding it by string-matching "PPG" against the
-            // channel name, independently in several places. The file states
-            // it once, from the same isPpgBlock the rows above already use.
-            f << "channel_type";
-            for (size_t k = 0; k < cols.size(); ++k)
-                f << ',' << (isPpgBlock ? "ppg" : "ecg");
-            f << '\n';
+        // ---- THE CHANNEL ROWS, LAST OF THE METADATA ---------------------
+        // After beat_share and before the waveform, not at the head of the
+        // table: the waveform below is thousands of rows tall, because an ECG
+        // axis is framed on the bin's LONGEST RR. A channel name at the top
+        // scrolls away long before the samples run out.
+        f << "channel";
+        for (auto& c : cols) f << ',' << c.channel;
+        f << '\n';
+        // ecg OR ppg. Not redundant with `channel`: that names the LEAD,
+        // this names the KIND. Everything that has to treat the pulse
+        // differently -- which minimum applies, the perfusion-index
+        // normalization, which landmarks exist -- was deciding it by
+        // string-matching "PPG" against the channel name, independently in
+        // several places.
+        f << "channel_type";
+        for (auto& c : cols) f << ',' << c.channel_type;
+        f << '\n';
 
-            // Waveform: the template median, one row per sample index. Empty
-            // cell for NaN -- the shared axis is NaN-padded at both ends, and 0
-            // is a real amplitude.
-            size_t width = 0;
-            for (auto& c : cols) width = std::max(width, c.wave->size());
-            for (size_t sIdx = 0; sIdx < width; ++sIdx) {
-                f << sIdx;
-                for (auto& c : cols) {
-                    f << ',';
-                    if (sIdx < c.wave->size() && !std::isnan((*c.wave)[sIdx]))
-                        f << (*c.wave)[sIdx];
-                }
-                f << '\n';
+        // Waveform: the template median, one row per sample index. Empty cell
+        // for NaN -- the shared axis is NaN-padded at both ends, and 0 is a
+        // real amplitude -- and empty for a whole column that has no waveform.
+        //
+        // THE WIDTH IS THE MAX ACROSS CHANNELS. An ECG axis is framed on the
+        // bin's longest RR and a pulse axis on its own foot-to-foot interval,
+        // so they differ by thousands of samples; the shorter columns run out
+        // and go empty, which is what a reader keyed on the sample index
+        // expects.
+        size_t width = 0;
+        for (auto& c : cols)
+            if (c.wave) width = std::max(width, c.wave->size());
+        for (size_t sIdx = 0; sIdx < width; ++sIdx) {
+            f << sIdx;
+            for (auto& c : cols) {
+                f << ',';
+                if (c.wave && sIdx < c.wave->size()
+                    && !std::isnan((*c.wave)[sIdx]))
+                    f << (*c.wave)[sIdx];
             }
+            f << '\n';
         }
         return true;
     }

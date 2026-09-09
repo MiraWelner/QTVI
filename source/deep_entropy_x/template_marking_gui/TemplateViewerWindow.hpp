@@ -32,6 +32,20 @@ public:
     void setBoundaryTrainingDir(const QString& dir) {
         m_boundaryLog = boundary_training::BoundaryTrainingLog(dir.toStdString());
     }
+    // ---- THE BANKS AS THE OPERATOR LEFT THEM ----------------------------
+    //
+    // Read by main.cpp after the window closes, to copy the banks back into
+    // the TemplateFile before templates.bin is rewritten.
+    //
+    // WHY IT HAS TO BE COPIED BACK. showPage sets confirmed_by_operator on
+    // THESE bins as each panel is built, and marked_invalid_template lands
+    // here on a right-click -- but prepareViewerJob wrote templates.bin before
+    // the window opened, from a separate TemplateFile that nothing touches
+    // afterwards. So the file's `confirmed` column could only ever read
+    // "presumed", for every template in every record, however much marking
+    // had been done.
+    const std::vector<TemplateBin>& bins() const { return m_bins; }
+
     void setVcgOutputDir(const QString& dir) { m_vcgOutputPath = dir; }
     void setNormOutputDir(const QString& dir) { m_normOutputPath = dir; } //write <id>_feature_norm.csv and <id>_cv_check.csv 
 

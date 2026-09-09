@@ -3433,6 +3433,65 @@ void TemplateViewerWindow::save_bin_and_csv() {
                 throw std::runtime_error("could not merge markings parts into " + csvPath.toStdString());
             std::cout << "Wrote markings CSV: " << csvPath.toStdString() << "\n";
         }
+
+        // ---- WHAT THE OPERATOR ACTUALLY RULED ON ---------------------
+        //
+        // ITS OWN FILE, because templates.csv cannot carry it. That one is
+        // written by GenerateTemplatesFast inside prepareViewerJob, BEFORE
+        // this window exists, so its `confirmed` column could only ever read
+        // "presumed" -- for every template in every record, however much
+        // marking followed. It could not be fixed by rewriting either: the
+        // ChannelBlocks that writer takes hold raw pointers into
+        // GenerateTemplatesFast's own frame, which is gone by the time the
+        // operator finishes.
+        //
+        // This is written from m_bins, after the session, which is the only
+        // place and time the answer exists. Joined to templates.csv on
+        // (bin, channel, template) -- three rows that file already carries.
+        //
+        // `template` IS THE SLOT INDEX, not the letter. templates.csv's
+        // `template` row holds the NAME (PQRST_A), and the letter comes from
+        // tbank::letterRanks over the surviving templates -- so joining on the
+        // name would mean recomputing those ranks here and keeping the two in
+        // step. The slot index is the same key on both sides with nothing to
+        // recompute.
+        {
+            const QString cPath = csvDir.absolutePath() + "/"
+                + m_subjectId + "_template_confirmations.csv";
+            std::ofstream cf(cPath.toStdString(), std::ios::trunc);
+            if (!cf) {
+                std::cerr << "[confirmations] could not write "
+                    << cPath.toStdString() << "\n";
+            }
+            else {
+                cf << "file_id,bin,channel,template,state,n_members\n";
+                static const char* kChan[4] = { "CH1", "CH2", "CH3", "PPG" };
+                for (size_t i = 0; i < m_bins.size(); ++i) {
+                    const TemplateBin& b = m_bins[i];
+                    for (int c = 0; c < 4; ++c) {
+                        const tbank::TemplateBank& bk =
+                            (c < 3) ? b.ecg_bank[c] : b.ppg_bank;
+                        for (int t = 0; t < bk.size(); ++t) {
+                            const tbank::BankTemplate& tp = bk.templates[t];
+                            // CROSSED-OUT IS TESTED FIRST. You have to view a
+                            // template to cross it out, so both flags are set
+                            // and the rejection is the later and more specific
+                            // statement; the other order reports every
+                            // rejected template as confirmed.
+                            const char* st =
+                                (tp.marked_invalid_template != 0) ? "unconfirmed"
+                                : tp.confirmed() ? "confirmed"
+                                : "presumed";
+                            cf << m_subjectId.toStdString() << ',' << i << ','
+                                << kChan[c] << ',' << t << ',' << st << ','
+                                << tp.memberCount() << '\n';
+                        }
+                    }
+                }
+                std::cout << "Wrote confirmations CSV: "
+                    << cPath.toStdString() << "\n";
+            }
+        }
     }
     catch (const std::exception& e) {
         QMessageBox::critical(this, "Save failed",

@@ -184,6 +184,15 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
         //  there is nothing to reload and the button always reads "Finish".)
 
         viewer.show();
+        // FROM MEMORY, NOT FROM A FILE. This passed
+        // job->viewerTemplatePath, which meant prepareViewerJob had to write
+        // templates.bin before the squared/absval blocks existed -- a file
+        // that looked complete and was not. The TemplateFile is already in
+        // this process; the disk round trip produced nothing but a filename.
+        //
+        // templates.bin is now written once, at the end of the anchor cycle,
+        // so its existence means complete and viewerTemplatePath is no longer
+        // read here.
         viewer.loadSubject(job->tmpl,
             QString::fromStdString(cfg.template_path),
             QString::fromStdString(cfg.fiducial_marker_locations),
@@ -192,6 +201,45 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
             cfg.art_upsample_rate, cfg.art_pulm_upsample_rate,
             cfg.notch_filter_hz);
         loop.exec();
+
+        // ---- TEMPLATES.BIN AGAIN, NOW THAT IT CAN SAY SOMETHING --------
+        //
+        // prepareViewerJob wrote it BEFORE this window opened, so every
+        // template's confirmed_by_operator was false and the `confirmed`
+        // column read "presumed" for the whole record no matter how much
+        // marking had been done.
+        //
+        // The flags live on the VIEWER's m_bins -- showPage sets
+        // confirmed_by_operator as each panel is built, and a right-click sets
+        // marked_invalid_template -- while job->tmpl is a separate
+        // TemplateFile that nothing touches after that first write. So the
+        // banks are copied back and the file rewritten here, once, after the
+        // operator is done.
+        //
+        // BANKS ONLY. The waveforms, r_cols and per-bin scalars in job->tmpl
+        // are the generated ones and the viewer never edits them; copying the
+        // whole bin back would overwrite the squared/absval blocks the
+        // finalize worker packed into it.
+        {
+            const auto& vb = viewer.bins();
+            for (size_t i = 0; i < job->tmpl.bins.size() && i < vb.size(); ++i) {
+                job->tmpl.bins[i].ecg_bank = vb[i].ecg_bank;
+                job->tmpl.bins[i].ppg_bank = vb[i].ppg_bank;
+            }
+            const std::filesystem::path tp =
+                std::filesystem::path(cfg.template_path)
+                / (job->stem + "_templates.bin");
+            try {
+                template_io::write_template_binfile(tp.string(), job->tmpl);
+                std::cerr << "  [templates] rewrote " << tp.string()
+                    << " with the operator's confirmations\n";
+            }
+            catch (const std::exception& e) {
+                std::cerr << "  [templates] WARNING: could not rewrite "
+                    << tp.string() << ": " << e.what()
+                    << " -- the file still holds the pre-marking state\n";
+            }
+        }
         // viewer is destroyed here (window closes).
     }
 }
@@ -243,9 +291,14 @@ int main(int argc, char* argv[]) {
 
     auto finishJob = [](const std::shared_ptr<post_process_detail::ViewerJob>& job) {
         if (!job->error.empty()) {
-            std::cerr << "  ERROR (squared/absval finalize) " << job->stem << ": "  << job->error << "\n";
+            std::cerr << "  ERROR (squared/absval finalize) " << job->stem << ": "
+                << job->error << "\n";
         }
-    };
+        // NO CLEANUP. This removed the _templates.partial.bin that
+        // prepareViewerJob used to write for the viewer to open. There is no
+        // provisional file: templates.bin is written directly and then
+        // rewritten once after marking, so nothing is left over to delete.
+        };
 
     // Reap completed background jobs. force==true joins everything (used at
     // shutdown); force==false only joins workers that have already finished,
