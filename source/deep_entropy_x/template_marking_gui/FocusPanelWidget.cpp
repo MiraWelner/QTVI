@@ -32,10 +32,20 @@ void FocusPanelWidget::setFocus(const std::vector<double>& mean,
     update();
 }
 
+void FocusPanelWidget::setSdMs(const std::vector<double>& sdMs,
+    const std::vector<uint8_t>& floorMask)
+{
+    m_sdMs = sdMs;
+    m_floorMask = floorMask;
+    update();
+}
+
 void FocusPanelWidget::clearFocus() {
     m_active = false;
     m_mean.clear();
     m_sd.clear();
+    m_sdMs.clear();
+    m_floorMask.clear();
     m_nBeats = 0;
     m_landmarkCol = -1;
     update();
@@ -87,17 +97,20 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
     const int visN = hi - lo + 1;
     if (visN < 2) return;
 
-    // 95% CI half-width per column: 1.96 * se, se = sd / sqrt(nBeats).
-    // (Spec B2.) Guard nBeats >= 1; if a column's sd is NaN or n < 1, the
-    // band is suppressed there (NaN), matching drawIqrBand's NaN handling.
+    // Band half-width per column: THE SD ITSELF, +/- 1 sd.
+    //
+    // It used to be a 95% CI on the mean: 1.96 * sd / sqrt(nBeats). With
+    // n=857 that divides the sd by ~29, so the band drew at ~7% of the actual
+    // spread and looked like a hairline even where the sd was large. A CI on
+    // the mean answers "how well do we know the average beat", which is not
+    // the question this panel is for -- the spread of the beats is.
     const double NaN = std::numeric_limits<double>::quiet_NaN();
-    const double sqrtN = (m_nBeats > 0) ? std::sqrt((double)m_nBeats) : 0.0;
     std::vector<double> ci(N, NaN);
-    const bool haveSd = ((int)m_sd.size() == N) && sqrtN > 0.0;
+    const bool haveSd = ((int)m_sd.size() == N);
     if (haveSd) {
         for (int i = lo; i <= hi; ++i) {
             if (std::isnan(m_sd[i])) continue;
-            ci[i] = 1.96 * (m_sd[i] / sqrtN);
+            ci[i] = m_sd[i];
         }
     }
 
@@ -122,7 +135,28 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
     auto xOf = [&](int col) { return startPx + (double)col * pxPerSample; };
     auto yOf = [&](double val) { return mt + ph - (val - vlo) / vr * ph; };
 
-    // ---- 95% confidence band (filled, translucent) ----
+    // ---- slope-floor shading -------------------------------------------
+    // Columns where the local |dV/dt| was clamped at the floor: flat regions
+    // and peak tops, where SD/slope would otherwise divide by ~0. The msec
+    // value there is a lower bound, so the columns are washed out rather than
+    // left looking like the rest.
+    if ((int)m_floorMask.size() == N) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(200, 90, 60, 28));
+        int i = lo;
+        while (i <= hi) {
+            while (i <= hi && !m_floorMask[i]) ++i;
+            const int runStart = i;
+            while (i <= hi && m_floorMask[i]) ++i;
+            if (i > runStart) {
+                const double x0 = xOf(runStart);
+                const double x1 = xOf(i - 1) + pxPerSample;
+                p.drawRect(QRectF(x0, mt, std::max(1.0, x1 - x0), ph));
+            }
+        }
+    }
+
+    // ---- +/- 1 sd band (filled, translucent) ----
     if (haveSd) {
         p.setPen(Qt::NoPen);
         p.setBrush(QColor(70, 130, 180, 70));   // steel blue, translucent
@@ -182,9 +216,18 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         p.drawLine(QPointF(x, mt), QPointF(x, mt + ph));
     }
 
-    // ---- footer: nBeats (the n in the CI) ----
+    // ---- footer: nBeats, and the SD at the bar in msec ----
+    // The number is always printed; the orange shading is what marks the
+    // columns where the slope floor engaged.
     p.setPen(QColor(120, 120, 120));
+    QString foot = QStringLiteral("n=%1  (band: mean +/- 1 sd)")
+        .arg(m_nBeats);
+    if (m_landmarkCol >= 0 && m_landmarkCol < (int)m_sdMs.size()) {
+        foot = std::isfinite(m_sdMs[m_landmarkCol])
+            ? QStringLiteral("n=%1  sd=%2 ms at bar")
+                .arg(m_nBeats).arg(m_sdMs[m_landmarkCol], 0, 'f', 1)
+            : QStringLiteral("n=%1  sd=-- at bar").arg(m_nBeats);
+    }
     p.drawText(QRect(ml, mt + ph - 14, pw, 12),
-        Qt::AlignRight | Qt::AlignVCenter,
-        QStringLiteral("n=%1  (95% CI: mean +/- 1.96 sd/sqrt(n))").arg(m_nBeats));
+        Qt::AlignRight | Qt::AlignVCenter, foot);
 }

@@ -29,6 +29,7 @@
 //
 #include <QWidget>
 #include <QString>
+#include <cstdint>
 #include <vector>
 
 class QPainter;
@@ -59,6 +60,17 @@ public:
         int halfWindowSamples = 100,
         int framingBias = 0);
 
+    // Per-sample SD in MSEC: each column's amplitude SD divided by the
+    // template's local |dV/dt| there (localAbsSlope / slopeFloor in
+    // TemplateViewerWindow.cpp). floorMask marks the columns where the slope
+    // was clamped at the floor -- flat regions, peak tops -- where the value
+    // is a lower bound rather than a measurement, and which are shaded.
+    //
+    // Display only: the band above is unchanged (it is the amplitude CI).
+    // Empty vectors leave the panel exactly as it was.
+    void setSdMs(const std::vector<double>& sdMs,
+        const std::vector<uint8_t>& floorMask);
+
     // Clear the panel (no landmark selected).
     void clearFocus();
 
@@ -68,6 +80,8 @@ protected:
 private:
     std::vector<double> m_mean;
     std::vector<double> m_sd;
+    std::vector<double>  m_sdMs;       // per-column SD in msec
+    std::vector<uint8_t> m_floorMask;  // 1 where the slope floor engaged
     int    m_nBeats = 0;
     int    m_landmarkCol = -1;
     int    m_half = 30;

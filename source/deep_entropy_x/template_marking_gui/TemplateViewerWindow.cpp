@@ -2684,6 +2684,56 @@ void TemplateViewerWindow::onMarkerDragStarted(int, int, int) {
 }
 // B2 focus mode --------------------------------------------------------------
 
+// ---- SLOPE NORMALIZATION FOR THE FOCUS PANEL'S SPREAD NUMBER --------------
+//
+// The panel used to report the mean per-sample amplitude SD around the
+// selected landmark. That number reports SLOPE, not alignment quality: the
+// QRS upstroke is ~40x steeper than the T-end region, so the same spread read
+// ~40x larger near R. Dividing each column's SD by the template's local
+// |dV/dt| there puts the SD in msec instead of amplitude units, which is
+// comparable between regions and between alignments -- and is invariant to
+// the /ref scaling, since mean and sd both carry the same one.
+
+// Per-sample |dV/dt| of the template, in amplitude units per sample.
+//
+// The derivative at a column is taken over 4 MSEC EITHER SIDE of it: a line
+// fitted by least squares through that span, and its slope. For a symmetric
+// window the fitted slope is sum(x*y)/sum(x*x) with x centered on the column,
+// which needs no intercept term.
+//
+// NaN where the window would run off the trace or into the NaN pads.
+static std::vector<double> localAbsSlope(const std::vector<double>& t, double fs) {
+    const int N = (int)t.size();
+    std::vector<double> s(N, std::numeric_limits<double>::quiet_NaN());
+    const int h = (fs > 0.0)
+        ? std::max(1, (int)std::lround(4.0 * fs / 1000.0)) : 1;   // +/- 4 ms
+    double sxx = 0.0;
+    for (int j = -h; j <= h; ++j) sxx += (double)j * (double)j;
+    if (!(sxx > 0.0)) return s;
+
+    for (int k = h; k < N - h; ++k) {
+        double sxy = 0.0;
+        bool ok = true;
+        for (int j = -h; j <= h; ++j) {
+            const double v = t[k + j];
+            if (std::isnan(v)) { ok = false; break; }
+            sxy += (double)j * v;
+        }
+        if (!ok) continue;
+        s[k] = std::fabs(sxy / sxx);
+    }
+    return s;
+}
+
+// Slope floor, so the quotient does not blow up at peaks: a column whose
+// local slope is below this divides by the floor instead, and is flagged
+// (orange in the panel) so a value bounded by the floor cannot be mistaken for
+// a measurement. A constant, in the same amplitude-per-sample units as the
+// ref-normalized template.
+static double slopeFloor() {
+    return 0.0001;
+}
+
 // `col` IS A DOUBLE, matching BinPlotWidget::landmarkSelected. A Qt signal and
 // slot whose parameter types differ connect at runtime and then silently never
 // fire, so these two must be changed together.
@@ -3053,17 +3103,33 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
 
     if (zoomed_in_section_top)
     {
-        // Mean SD over the same window the panel draws. On screen because the
+        // Spread over the same window the panel draws. On screen because the
         // panel autoscales y, so the BAND looks about the same width whatever
         // the spread actually is -- the number is the only way to compare two
         // alignments. In a P-aligned average the T region is the most smeared
         // part of the trace, so P-aligned-at-T should read larger than
         // T-aligned-at-T.
-        double acc = 0.0; int cnt = 0;
-        for (int k = colHere - 30; k <= colHere + 30; ++k)
-            if (k >= 0 && k < (int)sd.size() && !std::isnan(sd[k])) { acc += sd[k]; ++cnt; }
-        const double sdMean = cnt
-            ? acc / cnt : std::numeric_limits<double>::quiet_NaN();
+        //
+        // Per-sample SD in MSEC: each column's amplitude SD divided by the
+        // template's local |dV/dt| there (localAbsSlope above), with the slope
+        // clamped at slopeFloor() so the divide cannot blow up. Clamped
+        // columns are flagged (orange in the panel), not dropped.
+        const std::vector<double> absSlope = localAbsSlope(mean, m_sampleRate);
+        const double floor = slopeFloor();
+        const double msPerSample = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 0.0;
+        const double NaNv = std::numeric_limits<double>::quiet_NaN();
+        std::vector<double>  sdMs(sd.size(), NaNv);
+        std::vector<uint8_t> floorMask(sd.size(), 0u);
+        for (size_t k = 0; k < sd.size() && k < absSlope.size(); ++k) {
+            if (std::isnan(sd[k]) || !std::isfinite(absSlope[k])) continue;
+            double slope = absSlope[k];
+            if (slope < floor) { floorMask[k] = 1u; continue; }   // leaves NaN
+            sdMs[k] = sd[k] / slope * msPerSample;
+        }
+
+        // Reported at the bar's own column.
+        const double sdMsAtBar = (colHere >= 0 && colHere < (int)sdMs.size())
+            ? sdMs[colHere] : NaNv;
 
         // Two states only: this alignment's own template, or -- on a
         // sub-template column whose file predates the per-slot section -- the
@@ -3080,23 +3146,35 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         // it is framed to the RIGHT edge, where it ends the QRS; below to the
         // LEFT, where it starts the JT. Same waveform in both -- differing
         // only in which side of the landmark is shown.
+        // No "--" here: the orange shading in the panel is the floor flag.
         const QString head = QString("%1%2  sd=%3")
-            .arg(labelFor(marker), tag, QString::number(sdMean, 'f', 5));
+            .arg(labelFor(marker), tag,
+                std::isfinite(sdMsAtBar)
+                ? QStringLiteral("%1 ms").arg(sdMsAtBar, 0, 'f', 1)
+                : QStringLiteral("--"));
         if (marker == BinPlotWidget::EcgSEnd) {
             setFocusSplit(true);
-            if (zoomed_in_section_top)
+            if (zoomed_in_section_top) {
                 zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere,
                     head + QStringLiteral("  (QRS)"), 100, -1);
-            if (zoomed_in_section_bottom)
+                zoomed_in_section_top->setSdMs(sdMs, floorMask);
+            }
+            if (zoomed_in_section_bottom) {
                 zoomed_in_section_bottom->setFocus(mean, sd, nBeats, colHere,
                     head + QStringLiteral("  (JT)"), 100, +1);
+                zoomed_in_section_bottom->setSdMs(sdMs, floorMask);
+            }
         }
         else {
             // One segment -> top third only.a
             setFocusSplit(false);
             if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
-            if (zoomed_in_section_top)
+            if (zoomed_in_section_top) {
                 zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head, 100, bias);
+                // AFTER setFocus: clearFocus wipes the mask, so setting it
+                // first would leave the panel with none.
+                zoomed_in_section_top->setSdMs(sdMs, floorMask);
+            }
         }
     }
 }
