@@ -226,9 +226,7 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
                 job->tmpl.bins[i].ecg_bank = vb[i].ecg_bank;
                 job->tmpl.bins[i].ppg_bank = vb[i].ppg_bank;
             }
-            const std::filesystem::path tp =
-                std::filesystem::path(cfg.template_path)
-                / (job->stem + "_templates.bin");
+            const std::filesystem::path tp = job->templatePath;
             try {
                 template_io::write_template_binfile(tp.string(), job->tmpl);
                 std::cerr << "  [templates] rewrote " << tp.string()

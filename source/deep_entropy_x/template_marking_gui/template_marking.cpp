@@ -61,9 +61,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    QStringList allFiles = templateDir.entryList({ "*_templates.bin" }, QDir::Files);
+    QStringList allFiles = templateDir.entryList({ "*_bins.bin" }, QDir::Files);
     if (allFiles.isEmpty()) {
-        std::cerr << "No *_templates.bin files in: "
+        std::cerr << "No *_bins.bin files in: "
             << templatePath.toStdString() << "\n";
         QStringList everything = templateDir.entryList(QDir::Files);
         if (!everything.isEmpty()) {

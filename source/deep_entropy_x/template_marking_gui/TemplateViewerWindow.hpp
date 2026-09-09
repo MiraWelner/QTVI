@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QEvent>
 #include <vector>
 #include <utility>
 #include <map>
@@ -206,6 +207,28 @@ private:
     bool m_forceAlign = false;
     AnchorType m_forcedAlign = AnchorType::R_PEAK;
     void wireAlignButtons();
+
+    // ---- ONE PLACE THAT CHANGES THE ALIGNMENT ---------------------------
+    //
+    // The radio buttons, the letter hotkeys and the Tab cycle all land here.
+    // Each of them used to carry its own copy of "set the two members, call
+    // showPage, then refreshFocus if a landmark is selected", which is three
+    // chances for one of them to forget the focus refresh.
+    void applyAlignmentSelection(bool force, AnchorType a);
+
+    // Advance the forced alignment one step round P -> Q -> R -> J -> P.
+    // Prefers checking the matching radio button, so the visible selection
+    // cannot drift from m_forcedAlign; falls back to applyAlignmentSelection
+    // when that button is not in the .ui.
+    void cycleAlignment(int step);
+
+    // Tab / Shift+Tab, filtered at the application level rather than bound as
+    // a QShortcut. Tab is consumed by focus navigation inside whichever child
+    // has focus -- a radio button, the page buttons -- so a window-context
+    // shortcut fires only some of the time depending on where the operator
+    // last clicked. The filter sees the key first, every time, and eats it so
+    // focus does not also move.
+    bool eventFilter(QObject* obj, QEvent* ev) override;
 
     // Last focus selection, so a button press redraws the same landmark
     // instead of waiting for the next click.

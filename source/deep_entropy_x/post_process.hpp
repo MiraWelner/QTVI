@@ -140,7 +140,7 @@ namespace post_process_detail {
         const std::filesystem::path noisePath = std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
         const std::filesystem::path annealedPath = std::filesystem::path(cfg.annealed_data_path) / (stem + "_annealed.bin");
         const std::filesystem::path rPeakPath = std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
-        const std::filesystem::path templatePath = std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
+        const std::filesystem::path templatePath = std::filesystem::path(cfg.template_path) / (stem + "_bins.bin");
 
         // ---- Step 1: Anneal (always -- freshness check removed) ----
         //
@@ -655,7 +655,6 @@ namespace post_process_detail {
                 job.tmpl.raw_anchors[kv.first] = std::move(kv.second);
             job.anchorAccum.clear();
 
-            template_io::write_template_binfile(job.templatePath.string(), job.tmpl);
             {
 
                 // ---- deferred QC over every anchor (R + the sequence) ----

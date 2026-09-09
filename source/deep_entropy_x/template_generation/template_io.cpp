@@ -90,19 +90,6 @@ namespace template_io {
         //   [int32 anchorTag][uint64 nBinsForAnchor] then, per bin, 3x
         //   ChannelMethodTemplate (ch1_raw, ch2_raw, ch3_raw) via writeMethod.
         //
-        // ONE FORMAT VERSION. This code has not shipped, so there are no files
-        // in the world written by an earlier layout and no reader that stops
-        // short of any section. Every section below is written unconditionally
-        // and must be read unconditionally.
-        //
-        // The section numbering that used to be here (v2..v6) described a
-        // migration history that never happened, and it did active harm: it
-        // justified soft `if (f.read(...))` guards on every count, which made a
-        // genuine DESYNC indistinguishable from "this file predates the
-        // section". The reader broke, the next section read garbage, and the
-        // failure surfaced as length_error("vector too long") from a vector
-        // constructor tens of kilobytes past the cause. Numbers are kept only
-        // as position labels, so writer and reader can be read side by side.
         {
             uint64_t nAnchors = data.raw_anchors.size();
             f.write(reinterpret_cast<const char*>(&nAnchors), 8);

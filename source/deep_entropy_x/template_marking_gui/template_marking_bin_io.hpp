@@ -243,12 +243,20 @@ struct TemplateBin {
         return static_cast<int>(a) * 4 + lead;
     }
 
-    // This slot's aligned average, or nullptr when the file has none -- a
-    // pre-v6 templates file, a bin the alignment skipped, or a slot with no
-    // members. Callers fall back to the slot's own unaligned average AND say so
-    // in the panel header: a header naming an alignment the data is not in is
-    // the defect this exists to fix, so silently falling back would reinstate
-    // it one level down.
+    // This slot's aligned average for one NON-R alignment, or nullptr. R is
+    // not in here: alignTemplatesFromCache accumulates only the re-aligned
+    // anchors, and a slot's R-aligned average is BankTemplate::tmpl.
+    //
+    // A null means a bin the alignment skipped, a slot with no members, or
+    // build_templates failing to write the average for an anchor it aligned.
+    // It does NOT mean an older file: there is one format version and every
+    // section is written unconditionally (see template_io.cpp).
+    //
+    // CALLERS MUST NOT FALL BACK to the slot's R-aligned average. A header
+    // naming an alignment the data is not in is the defect this exists to fix,
+    // and for a marker set the substitution is worse than cosmetic -- it puts
+    // an R-frame column under a non-R tag, which userMarks then translates out
+    // of a frame it was never in.
     const AnchoredBankSlot* bankSlotFor(int lead, int slot, AnchorType a) const
     {
         if (lead < 0 || lead > 2) return nullptr;
@@ -315,6 +323,18 @@ struct TemplateBin {
         return it->second[lead];
     }
 
+    // This alignment's glyphs, or nullptr when the file has none for it.
+    //
+    // FOR THE GLYPH PATH, which draws positions straight into this alignment's
+    // own columns with no frame shift. autoFor()'s flat-field fallback would
+    // hand it R's positions to draw on another alignment's waveform, off by
+    // r_col(anchor) - r_col(R). Nullptr means those glyphs are simply not
+    // drawn, which shows the gap instead of misplacing marks over it.
+    const AnchorAuto* autoForStrict(AnchorType a) const {
+        auto it = auto_by_anchor.find(static_cast<int>(a));
+        return (it != auto_by_anchor.end()) ? &it->second : nullptr;
+    }
+
     // This alignment's glyphs. Absent anchor -> the flat fields, which is not a
     // compatibility fallback: it is the STORAGE PATH. loadSubject's seeding
     // loop writes each pass's result into the flat fields and reads it back
@@ -379,55 +399,6 @@ struct TemplateBin {
         pull(anchor_view::kQBegin, &tbank::BankMarkerSet::q_onset);
         pull(anchor_view::kSEnd, &tbank::BankMarkerSet::s_end);
         pull(anchor_view::kTEnd, &tbank::BankMarkerSet::t_end);
-        return out;
-    }
-
-    // ---- THE GLYPH COUNTERPART OF userMarks() -----------------------------
-    //
-    // Same idea as userMarks(), but for the frozen auto-detect dot instead of
-    // the draggable bar: each landmark is read from ITS OWNING alignment via
-    // autoFor(), then frame-shifted into `frame`'s columns exactly the way
-    // userMarks() shifts the bar. Without this, a glyph reader that reaches
-    // into the flat *_auto_ch fields directly gets whatever alignment ran
-    // LAST in the seeding loop (R_PEAK) regardless of which alignment a given
-    // landmark actually belongs to -- so a T-end glyph would show R_PEAK's own
-    // T-end detection, unshifted, while the T-end bar correctly shows J_POINT's
-    // detection translated into R's frame. Two different measurements, not
-    // just two different rounding paths, and no additive shift reconciles
-    // them after the fact.
-    //
-    // NO ROUNDING ON THE WAY IN any more. AnchorAuto is double and so is
-    // BankMarkerSet, so the detector's sub-sample position survives the
-    // frame shift intact; the lround these lines used to do was the last
-    // place a glyph got quantised.
-    tbank::BankMarkerSet autoMarks(int lead, AnchorType frame = AnchorType::R_PEAK) const
-    {
-        tbank::BankMarkerSet out;   // all -1
-        // AnchorAuto stores each landmark as a double[3] (per lead), so this
-        // is spelled out per field rather than one generic lambda over a
-        // pointer-to-member -- you can't take a pointer-to-member to an
-        // array element the way userMarks() does for BankMarkerSet's scalar
-        // fields.
-        {
-            const AnchorType owner = anchor_view::anchorFor(anchor_view::kPBegin);
-            const double v = autoFor(owner).p_begin[lead];
-            if (v >= 0.0) out.p_begin = v + frameShift(lead, owner, frame);
-        }
-        {
-            const AnchorType owner = anchor_view::anchorFor(anchor_view::kQBegin);
-            const double v = autoFor(owner).q_onset[lead];
-            if (v >= 0.0) out.q_onset = v + frameShift(lead, owner, frame);
-        }
-        {
-            const AnchorType owner = anchor_view::anchorFor(anchor_view::kSEnd);
-            const double v = autoFor(owner).s_end[lead];
-            if (v >= 0.0) out.s_end = v + frameShift(lead, owner, frame);
-        }
-        {
-            const AnchorType owner = anchor_view::anchorFor(anchor_view::kTEnd);
-            const double v = autoFor(owner).t_end[lead];
-            if (v >= 0.0) out.t_end = v + frameShift(lead, owner, frame);
-        }
         return out;
     }
 
@@ -688,7 +659,7 @@ inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::Template
         dst.ppgTemplate = src.ppgTemplate;
         dst.ppg_template_iqr = src.ppg_template_iqr;
 
-        // Section 4.6 banks. Empty on a pre-v3 templates file, which is the
+        // Section 4.6 banks. Empty when no bank reached this bin, which is the
         // correct reading: one template per channel IS a bank of size one, and
         // slot 0 of an absent bank is the chN_raw template already copied
         // above.
@@ -727,10 +698,10 @@ inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::Template
             dst.anchored[kv.first] = std::move(trio);
         }
 
-        // Per-anchor BANK SLOT averages (v6 section). Absent on any file
-        // written before that section existed, in which case bankSlotFor
-        // returns nullptr and the sub-template panels keep their old,
-        // now-honestly-labelled behaviour.
+        // Per-anchor BANK SLOT averages. Absent for a bin the alignment
+        // skipped or a slot with no members, in which case bankSlotFor returns
+        // nullptr and the caller reports the gap rather than substituting the
+        // slot's R-aligned average.
         // NO LOCAL DECLARATIONS IN THIS LOOP, deliberately. Every earlier form
         // declared something whose type mentioned AnchoredBankSlot -- a local
         // vector, a reference to a map element -- and MSVC failed to parse the

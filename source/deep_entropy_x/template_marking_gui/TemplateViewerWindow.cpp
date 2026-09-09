@@ -19,6 +19,8 @@
 #include <cstdio>
 #include <QRadioButton>
 #include <QShortcut>
+#include <QKeyEvent>
+#include <QApplication>
 #include <QStatusBar>
 #include <cassert>
 #include <QStringList>
@@ -239,6 +241,10 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         const std::vector<double>* trace = nullptr;
         int nMembers = 0;
         uint8_t labelCode = tbank::kUnlabeled;
+        // Set when a sub-template has no per-slot average for the selected
+        // alignment and the R-aligned one is being drawn instead. Read by the
+        // label below, so the panel says so.
+        bool traceIsRFallback = false;
 
         const bool pulseThin = templateIdx < b.ppg_bank.size() && b.ppg_bank.templates[templateIdx].tooFewBeats(/*is_ppg=*/true); //is there fewer ppgs than the given limit
         if (!pulseThin
@@ -249,11 +255,57 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
                 || bank.templates[templateIdx].wantsLandmarkMarking())) {
             const tbank::BankTemplate& t = bank.templates[templateIdx];
             trace = &t.tmpl;
-            // This slot's own aligned average, when the file has one.
-            // t.tmpl is R-aligned and has no anchor dimension.
-            if (const AnchoredBankSlot* asl =
-                b.bankSlotFor(c, templateIdx, gridAnchor))
-                if (!asl->tmpl.empty()) trace = &asl->tmpl;
+            // ---- THIS SLOT'S OWN ALIGNED AVERAGE -------------------------
+            //
+            // t.tmpl is R-aligned and has no anchor dimension, so on any other
+            // alignment it is the wrong trace -- and leaving it in place is
+            // what makes a sub-template's waveform sit still while its
+            // fiducials move, the exact inverse of the slot-0 defect noted
+            // below.
+            //
+            // EMPTY IS NOT THE ONLY WAY TO BE ABSENT. bankSlotFor only tests
+            // tmpl.empty(), and alignTemplatesFromCache builds each slot's
+            // average by assigning W NaNs and then filling the columns it has
+            // members for -- so a slot whose `members` are empty, or whose
+            // member indices fall outside the aligned matrix, comes back
+            // correctly sized and entirely NaN. That passes bankSlotFor,
+            // reaches the widget, and draws nothing at all. Checked here for a
+            // finite sample instead.
+            const AnchoredBankSlot* asl =
+                b.bankSlotFor(c, templateIdx, gridAnchor);
+            bool anchoredOk = false;
+            if (asl) {
+                for (double v : asl->tmpl)
+                    if (!std::isnan(v)) { anchoredOk = true; break; }
+            }
+            if (anchoredOk) trace = &asl->tmpl;
+            else if (templateIdx != 0 && gridAnchor != AnchorType::R_PEAK) {
+                // SAID ON THE PANEL, not just on stderr. The trace being drawn
+                // is R-aligned while the alignment control says otherwise, and
+                // a header naming an alignment the data is not in is the one
+                // failure mode this whole area keeps reintroducing.
+                //
+                // The three states are distinguished because they have three
+                // different causes: no map entry means alignTemplatesFromCache
+                // never ran for this anchor; a short vector means it ran before
+                // the bank existed, so bnk.templates was empty and outSlots was
+                // sized 0; all-NaN means it ran with a bank whose `members` did
+                // not index the aligned matrix it was reducing.
+                const char* why = "?";
+                if (!asl) {
+                    const int key = static_cast<int>(gridAnchor) * 4 + c;
+                    auto it = b.anchored_bank.find(key);
+                    why = (it == b.anchored_bank.end()) ? "no-anchor-entry"
+                        : (static_cast<size_t>(templateIdx) >= it->second.size())
+                        ? "slot-out-of-range" : "empty-tmpl";
+                }
+                else why = "all-nan";
+                traceIsRFallback = true;
+                fprintf(stderr, "[bank-trace] bin %llu lead %d slot %d anchor %s:"
+                    " NO PER-SLOT ALIGNED AVERAGE (%s) -- drawing R-aligned\n",
+                    (unsigned long long)b.index, c, templateIdx,
+                    anchor_view::label(gridAnchor), why);
+            }
             // SLOT 0 HAS AN ANCHORED TEMPLATE EVEN WITHOUT A PER-SLOT ONE.
             // t.tmpl above is R-aligned, and bankSlotFor is null on files with
             // no per-slot anchored averages, so slot 0 kept drawing the
@@ -333,7 +385,12 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         // bin -- two counts of different things, one line, neither labelled
         // as to which. The name is now just the name; the count travels on
         // Lead::nMembers and the widget prints it as the ECG beat count.
-        const QString lbl = QString("%1 %2_%3").arg(kNames[c]).arg(cls).arg(letter);
+        QString lbl = QString("%1 %2_%3").arg(kNames[c]).arg(cls).arg(letter);
+        // The trace does not match the alignment control. Named on the panel
+        // because there is no way to tell an alignment that made no difference
+        // from one that was never written, and the operator is placing bars
+        // against whichever this is.
+        if (traceIsRFallback) lbl += QStringLiteral(" [R!]");
 
         out.push_back({ trace, c, lbl, nMembers });
     }
@@ -475,15 +532,6 @@ std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) 
         return false;
         };
 
-    // TEMPORARY. Which of the three non-configurable pulse tests refuses slot 0.
-    fprintf(stderr, "[slot0] bin %llu ppgbank=%d tmpl=%zu members=%d "
-        "binPpg=%d ppg_n_beats=%llu\n",
-        (unsigned long long)b.index,
-        (int)b.ppg_bank.size(),
-        b.ppg_bank.size() > 0 ? b.ppg_bank.templates[0].tmpl.size() : 0u,
-        b.ppg_bank.size() > 0 ? b.ppg_bank.templates[0].memberCount() : -1,
-        (int)!b.ppgTemplate.empty(),
-        (unsigned long long)b.ppg_n_beats);
     std::vector<int> eligible;
     // Slot 0 on a bank-less bin has no BankTemplate to measure, so there is
     // nothing to suppress and it keeps its column: the chN_raw template IS
@@ -1538,7 +1586,6 @@ void TemplateViewerWindow::showPage() {
         }
 
         m_binPlots[i] = std::move(group);
-        lap("  one bin's widgets");
     }
     lap("all bin widgets");
 
@@ -2116,21 +2163,73 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
     // alignments per slot there are now four chances to trip it, so the guard
     // matters more, not less.
     //
-    // All four are seeded from this slot's ONE R-aligned waveform: raw_anchors
-    // is per (bin, channel), not per (bin, channel, slot), so a sub-template
-    // has no aligned averages of its own to detect on, and its close-up falls
-    // back to the bin's alignment template via chFor. Per-slot alignments would
-    // mean teaching alignTemplatesFromCache to walk the banks -- a separate job.
+    // ---- THIS SLOT'S AVERAGE FOR ONE ALIGNMENT ---------------------------
+    //
+    // R is tp.tmpl: that is what an R-aligned slot average IS, and
+    // alignTemplatesFromCache does not accumulate R into bank_anchors -- only
+    // the re-aligned anchors go there. Every other alignment comes from
+    // bankSlotFor, and a null is a WRITER GAP, not a state to render.
+    //
+    // NO FALLBACK TO tp.tmpl FOR A NON-R ANCHOR. There is one format version
+    // and every section is written unconditionally (see template_io.cpp), so
+    // "the file predates this section" is not a case. Substituting the
+    // R-aligned average would put a bar in the R frame under a non-R tag, and
+    // userMarks would then translate it OUT of a frame it was never in --
+    // displacing it by r_col(R) - r_col(anchor), which is the defect this
+    // whole function is being fixed for.
     //
     // r_col comes from the template when it has one, otherwise from the bin's
     // channel: every beat in the bank was aligned on the same R column by
     // construction, so the bin's value is correct rather than a guess when the
-    // template's own field was never filled.
+    // template's own field was never filled. detect_template_landmarks refines
+    // it only locally -- symmetricExtremum is clamped to +/-7 samples and drops
+    // to a five-point parabola when the residual guard trips on a sharp R -- so
+    // this is not a rough hint, it is very nearly the answer, and it is the
+    // search origin every other finder brackets on.
+    const int rColR = (tp.r_col >= 0)
+        ? tp.r_col
+        : static_cast<int>(std::lround(b.r_peak_ch[channel]));
+
+    auto slotWaveform = [&](AnchorType a, const std::vector<double>*& w,
+        int& rc) -> bool {
+            if (a == AnchorType::R_PEAK) {
+                w = &tp.tmpl; rc = rColR;
+                return !tp.tmpl.empty() && rc >= 0;
+            }
+            const AnchoredBankSlot* asl = b.bankSlotFor(channel, templateIdx, a);
+            if (!asl || asl->tmpl.empty()) return false;
+            w = &asl->tmpl;
+            rc = b.chFor(channel, a).r_col_raw;
+            return rc >= 0;
+        };
+
     for (AnchorType a4 : anchor_view::kAllAnchors) {
         const int tag4 = static_cast<int>(a4);
         if (tp.hasDetectedMarks(tag4)) continue;
-        const int rc4 = (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel];
-        FeatureMarks::seed_bank_template(tp.tmpl, rc4, m_sampleRate, a4, tp.marks(tag4));
+
+        // THIS ANCHOR'S WAVEFORM AND THIS ANCHOR'S R COLUMN. Both used to be
+        // the R-frame ones on all four passes -- every bar measured on tp.tmpl
+        // and stored under its owner's tag -- so a sub-template's Q-onset bar
+        // came back from userMarks displaced by r_col(R) - r_col(Q).
+        //
+        // The per-slot anchored averages are row subsets of the bin's aligned
+        // matrix, so they share the bin's frame and the bin's per-anchor r_col
+        // is the right seed for them.
+        const std::vector<double>* w4 = nullptr;
+        int rc4 = -1;
+        if (!slotWaveform(a4, w4, rc4)) {
+            // Reported, not papered over: this is build_templates failing to
+            // write a per-slot average for an anchor it aligned. The bar stays
+            // absent, which is the same answer refreshFocus gives for the same
+            // gap.
+            fprintf(stderr, "[bank-seed] bin=%llu lead=%d slot=%d anchor=%s"
+                " NO PER-SLOT ALIGNED AVERAGE -- bar not seeded\n",
+                (unsigned long long)b.index, channel, templateIdx,
+                anchor_view::label(a4));
+            continue;
+        }
+        FeatureMarks::seed_bank_template(*w4, rc4, m_sampleRate, a4,
+            tp.marks(tag4));
     }
     // (no glyph sync: p_peak is derived at every read now -- see the
     //  reactive_ecg call in applyBankTemplateToWidget below.)
@@ -2183,10 +2282,52 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
     pw->setMarker(BinPlotWidget::EcgPPeak, reBank.p_peak);
     pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_onset);
-    pw->setMarker(BinPlotWidget::EcgRPeak,
-        (tp.r_col >= 0) ? tp.r_col : b.r_peak_ch[channel]);
+    pw->setMarker(BinPlotWidget::EcgRPeak, rColR);
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
+
+    // ---- THIS SLOT'S OWN GLYPHS, ON THE TRACE THIS PANEL DRAWS -----------
+    //
+    // applyBinToWidget above ended in setAuto(), which captured the BIN's
+    // detection: b.autoForStrict(frame), measured on the bin's anchored channel
+    // average. For a bank column that is the wrong waveform. Same argument
+    // overridePulseGlyphs already makes for the pulse marks, and it applies
+    // just as much to ECG -- the bin's R and the slot's R coincide under R
+    // alignment only, because every beat in the bank shares R's column by
+    // construction and nothing else. A slot holding a different morphology has
+    // a different landmark-to-R distance, so once the beats are shifted onto
+    // their own P / Q / J its R lands on a different column of the shared
+    // frame, and the bin's glyph does not follow it.
+    //
+    // MUST STAY LAST. setAuto() performs the capture; anything overriding it
+    // has to run afterwards or be overwritten by it.
+    {
+        const AnchorType frame4 = m_forceAlign ? m_forcedAlign : AnchorType::R_PEAK;
+        // The same selection leadsForBinTemplate made when it chose the trace
+        // for setData, so the glyphs land on the waveform on screen rather than
+        // on whichever one this function happens to hold a pointer to.
+        const std::vector<double>* w = nullptr;
+        int rSeed = -1;
+        BinPlotWidget::EcgGlyphColumns g;   // all -1
+        if (slotWaveform(frame4, w, rSeed)) {
+            const FeatureMarks::TemplateLandmarks lmS =
+                FeatureMarks::detect_template_landmarks(*w, rSeed, m_sampleRate);
+            if (lmS.valid) {
+                g.p_begin = lmS.p_begin;
+                g.q_onset = lmS.q_onset;
+                g.q_peak = lmS.q_peak;
+                g.q_onset_found = lmS.q_onset_found;
+                g.r_peak = lmS.r_peak;
+                g.s_end = lmS.s_end;
+                g.t_end = lmS.t_end;
+            }
+        }
+        // PUSHED EVEN WHEN EMPTY. An all -1 set draws no ECG glyphs, which is
+        // what captureGlyphSnapshot's own strict path does for a missing
+        // anchor: an empty panel is a writer gap to go fix, and it beats
+        // leaving the BIN's marks sitting on this slot's waveform.
+        pw->overrideEcgGlyphs(g);
+    }
 }
 
 void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin& b) {
@@ -2812,6 +2953,92 @@ void TemplateViewerWindow::setFocusSplit(bool split) {
     m_focusLay->setStretch(1, split ? 1 : 0);   // second panel
     m_focusLay->setStretch(2, split ? 1 : 2);   // trailing spacer absorbs the rest
 }
+// ---- ONE PLACE THAT CHANGES THE ALIGNMENT ---------------------------------
+//
+// showPage() because leadsForBinTemplate reads the same selection, so redrawing
+// the page swaps every panel's trace to this alignment's average; refreshFocus
+// because the close-up is keyed on the same choice and would otherwise sit on
+// the previous alignment until the next click.
+void TemplateViewerWindow::applyAlignmentSelection(bool force, AnchorType a) {
+    m_forceAlign = force;
+    m_forcedAlign = a;
+    showPage();
+    if (m_lastFocusMarker >= 0)
+        refreshFocus(m_lastFocusBinIdx, m_lastFocusLeadIdx,
+            m_lastFocusTemplateIdx, m_lastFocusMarker, m_lastFocusCol);
+}
+
+// P -> Q -> R -> J -> P. The ring is spelled out rather than taken from
+// anchor_view::kAllAnchors, which is in CSV-merge order (R, P, Q, J): that is
+// the order columns are written in and is not the order an operator wants to
+// walk a beat in. Changing one must not change the other.
+namespace {
+    constexpr std::array<AnchorType, 4> kAlignRing = {
+        AnchorType::P_ONSET,
+        AnchorType::Q_ONSET,
+        AnchorType::R_PEAK,
+        AnchorType::J_POINT,
+    };
+    const char* alignRingButton(AnchorType a) {
+        switch (a) {
+        case AnchorType::P_ONSET: return "p_align_button";
+        case AnchorType::Q_ONSET: return "q_align_button";
+        case AnchorType::R_PEAK:  return "r_align_button";
+        case AnchorType::J_POINT: return "j_point_align_button";
+        }
+        return "r_align_button";
+    }
+}
+
+void TemplateViewerWindow::cycleAlignment(int step) {
+    const int n = static_cast<int>(kAlignRing.size());
+
+    // Where the ring currently stands. Automatic is not ON the ring, so Tab out
+    // of it enters at P going forwards and at J going backwards, rather than
+    // silently treating automatic as R and skipping P.
+    int idx = -1;
+    if (m_forceAlign)
+        for (int k = 0; k < n; ++k)
+            if (kAlignRing[k] == m_forcedAlign) { idx = k; break; }
+
+    const int next = (idx < 0)
+        ? (step > 0 ? 0 : n - 1)
+        : ((idx + step) % n + n) % n;
+    const AnchorType a = kAlignRing[next];
+
+    // THROUGH THE BUTTON when there is one. Setting the members directly would
+    // leave the checked radio naming the previous alignment, and the operator
+    // would be reading a label that disagrees with the trace. The toggled
+    // handler calls applyAlignmentSelection for us.
+    if (QRadioButton* rb = findChild<QRadioButton*>(
+        QString::fromLatin1(alignRingButton(a)))) {
+        rb->setChecked(true);
+        return;
+    }
+    applyAlignmentSelection(true, a);
+}
+
+// Tab / Shift+Tab. Filtered on the application object rather than bound as a
+// QShortcut: Tab is consumed by focus navigation inside whichever child holds
+// focus, so a window-context shortcut fires only when focus happens to sit on
+// something that does not want Tab. Accepting the event here also stops focus
+// from moving as a side effect of changing alignment.
+bool TemplateViewerWindow::eventFilter(QObject* obj, QEvent* ev) {
+    if (ev->type() == QEvent::KeyPress && isActiveWindow()) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        // Backtab is what Qt delivers for Shift+Tab; Key_Tab with the Shift
+        // modifier arrives on some platforms, so both are tested.
+        const bool back = ke->key() == Qt::Key_Backtab
+            || (ke->key() == Qt::Key_Tab
+                && (ke->modifiers() & Qt::ShiftModifier));
+        if (ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab) {
+            cycleAlignment(back ? -1 : +1);
+            return true;   // eaten: no focus change
+        }
+    }
+    return QMainWindow::eventFilter(obj, ev);
+}
+
 // Radio group that pins the focus panel to one alignment.
 //
 // findChild rather than ui->r_align_button on purpose: a button that is not in
@@ -2833,19 +3060,14 @@ void TemplateViewerWindow::wireAlignButtons() {
         const AnchorType a = b.a;
         connect(rb, &QRadioButton::toggled, this, [this, force, a](bool on) {
             if (!on) return;                  // only the newly-checked one acts
-            m_forceAlign = force;
-            m_forcedAlign = a;
-            // The GRID as well as the focus panel: leadsForBinTemplate reads
-            // the same selection, so redrawing the page swaps every panel's
-            // trace to this alignment's average.
-            showPage();
-            if (m_lastFocusMarker >= 0)
-                refreshFocus(m_lastFocusBinIdx, m_lastFocusLeadIdx,
-                    m_lastFocusTemplateIdx, m_lastFocusMarker, m_lastFocusCol);
+            applyAlignmentSelection(force, a);
             });
         if (rb->isChecked()) { m_forceAlign = force; m_forcedAlign = a; }
     }
-    // Hotkeys: same mapping as the radio buttons above.
+    // Hotkeys: same mapping as the radio buttons above. These go through the
+    // BUTTON, not through applyAlignmentSelection, so the checked radio always
+    // names the alignment on screen -- pressing Q used to change the trace and
+    // leave the R radio checked.
     struct Key { const char* seq; const char* btn; bool force; AnchorType a; };
     static const Key kKeys[] = {
         { "A", "automatic_align_button", false, AnchorType::R_PEAK  },
@@ -2866,17 +3088,11 @@ void TemplateViewerWindow::wireAlignButtons() {
                 rb->setChecked(true);
                 return;
             }
-            m_forceAlign = force;
-            m_forcedAlign = a;
-            // The GRID as well as the focus panel: leadsForBinTemplate reads
-            // the same selection, so redrawing the page swaps every panel's
-            // trace to this alignment's average.
-            showPage();
-            if (m_lastFocusMarker >= 0)
-                refreshFocus(m_lastFocusBinIdx, m_lastFocusLeadIdx,
-                    m_lastFocusTemplateIdx, m_lastFocusMarker, m_lastFocusCol);
+            applyAlignmentSelection(force, a);
             });
     }
+    // TAB IS NOT A QShortcut. See eventFilter.
+    if (qApp) qApp->installEventFilter(this);
 }
 
 void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
@@ -3079,16 +3295,16 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         // and the same spread under every bar, while the header named whichever
         // alignment the bar belonged to.
         //
-        // Per-slot aligned averages now exist (v6 section, computed in
-        // alignTemplatesFromCache as a reduction over the beats it already
-        // aligns). nullptr means the templates file predates that section, in
-        // which case the header says so rather than naming an alignment the
-        // data is not in.
+        // Per-slot aligned averages are computed in alignTemplatesFromCache,
+        // as a reduction over the beats it already aligns.
+        //
         // NO FALLBACK. Showing the slot's R-aligned average under a header
         // naming another alignment is the defect this branch existed to
-        // label, and a label is not a fix. A null here means build_templates
-        // did not write the per-slot averages for this anchor, which is a
-        // writer bug to go and fix, not a state to render.
+        // label, and a label is not a fix. There is one format version and
+        // every section is written unconditionally (template_io.cpp), so a
+        // null here is not an old file -- it is build_templates failing to
+        // write the per-slot average for this anchor, which is a writer bug to
+        // go and fix, not a state to render.
         const AnchoredBankSlot* asl =
             b.bankSlotFor(leadIdx, templateIdx, focusAnchor);
         if (!asl) {

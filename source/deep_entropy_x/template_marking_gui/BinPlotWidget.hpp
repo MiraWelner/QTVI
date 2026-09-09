@@ -272,6 +272,24 @@ public:
     QSize minimumSizeHint() const override { return QSize(40, 60); }
     void overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm);
 
+    // Replace the BIN's ECG glyphs with columns measured on THIS panel's own
+    // waveform. Counterpart to overridePulseGlyphs, and needed for exactly the
+    // same reason: captureGlyphSnapshot reads the bin's *_auto_ch fields, which
+    // describe the bin's anchored channel average, and a bank slot draws its
+    // own. The two coincide under R alignment -- every beat in the bank has R
+    // on one column by construction -- and under nothing else.
+    //
+    // A POD rather than FeatureMarks::TemplateLandmarks: this header is
+    // included by every panel and pulling feature_marks.hpp in would drag
+    // template_bank.hpp and annotation_types.hpp along with it. The caller
+    // already holds the detector result and does the conversion.
+    struct EcgGlyphColumns {
+        double p_begin = -1.0, q_onset = -1.0, q_peak = -1.0,
+            r_peak = -1.0, s_end = -1.0, t_end = -1.0;
+        bool q_onset_found = false;
+    };
+    void overrideEcgGlyphs(const EcgGlyphColumns& g);
+
 
 signals:
     void markerMoved(int binIndex, int leadIndex, int marker, int newIdx);

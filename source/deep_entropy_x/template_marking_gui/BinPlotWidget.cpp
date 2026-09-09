@@ -1102,30 +1102,42 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b,
             return (v >= 0.0 && v <= static_cast<double>(N - 1)) ? v : -1.0;
             };
         auto froz = frozen;
-        // Each frozen glyph is read from its OWNING alignment and shifted into
-        // this widget's R frame, exactly the way userMarks() assembles the
-        // bars -- so the glyph and the bar for a landmark are the same
-        // measurement translated the same way. The flat *_auto_ch fields hold
-        // only whatever alignment ran LAST in loadSubject's seeding loop
-        // (R_PEAK), so reading them directly put the T-end glyph at R's T-end
-        // while its bar sat at J's, shifted -- two different positions.
-        // FRAME, not R: autoMarks pulls each landmark from its owning
-        // alignment and shifts it into the frame asked for, so passing the
-        // alignment this panel is drawing puts the glyphs on the waveform
-        // under them. Defaulted to R, so every caller that does not care is
-        // unaffected.
-        const tbank::BankMarkerSet am = b.autoMarks(c, frame);
-        m_glyphs.ecgPBegin = froz((double)am.p_begin);
-        // (no ecgPPeak: the P peak is REACTIVE, bracketed by the P-onset and
-        //  Q-onset bars -- see reactiveGlyphs. The onset it brackets on is now
-        //  refit from the re-measured peak in detect_template_landmarks, so the
-        //  bracket actually contains the P wave.)
-        m_glyphs.ecgQ = froz((double)am.q_onset);
-        m_glyphs.ecgQFound = b.q_onset_found_auto_ch[c];
-        m_glyphs.ecgS = froz((double)am.s_end);
-        m_glyphs.ecgQPeak = froz(b.q_peak_auto_ch[c]);
-        m_glyphs.ecgTend = froz((double)am.t_end);
-        m_glyphs.ecgRPeak = frozen(m_markers[EcgRPeak]);
+        // ---- ONE SOURCE, NO FRAME SHIFTS -------------------------------
+        //
+        // Every glyph is the DISPLAYED alignment's own detection, read from
+        // its AnchorAuto. Nothing is translated, so nothing can be off by a
+        // frame error -- which a three-way split here was: four fields came
+        // from each landmark's owning alignment frame-shifted into this one,
+        // q_peak and q_onset_found came from the flat R fields unshifted, and
+        // R came from m_markers. Only under R alignment did the three agree.
+        //
+        // The BARS still translate, and must: an operator's mark is one
+        // stored value in one frame (see userMarks). A glyph is a
+        // measurement every alignment makes for itself, so the one belonging
+        // to the waveform on screen is the one to draw.
+        // STRICT: no glyphs at all rather than R's positions on another
+        // alignment's waveform. An empty panel is a writer gap to go fix.
+        if (const TemplateBin::AnchorAuto* aaP = b.autoForStrict(frame)) {
+            const TemplateBin::AnchorAuto& aa = *aaP;
+            m_glyphs.ecgPBegin = froz(aa.p_begin[c]);
+            // (no ecgPPeak: the P peak is REACTIVE, bracketed by the P-onset
+            //  and Q-onset bars -- see reactiveGlyphs. The onset it brackets
+            //  on is refit from the re-measured peak in
+            //  detect_template_landmarks, so the bracket contains the P wave.)
+            m_glyphs.ecgQ = froz(aa.q_onset[c]);
+            m_glyphs.ecgQFound = aa.q_onset_found[c];
+            // Q PEAK ONLY WHEN Q ONSET WAS FITTED. The peak is measured
+            // inside the QRS off the onset, so an unfitted onset gives it a
+            // fallback bracket -- a position, but not a measurement. The
+            // onset itself still draws, as a circle, which says exactly that;
+            // the peak has no found flag of its own to say it with, so it is
+            // not drawn at all.
+            m_glyphs.ecgQPeak = m_glyphs.ecgQFound
+                ? froz(aa.q_peak[c]) : -1.0;
+            m_glyphs.ecgRPeak = froz(aa.r_peak[c]);
+            m_glyphs.ecgS = froz(aa.s_end[c]);
+            m_glyphs.ecgTend = froz(aa.t_end[c]);
+        }
     }
 
     if (m_hasPPG && (int)m_ppg.size() >= 3) {
@@ -1171,6 +1183,30 @@ void BinPlotWidget::overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm) {
     m_glyphs.ppgDic = froz(pm.dicrotic_auto);  m_glyphs.ppgNotchFound = pm.notch_found;
     m_glyphs.ppgP2 = froz(pm.peak2_auto);
     m_glyphs.ppgEnd = froz(pm.end_auto);
+    update();
+}
+
+// Replace the BIN's ECG glyphs with this panel's own. Bounds-checked against
+// m_ecg -- the trace actually drawn -- so a column past the end of a short slot
+// template is dropped rather than pinned to the edge. Called AFTER
+// captureGlyphSnapshot, which is what setAuto() performs.
+void BinPlotWidget::overrideEcgGlyphs(const EcgGlyphColumns& g) {
+    if ((int)m_ecg.size() < 3) return;
+    const int N = (int)m_ecg.size();
+    auto froz = [&](double v) {
+        return (v >= 0.0 && v <= (double)(N - 1)) ? v : -1.0;
+        };
+    m_glyphs.ecgPBegin = froz(g.p_begin);
+    m_glyphs.ecgQ = froz(g.q_onset);
+    m_glyphs.ecgQFound = g.q_onset_found;
+    // SAME GATE captureGlyphSnapshot applies. The Q peak is measured inside
+    // the QRS off the onset, so an unfitted onset gives it a fallback bracket
+    // -- a position, not a measurement -- and it is not drawn at all. The onset
+    // itself still draws, hollow, which says that much on its own.
+    m_glyphs.ecgQPeak = g.q_onset_found ? froz(g.q_peak) : -1.0;
+    m_glyphs.ecgRPeak = froz(g.r_peak);
+    m_glyphs.ecgS = froz(g.s_end);
+    m_glyphs.ecgTend = froz(g.t_end);
     update();
 }
 
