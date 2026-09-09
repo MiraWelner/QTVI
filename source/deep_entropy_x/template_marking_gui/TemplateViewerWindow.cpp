@@ -224,8 +224,27 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
     std::vector<Lead> out;
     static const char* kNames[3] = { "Ch1", "Ch2", "Ch3" };
 
+    // WHICH ALIGNMENT THE GRID DRAWS. The panels used to be R-aligned always,
+    // so pressing P/Q/J switched the focus panel's waveform while the grid
+    // behind it kept showing the R-aligned average. Same selection now drives
+    // both. Automatic (m_forceAlign false) keeps the R-aligned grid, which is
+    // the frame the marker bars live in.
+    const AnchorType gridAnchor = m_forceAlign ? m_forcedAlign : AnchorType::R_PEAK;
+
     for (int c = 0; c < 3; ++c) {
         const tbank::TemplateBank& bank = b.ecg_bank[c];
+
+        // DIAGNOSTIC. chFor falls back to the R-aligned channel when the
+        // requested anchor is not in the file, silently, which is
+        // indistinguishable on screen from an alignment that made no
+        // difference. This says which it is: strict=NULL means the section is
+        // absent and the grid cannot show anything but R; strict=yes with an
+        // r_col that moves as P/Q/R/J are pressed means the swap is working.
+        fprintf(stderr, "[grid] ch%d anchor=%s strict=%s r_col=%d slot=%d\n",
+            c, anchor_view::label(gridAnchor),
+            b.chForStrict(c, gridAnchor) ? "yes" : "NULL (falls back to R)",
+            b.chFor(c, gridAnchor).r_col_raw,
+            b.bankSlotFor(c, templateIdx, gridAnchor) ? 1 : 0);
 
         // Slot 0 falls back to the chN_raw template when no bank reached this
         // bin, so a pre-bank file renders exactly as it always did.
@@ -242,6 +261,11 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
                 || bank.templates[templateIdx].wantsLandmarkMarking())) {
             const tbank::BankTemplate& t = bank.templates[templateIdx];
             trace = &t.tmpl;
+            // This slot's own aligned average, when the file has one.
+            // t.tmpl is R-aligned and has no anchor dimension.
+            if (const AnchoredBankSlot* asl =
+                b.bankSlotFor(c, templateIdx, gridAnchor))
+                if (!asl->tmpl.empty()) trace = &asl->tmpl;
             nMembers = t.memberCount();
             labelCode = t.label_code;
             // subtype is no longer read here: tbank::letterRanks applies the
@@ -262,9 +286,7 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             // pulseThin carries min_beats_template_ppg from config.csv via
             // tooFewBeats(), and is false when the bin has no pulse cohort at
             // all -- an ABSENT channel, which must not suppress markable ECG.
-            const std::vector<double>* raw =
-                (c == 0) ? &b.ch1.ecgTemplate_raw
-                : (c == 1) ? &b.ch2.ecgTemplate_raw : &b.ch3.ecgTemplate_raw;
+            const std::vector<double>* raw = &b.chFor(c, gridAnchor).ecgTemplate_raw;
             if (raw->empty()) continue;
             trace = raw;
         }
@@ -2796,6 +2818,10 @@ void TemplateViewerWindow::wireAlignButtons() {
             if (!on) return;                  // only the newly-checked one acts
             m_forceAlign = force;
             m_forcedAlign = a;
+            // The GRID as well as the focus panel: leadsForBinTemplate reads
+            // the same selection, so redrawing the page swaps every panel's
+            // trace to this alignment's average.
+            showPage();
             if (m_lastFocusMarker >= 0)
                 refreshFocus(m_lastFocusBinIdx, m_lastFocusLeadIdx,
                     m_lastFocusTemplateIdx, m_lastFocusMarker, m_lastFocusCol);
@@ -2825,6 +2851,10 @@ void TemplateViewerWindow::wireAlignButtons() {
             }
             m_forceAlign = force;
             m_forcedAlign = a;
+            // The GRID as well as the focus panel: leadsForBinTemplate reads
+            // the same selection, so redrawing the page swaps every panel's
+            // trace to this alignment's average.
+            showPage();
             if (m_lastFocusMarker >= 0)
                 refreshFocus(m_lastFocusBinIdx, m_lastFocusLeadIdx,
                     m_lastFocusTemplateIdx, m_lastFocusMarker, m_lastFocusCol);
