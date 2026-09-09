@@ -286,18 +286,41 @@ struct TemplateBin {
         return &it->second[lead];
     }
 
+    // NO FALLBACK TO R. This used to return the R-aligned channel whenever the
+    // requested anchor was absent or empty, which is indistinguishable on
+    // screen from an alignment that made no difference -- a whole session can
+    // be spent looking at R while the header names P. There is no
+    // backward-compatibility case to serve: every templates file is written by
+    // the current writer, so this no longer hides a missing anchor behind R.
+    //
+    // MISSING OR EMPTY RETURNS AN EMPTY CHANNEL, NOT R. Every caller already
+    // tests ecgTemplate_raw.empty() and skips, so an absent anchor or an absent
+    // lead renders as nothing -- visibly wrong, and traceable to this bin --
+    // instead of quietly rendering R under a header naming another alignment.
+    //
+    // NOT A THROW. A single-lead record leaves ch2/ch3 empty in every anchor
+    // and a bin the alignment skipped has no key at all; both are normal, and
+    // throwing from here fail-fasts inside the Qt slot painting the grid
+    // (0xC0000409) rather than reporting anything.
+    //
+    // R_PEAK reads ch1/ch2/ch3 because that IS where R is stored, not as a
+    // fallback.
     const ChannelTemplateData& chFor(int lead, AnchorType a) const {
+        static const ChannelTemplateData kEmpty{};
         const ChannelTemplateData* base[3] = { &ch1, &ch2, &ch3 };
-        if (lead < 0 || lead > 2) return ch1;
+        if (lead < 0 || lead > 2) return kEmpty;
         if (a == AnchorType::R_PEAK) return *base[lead];
         auto it = anchored.find(static_cast<int>(a));
-        if (it == anchored.end()) return *base[lead];
-        const ChannelTemplateData& c = it->second[lead];
-        return c.ecgTemplate_raw.empty() ? *base[lead] : c;
+        if (it == anchored.end()) return kEmpty;
+        return it->second[lead];
     }
 
-    // This alignment's glyphs. Absent anchor -> the flat (R) fields, which is
-    // also how loadSubject captures each pass's result on the way past.
+    // This alignment's glyphs. Absent anchor -> the flat fields, which is not a
+    // compatibility fallback: it is the STORAGE PATH. loadSubject's seeding
+    // loop writes each pass's result into the flat fields and reads it back
+    // through here on the way past, so auto_by_anchor is legitimately empty
+    // while that loop runs. Throwing here fail-fasts on the first glyph
+    // snapshot of the first panel.
     AnchorAuto autoFor(AnchorType a) const {
         auto it = auto_by_anchor.find(static_cast<int>(a));
         if (it != auto_by_anchor.end()) return it->second;

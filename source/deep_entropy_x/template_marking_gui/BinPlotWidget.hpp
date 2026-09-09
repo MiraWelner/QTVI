@@ -196,7 +196,15 @@ public:
     // Recaptures the frozen glyph snapshot and repaints. Call this LAST in a
     // seeding pass (see applyBinToWidget): m_glyphs.ecgRPeak reads the R bar,
     // which must already be set.
-    void setAuto(const TemplateBin& b) { captureGlyphSnapshot(b); update(); }
+    // frame = the alignment whose waveform this panel is drawing. The FROZEN
+    // glyphs are re-expressed in it, because each landmark is detected once
+    // per alignment and the positions differ; the draggable BARS are not, and
+    // stay in the R frame where they are stored and edited.
+    void setAuto(const TemplateBin& b,
+        AnchorType frame = AnchorType::R_PEAK) {
+        captureGlyphSnapshot(b, frame);
+        update();
+    }
 
     // Reactive glyphs: pure functions of the CURRENT bar positions, computed
     // on demand at paint time and never stored. T-peak therefore tracks
@@ -252,8 +260,6 @@ public:
     // on a different axis -- and it is set from the plot-construction path,
     // which runs BEFORE applyBinToWidget(), so sharing the member would mean
     // whichever wrote last silently erased the other.
-    void setBankTraces(const std::vector<std::pair<std::vector<double>, QColor>>& traces);
-    std::vector<std::pair<std::vector<double>, QColor>> m_bankTraces;
 
     int  binIndex()  const { return m_binIndex; }
     int  leadIndex() const { return m_leadIndex; }
@@ -427,7 +433,8 @@ private:
     GlyphSnapshot m_glyphs;
 
     // Compute the glyph snapshot from current trace + marker state.
-    void captureGlyphSnapshot(const TemplateBin& b);
+    void captureGlyphSnapshot(const TemplateBin& b,
+        AnchorType frame = AnchorType::R_PEAK);
 
     // Arterial trace vectors (own sample space; drawn foot-anchored at the
     // PPG origin). Empty when the channel is absent.

@@ -609,12 +609,6 @@ void BinPlotWidget::setBackgroundTraces(
     m_bgTraces = traces;
 }
 
-void BinPlotWidget::setBankTraces(
-    const std::vector<std::pair<std::vector<double>, QColor>>& traces) {
-    m_bankTraces = traces;
-    update();   // repaint now; otherwise the overlay waits for an unrelated one
-}
-
 // Resolve a marker to its channel, trace, and group visibility.
 //
 // No visible-sample bound and no rate ratio: both existed only because the
@@ -912,22 +906,6 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         draw_iqr_band(p, m_ecg, m_ecgIqr, x0, margin_top, ph, dx, n,
             yLo, yHi, color_iqrband_ecg);
 
-        // ---- Section 4.6 bank overlay ----------------------------------
-        // Every template in this bin's bank beyond slot 0, drawn UNDER the
-        // sinus trace on the same axis and the same scale. They share slot 0's
-        // geometry legitimately: alignment puts every beat's detected R at the
-        // same column regardless of morphology, so x0/dx need no adjustment.
-        //
-        // Dashed and thinner so slot 0 still reads as the primary trace. No
-        // label is drawn: an unconfirmed template must not display a class,
-        // because showing a guessed one would be the display making the very
-        // judgment the operator is being asked to make.
-        for (const auto& bg : m_bankTraces) {
-            if (static_cast<int>(bg.first.size()) < 3) continue;
-            draw_trace_fixed_scale(p, bg.first, x0, margin_top, ph, dx,
-                QPen(with_trace_alpha(bg.second), 1.1, Qt::DashLine),
-                static_cast<int>(bg.first.size()), yLo, yHi);
-        }
         draw_trace_fixed_scale(p, m_ecg, x0, margin_top, ph, dx,
             QPen(with_trace_alpha(ecg_trace_color), 1.5), n, yLo, yHi);
     }
@@ -1107,7 +1085,8 @@ void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
     m_dragMarker = -1;
 }
 
-void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
+void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b,
+    AnchorType frame) {
     m_glyphs = GlyphSnapshot{};
     const int c = m_leadIndex;
 
@@ -1130,7 +1109,12 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b) {
         // only whatever alignment ran LAST in loadSubject's seeding loop
         // (R_PEAK), so reading them directly put the T-end glyph at R's T-end
         // while its bar sat at J's, shifted -- two different positions.
-        const tbank::BankMarkerSet am = b.autoMarks(c);
+        // FRAME, not R: autoMarks pulls each landmark from its owning
+        // alignment and shifts it into the frame asked for, so passing the
+        // alignment this panel is drawing puts the glyphs on the waveform
+        // under them. Defaulted to R, so every caller that does not care is
+        // unaffected.
+        const tbank::BankMarkerSet am = b.autoMarks(c, frame);
         m_glyphs.ecgPBegin = froz((double)am.p_begin);
         // (no ecgPPeak: the P peak is REACTIVE, bracketed by the P-onset and
         //  Q-onset bars -- see reactiveGlyphs. The onset it brackets on is now

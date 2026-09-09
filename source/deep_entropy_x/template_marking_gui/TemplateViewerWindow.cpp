@@ -234,18 +234,6 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
     for (int c = 0; c < 3; ++c) {
         const tbank::TemplateBank& bank = b.ecg_bank[c];
 
-        // DIAGNOSTIC. chFor falls back to the R-aligned channel when the
-        // requested anchor is not in the file, silently, which is
-        // indistinguishable on screen from an alignment that made no
-        // difference. This says which it is: strict=NULL means the section is
-        // absent and the grid cannot show anything but R; strict=yes with an
-        // r_col that moves as P/Q/R/J are pressed means the swap is working.
-        fprintf(stderr, "[grid] ch%d anchor=%s strict=%s r_col=%d slot=%d\n",
-            c, anchor_view::label(gridAnchor),
-            b.chForStrict(c, gridAnchor) ? "yes" : "NULL (falls back to R)",
-            b.chFor(c, gridAnchor).r_col_raw,
-            b.bankSlotFor(c, templateIdx, gridAnchor) ? 1 : 0);
-
         // Slot 0 falls back to the chN_raw template when no bank reached this
         // bin, so a pre-bank file renders exactly as it always did.
         const std::vector<double>* trace = nullptr;
@@ -266,6 +254,18 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             if (const AnchoredBankSlot* asl =
                 b.bankSlotFor(c, templateIdx, gridAnchor))
                 if (!asl->tmpl.empty()) trace = &asl->tmpl;
+            // SLOT 0 HAS AN ANCHORED TEMPLATE EVEN WITHOUT A PER-SLOT ONE.
+            // t.tmpl above is R-aligned, and bankSlotFor is null on files with
+            // no per-slot anchored averages, so slot 0 kept drawing the
+            // R-aligned waveform while its glyphs moved with the alignment --
+            // the fiducials shifting on a trace that never did. The bin's own
+            // per-anchor channel template is the same waveform slot 0 is, so
+            // it is the right source here.
+            if (templateIdx == 0) {
+                const std::vector<double>& anchored =
+                    b.chFor(c, gridAnchor).ecgTemplate_raw;
+                if (!anchored.empty()) trace = &anchored;
+            }
             nMembers = t.memberCount();
             labelCode = t.label_code;
             // subtype is no longer read here: tbank::letterRanks applies the
@@ -1261,6 +1261,13 @@ void TemplateViewerWindow::showPage() {
             const auto& ppg = hasPPG ? ppgSlot->tmpl : empty;
 
             int lead_index = leads[li].channelIndex;
+            // The panel's x origin: the bin's R column, the SAME for every
+            // alignment. Deriving it from the selected anchor instead moved the
+            // axis rather than the waveform -- x=0 landed on that anchor's R
+            // column, so the frame slid under a trace that had not changed
+            // position, and two alignments could not be compared against a
+            // common axis. The traces differ because the per-anchor averages
+            // differ; the frame they are drawn in should not.
             const double rPeak = static_cast<double>(b.r_peak_ch[lead_index]);
 
             const std::vector<double>& ecgIqrRaw = (lead_index == 0) ? b.ch1.ecg_template_raw_iqr
@@ -2203,7 +2210,14 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
     pw->setMarker(BinPlotWidget::EcgPPeak, reBin.p_peak);   // glyph, not a bar
     pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_onset);
-    pw->setMarker(BinPlotWidget::EcgRPeak, b.r_peak_ch[c]);   // auto-only, no bar drawn
+    // R's column in the frame being displayed. Each anchor's template has its
+    // own R column -- that is what r_col_raw is, and what frameShift is built
+    // out of -- so this is the position of R on the waveform the panel is
+    // actually drawing. b.r_peak_ch[c] is the flat column with no anchor
+    // dimension, which pinned R to one place while the other four fiducials
+    // moved.
+    pw->setMarker(BinPlotWidget::EcgRPeak,
+        b.chFor(c, m_forceAlign ? m_forcedAlign : AnchorType::R_PEAK).r_col_raw);
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
 
@@ -2232,7 +2246,10 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     pw->setMarker(BinPlotWidget::ArtPulmDicrotic, b.art_pulm_dicrotic);
     pw->setMarker(BinPlotWidget::ArtPulmPeak2, b.art_pulm_peak2);
     pw->setMarker(BinPlotWidget::ArtPulmEnd, b.art_pulm_end);
-    pw->setAuto(b);   // last: captures the glyph snapshot and repaints
+    // Glyphs in the frame of the alignment the grid is drawing; the bars
+    // above stay R-framed. Both are deliberate: the fiducials are recomputed
+    // per alignment, the operator's marks are not.
+    pw->setAuto(b, m_forceAlign ? m_forcedAlign : AnchorType::R_PEAK);
 }
 
 void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
@@ -3036,10 +3053,6 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // worse than none.
     const std::vector<double>* meanRawEcg = &ch.ecgTemplate_raw;
     const std::vector<double>* sdRawEcg = &ch.ecg_template_raw_iqr;
-    // Set when a sub-template panel had to fall back to the slot's own
-    // unaligned average; changes the header so it cannot claim an alignment
-    // the data is not in.
-    bool slotUnaligned = false;
     const uint64_t nb[3] = { b.ch1_n_beats_raw, b.ch2_n_beats_raw, b.ch3_n_beats_raw };
     int nBeats = static_cast<int>(nb[leadIdx]);
     if (templateIdx > 0) {
@@ -3071,14 +3084,25 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         // aligns). nullptr means the templates file predates that section, in
         // which case the header says so rather than naming an alignment the
         // data is not in.
-        if (const AnchoredBankSlot* asl =
-            b.bankSlotFor(leadIdx, templateIdx, focusAnchor)) {
-            meanRawEcg = &asl->tmpl;
-            sdRawEcg = &asl->tmpl_iqr;
+        // NO FALLBACK. Showing the slot's R-aligned average under a header
+        // naming another alignment is the defect this branch existed to
+        // label, and a label is not a fix. A null here means build_templates
+        // did not write the per-slot averages for this anchor, which is a
+        // writer bug to go and fix, not a state to render.
+        const AnchoredBankSlot* asl =
+            b.bankSlotFor(leadIdx, templateIdx, focusAnchor);
+        if (!asl) {
+            setFocusSplit(false);
+            if (zoomed_in_section_top) zoomed_in_section_top->clearFocus();
+            if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
+            fprintf(stderr, "[focus] bin=%d lead=%d slot=%d anchor=%s"
+                " NO PER-SLOT ALIGNED AVERAGE -- build_templates did not write"
+                " it\n", binIdx, leadIdx, templateIdx,
+                anchor_view::label(focusAnchor));
+            return;
         }
-        else {
-            slotUnaligned = true;
-        }
+        meanRawEcg = &asl->tmpl;
+        sdRawEcg = &asl->tmpl_iqr;
     }
     const std::vector<double> mean = normalize_features::scale_array_by_ref(*meanRawEcg, eref);
     const std::vector<double> sd = normalize_features::scale_array_by_ref(*sdRawEcg, eref);
@@ -3166,9 +3190,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         // slot's unaligned average, said plainly. chForStrict has already
         // returned early if the alignment itself is absent, so the label can
         // never name an alignment the data is not in.
-        const QString tag = slotUnaligned
-            ? QStringLiteral(" [slot avg, NOT aligned]")
-            : QStringLiteral(" [%1-aligned]")
+        const QString tag = QStringLiteral(" [%1-aligned]")
             .arg(QString::fromLatin1(anchor_view::label(focusAnchor)));
 
         // THE J POINT GETS BOTH PANELS. It is the one landmark bounding two

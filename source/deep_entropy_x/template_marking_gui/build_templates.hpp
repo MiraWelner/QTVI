@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <atomic>
+#include <string>   // noise_bin_path
 
 #include "template_io.hpp"
 #include "template_generation/make_averaged_templates.hpp"
@@ -215,12 +216,23 @@ struct FastTemplateBuild {
 // until mergeTemplatesSlow runs.
 inline FastTemplateBuild
 buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
-    const SignalRates& rates)
+    const SignalRates& rates,
+    // <stem>_noise.bin from the noise-marking stage. Section 4.6 partitions
+    // the morphology bank by OPERATOR CLASS before any clustering, so the
+    // classes are an input to generation rather than an annotation applied
+    // afterwards -- and nothing read that file, which is why
+    // BinBankInput::mark_code was always empty and the partition always
+    // collapsed to one.
+    //
+    // DEFAULTED EMPTY so existing callers compile and behave exactly as
+    // before: no path means no classes, every slice reads kUnlabeled, one
+    // partition.
+    const std::string& noise_bin_path = {})
 {
     using namespace template_generation_detail;
 
     FastTemplateBuild out;
-    out.info = GenerateTemplatesFast(peakResults, rates);
+    out.info = GenerateTemplatesFast(peakResults, rates, noise_bin_path);
 
     out.tmpl.bins.resize(peakResults.size());
     for (size_t i = 0; i < peakResults.size(); ++i) {
@@ -519,7 +531,14 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
                     absScalar.ecgTemplate = std::move(absTmpl);
                     absScalar.r_col = alignedRcol;
 
-                    perBin[i] = std::move(q.beats);
+                    // COPY, NOT MOVE. The per-slot averaging block below
+                    // reads q.beats, and moving it out left that block's
+                    // `if (!q.beats.empty())` guard false -- so slotStore
+                    // was never filled, bank_anchors carried empty
+                    // vectors, and bankSlotFor returned nullptr for every
+                    // slot. The matrix is one bin's aligned beats; the
+                    // copy is cheaper than losing every per-slot average.
+                    perBin[i] = q.beats;
                 }
             }
 
@@ -622,9 +641,11 @@ inline void mergeTemplatesSlow(const std::vector<output_binfile_data>& peakResul
 
 inline std::pair<template_io::TemplateFile, template_io::BeatsFile>
 buildTemplatesAndBeatsFromPeakResults(const std::vector<output_binfile_data>& peakResults,
-    const SignalRates& rates)
+    const SignalRates& rates,
+    const std::string& noise_bin_path = {})
 {
-    FastTemplateBuild fast = buildTemplatesAndBeatsFast(peakResults, rates);
+    FastTemplateBuild fast =
+        buildTemplatesAndBeatsFast(peakResults, rates, noise_bin_path);
     mergeTemplatesSlow(peakResults, fast.tmpl, fast.info, rates);
     return { std::move(fast.tmpl), std::move(fast.beats) };
 }
