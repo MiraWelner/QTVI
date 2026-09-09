@@ -97,7 +97,7 @@ namespace post_process_detail {
         std::string fileID;
         double samplingRate = 0.0;   // ECG rate (used by non-template callers below)
         SignalRates rates;           // full per-channel rate set for template pipeline
-        std::filesystem::path rPeakPath, templatePath, beatsPath;
+        std::filesystem::path rPeakPath, binsPath, beatsPath;
         std::filesystem::path annealedPath;   // for reloading peakResults on the Q-align pass
         // qAlignPath IS GONE. Declared, never assigned, never read -- the last
         // trace of the two-pass Q-align design the four-alignment window
@@ -140,7 +140,7 @@ namespace post_process_detail {
         const std::filesystem::path noisePath = std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
         const std::filesystem::path annealedPath = std::filesystem::path(cfg.annealed_data_path) / (stem + "_annealed.bin");
         const std::filesystem::path rPeakPath = std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
-        const std::filesystem::path templatePath = std::filesystem::path(cfg.template_path) / (stem + "_bins.bin");
+        const std::filesystem::path binsPath = std::filesystem::path(cfg.template_path) / (stem + "_bins.bin");
 
         // ---- Step 1: Anneal (always -- freshness check removed) ----
         //
@@ -177,7 +177,7 @@ namespace post_process_detail {
         job.ecg2_inverted = ecg2_inverted;
         job.ecg3_inverted = ecg3_inverted;
         job.rPeakPath = rPeakPath;
-        job.templatePath = templatePath;
+        job.binsPath = binsPath;
         job.annealedPath = annealedPath;
 
         AnnealedData annealedData = read_input_binfile(annealedPath.string());
@@ -325,66 +325,10 @@ namespace post_process_detail {
         std::cerr << "  Processing Raw Templates (fast stage): " << stem << "\n";
         ecg_move_log::set(cfg.quality_metric, stem);   // per-beat vertical move log
         morphology_csv::set(cfg.template_path, stem);
+        tbank::setMatchFloors(cfg.ecg_match_floor, cfg.ppg_match_floor);//morphology split floors for ecg and ppg loaded from config
+		tbank::setMinBeats(cfg.min_beats_template_ecg, cfg.min_beats_template_ppg);//min beats for disaplyed templates in the viewer loaded from config
+		pulse_qc::setFitErrorPct(cfg.ppg_fit_error_pct); //ppg template fit error threshold for ppg template quality check loaded from config
 
-        // ---- SECTION 4.6 MORPHOLOGY THRESHOLDS, FROM config.csv ----------
-        //
-        // Applied here, once, before anything partitions. Every spawn and every
-        // merge in the record turns on these two numbers, so they must be in
-        // force before the first bin is built -- setting them later would leave
-        // earlier bins partitioned against the defaults, with nothing on disk
-        // saying which bins used which floor.
-        //
-        // EACH ONE FALLS BACK INDEPENDENTLY. A blank cell reaches here as 0.0,
-        // and pairing it with a configured value would fail validation and
-        // refuse BOTH -- so setting only the PPG floor, which is the likelier
-        // thing to want, would silently do nothing. Each unset floor keeps its
-        // own current value instead.
-        //
-        // AN UNUSABLE VALUE IS REFUSED, NOT CLAMPED. A floor of 0 accepts every
-        // beat against every template: one morphology per bin, no ectopy ever
-        // separated, and no error anywhere to explain it. Above 1 is the mirror
-        // image -- correlation cannot exceed 1, so everything spawns. Either
-        // way the defaults stand and the line below says so.
-        {
-            const bool have_ecg = (cfg.ecg_match_floor != 0.0);
-            const bool have_ppg = (cfg.ppg_match_floor != 0.0);
-            const double fe = have_ecg ? cfg.ecg_match_floor
-                : tbank::matchFloorEcg();
-            const double fp = have_ppg ? cfg.ppg_match_floor
-                : tbank::matchFloorPpg();
-
-            const char* src_ecg = have_ecg ? "config" : "default";
-            const char* src_ppg = have_ppg ? "config" : "default";
-
-
-            // Pulse QC threshold, same treatment: unset keeps the default,
-            // unusable is refused rather than clamped.
-            if (cfg.ppg_fit_error_pct == 0.0) {
-                std::cerr << "  [pulseqc] ppg_fit_error_pct absent from "
-                    "config.csv; using default "
-                    << 100.0 * pulse_qc::fitErrorFraction() << "%\n";
-            }
-            else if (!pulse_qc::setFitErrorPct(cfg.ppg_fit_error_pct)) {
-                std::cerr << "  [pulseqc] REFUSED ppg_fit_error_pct="
-                    << cfg.ppg_fit_error_pct << " -- must be in (0, 100]. "
-                    "Keeping " << 100.0 * pulse_qc::fitErrorFraction()
-                    << "%\n";
-            }
-            else {
-                std::cerr << "  [pulseqc] pulse fit error threshold "
-                    << 100.0 * pulse_qc::fitErrorFraction()
-                    << "% (config)\n";
-            }
-        }
-        //if there is a prior templates.bin (ie the morpohlogy has been split) reload it
-        std::optional<template_io::TemplateFile> priorSplit;
-        if (std::filesystem::exists(templatePath)) {
-            try { priorSplit = template_io::read_template_binfile(templatePath.string()); }
-            catch (const std::exception& e) {
-                std::cerr << "  [bank-reload] ignoring " << templatePath.string()
-                    << ": " << e.what() << "\n";
-            }
-        }
         FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates, noisePath.string());
         if (fast.tmpl.bins.empty()) {
             std::cerr << "  no bins for " << stem << " (recording shorter than one bin?); skipping.\n";
@@ -393,6 +337,29 @@ namespace post_process_detail {
         job.tmpl = std::move(fast.tmpl);
         job.beats = std::move(fast.beats);
         job.info = std::move(fast.info);
+
+        // ---- THE PRIOR MORPHOLOGY SPLIT, IF THIS RECORD HAS ONE ----------
+        //
+        // From <stem>_templates.bin -- one record per TEMPLATE, carrying
+        // `members` since v4, which is what lets it restore the partition
+        // rather than only describe it. AFTER the fresh build, because it
+        // overwrites what that build partitioned; BEFORE the tmplR snapshot, so
+        // the R frame every anchor aligns from carries the reloaded banks.
+        //
+        // THIS READ USED TO GO TO THE WRONG FILE WITH THE WRONG READER. It
+        // called template_io::read_template_binfile on the per-bin averages
+        // file, and put the result in a `priorSplit` local that nothing ever
+        // consumed -- so the reload was a no-op that also threw
+        // length_error("vector too long") whenever the two files collided on a
+        // name, which read as "ignoring <path>" and looked like a first run.
+        {
+            const std::filesystem::path splitPath =
+                std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
+            const bank_reload::SplitReport rep =
+                bank_reload::reloadSplit(splitPath.string(), job.tmpl);
+            bank_reload::printReport(rep);
+        }
+
         job.tmplR = job.tmpl;      // snapshot R frame (one copy, at prep time)
 
         // The R-pass checkpoints (bin archive, feature time series, envelope
@@ -611,7 +578,7 @@ namespace post_process_detail {
     // it can run concurrently with the finalize worker). Each step aligns FROM
     // the pristine R snapshot (job.tmplR / job.beatsR), never the previous
     // anchor. At the final anchor the accumulated set is folded into job.tmpl
-    // and written to _templates.bin -- the one and only write.
+    // and written to _bins.bin -- the one and only write.
     inline bool regenerateWithAnchor(ViewerJob& job, AnchorType anchor)
     {
         try {
@@ -649,12 +616,17 @@ namespace post_process_detail {
             // Final anchor. By now the finalize worker has been joined (the
             // controller joins it before the final step -- see main.cpp), so
             // job.tmpl carries the squared/absval scalars AND is safe to touch.
-            // Fold the separately-accumulated anchors into it, write the FULL
-            // file (all anchors + absval), then run deferred QC.
+            // Fold the separately-accumulated anchors into it, then run
+            // deferred QC.
             for (auto& kv : job.anchorAccum)
                 job.tmpl.raw_anchors[kv.first] = std::move(kv.second);
             job.anchorAccum.clear();
 
+            // NO WRITE HERE. _bins.bin is written in exactly one place: main.cpp,
+            // after the viewer closes, once the operator's banks have been copied
+            // back into job.tmpl. This call wrote it a second time, earlier, with
+            // the pre-marking banks -- so what ended up on disk depended on
+            // whether the operator reached the final anchor.
             {
 
                 // ---- deferred QC over every anchor (R + the sequence) ----

@@ -82,7 +82,7 @@ int main(int argc, char* argv[]) {
 
     for (const QString& f : allFiles) {
         QString stem = QFileInfo(f).completeBaseName();   // strip ".bin"
-        int suffixPos = stem.indexOf("_templates");
+        int suffixPos = stem.indexOf("_bins");
         if (suffixPos < 0) { ++skippedParse; continue; }
         QString nameStem = stem.left(suffixPos);
 

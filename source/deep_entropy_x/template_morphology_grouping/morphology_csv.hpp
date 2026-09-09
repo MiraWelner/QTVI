@@ -790,7 +790,38 @@ namespace morphology_csv {
     //    record size is unchanged and a v2 reader strides correctly while
     //    reading the flag as pad -- the version field is again the only thing
     //    that can tell the two apart.
-    inline constexpr uint32_t kBinVersion = 3;
+    // 4: each TEMPLATE column gained its member index lists, appended after the
+    //    waveform as [uint32 n][n x uint32] twice -- `members` then
+    //    `members_clean`. NOT in TemplateRecord: that struct is written raw and
+    //    its size is pinned by static_assert, so a variable-length list cannot
+    //    live in it. This is the field that makes the file able to RESTORE a
+    //    partition rather than only describe one -- n_members says how many
+    //    beats a template holds, `members` says which. A v3 reader on a v4 file
+    //    walks off alignment at the second column, which is why the version has
+    //    to be checked; readBin does that. Beats files are unaffected: only the
+    //    templates blocks carry the lists.
+    // 5: EVERY REMAINING BankTemplate AND TemplateBank FIELD, appended after
+    //    the member lists as a fixed trailer plus one vector. With this the
+    //    archive is a COMPLETE description of a bank, so a reload restores a
+    //    partition identically rather than approximately -- previously subtype,
+    //    spawn_seq, tmpl_iqr, the census counts, mean_rr_ms, operator_state and
+    //    the bank's own caps were absent, so a reloaded PVC_B could come back
+    //    lettered from bank order and presumedCategory could read an ectopic
+    //    template as REGULAR.
+    //
+    //    NOT IN TemplateRecord. That struct is written raw and its size is
+    //    pinned by static_assert, and read_morphology_bin.py hardcodes its
+    //    layout -- so growing it would break the python reader's stride on
+    //    every record. The trailer is appended instead, which the python reader
+    //    can skip by length without knowing the fields.
+    //
+    //    THE BANK SCALARS RIDE ON EVERY RECORD. configured_cap, effective_cap,
+    //    next_spawn_seq and assigned_beats are per BANK, and the format has no
+    //    per-bank framing to hang them on -- records are flat, one per
+    //    template, with no per-bin header. Repeating them per template costs 16
+    //    bytes each and needs no new section; a reader takes them from any
+    //    record of the bank and they agree by construction.
+    inline constexpr uint32_t kBinVersion = 5;
 
     // One record per beat column. Fixed size, so a reader can stride over
     // descriptors without parsing them.
@@ -883,6 +914,68 @@ namespace morphology_csv {
         inline bool r(std::ifstream& f, void* p, size_t n) {
             return static_cast<bool>(
                 f.read(reinterpret_cast<char*>(p), static_cast<std::streamsize>(n)));
+        }
+
+        // ---- v4 member lists: [uint32 n][n x uint32] ---------------------
+        //
+        // Bounded on read, so a corrupt or misaligned length fails instead of
+        // reaching the allocator with garbage. The cap is generous against any
+        // real bin -- a 15-minute bin holds low thousands of beats.
+        inline constexpr uint32_t kMaxMembers = 4u * 1024u * 1024u;
+
+        // ---- v5 trailer ---------------------------------------------------
+        //
+        // Fixed size, written raw like the descriptors, so a reader strides it
+        // without parsing. Explicit widths and an explicit pad: the padding is
+        // part of the on-disk format the moment the struct is written whole.
+        struct TemplateTrailer {
+            int32_t  subtype = -1;
+            uint32_t spawn_seq = 0;
+            int32_t  n_ppg_members = -1;
+            int32_t  n_tukey_members = 0;
+            uint32_t n_blended_members = 0;
+            uint32_t n_premature_members = 0;
+            uint32_t n_voted_members = 0;
+            uint32_t n_noise_members = 0;
+            uint8_t  marked_invalid_template = 0;
+            uint8_t  operator_state = 0;
+            uint8_t  confirmed_by_operator = 0;
+            uint8_t  pad0 = 0;
+            int32_t  configured_cap = 0;
+            int32_t  effective_cap = 0;
+            uint32_t next_spawn_seq = 0;
+            uint32_t assigned_beats = 0;
+            uint32_t pad1 = 0;          // keeps mean_rr_ms 8-byte aligned
+            double   mean_rr_ms = 0.0;
+        };
+        static_assert(sizeof(TemplateTrailer) == 64,
+            "TemplateTrailer layout changed; update read_morphology_bin.py"
+            " and bump kBinVersion");
+
+        inline void wvecd(std::ofstream& f, const std::vector<double>& v) {
+            const uint32_t n = static_cast<uint32_t>(v.size());
+            w(f, &n, 4);
+            if (n) w(f, v.data(), static_cast<size_t>(n) * 8);
+        }
+        inline bool rvecd(std::ifstream& f, std::vector<double>& v) {
+            uint32_t n = 0;
+            if (!r(f, &n, 4)) return false;
+            if (n > kMaxMembers) return false;
+            v.resize(n);
+            return n ? r(f, v.data(), static_cast<size_t>(n) * 8) : true;
+        }
+
+        inline void wvecu32(std::ofstream& f, const std::vector<uint32_t>& v) {
+            const uint32_t n = static_cast<uint32_t>(v.size());
+            w(f, &n, 4);
+            if (n) w(f, v.data(), static_cast<size_t>(n) * 4);
+        }
+        inline bool rvecu32(std::ifstream& f, std::vector<uint32_t>& v) {
+            uint32_t n = 0;
+            if (!r(f, &n, 4)) return false;
+            if (n > kMaxMembers) return false;
+            v.resize(n);
+            return n ? r(f, v.data(), static_cast<size_t>(n) * 4) : true;
         }
 
         inline void writeBlockHeader(std::ofstream& f, const char* channel,
@@ -1123,6 +1216,54 @@ namespace morphology_csv {
                         const double v = (s < tp.tmpl.size()) ? tp.tmpl[s] : nan;
                         detail::w(f, &v, 8);
                     }
+
+                    // ---- v4: WHICH beats, not just how many ---------------
+                    //
+                    // Length-prefixed and appended after the waveform, because
+                    // TemplateRecord is written raw with its size pinned by
+                    // static_assert -- a variable-length list cannot go in it.
+                    //
+                    // BOTH LISTS. `members` is everything the partition
+                    // assigned; `members_clean` is what tmpl was actually
+                    // averaged over. Carrying only the first would make a
+                    // reader that rebuilds the average include the premature
+                    // and Tukey-rejected beats that cleaning removed; carrying
+                    // only the second would lose those beats from the record
+                    // entirely. n_members and n_excluded in the descriptor are
+                    // the counts of these two, so the four agree by
+                    // construction.
+                    //
+                    // CHANNEL-LOCAL ROW INDICES, as projectToChannel left them
+                    // -- the same space _beats.bin's columns are in, so the two
+                    // files join on them without translation.
+                    detail::wvecu32(f, tp.members);
+                    detail::wvecu32(f, tp.members_clean);
+
+                    // ---- v5: the rest of the bank, so a reload is exact ----
+                    detail::TemplateTrailer tr;
+                    tr.subtype = tp.subtype;
+                    tr.spawn_seq = tp.spawn_seq;
+                    tr.n_ppg_members = tp.n_ppg_members;
+                    tr.n_tukey_members = tp.n_tukey_members;
+                    tr.n_blended_members = tp.n_blended_members;
+                    tr.n_premature_members = tp.n_premature_members;
+                    tr.n_voted_members = tp.n_voted_members;
+                    tr.n_noise_members = tp.n_noise_members;
+                    tr.mean_rr_ms = tp.mean_rr_ms;
+                    tr.marked_invalid_template = tp.marked_invalid_template ? 1u : 0u;
+                    tr.operator_state = tp.operator_state;
+                    tr.confirmed_by_operator = tp.confirmed_by_operator ? 1u : 0u;
+                    // Bank scalars, repeated per record -- see kBinVersion note 5.
+                    tr.configured_cap = out.bank.configured_cap;
+                    tr.effective_cap = out.bank.effective_cap;
+                    tr.next_spawn_seq = out.bank.next_spawn_seq;
+                    tr.assigned_beats = out.bank.assigned_beats;
+                    detail::w(f, &tr, sizeof(tr));
+
+                    // Length-prefixed, not padded to `width`: the spread is the
+                    // same length as tmpl by construction, and padding it would
+                    // put NaNs in a reloaded tmpl_iqr that were never measured.
+                    detail::wvecd(f, tp.tmpl_iqr);
                 }
             }
         }
@@ -1142,14 +1283,27 @@ namespace morphology_csv {
         std::vector<Rec> records;
         std::vector<double> samples;   // records.size() * width, column-major
 
+        // v4, TEMPLATES ONLY, parallel to `records`. Empty for a beats file and
+        // for any templates file written before v4 -- so a caller that needs
+        // them must check, rather than assume a size that matches `records`.
+        std::vector<std::vector<uint32_t>> members;
+        std::vector<std::vector<uint32_t>> members_clean;
+
+        // v5, TEMPLATES ONLY, parallel to `records`. Empty on an older file.
+        std::vector<detail::TemplateTrailer> trailers;
+        std::vector<std::vector<double>> tmpl_iqr;
+
         const double* column(size_t k) const {
             return (k < records.size() && width) ? &samples[k * width] : nullptr;
         }
     };
 
+    // hasMembers: this format appends the v4 member lists per column. True only
+    // for the templates file; the beats file never carried them, so passing the
+    // flag rather than testing `magic` again keeps the two callers explicit.
     template <class Rec>
     inline bool readBin(const std::string& path, const char* magic,
-        std::vector<BinBlock<Rec>>& out)
+        std::vector<BinBlock<Rec>>& out, bool hasMembers = false)
     {
         std::ifstream f(path, std::ios::binary);
         if (!f) return false;
@@ -1172,11 +1326,33 @@ namespace morphology_csv {
 
             blk.records.resize(nCols);
             blk.samples.assign(static_cast<size_t>(nCols) * blk.width, 0.0);
+            // v4 and up only. A v3 file has nothing after the waveform, so
+            // reading the lists would consume the NEXT column's descriptor --
+            // the misalignment the version field exists to prevent.
+            const bool readMembers = hasMembers && ver >= 4;
+            const bool readTrailer = hasMembers && ver >= 5;
+            if (readMembers) {
+                blk.members.resize(nCols);
+                blk.members_clean.resize(nCols);
+            }
+            if (readTrailer) {
+                blk.trailers.resize(nCols);
+                blk.tmpl_iqr.resize(nCols);
+            }
             for (uint64_t k = 0; k < nCols; ++k) {
                 if (!detail::r(f, &blk.records[k], sizeof(Rec))) return false;
                 if (blk.width && !detail::r(f,
                     &blk.samples[static_cast<size_t>(k) * blk.width],
                     static_cast<size_t>(blk.width) * 8)) return false;
+                if (readMembers) {
+                    if (!detail::rvecu32(f, blk.members[k])) return false;
+                    if (!detail::rvecu32(f, blk.members_clean[k])) return false;
+                }
+                if (readTrailer) {
+                    if (!detail::r(f, &blk.trailers[k],
+                        sizeof(detail::TemplateTrailer))) return false;
+                    if (!detail::rvecd(f, blk.tmpl_iqr[k])) return false;
+                }
             }
             out.push_back(std::move(blk));
         }
@@ -1187,9 +1363,12 @@ namespace morphology_csv {
         std::vector<BinBlock<BeatRecord>>& out) {
         return readBin<BeatRecord>(path, kBeatsMagic, out);
     }
+    // MEMBER LISTS INCLUDED (v4+). Returned in BinBlock::members /
+    // ::members_clean, parallel to ::records, empty on an older file.
     inline bool readTemplatesBin(const std::string& path,
         std::vector<BinBlock<TemplateRecord>>& out) {
-        return readBin<TemplateRecord>(path, kTemplatesMagic, out);
+        return readBin<TemplateRecord>(path, kTemplatesMagic, out,
+            /*hasMembers=*/true);
     }
 
 }  // namespace morphology_csv

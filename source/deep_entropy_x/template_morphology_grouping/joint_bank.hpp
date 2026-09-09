@@ -221,7 +221,7 @@ namespace jbank {
         // both excluded has nothing behind its waveform and must not present as
         // a markable morphology.
         bool earnsColumn() const {
-            return cleanCount() >= tbank::kMinMembersForColumn;
+            return cleanCount() >= tbank::min_members_per_column;
         }
         // Which list the waveform is built from.
         const std::vector<uint32_t>& averagedMembers() const {
@@ -243,8 +243,8 @@ namespace jbank {
     struct JointBank {
         std::vector<BeatGroup> groups;
 
-        int32_t configured_cap = tbank::kDefaultMaxTemplatesPerBin;
-        int32_t effective_cap = tbank::kDefaultMaxTemplatesPerBin;
+        int32_t configured_cap = tbank::max_templates_per_bin;
+        int32_t effective_cap = tbank::max_templates_per_bin;
         uint32_t next_spawn_seq = 0;
         uint32_t assigned_beats = 0;
 

@@ -540,7 +540,7 @@ std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) 
     for (int c = 0; c < 3; ++c) if (b.ecg_bank[c].size() > 0) anyBank = true;
     if (!anyBank || shown(b, 0)) eligible.push_back(0);
 
-    for (int t = 1; t < tbank::kDefaultMaxTemplatesPerBin * 4; ++t)
+    for (int t = 1; t < tbank::max_templates_per_bin * 4; ++t)
         if (shown(b, t)) eligible.push_back(t);
     return eligible;
 }

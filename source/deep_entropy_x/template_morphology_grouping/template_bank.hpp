@@ -21,42 +21,39 @@
 #include <vector>
 
 namespace tbank {
-    namespace detail_floors {
+    namespace correlation_floors {
         inline double g_ecg = 0.0;   //these are set later by the config
         inline double g_ppg = 0.0;
     }
 
-    inline double matchFloorEcg() { return detail_floors::g_ecg; }
-    inline double matchFloorPpg() { return detail_floors::g_ppg; }
+    inline double matchFloorEcg() { return correlation_floors::g_ecg; }
+    inline double matchFloorPpg() { return correlation_floors::g_ppg; }
 
-    namespace detail_minbeats {
+    namespace minimum_beats {
         inline int g_ecg = 0.0; //these are also set later by the config
         inline int g_ppg = 0.0;
     }
 
-    inline int minBeatsEcg() { return detail_minbeats::g_ecg; }
-    inline int minBeatsPpg() { return detail_minbeats::g_ppg; }
+    inline int minBeatsEcg() { return minimum_beats::g_ecg; }
+    inline int minBeatsPpg() { return minimum_beats::g_ppg; }
 
     // Negative is refused and changes nothing.
     inline bool setMinBeats(int ecg, int ppg) {
         if (ecg < 0 || ppg < 0) return false;
-        detail_minbeats::g_ecg = ecg;
-        detail_minbeats::g_ppg = ppg;
+        minimum_beats::g_ecg = ecg;
+        minimum_beats::g_ppg = ppg;
         return true;
     }
 
     inline bool setMatchFloors(double ecg, double ppg) {
         if (!(ecg > 0.0 && ecg <= 1.0)) return false;
         if (!(ppg > 0.0 && ppg <= 1.0)) return false;
-        detail_floors::g_ecg = ecg;
-        detail_floors::g_ppg = ppg;
+        correlation_floors::g_ecg = ecg;
+        correlation_floors::g_ppg = ppg;
         return true;
     }
 
-    // Default bank cap. A soft default, not an invariant: a bin whose two
-    // closest templates are both confirmed raises its own cap rather than
-    // merging them (see TemplateBank::effective_cap).
-    inline constexpr int kDefaultMaxTemplatesPerBin = 6;
+    inline constexpr int max_templates_per_bin = 6;//num templates in bank before merging
 
     // Minimum overlapping non-NaN columns for a correlation to mean anything.
     // alignment.hpp's pearson() returns 0.0 below its own floor, and 0.0 is
@@ -64,12 +61,7 @@ namespace tbank {
     // Beats below this get kUnscorable instead of an assignment.
     inline constexpr int kMinOverlapColumns = 8;
 
-    // A template must hold at least this many members before it earns a
-    // display column. Below it the template still exists, still counts, still
-    // reaches the archive -- it is just not gridded, because a bad thirty
-    // seconds produces many single-beat noise templates and they would drown
-    // the record-wide left-to-right reading of drift.
-    inline constexpr int kMinMembersForColumn = 2;
+	inline constexpr int min_members_per_column = 2; //how many beats must be in a template to have a column at all
 
     // Merge-eligibility ceiling for the garbage tier, deliberately ABOVE
     // kMinMembersForColumn. Tying the two together is a trap: merging two
@@ -515,14 +507,7 @@ namespace tbank {
                     || label_code == kCodeVt) return Category::ECTOPIC;
                 return Category::REGULAR;
             }
-            // Never reproduced. A member-count test, not a class inference:
-            // it says nothing about what the beat was, only that one beat is
-            // not a morphology. This is the gate that keeps single-beat noise
-            // fragments out of the marking grid.
-            if (!earnsColumn()) return Category::NOISE;
-            const uint32_t n = static_cast<uint32_t>(members.size());
-            if (n == 0) return Category::NOISE;
-            return Category::REGULAR;
+			return Category::REGULAR; //unless marked PVC, PAC, VT or noise, presume regular
         }
 
         // The Phase 1 sinus seed. spawn_seq 0 is issued once, to slot 0, by the
@@ -543,7 +528,7 @@ namespace tbank {
         bool corridor_inherited = false;
 
         int  memberCount() const { return static_cast<int>(members.size()); }
-        bool earnsColumn() const { return memberCount() >= kMinMembersForColumn; }
+        bool earnsColumn() const { return memberCount() >= min_members_per_column; }
 
         // Eligible for the garbage-collection merge tier. Not the negation of
         // earnsColumn() -- see kMaxJunkMembers.
@@ -573,8 +558,8 @@ namespace tbank {
         // effective_cap starts equal to it and only ever RISES, by the
         // confirmed-member rule. Keeping both means a raise is visible as a
         // difference rather than having to be reconstructed from the log.
-        int32_t configured_cap = kDefaultMaxTemplatesPerBin;
-        int32_t effective_cap = kDefaultMaxTemplatesPerBin;
+        int32_t configured_cap = max_templates_per_bin;
+        int32_t effective_cap = max_templates_per_bin;
 
         void setCap(int32_t cap) {
             if (cap < 1) cap = 1;   // slot 0 always exists

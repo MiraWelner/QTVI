@@ -226,7 +226,10 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
                 job->tmpl.bins[i].ecg_bank = vb[i].ecg_bank;
                 job->tmpl.bins[i].ppg_bank = vb[i].ppg_bank;
             }
-            const std::filesystem::path tp = job->templatePath;
+            // The job's own path, composed once in prepareViewerJob. Rebuilding
+            // it from cfg + stem here is a second place for the name to live
+            // and drift from.
+            const std::filesystem::path tp = job->binsPath;
             try {
                 template_io::write_template_binfile(tp.string(), job->tmpl);
                 std::cerr << "  [templates] rewrote " << tp.string()
