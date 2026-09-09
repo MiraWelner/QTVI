@@ -23,6 +23,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdint>
+#include <cmath>
 #include <fstream>
 #include <filesystem>
 #include <limits>
@@ -219,11 +220,15 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
                 m_genExc.marking_type[i].toStdString(),
                 sr);
         }
+        rehydrateParamOverrides();
     }
     else {
         m_genExc = GenExcStruct();
         m_genExc.filePath = filePath;
         m_noiseManager = std::make_unique<annotation_handler>();
+        m_thresholdOverrides.clear();
+        m_blankingOverrides.clear();
+        m_invertOverrides.clear();
     }
 
     current_start_time = 0.0;
@@ -232,13 +237,51 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
 
     setWindowTitle("Marking: " + QFileInfo(filePath).fileName());
     loadChunkFromFile(0);
+    autoDetectLeadPolarity(); //technically you should be able to figure out lead polarity via vcg but in practice this has never actually worked
+}
 
-    // Measured, not asked: now that m_ecg1/m_ecg2/m_ecg3 hold this file's
-    // first chunk, check whether any of the three is polarity-inverted
-    // relative to the other two and pre-set the corresponding checkbox.
-    // Once per FILE (here), not once per chunk (loadChunkFromFile) --
-    // lead polarity is a property of the recording, not of a time window.
-    autoDetectLeadPolarity();
+void noise_marking_gui::rehydrateParamOverrides() {
+    m_thresholdOverrides.clear();
+    m_blankingOverrides.clear();
+    m_invertOverrides.clear();
+
+    std::fprintf(stderr, "[rehydrate] %d marking(s), consistent=%d\n",
+        m_genExc.noiseExc.size(), (int)m_genExc.consistent());
+
+    if (!m_genExc.consistent()) {
+        std::fprintf(stderr, "[rehydrate] INCONSISTENT: %d/%d/%d/%d/%d\n",
+            m_genExc.noiseExc.size(), m_genExc.data_type.size(),
+            m_genExc.marking_type.size(), m_genExc.threshold.size(),
+            m_genExc.blanking.size());
+        return;
+    }
+
+    const QString paramLabel = QString::fromUtf8(annotation_types::kParamEditLabel);
+    const QString invertLabel = QString::fromUtf8(annotation_types::kInvertEditLabel);
+
+    for (int i = 0; i < m_genExc.noiseExc.size(); ++i) {
+        const double lo = m_genExc.noiseExc[i].first;
+        const double hi = m_genExc.noiseExc[i].second;
+        const QString& ch = m_genExc.data_type[i];
+        const QString& ty = m_genExc.marking_type[i];
+
+        std::fprintf(stderr, "[rehydrate] %d: ch=%s ty='%s' %.3f-%.3f thr=%.3f blk=%.3f\n",
+            i, ch.toStdString().c_str(), ty.toStdString().c_str(),
+            lo, hi, m_genExc.threshold[i], m_genExc.blanking[i]);
+
+        if (ty == paramLabel) {
+            if (!std::isnan(m_genExc.threshold[i]))
+                m_thresholdOverrides.append(ParamOverride{ ch, lo, hi, m_genExc.threshold[i] });
+            if (!std::isnan(m_genExc.blanking[i]))
+                m_blankingOverrides.append(ParamOverride{ ch, lo, hi, m_genExc.blanking[i] });
+        }
+        else if (ty == invertLabel) {
+            m_invertOverrides.append(ParamOverride{ ch, lo, hi, 1.0 });
+        }
+    }
+    std::fprintf(stderr, "[rehydrate] thr=%d blk=%d inv=%d, paramLabel='%s'\n",
+        m_thresholdOverrides.size(), m_blankingOverrides.size(),
+        m_invertOverrides.size(), paramLabel.toStdString().c_str());
 }
 
 void noise_marking_gui::handleBrowseFile() {

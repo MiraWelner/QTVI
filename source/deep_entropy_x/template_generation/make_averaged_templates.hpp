@@ -436,29 +436,12 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                         ji.n_slices, noiseSpans.spans, i);
 
 
-                // ---- PER-BIN, ALWAYS, NOT GATED ON BEING SLOW ------------
-                // The old per-channel line printed only when a bin took over
-                // 50 ms or spawned more than 20 times, so the bins that printed
-                // nothing were indistinguishable from bins that had not started
-                // -- and a stall looked identical to a finished run. Every bin
-                // reports. It is one line per bin per record: 40 lines.
+         
                 const auto _j0 = std::chrono::steady_clock::now();
                 info.joint = jbank::buildBinBank(ji);
                 info.joint_valid = true;
                 {
-                    const double _jms = std::chrono::duration<double, std::milli>(
-                        std::chrono::steady_clock::now() - _j0).count();
                     const jbank::BankCounts& bc = info.joint.counts;
-                    std::fprintf(stderr,
-                        "[set n bin to morphology template split] bin %zu/%zu slices=%u groups=%d spawns=%u "
-                        "merges=%u caps=%u unscorable=%u "
-                        "rejby=%u/%u/%u/%u  %.1f ms\n",
-                        i + 1, n, ji.n_slices, info.joint.bank.size(),
-                        bc.n_spawns, bc.n_merges, bc.n_cap_raises,
-                        bc.n_unscorable,
-                        bc.n_rejected_by[0], bc.n_rejected_by[1],
-                        bc.n_rejected_by[2], bc.n_rejected_by[3], _jms);
-                    std::fflush(stderr);
                 }
 
                 // PROJECT IT INTO bank_by_channel, so the joint partition is
@@ -778,9 +761,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
             row.last_bin = r.last_bin;
             nsvtRows.push_back(row);
         }
-        std::fprintf(stderr,
-            "  [nsvt] morphologies=%zu beats=%zu runs=%zu "
-            "polymorphic_candidates=%u\n",
+        std::fprintf(stderr, "  [nsvt] morphologies=%zu beats=%zu runs=%zu polymorphic_candidates=%u\n",
             gm.morphologies.size(), di.global_template.size(),
             runs.size(), polyCandidates);
         std::fflush(stderr);

@@ -126,7 +126,8 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
                 static_cast<int>(markings->noiseExc[i].first * sr),
                 static_cast<int>(markings->noiseExc[i].second * sr),
                 markings->data_type[i].toStdString(),
-                markings->marking_type[i].toStdString(), sr);
+                markings->marking_type[i].toStdString(), sr,
+                markings->threshold[i], markings->blanking[i]);
         }
     }
     const std::filesystem::path base =

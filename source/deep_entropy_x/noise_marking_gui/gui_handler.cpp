@@ -707,6 +707,37 @@ QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
     // numbers and every override reverted to the config defaults, moving the R
     // peaks inside it with nothing to indicate why.
     const QString paramLabel = QString::fromUtf8(annotation_types::kParamEditLabel);
+    const QString invertLabel = QString::fromUtf8(annotation_types::kInvertEditLabel);
+
+    // ---- STRIP THE STALE OVERRIDE ROWS BEFORE APPENDING THE LIVE ONES ----
+    //
+    // m_genExc carries paramEdit / invertEdit rows on any file that was
+    // RELOADED: readNoiseMarkingsBin appends every row it reads, override rows
+    // included, and loadFile copies the lot into m_genExc. The three
+    // ParamOverride vectors are the authority for those spans -- rehydrated
+    // from the same rows on load, and the only thing applyParamOverrides and
+    // editParamOverrideAt ever touch -- so appending from them on top of what
+    // m_genExc already holds emits the span TWICE: once with the values and
+    // once with the NaN that the extent-only row carries. Whichever the reader
+    // hits last wins, which is how a threshold survived a save and vanished on
+    // the reload after it.
+    //
+    // Rebuilt rather than deduplicated: an override edited this session has a
+    // different extent from the one on disk (applyParamOverrides replaces any
+    // overlapping entry), so there is no key the two rows agree on.
+    {
+        GenExcStruct kept;
+        kept.filePath = current.filePath;
+        for (int i = 0; i < current.noiseExc.size(); ++i) {
+            const QString& ty = current.marking_type[i];
+            if (ty == paramLabel || ty == invertLabel) continue;
+            kept.appendMarking(current.noiseExc[i].first,
+                current.noiseExc[i].second, current.data_type[i], ty,
+                current.threshold[i], current.blanking[i]);
+        }
+        current = kept;
+    }
+
     for (const ParamOverride& o : m_thresholdOverrides) {
         double blk = std::numeric_limits<double>::quiet_NaN();
         for (const ParamOverride& b : m_blankingOverrides)
@@ -730,14 +761,36 @@ QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
                 std::numeric_limits<double>::quiet_NaN(), b.value);
     }
     for (const ParamOverride& o : m_invertOverrides) {
-        current.appendMarking(o.start, o.end, o.channel,
-            QString::fromUtf8(annotation_types::kInvertEditLabel));
+        current.appendMarking(o.start, o.end, o.channel, invertLabel);
     }
 
     all[m_binFilePath] = current;
     QVector<GenExcStruct> result;
     for (auto it = all.cbegin(); it != all.cend(); ++it)
         if (!it->noiseExc.isEmpty()) result.append(it.value());
+
+    // ---- WHAT IS ACTUALLY LEAVING THIS FUNCTION --------------------------
+    //
+    // One line, kept in the build. A threshold that is right in
+    // m_thresholdOverrides and NaN in the file has three places to go missing
+    // between here and disk -- this map, the QVector copy, and exportMarkings'
+    // choice of which struct to write -- and none of them is visible from the
+    // symptom, which is a grey bar that looks correct and does nothing.
+    {
+        int nParam = 0, nWithValues = 0;
+        for (const GenExcStruct& g : result)
+            for (int i = 0; i < g.noiseExc.size(); ++i)
+                if (g.marking_type[i] == paramLabel) {
+                    ++nParam;
+                    if (!std::isnan(g.threshold[i]) || !std::isnan(g.blanking[i]))
+                        ++nWithValues;
+                }
+        std::fprintf(stderr, "[markings] out: %d file(s), %d paramEdit row(s),"
+            " %d carrying values (overrides held: thr=%d blk=%d inv=%d)\n",
+            result.size(), nParam, nWithValues,
+            m_thresholdOverrides.size(), m_blankingOverrides.size(),
+            m_invertOverrides.size());
+    }
     return result;
 }
 

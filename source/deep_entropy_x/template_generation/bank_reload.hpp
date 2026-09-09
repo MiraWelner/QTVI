@@ -282,23 +282,61 @@ namespace bank_reload {
 
     }  // namespace detail
 
-    inline SplitReport reloadSplit(const std::string& priorPath,
-        template_io::TemplateFile& fresh)
-    {
+    // ---- READ AND APPLY ARE SEPARATE, AND THE ORDER IS THE WHOLE POINT ----
+    //
+    // <stem>_templates.bin is REWRITTEN BY THIS RUN, inside
+    // buildTemplatesAndBeatsFast -> morphology_csv::writeTemplatesBin. So a
+    // reload that reads the file after the build reads THIS run's own output:
+    // it finds a file every time, reports a successful restore, puts the fresh
+    // split back over itself, and a config change is silently undone by the
+    // thing it was supposed to survive. That is not a subtle failure mode -- it
+    // is indistinguishable from working, because the numbers in the report are
+    // real.
+    //
+    // So the archive is READ BEFORE the build and APPLIED AFTER it. Holding the
+    // parsed blocks across the build costs one copy of the per-template records
+    // and their waveforms, which is small beside the beat matrices the build
+    // already holds.
+    struct SplitArchive {
         SplitReport rep;
+        std::vector<morphology_csv::BinBlock<morphology_csv::TemplateRecord>> blocks;
+
+        // True when there is something to apply. A first run has no archive and
+        // this is false, which is the normal case and not an error.
+        bool usable() const { return rep.prior_read && !rep.too_old; }
+    };
+
+    // Call BEFORE buildTemplatesAndBeatsFast.
+    inline SplitArchive readSplit(const std::string& priorPath) {
+        SplitArchive out;
+        SplitReport& rep = out.rep;
         rep.prior_path = priorPath;
 
         std::error_code ec;
         rep.prior_present = std::filesystem::exists(priorPath, ec) && !ec;
-        if (!rep.prior_present) return rep;
+        if (!rep.prior_present) return out;
 
-        std::vector<morphology_csv::BinBlock<morphology_csv::TemplateRecord>> blocks;
-        if (!morphology_csv::readTemplatesBin(priorPath, blocks)) {
+        if (!morphology_csv::readTemplatesBin(priorPath, out.blocks)) {
             rep.error = "readTemplatesBin failed (wrong magic, newer version,"
                 " or truncated)";
-            return rep;
+            return out;
         }
         rep.prior_read = true;
+
+        // Counted here rather than left to the caller: readSplit runs BEFORE
+        // the build, so this is the last moment the archive on disk is the
+        // PREVIOUS run's. Once buildTemplatesAndBeatsFast has run, the file has
+        // been overwritten and there is nothing left to compare against.
+        {
+            size_t nrec = 0, ntrail = 0;
+            for (const auto& blk : out.blocks) {
+                nrec += blk.records.size();
+                ntrail += blk.trailers.size();
+            }
+            std::fprintf(stderr, "  [split-reload] read %s: %zu block(s),"
+                " %zu template record(s), %zu trailer(s)\n",
+                priorPath.c_str(), out.blocks.size(), nrec, ntrail);
+        }
 
         // ---- ALL OF IT OR NONE OF IT ----------------------------------
         //
@@ -307,15 +345,26 @@ namespace bank_reload {
         // REGULAR, and no subtype, so letters would come back from bank order.
         // Applying the partition anyway produces a bank that disagrees with
         // itself, which is worse than a clean repartition.
-        for (const auto& blk : blocks) {
+        for (const auto& blk : out.blocks) {
             if (blk.records.empty()) continue;
             if (blk.trailers.size() != blk.records.size()) {
                 rep.too_old = true;
                 rep.error = "archive predates v5 (no per-template trailer), so"
                     " a reload could not be exact";
-                return rep;
+                out.blocks.clear();
+                return out;
             }
         }
+        return out;
+    }
+
+    // Call AFTER the build, with what readSplit returned.
+    inline SplitReport applySplit(SplitArchive& arch,
+        template_io::TemplateFile& fresh)
+    {
+        SplitReport rep = arch.rep;
+        if (!arch.usable()) return rep;
+        const auto& blocks = arch.blocks;
 
         for (const auto& blk : blocks) {
             const int c = detail::channelIndexOf(blk.channel);
@@ -412,8 +461,15 @@ namespace bank_reload {
 
     inline void printReport(const SplitReport& rep, std::FILE* out = stderr) {
         if (!rep.prior_present) {
-            std::fprintf(out, "  [split-reload] no prior split at %s"
-                " (first run -- fresh split stands)\n", rep.prior_path.c_str());
+            // SAID, not silent. This was silent for one build, on the grounds
+            // that a first run has nothing to report -- and that made "no
+            // archive on disk" indistinguishable from "archive found and
+            // refused", which is the one distinction anybody debugging a
+            // failed reload needs. The path is the useful part: it is composed
+            // from cfg.template_path and the stem, and a reload that silently
+            // does nothing is usually a reload looking in the wrong place.
+            std::fprintf(out, "  [split-reload] no archive at %s"
+                " -- fresh split stands\n", rep.prior_path.c_str());
             return;
         }
         if (rep.too_old) {

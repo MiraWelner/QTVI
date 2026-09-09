@@ -130,6 +130,22 @@ namespace post_process_detail {
         // the first anchor. Merged into job.tmpl.raw_anchors once, at the final
         // promote (after the worker is joined). Key = AnchorType tag.
         std::map<int, std::vector<std::array<template_io::ChannelMethodTemplate, 3>>> anchorAccum;
+
+        // The PER-SLOT anchored averages, accumulated beside anchorAccum and
+        // for the same reason -- kept out of job.tmpl so the anchor path cannot
+        // race the finalize worker. Key = AnchorType tag, then [bin][channel][slot].
+        //
+        // alignTemplatesFromCache has always filled bank_anchors alongside
+        // raw_anchors, from the same aligned beat matrix: the per-slot averages
+        // are row subsets of it. Both loops below moved only raw_anchors out of
+        // their local `atmpl`, so the per-slot work was done every run and
+        // discarded every run -- bank_anchors never reached job.tmpl, never
+        // reached the file, and bankSlotFor returned nullptr for every
+        // (slot, anchor). That is why a sub-template drew its R-aligned average
+        // under every alignment, and why its bars and glyphs went missing once
+        // the viewer's seeding was made to require the anchored waveform.
+        std::map<int, std::vector<std::array<
+            std::vector<template_io::TemplateFile::BankSlotTemplate>, 3>>> bankAnchorAccum;
     };
 
 
@@ -148,12 +164,7 @@ namespace post_process_detail {
         // sits between "Saved Noise Markings" and the first [timing] line. A
         // stall here was indistinguishable from a hang: no output, no progress,
         // and the two existing instrumentation lines both live downstream of it.
-        const auto _a0 = std::chrono::steady_clock::now();
-        std::cerr << "[stage] anneal " << stem << " ...\n" << std::flush;
         annealOneFile(binPath, noisePath, annealedPath, cfg.bin_size_minutes, ecg1_inverted, ecg2_inverted, ecg3_inverted);
-        const auto _a1 = std::chrono::steady_clock::now();
-        std::cerr << "[stage] anneal " << stem << " done in "
-            << std::chrono::duration<double>(_a1 - _a0).count() << " s\n" << std::flush;
 
         ViewerJob job;
         job.stem = stem;
@@ -182,8 +193,7 @@ namespace post_process_detail {
 
         AnnealedData annealedData = read_input_binfile(annealedPath.string());
 
-        // ---- shift PPG, and separately ABP/ART/ART_PULM, due to ----------
-        // ---- hardware lag -------------------------------------------------
+        // ---- shift PPG, and separately ABP/ART/ART_PULM, due to hardware lag----------
         // The lag needs R peaks and foot events, both produced from a probe
         // pass -- but the shift has to land BEFORE the REAL
         // create_ecg_ppg_pairs_raw call, so SegmentPPG, ppgMinAmps,
@@ -329,6 +339,22 @@ namespace post_process_detail {
 		tbank::setMinBeats(cfg.min_beats_template_ecg, cfg.min_beats_template_ppg);//min beats for disaplyed templates in the viewer loaded from config
 		pulse_qc::setFitErrorPct(cfg.ppg_fit_error_pct); //ppg template fit error threshold for ppg template quality check loaded from config
 
+        // The floors above must be in force BEFORE this call: every spawn and
+        // every merge in the record turns on them, so setting them later would
+        // leave earlier bins partitioned against whatever was in effect then.
+        // ---- THE PRIOR SPLIT IS READ BEFORE THE BUILD --------------------
+        //
+        // <stem>_templates.bin is REWRITTEN by the build below, inside
+        // morphology_csv::writeTemplatesBin. Reading it afterwards reads this
+        // run's own output: a file is found every time, the report claims a
+        // successful restore, and the fresh split is put back over itself -- so
+        // a config change is undone by the thing it was supposed to survive,
+        // and nothing distinguishes that from working.
+        const std::filesystem::path splitPath =
+            std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
+        bank_reload::SplitArchive priorSplit =
+            bank_reload::readSplit(splitPath.string());
+
         FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates, noisePath.string());
         if (fast.tmpl.bins.empty()) {
             std::cerr << "  no bins for " << stem << " (recording shorter than one bin?); skipping.\n";
@@ -338,25 +364,14 @@ namespace post_process_detail {
         job.beats = std::move(fast.beats);
         job.info = std::move(fast.info);
 
-        // ---- THE PRIOR MORPHOLOGY SPLIT, IF THIS RECORD HAS ONE ----------
+        // ---- AND APPLIED AFTER IT ---------------------------------------
         //
-        // From <stem>_templates.bin -- one record per TEMPLATE, carrying
-        // `members` since v4, which is what lets it restore the partition
-        // rather than only describe it. AFTER the fresh build, because it
-        // overwrites what that build partitioned; BEFORE the tmplR snapshot, so
-        // the R frame every anchor aligns from carries the reloaded banks.
-        //
-        // THIS READ USED TO GO TO THE WRONG FILE WITH THE WRONG READER. It
-        // called template_io::read_template_binfile on the per-bin averages
-        // file, and put the result in a `priorSplit` local that nothing ever
-        // consumed -- so the reload was a no-op that also threw
-        // length_error("vector too long") whenever the two files collided on a
-        // name, which read as "ignoring <path>" and looked like a first run.
+        // AFTER the fresh build, because it overwrites what that build
+        // partitioned; BEFORE the tmplR snapshot, so the R frame every anchor
+        // aligns from carries the reloaded banks.
         {
-            const std::filesystem::path splitPath =
-                std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
             const bank_reload::SplitReport rep =
-                bank_reload::reloadSplit(splitPath.string(), job.tmpl);
+                bank_reload::applySplit(priorSplit, job.tmpl);
             bank_reload::printReport(rep);
         }
 
@@ -406,6 +421,21 @@ namespace post_process_detail {
                         || !trip[2].ecgTemplate.empty()) ++filled;
                 job.tmpl.raw_anchors[tag] = std::move(it->second);
             }
+
+            // The per-slot averages for this anchor. `atmpl` dies at the end of
+            // this iteration, so anything left in it is lost.
+            size_t slotsFilled = 0;
+            {
+                auto bit = atmpl.bank_anchors.find(tag);
+                if (bit != atmpl.bank_anchors.end()) {
+                    for (const auto& trip : bit->second)
+                        for (int c = 0; c < 3; ++c)
+                            for (const auto& st : trip[c])
+                                if (!st.tmpl.empty()) ++slotsFilled;
+                    job.tmpl.bank_anchors[tag] = std::move(bit->second);
+                }
+            }
+
             std::cerr << "  [anchors] " << anchorName(a) << ": " << filled << "/"
                 << job.tmpl.bins.size() << " bins aligned, "
                 << std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -414,6 +444,15 @@ namespace post_process_detail {
                 std::cerr << "  [anchors] WARNING: " << anchorName(a)
                 << " aligned 0 bins -- the focus panel will show the "
                 "R template under every landmark for it.\n";
+            // Reported separately from `filled`, because they fail separately:
+            // a bin can align while its per-slot reduction produces nothing,
+            // and it is the latter that bankSlotFor sees.
+            std::cerr << "  [anchors] " << anchorName(a) << ": " << slotsFilled
+                << " per-slot average(s)\n";
+            if (slotsFilled == 0)
+                std::cerr << "  [anchors] WARNING: " << anchorName(a)
+                << " produced 0 per-slot averages -- sub-templates have no "
+                "anchored waveform for it.\n";
         }
         std::cerr.flush();
 
@@ -600,6 +639,13 @@ namespace post_process_detail {
             auto it = atmpl.raw_anchors.find(anchorTag);
             if (it != atmpl.raw_anchors.end())
                 job.anchorAccum[anchorTag] = std::move(it->second);   // NOT job.tmpl -- avoids racing finalize
+            // Same omission the prepare loop had: bank_anchors is filled beside
+            // raw_anchors and was left behind in the dying local.
+            {
+                auto bit = atmpl.bank_anchors.find(anchorTag);
+                if (bit != atmpl.bank_anchors.end())
+                    job.bankAnchorAccum[anchorTag] = std::move(bit->second);
+            }
 
             const auto& seq = anchorSequence();
             const bool finalAnchor =
@@ -621,12 +667,15 @@ namespace post_process_detail {
             for (auto& kv : job.anchorAccum)
                 job.tmpl.raw_anchors[kv.first] = std::move(kv.second);
             job.anchorAccum.clear();
+            for (auto& kv : job.bankAnchorAccum)
+                job.tmpl.bank_anchors[kv.first] = std::move(kv.second);
+            job.bankAnchorAccum.clear();
 
-            // NO WRITE HERE. _bins.bin is written in exactly one place: main.cpp,
-            // after the viewer closes, once the operator's banks have been copied
-            // back into job.tmpl. This call wrote it a second time, earlier, with
-            // the pre-marking banks -- so what ended up on disk depended on
-            // whether the operator reached the final anchor.
+            // NO WRITE HERE. _bins.bin is written in exactly one place:
+            // main.cpp, after the viewer closes, once the operator's banks have
+            // been copied back into job.tmpl. This call wrote it a second time,
+            // earlier, with the pre-marking banks -- so what ended up on disk
+            // depended on whether the operator reached the final anchor.
             {
 
                 // ---- deferred QC over every anchor (R + the sequence) ----

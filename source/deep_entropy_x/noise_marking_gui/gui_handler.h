@@ -348,6 +348,7 @@ private:
     bool invertedAt(const QString& label, double globalTime) const;
     void applyInvertOverride(const QStringList& channels, double globalStart, double globalEnd);
     void   finalizeParamEdit(const QStringList& channels, double globalStart, double globalEnd);
+    void   rehydrateParamOverrides();
     bool   editParamOverrideAt(QChartView* cv, const QPoint& pos);
     bool   promptThresholdBlanking(const QString& header, double& thr, double& blk);
     void   applyParamOverrides(const QStringList& channels, double lo, double hi, double thrVal, double blkVal);
