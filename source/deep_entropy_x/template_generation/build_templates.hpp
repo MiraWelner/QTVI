@@ -451,7 +451,61 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
             const std::vector<double>& ref_beat_of_median_length = *refP;
 
 
-            alignment::aligned_beats q = alignment::align_beat_matrix(perBin[i], blk.r_col, fs, /*compute_iqr=*/true, ref_beat_of_median_length, locate);
+            // ---- WHICH ROWS THE MEDIAN MAY DRAW ON --------------------
+            //
+            // align_beat_matrix re-shifts an already-sliced matrix and takes a
+            // column median. It has no verdicts of its own and never will: it
+            // does not slice, level, or look for a landmark on a beat. Every
+            // filter is computed in extract_beats_and_align, which
+            // deliberately prunes NOTHING, because 4.6 requires flagged beats
+            // retained in the record.
+            //
+            // So the exclusion used to be applied at the point of averaging, in
+            // create_ecg_templates' `usable` gate. When the per-anchor averages
+            // moved here, the gate did not come with them -- this median drew on
+            // every beat, including the ones every CSV already reported as
+            // excluded. A dropped R detection is the visible case: its rr spans
+            // several cardiac cycles so its slice is 1.8x that, it is the ONLY
+            // row with samples in the far tail, and the column median out there
+            // is its later QRS complexes at full amplitude. Bin 5 slot A drew
+            // four R peaks over a 2.84 s axis on 986 members while
+            // _templates.csv reported 28 of them excluded.
+            //
+            // members_clean is the answer and it is already in hand: cleanGroups
+            // wrote it, and it is in the SAME channel-local row space as
+            // perBin[i] -- see the per-slot block below, which reduces over the
+            // same rows. A row in no group's members_clean is a row nothing
+            // wants in an average: premature, voted, Tukey-rejected or
+            // operator-marked, whichever it was.
+            //
+            // SHIFTED, NOT DROPPED. The mask only suppresses a row's
+            // contribution to the median; align_beat_matrix still shifts it and
+            // still returns it in q.beats, so nothing that indexes by row is
+            // disturbed and the beat stays in the record.
+            std::vector<char> exclRows;
+            {
+                const tbank::TemplateBank& bnk = bin.ecg_bank[ch.chIdx];
+                if (!bnk.templates.empty() && !perBin[i].empty()) {
+                    exclRows.assign(perBin[i].size(), 1);
+                    size_t nKept = 0;
+                    for (const tbank::BankTemplate& tp : bnk.templates)
+                        for (const uint32_t m : tp.members_clean)
+                            if (m < exclRows.size() && exclRows[m]) {
+                                exclRows[m] = 0; ++nKept;
+                            }
+                    // NOTHING SURVIVED, so the mask says nothing. An
+                    // all-excluded mask returns an empty template, and a bin
+                    // with no waveform is worse than one averaged over
+                    // everything -- the same call cleanGroups makes when every
+                    // eligible member fails a fence and it keeps them all.
+                    if (nKept == 0) exclRows.clear();
+                }
+            }
+
+            alignment::aligned_beats q = alignment::align_beat_matrix(
+                perBin[i], blk.r_col, fs, /*compute_iqr=*/true,
+                ref_beat_of_median_length, locate,
+                exclRows.empty() ? nullptr : &exclRows);
             if (q.tmpl.empty()) continue;
 
             // DID ANY BEAT ACTUALLY MOVE? This is the only real failure
@@ -559,7 +613,7 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
                 const size_t W = q.beats.front().size();
                 std::vector<double> col;
                 for (size_t sl = 0; sl < bnk.templates.size(); ++sl) {
-                    const auto& mem = bnk.templates[sl].members;
+                    const auto& mem = bnk.templates[sl].members_clean;
                     if (mem.empty()) continue;
                     auto& st = outSlots[sl];
                     st.n_members = static_cast<uint32_t>(mem.size());

@@ -1068,7 +1068,27 @@ namespace jbank {
         // morphology, prematurity is an arithmetic verdict on an interval, and
         // they disagree in both directions (a PAC is marked and not premature;
         // a sinus beat after a pause is premature and unmarked).
-        CATEGORY = 7
+        CATEGORY = 7,
+        // A DROPPED R DETECTION, not a long beat. Its rr spans two or three
+        // cardiac cycles, so its slice -- [R - 0.3*rr, R + 1.5*rr] -- covers
+        // three or four of them and holds that many QRS complexes. It is also
+        // the only slice with samples past 1.8x the real RR, so the column
+        // median out there IS its later complexes, sharp and at full amplitude
+        // because nothing averages with it.
+        //
+        // NOTHING ELSE CAN SEE IT. Prematurity tests for rr BELOW 0.80x the
+        // median. alignment's own RR fence measures it and prunes nothing,
+        // because kTukeyPrunesInAlignment is false, and its verdict never
+        // enters BinBankInput. The three Tukey passes below are amplitude,
+        // R-location and wave-score -- all morphology, none of them interval.
+        //
+        // AND EVERY OLDER FILTER IS NOW BYPASSED. The panel used to draw
+        // extract_beats_and_align's output, which had run the four Tukey passes
+        // and dropped BaselineSource::NONE beats. It now draws bank_anchors,
+        // built by align_beat_matrix -- which shifts rows and takes a column
+        // median and does nothing else. members_clean is the only gate left,
+        // so a verdict that is not here is not applied anywhere.
+        TUKEY_RR_LENGTH = 8
     };
 
     inline const char* excludeReasonName(uint8_t r) {
@@ -1080,6 +1100,7 @@ namespace jbank {
         case ExcludeReason::TUKEY_R_LOCATION: return "tukey_r_location";
         case ExcludeReason::TUKEY_AMPLITUDE:  return "tukey_amplitude";
         case ExcludeReason::TUKEY_WAVE_SCORE: return "tukey_wave_score";
+        case ExcludeReason::TUKEY_RR_LENGTH:  return "tukey_rr_length";
         case ExcludeReason::CATEGORY:         return "category";
         }
         return "?";
@@ -1094,6 +1115,7 @@ namespace jbank {
         case ExcludeReason::TUKEY_R_LOCATION: return tbank::TukeyOutcome::REJ_R_LOCATION;
         case ExcludeReason::TUKEY_AMPLITUDE:  return tbank::TukeyOutcome::REJ_AMPLITUDE;
         case ExcludeReason::TUKEY_WAVE_SCORE: return tbank::TukeyOutcome::REJ_WAVE_SCORE;
+        case ExcludeReason::TUKEY_RR_LENGTH:  return tbank::TukeyOutcome::REJ_RR_LENGTH;
         default: break;
         }
         return tbank::TukeyOutcome::KEPT;
@@ -1184,7 +1206,12 @@ namespace jbank {
     inline void cleanGroups(JointBank& bank, const ChannelSet& chans,
         std::vector<tbank::BeatFlags>& flags,
         std::vector<uint8_t>& excluded_reason,
-        CleanCounts* counts = nullptr)
+        CleanCounts* counts = nullptr,
+        // Per slice, in ms. BinBankInput already carries it for the prematurity
+        // filter, so the RR fence below uses the same series -- an interval
+        // verdict and a prematurity verdict cannot disagree about a beat.
+        // Null or empty skips the RR pass entirely.
+        const std::vector<double>* rr_after_ms = nullptr)
     {
         const uint32_t n_slices = static_cast<uint32_t>(flags.size());
         excluded_reason.assign(n_slices,
@@ -1256,12 +1283,19 @@ namespace jbank {
             // order-independent, so nobody has to know which pass ran first to
             // interpret the result.
             //
-            // RR-LENGTH IS NOT ONE OF THEM. It is a rhythm test, not a
-            // morphology test, and premature removal above has already taken
-            // the short intervals. What would be left for it to reject is
-            // mostly long ones -- post-ectopic pauses and dropped detections --
-            // and inside a group of ectopics it would compute ectopic RR fences
-            // and reject on those, which is a different statement again.
+            // RR-LENGTH IS ONE OF THEM NOW, AND IT WAS NOT. The note here said
+            // it is a rhythm test rather than a morphology test, that premature
+            // removal had already taken the short intervals, and that what was
+            // left to reject was "mostly long ones -- post-ectopic pauses and
+            // dropped detections". All true. But a dropped DETECTION is neither
+            // rhythm nor morphology, it is a failure to find a beat, and its
+            // slice is 1.8x an interval that spans several cardiac cycles -- so
+            // it contributes three or four QRS complexes and is the only slice
+            // with samples out there. Nothing else in the pipeline sees it.
+            //
+            // The ectopic-fence objection is answered by rejecting the LONG
+            // side only: inside a group of ectopics a short-side rejection
+            // would be a statement about ectopy, and there isn't one.
             //
             // FENCES ARE PER CHANNEL, THE VERDICT IS NOT. Amplitude on CH1 and
             // amplitude on PPG are different quantities in different units, so
@@ -1272,6 +1306,40 @@ namespace jbank {
             std::vector<uint32_t> kept = clean;
             if (clean.size() >= 8) {
                 std::vector<uint8_t> reject(clean.size(), 0);   // ExcludeReason
+
+                // ---- RR LENGTH, ONCE, NOT PER CHANNEL ----------------
+                //
+                // The interval is a property of the BEAT, not of a lead, so
+                // there is one fence rather than four. Runs before the
+                // per-channel passes so a misdetection is attributed to the
+                // interval rather than to the amplitude and shape it also
+                // ruins -- same first-failing-pass-wins rule as below, and the
+                // more informative attribution when several would fire.
+                if (rr_after_ms && !rr_after_ms->empty()) {
+                    std::vector<double> rr(clean.size(),
+                        std::numeric_limits<double>::quiet_NaN());
+                    for (size_t k = 0; k < clean.size(); ++k)
+                        if (clean[k] < rr_after_ms->size())
+                            rr[k] = (*rr_after_ms)[clean[k]];
+
+                    alignment::TukeyStats sRR;
+                    const std::vector<bool> keepRR =
+                        alignment::keep_within_tukey(rr, 1.5, &sRR);
+                    for (size_t k = 0; k < clean.size(); ++k) {
+                        // Unmeasurable abstains, as everywhere else here.
+                        if (std::isnan(rr[k])) continue;
+                        if (k < keepRR.size() && keepRR[k]) continue;
+                        // ONLY THE LONG SIDE. The short side is prematurity,
+                        // already removed above, and re-rejecting it here would
+                        // count one beat under two reasons -- and inside a
+                        // group of ectopics the fence is computed over ectopic
+                        // intervals, so a short-side rejection there is a
+                        // statement about ectopy rather than about detection.
+                        if (!(rr[k] > sRR.fence_hi)) continue;
+                        reject[k] = static_cast<uint8_t>(
+                            ExcludeReason::TUKEY_RR_LENGTH);
+                    }
+                }
 
                 for (int c = 0; c < num_channels; ++c) {
                     if (!chans[c].present()) continue;
@@ -1678,7 +1746,8 @@ namespace jbank {
             }
         }
 
-        cleanGroups(out.bank, chans, out.flags, out.excluded_reason, &out.clean);
+        cleanGroups(out.bank, chans, out.flags, out.excluded_reason, &out.clean,
+            &in.rr_after_ms);
 
         substitute_premature(out.bank, chans, out.excluded_reason, out.flags,
             out.substitutions, &out.subs);

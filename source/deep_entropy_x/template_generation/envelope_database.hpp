@@ -195,6 +195,19 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
         };
 
     res.ecgTemplate = medianOver(usable);
+    {
+        int firstFin = -1, argmax = -1;
+        double best = -std::numeric_limits<double>::infinity();
+        for (int i = 0; i < (int)res.ecgTemplate.size(); ++i) {
+            if (std::isnan(res.ecgTemplate[i])) continue;
+            if (firstFin < 0) firstFin = i;
+            if (res.ecgTemplate[i] > best) { best = res.ecgTemplate[i]; argmax = i; }
+        }
+        std::fprintf(stderr,
+            "[tmpl] w=%zu r_col=%d argmax=%d firstFinite=%d pool=%zu/%zu\n",
+            res.ecgTemplate.size(), res.r_col, argmax, firstFin,
+            sel.members.size(), usable.size());
+    }
 
     // ---- Section 4.6 template bank ----------------------------------------
     // RAW METHOD ONLY. This function runs four times per channel per bin

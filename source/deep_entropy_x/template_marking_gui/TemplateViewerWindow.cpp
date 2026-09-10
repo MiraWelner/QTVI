@@ -212,11 +212,11 @@ std::vector<TemplateViewerWindow::Lead>
 TemplateViewerWindow::leadsForBin(const TemplateBin& b) const {
     std::vector<Lead> out;
     if (!b.ch1.ecgTemplate_raw.empty())
-        out.push_back({ &b.ch1.ecgTemplate_raw, 0, "Ch1" });
+        out.push_back({ &b.ch1.ecgTemplate_raw, &b.ch1.ecg_template_raw_iqr, 0, "Ch1" });
     if (!b.ch2.ecgTemplate_raw.empty())
-        out.push_back({ &b.ch2.ecgTemplate_raw, 1, "Ch2" });
+        out.push_back({ &b.ch2.ecgTemplate_raw, &b.ch2.ecg_template_raw_iqr, 1, "Ch2" });
     if (!b.ch3.ecgTemplate_raw.empty())
-        out.push_back({ &b.ch3.ecgTemplate_raw, 2, "Ch3" });
+        out.push_back({ &b.ch3.ecgTemplate_raw, &b.ch3.ecg_template_raw_iqr, 2, "Ch3" });
     return out;
 }
 
@@ -239,12 +239,12 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         // Slot 0 falls back to the chN_raw template when no bank reached this
         // bin, so a pre-bank file renders exactly as it always did.
         const std::vector<double>* trace = nullptr;
+        // The spread for THAT trace. Paired with it from the same source, so
+        // the band and the tail trim describe the waveform they are drawn
+        // around.
+        const std::vector<double>* traceIqr = nullptr;
         int nMembers = 0;
         uint8_t labelCode = tbank::kUnlabeled;
-        // Set when a sub-template has no per-slot average for the selected
-        // alignment and the R-aligned one is being drawn instead. Read by the
-        // label below, so the panel says so.
-        bool traceIsRFallback = false;
 
         const bool pulseThin = templateIdx < b.ppg_bank.size() && b.ppg_bank.templates[templateIdx].tooFewBeats(/*is_ppg=*/true); //is there fewer ppgs than the given limit
         if (!pulseThin
@@ -254,44 +254,54 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             && (templateIdx == 0
                 || bank.templates[templateIdx].wantsLandmarkMarking())) {
             const tbank::BankTemplate& t = bank.templates[templateIdx];
-            trace = &t.tmpl;
-            // ---- THIS SLOT'S OWN ALIGNED AVERAGE -------------------------
+
+            // ---- ONE SOURCE: THIS SLOT, THIS ALIGNMENT -------------------
             //
-            // t.tmpl is R-aligned and has no anchor dimension, so on any other
-            // alignment it is the wrong trace -- and leaving it in place is
-            // what makes a sub-template's waveform sit still while its
-            // fiducials move, the exact inverse of the slot-0 defect noted
-            // below.
+            // There used to be three waveforms reachable here, chosen by a
+            // fallback chain, with nothing on screen saying which one you got:
+            //
+            //   asl->tmpl                        this slot, this alignment,
+            //                                    averaged over members_clean
+            //   t.tmpl                           this slot, R-ALIGNED only
+            //   chFor(c, a).ecgTemplate_raw      the WHOLE BIN, no exclusions,
+            //                                    built before the partition
+            //                                    exists
+            //
+            // Three populations under one label. The third is the worst of
+            // them: create_ecg_templates builds it from every baseline-valid
+            // beat, so a dropped R detection -- whose "RR" is two cardiac
+            // cycles and whose slice therefore spans four -- is in it, is the
+            // only slice with samples past 1.8x the real RR, and the column
+            // median out there IS its later complexes. That is the four-QRS
+            // panel: bin 5 slot A, 986 members, a 2.84 s axis, beside slots B
+            // and C at 1.40 and 1.30 s drawing t.tmpl correctly.
+            //
+            // NO FALLBACK NOW. If this slot has no average for this alignment
+            // the panel is ABSENT, which is a visible gap rather than a silent
+            // substitution of a different population. prepareViewerJob now
+            // aligns all four anchors including R, so every (slot, anchor) has
+            // one -- R was missing, which is why Automatic, the alignment the
+            // operator starts on, was the one view with nothing to draw.
             //
             // EMPTY IS NOT THE ONLY WAY TO BE ABSENT. bankSlotFor only tests
-            // tmpl.empty(), and alignTemplatesFromCache builds each slot's
-            // average by assigning W NaNs and then filling the columns it has
-            // members for -- so a slot whose `members` are empty, or whose
-            // member indices fall outside the aligned matrix, comes back
-            // correctly sized and entirely NaN. That passes bankSlotFor,
-            // reaches the widget, and draws nothing at all. Checked here for a
-            // finite sample instead.
+            // tmpl.empty(), and alignTemplatesFromCache sizes each slot's
+            // average to W NaNs and then fills the columns it has members for
+            // -- so a slot with no members, or whose member indices fall
+            // outside the aligned matrix, comes back correctly sized and
+            // entirely NaN. Checked for a finite sample instead.
             const AnchoredBankSlot* asl =
                 b.bankSlotFor(c, templateIdx, gridAnchor);
             bool anchoredOk = false;
-            if (asl) {
+            if (asl)
                 for (double v : asl->tmpl)
                     if (!std::isnan(v)) { anchoredOk = true; break; }
-            }
-            if (anchoredOk) trace = &asl->tmpl;
-            else if (templateIdx != 0 && gridAnchor != AnchorType::R_PEAK) {
-                // SAID ON THE PANEL, not just on stderr. The trace being drawn
-                // is R-aligned while the alignment control says otherwise, and
-                // a header naming an alignment the data is not in is the one
-                // failure mode this whole area keeps reintroducing.
-                //
-                // The three states are distinguished because they have three
-                // different causes: no map entry means alignTemplatesFromCache
-                // never ran for this anchor; a short vector means it ran before
-                // the bank existed, so bnk.templates was empty and outSlots was
-                // sized 0; all-NaN means it ran with a bank whose `members` did
-                // not index the aligned matrix it was reducing.
-                const char* why = "?";
+            if (!anchoredOk) {
+                // Reported, because a missing panel with no explanation is the
+                // same problem one layer over. Three causes, distinguished:
+                // no map entry means the anchor pass never ran; a short vector
+                // means it ran before the bank existed; all-NaN means it ran
+                // against members that do not index the matrix it reduced.
+                const char* why = "all-nan";
                 if (!asl) {
                     const int key = static_cast<int>(gridAnchor) * 4 + c;
                     auto it = b.anchored_bank.find(key);
@@ -299,25 +309,14 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
                         : (static_cast<size_t>(templateIdx) >= it->second.size())
                         ? "slot-out-of-range" : "empty-tmpl";
                 }
-                else why = "all-nan";
-                traceIsRFallback = true;
                 fprintf(stderr, "[bank-trace] bin %llu lead %d slot %d anchor %s:"
-                    " NO PER-SLOT ALIGNED AVERAGE (%s) -- drawing R-aligned\n",
+                    " NO PER-SLOT AVERAGE (%s) -- no panel\n",
                     (unsigned long long)b.index, c, templateIdx,
                     anchor_view::label(gridAnchor), why);
+                continue;
             }
-            // SLOT 0 HAS AN ANCHORED TEMPLATE EVEN WITHOUT A PER-SLOT ONE.
-            // t.tmpl above is R-aligned, and bankSlotFor is null on files with
-            // no per-slot anchored averages, so slot 0 kept drawing the
-            // R-aligned waveform while its glyphs moved with the alignment --
-            // the fiducials shifting on a trace that never did. The bin's own
-            // per-anchor channel template is the same waveform slot 0 is, so
-            // it is the right source here.
-            if (templateIdx == 0) {
-                const std::vector<double>& anchored =
-                    b.chFor(c, gridAnchor).ecgTemplate_raw;
-                if (!anchored.empty()) trace = &anchored;
-            }
+            trace = &asl->tmpl;
+            traceIqr = &asl->tmpl_iqr;
             nMembers = t.memberCount();
             labelCode = t.label_code;
             // subtype is no longer read here: tbank::letterRanks applies the
@@ -338,9 +337,14 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             // pulseThin carries min_beats_template_ppg from config.csv via
             // tooFewBeats(), and is false when the bin has no pulse cohort at
             // all -- an ABSENT channel, which must not suppress markable ECG.
-            const std::vector<double>* raw = &b.chFor(c, gridAnchor).ecgTemplate_raw;
-            if (raw->empty()) continue;
-            trace = raw;
+            const ChannelTemplateData& cd = b.chFor(c, gridAnchor);
+            if (cd.ecgTemplate_raw.empty()) continue;
+            // The bin's spread is the RIGHT one here, uniquely: this branch's
+            // trace IS the whole-bin average, so the two describe one
+            // population. Everywhere else they do not, which is why the pairing
+            // travels on the Lead.
+            trace = &cd.ecgTemplate_raw;
+            traceIqr = &cd.ecg_template_raw_iqr;
         }
         else {
             continue;   // ragged: this channel's bank is shorter
@@ -385,14 +389,9 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         // bin -- two counts of different things, one line, neither labelled
         // as to which. The name is now just the name; the count travels on
         // Lead::nMembers and the widget prints it as the ECG beat count.
-        QString lbl = QString("%1 %2_%3").arg(kNames[c]).arg(cls).arg(letter);
-        // The trace does not match the alignment control. Named on the panel
-        // because there is no way to tell an alignment that made no difference
-        // from one that was never written, and the operator is placing bars
-        // against whichever this is.
-        if (traceIsRFallback) lbl += QStringLiteral(" [R!]");
+        const QString lbl = QString("%1 %2_%3").arg(kNames[c]).arg(cls).arg(letter);
 
-        out.push_back({ trace, c, lbl, nMembers });
+        out.push_back({ trace, traceIqr, c, lbl, nMembers });
     }
     return out;
 }
@@ -1277,7 +1276,7 @@ void TemplateViewerWindow::showPage() {
         const int nPpgForColumn = hasPPG ? ppgSlot->memberCount() : -1;
 
         if (leads.empty())
-            leads.push_back({ nullptr, 0, "No ECG" });
+            leads.push_back({ nullptr, nullptr, 0, "No ECG" });
 
         // VCG needs all three channels; with fewer, the trace comes back empty
         // and no row is reserved, so the leads keep the full height.
@@ -1318,9 +1317,14 @@ void TemplateViewerWindow::showPage() {
             // differ; the frame they are drawn in should not.
             const double rPeak = static_cast<double>(b.r_peak_ch[lead_index]);
 
-            const std::vector<double>& ecgIqrRaw = (lead_index == 0) ? b.ch1.ecg_template_raw_iqr
-                : (lead_index == 1) ? b.ch2.ecg_template_raw_iqr
-                : b.ch3.ecg_template_raw_iqr;
+            // FROM THE LEAD, not by channel. This picked
+            // b.chN.ecg_template_raw_iqr -- the whole bin's spread -- while the
+            // trace came from a bank slot, so the band around a slot's waveform
+            // described a different population, and recomputeFrame's tail trim
+            // read that band to decide where the trace stopped.
+            static const std::vector<double> emptyIqr;
+            const std::vector<double>& ecgIqrRaw =
+                leads[li].ecgIqr ? *leads[li].ecgIqr : emptyIqr;
             const double ecgRef = (lead_index >= 0 && lead_index < 3) ? m_ecgGlobalRef[lead_index] : std::nan("");
             // Both ecgIqrRaw (Q3-Q1 of raw amplitude) and b.ppg_template_iqr
             // (Q3-Q1 of each beat's own local perfusion-index ratio, computed

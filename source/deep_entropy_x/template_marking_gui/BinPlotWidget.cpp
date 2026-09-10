@@ -444,19 +444,7 @@ void BinPlotWidget::recomputeFrame() {
         hi = std::max(hi, t1);
         };
 
-    // The stored ECG array is framed on the bin's LONGEST RR, because no beat
-    // may lose a sample to framing -- then the outlier filters drop the pause
-    // beats that justified the width, leaving an all-NaN tail. lastFinite
-    // handles that. What it does not handle is a tail supported by one or two
-    // surviving beats: those columns are finite but are not a waveform.
-    // align_beat_matrix only writes ecg_template_iqr when nc >= 2, so a
-    // one-beat column reads exactly 0.0 -- trim those. Trims the FRAME only,
-    // never m_ecg.
-    int ecgLast = lastFinite(m_ecg);
-    if (m_ecgIqr.size() == m_ecg.size())
-        while (ecgLast > 0 && m_ecgIqr[ecgLast] == 0.0) --ecgLast;
-
-    add(m_ecg, Channel::Ecg, ecgLast);
+    add(m_ecg, Channel::Ecg, -1);
     if (m_hasPPG) add(m_ppg, Channel::Ppg, -1);
     add(m_abp, Channel::Abp, -1);
     add(m_art, Channel::Art, -1);

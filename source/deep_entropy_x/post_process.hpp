@@ -132,18 +132,16 @@ namespace post_process_detail {
         std::map<int, std::vector<std::array<template_io::ChannelMethodTemplate, 3>>> anchorAccum;
 
         // The PER-SLOT anchored averages, accumulated beside anchorAccum and
-        // for the same reason -- kept out of job.tmpl so the anchor path cannot
-        // race the finalize worker. Key = AnchorType tag, then [bin][channel][slot].
+        // kept out of job.tmpl for the same reason -- so the anchor path cannot
+        // race the finalize worker. Key = AnchorType tag, then
+        // [bin][channel][slot].
         //
         // alignTemplatesFromCache has always filled bank_anchors alongside
-        // raw_anchors, from the same aligned beat matrix: the per-slot averages
-        // are row subsets of it. Both loops below moved only raw_anchors out of
-        // their local `atmpl`, so the per-slot work was done every run and
-        // discarded every run -- bank_anchors never reached job.tmpl, never
-        // reached the file, and bankSlotFor returned nullptr for every
-        // (slot, anchor). That is why a sub-template drew its R-aligned average
-        // under every alignment, and why its bars and glyphs went missing once
-        // the viewer's seeding was made to require the anchored waveform.
+        // raw_anchors, from the same aligned beat matrix. Both loops below
+        // moved only raw_anchors out of their local `atmpl`, so the per-slot
+        // work was done every run and discarded every run -- bank_anchors never
+        // reached job.tmpl, never reached the file, and bankSlotFor returned
+        // nullptr for every (slot, anchor).
         std::map<int, std::vector<std::array<
             std::vector<template_io::TemplateFile::BankSlotTemplate>, 3>>> bankAnchorAccum;
     };
@@ -164,7 +162,12 @@ namespace post_process_detail {
         // sits between "Saved Noise Markings" and the first [timing] line. A
         // stall here was indistinguishable from a hang: no output, no progress,
         // and the two existing instrumentation lines both live downstream of it.
+        const auto _a0 = std::chrono::steady_clock::now();
+        std::cerr << "[stage] anneal " << stem << " ...\n" << std::flush;
         annealOneFile(binPath, noisePath, annealedPath, cfg.bin_size_minutes, ecg1_inverted, ecg2_inverted, ecg3_inverted);
+        const auto _a1 = std::chrono::steady_clock::now();
+        std::cerr << "[stage] anneal " << stem << " done in "
+            << std::chrono::duration<double>(_a1 - _a0).count() << " s\n" << std::flush;
 
         ViewerJob job;
         job.stem = stem;
@@ -193,7 +196,8 @@ namespace post_process_detail {
 
         AnnealedData annealedData = read_input_binfile(annealedPath.string());
 
-        // ---- shift PPG, and separately ABP/ART/ART_PULM, due to hardware lag----------
+        // ---- shift PPG, and separately ABP/ART/ART_PULM, due to ----------
+        // ---- hardware lag -------------------------------------------------
         // The lag needs R peaks and foot events, both produced from a probe
         // pass -- but the shift has to land BEFORE the REAL
         // create_ecg_ppg_pairs_raw call, so SegmentPPG, ppgMinAmps,
@@ -336,20 +340,67 @@ namespace post_process_detail {
         ecg_move_log::set(cfg.quality_metric, stem);   // per-beat vertical move log
         morphology_csv::set(cfg.template_path, stem);
         tbank::setMatchFloors(cfg.ecg_match_floor, cfg.ppg_match_floor);//morphology split floors for ecg and ppg loaded from config
-		tbank::setMinBeats(cfg.min_beats_template_ecg, cfg.min_beats_template_ppg);//min beats for disaplyed templates in the viewer loaded from config
-		pulse_qc::setFitErrorPct(cfg.ppg_fit_error_pct); //ppg template fit error threshold for ppg template quality check loaded from config
+        tbank::setMinBeats(cfg.min_beats_template_ecg, cfg.min_beats_template_ppg);//min beats for displayed templates in the viewer loaded from config
+        pulse_qc::setFitErrorPct(cfg.ppg_fit_error_pct); //ppg template fit error threshold loaded from config
 
-        // The floors above must be in force BEFORE this call: every spawn and
-        // every merge in the record turns on them, so setting them later would
-        // leave earlier bins partitioned against whatever was in effect then.
+        // ---- SECTION 4.6 MORPHOLOGY THRESHOLDS, FROM config.csv ----------
+        //
+        // Applied here, once, before anything partitions. Every spawn and every
+        // merge in the record turns on these two numbers, so they must be in
+        // force before the first bin is built -- setting them later would leave
+        // earlier bins partitioned against the defaults, with nothing on disk
+        // saying which bins used which floor.
+        //
+        // EACH ONE FALLS BACK INDEPENDENTLY. A blank cell reaches here as 0.0,
+        // and pairing it with a configured value would fail validation and
+        // refuse BOTH -- so setting only the PPG floor, which is the likelier
+        // thing to want, would silently do nothing. Each unset floor keeps its
+        // own current value instead.
+        //
+        // AN UNUSABLE VALUE IS REFUSED, NOT CLAMPED. A floor of 0 accepts every
+        // beat against every template: one morphology per bin, no ectopy ever
+        // separated, and no error anywhere to explain it. Above 1 is the mirror
+        // image -- correlation cannot exceed 1, so everything spawns. Either
+        // way the defaults stand and the line below says so.
+        {
+            const bool have_ecg = (cfg.ecg_match_floor != 0.0);
+            const bool have_ppg = (cfg.ppg_match_floor != 0.0);
+            const double fe = have_ecg ? cfg.ecg_match_floor
+                : tbank::matchFloorEcg();
+            const double fp = have_ppg ? cfg.ppg_match_floor
+                : tbank::matchFloorPpg();
+
+            const char* src_ecg = have_ecg ? "config" : "default";
+            const char* src_ppg = have_ppg ? "config" : "default";
+
+
+            // Pulse QC threshold, same treatment: unset keeps the default,
+            // unusable is refused rather than clamped.
+            if (cfg.ppg_fit_error_pct == 0.0) {
+                std::cerr << "  [pulseqc] ppg_fit_error_pct absent from "
+                    "config.csv; using default "
+                    << 100.0 * pulse_qc::fitErrorFraction() << "%\n";
+            }
+            else if (!pulse_qc::setFitErrorPct(cfg.ppg_fit_error_pct)) {
+                std::cerr << "  [pulseqc] REFUSED ppg_fit_error_pct="
+                    << cfg.ppg_fit_error_pct << " -- must be in (0, 100]. "
+                    "Keeping " << 100.0 * pulse_qc::fitErrorFraction()
+                    << "%\n";
+            }
+            else {
+                std::cerr << "  [pulseqc] pulse fit error threshold "
+                    << 100.0 * pulse_qc::fitErrorFraction()
+                    << "% (config)\n";
+            }
+        }
         // ---- THE PRIOR SPLIT IS READ BEFORE THE BUILD --------------------
         //
         // <stem>_templates.bin is REWRITTEN by the build below, inside
         // morphology_csv::writeTemplatesBin. Reading it afterwards reads this
         // run's own output: a file is found every time, the report claims a
         // successful restore, and the fresh split is put back over itself -- so
-        // a config change is undone by the thing it was supposed to survive,
-        // and nothing distinguishes that from working.
+        // a config change is undone by the thing it was meant to survive, and
+        // nothing distinguishes that from working.
         const std::filesystem::path splitPath =
             std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
         bank_reload::SplitArchive priorSplit =
@@ -400,7 +451,22 @@ namespace post_process_detail {
         // alignTemplatesFromCache leaves the R base untouched, so the calls
         // compose. R_PEAK is not in the list -- it IS the base, in
         // bins[i].chN_raw.
-        for (AnchorType a : anchorSequence()) {
+        // ---- ALL FOUR, INCLUDING R ---------------------------------------
+        //
+        // anchorSequence() is P/Q/J: R is the scalar base, already in
+        // bins[i].chN_raw, and re-aligning it is a no-op because
+        // make_anchor_locator returns the constant r_col for R, so every shift
+        // is zero.
+        //
+        // THE PER-SLOT AVERAGES ARE NOT A NO-OP. bank_anchors is filled by the
+        // same pass, so skipping R left bankSlotFor(c, slot, R_PEAK) null for
+        // every slot -- and R is what the grid draws on Automatic, the
+        // alignment the operator starts on. The one view everybody sees was the
+        // one with no per-slot average, so leadsForBinTemplate fell back to the
+        // slot's R-aligned BankTemplate::tmpl or to the whole-bin
+        // ecgTemplate_raw: three populations under one label, chosen by which
+        // lookup happened to succeed.
+        for (AnchorType a : anchor_view::kAllAnchors) {
             const auto _t0 = std::chrono::steady_clock::now();
             template_io::TemplateFile atmpl = job.tmplR;
             alignTemplatesFromCache(atmpl, job.beats, job.rates, a);
@@ -446,13 +512,14 @@ namespace post_process_detail {
                 "R template under every landmark for it.\n";
             // Reported separately from `filled`, because they fail separately:
             // a bin can align while its per-slot reduction produces nothing,
-            // and it is the latter that bankSlotFor sees.
+            // and it is the latter that bankSlotFor sees -- and now that
+            // leadsForBinTemplate has no fallback, 0 here means no panels.
             std::cerr << "  [anchors] " << anchorName(a) << ": " << slotsFilled
                 << " per-slot average(s)\n";
             if (slotsFilled == 0)
                 std::cerr << "  [anchors] WARNING: " << anchorName(a)
-                << " produced 0 per-slot averages -- sub-templates have no "
-                "anchored waveform for it.\n";
+                << " produced 0 per-slot averages -- no panel can be drawn "
+                "on this alignment.\n";
         }
         std::cerr.flush();
 

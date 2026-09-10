@@ -113,6 +113,13 @@ private slots:
 private:
     struct Lead {
         const std::vector<double>* ecg;
+        // THE SPREAD THAT DESCRIBES THAT TRACE, not the bin's. showPage used to
+        // pick this by channel -- b.chN.ecg_template_raw_iqr -- while the trace
+        // came from a bank slot, so the band around a slot's waveform was the
+        // whole bin's spread. It is also what recomputeFrame's tail trim reads,
+        // so a mismatched spread moved the drawn extent of a trace it did not
+        // describe. Travels with the trace now; null means none.
+        const std::vector<double>* ecgIqr = nullptr;
         int channelIndex;
         QString label;
         // Beats in THIS bank member, not in the bin. The panel title reports

@@ -982,11 +982,36 @@ namespace alignment {
         int r_col = -1;
     };
 
+    // exclude_from_median: one entry per row of beatsIn, non-zero meaning the
+    // row is SHIFTED but not averaged. Null or short means average everything,
+    // which is the behaviour this had before the parameter existed.
+    //
+    // WHY IT HAS TO BE PASSED IN. This function re-shifts an already-sliced
+    // matrix and takes a column median; it has no verdicts of its own and never
+    // will, because it does not slice, level, or look for a landmark on a beat.
+    // extract_beats_and_align computes all of that -- baseline_source, the four
+    // Tukey fences, prematurity -- and deliberately prunes NOTHING, because 4.6
+    // requires flagged beats retained in the record.
+    //
+    // So the exclusion used to be applied at the point of averaging, in
+    // create_ecg_templates' `usable` gate. When the per-anchor averages moved
+    // here, the gate did not move with them: this median drew on every beat,
+    // including the ones every CSV already reported as excluded. A dropped R
+    // detection is the visible case -- its rr spans several cardiac cycles so
+    // its slice is 1.8x that, it is the ONLY row with samples in the far tail,
+    // and the column median out there is its later QRS complexes at full
+    // amplitude. Bin 5 slot A drew four R peaks over a 2.84 s axis on 986
+    // members while _templates.csv reported 28 of them excluded.
+    //
+    // SHIFTED, NOT DROPPED. The row stays in the matrix and keeps its place, so
+    // nothing downstream that indexes by row is disturbed and the beat is still
+    // in the record. Only the median skips it.
     inline aligned_beats align_beat_matrix(
         const std::vector<std::vector<double>>& beatsIn,
         int R_anchor, double fs, bool compute_iqr,
         const std::vector<double>& ref_beat_of_median_length,
-        const std::function<double(const std::vector<double>&)>& locate)
+        const std::function<double(const std::vector<double>&)>& locate,
+        const std::vector<char>* exclude_from_median = nullptr)
     {
         aligned_beats res;
         if (beatsIn.empty()) return res;
@@ -1066,12 +1091,20 @@ namespace alignment {
         res.tmpl.assign(Wsh, std::numeric_limits<double>::quiet_NaN());
         res.iqr.assign(Wsh, 0.0);
 
+        // Hoisted out of the column loop: the same rows are skipped at every
+        // column, so the test is per row and not per (row, column).
+        auto skipRow = [&](size_t r) {
+            return exclude_from_median && r < exclude_from_median->size()
+                && (*exclude_from_median)[r] != 0;
+            };
+
         std::vector<double> col;
         col.reserve(beats.size());
         for (int c = 0; c < Wsh; ++c) {
             col.clear();
-            for (const auto& b : beats) {
-                const double v = b[c];
+            for (size_t r = 0; r < beats.size(); ++r) {
+                if (skipRow(r)) continue;
+                const double v = beats[r][c];
                 if (!std::isnan(v)) col.push_back(v);
             }
             const size_t nc = col.size();
