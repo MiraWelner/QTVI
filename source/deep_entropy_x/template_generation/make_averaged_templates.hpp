@@ -436,12 +436,29 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                         ji.n_slices, noiseSpans.spans, i);
 
 
-         
+                // ---- PER-BIN, ALWAYS, NOT GATED ON BEING SLOW ------------
+                // The old per-channel line printed only when a bin took over
+                // 50 ms or spawned more than 20 times, so the bins that printed
+                // nothing were indistinguishable from bins that had not started
+                // -- and a stall looked identical to a finished run. Every bin
+                // reports. It is one line per bin per record: 40 lines.
                 const auto _j0 = std::chrono::steady_clock::now();
                 info.joint = jbank::buildBinBank(ji);
                 info.joint_valid = true;
                 {
+                    const double _jms = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - _j0).count();
                     const jbank::BankCounts& bc = info.joint.counts;
+                    std::fprintf(stderr,
+                        "[set n bin to morphology template split] bin %zu/%zu slices=%u groups=%d spawns=%u "
+                        "merges=%u caps=%u unscorable=%u "
+                        "rejby=%u/%u/%u/%u  %.1f ms\n",
+                        i + 1, n, ji.n_slices, info.joint.bank.size(),
+                        bc.n_spawns, bc.n_merges, bc.n_cap_raises,
+                        bc.n_unscorable,
+                        bc.n_rejected_by[0], bc.n_rejected_by[1],
+                        bc.n_rejected_by[2], bc.n_rejected_by[3], _jms);
+                    std::fflush(stderr);
                 }
 
                 // PROJECT IT INTO bank_by_channel, so the joint partition is
@@ -509,7 +526,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                     row.n_vote_only = info.joint.pvc.n_vote_only;
                     row.n_substituted = info.joint.subs.n_substituted;
                     row.n_sub_channel_blends = info.joint.subs.n_channel_blends;
-                    row.n_sub_too_bad = info.joint.subs.n_too_bad;
 
                     for (uint32_t sIdx = 0; sIdx < ji.n_slices; ++sIdx) {
                         if (sIdx < info.joint.group_of_slice.size()
@@ -595,18 +611,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
             if (i < ppg_kept.size()) {
                 info.ppg_n_beats = ppg_kept[i].size();
 
-
-                // NO PPG BANK IS BUILT HERE. It used to be: a second
-                // bin_pipeline::runChannel call with is_ppg = true, producing a
-                // pulse partition of its own. That is the state Section 4.6
-                // forbids -- two independent partitions of the same heartbeats,
-                // one keyed by ECG aligned row and one by pulse aligned row,
-                // with nothing saying which pulse template belongs to which QRS
-                // template. bank_by_channel["PPG"] is now the PPG FACE of the
-                // joint partition, written by the projection above: group i of
-                // every channel is the same set of beats, so a group's pulse
-                // cohort travels with its ECG split.
-
                 info.kept_beats_by_channel["PPG"] = std::move(ppg_kept[i]);
             }
         }
@@ -614,28 +618,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         // which the viewer already interprets as "no PPG for this bin".
     }
 
-    // =====================================================================
-    // SECTION 4.5-4.6 ARCHIVE: _templates.csv, _beats.bin, _templates.bin
-    // =====================================================================
-    //
-    // HERE, not in create_ecg_templates.hpp, because here is the first point at
-    // which the joint partition exists. The writers used to run at the end of
-    // the ECG pass from per-channel banks, so the archive and the screen
-    // described two different partitions of the same beats and neither file said
-    // so.
-    //
-    // Pointers are filled AFTER the loop above, because that loop MOVES the beat
-    // matrices into TemplateInfo -- before the move they live in ecg_res, after
-    // it they live in result[bin], and the blocks must point at wherever they
-    // ended up. result is sized once up front and never resized, and both maps
-    // hold their values at stable addresses, so these pointers stay valid.
-    //
-    // THAT STABILITY IS NOW LOAD-BEARING BEYOND THIS FUNCTION: the deferred
-    // beats write holds a copy of `blocks` and runs after this returns, so it
-    // reads through these same pointers. NRVO puts `result` in the caller's
-    // storage, and a vector move would transfer the buffer rather than relocate
-    // the elements, so the addresses survive either way -- but a caller that
-    // ERASES or REBUILDS entries before the write drains would invalidate them.
+	//write templates.csv, beats.bin, templates.bin, and bins.csv.
     for (size_t i = 0; i < n; ++i) {
         for (int c = 0; c < 4; ++c) {
             const auto bit = result[i].bank_by_channel.find(kChanKeys[c]);
@@ -646,45 +629,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 mblocks[c].beats[i] = &kit->second;
         }
     }
-    const std::vector<morphology_csv::ChannelBlock> blocks(
-        mblocks.begin(), mblocks.end());
-
-    // =====================================================================
-    // THE SPEC'S ACCEPTANCE TESTS, MEASURED FROM THIS RECORD
-    // =====================================================================
-    //
-    // Aggregated from the same per-bin counts binRows carries, so the two files
-    // cannot disagree. Everything here is arithmetic over what the pipeline
-    // already produced -- no test re-runs any stage, because a test that
-    // recomputes its own subject proves only that it agrees with itself.
-    {
-        auto num = [](double v, int dp = 2) {
-            std::ostringstream o; o.setf(std::ios::fixed); o.precision(dp);
-            o << v; return o.str();
-            };
-
-        uint64_t slices = 0, becameBeat = 0, premature = 0, voteOnly = 0;
-        uint64_t exCat = 0, exPrem = 0, exVote = 0, exTukey = 0, exNotMember = 0;
-        uint64_t kept = 0, groupMembers = 0, groups = 0;
-        uint64_t subsBeats = 0, subsBlends = 0;
-        for (const auto& r : binRows) {
-            slices += r.n_slices; becameBeat += r.n_became_beat;
-            premature += r.n_premature; voteOnly += r.n_vote_only;
-            exCat += r.ex_category; exPrem += r.ex_premature;
-            exVote += r.ex_vote; exTukey += r.ex_tukey;
-            exNotMember += r.ex_not_member; kept += r.n_kept;
-            groups += r.n_groups;
-            subsBeats += r.n_substituted; subsBlends += r.n_sub_channel_blends;
-        }
-        for (size_t i = 0; i < n; ++i)
-            if (result[i].joint_valid)
-                for (const auto& g : result[i].joint.bank.groups)
-                    groupMembers += static_cast<uint64_t>(g.memberCount());
-        const uint64_t excluded = exCat + exPrem + exVote + exTukey;
-
-        // ---- 4.6: NSVT ------------------------------------------------
-        // Placed after the NSVT block below fills nsvtRows; see there.
-    }
+    const std::vector<morphology_csv::ChannelBlock> blocks(mblocks.begin(), mblocks.end());
+    
 
     // =====================================================================
     // SECTION 4.6 NSVT: RECORD-LEVEL, ACROSS BIN BOUNDARIES
@@ -771,72 +717,18 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         // carrying a VENTRICULAR label, and labels come from marks. On an
         // unmarked record no run can be produced by any input, so both of these
         // tests are unfalsifiable and say so rather than reporting a pass.
-        size_t nVentricular = 0;
-        for (const auto& m : gm.morphologies)
-            if (tbank::isVentricular(m.label_code)) ++nVentricular;
 
-        size_t crossing = 0, sustained = 0;
-        for (const auto& r : nsvtRows) {
-            if (r.crosses_bin) ++crossing;
-            if (r.sustained) ++sustained;
-        }
+        morphology_csv::writeBins(binRows);
+        morphology_csv::writeNsvt(nsvtRows, polyCandidates);
+        morphology_csv::writeTemplates(blocks);
 
+        // DEFERRED, NOT WRITTEN. The ~3.8 s this used to cost lands on the
+        // squared/absval pass instead -- see AugmentTemplatesSlow, which drains it.
+        morphology_writer::pending() = [blocks, local_of_slice_owned] {
+            morphology_csv::writeBeatsBin(blocks);
+            };
 
-
-        // THE SIZE OF WHAT IS ABOUT TO BE WRITTEN, before writing it. _beats is one
-        // column per SLICE and one row per SAMPLE, so its cell count is
-        // (total slices) x (axis width) per channel. That product grows with the
-        // record and nothing was reporting it, so a writer that is slow because the
-        // file is enormous was indistinguishable from one that is slow because the
-        // code is wrong.
-        for (const auto& blk : blocks) {
-            size_t nSlices = 0, present = 0;
-            for (size_t b = 0; b < blk.nBins(); ++b) {
-                const bin_pipeline::ChannelOutput* o2 = blk.out(b);
-                if (!o2) continue;
-                nSlices += o2->flags.size();
-                for (size_t sIdx = 0; sIdx < o2->flags.size(); ++sIdx)
-                    if (blk.rowOf(b, sIdx) >= 0) ++present;
-            }
-            size_t width = 0;
-            for (size_t b = 0; b < blk.nBins(); ++b)
-                if (const auto* bb = blk.binBeats(b))
-                    for (const auto& bt : *bb) width = std::max(width, bt.size());
-            std::fprintf(stderr,
-                "  [morphology] %s: %zu slice columns (%zu became beats) x %zu"
-                " sample rows = %.1f M cells\n",
-                blk.channel, nSlices, present, width,
-                double(nSlices) * double(width) / 1e6);
-        }
-        std::fflush(stderr);
-
-        {
-            auto _w0 = std::chrono::steady_clock::now();
-            auto _wstep = [&](const char* what) {
-                const auto now = std::chrono::steady_clock::now();
-                std::fprintf(stderr, "  [morphology] %-20s %9.1f ms\n", what,
-                    std::chrono::duration<double, std::milli>(now - _w0).count());
-                std::fflush(stderr);
-                _w0 = now;
-                };
-
-            morphology_csv::writeBins(binRows);         _wstep("writeBins csv");
-            morphology_csv::writeNsvt(nsvtRows, polyCandidates);
-            _wstep("writeNsvt csv");
-            morphology_csv::writeTemplates(blocks);     _wstep("writeTemplates csv");
-
-            // DEFERRED, NOT WRITTEN. The ~3.8 s this used to cost lands on the
-            // squared/absval pass instead -- see AugmentTemplatesSlow, which
-            // drains it. The timing line below measures the capture, so a
-            // number near zero here is the expected reading, not a sign the
-            // file got smaller.
-            morphology_writer::pending() = [blocks, local_of_slice_owned] {
-                morphology_csv::writeBeatsBin(blocks);
-                };
-            _wstep("writeBeatsBin deferred");
-
-            morphology_csv::writeTemplatesBin(blocks);  _wstep("writeTemplatesBin");
-        }
+        morphology_csv::writeTemplatesBin(blocks);
 
         return result;
     }
@@ -846,13 +738,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 // vector<TemplateInfo> produced by GenerateTemplatesFast. Applies the same
 // bad_segment gate as the fast pass, so squared/absval stay empty on bins
 // the fast pass cleared.
-//
-// AND IT WRITES _beats.bin, at the end. This is the abs/sqr pass --
-// CreateEcgTemplatesSlow below is the expensive part of it -- so draining the
-// deferred write here puts the file on whatever thread runs abs/sqr without
-// either caller having to know that happens. Both entry points reach it:
-// GenerateTemplates calls this directly, and mergeTemplatesSlow
-// (build_templates.hpp) calls it first thing.
 inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
     vector<TemplateInfo>& templates,
     const SignalRates& rates)
@@ -881,22 +766,7 @@ inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
         fill_slow(templates[i].ch2, ecg_res.ch2, i);
         fill_slow(templates[i].ch3, ecg_res.ch3, i);
     }
-
-    // ---- THE DEFERRED _beats.bin WRITE ---------------------------------
-    //
-    // `templates` is the vector the closure's `blocks` copy points into, and it
-    // arrives by reference, so it is alive for this whole call -- which is what
-    // makes those pointers safe here and is the reason the drain lives in this
-    // function rather than at the thread's launch site.
-    //
-    // AFTER the fill loop, not before. fill_slow only touches chN and never
-    // bank_by_channel or kept_beats_by_channel, so the pointers would hold
-    // either way, but draining last means the writer is not walking those maps
-    // while this function is still assigning into the same objects.
-    //
-    // No-op when nothing is pending: a record whose fast pass was skipped, or a
-    // second call on the same record.
-    morphology_writer::runPending();
+    morphology_writer::runPending();//the beats.bin write takes ~3 so it is deferred with the abs and sqr processing
 }
 
 // Original all-methods entry point, preserved by composition.

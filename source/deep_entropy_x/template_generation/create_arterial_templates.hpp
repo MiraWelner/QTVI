@@ -333,13 +333,6 @@ static inline void build_pulse_template_pair_windowed(
                     medHere = fin[fin.size() / 2];
                 }
             }
-            std::fprintf(stderr,
-                "  [pulseqc] no pulse cleared %.1f%% error in this bin "
-                "(%d candidates, err min %.3f median %.3f); "
-                "NO pulse template\n",
-                100.0 * pulse_qc::fitErrorFraction(),
-                diag_input_beats, diag_err_min, medHere);
-            std::fflush(stderr);
             return;
         }
 
@@ -359,13 +352,9 @@ static inline void build_pulse_template_pair_windowed(
         // produces a mapping of the right SHAPE and the wrong CONTENT, and every
         // consumer downstream would treat it as a valid join key.
         if (outKeptSlices && !ordinalsUsable)
-            std::fprintf(stderr,
-                "  [pulse] aligner supplied %zu ordinals for %zu beats; the "
-                "PPG/ECG join key is NOT reliable for this bin\n",
-                aligned.original_index.size(), aligned.beats.size());
-
-        diag_survivors = static_cast<int>(filteredBeats.size());
-
+        {
+            diag_survivors = static_cast<int>(filteredBeats.size());
+        }
     }
     const auto& beatsForTemplate = filteredBeats;
 
@@ -403,73 +392,6 @@ static inline void build_pulse_template_pair_windowed(
             std::sort(tmp.begin(), tmp.end());
             diag_err_median = tmp[tmp.size() / 2];
         }
-    }
-
-    // ---- WHERE THE PULSES WENT, EVERY BIN, UNGATED -----------------------
-    //
-    // TWO STAGES DROP PULSES AND THE REPORT HAS TO SEPARATE THEM. This filter
-    // runs on aligned.beats -- what the ALIGNER already passed -- so measuring
-    // survivors against that number describes the second stage while hiding the
-    // first. A first version of this line did exactly that, and would have
-    // reported 93% retention on a channel that had already lost most of its
-    // pulses upstream at a fiducial it could not find.
-    //
-    // So: slices offered, what the aligner kept and why it dropped the rest,
-    // then what this threshold kept of those, and the end-to-end figure. The
-    // last number is the only one that answers "how much of the pulse channel
-    // survived", and the middle ones say which stage to go and fix.
-    {
-        const size_t slices = aligned.n_slices;
-        const size_t alignedKept = aligned.beats.size();
-        const double pctAligned = slices
-            ? 100.0 * double(alignedKept) / double(slices) : 0.0;
-        const double pctQc = alignedKept
-            ? 100.0 * double(diag_survivors) / double(alignedKept) : 0.0;
-        const double pctEnd = slices
-            ? 100.0 * double(diag_survivors) / double(slices) : 0.0;
-        std::fprintf(stderr,
-            "  [pulseqc] bin %llu: %zu slices -> aligner kept %zu (%.1f%%; "
-            "dropped rr=%zu peak=%zu foot=%zu up50=%zu "
-            "peakcol=%zu[fence %.0f..%.0f]) "
-            "-> fit<%.1f%% kept %d "
-            "(%.1f%% of aligned, %.1f%% end to end); err min %.3f med %.3f "
-            "max %.3f\n",
-            static_cast<unsigned long long>(bin_index),
-            slices, alignedKept, pctAligned,
-            aligned.n_dropped_rr, aligned.n_dropped_peak,
-            aligned.n_dropped_foot, aligned.n_dropped_up50,
-            aligned.n_dropped_peak_col,
-            aligned.peak_col_fence_lo, aligned.peak_col_fence_hi,
-            100.0 * pulse_qc::fitErrorFraction(), diag_survivors,
-            pctQc, pctEnd,
-            diag_err_min, diag_err_median, diag_err_max);
-        std::fflush(stderr);
-    }
-    // EMPTY IS REACHABLE, AND .front() ON IT IS AN ACCESS VIOLATION.
-    //
-    // The survivor set can come back empty at any threshold when the
-    // reference template is degenerate -- an all-NaN column set, or a flat or
-    // dead stretch of pulse signal -- because footToFootError() then returns
-    // non-finite for every candidate and no threshold admits anything. The old
-    // accumulation happened to leave something behind in practice, so this
-    // dereference was latently wrong rather than actively wrong, and the
-    // survivor-row rewrite made it fire.
-    //
-    // Returning here leaves exactly the state the callers already handle: the
-    // out-params were cleared at function entry and the columns are -1, which
-    // is the same thing the catch(...) in CreatePulseTemplates produces and
-    // which the viewer reads as "no pulse template for this bin".
-    // Belt and braces. The keep-all fallback above means this is now
-    // unreachable whenever aligned.beats was non-empty (checked at entry), but
-    // an unguarded .front() on a filtered container is a bug independent of
-    // whether any current path reaches it -- that is precisely how this one got
-    // here. Out-params were cleared at entry and the columns are -1, which the
-    // callers already read as "no pulse template for this bin".
-    if (beatsForTemplate.empty()) {
-        std::fprintf(stderr,
-            "  [pulse] no beat survived QC (%d candidates, err median %.4g); "
-            "no template for this bin\n", diag_input_beats, diag_err_median);
-        return;
     }
 
     const size_t maxLen = beatsForTemplate.front().size();

@@ -26,7 +26,7 @@ namespace jbank {
     // that a loop over 0..2 is still "the ECG leads" and reads the same as it
     // does everywhere else in the pipeline.
     inline constexpr int kCh1 = 0, kCh2 = 1, kCh3 = 2, kPpg = 3;
-    inline constexpr int kNumChannels = 4;
+    inline constexpr int num_channels = 4;
     inline constexpr int kNumEcgCh = 3;      // 0..2; kPpg is the fourth
 
     // The two floors Section 4.6 names. Indexed by channel so the assignment
@@ -85,7 +85,7 @@ namespace jbank {
         }
     };
 
-    using ChannelSet = std::array<ChannelBeats, kNumChannels>;
+    using ChannelSet = std::array<ChannelBeats, num_channels>;
 
     // ---------------------------------------------------------------------
     // Building local_of_slice from what the pipeline already produces
@@ -128,7 +128,7 @@ namespace jbank {
         const std::vector<std::vector<double>>& beats,
         const IndexVec& forward, uint32_t n_slices, int anchor_col)
     {
-        if (channel < 0 || channel >= kNumChannels) return;
+        if (channel < 0 || channel >= num_channels) return;
         ChannelBeats& cb = set[channel];
         cb.beats = &beats;
         cb.width = beats.empty() ? 0 : static_cast<int>(beats.front().size());
@@ -164,7 +164,7 @@ namespace jbank {
 
         // Per-channel waveform + corridor over `members`. Only the waveform
         // fields are meaningful; see the header note on identity fields.
-        std::array<tbank::BankTemplate, kNumChannels> ch;
+        std::array<tbank::BankTemplate, num_channels> ch;
 
         // ---- group identity: ONE class for ONE morphology ----------------
         uint8_t  label_code = tbank::kUnlabeled;
@@ -232,7 +232,7 @@ namespace jbank {
         // Members this channel actually has. Lower than memberCount() whenever
         // the channel pruned some of them, which is normal.
         int memberCountOn(int c) const {
-            return (c >= 0 && c < kNumChannels)
+            return (c >= 0 && c < num_channels)
                 ? static_cast<int>(ch[c].members.size()) : 0;
         }
     };
@@ -317,9 +317,9 @@ namespace jbank {
     }
 
     inline void recomputeGroup(BeatGroup& g, const ChannelSet& chans,
-        const std::array<std::vector<double>, kNumChannels>* seed_corridors = nullptr)
+        const std::array<std::vector<double>, num_channels>* seed_corridors = nullptr)
     {
-        for (int c = 0; c < kNumChannels; ++c) {
+        for (int c = 0; c < num_channels; ++c) {
             const std::vector<double>* fc =
                 (seed_corridors && !(*seed_corridors)[c].empty())
                 ? &(*seed_corridors)[c] : nullptr;
@@ -331,12 +331,12 @@ namespace jbank {
     // inherits. Factored out because rebuilding ONE group needs them just as
     // much as rebuilding all of them does, and recomputing slot 0 to get them
     // is the entire cost this avoids.
-    inline std::array<std::vector<double>, kNumChannels> inheritedCorridors(
+    inline std::array<std::vector<double>, num_channels> inheritedCorridors(
         const JointBank& bank)
     {
-        std::array<std::vector<double>, kNumChannels> seeds;
+        std::array<std::vector<double>, num_channels> seeds;
         if (bank.groups.empty()) return seeds;
-        for (int c = 0; c < kNumChannels; ++c) {
+        for (int c = 0; c < num_channels; ++c) {
             const tbank::BankTemplate& s0 = bank.groups[0].ch[c];
             const size_t w = std::min(s0.band_lo.size(), s0.band_hi.size());
             seeds[c].assign(w, std::numeric_limits<double>::quiet_NaN());
@@ -363,7 +363,7 @@ namespace jbank {
     {
         if (idx < 0 || idx >= bank.size()) return;
         if (idx == 0) { recomputeGroup(bank.groups[0], chans, nullptr); return; }
-        const std::array<std::vector<double>, kNumChannels> seeds =
+        const std::array<std::vector<double>, num_channels> seeds =
             inheritedCorridors(bank);
         recomputeGroup(bank.groups[idx], chans, &seeds);
     }
@@ -375,7 +375,7 @@ namespace jbank {
         if (!bank.groups.empty())
             recomputeGroup(bank.groups[0], chans, nullptr);
 
-        const std::array<std::vector<double>, kNumChannels> seeds =
+        const std::array<std::vector<double>, num_channels> seeds =
             inheritedCorridors(bank);
         for (int i = 1; i < bank.size(); ++i)
             recomputeGroup(bank.groups[i], chans, &seeds);
@@ -389,7 +389,7 @@ namespace jbank {
         double mean_score = std::numeric_limits<double>::quiet_NaN();
         int    n_scored = 0;      // channels that could be compared
         int    failing_channel = -1;   // first channel below its floor, or -1
-        double per_channel[kNumChannels] = {
+        double per_channel[num_channels] = {
             std::numeric_limits<double>::quiet_NaN(),
             std::numeric_limits<double>::quiet_NaN(),
             std::numeric_limits<double>::quiet_NaN(),
@@ -411,7 +411,7 @@ namespace jbank {
     {
         JointScore js;
         double sum = 0.0;
-        for (int c = 0; c < kNumChannels; ++c) {
+        for (int c = 0; c < num_channels; ++c) {
             const std::vector<double>* beat = chans[c].beatFor(slice);
             if (!beat) continue;                 // channel dropped this beat
             const tbank::BandResult br = tbank::bandMatch(*beat, g.ch[c]);
@@ -455,7 +455,7 @@ namespace jbank {
     inline double groupCloseness(const BeatGroup& x, const BeatGroup& y)
     {
         double sum = 0.0; int n = 0;
-        for (int c = 0; c < kNumChannels; ++c) {
+        for (int c = 0; c < num_channels; ++c) {
             if (x.ch[c].tmpl.empty() || y.ch[c].tmpl.empty()) continue;
             // ONE DIRECTION. The old score was the fraction of one waveform
             // inside the other's corridor, which is directional -- a wide group
@@ -585,7 +585,7 @@ namespace jbank {
         // number that says whether the conjunction is splitting on cardiac
         // morphology or on pulse noise, and it is the first thing to look at if
         // the cap is being hit on ordinary records.
-        uint32_t n_rejected_by[kNumChannels] = { 0, 0, 0, 0 };
+        uint32_t n_rejected_by[num_channels] = { 0, 0, 0, 0 };
 
         // ---- SECTION 4.5 PER-BIN CATEGORY CENSUS -------------------------
         // Counts, never percentages: a percentage cannot be re-aggregated
@@ -689,7 +689,7 @@ namespace jbank {
 
         out.failing_channel = bestRejected.failing_channel;
         if (counts && out.failing_channel >= 0
-            && out.failing_channel < kNumChannels)
+            && out.failing_channel < num_channels)
             ++counts->n_rejected_by[out.failing_channel];
 
         // ---- spawn ------------------------------------------------------
@@ -784,12 +784,12 @@ namespace jbank {
     inline constexpr double kPhase1BandSigma = 1.96;
 
     inline void seedBank(JointBank& bank, const ChannelSet& chans,
-        const std::array<std::vector<double>, kNumChannels>& phase1,
+        const std::array<std::vector<double>, num_channels>& phase1,
         const std::vector<uint32_t>& seed_slices,
         int32_t max_templates_per_bin = 0,
         // Per-sample spread of the beats Phase 1's waveform was built from, per
         // channel. Empty entries leave that channel's corridor as recomputed.
-        const std::array<std::vector<double>, kNumChannels>* phase1_spread = nullptr)
+        const std::array<std::vector<double>, num_channels>* phase1_spread = nullptr)
     {
         bank.groups.clear();
         bank.next_spawn_seq = 0;
@@ -806,7 +806,7 @@ namespace jbank {
         // Phase 1's waveform overrides the recomputed median where it exists,
         // so features measured in Phase 1 and features measured against slot 0
         // use ONE reference.
-        for (int c = 0; c < kNumChannels; ++c)
+        for (int c = 0; c < num_channels; ++c)
             if (!phase1[c].empty())
                 bank.groups[0].ch[c].tmpl = phase1[c];
 
@@ -830,7 +830,7 @@ namespace jbank {
         // built -- so the required order still holds: partition first, then
         // remove premature, then Tukey on what is left.
         if (phase1_spread)
-            for (int c = 0; c < kNumChannels; ++c) {
+            for (int c = 0; c < num_channels; ++c) {
                 const std::vector<double>& sd = (*phase1_spread)[c];
                 std::vector<double>& tm = bank.groups[0].ch[c].tmpl;
                 if (sd.empty() || tm.empty()) continue;
@@ -904,7 +904,7 @@ namespace jbank {
             // concerned; skipped rather than counted as unscorable, which would
             // inflate that diagnostic with beats nobody tried to measure.
             bool anyPresent = false;
-            for (int c = 0; c < kNumChannels && !anyPresent; ++c)
+            for (int c = 0; c < num_channels && !anyPresent; ++c)
                 if (chans[c].beatFor(s)) anyPresent = true;
             if (!anyPresent) continue;
 
@@ -1273,7 +1273,7 @@ namespace jbank {
             if (clean.size() >= 8) {
                 std::vector<uint8_t> reject(clean.size(), 0);   // ExcludeReason
 
-                for (int c = 0; c < kNumChannels; ++c) {
+                for (int c = 0; c < num_channels; ++c) {
                     if (!chans[c].present()) continue;
                     const detail::MemberMetrics mm =
                         detail::measureOnChannel(g, c, chans, clean);
@@ -1396,54 +1396,35 @@ namespace jbank {
         uint32_t n_too_bad = 0;        // below the band: rejected, not blended
     };
 
-    inline void substituteBorderline(const JointBank& bank,
-        const ChannelSet& chans,
-        const std::vector<uint8_t>& excluded_reason,
-        std::vector<tbank::BeatFlags>& flags,
-        std::vector<Substitution>& out,
-        SubstitutionCounts* counts = nullptr)
+    inline void substitute_premature(const JointBank& bank, const ChannelSet& chans, const std::vector<uint8_t>& excluded_reason, std::vector<tbank::BeatFlags>& flags, std::vector<Substitution>& out,  SubstitutionCounts* counts = nullptr)
     {
+        //after the groups are separated morphologically, run the premature beat substitution on each group such that each premature beat is replaced with a ewma blend of beats
         for (const BeatGroup& g : bank.groups) {
             // Running average per channel, seeded from the group's template.
-            // Seeding from the median rather than from the first member means
-            // the first borderline beat is blended against the whole
-            // population, not against whichever beat happened to arrive first.
-            std::array<std::vector<double>, kNumChannels> avg;
-            for (int c = 0; c < kNumChannels; ++c) avg[c] = g.ch[c].tmpl;
+            std::array<std::vector<double>, num_channels> avg;
+            for (int c = 0; c < num_channels; ++c) avg[c] = g.ch[c].tmpl;
 
-            // IN SLICE ORDER, because this is a recursion in time: the average
-            // is updated with the substituted value, so consecutive borderline
+            // Update the average in slice order so consecutive borderline
             // beats drift toward it rather than each being pulled the same
-            // distance from it. members is sorted, so iterating it is time
-            // order.
+            // distance from it. members is sorted, so iterating it is time order.
             for (const uint32_t slice : g.members) {
-                if (slice < excluded_reason.size()
-                    && excluded_reason[slice]
-                    != static_cast<uint8_t>(ExcludeReason::KEPT)) continue;
+                if (slice < excluded_reason.size() && excluded_reason[slice] != static_cast<uint8_t>(ExcludeReason::KEPT)) {
+                    continue;
+                }
 
                 bool blended_any = false;
-                for (int c = 0; c < kNumChannels; ++c) {
+                for (int c = 0; c < num_channels; ++c) {
                     const std::vector<double>* beat = chans[c].beatFor(slice);
                     if (!beat || avg[c].empty()) continue;
                     const tbank::CorrResult cr =
                         tbank::correlate(*beat, g.ch[c].tmpl);
                     if (!cr.scorable()) continue;
 
-                    if (cr.r >= beat_substitute::borderlineHi()) continue;
-                    if (cr.r < beat_substitute::kBorderlineLo) {
-                        // Below the floor a beat is not borderline, it is bad,
-                        // and blending it would smuggle an artifact into the
-                        // series wearing the average's shape.
-                        if (counts) ++counts->n_too_bad;
-                        continue;
-                    }
-
                     Substitution sub;
                     sub.slice = slice;
                     sub.channel = static_cast<uint8_t>(c);
                     sub.score = cr.r;
-                    sub.blended = beat_substitute::substituteBeatNaNSafe(
-                        avg[c], *beat, beat_substitute::kAlpha);
+                    sub.blended = beat_substitute::substituteBeatNaNSafe(avg[c], *beat);
                     avg[c] = sub.blended;      // recursion, not a fixed offset
                     out.push_back(std::move(sub));
                     blended_any = true;
@@ -1574,10 +1555,10 @@ namespace jbank {
             setChannel(chans, kPpg, *in.ppg_beats, *in.ppg_forward,
                 in.n_slices, in.ppg_peak_col);
 
-        std::array<std::vector<double>, kNumChannels> phase1;
+        std::array<std::vector<double>, num_channels> phase1;
         for (int c = 0; c < kNumEcgCh; ++c) phase1[c] = in.ecg_phase1[c];
         phase1[kPpg] = in.ppg_phase1;
-        std::array<std::vector<double>, kNumChannels> spread;
+        std::array<std::vector<double>, num_channels> spread;
         for (int c = 0; c < kNumEcgCh; ++c) spread[c] = in.ecg_phase1_spread[c];
         spread[kPpg] = in.ppg_phase1_spread;
 
@@ -1594,7 +1575,7 @@ namespace jbank {
         const uint32_t kSeedTarget = 20;
         for (uint32_t s = 0; s < in.n_slices && seedSlices.size() < kSeedTarget; ++s) {
             bool any = false;
-            for (int c = 0; c < kNumChannels && !any; ++c)
+            for (int c = 0; c < num_channels && !any; ++c)
                 if (chans[c].beatFor(s)) any = true;
             if (any) seedSlices.push_back(s);
         }
@@ -1699,7 +1680,7 @@ namespace jbank {
 
         cleanGroups(out.bank, chans, out.flags, out.excluded_reason, &out.clean);
 
-        substituteBorderline(out.bank, chans, out.excluded_reason, out.flags,
+        substitute_premature(out.bank, chans, out.excluded_reason, out.flags,
             out.substitutions, &out.subs);
         out.rr_after_ms = in.rr_after_ms;
         return out;
@@ -1711,7 +1692,7 @@ namespace jbank {
         out.configured_cap = bank.configured_cap;
         out.effective_cap = bank.effective_cap;
         out.next_spawn_seq = bank.next_spawn_seq;
-        if (channel < 0 || channel >= kNumChannels) return out;
+        if (channel < 0 || channel >= num_channels) return out;
 
         const ChannelBeats& cb = chans[channel];
         out.templates.reserve(bank.groups.size());
@@ -1799,13 +1780,13 @@ namespace jbank {
     // All four at once, rebuilding the ChannelSet the bank was run against.
     // The caller must pass the SAME ChannelSet, or the local index spaces will
     // not match the ones the members were resolved from.
-    inline std::array<tbank::TemplateBank, kNumChannels> projectAll(
+    inline std::array<tbank::TemplateBank, num_channels> projectAll(
         const JointBank& bank, const ChannelSet& chans,
         const std::vector<tbank::BeatFlags>* flags = nullptr,
         const std::vector<double>* rr_after_ms = nullptr)
     {
-        std::array<tbank::TemplateBank, kNumChannels> out;
-        for (int c = 0; c < kNumChannels; ++c)
+        std::array<tbank::TemplateBank, num_channels> out;
+        for (int c = 0; c < num_channels; ++c)
             out[c] = projectToChannel(bank, chans, c, flags, rr_after_ms);
         return out;
     }
