@@ -171,6 +171,17 @@ namespace annotation_types {
         return 0;
     }
 
+    // Whether the type carrying this export code suppresses R-peak detection
+    // in its spans -- i.e. it is a noise/artifact mark whose beats must not
+    // contribute morphology. Data-driven off the table (not a hardcoded code)
+    // so renumbering or adding a suppressing type needs no edit here. Returns
+    // false for an unknown code, matching the "no annotation" default.
+    constexpr bool code_suppresses_detection(int code) {
+        for (const auto& t : noise_types)
+            if (t.code == code) return t.suppressesDetection;
+        return false;
+    }
+
     // ---------------------------------------------------------------------
     // The two types identified by BEHAVIOUR rather than by name
     // ---------------------------------------------------------------------

@@ -61,7 +61,7 @@ namespace tbank {
     // Beats below this get kUnscorable instead of an assignment.
     inline constexpr int kMinOverlapColumns = 8;
 
-	inline constexpr int min_members_per_column = 2; //how many beats must be in a template to have a column at all
+    inline constexpr int min_members_per_column = 2; //how many beats must be in a template to have a column at all
 
     // Merge-eligibility ceiling for the garbage tier, deliberately ABOVE
     // kMinMembersForColumn. Tying the two together is a trap: merging two
@@ -183,7 +183,17 @@ namespace tbank {
     // no third state, which is why the default arm returns REGULAR rather than
     // failing.
     inline Category categoryForLabelCode(uint8_t code) {
-        if (code == kCodeMinorNoise) return Category::NOISE;
+        // NOISE covers "2) Minor Noise" AND any type flagged
+        // suppressesDetection in annotation_types -- today that is "1) R Peak
+        // Noise". Both mean the beat's morphology is corrupted and must not be
+        // averaged into a template; keying the second condition off the table
+        // flag (rather than hardcoding code 1) keeps the rule in one place.
+        // Previously only Minor Noise was recognized here, so R-Peak-Noise
+        // beats fell through to REGULAR and were averaged into the plotted
+        // template despite being marked.
+        if (code == kCodeMinorNoise
+            || annotation_types::code_suppresses_detection(code))
+            return Category::NOISE;
         if (code == kCodePvc || code == kCodePac || code == kCodeVt)
             return Category::ECTOPIC;
         return Category::REGULAR;
@@ -367,7 +377,7 @@ namespace tbank {
         double p_begin = -1, q_onset = -1, s_end = -1, t_end = -1;
 
         bool isUnset() const {
-            return p_begin < 0 && q_onset < 0  && s_end < 0 && t_end < 0;
+            return p_begin < 0 && q_onset < 0 && s_end < 0 && t_end < 0;
         }
     };
     struct BankPulseMarkerSet {
@@ -502,12 +512,14 @@ namespace tbank {
         // verdict is not a hypothesis to be re-derived.
         Category presumedCategory() const {
             if (confirmed_by_operator) {
-                if (label_code == kCodeMinorNoise) return Category::NOISE;
+                if (label_code == kCodeMinorNoise
+                    || annotation_types::code_suppresses_detection(label_code))
+                    return Category::NOISE;
                 if (label_code == kCodePvc || label_code == kCodePac
                     || label_code == kCodeVt) return Category::ECTOPIC;
                 return Category::REGULAR;
             }
-			return Category::REGULAR; //unless marked PVC, PAC, VT or noise, presume regular
+            return Category::REGULAR; //unless marked PVC, PAC, VT or noise, presume regular
         }
 
         // The Phase 1 sinus seed. spawn_seq 0 is issued once, to slot 0, by the
