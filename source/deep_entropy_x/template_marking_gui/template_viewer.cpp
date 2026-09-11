@@ -231,7 +231,7 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
     // behind it kept showing the R-aligned average. Same selection now drives
     // both. Automatic (m_forceAlign false) keeps the R-aligned grid, which is
     // the frame the marker bars live in.
-    const AnchorType gridAnchor = m_forceAlign ? m_forcedAlign : AnchorType::R_PEAK;
+    const AnchorType gridAnchor = currentGridAnchor();
 
     for (int c = 0; c < 3; ++c) {
         const tbank::TemplateBank& bank = b.ecg_bank[c];
@@ -2244,7 +2244,7 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
     // MUST STAY LAST. setAuto() performs the capture; anything overriding it
     // has to run afterwards or be overwritten by it.
     {
-        const AnchorType frame4 = m_forceAlign ? m_forcedAlign : AnchorType::R_PEAK;
+        const AnchorType frame4 = currentGridAnchor();
         // The same selection leadsForBinTemplate made when it chose the trace
         // for setData, so the glyphs land on the waveform on screen rather than
         // on whichever one this function happens to hold a pointer to.
@@ -2299,8 +2299,7 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     // actually drawing. b.r_peak_ch[c] is the flat column with no anchor
     // dimension, which pinned R to one place while the other four fiducials
     // moved.
-    pw->setMarker(BinPlotWidget::EcgRPeak,
-        b.chFor(c, m_forceAlign ? m_forcedAlign : AnchorType::R_PEAK).r_col_raw);
+    pw->setMarker(BinPlotWidget::EcgRPeak,  b.chFor(c, currentGridAnchor()).r_col_raw);
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
 
@@ -2332,7 +2331,7 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     // Glyphs in the frame of the alignment the grid is drawing; the bars
     // above stay R-framed. Both are deliberate: the fiducials are recomputed
     // per alignment, the operator's marks are not.
-    pw->setAuto(b, m_forceAlign ? m_forcedAlign : AnchorType::R_PEAK);
+    pw->setAuto(b, currentGridAnchor());
 }
 
 void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
@@ -2868,28 +2867,13 @@ void TemplateViewerWindow::onLandmarkSelected(int binIdx, int leadIdx,
     if (binIdx >= 0 && leadIdx >= 0 && col >= 0)
         m_touchedMarks[touchKey(binIdx, leadIdx, marker)] = col;
     refreshFocus(binIdx, leadIdx, templateIdx, marker, col);
+
+    if (!m_forceAlign && BinPlotWidget::markerIsEcg(marker))
+        showPage();
 }
 
-// Rebuild the focus panel(s) for one landmark from the current bin/lead's
-// anchored-average stats. Reads mean/sd/n straight from the template the
-// viewer already holds:
-//   mean = ecgTemplate_raw
-//   sd   = ecg_template_raw_iqr  (holds STD, ddof=1 -- despite the _iqr name)
-//   n    = ch{1,2,3}_n_beats_raw (per-bin, not per-channel-struct)
-// The J-point (S-end) is shared by the QRS and JT views, so selecting/editing
-// it refreshes BOTH panels; every other landmark refreshes its own single
-// panel.
-// Move the stretch between the second panel and the trailing spacer so the
-// panels always sit on the SAME third-height grid.
-//
-//   split=false -> panel 1/3, panel(hidden) 0, spacer 2/3
-//   split=true  -> panel 1/3, panel        1/3, spacer 1/3
-//
-// A hidden widget contributes no stretch, so without moving it into the spacer
-// a lone visible panel would expand to fill half the dock -- and the same
-// landmark would then be drawn at one scale on its own and another right after
-// the J point had been selected. The spacer holds the leftover.
 void TemplateViewerWindow::setFocusSplit(bool split) {
+    //rebuild the focus panels in accordance with the new alignment
     if (!m_focusLay || !zoomed_in_section_bottom) return;
     zoomed_in_section_bottom->setVisible(split);
     m_focusLay->setStretch(1, split ? 1 : 0);   // second panel

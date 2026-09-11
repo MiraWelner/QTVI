@@ -216,6 +216,12 @@ private:
     // showPage, then refreshFocus if a landmark is selected", which is three
     // chances for one of them to forget the focus refresh.
     void applyAlignmentSelection(bool force, AnchorType a);
+    AnchorType currentGridAnchor() const {
+        if (m_forceAlign) return m_forcedAlign;
+        return (m_lastFocusMarker >= 0)
+            ? anchor_view::anchorFor(m_lastFocusMarker)
+            : AnchorType::R_PEAK;
+    }
 
     // Advance the forced alignment one step round P -> Q -> R -> J -> P.
     // Prefers checking the matching radio button, so the visible selection
