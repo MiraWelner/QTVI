@@ -104,6 +104,8 @@ public:
 // visible-sample bound and no ratio: the frame is the union of every
 // channel's extent, so a marker inside its own array is on screen.
     int    lastDrawnSample(Channel ch) const;
+    int    firstDrawnSample(Channel ch) const;
+
 
 
     // ----------------------------------------------------------------------

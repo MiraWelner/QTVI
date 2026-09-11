@@ -623,6 +623,29 @@ int BinPlotWidget::lastDrawnSample(Channel ch) const {
         while (last > 0 && m_ecgIqr[last] == 0.0) --last;
     return last;
 }
+int BinPlotWidget::firstDrawnSample(Channel ch) const {
+    const std::vector<double>* v = nullptr;
+    switch (ch) {
+    case Channel::Ecg:     v = &m_ecg;      break;
+    case Channel::Ppg:     v = &m_ppg;      break;
+    case Channel::Abp:     v = &m_abp;      break;
+    case Channel::Art:     v = &m_art;      break;
+    case Channel::ArtPulm: v = &m_artPulm;  break;
+    default: return -1;
+    }
+    int first = -1;
+    for (int i = 0; i < static_cast<int>(v->size()); ++i)
+        if (!std::isnan((*v)[i])) { first = i; break; }
+    // SAME TRIM lastDrawnSample applies, mirrored. align_beat_matrix leaves
+    // IQR == 0.0 on columns that had fewer than two beats, and recomputeFrame
+    // trims them off both ends -- so a bar dropped there would sit outside the
+    // drawn extent even though the sample is not NaN.
+    if (ch == Channel::Ecg && m_ecgIqr.size() == m_ecg.size()) {
+        const int n = static_cast<int>(m_ecg.size());
+        while (first >= 0 && first < n - 1 && m_ecgIqr[first] == 0.0) ++first;
+    }
+    return first;
+}
 
 bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
     Channel& ch, bool& visible) const
@@ -1052,9 +1075,11 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     // push a bar into the channel's NaN tail, past m_tMax, and the bar drew
     // outside the frame with no trace under it. lastDrawnSample is the same
     // bound recomputeFrame used to build that frame.
-    const int wall = lastDrawnSample(ch);
-    if (wall < 0) return;
-    int s = std::clamp(sampleFromX(ch, e->position().x()), 0, wall);
+
+    const int wallL = firstDrawnSample(ch);
+    const int wallR = lastDrawnSample(ch);
+    if (wallL < 0 || wallR < wallL) return;
+    int s = std::clamp(sampleFromX(ch, e->position().x()), wallL, wallR);
     m_markers[m_dragMarker] = s;
     // TEMPLATE-AWARE signal only. markerMoved carried no slot, so a drag on a
     // sub-template column was indistinguishable from one on slot 0 and wrote

@@ -71,13 +71,11 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     // this scores a template with no operator marks, and all that is wanted is
     // the rough position that opens detect_p_end's search. Renamed from
     // detect_p_peak so a call site cannot mistake a seed for a measurement.
-    const double pPeakD = FeatureMarks::seed_p_peak(ecg, r_col, fs);
+    const double qOnsetD = FeatureMarks::compute_q_onset(ecg, fs, r_col);
+    const double pPeakD = FeatureMarks::compute_p_peak(ecg, 0.0, qOnsetD, fs);
     const int pPeak = (int)std::lround(pPeakD);
     const int pEnd = FeatureMarks::detect_p_end(ecg, r_col, fs, pPeakD);
-    // compute_q_onset returns a sub-sample double and has an out-param this
-    // caller does not need; -1 means no Q-onset and the fallback below applies.
-    const double qBeginD = FeatureMarks::compute_q_onset(ecg, fs, r_col);
-    const int qBegin = (qBeginD >= 0.0) ? (int)std::lround(qBeginD) : -1;
+    const int qBegin = (qOnsetD >= 0.0) ? (int)std::lround(qOnsetD) : -1;
     const double jPointD = FeatureMarks::compute_j_point(ecg, fs, r_col);   // QRS end / J point
     const int jPoint = (int)std::lround(jPointD);
     const int tEnd = (int)std::lround(FeatureMarks::compute_t_end(ecg, fs, r_col, jPointD));

@@ -722,9 +722,9 @@ namespace normalize_features {
             // marks, and all that is wanted is the rough position that opens
             // detect_p_end's search. The seed is exactly that and nothing else
             // reads it.
-            const double pPeakD = FeatureMarks::seed_p_peak(pb.samples, pb.rCol, fs);
-            const int pEnd = FeatureMarks::detect_p_end(pb.samples, pb.rCol, fs, pPeakD);
             const double qOnD = FeatureMarks::compute_q_onset(pb.samples, fs, pb.rCol);
+            const double pPeakD = FeatureMarks::compute_p_peak(pb.samples, 0.0, qOnD, fs);
+            const int pEnd = FeatureMarks::detect_p_end(pb.samples, pb.rCol, fs, pPeakD);
             // compute_q_onset's monophasic-R path can return r_idx itself, which
             // would run the PQ window into the R upstroke. Require a real gap.
             const int qGuard = pb.rCol - static_cast<int>(std::lround(0.020 * fs));

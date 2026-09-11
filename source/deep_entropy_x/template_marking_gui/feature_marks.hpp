@@ -45,8 +45,7 @@ public:
     static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
     static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col);
     static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr);
-    static double compute_p_peak(const std::vector<double>& ecg, double pBegin, double qBegin, double fs);
-    static double seed_p_peak(const std::vector<double>& ecg_signal, int r_idx, double fs);
+    static double compute_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs);
     static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double pPeakIn = -1.0);
 
 
