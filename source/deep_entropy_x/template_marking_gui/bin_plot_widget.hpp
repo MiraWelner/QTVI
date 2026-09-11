@@ -159,6 +159,16 @@ public:
         int nPpgBeats = 0);
 
     void setHasPPG(bool has);
+
+    // Replace ONLY the ECG trace/band/R-column/count, leaving PPG, arterial
+    // channels and all markers untouched. For Automatic alignment re-anchoring
+    // the grid on a bar click: the ECG average is the one thing that changes
+    // per anchor, and updating in place (rather than rebuilding the panel)
+    // keeps an in-progress drag alive.
+    void setEcgData(const std::vector<double>& ecg,
+        const std::vector<double>& ecgIqr,
+        double rPeakSample,
+        int nEcgBeats = 0);
     bool hasPPG() const { return m_hasPPG; }
 
     void setChannelRate(Channel ch, double hz);

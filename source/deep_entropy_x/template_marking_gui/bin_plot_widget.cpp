@@ -485,6 +485,29 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     update();
 }
 
+// Replace ONLY the ECG trace, its band, R column and beat count, leaving the
+// PPG and arterial channels and every marker exactly as they are. Used when
+// Automatic alignment re-anchors the grid on a bar click: the ECG average
+// changes per anchor but nothing else does, so a full setData (which would
+// also re-take the unchanged pulse channels) is unnecessary -- and, crucially,
+// this leaves the widget object alive, so a re-skin mid-click does not disturb
+// an in-progress drag the way rebuilding the panel would.
+void BinPlotWidget::setEcgData(const std::vector<double>& ecg,
+    const std::vector<double>& ecgIqr,
+    double rPeakSample,
+    int nEcgBeats)
+{
+    m_nEcgBeats = nEcgBeats;
+    m_ecg = ecg;
+    m_ecgIqr = ecgIqr;
+    m_rPeakSample = rPeakSample;
+    m_rAnchor[static_cast<size_t>(Channel::Ecg)] = rPeakSample;
+
+    recomputeFrame();
+    updateGeometry();
+    update();
+}
+
 void BinPlotWidget::setHasPPG(bool has) { m_hasPPG = has; }
 void BinPlotWidget::setState(State s) { m_state = s; update(); }
 
@@ -959,7 +982,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         // Same wall the drag clamps to, so a bar is drawn exactly where it
         // can be grabbed.
         const int wallP = lastDrawnSample(ch);
-        if (wallP < 0 || idx > (double)wallP) continue;
+        if (wallP < 0 || idx >(double)wallP) continue;
         const double mx = xFromSample(ch, idx);
         QPen pen(marker_color(m), 2);
         pen.setStyle(markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine);

@@ -216,12 +216,29 @@ private:
     // showPage, then refreshFocus if a landmark is selected", which is three
     // chances for one of them to forget the focus refresh.
     void applyAlignmentSelection(bool force, AnchorType a);
+
+    // The anchor the grid draws in when NOT in a forced alignment (i.e. in
+    // Automatic). Set to the last ECG bar the operator clicked, so Automatic
+    // follows that bar the same way the focus panel does. Its own member,
+    // deliberately: the grid's alignment and the focus zoom's are two
+    // separate things and reading one from the other's state is how they end
+    // up quietly coupled.
+    AnchorType m_autoGridAnchor = AnchorType::R_PEAK;
+
+    // WHAT THE GRID (and the glyphs, and the R glyph column) IS CURRENTLY
+    // DRAWN IN. Forced -> m_forcedAlign; Automatic -> m_autoGridAnchor. ONE
+    // place, so leadsForBinTemplate, applyBankTemplateToWidget and
+    // applyBinToWidget cannot disagree about what "automatic" means.
     AnchorType currentGridAnchor() const {
-        if (m_forceAlign) return m_forcedAlign;
-        return (m_lastFocusMarker >= 0)
-            ? anchor_view::anchorFor(m_lastFocusMarker)
-            : AnchorType::R_PEAK;
+        return m_forceAlign ? m_forcedAlign : m_autoGridAnchor;
     }
+
+    // Re-anchor every panel on the current page to currentGridAnchor() IN
+    // PLACE -- updates each widget's ECG trace/band/glyphs via setEcgData
+    // rather than rebuilding the grid, so it is safe to call mid-click and a
+    // drag in progress is not disturbed. Used by Automatic alignment when a
+    // bar is clicked.
+    void reskinGridForAnchor();
 
     // Advance the forced alignment one step round P -> Q -> R -> J -> P.
     // Prefers checking the matching radio button, so the visible selection

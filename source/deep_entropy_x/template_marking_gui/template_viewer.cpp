@@ -229,8 +229,9 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
     // WHICH ALIGNMENT THE GRID DRAWS. The panels used to be R-aligned always,
     // so pressing P/Q/J switched the focus panel's waveform while the grid
     // behind it kept showing the R-aligned average. Same selection now drives
-    // both. Automatic (m_forceAlign false) keeps the R-aligned grid, which is
-    // the frame the marker bars live in.
+    // both -- including in Automatic, where the grid follows whichever bar
+    // was last clicked (currentGridAnchor), same as the focus panel, rather
+    // than sitting on R regardless of what the operator clicked.
     const AnchorType gridAnchor = currentGridAnchor();
 
     for (int c = 0; c < 3; ++c) {
@@ -2299,7 +2300,8 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     // actually drawing. b.r_peak_ch[c] is the flat column with no anchor
     // dimension, which pinned R to one place while the other four fiducials
     // moved.
-    pw->setMarker(BinPlotWidget::EcgRPeak,  b.chFor(c, currentGridAnchor()).r_col_raw);
+    pw->setMarker(BinPlotWidget::EcgRPeak,
+        b.chFor(c, currentGridAnchor()).r_col_raw);
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
 
@@ -2868,12 +2870,121 @@ void TemplateViewerWindow::onLandmarkSelected(int binIdx, int leadIdx,
         m_touchedMarks[touchKey(binIdx, leadIdx, marker)] = col;
     refreshFocus(binIdx, leadIdx, templateIdx, marker, col);
 
-    if (!m_forceAlign && BinPlotWidget::markerIsEcg(marker))
-        showPage();
+    // AUTOMATIC ALIGNMENT: the grid follows the bar just clicked, on the same
+    // PRESS that moved the focus zoom -- so the two shift together instead of
+    // the grid lagging until release. Safe on press because reskinGridForAnchor
+    // updates the EXISTING panels in place (setEcgData) rather than rebuilding
+    // them; the dragged widget survives, so the drag that this same click is
+    // starting is not disturbed. It runs once here, before any mouse-move, when
+    // every bar still sits at its stored column -- so re-applying the markers
+    // cannot yank the bar the operator just grabbed.
+    //
+    // Bars only (glyphs own no alignment); ECG only (pulse channels are
+    // foot-anchored). A forced alignment ignores clicks, and a click that would
+    // not change the anchor is skipped, so neither pays for a re-skin.
+    if (!m_forceAlign
+        && BinPlotWidget::markerIsEcg(marker)
+        && anchor_view::isBar(marker))
+    {
+        const AnchorType a = anchor_view::anchorFor(marker);
+        if (a != m_autoGridAnchor) {
+            m_autoGridAnchor = a;
+            reskinGridForAnchor();
+        }
+    }
 }
 
+// In-place ECG re-skin of every panel on the current page to
+// currentGridAnchor(). Mirrors the ECG half of showPage()'s per-column body
+// -- per-anchor average from leadsForBinTemplate, the same optional notch,
+// the same /ref normalization -- but pushes it through setEcgData (ECG trace,
+// band, R column and count only) and re-applies the glyphs, leaving the pulse
+// channels, the layout and the widgets themselves alone. That is what lets it
+// run mid-click without breaking a drag.
+void TemplateViewerWindow::reskinGridForAnchor() {
+    const bool notchActive = m_notchFilterOn && m_notchFilterHz > 0;
+
+    for (int i = 0; i < (int)m_binPlots.size()
+        && i < (int)m_pageGlobalIdx.size()
+        && i < (int)m_pageTemplateIdx.size(); ++i)
+    {
+        const int gi = m_pageGlobalIdx[i];
+        const int templateIndex = m_pageTemplateIdx[i];
+        if (gi < 0 || gi >= (int)m_bins.size()) continue;
+        const TemplateBin& b = m_bins[gi];
+
+        const auto leads = leadsForBinTemplate(b, templateIndex);
+
+        for (auto* pw : m_binPlots[i]) {
+            if (!pw) continue;
+            const int lead_index = pw->leadIndex();
+            // 0..2 only: the VCG panel (a fourth "lead" row) is derived from
+            // all three R-aligned leads and has no alignment of its own, so it
+            // neither needs nor wants a re-anchor.
+            if (lead_index < 0 || lead_index > 2) continue;
+
+            // The per-anchor average for THIS lead, picked exactly as showPage
+            // does. If this lead has no entry (e.g. absent channel), skip it.
+            const Lead* L = nullptr;
+            for (const auto& cand : leads)
+                if (cand.channelIndex == lead_index) { L = &cand; break; }
+            if (!L || !L->ecg) continue;
+
+            static const std::vector<double> emptyIqr;
+            const std::vector<double>& ecgRaw = *L->ecg;
+            const std::vector<double>& ecgIqrRaw = L->ecgIqr ? *L->ecgIqr : emptyIqr;
+
+            // ECG notch, footIdx = -1 (no rebase; ECG normalizes by /ref, not a
+            // foot) -- the same call showPage makes.
+            std::vector<double> ecgSrc = ecgRaw;
+            if (notchActive && !ecgSrc.empty())
+                ecgSrc = notch_filter(ecgSrc,
+                    static_cast<double>(m_notchFilterHz), m_sampleRate);
+
+            const std::vector<double> ecgN = normalizeEcgTrace(ecgSrc, lead_index);
+            const double ecgRef = m_ecgGlobalRef[lead_index];
+            const std::vector<double> ecgIqr =
+                normalize_features::scale_array_by_ref(ecgIqrRaw, ecgRef);
+
+            const double rPeak = static_cast<double>(b.r_peak_ch[lead_index]);
+            const uint64_t nEcgBinTotal = (lead_index == 0) ? b.ch1_n_beats_raw
+                : (lead_index == 1) ? b.ch2_n_beats_raw : b.ch3_n_beats_raw;
+            const uint64_t nEcgBeats = (L->nMembers > 0)
+                ? static_cast<uint64_t>(L->nMembers) : nEcgBinTotal;
+
+            pw->setEcgData(ecgN, ecgIqr, rPeak, static_cast<int>(nEcgBeats));
+
+            // Glyphs + the R glyph column follow the anchor too; these helpers
+            // already read currentGridAnchor(). The draggable bars they also
+            // re-apply are read from their stored R-framed positions, which at
+            // click time (before any move) equal what is on screen, so nothing
+            // the operator is holding jumps.
+            if (templateIndex == 0) applyBinToWidget(pw, b);
+            else applyBankTemplateToWidget(pw, m_bins[gi], lead_index, templateIndex);
+        }
+    }
+}
+
+// Rebuild the focus panel(s) for one landmark from the current bin/lead's
+// anchored-average stats. Reads mean/sd/n straight from the template the
+// viewer already holds:
+//   mean = ecgTemplate_raw
+//   sd   = ecg_template_raw_iqr  (holds STD, ddof=1 -- despite the _iqr name)
+//   n    = ch{1,2,3}_n_beats_raw (per-bin, not per-channel-struct)
+// The J-point (S-end) is shared by the QRS and JT views, so selecting/editing
+// it refreshes BOTH panels; every other landmark refreshes its own single
+// panel.
+// Move the stretch between the second panel and the trailing spacer so the
+// panels always sit on the SAME third-height grid.
+//
+//   split=false -> panel 1/3, panel(hidden) 0, spacer 2/3
+//   split=true  -> panel 1/3, panel        1/3, spacer 1/3
+//
+// A hidden widget contributes no stretch, so without moving it into the spacer
+// a lone visible panel would expand to fill half the dock -- and the same
+// landmark would then be drawn at one scale on its own and another right after
+// the J point had been selected. The spacer holds the leftover.
 void TemplateViewerWindow::setFocusSplit(bool split) {
-    //rebuild the focus panels in accordance with the new alignment
     if (!m_focusLay || !zoomed_in_section_bottom) return;
     zoomed_in_section_bottom->setVisible(split);
     m_focusLay->setStretch(1, split ? 1 : 0);   // second panel
