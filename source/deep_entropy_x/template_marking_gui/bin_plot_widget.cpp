@@ -53,7 +53,7 @@
 *
 */
 
-#include "BinPlotWidget.hpp"
+#include "bin_plot_widget.hpp"
 #include "template_anchoring\anchor_view.hpp"
 #include "noise_marking_gui/annotation_types.hpp"
 #include <QMenu>

@@ -8,15 +8,13 @@
 #include <cmath>
 #include <QString>
 #include "template_marking_bin_io.hpp"
-#include "BinPlotWidget.hpp"
-#include "FocusPanelWidget.hpp"
+#include "template_marking_gui/bin_plot_widget.hpp"
+#include "template_marking_gui/focus_panel_widget.hpp"
+#include "template_anchoring/anchor_view.hpp"
+#include "logging/boundary_training_log.hpp"
 
-// Pointer member only (m_focusLay); the dock is built in the .cpp,
-// which includes <QVBoxLayout> properly.
 class QVBoxLayout;
 class QRadioButton;
-#include "template_anchoring\anchor_view.hpp"
-#include "logging/boundary_training_log.hpp"
 
 namespace Ui { class TemplateViewerWindow; }
 
@@ -178,10 +176,6 @@ private:
 
     void showPage();
     void clearPlots();
-    // Save a PNG of the CURRENT page (markers are hidden by default) into the
-    // folder holding templates.bin/.csv. Called from showPage(), so each page
-    // is captured once, when the user first scrolls to it. No flicker: the
-    // page is already on screen and painted.
     void captureCurrentPage();
     std::string buildAlignedTemplateCsv(AnchorType anchor);
     void updatePageControls();
@@ -346,7 +340,7 @@ private:
     //Global references - earliest QRS onset, latest QRS offset, etc
     double m_ecgGlobalRef[3] = { std::nan(""), std::nan(""), std::nan("") };
     double m_pulseGlobalRef[4] = { std::nan(""), std::nan(""), std::nan(""), std::nan("") };
-    void computeGlobalRefs();
+    void compute_global_refs();
 
     void writeNormalizationCsvs(); // Writes <id>_cv_check.csv and <id>_feature_norm.csv
 

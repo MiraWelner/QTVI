@@ -33,7 +33,7 @@
 #include <vector>
 #include "template_marking_gui/alignment.hpp"
 #include "template_structs.hpp"
-#include "template_generation/NormalizeFeatures.hpp"
+#include "template_generation/normalize_template_amplitude.hpp"
 #include "pulse_matched_filter.hpp"
 #include "find_foot_pulseox.hpp"
 

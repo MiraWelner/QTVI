@@ -34,8 +34,8 @@ namespace alignment {
     // it from the per-sample amplitude aggregation (median/std) rather than
     // silently contribute an unreliable, unadjusted amplitude.
     enum class BaselineSource { TP, PQ, NONE };
-    constexpr double percent_interval_preceeding_rpeak = 0.3; //how far before the R peak the snip goes, in terms of percent of the RR interval length
-    constexpr double percent_interval_following_rpeak = 1.5;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
+    constexpr double percent_interval_preceeding_rpeak = 0.4; //how far before the R peak the snip goes, in terms of percent of the RR interval length
+    constexpr double percent_interval_following_rpeak = 1.4;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
 
     // Sample counts for a given RR (integer-truncated).
     inline int64_t rr_before_samples(int64_t rr) {
@@ -288,65 +288,16 @@ namespace alignment {
         // on the flags instead. original_index is consequently the identity,
         // which is what the joint bank's slice mapping wants anyway.
         //
-        // kTukeyPrunesInAlignment restores the old behaviour for a side-by-side
-        // comparison only. It is not a supported mode.
-        // ==================================================================
-        constexpr bool kTukeyPrunesInAlignment = false;
-
-        auto apply_mask = [&](const std::vector<bool>& keep) {
-            if (!kTukeyPrunesInAlignment) return;   // measure, record, keep
-            std::vector<std::vector<double>> kb;
-            std::vector<size_t> kr;
-            std::vector<int>    km;
-            std::vector<BaselineSource> ks;
-            std::vector<double> kd;
-            std::vector<char> kp, kv;
-            std::vector<size_t> ko;
-            std::vector<uint32_t> kslice;
-            const bool haveSrc = out.baseline_source.size() == out.beats.size();
-            const bool haveDelta = out.tp_pq_delta.size() == out.beats.size();
-            const bool haveFlags = out.premature.size() == out.beats.size()
-                && out.voted.size() == out.beats.size();
-            for (size_t i = 0; i < keep.size(); ++i) {
-                // A RHYTHM-FLAGGED BEAT IS NEVER PRUNED.
-                //
-                // The first Tukey pass below rejects on RR LENGTH at 1.5*IQR,
-                // and a premature beat is short by definition -- so without
-                // this exemption alignment discards the ectopy as a length
-                // outlier, for outlier reasons, and every beat that survives
-                // is one that was not premature. Measured on a record with 9
-                // scripted PVCs: all 9 were pruned, the flag vector came out
-                // empty of positives, and the per-beat output read NORMAL
-                // throughout while being entirely correct about the beats it
-                // still had.
-                //
-                // 4.6 requires these beats "excluded from the reference
-                // template but RETAINED with flags".
-                const bool flagged = haveFlags
-                    && (out.premature[i] || out.voted[i]);
-                if (!keep[i] && !flagged) continue;   // rejected, discarded
-                kb.push_back(std::move(out.beats[i]));
-                kr.push_back(out.r_indices[i]);
-                if (i < out.original_index.size()) ko.push_back(out.original_index[i]);
-                // Compacted with the beat, like every other parallel vector.
-                // Only reachable in the unsupported prune mode, and it has to
-                // hold even there: a slice map that survives one compaction and
-                // not the next is worse than no map at all.
-                if (i < out.slice_index.size()) kslice.push_back(out.slice_index[i]);
-                km.push_back(out.rr_lens[i]);
-                if (haveSrc) ks.push_back(out.baseline_source[i]);
-                if (haveDelta) kd.push_back(out.tp_pq_delta[i]);
-                if (haveFlags) { kp.push_back(out.premature[i]); kv.push_back(out.voted[i]); }
-            }
-            out.beats = std::move(kb);
-            out.r_indices = std::move(kr);
-            out.original_index = std::move(ko);
-            out.slice_index = std::move(kslice);
-            out.rr_lens = std::move(km);
-            if (haveSrc) out.baseline_source = std::move(ks);
-            if (haveDelta) out.tp_pq_delta = std::move(kd);
-            if (haveFlags) { out.premature = std::move(kp); out.voted = std::move(kv); }
-            };
+        // apply_mask() IS A NO-OP, KEPT ONLY AS A CALL TARGET. The Tukey
+        // passes below still call it after recording their verdicts, but
+        // alignment does not prune: it measures and records, and the pruning
+        // happens later, on the CLEAN beats, in jbank::cleanGroups -- running
+        // it here instead put it before the partition, where a PVC is an
+        // outlier by construction and got deleted before the bank could see it.
+        // The pruning body and its kTukeyPrunesInAlignment toggle are gone;
+        // the empty lambda stays so the call sites read unchanged and `beats`
+        // is unambiguously the full aligned set.
+        auto apply_mask = [&](const std::vector<bool>&) { };
 
         // Hard drop: a beat whose RR exceeds 4 s is not a real beat, it's a
         // dropout/detection gap between R-peaks (missed beats, noise,

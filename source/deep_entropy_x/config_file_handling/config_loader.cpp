@@ -174,12 +174,10 @@ namespace {
 }
 
 bool load_config(int dataType, config_entry& out) {
-    /*
-        Take a pointer to a config_entry and fill it with the values from the config.csv file. The return
-        bool indicates if it happened correctly, the dataType is an int that indicates which dataset to load
-        (1 = MESA, 2 = BITTIUM, 3 = CHAOS, 4 = SHHS). This mapping is mirrored by the menu in
-        get_dataset_choice() in main.cpp -- adding a dataset means editing both.
-    */
+    /*Take a pointer to a config_entry and fill it with the values from the config.csv file. The return
+    bool indicates if it happened correctly, the dataType is an int that indicates which dataset to load
+    (1 = MESA, 2 = BITTIUM, 3 = CHAOS, 4 = SHHS). This mapping is mirrored by the menu in
+    get_dataset_choice() in main.cpp -- adding a dataset means editing both.*/
     std::ifstream file(CONFIG_PATH);
     if (!file.is_open()) {
         std::cerr << "ERROR: cannot open " << CONFIG_PATH << "\n";

@@ -25,8 +25,8 @@
 #include <cassert>
 #include <QStringList>
 
-#include "TemplateViewerWindow.hpp"
-#include "ui_TemplateViewerWindow.h"
+#include "template_viewer.hpp"
+#include "ui_template_viewer.h"
 #include "feature_marks.hpp"
 #include "template_anchoring\anchor_view.hpp"
 #include "template_anchoring\anchor_fit.hpp"
@@ -34,7 +34,7 @@
 #include "global_intervals.hpp" 
 #include "global_interval_lines.hpp"
 #include "vcg_signal_average.hpp"
-#include "template_generation/NormalizeFeatures.hpp"
+#include "template_generation/normalize_template_amplitude.hpp"
 #include "peak_finding/FilterUtils.hpp"
 
 namespace {
@@ -741,67 +741,22 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
         b.syncReactivePpg();
     }
 
-    // If this subject was already marked in a previous session, restore
-    // those marker positions from the single canonical marking file. If
-    // it doesn't exist (never marked before), the fresh auto-seed above
-    // stands unchanged.
+    //load markers from previous session
     const QDir markingDir(m_markingPath);
     const QString canonical = markingDir.filePath(m_subjectId + "_template_markings.bin");
 
-    // ONE SOURCE. The .partial branch is gone with the cycle: mid-cycle used to
-    // be a real state -- three of four openings of this window found a partial
-    // file and had to restore PULSE only, leaving ECG at that alignment's fresh
-    // auto-seed, because the partial's ECG marks belonged to a DIFFERENT
-    // alignment than the one about to be shown. Every alignment is present at
-    // once now, so a marking file is either a finished subject's (restore
-    // everything) or absent (the fresh auto-seed stands).
-    //
-    // A leftover .partial from a pre-change session is deliberately ignored
-    // rather than migrated: its ECG marks are keyed by anchor tag and would
-    // restore correctly, but it may hold a half-finished cycle whose later
-    // alignments were never marked, and silently presenting that as a restored
-    // subject hides which bars are actually the operator's.
     bool markersReloaded = false;
     if (QFile::exists(canonical)) {
         markersReloaded = restoreMarkersFrom(canonical, /*ecg=*/true, /*pulse=*/true);
-        // REDERIVE THE CACHED REACTIVE VALUES FROM THE RESTORED BARS. The
-        // markings bin holds bars only, so t50 / t80 / t80_rise / pw80 / peak2
-        // arrive at whatever the fresh auto-seed left while the bars come from
-        // the file -- a worse mismatch than the stored copy this replaced. The
-        // ECG side needs no equivalent: p_peak is derived at every read.
-        if (markersReloaded)
+        if (markersReloaded) {
             for (auto& b : m_bins) b.syncReactivePpg();
+        }
     }
-    fprintf(stderr, "[markers] %s for subject %s (all %zu alignments)\n",
-        markersReloaded ? "RELOADED prior markers" : "using FRESH auto-seed (no prior markers applied)",
-        m_subjectId.toStdString().c_str(), anchor_view::kAllAnchors.size());
-
-    // ---- TEMPORARY INSTRUMENTATION ------------------------------------
-    // Everything above this point has already printed by the time the
-    // operator sees a delay ([fast-phases], [ectopic], [markers]), so the
-    // hang is in one of the two calls below or in Qt's first layout of what
-    // showPage builds. If showPage reports a small number and the window is
-    // still slow, the cost is the paint, not this function.
-    using clk = std::chrono::steady_clock;
-    auto t_prev = clk::now();
-    auto lap = [&t_prev](const char* what) {
-        const auto now = clk::now();
-        fprintf(stderr, "[viewer] %-26s %7lld ms\n", what,
-            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - t_prev).count());
-        fflush(stderr);
-        t_prev = now;
-        };
-
-    computeGlobalRefs();
-    lap("computeGlobalRefs");
-
+    compute_global_refs();
     showPage();
-    lap("showPage");
 }
 
-bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath,
-    bool ecg, bool pulse) {
+bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bool ecg, bool pulse) {
     try {
         std::vector<TemplateBin> saved = readTemplateMarkingsBin(markingsBinPath.toStdString());
         if (saved.empty()) {
@@ -941,33 +896,16 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath,
     }
 }
 
-void TemplateViewerWindow::computeGlobalRefs() {
+void TemplateViewerWindow::compute_global_refs() {
     /*compute the ecg global reference value for QRS complex height(abs(R) + abs(S))) and pulse global ref for
     PPG / ART / ART_PULM(abs(peak) - abs(foot))*/
-    for (int c = 0; c < 3; ++c)
-        m_ecgGlobalRef[c] = normalize_features::compute_ecg_global_ref(
-            m_bins, c, m_sampleRate);
+    for (int c = 0; c < 3; ++c) {
+        m_ecgGlobalRef[c] = normalize_features::compute_ecg_global_ref(m_bins, c, m_sampleRate);
+    }
     for (int c = 0; c < 4; ++c) {
         m_pulseGlobalRef[c] = normalize_features::compute_pulse_global_ref(m_bins, c);
     }
-
-    // ---- Sections 5.2-5.4: CV check + ratio/percentile normalization -----
-    // Runs HERE because this is the one place TemplateBin data and a global
-    // ref coexist (compute_ecg_global_ref itself is called just above). The
-    // functions live in NormalizeFeatures.hpp; this drives them on real
-    // per-bin data and persists the results.
-    //
-    // Decisions the spec left open, made explicit (override as needed):
-    //  - Reference FEATURE = per-bin |R|+|S| (Option A's own basis), so the
-    //    ratio and its reference are the same quantity. Computed per channel.
-    //  - GLOBAL REF = all three options (A=|R|+|S|, B=QRS area, C=spatial)
-    //    are written side by side rather than picking one; the ratio/pct
-    //    columns use Option A to stay consistent with the reference feature.
-    //  - p2/p98 for pct_scale come from THIS subject's own distribution of
-    //    the per-bin ratio (per channel), matching the acceptance criterion
-    //    "2nd and 98th percentiles at the extremes".
-    if (!m_normOutputPath.isEmpty())
-        writeNormalizationCsvs();
+    writeNormalizationCsvs();
 }
 
 // Section 5.2-5.4 persistence. Split out of computeGlobalRefs for clarity.

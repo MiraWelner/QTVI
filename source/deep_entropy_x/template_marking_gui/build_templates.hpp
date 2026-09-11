@@ -15,7 +15,6 @@
 #include <vector>
 #include <limits>
 #include <algorithm>
-#include <random>
 #include <cstdlib>
 #include <iostream>
 #include <atomic>
@@ -306,25 +305,6 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
             v[i] = kv.second;
         }
     }
-    /*
-    // DEBUG/TEST: corrupt ~50% of bin 0's beats with additive noise (remove when done).
-    {
-        const double sigma = 3.0;   // mV noise stddev
-        static std::mt19937 rng(2025);
-        std::normal_distribution<double> gauss(0.0, sigma);
-        std::bernoulli_distribution coin(0.5);   // 50% of beats get hit
-        const size_t targetBin = 0;
-        for (auto& kv : out.beats.per_channel_beats) {
-            auto& binsVec = kv.second;               // [bin][beat][sample]
-            if (targetBin >= binsVec.size()) continue;
-            for (auto& beat : binsVec[targetBin]) {
-                if (!coin(rng)) continue;            // skip half, leave them clean
-                for (double& s : beat)
-                    if (!std::isnan(s)) s += gauss(rng);
-            }
-        }
-    }
-    */
 
     return out;
 }
@@ -454,21 +434,34 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
             // ---- WHICH ROWS THE MEDIAN MAY DRAW ON --------------------
             //
             // align_beat_matrix re-shifts an already-sliced matrix and takes a
-            // column median. It has no verdicts of its own -- every filter in
-            // the system is computed in extract_beats_and_align, which
-            // deliberately prunes nothing because 4.6 requires flagged beats
-            // retained. The exclusion used to be applied at the point of
-            // averaging, in create_ecg_templates' `usable` gate; when the
-            // per-anchor averages moved here, the gate did not come with them,
-            // so this median drew on every beat including the ones every CSV
-            // already reported as excluded.
+            // column median. It has no verdicts of its own and never will: it
+            // does not slice, level, or look for a landmark on a beat. Every
+            // filter is computed in extract_beats_and_align, which
+            // deliberately prunes NOTHING, because 4.6 requires flagged beats
+            // retained in the record.
+            //
+            // So the exclusion used to be applied at the point of averaging, in
+            // create_ecg_templates' `usable` gate. When the per-anchor averages
+            // moved here, the gate did not come with them -- this median drew on
+            // every beat, including the ones every CSV already reported as
+            // excluded. A dropped R detection is the visible case: its rr spans
+            // several cardiac cycles so its slice is 1.8x that, it is the ONLY
+            // row with samples in the far tail, and the column median out there
+            // is its later QRS complexes at full amplitude. Bin 5 slot A drew
+            // four R peaks over a 2.84 s axis on 986 members while
+            // _templates.csv reported 28 of them excluded.
             //
             // members_clean is the answer and it is already in hand: cleanGroups
             // wrote it, and it is in the SAME channel-local row space as
-            // perBin[i] (see the note at the per-slot block below). A row in no
-            // group's members_clean is a row nothing wants in an average --
-            // premature, voted, Tukey-rejected or operator-marked, whichever it
-            // was.
+            // perBin[i] -- see the per-slot block below, which reduces over the
+            // same rows. A row in no group's members_clean is a row nothing
+            // wants in an average: premature, voted, Tukey-rejected or
+            // operator-marked, whichever it was.
+            //
+            // SHIFTED, NOT DROPPED. The mask only suppresses a row's
+            // contribution to the median; align_beat_matrix still shifts it and
+            // still returns it in q.beats, so nothing that indexes by row is
+            // disturbed and the beat stays in the record.
             std::vector<char> exclRows;
             {
                 const tbank::TemplateBank& bnk = bin.ecg_bank[ch.chIdx];
@@ -480,11 +473,11 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
                             if (m < exclRows.size() && exclRows[m]) {
                                 exclRows[m] = 0; ++nKept;
                             }
-                    // NOTHING SURVIVED, so the mask says nothing. An all-excluded
-                    // mask would return an empty template, and a bin with no
-                    // waveform is worse than one averaged over everything -- the
-                    // same argument cleanGroups makes when every eligible member
-                    // fails a fence and it keeps them all.
+                    // NOTHING SURVIVED, so the mask says nothing. An
+                    // all-excluded mask returns an empty template, and a bin
+                    // with no waveform is worse than one averaged over
+                    // everything -- the same call cleanGroups makes when every
+                    // eligible member fails a fence and it keeps them all.
                     if (nKept == 0) exclRows.clear();
                 }
             }
@@ -600,14 +593,6 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
                 const size_t W = q.beats.front().size();
                 std::vector<double> col;
                 for (size_t sl = 0; sl < bnk.templates.size(); ++sl) {
-                    // members_clean, NOT members -- the same set the bin-level
-                    // mask above is built from, so a slot's average and the
-                    // bin's agree about which beats are in an average.
-                    // cleanGroups already removed the premature, voted,
-                    // Tukey-rejected and operator-marked beats and left the
-                    // survivors here; averaging over `members` puts every
-                    // flagged beat back into the one waveform the operator
-                    // measures against, which is what the verdict is for.
                     const auto& mem = bnk.templates[sl].members_clean;
                     if (mem.empty()) continue;
                     auto& st = outSlots[sl];

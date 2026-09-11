@@ -9,7 +9,7 @@
 #include "noise_marking_gui/user_annotation_handler.h"
 #include "template_marking_gui/parse_data_from_filename.hpp"
 #include "logging/user_mark_log.hpp"
-#include "template_marking_gui/TemplateViewerWindow.hpp"
+#include "template_marking_gui/template_viewer.hpp"
 
 #include <QtWidgets/QApplication>
 #include <QGuiApplication>

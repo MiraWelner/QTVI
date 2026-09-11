@@ -1,4 +1,4 @@
-#include "FocusPanelWidget.hpp"
+#include "focus_panel_widget.hpp"
 #include "template_anchoring\anchor_fit.hpp"
 
 #include <QPainter>
