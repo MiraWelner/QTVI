@@ -2521,10 +2521,136 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     // onMarkerMoved, everything else here -- is what let the two paths
     // diverge in the first place.
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
-    // PPG and arterial markers have their own handler (bin-level, not
-    // per-slot). Every drag arrives through this one signal now, so the
-    // non-ECG ones are routed on rather than dropped -- which is why
-    // Move-Subsequent had no effect on PPG: onMarkerMoved was never reached.
+
+    // ---- PPG: SLOT-AWARE, PER-COLUMN, like the ECG path below -------------
+    //
+    // Each morphology column has its OWN pulse marks -- slot 0 in the bin-level
+    // b.ppg_* fields, slot N in ppg_bank.templates[N].pulse_marks -- and that is
+    // what each column DRAWS. The old path forwarded PPG to onMarkerMoved, which
+    // dropped the slot and edited only the bin-level fields, so a drag on a bank
+    // column (say 1_b) wrote a field that only slot 0 (1_a) reads: 1_a jumped,
+    // 1_c did not. This edits the DRAGGED column's own store and propagates to
+    // the SUBSEQUENT page columns, by equal screen distance.
+    if (BinPlotWidget::markerIsPpg(marker)) {
+        if (templateIdx < 0) return;
+
+        // Per-slot pulse-mark storage for the three draggable bars.
+        auto ppgGet = [&](int gi, int slot) -> double {
+            TemplateBin& tb = m_bins[gi];
+            if (slot == 0) {
+                switch (marker) {
+                case BinPlotWidget::PpgOnset:    return tb.ppg_onset;
+                case BinPlotWidget::PpgDicrotic: return tb.ppg_dicrotic;
+                case BinPlotWidget::PpgEnd:      return tb.ppg_end;
+                }
+                return -1.0;
+            }
+            if (slot < (int)tb.ppg_bank.size()) {
+                const tbank::BankPulseMarkerSet& pm =
+                    tb.ppg_bank.templates[slot].pulse_marks;
+                switch (marker) {
+                case BinPlotWidget::PpgOnset:    return pm.onset;
+                case BinPlotWidget::PpgDicrotic: return pm.dicrotic;
+                case BinPlotWidget::PpgEnd:      return pm.end;
+                }
+            }
+            return -1.0;
+            };
+        auto ppgSet = [&](int gi, int slot, double v) {
+            TemplateBin& tb = m_bins[gi];
+            if (slot == 0) {
+                switch (marker) {
+                case BinPlotWidget::PpgOnset:    tb.ppg_onset = v; break;
+                case BinPlotWidget::PpgDicrotic: tb.ppg_dicrotic = v; break;
+                case BinPlotWidget::PpgEnd:      tb.ppg_end = v; break;
+                }
+                tb.syncReactivePpg();   // t50/t80/peak2 follow the bars
+                return;
+            }
+            if (slot < (int)tb.ppg_bank.size()) {
+                tbank::BankPulseMarkerSet& pm =
+                    tb.ppg_bank.templates[slot].pulse_marks;
+                switch (marker) {
+                case BinPlotWidget::PpgOnset:    pm.onset = v; break;
+                case BinPlotWidget::PpgDicrotic: pm.dicrotic = v; break;
+                case BinPlotWidget::PpgEnd:      pm.end = v; break;
+                }
+            }
+            };
+        // Bank slots seed their pulse marks lazily; seed before reading so a
+        // never-displayed column still has a real bar to move from.
+        auto ppgSeed = [&](int gi, int slot) {
+            if (slot == 0) return;
+            TemplateBin& tb = m_bins[gi];
+            if (slot >= (int)tb.ppg_bank.size()) return;
+            tbank::BankTemplate& ps = tb.ppg_bank.templates[slot];
+            if (ps.tmpl.empty() || ps.hasDetectedPulseMarks()) return;
+            FeatureMarks::seed_pulse_bank_template(ps.tmpl, m_ppgRateHz, ps.pulse_marks);
+            };
+        // Drawn length of this column's pulse (clipped to the ECG window).
+        auto ppgLen = [&](int gi, int slot) -> int {
+            TemplateBin& tb = m_bins[gi];
+            const int rawLen = (slot == 0)
+                ? (int)tb.ppgTemplate.size()
+                : (slot < (int)tb.ppg_bank.size()
+                    ? (int)tb.ppg_bank.templates[slot].tmpl.size() : 0);
+            const int ecgClip = ecgClipLenFor(tb);
+            return (ecgClip > 0) ? std::min(rawLen, ecgClip) : rawLen;
+            };
+        auto spanSec = [&](int gi) -> double {
+            double lo, hi;
+            return unionEcgFrameSeconds(m_bins[gi], 0, 0, lo, hi) ? (hi - lo) : -1.0;
+            };
+
+        int dragCol = -1;
+        for (int li = 0; li < (int)m_pageGlobalIdx.size()
+            && li < (int)m_pageTemplateIdx.size(); ++li)
+            if (m_pageGlobalIdx[li] == binIdx && m_pageTemplateIdx[li] == templateIdx) {
+                dragCol = li; break;
+            }
+
+        // The dragged bar itself.
+        ppgSeed(binIdx, templateIdx);
+        const double oldIdx = ppgGet(binIdx, templateIdx);
+        int placed = newIdx;
+        const int dragLen = ppgLen(binIdx, templateIdx);
+        if (dragLen > 0) placed = std::clamp(placed, 0, dragLen - 1);
+        ppgSet(binIdx, templateIdx, placed);
+        refreshBankMarkers(binIdx, templateIdx);
+
+        if (m_moveMode == MoveMode::Individual || oldIdx < 0) {
+            refreshFocus(binIdx, leadIdx, templateIdx, marker, placed);
+            return;
+        }
+
+        // Propagate to every LATER column on the page, equal screen distance.
+        const double delta = placed - oldIdx;
+        const double dragSpan = spanSec(binIdx);
+        for (int li = dragCol + 1; li < (int)m_pageGlobalIdx.size()
+            && li < (int)m_pageTemplateIdx.size(); ++li) {
+            const int gi = m_pageGlobalIdx[li];
+            const int slot = m_pageTemplateIdx[li];
+            if (gi < 0 || slot < 0) continue;
+            if (m_bins[gi].bad_ppg != 0) continue;
+            ppgSeed(gi, slot);
+            const double cur = ppgGet(gi, slot);
+            if (cur < 0.0) continue;
+            const int n = ppgLen(gi, slot);
+            if (n <= 0) continue;
+            const double tgtSpan = spanSec(gi);
+            if (!(dragSpan > 0.0) || !(tgtSpan > 0.0)) continue;
+            const double target = cur + delta * (tgtSpan / dragSpan);
+            if (target < 0.0 || target > n - 1) continue;
+            ppgSet(gi, slot, target);
+        }
+        for (int li = dragCol + 1; li < (int)m_pageGlobalIdx.size()
+            && li < (int)m_pageTemplateIdx.size(); ++li)
+            refreshBankMarkers(m_pageGlobalIdx[li], m_pageTemplateIdx[li]);
+        refreshFocus(binIdx, leadIdx, templateIdx, marker, placed);
+        return;
+    }
+
+    // Arterial (ABP/ART/ART_PULM) still routes to the bin-level handler.
     if (!BinPlotWidget::markerIsEcg(marker)) {
         onMarkerMoved(binIdx, leadIdx, marker, newIdx);
         return;
@@ -3565,7 +3691,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         // of being a fixed amplitude constant.
         double maxSlope = 0.0;
         for (double s : absSlope) if (std::isfinite(s) && s > maxSlope) maxSlope = s;
-        const double floor = 0.02 * maxSlope;
+        const double floor = 0.05 * maxSlope;
         const double msPerSample = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 0.0;
         const double NaNv = std::numeric_limits<double>::quiet_NaN();
         std::vector<double>  sdMs(sd.size(), NaNv);

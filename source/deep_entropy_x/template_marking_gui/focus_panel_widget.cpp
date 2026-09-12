@@ -239,7 +239,7 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
             && m_floorMask[m_landmarkCol];
         const double denom = floored ? m_slopeFloor : slope;
         const QString sdStr = std::isfinite(rawSd)
-            ? QString::number(rawSd, 'f', 1) : QStringLiteral("--");
+            ? QString::number(rawSd, 'f', 4) : QStringLiteral("--");
         const QString dStr = std::isfinite(denom)
             ? QString::number(denom, 'f', 3) : QStringLiteral("--");
         foot = floored

@@ -820,8 +820,14 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         g.end = refine_end(seed >= 0 ? seed : Wc - 1);
     }
 
-    // Dicrotic notch (placeholder tier for now).
+    // Dicrotic notch (placeholder tier for now). Fallback = 120 ms after the
+    // peak, but BOUNDED to sit before the pulse end: on a fast/short pulse
+    // peak+120ms overshoots the end, lands past the trace, and then neither the
+    // DN bar nor its glyph draws at all. Kept strictly inside (peak, end) so the
+    // fallback always lands on the drawn waveform.
     g.dicrotic = cld(g.peak + 0.12 * ppgRate);
+    if (g.end > g.peak && g.dicrotic >= g.end)
+        g.dicrotic = cld(g.peak + 0.5 * (g.end - g.peak));   // midway peak->end
     g.notch_found = false;
     g.dn_tier = 0;
     g.dn_confidence = 0.0;
