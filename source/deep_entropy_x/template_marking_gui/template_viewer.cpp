@@ -36,6 +36,7 @@
 #include "vcg_signal_average.hpp"
 #include "template_generation/normalize_template_amplitude.hpp"
 #include "peak_finding/FilterUtils.hpp"
+#include "ppg_derivative.hpp"   // ppg_deriv::sgCoeffs -- Savitzky-Golay derivative
 
 namespace {
     constexpr int n_template_cols = 3;
@@ -2965,10 +2966,12 @@ void TemplateViewerWindow::onMarkerDragStarted(int, int, int) {
 
 // Per-sample |dV/dt| of the template, in amplitude units per sample.
 //
-// The derivative at a column is taken over 4 MSEC EITHER SIDE of it: a line
-// fitted by least squares through that span, and its slope. For a symmetric
-// window the fitted slope is sum(x*y)/sum(x*x) with x centered on the column,
-// which needs no intercept term.
+// SAVITZKY-GOLAY first derivative (ppg_deriv::sgCoeffs, the same differentiator
+// the pulse pipeline uses): a polynomial of order `order` is fit by least
+// squares over [-h, +h] and differentiated analytically, which suppresses
+// high-frequency noise while preserving peak position -- unlike a bare line
+// slope, whose noise gain grows with frequency. Window is +/- 4 ms; the order
+// is clamped so 2h+1 >= order+1 holds on small (low-fs) windows.
 //
 // NaN where the window would run off the trace or into the NaN pads.
 static std::vector<double> localAbsSlope(const std::vector<double>& t, double fs) {
@@ -2976,31 +2979,20 @@ static std::vector<double> localAbsSlope(const std::vector<double>& t, double fs
     std::vector<double> s(N, std::numeric_limits<double>::quiet_NaN());
     const int h = (fs > 0.0)
         ? std::max(1, (int)std::lround(4.0 * fs / 1000.0)) : 1;   // +/- 4 ms
-    double sxx = 0.0;
-    for (int j = -h; j <= h; ++j) sxx += (double)j * (double)j;
-    if (!(sxx > 0.0)) return s;
+    const int order = std::min(4, 2 * h);          // need 2h+1 >= order+1
+    const std::vector<double> k = ppg_deriv::sgCoeffs(h, order, /*deriv=*/1);
 
-    for (int k = h; k < N - h; ++k) {
-        double sxy = 0.0;
+    for (int i = h; i < N - h; ++i) {
+        double d = 0.0;
         bool ok = true;
         for (int j = -h; j <= h; ++j) {
-            const double v = t[k + j];
+            const double v = t[i + j];
             if (std::isnan(v)) { ok = false; break; }
-            sxy += (double)j * v;
+            d += k[j + h] * v;
         }
-        if (!ok) continue;
-        s[k] = std::fabs(sxy / sxx);
+        if (ok) s[i] = std::fabs(d);   // per-sample derivative (deriv! = 1)
     }
     return s;
-}
-
-// Slope floor, so the quotient does not blow up at peaks: a column whose
-// local slope is below this divides by the floor instead, and is flagged
-// (orange in the panel) so a value bounded by the floor cannot be mistaken for
-// a measurement. A constant, in the same amplitude-per-sample units as the
-// ref-normalized template.
-static double slopeFloor() {
-    return 0.0001;
 }
 
 // `col` IS A DOUBLE, matching BinPlotWidget::landmarkSelected. A Qt signal and
@@ -3565,10 +3557,15 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         //
         // Per-sample SD in MSEC: each column's amplitude SD divided by the
         // template's local |dV/dt| there (localAbsSlope above), with the slope
-        // clamped at slopeFloor() so the divide cannot blow up. Clamped
-        // columns are flagged (orange in the panel), not dropped.
+        // clamped at 5% of the template's max slope so the divide cannot blow
+        // up. Clamped columns are flagged (orange in the panel), not dropped.
         const std::vector<double> absSlope = localAbsSlope(mean, m_sampleRate);
-        const double floor = slopeFloor();
+        // Floor at 5% of the template's OWN max slope: the divide can't blow up
+        // in flat regions, and the threshold scales with the waveform instead
+        // of being a fixed amplitude constant.
+        double maxSlope = 0.0;
+        for (double s : absSlope) if (std::isfinite(s) && s > maxSlope) maxSlope = s;
+        const double floor = 0.02 * maxSlope;
         const double msPerSample = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 0.0;
         const double NaNv = std::numeric_limits<double>::quiet_NaN();
         std::vector<double>  sdMs(sd.size(), NaNv);
@@ -3608,12 +3605,12 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
             if (zoomed_in_section_top) {
                 zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere,
                     head + QStringLiteral("  (QRS)"), 100, -1);
-                zoomed_in_section_top->setSdMs(sdMs, floorMask);
+                zoomed_in_section_top->setSdMs(sdMs, floorMask, absSlope, floor);
             }
             if (zoomed_in_section_bottom) {
                 zoomed_in_section_bottom->setFocus(mean, sd, nBeats, colHere,
                     head + QStringLiteral("  (JT)"), 100, +1);
-                zoomed_in_section_bottom->setSdMs(sdMs, floorMask);
+                zoomed_in_section_bottom->setSdMs(sdMs, floorMask, absSlope, floor);
             }
         }
         else {
@@ -3624,7 +3621,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                 zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head, 100, bias);
                 // AFTER setFocus: clearFocus wipes the mask, so setting it
                 // first would leave the panel with none.
-                zoomed_in_section_top->setSdMs(sdMs, floorMask);
+                zoomed_in_section_top->setSdMs(sdMs, floorMask, absSlope, floor);
             }
         }
     }

@@ -69,7 +69,9 @@ public:
     // Display only: the band above is unchanged (it is the amplitude CI).
     // Empty vectors leave the panel exactly as it was.
     void setSdMs(const std::vector<double>& sdMs,
-        const std::vector<uint8_t>& floorMask);
+        const std::vector<uint8_t>& floorMask,
+        const std::vector<double>& deriv,
+        double slopeFloor);
 
     // Clear the panel (no landmark selected).
     void clearFocus();
@@ -81,6 +83,8 @@ private:
     std::vector<double> m_mean;
     std::vector<double> m_sd;
     std::vector<double>  m_sdMs;       // per-column SD in msec
+    std::vector<double>  m_deriv;      // per-column |dV/dt| (SG derivative), amp/sample
+    double  m_slopeFloor = 0.0;        // denominator used where the slope is below it
     std::vector<uint8_t> m_floorMask;  // 1 where the slope floor engaged
     int    m_nBeats = 0;
     int    m_landmarkCol = -1;

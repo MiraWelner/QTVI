@@ -33,10 +33,14 @@ void FocusPanelWidget::setFocus(const std::vector<double>& mean,
 }
 
 void FocusPanelWidget::setSdMs(const std::vector<double>& sdMs,
-    const std::vector<uint8_t>& floorMask)
+    const std::vector<uint8_t>& floorMask,
+    const std::vector<double>& deriv,
+    double slopeFloor)
 {
     m_sdMs = sdMs;
     m_floorMask = floorMask;
+    m_deriv = deriv;
+    m_slopeFloor = slopeFloor;
     update();
 }
 
@@ -45,6 +49,7 @@ void FocusPanelWidget::clearFocus() {
     m_mean.clear();
     m_sd.clear();
     m_sdMs.clear();
+    m_deriv.clear();
     m_floorMask.clear();
     m_nBeats = 0;
     m_landmarkCol = -1;
@@ -216,17 +221,30 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         p.drawLine(QPointF(x, mt), QPointF(x, mt + ph));
     }
 
-    // ---- footer: nBeats, and the SD at the bar in msec ----
-    // The number is always printed; the orange shading is what marks the
-    // columns where the slope floor engaged.
+    // ---- footer: the two inputs to the msec SD, so the equation is visible ----
+    // sd_ms = raw_sd / slope x (1000/fs). The header prints the resulting sd_ms;
+    // here we show raw_sd and the DENOMINATOR ACTUALLY USED at the bar. Where the
+    // column's own slope is below the floor (see the orange/pink shading), the
+    // divide used the floor, not the near-zero slope -- so print the floor and
+    // mark it, or raw_sd/slope would look like a divide-by-nothing. Slope is
+    // printed at 3 decimals so a small-but-nonzero value is not shown as 0.0.
     p.setPen(QColor(120, 120, 120));
-    QString foot = QStringLiteral("n=%1  (band: mean +/- 1 sd)")
-        .arg(m_nBeats);
-    if (m_landmarkCol >= 0 && m_landmarkCol < (int)m_sdMs.size()) {
-        foot = std::isfinite(m_sdMs[m_landmarkCol])
-            ? QStringLiteral("n=%1  sd=%2 ms at bar")
-                .arg(m_nBeats).arg(m_sdMs[m_landmarkCol], 0, 'f', 1)
-            : QStringLiteral("n=%1  sd=-- at bar").arg(m_nBeats);
+    QString foot = QStringLiteral("(band: mean +/- 1 sd)");
+    if (m_landmarkCol >= 0) {
+        const double rawSd = (m_landmarkCol < (int)m_sd.size())
+            ? m_sd[m_landmarkCol] : std::numeric_limits<double>::quiet_NaN();
+        const double slope = (m_landmarkCol < (int)m_deriv.size())
+            ? m_deriv[m_landmarkCol] : std::numeric_limits<double>::quiet_NaN();
+        const bool floored = (m_landmarkCol < (int)m_floorMask.size())
+            && m_floorMask[m_landmarkCol];
+        const double denom = floored ? m_slopeFloor : slope;
+        const QString sdStr = std::isfinite(rawSd)
+            ? QString::number(rawSd, 'f', 1) : QStringLiteral("--");
+        const QString dStr = std::isfinite(denom)
+            ? QString::number(denom, 'f', 3) : QStringLiteral("--");
+        foot = floored
+            ? QStringLiteral("raw sd=%1  slope=%2 /sample (floor)").arg(sdStr, dStr)
+            : QStringLiteral("raw sd=%1  slope=%2 /sample").arg(sdStr, dStr);
     }
     p.drawText(QRect(ml, mt + ph - 14, pw, 12),
         Qt::AlignRight | Qt::AlignVCenter, foot);
