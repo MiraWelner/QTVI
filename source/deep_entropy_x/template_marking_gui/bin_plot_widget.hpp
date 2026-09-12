@@ -171,6 +171,19 @@ public:
         int nEcgBeats = 0);
     bool hasPPG() const { return m_hasPPG; }
 
+    // Pin the ECG channel's contribution to the x-frame to a FIXED window, in
+    // seconds relative to R, instead of deriving it from the current ECG
+    // trace's finite extent. The four alignments (P/Q/R/J) produce averages
+    // with slightly different left/right extents, so without this the x-axis
+    // rescales every time the anchor changes and the waveform appears to slide.
+    // The caller passes the union of all four anchors' extents, so whichever
+    // anchor is shown draws inside the same window and the axis holds still.
+    // PPG and arterial channels still union in normally -- only the ECG span is
+    // pinned. clearEcgFrame() returns to per-trace behaviour (used by panels
+    // with no alignment dimension, e.g. VCG, which simply never call setEcgFrame).
+    void setEcgFrame(double tMinSec, double tMaxSec);
+    void clearEcgFrame();
+
     void setChannelRate(Channel ch, double hz);
     double channelRate(Channel ch) const { return m_rates[static_cast<size_t>(ch)]; }
     // R column for a channel, in THAT channel's own samples. With
@@ -228,6 +241,7 @@ public:
     // way into the paint path -- so the glyph drew up to half a sample away
     // from the value the CSV reported for the same landmark.
     struct Reactive {
+        double ecgPBegin = -1.0;  // onset before the reactive P peak (same peak)
         double ecgPPeak = -1.0;   // between the P-onset and Q-onset bars
         double ecgTPeak = -1.0;   // between the S-end and T-end bars
         double ppgT50 = -1.0, ppgT80 = -1.0, ppgPeak2 = -1.0;
@@ -425,6 +439,13 @@ private:
     double m_tMin = 0.0;
     double m_tMax = 1.0;
 
+    // Fixed ECG x-extent (seconds rel R), set by setEcgFrame. When active,
+    // recomputeFrame folds this in for the ECG channel instead of the current
+    // trace's own finite span, so switching alignment does not move the axis.
+    bool   m_ecgFrameFixed = false;
+    double m_ecgFrameLo = 0.0;
+    double m_ecgFrameHi = 0.0;
+
     // FROZEN glyph columns only -- every field here is a copy of an m_auto
     // value (bounds-checked against the trace), so nothing in this struct can
     // drift as the user drags. The reactive glyphs (ECG T-peak, PPG T50/T80)
@@ -461,6 +482,13 @@ private:
     };
 
     GlyphSnapshot m_glyphs;
+
+    // The glyph snapshot depends ONLY on the trace/bin, never on bar positions,
+    // so it is recomputed only when the trace is (re)set -- on build and on an
+    // alignment change (a bar click). setData/setEcgData clear this; during a
+    // drag nothing re-sets the trace, so captureGlyphSnapshot returns early and
+    // the expensive detect does not run per mouse-move.
+    bool m_glyphsValid = false;
 
     // Compute the glyph snapshot from current trace + marker state.
     void captureGlyphSnapshot(const TemplateBin& b,

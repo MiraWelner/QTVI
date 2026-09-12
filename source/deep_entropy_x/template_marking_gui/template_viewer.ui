@@ -164,7 +164,7 @@
          <item>
           <widget class="QRadioButton" name="move_subsequent_delta">
            <property name="text">
-            <string>Move Subsequent - Delta</string>
+            <string>Move Subsequent</string>
            </property>
            <property name="checked">
             <bool>true</bool>
@@ -172,13 +172,6 @@
            <attribute name="buttonGroup">
             <string notr="true">buttonGroup</string>
            </attribute>
-          </widget>
-         </item>
-         <item>
-          <widget class="QRadioButton" name="move_subsequent_raw">
-           <property name="text">
-            <string>Move Subsequent - Time</string>
-           </property>
           </widget>
          </item>
          <item>
@@ -459,7 +452,7 @@
   <slot>onNextPage()</slot>
  </slots>
  <buttongroups>
-  <buttongroup name="buttonGroup"/>
   <buttongroup name="buttonGroup_2"/>
+  <buttongroup name="buttonGroup"/>
  </buttongroups>
 </ui>

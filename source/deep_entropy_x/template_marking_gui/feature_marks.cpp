@@ -20,11 +20,6 @@ See feature_marks.hpp for the public interface*/
 
 namespace {
 
-    // Half-window in samples for a +/-0.05 s search around a user marker.
-    inline int win_005s(double fs) {
-        return std::max(1, static_cast<int>(std::lround(0.05 * fs)));
-    }
-
     // Least-squares polynomial fit (degree d) over samples [lo,hi] of v, with
     // x measured from lo. Returns coeffs c[0..d] (c[0] + c[1]x + c[2]x^2 ...).
     // Small normal-equation solve via Gaussian elimination with partial pivot.
@@ -75,26 +70,6 @@ namespace {
         for (double coef : c) { s += coef * xp; xp *= x; }
         return s;
     }
-
-    // "Elbow" of a degree-d polynomial fit over [lo,hi]: the sample whose
-    // fitted value deviates most from the straight chord joining the fitted
-    // endpoints. (Max-curvature of a cubic is useless here -- its 2nd
-    // derivative is linear, so the extremum is always at a window edge.)
-    inline int fit_elbow(const std::vector<double>& v, int lo, int hi, int d) {
-        if (hi - lo < d + 1) return (lo + hi) / 2;
-        const auto c = polyfit(v, lo, hi, d);
-        const int n = hi - lo;
-        const double y0 = poly_eval(c, 0.0);
-        const double y1 = poly_eval(c, static_cast<double>(n));
-        int best = lo; double bd = -1.0;
-        for (int k = 0; k <= n; ++k) {
-            const double chord = y0 + (y1 - y0) * (static_cast<double>(k) / n);
-            const double dev = std::abs(poly_eval(c, static_cast<double>(k)) - chord);
-            if (dev > bd) { bd = dev; best = lo + k; }
-        }
-        return best;
-    }
-
 } // anonymous
 
 
@@ -124,8 +99,7 @@ bool FeatureMarks::qrs_positive_at(const std::vector<double>& v, int r_idx) {
 // Search spans, in seconds. Q-peak within 50 ms before R (mirror of
 // S_PEAK_WIN_S); Q-onset within 50 ms before the Q peak.
 namespace { constexpr double Q_PEAK_WIN_S = 0.040; constexpr double Q_ONSET_WIN_S = 0.050; }
-// S-peak lives within 50 ms after R; the J-point within 50 ms after the S-peak.
-namespace { constexpr double S_PEAK_WIN_S = 0.050; constexpr double J_POINT_WIN_S = 0.050; }
+namespace { constexpr double S_PEAK_WIN_S = 0.100; constexpr double J_POINT_WIN_S = 0.100; }
 namespace { constexpr double Q_MIN_DEPTH = 0.0075; }
 
 double FeatureMarks::sample_at(const std::vector<double>& v, double p) {
@@ -242,77 +216,98 @@ double FeatureMarks::compute_s_peak(const std::vector<double>& ecg, int r_idx, d
 // Parameters named for what they ARE -- the two bars bracketing the search --
 // not for a t_begin landmark that no longer exists and never held a value. The
 // order does not matter; they are min/max'd below.
-double FeatureMarks::compute_t_peak(const std::vector<double>& v,
-    double bracketSEnd, double bracketTEnd) {
+double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracketSEnd, double bracketTEnd) {
+    // T peak = the sample furthest from the bracket-endpoint baseline, over the
+    // window between the S-end and T-end bars, clamped into the trace's FINITE
+    // region. Because the window always contains signal, the extremum always
+    // resolves: no failure branch, no fallback, and the only -1 is a trace with
+    // no finite sample at all (an empty trace, not a T-detection case).
     const int N = static_cast<int>(v.size());
-    if (!(bracketSEnd >= 0.0) || !(bracketTEnd >= 0.0)
-        || bracketSEnd >= N || bracketTEnd >= N) return -1.0;
-    // The bracket bars are themselves sub-sample, so the search runs over the
-    // integer columns strictly inside them and the RESULT is clamped to the
-    // fractional bracket -- the seed search needs samples, the answer does not.
+    if (N < 1) return -1.0;
+
+    int fFin = -1, lFin = -1;
+    for (int i = 0; i < N; ++i)      if (!std::isnan(v[i])) { fFin = i; break; }
+    for (int i = N - 1; i >= 0; --i) if (!std::isnan(v[i])) { lFin = i; break; }
+    if (fFin < 0) return -1.0;   // entirely NaN: no data
+
+    // Bracket ordered and clamped to [fFin, lFin]. A -1 bracket (absent bar)
+    // clamps to the finite edge rather than aborting; a collapsed bracket
+    // becomes one sample.
     const double loD = std::min(bracketSEnd, bracketTEnd);
     const double hiD = std::max(bracketSEnd, bracketTEnd);
-    const int lo = static_cast<int>(std::ceil(loD));
-    const int hi = static_cast<int>(std::floor(hiD));
-    if (hi <= lo) return loD;
+    int lo = std::clamp(static_cast<int>(std::ceil(loD)), fFin, lFin);
+    int hi = std::clamp(static_cast<int>(std::floor(hiD)), fFin, lFin);
+    if (hi < lo) hi = lo;
 
-    // Bracketed by the T-begin/T-end bars, so it tracks them live. T polarity is
-    // INDEPENDENT of QRS polarity, so this must not assume an upright T (a plain
-    // argmax picks the highest shoulder when the T is inverted). Both bracket
-    // ends sit at the T's feet, i.e. on baseline, so their mean is a local
-    // isoelectric reference and the peak is the sample furthest from it.
-    const double B = 0.5 * (v[lo] + v[hi]);
-    int best = lo; double bd = -1.0;
-    for (int i = lo; i <= hi; ++i)
+    int a = lo, b = hi;
+    while (a <= b && std::isnan(v[a])) ++a;
+    while (b >= a && std::isnan(v[b])) --b;
+    if (b < a) return static_cast<double>(lo);   // window was a NaN gap
+
+    // Baseline = mean of the (finite) window ends; both sit at the T's feet, so
+    // their mean is a local isoelectric reference. The peak is the sample
+    // furthest from it -- polarity-independent, so an inverted T works too.
+    const double B = 0.5 * (v[a] + v[b]);
+    int best = a; double bd = -1.0;
+    for (int i = a; i <= b; ++i)
         if (!std::isnan(v[i]) && std::abs(v[i] - B) > bd) { bd = std::abs(v[i] - B); best = i; }
 
-    // Refine on a copy oriented so the peak is a maximum (asymmetric extremum:
-    // cubic on Gaussian-weighted samples, analytic derivative, sigma = 15), then
-    // clamp to the BRACKET rather than the array -- a bracketed landmark must
-    // stay bracketed no matter where the refinement drifts.
+    // Refine on a copy oriented so the peak is a maximum (sigma = 15), then keep
+    // it inside the finite window. Coarse column stands if refinement is
+    // non-finite -- the detected position, not a default.
     std::vector<double> u = v;
     if (v[best] < B) for (auto& x : u) x = -x;
-    return std::clamp(subsample_refine::asymmetricExtremum(u, best, 15.0), loD, hiD);
+    const double p = subsample_refine::asymmetricExtremum(u, best, 15.0);
+    return std::isfinite(p)
+        ? std::clamp(p, static_cast<double>(lo), static_cast<double>(hi))
+        : static_cast<double>(best);
 }
 
 double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs)
 {
-    // P peak: argmax over a bracketed window, then sub-sample refined.
+    // P peak = the largest deviation from the endpoint chord over the pre-QRS
+    // window. The window is clamped into the trace's FINITE region, so it
+    // always contains signal and the argmax always resolves. There is no
+    // failure branch and no fallback: the only -1 is a trace with no finite
+    // sample at all, which is not a P-detection case but an empty trace.
     const int N = static_cast<int>(v.size());
-    if (N < 3 || fs <= 0.0) return -1.0;
-    if (!(loIn >= 0.0) || !(hiIn >= 0.0) || loIn >= N || hiIn >= N) return -1.0;
+    if (N < 1 || fs <= 0.0) return -1.0;
 
-    // Clear of the right bracket so the Q upstroke's first rise cannot win.
+    int fFin = -1, lFin = -1;
+    for (int i = 0; i < N; ++i)      if (!std::isnan(v[i])) { fFin = i; break; }
+    for (int i = N - 1; i >= 0; --i) if (!std::isnan(v[i])) { lFin = i; break; }
+    if (fFin < 0) return -1.0;   // entirely NaN: no data
+
+    // Bracket ordered, 20 ms trimmed off the top so the Q upstroke cannot win,
+    // then clamped to [fFin, lFin]. A -1 bracket (absent bar) clamps to the
+    // finite edge rather than aborting; a collapsed bracket becomes one sample.
     const double loD = std::min(loIn, hiIn);
     const double hiD = std::max(loIn, hiIn) - 0.020 * fs;
-    const int lo = std::max(0, static_cast<int>(std::ceil(loD)));
-    const int hi = std::min(N - 1, static_cast<int>(std::floor(hiD)));
-    if (hi <= lo) return -1.0;   // no room: absent, not an edge column
+    int lo = std::clamp(static_cast<int>(std::ceil(loD)), fFin, lFin);
+    int hi = std::clamp(static_cast<int>(std::floor(hiD)), fFin, lFin);
+    if (hi < lo) hi = lo;
 
-    // WALK IN FROM THE EDGES. lo is column 0 on the autodetect path, which is
-    // NaN for every beat shorter than the bin's longest -- the shared axis
-    // pads those on the left. Reading v[lo] directly made every template
-    // report an absent P wave, and the absent peak took the onset with it.
     int a = lo, b = hi;
     while (a <= b && std::isnan(v[a])) ++a;
     while (b >= a && std::isnan(v[b])) --b;
-    if (b - a < 2) return -1.0;
+    if (b < a) return static_cast<double>(fFin);   // window was a NaN gap
 
     const double yL = v[a], yR = v[b];
-    const double invSpan = 1.0 / static_cast<double>(b - a);
+    const double invSpan = (b > a) ? 1.0 / static_cast<double>(b - a) : 0.0;
 
-    int best = -1; double bd = -std::numeric_limits<double>::infinity();
+    int best = a; double bd = -std::numeric_limits<double>::infinity();
     for (int i = a; i <= b; ++i) {
         if (std::isnan(v[i])) continue;
         const double dev = v[i] - (yL + (yR - yL) * (i - a) * invSpan);
         if (dev > bd) { bd = dev; best = i; }
     }
-    if (best < 0) return -1.0;
 
-    // sigma = 12, the P-peak sigma.
+    // sigma = 12, the P-peak sigma. Coarse argmax stands if refinement is
+    // non-finite -- that is still the detected column, not a fallback default.
     const double p = subsample_refine::asymmetricExtremum(v, best, 12.0);
-    if (!std::isfinite(p)) return -1.0;
-    return std::clamp(p, loD, hiD);
+    return std::isfinite(p)
+        ? std::clamp(p, static_cast<double>(fFin), static_cast<double>(lFin))
+        : static_cast<double>(best);
 }
 
 // SINGLE canonical S-peak + J-point finder (spec steps 1-5). Used by BOTH the
@@ -501,29 +496,46 @@ double FeatureMarks::compute_t_end(const std::vector<double>& v, double fs, int 
 
 // P begin: anchor-fit elbow on the ascending onset of the P wave. The
 // human-editable P-onset marker. Mirrors compute_q_onset (f = 0.10).
+// P begin: anchor-fit elbow on the ascending onset of the P wave. The
+// human-editable P-onset marker. Range is [start of ECG, P-peak] -- the onset
+// precedes the peak, and cannot sit left of the first ECG sample. No other
+// clamps.
 double FeatureMarks::compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn) {
     const int N = static_cast<int>(v.size());
-    // Detect the P peak first, unless the caller already has it -- the onset
-    // window is bracketed on the peak, so it can't be found without one.
+    if (N < 1 || fs <= 0.0) return -1.0;
+
+    int fFin = -1;
+    for (int i = 0; i < N; ++i) if (!std::isnan(v[i])) { fFin = i; break; }
+    if (fFin < 0) return -1.0;   // entirely NaN: no data
+
+    // Upper bound is the P peak. compute_p_peak never returns -1 for a finite
+    // trace, so neither does the onset. Bracket: from the finite start to
+    // Q-onset (or R when Q is unresolved -- the QRS anchor, not an arbitrary
+    // offset). No fallback path.
     double pPeak = pPeakIn;
     if (!(pPeak >= 0.0)) {
         const double q = FeatureMarks::compute_q_onset(v, fs, r_idx);
-        pPeak = FeatureMarks::compute_p_peak(v, 0.0, q, fs);
+        const double hi = (q >= 0.0) ? q : static_cast<double>(r_idx);
+        pPeak = FeatureMarks::compute_p_peak(v, static_cast<double>(fFin), hi, fs);
     }
-    const int pUser = (int)std::lround(pPeak);
-    if (pUser < 0 || pUser >= N) return -1.0;
-    const int w = win_005s(fs);
+
+    // Onset = the elbow on the upstroke leading into the peak, over
+    // [start, peak]. The transition fit's own column stands if refinement is
+    // non-finite -- the detected position, not a default.
+    const int pUser = std::clamp(static_cast<int>(std::lround(pPeak)), fFin, N - 1);
+    // 100 ms window back from the peak (was 50 ms): a broad P's onset can sit
+    // well before the peak, and a short window took its baseline B already on
+    // the rising P, which pushed the 10% crossing up the upstroke.
+    const int w = std::max(1, static_cast<int>(std::lround(0.100 * fs)));
     const bool is_positive = FeatureMarks::qrs_positive_at(v, r_idx);
     std::vector<double> u = v;
     if (!is_positive) for (auto& x : u) x = -x;
-    const int lo = std::max(0, pUser - w);
-    const int hi = std::min(N - 1, pUser + w / 4);
-    // B = pre-P baseline: left edge of window (the level the onset rises FROM).
-    const double B = u[lo];
-    if (std::isnan(B)) return -1.0;   // else transitionAnchor substitutes
+    const int lo = std::max(fFin, pUser - w);
+    const int hi = std::min(pUser, N - 1);
+    const double B = u[std::clamp(lo, 0, N - 1)];
     const double pb = subsample_refine::transitionAnchor(u, pUser, 0.10, 40, B, lo, hi);
-    if (!std::isfinite(pb)) return -1.0;
-    return std::clamp(pb, 0.0, static_cast<double>(N - 1));
+    return std::clamp(std::isfinite(pb) ? pb : static_cast<double>(pUser),
+        static_cast<double>(fFin), pPeak);
 }
 
 AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
@@ -1223,14 +1235,11 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // call, cheap -- but a landmark the alignment smeared is reported ABSENT
         // rather than at whatever position the smeared median produced.
         // See landmark_admissibility.hpp.
-        const auto msk = landmark_admit::maskFor(anchor);
-        FeatureMarks::TemplateLandmarks lm = lmRaw;
-
-        if (!msk.p_begin) lm.p_begin = -1.0;
-        if (!msk.q_onset) { lm.q_onset = -1.0; lm.q_onset_found = false; }
-        if (!msk.s_end)   lm.s_end = -1.0;
-        if (!msk.t_end)   lm.t_end = -1.0;
-
+        // The per-anchor admissibility mask used to live here, to blank the
+        // bars this alignment may not report. Bars are no longer seeded in this
+        // function (see below), and the glyph *_auto_ch fields are never masked
+        // -- a glyph is a measurement reported on every alignment -- so there is
+        // nothing left to mask. detect_template_landmarks' result is used raw.
 
         b.p_peak_auto_ch[c] = lmRaw.p_peak;
         b.q_peak_auto_ch[c] = lmRaw.q_peak;
@@ -1241,26 +1250,19 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         b.t_end_auto_ch[c] = lmRaw.t_end;
         b.p_begin_auto_ch[c] = lmRaw.p_begin;
 
-        // User fields (per-anchor): only seed when unset for THIS anchor.
-        // R peak is auto-only (flat) so it's always overwritten with fresh auto.
-        // NO ROUNDING: BankMarkerSet is double, so the detector's sub-sample
-        // position lands in the bar intact. The ix() that used to sit here was
-        // where the refine stage's precision was thrown away.
+        // NO PER-ALIGNMENT BAR SEEDING HERE ANY MORE. Each pass used to seed
+        // its owned bar from its OWN averaged waveform, so the four bars came
+        // from four different traces and could land out of order once
+        // frame-shifted together, and disagree with the R-aligned fiducial
+        // crosses. All four bars are now seeded once, from the single R-aligned
+        // detection, in loadSubject after the seeding loop. This pass still
+        // writes the flat *_auto_ch glyph fields (above) and r_peak_ch (below).
         //
-        // Slot 0's set for THIS lead, fetched here because slotMarks selects the
-        // lead. Sub-template slots are seeded separately by
-        // seed_bank_template, against their own waveform.
-        tbank::BankMarkerSet& mk = b.slotMarks(c, 0, anchor);
-
-        mk.q_onset = lm.q_onset;
-        mk.s_end = lm.s_end;
-        mk.t_end = lm.t_end;
-        mk.p_begin = lm.p_begin;
         // R falls back to the unrefined column rather than -1: it is the
         // alignment anchor every other landmark is expressed against, so the
         // bin needs SOME R even when refinement could not run.
-        b.r_peak_ch[c] = (lm.r_peak >= 0.0)
-            ? lm.r_peak
+        b.r_peak_ch[c] = (lmRaw.r_peak >= 0.0)
+            ? lmRaw.r_peak
             : std::clamp(static_cast<double>(chs[c]->r_col_raw),
                 0.0, static_cast<double>(ecg.size()) - 1.0);
     }
@@ -1312,18 +1314,35 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
 }
 
 FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
-    const std::vector<double>& tmpl, int nominal_r_col, double sampleRate)
+    const std::vector<double>& tmplIn, int nominal_r_col, double sampleRate)
 {
     TemplateLandmarks out;
-    const int n = static_cast<int>(tmpl.size());
+    const int n = static_cast<int>(tmplIn.size());
     if (n < 2 || nominal_r_col < 0 || nominal_r_col >= n || sampleRate <= 0.0)
         return out;
 
+    // EDGE MARGIN, ONE PLACE, ALL FINDERS. A steep noise spike at the very
+    // first or last drawn sample can look like the largest deviation in the
+    // trace, so an argmax-based finder (the P peak especially) locks onto it
+    // instead of the real wave. Every finder below already walks in from NaN
+    // edges, so blanking a margin at each end of a working copy makes that edge
+    // invisible to all of them at once -- no per-finder change. R is refined on
+    // the ORIGINAL trace (it is interior by construction and its column must not
+    // move); every landmark search then runs on the margined copy. 40 ms is the
+    // same order as the finders' own bracket slack.
+    const int margin = std::max(1, static_cast<int>(std::lround(0.040 * sampleRate)));
+    std::vector<double> tmpl = tmplIn;
+    if (2 * margin < n) {
+        for (int i = 0; i < margin; ++i)
+            tmpl[i] = tmpl[n - 1 - i] = std::numeric_limits<double>::quiet_NaN();
+    }
+
     // R REFINED AGAINST THIS WAVEFORM, not inherited. This is the step the bank
     // and archive paths were missing, and it is the search origin for every
-    // finder below -- so omitting it moved every landmark, not just R.
+    // finder below -- so omitting it moved every landmark, not just R. Refined
+    // on tmplIn (un-margined) so R still anchors even if it sits near an edge.
     const int seed = std::clamp(nominal_r_col, 0, n - 1);
-    double r = subsample_refine::symmetricExtremum(tmpl, seed, 5.0);
+    double r = subsample_refine::symmetricExtremum(tmplIn, seed, 5.0);
     if (std::isnan(r) || r < 0.0 || r > static_cast<double>(n - 1))
         r = static_cast<double>(seed);   // refinement failed; nominal stands
     const int r_anchor = static_cast<int>(r);
@@ -1339,7 +1358,16 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     const double qp = FeatureMarks::compute_q_peak(tmpl, r_anchor, sampleRate);
     bool qFound = false;
     const double q = FeatureMarks::compute_q_onset(tmpl, sampleRate, r_anchor, qp, &qFound);
-    const double pp = FeatureMarks::compute_p_peak(tmpl, 0.0, q, sampleRate);
+    // P-PEAK UPPER BRACKET, ALWAYS VALID. The P-peak search is an argmax over
+    // [0, bracket]; the only way it returns -1 on a template that has a P
+    // region is a bracket that is itself invalid. q_onset is the bracket we
+    // want, but it is -1 on a monophasic-R (no-Q) beat -- and passing that
+    // straight through let a failed Q-onset erase the P wave, which is the bug
+    // this fixes. Fall back to a fixed 50 ms before R so the window is never
+    // empty and the argmax always runs.
+    double pHi = q;
+    if (!(pHi >= 0.0)) pHi = r - 0.050 * sampleRate;
+    const double pp = FeatureMarks::compute_p_peak(tmpl, 0.0, pHi, sampleRate);
     const double pb = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_anchor, pp);
 
     // Out-of-range is folded to -1 (absent), NOT clamped to an edge column. A

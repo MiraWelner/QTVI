@@ -148,6 +148,15 @@ private:
     // count and could therefore only describe a contiguous prefix.
     std::vector<int> markingSlotsForBin(const TemplateBin& b) const;
 
+    // The union of all four alignments' (P/Q/R/J) ECG extents for one
+    // (bin, lead, template), in seconds relative to R. Passed to
+    // BinPlotWidget::setEcgFrame so the x-axis holds the same window whichever
+    // anchor is displayed. Returns false (and leaves the outs untouched) when
+    // no anchor has a drawable average, in which case the caller lets the
+    // widget size the frame from the trace as before.
+    bool unionEcgFrameSeconds(const TemplateBin& b, int lead, int templateIdx,
+        double& tMinSec, double& tMaxSec) const;
+
     // Section 4.6 class confirmation, from BinPlotWidget::classConfirmRequested.
     // Turns one operator click into tbank::propagateLabel() across all three
     // channels' banks, then rebuilds the page so the label, the subtype the
@@ -328,7 +337,7 @@ private:
     int m_currentPage = 0;
     int m_totalPages = 1;
 
-    enum class MoveMode { Individual, SubsequentDelta, SubsequentRaw };
+    enum class MoveMode { Individual, SubsequentDelta };
     MoveMode m_moveMode = MoveMode::SubsequentDelta;
     std::map<int, int> original_location_of_bar;//helps ensure that the subsequent bars are moved by the same delta as the first bar
     int originFor(int col, int cur) const;

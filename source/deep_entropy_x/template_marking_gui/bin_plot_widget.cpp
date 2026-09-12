@@ -450,6 +450,15 @@ void BinPlotWidget::recomputeFrame() {
     add(m_art, Channel::Art, -1);
     add(m_artPulm, Channel::ArtPulm, -1);
 
+    // ECG span pinned to a fixed window (the union of the four alignments'
+    // extents), so the axis does not rescale when the anchor changes. Folded
+    // in AFTER the per-trace adds so it widens, never narrows: the drawn ECG
+    // trace is one of the four whose union this is, so it always fits inside.
+    if (m_ecgFrameFixed) {
+        lo = std::min(lo, m_ecgFrameLo);
+        hi = std::max(hi, m_ecgFrameHi);
+    }
+
     if (!(lo < hi)) { m_tMin = 0.0; m_tMax = 1.0; return; }   // nothing drawable
     m_tMin = lo;
     m_tMax = hi;
@@ -480,6 +489,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     // union of the channels rather than a sample count over one of them.
     m_rAnchor[static_cast<size_t>(Channel::Ecg)] = rPeakSample;
 
+    m_glyphsValid = false;   // trace changed: glyph snapshot must be recaptured
     recomputeFrame();
     updateGeometry();
     update();
@@ -503,12 +513,29 @@ void BinPlotWidget::setEcgData(const std::vector<double>& ecg,
     m_rPeakSample = rPeakSample;
     m_rAnchor[static_cast<size_t>(Channel::Ecg)] = rPeakSample;
 
+    m_glyphsValid = false;   // trace changed: glyph snapshot must be recaptured
     recomputeFrame();
     updateGeometry();
     update();
 }
 
 void BinPlotWidget::setHasPPG(bool has) { m_hasPPG = has; }
+
+void BinPlotWidget::setEcgFrame(double tMinSec, double tMaxSec) {
+    if (!(tMaxSec > tMinSec)) return;   // ignore a degenerate window
+    m_ecgFrameFixed = true;
+    m_ecgFrameLo = tMinSec;
+    m_ecgFrameHi = tMaxSec;
+    recomputeFrame();
+    update();
+}
+
+void BinPlotWidget::clearEcgFrame() {
+    if (!m_ecgFrameFixed) return;
+    m_ecgFrameFixed = false;
+    recomputeFrame();
+    update();
+}
 void BinPlotWidget::setState(State s) { m_state = s; update(); }
 
 void BinPlotWidget::setShowEcgMarkers(bool show) {
@@ -583,6 +610,14 @@ void BinPlotWidget::setArterialTraces(const std::vector<double>& abp,
 }
 
 void BinPlotWidget::setMarker(Marker m, double idx) {
+    // P-onset's left bound is the ECG start. A seeded value can land in the
+    // noisy pre-ECG lead-in; pin it to the first drawn sample so the bar stays
+    // on the trace, grabbable, and draggable from there. Nothing else clamped.
+    if (m == EcgPBegin && idx >= 0.0) {
+        const int wallL = firstDrawnSample(Channel::Ecg);
+        if (wallL >= 0 && idx < static_cast<double>(wallL))
+            idx = static_cast<double>(wallL);
+    }
     m_markers[m] = idx;
     update();
 }
@@ -602,6 +637,14 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
         m_markers[EcgSEnd], m_markers[EcgTEnd], m_rates[static_cast<size_t>(Channel::Ecg)]);
     r.ecgPPeak = e.p_peak;
     r.ecgTPeak = e.t_peak;
+    // P-BEGIN GLYPH ANCHORED TO THE REACTIVE P PEAK, not to detect's own peak.
+    // Both are recomputed here from the same e.p_peak, so the onset is always
+    // before the peak that is actually drawn -- the two can no longer disagree
+    // (which is what put the onset cross to the RIGHT of the peak). It tracks a
+    // bar drag with the peak because it is recomputed every repaint.
+    r.ecgPBegin = FeatureMarks::compute_p_begin(
+        m_ecg, m_rates[static_cast<size_t>(Channel::Ecg)],
+        static_cast<int>(std::lround(m_rPeakSample)), e.p_peak);
 
     if (m_hasPPG) {
         const FeatureMarks::ReactivePpg p = FeatureMarks::reactive_ppg(
@@ -981,9 +1024,12 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         if (!visible) continue;
         // Same wall the drag clamps to, so a bar is drawn exactly where it
         // can be grabbed.
-        const int wallP = lastDrawnSample(ch);
-        if (wallP < 0 || idx >(double)wallP) continue;
-        const double mx = xFromSample(ch, idx);
+        const int wallR = lastDrawnSample(ch);
+        const int wallL = firstDrawnSample(ch);
+        if (wallR < 0 || idx >(double)wallR) continue;
+        const double drawIdx = (wallL >= 0 && idx < (double)wallL)
+            ? (double)wallL : idx;
+        const double mx = xFromSample(ch, drawIdx);
         QPen pen(marker_color(m), 2);
         pen.setStyle(markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine);
         p.setPen(pen);
@@ -1123,56 +1169,47 @@ void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
 
 void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b,
     AnchorType frame) {
+    if (m_glyphsValid) return;   // trace unchanged since last capture
     m_glyphs = GlyphSnapshot{};
-    const int c = m_leadIndex;
 
     if ((int)m_ecg.size() >= 3) {
         const int N = (int)m_ecg.size();
-        // Glyph positions are sub-sample. The *_auto_ch fields are already
-        // doubles and are now passed through unrounded -- froz() used to
-        // lround them "exactly as the bar seeds do in seed_all()", but a
-        // draggable BAR has to land on a sample the operator can grab, whereas
-        // a drawn GLYPH does not, and rounding it put the mark up to half a
-        // sample off the landmark the writers report.
-        auto frozen = [&](double v) {
+        auto froz = [&](double v) {
             return (v >= 0.0 && v <= static_cast<double>(N - 1)) ? v : -1.0;
             };
-        auto froz = frozen;
-        // ---- ONE SOURCE, NO FRAME SHIFTS -------------------------------
+        // ---- GLYPHS ARE DETECTED LIVE ON THE WAVEFORM ON SCREEN --------
         //
-        // Every glyph is the DISPLAYED alignment's own detection, read from
-        // its AnchorAuto. Nothing is translated, so nothing can be off by a
-        // frame error -- which a three-way split here was: four fields came
-        // from each landmark's owning alignment frame-shifted into this one,
-        // q_peak and q_onset_found came from the flat R fields unshifted, and
-        // R came from m_markers. Only under R alignment did the three agree.
-        //
-        // The BARS still translate, and must: an operator's mark is one
-        // stored value in one frame (see userMarks). A glyph is a
-        // measurement every alignment makes for itself, so the one belonging
-        // to the waveform on screen is the one to draw.
-        // STRICT: no glyphs at all rather than R's positions on another
-        // alignment's waveform. An empty panel is a writer gap to go fix.
-        if (const TemplateBin::AnchorAuto* aaP = b.autoForStrict(frame)) {
-            const TemplateBin::AnchorAuto& aa = *aaP;
-            m_glyphs.ecgPBegin = froz(aa.p_begin[c]);
-            // (no ecgPPeak: the P peak is REACTIVE, bracketed by the P-onset
-            //  and Q-onset bars -- see reactiveGlyphs. The onset it brackets
-            //  on is refit from the re-measured peak in
-            //  detect_template_landmarks, so the bracket contains the P wave.)
-            m_glyphs.ecgQ = froz(aa.q_onset[c]);
-            m_glyphs.ecgQFound = aa.q_onset_found[c];
-            // Q PEAK ONLY WHEN Q ONSET WAS FITTED. The peak is measured
-            // inside the QRS off the onset, so an unfitted onset gives it a
-            // fallback bracket -- a position, but not a measurement. The
-            // onset itself still draws, as a circle, which says exactly that;
-            // the peak has no found flag of its own to say it with, so it is
-            // not drawn at all.
-            m_glyphs.ecgQPeak = m_glyphs.ecgQFound
-                ? froz(aa.q_peak[c]) : -1.0;
-            m_glyphs.ecgRPeak = froz(aa.r_peak[c]);
-            m_glyphs.ecgS = froz(aa.s_end[c]);
-            m_glyphs.ecgTend = froz(aa.t_end[c]);
+        // Not read from a precomputed per-alignment AnchorAuto. That snapshot
+        // could be absent for an alignment (autoForStrict returned null), and
+        // this block was STRICT about it -- so a bin with no AnchorAuto entry
+        // for the displayed anchor drew NO ecg glyphs at all, even with the
+        // landmarks plainly on the trace. m_ecg IS the alignment's waveform
+        // (setData/setEcgData put it there), so detecting on it gives this
+        // alignment's own glyphs directly, always available, and matching the
+        // bars drawn on the same trace. detect_template_landmarks never returns
+        // -1 for a real trace, so the glyphs always resolve.
+        // Seed R with the DISPLAYED alignment's own R column -- the same one
+        // the R bar uses (chFor(frame).r_col_raw) -- not m_rPeakSample, which
+        // is the flat R-aligned column. On a non-R average the R sits at a
+        // different column, and detect_template_landmarks only refines +-7
+        // samples around the seed, so seeding with the flat column made the R
+        // glyph miss the peak on non-R alignments.
+        // Detect only when the trace changed. The whole snapshot depends on
+        // the trace/bin, not on bar positions, so during a drag it is reused
+        // as-is -- re-detecting per mouse-move was what made dragging sluggish.
+        const int rSeed = b.chFor(m_leadIndex, frame).r_col_raw;
+        const FeatureMarks::TemplateLandmarks lm =
+            FeatureMarks::detect_template_landmarks(
+                m_ecg, rSeed, m_rates[static_cast<size_t>(Channel::Ecg)]);
+        if (lm.valid) {
+            m_glyphs.ecgPBegin = froz(lm.p_begin);   // frozen copy unused for drawing now
+            // (no ecgPPeak: the P peak is REACTIVE -- see reactiveGlyphs.)
+            m_glyphs.ecgQ = froz(lm.q_onset);
+            m_glyphs.ecgQFound = lm.q_onset_found;
+            m_glyphs.ecgQPeak = lm.q_onset_found ? froz(lm.q_peak) : -1.0;
+            m_glyphs.ecgRPeak = froz(lm.r_peak);
+            m_glyphs.ecgS = froz(lm.s_end);
+            m_glyphs.ecgTend = froz(lm.t_end);
         }
     }
 
@@ -1203,6 +1240,7 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b,
         m_glyphs.jpgP2 = frozen(b.ppg_p2_auto);
 
     }
+    m_glyphsValid = true;
 }
 
 // Replace the BIN's pulse glyphs with this bank slot's own. captureGlyphSnapshot
@@ -1314,7 +1352,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         // each block's cross/circle close over its own axis and geometry.
         auto found = [&](double idx, bool ok) { ok ? cross(idx) : circle(idx); };
 
-        cross(m_glyphs.ecgPBegin);   // P begin
+        cross(rx.ecgPBegin);         // reactive: onset before the reactive P peak
         cross(rx.ecgPPeak);          // reactive: P-onset bar -> Q-onset bar
         found(m_glyphs.ecgQ, m_glyphs.ecgQFound);
         cross(m_glyphs.ecgQPeak);

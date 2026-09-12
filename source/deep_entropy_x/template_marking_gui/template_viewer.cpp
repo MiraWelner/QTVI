@@ -52,11 +52,10 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
 {
     ui->setupUi(this);
 
-    //when you are moving a marker, do you move just that marker, or all subsequent markers by the same delta, or all subsequent markers to the same raw index?
+    //when you are moving a marker, do you move just that marker, or all subsequent markers by the same screen distance?
     auto* moveGroup = new QButtonGroup(this);
     moveGroup->addButton(ui->move_individual);
     moveGroup->addButton(ui->move_subsequent_delta);
-    moveGroup->addButton(ui->move_subsequent_raw);
     moveGroup->setExclusive(true);
 
     connect(ui->move_individual, &QRadioButton::toggled, this, [this](bool on) {
@@ -65,14 +64,10 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
     connect(ui->move_subsequent_delta, &QRadioButton::toggled, this, [this](bool on) {
         if (on) m_moveMode = MoveMode::SubsequentDelta;
         });
-    connect(ui->move_subsequent_raw, &QRadioButton::toggled, this, [this](bool on) {
-        if (on) m_moveMode = MoveMode::SubsequentRaw;
-        });
 
     // Sync m_moveMode to whichever button Designer has checked by default.
     if (ui->move_individual->isChecked())      m_moveMode = MoveMode::Individual;
     else if (ui->move_subsequent_delta->isChecked()) m_moveMode = MoveMode::SubsequentDelta;
-    else if (ui->move_subsequent_raw->isChecked())   m_moveMode = MoveMode::SubsequentRaw;
 
     // Startup defaults, enforced in code (independent of the .ui's checked
     // attributes): all markers OFF, all waveform traces ON. setChecked here
@@ -454,6 +449,57 @@ void TemplateViewerWindow::buildPages() {
     std::fflush(stderr);
 }
 
+bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
+    int templateIdx, double& tMinSec, double& tMaxSec) const
+{
+    if (!(m_sampleRate > 0.0)) return false;
+    if (lead < 0 || lead > 2) return false;
+
+    // x = 0 is R for every alignment (the panel's origin is b.r_peak_ch, the
+    // same column regardless of anchor), so an extent in columns maps to
+    // seconds by (col - rPeak) / fs with one shared rPeak and rate.
+    const double rPeak = static_cast<double>(b.r_peak_ch[lead]);
+
+    // The same four alignments the ring walks. Kept local so this does not
+    // depend on the anonymous-namespace kAlignRing defined further down.
+    static const AnchorType kFour[4] = {
+        AnchorType::P_ONSET, AnchorType::Q_ONSET,
+        AnchorType::R_PEAK,  AnchorType::J_POINT,
+    };
+
+    int loCol = std::numeric_limits<int>::max();
+    int hiCol = -1;
+    for (AnchorType a : kFour) {
+        // Same trace source leadsForBinTemplate draws: the per-anchor bank
+        // slot if present, else the pre-bank chN_raw fallback for slot 0.
+        const std::vector<double>* trace = nullptr;
+        const AnchoredBankSlot* asl = b.bankSlotFor(lead, templateIdx, a);
+        if (asl && !asl->tmpl.empty()) trace = &asl->tmpl;
+        else if (templateIdx == 0) {
+            const ChannelTemplateData& cd = b.chFor(lead, a);
+            if (!cd.ecgTemplate_raw.empty()) trace = &cd.ecgTemplate_raw;
+        }
+        if (!trace) continue;
+
+        int f = -1, l = -1;
+        for (int i = 0; i < (int)trace->size(); ++i)
+            if (!std::isnan((*trace)[i])) { f = i; break; }
+        for (int i = (int)trace->size() - 1; i >= 0; --i)
+            if (!std::isnan((*trace)[i])) { l = i; break; }
+        if (f < 0 || l <= f) continue;
+
+        loCol = std::min(loCol, f);
+        hiCol = std::max(hiCol, l);
+    }
+
+    if (hiCol < 0 || loCol == std::numeric_limits<int>::max() || hiCol <= loCol)
+        return false;
+
+    tMinSec = (static_cast<double>(loCol) - rPeak) / m_sampleRate;
+    tMaxSec = (static_cast<double>(hiCol) - rPeak) / m_sampleRate;
+    return true;
+}
+
 std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) const {
     // ONLY CATEGORY 1 TEMPLATES GET A COLUMN. Landmark marking exists to feed
     // feature extraction, and only category 1 beats do that -- a P-onset on a
@@ -740,6 +786,48 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
         // t80_rise / pw80 / peak2), so they are rederived here from the bars
         // the seed just wrote plus the auto-detected systolic peak.
         b.syncReactivePpg();
+    }
+
+    // ---- SEED EACH BAR FROM ITS OWN ALIGNMENT'S DETECTION -----------------
+    //
+    // Every bar starts on its own glyph. The glyph for a landmark is that
+    // landmark detected on the alignment that owns it (P-onset on the P-aligned
+    // average, where the P is sharp; Q-onset on Q; S-end on R; T-end on J), and
+    // the bar is seeded from that same per-alignment detection -- so on the
+    // alignment where a bar is placed, it and its glyph coincide. seed_all no
+    // longer seeds bars; the per-anchor detections captured above
+    // (auto_by_anchor / autoFor) are the one source. Bars live in their owner
+    // slots and userMarks shifts each into whatever frame the grid draws.
+    {
+        // Each bar seeds on ITS OWN glyph: the landmark detected on the
+        // alignment that owns it (P-onset on the P-aligned average, Q-onset on
+        // Q, S-end on R, T-end on J), stored directly in that owner's slot --
+        // already in the owner's frame, so no R->owner shift. This is the same
+        // per-alignment detection the glyph is drawn from, so every bar starts
+        // exactly on its glyph on the alignment where it is placed. userMarks
+        // shifts each into whatever frame the grid is drawing.
+        struct BarField {
+            int marker;
+            double tbank::BankMarkerSet::* bar;                 // where the bar is stored
+            double (TemplateBin::AnchorAuto::* autoArr)[3];     // the owner-alignment detection [lead]
+        };
+        static const BarField kBars[4] = {
+            { anchor_view::kPBegin, &tbank::BankMarkerSet::p_begin, &TemplateBin::AnchorAuto::p_begin },
+            { anchor_view::kQBegin, &tbank::BankMarkerSet::q_onset, &TemplateBin::AnchorAuto::q_onset },
+            { anchor_view::kSEnd,   &tbank::BankMarkerSet::s_end,   &TemplateBin::AnchorAuto::s_end   },
+            { anchor_view::kTEnd,   &tbank::BankMarkerSet::t_end,   &TemplateBin::AnchorAuto::t_end   },
+        };
+        for (auto& b : m_bins) {
+            const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
+            for (int c = 0; c < 3; ++c) {
+                if (chs[c]->ecgTemplate_raw.empty()) continue;
+                for (const BarField& bf : kBars) {
+                    const AnchorType owner = anchor_view::anchorFor(bf.marker);
+                    const double v = (b.autoFor(owner).*(bf.autoArr))[c];
+                    b.slotMarks(c, 0, owner).*(bf.bar) = (v >= 0.0) ? v : -1.0;
+                }
+            }
+        }
     }
 
     //load markers from previous session
@@ -1381,6 +1469,18 @@ void TemplateViewerWindow::showPage() {
                 static_cast<int>(nEcgBeats), nPpgForColumn);
 
             pw->setHasPPG(hasPPG);
+
+            // Pin the ECG x-window to the union of the four alignments' extents
+            // so switching anchor (Automatic bar click, or a forced P/Q/R/J)
+            // does not rescale the axis. Anchor-independent, so it survives the
+            // in-place re-skin without being re-set. Only the ECG leads (0..2);
+            // the VCG panel has no alignment dimension and keeps sizing itself.
+            {
+                double fLo = 0.0, fHi = 0.0;
+                if (lead_index >= 0 && lead_index <= 2
+                    && unionEcgFrameSeconds(b, lead_index, template_index, fLo, fHi))
+                    pw->setEcgFrame(fLo, fHi);
+            }
 
             // Faint arterial background-context traces (present-only),
             // foot-anchored like the PPG. Colors mirror the noise-marking GUI:
@@ -2180,7 +2280,7 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
     // userMarks pulls all four and translates them into the R frame the panel
     // draws in. Fetching one alignment's set here is what limited a session to
     // editing one alignment's bars.
-    const tbank::BankMarkerSet mk = b.userMarks(channel, templateIdx, AnchorType::R_PEAK);
+    const tbank::BankMarkerSet mk = b.userMarks(channel, templateIdx, currentGridAnchor());
     // Bin first, for the arterial markers (a bank slot has no ABP/ART waveform
     // of its own). The seven ECG bars are overridden below; the PULSE bars and
     // glyphs are overridden here, from this slot's own waveform.
@@ -2275,10 +2375,13 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
 
 void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin& b) {
     const int c = pw->leadIndex();
-    // ALL FOUR BARS, EACH FROM ITS OWN ALIGNMENT, translated into the R frame
-    // this widget draws in. The grid is R-aligned on every panel; only the
-    // close-up switches waveform.
-    const tbank::BankMarkerSet mk = b.userMarks(c, 0, AnchorType::R_PEAK);
+    // ALL FOUR BARS, EACH FROM ITS OWN ALIGNMENT, translated into the frame the
+    // grid is CURRENTLY drawing -- not hardcoded R. The trace and glyphs switch
+    // to currentGridAnchor(); assembling the bars in R while the waveform is
+    // P/Q/J is what put the bar a whole R-column offset away from its glyph and
+    // pushed it past the wall so it could not be grabbed. Under R/automatic this
+    // is identical to before.
+    const tbank::BankMarkerSet mk = b.userMarks(c, 0, currentGridAnchor());
 
     // Bank members are their own COLUMNS now (see the (bin, template) expansion
     // in the layout loop), so nothing is overlaid here -- drawing them again as
@@ -2417,9 +2520,16 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     // onMarkerMoved, everything else here -- is what let the two paths
     // diverge in the first place.
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
+    // PPG and arterial markers have their own handler (bin-level, not
+    // per-slot). Every drag arrives through this one signal now, so the
+    // non-ECG ones are routed on rather than dropped -- which is why
+    // Move-Subsequent had no effect on PPG: onMarkerMoved was never reached.
+    if (!BinPlotWidget::markerIsEcg(marker)) {
+        onMarkerMoved(binIdx, leadIdx, marker, newIdx);
+        return;
+    }
     if (leadIdx < 0 || leadIdx > 2) return;
     if (templateIdx < 0) return;
-    if (!BinPlotWidget::markerIsEcg(marker)) return;
 
     TemplateBin& b = m_bins[binIdx];
 
@@ -2482,6 +2592,20 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
         return -1;
         };
 
+    // The VISIBLE x-axis span, in seconds. Move-Subsequent moves every bar the
+    // same SCREEN distance: the columns are laid out at equal width (showPage
+    // sets equal column stretch), so equal screen distance is the same fraction
+    // of each panel's visible span -- which, converted back to samples, is a
+    // shift proportional to that panel's own span. Bins have different RR, so
+    // the sample counts differ, but the on-screen movement is identical.
+    auto spanAt = [&](int li) -> double {
+        if (li < 0 || li >= (int)m_binPlots.size()) return -1.0;
+        for (auto* pw : m_binPlots[li])
+            if (pw && pw->leadIndex() == leadIdx)
+                return pw->frameTMax() - pw->frameTMin();   // seconds
+        return -1.0;
+        };
+
     int dragCol = -1;
     for (int li = 0; li < (int)m_pageGlobalIdx.size()
         && li < (int)m_pageTemplateIdx.size(); ++li) {
@@ -2526,7 +2650,11 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
 
     int placed = newIdx;
     if (dragWall > 0) placed = std::clamp(placed, 0, dragWall);
-    set(b, templateIdx, placed + b.frameShift(leadIdx, AnchorType::R_PEAK, owner));
+    // Store so userMarks reads it back at `placed` in the frame the grid is
+    // drawing. newIdx came from the displayed (currentGridAnchor) trace, so the
+    // conversion is view -> owner, not the old hardcoded R -> owner (which
+    // stored the drag a whole R-column offset off on P/Q/J views).
+    set(b, templateIdx, placed + b.frameShift(leadIdx, currentGridAnchor(), owner));
 
     // The touched store follows the bar to its final position, so
     // confirmedIndex reflects where the operator left it. Recorded for every
@@ -2557,21 +2685,14 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     // markingSlotsForBin already applied every eligibility rule to build it,
     // so there is no second copy of those tests here to fall out of step.
     //
-    // BOTH MODES ARE FRACTIONAL. A raw sample delta is the wrong unit across
-    // bins: each bin's frame is its own width, so the same +12 samples is a
-    // different physical shift in every one, and a much smaller fraction of
-    // the beat on a bin holding a pause. A drag of "10% later" stays 10%
-    // later.
-    //
-    // THE FRACTION IS OF THE DRAWN WIDTH on both sides of the ratio.
-    // Previously it was of the array width, so "90% across" meant 90% of a
-    // frame the operator cannot see -- which put the bar in the untrimmed
-    // tail, past the plot wall, every time.
-    const int nDragged = (dragWall > 0) ? dragWall + 1 : 0;
-    const double deltaFrac = (nDragged > 1)
-        ? double(placed - m_dragStartIdx) / (nDragged - 1) : 0.0;
-    const double posFrac = (nDragged > 1)
-        ? double(placed) / (nDragged - 1) : 0.0;
+    // EQUAL SCREEN DISTANCE. Every subsequent bar moves the same distance
+    // across the screen as the dragged one. The columns are laid out at equal
+    // width (showPage sets equal column stretch), so equal screen distance is
+    // the same fraction of each panel's visible axis span -- and, converted
+    // back to samples, a shift proportional to that panel's own span. The bins
+    // have different RR (different sample counts), so the sample shift differs
+    // per panel, but the on-screen movement is identical.
+    const double dragSpan = spanAt(dragCol);
 
 
 
@@ -2585,7 +2706,6 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
 
         const int wall = wallAt(li);
         if (wall <= 0) continue;
-        const int n = wall + 1;
 
         seedIfNeeded(gi, slot);
         const double cur = get(m_bins[gi], slot);
@@ -2598,10 +2718,15 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
         if (!original_location_of_bar.count(key))
             original_location_of_bar[key] = (int)std::lround(cur);
 
-        int target = (m_moveMode == MoveMode::SubsequentDelta)
-            ? originFor(key, (int)std::lround(cur))
-            + (int)std::lround(deltaFrac * (n - 1))
-            : (int)std::lround(posFrac * (n - 1));
+        // Same screen distance = same fraction of the visible axis. In samples
+        // that is (Δ samples) × (this panel's span / drag panel's span); the
+        // sample rate cancels. Different RR -> different sample counts, same
+        // on-screen movement.
+        const double tgtSpan = spanAt(li);
+        if (!(dragSpan > 0.0) || !(tgtSpan > 0.0)) continue;
+        const int sampleShift = (int)std::lround(
+            double(placed - m_dragStartIdx) * (tgtSpan / dragSpan));
+        int target = originFor(key, (int)std::lround(cur)) + sampleShift;
 
         // CLAMP, DON'T SKIP, AND KEEP A BUFFER. Skipping left this bar where
         // it was while every other column moved. Landing exactly on 0 or on
@@ -2612,7 +2737,7 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
         target = std::clamp(target, kEdgeBuffer, wall - kEdgeBuffer);
 
         set(m_bins[gi], slot, target
-            + m_bins[gi].frameShift(leadIdx, AnchorType::R_PEAK, owner));
+            + m_bins[gi].frameShift(leadIdx, currentGridAnchor(), owner));
     }
 
     // Refresh exactly the panels that were written, by the same page walk.
@@ -2670,25 +2795,44 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         const double delta = newIdx - oldIdx;
 
         if (m_moveMode != MoveMode::Individual && oldIdx >= 0) {
-            const int nDragged = (int)b.ppgTemplate.size();
-            const double pct = (nDragged > 1) ? double(newIdx) / (nDragged - 1) : 0.0;
+            // EQUAL SCREEN DISTANCE, same rule as the ECG path. The overlaid
+            // PPG shares the ECG's visible x-axis (seconds), and the columns
+            // are equal width, so equal screen distance is a shift proportional
+            // to each bin's own visible span. unionEcgFrameSeconds gives that
+            // span for any bin, on-page or not; the sample rate cancels in the
+            // ratio just as it does for ECG.
+            auto spanSec = [&](const TemplateBin& tb) -> double {
+                double lo, hi;
+                return unionEcgFrameSeconds(tb, 0, 0, lo, hi) ? (hi - lo) : -1.0;
+                };
+            const double dragSpan = spanSec(b);
 
-            for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
-                if (m_bins[i].bad_ppg != 0) continue;
-                const double cur = ppgGet(m_bins[i]);
+            // PAGE-SCOPED, like the ECG path -- not to the end of the record.
+            // PPG is per bin (a bin's letters share one PPG bar), so this walks
+            // the page's columns, skips the dragged bin's own columns, and
+            // moves each SUBSEQUENT bin's PPG once (deduped: a bin's adjacent
+            // letter columns would otherwise re-move the same value).
+            int lastGi = -1;
+            for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
+                const int gi = m_pageGlobalIdx[li];
+                if (gi <= binIdx) continue;   // dragged bin and earlier
+                if (gi == lastGi) continue;   // same bin's other letters
+                lastGi = gi;
+                if (m_bins[gi].bad_ppg != 0) continue;
+                const double cur = ppgGet(m_bins[gi]);
                 if (cur < 0.0) continue;
 
-                const int rawLen = (int)m_bins[i].ppgTemplate.size();
-                const int ecgClip = ecgClipLenFor(m_bins[i]);
+                const int rawLen = (int)m_bins[gi].ppgTemplate.size();
+                const int ecgClip = ecgClipLenFor(m_bins[gi]);
                 const int n = (ecgClip > 0) ? std::min(rawLen, ecgClip) : rawLen;
                 if (n <= 0) continue;
 
-                const double target = (m_moveMode == MoveMode::SubsequentDelta)
-                    ? cur + delta
-                    : (n > 1 ? pct * (n - 1) : 0.0);
+                const double tgtSpan = spanSec(m_bins[gi]);
+                if (!(dragSpan > 0.0) || !(tgtSpan > 0.0)) continue;
+                const double target = cur + delta * (tgtSpan / dragSpan);
                 if (target < 0.0 || target > n - 1) continue;
-                ppgSet(m_bins[i], target);
-                m_bins[i].syncReactivePpg();
+                ppgSet(m_bins[gi], target);
+                m_bins[gi].syncReactivePpg();
             }
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
                 int gi = m_pageGlobalIdx[li];
@@ -2757,8 +2901,12 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
         if (m_moveMode != MoveMode::Individual && oldIdx >= 0) {
             const std::vector<double>* trDragged = nullptr; uint8_t* issDragged = nullptr;
             channelTrace(b, marker, trDragged, issDragged);
-            const int nDragged = trDragged ? (int)trDragged->size() : 0;
-            const double pct = (nDragged > 1) ? double(newIdx) / (nDragged - 1) : 0.0;
+            // PERCENT OF THE X-AXIS MOVED, same rule as the ECG/PPG paths.
+            const int rawLenD = trDragged ? (int)trDragged->size() : 0;
+            const int ecgClipD = ecgClipLenFor(b);
+            const int draggedN = (ecgClipD > 0 && rawLenD > 0)
+                ? std::min(rawLenD, ecgClipD) : rawLenD;
+            const double axisFrac = (draggedN > 1) ? double(delta) / (draggedN - 1) : 0.0;
 
             for (int i = binIdx + 1; i < (int)m_bins.size(); ++i) {
                 const std::vector<double>* tr = nullptr; uint8_t* iss = nullptr;
@@ -2773,9 +2921,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 const int n = (ecgClip > 0) ? std::min(rawLen, ecgClip) : rawLen;
                 if (n <= 0) continue;
 
-                const int target = (m_moveMode == MoveMode::SubsequentDelta)
-                    ? cur + delta
-                    : (n > 1 ? (int)std::lround(pct * (n - 1)) : 0);
+                const int target = cur + (int)std::lround(axisFrac * (n - 1));
                 if (target < 0 || target > n - 1) continue;
                 assign(m_bins[i], marker, target);
             }
