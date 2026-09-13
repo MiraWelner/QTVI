@@ -494,7 +494,7 @@ inline PPGTemplatesResult CreatePulseTemplates(
     std::vector<double> output_binfile_data::* sigMember,
     double ecgRate,
     double channelRate,
-    double padSeconds = 0.3)
+    double padSeconds = 0.4)
 {
     size_t n = bins.size();
     PPGTemplatesResult out;
@@ -763,7 +763,7 @@ inline PPGTemplatesResult CreateArterialTemplates(
     const vector<output_binfile_data>& bins,
     std::vector<double> output_binfile_data::* sigMember,
     double channelRate,
-    double padSeconds = 0.25)
+    double padSeconds = 0.4)
 {
     size_t n = bins.size();
     PPGTemplatesResult out;

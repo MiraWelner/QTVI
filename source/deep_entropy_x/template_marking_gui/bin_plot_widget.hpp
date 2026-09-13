@@ -179,25 +179,11 @@ public:
     // The caller passes the union of all four anchors' extents, so whichever
     // anchor is shown draws inside the same window and the axis holds still.
     // PPG and arterial channels still union in normally -- only the ECG span is
-    // pinned. clearEcgFrame() returns to per-trace behaviour (used by panels
-    // with no alignment dimension, e.g. VCG, which simply never call setEcgFrame).
+    // pinned.
     void setEcgFrame(double tMinSec, double tMaxSec);
-    void clearEcgFrame();
 
     void setChannelRate(Channel ch, double hz);
     double channelRate(Channel ch) const { return m_rates[static_cast<size_t>(ch)]; }
-    // R column for a channel, in THAT channel's own samples. With
-    // channelRate() this is the channel's entire geometry. -1 = unknown, and an
-    // unknown anchor means the channel is not drawn.
-    //
-    // Callers normally do not touch this: setChannelRate derives the pulse
-    // channels' anchors (a fixed number of SECONDS into the template, so it
-    // follows the rate), and setData takes the ECG's as rPeakSample. It is
-    // exposed for a caller that needs to override.
-    void setChannelAnchor(Channel ch, double rColumn);
-    double channelAnchor(Channel ch) const {
-        return m_rAnchor[static_cast<size_t>(ch)];
-    }
 
     // Frame bounds in seconds relative to R; negative before it.
     double frameTMin() const { return m_tMin; }
@@ -253,6 +239,14 @@ public:
     // Both default to true.
     void setShowEcgMarkers(bool show);
     void setShowPpgMarkers(bool show);
+
+    // R-aligned overlay: the 4 ECG landmarks (P-onset, Q-onset, S-end, T-end)
+    // as detected on the R alignment (the _R CSV columns), drawn read-only in
+    // addition to the normal bars. Positions are already in the frame the panel
+    // draws. setShowRMarkers toggles them; dragging one is handled via the
+    // rMarkerDragStarted / rMarkerMoved signals below.
+    void setShowRMarkers(bool show);
+    void setRMarks(double pBegin, double qOnset, double sEnd, double tEnd);
     void setShowPpgDerivMarkers(bool show);
     void setShowAbpMarkers(bool show);
     void setShowArtMarkers(bool show);
@@ -275,8 +269,6 @@ public:
         const std::vector<double>& abpIqr = {},
         const std::vector<double>& artIqr = {},
         const std::vector<double>& artPulmIqr = {});
-    void setBackgroundTraces(const std::vector<std::pair<std::vector<double>, QColor>>& traces);
-    std::vector<std::pair<std::vector<double>, QColor>> m_bgTraces;
 
     // Section 4.6 bank overlay: templates 1..N-1 of this (bin, channel)'s bank,
     // drawn on the ECG axis under the slot 0 trace.
@@ -320,6 +312,14 @@ public:
 signals:
     void markerMoved(int binIndex, int leadIndex, int marker, int newIdx);
     void markerDragStarted(int binIndex, int leadIndex, int marker);
+
+    // R-aligned overlay (ecg_r_markers) is DRAGGABLE. Starting a drag on one
+    // emits rMarkerDragStarted so the owner can flip the view to R while you
+    // drag; each move emits rMarkerMoved with the landmark index (0..3 =
+    // p_begin,q_onset,s_end,t_end) and its new column in the drawn frame.
+    void rMarkerDragStarted(int binIndex, int leadIndex);
+    void rMarkerMoved(int binIndex, int leadIndex, int templateIdx,
+        int rIndex, double newCol);
 
     // B2 focus mode: emitted when the operator selects (clicks) a landmark,
     // so the owner can render that landmark's focus panel. Distinct from
@@ -404,7 +404,7 @@ private:
         Channel& ch, bool& visible) const;
 
     // Recompute [m_tMin, m_tMax] from every present channel. Called by
-    // setData, setArterialTraces, setChannelRate and setChannelAnchor, so the
+    // setData, setArterialTraces, setChannelRate and, so the
     // frame can never be stale with respect to the traces.
     void   recomputeFrame();
 
@@ -489,6 +489,12 @@ private:
     // drag nothing re-sets the trace, so captureGlyphSnapshot returns early and
     // the expensive detect does not run per mouse-move.
     bool m_glyphsValid = false;
+
+    // R-aligned overlay markers (ecg_r_markers). Read-only; index order is
+    // P-onset, Q-onset, S-end, T-end. -1 = absent. Drawn only when shown.
+    bool   m_showRMarkers = false;
+    double m_rMarks[4] = { -1.0, -1.0, -1.0, -1.0 };
+    int    m_dragRMark = -1;   // which R marker (0..3) is being dragged, -1 none
 
     // Compute the glyph snapshot from current trace + marker state.
     void captureGlyphSnapshot(const TemplateBin& b,

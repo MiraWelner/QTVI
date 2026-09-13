@@ -337,7 +337,7 @@ private:
     int m_currentPage = 0;
     int m_totalPages = 1;
 
-    enum class MoveMode { Individual, SubsequentDelta };
+    enum class MoveMode { Individual, SubsequentDelta, SubsequentRaw };
     MoveMode m_moveMode = MoveMode::SubsequentDelta;
     std::map<int, int> original_location_of_bar;//helps ensure that the subsequent bars are moved by the same delta as the first bar
     int originFor(int col, int cur) const;
@@ -355,6 +355,7 @@ private:
     //  drag on one bar used to land in another alignment's set.)
     void setTitleForSubject();
     bool m_showEcgMarkers = false;
+    bool m_showEcgRMarkers = false;   // ecg_r_markers: R-aligned overlay
     bool m_showPpgMarkers = false;
     bool m_showAbpMarkers = false;
     bool m_showArtMarkers = false;

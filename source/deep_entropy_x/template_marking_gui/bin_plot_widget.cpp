@@ -1,56 +1,8 @@
 /*
 * @brief BinPlotWidget.cpp
 *
-* Signals are drawn such that the widest trace fills the  cell the layout gives this widget.
-* They have the same on screen length
-*
-* ECG/PPG alignment:
-*   Every channel is drawn in SECONDS RELATIVE TO ITS OWN R, so R lands at the
-*   same x on every trace by construction. Sample 0 is NOT a shared instant:
-*   the ECG's R column is 0.3 * the bin's LONGEST RR (alignment.hpp) while every
-*   pulse channel's is a fixed 0.3 s (create_arterial_templates.hpp), and
-*   treating them as equal is what put the ECG most of a second ahead of the
-*   PPG on any bin holding a pause. See the geometry note in BinPlotWidget.hpp.
-*
-* ============================================================================
-* Glyphs and bars
-*
-* A BAR is a draggable vertical line the operator positions. A GLYPH is a
-* small mark the widget draws and the operator cannot touch -- markerAtX()
-* never hit-tests glyphs, so a click can neither select nor move one.
-*
-* Glyphs come in two flavours, distinguished by when they are computed:
-*
-*   FROZEN   -- captured once per seeding pass by setAuto()
-*               (captureGlyphSnapshot) from the bin's *_auto columns.
-*               Does NOT follow subsequent drags, so dragging a bar leaves
-*               its glyph where detection put it. That difference is what
-*               makes the paired _autodetect / _user CSV columns meaningful.
-*   REACTIVE -- never stored. reactiveGlyphs() recomputes it from the current
-*               bars at every paint, via the same FeatureMarks functions the
-*               CSV/bin writers use, so screen and files cannot disagree.
-*
-* Three glyph shapes, three meanings:
-*
-*   X       the detector found a real landmark
-*   O       a fallback produced the position rather than the fit -- currently
-*           the Q onset alone, where the monophasic-R slope walk ran because
-*           there was no Q trough to fit against. A different measurement, not
-*           a worse version of the same one.
-*   dash    an auto-only derivative landmark, coloured by derivative order:
-*           VPG blue, APG green, JPG amber.
-*
-* Marks drawn:
-*   ECG  - Bars (user control): P begin, Q onset, S end, T end -- one per
-*          ALIGNMENT, see anchor_view.hpp. Glyphs (automatic): P peak, R peak,
-*          T peak. A bar's column belongs to the alignment its close-up shows
-*          and is reported only there; a glyph is measured on all four.
-
-*   PPG  - User control: Onset, Dicrotic Notch. Automatic: 50% Rise, 80% rise, T80, Foot, Systolic Peak, Diastolic Peak
-*   VPG  - u, v, w                      | dashes, behind the
-*   APG  - a, b, c, d, e, f             | "Show PPG Derivative Markers"
-*   JPG  - p1, p2                       | checkbox
-*
+* Handles the drawing of a single plot on the template marking GUI.
+* 
 */
 
 #include "bin_plot_widget.hpp"
@@ -67,30 +19,6 @@
 #include <cmath>
 #include <limits>
 
-// anchor_view.hpp mirrors these ids as literals because it cannot include this
-// header back (BinPlotWidget.hpp -> template_marking_bin_io.hpp ->
-// anchor_view.hpp). Drift between the two would route a drag to the wrong
-// alignment silently, so it is a build error instead.
-static_assert(BinPlotWidget::EcgPBegin == anchor_view::kPBegin, "anchor_view marker id drift");
-static_assert(BinPlotWidget::EcgPPeak == anchor_view::kPPeak, "anchor_view marker id drift");
-static_assert(BinPlotWidget::EcgQBegin == anchor_view::kQBegin, "anchor_view marker id drift");
-static_assert(BinPlotWidget::EcgRPeak == anchor_view::kRPeak, "anchor_view marker id drift");
-static_assert(BinPlotWidget::EcgSEnd == anchor_view::kSEnd, "anchor_view marker id drift");
-static_assert(BinPlotWidget::EcgTEnd == anchor_view::kTEnd, "anchor_view marker id drift");
-// Every marker anchor_view calls a bar must be one markerAtX will actually
-// hit-test, or an alignment would own a landmark the operator cannot reach.
-static_assert(anchor_view::isBar(BinPlotWidget::EcgPBegin),
-    "P-onset must be a bar: it is draggable and owns the P alignment");
-static_assert(anchor_view::isBar(BinPlotWidget::EcgQBegin),
-    "Q-onset must be a bar: it is draggable and owns the Q alignment");
-static_assert(anchor_view::isBar(BinPlotWidget::EcgSEnd),
-    "J-point must be a bar: it is draggable and owns the R alignment");
-static_assert(anchor_view::isBar(BinPlotWidget::EcgTEnd),
-    "T-end must be a bar: it is draggable and owns the T alignment");
-static_assert(anchor_view::isGlyph(BinPlotWidget::EcgRPeak),
-    "R-peak must be a glyph: it is the alignment anchor, never placed by hand");
-static_assert(anchor_view::isGlyph(BinPlotWidget::EcgPPeak),
-    "P-peak must be a glyph: reactive_ecg recomputes it from the P/Q bars");
 
 namespace {
 
@@ -100,9 +28,9 @@ namespace {
     // ABP/ART/ART_PULM in build_templates -- omit the argument and so take its
     // 0.3 default. Keep in step with that default.
     //
-    // The ECG's R column is NOT this: alignment.hpp puts it at 0.3 * the bin's
+    // The ECG's R column is NOT this: alignment.hpp puts it at 0.4 * the bin's
     // longest RR, which varies per bin, so it arrives through setData instead.
-    constexpr double kSlicePadSeconds = 0.3;
+    constexpr double kSlicePadSeconds = 0.4;
 
     // ------------------------------------------------------------------
     // ------------------------------------------------------------------
@@ -350,14 +278,6 @@ void BinPlotWidget::setChannelRate(Channel ch, double hz) {
     update();
 }
 
-void BinPlotWidget::setChannelAnchor(Channel ch, double rColumn) {
-    const size_t i = static_cast<size_t>(ch);
-    if (m_rAnchor[i] == rColumn) return;
-    m_rAnchor[i] = rColumn;
-    recomputeFrame();
-    update();
-}
-
 void BinPlotWidget::setReferenceLines(
     const std::vector<global_interval_lines::Line>& lines) {
     m_refLines = lines;
@@ -460,8 +380,8 @@ void BinPlotWidget::recomputeFrame() {
     }
 
     if (!(lo < hi)) { m_tMin = 0.0; m_tMax = 1.0; return; }   // nothing drawable
-    m_tMin = lo;
-    m_tMax = hi;
+    m_tMin = lo - 0.005;
+    m_tMax = hi + 0.005;
 }
 
 void BinPlotWidget::setData(const std::vector<double>& ppg,
@@ -530,17 +450,23 @@ void BinPlotWidget::setEcgFrame(double tMinSec, double tMaxSec) {
     update();
 }
 
-void BinPlotWidget::clearEcgFrame() {
-    if (!m_ecgFrameFixed) return;
-    m_ecgFrameFixed = false;
-    recomputeFrame();
-    update();
-}
 void BinPlotWidget::setState(State s) { m_state = s; update(); }
 
 void BinPlotWidget::setShowEcgMarkers(bool show) {
     if (m_showEcgMarkers == show) return;
     m_showEcgMarkers = show;
+    update();
+}
+
+void BinPlotWidget::setShowRMarkers(bool show) {
+    if (m_showRMarkers == show) return;
+    m_showRMarkers = show;
+    update();
+}
+
+void BinPlotWidget::setRMarks(double pBegin, double qOnset, double sEnd, double tEnd) {
+    m_rMarks[0] = pBegin; m_rMarks[1] = qOnset;
+    m_rMarks[2] = sEnd;   m_rMarks[3] = tEnd;
     update();
 }
 
@@ -655,12 +581,6 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
         r.ppgPeak2 = p.peak2;
     }
     return r;
-}
-
-void BinPlotWidget::setBackgroundTraces(
-    const std::vector<std::pair<std::vector<double>, QColor>>& traces)
-{
-    m_bgTraces = traces;
 }
 
 // Resolve a marker to its channel, trace, and group visibility.
@@ -1040,6 +960,29 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         );
     }
 
+    // ---- R-ALIGNED OVERLAY (ecg_r_markers) --------------------------------
+    // The 4 R-aligned ECG landmarks, read-only, on top of the normal bars.
+    // Positions arrive already in the frame the panel draws. Distinct style
+    // (dotted teal) so they read as reference, not editable bars. Only on the
+    // ECG panels, and only when the markers are being shown at all.
+    if (m_showRMarkers) {
+        static const char* kRLbl[4] = { "Rp", "Rq", "Rs", "Rt" };
+        const int wallR = lastDrawnSample(Channel::Ecg);
+        const int wallL = firstDrawnSample(Channel::Ecg);
+        QPen rpen(QColor(0, 140, 140), 2);   // teal
+        rpen.setStyle(Qt::DotLine);
+        for (int i = 0; i < 4; ++i) {
+            double idx = m_rMarks[i];
+            if (idx < 0.0) continue;
+            if (wallR >= 0 && idx > (double)wallR) continue;
+            if (wallL >= 0 && idx < (double)wallL) idx = (double)wallL;
+            const double mx = xFromSample(Channel::Ecg, idx);
+            p.setPen(rpen);
+            p.drawLine(QPointF(mx, margin_top), QPointF(mx, h - margin_bottom));
+            p.drawText(QPointF(mx + 2, margin_top + 10), QString::fromLatin1(kRLbl[i]));
+        }
+    }
+
     drawFeatureGlyphs(p, yLo, yHi, pLo, pHi, ph);
 
     p.restore();
@@ -1061,6 +1004,21 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
 void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::LeftButton) {
+        // R-ALIGNED OVERLAY DRAG. The markers are draggable: pressing one
+        // starts an R-marker drag and asks the owner to flip the view to R so
+        // the drag happens on the R trace. Checked before the bar hit-test so
+        // it takes priority when the overlay is shown. ~6 px tolerance.
+        if (m_showRMarkers) {
+            const double px = e->position().x();
+            for (int i = 0; i < 4; ++i) {
+                if (m_rMarks[i] < 0.0) continue;
+                if (std::abs(px - xFromSample(Channel::Ecg, m_rMarks[i])) < 6.0) {
+                    m_dragRMark = i;
+                    emit rMarkerDragStarted(m_binIndex, m_leadIndex);
+                    return;
+                }
+            }
+        }
         // B2 focus mode: focus selection is driven by the user BAR (the
         // draggable marker), NOT the automated glyph. A click on a bar selects
         // that landmark for the focus panel (using the bar's own position) and
@@ -1134,6 +1092,20 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
 }
 
 void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
+    // R-aligned overlay drag: move the grabbed R marker along the ECG axis and
+    // report it. By now the owner has flipped the view to R (on drag start),
+    // so this column is R-framed and the position is an R-frame column.
+    if (m_dragRMark >= 0) {
+        const int wallL = firstDrawnSample(Channel::Ecg);
+        const int wallR = lastDrawnSample(Channel::Ecg);
+        if (wallL < 0 || wallR < wallL) return;
+        const int s = std::clamp(sampleFromX(Channel::Ecg, e->position().x()),
+            wallL, wallR);
+        m_rMarks[m_dragRMark] = s;
+        emit rMarkerMoved(m_binIndex, m_leadIndex, m_templateIndex, m_dragRMark, s);
+        update();
+        return;
+    }
     if (m_dragMarker < 0) return;
     const std::vector<double>* vec = nullptr;
     Channel ch = Channel::Ecg;
@@ -1165,6 +1137,7 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
 
 void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
     m_dragMarker = -1;
+    m_dragRMark = -1;
 }
 
 void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b,

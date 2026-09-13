@@ -236,6 +236,13 @@
        </widget>
       </item>
       <item>
+       <widget class="QCheckBox" name="ecg_r_markers">
+        <property name="text">
+         <string>Show ECG R Markers</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QCheckBox" name="show_ppg_markers">
         <property name="text">
          <string>Show PPG Markers</string>
@@ -452,7 +459,7 @@
   <slot>onNextPage()</slot>
  </slots>
  <buttongroups>
-  <buttongroup name="buttonGroup_2"/>
   <buttongroup name="buttonGroup"/>
+  <buttongroup name="buttonGroup_2"/>
  </buttongroups>
 </ui>

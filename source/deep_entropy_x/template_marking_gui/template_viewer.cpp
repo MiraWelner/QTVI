@@ -15,7 +15,6 @@
 #include <QVBoxLayout>
 #include <iomanip>
 #include <iostream>
-#include <chrono>
 #include <cstdio>
 #include <QRadioButton>
 #include <QShortcut>
@@ -101,6 +100,14 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
     connect(ui->show_ecg_markers, &QCheckBox::toggled, this, [this](bool on) {
         m_showEcgMarkers = on; applyMarkerVisibility();
         });
+    // ecg_r_markers: R-aligned overlay. Wired via findChild so this compiles
+    // and runs whether or not the .ui declares the checkbox yet.
+    if (auto* rBox = findChild<QCheckBox*>("ecg_r_markers")) {
+        connect(rBox, &QCheckBox::toggled, this, [this](bool on) {
+            m_showEcgRMarkers = on; applyMarkerVisibility();
+            });
+        m_showEcgRMarkers = rBox->isChecked();
+    }
     connect(ui->show_ppg_markers, &QCheckBox::toggled, this, [this](bool on) {
         m_showPpgMarkers = on; applyMarkerVisibility();
         });
@@ -831,6 +838,18 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
         }
     }
 
+    // ---- SEED THE R-ALIGNED OVERLAY BARS (ecg_r_markers) ------------------
+    // The separate R-frame set, seeded from the R-alignment detection (the
+    // *_auto_ch fields, which hold R since the R pass ran last). Not
+    // serialized; re-seeded each load, edited via drag, exported as _R.
+    for (auto& b : m_bins) {
+        for (int c = 0; c < 3; ++c) {
+            b.r_bars_ch[c][0] = b.p_begin_auto_ch[c];
+            b.r_bars_ch[c][1] = b.q_onset_auto_ch[c];
+            b.r_bars_ch[c][2] = b.s_end_auto_ch[c];
+            b.r_bars_ch[c][3] = b.t_end_auto_ch[c];
+        }
+    }
     //load markers from previous session
     const QDir markingDir(m_markingPath);
     const QString canonical = markingDir.filePath(m_subjectId + "_template_markings.bin");
@@ -1141,20 +1160,7 @@ void TemplateViewerWindow::clearPlots() {
 }
 
 void TemplateViewerWindow::showPage() {
-    // ---- TEMPORARY INSTRUMENTATION ------------------------------------
-    using clk = std::chrono::steady_clock;
-    auto t_prev = clk::now();
-    auto lap = [&t_prev](const char* what) {
-        const auto now = clk::now();
-        fprintf(stderr, "[showPage] %-24s %7lld ms\n", what,
-            (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - t_prev).count());
-        fflush(stderr);
-        t_prev = now;
-        };
-
     clearPlots();
-    lap("clearPlots");
 
     // Page bounds come from the packed table, not from multiplication: pages
     // hold a variable number of bins so the COLUMN count stays bounded.
@@ -1239,9 +1245,8 @@ void TemplateViewerWindow::showPage() {
         // that on its own, so the two cannot disagree about which row exists.
         gridRows = std::min(n_template_rows, m_maxLeads + (anyVcg ? 1 : 0));
         // Note: this probe throws its trace away and the per-bin loop below
-        // recomputes the same thing for the same bins. If this lap is large,
-        // that duplication is the first thing to remove.
-        lap("anyVcg probe");
+        // recomputes the same thing for the same bins -- the first duplication
+        // to remove if this page build is ever too slow.
     }
 
     m_binPlots.resize(nCols);
@@ -1483,20 +1488,6 @@ void TemplateViewerWindow::showPage() {
                     pw->setEcgFrame(fLo, fHi);
             }
 
-            // Faint arterial background-context traces (present-only),
-            // foot-anchored like the PPG. Colors mirror the noise-marking GUI:
-            // ABP teal, ART dark red, ART_PULM dark blue.
-            {
-                std::vector<std::pair<std::vector<double>, QColor>> bg;
-                if (!abpN.empty())
-                    bg.push_back({ abpN,  QColor(0, 95, 105) });
-                if (!artN.empty())
-                    bg.push_back({ artN,  QColor(150, 40, 40) });
-                if (!artPN.empty())
-                    bg.push_back({ artPN, QColor(40, 60, 150) });
-                pw->setBackgroundTraces(bg);
-            }
-
             // Arterial traces for marker geometry/bounds. The arterial markers
             // themselves come from applyBinToWidget() with all the others.
             pw->setArterialTraces(abpN, artN, artPN,
@@ -1551,6 +1542,74 @@ void TemplateViewerWindow::showPage() {
             connect(pw, &BinPlotWidget::markerMovedOnTemplate, this, &TemplateViewerWindow::onMarkerMovedOnTemplate);
             connect(pw, &BinPlotWidget::markerDragStarted, this, &TemplateViewerWindow::onMarkerDragStarted);
             connect(pw, &BinPlotWidget::landmarkSelected, this, &TemplateViewerWindow::onLandmarkSelected);
+            // R-aligned overlay drag. On drag START, flip the view to R IN
+            // PLACE (reskin, no rebuild) so the drag survives and happens on the
+            // R trace. Each MOVE stores the new R-frame column into r_bars_ch
+            // and repaints the column.
+            connect(pw, &BinPlotWidget::rMarkerDragStarted, this, [this](int, int) {
+                if (currentGridAnchor() != AnchorType::R_PEAK) {
+                    m_forceAlign = true;
+                    m_forcedAlign = AnchorType::R_PEAK;
+                    reskinGridForAnchor();   // in-place: does not destroy the dragged widget
+                }
+                });
+            connect(pw, &BinPlotWidget::rMarkerMoved, this,
+                [this](int binIdx, int leadIdx, int /*templateIdx*/, int rIndex, double newCol) {
+                    if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
+                    if (leadIdx < 0 || leadIdx > 2) return;
+                    if (rIndex < 0 || rIndex > 3) return;
+
+                    // newCol is an R-frame column (view is R during the drag).
+                    const double oldCol = m_bins[binIdx].r_bars_ch[leadIdx][rIndex];
+                    m_bins[binIdx].r_bars_ch[leadIdx][rIndex] = newCol;
+
+                    // Repaint one bin's columns (the R overlay is on all of them).
+                    auto refreshBinR = [&](int gi) {
+                        for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
+                            if (m_pageGlobalIdx[li] != gi) continue;
+                            for (auto* p : m_binPlots[li]) {
+                                if (!p || p->leadIndex() != leadIdx) continue;
+                                const double sh = m_bins[gi].frameShift(
+                                    leadIdx, AnchorType::R_PEAK, currentGridAnchor());
+                                auto rs = [&](double v) { return (v >= 0.0) ? v + sh : -1.0; };
+                                const auto& r = m_bins[gi].r_bars_ch[leadIdx];
+                                p->setRMarks(rs(r[0]), rs(r[1]), rs(r[2]), rs(r[3]));
+                            }
+                        }
+                        };
+                    refreshBinR(binIdx);
+
+                    // MOVE SUBSEQUENT, page-scoped, equal screen distance -- same
+                    // rule as the ECG/PPG paths. R bars are per bin, so this walks
+                    // the page's SUBSEQUENT bins (deduped) and shifts the same
+                    // landmark by the drag's fraction of each bin's visible span.
+                    if (m_moveMode == MoveMode::Individual || oldCol < 0.0) return;
+                    const double delta = newCol - oldCol;
+                    auto spanSec = [&](int gi) -> double {
+                        double lo, hi;
+                        return unionEcgFrameSeconds(m_bins[gi], 0, 0, lo, hi) ? (hi - lo) : -1.0;
+                        };
+                    const double dragSpan = spanSec(binIdx);
+                    if (!(dragSpan > 0.0)) return;
+
+                    int lastGi = -1;
+                    for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
+                        const int gi = m_pageGlobalIdx[li];
+                        if (gi <= binIdx || gi == lastGi) continue;
+                        lastGi = gi;
+                        double& cur = m_bins[gi].r_bars_ch[leadIdx][rIndex];
+                        if (cur < 0.0) continue;
+                        const double tgtSpan = spanSec(gi);
+                        if (!(tgtSpan > 0.0)) continue;
+                        // Clamp to this bin's R-aligned ECG extent.
+                        const int n = (int)m_bins[gi].chFor(leadIdx, AnchorType::R_PEAK)
+                            .ecgTemplate_raw.size();
+                        double target = cur + delta * (tgtSpan / dragSpan);
+                        if (n > 0) target = std::clamp(target, 0.0, (double)(n - 1));
+                        cur = target;
+                        refreshBinR(gi);
+                    }
+                });
             connect(pw, &BinPlotWidget::badRToggled, this, &TemplateViewerWindow::onBadRToggled);
             pw->setTemplateIndex(template_index);
 
@@ -1631,7 +1690,6 @@ void TemplateViewerWindow::showPage() {
 
         m_binPlots[i] = std::move(group);
     }
-    lap("all bin widgets");
 
     // Equal stretch on every used row/column => equal-width, equal-height
     // cells that together fill the whole plot area. Combined with each
@@ -1642,7 +1700,6 @@ void TemplateViewerWindow::showPage() {
 
     applyMarkerVisibility();
     updatePageControls();
-    lap("stretch+visibility+controls");
 }
 
 void TemplateViewerWindow::captureCurrentPage() {
@@ -1920,7 +1977,14 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // Per lead, because slotMarks selects the lead -- the old bin-wide
             // MarkerSet held all three leads in one object and was fetched once
             // per bin.
-            const tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
+            tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
+            // _R uses the SEPARATE R-aligned overlay bars (r_bars_ch), not the
+            // per-alignment bars assembled by userMarks. This is the editable
+            // R set the ecg_r_markers overlay drags.
+            if (anchor == AnchorType::R_PEAK) {
+                umk.p_begin = b.r_bars_ch[c][0]; umk.q_onset = b.r_bars_ch[c][1];
+                umk.s_end = b.r_bars_ch[c][2];   umk.t_end = b.r_bars_ch[c][3];
+            }
             // userMarks returns BARS ONLY, and BankMarkerSet no longer has a
             // p_peak field at all: P peak is a glyph. It is recomputed from the
             // two bars that bracket it, on this alignment's own waveform.
@@ -1938,7 +2002,11 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // all four alignments and expressed in this one's frame, because
             // no single alignment's marker set holds a whole beat any more.
             const auto aa = b.autoFor(anchor);
-            const tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
+            tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
+            if (anchor == AnchorType::R_PEAK) {   // _R = the R overlay bars
+                umk.p_begin = b.r_bars_ch[c][0]; umk.q_onset = b.r_bars_ch[c][1];
+                umk.s_end = b.r_bars_ch[c][2];   umk.t_end = b.r_bars_ch[c][3];
+            }
             const std::vector<double>& ecgA = b.chFor(c, anchor).ecgTemplate_raw;
             const FeatureMarks::ReactiveEcg rxA = FeatureMarks::reactive_ecg(
                 ecgA, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_onset[c]),
@@ -2068,6 +2136,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
 void TemplateViewerWindow::applyMarkerVisibility() {
     for (auto* pw : m_allPlots) {
         pw->setShowEcgMarkers(m_showEcgMarkers);
+        pw->setShowRMarkers(m_showEcgRMarkers);
         pw->setShowPpgMarkers(m_showPpgMarkers);
         pw->setShowPpgDerivMarkers(m_showPpgDerivMarkers);
         pw->setShowAbpMarkers(m_showAbpMarkers);
@@ -2438,6 +2507,19 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     // above stay R-framed. Both are deliberate: the fiducials are recomputed
     // per alignment, the operator's marks are not.
     pw->setAuto(b, currentGridAnchor());
+
+    // R-aligned overlay (ecg_r_markers): the SEPARATE editable R-frame bars
+    // (b.r_bars_ch), shifted into the frame the panel is drawing so they land
+    // on the displayed trace. Draggable; edits go back to r_bars_ch.
+    {
+        const int c2 = pw->leadIndex();
+        if (c2 >= 0 && c2 <= 2) {
+            const double sh = b.frameShift(c2, AnchorType::R_PEAK, currentGridAnchor());
+            auto rshift = [&](double v) { return (v >= 0.0) ? v + sh : -1.0; };
+            pw->setRMarks(rshift(b.r_bars_ch[c2][0]), rshift(b.r_bars_ch[c2][1]),
+                rshift(b.r_bars_ch[c2][2]), rshift(b.r_bars_ch[c2][3]));
+        }
+    }
 }
 
 void TemplateViewerWindow::refreshBinMarkers(int binIdx) {

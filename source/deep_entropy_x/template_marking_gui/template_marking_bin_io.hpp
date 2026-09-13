@@ -438,6 +438,16 @@ struct TemplateBin {
     bool    bad_r_ch[3] = { false, false, false };
     uint8_t bad_ppg = 0;   // 0 = ok, 1 = bad, 2 = no ppg
 
+    // R-ALIGNED OVERLAY BARS (ecg_r_markers). A SEPARATE, editable set of the
+    // 4 ECG landmarks measured/held in the R frame -- [lead][0..3] =
+    // p_begin,q_onset,s_end,t_end. Seeded from the R-alignment detection on
+    // load, dragged independently of the per-alignment bars. NOT serialized to
+    // the .bin (readers/writers ignore them); they are exported to the CSV as
+    // the _R user columns and re-seeded fresh each load.
+    double r_bars_ch[3][4] = {
+        { -1, -1, -1, -1 }, { -1, -1, -1, -1 }, { -1, -1, -1, -1 }
+    };
+
     // Per-anchor USER marker positions. Each alignment anchor (R, Q_ONSET,
     // J_POINT, T_PEAK, ...) has its OWN independent set of draggable ECG
     // markers, because a marker's sample column is only meaningful relative to
