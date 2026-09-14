@@ -202,6 +202,7 @@ double FeatureMarks::compute_s_peak(const std::vector<double>& ecg, int r_idx, d
 // -------------------------------------------------------------------------
 // Reactive ECG X-glyphs: each is auto-computed but tracks the user's movable
 // markers live. Windows are +/-0.05 s around the relevant user marker.
+// markers live. Windows are +/-0.05 s around the relevant user marker.
 // -------------------------------------------------------------------------
 
 // T peak = max value between the user's T-begin and T-end markers.
@@ -534,8 +535,7 @@ double FeatureMarks::compute_p_begin(const std::vector<double>& v, double fs, in
     const int hi = std::min(pUser, N - 1);
     const double B = u[std::clamp(lo, 0, N - 1)];
     const double pb = subsample_refine::transitionAnchor(u, pUser, 0.10, 40, B, lo, hi);
-    return std::clamp(std::isfinite(pb) ? pb : static_cast<double>(pUser),
-        static_cast<double>(fFin), pPeak);
+    return std::clamp(std::isfinite(pb) ? pb : static_cast<double>(pUser), static_cast<double>(fFin), pPeak);
 }
 
 AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {

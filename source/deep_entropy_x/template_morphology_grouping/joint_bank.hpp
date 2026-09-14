@@ -202,6 +202,13 @@ namespace jbank {
         int32_t  subtype = -1;
         uint32_t spawn_seq = 0;
 
+        // Every member NOISE-categorized -> this is not a morphology, it is a
+        // clump of noise beats. Set in cleanGroups; makes averagedMembers()
+        // return nothing so the template comes out empty and is dropped, rather
+        // than being resurrected by the all-empty guard (which exists only to
+        // preserve an all-ectopic / all-premature morphology).
+        bool     all_noise = false;
+
         std::map<int32_t, tbank::BankMarkerSet> markers_by_anchor;
 
         tbank::BankMarkerSet& marks(int32_t a) { return markers_by_anchor[a]; }
@@ -225,6 +232,7 @@ namespace jbank {
         }
         // Which list the waveform is built from.
         const std::vector<uint32_t>& averagedMembers() const {
+            if (all_noise) { static const std::vector<uint32_t> none; return none; }
             return members_clean.empty() ? members : members_clean;
         }
         bool isJunk() const { return memberCount() <= tbank::kMaxJunkMembers; }
@@ -1229,7 +1237,7 @@ namespace jbank {
             // version zeroed the record-wide counters whenever any one group
             // turned out to be entirely premature, so a single all-ectopic
             // group erased every exclusion count in the bin.
-            uint32_t ex_cat = 0, ex_prem = 0, ex_vote = 0;
+            uint32_t ex_cat = 0, ex_prem = 0, ex_vote = 0, ex_noise = 0;
             std::vector<uint32_t> clean;
             clean.reserve(g.members.size());
             for (const uint32_t m : g.members) {
@@ -1243,6 +1251,7 @@ namespace jbank {
                     excluded_reason[m] =
                         static_cast<uint8_t>(ExcludeReason::CATEGORY);
                     ++ex_cat;
+                    if (cat == tbank::Category::NOISE) ++ex_noise;
                     continue;
                 }
                 const tbank::PvcFilter v = (m < flags.size())
@@ -1259,11 +1268,22 @@ namespace jbank {
             // what 4.6 exists to preserve -- the template would lose its
             // waveform and the operator would have nothing to confirm.
             if (clean.empty()) {
-                clean = g.members;
-                for (const uint32_t m : clean)
-                    excluded_reason[m] = static_cast<uint8_t>(ExcludeReason::KEPT);
-                ex_cat = ex_prem = ex_vote = 0;   // this group only
-                if (counts) ++counts->groups_all_premature;
+                if (ex_noise == g.members.size()) {
+                    // ENTIRELY NOISE. The guard below exists to preserve an
+                    // all-ectopic / all-premature morphology; it must NOT
+                    // resurrect a group of noise beats into a template. Flag it
+                    // so averagedMembers() returns nothing -- the slot comes out
+                    // empty and markingSlotsForBin drops it, instead of a noisy
+                    // fake morphology (PQRST_E) being averaged and marked.
+                    g.all_noise = true;
+                }
+                else {
+                    clean = g.members;
+                    for (const uint32_t m : clean)
+                        excluded_reason[m] = static_cast<uint8_t>(ExcludeReason::KEPT);
+                    ex_cat = ex_prem = ex_vote = 0;   // this group only
+                    if (counts) ++counts->groups_all_premature;
+                }
             }
             if (counts) {
                 counts->excluded_category += ex_cat;
@@ -1464,7 +1484,7 @@ namespace jbank {
         uint32_t n_too_bad = 0;        // below the band: rejected, not blended
     };
 
-    inline void substitute_premature(const JointBank& bank, const ChannelSet& chans, const std::vector<uint8_t>& excluded_reason, std::vector<tbank::BeatFlags>& flags, std::vector<Substitution>& out,  SubstitutionCounts* counts = nullptr)
+    inline void substitute_premature(const JointBank& bank, const ChannelSet& chans, const std::vector<uint8_t>& excluded_reason, std::vector<tbank::BeatFlags>& flags, std::vector<Substitution>& out, SubstitutionCounts* counts = nullptr)
     {
         //after the groups are separated morphologically, run the premature beat substitution on each group such that each premature beat is replaced with a ewma blend of beats
         for (const BeatGroup& g : bank.groups) {

@@ -96,6 +96,9 @@ public slots:
     void onPrevPage();
 
 private slots:
+    void onMarkerMovedOnTemplate(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
+    void movePpgMarker(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
+    void moveEcgMarker(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
     void onMarkerMoved(int binIdx, int leadIdx, int marker, int newIdx);
     void onMarkerDragStarted(int binIdx, int leadIdx, int marker);
     void onBadRToggled(int binIdx, int leadIdx, int templateIdx, bool bad);
@@ -106,7 +109,7 @@ private slots:
     // `col` IS A DOUBLE, matching BinPlotWidget::landmarkSelected. Qt connects
     // a signal to a slot by parameter type; a mismatch here connects at runtime
     // and then silently never fires, so the two must change together.
-    void onLandmarkSelected(int binIdx, int leadIdx, int templateIdx, int marker, double col); //focus mode - the focus is open in sidebar
+    void user_clicked_on_bar(int binIdx, int leadIdx, int templateIdx, int marker, double col); //focus mode - the focus is open in sidebar
 
 private:
     struct Lead {
@@ -154,8 +157,7 @@ private:
     // anchor is displayed. Returns false (and leaves the outs untouched) when
     // no anchor has a drawable average, in which case the caller lets the
     // widget size the frame from the trace as before.
-    bool unionEcgFrameSeconds(const TemplateBin& b, int lead, int templateIdx,
-        double& tMinSec, double& tMaxSec) const;
+    bool unionEcgFrameSeconds(const TemplateBin& b, int lead, int templateIdx, double& tMinSec, double& tMaxSec) const;
 
     // Section 4.6 class confirmation, from BinPlotWidget::classConfirmRequested.
     // Turns one operator click into tbank::propagateLabel() across all three
@@ -171,10 +173,6 @@ private:
     // bars at all before this: applyBinToWidget draws the BIN's marker set,
     // which describes sinus, so it was correctly applied to slot 0 only.
     void applyBankTemplateToWidget(BinPlotWidget* pw, TemplateBin& b, int channel, int templateIdx);
-
-    // Slot-aware marker write-back. Routes to the bin's marker set for slot 0
-    // and to the bank template's for every other column.
-    void onMarkerMovedOnTemplate(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
 
     // Everything both loadSubject overloads do once m_bins is populated:
     // the four-pass seeding loop, the markings restore, computeGlobalRefs and
@@ -317,25 +315,15 @@ private:
     // the bin index alone has to consult both.
     std::vector<int> m_pageTemplateIdx;
 
-    int m_maxLeads = 1;
-
-    int m_binsPerPage = 16;
-
-    // Columns a page may hold. Chosen so a panel keeps a usable width at the
-    // window sizes this tool is used at; a bin whose own column count exceeds
-    // it gets a page to itself and is the only case that still compresses,
-    // which is also the case the columnsForBin diagnostic is about (three or
-    // more markable templates in one bin means the bank over-segmented).
-    int m_maxColsPerPage = 8;
+    int max_leads = 1; //it is max leads because sometimes a lead might be noisy so there will be different bin counts for different leads
+    int m_currentPage = 0;
+    int m_totalPages = 1;
 
     // (first bin, bin count) per page, packed by column budget. Rebuilt whenever
     // marking eligibility changes, because confirming a template's class can add
     // or remove a column and therefore move every later page boundary.
     std::vector<std::pair<int, int>> m_pages;
     void buildPages();
-
-    int m_currentPage = 0;
-    int m_totalPages = 1;
 
     enum class MoveMode { Individual, SubsequentDelta, SubsequentRaw };
     MoveMode m_moveMode = MoveMode::SubsequentDelta;

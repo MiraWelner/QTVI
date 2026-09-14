@@ -34,15 +34,86 @@ void noise_marking_gui::setFileSource(const QString& filePath) {
 }
 
 namespace {
-    // Read a noise-markings .bin. ONE format: magic, version, count, then rows
-    // of noise_markings::kColumns doubles indexed by the Column enum. See
-    // noise_markings in user_annotation_handler.h, which the writer shares.
+    // Read a noise-markings .bin. TWO layouts, both handled here -- see
+    // noise_markings in user_annotation_handler.h, which the writer shares
+    // for the constants and lookup tables used by both:
     //
-    // A file without the magic is REFUSED, not parsed. Those are pre-versioned
-    // files whose rows are six bare doubles and which carry no threshold or
-    // blanking values, so reading one would restore every parameter-edit span at
-    // the config defaults and move the R peaks inside it -- looking entirely
-    // correct while being wrong about the one thing the span existed to record.
+    //   CURRENT (starts with the 8-byte magic): magic, version, count, then
+    //   rows of noise_markings::kColumns doubles indexed by the Column enum.
+    //
+    //   LEGACY (pre-versioned, no magic): a bare uint64 row count followed by
+    //   rows of six doubles -- start_sample, end_sample, start_sec, end_sec,
+    //   channel_code, annotation_code, in that order and nothing else. These
+    //   files predate threshold/blanking storage entirely, so a
+    //   parameter-edit span in one carries no recorded value. It is loaded
+    //   with threshold/blanking as NaN -- the same sentinel the current
+    //   format uses for "not applicable to this marking type" -- so
+    //   rehydrateParamOverrides() treats it as an unset override rather than
+    //   silently defaulting it to cfg.threshold / cfg.blanking_period.
+    //
+    // The two layouts share their first 8 bytes only by coincidence of size:
+    // the legacy row count and the current magic are both exactly 8 bytes, so
+    // one read tells us which layout follows -- if it doesn't match the
+    // magic, it IS the legacy count, not a corrupted magic value.
+
+    // Appends rows from a legacy (pre-versioned) noise-markings .bin. `f` is
+    // already positioned right after the 8-byte count; this reads exactly
+    // `count` rows of six bare doubles.
+    void appendLegacyNoiseMarkingRows(std::ifstream& f, uint64_t count,
+        const std::filesystem::path& path, GenExcStruct& g) {
+        namespace nm = noise_markings;
+        enum LegacyColumn : int {
+            kLStartSample = 0, kLEndSample, kLStartSec, kLEndSec,
+            kLChannelCode, kLAnnotationCode, kLegacyColumns
+        };
+
+        for (uint64_t i = 0; i < count; ++i) {
+            double row[kLegacyColumns];
+            f.read(reinterpret_cast<char*>(row), sizeof(row));
+            if (!f) {
+                std::fprintf(stderr,
+                    "[noise-markings] %s (legacy) ended after %llu of %llu "
+                    "rows\n", path.string().c_str(),
+                    static_cast<unsigned long long>(i),
+                    static_cast<unsigned long long>(count));
+                break;
+            }
+
+            // Both lookups read the same tables the current-format reader
+            // uses below, so a miss here means the file names a channel or
+            // marking type this build does not know -- worth a line each
+            // rather than a silent skip.
+            const char* chan = nm::channel_for_code(
+                static_cast<uint8_t>(row[kLChannelCode]));
+            if (!chan) {
+                std::fprintf(stderr,
+                    "[noise-markings] %s (legacy) row %llu: unknown channel "
+                    "code %d, skipped\n", path.string().c_str(),
+                    static_cast<unsigned long long>(i),
+                    static_cast<int>(row[kLChannelCode]));
+                continue;
+            }
+            const char* type = nullptr;
+            for (const auto& t : annotation_types::noise_types)
+                if (t.code == static_cast<int>(row[kLAnnotationCode])) {
+                    type = t.label; break;
+                }
+            if (!type) {
+                std::fprintf(stderr,
+                    "[noise-markings] %s (legacy) row %llu: unknown marking "
+                    "code %d, skipped\n", path.string().c_str(),
+                    static_cast<unsigned long long>(i),
+                    static_cast<int>(row[kLAnnotationCode]));
+                continue;
+            }
+
+            // threshold/blanking default to NaN inside appendMarking -- there
+            // is no column for them in this layout.
+            g.appendMarking(row[kLStartSec], row[kLEndSec],
+                QString::fromLatin1(chan), QString::fromLatin1(type));
+        }
+    }
+
     GenExcStruct readNoiseMarkingsBin(const std::filesystem::path& path,
         const QString& filePath) {
         namespace nm = noise_markings;
@@ -51,14 +122,35 @@ namespace {
         std::ifstream f(path, std::ios::binary);
         if (!f.is_open()) return g;
 
-        char magic[sizeof(nm::kMagic)] = {};
-        f.read(magic, sizeof(magic));
-        if (!f || std::memcmp(magic, nm::kMagic, sizeof(magic)) != 0) {
+        char header[sizeof(nm::kMagic)] = {};
+        f.read(header, sizeof(header));
+        if (!f) return g;   // truncated before header/count could even be told apart
+
+        if (std::memcmp(header, nm::kMagic, sizeof(header)) != 0) {
+            // No magic -- these 8 bytes are the legacy row count instead (see
+            // the comment above appendLegacyNoiseMarkingRows). Guard against
+            // an implausible count before looping over it, the same way
+            // loadSpans() does for the current format's count: a garbage
+            // value here is a sign this isn't actually a legacy file, not
+            // something to read millions of rows against.
+            uint64_t legacyCount = 0;
+            std::memcpy(&legacyCount, header, sizeof(legacyCount));
+            if (legacyCount > (1ull << 22)) {
+                std::fprintf(stderr,
+                    "[noise-markings] %s has neither a valid magic header "
+                    "nor a plausible legacy row count (%llu); refusing to "
+                    "read it.\n", path.string().c_str(),
+                    static_cast<unsigned long long>(legacyCount));
+                return g;
+            }
             std::fprintf(stderr,
                 "[noise-markings] %s has no magic header, so it predates "
-                "parameter storage; refusing to read it. Those files carry no "
-                "threshold or blanking values -- re-save from the CSV or "
-                "re-mark.\n", path.string().c_str());
+                "parameter storage; reading it as a legacy file with %llu "
+                "row(s). Any parameter-edit span in it has no recorded "
+                "threshold/blanking and loads as unset.\n",
+                path.string().c_str(),
+                static_cast<unsigned long long>(legacyCount));
+            appendLegacyNoiseMarkingRows(f, legacyCount, path, g);
             return g;
         }
 
@@ -306,7 +398,7 @@ void noise_marking_gui::handleBrowseFile() {
     QWidget* prevFocus = QApplication::focusWidget();
     QProgressDialog progress(this);
     progress.setWindowTitle("Loading");
-    progress.setLabelText(QString("Loading %1\u2026").arg(QFileInfo(binPath).fileName()));
+    progress.setLabelText(QString("Loading %1…").arg(QFileInfo(binPath).fileName()));
     progress.setRange(0, 0); progress.setCancelButton(nullptr);
     progress.setMinimumDuration(0); progress.setWindowModality(Qt::WindowModal);
     progress.setAutoClose(false); progress.setAutoReset(false);

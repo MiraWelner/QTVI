@@ -17,6 +17,7 @@
  // rather than as a missing include.
 #include <fstream>
 #include <algorithm>   // std::swap, for a span drawn right-to-left
+#include <cstring>     // std::memcpy, for reinterpreting the legacy row count below
 
 // ===========================================================================
 // Channel codes
@@ -92,13 +93,16 @@ namespace noise_markings {
     // Binary format
     // =======================================================================
     //
-    // ONE FORMAT, NO LEGACY PATH. The pre-versioned layout -- a bare uint64 row
-    // count followed by rows of six doubles -- is not read. A file without the
-    // magic below is REFUSED, with a message naming it, rather than parsed on a
-    // guess: those files carry no threshold or blanking values, so loading one
-    // would silently restore every parameter-edit span at the config defaults
-    // and move the R peaks inside it. Refusing says so; reading does not.
-    // Re-save affected files from the CSV, or re-mark them.
+    // TWO LAYOUTS, BOTH READ (see loadSpans below). The CURRENT layout starts
+    // with the 8-byte magic and carries threshold/blanking per row; the LEGACY
+    // (pre-versioned) layout is a bare uint64 row count followed by rows of
+    // six doubles with no parameter columns at all. Both are accepted for
+    // exactly the reason bin_chunk_loader.cpp's readNoiseMarkingsBin() accepts
+    // both: refusing the legacy layout here does not protect the two fields it
+    // lacks (this Span has no threshold/blanking fields to lose in the first
+    // place -- see the comment on Span below), it just throws away every
+    // legacy file's exclusion spans entirely, silently. See the comment on
+    // loadSpans() for the full story.
     //
     // EVERY FIELD IS A DOUBLE, including the two codes and the two sample
     // indices. One homogeneous row of kColumns doubles reads and writes as a
@@ -148,6 +152,13 @@ namespace noise_markings {
     // generation, not an annotation applied afterwards.
     // jbank::BinBankInput::mark_code is the field that carries them, and
     // nothing ever filled it -- because nothing read this file.
+    //
+    // NO THRESHOLD/BLANKING HERE. Span carries only what generation and the
+    // anneal step's exclusion logic actually key on: the sample range, the
+    // channel, and the annotation code. The parameter-edit VALUES (threshold,
+    // blanking) live only on AnnotationSegment / the GUI's own override lists,
+    // which is a completely separate path -- this struct never held them and
+    // never needed to.
     struct Span {
         int64_t start_sample = 0;
         int64_t end_sample = 0;
@@ -156,7 +167,7 @@ namespace noise_markings {
     };
 
     struct LoadResult {
-        bool read = false;          // the file opened and its magic matched
+        bool read = false;          // the file opened and a layout was recognized
         std::string path;
         std::string error;
         std::vector<Span> spans;
@@ -166,10 +177,29 @@ namespace noise_markings {
     // slice stays unmarked, and the bank has one partition -- the behaviour
     // before partitioning existed.
     //
-    // WRONG MAGIC IS REFUSED rather than guessed at, for the reason given
-    // above kMagic: the pre-versioned layout carried no threshold or blanking
-    // values, so parsing one on a guess restores every parameter-edit span at
-    // the config defaults and silently moves the R peaks inside it.
+    // LEGACY (PRE-VERSIONED) FILES ARE NOW READ, NOT REFUSED. This function
+    // used to refuse any file whose first 8 bytes did not match kMagic, on the
+    // reasoning that the pre-versioned layout carries no threshold/blanking
+    // and reading it on a guess would restore a parameter-edit span with those
+    // values silently defaulted. That reasoning does not apply to this
+    // function at all: Span (above) has no threshold or blanking fields --
+    // this reader was refusing legacy files to protect data it never returns
+    // in the first place. The actual effect of the refusal was that every
+    // record noise-marked before the magic/threshold/blanking format existed
+    // loaded here as "wrong magic", came back with an EMPTY span list, and
+    // every one of its noise-marked regions silently kept contributing R
+    // peaks, beats, and morphology votes to generation and templating --
+    // while the GUI's own separate reader (bin_chunk_loader.cpp's
+    // readNoiseMarkingsBin, which already tolerates the legacy layout) showed
+    // the very same markings on screen as present and applied. Markings
+    // visible in the GUI but silently not excluded from processing is exactly
+    // the bug this fixes.
+    //
+    // A genuine parameter-edit span from before parameter storage existed has
+    // nothing to recover regardless -- the threshold/blanking values were
+    // never captured anywhere, in this format or any other -- and that is a
+    // concern for AnnotationSegment/the GUI's override lists, not for this
+    // Span-only reader.
     inline LoadResult loadSpans(const std::string& path) {
         LoadResult out;
         out.path = path;
@@ -177,15 +207,58 @@ namespace noise_markings {
         std::ifstream f(path, std::ios::binary);
         if (!f) { out.error = "not found"; return out; }
 
-        char magic[sizeof(kMagic)] = {};
-        if (!f.read(magic, sizeof(magic))) {
+        char header[8] = {};
+        if (!f.read(header, sizeof(header))) {
             out.error = "truncated header"; return out;
         }
+
+        bool magicMatches = true;
         for (std::size_t i = 0; i < sizeof(kMagic); ++i)
-            if (magic[i] != kMagic[i]) {
-                out.error = "wrong magic -- not a noise-marking bin";
+            if (header[i] != kMagic[i]) { magicMatches = false; break; }
+
+        if (!magicMatches) {
+            // LEGACY LAYOUT. The same 8 bytes just read are a bare uint64 row
+            // count instead of a magic; each row is six raw doubles --
+            // start_sample, end_sample, start_sec, end_sec, channel_code,
+            // annotation_code, in that order and nothing else. Mirrors
+            // bin_chunk_loader.cpp's appendLegacyNoiseMarkingRows exactly
+            // (same layout, same guard), except this reader only needs four
+            // of those six columns.
+            uint64_t legacyCount = 0;
+            std::memcpy(&legacyCount, header, sizeof(legacyCount));
+            // A COUNT OFF DISK IS NOT A COUNT UNTIL IT IS CHECKED -- same
+            // guard as the current-format path below, and for the same
+            // reason: an implausible value here is a sign this file is
+            // neither layout, not something to read millions of rows against.
+            if (legacyCount > (1ull << 22)) {
+                out.error = "neither a valid magic header nor a plausible legacy row count";
                 return out;
             }
+
+            out.read = true;
+            out.spans.reserve(static_cast<std::size_t>(legacyCount));
+            enum LegacyColumn : int {
+                kLStartSample = 0, kLEndSample, kLStartSec, kLEndSec,
+                kLChannelCode, kLAnnotationCode, kLegacyColumns
+            };
+            for (uint64_t r = 0; r < legacyCount; ++r) {
+                double row[kLegacyColumns];
+                if (!f.read(reinterpret_cast<char*>(row), sizeof(row))) {
+                    out.error = "truncated at row (legacy) " + std::to_string(r);
+                    break;      // keep what parsed; the rest is unreadable
+                }
+                Span sp;
+                sp.start_sample = static_cast<int64_t>(row[kLStartSample]);
+                sp.end_sample = static_cast<int64_t>(row[kLEndSample]);
+                sp.channel_code = static_cast<uint8_t>(row[kLChannelCode]);
+                sp.annotation_code = static_cast<uint8_t>(row[kLAnnotationCode]);
+                // Drawn right-to-left: the GUI stores the drag as-is.
+                if (sp.end_sample < sp.start_sample)
+                    std::swap(sp.start_sample, sp.end_sample);
+                out.spans.push_back(sp);
+            }
+            return out;
+        }
 
         uint32_t version = 0;
         uint64_t count = 0;
