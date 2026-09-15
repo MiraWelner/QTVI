@@ -164,7 +164,7 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
         // process's current working directory instead of cfg.vcg_output --
         // <id>_vcg.csv (and vcg_basis, if it shares this directory) landed
         // wherever the executable was launched from.
-        viewer.setVcgOutputDir(QString::fromStdString(cfg.vcg_output));
+        viewer.set_vcg_output_dir(QString::fromStdString(cfg.vcg_output));
         // Sections 5.2-5.4 normalization CSVs (<id>_feature_norm.csv,
         // <id>_cv_check.csv) land alongside the bin archive. Same
         // "setter must actually be called or the path stays empty and

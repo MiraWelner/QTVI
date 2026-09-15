@@ -76,10 +76,18 @@ public:
     // Clear the panel (no landmark selected).
     void clearFocus();
 
+    // Which curve the red dashed overlay draws, so it matches the model that
+    // actually PLACED this landmark: a peak's weighted quadratic/cubic vs an
+    // onset/offset's anchor_fit transition model. Set per landmark by the owner
+    // right after setFocus; defaults to Transition (the onset/offset case).
+    enum class FitKind { Transition, PeakQuadratic, PeakCubic };
+    void setFitKind(FitKind k) { m_fitKind = k; update(); }
+
 protected:
     void paintEvent(QPaintEvent*) override;
 
 private:
+    FitKind m_fitKind = FitKind::Transition;
     std::vector<double> m_mean;
     std::vector<double> m_sd;
     std::vector<double>  m_sdMs;       // per-column SD in msec
@@ -96,4 +104,10 @@ private:
     // Build the fitted curve over [lo, hi] using anchor_fit; returns a
     // per-column vector (NaN outside the fit window). Defined in the .cpp.
     std::vector<double> fittedCurve(int lo, int hi) const;
+
+    // Peak candidate curve over [lo, hi]: a weighted quadratic (cubic=false) or
+    // cubic (cubic=true), fit over the VISIBLE window so it spans the peak and
+    // shows real curvature. NaN if the fit degenerated. Both are drawn for a
+    // peak landmark so quadratic vs cubic can be compared.
+    std::vector<double> peakCurve(int lo, int hi, bool cubic) const;
 };

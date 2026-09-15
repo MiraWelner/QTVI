@@ -2,7 +2,7 @@
 * @brief BinPlotWidget.cpp
 *
 * Handles the drawing of a single plot on the template marking GUI.
-* 
+*
 */
 
 #include "bin_plot_widget.hpp"
@@ -1021,8 +1021,7 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
         }
         // B2 focus mode: focus selection is driven by the user BAR (the
         // draggable marker), NOT the automated glyph. A click on a bar selects
-        // that landmark for the focus panel (using the bar's own position) and
-        // begins a drag; a subsequent drag re-fires focus via markerMoved.
+        // that landmark for the focus panel and begins a drag.
         int m = markerAtX(e->position().x());
         if (m >= 0) {
             m_dragMarker = m;
@@ -1030,6 +1029,36 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
             emit landmarkSelected(m_binIndex, m_leadIndex, m_templateIndex,
                 m, m_markers[m]);
             return;
+        }
+
+        // PEAK GLYPHS ARE CLICKABLE FOR FOCUS (read-only) -- to see the fit that
+        // placed them. Hit-test the positions ACTUALLY DRAWN (what the operator
+        // sees): R from the frozen snapshot (m_glyphs.ecgRPeak), P from the
+        // reactive fit (reactiveGlyphs). NOT m_markers[EcgRPeak], which holds
+        // r_col_raw and sits a few samples off the drawn cross -- that mismatch
+        // is why clicking the R glyph did nothing. Checked after the bars so a
+        // bar always wins when both are near the cursor.
+        if (m_showEcgTrace && !m_ecg.empty()) {
+            const Reactive rx = reactiveGlyphs();
+            const double px = e->position().x();
+            const int wall = lastDrawnSample(Channel::Ecg);
+            struct GlyphHit { int marker; double idx; };
+            const GlyphHit glyphs[] = {
+                { EcgRPeak, m_glyphs.ecgRPeak },
+                { EcgPPeak, rx.ecgPPeak },
+                { EcgQPeak, m_glyphs.ecgQPeak },   // -1 unless q_onset_found
+                { EcgTPeak, rx.ecgTPeak },
+            };
+            for (const GlyphHit& g : glyphs) {
+                if (g.idx < 0.0) continue;
+                if (wall >= 0 && g.idx > static_cast<double>(wall)) continue;
+                if (std::abs(px - xFromSample(Channel::Ecg, g.idx))
+                    < click_radius_around_marker) {
+                    emit landmarkSelected(m_binIndex, m_leadIndex,
+                        m_templateIndex, g.marker, g.idx);
+                    return;   // focus only; no drag
+                }
+            }
         }
     }
 

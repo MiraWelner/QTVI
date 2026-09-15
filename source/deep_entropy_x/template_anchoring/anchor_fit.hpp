@@ -64,6 +64,12 @@ namespace anchor_fit {
         int    nparams = 0;
         FitType type = FitType::FLAT;
         std::function<double(double)> f;   // evaluator: f(sample_index) -> fitted value
+        // Raw fitted parameters, exposed for serialization. Meaning by type:
+        //   LINEAR     : {m1, c1, m2, c2, breakpoint}
+        //   SIGMOID    : {a, k, t0, c}          (a/(1+exp(-k(t-t0)))+c)
+        //   FRACTIONAL : {c0, c1, c2, p1, p2, lo}
+        //   FLAT       : {mean}
+        std::vector<double> params;
     };
 
     // =========================================================================
@@ -198,6 +204,7 @@ namespace anchor_fit {
         }
 
         best.rss = bestRss;
+        best.params = { bm1, bc1, bm2, bc2, static_cast<double>(bestB) };
         const double fm1 = bm1, fc1 = bc1, fm2 = bm2, fc2 = bc2;
         const int fb = bestB;
         best.f = [=](double t) -> double {
@@ -331,6 +338,7 @@ namespace anchor_fit {
         }
 
         result.rss = prevRss;
+        result.params = { a, k, t0, c };
         const double fa = a, fk = k, ft0 = t0, fc = c;
         result.f = [=](double t) -> double {
             return sigmoid(fa, fk, ft0, fc, t);
@@ -395,6 +403,7 @@ namespace anchor_fit {
                     const double c0 = coeffs[0], c1 = coeffs[1], c2 = coeffs[2];
                     const double pp1 = p1, pp2 = p2;
                     const int flo = lo;
+                    best.params = { c0, c1, c2, pp1, pp2, static_cast<double>(flo) };
                     best.f = [=](double t) -> double {
                         const double ts = (t - flo) + 1.0;
                         const double b1 = (pp1 == 0.0) ? std::log(ts) : std::pow(ts, pp1);
@@ -433,6 +442,7 @@ namespace anchor_fit {
             for (int i = lo; i <= hi; ++i)
                 if (!std::isnan(y[i])) { mean += y[i]; ++cnt; }
             if (cnt > 0) mean /= cnt;
+            fallback.params = { mean };
             fallback.f = [=](double) { return mean; };
             return fallback;
         }

@@ -16,7 +16,6 @@
 #include <iomanip>
 #include <iostream>
 #include <cstdio>
-#include <QRadioButton>
 #include <QShortcut>
 #include <QKeyEvent>
 #include <QApplication>
@@ -35,7 +34,8 @@
 #include "vcg_signal_average.hpp"
 #include "template_generation/normalize_template_amplitude.hpp"
 #include "peak_finding/FilterUtils.hpp"
-#include "ppg_derivative.hpp"   // ppg_deriv::sgCoeffs -- Savitzky-Golay derivative
+#include "ppg_derivative.hpp"
+#include "subsample_refine.hpp"
 
 namespace {
     constexpr int n_template_cols = 3;
@@ -406,7 +406,7 @@ void TemplateViewerWindow::buildPages() {
     const int nBins = static_cast<int>(m_bins.size());
     if (nBins == 0) { m_pages.push_back({ 0, 0 }); m_totalPages = 1; return; }
 
-    const int budget = std::max(1, (max_leads <= 1) ? max_templates_per_page : n_template_cols);
+    const int budget = std::max(1, (max_leads <= 1) ? n_template_cols * n_template_rows : n_template_cols);
     int i = 0;
     while (i < nBins) {
         int cols = 0, taken = 0;
@@ -492,66 +492,8 @@ bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
 }
 
 std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) const {
-    // ONLY CATEGORY 1 TEMPLATES GET A COLUMN. Landmark marking exists to feed
-    // feature extraction, and only category 1 beats do that -- a P-onset on a
-    // PVC template has nothing downstream to consume it, and a PVC's QT is not
-    // comparable to a sinus QT, so putting them in one feature column would be
-    // worse than leaving it empty. Ectopic and noise templates take a class
-    // label from the operator and are not landmark-marked at all.
-    //
-    // Category 1 now means what Section 4.6 says it means: slot 0, which is the
-    // Phase 1 sinus template by construction, plus any template an operator has
-    // CONFIRMED as normal. Nothing is presumed. So a bin presents one markable
-    // column until an operator says otherwise, and the six-column pages came
-    // from the presumption, not from the bank.
-    //
-    // RETURNS THE ELIGIBLE SLOTS, NOT A COUNT. This used to return an int, and a
-    // count can only describe a contiguous prefix 0..n-1: `cols = max(cols, t+1)`
-    // meant one eligible slot 5 created columns for slots 1-4 as well, whatever
-    // the per-slot test had said about them. leadsForBinTemplate() then correctly
-    // refused to supply a lead for those slots, so they rendered as empty panels
-    // -- the gate was being applied one layer too late to affect layout. A sparse
-    // list cannot express the wrong thing.
-    //
-    // TREAT THREE OR MORE AS A DIAGNOSTIC. Being asked to mark three or more
-    // normal templates in one bin means the bank has over-segmented a single
-    // morphology. Do not raise the match threshold to hide it -- that merges the
-    // fragments and removes the symptom while leaving the cause. Check
-    // normalization, baseline drift, and false R detections first.
-    // NOT NAMED `slots`. Qt's qobjectdefs.h defines `slots` as an empty macro
-    // unless QT_NO_KEYWORDS is set, so a local of that name vanishes at
-    // preprocess time: the declaration becomes `std::vector<int> { 0 };` and
-    // every use becomes a bare `.push_back(...)`. MSVC reports it as
-    // "C2059: syntax error: '.'" several lines from the actual cause, plus a
-    // spurious "function must return a value" because `return slots;` collapses
-    // to `return ;`. `signals`, `emit` and `foreach` are the same trap.
-    // ---- AND NOT IF IT HAS TOO FEW BEATS ------------------------------
-    //
-    // tbank::minBeatsEcg(), from config.csv. A template below it is flagged
-    // too_few_beats in _templates.csv and _templates.bin and gets no column
-    // here -- the archive keeps it, the operator is not asked to mark it.
-    //
-    // THIS APPLIES TO SLOT 0 TOO. A seed built from three beats is no more
-    // markable than a spawned template built from three, and exempting it
-    // would be the same "it is slot 0 so it must be fine" assumption that
-    // put 2-beat waveforms in front of the operator in the first place. So a
-    // bin can now contribute ZERO columns, and the callers have to tolerate
-    // that: buildPages takes a bin with no columns without stalling, and
-    // showPage reports which bins vanished rather than letting them disappear
-    // quietly.
-    // EITHER CHANNEL BEING THIN INVALIDATES THE TEMPLATE. A group is one set
-    // of beats seen on four channels, so a slot whose pulse cohort is below
-    // min_beats_template_ppg is not a half-good template -- it is a template
-    // whose PPG face rests on too few beats to be a reference, and marking its
-    // ECG face would attach landmarks to a group that cannot be measured
-    // jointly. The two minimums are one gate.
-    //
-    // A CHANNEL WITH NO DATA IN THIS BIN DOES NOT VOTE. If the pulse filter
-    // produced no template for the bin at all, its pulse bank holds no members
-    // anywhere -- that is the channel being ABSENT, not thin, and it must not
-    // suppress ECG columns that are perfectly markable. The test is therefore
-    // conditional on the bin having some pulse cohort to speak of; the same
-    // rule an absent CH2 or CH3 already gets by having no bank.
+	/* Only category 1 (good PQRST, not ECTOPIC or NOISE) tempaltes are displayed here. This function returns the indices of
+    the templates that are eligible for marking, based on the criteria defined in the function.*/
     auto shown = [](const TemplateBin& bb, int t) {
         {
             if (t < bb.ppg_bank.size()
@@ -570,9 +512,6 @@ std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) 
         };
 
     std::vector<int> eligible;
-    // Slot 0 on a bank-less bin has no BankTemplate to measure, so there is
-    // nothing to suppress and it keeps its column: the chN_raw template IS
-    // the whole bin, and its beat count is the bin's.
     bool anyBank = false;
     for (int c = 0; c < 3; ++c) if (b.ecg_bank[c].size() > 0) anyBank = true;
     if (!anyBank || shown(b, 0)) eligible.push_back(0);
@@ -1819,6 +1758,101 @@ static bool mergeCsvParts(const std::string& canonicalPath,
     return out.good();
 }
 
+// Companion to <id>_bins.csv: the fitted curve for every ECG landmark, so the
+// exact model and parameters that placed each anchor are on disk next to the
+// templates. PEAKS (p/q/r-peak) get the weighted quadratic from
+// symmetricExtremumFit -- coeff ascending in (t - seed): value = p0 + p1*(t-seed)
+// + p2*(t-seed)^2. ONSETS/OFFSETS (p_begin, q_onset, s_end, t_end) get the
+// anchor_fit model BIC selected -- params meaning depends on curve_type
+// (LINEAR {m1,c1,m2,c2,brk} / SIGMOID {a,k,t0,c} / FRACTIONAL {c0,c1,c2,p1,p2,lo}
+// / FLAT {mean}). Recomputed here from the R-aligned average over a +-100 ms
+// window (same convention as the boundary log), not stored during detection.
+void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
+    const std::string subj = m_subjectId.toStdString();
+    std::ofstream f(dir + "/" + subj + "_landmark_fits.csv", std::ios::trunc);
+    if (!f) {
+        std::cerr << "[landmark-fits] could not write "
+            << dir << "/" << subj << "_landmark_fits.csv\n";
+        return;
+    }
+    f << "file_id,bin,channel,landmark,curve_type,seed_or_lo,rss,"
+        "p0,p1,p2,p3,p4,p5\n";
+    if (!(m_sampleRate > 0.0)) { std::cout << "Wrote landmark fits CSV (empty)\n"; return; }
+
+    const int half = std::max(2, static_cast<int>(std::lround(0.100 * m_sampleRate)));
+    const double NaNv = std::numeric_limits<double>::quiet_NaN();
+
+    auto peakTypeName = [](subsample_refine::CurveType t) -> const char* {
+        switch (t) {
+        case subsample_refine::CurveType::QUADRATIC:  return "QUADRATIC";
+        case subsample_refine::CurveType::CUBIC:      return "CUBIC";
+        case subsample_refine::CurveType::FIVE_POINT: return "FIVE_POINT";
+        default:                                      return "SEED";
+        }
+        };
+    auto transTypeName = [](anchor_fit::FitType t) -> const char* {
+        switch (t) {
+        case anchor_fit::FitType::LINEAR:     return "LINEAR";
+        case anchor_fit::FitType::SIGMOID:    return "SIGMOID";
+        case anchor_fit::FitType::FRACTIONAL: return "FRACTIONAL";
+        default:                              return "FLAT";
+        }
+        };
+
+    for (size_t bi = 0; bi < m_bins.size(); ++bi) {
+        const TemplateBin& b = m_bins[bi];
+        const auto aa = b.autoFor(AnchorType::R_PEAK);
+        for (int c = 0; c < 3; ++c) {
+            const std::vector<double>& ecg = b.chFor(c, AnchorType::R_PEAK).ecgTemplate_raw;
+            if (ecg.empty()) continue;
+            const int N = static_cast<int>(ecg.size());
+
+            auto emitRow = [&](const char* name, const char* ctype,
+                double seedOrLo, double rss, const std::vector<double>& ps) {
+                    f << subj << ',' << bi << ',' << (c + 1) << ',' << name << ','
+                        << ctype << ',';
+                    if (seedOrLo >= 0.0) f << seedOrLo; f << ',';
+                    if (!std::isnan(rss)) f << rss; f << ',';
+                    for (int k = 0; k < 6; ++k) {
+                        if (k < static_cast<int>(ps.size())) f << ps[k];
+                        if (k < 5) f << ',';
+                    }
+                    f << '\n';
+                };
+
+            // PEAKS: weighted quadratic (symmetricExtremumFit).
+            auto peak = [&](const char* name, double pos) {
+                if (pos < 0.0 || pos > N - 1) { emitRow(name, "NONE", -1.0, NaNv, {}); return; }
+                const subsample_refine::ExtremumFit fit =
+                    subsample_refine::symmetricExtremumFit(ecg,
+                        static_cast<int>(std::lround(pos)), 4.0);
+                emitRow(name, peakTypeName(fit.type),
+                    static_cast<double>(fit.seed), fit.rss,
+                    { fit.coeff[0], fit.coeff[1], fit.coeff[2], fit.coeff[3] });
+                };
+            // ONSETS/OFFSETS: anchor_fit model (BIC selected) over +-100 ms.
+            auto trans = [&](const char* name, double pos) {
+                if (pos < 0.0 || pos > N - 1) { emitRow(name, "NONE", -1.0, NaNv, {}); return; }
+                const int lo = std::max(0, static_cast<int>(std::lround(pos)) - half);
+                const int hi = std::min(N - 1, static_cast<int>(std::lround(pos)) + half);
+                if (hi - lo < 5) { emitRow(name, "NONE", (double)lo, NaNv, {}); return; }
+                const anchor_fit::FitResult fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
+                emitRow(name, transTypeName(fit.type), (double)lo, fit.rss, fit.params);
+                };
+
+            peak("p_peak", aa.p_peak[c]);
+            peak("q_peak", aa.q_peak[c]);
+            peak("r_peak", aa.r_peak[c]);
+            trans("p_begin", aa.p_begin[c]);
+            trans("q_onset", aa.q_onset[c]);
+            trans("s_end", aa.s_end[c]);
+            trans("t_end", aa.t_end[c]);
+        }
+    }
+    std::cout << "Wrote landmark fits CSV: " << dir << "/"
+        << subj << "_landmark_fits.csv\n";
+}
+
 std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
     if (m_bins.empty()) return {};
     std::ostringstream f;
@@ -2612,8 +2646,7 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
 // column's own store and propagates to SUBSEQUENT page columns, equal screen
 // distance.
 // ---------------------------------------------------------------------------
-void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx,
-    int templateIdx, int marker, int newIdx)
+void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx)
 {
     if (templateIdx < 0) return;
 
@@ -3483,8 +3516,8 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         setFocusSplit(false);
         if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
         if (zoomed_in_section_top)
-            zoomed_in_section_top->setFocus(mean, sd, nBeats, col,
-                chLabel + " " + pulseLabel(marker));
+            zoomed_in_section_top->setFocus(mean, sd, nBeats, col, chLabel + " " + pulseLabel(marker));
+            zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::Transition);
         return;
     }
 
@@ -3647,9 +3680,6 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // switching per bar there is one waveform per landmark and nothing to
     // reconcile.
     //
-    // Onsets frame toward the LEFT edge (they start their segment), offsets
-    // toward the RIGHT (they end it).
-    const int bias = BinPlotWidget::markerIsBegin(marker) ? +1 : -1;
 
     if (zoomed_in_section_top) //if the zoomed in top section is activated (it will always be with any focus)                                                                                                                                                   
     {
@@ -3698,24 +3728,27 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         if (marker == BinPlotWidget::EcgSEnd) {
             setFocusSplit(true);
             if (zoomed_in_section_top) {
-                zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere,
-                    head + QStringLiteral("  (QRS)"), 100, -1);
+                zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head + QStringLiteral("  (QRS)"), 100, -1);
+                zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::Transition);
                 zoomed_in_section_top->setSdMs(sdMs, floorMask, absSlope, floor);
             }
             if (zoomed_in_section_bottom) {
-                zoomed_in_section_bottom->setFocus(mean, sd, nBeats, colHere,
-                    head + QStringLiteral("  (JT)"), 100, +1);
+                zoomed_in_section_bottom->setFocus(mean, sd, nBeats, colHere,  head + QStringLiteral("  (JT)"), 100, +1);
+                zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::Transition);
                 zoomed_in_section_bottom->setSdMs(sdMs, floorMask, absSlope, floor);
             }
         }
         else {
-            // One segment -> top third only.a
+            const FocusPanelWidget::FitKind fk =
+                (marker == BinPlotWidget::EcgRPeak
+                    || marker == BinPlotWidget::EcgPPeak)
+                ? FocusPanelWidget::FitKind::PeakQuadratic
+                : FocusPanelWidget::FitKind::Transition;
             setFocusSplit(false);
             if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
             if (zoomed_in_section_top) {
-                zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head, 100, bias);
-                // AFTER setFocus: clearFocus wipes the mask, so setting it
-                // first would leave the panel with none.
+                zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head, 100, 0);
+                zoomed_in_section_top->setFitKind(fk);
                 zoomed_in_section_top->setSdMs(sdMs, floorMask, absSlope, floor);
             }
         }
@@ -4122,6 +4155,8 @@ void TemplateViewerWindow::save_bin_and_csv() {
         QDir alignedDir(m_templateDir);
         if (!alignedDir.exists()) alignedDir.mkpath(".");
         const QString canonical = alignedDir.filePath(m_subjectId + "_bins.csv");
+
+
         std::vector<CsvPart> parts;
         for (AnchorType a : anchor_view::kAllAnchors) {
             std::string content = buildAlignedTemplateCsv(a);
@@ -4131,6 +4166,8 @@ void TemplateViewerWindow::save_bin_and_csv() {
         if (!parts.empty() && mergeCsvParts(canonical.toStdString(), parts)) {
             std::cout << "Wrote bins CSV: " << canonical.toStdString() << "\n";
         }
+
+        writeLandmarkFitsCsv(alignedDir.absolutePath().toStdString());
     }
     emit finished();
 }

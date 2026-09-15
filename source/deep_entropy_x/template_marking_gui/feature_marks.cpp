@@ -258,7 +258,7 @@ double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracket
     // non-finite -- the detected position, not a default.
     std::vector<double> u = v;
     if (v[best] < B) for (auto& x : u) x = -x;
-    const double p = subsample_refine::asymmetricExtremum(u, best, 15.0);
+    const double p = subsample_refine::bestPeakExtremum(u, best, 15.0);
     return std::isfinite(p)
         ? std::clamp(p, static_cast<double>(lo), static_cast<double>(hi))
         : static_cast<double>(best);
@@ -305,7 +305,7 @@ double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, d
 
     // sigma = 12, the P-peak sigma. Coarse argmax stands if refinement is
     // non-finite -- that is still the detected column, not a fallback default.
-    const double p = subsample_refine::asymmetricExtremum(v, best, 12.0);
+    const double p = subsample_refine::bestPeakExtremum(v, best, 12.0);
     return std::isfinite(p)
         ? std::clamp(p, static_cast<double>(fFin), static_cast<double>(lFin))
         : static_cast<double>(best);
@@ -1348,7 +1348,7 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     // finder below -- so omitting it moved every landmark, not just R. Refined
     // on tmplIn (un-margined) so R still anchors even if it sits near an edge.
     const int seed = std::clamp(nominal_r_col, 0, n - 1);
-    double r = subsample_refine::symmetricExtremum(tmplIn, seed, 5.0);
+    double r = subsample_refine::bestPeakExtremum(tmplIn, seed, 5.0);
     if (std::isnan(r) || r < 0.0 || r > static_cast<double>(n - 1))
         r = static_cast<double>(seed);   // refinement failed; nominal stands
     const int r_anchor = static_cast<int>(r);

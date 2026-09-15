@@ -45,7 +45,7 @@ public:
     // had been done.
     const std::vector<TemplateBin>& bins() const { return m_bins; }
 
-    void setVcgOutputDir(const QString& dir) { m_vcgOutputPath = dir; }
+    void set_vcg_output_dir(const QString& dir) { m_vcgOutputPath = dir; }
     void setNormOutputDir(const QString& dir) { m_normOutputPath = dir; } //write <id>_feature_norm.csv and <id>_cv_check.csv 
 
     void loadSubject(const QString& templatePath, const QString& markingPath,
@@ -187,6 +187,7 @@ private:
     std::string buildAlignedTemplateCsv(AnchorType anchor);
     void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
+    void writeLandmarkFitsCsv(const std::string & dir);
 
     // Pushes the current bin's markings into every plot showing it.
     // Used when a PPG marker drags (which propagates across channels).

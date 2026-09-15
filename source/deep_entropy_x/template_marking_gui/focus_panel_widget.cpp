@@ -1,4 +1,5 @@
 #include "focus_panel_widget.hpp"
+#include "subsample_refine.hpp" 
 #include "template_anchoring\anchor_fit.hpp"
 
 #include <QPainter>
@@ -53,17 +54,38 @@ void FocusPanelWidget::clearFocus() {
     m_floorMask.clear();
     m_nBeats = 0;
     m_landmarkCol = -1;
+    m_fitKind = FitKind::Transition;
     update();
 }
 
 // Fitted curve over [lo, hi] via anchor_fit's BIC model selection, sampled
 // per column. NaN outside [lo, hi].
+std::vector<double> FocusPanelWidget::peakCurve(int lo, int hi, bool cubic) const {
+    const double NaN = std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> out(m_mean.size(), NaN);
+    if (m_landmarkCol < 0 || m_landmarkCol >= (int)m_mean.size()) return out;
+    if (lo < 0 || hi >= (int)m_mean.size() || hi - lo < 3) return out;
+
+    // Fit the peak LOCALLY (tight window, where the parabola/cubic is a valid
+    // model and the fitter's residual guard passes), then EXTRAPOLATE that
+    // polynomial across the whole visible window via eval(). This always yields
+    // a real curve -- the fit can't be rejected for not matching the wave's
+    // non-parabolic shoulders, because it never sees them -- and draws it wide.
+    const subsample_refine::ExtremumFit fit = cubic
+        ? subsample_refine::asymmetricExtremumFit(m_mean, m_landmarkCol, 12.0)
+        : subsample_refine::symmetricExtremumFit(m_mean, m_landmarkCol, 4.0);
+    if (fit.order < 2) return out;   // degenerate solve: nothing to draw
+    for (int i = lo; i <= hi; ++i) out[i] = fit.eval(static_cast<double>(i));
+    return out;
+}
+
 std::vector<double> FocusPanelWidget::fittedCurve(int lo, int hi) const {
     const double NaN = std::numeric_limits<double>::quiet_NaN();
     std::vector<double> out(m_mean.size(), NaN);
     if (lo < 0 || hi >= (int)m_mean.size() || hi - lo < 3) return out;
-    // Fit against the mean trace within the zoom window (the anchored
-    // average is what the operator sees and edits against).
+
+    // Onsets/offsets: the anchor_fit model BIC selected. (Peaks are drawn by
+    // peakCurve in paintEvent -- both quadratic and cubic -- not here.)
     const auto fit = anchor_fit::selectAnchorModel(m_mean, lo, hi);
     if (!fit.f) return out;
     for (int i = lo; i <= hi; ++i) out[i] = fit.f(static_cast<double>(i));
@@ -199,18 +221,30 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         p.drawPath(path);
     }
 
-    // ---- fitted curve (from anchor_fit) ----
+    // ---- fitted curve(s) ----
     {
-        const std::vector<double> fit = fittedCurve(lo, hi);
-        QPen pen(QColor(200, 60, 60)); pen.setWidthF(1.4); pen.setStyle(Qt::DashLine);
-        p.setPen(pen); p.setBrush(Qt::NoBrush);
-        QPainterPath path; bool pend = true;
-        for (int k = lo; k <= hi; ++k) {
-            if (std::isnan(fit[k])) { pend = true; continue; }
-            if (pend) { path.moveTo(xOf(k), yOf(fit[k])); pend = false; }
-            else      path.lineTo(xOf(k), yOf(fit[k]));
+        auto drawCurve = [&](const std::vector<double>& fit, QColor col) {
+            QPen pen(col); pen.setWidthF(1.4); pen.setStyle(Qt::DashLine);
+            p.setPen(pen); p.setBrush(Qt::NoBrush);
+            QPainterPath path; bool pend = true;
+            for (int k = lo; k <= hi; ++k) {
+                if (std::isnan(fit[k])) { pend = true; continue; }
+                if (pend) { path.moveTo(xOf(k), yOf(fit[k])); pend = false; }
+                else      path.lineTo(xOf(k), yOf(fit[k]));
+            }
+            p.drawPath(path);
+            };
+
+        const bool isPeak = (m_fitKind == FitKind::PeakQuadratic
+            || m_fitKind == FitKind::PeakCubic);
+        if (isPeak) {
+            // Both candidates so quadratic vs cubic can be compared by eye.
+            drawCurve(peakCurve(lo, hi, /*cubic=*/false), QColor(200, 60, 60));  // quadratic: red
+            drawCurve(peakCurve(lo, hi, /*cubic=*/true), QColor(60, 90, 200));   // cubic: blue
         }
-        p.drawPath(path);
+        else {
+            drawCurve(fittedCurve(lo, hi), QColor(200, 60, 60));   // transition: red
+        }
     }
 
     // ---- landmark marker (vertical line at landmarkCol) ----

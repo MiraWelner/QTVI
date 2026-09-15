@@ -72,10 +72,19 @@ public:
         ArtOnset = 18, ArtPeak = 19, ArtDicrotic = 20, ArtPeak2 = 21, ArtEnd = 22,
         ArtPulmOnset = 23, ArtPulmPeak = 24, ArtPulmDicrotic = 25,
         ArtPulmPeak2 = 26, ArtPulmEnd = 27,
-        MarkerCount = 28
+        // Q-peak and T-peak glyph ids, APPENDED (not in the [0,5] ECG range) so
+        // the shared 0..5 values anchor_view mirrors and static_asserts stay
+        // put. They exist only so a click on those glyphs can open a read-only
+        // focus view; they are never bars, never stored in a file, and
+        // markerIsEcg is widened by hand to include them.
+        EcgQPeak = 28, EcgTPeak = 29,
+        MarkerCount = 30
     };
 
-    static bool markerIsEcg(int m) { return m >= EcgPBegin && m <= EcgTEnd; }
+    static bool markerIsEcg(int m) {
+        return (m >= EcgPBegin && m <= EcgTEnd)   // contiguous bars + P/R-peak glyphs
+            || m == EcgQPeak || m == EcgTPeak;     // appended glyph ids (focus only)
+    }
     static bool markerIsPpg(int m) { return m >= PpgOnset && m <= PpgEnd; }
     static bool markerIsAbp(int m) { return m >= AbpOnset && m <= AbpEnd; }
     static bool markerIsArt(int m) { return m >= ArtOnset && m <= ArtEnd; }
