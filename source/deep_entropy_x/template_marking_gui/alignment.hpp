@@ -34,8 +34,8 @@ namespace alignment {
     // it from the per-sample amplitude aggregation (median/std) rather than
     // silently contribute an unreliable, unadjusted amplitude.
     enum class BaselineSource { TP, PQ, NONE };
-    constexpr double percent_interval_preceeding_rpeak = 0.4; //how far before the R peak the snip goes, in terms of percent of the RR interval length
-    constexpr double percent_interval_following_rpeak = 1.4;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
+    constexpr double percent_interval_preceeding_rpeak = 0.5; //how far before the R peak the snip goes, in terms of percent of the RR interval length
+    constexpr double percent_interval_following_rpeak = 1.3;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
 
     // Sample counts for a given RR (integer-truncated).
     inline int64_t rr_before_samples(int64_t rr) {

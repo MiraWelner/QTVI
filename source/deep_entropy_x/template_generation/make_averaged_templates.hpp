@@ -110,7 +110,6 @@ static std::vector<uint8_t> sliceMarkCodes(
     if (rPeaks.empty() || spans.empty()) return mark;
 
     const uint8_t ppg = noise_markings::code_for_channel("PPG");
-    size_t nMarked = 0, nConflict = 0, nSpansUsed = 0;
 
     for (const noise_markings::Span& s : spans) {
         if (s.channel_code == ppg) continue;
@@ -122,26 +121,13 @@ static std::vector<uint8_t> sliceMarkCodes(
             if (row.code == static_cast<int>(s.annotation_code)) { t = &row; break; }
         if (!t || t->paramEdit || t->invertEdit) continue;
 
-        bool used = false;
         for (uint32_t k = 0; k < n_slices && k < rPeaks.size(); ++k) {
             const int64_t r = static_cast<int64_t>(rPeaks[k]);
             if (r < s.start_sample || r > s.end_sample) continue;
-            used = true;
-            if (mark[k] == 0) { mark[k] = s.annotation_code; ++nMarked; }
-            else if (mark[k] != s.annotation_code) ++nConflict;
+            if (mark[k] == 0) mark[k] = s.annotation_code;   // first in file order wins
         }
-        if (used) ++nSpansUsed;
     }
 
-    if (nMarked || nConflict) {
-        std::fprintf(stderr, "  [marks] bin %llu: %zu/%u slices carry an "
-            "operator class (%zu span(s) used)\n",
-            (unsigned long long)bin_index, nMarked, n_slices, nSpansUsed);
-        if (nConflict)
-            std::fprintf(stderr, "  [marks] bin %llu: WARNING %zu slice(s) "
-                "claimed by two different classes -- first in file order wins\n",
-                (unsigned long long)bin_index, nConflict);
-    }
     return mark;
 }
 
@@ -302,17 +288,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // "the labels failed to load" produce the same partition and only one of
     // them is intended.
     noise_markings::LoadResult noiseSpans;
-    if (!noise_bin_path.empty()) {
+    if (!noise_bin_path.empty())
         noiseSpans = noise_markings::loadSpans(noise_bin_path);
-        if (!noiseSpans.read)
-            std::fprintf(stderr, "  [marks] no operator classes: %s (%s)"
-                " -- one partition\n",
-                noiseSpans.path.c_str(), noiseSpans.error.c_str());
-        else
-            std::fprintf(stderr, "  [marks] %zu span(s) from %s\n",
-                noiseSpans.spans.size(), noiseSpans.path.c_str());
-        std::fflush(stderr);
-    }
 
     std::vector<morphology_csv::BinRow> binRows;
     binRows.reserve(n);

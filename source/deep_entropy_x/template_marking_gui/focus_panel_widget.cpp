@@ -59,27 +59,6 @@ void FocusPanelWidget::clearFocus() {
     update();
 }
 
-// Fitted curve over [lo, hi] via anchor_fit's BIC model selection, sampled
-// per column. NaN outside [lo, hi].
-std::vector<double> FocusPanelWidget::peakCurve(int lo, int hi, bool cubic) const {
-    const double NaN = std::numeric_limits<double>::quiet_NaN();
-    std::vector<double> out(m_mean.size(), NaN);
-    if (m_landmarkCol < 0 || m_landmarkCol >= (int)m_mean.size()) return out;
-    if (lo < 0 || hi >= (int)m_mean.size() || hi - lo < 3) return out;
-
-    // Fit the peak LOCALLY (tight window, where the parabola/cubic is a valid
-    // model and the fitter's residual guard passes), then EXTRAPOLATE that
-    // polynomial across the whole visible window via eval(). This always yields
-    // a real curve -- the fit can't be rejected for not matching the wave's
-    // non-parabolic shoulders, because it never sees them -- and draws it wide.
-    const subsample_refine::ExtremumFit fit = cubic
-        ? subsample_refine::asymmetricExtremumFit(m_mean, m_landmarkCol, 12.0)
-        : subsample_refine::symmetricExtremumFit(m_mean, m_landmarkCol, 4.0);
-    if (fit.order < 2) return out;   // degenerate solve: nothing to draw
-    for (int i = lo; i <= hi; ++i) out[i] = fit.eval(static_cast<double>(i));
-    return out;
-}
-
 std::vector<FocusPanelWidget::Candidate>
 FocusPanelWidget::candidateCurves(int lo, int hi) const {
     std::vector<Candidate> out;
@@ -131,8 +110,8 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
         // one-sided window the panel can't reconstruct itself. Fall back to a
         // live re-fit over the visible window only when none were supplied.
         if (m_transCands.valid) {
-            static const char* kNames[4] = { "Piecewise", "Sigmoid", "Fractional", "Cubic Spline" };
-            for (int k = 0; k < 4; ++k) {
+            static const char* kNames[5] = { "Piecewise", "Sigmoid", "Fractional", "Cubic Spline", "Cubic" };
+            for (int k = 0; k < 5; ++k) {
                 const auto& fn = m_transCands.curve[k];
                 std::vector<double> c(m_mean.size(),
                     std::numeric_limits<double>::quiet_NaN());
@@ -141,12 +120,12 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
             }
             return out;
         }
-        // Same three candidates and same winner as selectAnchorModel, over the
+        // Same three candidates and same winner as selectBestFit, over the
         // visible window (fallback; see header note on the transition window).
         const auto pw = curve_fit::fitPiecewiseLinear(m_mean, lo, hi);
         const auto sig = curve_fit::fitSigmoid(m_mean, lo, hi, pw);
         const auto frac = curve_fit::fitFractionalPolynomial(m_mean, lo, hi);
-        const auto win = curve_fit::selectAnchorModel(m_mean, lo, hi);
+        const auto win = curve_fit::selectBestFit(m_mean, lo, hi);
         out.push_back({ evalModel(pw),  pw.type == win.type, QStringLiteral("Piecewise") });
         out.push_back({ evalModel(sig), sig.type == win.type, QStringLiteral("Sigmoid") });
         out.push_back({ evalModel(frac), frac.type == win.type, QStringLiteral("Fractional") });
@@ -285,8 +264,8 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
 
     // ---- fitted curve(s): every tested model; winner green, others red ----
     {
-        auto drawCurve = [&](const std::vector<double>& fit, QColor col) {
-            QPen pen(col); pen.setWidthF(1.4); pen.setStyle(Qt::DashLine);
+        auto drawCurve = [&](const std::vector<double>& fit, QColor col, Qt::PenStyle style) {
+            QPen pen(col); pen.setWidthF(1.4); pen.setStyle(style);
             p.setPen(pen); p.setBrush(Qt::NoBrush);
             QPainterPath path; bool pend = true;
             for (int k = lo; k <= hi; ++k) {
@@ -296,12 +275,12 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
             }
             p.drawPath(path);
             };
-        // Draw losers first, winner last so the green sits on top.
+        // Losers first, winner (green) on top.
         const std::vector<Candidate> cands = candidateCurves(lo, hi);
         for (const Candidate& c : cands)
-            if (!c.selected) drawCurve(c.curve, QColor(200, 60, 60));   // red
+            if (!c.selected) drawCurve(c.curve, QColor(200, 60, 60), Qt::DashLine);
         for (const Candidate& c : cands)
-            if (c.selected)  drawCurve(c.curve, QColor(0, 150, 0));     // green
+            if (c.selected)  drawCurve(c.curve, QColor(0, 150, 0), Qt::DashLine);
 
         // Name the winning model, in the winner's green, top-right.
         for (const Candidate& c : cands)
@@ -313,18 +292,11 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
             }
     }
 
-    // ---- fiducial marker (dotted vertical line) ----
-    // For a transition, this is WHERE THE SELECTED MODEL places the mark -- its
-    // own crossing (cross[winner]), so the dotted line tracks the green curve as
-    // you switch models. Falls back to the stored landmark column otherwise.
-    double fidCol = static_cast<double>(m_landmarkCol);
-    if (m_transCands.valid && m_transCands.winner >= 0 && m_transCands.winner < 4
-        && m_transCands.cross[m_transCands.winner] >= 0.0)
-        fidCol = m_transCands.cross[m_transCands.winner];
-    if (fidCol >= lo && fidCol <= hi) {
-        QPen pen(QColor(20, 20, 20)); pen.setWidthF(1.0); pen.setStyle(Qt::DotLine);
+    // ---- fiducial marker: gray vertical dotted line at the landmark ----
+    if (m_landmarkCol >= lo && m_landmarkCol <= hi) {
+        QPen pen(QColor(130, 130, 130)); pen.setWidthF(1.2); pen.setStyle(Qt::DotLine);
         p.setPen(pen);
-        const double x = xOf(fidCol);
+        const double x = xOf(static_cast<double>(m_landmarkCol));
         p.drawLine(QPointF(x, mt), QPointF(x, mt + ph));
     }
 

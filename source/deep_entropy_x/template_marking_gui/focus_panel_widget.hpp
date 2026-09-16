@@ -6,7 +6,7 @@
 // renders that landmark's anchored average, zoomed in around the landmark
 // column, with:
 //   - the mean trace (center line),
-//   - the fitted curve (from anchor_fit::selectAnchorModel over the zoom
+//   - the fitted curve (from curve_fit::selectBestFit over the zoom
 //     window), and
 //   - a 95% confidence band: mean +/- 1.96 * se per column, where
 //     se = sd / sqrt(nBeats).
@@ -79,7 +79,7 @@ public:
 
     // Which curve the red dashed overlay draws, so it matches the model that
     // actually PLACED this landmark: a peak's weighted quadratic/cubic vs an
-    // onset/offset's anchor_fit transition model. Set per landmark by the owner
+    // onset/offset's curve_fit transition model. Set per landmark by the owner
     // right after setFocus; defaults to Transition (the onset/offset case).
     enum class FitKind { Transition, PeakQuadratic, PeakCubic };
     // peakSigma is the SAME weighting the detector used for this landmark (so
@@ -131,11 +131,10 @@ private:
     // Peak candidate curve over [lo, hi]: a weighted quadratic (cubic=false) or
     // cubic (cubic=true). NaN if the fit degenerated. (Retained; candidateCurves
     // is the live path.)
-    std::vector<double> peakCurve(int lo, int hi, bool cubic) const;
 
     // Every model the DETECTOR tested for this landmark, over [lo, hi], with
     // the selector's winner flagged. Peaks: quadratic + cubic (BIC). Onsets/
-    // offsets: piecewise-linear + sigmoid + fractional (selectAnchorModel).
+    // offsets: piecewise-linear + sigmoid + fractional (selectBestFit).
     // Uses the same fitting functions the detector uses, so the drawn curves
     // are the tested curves.
     std::vector<Candidate> candidateCurves(int lo, int hi) const;

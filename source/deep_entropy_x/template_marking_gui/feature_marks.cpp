@@ -98,7 +98,7 @@ bool FeatureMarks::qrs_positive_at(const std::vector<double>& v, int r_idx) {
 
 // Search spans, in seconds. Q-peak within 50 ms before R (mirror of
 // S_PEAK_WIN_S); Q-onset within 50 ms before the Q peak.
-namespace { constexpr double Q_PEAK_WIN_S = 0.040; constexpr double Q_ONSET_WIN_S = 0.050; }
+namespace { constexpr double Q_PEAK_WIN_S = 0.040; constexpr double Q_ONSET_WIN_S = 0.020; }
 namespace { constexpr double S_PEAK_WIN_S = 0.100; constexpr double J_POINT_WIN_S = 0.100; }
 namespace { constexpr double Q_MIN_DEPTH = 0.0075; }
 
@@ -484,7 +484,7 @@ double FeatureMarks::compute_t_end(const std::vector<double>& v, double fs, int 
     // Near-baseline target (f = 0.10 == 90% recovered), matching every other
     // onset and offset here.
     if (std::isnan(B) || std::isnan(E)) return -1.0;
-    auto fit = curve_fit::selectAnchorModel(v, lo, hi);
+    auto fit = curve_fit::selectBestFit(v, lo, hi);
     const double af = curve_fit::anchorAtFraction(fit, lo, hi, B, E, 0.02);
     if (!std::isfinite(af)) return -1.0;
     const int seed = std::clamp(static_cast<int>(std::round(af)), 0, N - 1);
@@ -506,10 +506,8 @@ double FeatureMarks::compute_t_end(const std::vector<double>& v, double fs, int 
 // human-editable P-onset marker. Range is [start of ECG, P-peak] -- the onset
 // precedes the peak, and cannot sit left of the first ECG sample. No other
 // clamps.
-double FeatureMarks::compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn,
-    subsample_refine::TransitionCandidates* candOut, curve_fit::FitMode mode) {
+double FeatureMarks::compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn,  subsample_refine::TransitionCandidates* candOut, curve_fit::FitMode mode) {
     const int N = static_cast<int>(v.size());
-    if (N < 1 || fs <= 0.0) return -1.0;
 
     int fFin = -1;
     for (int i = 0; i < N; ++i) if (!std::isnan(v[i])) { fFin = i; break; }
@@ -525,15 +523,8 @@ double FeatureMarks::compute_p_begin(const std::vector<double>& v, double fs, in
         const double hi = (q >= 0.0) ? q : static_cast<double>(r_idx);
         pPeak = FeatureMarks::compute_p_peak(v, static_cast<double>(fFin), hi, fs);
     }
-
-    // Onset = the elbow on the upstroke leading into the peak, over
-    // [start, peak]. The transition fit's own column stands if refinement is
-    // non-finite -- the detected position, not a default.
     const int pUser = std::clamp(static_cast<int>(std::lround(pPeak)), fFin, N - 1);
-    // 100 ms window back from the peak (was 50 ms): a broad P's onset can sit
-    // well before the peak, and a short window took its baseline B already on
-    // the rising P, which pushed the 10% crossing up the upstroke.
-    const int w = std::max(1, static_cast<int>(std::lround(0.100 * fs)));
+    const int w = std::max(1, static_cast<int>(std::lround(0.150 * fs))); //150ms window before the p peak - the p wave can be wide
     const bool is_positive = FeatureMarks::qrs_positive_at(v, r_idx);
     std::vector<double> u = v;
     if (!is_positive) for (auto& x : u) x = -x;

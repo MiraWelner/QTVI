@@ -188,7 +188,7 @@ private:
     std::string buildAlignedTemplateCsv(AnchorType anchor);
     // Companion file <id>_landmark_fits.csv, beside <id>_bins.csv: per bin/
     // channel/landmark, the fitted curve TYPE and PARAMS (peaks: the weighted
-    // quadratic from symmetricExtremumFit; onsets/offsets: the anchor_fit model
+    // quadratic from symmetricExtremumFit; onsets/offsets: the curve_fit model
     // selected by BIC). Recomputed at save, same window convention as the
     // boundary log.
     void writeLandmarkFitsCsv(const std::string& dir);
@@ -214,7 +214,7 @@ private:
     // Re-detect marks for every bin with the current fit modes, preserving any
     // bar the operator has dragged (recorded in m_touchedMarks) and re-placing
     // only the untouched ones. Called when a fit-model radio changes.
-    void reseedFitModes();
+    void reseedFitModes(bool allBins = false);
     void pageIn();   // showPage, re-seeding this page with active fit modes first
 
     FocusPanelWidget* zoomed_in_section_top = nullptr; //for most close ups, they only use focus top

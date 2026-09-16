@@ -407,8 +407,8 @@ namespace subsample_refine {
     // BIC selector chose (0=piecewise, 1=sigmoid, 2=fractional). Populated only
     // when a caller passes candOut, so the detection hot path pays nothing.
     struct TransitionCandidates {
-        std::function<double(double)> curve[4];   // 0=piecewise 1=sigmoid 2=fractional 3=cubic-spline
-        double cross[4] = { -1.0, -1.0, -1.0, -1.0 };  // fiducial crossing per model (sample-indexed)
+        std::function<double(double)> curve[5];   // 0=piecewise 1=sigmoid 2=fractional 3=cubic-spline 4=cubic
+        double cross[5] = { -1.0, -1.0, -1.0, -1.0, -1.0 };  // fiducial crossing per model (sample-indexed)
         int  winner = -1;
         bool valid = false;
     };
@@ -482,8 +482,8 @@ namespace subsample_refine {
         double E = B, bestDist = 0.0;
         for (double v : up) { const double dd = std::fabs(v - B); if (dd > bestDist) { bestDist = dd; E = v; } }
 
-        auto fit = curve_fit::selectAnchorModel(up, 0, nOut - 1, mode);
-        const double anchorUp = curve_fit::anchorAtFraction(fit, 0, nOut - 1, B, E, fraction);
+        auto fit = curve_fit::selectBestFit(up, 0, nOut - 1, mode);
+        const double anchorUp = curve_fit::anchorPosition(fit, 0, nOut - 1, B, E, fraction);
         (void)seedUp;
 
         // Expose the three tested candidates as sample-indexed closures (only
@@ -509,26 +509,30 @@ namespace subsample_refine {
             const auto sg = curve_fit::fitSigmoid(up, 0, nOut - 1, pw);
             const auto fr = curve_fit::fitFractionalPolynomial(up, 0, nOut - 1);
             const auto sp = curve_fit::fitCubicSpline(up, 0, nOut - 1);
+            const auto cu = curve_fit::fitCubic(up, 0, nOut - 1);
             candOut->curve[0] = mk(pw);
             candOut->curve[1] = mk(sg);
             candOut->curve[2] = mk(fr);
             candOut->curve[3] = mk(sp);
+            candOut->curve[4] = mk(cu);
             // Each model's OWN fiducial crossing, mapped back to sample space --
             // the position that model would place the mark at. The focus dotted
             // line and (on selection) the mark itself use cross[winner].
             auto crossOf = [&](const curve_fit::FitResult& fr_) -> double {
                 if (!fr_.f) return -1.0;
-                const double au = curve_fit::anchorAtFraction(fr_, 0, nOut - 1, B, E, fraction);
+                const double au = curve_fit::anchorPosition(fr_, 0, nOut - 1, B, E, fraction);
                 return static_cast<double>(lo) + au / static_cast<double>(upsampleFactor);
                 };
             candOut->cross[0] = crossOf(pw);
             candOut->cross[1] = crossOf(sg);
             candOut->cross[2] = crossOf(fr);
             candOut->cross[3] = crossOf(sp);
+            candOut->cross[4] = crossOf(cu);
             switch (fit.type) {
             case curve_fit::FitType::SIGMOID:      candOut->winner = 1; break;
             case curve_fit::FitType::FRACTIONAL:   candOut->winner = 2; break;
             case curve_fit::FitType::CUBIC_SPLINE: candOut->winner = 3; break;
+            case curve_fit::FitType::CUBIC:        candOut->winner = 4; break;
             default:                                candOut->winner = 0; break;
             }
             candOut->valid = true;

@@ -113,15 +113,25 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
     // the focus fit follows immediately by re-running the current focus, and
     // the invalidated cache makes the next landmark use it too.
     auto applyFitMode = [this]() {
-        // Switching the model: (1) the DETECTED X-mark glyphs move to the
-        // selected model's crossing -- push the modes to every plot, which
-        // invalidates its glyph snapshot and repaints in place (no page
-        // rebuild, no shift, dragged BARS untouched); (2) the focus panel
-        // recolors the winner and moves its dotted line to that crossing.
+        // Switching the model: re-detect the X-mark glyphs at the selected
+        // model's crossing. setFitModes stores the mode + invalidates the glyph
+        // snapshot; setAuto re-captures it (that is the ONLY path that re-runs
+        // detect_template_landmarks). Both are needed -- without setAuto only
+        // the reactive P-onset glyph moved, since the detected Q/S/T glyphs are
+        // frozen in the snapshot. In place, per panel: no page rebuild, no
+        // shift, dragged BARS untouched. Then the focus panel recolors.
         m_lastTransKey = -1;
-        for (auto& row : m_binPlots)
-            for (auto* pw : row)
-                if (pw) pw->setFitModes(m_onOffsetFitMode, m_peakFitMode);
+        const AnchorType frame = currentGridAnchor();
+        for (int li = 0; li < (int)m_binPlots.size()
+            && li < (int)m_pageGlobalIdx.size(); ++li) {
+            const int gi = m_pageGlobalIdx[li];
+            if (gi < 0 || gi >= (int)m_bins.size()) continue;
+            for (auto* pw : m_binPlots[li]) {
+                if (!pw) continue;
+                pw->setFitModes(m_onOffsetFitMode, m_peakFitMode);
+                pw->setAuto(m_bins[gi], frame);   // re-capture glyphs with the mode
+            }
+        }
         if (m_focusMarker >= 0)
             refreshFocus(m_focusBin, m_focusLead, m_focusSlot, m_focusMarker, m_focusCol);
         };
@@ -135,6 +145,7 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
     wireOnOffset("auto_fit_onoffset", curve_fit::FitMode::Auto);
     wireOnOffset("linear_fit_onoffset", curve_fit::FitMode::Linear);
     wireOnOffset("cubic_spline_fit_onoffset", curve_fit::FitMode::CubicSpline);
+    wireOnOffset("cubic_fit_onoffset", curve_fit::FitMode::Cubic);
     wireOnOffset("sigmoid_fit_onoffset", curve_fit::FitMode::Sigmoid);
     wireOnOffset("fracpoly_fit_onoffset", curve_fit::FitMode::FracPoly);
 
@@ -752,10 +763,9 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
                 b.ch1 = it->second[0]; b.ch2 = it->second[1]; b.ch3 = it->second[2];
             }
             FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, a);
-            // Captures the flat fields seed_all just wrote: autoFor falls back
-            // to them when this alignment has no entry yet, which is exactly
-            // the capture wanted.
-            b.auto_by_anchor[static_cast<int>(a)] = b.autoFor(a);
+            // Capture the flat fields seed_all just wrote, straight from them
+            // (not via autoFor, which would return any stale cached entry).
+            b.auto_by_anchor[static_cast<int>(a)] = b.autoFromFlat();
         }
         // R last so the flat state the grid reads is R's.
         b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
@@ -1825,7 +1835,7 @@ static bool mergeCsvParts(const std::string& canonicalPath,
 // templates. PEAKS (p/q/r-peak) get the weighted quadratic from
 // symmetricExtremumFit -- coeff ascending in (t - seed): value = p0 + p1*(t-seed)
 // + p2*(t-seed)^2. ONSETS/OFFSETS (p_begin, q_onset, s_end, t_end) get the
-// anchor_fit model BIC selected -- params meaning depends on curve_type
+// curve_fit model BIC selected -- params meaning depends on curve_type
 // (LINEAR {m1,c1,m2,c2,brk} / SIGMOID {a,k,t0,c} / FRACTIONAL {c0,c1,c2,p1,p2,lo}
 // / FLAT {mean}). Recomputed here from the R-aligned average over a +-100 ms
 // window (same convention as the boundary log), not stored during detection.
@@ -1854,10 +1864,12 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
         };
     auto transTypeName = [](curve_fit::FitType t) -> const char* {
         switch (t) {
-        case curve_fit::FitType::LINEAR:     return "LINEAR";
-        case curve_fit::FitType::SIGMOID:    return "SIGMOID";
-        case curve_fit::FitType::FRACTIONAL: return "FRACTIONAL";
-        default:                              return "FLAT";
+        case curve_fit::FitType::LINEAR:       return "LINEAR";
+        case curve_fit::FitType::SIGMOID:      return "SIGMOID";
+        case curve_fit::FitType::FRACTIONAL:   return "FRACTIONAL";
+        case curve_fit::FitType::CUBIC_SPLINE: return "CUBIC_SPLINE";
+        case curve_fit::FitType::CUBIC:        return "CUBIC";
+        default:                               return "FLAT";
         }
         };
 
@@ -1882,29 +1894,32 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
                     f << '\n';
                 };
 
-            // PEAKS: weighted quadratic (symmetricExtremumFit).
-            auto peak = [&](const char* name, double pos) {
+            // PEAKS: the selected peak model (Auto = BIC quad-vs-cubic),
+            // per-marker sigma -- so the CSV reports what Save placed.
+            auto peak = [&](const char* name, double pos, double sigma) {
                 if (pos < 0.0 || pos > N - 1) { emitRow(name, "NONE", -1.0, NaNv, {}); return; }
                 const subsample_refine::ExtremumFit fit =
-                    subsample_refine::symmetricExtremumFit(ecg,
-                        static_cast<int>(std::lround(pos)), 4.0);
+                    subsample_refine::bestPeakExtremumFit(ecg,
+                        static_cast<int>(std::lround(pos)), sigma,
+                        subsample_refine::kWindowHalfWidth, m_peakFitMode);
                 emitRow(name, peakTypeName(fit.type),
                     static_cast<double>(fit.seed), fit.rss,
                     { fit.coeff[0], fit.coeff[1], fit.coeff[2], fit.coeff[3] });
                 };
-            // ONSETS/OFFSETS: anchor_fit model (BIC selected) over +-100 ms.
+            // ONSETS/OFFSETS: the selected transition model (Auto = BIC) over
+            // +-100 ms.
             auto trans = [&](const char* name, double pos) {
                 if (pos < 0.0 || pos > N - 1) { emitRow(name, "NONE", -1.0, NaNv, {}); return; }
                 const int lo = std::max(0, static_cast<int>(std::lround(pos)) - half);
                 const int hi = std::min(N - 1, static_cast<int>(std::lround(pos)) + half);
                 if (hi - lo < 5) { emitRow(name, "NONE", (double)lo, NaNv, {}); return; }
-                const curve_fit::FitResult fit = curve_fit::selectAnchorModel(ecg, lo, hi);
+                const curve_fit::FitResult fit = curve_fit::selectBestFit(ecg, lo, hi, m_onOffsetFitMode);
                 emitRow(name, transTypeName(fit.type), (double)lo, fit.rss, fit.params);
                 };
 
-            peak("p_peak", aa.p_peak[c]);
-            peak("q_peak", aa.q_peak[c]);
-            peak("r_peak", aa.r_peak[c]);
+            peak("p_peak", aa.p_peak[c], subsample_refine::peak_sigma::P);
+            peak("q_peak", aa.q_peak[c], subsample_refine::peak_sigma::Q);
+            peak("r_peak", aa.r_peak[c], subsample_refine::peak_sigma::R);
             trans("p_begin", aa.p_begin[c]);
             trans("q_onset", aa.q_onset[c]);
             trans("s_end", aa.s_end[c]);
@@ -3470,17 +3485,23 @@ void TemplateViewerWindow::wireAlignButtons() {
     if (qApp) qApp->installEventFilter(this);
 }
 
-void TemplateViewerWindow::reseedFitModes() {
+void TemplateViewerWindow::reseedFitModes(bool allBins) {
     if (m_bins.empty() || m_pages.empty()) return;
 
-    // ONLY the bins on the CURRENT PAGE. Re-detecting every bin in the record
-    // on each radio click is what froze the UI -- and pointless, since only the
-    // visible page is drawn. Other pages are re-seeded when navigated to (see
-    // onNextPage/onPrevPage), so the chosen mode still applies everywhere.
-    m_currentPage = std::clamp(m_currentPage, 0, (int)m_pages.size() - 1);
-    const int start = m_pages[m_currentPage].first;
-    const int count = m_pages[m_currentPage].second;
-    const int end = std::min((int)m_bins.size(), start + count);
+    // Radio path (allBins=false): ONLY the bins on the CURRENT PAGE. Re-detecting
+    // every bin on each radio click is what froze the UI, and other pages are
+    // re-seeded when navigated to. SAVE path (allBins=true): every bin, because
+    // save writes them all -- a page-only reseed left every off-page bin at Auto,
+    // so the saved CSV did not reflect the selected model.
+    int start, end;
+    if (allBins) {
+        start = 0; end = (int)m_bins.size();
+    }
+    else {
+        m_currentPage = std::clamp(m_currentPage, 0, (int)m_pages.size() - 1);
+        start = m_pages[m_currentPage].first;
+        end = std::min((int)m_bins.size(), start + m_pages[m_currentPage].second);
+    }
 
     for (int bi = start; bi < end; ++bi) {
         TemplateBin& b = m_bins[bi];
@@ -3518,7 +3539,10 @@ void TemplateViewerWindow::reseedFitModes() {
             }
             FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, a,
                 std::numeric_limits<double>::quiet_NaN(), m_onOffsetFitMode, m_peakFitMode);
-            b.auto_by_anchor[static_cast<int>(a)] = b.autoFor(a);
+            // Fill the cache from the FRESH flat fields seed_all just wrote.
+            // (Going through autoFor() here would return the stale cached entry
+            // and discard the new positions -- the forced-mode export bug.)
+            b.auto_by_anchor[static_cast<int>(a)] = b.autoFromFlat();
         }
         b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
         FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK,
@@ -3526,7 +3550,7 @@ void TemplateViewerWindow::reseedFitModes() {
     }
 
     m_lastTransKey = -1;   // focus-candidate cache depends on the mode
-    showPage();            // rebuild the page from the re-placed marks
+    if (!allBins) showPage();   // rebuild the page from the re-placed marks
 }
 
 void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
@@ -3878,9 +3902,14 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                     transCand = m_lastTransCand;
                 }
                 else {
+                    // Seed with the DISPLAYED alignment's own R column -- the
+                    // same one the main-plot glyphs use (chFor(frame).r_col_raw)
+                    // -- NOT r_peak_ch + frameShift, a computed value that
+                    // drifted and put the P/T detection window on the wrong part
+                    // of the wave. detect runs on the displayed (e.g. P-aligned)
+                    // mean, which is correct; only the R seed was off.
                     const int rColInMean = std::clamp(
-                        static_cast<int>(std::lround(static_cast<double>(b.r_peak_ch[leadIdx])))
-                        + b.frameShift(leadIdx, AnchorType::R_PEAK, focusAnchor),
+                        b.chFor(leadIdx, focusAnchor).r_col_raw,
                         0, static_cast<int>(mean.size()) - 1);
                     const FeatureMarks::TemplateLandmarks lm =
                         FeatureMarks::detect_template_landmarks(mean, rColInMean, m_sampleRate,
@@ -3905,6 +3934,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                     case curve_fit::FitMode::Sigmoid:     transCand.winner = 1; break;
                     case curve_fit::FitMode::FracPoly:    transCand.winner = 2; break;
                     case curve_fit::FitMode::CubicSpline: transCand.winner = 3; break;
+                    case curve_fit::FitMode::Cubic:       transCand.winner = 4; break;
                     case curve_fit::FitMode::Auto:
                     default:                              break;   // keep BIC winner
                     }
@@ -4209,8 +4239,8 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
                 boundary_training::BoundaryTrainingRecord rec;
                 rec.segment.assign(sig.begin() + lo, sig.begin() + hi);
                 rec.confirmedIndex = confirmed;
-                // fit from anchor_fit: fit-and-select on this landmark's window.
-                const curve_fit::FitResult fit = curve_fit::selectAnchorModel(sig, lo, hi - 1);
+                // fit from curve_fit: fit-and-select on this landmark's window.
+                const curve_fit::FitResult fit = curve_fit::selectBestFit(sig, lo, hi - 1);
                 rec.fitType = fit.type;
                 rec.fitRSS = fit.rss;
                 rec.individualID = m_subjectId.toStdString();
@@ -4236,6 +4266,13 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
 
 void TemplateViewerWindow::save_bin_and_csv() {
     captureCurrentPage();   // snapshot the page being left on Finish
+
+    // Honor the selected fit models on save: re-detect the untouched marks with
+    // the operator's chosen on/offset and peak models (dragged bars preserved)
+    // so what is written matches what is displayed. No-op when both are Auto.
+    if (m_onOffsetFitMode != curve_fit::FitMode::Auto
+        || m_peakFitMode != curve_fit::PeakFitMode::Auto)
+        reseedFitModes(/*allBins=*/true);
 
     QDir binDir(m_markingPath);
     QDir csvDir(m_markingPath);

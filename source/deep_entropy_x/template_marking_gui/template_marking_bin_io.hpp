@@ -341,9 +341,12 @@ struct TemplateBin {
     // through here on the way past, so auto_by_anchor is legitimately empty
     // while that loop runs. Throwing here fail-fasts on the first glyph
     // snapshot of the first panel.
-    AnchorAuto autoFor(AnchorType a) const {
-        auto it = auto_by_anchor.find(static_cast<int>(a));
-        if (it != auto_by_anchor.end()) return it->second;
+    // Build an AnchorAuto from the flat *_auto_ch fields -- always fresh, never
+    // the cache. seed_all writes those fields for the anchor it just ran on, so
+    // this is the correct capture right after a (re)seed. autoFor() uses it as
+    // its fallback, and the seeding code uses it to FILL auto_by_anchor -- going
+    // through autoFor() there would return the stale cached entry instead.
+    AnchorAuto autoFromFlat() const {
         AnchorAuto out;
         for (int c = 0; c < 3; ++c) {
             out.p_begin[c] = p_begin_auto_ch[c];
@@ -356,6 +359,12 @@ struct TemplateBin {
             out.q_onset_found[c] = q_onset_found_auto_ch[c];
         }
         return out;
+    }
+
+    AnchorAuto autoFor(AnchorType a) const {
+        auto it = auto_by_anchor.find(static_cast<int>(a));
+        if (it != auto_by_anchor.end()) return it->second;
+        return autoFromFlat();
     }
 
     // Samples to ADD to a column measured in `from`'s frame to express it in

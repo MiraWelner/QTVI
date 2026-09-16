@@ -1704,22 +1704,11 @@ namespace jbank {
             for (uint32_t sl : seedSlices)
                 if (sl >= pkeys.size() || pkeys[sl] == tbank::kUnlabeled)
                     clean.push_back(sl);
-            // Not if it would empty the pool: a bin that is ALL marked has no
-            // unlabeled seed available, and an empty slot 0 is worse than an
-            // impure one. Reported, because a seed built from marked beats is
-            // exactly what the caller needs to know about.
-            if (clean.empty()) {
-                std::fprintf(stderr, "  [marks] bin %llu: every seed slice "
-                    "carries an operator class -- slot 0 seeded from marked "
-                    "beats\n", (unsigned long long)in.bin_index);
-            }
-            else if (clean.size() < seedSlices.size()) {
-                std::fprintf(stderr, "  [marks] bin %llu: %zu of %zu seed "
-                    "slices dropped as marked\n",
-                    (unsigned long long)in.bin_index,
-                    seedSlices.size() - clean.size(), seedSlices.size());
+            // Drop marked seed slices -- unless that would empty the pool (a
+            // bin that is ALL marked keeps its slices; an empty slot 0 is worse
+            // than an impure one).
+            if (!clean.empty() && clean.size() < seedSlices.size())
                 seedSlices = std::move(clean);
-            }
         }
 
         seedBank(out.bank, chans, phase1, seedSlices, in.max_templates_per_bin,

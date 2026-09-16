@@ -12,10 +12,10 @@
  *         (R, S, T-peak, P-peak) stay on their existing detectors.
  *
  *         Design notes (from spec Sections 3.7 and 4.2):
- *           - Piecewise-linear and sigmoid are always tried.
+ *           - Piecewise-linear, sigmoid, and cubic spline are always tried.
  *           - Fractional polynomial is the escalation model, tried only
- *             when neither simple model fits well (gated by POOR_FIT_THRESH).
- *           - The POOR_FIT_THRESH below is a starting estimate; calibrate
+ *             when none of those fits well (gated by POOR_FIT_FACTOR).
+ *           - POOR_FIT_FACTOR below is a starting estimate; calibrate
  *             empirically from clean expert-marked templates.
  *
  * @author Mira Welner
@@ -39,10 +39,9 @@ namespace curve_fit {
     // =========================================================================
 
     // Raw RSS threshold for escalating to the fractional polynomial. If the
-    // better of piecewise-linear and sigmoid has RSS above POOR_FIT_FACTOR * n,
-    // the fractional polynomial is tried. Tune from clean-template residuals.
-    //
-    // Per spec: "const double POOR = 0.05 * n; // tune from clean-template residuals"
+    // best of the cheap models (piecewise-linear, sigmoid, cubic spline) has RSS
+    // above POOR_FIT_FACTOR * n, the fractional polynomial is tried. Tune from
+    // clean-template residuals.
     inline constexpr double POOR_FIT_FACTOR = 0.05;
 
     // Sigmoid fitter iteration budget. 50 iterations is generous for a
@@ -57,12 +56,12 @@ namespace curve_fit {
 
     // Which candidate model a FitResult came from. Recorded so downstream
     // consumers (e.g. the boundary training log) can label each fit.
-    enum class FitType { LINEAR, SIGMOID, FRACTIONAL, CUBIC_SPLINE, FLAT };
+    enum class FitType { LINEAR, SIGMOID, FRACTIONAL, CUBIC_SPLINE, CUBIC, FLAT };
 
     // Forced model selection, driven by the on/offset radio group. Auto = the
     // BIC contest across all candidates (the previous behaviour); any other
     // value returns exactly that model so the anchor is placed from it.
-    enum class FitMode { Auto, Linear, CubicSpline, Sigmoid, FracPoly };
+    enum class FitMode { Auto, Linear, CubicSpline, Cubic, Sigmoid, FracPoly };
     // Peak radio group (Fit Peaks): Auto = BIC quad-vs-cubic; else forced.
     enum class PeakFitMode { Auto, Cubic, Parabola, FivePoint };
 
@@ -433,7 +432,7 @@ namespace curve_fit {
 
                 // Early-out (change #1): once a pair fits to the caller's
                 // "good enough" threshold, no later pair can change the
-                // selectAnchorModel outcome (it only accepts fp if it beats
+                // selectBestFit outcome (it only accepts fp if it beats
                 // the current winner, and this already clears POOR), so stop
                 // grinding through the remaining pairs -- this is exactly the
                 // hard-landmark case that was slow.
@@ -502,7 +501,45 @@ namespace curve_fit {
         return r;
     }
 
-    inline FitResult selectAnchorModel(const std::vector<double>& y, int lo, int hi,
+    // =========================================================================
+    // Model 5: single cubic polynomial  c0 + c1*x + c2*x^2 + c3*x^3  (x = t-lo)
+    // =========================================================================
+    // A plain cubic over the whole window (4 parameters) -- distinct from the
+    // 3-knot natural spline above: one segment, no interior knot.
+    inline FitResult fitCubic(const std::vector<double>& y, int lo, int hi) {
+        FitResult r;
+        r.type = FitType::CUBIC;
+        r.nparams = 4;
+        const int fl = lo;
+        auto basis = [fl](double t, int j) -> double {
+            const double x = t - static_cast<double>(fl);
+            switch (j) {
+            case 0:  return 1.0;
+            case 1:  return x;
+            case 2:  return x * x;
+            default: return x * x * x;
+            }
+            };
+        std::vector<double> c; double rss = 0.0;
+        if (!detail::linear_ls(y, lo, hi, 4, basis, c, rss) || c.size() < 4) {
+            double mean = 0.0; int cnt = 0;
+            for (int i = lo; i <= hi; ++i) if (!std::isnan(y[i])) { mean += y[i]; ++cnt; }
+            if (cnt > 0) mean /= cnt;
+            r.type = FitType::FLAT; r.nparams = 1; r.rss = 0.0; r.params = { mean };
+            r.f = [=](double) { return mean; };
+            return r;
+        }
+        r.rss = rss;
+        r.params = { c[0], c[1], c[2], c[3] };
+        const double c0 = c[0], c1 = c[1], c2 = c[2], c3 = c[3];
+        r.f = [c0, c1, c2, c3, fl](double t) {
+            const double x = t - static_cast<double>(fl);
+            return c0 + c1 * x + c2 * x * x + c3 * x * x * x;
+            };
+        return r;
+    }
+
+    inline FitResult selectBestFit(const std::vector<double>& y, int lo, int hi,
         FitMode mode = FitMode::Auto) {
         const int n = hi - lo + 1;
         if (n < 5) {
@@ -527,6 +564,7 @@ namespace curve_fit {
         case FitMode::Sigmoid:     return fitSigmoid(y, lo, hi, fitPiecewiseLinear(y, lo, hi));
         case FitMode::FracPoly:    return fitFractionalPolynomial(y, lo, hi);   // full fit when forced
         case FitMode::CubicSpline: return fitCubicSpline(y, lo, hi);
+        case FitMode::Cubic:       return fitCubic(y, lo, hi);
         case FitMode::Auto:
         default:                   break;
         }
@@ -541,6 +579,7 @@ namespace curve_fit {
         FitResult pw = fitPiecewiseLinear(y, lo, hi);
         FitResult sig = fitSigmoid(y, lo, hi, pw);
         FitResult sp = fitCubicSpline(y, lo, hi);
+        FitResult cu = fitCubic(y, lo, hi);
 
         FitResult best = pw; double bestBic = bic(pw.rss, n, pw.nparams);
         auto consider = [&](const FitResult& r) {
@@ -549,6 +588,7 @@ namespace curve_fit {
             };
         consider(sig);
         consider(sp);
+        consider(cu);
 
         if (best.rss > POOR_FIT_FACTOR * n) {
             FitResult fp = fitFractionalPolynomial(y, lo, hi, POOR_FIT_FACTOR * n);
@@ -600,8 +640,30 @@ namespace curve_fit {
             }
         }
 
-        // Fallback: no crossing found.
-        return (lo + hi) / 2.0;
+        // Fallback: the fitted curve never crossed level L over [lo,hi] (e.g.
+        // a piecewise-linear fit that bottoms out just above L). Return the
+        // point of CLOSEST APPROACH to L -- which sits in the transition region
+        // -- instead of the window MIDPOINT, which used to drop the fiducial to
+        // the center of the panel whenever a model didn't quite reach L.
+        double bestT = static_cast<double>(lo);
+        double bestD = std::abs(fit.f(static_cast<double>(lo)) - L);
+        for (int t = lo + 1; t <= hi; ++t) {
+            const double d = std::abs(fit.f(static_cast<double>(t)) - L);
+            if (d < bestD) { bestD = d; bestT = static_cast<double>(t); }
+        }
+        return bestT;
+    }
+
+    // The position a model places the fiducial at. Exception: the piecewise-
+    // LINEAR model marks its KINK -- the breakpoint where the two segments meet
+    // (params[4]) -- not a fraction crossing. Every other model uses the
+    // 10%-of-rise crossing.
+    inline double anchorPosition(const FitResult& fit, int lo, int hi,
+        double B, double E, double f)
+    {
+        if (fit.type == FitType::LINEAR && fit.params.size() >= 5)
+            return fit.params[4];
+        return anchorAtFraction(fit, lo, hi, B, E, f);
     }
 
     // =========================================================================
@@ -623,4 +685,4 @@ namespace curve_fit {
         return bestT;
     }
 
-} // namespace anchor_fit
+} // namespace curve_fit

@@ -353,6 +353,16 @@
       </item>
       <item>
        <layout class="QGridLayout" name="onoffset_fit_button_grid">
+        <item row="2" column="0">
+         <widget class="QRadioButton" name="fracpoly_fit_onoffset">
+          <property name="text">
+           <string>Frac Poly</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_4</string>
+          </attribute>
+         </widget>
+        </item>
         <item row="1" column="0">
          <widget class="QRadioButton" name="linear_fit_onoffset">
           <property name="text">
@@ -363,27 +373,10 @@
           </attribute>
          </widget>
         </item>
-        <item row="0" column="0">
-         <widget class="QLabel" name="onoffset_label">
-          <property name="text">
-           <string>Fit on/offset</string>
-          </property>
-         </widget>
-        </item>
         <item row="0" column="1">
          <widget class="QRadioButton" name="auto_fit_onoffset">
           <property name="text">
            <string>Auto</string>
-          </property>
-          <attribute name="buttonGroup">
-           <string notr="true">buttonGroup_4</string>
-          </attribute>
-         </widget>
-        </item>
-        <item row="1" column="1">
-         <widget class="QRadioButton" name="cubic_spline_fit_onoffset">
-          <property name="text">
-           <string>Cubic Spline</string>
           </property>
           <attribute name="buttonGroup">
            <string notr="true">buttonGroup_4</string>
@@ -400,10 +393,27 @@
           </attribute>
          </widget>
         </item>
-        <item row="2" column="0">
-         <widget class="QRadioButton" name="fracpoly_fit_onoffset">
+        <item row="0" column="0">
+         <widget class="QLabel" name="onoffset_label">
           <property name="text">
-           <string>Frac Poly</string>
+           <string>Fit on/offset</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QRadioButton" name="cubic_spline_fit_onoffset">
+          <property name="text">
+           <string>Cubic Spline</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_4</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="3" column="0">
+         <widget class="QRadioButton" name="cubic_fit_onoffset">
+          <property name="text">
+           <string>Cubic</string>
           </property>
           <attribute name="buttonGroup">
            <string notr="true">buttonGroup_4</string>
@@ -589,9 +599,9 @@
   <slot>onNextPage()</slot>
  </slots>
  <buttongroups>
-  <buttongroup name="buttonGroup_2"/>
-  <buttongroup name="buttonGroup_4"/>
   <buttongroup name="buttonGroup"/>
+  <buttongroup name="buttonGroup_2"/>
   <buttongroup name="buttonGroup_5"/>
+  <buttongroup name="buttonGroup_4"/>
  </buttongroups>
 </ui>
