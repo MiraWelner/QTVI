@@ -900,9 +900,8 @@ struct EcgFeatures {
 // Every position in and out is a sub-sample double. The two FeatureMarks
 // finders below still take an int R column, so the rounding happens HERE, at
 // the one call that needs it, instead of at every caller.
-inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg,
-    double p_peak, double q_onset, double r_peak, double s_end, double t_end,
-    double rateHz)
+inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg,  double p_peak, double q_onset, double r_peak, double s_end, double t_end,
+    double rateHz, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
 {
     EcgFeatures f;
     const double N = static_cast<double>(ecg.size());
@@ -915,10 +914,10 @@ inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg,
     const int rInt = (r_peak >= 0.0) ? static_cast<int>(std::lround(r_peak)) : -1;
     // Q for the q_peak column: same canonical finder compute_q_onset uses.
     // Mirrors compute_s_peak's signature below. -1 when there is no Q trough.
-    f.q_idx = FeatureMarks::compute_q_peak(ecg, rInt, rateHz);   // sub-sample
+    f.q_idx = FeatureMarks::compute_q_peak(ecg, rInt, rateHz, peakMode);    // sub-sample
     // S for |R|+|S| = first opposite-polarity trough after R (robust; not the
     // max over [R, s_end], which depends on where s_end sits).
-    f.s_idx = FeatureMarks::compute_s_peak(ecg, rInt, rateHz);   // sub-sample
+    f.s_idx = FeatureMarks::compute_s_peak(ecg, rInt, rateHz, peakMode);   // sub-sample
     return f;
 }
 
@@ -992,7 +991,8 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     const std::string& fileID,
     double sampleRateHz,
     AnchorType anchor,
-    MarkingsCsvSection section)
+    MarkingsCsvSection section,
+    curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
 {
     const bool wantEcg = (section == MarkingsCsvSection::EcgOnly);
     const bool wantPulse = (section == MarkingsCsvSection::PulseOnly);
@@ -1023,11 +1023,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                 const std::vector<double>& ecg = b.chFor(c, AnchorType::R_PEAK).ecgTemplate_raw;
                 if (ecg.empty()) continue;
                 const auto aaR = b.autoFor(AnchorType::R_PEAK);
-                // NO ROUNDING: computeEcgFeatures takes doubles now.
-                EcgFeatures ft = computeEcgFeatures(ecg,
-                    aaR.p_peak[c], aaR.q_onset[c], aaR.r_peak[c],
-                    aaR.s_end[c], aaR.t_end[c],
-                    sampleRateHz);
+                EcgFeatures ft = computeEcgFeatures(ecg,  aaR.p_peak[c], aaR.q_onset[c], aaR.r_peak[c],  aaR.s_end[c], aaR.t_end[c], sampleRateHz, peakMode);
                 if (ft.r_idx < 0.0 || ft.s_idx < 0.0) continue;
                 const double last = static_cast<double>(ecg.size()) - 1.0;
                 if (ft.r_idx > last || ft.s_idx > last) continue;
@@ -1316,36 +1312,11 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                     if (anchor_view::owns(anchor, anchor_view::kTEnd))   umk.t_end = own.t_end;
                 }
 
-                // ---- GLYPHS: AUTO SIDE ONLY, IN EVERY BLOCK ---------------
-                // A glyph is a measurement, not a judgement, so all four
-                // alignments report all of them -- on the AUTO side. There is
-                // no user side: markerAtX never hands a glyph out, so nothing
-                // about it was placed.
-                //
-                // rxUser is still computed, because ftUser (q_peak, s_peak and
-                // the two intervals) needs the reactive P peak as an input and
-                // those columns are derived quantities rather than glyph
-                // positions. It no longer reaches a p_peak or t_peak column:
-                // it is built from userMarks(), the bar set assembled across
-                // three alignments, and emitting it per block reported one
-                // placed mark four times.
-                //
-                // reactive_ecg is the function BinPlotWidget::reactiveGlyphs
-                // calls, with the same bracket bars (P peak between P-onset and
-                // Q-onset; T peak between S-END and T-end). It is also the
-                // ONLY source of p_peak anywhere -- the stored copy in
-                // BankMarkerSet is gone, so screen and file cannot diverge.
+                //bracket t peak by send tbegin
                 const tbank::BankMarkerSet whole = b.userMarks(c, 0, anchor);
-                const FeatureMarks::ReactiveEcg rxUser = FeatureMarks::reactive_ecg(
-                    ecg, whole.p_begin, whole.q_onset, whole.s_end, whole.t_end, sampleRateHz);
-                const FeatureMarks::ReactiveEcg rxAuto = FeatureMarks::reactive_ecg(
-                    ecg, aa.p_begin[c], aa.q_onset[c],
-                    aa.s_end[c], aa.t_end[c], sampleRateHz);
-
-                EcgFeatures ftAuto = computeEcgFeatures(ecg,
-                    aa.p_peak[c], aa.q_onset[c], aa.r_peak[c],
-                    aa.s_end[c], aa.t_end[c],
-                    sampleRateHz);
+                const FeatureMarks::ReactiveEcg user_placed_s_and_t_bars_for_bracketing_tpeak = FeatureMarks::reactive_ecg(ecg, whole.p_begin, whole.q_onset, whole.s_end, whole.t_end, sampleRateHz, peakMode);
+                const FeatureMarks::ReactiveEcg auto_s_and_t_bars_for_bracketing_tpeak = FeatureMarks::reactive_ecg(  ecg, aa.p_begin[c], aa.q_onset[c], aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode);
+                EcgFeatures ftAuto = computeEcgFeatures(ecg, aa.p_peak[c], aa.q_onset[c], aa.r_peak[c], aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode);
                 // Derived from the assembled bars, not from `umk`: q_peak,
                 // s_peak and the QRS/QT intervals need a whole beat's
                 // brackets, and no single alignment's marker set holds one any
@@ -1353,8 +1324,8 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                 // blocks (a duration is frame-free), which is exactly why only
                 // the R block emits their user half.
                 EcgFeatures ftUser = computeEcgFeatures(ecg,
-                    rxUser.p_peak, whole.q_onset, b.r_peak_ch[c],
-                    whole.s_end, whole.t_end, sampleRateHz);
+                    user_placed_s_and_t_bars_for_bracketing_tpeak.p_peak, whole.q_onset, b.r_peak_ch[c],
+                    whole.s_end, whole.t_end, sampleRateHz, peakMode);
 
                 // Order MUST match ecgPointNames:
                 //   p_begin(bar), p_peak(glyph), q_onset(bar), q_peak(computed),
@@ -1368,13 +1339,13 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                 struct P { const char* name; double a; double u; };
                 const P pts[] = {
                     { "p_begin", aa.p_begin[c],  umk.p_begin  },
-                    { "p_peak",  rxAuto.p_peak,  -1.0         },   // glyph: auto only
+                    { "p_peak",  auto_s_and_t_bars_for_bracketing_tpeak.p_peak,  -1.0         },   // glyph: auto only
                     { "q_onset", aa.q_onset[c],  umk.q_onset  },
                     { "q_peak",  ftAuto.q_idx,   -1.0         },   // glyph: auto only
                     { "r_peak",  aa.r_peak[c],   -1.0         },   // glyph: auto only
                     { "s_peak",  ftAuto.s_idx,   -1.0         },   // glyph: auto only
                     { "s_end",   aa.s_end[c],    umk.s_end    },
-                    { "t_peak",  rxAuto.t_peak,  -1.0         },   // glyph: auto only
+                    { "t_peak",  auto_s_and_t_bars_for_bracketing_tpeak.t_peak,  -1.0         },   // glyph: auto only
                     { "t_end",   aa.t_end[c],    umk.t_end    }
                 };
                 for (const P& pt : pts) {
@@ -1501,7 +1472,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                 const auto aa = b.autoFor(anchor);
                 const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
                     ecg, aa.p_begin[c], aa.q_onset[c],
-                    aa.s_end[c], aa.t_end[c], sampleRateHz);
+                    aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode);
                 emitAutoFeatPt(ecg, rx.p_peak);
                 emitAutoFeatPt(ecg, aa.q_onset[c]);
                 emitAutoFeatPt(ecg, aa.r_peak[c]);
@@ -1526,12 +1497,14 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     const std::string& fileID,
     double sampleRateHz,
     AnchorType anchor,
-    MarkingsCsvSection section)
+    MarkingsCsvSection section,
+    curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
 {
     std::ofstream f(path);
     if (!f.is_open())
         throw std::runtime_error("cannot open for write: " + path);
-    writeTemplateMarkingsCsv(f, bins, fileID, sampleRateHz, anchor, section);
+    writeTemplateMarkingsCsv(f, bins, fileID, sampleRateHz, anchor, section,
+        peakMode);
 }
 
 inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path) {

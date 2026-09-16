@@ -71,12 +71,16 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
     const int peakHw = std::max(subsample_refine::kWindowHalfWidth,
         static_cast<int>(std::lround(m_peakSigma)));
 
-    auto evalExtremum = [&](const subsample_refine::ExtremumFit& f) {
+    // drawHw defaults to the peak window. Each model is drawn only over the
+    // span it was FIT on: the 5-point parabola over +-4 rather than +-sigma,
+    // where a 5-sample parabola extrapolates straight off the top of the panel.
+    auto evalExtremum = [&](const subsample_refine::peak_fit& f, int drawHw = -1) {
         std::vector<double> c(m_mean.size(),
             std::numeric_limits<double>::quiet_NaN());
         if (f.order >= 2) {
-            const int a = std::max(lo, f.seed - peakHw);
-            const int b = std::min(hi, f.seed + peakHw);
+            const int hw = (drawHw > 0) ? drawHw : peakHw;
+            const int a = std::max(lo, f.seed - hw);
+            const int b = std::min(hi, f.seed + hw);
             for (int i = a; i <= b; ++i) c[i] = f.eval(static_cast<double>(i));
         }
         return c;
@@ -90,19 +94,49 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
 
     if (m_fitKind == FitKind::PeakQuadratic || m_fitKind == FitKind::PeakCubic) {
         if (m_landmarkCol < 0 || m_landmarkCol >= (int)m_mean.size()) return out;
-        const auto q = subsample_refine::symmetricExtremumFit(m_mean, m_landmarkCol, m_peakSigma, peakHw);
-        const auto c = subsample_refine::asymmetricExtremumFit(m_mean, m_landmarkCol, m_peakSigma, peakHw);
-        const auto win = subsample_refine::bestPeakExtremumFit(m_mean, m_landmarkCol, m_peakSigma, peakHw, m_panelPeakMode);
-        const bool winDegenerate = (win.order < 2);   // quad AND cubic both failed
-        const bool fpIsWinner = winDegenerate
-            || win.type == subsample_refine::CurveType::FIVE_POINT;   // forced 5-point
-        if (q.order >= 2) out.push_back({ evalExtremum(q), !fpIsWinner && q.type == win.type, QStringLiteral("Quadratic") });
-        if (c.order >= 2) out.push_back({ evalExtremum(c), !fpIsWinner && c.type == win.type, QStringLiteral("Cubic") });
+        // DRAW-ONLY fits (applyGuard=false). The guarded versions collapse a
+        // residual-rejected quadratic/cubic to FIVE_POINT with order 0 and no
+        // coefficients, and the order>=2 test below then dropped them -- which
+        // is why, on a broad peak where BOTH were rejected, the 5-point
+        // parabola was the only curve on screen. The guard decides what may
+        // PLACE the mark; it should not decide what is VISIBLE, since the
+        // rejected curve is exactly what shows why the fallback was taken.
+        const auto qD = subsample_refine::quadratic_fit(
+            m_mean, m_landmarkCol, m_peakSigma, peakHw, /*applyGuard=*/false);
+        const auto cD = subsample_refine::cubic_fit(
+            m_mean, m_landmarkCol, m_peakSigma, peakHw, /*applyGuard=*/false);
+        const auto fp5 = subsample_refine::fivePointParabolaFit(m_mean, m_landmarkCol);
+
+        // The GUARDED contest, honouring the Fit-Peaks radio: this is the model
+        // that actually places the mark, and win.position is where. The winner
+        // is read off the returned TYPE rather than re-derived from the radio,
+        // so a forced model that degenerated shows its fallback as green
+        // instead of colouring a curve that placed nothing.
+        const auto win = subsample_refine::bestPeakExtremumFit(
+            m_mean, m_landmarkCol, m_peakSigma, peakHw, m_panelPeakMode);
+        int winIdx = 2;   // 0=quadratic, 1=cubic, 2=five-point
+        switch (win.type) {
+        case subsample_refine::CurveType::QUADRATIC: winIdx = 0; break;
+        case subsample_refine::CurveType::CUBIC:     winIdx = 1; break;
+        default:                                     winIdx = 2; break;
+        }
+
+        auto push = [&](const subsample_refine::peak_fit& f, int idx,
+            const QString& name, int drawHw = -1) {
+                if (f.order < 2) return;   // genuinely no polynomial: nothing to draw
+                Candidate cd;
+                cd.curve = evalExtremum(f, drawHw);
+                cd.selected = (idx == winIdx);
+                cd.label = name;
+                cd.position = (idx == winIdx) ? win.position : f.position;
+                out.push_back(std::move(cd));
+            };
+        push(qD, 0, QStringLiteral("Quadratic"));
+        push(cD, 1, QStringLiteral("Cubic"));
         // ALWAYS draw the 5-point parabola so a broad/flat peak (e.g. P) still
         // has a visible curve. Green when it IS the placement (both models
         // degenerated) or the operator forced it, red otherwise.
-        const auto fp5 = subsample_refine::fivePointParabolaFit(m_mean, m_landmarkCol);
-        if (fp5.order >= 2) out.push_back({ evalExtremum(fp5), fpIsWinner, QStringLiteral("5-pt parabola") });
+        push(fp5, 2, QStringLiteral("5-pt parabola"), 4);
     }
     else {
         // Prefer the EXACT candidates the detector fit (supplied via
@@ -116,7 +150,20 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
                 std::vector<double> c(m_mean.size(),
                     std::numeric_limits<double>::quiet_NaN());
                 if (fn) for (int i = lo; i <= hi; ++i) c[i] = fn(static_cast<double>(i));
-                out.push_back({ c, k == m_transCands.winner, QString::fromUtf8(kNames[k]) });
+                Candidate cd;
+                cd.curve = std::move(c);
+                cd.selected = (k == m_transCands.winner);
+                cd.label = QString::fromUtf8(kNames[k]);
+                // cross[k] is THIS model's own fiducial crossing, already in
+                // sample coordinates (transitionAnchor fills it, and its own
+                // comment says the focus dotted line should use cross[winner]).
+                // It was computed and then never read: the panel drew its line
+                // at the integer bar column, so switching the on/offset model
+                // recoloured the curves and moved nothing.
+                cd.position = (m_transCands.cross[k] >= 0.0)
+                    ? m_transCands.cross[k]
+                    : std::numeric_limits<double>::quiet_NaN();
+                out.push_back(std::move(cd));
             }
             return out;
         }
@@ -138,9 +185,10 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
     p.setRenderHint(QPainter::Antialiasing);
     p.fillRect(rect(), QColor(250, 250, 250));
 
-    const int mt = 24;                 // top margin (header)
-    const int mb = 12, ml = 8, mr = 8;
-    const int ph = height() - mt - mb;
+    const int focuspanel_top_margin = 40;
+    const int focuspanel_bottom_margin = 12;
+    const int ml = 8, mr = 8;
+    const int ph = height() - focuspanel_top_margin - focuspanel_bottom_margin;
     const int pw = width() - ml - mr;
 
     // Header label.
@@ -200,8 +248,10 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
     const double pxPerSample = (double)pw / (double)(visN - 1);
     const double startPx = ml - (double)lo * pxPerSample;   // so column `lo` maps to x=ml
 
-    auto xOf = [&](int col) { return startPx + (double)col * pxPerSample; };
-    auto yOf = [&](double val) { return mt + ph - (val - vlo) / vr * ph; };
+    // SUB-SAMPLE. Was int, so every call site silently truncated -- including
+    // the fiducial, which sits at a fractional column.
+    auto xOf = [&](double col) { return startPx + col * pxPerSample; };
+    auto yOf = [&](double val) { return focuspanel_top_margin + ph - (val - vlo) / vr * ph; };
 
     // ---- slope-floor shading -------------------------------------------
     // Columns where the local |dV/dt| was clamped at the floor: flat regions
@@ -219,7 +269,7 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
             if (i > runStart) {
                 const double x0 = xOf(runStart);
                 const double x1 = xOf(i - 1) + pxPerSample;
-                p.drawRect(QRectF(x0, mt, std::max(1.0, x1 - x0), ph));
+                p.drawRect(QRectF(x0, focuspanel_top_margin, std::max(1.0, x1 - x0), ph));
             }
         }
     }
@@ -285,19 +335,35 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         // Name the winning model, in the winner's green, top-right.
         for (const Candidate& c : cands)
             if (c.selected && !c.label.isEmpty()) {
-                p.setPen(QColor(0, 130, 0));
-                p.drawText(QRect(ml, 4, width() - ml - mr, 18),
-                    Qt::AlignRight | Qt::AlignVCenter, c.label);
+                p.setPen(QColor(120, 120, 120));
+                p.drawText(QRect(ml, 22, width() - ml - mr, 16),
+                    Qt::AlignLeft | Qt::AlignVCenter, c.label);
                 break;
             }
-    }
 
-    // ---- fiducial marker: gray vertical dotted line at the landmark ----
-    if (m_landmarkCol >= lo && m_landmarkCol <= hi) {
-        QPen pen(QColor(130, 130, 130)); pen.setWidthF(1.2); pen.setStyle(Qt::DotLine);
-        p.setPen(pen);
-        const double x = xOf(static_cast<double>(m_landmarkCol));
-        p.drawLine(QPointF(x, mt), QPointF(x, mt + ph));
+        // ---- fiducial marker: gray vertical dotted line, at the column the
+        // SELECTED model places the landmark on --------------------------
+        //
+        // Same single gray line as before; the only change is WHERE. It used to
+        // be drawn at m_landmarkCol -- the integer bar column, which does not
+        // depend on the fit at all -- so changing either fit-model radio
+        // recoloured the curves and left the line sitting still.
+        double winPos = std::numeric_limits<double>::quiet_NaN();
+        for (const Candidate& c : cands)
+            if (c.selected) { winPos = c.position; break; }
+        // The bar column stays the fallback: a selected model with no placement
+        // to report (a rejected fit with no vertex, or the transition re-fit
+        // path, which has no crossing to hand back) leaves the line exactly
+        // where it has always been rather than dropping it off the panel.
+        const double fidCol = std::isfinite(winPos)
+            ? winPos : static_cast<double>(m_landmarkCol);
+        m_lastFidCol = fidCol;
+        if (fidCol >= lo && fidCol <= hi) {
+            QPen pen(QColor(130, 130, 130)); pen.setWidthF(1.2); pen.setStyle(Qt::DotLine);
+            p.setPen(pen);
+            const double x = xOf(fidCol);
+            p.drawLine(QPointF(x, focuspanel_top_margin), QPointF(x, focuspanel_top_margin + ph));
+        }
     }
 
     // ---- footer: the two inputs to the msec SD, so the equation is visible ----
@@ -324,7 +390,11 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         foot = floored
             ? QStringLiteral("raw sd=%1  slope=%2 /sample (floor)").arg(sdStr, dStr)
             : QStringLiteral("raw sd=%1  slope=%2 /sample").arg(sdStr, dStr);
+        // The fitted fiducial's own column, so a sub-pixel move is still
+        // readable as a change.
+        if (m_lastFidCol >= 0.0)
+            foot = QStringLiteral("fid=%1  ").arg(m_lastFidCol, 0, 'f', 2) + foot;
     }
-    p.drawText(QRect(ml, mt + ph - 14, pw, 12),
+    p.drawText(QRect(ml, focuspanel_top_margin + ph - 14, pw, 12),
         Qt::AlignRight | Qt::AlignVCenter, foot);
 }

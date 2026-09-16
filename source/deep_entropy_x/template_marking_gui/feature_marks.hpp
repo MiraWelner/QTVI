@@ -36,25 +36,23 @@ public:
     static double sample_at(const std::vector<double>& v, double p);// Returns the landmark as a sub-sample (floating-point) position
     struct ReactiveEcg { double t_peak = -1.0, p_peak = -1.0; };
     struct ReactivePpg { double t50 = -1.0, t80 = -1.0, t80_rise = -1.0, pw80 = -1.0, peak2 = -1.0; };
-    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_onset, double s_end, double t_end, double sampleRate);
+    // peakMode is the Fit-Peaks selection. It was MISSING, so this -- the one
+    // function every reader uses to derive the P-peak and T-peak markers --
+    // always called compute_p_peak / compute_t_peak with their Auto default.
+    // That is why the peak markers did not move when the radio changed: the
+    // selection never reached the code that places them. DEFAULTED to Auto, so
+    // every existing call site keeps its current behaviour exactly.
+    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_onset, double s_end, double t_end, double sampleRate,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static ReactivePpg reactive_ppg(const std::vector<double>& ppg, double onset, double peak, double dicrotic, double end);
 
-    static double compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs);
-    static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0,
-        subsample_refine::TransitionCandidates* candOut = nullptr,
-        curve_fit::FitMode mode = curve_fit::FitMode::Auto);
-    static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0,
-        subsample_refine::TransitionCandidates* candOut = nullptr,
-        curve_fit::FitMode mode = curve_fit::FitMode::Auto);
-    static double compute_t_peak(const std::vector<double>& ecg, double bracketSEnd, double bracketTEnd,
-        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
-    static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
-    static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col,
-        subsample_refine::TransitionCandidates* candOut = nullptr,
-        curve_fit::FitMode mode = curve_fit::FitMode::Auto);
-    static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr,
-        subsample_refine::TransitionCandidates* candOut = nullptr,
-        curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs,  curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+    static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs,  curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+    static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0,  subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double compute_t_peak(const std::vector<double>& ecg, double bracketSEnd, double bracketTEnd, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+    static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
     static double compute_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double pPeakIn = -1.0);

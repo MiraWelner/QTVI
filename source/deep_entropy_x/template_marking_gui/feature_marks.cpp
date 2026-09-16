@@ -123,8 +123,7 @@ double FeatureMarks::sample_at(const std::vector<double>& v, double p) {
 // Where a caller needs the trace's value at a landmark it interpolates
 // (sample_at below) rather than indexing a rounded column: a landmark at
 // 104.37 has an amplitude, and it is not ecg[104].
-double FeatureMarks::compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs)
-{
+double FeatureMarks::compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs, curve_fit::PeakFitMode peakMode) {
     const int N = static_cast<int>(ecg.size());
     if (r_idx <= 0 || r_idx >= N) return -1;
     auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
@@ -163,9 +162,8 @@ double FeatureMarks::compute_q_peak(const std::vector<double>& ecg, int r_idx, d
     const double rAmp = u[r_idx] - b_iso;
     if (rAmp > 0.0 && (b_iso - u[qSeed]) < Q_MIN_DEPTH * rAmp) return -1;   // too shallow to be a Q
 
-    // Symmetric extremum: Gaussian-weighted quadratic, sigma = 4.
-    return std::clamp(subsample_refine::symmetricExtremum(u, qSeed, 4.0),
-        0.0, static_cast<double>(N - 1));
+    //return best fit (cubic or quadratic) 
+    return std::clamp(subsample_refine::best_peakfinding_algorithm(u, qSeed, 4.0, peakMode), 0.0, static_cast<double>(N - 1));
 }
 
 // S = the first opposite-polarity trough after R: walk right from R tracking
@@ -173,8 +171,7 @@ double FeatureMarks::compute_q_peak(const std::vector<double>& ecg, int r_idx, d
 // inverted) and stop once the trace has clearly turned back. Rate-aware search
 // window (~0.12 s), so it needs no s_end bound -- the single S-trough source,
 // used for the s_end detection and for |R|+|S| normalization.
-double FeatureMarks::compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs)
-{
+double FeatureMarks::compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs, curve_fit::PeakFitMode peakMode) {
     const int N = static_cast<int>(ecg.size());
     if (r_idx < 0 || r_idx >= N - 1)
         return static_cast<double>(std::clamp(r_idx + 1, 0, std::max(0, N - 1)));
@@ -194,36 +191,12 @@ double FeatureMarks::compute_s_peak(const std::vector<double>& ecg, int r_idx, d
     for (int i = sp_lo; i <= sp_hi; ++i)
         if (!std::isnan(u[i]) && u[i] < sv) { sv = u[i]; sSeed = i; }
 
-    // Symmetric extremum: Gaussian-weighted quadratic, sigma = 4.
-    return std::clamp(subsample_refine::symmetricExtremum(u, sSeed, 4.0),
-        0.0, static_cast<double>(N - 1));
+    //return best fit (cubic or quadratic) ]
+    return std::clamp(subsample_refine::best_peakfinding_algorithm(u, sSeed, 4.0, peakMode), 0.0, static_cast<double>(N - 1));
 }
 
-// -------------------------------------------------------------------------
-// Reactive ECG X-glyphs: each is auto-computed but tracks the user's movable
-// markers live. Windows are +/-0.05 s around the relevant user marker.
-// markers live. Windows are +/-0.05 s around the relevant user marker.
-// -------------------------------------------------------------------------
 
-// T peak = max value between the user's T-begin and T-end markers.
-// T-peak: single canonical finder. T-peak is an AMPLITUDE landmark (a peak),
-// so per spec it is placed at the fitted peak and refined as an ASYMMETRIC
-// EXTREMUM -- cubic fit on Gaussian-weighted samples with the derivative
-// solved analytically, sigma = 15 -- NOT via the transition-upsample path used
-// for onsets/offsets. Bracketed by the S-end and T-end bars (the T-wave's position varies
-// with heart rate, so it can't be derived from R alone). Both the movable bar
-// (T_PEAK locator) and the auto glyph call this; the sigma=15 refinement is
-// folded in here so neither caller re-refines.
-// Parameters named for what they ARE -- the two bars bracketing the search --
-// not for a t_begin landmark that no longer exists and never held a value. The
-// order does not matter; they are min/max'd below.
-double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracketSEnd, double bracketTEnd,
-    curve_fit::PeakFitMode peakMode) {
-    // T peak = the sample furthest from the bracket-endpoint baseline, over the
-    // window between the S-end and T-end bars, clamped into the trace's FINITE
-    // region. Because the window always contains signal, the extremum always
-    // resolves: no failure branch, no fallback, and the only -1 is a trace with
-    // no finite sample at all (an empty trace, not a T-detection case).
+double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracketSEnd, double bracketTEnd,  curve_fit::PeakFitMode peakMode) {
     const int N = static_cast<int>(v.size());
     if (N < 1) return -1.0;
 
@@ -231,10 +204,6 @@ double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracket
     for (int i = 0; i < N; ++i)      if (!std::isnan(v[i])) { fFin = i; break; }
     for (int i = N - 1; i >= 0; --i) if (!std::isnan(v[i])) { lFin = i; break; }
     if (fFin < 0) return -1.0;   // entirely NaN: no data
-
-    // Bracket ordered and clamped to [fFin, lFin]. A -1 bracket (absent bar)
-    // clamps to the finite edge rather than aborting; a collapsed bracket
-    // becomes one sample.
     const double loD = std::min(bracketSEnd, bracketTEnd);
     const double hiD = std::max(bracketSEnd, bracketTEnd);
     int lo = std::clamp(static_cast<int>(std::ceil(loD)), fFin, lFin);
@@ -254,12 +223,9 @@ double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracket
     for (int i = a; i <= b; ++i)
         if (!std::isnan(v[i]) && std::abs(v[i] - B) > bd) { bd = std::abs(v[i] - B); best = i; }
 
-    // Refine on a copy oriented so the peak is a maximum (sigma = 15), then keep
-    // it inside the finite window. Coarse column stands if refinement is
-    // non-finite -- the detected position, not a default.
     std::vector<double> u = v;
     if (v[best] < B) for (auto& x : u) x = -x;
-    const double p = subsample_refine::bestPeakExtremum(u, best, subsample_refine::peak_sigma::T, peakMode);
+    const double p = subsample_refine::best_peakfinding_algorithm(u, best, subsample_refine::peak_sigma::T, peakMode);
     return std::isfinite(p)
         ? std::clamp(p, static_cast<double>(lo), static_cast<double>(hi))
         : static_cast<double>(best);
@@ -307,23 +273,13 @@ double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, d
 
     // sigma = 12, the P-peak sigma. Coarse argmax stands if refinement is
     // non-finite -- that is still the detected column, not a fallback default.
-    const double p = subsample_refine::bestPeakExtremum(v, best, subsample_refine::peak_sigma::P, peakMode);
+    const double p = subsample_refine::best_peakfinding_algorithm(v, best, subsample_refine::peak_sigma::P, peakMode);
     return std::isfinite(p)
         ? std::clamp(p, static_cast<double>(fFin), static_cast<double>(lFin))
         : static_cast<double>(best);
 }
 
-// SINGLE canonical S-peak + J-point finder (spec steps 1-5). Used by BOTH the
-// movable bar (J_POINT locator) and the auto glyph. Steps:
-//   1) S-peak search range = [R, R + 50 ms].
-//   2) S-peak = Gaussian-weighted quadratic (symmetricExtremum), sigma = 4.
-//   3) The offset found here is the J-point.
-//   4) J-point search range = [S-peak, S-peak + 50 ms].
-//   5) 40-sample window, 4x cubic upsample, fit-and-select (piecewise-linear /
-//      sigmoid / fractional-poly by BIC) via transitionAnchor; anchor placed
-//      at the offset fractional level.
-double FeatureMarks::compute_j_point(const std::vector<double>& v, double fs, int r_col,
-    subsample_refine::TransitionCandidates* candOut, curve_fit::FitMode mode) {
+double FeatureMarks::compute_j_point(const std::vector<double>& v, double fs, int r_col,   subsample_refine::TransitionCandidates* candOut, curve_fit::FitMode mode) {
     const int N = static_cast<int>(v.size());
     if (r_col < 0 || r_col >= N - 1 || N < 4) return -1.0;
     auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
@@ -506,7 +462,7 @@ double FeatureMarks::compute_t_end(const std::vector<double>& v, double fs, int 
 // human-editable P-onset marker. Range is [start of ECG, P-peak] -- the onset
 // precedes the peak, and cannot sit left of the first ECG sample. No other
 // clamps.
-double FeatureMarks::compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn,  subsample_refine::TransitionCandidates* candOut, curve_fit::FitMode mode) {
+double FeatureMarks::compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn, subsample_refine::TransitionCandidates* candOut, curve_fit::FitMode mode) {
     const int N = static_cast<int>(v.size());
 
     int fFin = -1;
@@ -572,12 +528,13 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
 // column, the user MarkerSet for a user column.
 // ============================================================================
 
-FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_onset, double s_end, double t_end, double sampleRate)
+FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_onset, double s_end, double t_end, double sampleRate,
+    curve_fit::PeakFitMode peakMode)
 {
     ReactiveEcg r;
     if (static_cast<int>(ecg.size()) < 3) return r;
-    r.p_peak = compute_p_peak(ecg, p_begin, q_onset, sampleRate);
-    r.t_peak = compute_t_peak(ecg, s_end, t_end);
+    r.p_peak = compute_p_peak(ecg, p_begin, q_onset, sampleRate, peakMode);
+    r.t_peak = compute_t_peak(ecg, s_end, t_end, peakMode);
     return r;
 }
 
@@ -789,7 +746,7 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         pkSeed = best;
     }
     if (pkSeed < 0) return g;              // all-NaN window: nothing to mark
-    g.peak = cld(subsample_refine::symmetricExtremum(v, pkSeed, 8.0));
+    g.peak = cld(subsample_refine::quadratic_fit(v, pkSeed, 8.0).position);
 
     // A systolic peak with no room for a foot before it is a head fragment,
     // not a pulse. Bail rather than pile every landmark at sample 0.
@@ -1040,8 +997,8 @@ int FeatureMarks::detect_ppg_onset(const std::vector<double>& pulse) {
 double FeatureMarks::detect_ppg_peak(const std::vector<double>& pulse) {
     if (pulse.empty()) return 0.0;
     const int seed = detect_ppg_upstroke_peak(pulse);
-    if (seed < 0) return 0.0;
-    return subsample_refine::symmetricExtremum(pulse, seed, 8.0);
+    if (seed < 0) return 0.0;   
+    return subsample_refine::quadratic_fit(pulse, seed, 8.0).position;
 }
 
 int FeatureMarks::detect_ppg_end(const std::vector<double>& pulse) {
@@ -1346,7 +1303,7 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     // finder below -- so omitting it moved every landmark, not just R. Refined
     // on tmplIn (un-margined) so R still anchors even if it sits near an edge.
     const int seed = std::clamp(nominal_r_col, 0, n - 1);
-    double r = subsample_refine::bestPeakExtremum(tmplIn, seed, subsample_refine::peak_sigma::R, peakMode);
+    double r = subsample_refine::best_peakfinding_algorithm(tmplIn, seed, subsample_refine::peak_sigma::R, peakMode);
     if (std::isnan(r) || r < 0.0 || r > static_cast<double>(n - 1))
         r = static_cast<double>(seed);   // refinement failed; nominal stands
     const int r_anchor = static_cast<int>(r);
@@ -1359,7 +1316,7 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     const double j = FeatureMarks::compute_j_point(tmpl, sampleRate, r_anchor, &out.s_end_cand, fitMode);
     const double te = FeatureMarks::compute_t_end(tmpl, sampleRate, r_anchor, j, &out.t_end_cand, fitMode);
 
-    const double qp = FeatureMarks::compute_q_peak(tmpl, r_anchor, sampleRate);
+    const double qp = FeatureMarks::compute_q_peak(tmpl, r_anchor, sampleRate, peakMode);
     bool qFound = false;
     const double q = FeatureMarks::compute_q_onset(tmpl, sampleRate, r_anchor, qp, &qFound, &out.q_onset_cand, fitMode);
     // P-PEAK UPPER BRACKET, ALWAYS VALID. The P-peak search is an argmax over

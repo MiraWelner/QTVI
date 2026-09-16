@@ -558,9 +558,17 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
     // T-end. Both track a drag of any of the four, and both come from the
     // same FeatureMarks call the CSV/bin writers use, so the screen and the
     // files cannot disagree about where a landmark is.
+    // m_peakFitMode passed for the same reason m_onOffsetFitMode is passed to
+    // compute_p_begin below: this runs on every repaint, so the P/T peak glyphs
+    // follow the Fit-Peaks radio immediately, with no re-detection and without
+    // touching a single stored mark. It was simply omitted, which pinned both
+    // peaks to Auto. P-begin stays anchored to this same e.p_peak on purpose
+    // (see the note below it), so the onset cannot end up to the right of the
+    // peak that is actually drawn.
     const FeatureMarks::ReactiveEcg e = FeatureMarks::reactive_ecg(
         m_ecg, m_markers[EcgPBegin], m_markers[EcgQBegin],
-        m_markers[EcgSEnd], m_markers[EcgTEnd], m_rates[static_cast<size_t>(Channel::Ecg)]);
+        m_markers[EcgSEnd], m_markers[EcgTEnd], m_rates[static_cast<size_t>(Channel::Ecg)],
+        m_peakFitMode);
     r.ecgPPeak = e.p_peak;
     r.ecgTPeak = e.t_peak;
     // P-BEGIN GLYPH ANCHORED TO THE REACTIVE P PEAK, not to detect's own peak.

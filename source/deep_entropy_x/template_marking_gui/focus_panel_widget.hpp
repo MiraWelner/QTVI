@@ -30,6 +30,7 @@
 #include <QWidget>
 #include <QString>
 #include <cstdint>
+#include <limits>
 #include <vector>
 #include "subsample_refine.hpp"   // subsample_refine::TransitionCandidates
 
@@ -105,6 +106,12 @@ public:
         std::vector<double> curve;   // per-column, NaN outside the fit
         bool selected = false;
         QString label;               // model name (shown for the winner)
+        // WHERE THIS MODEL PUTS THE FIDUCIAL, in sub-sample columns; NaN if it
+        // has no placement to report. The dotted line is drawn at the SELECTED
+        // candidate's position, which is what makes it follow the fit-model
+        // radios -- it used to be pinned to the integer bar column and so never
+        // responded to them at all.
+        double position = std::numeric_limits<double>::quiet_NaN();
     };
 
 protected:
@@ -123,6 +130,11 @@ private:
     std::vector<uint8_t> m_floorMask;  // 1 where the slope floor engaged
     int    m_nBeats = 0;
     int    m_landmarkCol = -1;
+    // Sub-sample column the fiducial was last DRAWN at. Recorded in paintEvent
+    // for the footer readout: quadratic and cubic vertices often differ by well
+    // under one sample, which at this zoom is a sub-pixel shift, so the number
+    // is the only reliable way to see that the mark moved with the radio.
+    double m_lastFidCol = -1.0;
     int    m_half = 30;
     int    m_framingBias = 0;   // -1 right-edge, +1 left-edge, 0 centered
     QString m_label;

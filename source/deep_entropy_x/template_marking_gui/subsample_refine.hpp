@@ -45,7 +45,7 @@ namespace subsample_refine {
     // ---------------------------------------------------------------------
     enum class CurveType { SEED, QUADRATIC, CUBIC, FIVE_POINT };
 
-    struct ExtremumFit {
+    struct peak_fit {
         double     position = -1.0;          // sub-sample extremum, absolute samples
         CurveType  type = CurveType::SEED;
         int        order = 0;                // 2, 3, or 0 (no polynomial)
@@ -53,6 +53,11 @@ namespace subsample_refine {
         double     rss = std::numeric_limits<double>::quiet_NaN();
         int        npts = 0;                 // points the fit used (n, for BIC)
         std::array<double, 4> coeff{ 0,0,0,0 };  // ascending powers of (t-seed)
+        // TRUE when a polynomial WAS solved but the residual guard rejected it.
+        // Only ever set on the applyGuard=false path; with the guard on, a
+        // rejected fit degrades to FIVE_POINT/order 0 as before and this stays
+        // false. Nothing in Auto detection reads it.
+        bool       guardFailed = false;
 
         // Evaluate the fitted polynomial at absolute sample x. NaN if no curve.
         double eval(double x) const {
@@ -150,8 +155,8 @@ namespace subsample_refine {
     // Five-point parabola exposed as a drawable curve: the guaranteed fallback
     // for a peak, so even a broad/flat wave (P) always has a visible parabola.
     // Coeffs ascending in (t - seed): value = c0 + c1*(t-seed) + c2*(t-seed)^2.
-    inline ExtremumFit fivePointParabolaFit(const std::vector<double>& signal, int seed) {
-        ExtremumFit out;
+    inline peak_fit fivePointParabolaFit(const std::vector<double>& signal, int seed) {
+        peak_fit out;
         out.seed = seed;
         out.position = static_cast<double>(seed);
         const int N = static_cast<int>(signal.size());
@@ -207,9 +212,15 @@ namespace subsample_refine {
         return static_cast<double>(seed) + std::clamp(tVertex, -2.0, 2.0);
     }
 
-    inline ExtremumFit symmetricExtremumFit(const std::vector<double>& signal, int seed,
-        double sigma, int halfWidth = kWindowHalfWidth) {
-        ExtremumFit out;
+    // Gaussian-weighted quadratic, y = a t^2 + b t + c; the vertex is the
+    // extremum. applyGuard=false skips ONLY the residual guard, so the fitted
+    // polynomial is returned with guardFailed set instead of being discarded --
+    // that is what lets a FORCED Parabola selection return a parabola. Every
+    // other early return (too few samples, singular solve, no curvature) is
+    // untouched: those are cases where no vertex exists to report.
+    inline peak_fit quadratic_fit(const std::vector<double>& signal, int seed,
+        double sigma, int halfWidth = kWindowHalfWidth, bool applyGuard = true) {
+        peak_fit out;
         out.seed = seed;
         out.position = static_cast<double>(seed);
 
@@ -238,7 +249,13 @@ namespace subsample_refine {
             const double e = ws.y[i] - fitted[i];
             rss += e * e;
         }
-        if (weightedRmsResidualFrac(ws, fitted) > kResidualGuardFrac) {
+        // ---- THE RESIDUAL GUARD ----------------------------------------
+        // Weighted RMS residual above 10% of peak amplitude -> 5-point
+        // unweighted parabola. Skipped when applyGuard is false, in which case
+        // execution falls through and the quadratic below is returned with
+        // guardFailed set.
+        const bool tripped = (weightedRmsResidualFrac(ws, fitted) > kResidualGuardFrac);
+        if (tripped && applyGuard) {
             out.type = CurveType::FIVE_POINT;
             out.position = fivePointParabolaExtremum(signal, seed);
             return out;
@@ -250,6 +267,7 @@ namespace subsample_refine {
         out.rss = rss;
         out.npts = static_cast<int>(ws.t.size());
         out.coeff = { sol[2], sol[1], sol[0], 0.0 };   // c0=c, c1=b, c2=a
+        out.guardFailed = tripped;
         out.position = static_cast<double>(seed)
             + std::clamp(tVertex, (double)-halfWidth, (double)halfWidth);
         return out;
@@ -258,13 +276,20 @@ namespace subsample_refine {
     // ---------------------------------------------------------------------
     // Symmetric extrema: Gaussian-weighted quadratic, vertex = extremum.
     // ---------------------------------------------------------------------
+    // NAME KEPT DELIBERATELY. Renaming this to quadratic_fit collides with the
+    // fit above -- the 4th/5th parameters have defaults, so a 3-argument call
+    // matches both overloads and is ambiguous, which is a hard compile error at
+    // the wrapper itself and at all four feature_marks.cpp call sites. It also
+    // pairs with asymmetricExtremum below.
     inline double symmetricExtremum(const std::vector<double>& signal, int seed, double sigma) {
-        return symmetricExtremumFit(signal, seed, sigma).position;
+        return quadratic_fit(signal, seed, sigma).position;
     }
 
-    inline ExtremumFit asymmetricExtremumFit(const std::vector<double>& signal, int seed,
-        double sigma, int halfWidth = kWindowHalfWidth) {
-        ExtremumFit out;
+    // Gaussian-weighted cubic, y = a t^3 + b t^2 + c t + d; dy/dt = 0 solved
+    // analytically, root nearest the seed. applyGuard: see quadratic_fit.
+    inline peak_fit cubic_fit(const std::vector<double>& signal, int seed,
+        double sigma, int halfWidth = kWindowHalfWidth, bool applyGuard = true) {
+        peak_fit out;
         out.seed = seed;
         out.position = static_cast<double>(seed);
 
@@ -303,7 +328,9 @@ namespace subsample_refine {
             const double e = ws.y[i] - fitted[i];
             rss += e * e;
         }
-        if (weightedRmsResidualFrac(ws, fitted) > kResidualGuardFrac) return fivePoint();
+        // ---- THE RESIDUAL GUARD (see quadratic_fit) --------------------
+        const bool tripped = (weightedRmsResidualFrac(ws, fitted) > kResidualGuardFrac);
+        if (tripped && applyGuard) return fivePoint();
 
         // dy/dt = 3a t^2 + 2b t + c = 0
         const double a = sol[0], b = sol[1], c = sol[2];
@@ -330,6 +357,7 @@ namespace subsample_refine {
         out.rss = rss;
         out.npts = static_cast<int>(ws.t.size());
         out.coeff = { sol[3], sol[2], sol[1], sol[0] };   // c0=d, c1=c, c2=b, c3=a
+        out.guardFailed = tripped;
         out.position = static_cast<double>(seed)
             + std::clamp(tBest, (double)-halfWidth, (double)halfWidth);
         return out;
@@ -341,7 +369,7 @@ namespace subsample_refine {
     // window closest to t=0 (the seed).
     // ---------------------------------------------------------------------
     inline double asymmetricExtremum(const std::vector<double>& signal, int seed, double sigma) {
-        return asymmetricExtremumFit(signal, seed, sigma).position;
+        return cubic_fit(signal, seed, sigma).position;
     }
 
     // ---------------------------------------------------------------------
@@ -353,17 +381,31 @@ namespace subsample_refine {
     // (a genuinely skewed peak). Ties and degenerate cubics fall to the
     // quadratic.
     // ---------------------------------------------------------------------
-    inline ExtremumFit bestPeakExtremumFit(const std::vector<double>& signal, int seed,
+    inline peak_fit bestPeakExtremumFit(const std::vector<double>& signal, int seed,
         double sigma, int halfWidth = kWindowHalfWidth,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto) {
-        const ExtremumFit q = symmetricExtremumFit(signal, seed, sigma, halfWidth);
-        const ExtremumFit c = asymmetricExtremumFit(signal, seed, sigma, halfWidth);
-        // FORCED by the Fit-Peaks radio: return that model (fall back only if it
-        // degenerated). Parabola = quadratic (symmetric), Cubic = asymmetric,
-        // FivePoint = the 5-point fallback parabola.
+        // GUARDED, for Auto only. These two are unchanged from before, so the
+        // Auto branch at the bottom behaves exactly as it always has.
+        const peak_fit q = quadratic_fit(signal, seed, sigma, halfWidth);
+        const peak_fit c = cubic_fit(signal, seed, sigma, halfWidth);
+
+        // FORCED by the Fit-Peaks radio: that model, guard or no guard, via a
+        // re-fit with applyGuard=false.
+        //
+        // This is why forced mode did nothing before. q and c above are the
+        // GUARDED fits: when the residual guard fires, they come back as
+        // FIVE_POINT with order 0 and no coefficients -- they ARE the fallback,
+        // not a quadratic that failed a test. So "(q.order >= 2) ? q : c" could
+        // only ever return the five-point, whichever branch it took. The guard
+        // is a model-SELECTION decision and belongs to Auto; an operator
+        // overriding the selection must not be overridden by it in turn.
         if (peakMode == curve_fit::PeakFitMode::FivePoint) return fivePointParabolaFit(signal, seed);
-        if (peakMode == curve_fit::PeakFitMode::Parabola) return (q.order >= 2) ? q : c;
-        if (peakMode == curve_fit::PeakFitMode::Cubic)    return (c.order >= 2) ? c : q;
+        if (peakMode == curve_fit::PeakFitMode::Parabola)
+            return quadratic_fit(signal, seed, sigma, halfWidth, false);
+        if (peakMode == curve_fit::PeakFitMode::Cubic)
+            return cubic_fit(signal, seed, sigma, halfWidth, false);
+
+        // ---- AUTO: unchanged. The guard already applied inside q and c. ----
         const bool qOk = q.order >= 2, cOk = c.order >= 2;
         if (!cOk) return q;               // cubic degenerate: quadratic (or its fallback)
         if (!qOk) return c;
@@ -378,7 +420,7 @@ namespace subsample_refine {
         const double bicC = bic(c.rss, c.npts, 4);
         return (bicC < bicQ) ? c : q;     // strict: quadratic wins ties
     }
-    inline double bestPeakExtremum(const std::vector<double>& signal, int seed, double sigma,
+    inline double best_peakfinding_algorithm(const std::vector<double>& signal, int seed, double sigma,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto) {
         return bestPeakExtremumFit(signal, seed, sigma, kWindowHalfWidth, peakMode).position;
     }

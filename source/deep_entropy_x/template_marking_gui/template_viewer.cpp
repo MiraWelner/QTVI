@@ -141,6 +141,9 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
                 [this, applyFitMode, mode](bool on) {
                     if (!on) return; m_onOffsetFitMode = mode; applyFitMode();
                 });
+        else   // SAY SO. findChild returning null here is a radio that silently
+               // does nothing when clicked, with no diagnostic anywhere.
+            fprintf(stderr, "[fit-onoffset] NOT WIRED: %s\n", name);
         };
     wireOnOffset("auto_fit_onoffset", curve_fit::FitMode::Auto);
     wireOnOffset("linear_fit_onoffset", curve_fit::FitMode::Linear);
@@ -149,12 +152,17 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
     wireOnOffset("sigmoid_fit_onoffset", curve_fit::FitMode::Sigmoid);
     wireOnOffset("fracpoly_fit_onoffset", curve_fit::FitMode::FracPoly);
 
+    // The initial selection is set in the .ui (fit_peaks_auto is checked), so it
+    // happens inside setupUi -- before these connects -- and therefore does not
+    // fire applyFitMode during construction, when no page or panel exists yet.
     auto wirePeak = [this, applyFitMode](const char* name, curve_fit::PeakFitMode mode) {
         if (auto* rb = findChild<QRadioButton*>(name))
             connect(rb, &QRadioButton::toggled, this,
                 [this, applyFitMode, mode](bool on) {
                     if (!on) return; m_peakFitMode = mode; applyFitMode();
                 });
+        else
+            fprintf(stderr, "[fit-peaks] NOT WIRED: %s\n", name);
         };
     wirePeak("fit_peaks_auto", curve_fit::PeakFitMode::Auto);
     wirePeak("fit_peaks_cubic", curve_fit::PeakFitMode::Cubic);
@@ -1898,7 +1906,7 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
             // per-marker sigma -- so the CSV reports what Save placed.
             auto peak = [&](const char* name, double pos, double sigma) {
                 if (pos < 0.0 || pos > N - 1) { emitRow(name, "NONE", -1.0, NaNv, {}); return; }
-                const subsample_refine::ExtremumFit fit =
+                const subsample_refine::peak_fit fit =
                     subsample_refine::bestPeakExtremumFit(ecg,
                         static_cast<int>(std::lround(pos)), sigma,
                         subsample_refine::kWindowHalfWidth, m_peakFitMode);
@@ -4351,8 +4359,7 @@ void TemplateViewerWindow::save_bin_and_csv() {
         auto buildPart = [&](const QString& label, const QString& suffix,
             AnchorType anchor, MarkingsCsvSection section) -> CsvPart {
                 std::ostringstream gen;
-                writeTemplateMarkingsCsv(gen, m_bins,
-                    m_subjectId.toStdString(), m_sampleRate, anchor, section);
+                writeTemplateMarkingsCsv(gen, m_bins, m_subjectId.toStdString(), m_sampleRate, anchor, section, m_peakFitMode);
                 const std::string tcontent = gen.str();
                 const size_t tnl = tcontent.find('\n');
                 if (tnl == std::string::npos)
