@@ -1,5 +1,5 @@
 ﻿/**
- * @file   anchor_fit.hpp
+ * @file   curve_fit.hpp
  * @brief  Model-selection anchor placement for ECG transition landmarks.
  *
  *         Fits three candidate models (piecewise-linear, sigmoid, fractional
@@ -32,7 +32,7 @@
 #include <numeric>
 #include <vector>
 
-namespace anchor_fit {
+namespace curve_fit {
 
     // =========================================================================
     // Tuning constants
@@ -57,7 +57,14 @@ namespace anchor_fit {
 
     // Which candidate model a FitResult came from. Recorded so downstream
     // consumers (e.g. the boundary training log) can label each fit.
-    enum class FitType { LINEAR, SIGMOID, FRACTIONAL, FLAT };
+    enum class FitType { LINEAR, SIGMOID, FRACTIONAL, CUBIC_SPLINE, FLAT };
+
+    // Forced model selection, driven by the on/offset radio group. Auto = the
+    // BIC contest across all candidates (the previous behaviour); any other
+    // value returns exactly that model so the anchor is placed from it.
+    enum class FitMode { Auto, Linear, CubicSpline, Sigmoid, FracPoly };
+    // Peak radio group (Fit Peaks): Auto = BIC quad-vs-cubic; else forced.
+    enum class PeakFitMode { Auto, Cubic, Parabola, FivePoint };
 
     struct FitResult {
         double rss = std::numeric_limits<double>::infinity();
@@ -230,6 +237,7 @@ namespace anchor_fit {
         FitResult result;
         result.nparams = 4;
         result.type = FitType::SIGMOID;
+        (void)pwInit;   // init is now data-driven; kept in the signature for callers
 
         const int n = hi - lo + 1;
         if (n < 5) { result.rss = std::numeric_limits<double>::infinity(); return result; }
@@ -242,25 +250,36 @@ namespace anchor_fit {
         const int npts = static_cast<int>(idx.size());
         if (npts < 5) { result.rss = std::numeric_limits<double>::infinity(); return result; }
 
-        // Initialize from piecewise-linear.
-        const double yLo = pwInit.f(static_cast<double>(lo));
-        const double yHi = pwInit.f(static_cast<double>(hi));
-        double a = yHi - yLo;
-        double c = yLo;
-        double t0 = 0.0;
-        // Find breakpoint: evaluate pw at each sample, the breakpoint is
-        // where the two segments meet -- approximate as midpoint of the window
-        // scaled by the piecewise-linear shape.
-        {
-            double maxSlope = 0.0;
-            t0 = (lo + hi) / 2.0;
-            for (int i = lo + 1; i < hi; ++i) {
-                const double s = std::abs(pwInit.f(i + 0.5) - pwInit.f(i - 0.5));
-                if (s > maxSlope) { maxSlope = s; t0 = i; }
+        // Data-driven initialization. Seeding the amplitude from the window
+        // ENDPOINTS (pwInit.f(lo/hi)) collapsed to a flat line whenever the
+        // transition sat mid-window, because Gauss-Newton then had ~no gradient.
+        // Instead: baseline/plateau from robust edge means, t0 at the steepest
+        // DATA slope, and k from that actual slope.
+        const int edge = std::max(1, npts / 5);
+        double yFirst = 0.0, yLast = 0.0;
+        for (int i = 0; i < edge; ++i) {
+            yFirst += y[idx[i]];
+            yLast += y[idx[npts - 1 - i]];
+        }
+        yFirst /= edge; yLast /= edge;
+        double a = yLast - yFirst;     // signed transition amplitude
+        double c = yFirst;             // baseline
+        double t0 = (lo + hi) / 2.0;
+        double maxSlope = 0.0;
+        for (size_t j = 1; j < idx.size(); ++j) {
+            const int dx = std::max(1, idx[j] - idx[j - 1]);
+            const double s = (y[idx[j]] - y[idx[j - 1]]) / dx;
+            if (std::abs(s) > std::abs(maxSlope)) {
+                maxSlope = s;
+                t0 = 0.5 * (idx[j] + idx[j - 1]);
             }
         }
-        double k = 4.0 / std::max(1, hi - lo);
-        if (a < 0) k = -k;   // descending sigmoid
+        // sigmoid'(t0) = a*k/4  =>  k = 4*slope/a. Fall back to a gentle slope
+        // (correctly signed) if the amplitude is ~0.
+        double k = (std::abs(a) > 1e-9)
+            ? 4.0 * maxSlope / a
+            : ((maxSlope >= 0 ? 1.0 : -1.0) * 4.0 / std::max(1, hi - lo));
+        if (std::abs(k) < 1e-6) k = 4.0 / std::max(1, hi - lo);
 
         // Gauss-Newton with Levenberg damping.
         double lambda = 1e-3;
@@ -430,7 +449,61 @@ namespace anchor_fit {
     // Model selection (tiered, per spec Section 4.2 Step 2)
     // =========================================================================
 
-    inline FitResult selectAnchorModel(const std::vector<double>& y, int lo, int hi) {
+    // =========================================================================
+    // Model 4: natural cubic spline through 3 EVENLY-SPACED knots
+    // =========================================================================
+    // Knots at the window start / middle / end (x0, x0+h, x0+2h). A natural
+    // cubic spline (second derivative 0 at both ends) through those three knots
+    // is fully determined by the three knot VALUES v0,v1,v2, which are fit by
+    // least squares over the window (cardinal-basis regression: basis j is the
+    // spline that is 1 at knot j and 0 at the others). 3 parameters.
+    inline FitResult fitCubicSpline(const std::vector<double>& y, int lo, int hi) {
+        FitResult r;
+        r.type = FitType::CUBIC_SPLINE;
+        r.nparams = 3;
+        const double x0 = static_cast<double>(lo);
+        const double h = (hi - lo) / 2.0;
+
+        auto flat = [&]() {
+            double mean = 0.0; int cnt = 0;
+            for (int i = lo; i <= hi; ++i) if (!std::isnan(y[i])) { mean += y[i]; ++cnt; }
+            if (cnt > 0) mean /= cnt;
+            r.type = FitType::FLAT; r.nparams = 1; r.rss = 0.0; r.params = { mean };
+            r.f = [=](double) { return mean; };
+            return r;
+            };
+        if (h <= 0.0) return flat();
+
+        // Natural cubic spline value at x for knot values (v0,v1,v2). With the
+        // natural end conditions M0 = M2 = 0, the only interior second
+        // derivative is M1 = (3/2h^2)(v0 - 2v1 + v2).
+        auto spline3 = [x0, h](double x, double v0, double v1, double v2) -> double {
+            const double x1 = x0 + h, x2 = x0 + 2.0 * h;
+            const double M1 = (3.0 / (2.0 * h * h)) * (v0 - 2.0 * v1 + v2);
+            if (x <= x1) {
+                const double A = x1 - x, B = x - x0;
+                return M1 * B * B * B / (6.0 * h) + (v0 / h) * A + (v1 / h - M1 * h / 6.0) * B;
+            }
+            const double A = x2 - x, B = x - x1;
+            return M1 * A * A * A / (6.0 * h) + (v1 / h - M1 * h / 6.0) * A + (v2 / h) * B;
+            };
+        auto basis = [spline3](double t, int j) -> double {
+            return spline3(t, j == 0 ? 1.0 : 0.0, j == 1 ? 1.0 : 0.0, j == 2 ? 1.0 : 0.0);
+            };
+
+        std::vector<double> c; double rss = 0.0;
+        if (!detail::linear_ls(y, lo, hi, 3, basis, c, rss) || c.size() < 3)
+            return flat();
+
+        r.rss = rss;
+        r.params = { c[0], c[1], c[2] };   // the three knot values
+        const double v0 = c[0], v1 = c[1], v2 = c[2];
+        r.f = [spline3, v0, v1, v2](double t) { return spline3(t, v0, v1, v2); };
+        return r;
+    }
+
+    inline FitResult selectAnchorModel(const std::vector<double>& y, int lo, int hi,
+        FitMode mode = FitMode::Auto) {
         const int n = hi - lo + 1;
         if (n < 5) {
             // Too few samples for any meaningful fit; return a flat line.
@@ -447,23 +520,40 @@ namespace anchor_fit {
             return fallback;
         }
 
-        // Always fit both simple models.
-        FitResult pw = fitPiecewiseLinear(y, lo, hi);
-        FitResult sig = fitSigmoid(y, lo, hi, pw);
-
-        const double bic_pw = bic(pw.rss, n, pw.nparams);
-        const double bic_sig = bic(sig.rss, n, sig.nparams);
-        FitResult best = (bic_pw <= bic_sig) ? pw : sig;
-
-        // Escalate to fractional polynomial only if the winner fits poorly.
-        // Per spec: POOR = 0.05 * n (tune from clean-template residuals).
-        const double POOR = POOR_FIT_FACTOR * n;
-        if (best.rss > POOR) {
-            FitResult fp = fitFractionalPolynomial(y, lo, hi, POOR);
-            if (bic(fp.rss, n, fp.nparams) < bic(best.rss, n, best.nparams))
-                best = fp;
+        // FORCED model: the operator picked one on the radio; return it directly
+        // so the anchor is placed from that model (no BIC contest).
+        switch (mode) {
+        case FitMode::Linear:      return fitPiecewiseLinear(y, lo, hi);
+        case FitMode::Sigmoid:     return fitSigmoid(y, lo, hi, fitPiecewiseLinear(y, lo, hi));
+        case FitMode::FracPoly:    return fitFractionalPolynomial(y, lo, hi);   // full fit when forced
+        case FitMode::CubicSpline: return fitCubicSpline(y, lo, hi);
+        case FitMode::Auto:
+        default:                   break;
         }
 
+        // AUTO: the cheap models (piecewise, sigmoid, cubic spline) are always
+        // fit and compared by BIC. The FRACTIONAL polynomial is expensive (a
+        // power-pair search) and this runs on every glyph snapshot of every
+        // panel on every alignment switch -- fitting it unconditionally made
+        // alignment crawl. So it is only escalated to when the cheap winner
+        // fits POORLY (the original gate). The focus panel still fits and draws
+        // all four candidates (that path passes candOut and runs only on click).
+        FitResult pw = fitPiecewiseLinear(y, lo, hi);
+        FitResult sig = fitSigmoid(y, lo, hi, pw);
+        FitResult sp = fitCubicSpline(y, lo, hi);
+
+        FitResult best = pw; double bestBic = bic(pw.rss, n, pw.nparams);
+        auto consider = [&](const FitResult& r) {
+            const double b = bic(r.rss, n, r.nparams);
+            if (b < bestBic) { best = r; bestBic = b; }
+            };
+        consider(sig);
+        consider(sp);
+
+        if (best.rss > POOR_FIT_FACTOR * n) {
+            FitResult fp = fitFractionalPolynomial(y, lo, hi, POOR_FIT_FACTOR * n);
+            consider(fp);
+        }
         return best;
     }
 

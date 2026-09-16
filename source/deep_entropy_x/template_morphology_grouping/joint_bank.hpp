@@ -59,6 +59,7 @@ namespace jbank {
         const std::vector<std::vector<double>>* beats = nullptr;  // aligned, shared axis
         int width = 0;
         int anchor_col = -1;   // r_col for ECG, systolic peak column for PPG
+        int corr_halfwin = -1; // +-samples (0.5 s) the split correlation uses; <=0 = full
 
         // local_of_slice[slice] = row in *beats, or -1 if this channel dropped
         // that slice. Sized to the slice count, NOT to beats->size().
@@ -126,13 +127,15 @@ namespace jbank {
     template <typename IndexVec>
     inline void setChannel(ChannelSet& set, int channel,
         const std::vector<std::vector<double>>& beats,
-        const IndexVec& forward, uint32_t n_slices, int anchor_col)
+        const IndexVec& forward, uint32_t n_slices, int anchor_col,
+        int corr_halfwin = -1)
     {
         if (channel < 0 || channel >= num_channels) return;
         ChannelBeats& cb = set[channel];
         cb.beats = &beats;
         cb.width = beats.empty() ? 0 : static_cast<int>(beats.front().size());
         cb.anchor_col = anchor_col;
+        cb.corr_halfwin = corr_halfwin;
         cb.local_of_slice = localOfSlice(forward, n_slices);
     }
 
@@ -321,6 +324,7 @@ namespace jbank {
             if (k >= 0) t.members.push_back(static_cast<uint32_t>(k));
         }
         t.r_col = cb.anchor_col;
+        t.corr_halfwin = cb.corr_halfwin;   // rides with the anchor into bandMatch
         tbank::recomputeTemplate(t, *cb.beats, cb.width, floor_corridor);
     }
 
@@ -1574,6 +1578,13 @@ namespace jbank {
         int32_t  max_templates_per_bin = 0;   // 0 => kDefaultMaxTemplatesPerBin
         uint64_t bin_index = 0;
 
+        // Morphology-split correlation half-window in SAMPLES: the split scores
+        // only +-this many samples around each channel's anchor (0.5 s at the
+        // channel rate -- ecg for the leads, ppg for the pulse). <= 0 = full
+        // width. The caller computes these from the sample rates it holds.
+        int ecg_corr_halfwin = -1;
+        int ppg_corr_halfwin = -1;
+
         // ---- PER-SLICE INPUTS FOR THE POST-PARTITION STAGE ---------------
         //
         // rr_after_ms[s] = R[s+1] - R[s] in milliseconds, one entry per slice.
@@ -1637,11 +1648,11 @@ namespace jbank {
         for (int c = 0; c < kNumEcgCh; ++c) {
             if (!in.ecg_beats[c] || !in.ecg_forward[c]) continue;
             setChannel(chans, c, *in.ecg_beats[c], *in.ecg_forward[c],
-                in.n_slices, in.ecg_r_col[c]);
+                in.n_slices, in.ecg_r_col[c], in.ecg_corr_halfwin);
         }
         if (in.ppg_beats && in.ppg_forward)
             setChannel(chans, kPpg, *in.ppg_beats, *in.ppg_forward,
-                in.n_slices, in.ppg_peak_col);
+                in.n_slices, in.ppg_peak_col, in.ppg_corr_halfwin);
 
         std::array<std::vector<double>, num_channels> phase1;
         for (int c = 0; c < kNumEcgCh; ++c) phase1[c] = in.ecg_phase1[c];

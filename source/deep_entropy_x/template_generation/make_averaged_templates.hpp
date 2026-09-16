@@ -347,6 +347,13 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 ji.n_slices = static_cast<uint32_t>(nR - 1);
                 ji.bin_index = static_cast<uint64_t>(i);
 
+                // Morphology split looks at +-0.5 s around each anchor only:
+                // the R peak (ECG rate) and the systolic peak (PPG rate).
+                if (rates.ecg > 0.0)
+                    ji.ecg_corr_halfwin = static_cast<int>(0.5 * rates.ecg + 0.5);
+                if (rates.ppg > 0.0)
+                    ji.ppg_corr_halfwin = static_cast<int>(0.5 * rates.ppg + 0.5);
+
                 const EcgChannelResult* ec[3] =
                 { &ecg_res.ch1, &ecg_res.ch2, &ecg_res.ch3 };
                 for (int c = 0; c < 3; ++c) {
@@ -618,7 +625,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         // which the viewer already interprets as "no PPG for this bin".
     }
 
-	//write templates.csv, beats.bin, templates.bin, and bins.csv.
+    //write templates.csv, beats.bin, templates.bin, and bins.csv.
     for (size_t i = 0; i < n; ++i) {
         for (int c = 0; c < 4; ++c) {
             const auto bit = result[i].bank_by_channel.find(kChanKeys[c]);
@@ -630,7 +637,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         }
     }
     const std::vector<morphology_csv::ChannelBlock> blocks(mblocks.begin(), mblocks.end());
-    
+
 
     // =====================================================================
     // SECTION 4.6 NSVT: RECORD-LEVEL, ACROSS BIN BOUNDARIES

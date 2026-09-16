@@ -95,6 +95,13 @@
        </widget>
       </item>
       <item>
+       <widget class="QPushButton" name="reset_marks">
+        <property name="text">
+         <string>Reset Marks</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QLabel" name="instructionsLabel">
         <property name="text">
          <string>Single Right Click: Marks bad R peak</string>
@@ -281,57 +288,180 @@
        </widget>
       </item>
       <item>
-       <widget class="QRadioButton" name="automatic_align_button">
-        <property name="text">
-         <string>Automatically Align</string>
-        </property>
-        <property name="checked">
-         <bool>true</bool>
-        </property>
-        <attribute name="buttonGroup">
-         <string notr="true">buttonGroup_2</string>
-        </attribute>
-       </widget>
+       <layout class="QGridLayout" name="align_button_grid">
+        <item row="2" column="0">
+         <widget class="QRadioButton" name="p_align_button">
+          <property name="text">
+           <string>P Peak</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_2</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="QRadioButton" name="r_align_button">
+          <property name="text">
+           <string>R Peak</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_2</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QRadioButton" name="q_align_button">
+          <property name="text">
+           <string>Q Peak</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_2</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="0" column="0">
+         <widget class="QLabel" name="label_4">
+          <property name="text">
+           <string>Align Template by:</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="QRadioButton" name="automatic_align_button">
+          <property name="text">
+           <string>Auto</string>
+          </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_2</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QRadioButton" name="j_point_align_button">
+          <property name="text">
+           <string>J Point</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_2</string>
+          </attribute>
+         </widget>
+        </item>
+       </layout>
       </item>
       <item>
-       <widget class="QRadioButton" name="p_align_button">
-        <property name="text">
-         <string>P Peak Align</string>
-        </property>
-        <attribute name="buttonGroup">
-         <string notr="true">buttonGroup_2</string>
-        </attribute>
-       </widget>
+       <layout class="QGridLayout" name="onoffset_fit_button_grid">
+        <item row="1" column="0">
+         <widget class="QRadioButton" name="linear_fit_onoffset">
+          <property name="text">
+           <string>Linear</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_4</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="0" column="0">
+         <widget class="QLabel" name="onoffset_label">
+          <property name="text">
+           <string>Fit on/offset</string>
+          </property>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="QRadioButton" name="auto_fit_onoffset">
+          <property name="text">
+           <string>Auto</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_4</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="1" column="1">
+         <widget class="QRadioButton" name="cubic_spline_fit_onoffset">
+          <property name="text">
+           <string>Cubic Spline</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_4</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="2" column="1">
+         <widget class="QRadioButton" name="sigmoid_fit_onoffset">
+          <property name="text">
+           <string>Sigmoid</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_4</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="2" column="0">
+         <widget class="QRadioButton" name="fracpoly_fit_onoffset">
+          <property name="text">
+           <string>Frac Poly</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_4</string>
+          </attribute>
+         </widget>
+        </item>
+       </layout>
       </item>
       <item>
-       <widget class="QRadioButton" name="q_align_button">
-        <property name="text">
-         <string>Q Peak Align</string>
-        </property>
-        <attribute name="buttonGroup">
-         <string notr="true">buttonGroup_2</string>
-        </attribute>
-       </widget>
-      </item>
-      <item>
-       <widget class="QRadioButton" name="r_align_button">
-        <property name="text">
-         <string>R Peak Align</string>
-        </property>
-        <attribute name="buttonGroup">
-         <string notr="true">buttonGroup_2</string>
-        </attribute>
-       </widget>
-      </item>
-      <item>
-       <widget class="QRadioButton" name="j_point_align_button">
-        <property name="text">
-         <string>J Point Align</string>
-        </property>
-        <attribute name="buttonGroup">
-         <string notr="true">buttonGroup_2</string>
-        </attribute>
-       </widget>
+       <layout class="QGridLayout" name="gridLayout_3">
+        <item row="1" column="1">
+         <widget class="QRadioButton" name="fit_peaks_parabola">
+          <property name="text">
+           <string>Parabola</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_5</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="0" column="0">
+         <widget class="QLabel" name="label_3">
+          <property name="text">
+           <string>Fit Peaks</string>
+          </property>
+         </widget>
+        </item>
+        <item row="1" column="0">
+         <widget class="QRadioButton" name="fit_peaks_cubic">
+          <property name="text">
+           <string>Cubic</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_5</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="QRadioButton" name="fit_peaks_auto">
+          <property name="text">
+           <string>Auto</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_5</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="2" column="0">
+         <widget class="QRadioButton" name="fit_peaks_5pt">
+          <property name="text">
+           <string>5 Pt (Fallback)</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">buttonGroup_5</string>
+          </attribute>
+         </widget>
+        </item>
+       </layout>
       </item>
       <item>
        <spacer name="verticalSpacer">
@@ -459,7 +589,9 @@
   <slot>onNextPage()</slot>
  </slots>
  <buttongroups>
-  <buttongroup name="buttonGroup"/>
   <buttongroup name="buttonGroup_2"/>
+  <buttongroup name="buttonGroup_4"/>
+  <buttongroup name="buttonGroup"/>
+  <buttongroup name="buttonGroup_5"/>
  </buttongroups>
 </ui>

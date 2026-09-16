@@ -27,7 +27,7 @@
 #include "ui_template_viewer.h"
 #include "feature_marks.hpp"
 #include "template_anchoring\anchor_view.hpp"
-#include "template_anchoring\anchor_fit.hpp"
+#include "template_anchoring\curve_fit.hpp"
 #include "alignment.hpp"
 #include "global_intervals.hpp" 
 #include "global_interval_lines.hpp"
@@ -107,6 +107,52 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
             m_showEcgRMarkers = on; applyMarkerVisibility();
             });
         m_showEcgRMarkers = rBox->isChecked();
+    }
+
+    // Fit-model radios. Picking a model forces it (Auto = the BIC contest);
+    // the focus fit follows immediately by re-running the current focus, and
+    // the invalidated cache makes the next landmark use it too.
+    auto applyFitMode = [this]() {
+        // Switching the model: (1) the DETECTED X-mark glyphs move to the
+        // selected model's crossing -- push the modes to every plot, which
+        // invalidates its glyph snapshot and repaints in place (no page
+        // rebuild, no shift, dragged BARS untouched); (2) the focus panel
+        // recolors the winner and moves its dotted line to that crossing.
+        m_lastTransKey = -1;
+        for (auto& row : m_binPlots)
+            for (auto* pw : row)
+                if (pw) pw->setFitModes(m_onOffsetFitMode, m_peakFitMode);
+        if (m_focusMarker >= 0)
+            refreshFocus(m_focusBin, m_focusLead, m_focusSlot, m_focusMarker, m_focusCol);
+        };
+    auto wireOnOffset = [this, applyFitMode](const char* name, curve_fit::FitMode mode) {
+        if (auto* rb = findChild<QRadioButton*>(name))
+            connect(rb, &QRadioButton::toggled, this,
+                [this, applyFitMode, mode](bool on) {
+                    if (!on) return; m_onOffsetFitMode = mode; applyFitMode();
+                });
+        };
+    wireOnOffset("auto_fit_onoffset", curve_fit::FitMode::Auto);
+    wireOnOffset("linear_fit_onoffset", curve_fit::FitMode::Linear);
+    wireOnOffset("cubic_spline_fit_onoffset", curve_fit::FitMode::CubicSpline);
+    wireOnOffset("sigmoid_fit_onoffset", curve_fit::FitMode::Sigmoid);
+    wireOnOffset("fracpoly_fit_onoffset", curve_fit::FitMode::FracPoly);
+
+    auto wirePeak = [this, applyFitMode](const char* name, curve_fit::PeakFitMode mode) {
+        if (auto* rb = findChild<QRadioButton*>(name))
+            connect(rb, &QRadioButton::toggled, this,
+                [this, applyFitMode, mode](bool on) {
+                    if (!on) return; m_peakFitMode = mode; applyFitMode();
+                });
+        };
+    wirePeak("fit_peaks_auto", curve_fit::PeakFitMode::Auto);
+    wirePeak("fit_peaks_cubic", curve_fit::PeakFitMode::Cubic);
+    wirePeak("fit_peaks_parabola", curve_fit::PeakFitMode::Parabola);
+    wirePeak("fit_peaks_5pt", curve_fit::PeakFitMode::FivePoint);
+
+    if (auto* resetBtn = findChild<QPushButton*>("reset_marks"))
+    {
+        connect(resetBtn, &QPushButton::clicked, this, &TemplateViewerWindow::resetMarks);
     }
     connect(ui->show_ppg_markers, &QCheckBox::toggled, this, [this](bool on) {
         m_showPpgMarkers = on; applyMarkerVisibility();
@@ -492,7 +538,7 @@ bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
 }
 
 std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) const {
-	/* Only category 1 (good PQRST, not ECTOPIC or NOISE) tempaltes are displayed here. This function returns the indices of
+    /* Only category 1 (good PQRST, not ECTOPIC or NOISE) tempaltes are displayed here. This function returns the indices of
     the templates that are eligible for marking, based on the criteria defined in the function.*/
     auto shown = [](const TemplateBin& bb, int t) {
         {
@@ -547,7 +593,7 @@ void TemplateViewerWindow::onNextPage() {
     if (m_currentPage < m_totalPages - 1) {
         captureCurrentPage();   // snapshot the page we are leaving
         ++m_currentPage;
-        showPage();
+        pageIn();
     }
 }
 
@@ -555,8 +601,18 @@ void TemplateViewerWindow::onPrevPage() {
     if (m_currentPage > 0) {
         captureCurrentPage();   // snapshot the page we are leaving
         --m_currentPage;
-        showPage();
+        pageIn();
     }
+}
+
+// Show the current page; if a forced fit mode is active, re-seed this page's
+// bins with it first (reseedFitModes ends with showPage). A no-op re-seed for
+// Auto would just repeat load-time detection, so skip straight to showPage.
+void TemplateViewerWindow::pageIn() {
+    const bool forced = (m_onOffsetFitMode != curve_fit::FitMode::Auto)
+        || (m_peakFitMode != curve_fit::PeakFitMode::Auto);
+    if (forced) reseedFitModes();   // re-seeds the (now current) page, then showPage
+    else        showPage();
 }
 
 // ========================================================================
@@ -1468,6 +1524,12 @@ void TemplateViewerWindow::showPage() {
             connect(pw, &BinPlotWidget::markerMovedOnTemplate, this, &TemplateViewerWindow::onMarkerMovedOnTemplate);
             connect(pw, &BinPlotWidget::markerDragStarted, this, &TemplateViewerWindow::onMarkerDragStarted);
             connect(pw, &BinPlotWidget::landmarkSelected, this, &TemplateViewerWindow::user_clicked_on_bar);
+            // Glyph click: focus only -- refresh the panel, do NOT record a
+            // touch or re-align (the glyph is the detector's answer, not a bar).
+            connect(pw, &BinPlotWidget::landmarkFocusOnly, this,
+                [this](int binIdx, int leadIdx, int templateIdx, int marker, double col) {
+                    refreshFocus(binIdx, leadIdx, templateIdx, marker, col);
+                });
             // R-aligned overlay drag. On drag START, align to R exactly the way
             // clicking the S-end bar does -- the AUTOMATIC anchor (S-end owns R),
             // re-skinned IN PLACE so the drag survives. NOT a forced align:
@@ -1790,11 +1852,11 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
         default:                                      return "SEED";
         }
         };
-    auto transTypeName = [](anchor_fit::FitType t) -> const char* {
+    auto transTypeName = [](curve_fit::FitType t) -> const char* {
         switch (t) {
-        case anchor_fit::FitType::LINEAR:     return "LINEAR";
-        case anchor_fit::FitType::SIGMOID:    return "SIGMOID";
-        case anchor_fit::FitType::FRACTIONAL: return "FRACTIONAL";
+        case curve_fit::FitType::LINEAR:     return "LINEAR";
+        case curve_fit::FitType::SIGMOID:    return "SIGMOID";
+        case curve_fit::FitType::FRACTIONAL: return "FRACTIONAL";
         default:                              return "FLAT";
         }
         };
@@ -1836,7 +1898,7 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
                 const int lo = std::max(0, static_cast<int>(std::lround(pos)) - half);
                 const int hi = std::min(N - 1, static_cast<int>(std::lround(pos)) + half);
                 if (hi - lo < 5) { emitRow(name, "NONE", (double)lo, NaNv, {}); return; }
-                const anchor_fit::FitResult fit = anchor_fit::selectAnchorModel(ecg, lo, hi);
+                const curve_fit::FitResult fit = curve_fit::selectAnchorModel(ecg, lo, hi);
                 emitRow(name, transTypeName(fit.type), (double)lo, fit.rss, fit.params);
                 };
 
@@ -3154,13 +3216,13 @@ static std::vector<double> get_savitzky_golay_derivative_for_every_sample_in_vec
     return s;
 }
 
-void TemplateViewerWindow::user_clicked_on_bar(int binIdx, int leadIdx,  int templateIdx, int marker, double col)
+void TemplateViewerWindow::user_clicked_on_bar(int binIdx, int leadIdx, int templateIdx, int marker, double col)
 {
-	//the user clicked a bar. Record that it was confirmed, align automatically accordingly, and load/refresh the focus panel on the side
+    //the user clicked a bar. Record that it was confirmed, align automatically accordingly, and load/refresh the focus panel on the side
     if (binIdx >= 0 && leadIdx >= 0 && col >= 0)
         m_touchedMarks[touchKey(binIdx, leadIdx, marker)] = col;
     refreshFocus(binIdx, leadIdx, templateIdx, marker, col);
-    if (!m_forceAlign && BinPlotWidget::markerIsEcg(marker)  && anchor_view::isBar(marker))
+    if (!m_forceAlign && BinPlotWidget::markerIsEcg(marker) && anchor_view::isBar(marker))
     {
         const AnchorType a = anchor_view::anchorFor(marker);
         if (a != m_autoGridAnchor) {
@@ -3408,11 +3470,73 @@ void TemplateViewerWindow::wireAlignButtons() {
     if (qApp) qApp->installEventFilter(this);
 }
 
+void TemplateViewerWindow::reseedFitModes() {
+    if (m_bins.empty() || m_pages.empty()) return;
+
+    // ONLY the bins on the CURRENT PAGE. Re-detecting every bin in the record
+    // on each radio click is what froze the UI -- and pointless, since only the
+    // visible page is drawn. Other pages are re-seeded when navigated to (see
+    // onNextPage/onPrevPage), so the chosen mode still applies everywhere.
+    m_currentPage = std::clamp(m_currentPage, 0, (int)m_pages.size() - 1);
+    const int start = m_pages[m_currentPage].first;
+    const int count = m_pages[m_currentPage].second;
+    const int end = std::min((int)m_bins.size(), start + count);
+
+    for (int bi = start; bi < end; ++bi) {
+        TemplateBin& b = m_bins[bi];
+
+        // Clear ONLY the untouched slot-0 transition marks across every anchor,
+        // so seed_all refills them from the new-mode auto detection. A bar the
+        // operator dragged (in m_touchedMarks) is left alone. Peaks live in the
+        // *_auto_ch fields, which seed_all always overwrites, so they follow the
+        // peak mode automatically.
+        for (int lead = 0; lead < 3; ++lead) {
+            const bool keepP = m_touchedMarks.count(touchKey((int)bi, lead, BinPlotWidget::EcgPBegin)) != 0;
+            const bool keepQ = m_touchedMarks.count(touchKey((int)bi, lead, BinPlotWidget::EcgQBegin)) != 0;
+            const bool keepS = m_touchedMarks.count(touchKey((int)bi, lead, BinPlotWidget::EcgSEnd)) != 0;
+            const bool keepT = m_touchedMarks.count(touchKey((int)bi, lead, BinPlotWidget::EcgTEnd)) != 0;
+            for (AnchorType a : anchor_view::kAllAnchors) {
+                tbank::BankMarkerSet& m = b.slotMarks(lead, 0, a);
+                if (!keepP) m.p_begin = -1;
+                if (!keepQ) m.q_onset = -1;
+                if (!keepS) m.s_end = -1;
+                if (!keepT) m.t_end = -1;
+            }
+        }
+
+        // Same per-anchor seeding loop as initAfterBinsLoaded, but with the
+        // operator-selected fit modes.
+        const std::array<ChannelTemplateData, 3> savedR = { b.ch1, b.ch2, b.ch3 };
+        for (AnchorType a : anchor_view::kAllAnchors) {
+            if (a == AnchorType::R_PEAK) {
+                b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
+            }
+            else {
+                auto it = b.anchored.find(static_cast<int>(a));
+                if (it == b.anchored.end()) continue;
+                b.ch1 = it->second[0]; b.ch2 = it->second[1]; b.ch3 = it->second[2];
+            }
+            FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, a,
+                std::numeric_limits<double>::quiet_NaN(), m_onOffsetFitMode, m_peakFitMode);
+            b.auto_by_anchor[static_cast<int>(a)] = b.autoFor(a);
+        }
+        b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
+        FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK,
+            std::numeric_limits<double>::quiet_NaN(), m_onOffsetFitMode, m_peakFitMode);
+    }
+
+    m_lastTransKey = -1;   // focus-candidate cache depends on the mode
+    showPage();            // rebuild the page from the re-placed marks
+}
+
 void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     int templateIdx, int marker, double col)
 {
     if (!zoomed_in_section_top) return;   // panels not created (nothing to do)
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
+    // Remember this focus so a fit-mode radio change can replay it in place.
+    m_focusBin = binIdx; m_focusLead = leadIdx; m_focusSlot = templateIdx;
+    m_focusMarker = marker; m_focusCol = col;
     TemplateBin& b = m_bins[binIdx];
 
     // ---- PPG and ARTERIAL landmarks (B2 focus extended to all channels) --
@@ -3517,7 +3641,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
         if (zoomed_in_section_top)
             zoomed_in_section_top->setFocus(mean, sd, nBeats, col, chLabel + " " + pulseLabel(marker));
-            zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::Transition);
+        zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::Transition);
         return;
     }
 
@@ -3647,6 +3771,8 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         case BinPlotWidget::EcgPPeak:  return QStringLiteral("P peak");
         case BinPlotWidget::EcgQBegin: return QStringLiteral("Q onset");
         case BinPlotWidget::EcgRPeak:  return QStringLiteral("R peak");
+        case BinPlotWidget::EcgQPeak:  return QStringLiteral("Q peak");
+        case BinPlotWidget::EcgTPeak:  return QStringLiteral("T peak");
         case BinPlotWidget::EcgSEnd:   return QStringLiteral("J-point");
         case BinPlotWidget::EcgTEnd:   return QStringLiteral("T end");
         }
@@ -3683,7 +3809,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
 
     if (zoomed_in_section_top) //if the zoomed in top section is activated (it will always be with any focus)                                                                                                                                                   
     {
-        
+
         const std::vector<double> absSlope = get_savitzky_golay_derivative_for_every_sample_in_vector(mean, m_sampleRate);
         // Floor at 5% of the template's OWN max slope: the divide can't blow up
         // in flat regions, and the threshold scales with the waveform instead
@@ -3725,33 +3851,163 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                 std::isfinite(sdMsAtBar)
                 ? QStringLiteral("%1 ms").arg(sdMsAtBar, 0, 'f', 1)
                 : QStringLiteral("--"));
+        // EXACT transition candidates: recompute the detector's fits on the
+        // SAME displayed average. detect_template_landmarks is scale- and
+        // position-invariant (the BIC argmin and the landmark positions do not
+        // move under the eref amplitude scale), so this reproduces the winner
+        // and positions that placed the mark, and the curves overlay `mean`.
+        // Only the transition bars carry candidates; peaks fit locally in the
+        // panel and ignore an invalid set.
+        subsample_refine::TransitionCandidates transCand;
+        {
+            const bool isTrans =
+                marker == BinPlotWidget::EcgPBegin || marker == BinPlotWidget::EcgQBegin
+                || marker == BinPlotWidget::EcgSEnd || marker == BinPlotWidget::EcgTEnd;
+            if (isTrans && !mean.empty()) {
+                // The detector's fit depends on the TEMPLATE, not on where the
+                // operator drags the bar -- so it is identical on every mouse-
+                // move of the same landmark. refreshFocus fires on each drag
+                // move; recomputing detect_template_landmarks every time was
+                // the drag lag. Cache by (bin,slot,lead,marker,anchor) and only
+                // re-detect when the focused landmark actually changes.
+                const long long tkey =
+                    (((((static_cast<long long>(binIdx) * 64 + templateIdx) * 4
+                        + leadIdx) * 32 + marker) * 8)
+                        + static_cast<int>(focusAnchor));
+                if (tkey == m_lastTransKey) {
+                    transCand = m_lastTransCand;
+                }
+                else {
+                    const int rColInMean = std::clamp(
+                        static_cast<int>(std::lround(static_cast<double>(b.r_peak_ch[leadIdx])))
+                        + b.frameShift(leadIdx, AnchorType::R_PEAK, focusAnchor),
+                        0, static_cast<int>(mean.size()) - 1);
+                    const FeatureMarks::TemplateLandmarks lm =
+                        FeatureMarks::detect_template_landmarks(mean, rColInMean, m_sampleRate,
+                            curve_fit::FitMode::Auto, curve_fit::PeakFitMode::Auto);
+                    switch (marker) {
+                    case BinPlotWidget::EcgPBegin: transCand = lm.p_begin_cand; break;
+                    case BinPlotWidget::EcgQBegin: transCand = lm.q_onset_cand; break;
+                    case BinPlotWidget::EcgSEnd:   transCand = lm.s_end_cand;   break;
+                    case BinPlotWidget::EcgTEnd:   transCand = lm.t_end_cand;   break;
+                    default: break;
+                    }
+                    m_lastTransKey = tkey;
+                    m_lastTransCand = transCand;
+                }
+                // The candidates are computed in Auto (a stable window). The
+                // radio only recolors WHICH is green -- override the winner
+                // index here, without re-fitting, so switching the model never
+                // reshapes the curves (that was the "sigmoid goes flat" bug).
+                if (transCand.valid) {
+                    switch (m_onOffsetFitMode) {
+                    case curve_fit::FitMode::Linear:      transCand.winner = 0; break;
+                    case curve_fit::FitMode::Sigmoid:     transCand.winner = 1; break;
+                    case curve_fit::FitMode::FracPoly:    transCand.winner = 2; break;
+                    case curve_fit::FitMode::CubicSpline: transCand.winner = 3; break;
+                    case curve_fit::FitMode::Auto:
+                    default:                              break;   // keep BIC winner
+                    }
+                }
+            }
+        }
+
         if (marker == BinPlotWidget::EcgSEnd) {
             setFocusSplit(true);
             if (zoomed_in_section_top) {
                 zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head + QStringLiteral("  (QRS)"), 100, -1);
                 zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::Transition);
+                zoomed_in_section_top->setTransitionCandidates(transCand);
                 zoomed_in_section_top->setSdMs(sdMs, floorMask, absSlope, floor);
             }
             if (zoomed_in_section_bottom) {
-                zoomed_in_section_bottom->setFocus(mean, sd, nBeats, colHere,  head + QStringLiteral("  (JT)"), 100, +1);
-                zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::Transition);
+                zoomed_in_section_bottom->setFocus(mean, sd, nBeats, colHere, head + QStringLiteral("  (JT)"), 100, +1);
+                zoomed_in_section_bottom->setFitKind(FocusPanelWidget::FitKind::Transition);
+                zoomed_in_section_bottom->setTransitionCandidates(transCand);
                 zoomed_in_section_bottom->setSdMs(sdMs, floorMask, absSlope, floor);
             }
         }
         else {
-            const FocusPanelWidget::FitKind fk =
+            // Peaks (R/P/Q/T) draw their tested candidates; onsets/offsets draw
+            // theirs. peakSigma MUST match the detector's per-landmark sigma so
+            // the drawn quadratic/cubic are the same fits that placed the mark.
+            const bool isPeak =
                 (marker == BinPlotWidget::EcgRPeak
-                    || marker == BinPlotWidget::EcgPPeak)
+                    || marker == BinPlotWidget::EcgPPeak
+                    || marker == BinPlotWidget::EcgQPeak
+                    || marker == BinPlotWidget::EcgTPeak);
+            const FocusPanelWidget::FitKind fk = isPeak
                 ? FocusPanelWidget::FitKind::PeakQuadratic
                 : FocusPanelWidget::FitKind::Transition;
+            double peakSigma = 4.0;
+            switch (marker) {
+            case BinPlotWidget::EcgRPeak: peakSigma = subsample_refine::peak_sigma::R; break;
+            case BinPlotWidget::EcgPPeak: peakSigma = subsample_refine::peak_sigma::P; break;
+            case BinPlotWidget::EcgTPeak: peakSigma = subsample_refine::peak_sigma::T; break;
+            case BinPlotWidget::EcgQPeak: peakSigma = subsample_refine::peak_sigma::Q; break;
+            default: break;
+            }
             setFocusSplit(false);
             if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
             if (zoomed_in_section_top) {
                 zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head, 100, 0);
-                zoomed_in_section_top->setFitKind(fk);
+                zoomed_in_section_top->setFitKind(fk, peakSigma);
+                zoomed_in_section_top->setPeakFitMode(m_peakFitMode);
+                zoomed_in_section_top->setTransitionCandidates(transCand);   // invalid for peaks -> ignored
                 zoomed_in_section_top->setSdMs(sdMs, floorMask, absSlope, floor);
             }
         }
+    }
+}
+
+// reset_marks: restore every ECG bar on the CURRENT PAGE to its auto-detected
+// ("original") position, discarding operator edits. Slot 0 restores from the
+// bin's stored AnchorAuto; bank slots re-run the same seeding load used, so
+// both return to exactly what auto-detection produced. The touched-mark and
+// drag-origin records for those columns are cleared so nothing later re-applies
+// an edit, and the columns repaint.
+void TemplateViewerWindow::resetMarks()
+{
+    for (int li = 0; li < (int)m_pageGlobalIdx.size()
+        && li < (int)m_pageTemplateIdx.size(); ++li) {
+        const int gi = m_pageGlobalIdx[li];
+        const int slot = m_pageTemplateIdx[li];
+        if (gi < 0 || gi >= (int)m_bins.size() || slot < 0) continue;
+        TemplateBin& b = m_bins[gi];
+
+        for (int lead = 0; lead < 3; ++lead) {
+            for (AnchorType a : anchor_view::kAllAnchors) {
+                tbank::BankMarkerSet& m = b.slotMarks(lead, slot, a);
+                if (slot == 0) {
+                    // Slot 0's original = the bin's stored auto detection.
+                    const auto aa = b.autoFor(a);
+                    m.p_begin = aa.p_begin[lead];
+                    m.q_onset = aa.q_onset[lead];
+                    m.s_end = aa.s_end[lead];
+                    m.t_end = aa.t_end[lead];
+                }
+                else {
+                    // Bank slot's original = re-seed from its own template,
+                    // the same detection load ran.
+                    tbank::TemplateBank& bk = b.ecg_bank[lead];
+                    if (slot >= (int)bk.templates.size()) continue;
+                    tbank::BankTemplate& tg = bk.templates[slot];
+                    if (tg.tmpl.empty()) continue;
+                    const int rc = (tg.r_col >= 0)
+                        ? tg.r_col : static_cast<int>(b.r_peak_ch[lead]);
+                    FeatureMarks::seed_bank_template(tg.tmpl, rc, m_sampleRate, a, m);
+                }
+            }
+            // Drop the operator-confirmed positions for the four bars, so a save
+            // does not re-record the edited spot as confirmed ground truth.
+            for (int mk : { BinPlotWidget::EcgPBegin, BinPlotWidget::EcgQBegin,
+                BinPlotWidget::EcgSEnd, BinPlotWidget::EcgTEnd })
+                m_touchedMarks.erase(touchKey(gi, lead, mk));
+        }
+        // Drop this column's drag-origin (same key space moveEcgMarker uses).
+        original_location_of_bar.erase(gi * 64 + slot);
+
+        refreshBankMarkers(gi, slot);
     }
 }
 
@@ -3954,7 +4210,7 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
                 rec.segment.assign(sig.begin() + lo, sig.begin() + hi);
                 rec.confirmedIndex = confirmed;
                 // fit from anchor_fit: fit-and-select on this landmark's window.
-                const anchor_fit::FitResult fit = anchor_fit::selectAnchorModel(sig, lo, hi - 1);
+                const curve_fit::FitResult fit = curve_fit::selectAnchorModel(sig, lo, hi - 1);
                 rec.fitType = fit.type;
                 rec.fitRSS = fit.rss;
                 rec.individualID = m_subjectId.toStdString();
@@ -4110,9 +4366,9 @@ void TemplateViewerWindow::save_bin_and_csv() {
         // step. The slot index is the same key on both sides with nothing to
         // recompute.
         {
-            const QString cPath = csvDir.absolutePath() + "/"  + m_subjectId + "_template_confirmations.csv";
+            const QString cPath = csvDir.absolutePath() + "/" + m_subjectId + "_template_confirmations.csv";
             std::ofstream cf(cPath.toStdString(), std::ios::trunc);
-          
+
             cf << "file_id,bin,channel,template,state,n_members\n";
             static const char* kChan[4] = { "CH1", "CH2", "CH3", "PPG" };
             for (size_t i = 0; i < m_bins.size(); ++i) {

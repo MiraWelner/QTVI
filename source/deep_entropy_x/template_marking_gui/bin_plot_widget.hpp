@@ -34,6 +34,7 @@
 #include <vector>
 #include "template_marking_bin_io.hpp"
 #include "global_interval_lines.hpp"
+#include "template_anchoring\curve_fit.hpp"   // curve_fit::FitMode / PeakFitMode
 
 class QPainter;
 
@@ -243,6 +244,14 @@ public:
     };
     Reactive reactiveGlyphs() const;
 
+    // Fit models for the DETECTED glyphs (the X marks): the transition fiducials
+    // are drawn at the selected model's crossing. Setting them invalidates the
+    // glyph snapshot so the next paint re-detects with the new model.
+    void setFitModes(curve_fit::FitMode onOffset, curve_fit::PeakFitMode peak) {
+        m_onOffsetFitMode = onOffset; m_peakFitMode = peak;
+        m_glyphsValid = false; update();
+    }
+
     // Per-trace marker visibility. When false, that group's markers
     // are neither drawn nor hit-testable (drag-pick ignores them).
     // Both default to true.
@@ -345,6 +354,13 @@ signals:
     // match -- a Qt signal and slot with different parameter types connect at
     // runtime and then silently never fire.
     void landmarkSelected(int binIndex, int leadIndex, int templateIdx,
+        int marker, double col);
+
+    // A GLYPH was clicked (read-only): open the focus panel WITHOUT recording a
+    // touch or re-aligning. Glyphs (peaks and the detected transition fiducials)
+    // are the detector's answer, independent of the draggable bars, so clicking
+    // one must not mark the bar as operator-moved.
+    void landmarkFocusOnly(int binIndex, int leadIndex, int templateIdx,
         int marker, double col);
 
     // TEMPLATE INDEX ADDED to the marker signals. A panel is a (bin, template)
@@ -498,6 +514,8 @@ private:
     // drag nothing re-sets the trace, so captureGlyphSnapshot returns early and
     // the expensive detect does not run per mouse-move.
     bool m_glyphsValid = false;
+    curve_fit::FitMode     m_onOffsetFitMode = curve_fit::FitMode::Auto;
+    curve_fit::PeakFitMode m_peakFitMode = curve_fit::PeakFitMode::Auto;
 
     // R-aligned overlay markers (ecg_r_markers). Read-only; index order is
     // P-onset, Q-onset, S-end, T-end. -1 = absent. Drawn only when shown.

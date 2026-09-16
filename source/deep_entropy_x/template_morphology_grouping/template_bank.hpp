@@ -402,6 +402,12 @@ namespace tbank {
         std::vector<double> tmpl;
         std::vector<double> tmpl_iqr;      // per-sample spread
         int                 r_col = -1;
+        // +-samples around r_col that the morphology-split correlation is
+        // restricted to (0.5 s at the channel rate). <= 0 means unrestricted.
+        // Set by recomputeGroupChannel from the channel's ChannelBeats; not
+        // serialized (a reloaded bank scores full-width, which is the old
+        // behaviour).
+        int                 corr_halfwin = -1;
         uint8_t label_code = kUnlabeled;
         bool confirmed_by_operator = false;
         int32_t subtype = -1; //PVC_2, etc

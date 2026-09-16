@@ -17,7 +17,7 @@
 // (keeps the set trivially splittable); the fixed-length +/-100 ms segment is
 // written as trailing sample columns s0..sN.
 //
-// This component only reuses anchor_fit.hpp (for FitType); it has no other
+// This component only reuses curve_fit.hpp (for FitType); it has no other
 // dependency on the marking/template pipeline, so it can be called from
 // wherever the operator confirmation happens.
 //
@@ -28,7 +28,7 @@
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
-#include "template_anchoring\anchor_fit.hpp"   // anchor_fit::FitType
+#include "template_anchoring\curve_fit.hpp"   // curve_fit::FitType
 
 namespace boundary_training {
 
@@ -48,12 +48,12 @@ namespace boundary_training {
         return "UNKNOWN";
     }
 
-    inline const char* fittype_name(anchor_fit::FitType t) {
+    inline const char* fittype_name(curve_fit::FitType t) {
         switch (t) {
-        case anchor_fit::FitType::LINEAR:     return "LINEAR";
-        case anchor_fit::FitType::SIGMOID:    return "SIGMOID";
-        case anchor_fit::FitType::FRACTIONAL: return "FRACTIONAL";
-        case anchor_fit::FitType::FLAT:       return "FLAT";
+        case curve_fit::FitType::LINEAR:     return "LINEAR";
+        case curve_fit::FitType::SIGMOID:    return "SIGMOID";
+        case curve_fit::FitType::FRACTIONAL: return "FRACTIONAL";
+        case curve_fit::FitType::FLAT:       return "FLAT";
         }
         return "UNKNOWN";
     }
@@ -69,7 +69,7 @@ namespace boundary_training {
     struct BoundaryTrainingRecord {
         std::vector<double> segment; // +/-100 ms (200 samples at 1000 Hz)
         int confirmedIndex; // label
-        anchor_fit::FitType fitType; // which fit-and-select model won (incl. FLAT)
+        curve_fit::FitType fitType; // which fit-and-select model won (incl. FLAT)
         double fitRSS;
         std::string individualID;
         bool bbb; double heartRate, qrsDurationMs; // clinical metadata

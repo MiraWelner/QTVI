@@ -12,12 +12,24 @@
 #include <vector>
 #include <array>
 #include <algorithm>
-#include "template_anchoring\anchor_fit.hpp"
+#include <functional>
+#include "template_anchoring\curve_fit.hpp"
 
 namespace subsample_refine {
 
     inline constexpr int kWindowHalfWidth = 7;     // 15-point window = seed +- 7
     inline constexpr double kResidualGuardFrac = 0.10;   // 10% of peak amplitude
+
+    // ONE source of truth for each peak's Gaussian-weighting sigma, shared by
+    // the DETECTOR (bestPeakExtremum call sites in feature_marks) and the focus
+    // panel's redraw. Duplicating these as literals in both places let the drawn
+    // fit and the placement fit diverge; centralize so they cannot.
+    namespace peak_sigma {
+        inline constexpr double R = 5.0;
+        inline constexpr double P = 12.0;
+        inline constexpr double T = 15.0;
+        inline constexpr double Q = 5.0;   // Q-peak: no dedicated detector site; sensible default
+    }
 
     // ---------------------------------------------------------------------
     // Exposed fit result for the peak finders. The finders previously returned
@@ -135,6 +147,41 @@ namespace subsample_refine {
     }
 
     // 5-point unweighted parabola fallback: fit y = a t^2 + b t + c on the
+    // Five-point parabola exposed as a drawable curve: the guaranteed fallback
+    // for a peak, so even a broad/flat wave (P) always has a visible parabola.
+    // Coeffs ascending in (t - seed): value = c0 + c1*(t-seed) + c2*(t-seed)^2.
+    inline ExtremumFit fivePointParabolaFit(const std::vector<double>& signal, int seed) {
+        ExtremumFit out;
+        out.seed = seed;
+        out.position = static_cast<double>(seed);
+        const int N = static_cast<int>(signal.size());
+        std::vector<double> t, y;
+        for (int d = -2; d <= 2; ++d) {
+            const int idx = seed + d;
+            if (idx < 0 || idx >= N || std::isnan(signal[idx])) continue;
+            t.push_back(static_cast<double>(d)); y.push_back(signal[idx]);
+        }
+        if (t.size() < 3) return out;   // SEED, no curve
+        double S0 = 0, S1 = 0, S2 = 0, S3 = 0, S4 = 0, Y0 = 0, Y1 = 0, Y2 = 0;
+        for (size_t i = 0; i < t.size(); ++i) {
+            const double ti = t[i], ti2 = ti * ti;
+            S0 += 1; S1 += ti; S2 += ti2; S3 += ti2 * ti; S4 += ti2 * ti2;
+            Y0 += y[i]; Y1 += ti * y[i]; Y2 += ti2 * y[i];
+        }
+        std::vector<double> sol;
+        if (!solveLinear({ {S4,S3,S2},{S3,S2,S1},{S2,S1,S0} }, { Y2,Y1,Y0 }, sol))
+            return out;
+        out.type = CurveType::FIVE_POINT;
+        out.order = 2;
+        out.npts = static_cast<int>(t.size());
+        out.coeff = { sol[2], sol[1], sol[0], 0.0 };   // c0=c, c1=b, c2=a
+        if (std::fabs(sol[0]) >= 1e-12) {
+            const double tv = -sol[1] / (2.0 * sol[0]);
+            out.position = static_cast<double>(seed) + std::clamp(tv, -2.0, 2.0);
+        }
+        return out;
+    }
+
     // 5 points nearest the seed (unweighted), return the vertex (extremum)
     // or, for a linear/degenerate fit, the seed itself.
     inline double fivePointParabolaExtremum(const std::vector<double>& signal, int seed) {
@@ -307,9 +354,16 @@ namespace subsample_refine {
     // quadratic.
     // ---------------------------------------------------------------------
     inline ExtremumFit bestPeakExtremumFit(const std::vector<double>& signal, int seed,
-        double sigma, int halfWidth = kWindowHalfWidth) {
+        double sigma, int halfWidth = kWindowHalfWidth,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto) {
         const ExtremumFit q = symmetricExtremumFit(signal, seed, sigma, halfWidth);
         const ExtremumFit c = asymmetricExtremumFit(signal, seed, sigma, halfWidth);
+        // FORCED by the Fit-Peaks radio: return that model (fall back only if it
+        // degenerated). Parabola = quadratic (symmetric), Cubic = asymmetric,
+        // FivePoint = the 5-point fallback parabola.
+        if (peakMode == curve_fit::PeakFitMode::FivePoint) return fivePointParabolaFit(signal, seed);
+        if (peakMode == curve_fit::PeakFitMode::Parabola) return (q.order >= 2) ? q : c;
+        if (peakMode == curve_fit::PeakFitMode::Cubic)    return (c.order >= 2) ? c : q;
         const bool qOk = q.order >= 2, cOk = c.order >= 2;
         if (!cOk) return q;               // cubic degenerate: quadratic (or its fallback)
         if (!qOk) return c;
@@ -324,8 +378,9 @@ namespace subsample_refine {
         const double bicC = bic(c.rss, c.npts, 4);
         return (bicC < bicQ) ? c : q;     // strict: quadratic wins ties
     }
-    inline double bestPeakExtremum(const std::vector<double>& signal, int seed, double sigma) {
-        return bestPeakExtremumFit(signal, seed, sigma).position;
+    inline double bestPeakExtremum(const std::vector<double>& signal, int seed, double sigma,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto) {
+        return bestPeakExtremumFit(signal, seed, sigma, kWindowHalfWidth, peakMode).position;
     }
 
     // ---------------------------------------------------------------------
@@ -344,6 +399,21 @@ namespace subsample_refine {
     }
 
     // ---------------------------------------------------------------------
+    // The three models transitionAnchor tests, exposed for display so the
+    // focus panel can draw the EXACT fits that placed the mark (not a re-fit
+    // over a different window). Each curve is SAMPLE-INDEXED already: the
+    // caller evaluates curve[k](sampleIndex) directly -- the lo offset and the
+    // 4x upsample mapping are baked into the closure. `winner` is the index the
+    // BIC selector chose (0=piecewise, 1=sigmoid, 2=fractional). Populated only
+    // when a caller passes candOut, so the detection hot path pays nothing.
+    struct TransitionCandidates {
+        std::function<double(double)> curve[4];   // 0=piecewise 1=sigmoid 2=fractional 3=cubic-spline
+        double cross[4] = { -1.0, -1.0, -1.0, -1.0 };  // fiducial crossing per model (sample-indexed)
+        int  winner = -1;
+        bool valid = false;
+    };
+
+    // ---------------------------------------------------------------------
     // Transition onsets/offsets: locally upsample a 40-sample window from
     // its native rate to 4x via cubic interpolation, then fit-and-select
     // (Section 4.2 machinery, Phase A) on the upsampled window, returning a
@@ -352,7 +422,9 @@ namespace subsample_refine {
     inline double transitionAnchor(const std::vector<double>& signal, int seed,
         double fraction, int windowSamples = 40,
         double externalBaseline = std::numeric_limits<double>::quiet_NaN(),
-        double boundLo = -1.0, double boundHi = -1.0) {
+        double boundLo = -1.0, double boundHi = -1.0,
+        TransitionCandidates* candOut = nullptr,
+        curve_fit::FitMode mode = curve_fit::FitMode::Auto) {
         const int N = static_cast<int>(signal.size());
         // If the caller supplies explicit bounds (e.g. already correctly
         // one-sided, capped at a known extremum so the window can't cross
@@ -410,9 +482,58 @@ namespace subsample_refine {
         double E = B, bestDist = 0.0;
         for (double v : up) { const double dd = std::fabs(v - B); if (dd > bestDist) { bestDist = dd; E = v; } }
 
-        auto fit = anchor_fit::selectAnchorModel(up, 0, nOut - 1);
-        const double anchorUp = anchor_fit::anchorAtFraction(fit, 0, nOut - 1, B, E, fraction);
+        auto fit = curve_fit::selectAnchorModel(up, 0, nOut - 1, mode);
+        const double anchorUp = curve_fit::anchorAtFraction(fit, 0, nOut - 1, B, E, fraction);
         (void)seedUp;
+
+        // Expose the three tested candidates as sample-indexed closures (only
+        // when asked). Each model's evaluator works on the UPSAMPLED grid, so
+        // the closure maps a sample x to that grid: up = (x - lo) * factor.
+        if (candOut) {
+            const int loc = lo, hic = hi, uf = upsampleFactor;
+            auto mk = [loc, hic, uf](const curve_fit::FitResult& fr)
+                -> std::function<double(double)> {
+                if (!fr.f) return {};
+                auto f = fr.f;
+                return [f, loc, hic, uf](double sample) -> double {
+                    // Only within the window it was fit on -- outside, a
+                    // fractional model decays to its constant term and would
+                    // paint a long flat tail that reads as "frac is flat".
+                    if (sample < static_cast<double>(loc)
+                        || sample > static_cast<double>(hic))
+                        return std::numeric_limits<double>::quiet_NaN();
+                    return f((sample - static_cast<double>(loc)) * static_cast<double>(uf));
+                    };
+                };
+            const auto pw = curve_fit::fitPiecewiseLinear(up, 0, nOut - 1);
+            const auto sg = curve_fit::fitSigmoid(up, 0, nOut - 1, pw);
+            const auto fr = curve_fit::fitFractionalPolynomial(up, 0, nOut - 1);
+            const auto sp = curve_fit::fitCubicSpline(up, 0, nOut - 1);
+            candOut->curve[0] = mk(pw);
+            candOut->curve[1] = mk(sg);
+            candOut->curve[2] = mk(fr);
+            candOut->curve[3] = mk(sp);
+            // Each model's OWN fiducial crossing, mapped back to sample space --
+            // the position that model would place the mark at. The focus dotted
+            // line and (on selection) the mark itself use cross[winner].
+            auto crossOf = [&](const curve_fit::FitResult& fr_) -> double {
+                if (!fr_.f) return -1.0;
+                const double au = curve_fit::anchorAtFraction(fr_, 0, nOut - 1, B, E, fraction);
+                return static_cast<double>(lo) + au / static_cast<double>(upsampleFactor);
+                };
+            candOut->cross[0] = crossOf(pw);
+            candOut->cross[1] = crossOf(sg);
+            candOut->cross[2] = crossOf(fr);
+            candOut->cross[3] = crossOf(sp);
+            switch (fit.type) {
+            case curve_fit::FitType::SIGMOID:      candOut->winner = 1; break;
+            case curve_fit::FitType::FRACTIONAL:   candOut->winner = 2; break;
+            case curve_fit::FitType::CUBIC_SPLINE: candOut->winner = 3; break;
+            default:                                candOut->winner = 0; break;
+            }
+            candOut->valid = true;
+        }
+
         // Back to original-rate coordinate: anchorUp is a position on the
         // 4x grid starting at local[0] == signal[lo].
         return static_cast<double>(lo) + anchorUp / upsampleFactor;

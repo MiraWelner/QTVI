@@ -16,6 +16,7 @@
 #include <vector>
 #include "template_anchoring\anchor_type.hpp"   // AnchorType (re-exported for existing users)
 #include "template_morphology_grouping/template_bank.hpp"
+#include "subsample_refine.hpp"   // subsample_refine::TransitionCandidates
 #include <functional>
 #include <cmath>
 #include <cstdint>
@@ -39,13 +40,23 @@ public:
     static ReactivePpg reactive_ppg(const std::vector<double>& ppg, double onset, double peak, double dicrotic, double end);
 
     static double compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs);
-    static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0);
-    static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0);
-    static double compute_t_peak(const std::vector<double>& ecg, double bracketSEnd, double bracketTEnd);
+    static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0,
+        subsample_refine::TransitionCandidates* candOut = nullptr,
+        curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0,
+        subsample_refine::TransitionCandidates* candOut = nullptr,
+        curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double compute_t_peak(const std::vector<double>& ecg, double bracketSEnd, double bracketTEnd,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs);
-    static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col);
-    static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr);
-    static double compute_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs);
+    static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col,
+        subsample_refine::TransitionCandidates* candOut = nullptr,
+        curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr,
+        subsample_refine::TransitionCandidates* candOut = nullptr,
+        curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double compute_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static int detect_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double pPeakIn = -1.0);
 
 
@@ -58,12 +69,25 @@ public:
         double p_peak = -1.0;
         double p_begin = -1.0;
         bool   valid = false;    // false => waveform or anchor unusable
+
+        // The three tested model curves (sample-indexed) for each transition
+        // landmark, with the BIC winner flagged -- populated by
+        // detect_template_landmarks so the focus panel can draw the exact fits
+        // that placed the mark. Empty/invalid for landmarks not computed.
+        subsample_refine::TransitionCandidates q_onset_cand;
+        subsample_refine::TransitionCandidates s_end_cand;
+        subsample_refine::TransitionCandidates t_end_cand;
+        subsample_refine::TransitionCandidates p_begin_cand;
     };
 
-    static TemplateLandmarks detect_template_landmarks(const std::vector<double>& tmpl, int nominal_r_col, double sampleRate);
+    static TemplateLandmarks detect_template_landmarks(const std::vector<double>& tmpl, int nominal_r_col, double sampleRate,
+        curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
 
     static void seed_bank_template(const std::vector<double>& tmpl, int r_col,
-        double sampleRate, AnchorType anchor, tbank::BankMarkerSet& out);
+        double sampleRate, AnchorType anchor, tbank::BankMarkerSet& out,
+        curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
 
     // the x, o, |, || or ||| markers for to mark the ppg and to be output in the csv
     struct PpgFiducials {
@@ -131,7 +155,7 @@ public:
     static double first_crossing(const std::vector<double>& v, int a, int b, double frac);
 
     static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
-   
+
     static int detect_ppg_upstroke_peak(const std::vector<double>& v, int lo = 0, int hi = -1);
     static int detect_ppg_onset(const std::vector<double>& pulse);
     static double detect_ppg_peak(const std::vector<double>& pulse);
@@ -140,7 +164,9 @@ public:
     static int detect_ppg_end(const std::vector<double>& pulse);
 
     static void seed_all(TemplateBin& bin, double sampleRate, double ppgRate, AnchorType anchor,
-        double heightMeters = NAN);
+        double heightMeters = NAN,
+        curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
 
     static void seed_pulse_bank_template(const std::vector<double>& tmpl,
         double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters = NAN);

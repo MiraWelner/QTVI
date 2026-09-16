@@ -31,6 +31,7 @@
 #include <QString>
 #include <cstdint>
 #include <vector>
+#include "subsample_refine.hpp"   // subsample_refine::TransitionCandidates
 
 class QPainter;
 
@@ -81,13 +82,39 @@ public:
     // onset/offset's anchor_fit transition model. Set per landmark by the owner
     // right after setFocus; defaults to Transition (the onset/offset case).
     enum class FitKind { Transition, PeakQuadratic, PeakCubic };
-    void setFitKind(FitKind k) { m_fitKind = k; update(); }
+    // peakSigma is the SAME weighting the detector used for this landmark (so
+    // the drawn fit and the placement fit can't diverge); ignored for
+    // transitions. Set per landmark by the owner right after setFocus.
+    void setFitKind(FitKind k, double peakSigma = 4.0) {
+        m_fitKind = k; m_peakSigma = peakSigma; update();
+    }
+    // Forced peak model (Fit-Peaks radio); Auto = BIC quad-vs-cubic.
+    void setPeakFitMode(curve_fit::PeakFitMode m) { m_panelPeakMode = m; update(); }
+
+    // Supply the EXACT candidate curves the detector fit for this transition
+    // landmark (sample-indexed closures + winner), so the panel draws the fits
+    // that placed the mark rather than a re-fit over the visible window. Cleared
+    // by clearFocus; ignored for peaks.
+    void setTransitionCandidates(const subsample_refine::TransitionCandidates& c) {
+        m_transCands = c; update();
+    }
+
+    // One tested model curve, plus whether the selector chose it. Drawn green
+    // when selected, red otherwise.
+    struct Candidate {
+        std::vector<double> curve;   // per-column, NaN outside the fit
+        bool selected = false;
+        QString label;               // model name (shown for the winner)
+    };
 
 protected:
     void paintEvent(QPaintEvent*) override;
 
 private:
     FitKind m_fitKind = FitKind::Transition;
+    double  m_peakSigma = 4.0;
+    curve_fit::PeakFitMode m_panelPeakMode = curve_fit::PeakFitMode::Auto;
+    subsample_refine::TransitionCandidates m_transCands;   // supplied exact transition fits
     std::vector<double> m_mean;
     std::vector<double> m_sd;
     std::vector<double>  m_sdMs;       // per-column SD in msec
@@ -101,13 +128,15 @@ private:
     QString m_label;
     bool   m_active = false;
 
-    // Build the fitted curve over [lo, hi] using anchor_fit; returns a
-    // per-column vector (NaN outside the fit window). Defined in the .cpp.
-    std::vector<double> fittedCurve(int lo, int hi) const;
-
     // Peak candidate curve over [lo, hi]: a weighted quadratic (cubic=false) or
-    // cubic (cubic=true), fit over the VISIBLE window so it spans the peak and
-    // shows real curvature. NaN if the fit degenerated. Both are drawn for a
-    // peak landmark so quadratic vs cubic can be compared.
+    // cubic (cubic=true). NaN if the fit degenerated. (Retained; candidateCurves
+    // is the live path.)
     std::vector<double> peakCurve(int lo, int hi, bool cubic) const;
+
+    // Every model the DETECTOR tested for this landmark, over [lo, hi], with
+    // the selector's winner flagged. Peaks: quadratic + cubic (BIC). Onsets/
+    // offsets: piecewise-linear + sigmoid + fractional (selectAnchorModel).
+    // Uses the same fitting functions the detector uses, so the drawn curves
+    // are the tested curves.
+    std::vector<Candidate> candidateCurves(int lo, int hi) const;
 };

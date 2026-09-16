@@ -100,6 +100,7 @@ private slots:
     void movePpgMarker(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
     void moveEcgMarker(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
     void onMarkerMoved(int binIdx, int leadIdx, int marker, int newIdx);
+    void resetMarks();
     void onMarkerDragStarted(int binIdx, int leadIdx, int marker);
     void onBadRToggled(int binIdx, int leadIdx, int templateIdx, bool bad);
     // Helpers for the two above; declared here so both can find them.
@@ -185,9 +186,14 @@ private:
     void clearPlots();
     void captureCurrentPage();
     std::string buildAlignedTemplateCsv(AnchorType anchor);
+    // Companion file <id>_landmark_fits.csv, beside <id>_bins.csv: per bin/
+    // channel/landmark, the fitted curve TYPE and PARAMS (peaks: the weighted
+    // quadratic from symmetricExtremumFit; onsets/offsets: the anchor_fit model
+    // selected by BIC). Recomputed at save, same window convention as the
+    // boundary log.
+    void writeLandmarkFitsCsv(const std::string& dir);
     void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
-    void writeLandmarkFitsCsv(const std::string & dir);
 
     // Pushes the current bin's markings into every plot showing it.
     // Used when a PPG marker drags (which propagates across channels).
@@ -205,6 +211,11 @@ private:
     void refreshBankMarkers(int binIdx, int templateIdx);
     //if you don't refresh, after switching from j alingnment to another alignment, the focus panel will still show the j alignment
     void refreshFocus(int binIdx, int leadIdx, int templateIdx, int marker, double col);
+    // Re-detect marks for every bin with the current fit modes, preserving any
+    // bar the operator has dragged (recorded in m_touchedMarks) and re-placing
+    // only the untouched ones. Called when a fit-model radio changes.
+    void reseedFitModes();
+    void pageIn();   // showPage, re-seeding this page with active fit modes first
 
     FocusPanelWidget* zoomed_in_section_top = nullptr; //for most close ups, they only use focus top
     FocusPanelWidget* zoomed_in_section_bottom = nullptr;   // J point only - the bottom panel is used to show the JT segment (top is QRS)
@@ -232,6 +243,21 @@ private:
     // separate things and reading one from the other's state is how they end
     // up quietly coupled.
     AnchorType m_autoGridAnchor = AnchorType::R_PEAK;
+
+    // Cache of the last focused landmark's detector fit, so a drag (which
+    // re-fires refreshFocus every mouse-move) reuses it instead of re-running
+    // detect_template_landmarks each time. Keyed by (bin,slot,lead,marker,anchor).
+    long long m_lastTransKey = -1;
+    subsample_refine::TransitionCandidates m_lastTransCand;
+
+    // Operator-selected fit models (the on/offset and Fit-Peaks radio groups).
+    // Auto = the BIC contest; any other value forces that model so the focus
+    // fit (and, after a re-seed, the placement) follows the radio.
+    curve_fit::FitMode     m_onOffsetFitMode = curve_fit::FitMode::Auto;
+    curve_fit::PeakFitMode m_peakFitMode = curve_fit::PeakFitMode::Auto;
+    // Last focused landmark, so a fit-mode change re-runs refreshFocus in place.
+    int    m_focusBin = -1, m_focusLead = -1, m_focusSlot = -1, m_focusMarker = -1;
+    double m_focusCol = -1.0;
 
     // WHAT THE GRID (and the glyphs, and the R glyph column) IS CURRENTLY
     // DRAWN IN. Forced -> m_forcedAlign; Automatic -> m_autoGridAnchor. ONE
@@ -316,15 +342,25 @@ private:
     // the bin index alone has to consult both.
     std::vector<int> m_pageTemplateIdx;
 
-    int max_leads = 1; //it is max leads because sometimes a lead might be noisy so there will be different bin counts for different leads
-    int m_currentPage = 0;
-    int m_totalPages = 1;
+    int max_leads = 1;
+
+    int m_binsPerPage = 16;
+
+    // Columns a page may hold. Chosen so a panel keeps a usable width at the
+    // window sizes this tool is used at; a bin whose own column count exceeds
+    // it gets a page to itself and is the only case that still compresses,
+    // which is also the case the columnsForBin diagnostic is about (three or
+    // more markable templates in one bin means the bank over-segmented).
+    int m_maxColsPerPage = 8;
 
     // (first bin, bin count) per page, packed by column budget. Rebuilt whenever
     // marking eligibility changes, because confirming a template's class can add
     // or remove a column and therefore move every later page boundary.
     std::vector<std::pair<int, int>> m_pages;
     void buildPages();
+
+    int m_currentPage = 0;
+    int m_totalPages = 1;
 
     enum class MoveMode { Individual, SubsequentDelta, SubsequentRaw };
     MoveMode m_moveMode = MoveMode::SubsequentDelta;

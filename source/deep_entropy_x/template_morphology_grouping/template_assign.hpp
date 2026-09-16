@@ -65,13 +65,16 @@ namespace tbank {
     // spec forbids, so this is left as r alone. If amplitude-only variants
     // turn out to merge in practice, that is a spec question, not a local fix.
     inline CorrResult correlate(const std::vector<double>& a,
-        const std::vector<double>& b)
+        const std::vector<double>& b, int lo = 0, int hi = std::numeric_limits<int>::max())
     {
         CorrResult out;
         double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
         int n = 0;
         const size_t w = std::min(a.size(), b.size());
-        for (size_t k = 0; k < w; ++k) {
+        const size_t kLo = (lo > 0) ? static_cast<size_t>(lo) : 0;
+        const size_t kHi = (hi < 0) ? 0
+            : std::min(w, static_cast<size_t>(hi) + 1);
+        for (size_t k = kLo; k < kHi; ++k) {
             if (std::isnan(a[k]) || std::isnan(b[k])) continue;
             sa += a[k]; sb += b[k];
             saa += a[k] * a[k]; sbb += b[k] * b[k]; sab += a[k] * b[k];
@@ -197,7 +200,20 @@ namespace tbank {
         // cleanGroups, NSVT's cross-bin identity, the substitution band. A
         // second implementation here would be a second definition of "the same
         // shape", and they would disagree first on the beats that matter.
-        const CorrResult cr = correlate(beat, t.tmpl);
+        // MORPHOLOGY SPLIT WINDOW. When the template carries a corr_halfwin
+        // (samples), score only over [r_col - halfwin, r_col + halfwin] -- i.e.
+        // +-0.5 s around the R peak (ECG) or the systolic peak (PPG). Only this
+        // split metric is windowed; correlate's other callers (cleanGroups,
+        // NSVT, substitution) pass no window and stay full-width. halfwin <= 0
+        // or r_col < 0 means no restriction (reloaded banks, older callers).
+        CorrResult cr;
+        if (t.corr_halfwin > 0 && t.r_col >= 0) {
+            cr = correlate(beat, t.tmpl,
+                t.r_col - t.corr_halfwin, t.r_col + t.corr_halfwin);
+        }
+        else {
+            cr = correlate(beat, t.tmpl);
+        }
         out.n_overlap = cr.n_overlap;
         out.score = cr.r;
         out.r = cr.r;

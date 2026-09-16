@@ -570,7 +570,8 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
     // bar drag with the peak because it is recomputed every repaint.
     r.ecgPBegin = FeatureMarks::compute_p_begin(
         m_ecg, m_rates[static_cast<size_t>(Channel::Ecg)],
-        static_cast<int>(std::lround(m_rPeakSample)), e.p_peak);
+        static_cast<int>(std::lround(m_rPeakSample)), e.p_peak,
+        nullptr, m_onOffsetFitMode);
 
     if (m_hasPPG) {
         const FeatureMarks::ReactivePpg p = FeatureMarks::reactive_ppg(
@@ -1048,16 +1049,27 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
                 { EcgPPeak, rx.ecgPPeak },
                 { EcgQPeak, m_glyphs.ecgQPeak },   // -1 unless q_onset_found
                 { EcgTPeak, rx.ecgTPeak },
+                // Transition fiducials at their DRAWN (detected) positions --
+                // independent of the bars, so clickable where they're shown even
+                // after the bar has been dragged elsewhere.
+                { EcgPBegin, rx.ecgPBegin },
+                { EcgQBegin, m_glyphs.ecgQ },
+                { EcgSEnd,   m_glyphs.ecgS },
+                { EcgTEnd,   m_glyphs.ecgTend },
             };
+            int    bestMarker = -1;
+            double bestIdx = -1.0;
+            double bestDist = click_radius_around_marker;   // must be within radius
             for (const GlyphHit& g : glyphs) {
                 if (g.idx < 0.0) continue;
                 if (wall >= 0 && g.idx > static_cast<double>(wall)) continue;
-                if (std::abs(px - xFromSample(Channel::Ecg, g.idx))
-                    < click_radius_around_marker) {
-                    emit landmarkSelected(m_binIndex, m_leadIndex,
-                        m_templateIndex, g.marker, g.idx);
-                    return;   // focus only; no drag
-                }
+                const double d = std::abs(px - xFromSample(Channel::Ecg, g.idx));
+                if (d < bestDist) { bestDist = d; bestMarker = g.marker; bestIdx = g.idx; }
+            }
+            if (bestMarker >= 0) {
+                emit landmarkFocusOnly(m_binIndex, m_leadIndex,
+                    m_templateIndex, bestMarker, bestIdx);
+                return;   // focus only; no drag, no touch
             }
         }
     }
@@ -1202,7 +1214,8 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b,
         const int rSeed = b.chFor(m_leadIndex, frame).r_col_raw;
         const FeatureMarks::TemplateLandmarks lm =
             FeatureMarks::detect_template_landmarks(
-                m_ecg, rSeed, m_rates[static_cast<size_t>(Channel::Ecg)]);
+                m_ecg, rSeed, m_rates[static_cast<size_t>(Channel::Ecg)],
+                m_onOffsetFitMode, m_peakFitMode);
         if (lm.valid) {
             m_glyphs.ecgPBegin = froz(lm.p_begin);   // frozen copy unused for drawing now
             // (no ecgPPeak: the P peak is REACTIVE -- see reactiveGlyphs.)
