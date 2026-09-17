@@ -1107,30 +1107,16 @@ struct EcgFiducials {
     bool   valid = false;
 };
 
-// ===========================================================================
-// SPLIT IN TWO, ALONG THE LINE THE BARS DRAW.
-//
-// Everything the detector finds is a pure function of the TRACE. Only the P and
-// T peak depend on the operator's bars, and those two cost an argmax each. That
-// asymmetry was invisible while the two halves lived in one function, so
-// BinPlotWidget::reactiveGlyphs -- which runs once per repaint -- re-ran
-// detect_template_landmarks on every paint of every panel. With
-// Move-Subsequent on, one drag pixel repainted every later column, so the
-// detector (five finders, four of them fitting up to five curve models and
-// choosing by BIC) ran of the order of a hundred times per mouse event. That
-// was the drag lag.
-//
-// ecgDetect is the cacheable half: hold it for as long as the trace is
-// unchanged, which is the whole of a drag. ecgFiducialsFrom is the cheap half,
-// safe to call per paint. ecgFiducials is the two back to back and keeps the
-// old signature, so existing callers are unaffected.
-// ===========================================================================
+// SPLIT ALONG THE LINE THE BARS DRAW. ecgDetect is a pure function of the
+// trace, so a caller may cache it; ecgFiducialsFrom is the two bar-bracketed
+// peaks and is cheap enough to call per repaint. ecgFiducials is the two back
+// to back, with the original signature.
 struct EcgDetection {
     FeatureMarks::TemplateLandmarks lm;
     double s_peak = -1.0;
-    // The trace the landmarks were measured on -- needed by the reactive half,
-    // which re-brackets on the SAME array. Non-owning and interior to the bin,
-    // so a holder must drop the cache whenever the bin or the slot changes.
+    // The trace the landmarks were measured on; the reactive half re-brackets
+    // on the SAME array. Non-owning and interior to the bin, so a holder must
+    // drop the cache when the bin or the slot changes.
     const std::vector<double>* tmpl = nullptr;
     bool valid = false;
 };
@@ -1161,19 +1147,11 @@ inline EcgDetection ecgDetect(const TemplateBin& b, int lead, int slot,
 // operator's P-onset/Q-onset and S-end/T-end bars, so they follow a drag. Pass
 // a default-constructed set to get the detector's own brackets instead.
 //
-// PER-PEAK BRACKET TEST, AND THIS PART IS A FIX. The old form asked one
-// question -- bars.isUnset() -- and then used the operator's set for BOTH peaks
-// or the detector's for both. isUnset() is true only when all four fields are
-// negative, which a PER-ANCHOR set never is: the admissibility mask
-// (landmark_admissibility.hpp) gives the P_ONSET set p_begin and nothing else,
-// the Q_ONSET set q_onset and nothing else. So a caller handing over one
-// anchor's set got haveBars == true with q_onset == -1, and compute_p_peak,
-// which clamps a negative bracket to the trace's finite edge rather than
-// treating it as absent, returned a "P peak" in the pre-P lead-in. That is what
-// left the focus panel's gray dotted fiducial off the window under forced-P
-// alignment. Each peak now tests its OWN two brackets and falls back to the
-// detector's independently, so a half-populated set degrades one peak instead
-// of poisoning it.
+// EACH PEAK TESTS ITS OWN TWO BRACKETS. A per-anchor marker set holds only the
+// bars its alignment admits (landmark_admissibility.hpp), so a half-populated
+// set must degrade one peak rather than poison both -- asking bars.isUnset()
+// once did the latter, and compute_p_peak clamps a -1 bracket to the trace
+// edge instead of reporting absence.
 inline EcgFiducials ecgFiducialsFrom(const EcgDetection& d, double sampleRate,
     curve_fit::PeakFitMode peakMode, const tbank::BankMarkerSet& bars)
 {

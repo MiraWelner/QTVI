@@ -154,16 +154,12 @@ public:
     // an anchor is what produced the misalignment this replaces.
     // ----------------------------------------------------------------------
 
-    // INVALIDATES THE DETECTION CACHE. The cache is keyed on (bin, lead, slot,
-    // alignment), and the slot selects which waveform ecgDetect measures, so a
-    // slot change is a trace change even though no trace was re-set.
+    // The slot selects which waveform ecgDetect measures, so it invalidates
+    // m_det -- but NOT m_glyphs, which is measured on m_ecg and would then
+    // re-detect over the per-slot glyphs overrideEcgGlyphs pushes in.
     void setTemplateIndex(int t) {
         if (t == m_templateIndex) return;
         m_templateIndex = t;
-        // Only the detection cache: captureGlyphSnapshot measures m_ecg and
-        // b.chFor(lead, frame), neither of which the slot selects, and clearing
-        // its flag here would make it re-detect and overwrite the per-slot
-        // glyphs applyBankTemplateToWidget pushes through overrideEcgGlyphs.
         m_detValid = false;
     }
     int  templateIndex() const { return m_templateIndex; }
@@ -247,11 +243,8 @@ public:
         // drifted: the bin-wide array instead of the slot's, R's column instead
         // of the alignment's. Non-owning -- the bins outlive the panels, and
         // setAuto is called on every rebuild.
-        // A NEW BIN OR A NEW ALIGNMENT IS A NEW WAVEFORM, so the cached
-        // detection no longer describes what this panel draws. captureGlyph-
-        // Snapshot has its own guard (m_glyphsValid), which setData/setEcgData
-        // clear; this one covers the in-place re-skin, which changes the frame
-        // without re-setting the trace through either.
+        // A new bin or alignment is a new waveform. Covers the in-place
+        // re-skin, which changes the frame without going through setData.
         if (m_bin != &b || m_frame != frame) m_detValid = false;
         m_bin = &b;
         m_frame = frame;
@@ -281,8 +274,7 @@ public:
     // glyph snapshot so the next paint re-detects with the new model.
     void setFitModes(curve_fit::FitMode onOffset, curve_fit::PeakFitMode peak) {
         m_onOffsetFitMode = onOffset; m_peakFitMode = peak;
-        // BOTH caches: the fit modes are inputs to detect_template_landmarks,
-        // so the cached detection is as stale as the glyph snapshot.
+        // Both caches: the fit modes are detector inputs.
         m_glyphsValid = false; m_detValid = false; update();
     }
 
@@ -362,18 +354,13 @@ public:
 
 
 signals:
-    // NEVER EMITTED. Superseded by markerMovedOnTemplate, which carries the
-    // slot; kept only so any existing connect() still compiles. Nothing in the
-    // tree emits it, so a connection to it is dead -- see
-    // TemplateViewerWindow::onMarkerMoved.
+    // NEVER EMITTED -- superseded by markerMovedOnTemplate, which carries the
+    // slot. Kept only so an existing connect() still compiles.
     void markerMoved(int binIndex, int leadIndex, int marker, int newIdx);
     void markerDragStarted(int binIndex, int leadIndex, int marker);
 
-    // THE END OF A BAR GESTURE. Emitted once from mouseReleaseEvent when a bar
-    // was being dragged. The propagation path pushes single marker positions
-    // per mouse-move (cheap) and leaves the one full re-apply of the page --
-    // re-seeding, pulse marks, glyph re-detection -- to this signal, instead of
-    // paying for it per pixel.
+    // End of a bar gesture, once from mouseReleaseEvent. The owner defers its
+    // one full page re-apply to this instead of paying it per mouse-move.
     void markerDragFinished(int binIndex, int leadIndex, int templateIdx,
         int marker);
 
@@ -561,18 +548,10 @@ private:
     // the expensive detect does not run per mouse-move.
     bool m_glyphsValid = false;
 
-    // ---- THE REACTIVE GLYPHS' EXPENSIVE HALF, CACHED --------------------
-    //
-    // reactiveGlyphs() is called once per repaint and used to run
-    // ecgFiducials(), i.e. detect_template_landmarks + compute_s_peak, every
-    // time. Only the P and T peak react to the bars; everything else the
-    // detector finds is a function of the trace alone (see ecgDetect in
-    // template_marking_bin_io.hpp). So the detection is held here and only the
-    // two bracketed peaks are recomputed per paint.
-    //
-    // m_det.tmpl points INTO the bin, so the identity check is part of the
-    // guard rather than trusting m_detValid alone: a page rebuild can hand this
-    // panel a different bin or slot without going through setData.
+    // The reactive glyphs' expensive half, held while the trace is unchanged:
+    // only P and T peak react to the bars (see ecgDetect). m_det.tmpl points
+    // INTO the bin, so the identity fields are part of the guard -- a rebuild
+    // can hand this panel another bin or slot without going through setData.
     mutable EcgDetection       m_det;
     mutable bool               m_detValid = false;
     mutable const TemplateBin* m_detBin = nullptr;

@@ -1115,10 +1115,7 @@ void TemplateViewerWindow::clearPlots() {
     m_binPlots.clear();
     m_pageTemplateIdx.clear();
     m_pageGlobalIdx.clear();
-    // The (bin, slot) -> column index holds page column numbers and the panels
-    // behind them have just been deleted, so it dies with them. showPage
-    // rebuilds it after the new grid is populated.
-    m_pageColOf.clear();
+    m_pageColOf.clear();   // indexes panels that have just been deleted
 
     // Drop stretch factors left over from a previous (possibly larger) page
     // so unused rows/columns don't reserve empty space on the next page.
@@ -1557,11 +1554,7 @@ void TemplateViewerWindow::showPage() {
                     if (dragCol < 0) return;
 
                     const double delta = newCol - oldCol;
-                    auto spanSec = [&](int gi) -> double {
-                        double lo, hi;
-                        return unionEcgFrameSeconds(m_bins[gi], 0, 0, lo, hi) ? (hi - lo) : -1.0;
-                        };
-                    const double dragSpan = spanSec(binIdx);
+                    const double dragSpan = binSpanSeconds(binIdx);
                     if (!(dragSpan > 0.0)) return;
 
                     // Clamp to the DRAWN wall (the array runs past it after the
@@ -1584,7 +1577,7 @@ void TemplateViewerWindow::showPage() {
                         if (gi < 0 || slot < 0 || slot >= TemplateBin::kRBarsSlots) continue;
                         double& cur = m_bins[gi].r_bars_ch[leadIdx][slot][rIndex];
                         if (cur < 0.0) continue;
-                        const double tgtSpan = spanSec(gi);
+                        const double tgtSpan = binSpanSeconds(gi);
                         if (!(tgtSpan > 0.0)) continue;
                         int wlo = -1, whi = -1;
                         if (!wallOfCol(li, wlo, whi)) continue;
@@ -1685,9 +1678,7 @@ void TemplateViewerWindow::showPage() {
     for (int c = 0; c < usedCols; ++c) ui->plotGrid->setColumnStretch(c, 1);
     for (int r = 0; r < usedRows; ++r) ui->plotGrid->setRowStretch(r, 1);
 
-    // (bin, slot) -> page column, built once here instead of re-derived by a
-    // linear scan of m_pageGlobalIdx in every refresh and every propagated
-    // column of every drag event.
+    // The column index, once, rather than a linear scan per lookup.
     m_pageColOf.clear();
     for (int li = 0; li < (int)m_pageGlobalIdx.size()
         && li < (int)m_pageTemplateIdx.size(); ++li)
@@ -1697,6 +1688,58 @@ void TemplateViewerWindow::showPage() {
     updatePageControls();
 }
 
+// ---------------------------------------------------------------------------
+// ONE TABLE FOR THE PULSE AND ARTERIAL MARKER FIELDS.
+//
+// Every one of them is a plain double on TemplateBin, so marker -> field is a
+// pointer-to-member lookup. This replaced three hand-written switches that had
+// to agree: applyBinToWidget's run of twenty-two setMarker lines, and
+// onMarkerMoved's assign/artGet pair (fifteen cases each, once to write and
+// once to read). ECG markers are NOT here -- those live in BankMarkerSet, per
+// slot and per anchor, and go through slotMarks.
+//
+// Kept file-local rather than beside the CSV writer's kPoints table because
+// template_marking_bin_io.hpp cannot include BinPlotWidget for the marker ids.
+// ---------------------------------------------------------------------------
+namespace {
+    struct PulseField { int marker; double TemplateBin::* field; };
+
+    constexpr PulseField kPulseFields[] = {
+        { BinPlotWidget::PpgOnset,           &TemplateBin::ppg_onset },
+        { BinPlotWidget::PpgPeak,            &TemplateBin::ppg_peak },
+        { BinPlotWidget::PpgDicrotic,        &TemplateBin::ppg_dicrotic },
+        { BinPlotWidget::PpgPeak2,           &TemplateBin::ppg_peak2 },
+        { BinPlotWidget::PpgEnd,             &TemplateBin::ppg_end },
+        // T50/T80 are reactive glyphs: neither drawn from here nor draggable.
+        // Pushed anyway so the enum entries never hold a stale position.
+        { BinPlotWidget::PpgT50,             &TemplateBin::ppg_t50 },
+        { BinPlotWidget::PpgT80,             &TemplateBin::ppg_t80 },
+        { BinPlotWidget::AbpOnset,           &TemplateBin::abp_onset },
+        { BinPlotWidget::AbpPeak,            &TemplateBin::abp_peak },
+        { BinPlotWidget::AbpDicrotic,        &TemplateBin::abp_dicrotic },
+        { BinPlotWidget::AbpPeak2,           &TemplateBin::abp_peak2 },
+        { BinPlotWidget::AbpEnd,             &TemplateBin::abp_end },
+        { BinPlotWidget::ArtOnset,           &TemplateBin::art_onset },
+        { BinPlotWidget::ArtPeak,            &TemplateBin::art_peak },
+        { BinPlotWidget::ArtDicrotic,        &TemplateBin::art_dicrotic },
+        { BinPlotWidget::ArtPeak2,           &TemplateBin::art_peak2 },
+        { BinPlotWidget::ArtEnd,             &TemplateBin::art_end },
+        { BinPlotWidget::ArtPulmOnset,       &TemplateBin::art_pulm_onset },
+        { BinPlotWidget::ArtPulmPeak,        &TemplateBin::art_pulm_peak },
+        { BinPlotWidget::ArtPulmDicrotic,    &TemplateBin::art_pulm_dicrotic },
+        { BinPlotWidget::ArtPulmPeak2,       &TemplateBin::art_pulm_peak2 },
+        { BinPlotWidget::ArtPulmEnd,         &TemplateBin::art_pulm_end },
+    };
+
+    // The field behind a marker, or nullptr when the marker is not a pulse or
+    // arterial one.
+    double* pulseField(TemplateBin& tb, int marker) {
+        for (const PulseField& f : kPulseFields)
+            if (f.marker == marker) return &(tb.*f.field);
+        return nullptr;
+    }
+}   // namespace
+
 // This column's panels, or nullptr when the (bin, slot) is not on this page.
 const std::vector<BinPlotWidget*>* TemplateViewerWindow::panelsForColumn(
     int binIdx, int templateIdx) const
@@ -1705,6 +1748,21 @@ const std::vector<BinPlotWidget*>* TemplateViewerWindow::panelsForColumn(
     if (it == m_pageColOf.end()) return nullptr;
     if (it->second < 0 || it->second >= (int)m_binPlots.size()) return nullptr;
     return &m_binPlots[it->second];
+}
+
+// A bin's visible x-axis span in seconds. The sample rate cancels in the
+// ratio, so this is the only term an equal-screen-distance shift needs.
+double TemplateViewerWindow::binSpanSeconds(int binIdx) const {
+    if (binIdx < 0 || binIdx >= (int)m_bins.size()) return -1.0;
+    double lo = 0.0, hi = 0.0;
+    return unionEcgFrameSeconds(m_bins[binIdx], 0, 0, lo, hi) ? (hi - lo) : -1.0;
+}
+
+// Both panels to "nothing selected".
+void TemplateViewerWindow::clearFocusPanels() {
+    setFocusSplit(false);
+    if (zoomed_in_section_top) zoomed_in_section_top->clearFocus();
+    if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
 }
 
 void TemplateViewerWindow::captureCurrentPage() {
@@ -2584,31 +2642,9 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
 
-    pw->setMarker(BinPlotWidget::PpgOnset, b.ppg_onset);
-    pw->setMarker(BinPlotWidget::PpgPeak, b.ppg_peak);
-    pw->setMarker(BinPlotWidget::PpgDicrotic, b.ppg_dicrotic);
-    pw->setMarker(BinPlotWidget::PpgPeak2, b.ppg_peak2);
-    pw->setMarker(BinPlotWidget::PpgEnd, b.ppg_end);
-    // T50/T80 are neither drawn nor draggable -- they're reactive glyphs now.
-    // Kept in sync anyway so the enum entries never hold a stale position.
-    pw->setMarker(BinPlotWidget::PpgT50, b.ppg_t50);
-    pw->setMarker(BinPlotWidget::PpgT80, b.ppg_t80);
-
-    pw->setMarker(BinPlotWidget::AbpOnset, b.abp_onset);
-    pw->setMarker(BinPlotWidget::AbpPeak, b.abp_peak);
-    pw->setMarker(BinPlotWidget::AbpDicrotic, b.abp_dicrotic);
-    pw->setMarker(BinPlotWidget::AbpPeak2, b.abp_peak2);
-    pw->setMarker(BinPlotWidget::AbpEnd, b.abp_end);
-    pw->setMarker(BinPlotWidget::ArtOnset, b.art_onset);
-    pw->setMarker(BinPlotWidget::ArtPeak, b.art_peak);
-    pw->setMarker(BinPlotWidget::ArtDicrotic, b.art_dicrotic);
-    pw->setMarker(BinPlotWidget::ArtPeak2, b.art_peak2);
-    pw->setMarker(BinPlotWidget::ArtEnd, b.art_end);
-    pw->setMarker(BinPlotWidget::ArtPulmOnset, b.art_pulm_onset);
-    pw->setMarker(BinPlotWidget::ArtPulmPeak, b.art_pulm_peak);
-    pw->setMarker(BinPlotWidget::ArtPulmDicrotic, b.art_pulm_dicrotic);
-    pw->setMarker(BinPlotWidget::ArtPulmPeak2, b.art_pulm_peak2);
-    pw->setMarker(BinPlotWidget::ArtPulmEnd, b.art_pulm_end);
+    // Pulse and arterial bars and glyphs, from the one field table.
+    for (const PulseField& f : kPulseFields)
+        pw->setMarker(static_cast<BinPlotWidget::Marker>(f.marker), b.*f.field);
     // Glyphs in the frame of the alignment the grid is drawing; the bars
     // above stay R-framed. Both are deliberate: the fiducials are recomputed
     // per alignment, the operator's marks are not.
@@ -2656,11 +2692,7 @@ void TemplateViewerWindow::refreshBankMarkers(int binIdx, int templateIdx) {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
     if (templateIdx <= 0) { refreshBinMarkers(binIdx); return; }
 
-    // ONE COLUMN, LOOKED UP RATHER THAN SEARCHED FOR. A (bin, slot) pair
-    // occupies exactly one page column, so the scan this replaced was a linear
-    // search for a single answer -- and the Move-Subsequent loops called it once
-    // per propagated column, which made the propagation quadratic in the page's
-    // column count.
+    // One column, looked up rather than searched for.
     const std::vector<BinPlotWidget*>* col = panelsForColumn(binIdx, templateIdx);
     if (!col) return;
     // Each widget in the column is one lead, and a bank is per lead, so the
@@ -2768,11 +2800,6 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         const int ecgClip = ecgClipLenFor(tb);
         return (ecgClip > 0) ? std::min(rawLen, ecgClip) : rawLen;
         };
-    auto spanSec = [&](int gi) -> double {
-        double lo, hi;
-        return unionEcgFrameSeconds(m_bins[gi], 0, 0, lo, hi) ? (hi - lo) : -1.0;
-        };
-
     // O(1), from the index showPage builds.
     int dragCol = -1;
     {
@@ -2787,10 +2814,8 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
     const int dragLen = ppgLen(binIdx, templateIdx);
     if (dragLen > 0) placed = std::clamp(placed, 0, dragLen - 1);
     ppgSet(binIdx, templateIdx, placed);
-    // THE DRAGGED COLUMN, LIGHTLY. Pulse marks are per (bin, slot) and shared
-    // by every lead panel in the column, so the sibling panels do need the new
-    // position -- but they do not need applyBankTemplateToWidget's re-seeding
-    // and re-detection on every mouse-move. onMarkerDragFinished does that once.
+    // The dragged column's sibling leads share these marks, so they need the
+    // position -- but not a re-seed and re-detect per mouse-move.
     if (dragCol >= 0 && dragCol < (int)m_binPlots.size())
         for (auto* pw : m_binPlots[dragCol])
             if (pw)
@@ -2804,7 +2829,7 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
 
     // Propagate to every LATER column on the page, equal screen distance.
     const double delta = placed - oldIdx;
-    const double dragSpan = spanSec(binIdx);
+    const double dragSpan = binSpanSeconds(binIdx);
     for (int li = dragCol + 1; li < (int)m_pageGlobalIdx.size()
         && li < (int)m_pageTemplateIdx.size(); ++li) {
         const int gi = m_pageGlobalIdx[li];
@@ -2816,17 +2841,14 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         if (cur < 0.0) continue;
         const int n = ppgLen(gi, slot);
         if (n <= 0) continue;
-        const double tgtSpan = spanSec(gi);
+        const double tgtSpan = binSpanSeconds(gi);
         if (!(dragSpan > 0.0) || !(tgtSpan > 0.0)) continue;
         const double target = cur + delta * (tgtSpan / dragSpan);
         if (target < 0.0 || target > n - 1) continue;
         ppgSet(gi, slot, target);
 
-        // PUSH ONE BAR -- same reasoning as the ECG path. This replaced a
-        // second page walk that called refreshBankMarkers for every later
-        // column on every mouse-move; the full re-apply now happens once, in
-        // onMarkerDragFinished. Pulse marks are per (bin, slot) and shared
-        // across the leads of a column, so every panel in the column gets it.
+        // PUSH ONE BAR -- as the ECG path. Pulse marks are per (bin, slot),
+        // shared across a column's leads, so every panel in it gets the push.
         if (li >= 0 && li < (int)m_binPlots.size())
             for (auto* pw : m_binPlots[li])
                 if (pw)
@@ -2932,27 +2954,13 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
 
     // ---- ONE FRAME FOR ALL THE ARITHMETIC --------------------------------
     //
-    // Storage is in the OWNER alignment's columns; the widget measures, draws
-    // and reports in the frame the grid is currently drawing. The conversion
-    // belongs on BOTH sides of the accessor, and it used to be on the write
-    // only -- get() returned an owner-frame column and set() added the
-    // view->owner shift to whatever it was handed. For the dragged bar that was
-    // right, because `newIdx` arrives view-framed. For every PROPAGATED bar it
-    // was wrong three times over:
-    //
-    //   * m_dragStartIdx was seeded from get(), so `placed - m_dragStartIdx`
-    //     subtracted an owner-frame column from a view-frame one and the
-    //     propagated shift was off by frameShift on the first move of a drag;
-    //   * `cur` came back owner-framed and was written back with the shift
-    //     added a second time, displacing every subsequent column by
-    //     r_col(owner) - r_col(view) per drag;
-    //   * `target` was clamped against `wall`, which lastDrawnSample reports in
-    //     the DRAWN frame.
-    //
-    // frameShift is 0 whenever the grid draws the bar's own alignment, and was
-    // 0 everywhere before sub-sample alignment landed, so this only shows up
-    // once the anchors' r_cols genuinely differ AND the grid is on another
-    // anchor -- forced-P with Move-Subsequent, most visibly.
+    // THE INVARIANT: bars are STORED in the owner alignment's columns and
+    // MEASURED in the frame the grid is drawing, so the conversion belongs on
+    // BOTH sides of the accessor. It used to be on the write only, which left
+    // every propagated bar reading owner-framed, shifted a second time on the
+    // way back, and clamped against a drawn-frame wall. frameShift is 0 when
+    // the grid draws the bar's own alignment, so it surfaced as forced-P plus
+    // Move-Subsequent.
     //
     // Below this line, every column is a DRAWN-frame column.
     auto getView = [&](TemplateBin& tb, int slot) -> double {
@@ -3020,20 +3028,11 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
 
         setView(m_bins[gi], slot, target);
 
-        // PUSH ONE BAR, NOT THE WHOLE COLUMN.
-        //
-        // This used to be a second page walk calling refreshBankMarkers for
-        // every later column, on every mouse-move. That goes through
-        // applyBankTemplateToWidget, which re-seeds four alignments, re-derives
-        // the pulse marks, re-runs detect_template_landmarks for the glyph
-        // override and issues some thirty setMarker calls -- per panel, per
-        // pixel of drag, none of which a bar move can change. The glyphs that
-        // DO depend on the bars (P peak, T peak, T50/T80) are reactive and
-        // recompute inside the repaint this setMarker triggers.
-        //
-        // `target` is already a drawn-frame column, which is what setMarker
-        // wants. The full re-apply happens once, on drag release -- see
-        // onMarkerDragFinished.
+        // PUSH ONE BAR, NOT THE WHOLE COLUMN. A bar move changes nothing that
+        // refreshBankMarkers recomputes (seeding, pulse marks, glyph
+        // detection), and the glyphs that DO follow a bar are reactive at
+        // paint time. Full re-apply once, in onMarkerDragFinished. `target` is
+        // already a drawn-frame column, which is what setMarker wants.
         for (auto* pw : m_binPlots[li])
             if (pw && pw->leadIndex() == leadIdx)
                 pw->setMarker(static_cast<BinPlotWidget::Marker>(marker),
@@ -3076,46 +3075,8 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
     // Shared across leads like PPG. Route to the right channel's fields and
     // propagate to subsequent bins when Move-Subsequent is on.
     if (BinPlotWidget::markerIsArterial(marker)) {
-        // Select the channel's field pointers, issue flag, and trace by group.
-        auto assign = [&](TemplateBin& tb, int mk, double val) {
-            switch (mk) {
-            case BinPlotWidget::AbpOnset:    tb.abp_onset = val; break;
-            case BinPlotWidget::AbpPeak:     tb.abp_peak = val; break;
-            case BinPlotWidget::AbpDicrotic: tb.abp_dicrotic = val; break;
-            case BinPlotWidget::AbpPeak2:       tb.abp_peak2 = val; break;
-            case BinPlotWidget::AbpEnd:      tb.abp_end = val; break;
-            case BinPlotWidget::ArtOnset:    tb.art_onset = val; break;
-            case BinPlotWidget::ArtPeak:     tb.art_peak = val; break;
-            case BinPlotWidget::ArtDicrotic: tb.art_dicrotic = val; break;
-            case BinPlotWidget::ArtPeak2:       tb.art_peak2 = val; break;
-            case BinPlotWidget::ArtEnd:      tb.art_end = val; break;
-            case BinPlotWidget::ArtPulmOnset:    tb.art_pulm_onset = val; break;
-            case BinPlotWidget::ArtPulmPeak:     tb.art_pulm_peak = val; break;
-            case BinPlotWidget::ArtPulmDicrotic: tb.art_pulm_dicrotic = val; break;
-            case BinPlotWidget::ArtPulmPeak2:       tb.art_pulm_peak2 = val; break;
-            case BinPlotWidget::ArtPulmEnd:      tb.art_pulm_end = val; break;
-            }
-            };
-        auto artGet = [&](TemplateBin& tb, int mk) -> double {
-            switch (mk) {
-            case BinPlotWidget::AbpOnset:    return tb.abp_onset;
-            case BinPlotWidget::AbpPeak:     return tb.abp_peak;
-            case BinPlotWidget::AbpDicrotic: return tb.abp_dicrotic;
-            case BinPlotWidget::AbpPeak2:    return tb.abp_peak2;
-            case BinPlotWidget::AbpEnd:      return tb.abp_end;
-            case BinPlotWidget::ArtOnset:    return tb.art_onset;
-            case BinPlotWidget::ArtPeak:     return tb.art_peak;
-            case BinPlotWidget::ArtDicrotic: return tb.art_dicrotic;
-            case BinPlotWidget::ArtPeak2:    return tb.art_peak2;
-            case BinPlotWidget::ArtEnd:      return tb.art_end;
-            case BinPlotWidget::ArtPulmOnset:    return tb.art_pulm_onset;
-            case BinPlotWidget::ArtPulmPeak:     return tb.art_pulm_peak;
-            case BinPlotWidget::ArtPulmDicrotic: return tb.art_pulm_dicrotic;
-            case BinPlotWidget::ArtPulmPeak2:    return tb.art_pulm_peak2;
-            case BinPlotWidget::ArtPulmEnd:      return tb.art_pulm_end;
-            }
-            return -1;
-            };
+        // Field access is the shared table; only the trace and issue flag
+        // still need a per-channel branch.
         auto channelTrace = [&](TemplateBin& tb, int mk,
             const std::vector<double>*& tr, uint8_t*& iss) {
                 if (BinPlotWidget::markerIsAbp(mk)) { tr = &tb.abpTemplate; iss = &tb.abp_issue; }
@@ -3123,8 +3084,10 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 else { tr = &tb.artPulmTemplate; iss = &tb.art_pulm_issue; }
             };
 
-        const int oldIdx = artGet(b, marker);
-        assign(b, marker, newIdx);
+        double* dragged = pulseField(b, marker);
+        if (!dragged) return;
+        const int oldIdx = (int)*dragged;
+        *dragged = newIdx;
         refreshBinMarkers(binIdx);
         const int delta = newIdx - oldIdx;
 
@@ -3143,7 +3106,9 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
                 channelTrace(m_bins[i], marker, tr, iss);
                 if (!iss || *iss != 0) continue;
                 if (!tr) continue;
-                const int cur = artGet(m_bins[i], marker);
+                double* fld = pulseField(m_bins[i], marker);
+                if (!fld) continue;
+                const int cur = (int)*fld;
                 if (cur < 0) continue;
 
                 const int rawLen = (int)tr->size();
@@ -3153,7 +3118,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
 
                 const int target = cur + (int)std::lround(axisFrac * (n - 1));
                 if (target < 0 || target > n - 1) continue;
-                assign(m_bins[i], marker, target);
+                *fld = target;
             }
             for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
                 int gi = m_pageGlobalIdx[li];
@@ -3182,18 +3147,10 @@ void TemplateViewerWindow::onMarkerDragStarted(int, int, int) {
     original_location_of_bar.clear(); // per-panel starts; filled lazily below
 }
 
-// A drag ends. THE ONE FULL RE-APPLY OF THE PAGE, paid once per gesture.
-//
-// While the mouse moves, the propagation loops write the store and push the
-// single bar they changed to the panels that show it. They deliberately do NOT
-// call refreshBankMarkers, which re-seeds all four alignments, re-derives the
-// pulse marks and re-runs the landmark detector for the glyph override, per
-// panel -- none of which a bar move changes, and which cost of the order of a
-// hundred detector runs per mouse event with Move-Subsequent on. Everything
-// that genuinely reacts to a bar (P peak, T peak, T50/T80) is reactive and
-// recomputed at paint time, so this pass is here for the derived state that is
-// NOT reactive, and for the guarantee that what is on screen at the end of a
-// gesture came from the same function a page rebuild uses.
+// A drag ends: THE ONE FULL RE-APPLY OF THE PAGE, paid once per gesture rather
+// than once per mouse-move per column. Here for the derived state that is not
+// reactive, and so the end of a gesture leaves the page in the state a rebuild
+// would produce.
 void TemplateViewerWindow::onMarkerDragFinished(int, int, int, int) {
     for (int li = 0; li < (int)m_pageGlobalIdx.size()
         && li < (int)m_pageTemplateIdx.size(); ++li)
@@ -3541,6 +3498,115 @@ void TemplateViewerWindow::reseedFitModes(bool allBins) {
     m_lastTransKey = -1;   // focus-candidate cache depends on the mode
     if (!allBins) showPage();   // rebuild the page from the re-placed marks
 }
+// ---- PULSE AND ARTERIAL FOCUS ------------------------------------------
+//
+// These ride their own template (ppgTemplate / abpTemplate / artTemplate /
+// artPulmTemplate) with the matching per-sample std (*_iqr, ddof=1) and the
+// shared pulse beat count (ppg_n_beats -- all pulse channels derive from the
+// same foot-anchored beat set). One panel, not two: pulse channels are
+// foot-anchored once and have no QRS/JT split and no alignment dimension.
+//
+// Split out of refreshFocus, which was 500 lines doing three unrelated jobs.
+void TemplateViewerWindow::focusPulse(TemplateBin& b, int templateIdx,
+    int marker, double col)
+{
+    const std::vector<double>* meanRaw = nullptr;
+    const std::vector<double>* iqrRaw = nullptr;
+    int pulseChan = -1;   // index into m_pulseGlobalRef: PPG=0,ABP=1,ART=2,ART_PULM=3
+    // -1 until a branch sets it. The arterial channels have no bank, so
+    // they keep the bin-wide pulse beat count, which for them IS the whole
+    // population -- there is no per-group arterial cohort to get wrong.
+    int nPulseBeats = -1;
+    int footIdx = -1;     // this channel's foot/onset column (perfusion-index baseline)
+    QString chLabel;
+    if (BinPlotWidget::markerIsPpg(marker)) {
+        // THE GROUP'S PULSE, NOT THE BIN'S. ppg_bank slot i is group i, on
+        // the same axis as the bin's pulse template. This path read
+        // b.ppgTemplate / b.ppg_template_iqr / b.ppg_n_beats
+        // unconditionally, so clicking a pulse landmark on ANY column
+        // showed the bin's mean, its bin-wide spread and its bin-wide beat
+        // count -- the same defect the main panel had, one layer over.
+        //
+        // NO FALLBACK. A group with no pulse cohort has no focus view:
+        // both panels are cleared and the function returns. Showing the
+        // bin's waveform there would be a measurement attributed to beats
+        // that are not in this template.
+        const tbank::BankTemplate* ps =
+            (templateIdx >= 0 && templateIdx < b.ppg_bank.size())
+            ? &b.ppg_bank.templates[templateIdx] : nullptr;
+        if (!ps || ps->tmpl.empty() || ps->memberCount() <= 0) {
+            clearFocusPanels();
+            return;
+        }
+        meanRaw = &ps->tmpl;           iqrRaw = &ps->tmpl_iqr;
+        pulseChan = 0; footIdx = b.ppg_onset;  chLabel = "PPG";
+        nPulseBeats = ps->memberCount();
+    }
+    else if (BinPlotWidget::markerIsAbp(marker)) {
+        meanRaw = &b.abpTemplate;      iqrRaw = &b.abpTemplate_iqr;      pulseChan = 1; footIdx = b.abp_onset;      chLabel = "ABP";
+    }
+    else if (BinPlotWidget::markerIsArt(marker)) {
+        meanRaw = &b.artTemplate;      iqrRaw = &b.artTemplate_iqr;      pulseChan = 2; footIdx = b.art_onset;      chLabel = "ART";
+    }
+    else if (BinPlotWidget::markerIsArtPulm(marker)) {
+        meanRaw = &b.artPulmTemplate;  iqrRaw = &b.artPulmTemplate_iqr;  pulseChan = 3; footIdx = b.art_pulm_onset; chLabel = "ART_PULM";
+    }
+    if (!meanRaw || meanRaw->empty()) return;
+
+    // Pulse channels are NOT normalized by a plain scalar (that was the
+    // bug -- it left the trace flat). The displayed trace uses a per-
+    // sample PERFUSION-INDEX transform relative to the pulse's own foot,
+    // then /ref (normalize_ppg_or_similar -> normalize_pulse_trace, see
+    // the main plot ~line 508). The mean MUST use that same transform.
+    const std::vector<double> mean = normalize_ppg_or_similar(*meanRaw, footIdx, pulseChan);
+    // The *_iqr is ALREADY in perfusion-index space (local_ratio_iqr at
+    // build time), so it only needs the scalar /ref -- NOT the perfusion
+    // transform again (main plot ~line 492). It's a true IQR (Q3-Q1), so
+    // convert to an SD estimate (IQR/1.349) for the 95% CI.
+    const double ref = (pulseChan >= 0 && pulseChan < 4) ? m_pulseGlobalRef[pulseChan] : std::nan("");
+    std::vector<double> sd = normalize_features::scale_array_by_ref(*iqrRaw, ref);
+    for (double& s : sd) if (!std::isnan(s)) s /= 1.349;
+
+    const int nBeats = (nPulseBeats >= 0)
+        ? nPulseBeats : static_cast<int>(b.ppg_n_beats);
+
+    auto pulseLabel = [](int m) -> QString {
+        switch (m) {
+        case BinPlotWidget::PpgOnset:    return QStringLiteral("Foot");
+        case BinPlotWidget::PpgT50:      return QStringLiteral("T50");
+            // SWAPPED. PpgPeak is the SYSTOLIC peak -- the forward-wave maximum
+            // the whole pulse is anchored on -- and PpgPeak2 is the DIASTOLIC
+            // peak, the reflected wave arriving after the dicrotic notch. Every
+            // other reference in the tree agrees: ppg_peak2_color is commented
+            // "(2nd/diastolic peak)", and feature_marks builds peak2 as "first
+            // local max after the notch". Only these two labels disagreed, and
+            // they disagreed with each other in a way that made the diastolic
+            // bar look like a missing systolic one.
+        case BinPlotWidget::PpgPeak:     return QStringLiteral("Systolic Peak");
+        case BinPlotWidget::PpgDicrotic: return QStringLiteral("Dicrotic Notch");
+        case BinPlotWidget::PpgPeak2:    return QStringLiteral("Diastolic Peak");
+        case BinPlotWidget::PpgT80:      return QStringLiteral("T80");
+        case BinPlotWidget::PpgEnd:      return QStringLiteral("End");
+        case BinPlotWidget::AbpOnset: case BinPlotWidget::ArtOnset: case BinPlotWidget::ArtPulmOnset:       return QStringLiteral("onset");
+        case BinPlotWidget::AbpPeak: case BinPlotWidget::ArtPeak: case BinPlotWidget::ArtPulmPeak:          return QStringLiteral("peak");
+        case BinPlotWidget::AbpDicrotic: case BinPlotWidget::ArtDicrotic: case BinPlotWidget::ArtPulmDicrotic: return QStringLiteral("dicrotic");
+        case BinPlotWidget::AbpPeak2: case BinPlotWidget::ArtPeak2: case BinPlotWidget::ArtPulmPeak2:        return QStringLiteral("peak2");
+        case BinPlotWidget::AbpEnd: case BinPlotWidget::ArtEnd: case BinPlotWidget::ArtPulmEnd:             return QStringLiteral("end");
+        }
+        return QStringLiteral("landmark");
+        };
+
+    // Pulse channels have no alignment dimension: they are foot-anchored,
+    // once, and raw_anchors is ECG-only. One panel, no suffix.
+    // Pulse landmarks bound one part of the wave: top third only.
+    setFocusSplit(false);
+    if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
+    if (zoomed_in_section_top)
+        zoomed_in_section_top->setFocus(mean, sd, nBeats, col, chLabel + " " + pulseLabel(marker));
+    zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::Transition);
+    return;
+}
+
 
 void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     int templateIdx, int marker, double col)
@@ -3552,109 +3618,11 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     m_focusMarker = marker; m_focusCol = col;
     TemplateBin& b = m_bins[binIdx];
 
-    // ---- PPG and ARTERIAL landmarks (B2 focus extended to all channels) --
-    // These ride their own template (ppgTemplate / abpTemplate / artTemplate
-    // / artPulmTemplate) with the matching per-sample std (*_iqr, ddof=1) and
-    // the shared pulse beat count (ppg_n_beats -- all pulse channels derive
-    // from the same foot-anchored beat set). Routed to the QRS panel as the
-    // single focus view for pulse channels (they have no QRS/JT split).
+    // Pulse channels have no alignment dimension, so they take a separate,
+    // self-contained path (focusPulse) rather than threading through the ECG
+    // slot and anchor selection below.
     if (!BinPlotWidget::markerIsEcg(marker)) {
-        const std::vector<double>* meanRaw = nullptr;
-        const std::vector<double>* iqrRaw = nullptr;
-        int pulseChan = -1;   // index into m_pulseGlobalRef: PPG=0,ABP=1,ART=2,ART_PULM=3
-        // -1 until a branch sets it. The arterial channels have no bank, so
-        // they keep the bin-wide pulse beat count, which for them IS the whole
-        // population -- there is no per-group arterial cohort to get wrong.
-        int nPulseBeats = -1;
-        int footIdx = -1;     // this channel's foot/onset column (perfusion-index baseline)
-        QString chLabel;
-        if (BinPlotWidget::markerIsPpg(marker)) {
-            // THE GROUP'S PULSE, NOT THE BIN'S. ppg_bank slot i is group i, on
-            // the same axis as the bin's pulse template. This path read
-            // b.ppgTemplate / b.ppg_template_iqr / b.ppg_n_beats
-            // unconditionally, so clicking a pulse landmark on ANY column
-            // showed the bin's mean, its bin-wide spread and its bin-wide beat
-            // count -- the same defect the main panel had, one layer over.
-            //
-            // NO FALLBACK. A group with no pulse cohort has no focus view:
-            // both panels are cleared and the function returns. Showing the
-            // bin's waveform there would be a measurement attributed to beats
-            // that are not in this template.
-            const tbank::BankTemplate* ps =
-                (templateIdx >= 0 && templateIdx < b.ppg_bank.size())
-                ? &b.ppg_bank.templates[templateIdx] : nullptr;
-            if (!ps || ps->tmpl.empty() || ps->memberCount() <= 0) {
-                setFocusSplit(false);
-                if (zoomed_in_section_top) zoomed_in_section_top->clearFocus();
-                if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
-                return;
-            }
-            meanRaw = &ps->tmpl;           iqrRaw = &ps->tmpl_iqr;
-            pulseChan = 0; footIdx = b.ppg_onset;  chLabel = "PPG";
-            nPulseBeats = ps->memberCount();
-        }
-        else if (BinPlotWidget::markerIsAbp(marker)) {
-            meanRaw = &b.abpTemplate;      iqrRaw = &b.abpTemplate_iqr;      pulseChan = 1; footIdx = b.abp_onset;      chLabel = "ABP";
-        }
-        else if (BinPlotWidget::markerIsArt(marker)) {
-            meanRaw = &b.artTemplate;      iqrRaw = &b.artTemplate_iqr;      pulseChan = 2; footIdx = b.art_onset;      chLabel = "ART";
-        }
-        else if (BinPlotWidget::markerIsArtPulm(marker)) {
-            meanRaw = &b.artPulmTemplate;  iqrRaw = &b.artPulmTemplate_iqr;  pulseChan = 3; footIdx = b.art_pulm_onset; chLabel = "ART_PULM";
-        }
-        if (!meanRaw || meanRaw->empty()) return;
-
-        // Pulse channels are NOT normalized by a plain scalar (that was the
-        // bug -- it left the trace flat). The displayed trace uses a per-
-        // sample PERFUSION-INDEX transform relative to the pulse's own foot,
-        // then /ref (normalize_ppg_or_similar -> normalize_pulse_trace, see
-        // the main plot ~line 508). The mean MUST use that same transform.
-        const std::vector<double> mean = normalize_ppg_or_similar(*meanRaw, footIdx, pulseChan);
-        // The *_iqr is ALREADY in perfusion-index space (local_ratio_iqr at
-        // build time), so it only needs the scalar /ref -- NOT the perfusion
-        // transform again (main plot ~line 492). It's a true IQR (Q3-Q1), so
-        // convert to an SD estimate (IQR/1.349) for the 95% CI.
-        const double ref = (pulseChan >= 0 && pulseChan < 4) ? m_pulseGlobalRef[pulseChan] : std::nan("");
-        std::vector<double> sd = normalize_features::scale_array_by_ref(*iqrRaw, ref);
-        for (double& s : sd) if (!std::isnan(s)) s /= 1.349;
-
-        const int nBeats = (nPulseBeats >= 0)
-            ? nPulseBeats : static_cast<int>(b.ppg_n_beats);
-
-        auto pulseLabel = [](int m) -> QString {
-            switch (m) {
-            case BinPlotWidget::PpgOnset:    return QStringLiteral("Foot");
-            case BinPlotWidget::PpgT50:      return QStringLiteral("T50");
-                // SWAPPED. PpgPeak is the SYSTOLIC peak -- the forward-wave maximum
-                // the whole pulse is anchored on -- and PpgPeak2 is the DIASTOLIC
-                // peak, the reflected wave arriving after the dicrotic notch. Every
-                // other reference in the tree agrees: ppg_peak2_color is commented
-                // "(2nd/diastolic peak)", and feature_marks builds peak2 as "first
-                // local max after the notch". Only these two labels disagreed, and
-                // they disagreed with each other in a way that made the diastolic
-                // bar look like a missing systolic one.
-            case BinPlotWidget::PpgPeak:     return QStringLiteral("Systolic Peak");
-            case BinPlotWidget::PpgDicrotic: return QStringLiteral("Dicrotic Notch");
-            case BinPlotWidget::PpgPeak2:    return QStringLiteral("Diastolic Peak");
-            case BinPlotWidget::PpgT80:      return QStringLiteral("T80");
-            case BinPlotWidget::PpgEnd:      return QStringLiteral("End");
-            case BinPlotWidget::AbpOnset: case BinPlotWidget::ArtOnset: case BinPlotWidget::ArtPulmOnset:       return QStringLiteral("onset");
-            case BinPlotWidget::AbpPeak: case BinPlotWidget::ArtPeak: case BinPlotWidget::ArtPulmPeak:          return QStringLiteral("peak");
-            case BinPlotWidget::AbpDicrotic: case BinPlotWidget::ArtDicrotic: case BinPlotWidget::ArtPulmDicrotic: return QStringLiteral("dicrotic");
-            case BinPlotWidget::AbpPeak2: case BinPlotWidget::ArtPeak2: case BinPlotWidget::ArtPulmPeak2:        return QStringLiteral("peak2");
-            case BinPlotWidget::AbpEnd: case BinPlotWidget::ArtEnd: case BinPlotWidget::ArtPulmEnd:             return QStringLiteral("end");
-            }
-            return QStringLiteral("landmark");
-            };
-
-        // Pulse channels have no alignment dimension: they are foot-anchored,
-        // once, and raw_anchors is ECG-only. One panel, no suffix.
-        // Pulse landmarks bound one part of the wave: top third only.
-        setFocusSplit(false);
-        if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
-        if (zoomed_in_section_top)
-            zoomed_in_section_top->setFocus(mean, sd, nBeats, col, chLabel + " " + pulseLabel(marker));
-        zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::Transition);
+        focusPulse(b, templateIdx, marker, col);
         return;
     }
 
@@ -3688,9 +3656,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // is what made every bar look identical.
     const ChannelTemplateData* chP = b.chForStrict(leadIdx, focusAnchor);
     if (!chP) {
-        setFocusSplit(false);
-        if (zoomed_in_section_top) zoomed_in_section_top->clearFocus();
-        if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
+        clearFocusPanels();
         fprintf(stderr, "[focus] bin=%d lead=%d marker=%d anchor=%s NOT IN FILE"
             " -- regenerate templates\n",
             binIdx, leadIdx, marker, anchor_view::label(focusAnchor));
@@ -3725,9 +3691,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         const tbank::TemplateBank& bank = b.ecg_bank[leadIdx];
         if (templateIdx >= bank.size()
             || bank.templates[templateIdx].tmpl.empty()) {
-            setFocusSplit(false);
-            if (zoomed_in_section_top) zoomed_in_section_top->clearFocus();
-            if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
+            clearFocusPanels();
             return;
         }
         const tbank::BankTemplate& tp = bank.templates[templateIdx];
@@ -3758,9 +3722,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         const AnchoredBankSlot* asl =
             b.bankSlotFor(leadIdx, templateIdx, focusAnchor);
         if (!asl) {
-            setFocusSplit(false);
-            if (zoomed_in_section_top) zoomed_in_section_top->clearFocus();
-            if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
+            clearFocusPanels();
             fprintf(stderr, "[focus] bin=%d lead=%d slot=%d anchor=%s"
                 " NO PER-SLOT ALIGNED AVERAGE -- build_templates did not write"
                 " it\n", binIdx, leadIdx, templateIdx,
@@ -3916,12 +3878,9 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                     case BinPlotWidget::EcgTEnd:   transCand = lm.t_end_cand;   break;
                     default: break;
                     }
-                    // THE EXPENSIVE HALF OF THE FIDUCIAL DETECTION, cached on
-                    // the same key. ecgDetect assembles the trace, the R column
-                    // and the fit modes from (bin, lead, slot, alignment)
-                    // itself, so this panel cannot pair them differently from
-                    // the bar seeding or the grid glyphs -- which is what every
-                    // P-onset mismatch was.
+                    // The expensive half, on the same key. ecgDetect pairs the
+                    // trace with its own R column, so this panel cannot pair
+                    // them differently from the seeding or the grid glyphs.
                     m_lastDet = ecgDetect(b, leadIdx, templateIdx, focusAnchor,
                         m_sampleRate, m_onOffsetFitMode, m_peakFitMode);
                     m_lastTransKey = tkey;
@@ -3930,33 +3889,18 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
 
                 // ---- THE FIDUCIAL, RE-BRACKETED EVERY CALL ---------------
                 //
-                // Outside the cache on purpose: p_peak and t_peak are measured
-                // between the operator's bars, so they change when a bar moves
-                // while the key does not. Caching the finished position meant
-                // the P-peak view replayed a pre-drag fiducial. The detection
-                // above is what is cached; this is two bracketed argmaxes.
+                // Outside the cache: the peaks follow the bars, which move
+                // without changing the key.
                 //
-                // userMarks, NOT slotMarks -- THIS IS THE MISSING GRAY DOTTED
-                // LINE. The P peak is bracketed by the P-onset bar and the
-                // Q-onset bar, and those two live in DIFFERENT anchors' marker
-                // sets: the admissibility mask (landmark_admissibility.hpp)
-                // gives the P_ONSET set p_begin and nothing else, the Q_ONSET
-                // set q_onset and nothing else. slotMarks returns ONE anchor's
-                // set, so with the alignment forced to P the bracket arrived as
-                // (p_begin, -1); compute_p_peak clamps a negative bracket to
-                // the trace's finite edge instead of treating it as absent, so
-                // the "P peak" came back in the pre-P lead-in, outside the
-                // +/-100 sample view, and FocusPanelWidget draws the fiducial
-                // only inside the window. Under R/automatic the R set is fully
-                // populated, which is why the line disappeared only sometimes.
-                //
-                // userMarks pulls each bar from its owning anchor and
-                // translates it into focusAnchor's columns -- the same set
-                // BinPlotWidget draws its X from, so the dotted line and the
-                // on-screen glyph now agree by construction. It is also the
-                // CONST accessor: slotMarks' non-const overload resizes the
-                // bank and inserts through operator[], so reading the bars here
-                // was quietly mutating the bin.
+                // userMarks, NOT slotMarks. The P peak is bracketed by the
+                // P-onset and Q-onset bars, which live in DIFFERENT anchors'
+                // sets -- one anchor's set holds only the bars it admits, so
+                // the bracket arrived half-empty and compute_p_peak clamped it
+                // to the trace edge, putting the fiducial outside the window.
+                // userMarks assembles all four and translates them into
+                // focusAnchor's columns: the same set the grid draws its X
+                // from. It is also the const accessor -- slotMarks' non-const
+                // overload inserts through operator[].
                 const EcgFiducials fid = ecgFiducialsFrom(m_lastDet,
                     m_sampleRate, m_peakFitMode,
                     b.userMarks(leadIdx, templateIdx, focusAnchor));
@@ -4513,21 +4457,28 @@ void TemplateViewerWindow::save_bin_and_csv() {
             .arg(m_subjectId, e.what()));
         return;   // don't emit finished(); let the user retry
     }
-    QDir alignedDir(m_templateDir);
-    if (!alignedDir.exists()) alignedDir.mkpath(".");
-    const QString canonical = alignedDir.filePath(m_subjectId + "_bins.csv");
+
+    // Aligned-template CSV: one part per alignment, holding that alignment's
+    // own averages, merged into the canonical <id>_template.csv in one write.
+    // Same restructuring as the markings parts above, same reason -- the
+    // sidecars only existed to survive window teardowns between passes.
+    {
+        QDir alignedDir(m_templateDir);
+        if (!alignedDir.exists()) alignedDir.mkpath(".");
+        const QString canonical = alignedDir.filePath(m_subjectId + "_bins.csv");
 
 
-    std::vector<CsvPart> parts;
-    for (AnchorType a : anchor_view::kAllAnchors) {
-        std::string content = buildAlignedTemplateCsv(a);
-        if (content.empty()) continue;
-        parts.push_back(CsvPart{ anchor_view::label(a), std::move(content) });
+        std::vector<CsvPart> parts;
+        for (AnchorType a : anchor_view::kAllAnchors) {
+            std::string content = buildAlignedTemplateCsv(a);
+            if (content.empty()) continue;
+            parts.push_back(CsvPart{ anchor_view::label(a), std::move(content) });
+        }
+        if (!parts.empty() && mergeCsvParts(canonical.toStdString(), parts)) {
+            std::cout << "Wrote bins CSV: " << canonical.toStdString() << "\n";
+        }
+
+        writeLandmarkFitsCsv(alignedDir.absolutePath().toStdString());
     }
-    if (!parts.empty() && mergeCsvParts(canonical.toStdString(), parts)) {
-        std::cout << "Wrote bins CSV: " << canonical.toStdString() << "\n";
-    }
-
-    writeLandmarkFitsCsv(alignedDir.absolutePath().toStdString());
     emit finished();
 }

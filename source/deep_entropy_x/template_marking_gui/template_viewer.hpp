@@ -260,17 +260,9 @@ private:
     long long m_lastTransKey = -1;
     subsample_refine::TransitionCandidates m_lastTransCand;
 
-    // THE DETECTION, not the position. This used to cache the finished
-    // fiducial column (m_lastDetFid) on the same key -- and for the two
-    // BRACKET-DERIVED landmarks that was wrong: P peak and T peak are measured
-    // between the operator's bars, so dragging the P-onset bar moves the P
-    // peak, while the key (bin, slot, lead, marker, anchor) does not change.
-    // Clicking the P-peak glyph afterwards replayed the pre-drag position.
-    //
-    // Now that the detector is split (see ecgDetect / ecgFiducialsFrom), the
-    // expensive half is what gets cached and the two peaks are re-bracketed on
-    // every call -- two argmaxes, so the drag stays cheap and the dotted line
-    // cannot be stale.
+    // THE DETECTION, not the finished position: P and T peak are bracketed by
+    // the operator's bars, which move without changing this key, so caching
+    // the column replayed a pre-drag fiducial. Re-bracketed per call.
     EcgDetection m_lastDet;
 
     // Operator-selected fit models (the on/offset and Fit-Peaks radio groups).
@@ -365,21 +357,14 @@ private:
     // the bin index alone has to consult both.
     std::vector<int> m_pageTemplateIdx;
 
-    // ---- (bin, slot) -> PAGE COLUMN -------------------------------------
-    //
-    // Rebuilt at the end of showPage. Every refresh and every drag used to scan
-    // m_pageGlobalIdx linearly to answer "which column is this", and the
-    // Move-Subsequent loops did it once per propagated column, which made the
-    // propagation quadratic in the page's column count. A (bin, slot) pair
-    // occupies exactly one column, so this is an exact index rather than a
-    // cache of the first match.
+    // (bin, slot) -> page column, rebuilt at the end of showPage. A pair
+    // occupies exactly one column, so this is exact, not a first-match cache.
+    // Replaces the linear m_pageGlobalIdx scan that the propagation loops ran
+    // once per propagated column.
     std::unordered_map<int, int> m_pageColOf;
 
-    // The one key function for a (bin, slot) pair. Was written out as
-    // `bin * 64 + slot` in four places (originFor's caller, resetMarks, the
-    // propagation loop, ...) with the 64 as a bare literal. Slots come from
-    // visibleSlots, which iterates to max_templates_per_bin * 4, so the bound
-    // is asserted rather than assumed.
+    // The one key function for a (bin, slot) pair; the stride was a bare 64 in
+    // four places. Slots run to max_templates_per_bin * 4, hence the assert.
     static constexpr int kSlotKeyStride = 64;
     static constexpr int slotKey(int bin, int slot) {
         return bin * kSlotKeyStride + slot;
@@ -390,6 +375,20 @@ private:
     // This column's panels, or nullptr when the (bin, slot) is not on the page.
     const std::vector<BinPlotWidget*>* panelsForColumn(int binIdx,
         int templateIdx) const;
+
+    // A bin's visible x-axis span in seconds, the denominator every
+    // equal-screen-distance propagation divides by. Was an identical lambda in
+    // each of the propagation paths. -1 when the bin has no drawable extent.
+    double binSpanSeconds(int binIdx) const;
+
+    // Both focus panels to "nothing selected". Five sites had the three lines
+    // written out, and two of them cleared only one panel.
+    void clearFocusPanels();
+
+    // The pulse/arterial half of refreshFocus. Foot-anchored, no alignment
+    // dimension, one panel -- it shares nothing with the ECG half but the two
+    // panel pointers, so it is its own function.
+    void focusPulse(TemplateBin& b, int templateIdx, int marker, double col);
 
     int max_leads = 1;
 
@@ -421,6 +420,12 @@ private:
     // computed and rounded once per drag instead of once per mouse-move.
     double m_dragStartIdx = -1.0;
 
+    // (m_qAlignPass / m_anchorStep / m_anchorPassCount / m_anchorLabel /
+    //  m_currentAnchor removed with the cycle. No member holds "the current
+    //  alignment" any more, deliberately: whichever alignment a read or write
+    //  concerns is a property of the MARKER, answered by
+    //  anchor_view::anchorFor, and a member shadowing that is exactly how a
+    //  drag on one bar used to land in another alignment's set.)
     void setTitleForSubject();
     bool m_showEcgMarkers = false;
     bool m_showEcgRMarkers = false;   // ecg_r_markers: R-aligned overlay

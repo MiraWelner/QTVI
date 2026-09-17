@@ -570,16 +570,10 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
     // STILL REACTIVE: the bars go in as an argument and are read fresh on every
     // repaint, so P and T peak track a drag exactly as before.
     if (m_bin) {
-        // ---- THE DETECTOR RUNS ON TRACE CHANGES, NOT ON PAINTS ---------
-        //
-        // This function is called once per repaint and called ecgFiducials,
-        // which runs detect_template_landmarks: five finders, four of them
-        // fitting up to five curve models and choosing by BIC. Nothing in it
-        // depends on the bars except the two bracketed peaks, so a drag was
-        // paying for the whole detector on every panel of every repainted
-        // column, every mouse-move. It is now computed when the waveform this
-        // panel draws changes -- new trace, new slot, new alignment, new fit
-        // mode -- and reused otherwise. See ecgDetect / ecgFiducialsFrom.
+        // THE DETECTOR RUNS ON TRACE CHANGES, NOT ON PAINTS. This is called
+        // once per repaint, and detect_template_landmarks is the most
+        // expensive call in the GUI; nothing in it reacts to the bars except
+        // the two bracketed peaks below.
         if (!m_detValid || m_detBin != m_bin || m_detFrame != m_frame
             || m_detSlot != m_templateIndex) {
             m_det = ecgDetect(*m_bin, m_leadIndex, m_templateIndex, m_frame,
@@ -1207,13 +1201,10 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     const int wallR = lastDrawnSample(ch);
     if (wallL < 0 || wallR < wallL) return;
     int s = std::clamp(sampleFromX(ch, e->position().x()), wallL, wallR);
-    // SAME COLUMN, NOTHING TO DO. A drag emits on every mouse event, and at
-    // normal zoom several pixels map to one sample, so most events asked the
-    // owner to re-place a bar where it already was -- and each of those ran a
-    // full Move-Subsequent propagation pass over the page and repainted every
-    // later column. Sub-sample bar positions come from the detectors and from
-    // userMarks, never from a drag (sampleFromX returns a column), so the
-    // rounded compare loses nothing.
+    // SAME COLUMN, NOTHING TO DO. Several pixels map to one sample at normal
+    // zoom, so most drag events re-placed a bar where it already was -- each
+    // one running a full propagation pass. A drag only ever produces whole
+    // columns (sampleFromX), so the rounded compare loses nothing.
     if (s == static_cast<int>(std::lround(m_markers[m_dragMarker]))) return;
     m_markers[m_dragMarker] = s;
     // TEMPLATE-AWARE signal only. markerMoved carried no slot, so a drag on a
@@ -1230,10 +1221,7 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
-    // THE GESTURE IS OVER. The owner's propagation path pushes one marker
-    // position per column per mouse-move and defers the full re-apply
-    // (re-seeding, pulse marks, glyph re-detection) to here, so it is paid once
-    // per drag rather than once per pixel.
+    // The gesture is over: the owner's one full page re-apply hangs off this.
     if (m_dragMarker >= 0)
         emit markerDragFinished(m_binIndex, m_leadIndex, m_templateIndex,
             m_dragMarker);
