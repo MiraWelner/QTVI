@@ -61,6 +61,24 @@ struct config_entry {
     int min_beats_template_ecg = 0;
     int min_beats_template_ppg = 0;
 
+    // MORPHOLOGY SPLIT WINDOW, IN SECONDS EITHER SIDE OF THE ANCHOR. The
+    // split correlation compares beats over this region only -- around the R
+    // peak for ECG, around the systolic peak for the pulse -- so a difference
+    // outside it does not separate two morphologies. Converted to samples at
+    // each channel's own rate in GenerateTemplatesFast.
+    //
+    // UNSET MEANS THE WHOLE BEAT. 0 is the default and it is a real setting,
+    // not a missing one: jbank::CandidateBank::corr_halfwin <= 0 already meant
+    // "no window, correlate the whole slice", so a blank cell gets you the
+    // full-beat comparison rather than a guessed window.
+    //
+    // NOTE this is NOT what the code did before. The window was hardcoded at
+    // 0.5 s, so a config.csv with these columns blank now splits on the whole
+    // beat where it used to split on +-0.5 s around the anchor. Put 0.5 in the
+    // cells to keep the old behaviour.
+    double region_around_Rpeak_for_morphology_split = 0.0;
+    double region_around_PPGPeak_for_morphology_split = 0.0;
+
     // Output subpaths used by the marking / viewer pipeline. output_path is
     // the user-set parent; the rest are derived from it by deriveSubpaths()
     // in config_loader. Ignored by the bin maker.
@@ -70,7 +88,7 @@ struct config_entry {
     std::string r_peak_data_path;
     std::string template_path;
     std::string fiducial_marker_locations;
-	std::string quality_metric;
+    std::string quality_metric;
     std::string snapshot_path;
     std::string log_path;
     std::string training_log;

@@ -324,12 +324,23 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 ji.n_slices = static_cast<uint32_t>(nR - 1);
                 ji.bin_index = static_cast<uint64_t>(i);
 
-                // Morphology split looks at +-0.5 s around each anchor only:
-                // the R peak (ECG rate) and the systolic peak (PPG rate).
-                if (rates.ecg > 0.0)
-                    ji.ecg_corr_halfwin = static_cast<int>(0.5 * rates.ecg + 0.5);
-                if (rates.ppg > 0.0)
-                    ji.ppg_corr_halfwin = static_cast<int>(0.5 * rates.ppg + 0.5);
+                // MORPHOLOGY SPLIT WINDOW, from config.csv
+                // (region_around_Rpeak_for_morphology_split and
+                // region_around_PPGPeak_for_morphology_split), seconds either
+                // side of the anchor -- the R peak at the ECG rate, the
+                // systolic peak at the PPG rate. Was hardcoded at 0.5 s.
+                //
+                // UNSET (0, the default) leaves corr_halfwin at -1, which jbank
+                // reads as "no window, correlate the whole beat" -- so blank
+                // cells now split on the whole beat, not on +-0.5 s. The
+                // trailing + 0.5 is rounding to the nearest sample, not the old
+                // window.
+                if (rates.ecg > 0.0 && rates.morph_halfwin_ecg_s > 0.0)
+                    ji.ecg_corr_halfwin = static_cast<int>(
+                        rates.morph_halfwin_ecg_s * rates.ecg + 0.5);
+                if (rates.ppg > 0.0 && rates.morph_halfwin_ppg_s > 0.0)
+                    ji.ppg_corr_halfwin = static_cast<int>(
+                        rates.morph_halfwin_ppg_s * rates.ppg + 0.5);
 
                 const EcgChannelResult* ec[3] =
                 { &ecg_res.ch1, &ecg_res.ch2, &ecg_res.ch3 };

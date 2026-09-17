@@ -181,7 +181,11 @@ namespace post_process_detail {
             cfg.ppg_upsample_rate,
             cfg.abp_upsample_rate,
             cfg.art_upsample_rate,
-            cfg.art_pulm_upsample_rate
+            cfg.art_pulm_upsample_rate,
+            // Seconds, not Hz -- the morphology split's half-window. See
+            // SignalRates; positional, so these must stay last.
+            cfg.region_around_Rpeak_for_morphology_split,
+            cfg.region_around_PPGPeak_for_morphology_split
         };
         // Everything finalize needs from cfg. Copy it once here rather than
         // wiring individual fields piecewise later.

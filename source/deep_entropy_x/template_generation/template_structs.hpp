@@ -39,6 +39,18 @@ struct SignalRates {
     double abp = 0.0;
     double art = 0.0;
     double artPulm = 0.0;
+
+    // NOT RATES -- SECONDS. The morphology split's half-window either side of
+    // its anchor: the R peak for ECG, the systolic peak for the pulse. They
+    // ride here because this struct is already the one thing threaded from the
+    // config through every stage of template generation, and the conversion to
+    // samples needs the rates above anyway (GenerateTemplatesFast does it).
+    //
+    // UNSET = 0 = correlate the whole beat, which is what corr_halfwin <= 0
+    // means downstream. A caller that does not set these gets the full-beat
+    // split, NOT the 0.5 s that used to be hardcoded here.
+    double morph_halfwin_ecg_s = 0.0;
+    double morph_halfwin_ppg_s = 0.0;
 };
 
 // Per-channel, per-method ECG template results
@@ -99,17 +111,6 @@ struct TemplateInfo {
     // passes run.
     std::map<std::string, std::vector<uint8_t>> kept_rhythm_by_channel;
     std::map<std::string, bin_pipeline::ChannelOutput> bank_by_channel;
-
-    // THE SECTION 4.6 PARTITION FOR THIS BIN: one grouping of the beats, with
-    // every channel's average taken over the same members. This is what
-    // replaces the per-channel banks above -- an ECG split now carries its PPG
-    // beats with it, so each group's PPG cohort differs from its siblings'
-    // instead of every column of a bin reporting the same bin-wide pulse count.
-    //
-    // bank_by_channel is kept alongside during the transition because the
-    // viewer, the serializer and the morphology writers still read it. It must
-    // NOT be treated as a second opinion: when both are present this one is the
-    // partition and those are a per-channel view of an older one.
     jbank::BinBankOutput joint;
     bool joint_valid = false;
 };
@@ -151,24 +152,8 @@ struct EcgChannelResult {
     vector<size_t> n_beats_raw;//the viewer displays the number of beats contributing to template for each channel
 
     vector<vector<vector<double>>> kept_beats_raw;
-    // bank_out_raw IS GONE. It held one bin_pipeline::ChannelOutput per bin --
-    // a partition of this channel's beats alone. There is one partition now,
-    // TemplateInfo::joint, and bank_by_channel holds the four channel views of
-    // it. A second grouping of the same beats with nothing marking it as the
-    // stale one is what let the archive and the screen disagree.
-
-    // Rhythm verdict per kept beat, [bin][beat]: 0 NORMAL, 1 PVC, 2 VOTED_PVC.
     vector<vector<uint8_t>> kept_rhythm_raw;
-
-    // seed_pool::SeedBasis per bin: how the Phase 1 reference pool was chosen.
-    // A bin whose basis is not SINUS_ONLY has a reference that is not purely
-    // sinus -- the fallback ladder never returns an empty pool, so a bin where
-    // ectopy is the majority still gets a template and this is the only thing
-    // that says so.
     vector<uint8_t> seed_basis_raw;
-
-    // Per-bin, per-beat vertical DC leveling shifts (two-stage TP/PQ),
-    // indexed [bin][beat]. Written to the beat-move log post-loop.
     vector<vector<double>> tp_shift_raw;
     vector<vector<double>> pq_shift_raw;
 };
@@ -177,29 +162,5 @@ struct EcgTemplateResult {
     EcgChannelResult ch1;
     EcgChannelResult ch2;
     EcgChannelResult ch3;
-
-    // CAPTURED SLOT -> R-PAIR SLICE, per channel per bin. kept_index[c][bin][k]
-    // is the slice that row k of kept_beats_raw[bin] was cut from.
-    //
-    // IT NOW HOLDS WHAT THIS COMMENT SAYS. create_ecg_templates filled it with
-    // usableIdx -- the ALIGNED ROW -- which is a different number: the slicer
-    // skips R-pairs (rr <= 3 samples, rr > 4 s, a dropout gap rather than a
-    // beat) before anything is pushed, so `beats` is already compacted against
-    // the R-pair list. The two coincide on a bin where nothing was skipped,
-    // which is most bins, and diverge by one per skip on the bins that have
-    // gaps. Composed against alignment's slice_index at the point of capture.
-    //
-    // THIS IS THE JOIN KEY BETWEEN THE CHANNELS. Each channel prunes
-    // independently, so row k of CH1 and row k of CH2 and row k of PPG are
-    // three different heartbeats. The Section 4.6 partition has to be ONE
-    // partition across all four channels -- an ECG split must carry its PPG
-    // beats with it -- and that is impossible without a shared key. The slice
-    // ordinal is that key, because every slicer is driven by the same ch1.raw
-    // R-peaks.
-    //
-    // It was already computed inside CreateEcgTemplatesFast (as the local
-    // keptIdx, for the morphology writers) and thrown away at the end of the
-    // function. Surfaced here instead of recomputed, so the partition and the
-    // archive cannot disagree about which beat is which.
     std::array<std::vector<std::vector<size_t>>, 3> kept_index;
 };

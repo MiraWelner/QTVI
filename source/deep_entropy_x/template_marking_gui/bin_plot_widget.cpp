@@ -77,6 +77,26 @@ namespace {
     // both axes; dash_half_width is the dash's half-length. The dash is longer
     // because it has one stroke to the X's two and needs the extra reach to
     // stay findable where the trace is steep.
+    // ONE ALIGNMENT'S OWN BARS. Teal, the colour the R-aligned overlay used,
+    // because in a forced view every bar on screen was measured on the SAME
+    // waveform -- what distinguishes them is the landmark, which the label
+    // says, not the alignment, which is the same for all of them. The
+    // per-landmark palette above is for Automatic, where the bars genuinely
+    // come from four different alignments.
+    constexpr QColor align_bar_color{ 0, 140, 140 };
+
+    // The landmark's letter, to follow the alignment's. Matches the old
+    // overlay's "Rp"/"Rq"/"Rs"/"Rt".
+    const char* align_bar_letter(int m) {
+        switch (m) {
+        case BinPlotWidget::EcgPBegin: return "p";
+        case BinPlotWidget::EcgQBegin: return "q";
+        case BinPlotWidget::EcgSEnd:   return "s";
+        case BinPlotWidget::EcgTEnd:   return "t";
+        }
+        return "?";
+    }
+
     constexpr double marker_half_size = 2.0;
     constexpr double dash_half_width = 5.0;
     constexpr double marker_pen_size = 1.25;
@@ -460,18 +480,6 @@ void BinPlotWidget::setShowEcgMarkers(bool show) {
     update();
 }
 
-void BinPlotWidget::setShowRMarkers(bool show) {
-    if (m_showRMarkers == show) return;
-    m_showRMarkers = show;
-    update();
-}
-
-void BinPlotWidget::setRMarks(double pBegin, double qOnset, double sEnd, double tEnd) {
-    m_rMarks[0] = pBegin; m_rMarks[1] = qOnset;
-    m_rMarks[2] = sEnd;   m_rMarks[3] = tEnd;
-    update();
-}
-
 void BinPlotWidget::setShowPpgMarkers(bool show) {
     if (m_showPpgMarkers == show) return;
     m_showPpgMarkers = show;
@@ -688,9 +696,10 @@ bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
 }
 
 
-int BinPlotWidget::markerAtX(double x) const {
+int BinPlotWidget::markerAtX(double x, double* distOut) const {
     int best = -1;
     double bestDist = click_radius_around_marker + 1.0;
+    if (distOut) *distOut = std::numeric_limits<double>::infinity();
     for (int m = 0; m < MarkerCount; ++m) {
         const double idx = m_markers[m];
         if (idx < 0.0) continue;
@@ -712,6 +721,7 @@ int BinPlotWidget::markerAtX(double x) const {
         const double d = std::abs(x - xFromSample(ch, idx));
         if (d < bestDist) { bestDist = d; best = m; }
     }
+    if (distOut && best >= 0) *distOut = bestDist;
     return best;
 }
 
@@ -978,37 +988,21 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         const double drawIdx = (wallL >= 0 && idx < (double)wallL)
             ? (double)wallL : idx;
         const double mx = xFromSample(ch, drawIdx);
-        QPen pen(marker_color(m), 2);
-        pen.setStyle(markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine);
+        // OVERLAY STYLE for a forced alignment's own ECG bars. Pulse and
+        // arterial bars are foot-anchored and have no alignment, so they keep
+        // their palette in every view.
+        const bool overlay = !m_alignBadge.isEmpty() && markerIsEcg(m);
+        QPen pen(overlay ? align_bar_color : marker_color(m), 2);
+        pen.setStyle(overlay ? Qt::DotLine
+            : (markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine));
         p.setPen(pen);
         p.drawLine(QPointF(mx, margin_top), QPointF(mx, h - margin_bottom));
         p.drawText(
             QPointF(mx + 2, margin_top + marker_text_y_offset(m)),
-            marker_short_label(m)
+            overlay
+            ? (m_alignBadge + QString::fromLatin1(align_bar_letter(m)))
+            : QString::fromLatin1(marker_short_label(m))
         );
-    }
-
-    // ---- R-ALIGNED OVERLAY (ecg_r_markers) --------------------------------
-    // The 4 R-aligned ECG landmarks, read-only, on top of the normal bars.
-    // Positions arrive already in the frame the panel draws. Distinct style
-    // (dotted teal) so they read as reference, not editable bars. Only on the
-    // ECG panels, and only when the markers are being shown at all.
-    if (m_showRMarkers) {
-        static const char* kRLbl[4] = { "Rp", "Rq", "Rs", "Rt" };
-        const int wallR = lastDrawnSample(Channel::Ecg);
-        const int wallL = firstDrawnSample(Channel::Ecg);
-        QPen rpen(QColor(0, 140, 140), 2);   // teal
-        rpen.setStyle(Qt::DotLine);
-        for (int i = 0; i < 4; ++i) {
-            double idx = m_rMarks[i];
-            if (idx < 0.0) continue;
-            if (wallR >= 0 && idx > (double)wallR) continue;
-            if (wallL >= 0 && idx < (double)wallL) idx = (double)wallL;
-            const double mx = xFromSample(Channel::Ecg, idx);
-            p.setPen(rpen);
-            p.drawLine(QPointF(mx, margin_top), QPointF(mx, h - margin_bottom));
-            p.drawText(QPointF(mx + 2, margin_top + 10), QString::fromLatin1(kRLbl[i]));
-        }
     }
 
     drawFeatureGlyphs(p, yLo, yHi, pLo, pHi, ph);
@@ -1037,43 +1031,37 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
 void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::LeftButton) {
-        // R-ALIGNED OVERLAY DRAG. The markers are draggable: pressing one
-        // starts an R-marker drag and asks the owner to flip the view to R so
-        // the drag happens on the R trace. Checked before the bar hit-test so
-        // it takes priority when the overlay is shown. ~6 px tolerance.
-        if (m_showRMarkers) {
-            const double px = e->position().x();
-            for (int i = 0; i < 4; ++i) {
-                if (m_rMarks[i] < 0.0) continue;
-                if (std::abs(px - xFromSample(Channel::Ecg, m_rMarks[i])) < 6.0) {
-                    m_dragRMark = i;
-                    emit rMarkerDragStarted(m_binIndex, m_leadIndex);
-                    return;
-                }
-            }
-        }
-        // B2 focus mode: focus selection is driven by the user BAR (the
-        // draggable marker), NOT the automated glyph. A click on a bar selects
-        // that landmark for the focus panel and begins a drag.
-        int m = markerAtX(e->position().x());
-        if (m >= 0) {
-            m_dragMarker = m;
-            emit markerDragStarted(m_binIndex, m_leadIndex, m);
-            emit landmarkSelected(m_binIndex, m_leadIndex, m_templateIndex,
-                m, m_markers[m]);
-            return;
-        }
+        // ---- ONE HIT TEST OVER BARS AND GLYPHS: NEAREST WINS ------------
+        //
+        // Bars used to win unconditionally inside the 12 px radius, and that
+        // made some glyphs unreachable rather than merely hard to hit. The P
+        // peak is the worst case: it sits 30-50 ms from the P-onset BAR, and
+        // 12 px at page zoom is of the order of 100 ms, so every click aimed
+        // at the P peak was claimed by the onset bar -- which then also
+        // recorded an operator touch on that bar (user_clicked_on_bar),
+        // re-aligned the grid to P_ONSET, and armed a drag on it. When
+        // compute_p_begin's `clamp(pb, fFin, pPeak)` saturates the two share a
+        // column exactly and no zoom could separate them.
+        //
+        // Both candidates are now measured and the CLOSER one answers. A bar
+        // still wins a tie (strict <), so deliberately grabbing a bar that has
+        // a glyph sitting on it behaves as before.
+        const double px = e->position().x();
 
-        // PEAK GLYPHS ARE CLICKABLE FOR FOCUS (read-only) -- to see the fit that
-        // placed them. Hit-test the positions ACTUALLY DRAWN (what the operator
-        // sees): R from the frozen snapshot (m_glyphs.ecgRPeak), P from the
-        // reactive fit (reactiveGlyphs). NOT m_markers[EcgRPeak], which holds
-        // r_col_raw and sits a few samples off the drawn cross -- that mismatch
-        // is why clicking the R glyph did nothing. Checked after the bars so a
-        // bar always wins when both are near the cursor.
+        double barDist = std::numeric_limits<double>::infinity();
+        const int mBar = markerAtX(px, &barDist);
+
+        // GLYPHS ARE READ-ONLY, hit-tested at the positions ACTUALLY DRAWN
+        // (what the operator sees): R from the frozen snapshot
+        // (m_glyphs.ecgRPeak), P from the reactive fit (reactiveGlyphs). NOT
+        // m_markers[EcgRPeak], which holds r_col_raw and sits a few samples
+        // off the drawn cross -- that mismatch is why clicking the R glyph used
+        // to do nothing.
+        int    glyphMarker = -1;
+        double glyphIdx = -1.0;
+        double glyphDist = click_radius_around_marker;   // must be within radius
         if (m_showEcgTrace && !m_ecg.empty()) {
             const Reactive rx = reactiveGlyphs();
-            const double px = e->position().x();
             const int wall = lastDrawnSample(Channel::Ecg);
             struct GlyphHit { int marker; double idx; };
             const GlyphHit glyphs[] = {
@@ -1089,20 +1077,27 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
                 { EcgSEnd,   m_glyphs.ecgS },
                 { EcgTEnd,   m_glyphs.ecgTend },
             };
-            int    bestMarker = -1;
-            double bestIdx = -1.0;
-            double bestDist = click_radius_around_marker;   // must be within radius
             for (const GlyphHit& g : glyphs) {
                 if (g.idx < 0.0) continue;
                 if (wall >= 0 && g.idx > static_cast<double>(wall)) continue;
                 const double d = std::abs(px - xFromSample(Channel::Ecg, g.idx));
-                if (d < bestDist) { bestDist = d; bestMarker = g.marker; bestIdx = g.idx; }
+                if (d < glyphDist) {
+                    glyphDist = d; glyphMarker = g.marker; glyphIdx = g.idx;
+                }
             }
-            if (bestMarker >= 0) {
-                emit landmarkFocusOnly(m_binIndex, m_leadIndex,
-                    m_templateIndex, bestMarker, bestIdx);
-                return;   // focus only; no drag, no touch
-            }
+        }
+
+        if (glyphMarker >= 0 && glyphDist < barDist) {
+            emit landmarkFocusOnly(m_binIndex, m_leadIndex,
+                m_templateIndex, glyphMarker, glyphIdx);
+            return;   // focus only; no drag, no touch
+        }
+        if (mBar >= 0) {
+            m_dragMarker = mBar;
+            emit markerDragStarted(m_binIndex, m_leadIndex, mBar);
+            emit landmarkSelected(m_binIndex, m_leadIndex, m_templateIndex,
+                mBar, m_markers[mBar]);
+            return;
         }
     }
 
@@ -1172,20 +1167,6 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
 }
 
 void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
-    // R-aligned overlay drag: move the grabbed R marker along the ECG axis and
-    // report it. By now the owner has flipped the view to R (on drag start),
-    // so this column is R-framed and the position is an R-frame column.
-    if (m_dragRMark >= 0) {
-        const int wallL = firstDrawnSample(Channel::Ecg);
-        const int wallR = lastDrawnSample(Channel::Ecg);
-        if (wallL < 0 || wallR < wallL) return;
-        const int s = std::clamp(sampleFromX(Channel::Ecg, e->position().x()),
-            wallL, wallR);
-        m_rMarks[m_dragRMark] = s;
-        emit rMarkerMoved(m_binIndex, m_leadIndex, m_templateIndex, m_dragRMark, s);
-        update();
-        return;
-    }
     if (m_dragMarker < 0) return;
     const std::vector<double>* vec = nullptr;
     Channel ch = Channel::Ecg;
@@ -1221,12 +1202,15 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
-    // The gesture is over: the owner's one full page re-apply hangs off this.
-    if (m_dragMarker >= 0)
-        emit markerDragFinished(m_binIndex, m_leadIndex, m_templateIndex,
-            m_dragMarker);
+    // NOTHING IS EMITTED HERE, deliberately. A release used to fire a
+    // markerDragFinished so the owner could re-apply the whole page once per
+    // gesture -- but m_dragMarker is armed by any bar CLICK, not just a drag,
+    // and an automatic alignment shift IS a bar click, so every one of those
+    // paid for a full-page re-detect on mouse-up. The pass had no work to do
+    // either: everything that follows a bar is reactive (P and T peak through
+    // reactiveGlyphs, T50/T80 likewise) or was already pushed by the
+    // propagation loops' setMarker calls.
     m_dragMarker = -1;
-    m_dragRMark = -1;
 }
 
 void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b,

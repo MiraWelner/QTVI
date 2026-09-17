@@ -284,13 +284,20 @@ public:
     void setShowEcgMarkers(bool show);
     void setShowPpgMarkers(bool show);
 
-    // R-aligned overlay: the 4 ECG landmarks (P-onset, Q-onset, S-end, T-end)
-    // as detected on the R alignment (the _R CSV columns), drawn read-only in
-    // addition to the normal bars. Positions are already in the frame the panel
-    // draws. setShowRMarkers toggles them; dragging one is handled via the
-    // rMarkerDragStarted / rMarkerMoved signals below.
-    void setShowRMarkers(bool show);
-    void setRMarks(double pBegin, double qOnset, double sEnd, double tEnd);
+    // THIS PANEL IS SHOWING ONE ALIGNMENT'S OWN BARS. Non-empty (the
+    // alignment's letter, "P"/"Q"/"R"/"J") switches the ECG bars to the
+    // overlay style the R-aligned overlay used to have: dotted, all one
+    // colour, each labelled with this letter plus its landmark -- "Pp", "Qq",
+    // "Qs", "Jt". Empty means Automatic, where the bars are canonical copies
+    // assembled from four different alignments and the per-landmark colours
+    // are the cue that matters.
+    void setAlignmentBadge(const char* label) {
+        const QString s = label ? QString::fromLatin1(label) : QString();
+        if (s == m_alignBadge) return;
+        m_alignBadge = s;
+        update();
+    }
+
     void setShowPpgDerivMarkers(bool show);
     void setShowAbpMarkers(bool show);
     void setShowArtMarkers(bool show);
@@ -359,18 +366,6 @@ signals:
     void markerMoved(int binIndex, int leadIndex, int marker, int newIdx);
     void markerDragStarted(int binIndex, int leadIndex, int marker);
 
-    // End of a bar gesture, once from mouseReleaseEvent. The owner defers its
-    // one full page re-apply to this instead of paying it per mouse-move.
-    void markerDragFinished(int binIndex, int leadIndex, int templateIdx,
-        int marker);
-
-    // R-aligned overlay (ecg_r_markers) is DRAGGABLE. Starting a drag on one
-    // emits rMarkerDragStarted so the owner can flip the view to R while you
-    // drag; each move emits rMarkerMoved with the landmark index (0..3 =
-    // p_begin,q_onset,s_end,t_end) and its new column in the drawn frame.
-    void rMarkerDragStarted(int binIndex, int leadIndex);
-    void rMarkerMoved(int binIndex, int leadIndex, int templateIdx,
-        int rIndex, double newCol);
 
     // B2 focus mode: emitted when the operator selects (clicks) a landmark,
     // so the owner can render that landmark's focus panel. Distinct from
@@ -456,7 +451,10 @@ private:
     // The ONLY hit-test. Bars are clickable; glyphs are display-only and are
     // deliberately not hit-tested, so a click can never select or drag an
     // automated mark.
-    int    markerAtX(double x) const;
+    // The nearest BAR to x, or -1. distOut receives that bar's pixel distance
+    // (infinity on a miss) so the caller can weigh it against a glyph hit
+    // instead of letting bars win unconditionally.
+    int    markerAtX(double x, double* distOut = nullptr) const;
 
     bool   markerTrace(int m, const std::vector<double>*& vec,
         Channel& ch, bool& visible) const;
@@ -558,14 +556,12 @@ private:
     mutable AnchorType         m_detFrame = AnchorType::R_PEAK;
     mutable int                m_detSlot = -1;
 
+    // Alignment letter for the overlay bar style; empty in Automatic.
+    QString m_alignBadge;
+
     curve_fit::FitMode     m_onOffsetFitMode = curve_fit::FitMode::Auto;
     curve_fit::PeakFitMode m_peakFitMode = curve_fit::PeakFitMode::Auto;
 
-    // R-aligned overlay markers (ecg_r_markers). Read-only; index order is
-    // P-onset, Q-onset, S-end, T-end. -1 = absent. Drawn only when shown.
-    bool   m_showRMarkers = false;
-    double m_rMarks[4] = { -1.0, -1.0, -1.0, -1.0 };
-    int    m_dragRMark = -1;   // which R marker (0..3) is being dragged, -1 none
 
     // Compute the glyph snapshot from current trace + marker state.
     void captureGlyphSnapshot(const TemplateBin& b,

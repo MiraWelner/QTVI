@@ -13,7 +13,7 @@ See feature_marks.hpp for the public interface*/
 #include <vector>
 #include <functional>
 #include "template_anchoring\curve_fit.hpp"
-#include "template_anchoring\landmark_admissibility.hpp"
+#include "template_anchoring\anchor_view.hpp"
 #include "subsample_refine.hpp"
 #include "ppg_derivative.hpp"
 #include "ppg_dicrotic.hpp"
@@ -234,11 +234,29 @@ double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracket
 double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs,
     curve_fit::PeakFitMode peakMode)
 {
-    // P peak = the largest deviation from the endpoint chord over the pre-QRS
-    // window. The window is clamped into the trace's FINITE region, so it
-    // always contains signal and the argmax always resolves. There is no
-    // failure branch and no fallback: the only -1 is a trace with no finite
-    // sample at all, which is not a P-detection case but an empty trace.
+    // P PEAK = A RAW ARGMAX BETWEEN THE TWO POLES, refined to sub-sample.
+    //
+    // The largest SAMPLE in [loIn, hiIn], with no baseline term of any kind.
+    // This used to subtract an endpoint chord -- a straight line between
+    // v[a] and v[b] -- and take the largest deviation from it. That made both
+    // poles do two jobs at once: they bounded the search AND they anchored the
+    // baseline, so moving either bar rotated the chord about the other and
+    // could hand the maximum to a different sample even while the P hump
+    // stayed comfortably inside the window. A raw argmax cannot do that: the
+    // poles only bound the search, so a bar move changes the answer only when
+    // it moves a pole across the peak itself.
+    //
+    // POLARITY IS ASSUMED UPRIGHT. argmax finds the largest value, so an
+    // inverted P would return the baseline shoulder instead. Note that this is
+    // also the one finder here that does NOT apply the qrs_positive_at flip its
+    // neighbours do (compute_p_begin and detect_p_end both flip into an
+    // `upright` copy and then call this one on the RAW array), so an inverted
+    // lead has to be excluded upstream rather than handled here.
+    //
+    // The window is clamped into the trace's FINITE region, so it always
+    // contains signal and the argmax always resolves. There is no failure
+    // branch and no fallback: the only -1 is a trace with no finite sample at
+    // all, which is not a P-detection case but an empty trace.
     const int N = static_cast<int>(v.size());
     if (N < 1 || fs <= 0.0) return -1.0;
 
@@ -261,18 +279,20 @@ double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, d
     while (b >= a && std::isnan(v[b])) --b;
     if (b < a) return static_cast<double>(fFin);   // window was a NaN gap
 
-    const double yL = v[a], yR = v[b];
-    const double invSpan = (b > a) ? 1.0 / static_cast<double>(b - a) : 0.0;
-
-    int best = a; double bd = -std::numeric_limits<double>::infinity();
+    // The argmax itself is a COLUMN. Ties go to the earliest sample, which on
+    // a flat-topped P is the left shoulder rather than the middle -- the
+    // refinement below is what resolves the vertex, so the tie rule only
+    // decides where that fit is seeded.
+    int best = a; double bv = -std::numeric_limits<double>::infinity();
     for (int i = a; i <= b; ++i) {
         if (std::isnan(v[i])) continue;
-        const double dev = v[i] - (yL + (yR - yL) * (i - a) * invSpan);
-        if (dev > bd) { bd = dev; best = i; }
+        if (v[i] > bv) { bv = v[i]; best = i; }
     }
 
-    // sigma = 12, the P-peak sigma. Coarse argmax stands if refinement is
-    // non-finite -- that is still the detected column, not a fallback default.
+    // SUB-SAMPLE COMES FROM HERE, not from the argmax: Gaussian-weighted
+    // quadratic/cubic over best +- kWindowHalfWidth, sigma = 12. The coarse
+    // column stands if the refinement is non-finite -- that is still the
+    // detected column, not a fallback default.
     const double p = subsample_refine::best_peakfinding_algorithm(v, best, subsample_refine::peak_sigma::P, peakMode);
     return std::isfinite(p)
         ? std::clamp(p, static_cast<double>(fFin), static_cast<double>(lFin))
@@ -1194,7 +1214,6 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // Mask to what THIS alignment may report. The finders all run -- one
         // call, cheap -- but a landmark the alignment smeared is reported ABSENT
         // rather than at whatever position the smeared median produced.
-        // See landmark_admissibility.hpp.
         // The per-anchor admissibility mask used to live here, to blank the
         // bars this alignment may not report. Bars are no longer seeded in this
         // function (see below), and the glyph *_auto_ch fields are never masked
@@ -1372,9 +1391,6 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
         FeatureMarks::detect_template_landmarks(tmpl, r_col, sampleRate, fitMode, peakMode);
     if (!lm.valid) return;
 
-    // SAME MASK seed_all applies. See landmark_admissibility.hpp.
-    const auto msk = landmark_admit::maskFor(anchor);
-
     // BankMarkerSet is double, so lm's sub-sample positions go in as they are.
     // -1 still means absent.
     //
@@ -1383,12 +1399,34 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
     // Q-onset bars, so every reader calls FeatureMarks::reactive_ecg on the bar
     // set instead. A detector-sourced copy stored alongside was a second answer
     // that drifted from the X on screen the moment either bracket bar moved.
-    if (msk.q_onset) out.q_onset = lm.q_onset;
-    if (msk.s_end)   out.s_end = lm.s_end;
-    if (msk.t_end)   out.t_end = lm.t_end;
+    //
+    // WHICH BARS THIS ALIGNMENT SHOWS: anchor_view::showsBar, the 9-cell grid,
+    // and the same predicate hasUserColumn reports them under. Every cell it
+    // admits is an independent bar measured on THIS alignment's waveform --
+    // p_begin under P is not the same bar as p_begin under R.
+    //
+    // This replaced landmark_admit::maskFor, which is gone. That header's only
+    // remaining consumer was these four lines -- seed_all stopped masking when
+    // glyphs became unconditional (a glyph is measured on every alignment) --
+    // and its rows were a second copy of anchorFor's table, maintained by hand.
+    // Two copies of one fact is what it cost to move a bar from one alignment
+    // to another: the mask had to be edited in lockstep or the bar simply
+    // stopped being seeded.
+    //
+    // CONSEQUENCE, stated because it is a real change: an alignment that owns
+    // NO bar (R and J, once the J-point and T-end bars moved onto Q) seeds an
+    // all -1 set rather than a full one. Nothing read those values -- userMarks
+    // pulls each bar from its owner and hasUserColumn emits no _user column for
+    // a non-owning block -- but hasDetectedMarks() tests !isUnset(), so such a
+    // set now reports "never seeded" permanently. Callers that seed lazily on
+    // that test must skip an anchor with no owned bar, or they will re-run this
+    // detection on every display.
+    if (anchor_view::showsBar(anchor, anchor_view::kQBegin)) out.q_onset = lm.q_onset;
+    if (anchor_view::showsBar(anchor, anchor_view::kSEnd))   out.s_end = lm.s_end;
+    if (anchor_view::showsBar(anchor, anchor_view::kTEnd))   out.t_end = lm.t_end;
     // lm.p_begin is the -1 call now (see detect_template_landmarks), so the
     // override that used to live here is gone: one source again.
-    if (msk.p_begin) out.p_begin = lm.p_begin;
+    if (anchor_view::showsBar(anchor, anchor_view::kPBegin)) out.p_begin = lm.p_begin;
 }
 
 

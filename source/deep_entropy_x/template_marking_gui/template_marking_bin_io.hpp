@@ -424,15 +424,16 @@ struct TemplateBin {
     bool    bad_r_ch[3] = { false, false, false };
     uint8_t bad_ppg = 0;   // 0 = ok, 1 = bad, 2 = no ppg
 
-    // R-ALIGNED OVERLAY BARS (ecg_r_markers). A SEPARATE, editable set of the
-    // 4 ECG landmarks in the R frame -- PER SLOT, because each morphology
-    // column is its own template with its own R-aligned landmarks (a PVC's R
-    // markers are not a sinus's). Indexed [lead][slot][0..3] =
-    // p_begin,q_onset,s_end,t_end. Seeded per slot from that slot's R-aligned
-    // detection; dragged independently per column. NOT serialized (readers/
-    // writers ignore it); re-seeded each load, exported to the CSV as _R.
-    static constexpr int kRBarsSlots = 24;   // >= any bank slot index in use
-    double r_bars_ch[3][kRBarsSlots][4] = {};   // seeded in initAfterBinsLoaded
+    // THE R-ALIGNED OVERLAY BARS (r_bars_ch / ecg_r_markers) LIVED HERE.
+    //
+    // A separate, editable, per-slot set of the four landmarks in the R frame,
+    // unserialized and re-seeded each load. It existed because the per-anchor
+    // marker sets held one bar each, so there was nowhere to put a full set of
+    // R-measured bars -- and markers_by_anchor has always been a full
+    // BankMarkerSet per anchor, which is exactly what it was working around.
+    // Forced-R now marks slotMarks(lead, slot, R_PEAK) through the ordinary bar
+    // path (see anchor_view::showsBar), so the overlay was a second set of the
+    // same nine cells with no serialization and no reload.
 
     // Per-anchor USER marker positions. Each alignment anchor (R, Q_ONSET,
     // J_POINT, T_PEAK, ...) has its OWN independent set of draggable ECG

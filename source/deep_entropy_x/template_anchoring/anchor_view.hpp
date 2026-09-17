@@ -1,93 +1,9 @@
 #pragma once
 //
 // anchor_view.hpp
-//
-// ONE SCREEN, FOUR ALIGNMENTS.
-//
-// The marking session used to run four sequential passes -- one window per
-// alignment, "Finish and Next" between them -- and each pass could only see
-// its own aligned template. This header replaces that with one rule, stated in
-// the vocabulary BinPlotWidget.cpp already uses:
-//
-//   A GLYPH IS REPORTED ON EVERY ALIGNMENT. A BAR IS REPORTED ON ONE.
-//
-// A BAR is a draggable vertical line the operator positions. Its column is a
-// column OF the aligned average it was placed against -- a P onset measured on
-// the P-aligned average is not the same number as one measured on the R-aligned
-// average -- so it is reported under that alignment's suffix and no other.
-// There are four bars and four alignments, one each:
-//
-//   bar              close-up shows       column reported in
-//   -------------------------------------------------------------
-//   P onset          P-aligned            _P
-//   Q onset          Q-aligned            _Q
-//   J point (S end)  R-aligned            _R
-//   T end            J-aligned            _J
-//
-// A GLYPH is a mark the widget draws and the operator cannot touch --
-// markerAtX() never hit-tests one, so a click can neither select nor move it.
-// It is a measurement, not a judgement, so it is measured independently on all
-// four aligned averages and all four are reported. <landmark>_auto_P through
-// _auto_J are four measurements of the same landmark on four waveforms, and
-// comparing them is how the effect of an alignment on a landmark becomes
-// visible. That is why the admissibility mask governs bars only.
-//
-// AND THAT RULE NOW DECIDES CSV COLUMN COUNT, via hasUserColumn below. It used
-// to be stated as "everything except r_peak gets a user column", which
-// contradicted the paragraph above in two ways at once: a glyph got a _user
-// cell it had no value for, and because the reactive glyphs are derived from
-// the ASSEMBLED bar set, that cell carried one placed mark into all four
-// blocks -- three of them attributing it to a waveform it was never compared
-// to. A _user column now exists for a bar, in its owning block, and nowhere
-// else.
-//
-// GLYPHS COME IN THE TWO FLAVOURS BinPlotWidget ALREADY NAMES, and the rule
-// covers both the same way:
-//
-//   FROZEN   -- from detection on that alignment's own average (P peak from
-//               the detector, R peak from r_col, Q onset, T end, ...). Four
-//               alignments, four detections, four columns.
-//   REACTIVE -- recomputed from the current bars: P peak between the P-onset
-//               and Q-onset bars, T peak between the S-end and T-end bars,
-//               Q peak and S peak inside the QRS. Their brackets STRADDLE
-//               ALIGNMENTS -- P peak's two bars live on _P and _Q -- so a
-//               reactive glyph has no single alignment home either, and is
-//               likewise computed once per alignment from the assembled bar
-//               set translated into that alignment's frame.
-//
-// R PEAK IS A GLYPH, NOT A BAR: the alignment anchor itself, re-derived from
-// each template's own r_col at every load, never placed by hand, holding no
-// BankMarkerSet field. Four auto columns, no user column anywhere. So is
-// P PEAK -- reactive, per above -- which is why neither appears in the table.
-//
-// THE T-END BAR IS MEASURED ON THE J_POINT ALIGNMENT. Aligning on the J point
-// is what makes the whole ST-T segment sharp, and that pass exists for one
-// reason: T-end is not measurable from any earlier anchor. The alignment is
-// named after its fiducial -- the J point -- so it is labelled "J" on screen
-// and carries the _J suffix in the CSV, even though the bar it serves is the
-// T-end bar.
-//
-// INTERVALS ARE NOT COVERED BY ANY OF THIS. qrs needs q_onset and s_end; qt
-// needs q_onset and t_end -- bars from three different alignments -- so `owns`
-// cannot answer for one, and there is no function here that tries. A duration
-// is frame-free, so writeTemplateMarkingsCsv reports its user half once, under
-// R. If a fifth alignment ever arrives that changes nothing about that.
-//
-// MARKER IDS ARE DUPLICATED HERE ON PURPOSE, and they were RENUMBERED when
-// T begin was removed -- 4 is S end, 5 is T end. Nothing persists a marker id,
-// so the shift is invisible outside the process; the static_asserts in
-// BinPlotWidget.cpp are what keep the two lists honest.
-//
-// BinPlotWidget.hpp includes
-// template_marking_bin_io.hpp, which includes this file, so this header cannot
-// include BinPlotWidget.hpp back. The literals below mirror
-// BinPlotWidget::Marker and BinPlotWidget.cpp carries static_asserts that fail
-// the build if the two ever drift.
-//
-// AnchorType ONLY. This header is included by template_marking_bin_io.hpp,
-// landmark_admissibility.hpp and BinPlotWidget.cpp; pulling feature_marks.hpp
-// in here would have made all of them depend on template_bank.hpp and
-// annotation_types.hpp just to ask which alignment a bar belongs to.
+// this handles the anchored alignments and bars in the grid
+
+
 #include "anchor_type.hpp"
 
 #include <array>
@@ -145,25 +61,61 @@ namespace anchor_view {
         return isEcgMarker(marker) && !isBar(marker);
     }
 
-    // Which alignment this BAR is displayed on, stored against, and reported
-    // under -- one question, one answer. Meaningless for a glyph; returns
-    // R_PEAK there, and `owns` still answers false, so a glyph can never be
-    // pinned to one alignment by accident.
+    // THE CANONICAL ALIGNMENT for a bar: which cell the AUTOMATIC view draws.
+    // Automatic means the operator has not chosen an alignment, so the grid
+    // assembles one bar per landmark and this says whose copy that is
+    // (TemplateBin::userMarks). It is NOT the storage rule, NOT the seeding
+    // rule and NOT the CSV rule any more -- all three are showsBar.
+    // Meaningless for a glyph; returns R_PEAK there, and both predicates below
+    // answer false, so a glyph can never be pinned to one alignment.
     inline constexpr AnchorType anchorFor(int marker) {
         switch (marker) {
         case kPBegin: return AnchorType::P_ONSET;
         case kQBegin: return AnchorType::Q_ONSET;
-        case kSEnd:   return AnchorType::R_PEAK;
-        case kTEnd:   return AnchorType::J_POINT;
+        case kSEnd:   return AnchorType::Q_ONSET;
+        case kTEnd:   return AnchorType::Q_ONSET;
         }
         return AnchorType::R_PEAK;
     }
 
-    // Does alignment `a` report a *_user value for this marker? True for
-    // exactly one alignment per bar, and for no alignment for any glyph.
+    // Is `a` the canonical alignment for this bar? Exactly one per bar, none
+    // for any glyph. Read only by the Automatic assembly.
     inline constexpr bool owns(AnchorType a, int marker) {
         return isBar(marker) && anchorFor(marker) == a;
     }
+
+    inline constexpr bool showsBar(AnchorType a, int marker) {
+        if (!isBar(marker)) return false;
+        switch (a) {
+        case AnchorType::R_PEAK:  return true;
+        case AnchorType::P_ONSET: return marker == kPBegin;
+        case AnchorType::Q_ONSET: return marker == kQBegin
+            || marker == kSEnd || marker == kTEnd;
+        case AnchorType::J_POINT: return marker == kTEnd;
+        }
+        return false;
+    }
+
+    // A bar's canonical alignment must be one that offers it, or Automatic
+    // would assemble from a cell nothing ever seeds.
+    static_assert(showsBar(anchorFor(kPBegin), kPBegin), "");
+    static_assert(showsBar(anchorFor(kQBegin), kQBegin), "");
+    static_assert(showsBar(anchorFor(kSEnd), kSEnd), "");
+    static_assert(showsBar(anchorFor(kTEnd), kTEnd), "");
+
+    // The rows, pinned -- the guard landmark_admissibility.hpp used to carry.
+    static_assert(showsBar(AnchorType::P_ONSET, kPBegin), "");
+    static_assert(!showsBar(AnchorType::P_ONSET, kQBegin), "");
+    static_assert(!showsBar(AnchorType::P_ONSET, kTEnd), "");
+    static_assert(showsBar(AnchorType::Q_ONSET, kQBegin), "");
+    static_assert(showsBar(AnchorType::Q_ONSET, kSEnd), "");
+    static_assert(showsBar(AnchorType::Q_ONSET, kTEnd), "");
+    static_assert(!showsBar(AnchorType::Q_ONSET, kPBegin), "");
+    static_assert(showsBar(AnchorType::J_POINT, kTEnd), "");
+    static_assert(!showsBar(AnchorType::J_POINT, kSEnd), "");
+    static_assert(showsBar(AnchorType::R_PEAK, kPBegin), "");
+    static_assert(showsBar(AnchorType::R_PEAK, kTEnd), "");
+    static_assert(!showsBar(AnchorType::R_PEAK, kPPeak), "");
 
     // ---- THE CSV COLUMN RULE -----------------------------------------------
     //
@@ -184,40 +136,9 @@ namespace anchor_view {
         if (std::strcmp(pointName, "t_end") == 0) return kTEnd;
         return -1;
     }
-
-    // Does this point emit a _user column IN THIS BLOCK?
-    //
-    // Two conditions, both necessary. It must be a BAR -- a glyph has no
-    // operator value at all, because markerAtX never hands one out for a drag
-    // -- and this must be the alignment that OWNS it, because a bar's column
-    // is a column of the average it was placed against.
-    //
-    // WHAT THIS REPLACED, and why the old form was wrong twice over:
-    //
-    //     return std::strcmp(pointName, "r_peak") != 0;
-    //
-    // That gave a _user column to every point except r_peak, in all four
-    // blocks. The glyph half was a value nobody placed: p_peak and t_peak ARE
-    // re-measured between the operator's bars, and that re-measurement is the
-    // X on screen, but it is not a placement and labelling it _user says it
-    // was. The alignment half was worse: the re-measurement comes from
-    // userMarks(), the bar set ASSEMBLED across all four alignments, so one
-    // bar placed once on the Q-aligned average reappeared in the P, R and J
-    // blocks through those columns -- four records of one mark, three of them
-    // under a waveform it was never compared to.
-    //
-    // ASKED IN EXACTLY TWO PLACES -- writeTemplateMarkingsCsv's header emitter
-    // and its row loop -- so the two cannot disagree about column count. The
-    // row loop previously used a bare `k != 3` index test, which meant adding
-    // a point silently shifted which one lost its user variant.
-    //
-    // CONSEQUENCE, stated here because this function causes it: the four ECG
-    // parts no longer have equal column counts. Each carries its own header,
-    // so the merged file stays self-describing, but anything joining the parts
-    // positionally rather than by name will break.
     inline bool hasUserColumn(const char* pointName, AnchorType a) {
         const int m = markerForPoint(pointName);
-        return m >= 0 && owns(a, m);
+        return m >= 0 && showsBar(a, m);
     }
 
 } // namespace anchor_view

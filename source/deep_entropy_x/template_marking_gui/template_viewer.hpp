@@ -103,12 +103,6 @@ private slots:
     void onMarkerMoved(int binIdx, int leadIdx, int marker, int newIdx);
     void resetMarks();
     void onMarkerDragStarted(int binIdx, int leadIdx, int marker);
-    // The end of a bar gesture. The propagation loops push single marker
-    // positions while the mouse moves; this is where the page gets its one full
-    // re-apply (re-seeding, pulse marks, glyph re-detection), so that cost is
-    // paid once per drag instead of once per mouse-move per column.
-    void onMarkerDragFinished(int binIdx, int leadIdx, int templateIdx,
-        int marker);
     void onBadRToggled(int binIdx, int leadIdx, int templateIdx, bool bad);
     // Helpers for the two above; declared here so both can find them.
     tbank::BankTemplate* slotFor(int binIdx, int leadIdx, int templateIdx);
@@ -327,8 +321,15 @@ private:
     // logBoundaryTrainingAtSave rounds it, where the record needs a whole
     // sample offset into its own segment.
     std::map<long long, double> m_touchedMarks;
-    static long long touchKey(int binIdx, int leadIdx, int marker) {
-        return ((long long)binIdx * 100 + leadIdx) * 100 + marker;
+    // ANCHOR IS PART OF THE KEY. A bar is one cell of the (alignment,
+    // landmark) grid, so "the operator confirmed p_begin" is only meaningful
+    // together with the alignment it was confirmed on -- p_begin under P and
+    // p_begin under R are different bars on different waveforms. Without the
+    // anchor, touching one marked all four as ground truth.
+    static long long touchKey(int binIdx, int leadIdx, int marker,
+        AnchorType a) {
+        return (((long long)binIdx * 100 + leadIdx) * 100 + marker) * 8
+            + static_cast<int>(a);
     }
 
     // Log boundary training data for all landmarks at save (auto_detect from
@@ -385,6 +386,14 @@ private:
     // written out, and two of them cleared only one panel.
     void clearFocusPanels();
 
+    // THE BARS THIS PANEL DRAWS. In a FORCED alignment that is the alignment's
+    // own set, untranslated: every cell in it was measured on the waveform
+    // currently on screen, so there is no frame to convert from. In Automatic
+    // nobody has chosen, so userMarks assembles each bar's canonical copy and
+    // translates those into the drawn frame, exactly as before.
+    tbank::BankMarkerSet barsForPanel(const TemplateBin& b, int lead,
+        int slot) const;
+
     // The pulse/arterial half of refreshFocus. Foot-anchored, no alignment
     // dimension, one panel -- it shares nothing with the ECG half but the two
     // panel pointers, so it is its own function.
@@ -428,7 +437,6 @@ private:
     //  drag on one bar used to land in another alignment's set.)
     void setTitleForSubject();
     bool m_showEcgMarkers = false;
-    bool m_showEcgRMarkers = false;   // ecg_r_markers: R-aligned overlay
     bool m_showPpgMarkers = false;
     bool m_showAbpMarkers = false;
     bool m_showArtMarkers = false;

@@ -24,7 +24,7 @@
 #include <optional>
 
 
-static const std::string CONFIG_PATH = "config.csv"; 
+static const std::string CONFIG_PATH = "config.csv";
 
 namespace {
 
@@ -327,6 +327,26 @@ bool load_config(int dataType, config_entry& out) {
             std::cerr << "WARNING: ppg_match_floor=" << out.ppg_match_floor
                 << " is not in (0, 1]; the Section 4.6 defaults will be used\n";
         }
+        // Morphology split window, seconds either side of the anchor. BLANK
+        // OR 0 -> no window, correlate the whole beat. Negative is meaningless
+        // and falls back to the same.
+        out.region_around_Rpeak_for_morphology_split =
+            stod_or_default(cell("region_around_Rpeak_for_morphology_split"), 0.0);
+        out.region_around_PPGPeak_for_morphology_split =
+            stod_or_default(cell("region_around_PPGPeak_for_morphology_split"), 0.0);
+        if (out.region_around_Rpeak_for_morphology_split < 0.0) {
+            std::cerr << "WARNING: region_around_Rpeak_for_morphology_split="
+                << out.region_around_Rpeak_for_morphology_split
+                << " is negative; splitting on the whole beat\n";
+            out.region_around_Rpeak_for_morphology_split = 0.0;
+        }
+        if (out.region_around_PPGPeak_for_morphology_split < 0.0) {
+            std::cerr << "WARNING: region_around_PPGPeak_for_morphology_split="
+                << out.region_around_PPGPeak_for_morphology_split
+                << " is negative; splitting on the whole beat\n";
+            out.region_around_PPGPeak_for_morphology_split = 0.0;
+        }
+
         out.input_path = cell("original_file_path");
         out.output_path = cell("output_folder");
         out.use_consensus_rpeak = parseBool(cell("use_consensus_rpeak"), true);

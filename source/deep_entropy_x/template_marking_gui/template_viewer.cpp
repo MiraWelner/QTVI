@@ -100,15 +100,6 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
     connect(ui->show_ecg_markers, &QCheckBox::toggled, this, [this](bool on) {
         m_showEcgMarkers = on; applyMarkerVisibility();
         });
-    // ecg_r_markers: R-aligned overlay. Wired via findChild so this compiles
-    // and runs whether or not the .ui declares the checkbox yet.
-    if (auto* rBox = findChild<QCheckBox*>("ecg_r_markers")) {
-        connect(rBox, &QCheckBox::toggled, this, [this](bool on) {
-            m_showEcgRMarkers = on; applyMarkerVisibility();
-            });
-        m_showEcgRMarkers = rBox->isChecked();
-    }
-
     // Fit-model radios. Picking a model forces it (Auto = the BIC contest);
     // the focus fit follows immediately by re-running the current focus, and
     // the invalidated cache makes the next landmark use it too.
@@ -779,42 +770,10 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
     }
 
     // ---- SEED THE R-ALIGNED OVERLAY BARS (ecg_r_markers), PER SLOT --------
-    // Each morphology column is its own template, so each slot's R overlay is
-    // seeded from THAT slot's R-aligned average -- slot 0 from the bin's R
-    // detection (the *_auto_ch fields, R since the R pass ran last), slot k>0
-    // from detect_template_landmarks on the slot's own R-aligned waveform.
-    // Slots with no template are left at -1 (not drawn). Not serialized;
-    // re-seeded each load, edited per column via drag, exported as _R.
-    for (auto& b : m_bins) {
-        for (int c = 0; c < 3; ++c) {
-            for (int s = 0; s < TemplateBin::kRBarsSlots; ++s)
-                b.r_bars_ch[c][s][0] = b.r_bars_ch[c][s][1] =
-                b.r_bars_ch[c][s][2] = b.r_bars_ch[c][s][3] = -1.0;
-
-            // slot 0: the bin's R detection.
-            b.r_bars_ch[c][0][0] = b.p_begin_auto_ch[c];
-            b.r_bars_ch[c][0][1] = b.q_onset_auto_ch[c];
-            b.r_bars_ch[c][0][2] = b.s_end_auto_ch[c];
-            b.r_bars_ch[c][0][3] = b.t_end_auto_ch[c];
-
-            // slots 1..: each bank slot's own R-aligned average.
-            const tbank::TemplateBank& bank = b.ecg_bank[c];
-            for (int s = 1; s < (int)bank.size()
-                && s < TemplateBin::kRBarsSlots; ++s) {
-                const tbank::BankTemplate& tp = bank.templates[s];
-                if (tp.tmpl.empty()) continue;
-                const int rc = (tp.r_col >= 0)
-                    ? tp.r_col : (int)std::lround(b.r_peak_ch[c]);
-                const FeatureMarks::TemplateLandmarks lm =
-                    FeatureMarks::detect_template_landmarks(tp.tmpl, rc, m_sampleRate);
-                if (!lm.valid) continue;
-                b.r_bars_ch[c][s][0] = lm.p_begin;
-                b.r_bars_ch[c][s][1] = lm.q_onset;
-                b.r_bars_ch[c][s][2] = lm.s_end;
-                b.r_bars_ch[c][s][3] = lm.t_end;
-            }
-        }
-    }
+    // (The R-overlay seeding loop lived here. It ran
+    //  detect_template_landmarks once per lead per bank slot at LOAD, for a
+    //  bar set that forced-R now marks through the ordinary per-anchor path --
+    //  which seeds lazily, on first display, from the same detection.)
     //load markers from previous session
     const QDir markingDir(m_markingPath);
     const QString canonical = markingDir.filePath(m_subjectId + "_template_markings.bin");
@@ -1486,7 +1445,6 @@ void TemplateViewerWindow::showPage() {
 
             connect(pw, &BinPlotWidget::markerMovedOnTemplate, this, &TemplateViewerWindow::onMarkerMovedOnTemplate);
             connect(pw, &BinPlotWidget::markerDragStarted, this, &TemplateViewerWindow::onMarkerDragStarted);
-            connect(pw, &BinPlotWidget::markerDragFinished, this, &TemplateViewerWindow::onMarkerDragFinished);
             connect(pw, &BinPlotWidget::landmarkSelected, this, &TemplateViewerWindow::user_clicked_on_bar);
             // Glyph click: focus only -- refresh the panel, do NOT record a
             // touch or re-align (the glyph is the detector's answer, not a bar).
@@ -1494,102 +1452,13 @@ void TemplateViewerWindow::showPage() {
                 [this](int binIdx, int leadIdx, int templateIdx, int marker, double col) {
                     refreshFocus(binIdx, leadIdx, templateIdx, marker, col);
                 });
-            // R-aligned overlay drag. On drag START, align to R exactly the way
-            // clicking the S-end bar does -- the AUTOMATIC anchor (S-end owns R),
-            // re-skinned IN PLACE so the drag survives. NOT a forced align:
-            // forcing left the view stuck on R with no way back; automatic lets
-            // the next bar click move it again.
-            connect(pw, &BinPlotWidget::rMarkerDragStarted, this, [this](int, int) {
-                if (!m_forceAlign && m_autoGridAnchor != AnchorType::R_PEAK) {
-                    m_autoGridAnchor = AnchorType::R_PEAK;
-                    reskinGridForAnchor();   // in-place: does not destroy the dragged widget
-                }
-                });
-            connect(pw, &BinPlotWidget::rMarkerMoved, this,
-                [this](int binIdx, int leadIdx, int templateIdx, int rIndex, double newCol) {
-                    if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
-                    if (leadIdx < 0 || leadIdx > 2) return;
-                    if (rIndex < 0 || rIndex > 3) return;
-                    if (templateIdx < 0 || templateIdx >= TemplateBin::kRBarsSlots) return;
-
-                    // PER-SLOT store: each morphology column is its own R
-                    // template, so dragging column F edits (bin, F) alone and A
-                    // is untouched. newCol is an R-frame column (view is R while
-                    // dragging).
-                    const double oldCol =
-                        m_bins[binIdx].r_bars_ch[leadIdx][templateIdx][rIndex];
-                    m_bins[binIdx].r_bars_ch[leadIdx][templateIdx][rIndex] = newCol;
-
-                    // Repaint ONE column (bin, slot) -- not the bin's other
-                    // letters, which now hold their own R bars.
-                    auto refreshCol = [&](int gi, int slot) {
-                        if (slot < 0 || slot >= TemplateBin::kRBarsSlots) return;
-                        for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li) {
-                            if (m_pageGlobalIdx[li] != gi
-                                || m_pageTemplateIdx[li] != slot) continue;
-                            for (auto* p : m_binPlots[li]) {
-                                if (!p || p->leadIndex() != leadIdx) continue;
-                                const double sh = m_bins[gi].frameShift(
-                                    leadIdx, AnchorType::R_PEAK, currentGridAnchor());
-                                auto rs = [&](double v) { return (v >= 0.0) ? v + sh : -1.0; };
-                                const auto& r = m_bins[gi].r_bars_ch[leadIdx][slot];
-                                p->setRMarks(rs(r[0]), rs(r[1]), rs(r[2]), rs(r[3]));
-                            }
-                        }
-                        };
-                    refreshCol(binIdx, templateIdx);
-
-                    if (m_moveMode == MoveMode::Individual || oldCol < 0.0) return;
-
-                    // MOVE SUBSEQUENT over the PAGE'S COLUMNS, like the ECG path:
-                    // every column drawn AFTER this one (later letters and
-                    // subsequent bins), each shifted the same SCREEN distance
-                    // (fraction of its own visible span). Never an earlier column.
-                    int dragCol = -1;
-                    for (int li = 0; li < (int)m_pageGlobalIdx.size(); ++li)
-                        if (m_pageGlobalIdx[li] == binIdx
-                            && m_pageTemplateIdx[li] == templateIdx) {
-                            dragCol = li; break;
-                        }
-                    if (dragCol < 0) return;
-
-                    const double delta = newCol - oldCol;
-                    const double dragSpan = binSpanSeconds(binIdx);
-                    if (!(dragSpan > 0.0)) return;
-
-                    // Clamp to the DRAWN wall (the array runs past it after the
-                    // tail trim; the widget only draws R marks at idx <= wall, so
-                    // an over-clamped mark vanished). Edge buffer keeps it
-                    // grabbable.
-                    auto wallOfCol = [&](int li, int& lo, int& hi) -> bool {
-                        for (auto* p : m_binPlots[li])
-                            if (p && p->leadIndex() == leadIdx) {
-                                lo = p->firstDrawnSample(BinPlotWidget::Channel::Ecg);
-                                hi = p->lastDrawnSample(BinPlotWidget::Channel::Ecg);
-                                return hi >= 0;
-                            }
-                        return false;
-                        };
-
-                    for (int li = dragCol + 1; li < (int)m_pageGlobalIdx.size(); ++li) {
-                        const int gi = m_pageGlobalIdx[li];
-                        const int slot = m_pageTemplateIdx[li];
-                        if (gi < 0 || slot < 0 || slot >= TemplateBin::kRBarsSlots) continue;
-                        double& cur = m_bins[gi].r_bars_ch[leadIdx][slot][rIndex];
-                        if (cur < 0.0) continue;
-                        const double tgtSpan = binSpanSeconds(gi);
-                        if (!(tgtSpan > 0.0)) continue;
-                        int wlo = -1, whi = -1;
-                        if (!wallOfCol(li, wlo, whi)) continue;
-                        const int buf = 5;
-                        if (whi <= 2 * buf) continue;
-                        double target = cur + delta * (tgtSpan / dragSpan);
-                        target = std::clamp(target,
-                            (double)(std::max(0, wlo) + buf), (double)(whi - buf));
-                        cur = target;
-                        refreshCol(gi, slot);
-                    }
-                });
+            // (The two R-overlay connects lived here: rMarkerDragStarted,
+            //  which forced the view to R so the drag happened on the R
+            //  trace, and rMarkerMoved, which wrote r_bars_ch and propagated
+            //  it across the page. Forced-R now marks the R cell through the
+            //  ordinary bar path, so both are gone with the overlay -- and
+            //  with them the last site that clamped an R-frame column against
+            //  a drawn-frame wall.)
             connect(pw, &BinPlotWidget::badRToggled, this, &TemplateViewerWindow::onBadRToggled);
             pw->setTemplateIndex(template_index);
 
@@ -1739,6 +1608,15 @@ namespace {
         return nullptr;
     }
 }   // namespace
+
+tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const TemplateBin& b,
+    int lead, int slot) const
+{
+    // Forced: this alignment's own cells, as stored. Automatic: the assembled
+    // canonical set, frame-converted. See the declaration.
+    if (m_forceAlign) return b.slotMarks(lead, slot, m_forcedAlign);
+    return b.userMarks(lead, slot, currentGridAnchor());
+}
 
 // This column's panels, or nullptr when the (bin, slot) is not on this page.
 const std::vector<BinPlotWidget*>* TemplateViewerWindow::panelsForColumn(
@@ -2142,14 +2020,21 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // Per lead, because slotMarks selects the lead -- the old bin-wide
             // MarkerSet held all three leads in one object and was fetched once
             // per bin.
-            tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
-            // _R uses the SEPARATE R-aligned overlay bars (r_bars_ch). The
-            // aligned CSV is bin-level (one template per bin per channel), so it
-            // takes SLOT 0's R bars -- the bin's primary column.
-            if (anchor == AnchorType::R_PEAK) {
-                umk.p_begin = b.r_bars_ch[c][0][0]; umk.q_onset = b.r_bars_ch[c][0][1];
-                umk.s_end = b.r_bars_ch[c][0][2];   umk.t_end = b.r_bars_ch[c][0][3];
-            }
+            // THIS ANCHOR'S OWN CELLS, not an assembled set. Each block now
+            // reports the bars the operator placed against THAT alignment's
+            // waveform -- which is what a _user column in that block means --
+            // so there is nothing to assemble and no R special case: the
+            // r_bars_ch override that used to sit here was the R block doing
+            // by hand what every block now does uniformly.
+            //
+            // CONSEQUENCE: a block reports only the cells showsBar admits, so
+            // the P block carries p_begin alone and the J block t_end alone.
+            // The intervals below therefore compute within one alignment --
+            // QRS and QT resolve under R and Q (which hold q_onset, s_end and
+            // t_end) and come back absent under P and J. That is the honest
+            // answer: an interval spanning bars measured on two different
+            // waveforms was never a duration of anything.
+            tbank::BankMarkerSet umk = b.slotMarks(c, 0, anchor);
             // userMarks returns BARS ONLY, and BankMarkerSet no longer has a
             // p_peak field at all: P peak is a glyph. It is recomputed from the
             // two bars that bracket it, on this alignment's own waveform.
@@ -2163,16 +2048,12 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
         // ECG marker positions, indices aligned with ECG_MARKERS.
         double ecgAuto[3][kNumEcgMarkers], ecgUser[3][kNumEcgMarkers];
         for (int c = 0; c < 3; ++c) {
-            // Glyphs from THIS alignment's detections; bars assembled across
-            // all four alignments and expressed in this one's frame, because
-            // no single alignment's marker set holds a whole beat any more.
+            // Glyphs AND bars from THIS alignment: the glyphs from its own
+            // detection, the bars from its own cells. No frame conversion --
+            // both were measured on this alignment's average.
             const FeatureMarks::TemplateLandmarks aa =
                 alignedLandmarks(b, c, anchor, m_sampleRate);
-            tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
-            if (anchor == AnchorType::R_PEAK) {   // _R = the R overlay bars, slot 0
-                umk.p_begin = b.r_bars_ch[c][0][0]; umk.q_onset = b.r_bars_ch[c][0][1];
-                umk.s_end = b.r_bars_ch[c][0][2];   umk.t_end = b.r_bars_ch[c][0][3];
-            }
+            tbank::BankMarkerSet umk = b.slotMarks(c, 0, anchor);
             const std::vector<double>& ecgA = b.chFor(c, anchor).ecgTemplate_raw;
             const FeatureMarks::ReactiveEcg rxA = FeatureMarks::reactive_ecg(
                 ecgA, (int)std::lround(aa.p_begin), (int)std::lround(aa.q_onset),
@@ -2302,7 +2183,6 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
 void TemplateViewerWindow::applyMarkerVisibility() {
     for (auto* pw : m_allPlots) {
         pw->setShowEcgMarkers(m_showEcgMarkers);
-        pw->setShowRMarkers(m_showEcgRMarkers);
         pw->setShowPpgMarkers(m_showPpgMarkers);
         pw->setShowPpgDerivMarkers(m_showPpgDerivMarkers);
         pw->setShowAbpMarkers(m_showAbpMarkers);
@@ -2514,7 +2394,7 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
     // userMarks pulls all four and translates them into the R frame the panel
     // draws in. Fetching one alignment's set here is what limited a session to
     // editing one alignment's bars.
-    const tbank::BankMarkerSet mk = b.userMarks(channel, templateIdx, currentGridAnchor());
+    const tbank::BankMarkerSet mk = barsForPanel(b, channel, templateIdx);
     // Bin first, for the arterial markers (a bank slot has no ABP/ART waveform
     // of its own). The seven ECG bars are overridden below; the PULSE bars and
     // glyphs are overridden here, from this slot's own waveform.
@@ -2615,7 +2495,7 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     // P/Q/J is what put the bar a whole R-column offset away from its glyph and
     // pushed it past the wall so it could not be grabbed. Under R/automatic this
     // is identical to before.
-    const tbank::BankMarkerSet mk = b.userMarks(c, 0, currentGridAnchor());
+    const tbank::BankMarkerSet mk = barsForPanel(b, c, 0);
 
     // Bank members are their own COLUMNS now (see the (bin, template) expansion
     // in the layout loop), so nothing is overlaid here -- drawing them again as
@@ -2645,26 +2525,17 @@ void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin
     // Pulse and arterial bars and glyphs, from the one field table.
     for (const PulseField& f : kPulseFields)
         pw->setMarker(static_cast<BinPlotWidget::Marker>(f.marker), b.*f.field);
-    // Glyphs in the frame of the alignment the grid is drawing; the bars
-    // above stay R-framed. Both are deliberate: the fiducials are recomputed
-    // per alignment, the operator's marks are not.
-    pw->setAuto(b, currentGridAnchor());
+    // A FORCED VIEW MARKS ONE ALIGNMENT'S OWN BARS, so say so on the panel:
+    // dotted, one colour, labelled with the alignment (see
+    // BinPlotWidget::setAlignmentBadge). In Automatic the bars are canonical
+    // copies drawn from four alignments and keep the per-landmark palette.
+    // Set here because this is the one function every panel's bars go through,
+    // on a rebuild and on an in-place re-skin alike.
+    pw->setAlignmentBadge(m_forceAlign
+        ? anchor_view::label(m_forcedAlign) : nullptr);
 
-    // R-aligned overlay (ecg_r_markers): THIS COLUMN'S OWN slot of the R-frame
-    // bars (b.r_bars_ch[lead][slot]), shifted into the drawn frame. Uses the
-    // widget's templateIndex so slot 0 and each bank column get their own set --
-    // this is what makes dragging column F leave column A alone. Called for
-    // slot 0 directly and via applyBankTemplateToWidget for bank columns.
-    {
-        const int c2 = pw->leadIndex();
-        const int slot = pw->templateIndex();
-        if (c2 >= 0 && c2 <= 2 && slot >= 0 && slot < TemplateBin::kRBarsSlots) {
-            const double sh = b.frameShift(c2, AnchorType::R_PEAK, currentGridAnchor());
-            auto rshift = [&](double v) { return (v >= 0.0) ? v + sh : -1.0; };
-            const auto& r = b.r_bars_ch[c2][slot];
-            pw->setRMarks(rshift(r[0]), rshift(r[1]), rshift(r[2]), rshift(r[3]));
-        }
-    }
+    // Glyphs in the frame of the alignment the grid is drawing.
+    pw->setAuto(b, currentGridAnchor());
 }
 
 void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
@@ -2815,7 +2686,7 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
     if (dragLen > 0) placed = std::clamp(placed, 0, dragLen - 1);
     ppgSet(binIdx, templateIdx, placed);
     // The dragged column's sibling leads share these marks, so they need the
-    // position -- but not a re-seed and re-detect per mouse-move.
+    // position -- but not a re-seed and re-detect.
     if (dragCol >= 0 && dragCol < (int)m_binPlots.size())
         for (auto* pw : m_binPlots[dragCol])
             if (pw)
@@ -2847,8 +2718,9 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         if (target < 0.0 || target > n - 1) continue;
         ppgSet(gi, slot, target);
 
-        // PUSH ONE BAR -- as the ECG path. Pulse marks are per (bin, slot),
-        // shared across a column's leads, so every panel in it gets the push.
+        // PUSH ONE BAR -- as the ECG path, and likewise the whole update.
+        // Pulse marks are per (bin, slot), shared across a column's leads, so
+        // every panel in the column gets the push.
         if (li >= 0 && li < (int)m_binPlots.size())
             for (auto* pw : m_binPlots[li])
                 if (pw)
@@ -2888,7 +2760,15 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
     }
     if (!anchor_view::isBar(marker)) return;   // glyphs are not draggable
 
-    const AnchorType owner = anchor_view::anchorFor(marker);
+    // WHICH CELL THIS DRAG EDITS. In a forced alignment the operator is placing
+    // THAT alignment's bar, against the waveform on screen, so the drag writes
+    // that cell. anchorFor's canonical anchor is only the right answer in
+    // Automatic, where the assembled set is what is drawn. A bar the forced
+    // alignment does not show is not drawn there either, so the guard is
+    // defensive rather than reachable.
+    const AnchorType owner = m_forceAlign ? m_forcedAlign
+        : anchor_view::anchorFor(marker);
+    if (!anchor_view::showsBar(owner, marker)) return;
 
     // ---- storage: one accessor pair, any (bin, slot) ----------------------
     auto get = [&](TemplateBin& tb, int slot) -> double {
@@ -2986,7 +2866,7 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
     setView(b, templateIdx, placed);
 
     if (placed >= 0)
-        m_touchedMarks[touchKey(binIdx, leadIdx, marker)] = placed;
+        m_touchedMarks[touchKey(binIdx, leadIdx, marker, owner)] = placed;
 
     if (m_moveMode == MoveMode::Individual || oldIdx < 0) {
         refreshFocus(binIdx, leadIdx, templateIdx, marker, placed);
@@ -3028,11 +2908,12 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
 
         setView(m_bins[gi], slot, target);
 
-        // PUSH ONE BAR, NOT THE WHOLE COLUMN. A bar move changes nothing that
-        // refreshBankMarkers recomputes (seeding, pulse marks, glyph
-        // detection), and the glyphs that DO follow a bar are reactive at
-        // paint time. Full re-apply once, in onMarkerDragFinished. `target` is
-        // already a drawn-frame column, which is what setMarker wants.
+        // PUSH ONE BAR, NOT THE WHOLE COLUMN, AND NOTHING ON RELEASE. A bar
+        // move changes nothing that refreshBankMarkers recomputes (seeding,
+        // pulse marks, glyph detection), and the glyphs that DO follow a bar
+        // are reactive at paint time -- so this push is the whole update, not
+        // a cheap stand-in for one. `target` is already a drawn-frame column,
+        // which is what setMarker wants.
         for (auto* pw : m_binPlots[li])
             if (pw && pw->leadIndex() == leadIdx)
                 pw->setMarker(static_cast<BinPlotWidget::Marker>(marker),
@@ -3147,16 +3028,6 @@ void TemplateViewerWindow::onMarkerDragStarted(int, int, int) {
     original_location_of_bar.clear(); // per-panel starts; filled lazily below
 }
 
-// A drag ends: THE ONE FULL RE-APPLY OF THE PAGE, paid once per gesture rather
-// than once per mouse-move per column. Here for the derived state that is not
-// reactive, and so the end of a gesture leaves the page in the state a rebuild
-// would produce.
-void TemplateViewerWindow::onMarkerDragFinished(int, int, int, int) {
-    for (int li = 0; li < (int)m_pageGlobalIdx.size()
-        && li < (int)m_pageTemplateIdx.size(); ++li)
-        refreshBankMarkers(m_pageGlobalIdx[li], m_pageTemplateIdx[li]);
-}
-
 
 
 static std::vector<double> get_savitzky_golay_derivative_for_every_sample_in_vector(const std::vector<double>& t, double fs) {
@@ -3184,8 +3055,9 @@ static std::vector<double> get_savitzky_golay_derivative_for_every_sample_in_vec
 void TemplateViewerWindow::user_clicked_on_bar(int binIdx, int leadIdx, int templateIdx, int marker, double col)
 {
     //the user clicked a bar. Record that it was confirmed, align automatically accordingly, and load/refresh the focus panel on the side
+    // Against the alignment on screen: that is the cell whose bar was clicked.
     if (binIdx >= 0 && leadIdx >= 0 && col >= 0)
-        m_touchedMarks[touchKey(binIdx, leadIdx, marker)] = col;
+        m_touchedMarks[touchKey(binIdx, leadIdx, marker, currentGridAnchor())] = col;
     refreshFocus(binIdx, leadIdx, templateIdx, marker, col);
     if (!m_forceAlign && BinPlotWidget::markerIsEcg(marker) && anchor_view::isBar(marker))
     {
@@ -3462,11 +3334,18 @@ void TemplateViewerWindow::reseedFitModes(bool allBins) {
         // *_auto_ch fields, which seed_all always overwrites, so they follow the
         // peak mode automatically.
         for (int lead = 0; lead < 3; ++lead) {
-            const bool keepP = m_touchedMarks.count(touchKey((int)bi, lead, BinPlotWidget::EcgPBegin)) != 0;
-            const bool keepQ = m_touchedMarks.count(touchKey((int)bi, lead, BinPlotWidget::EcgQBegin)) != 0;
-            const bool keepS = m_touchedMarks.count(touchKey((int)bi, lead, BinPlotWidget::EcgSEnd)) != 0;
-            const bool keepT = m_touchedMarks.count(touchKey((int)bi, lead, BinPlotWidget::EcgTEnd)) != 0;
             for (AnchorType a : anchor_view::kAllAnchors) {
+                // PER ANCHOR: a bar dragged on the Q-aligned view protects the
+                // Q cell and nothing else. Hoisted out of the anchor loop, one
+                // touched bar kept all four alignments' copies of it.
+                const bool keepP = m_touchedMarks.count(
+                    touchKey((int)bi, lead, BinPlotWidget::EcgPBegin, a)) != 0;
+                const bool keepQ = m_touchedMarks.count(
+                    touchKey((int)bi, lead, BinPlotWidget::EcgQBegin, a)) != 0;
+                const bool keepS = m_touchedMarks.count(
+                    touchKey((int)bi, lead, BinPlotWidget::EcgSEnd, a)) != 0;
+                const bool keepT = m_touchedMarks.count(
+                    touchKey((int)bi, lead, BinPlotWidget::EcgTEnd, a)) != 0;
                 tbank::BankMarkerSet& m = b.slotMarks(lead, 0, a);
                 if (!keepP) m.p_begin = -1;
                 if (!keepQ) m.q_onset = -1;
@@ -3803,9 +3682,9 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
             sdMs[k] = sd[k] / slope * msPerSample;
         }
 
-        // Reported at the bar's own column.
-        const double sdMsAtBar = (colHere >= 0 && colHere < (int)sdMs.size())
-            ? sdMs[colHere] : NaNv;
+        // (The sd at the bar is no longer read here: FocusPanelWidget already
+        //  holds m_sdMs and prints it on its own two lines below the plot, so a
+        //  copy in the header would be the same number twice.)
 
         // Two states only: this alignment's own template, or -- on a
         // sub-template column whose file predates the per-slot section -- the
@@ -3820,12 +3699,10 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         // it is framed to the RIGHT edge, where it ends the QRS; below to the
         // LEFT, where it starts the JT. Same waveform in both -- differing
         // only in which side of the landmark is shown.
-        // No "--" here: the orange shading in the panel is the floor flag.
-        const QString head = QString("%1%2  sd=%3")
-            .arg(labelFor(marker), tag,
-                std::isfinite(sdMsAtBar)
-                ? QStringLiteral("%1 ms").arg(sdMsAtBar, 0, 'f', 1)
-                : QStringLiteral("--"));
+        // THE LANDMARK AND ITS ALIGNMENT, nothing else. The sd moved to the
+        // panel's own footer lines; the model name moved to a second header
+        // line that the panel draws itself.
+        const QString head = QString("%1%2").arg(labelFor(marker), tag);
         // EXACT transition candidates: recompute the detector's fits on the
         // SAME displayed average. detect_template_landmarks is scale- and
         // position-invariant (the BIC argmin and the landmark positions do not
@@ -4033,7 +3910,8 @@ void TemplateViewerWindow::resetMarks()
             // does not re-record the edited spot as confirmed ground truth.
             for (int mk : { BinPlotWidget::EcgPBegin, BinPlotWidget::EcgQBegin,
                 BinPlotWidget::EcgSEnd, BinPlotWidget::EcgTEnd })
-                m_touchedMarks.erase(touchKey(gi, lead, mk));
+                for (AnchorType a : anchor_view::kAllAnchors)
+                    m_touchedMarks.erase(touchKey(gi, lead, mk, a));
         }
         // Drop this column's drag-origin (same key space moveEcgMarker uses).
         original_location_of_bar.erase(slotKey(gi, slot));
@@ -4273,7 +4151,13 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
                 // position; only this one field quantises.
                 int confirmed = -1;
                 const int mid = markerIdOf(tgt.lm);
-                auto it = m_touchedMarks.find(touchKey(i, lead, mid));
+                // THE CANONICAL CELL. This record has no alignment of its own
+                // -- it logs a segment of the R-framed signal -- so it reports
+                // the confirmation of the bar's canonical copy, which is the
+                // one the Automatic view draws. A bar confirmed only on a
+                // non-canonical alignment reads as unconfirmed here.
+                auto it = m_touchedMarks.find(
+                    touchKey(i, lead, mid, anchor_view::anchorFor(mid)));
                 if (it != m_touchedMarks.end())
                     confirmed = static_cast<int>(std::lround(it->second)) - lo;
 

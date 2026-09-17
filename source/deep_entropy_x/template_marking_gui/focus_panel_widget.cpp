@@ -30,6 +30,19 @@ void FocusPanelWidget::setFocus(const std::vector<double>& mean,
     m_half = std::max(4, halfWindowSamples);
     m_framingBias = framingBias;
     m_active = (landmarkCol >= 0 && !mean.empty());
+
+    // A NEW LANDMARK INVALIDATES THE DERIVED ARRAYS. They describe the
+    // PREVIOUS waveform, and every caller that has them supplies them through
+    // setSdMs immediately after this call -- so clearing here costs those
+    // callers nothing and stops the ones that DON'T (the pulse path, which has
+    // no slope model) from printing the last ECG landmark's sd and slope at
+    // this landmark's column.
+    m_sdMs.clear();
+    m_floorMask.clear();
+    m_deriv.clear();
+    m_slopeFloor = 0.0;
+    m_lastFidCol = -1.0;
+
     update();
 }
 
@@ -226,14 +239,22 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
     p.setRenderHint(QPainter::Antialiasing);
     p.fillRect(rect(), QColor(250, 250, 250));
 
-    const int mt = 24;                 // top margin (header)
-    const int mb = 12, ml = 8, mr = 8;
+    // TWO HEADER LINES, TWO FOOTER LINES. The header carries the landmark and
+    // its alignment on line 1 and the selected fit model on line 2; the sd
+    // breakdown sits below the plot rather than inside it, so nothing overlaps
+    // the trace and nothing shares a line with the landmark name.
+    const int kHeadLine = 18;          // landmark + alignment
+    const int kSubLine = 15;           // selected model name
+    const int kFootLine = 14;          // one sd line
+    const int mt = 4 + kHeadLine + kSubLine;          // top margin (both header lines)
+    const int mb = 6 + 2 * kFootLine;                 // bottom margin (both sd lines)
+    const int ml = 8, mr = 8;
     const int ph = height() - mt - mb;
     const int pw = width() - ml - mr;
 
-    // Header label.
+    // Header line 1: the landmark and its alignment.
     p.setPen(QColor(60, 60, 60));
-    p.drawText(QRect(ml, 4, width() - ml - mr, 18),
+    p.drawText(QRect(ml, 4, width() - ml - mr, kHeadLine),
         Qt::AlignLeft | Qt::AlignVCenter,
         m_active ? m_label : QStringLiteral("Focus: (no landmark selected)"));
 
@@ -372,12 +393,16 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         for (const Candidate& c : cands)
             if (c.selected)  drawCurve(c.curve, QColor(0, 150, 0), Qt::DashLine);
 
-        // Name the winning model, in the winner's green, top-right.
+        // HEADER LINE 2: the selected model's name, in GRAY, on its own line
+        // under the landmark. It was green and right-aligned on the landmark's
+        // own line, which read as part of the landmark's name and competed with
+        // it. The winning CURVE keeps its green -- that is what the colour is
+        // for, and it is unambiguous next to the red losers.
         for (const Candidate& c : cands)
             if (c.selected && !c.label.isEmpty()) {
-                p.setPen(QColor(0, 130, 0));
-                p.drawText(QRect(ml, 4, width() - ml - mr, 18),
-                    Qt::AlignRight | Qt::AlignVCenter, c.label);
+                p.setPen(QColor(120, 120, 120));
+                p.drawText(QRect(ml, 4 + kHeadLine, width() - ml - mr, kSubLine),
+                    Qt::AlignLeft | Qt::AlignVCenter, c.label);
                 break;
             }
 
@@ -417,35 +442,54 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         }
     }
 
-    // ---- footer: the two inputs to the msec SD, so the equation is visible ----
-    // sd_ms = raw_sd / slope x (1000/fs). The header prints the resulting sd_ms;
-    // here we show raw_sd and the DENOMINATOR ACTUALLY USED at the bar. Where the
-    // column's own slope is below the floor (see the orange/pink shading), the
-    // divide used the floor, not the near-zero slope -- so print the floor and
-    // mark it, or raw_sd/slope would look like a divide-by-nothing. Slope is
-    // printed at 3 decimals so a small-but-nonzero value is not shown as 0.0.
-    p.setPen(QColor(120, 120, 120));
-    QString foot = QStringLiteral("(band: mean +/- 1 sd)");
-    if (m_landmarkCol >= 0) {
-        const double rawSd = (m_landmarkCol < (int)m_sd.size())
-            ? m_sd[m_landmarkCol] : std::numeric_limits<double>::quiet_NaN();
-        const double slope = (m_landmarkCol < (int)m_deriv.size())
-            ? m_deriv[m_landmarkCol] : std::numeric_limits<double>::quiet_NaN();
-        const bool floored = (m_landmarkCol < (int)m_floorMask.size())
-            && m_floorMask[m_landmarkCol];
-        const double denom = floored ? m_slopeFloor : slope;
-        const QString sdStr = std::isfinite(rawSd)
-            ? QString::number(rawSd, 'f', 4) : QStringLiteral("--");
-        const QString dStr = std::isfinite(denom)
-            ? QString::number(denom, 'f', 3) : QStringLiteral("--");
-        foot = floored
-            ? QStringLiteral("raw sd=%1  slope=%2 /sample (floor)").arg(sdStr, dStr)
-            : QStringLiteral("raw sd=%1  slope=%2 /sample").arg(sdStr, dStr);
-        // The fitted fiducial's own column, so a sub-pixel move is still
-        // readable as a change.
-        if (m_lastFidCol >= 0.0)
-            foot = QStringLiteral("fid=%1  ").arg(m_lastFidCol, 0, 'f', 2) + foot;
+    // ---- THE SD, TWO LINES, BELOW THE PLOT -----------------------------
+    //
+    // Line 1 is the number: sd in milliseconds at the bar's own column.
+    // Line 2 is the equation behind it -- sd_ms = raw_sd / slope x (1000/fs) --
+    // so the result and its two inputs are both visible without reading the
+    // header. Where the column's own slope is below the floor (the orange/pink
+    // shading) the divide used the floor, not the near-zero slope, so the floor
+    // is printed and flagged; otherwise raw_sd/slope would look like a
+    // divide-by-nothing. Slope is at 3 decimals so a small-but-nonzero value is
+    // not shown as 0.0.
+    //
+    // BELOW the plot, not inside it: this used to draw at mt + ph - 14, i.e.
+    // over the bottom of the trace and the band.
+    {
+        const int fy = mt + ph + 4;
+        p.setPen(QColor(120, 120, 120));
+
+        QString l1, l2;
+        if (m_landmarkCol >= 0) {
+            const double NaNv = std::numeric_limits<double>::quiet_NaN();
+            const double sdMs = (m_landmarkCol < (int)m_sdMs.size())
+                ? m_sdMs[m_landmarkCol] : NaNv;
+            const double rawSd = (m_landmarkCol < (int)m_sd.size())
+                ? m_sd[m_landmarkCol] : NaNv;
+            const double slope = (m_landmarkCol < (int)m_deriv.size())
+                ? m_deriv[m_landmarkCol] : NaNv;
+            const bool floored = (m_landmarkCol < (int)m_floorMask.size())
+                && m_floorMask[m_landmarkCol];
+            const double denom = floored ? m_slopeFloor : slope;
+
+            l1 = std::isfinite(sdMs)
+                ? QStringLiteral("sd = %1 ms").arg(sdMs, 0, 'f', 1)
+                : QStringLiteral("sd = --");
+
+            const QString sdStr = std::isfinite(rawSd)
+                ? QString::number(rawSd, 'f', 4) : QStringLiteral("--");
+            const QString dStr = std::isfinite(denom)
+                ? QString::number(denom, 'f', 3) : QStringLiteral("--");
+            l2 = floored
+                ? QStringLiteral("raw sd = %1   slope = %2 /sample (floor)").arg(sdStr, dStr)
+                : QStringLiteral("raw sd = %1   slope = %2 /sample").arg(sdStr, dStr);
+        }
+
+        if (!l1.isEmpty())
+            p.drawText(QRect(ml, fy, pw, kFootLine),
+                Qt::AlignLeft | Qt::AlignVCenter, l1);
+        if (!l2.isEmpty())
+            p.drawText(QRect(ml, fy + kFootLine, pw, kFootLine),
+                Qt::AlignLeft | Qt::AlignVCenter, l2);
     }
-    p.drawText(QRect(ml, mt + ph - 14, pw, 12),
-        Qt::AlignRight | Qt::AlignVCenter, foot);
 }
