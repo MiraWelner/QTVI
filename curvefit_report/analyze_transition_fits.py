@@ -30,16 +30,15 @@ import sys
 from statistics import mean, stdev
 
 # Model name -> filename prefix. Add to this if more exports appear.
-MODELS = {
-    "linear": "linear",
-    "sigmoid": "sigmoid",
-    "cubic": "cubic",
-    "cubic_spline": "cubic_spline",
-    "frac_poly": "frac_poly",
-}
+MODELS = ["linear", "sigmoid", "cubic", "cubic_spline", "frac_poly"]
 
 CHANNELS = (1, 2, 3)   # scanned to find the populated one; not an output column
 METRICS = ("q_onset_ms", "s_end_ms", "qrs_ms", "t_end_ms", "qt_ms")
+
+# Row order in the summary CSV: metric-major, positions before intervals, with
+# the models alphabetical inside each metric. Grouping by metric is what makes
+# the five models directly comparable down a column.
+SUMMARY_METRIC_ORDER = ("q_onset_ms", "s_end_ms", "t_end_ms", "qrs_ms", "qt_ms")
 
 
 def find_file(indir, prefix):
@@ -128,23 +127,25 @@ def read_model(path, model):
 
 
 def summarize_by_model(rows):
-    """mean / sd per (model, metric), taken ACROSS BINS. Sample sd (n-1)."""
+    """mean / sd per (metric, model), taken ACROSS BINS. Sample sd (n-1).
+
+    Metric-major: all five models for q_onset, then all five for s_end, and so
+    on, so one metric's models read straight down the sheet.
+    """
     groups = {}
     for r in rows:
         groups.setdefault(r["fit_model"], []).append(r)
     out = []
-    for model in sorted(groups):
-        recs = groups[model]
-        for metric in METRICS:
-            vals = [r[metric] for r in recs]
+    for metric in SUMMARY_METRIC_ORDER:
+        for model in sorted(groups):
+            vals = [r[metric] for r in groups[model] if r[metric] is not None]
             out.append({
-                "fit_model": model,
                 "metric": metric,
-                "n_bins": len(vals),
-                "mean_ms": round(mean(vals), 4) if vals else "",
-                "sd_ms": round(stdev(vals), 4) if len(vals) > 1 else "",
-                "min_ms": round(min(vals), 4) if vals else "",
-                "max_ms": round(max(vals), 4) if vals else "",
+                "Model": model,
+                "Mean ms": round(mean(vals), 4) if vals else "",
+                "Std ms": round(stdev(vals), 4) if len(vals) > 1 else "",
+                "Min ms": round(min(vals), 4) if vals else "",
+                "Max ms": round(max(vals), 4) if vals else "",
             })
     return out
 
@@ -171,7 +172,7 @@ def summarize_by_bin(rows):
     for b in sorted(groups, key=key):
         recs = groups[b]
         for metric in METRICS:
-            vals = [r[metric] for r in recs]
+            vals = [r[metric] for r in recs if r[metric] is not None]
             out.append({
                 "bin_index": b,
                 "metric": metric,
@@ -199,8 +200,8 @@ def main():
     os.makedirs(outdir, exist_ok=True)
 
     rows = []
-    for model, prefix in MODELS.items():
-        path = find_file(indir, prefix)
+    for model in MODELS:
+        path = find_file(indir, model)
         got, ch = read_model(path, model)
         rows.extend(got)
         print(f"{model:13s} {os.path.basename(path):55s} "
@@ -215,8 +216,7 @@ def main():
                "q_onset_ms", "s_end_ms", "qrs_ms", "t_end_ms", "qt_ms"])
     write_csv(os.path.join(outdir, "fit_model_summary.csv"),
               summarize_by_model(rows),
-              ["fit_model", "metric", "n_bins",
-               "mean_ms", "sd_ms", "min_ms", "max_ms"])
+              ["metric", "Model", "Mean ms", "Std ms", "Min ms", "Max ms"])
     write_csv(os.path.join(outdir, "fit_model_per_bin_stats.csv"),
               summarize_by_bin(rows),
               ["bin_index", "metric", "n_models",
@@ -224,13 +224,14 @@ def main():
 
     # Console view, so a run is readable without opening a file.
     print()
-    print("PER MODEL, across bins")
-    hdr = f"{'model':13s} {'metric':11s} {'n':>4s} {'mean':>10s} {'sd':>9s}"
+    print("SUMMARY, across bins")
+    hdr = (f"{'metric':11s} {'Model':13s} {'Mean ms':>10s} {'Std ms':>9s} "
+           f"{'Min ms':>10s} {'Max ms':>10s}")
     print(hdr); print("-" * len(hdr))
     for r in summarize_by_model(rows):
-        sd = f"{r['sd_ms']:9.3f}" if r["sd_ms"] != "" else f"{'-':>9s}"
-        print(f"{r['fit_model']:13s} {r['metric']:11s} "
-              f"{r['n_bins']:4d} {r['mean_ms']:10.3f} {sd}")
+        sd = f"{r['Std ms']:9.4f}" if r["Std ms"] != "" else f"{'-':>9s}"
+        print(f"{r['metric']:11s} {r['Model']:13s} {r['Mean ms']:10.4f} {sd} "
+              f"{r['Min ms']:10.4f} {r['Max ms']:10.4f}")
 
     print()
     print("PER BIN, across the 5 models -- sd is model sensitivity")

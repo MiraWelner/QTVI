@@ -1323,9 +1323,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                 // more. The two intervals come out identical in all four
                 // blocks (a duration is frame-free), which is exactly why only
                 // the R block emits their user half.
-                EcgFeatures ftUser = computeEcgFeatures(ecg,
-                    user_placed_s_and_t_bars_for_bracketing_tpeak.p_peak, whole.q_onset, b.r_peak_ch[c],
-                    whole.s_end, whole.t_end, sampleRateHz, peakMode);
+                EcgFeatures ftUser = computeEcgFeatures(ecg, user_placed_s_and_t_bars_for_bracketing_tpeak.p_peak, whole.q_onset, b.r_peak_ch[c], whole.s_end, whole.t_end, sampleRateHz, peakMode);
 
                 // Order MUST match ecgPointNames:
                 //   p_begin(bar), p_peak(glyph), q_onset(bar), q_peak(computed),
@@ -1374,44 +1372,18 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
 
         if (wantPulse) {
             // PPG: onset, p50, peak, dicrotic, peak2, t80, t80_rise, end
-            // (matches ppgCols). p50/t80/t80_rise/peak2 are reactive --
-            // bracketed by onset/peak/end -- so both sides of all four are
-            // computed from the shared FeatureMarks::reactive_ppg, the same
-            // call the on-screen glyph makes: rxAuto under the detector's
-            // brackets, rxUser under the operator's.
-            //
-            // ONLY THREE OF THE EIGHT EMIT A USER HALF -- onset, dicrotic, end
-            // -- because those are the three markerAtX hands out. The rxUser
-            // values for the other five are still passed (the argument list is
-            // uniform) and emitPulsePoint discards them via
-            // pulseHasUserColumn. peak2's auto side used to read
-            // ppg_peak2_auto instead of rxAuto, which made it the only
-            // reactive column whose two halves came from different functions.
-            // The cached ppg_t50 / ppg_t80 / ppg_peak2 fields are deliberately
-            // not used for these columns: they are a convenience copy, and
-            // reading them here would let a stale cache disagree with the
-            // screen.
-            const FeatureMarks::ReactivePpg rxAuto = FeatureMarks::reactive_ppg(
-                b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_dicrotic_auto, b.ppg_end_auto);
-            const FeatureMarks::ReactivePpg rxUser = FeatureMarks::reactive_ppg(
-                b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_dicrotic, b.ppg_end);
-            emitPulsePoint("ppg_onset", b.ppgTemplate, b.ppg_onset_auto, b.ppg_onset,
-                b.ppg_onset_auto, b.ppg_onset, refPpg);
-            emitPulsePoint("ppg_p50", b.ppgTemplate, rxAuto.t50, rxUser.t50,
-                b.ppg_onset_auto, b.ppg_onset, refPpg);
-            emitPulsePoint("ppg_peak", b.ppgTemplate, b.ppg_peak_auto, b.ppg_peak,
-                b.ppg_onset_auto, b.ppg_onset, refPpg);
-            emitPulsePoint("ppg_dicr", b.ppgTemplate, b.ppg_dicrotic_auto, b.ppg_dicrotic,
-                b.ppg_onset_auto, b.ppg_onset, refPpg);
-            emitPulsePoint("ppg_peak2", b.ppgTemplate, rxAuto.peak2, rxUser.peak2,
-                b.ppg_onset_auto, b.ppg_onset, refPpg);
-            emitPulsePoint("ppg_t80", b.ppgTemplate, rxAuto.t80, rxUser.t80,
-                b.ppg_onset_auto, b.ppg_onset, refPpg);
+            //onset, dicrotic, and end are the only user movable bars
+            const FeatureMarks::ReactivePpg rxAuto = FeatureMarks::reactive_ppg( b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_dicrotic_auto, b.ppg_end_auto);
+            const FeatureMarks::ReactivePpg rxUser = FeatureMarks::reactive_ppg(b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_dicrotic, b.ppg_end);
+            emitPulsePoint("ppg_onset", b.ppgTemplate, b.ppg_onset_auto, b.ppg_onset, b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint("ppg_p50", b.ppgTemplate, rxAuto.t50, rxUser.t50,  b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint("ppg_peak", b.ppgTemplate, b.ppg_peak_auto, b.ppg_peak,  b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint("ppg_dicr", b.ppgTemplate, b.ppg_dicrotic_auto, b.ppg_dicrotic, b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint("ppg_peak2", b.ppgTemplate, rxAuto.peak2, rxUser.peak2, b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint("ppg_t80", b.ppgTemplate, rxAuto.t80, rxUser.t80,  b.ppg_onset_auto, b.ppg_onset, refPpg);
             // T80_rise: upslope point at t80's level (a position, like t80).
-            emitPulsePoint("ppg_t80_rise", b.ppgTemplate, rxAuto.t80_rise, rxUser.t80_rise,
-                b.ppg_onset_auto, b.ppg_onset, refPpg);
-            emitPulsePoint("ppg_end", b.ppgTemplate, b.ppg_end_auto, b.ppg_end,
-                b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint("ppg_t80_rise", b.ppgTemplate, rxAuto.t80_rise, rxUser.t80_rise, b.ppg_onset_auto, b.ppg_onset, refPpg);
+            emitPulsePoint("ppg_end", b.ppgTemplate, b.ppg_end_auto, b.ppg_end,  b.ppg_onset_auto, b.ppg_onset, refPpg);
             // PW80 width, ms only, autodetect bracketing (t80 - t80_rise).
             // Single value; blank when unavailable. Matches the one
             // ppg_pw80_ms_auto header column.

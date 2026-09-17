@@ -8,12 +8,20 @@ Third script in the set:
     compare_peak_fits.py    peak models, p_peak plus those same intervals
     compare_peak_positions.py   <- this one
 
-This one reports the five landmarks the Fit-Peaks radio actually places, with
-P peak first:
+This one reports the landmarks the Fit-Peaks radio actually places, each as a
+DISTANCE FROM THE R PEAK in ms:
 
-    p_peak, q_peak, r_peak, s_peak, t_peak
+    p_peak_from_r, q_peak_from_r, s_peak_from_r, t_peak_from_r
 
-all as R-aligned AUTO positions in ms. The on/offset bars are deliberately not
+Negative means before R. The raw x_ms_auto_R columns are absolute positions
+along each template, and each bin's R sits at a different column, so their sd
+is dominated by that offset rather than by anything measured -- subtracting R
+removes it and makes the numbers comparable to clinical ranges (P peak about
+R-190 to R-100, Q peak R-40 to R-20, S peak R+20 to R+45, T peak R+180 to
+R+320).
+
+r_peak_abs_ms is carried alongside as the raw anchor, since R's own distance
+from R is identically zero. The on/offset bars are deliberately not
 here -- they belong to the other radio, and compare_peak_fits.py already covers
 them for this model set.
 
@@ -42,15 +50,23 @@ MODELS = ["5_point", "quadratic", "cubic"]
 
 CHANNELS = (1, 2, 3)   # scanned to find the populated one; not an output column
 
-# metric name -> CSV column stem. Order is the output column order.
-LANDMARKS = [
-    ("p_peak_ms", "p_peak"),
-    ("q_peak_ms", "q_peak"),
-    ("r_peak_ms", "r_peak"),
-    ("s_peak_ms", "s_peak"),
-    ("t_peak_ms", "t_peak"),
+# metric name -> CSV column stem, for the landmarks reported as an offset from
+# R. Order is the output column order.
+OFFSET_LANDMARKS = [
+    ("p_peak_from_r_ms", "p_peak"),
+    ("q_peak_from_r_ms", "q_peak"),
+    ("s_peak_from_r_ms", "s_peak"),
+    ("t_peak_from_r_ms", "t_peak"),
 ]
-METRICS = [m for m, _ in LANDMARKS]
+
+# R's absolute position, kept as the anchor: its offset from itself is zero.
+R_ABS = "r_peak_abs_ms"
+
+METRICS = [m for m, _ in OFFSET_LANDMARKS] + [R_ABS]
+
+# Row order in the summary CSV: metric-major, models alphabetical inside each
+# metric -- same layout as the on/offset summary so the two read the same way.
+SUMMARY_METRIC_ORDER = METRICS
 
 
 def find_file(indir, prefix):
@@ -95,10 +111,9 @@ def read_model(path, model):
     two leads would collide on the same bin_index and the per-bin statistics
     would silently average across them.
 
-    A bin is kept if ANY of the five landmarks is present; each missing one is
-    left as None and dropped from that metric's statistics only. The five are
-    independent positions, not endpoints of an interval, so one absent value
-    does not invalidate the others.
+    R peak is REQUIRED -- every other value is measured relative to it, so a
+    bin without R has no usable offsets and is skipped. Beyond that, a missing
+    landmark is left as None and dropped from that metric's statistics only.
     """
     rows = list(csv.DictReader(open(path, newline="")))
 
@@ -115,14 +130,17 @@ def read_model(path, model):
 
     out = []
     for row in rows:
+        r_abs = num(row, f"r_peak_ch{ch}_x_ms_auto_R")
+        if r_abs is None:
+            continue          # no anchor, no offsets
         rec = {
             "fit_model": model,
             "bin_index": row.get("bin_index", "").strip(),
         }
-        for metric, stem in LANDMARKS:
-            rec[metric] = num(row, f"{stem}_ch{ch}_x_ms_auto_R")
-        if all(rec[m] is None for m in METRICS):
-            continue
+        for metric, stem in OFFSET_LANDMARKS:
+            v = num(row, f"{stem}_ch{ch}_x_ms_auto_R")
+            rec[metric] = None if v is None else v - r_abs
+        rec[R_ABS] = r_abs
         out.append(rec)
     return out, ch
 
@@ -144,17 +162,26 @@ def stats(vals):
 
 
 def summarize_by_model(rows):
-    """mean / sd per (model, metric), taken ACROSS BINS."""
+    """mean / sd per (metric, model), taken ACROSS BINS.
+
+    Metric-major: all three models for p_peak, then all three for q_peak, and
+    so on, so one landmark's models read straight down the sheet.
+    """
     groups = {}
     for r in rows:
         groups.setdefault(r["fit_model"], []).append(r)
     out = []
-    for model in MODELS:
-        recs = groups.get(model, [])
-        for metric in METRICS:
-            st = stats([r[metric] for r in recs])
-            out.append({"fit_model": model, "metric": metric,
-                        "n_bins": st.pop("n"), **st})
+    for metric in SUMMARY_METRIC_ORDER:
+        for model in sorted(groups):
+            st = stats([r[metric] for r in groups[model]])
+            out.append({
+                "metric": metric,
+                "Model": model,
+                "Mean ms": st["mean_ms"],
+                "Std ms": st["sd_ms"],
+                "Min ms": st["min_ms"],
+                "Max ms": st["max_ms"],
+            })
     return out
 
 
@@ -213,8 +240,7 @@ def main():
               ["fit_model", "bin_index"] + METRICS)
     write_csv(os.path.join(outdir, "peak_pos_summary.csv"),
               summarize_by_model(rows),
-              ["fit_model", "metric", "n_bins",
-               "mean_ms", "sd_ms", "min_ms", "max_ms", "range_ms"])
+              ["metric", "Model", "Mean ms", "Std ms", "Min ms", "Max ms"])
     bybin = summarize_by_bin(rows)
     write_csv(os.path.join(outdir, "peak_pos_per_bin_stats.csv"), bybin,
               ["bin_index", "metric", "n_models",
@@ -222,17 +248,18 @@ def main():
 
     # ---- console view ------------------------------------------------------
     print()
-    print("PER MODEL, across bins")
-    hdr = f"{'model':10s} {'metric':10s} {'n':>4s} {'mean':>11s} {'sd':>10s}"
+    print("SUMMARY, across bins")
+    hdr = (f"{'metric':18s} {'Model':10s} {'Mean ms':>10s} {'Std ms':>9s} "
+           f"{'Min ms':>10s} {'Max ms':>10s}")
     print(hdr)
     print("-" * len(hdr))
     for r in summarize_by_model(rows):
-        sd = f"{r['sd_ms']:10.3f}" if r["sd_ms"] != "" else f"{'-':>10s}"
-        print(f"{r['fit_model']:10s} {r['metric']:10s} "
-              f"{r['n_bins']:4d} {r['mean_ms']:11.3f} {sd}")
+        sd = f"{r['Std ms']:9.4f}" if r["Std ms"] != "" else f"{'-':>9s}"
+        print(f"{r['metric']:18s} {r['Model']:10s} {r['Mean ms']:10.4f} {sd} "
+              f"{r['Min ms']:10.4f} {r['Max ms']:10.4f}")
 
     print()
-    print(f"P PEAK PER BIN, across the {len(MODELS)} models")
+    print(f"P PEAK PER BIN (offset from R), across the {len(MODELS)} models")
     hdr = (f"{'bin':>4s} {'n':>3s} {'mean':>11s} {'sd':>8s} {'range':>8s}")
     print(hdr)
     print("-" * len(hdr))
@@ -254,7 +281,7 @@ def main():
         sds = [r["sd_ms"] for r in per if r["sd_ms"] not in ("", 0.0)]
         tail = (f"  median sd {sorted(sds)[len(sds) // 2]:.3f} ms"
                 if sds else "   <-- identical in every bin")
-        print(f"  {metric:10s} moved in {moved:3d}/{len(per)} bins{tail}")
+        print(f"  {metric:18s} moved in {moved:3d}/{len(per)} bins{tail}")
 
 
 if __name__ == "__main__":
