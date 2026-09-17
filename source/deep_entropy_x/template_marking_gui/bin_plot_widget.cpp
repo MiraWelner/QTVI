@@ -536,14 +536,13 @@ void BinPlotWidget::setArterialTraces(const std::vector<double>& abp,
 }
 
 void BinPlotWidget::setMarker(Marker m, double idx) {
-    // P-onset's left bound is the ECG start. A seeded value can land in the
-    // noisy pre-ECG lead-in; pin it to the first drawn sample so the bar stays
-    // on the trace, grabbable, and draggable from there. Nothing else clamped.
-    if (m == EcgPBegin && idx >= 0.0) {
-        const int wallL = firstDrawnSample(Channel::Ecg);
-        if (wallL >= 0 && idx < static_cast<double>(wallL))
-            idx = static_cast<double>(wallL);
-    }
+    // NO CLAMP. EcgPBegin used to be pinned to firstDrawnSample when it
+    // arrived before the window -- "a seeded value can land in the noisy
+    // pre-ECG lead-in". It landed there because the seeding detected on the
+    // BIN-WIDE average while this panel draws slot 0's own per-slot average:
+    // different NaN padding, different first finite sample. Both sides use the
+    // per-slot array now, so a P onset cannot precede the window, and pinning
+    // it would only hide a real disagreement at the edge.
     m_markers[m] = idx;
     update();
 }
@@ -572,13 +571,22 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
     r.ecgPPeak = e.p_peak;
     r.ecgTPeak = e.t_peak;
     // P-BEGIN GLYPH ANCHORED TO THE REACTIVE P PEAK, not to detect's own peak.
-    // Both are recomputed here from the same e.p_peak, so the onset is always
-    // before the peak that is actually drawn -- the two can no longer disagree
-    // (which is what put the onset cross to the RIGHT of the peak). It tracks a
-    // bar drag with the peak because it is recomputed every repaint.
+    // pPeakIn = -1: compute_p_begin DERIVES the P peak itself, bracketing
+    // [firstFinite, q_onset]. That is the same bracket the bar's seed uses, so
+    // the X and the P-onset bar are now one expression evaluated on one array
+    // -- identical, not merely agreeing.
+    //
+    // It used to pass e.p_peak, the peak found BETWEEN THE BARS. A different
+    // peak gives a different onset, and that is the whole of the ~280 ms gap
+    // between the X and the bar.
+    //
+    // TRADEOFF, deliberately taken: the onset no longer tracks the P-peak
+    // glyph, so it will not follow a drag of the Q-onset bar and can in
+    // principle sit right of the drawn peak. A bar should not move on its own,
+    // which is why this is the wanted behaviour rather than a regression.
     r.ecgPBegin = FeatureMarks::compute_p_begin(
         m_ecg, m_rates[static_cast<size_t>(Channel::Ecg)],
-        static_cast<int>(std::lround(m_rPeakSample)), e.p_peak,
+        static_cast<int>(std::lround(m_rPeakSample)), /*pPeakIn=*/-1.0,
         nullptr, m_onOffsetFitMode);
 
     if (m_hasPPG) {

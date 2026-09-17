@@ -279,12 +279,14 @@ static int ecgClipLenFor(const TemplateBin& tb) {
 std::vector<TemplateViewerWindow::Lead>
 TemplateViewerWindow::leadsForBin(const TemplateBin& b) const {
     std::vector<Lead> out;
-    if (!b.ch1.ecgTemplate_raw.empty())
-        out.push_back({ &b.ch1.ecgTemplate_raw, &b.ch1.ecg_template_raw_iqr, 0, "Ch1" });
-    if (!b.ch2.ecgTemplate_raw.empty())
-        out.push_back({ &b.ch2.ecgTemplate_raw, &b.ch2.ecg_template_raw_iqr, 1, "Ch2" });
-    if (!b.ch3.ecgTemplate_raw.empty())
-        out.push_back({ &b.ch3.ecgTemplate_raw, &b.ch3.ecg_template_raw_iqr, 2, "Ch3" });
+    // Shared with the markings CSV, so it cannot report a channel this
+    // function says does not exist.
+    static const char* kNames[3] = { "Ch1", "Ch2", "Ch3" };
+    const ChannelTemplateData* ch[3] = { &b.ch1, &b.ch2, &b.ch3 };
+    for (int c = 0; c < 3; ++c)
+        if (ecgChannelPresent(b, c))
+            out.push_back({ &ch[c]->ecgTemplate_raw,
+                            &ch[c]->ecg_template_raw_iqr, c, kNames[c] });
     return out;
 }
 
@@ -391,32 +393,12 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             // subtype is no longer read here: tbank::letterRanks applies the
             // confirmed-subtype rule itself, from the same BankTemplate.
         }
-        else if (templateIdx == 0 && !pulseThin) {
-            // PRE-BANK FALLBACK, AND IT MUST STILL RESPECT THE PULSE MINIMUM.
-            //
-            // A file with no bank has no BankTemplate to measure, so slot 0
-            // renders from the bin's own chN_raw -- that is what this branch is
-            // for. But it was unconditional, so slot 0 also caught every bin
-            // whose bank DID exist and whose slot 0 the test above had just
-            // refused. pulseThin was computed and then bypassed here, which is
-            // why panels with no PPG kept appearing however tightly
-            // markingSlotsForBin and showPage were gated: the panel never
-            // reached those gates, it took this exit.
-            //
-            // pulseThin carries min_beats_template_ppg from config.csv via
-            // tooFewBeats(), and is false when the bin has no pulse cohort at
-            // all -- an ABSENT channel, which must not suppress markable ECG.
-            const ChannelTemplateData& cd = b.chFor(c, gridAnchor);
-            if (cd.ecgTemplate_raw.empty()) continue;
-            // The bin's spread is the RIGHT one here, uniquely: this branch's
-            // trace IS the whole-bin average, so the two describe one
-            // population. Everywhere else they do not, which is why the pairing
-            // travels on the Lead.
-            trace = &cd.ecgTemplate_raw;
-            traceIqr = &cd.ecg_template_raw_iqr;
-        }
         else {
-            continue;   // ragged: this channel's bank is shorter
+            // No chN_raw fallback and no unconditional slot 0: both drew a
+            // panel whose waveform was a different population from the
+            // template it claimed to be. Covers every old exit -- ragged bank,
+            // too few beats, thin pulse cohort, no average for this alignment.
+            continue;
         }
 
         // NAMING. Bin, then the class, then an underscore and the letter the
@@ -557,33 +539,10 @@ bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
 }
 
 std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) const {
-    /* Only category 1 (good PQRST, not ECTOPIC or NOISE) tempaltes are displayed here. This function returns the indices of
-    the templates that are eligible for marking, based on the criteria defined in the function.*/
-    auto shown = [](const TemplateBin& bb, int t) {
-        {
-            if (t < bb.ppg_bank.size()
-                && bb.ppg_bank.templates[t].tooFewBeats(/*is_ppg=*/true))
-                return false;
-        }
-        for (int c = 0; c < 3; ++c) {
-            const tbank::TemplateBank& bank = bb.ecg_bank[c];
-            if (t >= bank.size()) continue;
-            const tbank::BankTemplate& tp = bank.templates[t];
-            if (tp.tmpl.empty()) continue;
-            if (tp.tooFewBeats(/*is_ppg=*/false)) continue;
-            if (t == 0 || tp.wantsLandmarkMarking()) return true;
-        }
-        return false;
-        };
-
-    std::vector<int> eligible;
-    bool anyBank = false;
-    for (int c = 0; c < 3; ++c) if (b.ecg_bank[c].size() > 0) anyBank = true;
-    if (!anyBank || shown(b, 0)) eligible.push_back(0);
-
-    for (int t = 1; t < tbank::max_templates_per_bin * 4; ++t)
-        if (shown(b, t)) eligible.push_back(t);
-    return eligible;
+    // ONE SOURCE, shared with the markings CSV writer, so the file's row set
+    // IS this column set. Also per ALIGNMENT, which the old local lambda was
+    // not: a slot can have an average for R and none for P.
+    return visibleSlots(b, currentGridAnchor());
 }
 
 // Rows x columns for n compact panels, inside the kMaxGridRows x kMaxGridCols
@@ -771,9 +730,6 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
                 b.ch1 = it->second[0]; b.ch2 = it->second[1]; b.ch3 = it->second[2];
             }
             FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, a);
-            // Capture the flat fields seed_all just wrote, straight from them
-            // (not via autoFor, which would return any stale cached entry).
-            b.auto_by_anchor[static_cast<int>(a)] = b.autoFromFlat();
         }
         // R last so the flat state the grid reads is R's.
         b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
@@ -796,32 +752,31 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
     // (auto_by_anchor / autoFor) are the one source. Bars live in their owner
     // slots and userMarks shifts each into whatever frame the grid draws.
     {
-        // Each bar seeds on ITS OWN glyph: the landmark detected on the
-        // alignment that owns it (P-onset on the P-aligned average, Q-onset on
-        // Q, S-end on R, T-end on J), stored directly in that owner's slot --
-        // already in the owner's frame, so no R->owner shift. This is the same
-        // per-alignment detection the glyph is drawn from, so every bar starts
-        // exactly on its glyph on the alignment where it is placed. userMarks
-        // shifts each into whatever frame the grid is drawing.
-        struct BarField {
-            int marker;
-            double tbank::BankMarkerSet::* bar;                 // where the bar is stored
-            double (TemplateBin::AnchorAuto::* autoArr)[3];     // the owner-alignment detection [lead]
-        };
-        static const BarField kBars[4] = {
-            { anchor_view::kPBegin, &tbank::BankMarkerSet::p_begin, &TemplateBin::AnchorAuto::p_begin },
-            { anchor_view::kQBegin, &tbank::BankMarkerSet::q_onset, &TemplateBin::AnchorAuto::q_onset },
-            { anchor_view::kSEnd,   &tbank::BankMarkerSet::s_end,   &TemplateBin::AnchorAuto::s_end   },
-            { anchor_view::kTEnd,   &tbank::BankMarkerSet::t_end,   &TemplateBin::AnchorAuto::t_end   },
-        };
+        // ---- SEED EVERY (lead, slot, alignment) THROUGH ONE CALL --------
+        //
+        // SLOT 0 IS NOT A SPECIAL CASE. It used to be seeded here, from its own
+        // block with its own detection, while slots 1+ went through
+        // seedIfNeeded -> FeatureMarks::seed_bank_template. Two paths for one
+        // job, and they disagreed: slot 0's P onset matched the glyph and every
+        // other slot's did not, because only one of the two passed
+        // pPeakIn = -1 to compute_p_begin. That rule now lives inside
+        // seed_bank_template, so it cannot differ per slot.
+        //
+        // slotView supplies the waveform AND its R column for the alignment
+        // being seeded -- the same pair the panel draws, so a seeded bar cannot
+        // land outside the window it is shown in.
         for (auto& b : m_bins) {
-            const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
             for (int c = 0; c < 3; ++c) {
-                if (chs[c]->ecgTemplate_raw.empty()) continue;
-                for (const BarField& bf : kBars) {
-                    const AnchorType owner = anchor_view::anchorFor(bf.marker);
-                    const double v = (b.autoFor(owner).*(bf.autoArr))[c];
-                    b.slotMarks(c, 0, owner).*(bf.bar) = (v >= 0.0) ? v : -1.0;
+                const int nSlots = b.slotCount(c);
+                for (int slot = 0; slot < nSlots; ++slot) {
+                    for (AnchorType a : anchor_view::kAllAnchors) {
+                        const SlotView sv = slotView(b, c, slot, a);
+                        if (!sv.valid) continue;   // no average: no bar
+                        FeatureMarks::seed_bank_template(
+                            *sv.tmpl, sv.r_col, m_sampleRate, a,
+                            b.slotMarks(c, slot, a),
+                            m_onOffsetFitMode, m_peakFitMode);
+                    }
                 }
             }
         }
@@ -946,7 +901,7 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                 // rebuilt every run and its slot count can shrink, and a
                 // landmark has no meaning without the waveform it sat on.
                 for (int c = 0; c < 3; ++c) {
-                    const int nSaved = s.markedSlotCount(c);
+                    const int nSaved = s.slotCount(c);
                     const int nNow =
                         static_cast<int>(d.ecg_bank[c].templates.size());
                     for (int slot = 0; slot < nSaved && slot < nNow; ++slot) {
@@ -1883,10 +1838,11 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
 
     for (size_t bi = 0; bi < m_bins.size(); ++bi) {
         const TemplateBin& b = m_bins[bi];
-        const auto aa = b.autoFor(AnchorType::R_PEAK);
         for (int c = 0; c < 3; ++c) {
             const std::vector<double>& ecg = b.chFor(c, AnchorType::R_PEAK).ecgTemplate_raw;
             if (ecg.empty()) continue;
+            const FeatureMarks::TemplateLandmarks aa =
+                alignedLandmarks(b, c, AnchorType::R_PEAK, m_sampleRate);
             const int N = static_cast<int>(ecg.size());
 
             auto emitRow = [&](const char* name, const char* ctype,
@@ -1925,13 +1881,13 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
                 emitRow(name, transTypeName(fit.type), (double)lo, fit.rss, fit.params);
                 };
 
-            peak("p_peak", aa.p_peak[c], subsample_refine::peak_sigma::P);
-            peak("q_peak", aa.q_peak[c], subsample_refine::peak_sigma::Q);
-            peak("r_peak", aa.r_peak[c], subsample_refine::peak_sigma::R);
-            trans("p_begin", aa.p_begin[c]);
-            trans("q_onset", aa.q_onset[c]);
-            trans("s_end", aa.s_end[c]);
-            trans("t_end", aa.t_end[c]);
+            peak("p_peak", aa.p_peak, subsample_refine::peak_sigma::P);
+            peak("q_peak", aa.q_peak, subsample_refine::peak_sigma::Q);
+            peak("r_peak", aa.r_peak, subsample_refine::peak_sigma::R);
+            trans("p_begin", aa.p_begin);
+            trans("q_onset", aa.q_onset);
+            trans("s_end", aa.s_end);
+            trans("t_end", aa.t_end);
         }
     }
     std::cout << "Wrote landmark fits CSV: " << dir << "/"
@@ -2106,12 +2062,13 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
         EcgFeatures ftAuto[3], ftUser[3];
         for (int c = 0; c < 3; ++c) {
             const auto& ecg = chs[c]->ecgTemplate_raw;
-            const auto aaF = b.autoFor(anchor);
+            const FeatureMarks::TemplateLandmarks aaF =
+                alignedLandmarks(b, c, anchor, m_sampleRate);
             // NO ROUNDING: computeEcgFeatures takes doubles, AnchorAuto is
             // double, and the qrs/qt milliseconds this feeds are sub-sample.
             ftAuto[c] = computeEcgFeatures(ecg,
-                aaF.p_peak[c], aaF.q_onset[c], aaF.r_peak[c],
-                aaF.s_end[c], aaF.t_end[c], m_sampleRate);
+                aaF.p_peak, aaF.q_onset, aaF.r_peak,
+                aaF.s_end, aaF.t_end, m_sampleRate);
             // Per lead, because slotMarks selects the lead -- the old bin-wide
             // MarkerSet held all three leads in one object and was fetched once
             // per bin.
@@ -2139,7 +2096,8 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // Glyphs from THIS alignment's detections; bars assembled across
             // all four alignments and expressed in this one's frame, because
             // no single alignment's marker set holds a whole beat any more.
-            const auto aa = b.autoFor(anchor);
+            const FeatureMarks::TemplateLandmarks aa =
+                alignedLandmarks(b, c, anchor, m_sampleRate);
             tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
             if (anchor == AnchorType::R_PEAK) {   // _R = the R overlay bars, slot 0
                 umk.p_begin = b.r_bars_ch[c][0][0]; umk.q_onset = b.r_bars_ch[c][0][1];
@@ -2147,18 +2105,18 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             }
             const std::vector<double>& ecgA = b.chFor(c, anchor).ecgTemplate_raw;
             const FeatureMarks::ReactiveEcg rxA = FeatureMarks::reactive_ecg(
-                ecgA, (int)std::lround(aa.p_begin[c]), (int)std::lround(aa.q_onset[c]),
-                (int)std::lround(aa.s_end[c]), (int)std::lround(aa.t_end[c]), m_sampleRate);
+                ecgA, (int)std::lround(aa.p_begin), (int)std::lround(aa.q_onset),
+                (int)std::lround(aa.s_end), (int)std::lround(aa.t_end), m_sampleRate);
             const FeatureMarks::ReactiveEcg rxU = FeatureMarks::reactive_ecg(ecgA, umk.p_begin, umk.q_onset, umk.s_end, umk.t_end, m_sampleRate);
 
-            ecgAuto[c][0] = aa.p_begin[c];
+            ecgAuto[c][0] = aa.p_begin;
             ecgAuto[c][1] = rxA.p_peak;          // reactive glyph, detector brackets
-            ecgAuto[c][2] = aa.q_onset[c];
+            ecgAuto[c][2] = aa.q_onset;
             ecgAuto[c][3] = ftAuto[c].q_idx;
-            ecgAuto[c][4] = aa.r_peak[c];
+            ecgAuto[c][4] = aa.r_peak;
             ecgAuto[c][5] = ftAuto[c].s_idx;
-            ecgAuto[c][6] = aa.s_end[c];
-            ecgAuto[c][7] = aa.t_end[c];
+            ecgAuto[c][6] = aa.s_end;
+            ecgAuto[c][7] = aa.t_end;
             ecgUser[c][0] = umk.p_begin;
             ecgUser[c][1] = rxU.p_peak;          // reactive glyph, operator brackets
             ecgUser[c][2] = umk.q_onset;
@@ -2441,17 +2399,15 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
         ? tp.r_col
         : static_cast<int>(std::lround(b.r_peak_ch[channel]));
 
+    // slotView is shared, so the bar-seeding sites elsewhere use the same
+    // answer -- they used to seed from the R-aligned average under another
+    // alignment's tag because this logic was a lambda they could not call.
     auto slotWaveform = [&](AnchorType a, const std::vector<double>*& w,
         int& rc) -> bool {
-            if (a == AnchorType::R_PEAK) {
-                w = &tp.tmpl; rc = rColR;
-                return !tp.tmpl.empty() && rc >= 0;
-            }
-            const AnchoredBankSlot* asl = b.bankSlotFor(channel, templateIdx, a);
-            if (!asl || asl->tmpl.empty()) return false;
-            w = &asl->tmpl;
-            rc = b.chFor(channel, a).r_col_raw;
-            return rc >= 0;
+            const SlotView sv = slotView(b, channel, templateIdx, a);
+            if (!sv.valid) return false;
+            w = sv.tmpl; rc = sv.r_col;
+            return true;
         };
 
     for (AnchorType a4 : anchor_view::kAllAnchors) {
@@ -2932,14 +2888,17 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
     // SEED BEFORE READING, for every slot (marks() is operator[]; a read
     // inserts, which used to suppress a slot's auto-detection permanently).
     auto seedIfNeeded = [&](int binI, int slot) {
-        if (slot == 0) return;   // seed_all owns slot 0
+        // No slot-0 exclusion: one seeding call for every slot.
         tbank::TemplateBank& bk = m_bins[binI].ecg_bank[leadIdx];
         if (slot >= (int)bk.templates.size()) return;
         tbank::BankTemplate& tgt = bk.templates[slot];
         if (tgt.hasDetectedMarks(static_cast<int>(owner))) return;
-        const int rc = (tgt.r_col >= 0)
-            ? tgt.r_col : (int)m_bins[binI].r_peak_ch[leadIdx];
-        FeatureMarks::seed_bank_template(tgt.tmpl, rc, m_sampleRate,
+        // This alignment's average, not the R-aligned one: tgt.tmpl/tgt.r_col
+        // are the R-frame pair, and filing that under `owner` is what put an
+        // R-frame number in the P-onset bar.
+        const SlotView sv = slotView(m_bins[binI], leadIdx, slot, owner);
+        if (!sv.valid) return;
+        FeatureMarks::seed_bank_template(*sv.tmpl, sv.r_col, m_sampleRate,
             owner, tgt.marks(static_cast<int>(owner)));
         };
 
@@ -3547,10 +3506,6 @@ void TemplateViewerWindow::reseedFitModes(bool allBins) {
             }
             FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, a,
                 std::numeric_limits<double>::quiet_NaN(), m_onOffsetFitMode, m_peakFitMode);
-            // Fill the cache from the FRESH flat fields seed_all just wrote.
-            // (Going through autoFor() here would return the stale cached entry
-            // and discard the new positions -- the forced-mode export bug.)
-            b.auto_by_anchor[static_cast<int>(a)] = b.autoFromFlat();
         }
         b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
         FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK,
@@ -4017,12 +3972,14 @@ void TemplateViewerWindow::resetMarks()
             for (AnchorType a : anchor_view::kAllAnchors) {
                 tbank::BankMarkerSet& m = b.slotMarks(lead, slot, a);
                 if (slot == 0) {
-                    // Slot 0's original = the bin's stored auto detection.
-                    const auto aa = b.autoFor(a);
-                    m.p_begin = aa.p_begin[lead];
-                    m.q_onset = aa.q_onset[lead];
-                    m.s_end = aa.s_end[lead];
-                    m.t_end = aa.t_end[lead];
+                    // Slot 0's original = this alignment's own detection.
+                    const FeatureMarks::TemplateLandmarks aa =
+                        alignedLandmarks(b, lead, a, m_sampleRate);
+                    if (!aa.valid) continue;
+                    m.p_begin = aa.p_begin;
+                    m.q_onset = aa.q_onset;
+                    m.s_end = aa.s_end;
+                    m.t_end = aa.t_end;
                 }
                 else {
                     // Bank slot's original = re-seed from its own template,
@@ -4031,9 +3988,11 @@ void TemplateViewerWindow::resetMarks()
                     if (slot >= (int)bk.templates.size()) continue;
                     tbank::BankTemplate& tg = bk.templates[slot];
                     if (tg.tmpl.empty()) continue;
-                    const int rc = (tg.r_col >= 0)
-                        ? tg.r_col : static_cast<int>(b.r_peak_ch[lead]);
-                    FeatureMarks::seed_bank_template(tg.tmpl, rc, m_sampleRate, a, m);
+                    // This alignment's pair -- see seedIfNeeded.
+                    const SlotView sv = slotView(b, lead, slot, a);
+                    if (!sv.valid) continue;
+                    FeatureMarks::seed_bank_template(*sv.tmpl, sv.r_col,
+                        m_sampleRate, a, m);
                 }
             }
             // Drop the operator-confirmed positions for the four bars, so a save
@@ -4343,48 +4302,26 @@ void TemplateViewerWindow::save_bin_and_csv() {
                 << m_subjectId.toStdString() << "_vcg.csv\n";
         }
 
-        // ---- FOUR PARTS, ONE WRITE ------------------------------------
+        // ---- ONE WRITE, NO MERGE ------------------------------------
         //
-        // Each part holds one alignment's glyph columns and the one bar it
-        // owns, with its value columns suffixed _R / _P / _Q / _T; the merge
-        // joins them on (file_id, bin_index) exactly as it did when the four
-        // were written one window apart. Pulse last, un-suffixed, once -- it
-        // has no alignment dimension.
+        // The writer emits all four alignment blocks and the pulse block into
+        // one row itself. This replaced four suffixed EcgOnly parts stitched by
+        // mergeCsvParts, which compared row COUNTS and concatenated line i of
+        // each -- so what a row meant was a contract between five files.
         const QString csvPath = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings.csv";
-        const QString pulseSidecar = csvDir.absolutePath() + "/" + m_subjectId + "_template_markings_PULSE.csv";
-
-        // Build one part: serialize the CSV into a string, then re-emit with
-        // every value column suffixed. An empty suffix skips the renaming
-        // (pulse). Nothing touches the filesystem until the merge.
-        auto buildPart = [&](const QString& label, const QString& suffix,
-            AnchorType anchor, MarkingsCsvSection section) -> CsvPart {
-                std::ostringstream gen;
-                writeTemplateMarkingsCsv(gen, m_bins, m_subjectId.toStdString(), m_sampleRate, anchor, section, m_peakFitMode);
-                const std::string tcontent = gen.str();
-                const size_t tnl = tcontent.find('\n');
-                if (tnl == std::string::npos)
-                    throw std::runtime_error("markings CSV writer produced malformed content (no newline)");
-                const std::string tHeader = tcontent.substr(0, tnl);
-                const std::string tBody = tcontent.substr(tnl);
-                std::string outContent = (suffix.isEmpty()
-                    ? tHeader
-                    : suffixValueColumns(tHeader, suffix.toStdString()));
-                outContent += tBody;
-                return CsvPart{ label.toStdString(), std::move(outContent) };
-            };
-
-        std::vector<CsvPart> parts;
-        for (AnchorType a : anchor_view::kAllAnchors) {
-            const QString suffix = QString("_") + anchor_view::label(a);
-            parts.push_back(buildPart(suffix, suffix, a,
-                MarkingsCsvSection::EcgOnly));
-        }
-        parts.push_back(buildPart("PULSE", QString(), AnchorType::R_PEAK,
-            MarkingsCsvSection::PulseOnly));
 
         {
-            if (!mergeCsvParts(csvPath.toStdString(), parts))
-                throw std::runtime_error("could not merge markings parts into " + csvPath.toStdString());
+            std::ofstream mf(csvPath.toStdString(), std::ios::trunc);
+            if (!mf)
+                throw std::runtime_error("cannot open for write: " + csvPath.toStdString());
+            // `anchor` is unused for EcgAndPulse: the writer walks
+            // kAllAnchors itself. R_PEAK only satisfies the signature.
+            writeTemplateMarkingsCsv(mf, m_bins,
+                m_subjectId.toStdString(), m_sampleRate,
+                AnchorType::R_PEAK, MarkingsCsvSection::EcgAndPulse,
+                m_peakFitMode, m_onOffsetFitMode);
+            if (!mf.good())
+                throw std::runtime_error("failed writing " + csvPath.toStdString());
             std::cout << "Wrote markings CSV: " << csvPath.toStdString() << "\n";
         }
 

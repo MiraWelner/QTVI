@@ -196,7 +196,7 @@ double FeatureMarks::compute_s_peak(const std::vector<double>& ecg, int r_idx, d
 }
 
 
-double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracketSEnd, double bracketTEnd,  curve_fit::PeakFitMode peakMode) {
+double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracketSEnd, double bracketTEnd, curve_fit::PeakFitMode peakMode) {
     const int N = static_cast<int>(v.size());
     if (N < 1) return -1.0;
 
@@ -279,7 +279,7 @@ double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, d
         : static_cast<double>(best);
 }
 
-double FeatureMarks::compute_j_point(const std::vector<double>& v, double fs, int r_col,   subsample_refine::TransitionCandidates* candOut, curve_fit::FitMode mode) {
+double FeatureMarks::compute_j_point(const std::vector<double>& v, double fs, int r_col, subsample_refine::TransitionCandidates* candOut, curve_fit::FitMode mode) {
     const int N = static_cast<int>(v.size());
     if (r_col < 0 || r_col >= N - 1 || N < 4) return -1.0;
     auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
@@ -997,7 +997,7 @@ int FeatureMarks::detect_ppg_onset(const std::vector<double>& pulse) {
 double FeatureMarks::detect_ppg_peak(const std::vector<double>& pulse) {
     if (pulse.empty()) return 0.0;
     const int seed = detect_ppg_upstroke_peak(pulse);
-    if (seed < 0) return 0.0;   
+    if (seed < 0) return 0.0;
     return subsample_refine::quadratic_fit(pulse, seed, 8.0).position;
 }
 
@@ -1377,7 +1377,14 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
     if (msk.q_onset) out.q_onset = lm.q_onset;
     if (msk.s_end)   out.s_end = lm.s_end;
     if (msk.t_end)   out.t_end = lm.t_end;
-    if (msk.p_begin) out.p_begin = lm.p_begin;
+    // P ONSET: THE SAME CALL reactiveGlyphs MAKES FOR THE X. pPeakIn = -1 so
+    // compute_p_begin derives the peak itself over [firstFinite, q_onset].
+    // detect_template_landmarks above supplies its OWN peak, and a different
+    // peak gives a different onset -- that difference was the whole gap between
+    // the P bar and the P-onset glyph. One call, one answer, every slot.
+    if (msk.p_begin)
+        out.p_begin = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_col,
+            /*pPeakIn=*/-1.0, nullptr, fitMode);
 }
 
 
