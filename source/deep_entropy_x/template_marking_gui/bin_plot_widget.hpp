@@ -42,7 +42,11 @@ class BinPlotWidget : public QWidget {
     Q_OBJECT
 public:
 
-    enum class State { Good, BadR, BadPPG };
+    // Right-click cycle: Good -> BadR -> BadPPG -> BadBoth -> Good.
+    // BadPPG is PULSE ONLY (ECG good) and BadBoth is both, so the two verdicts
+    // are independent rather than alternatives. With no pulse channel the
+    // cycle is just Good -> BadR -> Good.
+    enum class State { Good, BadR, BadPPG, BadBoth };
 
     // Each enum value MUST be unique (it's used as an array index into
     // m_markers). ECG markers come first, then PPG markers, so
@@ -100,7 +104,10 @@ public:
         return m == EcgPBegin || m == EcgQBegin
             || m == PpgOnset || m == AbpOnset || m == ArtOnset || m == ArtPulmOnset;
     }
-    double m_rPeakSample = 0.0;   // R-peak sample index within the ECG template
+    double m_rPeakSample = 0.0;
+    // Set by setAuto; null until then. See the note there.
+    const TemplateBin* m_bin = nullptr;
+    AnchorType m_frame = AnchorType::R_PEAK;   // R-peak sample index within the ECG template
     // (m_ppgDelay / m_ppgFootIdx retired in Patch C: every channel is
     // real-time-aligned by construction under Patch B slicing.)
 
@@ -147,7 +154,18 @@ public:
     // an anchor is what produced the misalignment this replaces.
     // ----------------------------------------------------------------------
 
-    void setTemplateIndex(int t) { m_templateIndex = t; }
+    // INVALIDATES THE DETECTION CACHE. The cache is keyed on (bin, lead, slot,
+    // alignment), and the slot selects which waveform ecgDetect measures, so a
+    // slot change is a trace change even though no trace was re-set.
+    void setTemplateIndex(int t) {
+        if (t == m_templateIndex) return;
+        m_templateIndex = t;
+        // Only the detection cache: captureGlyphSnapshot measures m_ecg and
+        // b.chFor(lead, frame), neither of which the slot selects, and clearing
+        // its flag here would make it re-detect and overwrite the per-slot
+        // glyphs applyBankTemplateToWidget pushes through overrideEcgGlyphs.
+        m_detValid = false;
+    }
     int  templateIndex() const { return m_templateIndex; }
 
     explicit BinPlotWidget(int binIndex, int leadIndex,
@@ -223,6 +241,20 @@ public:
     // stay in the R frame where they are stored and edited.
     void setAuto(const TemplateBin& b,
         AnchorType frame = AnchorType::R_PEAK) {
+        // WHICH TEMPLATE THIS PANEL IS, kept so reactiveGlyphs can call the
+        // shared ecgFiducials instead of assembling the detector's arguments
+        // from its own copies (m_ecg, m_rPeakSample). Those copies are what
+        // drifted: the bin-wide array instead of the slot's, R's column instead
+        // of the alignment's. Non-owning -- the bins outlive the panels, and
+        // setAuto is called on every rebuild.
+        // A NEW BIN OR A NEW ALIGNMENT IS A NEW WAVEFORM, so the cached
+        // detection no longer describes what this panel draws. captureGlyph-
+        // Snapshot has its own guard (m_glyphsValid), which setData/setEcgData
+        // clear; this one covers the in-place re-skin, which changes the frame
+        // without re-setting the trace through either.
+        if (m_bin != &b || m_frame != frame) m_detValid = false;
+        m_bin = &b;
+        m_frame = frame;
         captureGlyphSnapshot(b, frame);
         update();
     }
@@ -249,7 +281,9 @@ public:
     // glyph snapshot so the next paint re-detects with the new model.
     void setFitModes(curve_fit::FitMode onOffset, curve_fit::PeakFitMode peak) {
         m_onOffsetFitMode = onOffset; m_peakFitMode = peak;
-        m_glyphsValid = false; update();
+        // BOTH caches: the fit modes are inputs to detect_template_landmarks,
+        // so the cached detection is as stale as the glyph snapshot.
+        m_glyphsValid = false; m_detValid = false; update();
     }
 
     // Per-trace marker visibility. When false, that group's markers
@@ -328,8 +362,20 @@ public:
 
 
 signals:
+    // NEVER EMITTED. Superseded by markerMovedOnTemplate, which carries the
+    // slot; kept only so any existing connect() still compiles. Nothing in the
+    // tree emits it, so a connection to it is dead -- see
+    // TemplateViewerWindow::onMarkerMoved.
     void markerMoved(int binIndex, int leadIndex, int marker, int newIdx);
     void markerDragStarted(int binIndex, int leadIndex, int marker);
+
+    // THE END OF A BAR GESTURE. Emitted once from mouseReleaseEvent when a bar
+    // was being dragged. The propagation path pushes single marker positions
+    // per mouse-move (cheap) and leaves the one full re-apply of the page --
+    // re-seeding, pulse marks, glyph re-detection -- to this signal, instead of
+    // paying for it per pixel.
+    void markerDragFinished(int binIndex, int leadIndex, int templateIdx,
+        int marker);
 
     // R-aligned overlay (ecg_r_markers) is DRAGGABLE. Starting a drag on one
     // emits rMarkerDragStarted so the owner can flip the view to R while you
@@ -514,6 +560,25 @@ private:
     // drag nothing re-sets the trace, so captureGlyphSnapshot returns early and
     // the expensive detect does not run per mouse-move.
     bool m_glyphsValid = false;
+
+    // ---- THE REACTIVE GLYPHS' EXPENSIVE HALF, CACHED --------------------
+    //
+    // reactiveGlyphs() is called once per repaint and used to run
+    // ecgFiducials(), i.e. detect_template_landmarks + compute_s_peak, every
+    // time. Only the P and T peak react to the bars; everything else the
+    // detector finds is a function of the trace alone (see ecgDetect in
+    // template_marking_bin_io.hpp). So the detection is held here and only the
+    // two bracketed peaks are recomputed per paint.
+    //
+    // m_det.tmpl points INTO the bin, so the identity check is part of the
+    // guard rather than trusting m_detValid alone: a page rebuild can hand this
+    // panel a different bin or slot without going through setData.
+    mutable EcgDetection       m_det;
+    mutable bool               m_detValid = false;
+    mutable const TemplateBin* m_detBin = nullptr;
+    mutable AnchorType         m_detFrame = AnchorType::R_PEAK;
+    mutable int                m_detSlot = -1;
+
     curve_fit::FitMode     m_onOffsetFitMode = curve_fit::FitMode::Auto;
     curve_fit::PeakFitMode m_peakFitMode = curve_fit::PeakFitMode::Auto;
 

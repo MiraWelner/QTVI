@@ -45,6 +45,11 @@ void FocusPanelWidget::setSdMs(const std::vector<double>& sdMs,
     update();
 }
 
+void FocusPanelWidget::setDetectorFiducial(double col) {
+    m_detectorFid = col;
+    update();
+}
+
 void FocusPanelWidget::clearFocus() {
     m_active = false;
     m_mean.clear();
@@ -56,6 +61,7 @@ void FocusPanelWidget::clearFocus() {
     m_landmarkCol = -1;
     m_fitKind = FitKind::Transition;
     m_transCands = subsample_refine::TransitionCandidates{};
+    m_detectorFid = -1.0;   // stale for the new landmark until re-supplied
     update();
 }
 
@@ -64,11 +70,22 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
     std::vector<Candidate> out;
     if (lo < 0 || hi >= (int)m_mean.size() || hi - lo < 3) return out;
 
-    // Peak fit/draw window: at least kWindowHalfWidth, but widened to the
-    // landmark's own sigma so a BROAD peak (P, sigma 12) is seen over enough
-    // samples to have real curvature. Over the fixed +-7 a broad wave fits with
-    // a~=0 and the residual guard rejects it -> no polynomial -> nothing drawn.
-    const int peakHw = std::max(subsample_refine::kWindowHalfWidth,
+    // THE DETECTOR'S WINDOW, EXACTLY. bestPeakExtremum hardcodes
+    // kWindowHalfWidth, so this must too: any other value makes this panel fit
+    // a different span from the one that placed the mark, and then the dotted
+    // fiducial, the curves and the fid= readout all describe a position nothing
+    // else in the system uses. It was max(kWindowHalfWidth, round(sigma)) --
+    // +-12 for P, +-15 for T -- widened so a broad wave would show curvature,
+    // which silently changed the numbers to get a better-looking picture.
+    //
+    // Widening the DRAWN span is fine and is what drawHw below is for; widening
+    // the FIT is not.
+    const int peakHw = subsample_refine::kWindowHalfWidth;
+
+    // How far the curves are DRAWN. Wider than the fit for a broad landmark, so
+    // the shape is visible -- extrapolation of the same polynomial, not a
+    // different fit.
+    const int drawSpan = std::max(subsample_refine::kWindowHalfWidth,
         static_cast<int>(std::lround(m_peakSigma)));
 
     // drawHw defaults to the peak window. Each model is drawn only over the
@@ -78,7 +95,7 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
         std::vector<double> c(m_mean.size(),
             std::numeric_limits<double>::quiet_NaN());
         if (f.order >= 2) {
-            const int hw = (drawHw > 0) ? drawHw : peakHw;
+            const int hw = (drawHw > 0) ? drawHw : drawSpan;
             const int a = std::max(lo, f.seed - hw);
             const int b = std::min(hi, f.seed + hw);
             for (int i = a; i <= b; ++i) c[i] = f.eval(static_cast<double>(i));
@@ -93,7 +110,28 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
         };
 
     if (m_fitKind == FitKind::PeakQuadratic || m_fitKind == FitKind::PeakCubic) {
-        if (m_landmarkCol < 0 || m_landmarkCol >= (int)m_mean.size()) return out;
+        // SEED WHERE THE MARK IS, not where the bar is. m_landmarkCol is the
+        // bar's column; the detector's position is m_detectorFid. Fitting at the
+        // bar put the curves on a different part of the wave from the dotted
+        // fiducial -- two views of one landmark, drawn a window apart.
+        //
+        // Rounding the detector's sub-sample position is within a sample of the
+        // integer argmax it fitted around, so the curves sit on the peak the
+        // line marks. Falls back to the bar when nothing was supplied.
+        //
+        // AND IT MUST BE INSIDE THE DRAWN WINDOW. evalExtremum clips to
+        // [lo, hi], so a seed outside it produces a > b and an all-NaN curve --
+        // the fits vanish with no indication why. The window is centred on the
+        // bar, so that happens exactly when the fiducial and the bar disagree
+        // by more than half the view. Fall back to the bar in that case: a
+        // curve on the bar is wrong by the same amount the fiducial is, but it
+        // is visible, and the dotted line shows the disagreement.
+        int seedCol = m_landmarkCol;
+        if (m_detectorFid >= 0.0 && m_detectorFid < (double)m_mean.size()) {
+            const int c = static_cast<int>(std::lround(m_detectorFid));
+            if (c >= lo && c <= hi) seedCol = c;
+        }
+        if (seedCol < 0 || seedCol >= (int)m_mean.size()) return out;
         // DRAW-ONLY fits (applyGuard=false). The guarded versions collapse a
         // residual-rejected quadratic/cubic to FIVE_POINT with order 0 and no
         // coefficients, and the order>=2 test below then dropped them -- which
@@ -102,10 +140,10 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
         // PLACE the mark; it should not decide what is VISIBLE, since the
         // rejected curve is exactly what shows why the fallback was taken.
         const auto qD = subsample_refine::quadratic_fit(
-            m_mean, m_landmarkCol, m_peakSigma, peakHw, /*applyGuard=*/false);
+            m_mean, seedCol, m_peakSigma, peakHw, /*applyGuard=*/false);
         const auto cD = subsample_refine::cubic_fit(
-            m_mean, m_landmarkCol, m_peakSigma, peakHw, /*applyGuard=*/false);
-        const auto fp5 = subsample_refine::fivePointParabolaFit(m_mean, m_landmarkCol);
+            m_mean, seedCol, m_peakSigma, peakHw, /*applyGuard=*/false);
+        const auto fp5 = subsample_refine::fivePointParabolaFit(m_mean, seedCol);
 
         // The GUARDED contest, honouring the Fit-Peaks radio: this is the model
         // that actually places the mark, and win.position is where. The winner
@@ -113,7 +151,7 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
         // so a forced model that degenerated shows its fallback as green
         // instead of colouring a curve that placed nothing.
         const auto win = subsample_refine::bestPeakExtremumFit(
-            m_mean, m_landmarkCol, m_peakSigma, peakHw, m_panelPeakMode);
+            m_mean, seedCol, m_peakSigma, peakHw, m_panelPeakMode);
         int winIdx = 2;   // 0=quadratic, 1=cubic, 2=five-point
         switch (win.type) {
         case subsample_refine::CurveType::QUADRATIC: winIdx = 0; break;
@@ -127,7 +165,10 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
                 Candidate cd;
                 cd.curve = evalExtremum(f, drawHw);
                 cd.selected = (idx == winIdx);
-                cd.label = name;
+                cd.label = f.guardFailed
+                    ? name + QStringLiteral(" (rejected)") : name;
+                // The winner reports the placement the detector would make;
+                // the losers report their own vertex.
                 cd.position = (idx == winIdx) ? win.position : f.position;
                 out.push_back(std::move(cd));
             };
@@ -185,10 +226,9 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
     p.setRenderHint(QPainter::Antialiasing);
     p.fillRect(rect(), QColor(250, 250, 250));
 
-    const int focuspanel_top_margin = 40;
-    const int focuspanel_bottom_margin = 12;
-    const int ml = 8, mr = 8;
-    const int ph = height() - focuspanel_top_margin - focuspanel_bottom_margin;
+    const int mt = 24;                 // top margin (header)
+    const int mb = 12, ml = 8, mr = 8;
+    const int ph = height() - mt - mb;
     const int pw = width() - ml - mr;
 
     // Header label.
@@ -251,7 +291,7 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
     // SUB-SAMPLE. Was int, so every call site silently truncated -- including
     // the fiducial, which sits at a fractional column.
     auto xOf = [&](double col) { return startPx + col * pxPerSample; };
-    auto yOf = [&](double val) { return focuspanel_top_margin + ph - (val - vlo) / vr * ph; };
+    auto yOf = [&](double val) { return mt + ph - (val - vlo) / vr * ph; };
 
     // ---- slope-floor shading -------------------------------------------
     // Columns where the local |dV/dt| was clamped at the floor: flat regions
@@ -269,7 +309,7 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
             if (i > runStart) {
                 const double x0 = xOf(runStart);
                 const double x1 = xOf(i - 1) + pxPerSample;
-                p.drawRect(QRectF(x0, focuspanel_top_margin, std::max(1.0, x1 - x0), ph));
+                p.drawRect(QRectF(x0, mt, std::max(1.0, x1 - x0), ph));
             }
         }
     }
@@ -335,9 +375,9 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         // Name the winning model, in the winner's green, top-right.
         for (const Candidate& c : cands)
             if (c.selected && !c.label.isEmpty()) {
-                p.setPen(QColor(120, 120, 120));
-                p.drawText(QRect(ml, 22, width() - ml - mr, 16),
-                    Qt::AlignLeft | Qt::AlignVCenter, c.label);
+                p.setPen(QColor(0, 130, 0));
+                p.drawText(QRect(ml, 4, width() - ml - mr, 18),
+                    Qt::AlignRight | Qt::AlignVCenter, c.label);
                 break;
             }
 
@@ -348,9 +388,20 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         // be drawn at m_landmarkCol -- the integer bar column, which does not
         // depend on the fit at all -- so changing either fit-model radio
         // recoloured the curves and left the line sitting still.
+        // THE DETECTOR'S POSITION, not a re-fit's. See m_detectorFid: the
+        // panel cannot reproduce the detector's vertex because it does not know
+        // the integer seed the detector fitted around. The transition path is
+        // exempt -- its cross[winner] comes from transitionAnchor itself, so it
+        // already IS the detector's answer -- and the selected candidate's own
+        // position is the last resort when nothing was supplied.
         double winPos = std::numeric_limits<double>::quiet_NaN();
-        for (const Candidate& c : cands)
-            if (c.selected) { winPos = c.position; break; }
+        if (m_detectorFid >= 0.0) {
+            winPos = m_detectorFid;
+        }
+        else {
+            for (const Candidate& c : cands)
+                if (c.selected) { winPos = c.position; break; }
+        }
         // The bar column stays the fallback: a selected model with no placement
         // to report (a rejected fit with no vertex, or the transition re-fit
         // path, which has no crossing to hand back) leaves the line exactly
@@ -362,7 +413,7 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
             QPen pen(QColor(130, 130, 130)); pen.setWidthF(1.2); pen.setStyle(Qt::DotLine);
             p.setPen(pen);
             const double x = xOf(fidCol);
-            p.drawLine(QPointF(x, focuspanel_top_margin), QPointF(x, focuspanel_top_margin + ph));
+            p.drawLine(QPointF(x, mt), QPointF(x, mt + ph));
         }
     }
 
@@ -395,6 +446,6 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         if (m_lastFidCol >= 0.0)
             foot = QStringLiteral("fid=%1  ").arg(m_lastFidCol, 0, 'f', 2) + foot;
     }
-    p.drawText(QRect(ml, focuspanel_top_margin + ph - 14, pw, 12),
+    p.drawText(QRect(ml, mt + ph - 14, pw, 12),
         Qt::AlignRight | Qt::AlignVCenter, foot);
 }

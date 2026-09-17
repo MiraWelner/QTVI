@@ -1080,6 +1080,161 @@ inline std::vector<int> visibleSlots(const TemplateBin& b, AnchorType gridAnchor
     return out;
 }
 
+// ===========================================================================
+// THE ONLY PLACE ECG LANDMARKS ARE COMPUTED.
+//
+// Three callers used to assemble the detector's arguments themselves -- the bar
+// seeding, the focus panel, and BinPlotWidget::reactiveGlyphs -- and every P
+// onset bug today was one of those assemblies differing from another: the
+// bin-wide average instead of the slot's, R's column instead of the alignment's,
+// a hardcoded Auto instead of the live radio, the /ref-normalised array instead
+// of the raw one. Matching them by hand does not hold, because nothing stops
+// the next one drifting.
+//
+// So the arguments are assembled ONCE, here. Callers pass what identifies the
+// template -- (bin, lead, slot, alignment) -- and the bars, and get positions
+// back. slotView supplies the trace and its R column together, which is what
+// makes the wrong pairing unrepresentable.
+// ===========================================================================
+struct EcgFiducials {
+    // Every ECG landmark, in the alignment's own columns. -1 = absent.
+    double p_begin = -1.0, p_peak = -1.0;
+    double q_onset = -1.0, q_peak = -1.0;
+    double r_peak = -1.0;
+    double s_peak = -1.0, s_end = -1.0;
+    double t_peak = -1.0, t_end = -1.0;
+    bool   q_onset_found = false;
+    bool   valid = false;
+};
+
+// ===========================================================================
+// SPLIT IN TWO, ALONG THE LINE THE BARS DRAW.
+//
+// Everything the detector finds is a pure function of the TRACE. Only the P and
+// T peak depend on the operator's bars, and those two cost an argmax each. That
+// asymmetry was invisible while the two halves lived in one function, so
+// BinPlotWidget::reactiveGlyphs -- which runs once per repaint -- re-ran
+// detect_template_landmarks on every paint of every panel. With
+// Move-Subsequent on, one drag pixel repainted every later column, so the
+// detector (five finders, four of them fitting up to five curve models and
+// choosing by BIC) ran of the order of a hundred times per mouse event. That
+// was the drag lag.
+//
+// ecgDetect is the cacheable half: hold it for as long as the trace is
+// unchanged, which is the whole of a drag. ecgFiducialsFrom is the cheap half,
+// safe to call per paint. ecgFiducials is the two back to back and keeps the
+// old signature, so existing callers are unaffected.
+// ===========================================================================
+struct EcgDetection {
+    FeatureMarks::TemplateLandmarks lm;
+    double s_peak = -1.0;
+    // The trace the landmarks were measured on -- needed by the reactive half,
+    // which re-brackets on the SAME array. Non-owning and interior to the bin,
+    // so a holder must drop the cache whenever the bin or the slot changes.
+    const std::vector<double>* tmpl = nullptr;
+    bool valid = false;
+};
+
+inline EcgDetection ecgDetect(const TemplateBin& b, int lead, int slot,
+    AnchorType a, double sampleRate,
+    curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
+    curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
+{
+    EcgDetection d;
+    const SlotView sv = slotView(b, lead, slot, a);
+    if (!sv.valid) return d;
+
+    d.lm = FeatureMarks::detect_template_landmarks(*sv.tmpl, sv.r_col,
+        sampleRate, onOffsetMode, peakMode);
+    if (!d.lm.valid) return d;
+
+    // S peak has no field on TemplateLandmarks; it is the same finder the
+    // interval code uses, on this alignment's trace and R column.
+    d.s_peak = FeatureMarks::compute_s_peak(*sv.tmpl, sv.r_col, sampleRate,
+        peakMode);
+    d.tmpl = sv.tmpl;
+    d.valid = true;
+    return d;
+}
+
+// `bars` is the REACTIVE input: p_peak and t_peak are re-measured between the
+// operator's P-onset/Q-onset and S-end/T-end bars, so they follow a drag. Pass
+// a default-constructed set to get the detector's own brackets instead.
+//
+// PER-PEAK BRACKET TEST, AND THIS PART IS A FIX. The old form asked one
+// question -- bars.isUnset() -- and then used the operator's set for BOTH peaks
+// or the detector's for both. isUnset() is true only when all four fields are
+// negative, which a PER-ANCHOR set never is: the admissibility mask
+// (landmark_admissibility.hpp) gives the P_ONSET set p_begin and nothing else,
+// the Q_ONSET set q_onset and nothing else. So a caller handing over one
+// anchor's set got haveBars == true with q_onset == -1, and compute_p_peak,
+// which clamps a negative bracket to the trace's finite edge rather than
+// treating it as absent, returned a "P peak" in the pre-P lead-in. That is what
+// left the focus panel's gray dotted fiducial off the window under forced-P
+// alignment. Each peak now tests its OWN two brackets and falls back to the
+// detector's independently, so a half-populated set degrades one peak instead
+// of poisoning it.
+inline EcgFiducials ecgFiducialsFrom(const EcgDetection& d, double sampleRate,
+    curve_fit::PeakFitMode peakMode, const tbank::BankMarkerSet& bars)
+{
+    EcgFiducials out;
+    if (!d.valid || !d.tmpl) return out;
+    const FeatureMarks::TemplateLandmarks& lm = d.lm;
+
+    out.p_begin = lm.p_begin;
+    out.q_onset = lm.q_onset;
+    out.q_onset_found = lm.q_onset_found;
+    out.q_peak = lm.q_peak;
+    out.r_peak = lm.r_peak;
+    out.s_end = lm.s_end;
+    out.t_end = lm.t_end;
+    out.s_peak = d.s_peak;
+
+    // P AND T PEAK ARE BRACKET-DERIVED, not detected on their own.
+    // TemplateLandmarks has no t_peak field at all -- reactive_ecg is the one
+    // function that measures both, between the bars that bracket them.
+    const bool haveP = (bars.p_begin >= 0.0 && bars.q_onset >= 0.0);
+    const bool haveT = (bars.s_end >= 0.0 && bars.t_end >= 0.0);
+    const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(*d.tmpl,
+        haveP ? bars.p_begin : lm.p_begin,
+        haveP ? bars.q_onset : lm.q_onset,
+        haveT ? bars.s_end : lm.s_end,
+        haveT ? bars.t_end : lm.t_end,
+        sampleRate, peakMode);
+    out.p_peak = rx.p_peak;
+    out.t_peak = rx.t_peak;
+
+    out.valid = true;
+    return out;
+}
+
+inline EcgFiducials ecgFiducials(const TemplateBin& b, int lead, int slot,
+    AnchorType a, double sampleRate,
+    curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
+    curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
+    const tbank::BankMarkerSet& bars = tbank::BankMarkerSet{})
+{
+    return ecgFiducialsFrom(
+        ecgDetect(b, lead, slot, a, sampleRate, onOffsetMode, peakMode),
+        sampleRate, peakMode, bars);
+}
+
+// SEEDING, with the same one assembly. seed_bank_template owns the
+// admissibility mask (it includes landmark_admissibility.hpp, which the viewer
+// cannot -- the graph would cycle), so the bars go through it; slotView still
+// supplies the trace and R column, so the inputs match ecgFiducials exactly.
+inline bool seedSlotBars(TemplateBin& b, int lead, int slot, AnchorType a,
+    double sampleRate,
+    curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
+    curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
+{
+    const SlotView sv = slotView(b, lead, slot, a);
+    if (!sv.valid) return false;
+    FeatureMarks::seed_bank_template(*sv.tmpl, sv.r_col, sampleRate, a,
+        b.slotMarks(lead, slot, a), onOffsetMode, peakMode);
+    return true;
+}
+
 // PQRST_A and friends: the name the grid shows, minus its "Ch1 " prefix.
 // Letter from tbank::letterRanks, the same function leadsForBinTemplate uses --
 // the raw slot index skips letters when a lower slot is empty.
@@ -1213,14 +1368,19 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     }
 
     // ---- header ------------------------------------------------------------
-    // Keys. ppg_issue is PULSE metadata -> only in the pulse section.
     // ONE ROW PER (bin, channel, template slot) -- one row per panel on
     // screen. channel is a row key, not a column suffix: the template name is
     // only unique within (bin, channel), so CH1 and CH2 can each hold a
     // PQRST_A and they are different templates. n_members is memberCount;
     // n_clean is cleanCount, the one the visibility predicates test.
-    f << "file_id,bin_index,channel,template,bad_r,n_members,n_clean";
-    if (wantPulse) f << ",ppg_issue";
+    // bad_ecg / bad_ppg, 1 = yes and 0 = no, INDEPENDENT. The right-click
+    // cycle can set either or both (Good -> BAD ECG -> BAD PPG -> both), so a
+    // panel marked both bad reads 1,1. They were bad_r and ppg_issue, which
+    // named the mechanism rather than the verdict and read as alternatives.
+    //
+    // bad_ppg is 1 when the pulse is absent as well as when it was marked bad:
+    // the file says whether there is a usable pulse, not why there isn't.
+    f << "file_id,bin_index,channel,template,bad_ecg,bad_ppg,n_members,n_clean";
 
     // ECG point columns + 2 interval columns per channel.
     //
@@ -1306,7 +1466,9 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     }
 
     if (wantPulse) {
-        if (suffixed) f << ",ppg_issue";
+        // No ppg_issue header here any more: the pulse verdict is the bad_ppg
+        // ROW KEY above. Emitting it here too would have left a column with no
+        // value and shifted every pulse column by one.
         for (const char* n : ppgCols)     emitPulsePointHeader(n);
         // PW80 width (t80 - t80_rise), in ms. Single value per bar-set, not a
         // pulse point -- a width has no y/position, so it gets its own two
@@ -1460,9 +1622,12 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                 f << fileID << ',' << b.index << ',' << kChan[c]
                     << ',' << bankSlotName(b.ecg_bank[c], slot)
                     << ',' << (b.bad_r_ch[c] ? 1 : 0)
+                    // ANY NON-ZERO IS BAD. bad_ppg is 0 = ok, 1 = marked bad, 2 = no
+                    // pulse present -- and no pulse is the same verdict as marked bad for
+                    // a consumer of this file: there is no usable pulse either way.
+                    << ',' << ((b.bad_ppg != 0) ? 1 : 0)
                     << ',' << nMembers
                     << ',' << nClean;
-                if (wantPulse) f << ',' << static_cast<int>(b.bad_ppg);
 
                 // (every ECG lookup below goes through b.bankSlotFor(c, slot, anchor),
                 //  which selects this row's template in this block's alignment.)
@@ -1630,7 +1795,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             emitAutoFeatPt(ecg, rx.t_peak);
                         }
                     }
-                // (bad_r and ppg_issue are row keys now -- emitted once, above.)
+                // (bad_ecg and bad_ppg are row keys -- emitted once, above.)
                 if (wantPulse) {
                     // PPG: onset, p50, peak, dicrotic, peak2, t80, t80_rise, end
                     //onset, dicrotic, and end are the only user movable bars

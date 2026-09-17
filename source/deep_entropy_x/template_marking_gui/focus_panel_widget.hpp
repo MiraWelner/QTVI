@@ -78,6 +78,10 @@ public:
     // Clear the panel (no landmark selected).
     void clearFocus();
 
+    // The detector's position for the focused landmark, in this trace's
+    // columns. Call after setFocus; -1 clears it.
+    void setDetectorFiducial(double col);
+
     // Which curve the red dashed overlay draws, so it matches the model that
     // actually PLACED this landmark: a peak's weighted quadratic/cubic vs an
     // onset/offset's curve_fit transition model. Set per landmark by the owner
@@ -135,6 +139,16 @@ private:
     // under one sample, which at this zoom is a sub-pixel shift, so the number
     // is the only reliable way to see that the mark moved with the radio.
     double m_lastFidCol = -1.0;
+
+    // THE DETECTOR'S OWN ANSWER for this landmark on this trace, supplied by
+    // refreshFocus. The dotted fiducial is drawn here and nowhere else.
+    //
+    // The panel used to draw it at its own re-fit's vertex, and that cannot
+    // match: the detector fits a window centred on the integer argmax it
+    // found, while the panel seeds at the landmark's ALREADY-REFINED column.
+    // Different window, different weighted fit, different vertex -- so the line
+    // sat beside the mark it was supposed to be marking. -1 = not supplied.
+    double m_detectorFid = -1.0;
     int    m_half = 30;
     int    m_framingBias = 0;   // -1 right-edge, +1 left-edge, 0 centered
     QString m_label;

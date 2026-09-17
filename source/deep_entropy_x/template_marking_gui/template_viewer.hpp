@@ -5,6 +5,7 @@
 #include <vector>
 #include <utility>
 #include <map>
+#include <unordered_map>
 #include <cmath>
 #include <QString>
 #include "template_marking_bin_io.hpp"
@@ -102,9 +103,18 @@ private slots:
     void onMarkerMoved(int binIdx, int leadIdx, int marker, int newIdx);
     void resetMarks();
     void onMarkerDragStarted(int binIdx, int leadIdx, int marker);
+    // The end of a bar gesture. The propagation loops push single marker
+    // positions while the mouse moves; this is where the page gets its one full
+    // re-apply (re-seeding, pulse marks, glyph re-detection), so that cost is
+    // paid once per drag instead of once per mouse-move per column.
+    void onMarkerDragFinished(int binIdx, int leadIdx, int templateIdx,
+        int marker);
     void onBadRToggled(int binIdx, int leadIdx, int templateIdx, bool bad);
     // Helpers for the two above; declared here so both can find them.
     tbank::BankTemplate* slotFor(int binIdx, int leadIdx, int templateIdx);
+    // One panel's combined bad-ECG / bad-PPG state, from both flag sources.
+    BinPlotWidget::State panelState(int binIdx, int leadIdx,
+        int templateIdx) const;
     void repaintPanel(int binIdx, int leadIdx, int templateIdx, BinPlotWidget::State st);
     void onBadPPGToggled(int binIdx, int templateIdx, bool bad);
     // `col` IS A DOUBLE, matching BinPlotWidget::landmarkSelected. Qt connects
@@ -250,6 +260,19 @@ private:
     long long m_lastTransKey = -1;
     subsample_refine::TransitionCandidates m_lastTransCand;
 
+    // THE DETECTION, not the position. This used to cache the finished
+    // fiducial column (m_lastDetFid) on the same key -- and for the two
+    // BRACKET-DERIVED landmarks that was wrong: P peak and T peak are measured
+    // between the operator's bars, so dragging the P-onset bar moves the P
+    // peak, while the key (bin, slot, lead, marker, anchor) does not change.
+    // Clicking the P-peak glyph afterwards replayed the pre-drag position.
+    //
+    // Now that the detector is split (see ecgDetect / ecgFiducialsFrom), the
+    // expensive half is what gets cached and the two peaks are re-bracketed on
+    // every call -- two argmaxes, so the drag stays cheap and the dotted line
+    // cannot be stale.
+    EcgDetection m_lastDet;
+
     // Operator-selected fit models (the on/offset and Fit-Peaks radio groups).
     // Auto = the BIC contest; any other value forces that model so the focus
     // fit (and, after a re-seed, the placement) follows the radio.
@@ -342,6 +365,32 @@ private:
     // the bin index alone has to consult both.
     std::vector<int> m_pageTemplateIdx;
 
+    // ---- (bin, slot) -> PAGE COLUMN -------------------------------------
+    //
+    // Rebuilt at the end of showPage. Every refresh and every drag used to scan
+    // m_pageGlobalIdx linearly to answer "which column is this", and the
+    // Move-Subsequent loops did it once per propagated column, which made the
+    // propagation quadratic in the page's column count. A (bin, slot) pair
+    // occupies exactly one column, so this is an exact index rather than a
+    // cache of the first match.
+    std::unordered_map<int, int> m_pageColOf;
+
+    // The one key function for a (bin, slot) pair. Was written out as
+    // `bin * 64 + slot` in four places (originFor's caller, resetMarks, the
+    // propagation loop, ...) with the 64 as a bare literal. Slots come from
+    // visibleSlots, which iterates to max_templates_per_bin * 4, so the bound
+    // is asserted rather than assumed.
+    static constexpr int kSlotKeyStride = 64;
+    static constexpr int slotKey(int bin, int slot) {
+        return bin * kSlotKeyStride + slot;
+    }
+    static_assert(tbank::max_templates_per_bin * 4 <= kSlotKeyStride,
+        "slotKey would collide: a bin's slot range no longer fits the stride");
+
+    // This column's panels, or nullptr when the (bin, slot) is not on the page.
+    const std::vector<BinPlotWidget*>* panelsForColumn(int binIdx,
+        int templateIdx) const;
+
     int max_leads = 1;
 
     int m_binsPerPage = 16;
@@ -372,12 +421,6 @@ private:
     // computed and rounded once per drag instead of once per mouse-move.
     double m_dragStartIdx = -1.0;
 
-    // (m_qAlignPass / m_anchorStep / m_anchorPassCount / m_anchorLabel /
-    //  m_currentAnchor removed with the cycle. No member holds "the current
-    //  alignment" any more, deliberately: whichever alignment a read or write
-    //  concerns is a property of the MARKER, answered by
-    //  anchor_view::anchorFor, and a member shadowing that is exactly how a
-    //  drag on one bar used to land in another alignment's set.)
     void setTitleForSubject();
     bool m_showEcgMarkers = false;
     bool m_showEcgRMarkers = false;   // ecg_r_markers: R-aligned overlay

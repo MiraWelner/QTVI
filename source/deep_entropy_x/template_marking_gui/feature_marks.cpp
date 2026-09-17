@@ -1329,7 +1329,16 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     double pHi = q;
     if (!(pHi >= 0.0)) pHi = r - 0.050 * sampleRate;
     const double pp = FeatureMarks::compute_p_peak(tmpl, 0.0, pHi, sampleRate, peakMode);
-    const double pb = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_anchor, pp, &out.p_begin_cand, fitMode);
+    // pPeakIn = -1, NOT pp. compute_p_begin derives the peak itself over
+    // [firstFinite, q_onset]; handing it `pp` -- computed just above from a
+    // DIFFERENT bracket, [0, pHi] -- made lm.p_begin a second, disagreeing
+    // answer. Every other caller already passes -1, so this was the odd one
+    // out, and it was the number the focus panel's fiducial and the marking
+    // CSV's p_begin_auto both reported while the bar reported the other.
+    //
+    // ONE P ONSET NOW: this, seed_bank_template's bar and reactiveGlyphs' X are
+    // the same call on the same trace.
+    const double pb = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_anchor, -1.0, &out.p_begin_cand, fitMode);
 
     // Out-of-range is folded to -1 (absent), NOT clamped to an edge column. A
     // landmark pinned to column 0 is indistinguishable from one genuinely found
@@ -1377,14 +1386,9 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
     if (msk.q_onset) out.q_onset = lm.q_onset;
     if (msk.s_end)   out.s_end = lm.s_end;
     if (msk.t_end)   out.t_end = lm.t_end;
-    // P ONSET: THE SAME CALL reactiveGlyphs MAKES FOR THE X. pPeakIn = -1 so
-    // compute_p_begin derives the peak itself over [firstFinite, q_onset].
-    // detect_template_landmarks above supplies its OWN peak, and a different
-    // peak gives a different onset -- that difference was the whole gap between
-    // the P bar and the P-onset glyph. One call, one answer, every slot.
-    if (msk.p_begin)
-        out.p_begin = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_col,
-            /*pPeakIn=*/-1.0, nullptr, fitMode);
+    // lm.p_begin is the -1 call now (see detect_template_landmarks), so the
+    // override that used to live here is gone: one source again.
+    if (msk.p_begin) out.p_begin = lm.p_begin;
 }
 
 

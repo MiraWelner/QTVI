@@ -410,6 +410,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_rAnchor[static_cast<size_t>(Channel::Ecg)] = rPeakSample;
 
     m_glyphsValid = false;   // trace changed: glyph snapshot must be recaptured
+    m_detValid = false;      // ... and so is the cached landmark detection
     recomputeFrame();
     updateGeometry();
     update();
@@ -434,6 +435,7 @@ void BinPlotWidget::setEcgData(const std::vector<double>& ecg,
     m_rAnchor[static_cast<size_t>(Channel::Ecg)] = rPeakSample;
 
     m_glyphsValid = false;   // trace changed: glyph snapshot must be recaptured
+    m_detValid = false;      // ... and so is the cached landmark detection
     recomputeFrame();
     updateGeometry();
     update();
@@ -557,37 +559,52 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
     // T-end. Both track a drag of any of the four, and both come from the
     // same FeatureMarks call the CSV/bin writers use, so the screen and the
     // files cannot disagree about where a landmark is.
-    // m_peakFitMode passed for the same reason m_onOffsetFitMode is passed to
-    // compute_p_begin below: this runs on every repaint, so the P/T peak glyphs
-    // follow the Fit-Peaks radio immediately, with no re-detection and without
-    // touching a single stored mark. It was simply omitted, which pinned both
-    // peaks to Auto. P-begin stays anchored to this same e.p_peak on purpose
-    // (see the note below it), so the onset cannot end up to the right of the
-    // peak that is actually drawn.
-    const FeatureMarks::ReactiveEcg e = FeatureMarks::reactive_ecg(
-        m_ecg, m_markers[EcgPBegin], m_markers[EcgQBegin],
-        m_markers[EcgSEnd], m_markers[EcgTEnd], m_rates[static_cast<size_t>(Channel::Ecg)],
-        m_peakFitMode);
-    r.ecgPPeak = e.p_peak;
-    r.ecgTPeak = e.t_peak;
-    // P-BEGIN GLYPH ANCHORED TO THE REACTIVE P PEAK, not to detect's own peak.
-    // pPeakIn = -1: compute_p_begin DERIVES the P peak itself, bracketing
-    // [firstFinite, q_onset]. That is the same bracket the bar's seed uses, so
-    // the X and the P-onset bar are now one expression evaluated on one array
-    // -- identical, not merely agreeing.
+    // ONE DETECTION CALL, shared with the bar seeding and the focus panel.
+    // ecgFiducials assembles the trace, the R column and the fit modes itself
+    // from (bin, lead, slot, alignment), so this panel can no longer detect
+    // from its own copies and land somewhere else: m_ecg is the bin-wide array
+    // on some paths and m_rPeakSample is the DRAWING AXIS origin, R's column on
+    // every alignment, which as a detection seed is off by
+    // r_col(R) - r_col(anchor).
     //
-    // It used to pass e.p_peak, the peak found BETWEEN THE BARS. A different
-    // peak gives a different onset, and that is the whole of the ~280 ms gap
-    // between the X and the bar.
-    //
-    // TRADEOFF, deliberately taken: the onset no longer tracks the P-peak
-    // glyph, so it will not follow a drag of the Q-onset bar and can in
-    // principle sit right of the drawn peak. A bar should not move on its own,
-    // which is why this is the wanted behaviour rather than a regression.
-    r.ecgPBegin = FeatureMarks::compute_p_begin(
-        m_ecg, m_rates[static_cast<size_t>(Channel::Ecg)],
-        static_cast<int>(std::lround(m_rPeakSample)), /*pPeakIn=*/-1.0,
-        nullptr, m_onOffsetFitMode);
+    // STILL REACTIVE: the bars go in as an argument and are read fresh on every
+    // repaint, so P and T peak track a drag exactly as before.
+    if (m_bin) {
+        // ---- THE DETECTOR RUNS ON TRACE CHANGES, NOT ON PAINTS ---------
+        //
+        // This function is called once per repaint and called ecgFiducials,
+        // which runs detect_template_landmarks: five finders, four of them
+        // fitting up to five curve models and choosing by BIC. Nothing in it
+        // depends on the bars except the two bracketed peaks, so a drag was
+        // paying for the whole detector on every panel of every repainted
+        // column, every mouse-move. It is now computed when the waveform this
+        // panel draws changes -- new trace, new slot, new alignment, new fit
+        // mode -- and reused otherwise. See ecgDetect / ecgFiducialsFrom.
+        if (!m_detValid || m_detBin != m_bin || m_detFrame != m_frame
+            || m_detSlot != m_templateIndex) {
+            m_det = ecgDetect(*m_bin, m_leadIndex, m_templateIndex, m_frame,
+                m_rates[static_cast<size_t>(Channel::Ecg)],
+                m_onOffsetFitMode, m_peakFitMode);
+            m_detBin = m_bin;
+            m_detFrame = m_frame;
+            m_detSlot = m_templateIndex;
+            m_detValid = true;
+        }
+
+        // The bars are still read fresh on every repaint (see above), so the
+        // reactive half is two bracketed argmaxes -- which is what this call
+        // now costs.
+        tbank::BankMarkerSet bars;
+        bars.p_begin = m_markers[EcgPBegin];
+        bars.q_onset = m_markers[EcgQBegin];
+        bars.s_end = m_markers[EcgSEnd];
+        bars.t_end = m_markers[EcgTEnd];
+        const EcgFiducials fid = ecgFiducialsFrom(m_det,
+            m_rates[static_cast<size_t>(Channel::Ecg)], m_peakFitMode, bars);
+        r.ecgPPeak = fid.p_peak;
+        r.ecgTPeak = fid.t_peak;
+        r.ecgPBegin = fid.p_begin;
+    }
 
     if (m_hasPPG) {
         const FeatureMarks::ReactivePpg p = FeatureMarks::reactive_ppg(
@@ -1005,16 +1022,21 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     p.restore();
 
 
-    if (m_state == State::BadPPG) {
+    // ONE MARKING PER STATE, so the panel says which verdict it carries rather
+    // than leaving it to be inferred from two overlaid marks:
+    //   BadR     -> "BAD ECG"
+    //   BadPPG   -> "BAD PPG"
+    //   BadBoth  -> the diagonal cross
+    if (m_state == State::BadBoth) {
         p.setPen(QPen(Qt::red, 4));
         p.drawLine(margin_left, margin_top, w - margin_right, h - margin_bottom);
         p.drawLine(margin_left, h - margin_bottom, w - margin_right, margin_top);
     }
-
-    if (m_state == State::BadR) {
+    else if (m_state == State::BadR || m_state == State::BadPPG) {
         p.setPen(QPen(QColor(200, 0, 0), 2));
         QFont bf = p.font(); bf.setPointSize(14); bf.setBold(true); p.setFont(bf);
-        p.drawText(rect(), Qt::AlignCenter, "BAD R");
+        p.drawText(rect(), Qt::AlignCenter,
+            (m_state == State::BadR) ? "BAD ECG" : "BAD PPG");
     }
 }
 
@@ -1122,6 +1144,7 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
     }
 
     if (e->button() == Qt::RightButton) {
+        // Good -> BadR -> BadPPG (pulse only) -> BadBoth -> Good.
         switch (m_state) {
         case State::Good:
             m_state = State::BadR;
@@ -1139,8 +1162,14 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
             }
             break;
         case State::BadPPG:
+            m_state = State::BadBoth;
+            emit badPPGToggled(m_binIndex, m_templateIndex, true);
+            emit badRToggled(m_binIndex, m_leadIndex, m_templateIndex, true);
+            break;
+        case State::BadBoth:
             m_state = State::Good;
             emit badPPGToggled(m_binIndex, m_templateIndex, false);
+            emit badRToggled(m_binIndex, m_leadIndex, m_templateIndex, false);
             break;
         }
         update();
@@ -1178,6 +1207,14 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     const int wallR = lastDrawnSample(ch);
     if (wallL < 0 || wallR < wallL) return;
     int s = std::clamp(sampleFromX(ch, e->position().x()), wallL, wallR);
+    // SAME COLUMN, NOTHING TO DO. A drag emits on every mouse event, and at
+    // normal zoom several pixels map to one sample, so most events asked the
+    // owner to re-place a bar where it already was -- and each of those ran a
+    // full Move-Subsequent propagation pass over the page and repainted every
+    // later column. Sub-sample bar positions come from the detectors and from
+    // userMarks, never from a drag (sampleFromX returns a column), so the
+    // rounded compare loses nothing.
+    if (s == static_cast<int>(std::lround(m_markers[m_dragMarker]))) return;
     m_markers[m_dragMarker] = s;
     // TEMPLATE-AWARE signal only. markerMoved carried no slot, so a drag on a
     // sub-template column was indistinguishable from one on slot 0 and wrote
@@ -1193,6 +1230,13 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
+    // THE GESTURE IS OVER. The owner's propagation path pushes one marker
+    // position per column per mouse-move and defers the full re-apply
+    // (re-seeding, pulse marks, glyph re-detection) to here, so it is paid once
+    // per drag rather than once per pixel.
+    if (m_dragMarker >= 0)
+        emit markerDragFinished(m_binIndex, m_leadIndex, m_templateIndex,
+            m_dragMarker);
     m_dragMarker = -1;
     m_dragRMark = -1;
 }
