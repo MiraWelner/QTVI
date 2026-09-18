@@ -156,7 +156,7 @@ public:
 
     // The slot selects which waveform ecgDetect measures, so it invalidates
     // m_det -- but NOT m_glyphs, which is measured on m_ecg and would then
-    // re-detect over the per-slot glyphs overrideEcgGlyphs pushes in.
+    // re-detect on a waveform this panel is no longer showing.
     void setTemplateIndex(int t) {
         if (t == m_templateIndex) return;
         m_templateIndex = t;
@@ -352,12 +352,12 @@ public:
     // included by every panel and pulling feature_marks.hpp in would drag
     // template_bank.hpp and annotation_types.hpp along with it. The caller
     // already holds the detector result and does the conversion.
-    struct EcgGlyphColumns {
-        double p_begin = -1.0, q_onset = -1.0, q_peak = -1.0,
-            r_peak = -1.0, s_end = -1.0, t_end = -1.0;
-        bool q_onset_found = false;
-    };
-    void overrideEcgGlyphs(const EcgGlyphColumns& g);
+    // (EcgGlyphColumns / overrideEcgGlyphs lived here. They pushed a SECOND
+    // detection -- raw per-slot array, Auto fit modes -- over the one
+    // captureGlyphSnapshot had just made on the displayed trace in the
+    // operator's modes. One detector run per panel per apply, thrown away, and
+    // the answer that won ignored both the notch filter and the radios. There
+    // is one detection now, in reactiveGlyphs, on m_ecg.)
 
 
 signals:

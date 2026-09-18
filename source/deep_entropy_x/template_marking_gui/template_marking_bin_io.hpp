@@ -55,37 +55,6 @@
 *    Some carry a trailing found-flag column. ppg_pw80_ms_auto is a lone
 *    column on the same footing: a width has no position either.
 *
-* ONE SOURCE PER RULE. anchor_view::hasUserColumn(name, anchor) answers for
-* the ECG points and pulseHasUserColumn(name) for the pulse points, each asked
-* in exactly two places -- the header emitter and the row loop -- so the two
-* cannot disagree about column count. Adding a point is one entry in the name
-* list plus, if it is a bar, one line in the predicate.
-*
-* CONSEQUENCE FOR THE MERGE: the four ECG parts no longer have equal column
-* counts. Each carries its own header, so the file stays self-describing, but
-* anything joining the parts positionally rather than by name will break.
-*
-* Normalization
-*
-*   ECG:   y / Global_Ref_ecg(ch), where Global_Ref_ecg = median across bins
-*          of (|R_peak_y| + |S_peak_y|) using that variant's own R/S positions.
-*   Pulse: (100 * (y - foot_y) / foot_y) / Global_Ref_pulse(chan), where
-*          Global_Ref_pulse = median across bins of 100*(peak - foot)/foot.
-*          Autodetect uses foot_auto; user uses foot.
-* Both refs computed once per subject inside this function; they use the
-* autodetect positions so the "reference" is stable regardless of user edits.
-*
-* EVERY POSITION IS A DOUBLE END TO END. Amplitudes go through
-* FeatureMarks::sample_at (interpolated at a fractional column, not read from
-* a rounded one) and every _x_ms column carries its fraction. The bar side is
-* no longer widened-from-int at the call site -- BankMarkerSet is double -- so
-* the _user millisecond columns are as precise as the _auto ones. This matters
-* beyond tidiness: Section 6.3's T80 entropy result turns on differences
-* smaller than one sample period at 256 Hz.
-*
-* Q peak and S peak are computed inside the QRS: their autodetect variant uses
-* (q_onset_auto, r_peak_auto, s_end_auto), and they are glyphs, so under (1)
-* they have no user column.
 * ---------------------------------------------------------------------------
 */
 
@@ -109,18 +78,6 @@
 #include "template_morphology_grouping\template_bank.hpp"
 #include "template_anchoring\anchor_view.hpp"
 
-
-// Which half of the markings CSV a call emits. Declared HERE, above every
-// function that names it in a parameter list -- it used to sit further down,
-// between the two writers, so the first one referenced it before declaration.
-// EcgAndPulse emits the four alignment blocks AND the pulse block into ONE
-// row. It replaces the old five-part build -- four EcgOnly parts with their
-// value columns suffixed afterwards by string surgery, plus one PulseOnly
-// part, stitched by mergeCsvParts. That merge only looked like a join: it
-// compared the parts' row COUNTS and concatenated line i of each, discarding
-// three leading fields per part. So what a row meant was a contract between
-// five independently generated files and could not be changed in one place --
-// which is what blocked giving this file a slot dimension.
 enum class MarkingsCsvSection { EcgOnly, PulseOnly, EcgAndPulse };
 
 
@@ -158,64 +115,19 @@ struct AnchoredBankSlot {
 };
 
 struct TemplateBin {
-    // Section 4.6 template bank per ECG channel, index 0..2 == CH1..CH3.
-    // Slot 0 of each is the sinus seed and corresponds to that channel's
-    // ecgTemplate, except that it excludes ectopy. Channels are allowed to
-    // disagree on template count -- a morphology separable on one lead may not
-    // be on another -- so these are NOT parallel across the array.
     std::array<tbank::TemplateBank, 3> ecg_bank;
-
-    // ---- AND THE PULSE BANK ---------------------------------------------
-    //
-    // template_io::BinTemplates has carried ppg_bank since v4 and this struct
-    // did not, so `dst.ecg_bank = src.ecg_bank` in fromTemplateFile() loaded the
-    // pulse partition off disk and then dropped it. The consequences were all
-    // downstream and all silent: the viewer had no pulse bank to label, so a
-    // class confirmation could not reach the PPG cohort of the morphology it
-    // confirmed, and a right-click had nowhere to record a pulse verdict.
-    //
-    // Slot i is group i, the same group ECG slot i is -- the projection walks
-    // the joint groups in order for every channel, so the four banks are
-    // parallel by construction. That is what makes labelling and marking by
-    // slot correct across all of them.
     tbank::TemplateBank ppg_bank;
 
     uint64_t index = 0;
     std::vector<std::pair<uint64_t, uint64_t>> ppg_bin_indexs;
     std::vector<std::pair<uint64_t, uint64_t>> ecg_bin_indexs;
     bool bad_segment = false;
-    // Slice counts (post drop-rules) that fed each channel's raw-method
-    // median, plus PPG. All driven by ch1.raw R-pairs under Patch B, so
-    // they normally read equal; per-channel storage lets a future filter
-    // drop them per-channel. 0 = channel absent / no beats.
     uint64_t ch1_n_beats_raw = 0;
     uint64_t ch2_n_beats_raw = 0;
     uint64_t ch3_n_beats_raw = 0;
     uint64_t ppg_n_beats = 0;
-
     ChannelTemplateData ch1, ch2, ch3;
-
-    // ====================================================================
-    // ALL FOUR ALIGNMENTS, LOADED AT ONCE
-    //
-    // ch1/ch2/ch3 above stay the R-aligned base: the grid draws them, every
-    // existing reference to them keeps meaning what it meant, and R is the
-    // frame every other alignment's columns are translated into. The other
-    // three live here, keyed by (int)AnchorType.
-    //
-    // readTemplateInfoBin used to project ONE anchor block into ch1..3, which
-    // is why seeing a second alignment meant regenerating the templates file
-    // and reopening the window. Four sequential screens were a consequence of
-    // this one field being a scalar.
-    // ====================================================================
     std::map<int, std::array<ChannelTemplateData, 3>> anchored;
-
-    // Glyph positions for ONE alignment. Glyphs are measurements, not
-    // judgements, so every alignment detects all of them on its own average
-    // and all four are reported -- <landmark>_auto_P through _auto_T are four
-    // measurements of one landmark on four waveforms. The flat *_auto_ch
-    // fields are R's copy, kept flat so the grid's glyph drawing and every
-    // existing consumer are untouched; this map carries the other three.
     struct AnchorAuto {
         double p_begin[3] = { -1, -1, -1 };
         double p_peak[3] = { -1, -1, -1 };
@@ -226,47 +138,10 @@ struct TemplateBin {
         double t_end[3] = { -1, -1, -1 };
         bool   q_onset_found[3] = { false, false, false };
     };
-    // (auto_by_anchor removed -- see alignedLandmarks.)
-
-    // ---- PER-ANCHOR BANK SLOT AVERAGES --------------------------------
-    //
-    // anchored above holds one aligned average per (anchor, lead) -- the bin's
-    // whole-channel template, which is what slot 0 draws. The BANK slots (the
-    // _A / _B columns) had no aligned variant, so their focus panel showed the
-    // slot's own R-aligned average under whatever "[X-aligned]" header the
-    // clicked bar produced. The switch did nothing and the label was wrong.
-    //
-    // Keyed [anchor tag][lead][slot], mirroring template_io's bank_anchors.
-    // Produced offline in alignTemplatesFromCache as column-wise reductions
-    // over the SAME aligned beat matrix the whole-channel average comes from,
-    // so a slot and its bin share one frame.
-    // FLAT KEY: anchorTag * 4 + lead. Deliberately not
-    // map<int, array<vector<...>,3>>: MSVC could not parse a declaration of
-    // that nested type inside a member function, and once the declarator
-    // failed it read the following `(...)[lead]` as a LAMBDA INTRODUCER --
-    // producing "expected a '{' introducing a lambda body" and a cascade of
-    // syntax errors on the lines below. One level of nesting, no arrays.
     std::map<int, std::vector<AnchoredBankSlot> > anchored_bank;
     static int bankSlotKey(int lead, AnchorType a) {
         return static_cast<int>(a) * 4 + lead;
     }
-
-    // This slot's aligned average for one NON-R alignment, or nullptr. R is
-    // not in here: alignTemplatesFromCache accumulates only the re-aligned
-    // anchors, and a slot's R-aligned average is BankTemplate::tmpl.
-    //
-    // A null means a bin the alignment skipped, a slot with no members, or
-    // build_templates failing to write the average for an anchor it aligned.
-    // It does NOT mean an older file: there is one format version and every
-    // section is written unconditionally (see template_io.cpp).
-    //
-    // CALLERS MUST NOT FALL BACK to the slot's R-aligned average. A header
-    // naming an alignment the data is not in is the defect this exists to fix,
-    // and for a marker set the substitution is worse than cosmetic -- it puts
-    // an R-frame column under a non-R tag, which userMarks then translates out
-    // of a frame it was never in.
-    // Non-null means there IS a waveform: an average sized to W NaNs with no
-    // filled columns counts as absent.
     const AnchoredBankSlot* bankSlotFor(int lead, int slot, AnchorType a) const
     {
         if (lead < 0 || lead > 2) return nullptr;
@@ -280,21 +155,6 @@ struct TemplateBin {
             if (!std::isnan(v)) return &it->second[slot];
         return nullptr;
     }
-
-    // This alignment's template for one lead. Falls back to the R base when
-    // the anchor block is absent -- a templates file built before this change
-    // has none, and every bar's close-up then shows the R template, which is
-    // the old single-pass behaviour rather than a failure.
-    // STRICT: this alignment's template, or nullptr. NO FALLBACK.
-    //
-    // chFor below substitutes the R base when the anchor block is absent, which
-    // is right for the CSV writers -- an R-only file must still produce columns
-    // -- and WRONG for the focus panel, where it silently showed the R-aligned
-    // average under a "[P-aligned]" header. A view that claims an alignment it
-    // is not showing is worse than an empty view, because there is no way to
-    // tell the two apart by eye.
-    //
-    // So the panel uses this one and draws nothing when it returns nullptr.
     const ChannelTemplateData* chForStrict(int lead, AnchorType a) const {
         if (lead < 0 || lead > 2) return nullptr;
         if (a == AnchorType::R_PEAK) {
@@ -306,26 +166,6 @@ struct TemplateBin {
         if (it->second[lead].ecgTemplate_raw.empty()) return nullptr;
         return &it->second[lead];
     }
-
-    // NO FALLBACK TO R. This used to return the R-aligned channel whenever the
-    // requested anchor was absent or empty, which is indistinguishable on
-    // screen from an alignment that made no difference -- a whole session can
-    // be spent looking at R while the header names P. There is no
-    // backward-compatibility case to serve: every templates file is written by
-    // the current writer, so this no longer hides a missing anchor behind R.
-    //
-    // MISSING OR EMPTY RETURNS AN EMPTY CHANNEL, NOT R. Every caller already
-    // tests ecgTemplate_raw.empty() and skips, so an absent anchor or an absent
-    // lead renders as nothing -- visibly wrong, and traceable to this bin --
-    // instead of quietly rendering R under a header naming another alignment.
-    //
-    // NOT A THROW. A single-lead record leaves ch2/ch3 empty in every anchor
-    // and a bin the alignment skipped has no key at all; both are normal, and
-    // throwing from here fail-fasts inside the Qt slot painting the grid
-    // (0xC0000409) rather than reporting anything.
-    //
-    // R_PEAK reads ch1/ch2/ch3 because that IS where R is stored, not as a
-    // fallback.
     const ChannelTemplateData& chFor(int lead, AnchorType a) const {
         static const ChannelTemplateData kEmpty{};
         const ChannelTemplateData* base[3] = { &ch1, &ch2, &ch3 };
@@ -335,41 +175,11 @@ struct TemplateBin {
         if (it == anchored.end()) return kEmpty;
         return it->second[lead];
     }
-
-    // This alignment's glyphs, or nullptr when the file has none for it.
-    // autoFor / autoForStrict / autoFromFlat and the auto_by_anchor map they
-    // read are GONE. They cached detect_template_landmarks over a stored
-    // template -- a pure function of data already in memory -- and autoFor
-    // returned the R-aligned set on a miss, so a caller asking for P silently
-    // got R. Use alignedLandmarks(bin, lead, anchor, fs), which recomputes and
-    // reports valid=false for an alignment that has no template.
-
-    // Samples to ADD to a column measured in `from`'s frame to express it in
-    // `to`'s. Both alignments put the same beat's R on their own r_col, so the
-    // difference of the two r_cols is the whole conversion. Normally 0 or a
-    // sample or two: alignTemplatesFromCache aligns each anchor against the
-    // median-length snippet, which does not move, so R lands near the base
-    // column -- near, not exactly, which is why this is a function and not an
-    // assumption. 0 when either r_col is unknown.
-    //
-    // STAYS INT. r_col is a file field and their difference is a whole-sample
-    // column offset; adding it to a double position is exact.
     int frameShift(int lead, AnchorType from, AnchorType to) const {
         const int a = chFor(lead, from).r_col_raw;
         const int b = chFor(lead, to).r_col_raw;
         return (a < 0 || b < 0) ? 0 : (b - a);
     }
-
-    // ---- THE BAR SET THE OPERATOR ACTUALLY PLACED ------------------------
-    //
-    // Each bar lives in its owning alignment's set, so no single
-    // markers_by_anchor entry holds a whole beat any more. Anything needing
-    // P-onset AND Q-onset AND S-end AND T-end together -- QRS duration, QT,
-    // the reactive P and T peaks, the global interval lines, the VCG rows --
-    // assembles them here, each translated into `frame`'s columns on the way.
-    //
-    // BARS ONLY, and that is now the whole of BankMarkerSet: the reactive
-    // P-peak is no longer stored anywhere, so there is nothing else to pull.
     tbank::BankMarkerSet userMarks(int lead, int slot,
         AnchorType frame = AnchorType::R_PEAK) const
     {
@@ -423,49 +233,6 @@ struct TemplateBin {
     //error markings made via user right click
     bool    bad_r_ch[3] = { false, false, false };
     uint8_t bad_ppg = 0;   // 0 = ok, 1 = bad, 2 = no ppg
-
-    // THE R-ALIGNED OVERLAY BARS (r_bars_ch / ecg_r_markers) LIVED HERE.
-    // A separate, unserialized, per-slot set of the four landmarks in the R
-    // frame, re-seeded each load. It existed because the per-anchor marker sets
-    // held one bar each, so there was nowhere to put a full set of R-measured
-    // bars -- and markers_by_anchor has always been a full BankMarkerSet per
-    // anchor, which is what it was working around. Forced-R now marks
-    // slotMarks(lead, slot, R_PEAK) through the ordinary bar path (see
-    // anchor_view::showsBar).
-
-    // Per-anchor USER marker positions. Each alignment anchor (R, Q_ONSET,
-    // J_POINT, T_PEAK, ...) has its OWN independent set of draggable ECG
-    // markers, because a marker's sample column is only meaningful relative to
-    // the alignment it was placed on. Keyed by AnchorType; a missing anchor
-    // means "not marked yet for that anchor" (seed fresh on load). Use marks().
-    // ---- ONE HOME FOR EVERY LANDMARK: THE BANK TEMPLATE ------------------
-    //
-    // There used to be two. A bin-level MarkerSet held slot 0's landmarks as
-    // per-lead arrays of 3, while slots 1..N held theirs as scalars in
-    // BankTemplate::markers_by_anchor. Same landmark, two shapes, two homes --
-    // and the consequences were not cosmetic:
-    //
-    //   * onMarkerMoved (the slot-0 drag path) propagated through the BIN's set
-    //     and so had no slot dimension at all. It could not move a sub-template
-    //     column no matter what, which is why dragging _A never moved _E.
-    //   * Three functions disagreed about what slot 0 was: markingSlotsForBin
-    //     treated it as a bank slot, leadsForBinTemplate fell back to chN_raw
-    //     for it, onMarkerMoved wrote it to the bin.
-    //   * Every operation spanning both had to know which storage applied, and
-    //     there were four propagation loops between them.
-    //
-    // Now slot 0 is a slot like any other. The bank is ALREADY per lead, so the
-    // array of 3 was itself a leftover from before banks existed; BankMarkerSet
-    // is the correct shape and is the only one.
-    //
-    // Reach them through slotMarks(). Nothing outside this struct should index
-    // ecg_bank[...].templates[...].markers_by_anchor directly.
-
-    // Writable, and CREATES THE SLOT if the bank is shorter -- which is what the
-    // markings reader needs, since it builds bins with no banks and has to put
-    // the saved landmarks somewhere before the merge. A created slot carries
-    // marks and nothing else: no tmpl, no members, so it earns no column and
-    // draws nothing until the real bank arrives.
     tbank::BankMarkerSet& slotMarks(int lead, int slot, AnchorType a) {
         static tbank::BankMarkerSet kScratch;
         if (lead < 0 || lead > 2 || slot < 0) { kScratch = {}; return kScratch; }
@@ -601,21 +368,6 @@ struct TemplateBin {
     // A TIER AND A CONFIDENCE, not positions -- tier stays int.
     int    ppg_dn_tier_auto = 3;          // 1=IEM, 2=Windkessel, 3=absent
     double ppg_dn_confidence_auto = 0.0;
-
-    // ---- THE PPG COUNTERPART OF THE REMOVED syncReactiveGlyphs -----------
-    //
-    // The bars are the input, every reactive value is the output, and this is
-    // the ONLY thing that assigns them. ppg_peak is taken from ppg_peak_auto
-    // rather than trusted from wherever it currently sits, because it is
-    // auto-only and reactive_ppg needs it as a bracket.
-    //
-    // Call after seeding and after a markings-bin restore. The bin stores bars
-    // only, so on restore these have to be rederived or they keep whatever the
-    // auto-seed left while the bars come from the file.
-    //
-    // NOTE: reactive_ppg takes `dicrotic` but does not read it -- t50, t80,
-    // t80_rise, pw80 and peak2 are all derived from onset, peak and end. It is
-    // passed anyway so this call matches BinPlotWidget::reactiveGlyphs.
     void syncReactivePpg() {
         ppg_peak = ppg_peak_auto;
         if (ppgTemplate.empty()) return;
@@ -1157,6 +909,29 @@ struct EcgDetection {
     const std::vector<double>* tmpl = nullptr;
     bool valid = false;
 };
+
+// TRACE GIVEN EXPLICITLY. A caller that already holds the waveform on screen --
+// BinPlotWidget does, in m_ecg, notch-filtered and amplitude-scaled -- must
+// detect on THAT array, or its glyphs describe a different signal from the one
+// under them. `tmpl` has to outlive the returned EcgDetection, which holds a
+// pointer to it for the reactive half.
+inline EcgDetection ecgDetectOn(const std::vector<double>& tmpl, int r_col,
+    double sampleRate,
+    curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
+    curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
+{
+    EcgDetection d;
+    if (tmpl.size() < 3 || r_col < 0) return d;
+
+    d.lm = FeatureMarks::detect_template_landmarks(tmpl, r_col, sampleRate,
+        onOffsetMode, peakMode);
+    if (!d.lm.valid) return d;
+
+    d.s_peak = FeatureMarks::compute_s_peak(tmpl, r_col, sampleRate, peakMode);
+    d.tmpl = &tmpl;
+    d.valid = true;
+    return d;
+}
 
 inline EcgDetection ecgDetect(const TemplateBin& b, int lead, int slot,
     AnchorType a, double sampleRate,

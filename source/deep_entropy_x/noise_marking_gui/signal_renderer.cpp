@@ -40,11 +40,9 @@
 namespace {
 
     int firstRawAtOrAfter(const QVector<QPointF>& raw, double target) {
-        /*
-            First index whose x >= target. rawData x is monotonic (index-time after the
-            loader's rewrite), so we can binary-search the window start instead of
-            linear-skipping every sample before it.
-        */
+        /* First index whose x >= target. rawData x is monotonic (index-time after the
+        loader's rewrite), so we can binary-search the window start instead of
+        linear-skipping every sample before it. */
         int lo = 0, hi = raw.size();
         while (lo < hi) {
             const int mid = (lo + hi) >> 1;
@@ -128,8 +126,7 @@ namespace {
         return idx;
     }
 
-    QCategoryAxis* make_time_labled_xaxis(double startLocal, double duration,
-        double globalOffset, bool labelsVisible)
+    QCategoryAxis* make_time_labled_xaxis(double startLocal, double duration, double globalOffset, bool labelsVisible)
     {
         auto* xAxis = new QCategoryAxis();
         xAxis->setRange(startLocal, startLocal + duration);
@@ -150,18 +147,8 @@ namespace {
         return xAxis;
     }
 
-    std::pair<double, double> renderWindowedChart(
-        QChartView* view,
-        const QList<markable_data_series>& serieses,
-        QList<QLineSeries*>& persistentLines,
-        QList<QScatterSeries*>& persistentRawScatter,
-        double currentStartTime, double windowDuration,
-        double globalOffset, double ecgSR,
-        bool labelsVisible,
-        bool useScatterMode,
-        bool forceLineForUpsampled,
-        double yScale = 1.0)
-    {
+    std::pair<double, double> renderWindowedChart(QChartView* view, const QList<markable_data_series>& serieses, QList<QLineSeries*>& persistentLines, QList<QScatterSeries*>& persistentRawScatter,
+        double currentStartTime, double windowDuration, double globalOffset, double ecgSR, bool labelsVisible, bool useScatterMode, bool forceLineForUpsampled, double yScale = 1.0) {
         if (!view || !view->chart()) return { 1e9, -1e9 };
         QChart* chart = view->chart();
         chart->legend()->hide();

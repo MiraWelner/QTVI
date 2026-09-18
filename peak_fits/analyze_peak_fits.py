@@ -1,43 +1,37 @@
 #!/usr/bin/env python3
 """
-Analyse PEAK LANDMARK POSITIONS across the peak fit models.
+Analyse P AND R PEAK POSITIONS across the peak fit models.
 
-Each landmark is reported as a DISTANCE FROM THE R PEAK in ms:
+Three numbers per template:
 
-    p_peak_from_r, q_peak_from_r, s_peak_from_r, t_peak_from_r
+    p_peak_abs_ms    P peak position along the template
+    r_peak_abs_ms    R peak position along the template
+    rp_distance_ms   r_peak_abs_ms - p_peak_abs_ms, so POSITIVE, P before R
 
-Negative means before R. The raw x_ms_auto_R columns are absolute positions
-along a template, and every template has R at its own column, so their spread
-is dominated by that offset rather than by anything measured. Subtracting R
-removes it and makes the numbers comparable to clinical ranges (P peak about
-R-200 to R-100, Q peak R-45 to R-20, S peak R+20 to R+50, T peak R+180 to
-R+320). r_peak_abs_ms rides along as the raw anchor, since R's distance from
-itself is zero.
+The two absolute positions are columns along a template and every template has
+R at its own column, so their spread is dominated by that offset rather than by
+anything measured -- read them as provenance, and read rp_distance_ms as the
+measurement. Clinically the P-to-R distance runs about 100-200 ms; it is the PR
+interval measured peak-to-peak rather than onset-to-onset, so it sits below a
+conventional PR.
 
-UPDATED FOR THE PER-TEMPLATE SCHEMA. The export used to be one row per bin
-with the channel as a column suffix (q_onset_ch1_x_ms_auto_R). It is now one
-row per (bin_index, channel, template) -- one row per column you can see and
-mark in the grid -- and the suffix is gone (q_onset_x_ms_auto_R). So:
-
-  * the row key is the TRIPLE, not bin_index. Two templates in one bin are
-    different waveforms with their own marks; averaging them would be the same
-    mistake the old export made by reporting slot 0 only.
-  * channel is read from its column instead of being sniffed from which
-    _chN columns happen to be populated.
-  * `template` is PQRST_A / PQRST_B / ... -- the name the grid shows, minus its
-    channel prefix. It is only unique WITHIN a (bin, channel).
+PER-TEMPLATE SCHEMA. One row per (bin_index, channel, template) -- one row per
+column you can see and mark in the grid. `template` is PQRST_A / PQRST_B / ...,
+the name the grid shows minus its channel prefix, and it is only unique WITHIN
+a (bin, channel). The row key is the TRIPLE, not bin_index: two templates in
+one bin are different waveforms with their own marks.
 
 Writes three CSVs:
     peak_pos_per_row.csv    one row per (model, bin, channel, template)
     peak_pos_summary.csv    mean / sd per (model, metric), across all rows
     peak_pos_per_row_stats.csv
                             mean / sd per (bin, channel, template, metric),
-                            across the MODELS -- how far the choice of peak
-                            model moves that one template's landmark
+                            across the MODELS (auto, 5_point, quadratic,
+                            cubic) -- how far the choice of peak model moves
+                            that one template's landmark
 
 Columns read (R-aligned auto):
-    p_peak_x_ms_auto_R, q_peak_x_ms_auto_R, s_peak_x_ms_auto_R,
-    t_peak_x_ms_auto_R, r_peak_x_ms_auto_R
+    p_peak_x_ms_auto_R, r_peak_x_ms_auto_R
 
 NOTE ON FILENAMES
     The peak radio exports as 5_point / quadratic / cubic. 'cubic' is also an
@@ -54,23 +48,41 @@ import sys
 from statistics import mean, stdev
 
 # Model name -> filename prefix. Add to this if more exports appear.
-MODELS = ["5_point", "quadratic", "cubic"]
+#
+# 'auto' is the radio's default -- the BIC contest -- so it is not a fourth
+# independent model: per template it reports whichever of the other three won.
+# That means it DUPLICATES one of them in the sensitivity sd below, pulling the
+# sd down a little. Read the sd as "how much does forcing a model move this
+# landmark", and use auto's own row to see which model the detector picked.
+MODELS = ["auto", "5_point", "quadratic", "cubic"]
 
-# metric -> CSV column stem, for the landmarks reported as an offset from R.
-OFFSET_LANDMARKS = [
-    ("p_peak_from_r_ms", "p_peak"),
-    ("q_peak_from_r_ms", "q_peak"),
-    ("s_peak_from_r_ms", "s_peak"),
-    ("t_peak_from_r_ms", "t_peak"),
-]
+P_ABS = "p_peak_abs_ms"
 R_ABS = "r_peak_abs_ms"
-METRICS = tuple(m for m, _ in OFFSET_LANDMARKS) + (R_ABS,)
+RP_DIST = "rp_distance_ms"
 
 # Metric-major, models alphabetical inside each metric -- same layout as the
-# on/offset summary so the two read the same way.
-SUMMARY_METRIC_ORDER = METRICS
+# on/offset summary so the two read the same way. The distance is last because
+# it is the one to look at; the two absolutes above it say where it came from.
+METRICS = (P_ABS, R_ABS, RP_DIST)
 
 KEY = ("bin_index", "channel", "template")
+
+# ---- ROWS TO LEAVE OUT ---------------------------------------------------
+#
+# bad_ecg is the grid's X mark, and it is the reason to skip a row: the export
+# writes every template and records the flag as a column rather than dropping
+# it, so the filtering is the reader's job. An earlier version of this script
+# looked for 'bad_r', which does not exist in this schema -- so the flag was
+# silently ignored and a template marked bad went into the statistics anyway.
+#
+# bad_ppg is NOT consulted. Every metric here is an ECG landmark, so a bad
+# pulse says nothing about whether the P and R peaks are trustworthy.
+BAD_FLAG = "bad_ecg"
+
+# Ad-hoc exclusions by bin_index, for a bin you know is wrong but have not
+# marked. Empty is the normal state -- prefer the X mark, which travels with
+# the data and is visible to everything downstream.
+EXCLUDE_BINS = {"30"}
 
 
 def find_file(indir, prefix):
@@ -115,9 +127,10 @@ def num(row, col):
 def read_model(path, model):
     """One record per (bin, channel, template) with an R peak.
 
-    R is REQUIRED -- every other value is measured relative to it. Beyond that
-    a missing landmark stays None and drops out of that metric's statistics
-    only; the five are independent positions, not interval endpoints.
+    R is REQUIRED: it is the anchor, and without it there is nothing to measure
+    the P peak against. P is optional -- a template with no detectable P wave
+    reports its R position and a blank distance, which is the honest answer and
+    keeps the row available for the R statistics.
     """
     rows = list(csv.DictReader(open(path, newline="")))
     if not rows:
@@ -129,21 +142,29 @@ def read_model(path, model):
             "a pre-per-template export. Use the older script for it.")
 
     out = []
+    n_bad = n_excl = 0
     for row in rows:
+        if row.get("bin_index", "").strip() in EXCLUDE_BINS:
+            n_excl += 1
+            continue
+        if row.get(BAD_FLAG, "").strip() == "1":
+            n_bad += 1
+            continue
+
         members = num(row, "n_members")
         r_abs = num(row, "r_peak_x_ms_auto_R")
         if r_abs is None:
-            continue          # no anchor, no offsets
+            continue          # no anchor, nothing to measure against
+        p_abs = num(row, "p_peak_x_ms_auto_R")
+
         rec = {"fit_model": model}
         rec.update({k: row.get(k, "").strip() for k in KEY})
         rec["n_members"] = int(members) if members is not None else ""
-        rec["bad_r"] = row.get("bad_r", "").strip()
-        for metric, stem in OFFSET_LANDMARKS:
-            v = num(row, f"{stem}_x_ms_auto_R")
-            rec[metric] = None if v is None else v - r_abs
+        rec[P_ABS] = p_abs
         rec[R_ABS] = r_abs
+        rec[RP_DIST] = None if p_abs is None else r_abs - p_abs
         out.append(rec)
-    return out, len(rows)
+    return out, len(rows), n_bad, n_excl
 
 
 def summarize_by_model(rows):
@@ -152,7 +173,7 @@ def summarize_by_model(rows):
     for r in rows:
         groups.setdefault(r["fit_model"], []).append(r)
     out = []
-    for metric in SUMMARY_METRIC_ORDER:
+    for metric in METRICS:
         for model in sorted(groups):
             vals = [r[metric] for r in groups[model] if r[metric] is not None]
             out.append({
@@ -170,9 +191,9 @@ def summarize_by_model(rows):
 def summarize_by_row(rows):
     """mean / sd per (bin, channel, template, metric), ACROSS THE MODELS.
 
-    The model-sensitivity view, now per template rather than per bin: a large
-    sd_ms means the choice of on/offset model moves THAT template's landmark.
-    Grouping by bin alone would mix a bin's several morphologies together.
+    The model-sensitivity view, per template rather than per bin: a large sd_ms
+    means the choice of peak model moves THAT template's landmark. Grouping by
+    bin alone would mix a bin's several morphologies together.
     """
     groups = {}
     for r in rows:
@@ -220,16 +241,24 @@ def main():
     rows = []
     for model in MODELS:
         path = find_file(indir, model)
-        got, total = read_model(path, model)
+        got, total, n_bad, n_excl = read_model(path, model)
         rows.extend(got)
+        skipped = ""
+        if n_bad or n_excl:
+            bits = []
+            if n_bad:
+                bits.append(f"{n_bad} {BAD_FLAG}")
+            if n_excl:
+                bits.append(f"{n_excl} in EXCLUDE_BINS")
+            skipped = "  (skipped " + ", ".join(bits) + ")"
         print(f"{model:13s} {os.path.basename(path):55s} "
-              f"{len(got):4d} of {total} rows usable")
+              f"{len(got):4d} of {total} rows usable{skipped}")
 
     if not rows:
         raise SystemExit("no usable rows: no template had an r_peak")
 
     write_csv(os.path.join(outdir, "peak_pos_per_row.csv"), rows,
-              ["fit_model", *KEY, "n_members", "bad_r", *METRICS])
+              ["fit_model", *KEY, "n_members", *METRICS])
     write_csv(os.path.join(outdir, "peak_pos_summary.csv"),
               summarize_by_model(rows),
               ["metric", "Model", "n_rows",
@@ -251,24 +280,29 @@ def main():
               f"{r['Mean ms']:10.4f} {sd} {r['Min ms']:10.4f} {r['Max ms']:10.4f}")
 
     print()
-    print(f"P PEAK PER TEMPLATE (offset from R), across the {len(MODELS)} "
+    print(f"R-P DISTANCE PER TEMPLATE, across the {len(MODELS)} "
           "models -- sd is model sensitivity")
-    hdr = (f"{'bin':>4s} {'ch':4s} {'template':9s} {'metric':17s} {'n':>3s} "
+    hdr = (f"{'bin':>4s} {'ch':4s} {'template':9s} {'n':>3s} "
            f"{'beats':>6s} {'mean':>10s} {'sd':>8s} {'range':>8s}")
     print(hdr)
     print("-" * len(hdr))
     for r in byrow:
-        if r["metric"] != "p_peak_from_r_ms":
-            continue          # full table is in the CSV
+        if r["metric"] != RP_DIST:
+            continue          # the absolutes are in the CSV
         sd = f"{r['sd_ms']:8.3f}" if r["sd_ms"] != "" else f"{'-':>8s}"
+        mean_s = f"{r['mean_ms']:10.3f}" if r["mean_ms"] != "" else f"{'-':>10s}"
+        rng = f"{r['range_ms']:8.3f}" if r["range_ms"] != "" else f"{'-':>8s}"
         print(f"{r['bin_index']:>4s} {r['channel']:4s} {r['template']:9s} "
-              f"{r['metric']:17s} {r['n_models']:3d} {str(r['n_members']):>6s} "
-              f"{r['mean_ms']:10.3f} {sd} {r['range_ms']:8.3f}")
+              f"{r['n_models']:3d} {str(r['n_members']):>6s} "
+              f"{mean_s} {sd} {rng}")
 
     # A landmark whose per-row sd is 0 everywhere is not "stable", it is
     # unplumbed -- the radio never reached the code that places it. Worth
     # stating outright rather than leaving a column of zeros to be read as
-    # agreement between the models.
+    # agreement between the models. R is expected to show exactly that: it is
+    # the alignment anchor, re-derived from r_col rather than fitted, so the
+    # peak radio cannot move it. P moving while R does not is the correct
+    # result; NEITHER moving means the radio is not reaching the peak finder.
     print()
     print("model sensitivity, over all templates")
     for metric in METRICS:

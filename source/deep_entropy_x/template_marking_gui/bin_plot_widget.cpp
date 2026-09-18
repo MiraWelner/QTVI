@@ -589,7 +589,20 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
         // the two bracketed peaks below.
         if (!m_detValid || m_detBin != m_bin || m_detFrame != m_frame
             || m_detSlot != m_templateIndex) {
-            m_det = ecgDetect(*m_bin, m_leadIndex, m_templateIndex, m_frame,
+            // ON m_ecg, THE WAVEFORM ON SCREEN. It is this slot's own average
+            // (setData/setEcgData put it there via leadsForBinTemplate), it has
+            // been through the notch filter, and it is amplitude-scaled -- so
+            // detecting on it is the only way the notch reaches the glyphs and
+            // the only way they describe the trace they are drawn on. Detecting
+            // on slotView's raw array instead left the glyphs measuring an
+            // un-notched signal while the operator looked at a filtered one.
+            //
+            // Seeded with the DISPLAYED alignment's own R column, the same one
+            // the R bar uses. detect_template_landmarks refines only +-7
+            // samples around the seed, so the flat R-aligned column would make
+            // the R glyph miss the peak on a P/Q/J average.
+            const int rSeed = m_bin->chFor(m_leadIndex, m_frame).r_col_raw;
+            m_det = ecgDetectOn(m_ecg, rSeed,
                 m_rates[static_cast<size_t>(Channel::Ecg)],
                 m_onOffsetFitMode, m_peakFitMode);
             m_detBin = m_bin;
@@ -1261,39 +1274,28 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b,
     if (m_glyphsValid) return;   // trace unchanged since last capture
     m_glyphs = GlyphSnapshot{};
 
+    // ---- THE ECG GLYPHS COME FROM reactiveGlyphs' CACHED DETECTION -------
+    //
+    // This block used to run detect_template_landmarks itself, on m_ecg, with
+    // the operator's fit modes -- correct on both counts -- and then
+    // applyTemplateToWidget's overrideEcgGlyphs overwrote all seven with a
+    // SECOND detection on the raw per-slot array in Auto mode. One full
+    // detector run per panel per apply, discarded; and the surviving answer was
+    // the one that ignored both the notch filter and the fit-mode radios.
+    //
+    // There is now one detection, in reactiveGlyphs, on m_ecg, in the
+    // operator's modes, cached on the trace. The frozen snapshot reads it
+    // rather than repeating it, so all seven glyphs and the two bar-bracketed
+    // peaks come from the same measurement of the same waveform.
     if ((int)m_ecg.size() >= 3) {
         const int N = (int)m_ecg.size();
         auto froz = [&](double v) {
             return (v >= 0.0 && v <= static_cast<double>(N - 1)) ? v : -1.0;
             };
-        // ---- GLYPHS ARE DETECTED LIVE ON THE WAVEFORM ON SCREEN --------
-        //
-        // Not read from a precomputed per-alignment AnchorAuto. That snapshot
-        // could be absent for an alignment (autoForStrict returned null), and
-        // this block was STRICT about it -- so a bin with no AnchorAuto entry
-        // for the displayed anchor drew NO ecg glyphs at all, even with the
-        // landmarks plainly on the trace. m_ecg IS the alignment's waveform
-        // (setData/setEcgData put it there), so detecting on it gives this
-        // alignment's own glyphs directly, always available, and matching the
-        // bars drawn on the same trace. detect_template_landmarks never returns
-        // -1 for a real trace, so the glyphs always resolve.
-        // Seed R with the DISPLAYED alignment's own R column -- the same one
-        // the R bar uses (chFor(frame).r_col_raw) -- not m_rPeakSample, which
-        // is the flat R-aligned column. On a non-R average the R sits at a
-        // different column, and detect_template_landmarks only refines +-7
-        // samples around the seed, so seeding with the flat column made the R
-        // glyph miss the peak on non-R alignments.
-        // Detect only when the trace changed. The whole snapshot depends on
-        // the trace/bin, not on bar positions, so during a drag it is reused
-        // as-is -- re-detecting per mouse-move was what made dragging sluggish.
-        const int rSeed = b.chFor(m_leadIndex, frame).r_col_raw;
-        const FeatureMarks::TemplateLandmarks lm =
-            FeatureMarks::detect_template_landmarks(
-                m_ecg, rSeed, m_rates[static_cast<size_t>(Channel::Ecg)],
-                m_onOffsetFitMode, m_peakFitMode);
-        if (lm.valid) {
-            m_glyphs.ecgPBegin = froz(lm.p_begin);   // frozen copy unused for drawing now
-            // (no ecgPPeak: the P peak is REACTIVE -- see reactiveGlyphs.)
+        const Reactive rx = reactiveGlyphs();   // populates/reuses m_det
+        if (m_det.valid) {
+            const FeatureMarks::TemplateLandmarks& lm = m_det.lm;
+            m_glyphs.ecgPBegin = froz(rx.ecgPBegin);
             m_glyphs.ecgQ = froz(lm.q_onset);
             m_glyphs.ecgQFound = lm.q_onset_found;
             m_glyphs.ecgQPeak = lm.q_onset_found ? froz(lm.q_peak) : -1.0;
@@ -1354,25 +1356,6 @@ void BinPlotWidget::overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm) {
 // m_ecg -- the trace actually drawn -- so a column past the end of a short slot
 // template is dropped rather than pinned to the edge. Called AFTER
 // captureGlyphSnapshot, which is what setAuto() performs.
-void BinPlotWidget::overrideEcgGlyphs(const EcgGlyphColumns& g) {
-    if ((int)m_ecg.size() < 3) return;
-    const int N = (int)m_ecg.size();
-    auto froz = [&](double v) {
-        return (v >= 0.0 && v <= (double)(N - 1)) ? v : -1.0;
-        };
-    m_glyphs.ecgPBegin = froz(g.p_begin);
-    m_glyphs.ecgQ = froz(g.q_onset);
-    m_glyphs.ecgQFound = g.q_onset_found;
-    // SAME GATE captureGlyphSnapshot applies. The Q peak is measured inside
-    // the QRS off the onset, so an unfitted onset gives it a fallback bracket
-    // -- a position, not a measurement -- and it is not drawn at all. The onset
-    // itself still draws, hollow, which says that much on its own.
-    m_glyphs.ecgQPeak = g.q_onset_found ? froz(g.q_peak) : -1.0;
-    m_glyphs.ecgRPeak = froz(g.r_peak);
-    m_glyphs.ecgS = froz(g.s_end);
-    m_glyphs.ecgTend = froz(g.t_end);
-    update();
-}
 
 void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
     double yLo, double yHi, double pLo, double pHi, int ph) const

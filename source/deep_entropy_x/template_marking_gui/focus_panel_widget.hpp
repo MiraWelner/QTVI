@@ -86,7 +86,14 @@ public:
     // actually PLACED this landmark: a peak's weighted quadratic/cubic vs an
     // onset/offset's curve_fit transition model. Set per landmark by the owner
     // right after setFocus; defaults to Transition (the onset/offset case).
-    enum class FitKind { Transition, PeakQuadratic, PeakCubic };
+    // None = THE MARK WAS NOT PLACED BY A FIT. Q onset has a fallback path --
+    // compute_q_onset's R-upstroke branch, taken on a monophasic-R beat with no
+    // Q trough -- and the grid says so by drawing a CIRCLE instead of an X.
+    // There is no curve behind such a mark, so the panel draws no candidates
+    // for it: showing three fitted curves would claim a contest that never
+    // happened, and the operator would be comparing models against a position
+    // none of them produced.
+    enum class FitKind { None, Transition, PeakQuadratic, PeakCubic };
     // peakSigma is the SAME weighting the detector used for this landmark (so
     // the drawn fit and the placement fit can't diverge); ignored for
     // transitions. Set per landmark by the owner right after setFocus.

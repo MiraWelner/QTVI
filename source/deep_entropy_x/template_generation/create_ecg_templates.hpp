@@ -649,9 +649,6 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
             process_channel_fast(res.ch3, bins, i, bin.ecgSignal3, bin.ecgSignal3,
                 master, ecgRate, /*capture_raw_beats=*/true, /*channel_index=*/2,
                 &keptIdx[2][i]);
-
-        const int _d = ++_done;
-        std::fflush(stderr);
     }
 
     ecg_move_log::write_channel("CH1", res.ch1.tp_shift_raw, res.ch1.pq_shift_raw, /*first=*/true);

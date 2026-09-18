@@ -81,6 +81,7 @@ void FocusPanelWidget::clearFocus() {
 std::vector<FocusPanelWidget::Candidate>
 FocusPanelWidget::candidateCurves(int lo, int hi) const {
     std::vector<Candidate> out;
+    if (m_fitKind == FitKind::None) return out;   // nothing fitted it
     if (lo < 0 || hi >= (int)m_mean.size() || hi - lo < 3) return out;
 
     // THE DETECTOR'S WINDOW, EXACTLY. bestPeakExtremum hardcodes
@@ -398,7 +399,15 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         // own line, which read as part of the landmark's name and competed with
         // it. The winning CURVE keeps its green -- that is what the colour is
         // for, and it is unambiguous next to the red losers.
-        for (const Candidate& c : cands)
+        if (m_fitKind == FitKind::None) {
+            // The line that would name the winning model says why there is
+            // none, rather than sitting blank and reading as "still loading".
+            p.setPen(QColor(120, 120, 120));
+            p.drawText(QRect(ml, 4 + kHeadLine, width() - ml - mr, kSubLine),
+                Qt::AlignLeft | Qt::AlignVCenter,
+                QStringLiteral("no fit - fallback position (no Q trough)"));
+        }
+        else for (const Candidate& c : cands)
             if (c.selected && !c.label.isEmpty()) {
                 p.setPen(QColor(120, 120, 120));
                 p.drawText(QRect(ml, 4 + kHeadLine, width() - ml - mr, kSubLine),

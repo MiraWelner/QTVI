@@ -2479,35 +2479,12 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     // their own P / Q / J its R lands on a different column of the shared
     // frame, and the bin's glyph does not follow it.
     //
-    // MUST STAY LAST. setAuto() performs the capture; anything overriding it
-    // has to run afterwards or be overwritten by it.
-    {
-        const AnchorType frame4 = currentGridAnchor();
-        // The same selection leadsForBinTemplate made when it chose the trace
-        // for setData, so the glyphs land on the waveform on screen rather than
-        // on whichever one this function happens to hold a pointer to.
-        const std::vector<double>* w = nullptr;
-        int rSeed = -1;
-        BinPlotWidget::EcgGlyphColumns g;   // all -1
-        if (slotWaveform(frame4, w, rSeed)) {
-            const FeatureMarks::TemplateLandmarks lmS =
-                FeatureMarks::detect_template_landmarks(*w, rSeed, m_sampleRate);
-            if (lmS.valid) {
-                g.p_begin = lmS.p_begin;
-                g.q_onset = lmS.q_onset;
-                g.q_peak = lmS.q_peak;
-                g.q_onset_found = lmS.q_onset_found;
-                g.r_peak = lmS.r_peak;
-                g.s_end = lmS.s_end;
-                g.t_end = lmS.t_end;
-            }
-        }
-        // PUSHED EVEN WHEN EMPTY. An all -1 set draws no ECG glyphs, which is
-        // what captureGlyphSnapshot's own strict path does for a missing
-        // anchor: an empty panel is a writer gap to go fix, and it beats
-        // leaving the BIN's marks sitting on this slot's waveform.
-        pw->overrideEcgGlyphs(g);
-    }
+    // (A per-slot glyph override ran here, re-detecting on the raw slot array
+    //  in Auto fit modes and overwriting the detection setAuto had just made on
+    //  the DISPLAYED trace in the operator's modes. It existed because m_ecg
+    //  used to be the bin's average; leadsForBinTemplate now puts this slot's
+    //  own waveform there, so the override was overwriting a better answer with
+    //  a worse one -- and costing a full detector run per panel to do it.)
 }
 
 // ---------------------------------------------------------------------------
@@ -3728,6 +3705,10 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         // The detector's own position for the focused landmark, in `mean`'s
         // columns. -1 until the block below supplies it.
         double detFid = -1.0;
+        // Hoisted out of the block below, where lm lives: the fit-kind choice
+        // needs it and lm does not reach that far. True by default so a path
+        // that never detects keeps the old behaviour.
+        bool qOnsetFound = true;
         {
             // Peaks need this block as well: it is where the detector runs on
             // `mean`, and its peak fields are the only way the panel can know
@@ -3762,6 +3743,7 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                     const FeatureMarks::TemplateLandmarks lm =
                         FeatureMarks::detect_template_landmarks(mean, rColInMean, m_sampleRate,
                             curve_fit::FitMode::Auto, curve_fit::PeakFitMode::Auto);
+                    qOnsetFound = lm.q_onset_found;
                     switch (marker) {
                     case BinPlotWidget::EcgPBegin: transCand = lm.p_begin_cand; break;
                     case BinPlotWidget::EcgQBegin: transCand = lm.q_onset_cand; break;
@@ -3853,9 +3835,20 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                     || marker == BinPlotWidget::EcgPPeak
                     || marker == BinPlotWidget::EcgQPeak
                     || marker == BinPlotWidget::EcgTPeak);
-            const FocusPanelWidget::FitKind fk = isPeak
-                ? FocusPanelWidget::FitKind::PeakQuadratic
-                : FocusPanelWidget::FitKind::Transition;
+            // NO Q TROUGH => NO FIT. compute_q_onset falls back to its
+            // R-upstroke branch on a monophasic-R beat, and lm.q_onset_found is
+            // false -- the same flag the grid uses to draw a CIRCLE there
+            // instead of an X, and the reason lm.q_peak comes back -1. Neither
+            // the Q onset nor the Q peak was placed by a curve, so the panel
+            // must not draw candidates for them.
+            const bool qUnfound =
+                (marker == BinPlotWidget::EcgQBegin
+                    || marker == BinPlotWidget::EcgQPeak)
+                && !qOnsetFound;
+            const FocusPanelWidget::FitKind fk = qUnfound
+                ? FocusPanelWidget::FitKind::None
+                : (isPeak ? FocusPanelWidget::FitKind::PeakQuadratic
+                    : FocusPanelWidget::FitKind::Transition);
             double peakSigma = 4.0;
             switch (marker) {
             case BinPlotWidget::EcgRPeak: peakSigma = subsample_refine::peak_sigma::R; break;
