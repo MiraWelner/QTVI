@@ -1421,11 +1421,12 @@ void TemplateViewerWindow::showPage() {
             // PVC's Q-onset sits at a different column than sinus's and drawing
             // sinus's bars there would be wrong in a way a drag would then
             // persist. That was the reason sub-templates had no bars at all.
-            if (template_index == 0) applyBinToWidget(pw, b);
-            // m_bins[gi] rather than `b`: the loop binds `b` as const, and the
-            // lazy seed writes the marker set it just computed back into the
-            // template so the next repaint and any drag see the same positions.
-            else         applyBankTemplateToWidget(pw, m_bins[gi], lead_index, template_index);
+            // ONE CALL FOR EVERY COLUMN. This was a templateIdx == 0 fork into
+            // applyBinToWidget, which is what left slot 0 unseeded. m_bins[gi]
+            // rather than `b`: the loop binds `b` as const, and the lazy seed
+            // writes the marker set it just computed back into the template so
+            // the next repaint and any drag see the same positions.
+            applyTemplateToWidget(pw, m_bins[gi], lead_index, template_index);
 
             pw->setReferenceLines(global_interval_lines::forChannel(b, gi_intervals, lead_index));
 
@@ -2296,7 +2297,7 @@ void TemplateViewerWindow::onClassConfirmRequested(int binIndex, int leadIndex,
 // arterial waveform of its own, so those markers stay at -1 and their bars are
 // simply absent -- which is honest, and better than showing the bin's PPG bars
 // against an ECG-only column.
-void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
+void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     TemplateBin& b, int channel, int templateIdx)
 {
     if (channel < 0 || channel > 2) return;
@@ -2404,11 +2405,12 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
     // ppg_bank arrived: showPage draws ppg_bank.templates[templateIdx], so the
     // bin's marks were indices into a different pulse. That is why the foot sat
     // nowhere near a minimum.
-    applyBinToWidget(pw, b);
+    applyBinCommonToWidget(pw, b);
 
-    if (templateIdx >= 0 && templateIdx < b.ppg_bank.size()) {
+    if (templateIdx >= 0 && templateIdx < b.ppg_bank.size()
+        && !b.ppg_bank.templates[templateIdx].tmpl.empty()) {
         tbank::BankTemplate& ps = b.ppg_bank.templates[templateIdx];
-        if (!ps.tmpl.empty()) {
+        {
             if (!ps.hasDetectedPulseMarks())
                 FeatureMarks::seed_pulse_bank_template(ps.tmpl, m_ppgRateHz,
                     ps.pulse_marks);
@@ -2429,17 +2431,38 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
             pw->overridePulseGlyphs(pm);
         }
     }
+    else {
+        // NO PULSE FOR THIS SLOT, so no pulse bars. Left unset they would keep
+        // whatever the previous occupant of this widget had -- the bin's values
+        // used to be pushed here unconditionally, which hid it.
+        pw->setMarker(BinPlotWidget::PpgOnset, -1.0);
+        pw->setMarker(BinPlotWidget::PpgPeak, -1.0);
+        pw->setMarker(BinPlotWidget::PpgDicrotic, -1.0);
+        pw->setMarker(BinPlotWidget::PpgPeak2, -1.0);
+        pw->setMarker(BinPlotWidget::PpgEnd, -1.0);
+        pw->setMarker(BinPlotWidget::PpgT50, -1.0);
+        pw->setMarker(BinPlotWidget::PpgT80, -1.0);
+    }
 
     // P PEAK IS DERIVED, not stored: reactive_ecg on this slot's own bars,
     // against this slot's own waveform. Same function BinPlotWidget::
     // reactiveGlyphs calls, so the bar set, the X on screen and the CSV column
     // cannot disagree.
+    // ON THE WAVEFORM THIS PANEL DRAWS. tp.tmpl is the slot's R-aligned
+    // average, so bracketing it with bars in the P/Q/J frame measured the P
+    // peak on one waveform with another's columns. slotView pairs the trace
+    // with its own R column for the alignment on screen.
+    const SlotView svDraw = slotView(b, channel, templateIdx, currentGridAnchor());
+    const std::vector<double>& drawnEcg = svDraw.valid ? *svDraw.tmpl : tp.tmpl;
     const FeatureMarks::ReactiveEcg reBank = FeatureMarks::reactive_ecg(
-        tp.tmpl, mk.p_begin, mk.q_onset, mk.s_end, mk.t_end, m_sampleRate);
+        drawnEcg, mk.p_begin, mk.q_onset, mk.s_end, mk.t_end, m_sampleRate);
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
     pw->setMarker(BinPlotWidget::EcgPPeak, reBank.p_peak);
     pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_onset);
-    pw->setMarker(BinPlotWidget::EcgRPeak, rColR);
+    // R's column ON THE DRAWN ALIGNMENT. rColR is the R-frame one; every
+    // anchor's average has its own, which is what frameShift is built out of.
+    pw->setMarker(BinPlotWidget::EcgRPeak,
+        svDraw.valid ? static_cast<double>(svDraw.r_col) : rColR);
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
 
@@ -2487,44 +2510,31 @@ void TemplateViewerWindow::applyBankTemplateToWidget(BinPlotWidget* pw,
     }
 }
 
-void TemplateViewerWindow::applyBinToWidget(BinPlotWidget* pw, const TemplateBin& b) {
-    const int c = pw->leadIndex();
-    // ALL FOUR BARS, EACH FROM ITS OWN ALIGNMENT, translated into the frame the
-    // grid is CURRENTLY drawing -- not hardcoded R. The trace and glyphs switch
-    // to currentGridAnchor(); assembling the bars in R while the waveform is
-    // P/Q/J is what put the bar a whole R-column offset away from its glyph and
-    // pushed it past the wall so it could not be grabbed. Under R/automatic this
-    // is identical to before.
-    const tbank::BankMarkerSet mk = barsForPanel(b, c, 0);
-
-    // Bank members are their own COLUMNS now (see the (bin, template) expansion
-    // in the layout loop), so nothing is overlaid here -- drawing them again as
-    // dashed traces under slot 0 would duplicate what the neighbouring columns
-    // already show.
-
-    // P PEAK IS DERIVED, not stored -- see applyBankTemplateToWidget.
-    const FeatureMarks::ReactiveEcg reBin = FeatureMarks::reactive_ecg(
-        b.chFor(c, AnchorType::R_PEAK).ecgTemplate_raw,
-        mk.p_begin, mk.q_onset, mk.s_end, mk.t_end, m_sampleRate);
-
-    // ---- draggable bars ----------------------------------------------------
-    pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
-    pw->setMarker(BinPlotWidget::EcgPPeak, reBin.p_peak);   // glyph, not a bar
-    pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_onset);
-    // R's column in the frame being displayed. Each anchor's template has its
-    // own R column -- that is what r_col_raw is, and what frameShift is built
-    // out of -- so this is the position of R on the waveform the panel is
-    // actually drawing. b.r_peak_ch[c] is the flat column with no anchor
-    // dimension, which pinned R to one place while the other four fiducials
-    // moved.
-    pw->setMarker(BinPlotWidget::EcgRPeak,
-        b.chFor(c, currentGridAnchor()).r_col_raw);
-    pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
-    pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
-
-    // Pulse and arterial bars and glyphs, from the one field table.
-    for (const PulseField& f : kPulseFields)
+// ---------------------------------------------------------------------------
+// THE BIN-WIDE HALF, SHARED BY EVERY COLUMN OF THE BIN.
+//
+// This was applyBinToWidget, "the slot 0 path", and it set the ECG bars, the
+// pulse bars and the arterial bars. That made slot 0 the one column nobody
+// seeded, the one column whose pulse bars came from the bin instead of from the
+// pulse it draws, and the one column whose P peak was measured on
+// chFor(c, R_PEAK) -- hardcoded R -- with bars in the current frame. Those were
+// three separate bugs with one cause: slot 0 was special.
+//
+// It now does only what is genuinely PER BIN: the arterial channels (one ABP /
+// ART / ART_PULM trace per bin, no bank to hang them off), the alignment badge
+// and the glyph snapshot. Everything per-template is in
+// applyTemplateToWidget, which every column goes through, slot 0 included.
+// ---------------------------------------------------------------------------
+void TemplateViewerWindow::applyBinCommonToWidget(BinPlotWidget* pw,
+    const TemplateBin& b) {
+    // ARTERIAL ONLY out of the field table. The pulse entries are per slot now
+    // and applyTemplateToWidget sets them from this column's own pulse_marks;
+    // pushing the bin's values here first would put a bar from another
+    // waveform on screen for however long it took to be overwritten.
+    for (const PulseField& f : kPulseFields) {
+        if (BinPlotWidget::markerIsPpg(f.marker)) continue;
         pw->setMarker(static_cast<BinPlotWidget::Marker>(f.marker), b.*f.field);
+    }
     // A FORCED VIEW MARKS ONE ALIGNMENT'S OWN BARS, so say so on the panel:
     // dotted, one colour, labelled with the alignment (see
     // BinPlotWidget::setAlignmentBadge). In Automatic the bars are canonical
@@ -2551,7 +2561,8 @@ void TemplateViewerWindow::refreshBinMarkers(int binIdx) {
         // refresh only the sinus column of a polymorphic bin.
         if (li < (int)m_pageTemplateIdx.size() && m_pageTemplateIdx[li] != 0)
             continue;
-        for (auto* pw : m_binPlots[li]) applyBinToWidget(pw, m_bins[binIdx]);
+        for (auto* pw : m_binPlots[li])
+            applyTemplateToWidget(pw, m_bins[binIdx], pw->leadIndex(), 0);
     }
 }
 
@@ -2570,7 +2581,7 @@ void TemplateViewerWindow::refreshBankMarkers(int binIdx, int templateIdx) {
     // widget's own leadIndex() selects the bank to draw from -- not the
     // dragged lead, which would paint lead 1's bars onto lead 2's panel.
     for (auto* pw : *col)
-        applyBankTemplateToWidget(pw, m_bins[binIdx],
+        applyTemplateToWidget(pw, m_bins[binIdx],
             pw->leadIndex(), templateIdx);
 }
 void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
@@ -2609,17 +2620,15 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
     if (templateIdx < 0) return;
 
     // Per-slot pulse-mark storage for the three draggable bars.
+    // SLOT 0 IS A SLOT LIKE ANY OTHER. These four lambdas each had a
+    // `slot == 0` branch reading and writing the BIN-level ppg_onset /
+    // ppg_dicrotic / ppg_end, while every column DRAWS its own pulse
+    // (ppg_bank.templates[slot].tmpl) -- so slot 0's bars were indices into a
+    // different waveform from the one under them, and the markings file now
+    // serializes pulse_marks per slot, which the bin fields would never reach.
     auto ppgGet = [&](int gi, int slot) -> double {
         TemplateBin& tb = m_bins[gi];
-        if (slot == 0) {
-            switch (marker) {
-            case BinPlotWidget::PpgOnset:    return tb.ppg_onset;
-            case BinPlotWidget::PpgDicrotic: return tb.ppg_dicrotic;
-            case BinPlotWidget::PpgEnd:      return tb.ppg_end;
-            }
-            return -1.0;
-        }
-        if (slot < (int)tb.ppg_bank.size()) {
+        if (slot >= 0 && slot < (int)tb.ppg_bank.size()) {
             const tbank::BankPulseMarkerSet& pm =
                 tb.ppg_bank.templates[slot].pulse_marks;
             switch (marker) {
@@ -2632,16 +2641,7 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         };
     auto ppgSet = [&](int gi, int slot, double v) {
         TemplateBin& tb = m_bins[gi];
-        if (slot == 0) {
-            switch (marker) {
-            case BinPlotWidget::PpgOnset:    tb.ppg_onset = v; break;
-            case BinPlotWidget::PpgDicrotic: tb.ppg_dicrotic = v; break;
-            case BinPlotWidget::PpgEnd:      tb.ppg_end = v; break;
-            }
-            tb.syncReactivePpg();   // t50/t80/peak2 follow the bars
-            return;
-        }
-        if (slot < (int)tb.ppg_bank.size()) {
+        if (slot >= 0 && slot < (int)tb.ppg_bank.size()) {
             tbank::BankPulseMarkerSet& pm =
                 tb.ppg_bank.templates[slot].pulse_marks;
             switch (marker) {
@@ -2651,10 +2651,11 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
             }
         }
         };
-    // Bank slots seed their pulse marks lazily; seed before reading so a
-    // never-displayed column still has a real bar to move from.
+    // Every slot seeds its pulse marks lazily; seed before reading so a
+    // never-displayed column still has a real bar to move from. Slot 0 was
+    // exempt because its bars came from the bin; it no longer is.
     auto ppgSeed = [&](int gi, int slot) {
-        if (slot == 0) return;
+        if (slot < 0) return;
         TemplateBin& tb = m_bins[gi];
         if (slot >= (int)tb.ppg_bank.size()) return;
         tbank::BankTemplate& ps = tb.ppg_bank.templates[slot];
@@ -2664,10 +2665,10 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
     // Drawn length of this column's pulse (clipped to the ECG window).
     auto ppgLen = [&](int gi, int slot) -> int {
         TemplateBin& tb = m_bins[gi];
-        const int rawLen = (slot == 0)
-            ? (int)tb.ppgTemplate.size()
-            : (slot < (int)tb.ppg_bank.size()
-                ? (int)tb.ppg_bank.templates[slot].tmpl.size() : 0);
+        // This slot's own pulse, not the bin's -- it is the trace the column
+        // draws and therefore the one its bars are columns of.
+        const int rawLen = (slot >= 0 && slot < (int)tb.ppg_bank.size())
+            ? (int)tb.ppg_bank.templates[slot].tmpl.size() : 0;
         const int ecgClip = ecgClipLenFor(tb);
         return (ecgClip > 0) ? std::min(rawLen, ecgClip) : rawLen;
         };
@@ -3134,8 +3135,7 @@ void TemplateViewerWindow::reskinGridForAnchor() {
             // re-apply are read from their stored R-framed positions, which at
             // click time (before any move) equal what is on screen, so nothing
             // the operator is holding jumps.
-            if (templateIndex == 0) applyBinToWidget(pw, b);
-            else applyBankTemplateToWidget(pw, m_bins[gi], lead_index, templateIndex);
+            applyTemplateToWidget(pw, m_bins[gi], lead_index, templateIndex);
         }
     }
 }
@@ -3527,9 +3527,23 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     m_lastFocusMarker = marker;
     m_lastFocusCol = col;
 
+    // A BAR TAKES ITS OWN ALIGNMENT; A GLYPH TAKES THE ONE ON SCREEN.
+    //
+    // anchorFor returns R_PEAK for every glyph -- deliberately, since a glyph
+    // is measured on all four averages and has no alignment of its own. Using
+    // that as the FOCUS alignment meant clicking the P peak showed the
+    // R-aligned average while clicking the P-onset bar a few pixels away showed
+    // the P-aligned one. The glyph was drawn on the waveform currently
+    // displayed, so that is the waveform its close-up must magnify.
+    //
+    // Bars keep anchorFor rather than currentGridAnchor() because of ordering:
+    // user_clicked_on_bar calls refreshFocus BEFORE it moves m_autoGridAnchor
+    // and re-skins, so at this point currentGridAnchor() is still the alignment
+    // being left. A glyph click moves no anchor, so for glyphs it is current.
     const AnchorType focusAnchor = m_forceAlign
         ? m_forcedAlign
-        : anchor_view::anchorFor(marker);    // NO FALLBACK: chForStrict returns nullptr when this alignment is absent
+        : (anchor_view::isBar(marker) ? anchor_view::anchorFor(marker)
+            : currentGridAnchor());    // NO FALLBACK: chForStrict returns nullptr when this alignment is absent
     // from the file, and the panel is cleared rather than showing the R-aligned
     // average under this bar's header. chFor's fallback did the latter, which
     // is what made every bar look identical.

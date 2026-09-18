@@ -25,7 +25,7 @@
 #include "template_structs.hpp"
 #include "template_marking_gui/alignment.hpp"
 #include "template_morphology_grouping/bin_pipeline.hpp"
-// selectSeedPool: the ectopic mask on the Phase 1 reference.
+ // selectSeedPool: the ectopic mask on the Phase 1 reference.
 #include "template_morphology_grouping/seed_pool.hpp"
 #include "template_morphology_grouping/morphology_csv.hpp"
 #include <chrono>
@@ -128,7 +128,10 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
     // build_bank / bin_index / channel went with the per-channel bank. Left
     // unnamed rather than deleted so the existing call sites keep compiling,
     // and so passing `true` cannot quietly rebuild it.
-    bool = false, uint64_t = 0, int = 0) {
+    bool = false, uint64_t = 0, int = 0,
+    // This bin's splice seams, forwarded to the slicer. Defaulted so anything
+    // outside this file compiles unchanged.
+    const alignment::FragmentSeams* seams = nullptr) {
     SingleMethodResult res;
     res.ecgTemplate = {};
     res.ecg_template_iqr = {};
@@ -137,7 +140,8 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
 
     if (rpeaks.size() < 2 || ecgSignal.empty() || ecgRate <= 0.0) return res;
 
-    const alignment::ecg_beat_set aligned = alignment::extract_beats_and_align(ecgSignal, rpeaks, ecgRate);
+    const alignment::ecg_beat_set aligned =
+        alignment::extract_beats_and_align(ecgSignal, rpeaks, ecgRate, seams);
     if (aligned.beats.empty() || aligned.median_length <= 0) return res;
 
     res.tp_shift = aligned.tp_shift;   // surface for the move log
@@ -379,6 +383,48 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
     return res;
 }
 
+// ---- THIS BIN'S SPLICE SEAMS -------------------------------------------
+//
+// An annealed bin is a CONCATENATION of good fragments: the annealer excises
+// the noise-marked regions and redistributes what survives between neighbouring
+// bins, so two samples adjacent in bin.ecgSignal can be seconds apart in the
+// recording. ecg_bin_indexs is that fragment list, in ORIGINAL coordinates.
+//
+// The seams are the running sum of the fragment lengths, which puts them in the
+// BIN's own sample space -- the space masterPeaks is in. So no coordinate
+// translation is needed: an R-pair straddling one of these is not a beat, and
+// alignment's slicers drop it (see alignment::FragmentSeams).
+//
+// Ranges are 1-based inclusive (the annealer copies [first - 1, second)), hence
+// the + 1 on each length.
+//
+// EMPTY WHEN THERE IS NOTHING TO SAY: one fragment, or a bin loaded from the
+// wave_markings file alone, which does not populate ecg_bin_indexs. Both mean
+// "one continuous stretch" and the slicers then behave exactly as before.
+//
+// SHARED BY process_channel_fast AND process_channel_slow, because all four
+// methods have to agree on the beat set -- raw and unfiltered dropping a spliced
+// pair while squared and absval keep it would leave the four templates
+// disagreeing about r_col for the same bin.
+// DISABLED, and superseded. The idea was to drop R-pairs straddling a splice in
+// an annealed bin, deriving the splice positions from ecg_bin_indexs. Turning it
+// on emptied every bin -- every slot fell below the 8-clean-beat floor -- so the
+// positions it derives do not describe this signal and nearly every pair looked
+// spliced. The 1.5 s RR cap in alignment.hpp covers the same case from the other
+// direction: a gap left by excised noise shows up as a long RR, and a long RR is
+// now dropped whatever caused it.
+//
+// Kept only so the reasoning is on record; it returns empty and the slicers see
+// nullptr. Delete this and alignment's FragmentSeams parameter when convenient.
+static constexpr bool kDropPairsCrossingSeams = false;
+
+static inline alignment::FragmentSeams fragmentSeamsFor(
+    const output_binfile_data& bin)
+{
+    (void)bin;
+    return alignment::FragmentSeams{};
+}
+
 static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
     cr.ecgTemplates_raw.resize(n);
     cr.ecgTemplates_raw_iqr.resize(n);
@@ -448,6 +494,11 @@ static inline void process_channel_fast(
 {
     const auto& bin = bins[i];
 
+    // This bin's splices; see fragmentSeamsFor. Forwarded to both methods here
+    // and, through process_channel_slow, to the other two.
+    const alignment::FragmentSeams seams = fragmentSeamsFor(bin);
+    const alignment::FragmentSeams* seamsPtr = seams.empty() ? nullptr : &seams;
+
     // Method 1: raw (detection signal + master R-peaks). Only method with std.
     vector<vector<double>>* capture =
         (capture_raw_beats && i < cr.kept_beats_raw.size())
@@ -455,7 +506,7 @@ static inline void process_channel_fast(
     auto raw_res = build_ecg_template_for_method(
         ecgSignal, masterPeaks, bin.pairs, ecgRate,
         capture, /*compute_iqr=*/true,
-        /*unused*/false, static_cast<uint64_t>(i), channel_index);
+        /*unused*/false, static_cast<uint64_t>(i), channel_index, seamsPtr);
     if (out_kept_idx) *out_kept_idx = std::move(raw_res.kept_idx);
     cr.ecgTemplates_raw[i] = raw_res.ecgTemplate;
     cr.ecgTemplates_raw_iqr[i] = raw_res.ecg_template_iqr;
@@ -475,7 +526,8 @@ static inline void process_channel_fast(
     // Method 4: unfiltered (original ECG signal + master R-peaks). No std.
     auto unfilt_res = build_ecg_template_for_method(
         origSignal, masterPeaks, bin.pairs, ecgRate,
-        nullptr, /*compute_iqr=*/false);
+        nullptr, /*compute_iqr=*/false,
+        /*unused*/false, 0, 0, seamsPtr);
     cr.ecgTemplates_unfiltered[i] = unfilt_res.ecgTemplate;
     cr.ppg_alignment_point_unfiltered[i] = unfilt_res.ppg_alignment_point;
     cr.r_col_unfiltered[i] = unfilt_res.r_col;
@@ -500,11 +552,17 @@ static inline void process_channel_slow(
 {
     const auto& bin = bins[i];
 
+    // The SAME seams process_channel_fast derives, from the same bin: the four
+    // methods must agree on which R-pairs are beats.
+    const alignment::FragmentSeams seams = fragmentSeamsFor(bin);
+    const alignment::FragmentSeams* seamsPtr = seams.empty() ? nullptr : &seams;
+
     // Method 2: squared (squared signal + master R-peaks). No std.
     const auto& sq_sig = ch.squared_signal.empty() ? ecgSignal : ch.squared_signal;
     auto sq_res = build_ecg_template_for_method(
         sq_sig, masterPeaks, bin.pairs, ecgRate,
-        nullptr, /*compute_iqr=*/false);
+        nullptr, /*compute_iqr=*/false,
+        /*unused*/false, 0, 0, seamsPtr);
     cr.ecgTemplates_squared[i] = sq_res.ecgTemplate;
     cr.ppg_alignment_point_squared[i] = sq_res.ppg_alignment_point;
     cr.r_col_squared[i] = sq_res.r_col;
@@ -513,7 +571,8 @@ static inline void process_channel_slow(
     const auto& abs_sig = ch.absval_signal.empty() ? ecgSignal : ch.absval_signal;
     auto abs_res = build_ecg_template_for_method(
         abs_sig, masterPeaks, bin.pairs, ecgRate,
-        nullptr, /*compute_iqr=*/false);
+        nullptr, /*compute_iqr=*/false,
+        /*unused*/false, 0, 0, seamsPtr);
     cr.ecgTemplates_absval[i] = abs_res.ecgTemplate;
     cr.ppg_alignment_point_absval[i] = abs_res.ppg_alignment_point;
     cr.r_col_absval[i] = abs_res.r_col;

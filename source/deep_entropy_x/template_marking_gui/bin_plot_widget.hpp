@@ -559,6 +559,21 @@ private:
     // Alignment letter for the overlay bar style; empty in Automatic.
     QString m_alignBadge;
 
+    // ---- THE ECG GEOMETRY THE LAST PAINT USED ---------------------------
+    //
+    // A glyph is a five-pixel X at one point ON THE TRACE, so hit-testing it
+    // needs its y, which needs the axis range and plot height -- and those are
+    // computed in paintEvent and handed to drawFeatureGlyphs, so they do not
+    // exist when a mouse press arrives. Recorded here by the paint that drew
+    // them, which also means the hit test uses exactly the geometry the
+    // operator was looking at.
+    //
+    // m_lastPh <= 0 means nothing has been painted yet; the press handler then
+    // falls back to testing x alone.
+    mutable double m_lastYLo = 0.0;
+    mutable double m_lastYHi = 0.0;
+    mutable int    m_lastPh = 0;
+
     curve_fit::FitMode     m_onOffsetFitMode = curve_fit::FitMode::Auto;
     curve_fit::PeakFitMode m_peakFitMode = curve_fit::PeakFitMode::Auto;
 

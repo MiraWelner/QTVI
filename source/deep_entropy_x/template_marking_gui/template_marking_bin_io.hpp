@@ -425,15 +425,13 @@ struct TemplateBin {
     uint8_t bad_ppg = 0;   // 0 = ok, 1 = bad, 2 = no ppg
 
     // THE R-ALIGNED OVERLAY BARS (r_bars_ch / ecg_r_markers) LIVED HERE.
-    //
-    // A separate, editable, per-slot set of the four landmarks in the R frame,
-    // unserialized and re-seeded each load. It existed because the per-anchor
-    // marker sets held one bar each, so there was nowhere to put a full set of
-    // R-measured bars -- and markers_by_anchor has always been a full
-    // BankMarkerSet per anchor, which is exactly what it was working around.
-    // Forced-R now marks slotMarks(lead, slot, R_PEAK) through the ordinary bar
-    // path (see anchor_view::showsBar), so the overlay was a second set of the
-    // same nine cells with no serialization and no reload.
+    // A separate, unserialized, per-slot set of the four landmarks in the R
+    // frame, re-seeded each load. It existed because the per-anchor marker sets
+    // held one bar each, so there was nowhere to put a full set of R-measured
+    // bars -- and markers_by_anchor has always been a full BankMarkerSet per
+    // anchor, which is what it was working around. Forced-R now marks
+    // slotMarks(lead, slot, R_PEAK) through the ordinary bar path (see
+    // anchor_view::showsBar).
 
     // Per-anchor USER marker positions. Each alignment anchor (R, Q_ONSET,
     // J_POINT, T_PEAK, ...) has its OWN independent set of draggable ECG
@@ -740,6 +738,8 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
 // template_markings.bin layout -- BARS ONLY, POSITIONS AS FLOAT64:
 //
 //   header:
+//     uint32  magic   = kMarkMagic ("TMRK")
+//     uint32  version = kMarkVersion (1)
 //     uint64  numBins
 //
 //   per bin:
@@ -755,8 +755,10 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
 //             int32   anchorTag
 //             float64 p_begin, q_onset, s_end, t_end
 //
-//     -- PPG bars: --
-//     float64 ppg_onset, ppg_dicrotic, ppg_end
+//     -- PPG bars, PER SLOT (same shape as the ECG block above): --
+//     int32   slotCount
+//       per slot:
+//         float64 onset, dicrotic, end
 //
 //     -- arterial, one block each for ABP, ART, ART_PULM: --
 //     uint8   <chan>_issue
@@ -771,19 +773,41 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
 // absent from this record it is auto-only, and the CSV writer below must not
 // emit a user half for it.
 //
-// NO VERSION FIELD EXISTS -- the header is a bare bin count -- so a markings
-// file written under any earlier layout misparses from its first marker set
-// onward. That covers the removal of t_begin, the removal of p_peak, the
-// removal of the six auto-only PPG values, and this widening to float64.
-// Re-mark rather than migrate.
+// THERE IS NOW A MAGIC AND A VERSION, which is what this comment used to say
+// was missing. The header was a bare bin count, so a file written under any
+// earlier layout misparsed from its first marker set onward with no error --
+// it simply read a bin count out of whatever the old first field was. The
+// magic catches that: a pre-version file fails the check and is reported
+// rather than silently misread.
+//
+// VERSION 1 IS THE FIRST AND ONLY VERSION. Nothing has shipped, so there is no
+// migration path and none is wanted: a file whose version is not 1 is
+// rejected. When a second version arrives, branch in readTemplateMarkingsBin
+// on the field rather than adding another unversioned section.
+//
+// PPG BARS ARE PER SLOT, as of version 1. They used to be three bin-level
+// values, which meant a bin's morphology columns all shared one set of pulse
+// bars while each column DREW its own pulse (ppg_bank.templates[slot].tmpl) --
+// so the foot could sit nowhere near a minimum on every column but one. The
+// bars now live where the waveform does, in
+// ppg_bank.templates[slot].pulse_marks, for slot 0 exactly as for the rest.
 // ---------------------------------------------------------------------------
+// "TMRK", little-endian. Any 4 bytes would do; these are readable in a hex
+// dump, which is worth something the first time a file will not open.
+inline constexpr uint32_t kMarkMagic = 0x4B524D54u;
+inline constexpr uint32_t kMarkVersion = 1u;
+
 inline void writeTemplateMarkingsBin(const std::string& path,
     const std::vector<TemplateBin>& bins) {
     std::ofstream f(path, std::ios::binary);
     if (!f.is_open())
         throw std::runtime_error("cannot open for write: " + path);
 
-    //header: just bin count
+    // header: magic, version, bin count
+    uint32_t magic = kMarkMagic;
+    uint32_t ver = kMarkVersion;
+    f.write(reinterpret_cast<const char*>(&magic), 4);
+    f.write(reinterpret_cast<const char*>(&ver), 4);
     uint64_t n = bins.size();
     f.write(reinterpret_cast<const char*>(&n), 8);
 
@@ -846,14 +870,26 @@ inline void writeTemplateMarkingsBin(const std::string& path,
             }
         }
 
-        // PPG: THE THREE BARS ONLY. t50 / peak / peak2 / t80 / t80_rise /
-        // pw80 are auto-only glyphs -- markerAtX refuses to hand any of them
-        // out -- and all five reactive ones come back from reactive_ppg,
-        // bracketed by these bars. TemplateBin::syncReactivePpg rederives them
-        // after every load.
-        w64d(b.ppg_onset);
-        w64d(b.ppg_dicrotic);
-        w64d(b.ppg_end);
+        // PPG: THE THREE BARS ONLY, PER SLOT. t50 / peak / peak2 / t80 /
+        // t80_rise / pw80 are auto-only glyphs -- markerAtX refuses to hand any
+        // of them out -- and all five reactive ones come back from reactive_ppg
+        // bracketed by these bars, so storing them would be storing a cache.
+        //
+        // PER SLOT, because each morphology column draws its OWN pulse
+        // (ppg_bank.templates[slot].tmpl). Three bin-level values meant every
+        // column shared one set of bars against a different waveform each.
+        // Slot 0 is a slot like any other here.
+        {
+            const int nPulse = static_cast<int>(b.ppg_bank.templates.size());
+            w32(nPulse);
+            for (int slot = 0; slot < nPulse; ++slot) {
+                const tbank::BankPulseMarkerSet& pm =
+                    b.ppg_bank.templates[slot].pulse_marks;
+                w64d(pm.onset);
+                w64d(pm.dicrotic);
+                w64d(pm.end);
+            }
+        }
 
         // Arterial block: ABP, ART, ART_PULM (issue + 5 positions each). All
         // five ARE bars on these channels -- see the struct note.
@@ -1149,10 +1185,10 @@ inline EcgDetection ecgDetect(const TemplateBin& b, int lead, int slot,
 // a default-constructed set to get the detector's own brackets instead.
 //
 // EACH PEAK TESTS ITS OWN TWO BRACKETS. A per-anchor marker set holds only the
-// bars its alignment admits (landmark_admissibility.hpp), so a half-populated
-// set must degrade one peak rather than poison both -- asking bars.isUnset()
-// once did the latter, and compute_p_peak clamps a -1 bracket to the trace
-// edge instead of reporting absence.
+// bars its alignment shows (anchor_view::showsBar), so a half-populated set
+// must degrade one peak rather than poison both -- asking bars.isUnset() once
+// did the latter, and compute_p_peak clamps a -1 bracket to the trace edge
+// instead of reporting absence.
 inline EcgFiducials ecgFiducialsFrom(const EcgDetection& d, double sampleRate,
     curve_fit::PeakFitMode peakMode, const tbank::BankMarkerSet& bars)
 {
@@ -1778,17 +1814,49 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                 if (wantPulse) {
                     // PPG: onset, p50, peak, dicrotic, peak2, t80, t80_rise, end
                     //onset, dicrotic, and end are the only user movable bars
-                    const FeatureMarks::ReactivePpg rxAuto = FeatureMarks::reactive_ppg(b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_dicrotic_auto, b.ppg_end_auto);
-                    const FeatureMarks::ReactivePpg rxUser = FeatureMarks::reactive_ppg(b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_dicrotic, b.ppg_end);
-                    emitPulsePoint("ppg_onset", b.ppgTemplate, b.ppg_onset_auto, b.ppg_onset, b.ppg_onset_auto, b.ppg_onset, refPpg);
-                    emitPulsePoint("ppg_p50", b.ppgTemplate, rxAuto.t50, rxUser.t50, b.ppg_onset_auto, b.ppg_onset, refPpg);
-                    emitPulsePoint("ppg_peak", b.ppgTemplate, b.ppg_peak_auto, b.ppg_peak, b.ppg_onset_auto, b.ppg_onset, refPpg);
-                    emitPulsePoint("ppg_dicr", b.ppgTemplate, b.ppg_dicrotic_auto, b.ppg_dicrotic, b.ppg_onset_auto, b.ppg_onset, refPpg);
-                    emitPulsePoint("ppg_peak2", b.ppgTemplate, rxAuto.peak2, rxUser.peak2, b.ppg_onset_auto, b.ppg_onset, refPpg);
-                    emitPulsePoint("ppg_t80", b.ppgTemplate, rxAuto.t80, rxUser.t80, b.ppg_onset_auto, b.ppg_onset, refPpg);
+                    // THIS SLOT'S PULSE AND THIS SLOT'S BARS. The rows here
+                    // are already per (lead, slot); only the pulse columns were
+                    // still bin-level, so every column of a bin reported one
+                    // set of pulse marks measured against a waveform that was
+                    // only correct for one of them. pulse_marks is where the
+                    // bars live now (and what the .bin serializes per slot).
+                    //
+                    // The *_auto columns come from the same place: they are the
+                    // detector's own positions on THIS slot's pulse, where
+                    // b.ppg_*_auto describe b.ppgTemplate -- a different
+                    // waveform for every column but one.
+                    // BY VALUE, not by reference: the ternary below has a
+                    // temporary in one branch, so it yields a prvalue and a
+                    // const& would bind to a copy in both cases anyway. Saying
+                    // so beats relying on lifetime extension to read right.
+                    const tbank::BankPulseMarkerSet pmU =
+                        (slot >= 0 && slot < static_cast<int>(b.ppg_bank.templates.size()))
+                        ? b.ppg_bank.templates[slot].pulse_marks
+                        : tbank::BankPulseMarkerSet{};
+                    const std::vector<double>& pulseU =
+                        (slot >= 0 && slot < static_cast<int>(b.ppg_bank.templates.size()))
+                        ? b.ppg_bank.templates[slot].tmpl
+                        : b.ppgTemplate;
+                    const FeatureMarks::ReactivePpg rxUser =
+                        FeatureMarks::reactive_ppg(pulseU, pmU.onset,
+                            pmU.peak_auto, pmU.dicrotic, pmU.end);
+                    const FeatureMarks::ReactivePpg rxAuto =
+                        FeatureMarks::reactive_ppg(pulseU, pmU.onset_auto,
+                            pmU.peak_auto, pmU.dicrotic_auto, pmU.end_auto);
+                    // EVERY ARGUMENT FROM THIS SLOT: its pulse, its detector
+                    // columns, its bars, and its own foot as the perfusion
+                    // baseline. ppg_peak is auto-only (markerAtX hands it out
+                    // to nobody), so its user half is the detector's column --
+                    // not a placement, and the same answer the bin fields gave.
+                    emitPulsePoint("ppg_onset", pulseU, pmU.onset_auto, pmU.onset, pmU.onset_auto, pmU.onset, refPpg);
+                    emitPulsePoint("ppg_p50", pulseU, rxAuto.t50, rxUser.t50, pmU.onset_auto, pmU.onset, refPpg);
+                    emitPulsePoint("ppg_peak", pulseU, pmU.peak_auto, pmU.peak_auto, pmU.onset_auto, pmU.onset, refPpg);
+                    emitPulsePoint("ppg_dicr", pulseU, pmU.dicrotic_auto, pmU.dicrotic, pmU.onset_auto, pmU.onset, refPpg);
+                    emitPulsePoint("ppg_peak2", pulseU, rxAuto.peak2, rxUser.peak2, pmU.onset_auto, pmU.onset, refPpg);
+                    emitPulsePoint("ppg_t80", pulseU, rxAuto.t80, rxUser.t80, pmU.onset_auto, pmU.onset, refPpg);
                     // T80_rise: upslope point at t80's level (a position, like t80).
-                    emitPulsePoint("ppg_t80_rise", b.ppgTemplate, rxAuto.t80_rise, rxUser.t80_rise, b.ppg_onset_auto, b.ppg_onset, refPpg);
-                    emitPulsePoint("ppg_end", b.ppgTemplate, b.ppg_end_auto, b.ppg_end, b.ppg_onset_auto, b.ppg_onset, refPpg);
+                    emitPulsePoint("ppg_t80_rise", pulseU, rxAuto.t80_rise, rxUser.t80_rise, pmU.onset_auto, pmU.onset, refPpg);
+                    emitPulsePoint("ppg_end", pulseU, pmU.end_auto, pmU.end, pmU.onset_auto, pmU.onset, refPpg);
                     // PW80 width, ms only, autodetect bracketing (t80 - t80_rise).
                     // Single value; blank when unavailable. Matches the one
                     // ppg_pw80_ms_auto header column.
@@ -1880,7 +1948,23 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         double v = 0.0; f.read(reinterpret_cast<char*>(&v), 8); return v;
         };
 
-    //read header - it tells you how many bins to expect
+    // Header: magic, version, bin count. The magic is what makes a
+    // pre-version file an ERROR rather than a silent misparse -- without it the
+    // old first field (a bin count) was read as a bin count and everything
+    // after it shifted by eight bytes with no complaint.
+    uint32_t magic = 0, ver = 0;
+    f.read(reinterpret_cast<char*>(&magic), 4);
+    f.read(reinterpret_cast<char*>(&ver), 4);
+    if (magic != kMarkMagic)
+        throw std::runtime_error(
+            "not a template-markings file (bad magic), or written before the "
+            "version field existed -- re-mark: " + path);
+    if (ver != kMarkVersion)
+        throw std::runtime_error(
+            "template-markings version " + std::to_string(ver)
+            + " is not supported (this build writes and reads version "
+            + std::to_string(kMarkVersion) + "): " + path);
+
     uint64_t n = 0;
     f.read(reinterpret_cast<char*>(&n), 8);
 
@@ -1906,9 +1990,25 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
                 }
             }
         }
-        b.ppg_onset = r64d();
-        b.ppg_dicrotic = r64d();
-        b.ppg_end = r64d();
+        // PPG bars, per slot. slotMarks' pulse counterpart: the bank may be
+        // shorter than the record (a bin read from the markings file has no
+        // templates yet), so the slots are created to hold the marks and the
+        // real bank merges onto them later -- the same thing the ECG block
+        // above relies on slotMarks for.
+        {
+            const int nPulse = r32();
+            if (nPulse > 0) {
+                if (static_cast<int>(b.ppg_bank.templates.size()) < nPulse)
+                    b.ppg_bank.templates.resize(static_cast<size_t>(nPulse));
+                for (int slot = 0; slot < nPulse; ++slot) {
+                    tbank::BankPulseMarkerSet& pm =
+                        b.ppg_bank.templates[slot].pulse_marks;
+                    pm.onset = r64d();
+                    pm.dicrotic = r64d();
+                    pm.end = r64d();
+                }
+            }
+        }
 
         b.abp_issue = r8();
         b.abp_onset = r64d(); b.abp_peak = r64d(); b.abp_dicrotic = r64d();

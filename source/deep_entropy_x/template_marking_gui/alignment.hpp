@@ -231,7 +231,45 @@ namespace alignment {
         std::vector<double> pq_shift;
     };
 
-    inline ecg_beat_set extract_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs) {
+    // ---- FRAGMENT SEAMS: WHERE THIS BIN'S SIGNAL IS SPLICED ---------------
+    //
+    // An annealed bin is not one continuous stretch of recording. The annealer
+    // excises the noise-marked regions and redistributes the surviving good
+    // fragments between neighbouring bins, then builds each bin's signal by
+    // CONCATENATING those fragments end to end (see anneal_handler's writer and
+    // the ecg_bin_indexs it emits). So two samples adjacent in this array can
+    // be seconds apart in the recording.
+    //
+    // WHICH MAKES AN RR ACROSS A SEAM MEANINGLESS. The loop below computes
+    // rr = rPeaks[i+1] - rPeaks[i] and treats it as a cardiac interval. For an
+    // R-pair straddling a splice that number is the distance across a join, and
+    // because fragments are redistributed between bins it can be large -- so
+    // the slicer cuts a 0.4*rr before / 1.3*rr after window from it and
+    // produces one "beat" spanning several cardiac cycles. That is the
+    // multi-QRS template with the over-long axis, and the column median out
+    // past the real RR is that slice's LATER complexes.
+    //
+    // A pair whose two peaks sit in different fragments is not a beat. Dropping
+    // it needs no knowledge of annotations, no span coordinates and no
+    // translation between coordinate systems: the caller derives the seams from
+    // ecg_bin_indexs, which it already holds.
+    //
+    // SEAMS ARE BIN-LOCAL: each entry is the index, in this array, of the FIRST
+    // sample of a fragment other than the first. Empty (or null) means one
+    // continuous fragment -- which is every bin of an un-annealed record, and
+    // every bin the operator never marked.
+    using FragmentSeams = std::vector<int64_t>;
+
+    // Does [r0, r1] cross a splice? True when a seam lies in (r0, r1].
+    inline bool pair_crosses_seam(int64_t r0, int64_t r1,
+        const FragmentSeams& seams) {
+        for (const int64_t s : seams)
+            if (s > r0 && s <= r1) return true;
+        return false;
+    }
+
+    inline ecg_beat_set extract_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs,
+        const FragmentSeams* seams = nullptr) {
         ecg_beat_set out;
         const int64_t N = static_cast<int64_t>(signal.size());
         if (N == 0 || rPeaks.size() < 2) {
@@ -297,7 +335,7 @@ namespace alignment {
         // The pruning body and its kTukeyPrunesInAlignment toggle are gone;
         // the empty lambda stays so the call sites read unchanged and `beats`
         // is unambiguously the full aligned set.
-        auto apply_mask = [&](const std::vector<bool>&) { };
+        auto apply_mask = [&](const std::vector<bool>&) {};
 
         // Hard drop: a beat whose RR exceeds 4 s is not a real beat, it's a
         // dropout/detection gap between R-peaks (missed beats, noise,
@@ -307,13 +345,26 @@ namespace alignment {
         // the MAXIMUM rr_len across all its beats, so a single such outlier
         // silently ballooned the whole bin's window (a sparse bin with only
         // 1-3 real detections could produce a many-hundred-second template).
-        const int64_t kMaxBeatSamplesEcg = (fs > 0.0) ? static_cast<int64_t>(4.0 * fs) : 0;
+        // MAX RR = 1.5 s. An R-pair longer than this is not a beat: at the
+        // slowest plausible rate it is a missed detection or a gap left by
+        // excised noise, and the slice cut from it spans
+        // 1.5 * (0.5 + 1.3) = 2.7 s -- several cardiac cycles, several QRS
+        // complexes, and it alone sets the bin's frame width (shared_w is sized
+        // on max_rr_len, so ONE survivor stretches every template in the bin).
+        //
+        // Was 4.0 s, which only ever caught the extreme cases.
+        const int64_t kMaxBeatSamplesEcg = (fs > 0.0) ? static_cast<int64_t>(2.5 * fs) : 0;
         // ---- slice every beat ------------------------------------------
         for (size_t i = 0; i + 1 < rPeaks.size(); ++i) {
             const int64_t r0 = static_cast<int64_t>(rPeaks[i]);
             const int64_t rr = static_cast<int64_t>(rPeaks[i + 1]) - r0;
             if (rr <= 3) continue;
             if (kMaxBeatSamplesEcg > 0 && rr > kMaxBeatSamplesEcg) continue;
+            // SPLICED ACROSS: not a beat, whatever `rr` says. Dropped BEFORE
+            // slice_index is pushed, like every other guard in this loop, so
+            // the parallel arrays stay in step.
+            if (seams && pair_crosses_seam(r0,
+                static_cast<int64_t>(rPeaks[i + 1]), *seams)) continue;
 
             const int64_t before = rr_before_samples(rr);
             const int64_t after = rr_after_samples(rr);
@@ -1178,7 +1229,8 @@ namespace alignment {
         int    ref_beat_index = -1;
     };
 
-    inline PpgBeatSet extract_ppg_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs)
+    inline PpgBeatSet extract_ppg_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs,
+        const FragmentSeams* seams = nullptr)
     {
         PpgBeatSet out;
         const int64_t N = static_cast<int64_t>(signal.size());
@@ -1222,7 +1274,9 @@ namespace alignment {
         // 4 s is not "a long beat to window-clamp", it's not a real beat at
         // all (a dropout/artifact gap between R-peaks) and is excluded
         // entirely rather than sliced-and-clamped.
-        const int64_t kMaxBeatSamples = (fs > 0.0) ? static_cast<int64_t>(4.0 * fs) : 0;
+        // MAX RR = 1.5 s, as the ECG slicer. Same reasoning; counted into
+        // n_dropped_rr with the other RR rejections.
+        const int64_t kMaxBeatSamples = (fs > 0.0) ? static_cast<int64_t>(1.5 * fs) : 0;
 
         // ---- slice + per-beat peak/foot --------------------------------
         // n_slices is the R-pair count this loop was OFFERED, recorded before
@@ -1233,6 +1287,12 @@ namespace alignment {
             const int64_t rr = static_cast<int64_t>(rPeaks[i + 1]) - r0;
             if (rr <= 3) { ++out.n_dropped_rr; continue; }
             if (kMaxBeatSamples > 0 && rr > kMaxBeatSamples) {
+                ++out.n_dropped_rr; continue;
+            }
+            // Same splice drop as the ECG slicer, counted with the other RR
+            // drops so the denominator stays honest.
+            if (seams && pair_crosses_seam(r0,
+                static_cast<int64_t>(rPeaks[i + 1]), *seams)) {
                 ++out.n_dropped_rr; continue;
             }
 
@@ -1366,7 +1426,7 @@ namespace alignment {
         }
         out.up50_aligned_col = up50_anchor;
 
-        
+
         out.total_beats = out.beats.size();
         if (out.beats.empty()) return out;
 

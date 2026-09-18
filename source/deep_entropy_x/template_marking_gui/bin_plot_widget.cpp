@@ -83,6 +83,11 @@ namespace {
     // says, not the alignment, which is the same for all of them. The
     // per-landmark palette above is for Automatic, where the bars genuinely
     // come from four different alignments.
+    // A glyph is a small X, so it gets a small target -- tighter than
+    // click_radius_around_marker, which is sized for grabbing a full-height
+    // bar. Within this of the X means the glyph; outside it, the bar.
+    constexpr double glyph_click_radius = 8.0;
+
     constexpr QColor align_bar_color{ 0, 140, 140 };
 
     // The landmark's letter, to follow the alignment's. Matches the old
@@ -1077,17 +1082,55 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
                 { EcgSEnd,   m_glyphs.ecgS },
                 { EcgTEnd,   m_glyphs.ecgTend },
             };
+            // MEASURED IN 2D, because that is what separates a glyph from the
+            // bar sitting on top of it. A bar is a full-height vertical line --
+            // it has no y -- while a glyph is a small X on the trace. Clicking
+            // the line anywhere away from the trace means the bar; clicking the
+            // X means the glyph.
+            const double py = e->position().y();
+            const bool haveY = (m_lastPh > 0);
+            const double yRange = (m_lastYHi - m_lastYLo > 1e-10)
+                ? (m_lastYHi - m_lastYLo) : 1.0;
             for (const GlyphHit& g : glyphs) {
                 if (g.idx < 0.0) continue;
                 if (wall >= 0 && g.idx > static_cast<double>(wall)) continue;
-                const double d = std::abs(px - xFromSample(Channel::Ecg, g.idx));
+                const double dx = px - xFromSample(Channel::Ecg, g.idx);
+                double d = std::abs(dx);
+                if (haveY) {
+                    // Same y the glyph was DRAWN at: the trace value at that
+                    // column, on the axis the last paint used. NaN draws at the
+                    // axis floor, so test it there too.
+                    const double raw = FeatureMarks::sample_at(m_ecg, g.idx);
+                    const double val = std::isnan(raw) ? m_lastYLo : raw;
+                    const double gy = margin_top + m_lastPh
+                        - (val - m_lastYLo) / yRange * m_lastPh;
+                    const double dy = py - gy;
+                    d = std::sqrt(dx * dx + dy * dy);
+                }
                 if (d < glyphDist) {
                     glyphDist = d; glyphMarker = g.marker; glyphIdx = g.idx;
                 }
             }
         }
 
-        if (glyphMarker >= 0 && glyphDist < barDist) {
+        // THE GLYPH WINS ONLY ON A GENUINE 2D HIT.
+        //
+        // Bars and glyphs are different-shaped targets, so comparing their
+        // distances directly never worked: the four transition markers exist as
+        // both, and an x-only comparison let the glyph swallow every click on
+        // its bar -- which silently turned "select this bar and realign the
+        // grid" into "open the close-up", because a glyph click is
+        // landmarkFocusOnly and user_clicked_on_bar never ran.
+        //
+        // In 2D the two separate on their own. The bar is a tall thin line and
+        // the glyph is a small X on the trace, so a click needs to be near the
+        // glyph in BOTH axes to mean the glyph. Everywhere else on the line is
+        // the bar, and a glyph-only mark (R peak, P peak, Q peak, T peak) is
+        // reachable because no bar competes for those pixels at all.
+        const bool glyphHit = (glyphMarker >= 0)
+            && (glyphDist <= glyph_click_radius || mBar < 0)
+            && glyphDist < barDist;
+        if (glyphHit) {
             emit landmarkFocusOnly(m_binIndex, m_leadIndex,
                 m_templateIndex, glyphMarker, glyphIdx);
             return;   // focus only; no drag, no touch
@@ -1336,6 +1379,9 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
 {
     // Reactive columns, recomputed every paint from the current bars.
     const Reactive rx = reactiveGlyphs();
+
+    // Remembered for the hit test: see m_lastYLo.
+    m_lastYLo = yLo; m_lastYHi = yHi; m_lastPh = ph;
 
     auto plot_y = [&](double val, double lo, double hi) {
         const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;

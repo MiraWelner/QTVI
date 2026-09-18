@@ -177,7 +177,11 @@ private:
     // BankMarkerSet (seeded lazily from its own median). Sub-templates had no
     // bars at all before this: applyBinToWidget draws the BIN's marker set,
     // which describes sinus, so it was correctly applied to slot 0 only.
-    void applyBankTemplateToWidget(BinPlotWidget* pw, TemplateBin& b, int channel, int templateIdx);
+    // ONE APPLY FOR EVERY COLUMN, slot 0 included. Was two functions with a
+    // templateIdx == 0 fork, which is what made slot 0 the column nobody
+    // seeded and the column whose pulse bars came from the bin.
+    void applyTemplateToWidget(BinPlotWidget* pw, TemplateBin& b, int channel,
+        int templateIdx);
 
     // Everything both loadSubject overloads do once m_bins is populated:
     // the four-pass seeding loop, the markings restore, computeGlobalRefs and
@@ -205,7 +209,9 @@ private:
     // pushed into a plot widget. Both the initial page build (showPage) and
     // every later refresh go through it, so the bars and the glyphs are always
     // written from the same TemplateBin in the same call.
-    void applyBinToWidget(BinPlotWidget* pw, const TemplateBin& b);
+    // The per-bin half: arterial bars, alignment badge, glyph snapshot. Called
+    // only by applyTemplateToWidget.
+    void applyBinCommonToWidget(BinPlotWidget* pw, const TemplateBin& b);
     void refreshBinMarkers(int binIdx);
 
     // Bank-column counterpart of refreshBinMarkers. Repaints only the columns

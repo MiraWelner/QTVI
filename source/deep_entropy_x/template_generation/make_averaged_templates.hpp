@@ -191,6 +191,11 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // empty vectors through harmlessly, and AugmentTemplatesSlow fills
     // them later.
     const auto _ppg1 = std::chrono::steady_clock::now();
+    // NO SPAN PLUMBING HERE. An R-pair that is not a beat is one that straddles
+    // a splice in the annealed bin, and process_channel_fast answers that from
+    // bin.ecg_bin_indexs, which it already holds -- see
+    // alignment::FragmentSeams. Nothing about annotations, coordinates or span
+    // translation needs to reach the slicer.
     EcgTemplateResult ecg_res = CreateEcgTemplatesFast(wave_data, rates.ecg);
     const auto _ecg1 = std::chrono::steady_clock::now();
     std::fprintf(stderr,
