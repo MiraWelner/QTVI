@@ -5,14 +5,63 @@
 #include <vector>
 #include <utility>
 #include <map>
+#include <set>
+#include <array>
 #include <unordered_map>
 #include <cmath>
 #include <QString>
-#include "template_marking_bin_io.hpp"
+#include "template_marking_gui/template_marking_bin_io.hpp"
 #include "template_marking_gui/bin_plot_widget.hpp"
 #include "template_marking_gui/focus_panel_widget.hpp"
 #include "template_anchoring/anchor_view.hpp"
 #include "logging/boundary_training_log.hpp"
+
+// Needed by the template_viewer_*.cpp units, which include only this header.
+#include <QMessageBox>
+#include <QRadioButton>
+#include <QPushButton>
+#include <QButtonGroup>
+#include <QColor>
+#include <QPixmap>
+#include <QDir>
+#include <QFileInfo>
+#include <QFile>
+#include <QCheckBox>
+#include <QDockWidget>
+#include <QVBoxLayout>
+#include <QShortcut>
+#include <QKeyEvent>
+#include <QApplication>
+#include <QGuiApplication>
+#include <QStatusBar>
+#include <QStringList>
+#include <QtConcurrent/QtConcurrentMap>
+#include <algorithm>
+#include <limits>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <iostream>
+#include <cstdio>
+#include <cassert>
+#include <set>
+#include "ui_template_viewer.h"
+#include "template_marking_gui/feature_marks.hpp"
+#include "template_marking_gui/alignment.hpp"
+#include "template_marking_gui/global_intervals.hpp"
+#include "template_marking_gui/global_interval_lines.hpp"
+#include "template_marking_gui/vcg_signal_average.hpp"
+#include "template_marking_gui/ppg_derivative.hpp"
+#include "template_marking_gui/subsample_refine.hpp"
+#include "template_anchoring/curve_fit.hpp"
+#include "template_generation/normalize_template_amplitude.hpp"
+#include "peak_finding/FilterUtils.hpp"
+
+// addVcgPanel takes one by const reference and nothing here needs its
+// layout, so a declaration is enough -- global_intervals.hpp is included
+// in the .cpp, and keeping it out of this header keeps it out of every
+// TU that only wants TemplateViewerWindow.
+namespace global_intervals { struct GlobalIntervals; }
 
 class QVBoxLayout;
 class QRadioButton;
@@ -156,6 +205,29 @@ private:
     // count and could therefore only describe a contiguous prefix.
     std::vector<int> markingSlotsForBin(const TemplateBin& b) const;
 
+    // ---- showPage() helpers ---------------------------------------------
+    // Lifted out of showPage() verbatim. They were the two blocks at its head
+    // with no dependency on anything the panel loop builds, so they are the
+    // part of a 480-line function that could be moved without a compiler in
+    // hand. Both const: they read m_bins and the page table and build a value.
+
+    /// This page's (global bin index, template index) columns, in draw order.
+    /// A bin holding several morphologies occupies several adjacent columns.
+    std::vector<std::pair<int, int>> pageColumns(int start, int count) const;
+
+    /// Grid row count for this page. `compact` wraps panels, so it has to be
+    /// computed from the COLUMN count, not the bin count.
+    int pageGridRows(bool compact, int nCols, int start, int end) const;
+
+    /// The VCG panel on the bottom row of one column. Display only -- no
+    /// markers, no marker signals. Takes what it draws explicitly rather than
+    /// reading it back off the window, so it cannot disagree with the lead
+    /// panels above it about which alignment or axis it is on.
+    void addVcgPanel(int gi, int column, int gridRows, const TemplateBin& b,
+        const std::vector<double>& vcgTrace, double vcgRCol,
+        const global_intervals::GlobalIntervals& intervals,
+        std::vector<BinPlotWidget*>& group, int& usedRows, int& usedCols);
+
     // The union of all four alignments' (P/Q/R/J) ECG extents for one
     // (bin, lead, template), in seconds relative to R. Passed to
     // BinPlotWidget::setEcgFrame so the x-axis holds the same window whichever
@@ -200,6 +272,31 @@ private:
     // selected by BIC). Recomputed at save, same window convention as the
     // boundary log.
     void writeLandmarkFitsCsv(const std::string& dir);
+
+    // ---- EXPORT LANDMARK CACHE ------------------------------------------
+    // alignedLandmarks() is a pure function of one alignment's average, its R
+    // column and the sample rate -- and the Finish export called it
+    // bins x 3 leads x 9 times: twice per bin per lead inside
+    // buildAlignedTemplateCsv (two consecutive `for c` loops asked for the
+    // same thing), once per each of the four anchors, and once more in
+    // writeLandmarkFitsCsv. Nothing in between changes its inputs; the
+    // operator moves bars, not templates.
+    //
+    // So it is computed once, across cores, and read from thereafter:
+    // bins x 3 x 4 detections instead of bins x 3 x 9, in parallel.
+    //
+    // Indexed by position in anchor_view::kAllAnchors, NOT by AnchorType's
+    // numeric value -- a std::map would have to be written to from the
+    // parallel fill, and std::map is not safe to index concurrently even when
+    // no insertion happens. A fixed array of pre-sized vectors has no such
+    // question: every element exists before the first worker starts.
+    std::array<std::vector<std::array<FeatureMarks::TemplateLandmarks, 3>>, 4>
+        m_exportLm;
+
+    static int anchorSlot(AnchorType a);
+    void primeExportLandmarks();
+    const FeatureMarks::TemplateLandmarks&
+        exportLandmarks(std::size_t bi, int lead, AnchorType a) const;
     void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
 
@@ -221,10 +318,6 @@ private:
     void refreshBankMarkers(int binIdx, int templateIdx);
     //if you don't refresh, after switching from j alingnment to another alignment, the focus panel will still show the j alignment
     void refreshFocus(int binIdx, int leadIdx, int templateIdx, int marker, double col);
-    // Re-detect marks for every bin with the current fit modes, preserving any
-    // bar the operator has dragged (recorded in m_touchedMarks) and re-placing
-    // only the untouched ones. Called when a fit-model radio changes.
-    void reseedFitModes(bool allBins = false);
     void pageIn();   // showPage, re-seeding this page with active fit modes first
 
     FocusPanelWidget* zoomed_in_section_top = nullptr; //for most close ups, they only use focus top
@@ -397,8 +490,10 @@ private:
     // currently on screen, so there is no frame to convert from. In Automatic
     // nobody has chosen, so userMarks assembles each bar's canonical copy and
     // translates those into the drawn frame, exactly as before.
-    tbank::BankMarkerSet barsForPanel(const TemplateBin& b, int lead,
-        int slot) const;
+    // The panel supplies the detection; the cell supplies operator edits.
+    // See the definition -- this is the only source of bar positions.
+    tbank::BankMarkerSet barsForPanel(const BinPlotWidget* pw,
+        const TemplateBin& b, int lead, int slot) const;
 
     // The pulse/arterial half of refreshFocus. Foot-anchored, no alignment
     // dimension, one panel -- it shares nothing with the ECG half but the two
@@ -461,6 +556,12 @@ private:
     double m_ecgGlobalRef[3] = { std::nan(""), std::nan(""), std::nan("") };
     double m_pulseGlobalRef[4] = { std::nan(""), std::nan(""), std::nan(""), std::nan("") };
     void compute_global_refs();
+
+    // One bin's load-time landmark seeding. const because it is called
+    // concurrently from initAfterBinsLoaded and must not touch this window's
+    // state -- it reads the rates and fit modes and writes only into `b`.
+    void seedOneBin(TemplateBin& b) const;
+
 
     void writeNormalizationCsvs(); // Writes <id>_cv_check.csv and <id>_feature_norm.csv
 

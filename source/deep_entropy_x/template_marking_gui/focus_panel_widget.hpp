@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <limits>
 #include <vector>
+#include <algorithm>   // std::max in setPeakFitKind
 #include "subsample_refine.hpp"   // subsample_refine::TransitionCandidates
 
 class QPainter;
@@ -97,8 +98,26 @@ public:
     // peakSigma is the SAME weighting the detector used for this landmark (so
     // the drawn fit and the placement fit can't diverge); ignored for
     // transitions. Set per landmark by the owner right after setFocus.
-    void setFitKind(FitKind k, double peakSigma = 4.0) {
-        m_fitKind = k; m_peakSigma = peakSigma; update();
+    // TWO OVERLOADS, NO DEFAULTS. Transition and None involve no peak fit --
+    // their curves come from setTransitionCandidates -- so there are no peak
+    // parameters to supply, and requiring them would force the caller to invent
+    // values. m_peakHalfWidth goes to -1 on that path so a width left over from
+    // a previous selection can never be read.
+    void setFitKind(FitKind k) {
+        m_fitKind = k;
+        m_peakHalfWidth = -1;
+        update();
+    }
+
+    // Peaks: both required, from subsample_refine::peak_sigma and
+    // ::peak_halfwidth for the landmark in focus. The panel must fit the same
+    // span the detector fitted, or the dotted fiducial, the curves and the fid=
+    // readout all describe a position nothing else in the system uses.
+    void setPeakFitKind(FitKind k, double peakSigma, int peakHalfWidth) {
+        m_fitKind = k;
+        m_peakSigma = peakSigma;
+        m_peakHalfWidth = std::max(3, peakHalfWidth);
+        update();
     }
     // Forced peak model (Fit-Peaks radio); Auto = BIC quad-vs-cubic.
     void setPeakFitMode(curve_fit::PeakFitMode m) { m_panelPeakMode = m; update(); }
@@ -131,6 +150,7 @@ protected:
 private:
     FitKind m_fitKind = FitKind::Transition;
     double  m_peakSigma = 4.0;
+    int     m_peakHalfWidth = -1;   // -1 = no peak in focus
     curve_fit::PeakFitMode m_panelPeakMode = curve_fit::PeakFitMode::Auto;
     subsample_refine::TransitionCandidates m_transCands;   // supplied exact transition fits
     std::vector<double> m_mean;

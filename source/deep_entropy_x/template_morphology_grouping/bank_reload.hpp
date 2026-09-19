@@ -69,7 +69,7 @@
 #include <string>
 #include <vector>
 
-#include "template_io.hpp"
+#include "template_generation\template_io.hpp"
 #include "template_morphology_grouping/morphology_csv.hpp"
 #include <algorithm>
 #include <cmath>

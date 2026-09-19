@@ -2,6 +2,7 @@
 See feature_marks.hpp for the public interface*/
 
 #include "feature_marks.hpp"
+#include "sample_extent.hpp"
 #include "template_marking_gui\template_marking_bin_io.hpp"
 #include <algorithm>
 #include <cmath>
@@ -163,7 +164,10 @@ double FeatureMarks::compute_q_peak(const std::vector<double>& ecg, int r_idx, d
     if (rAmp > 0.0 && (b_iso - u[qSeed]) < Q_MIN_DEPTH * rAmp) return -1;   // too shallow to be a Q
 
     //return best fit (cubic or quadratic) 
-    return std::clamp(subsample_refine::best_peakfinding_algorithm(u, qSeed, 4.0, peakMode), 0.0, static_cast<double>(N - 1));
+    return std::clamp(subsample_refine::best_peakfinding_algorithm(u, qSeed,
+        subsample_refine::peak_sigma::Q,
+        subsample_refine::peak_halfwidth::Q, peakMode),
+        0.0, static_cast<double>(N - 1));
 }
 
 // S = the first opposite-polarity trough after R: walk right from R tracking
@@ -192,7 +196,10 @@ double FeatureMarks::compute_s_peak(const std::vector<double>& ecg, int r_idx, d
         if (!std::isnan(u[i]) && u[i] < sv) { sv = u[i]; sSeed = i; }
 
     //return best fit (cubic or quadratic) ]
-    return std::clamp(subsample_refine::best_peakfinding_algorithm(u, sSeed, 4.0, peakMode), 0.0, static_cast<double>(N - 1));
+    return std::clamp(subsample_refine::best_peakfinding_algorithm(u, sSeed,
+        subsample_refine::peak_sigma::S,
+        subsample_refine::peak_halfwidth::S, peakMode),
+        0.0, static_cast<double>(N - 1));
 }
 
 
@@ -201,9 +208,8 @@ double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracket
     if (N < 1) return -1.0;
 
     int fFin = -1, lFin = -1;
-    for (int i = 0; i < N; ++i)      if (!std::isnan(v[i])) { fFin = i; break; }
-    for (int i = N - 1; i >= 0; --i) if (!std::isnan(v[i])) { lFin = i; break; }
-    if (fFin < 0) return -1.0;   // entirely NaN: no data
+    if (!sample_extent::finiteExtent(v, fFin, lFin))
+        return -1.0;             // entirely NaN: no data
     const double loD = std::min(bracketSEnd, bracketTEnd);
     const double hiD = std::max(bracketSEnd, bracketTEnd);
     int lo = std::clamp(static_cast<int>(std::ceil(loD)), fFin, lFin);
@@ -211,8 +217,8 @@ double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracket
     if (hi < lo) hi = lo;
 
     int a = lo, b = hi;
-    while (a <= b && std::isnan(v[a])) ++a;
-    while (b >= a && std::isnan(v[b])) --b;
+    const bool anyFinite = sample_extent::trimToFinite(v, a, b);
+    (void)anyFinite;   // each caller's own sentinel follows
     if (b < a) return static_cast<double>(lo);   // window was a NaN gap
 
     // Baseline = mean of the (finite) window ends; both sit at the T's feet, so
@@ -225,7 +231,9 @@ double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracket
 
     std::vector<double> u = v;
     if (v[best] < B) for (auto& x : u) x = -x;
-    const double p = subsample_refine::best_peakfinding_algorithm(u, best, subsample_refine::peak_sigma::T, peakMode);
+    const double p = subsample_refine::best_peakfinding_algorithm(u, best,
+        subsample_refine::peak_sigma::T,
+        subsample_refine::peak_halfwidth::T, peakMode);
     return std::isfinite(p)
         ? std::clamp(p, static_cast<double>(lo), static_cast<double>(hi))
         : static_cast<double>(best);
@@ -261,9 +269,8 @@ double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, d
     if (N < 1 || fs <= 0.0) return -1.0;
 
     int fFin = -1, lFin = -1;
-    for (int i = 0; i < N; ++i)      if (!std::isnan(v[i])) { fFin = i; break; }
-    for (int i = N - 1; i >= 0; --i) if (!std::isnan(v[i])) { lFin = i; break; }
-    if (fFin < 0) return -1.0;   // entirely NaN: no data
+    if (!sample_extent::finiteExtent(v, fFin, lFin))
+        return -1.0;             // entirely NaN: no data
 
     // Bracket ordered, 20 ms trimmed off the top so the Q upstroke cannot win,
     // then clamped to [fFin, lFin]. A -1 bracket (absent bar) clamps to the
@@ -275,8 +282,8 @@ double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, d
     if (hi < lo) hi = lo;
 
     int a = lo, b = hi;
-    while (a <= b && std::isnan(v[a])) ++a;
-    while (b >= a && std::isnan(v[b])) --b;
+    const bool anyFinite = sample_extent::trimToFinite(v, a, b);
+    (void)anyFinite;   // each caller's own sentinel follows
     if (b < a) return static_cast<double>(fFin);   // window was a NaN gap
 
     // The argmax itself is a COLUMN. Ties go to the earliest sample, which on
@@ -290,10 +297,12 @@ double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, d
     }
 
     // SUB-SAMPLE COMES FROM HERE, not from the argmax: Gaussian-weighted
-    // quadratic/cubic over best +- kWindowHalfWidth, sigma = 12. The coarse
-    // column stands if the refinement is non-finite -- that is still the
-    // detected column, not a fallback default.
-    const double p = subsample_refine::best_peakfinding_algorithm(v, best, subsample_refine::peak_sigma::P, peakMode);
+    // quadratic/cubic over best +- peak_halfwidth::P, sigma = peak_sigma::P.
+    // The coarse column stands if the refinement is non-finite -- that is
+    // still the detected column, not a fallback default.
+    const double p = subsample_refine::best_peakfinding_algorithm(v, best,
+        subsample_refine::peak_sigma::P,
+        subsample_refine::peak_halfwidth::P, peakMode);
     return std::isfinite(p)
         ? std::clamp(p, static_cast<double>(fFin), static_cast<double>(lFin))
         : static_cast<double>(best);
@@ -482,11 +491,22 @@ double FeatureMarks::compute_t_end(const std::vector<double>& v, double fs, int 
 // human-editable P-onset marker. Range is [start of ECG, P-peak] -- the onset
 // precedes the peak, and cannot sit left of the first ECG sample. No other
 // clamps.
-double FeatureMarks::compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn, subsample_refine::TransitionCandidates* candOut, curve_fit::FitMode mode) {
+double FeatureMarks::compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn, subsample_refine::TransitionCandidates* candOut, curve_fit::FitMode mode,
+    const std::vector<double>* iqr) {
     const int N = static_cast<int>(v.size());
 
-    int fFin = -1;
-    for (int i = 0; i < N; ++i) if (!std::isnan(v[i])) { fFin = i; break; }
+    // THE DRAWN EXTENT WHEN THE CALLER HAS THE IQR, the finite extent
+    // otherwise. This function is the reason sample_extent distinguishes the
+    // two: its window reaches 150 ms left of the P peak, far enough on an
+    // R-aligned average to land in the zero-IQR shoulder -- non-NaN, real
+    // signal, fewer than two contributing beats -- which BinPlotWidget will
+    // not paint. A p_begin there was drawn at the left wall instead of at its
+    // own column and could not be dragged.
+    //
+    // iqr is optional so no existing caller had to change; the ones that have
+    // it (ecgDetectOn, ecgDetect, alignedLandmarks, seedSlotBars) pass it.
+    const int fFin = iqr ? sample_extent::firstDrawn(v, *iqr)
+        : sample_extent::firstFinite(v);
     if (fFin < 0) return -1.0;   // entirely NaN: no data
 
     // Upper bound is the P peak. compute_p_peak never returns -1 for a finite
@@ -754,8 +774,8 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
  // Skip any leading NaN run: the template's first samples sit before the
  // first R (construction pads by `pad` seconds), so a partial pulse there
  // can win the slope gate and drag every landmark onto the left edge.
-    int lo0 = 0;
-    while (lo0 < Wc && std::isnan(v[lo0])) ++lo0;
+    int lo0 = std::max(0, sample_extent::firstFinite(v));
+    if (lo0 > Wc) lo0 = Wc;
 
     int pkSeed = FeatureMarks::detect_ppg_upstroke_peak(v, lo0, Wc);
     if (pkSeed < 0) {
@@ -766,7 +786,8 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         pkSeed = best;
     }
     if (pkSeed < 0) return g;              // all-NaN window: nothing to mark
-    g.peak = cld(subsample_refine::quadratic_fit(v, pkSeed, 8.0).position);
+    g.peak = cld(subsample_refine::quadratic_fit(v, pkSeed, 8.0,
+        subsample_refine::pulse_halfwidth::Peak).position);
 
     // A systolic peak with no room for a foot before it is a head fragment,
     // not a pulse. Bail rather than pile every landmark at sample 0.
@@ -774,12 +795,14 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
 
     //systolic foot: asymmetric extremum (sigma = 8) on the rising shoulder
     auto refine_foot = [&](int seed) {
-        return cld(subsample_refine::asymmetricExtremum(v, seed, 8.0));
+        return cld(subsample_refine::asymmetricExtremum(v, seed, 8.0,
+            subsample_refine::pulse_halfwidth::Foot));
         };
 
     //systolic foot end of cycle: asymmetric extremum (sigma = 8) after the peak
     auto refine_end = [&](int seed) {
-        return cld(subsample_refine::asymmetricExtremum(v, seed, 8.0));
+        return cld(subsample_refine::asymmetricExtremum(v, seed, 8.0,
+            subsample_refine::pulse_halfwidth::Foot));
         };
 
     // Systolic foot: the trough before the peak.
@@ -1018,7 +1041,8 @@ double FeatureMarks::detect_ppg_peak(const std::vector<double>& pulse) {
     if (pulse.empty()) return 0.0;
     const int seed = detect_ppg_upstroke_peak(pulse);
     if (seed < 0) return 0.0;
-    return subsample_refine::quadratic_fit(pulse, seed, 8.0).position;
+    return subsample_refine::quadratic_fit(pulse, seed, 8.0,
+        subsample_refine::pulse_halfwidth::Peak).position;
 }
 
 int FeatureMarks::detect_ppg_end(const std::vector<double>& pulse) {
@@ -1294,7 +1318,8 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
 
 FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     const std::vector<double>& tmplIn, int nominal_r_col, double sampleRate,
-    curve_fit::FitMode fitMode, curve_fit::PeakFitMode peakMode)
+    curve_fit::FitMode fitMode, curve_fit::PeakFitMode peakMode,
+    const std::vector<double>* iqr)
 {
     TemplateLandmarks out;
     const int n = static_cast<int>(tmplIn.size());
@@ -1322,7 +1347,9 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     // finder below -- so omitting it moved every landmark, not just R. Refined
     // on tmplIn (un-margined) so R still anchors even if it sits near an edge.
     const int seed = std::clamp(nominal_r_col, 0, n - 1);
-    double r = subsample_refine::best_peakfinding_algorithm(tmplIn, seed, subsample_refine::peak_sigma::R, peakMode);
+    double r = subsample_refine::best_peakfinding_algorithm(tmplIn, seed,
+        subsample_refine::peak_sigma::R,
+        subsample_refine::peak_halfwidth::R, peakMode);
     if (std::isnan(r) || r < 0.0 || r > static_cast<double>(n - 1))
         r = static_cast<double>(seed);   // refinement failed; nominal stands
     const int r_anchor = static_cast<int>(r);
@@ -1357,7 +1384,8 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     //
     // ONE P ONSET NOW: this, seed_bank_template's bar and reactiveGlyphs' X are
     // the same call on the same trace.
-    const double pb = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_anchor, -1.0, &out.p_begin_cand, fitMode);
+    const double pb = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_anchor,
+        -1.0, &out.p_begin_cand, fitMode, iqr);
 
     // Out-of-range is folded to -1 (absent), NOT clamped to an edge column. A
     // landmark pinned to column 0 is indistinguishable from one genuinely found

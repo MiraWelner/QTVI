@@ -46,10 +46,14 @@ public:
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static ReactivePpg reactive_ppg(const std::vector<double>& ppg, double onset, double peak, double dicrotic, double end);
 
-    static double compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs,  curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
-    static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs,  curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+    static double compute_q_peak(const std::vector<double>& ecg, int r_idx, double fs, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+    static double compute_s_peak(const std::vector<double>& ecg, int r_idx, double fs, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static double compute_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
-    static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0,  subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    // iqr OPTIONAL: when given, the search is bounded by the DRAWN extent
+    // (sample_extent::firstDrawn) rather than the finite one, so the onset
+    // cannot land in a zero-IQR shoulder the panel refuses to paint.
+    static double compute_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto,
+        const std::vector<double>* iqr = nullptr);
     static double compute_t_peak(const std::vector<double>& ecg, double bracketSEnd, double bracketTEnd, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static double compute_j_point(const std::vector<double>& ecg, double fs, int r_col, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
     static double compute_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
@@ -78,9 +82,11 @@ public:
         subsample_refine::TransitionCandidates p_begin_cand;
     };
 
+    // iqr OPTIONAL, forwarded to compute_p_begin -- see there.
     static TemplateLandmarks detect_template_landmarks(const std::vector<double>& tmpl, int nominal_r_col, double sampleRate,
         curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
-        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
+        const std::vector<double>* iqr = nullptr);
 
     static void seed_bank_template(const std::vector<double>& tmpl, int r_col,
         double sampleRate, AnchorType anchor, tbank::BankMarkerSet& out,

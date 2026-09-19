@@ -6,6 +6,7 @@
 */
 
 #include "bin_plot_widget.hpp"
+#include "sample_extent.hpp"
 #include "template_anchoring\anchor_view.hpp"
 #include "noise_marking_gui/annotation_types.hpp"
 #include <QMenu>
@@ -601,8 +602,15 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
             // the R bar uses. detect_template_landmarks refines only +-7
             // samples around the seed, so the flat R-aligned column would make
             // the R glyph miss the peak on a P/Q/J average.
-            const int rSeed = m_bin->chFor(m_leadIndex, m_frame).r_col_raw;
-            m_det = ecgDetectOn(m_ecg, rSeed,
+            // THE SAME CALL THAT SEEDS THE BARS. ecgDetect goes through
+            // slotView, so it detects on this slot's RAW stored average with
+            // that alignment's own r_col -- byte for byte the inputs
+            // seedSlotBars hands seed_bank_template. A bar and its glyph are
+            // therefore the same number by construction.
+            // NOT m_ecg: that is normalized and optionally notched, and the
+            // detector is not scale-invariant (Q_MIN_DEPTH is absolute). The
+            // trade is that glyphs no longer follow the notch toggle.
+            m_det = ecgDetect(*m_bin, m_leadIndex, m_templateIndex, m_frame,
                 m_rates[static_cast<size_t>(Channel::Ecg)],
                 m_onOffsetFitMode, m_peakFitMode);
             m_detBin = m_bin;
@@ -623,7 +631,6 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
             m_rates[static_cast<size_t>(Channel::Ecg)], m_peakFitMode, bars);
         r.ecgPPeak = fid.p_peak;
         r.ecgTPeak = fid.t_peak;
-        r.ecgPBegin = fid.p_begin;
     }
 
     if (m_hasPPG) {
@@ -654,13 +661,11 @@ int BinPlotWidget::lastDrawnSample(Channel ch) const {
     case Channel::ArtPulm: v = &m_artPulm;  break;
     default: return -1;
     }
-    int last = -1;
-    for (int i = static_cast<int>(v->size()) - 1; i >= 0; --i)
-        if (!std::isnan((*v)[i])) { last = i; break; }
+    int last = sample_extent::lastFinite(*v);
     // SAME TRIM recomputeFrame applies, and it has to be the same or the wall
     // this reports is not the wall that was drawn.
     if (ch == Channel::Ecg && m_ecgIqr.size() == m_ecg.size())
-        while (last > 0 && m_ecgIqr[last] == 0.0) --last;
+        last = sample_extent::lastDrawn(m_ecg, m_ecgIqr);
     return last;
 }
 int BinPlotWidget::firstDrawnSample(Channel ch) const {
@@ -673,17 +678,16 @@ int BinPlotWidget::firstDrawnSample(Channel ch) const {
     case Channel::ArtPulm: v = &m_artPulm;  break;
     default: return -1;
     }
-    int first = -1;
-    for (int i = 0; i < static_cast<int>(v->size()); ++i)
-        if (!std::isnan((*v)[i])) { first = i; break; }
+    int first = sample_extent::firstFinite(*v);
     // SAME TRIM lastDrawnSample applies, mirrored. align_beat_matrix leaves
     // IQR == 0.0 on columns that had fewer than two beats, and recomputeFrame
     // trims them off both ends -- so a bar dropped there would sit outside the
     // drawn extent even though the sample is not NaN.
-    if (ch == Channel::Ecg && m_ecgIqr.size() == m_ecg.size()) {
-        const int n = static_cast<int>(m_ecg.size());
-        while (first >= 0 && first < n - 1 && m_ecgIqr[first] == 0.0) ++first;
-    }
+    // sample_extent::firstDrawn IS this trim -- one definition, shared with
+    // compute_p_begin so the detector and the painter agree on where the
+    // drawn extent starts.
+    if (ch == Channel::Ecg)
+        first = sample_extent::firstDrawn(m_ecg, m_ecgIqr);
     return first;
 }
 
@@ -1090,7 +1094,7 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
                 // Transition fiducials at their DRAWN (detected) positions --
                 // independent of the bars, so clickable where they're shown even
                 // after the bar has been dragged elsewhere.
-                { EcgPBegin, rx.ecgPBegin },
+                { EcgPBegin, m_glyphs.ecgPBegin },
                 { EcgQBegin, m_glyphs.ecgQ },
                 { EcgSEnd,   m_glyphs.ecgS },
                 { EcgTEnd,   m_glyphs.ecgTend },
@@ -1295,7 +1299,7 @@ void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b,
         const Reactive rx = reactiveGlyphs();   // populates/reuses m_det
         if (m_det.valid) {
             const FeatureMarks::TemplateLandmarks& lm = m_det.lm;
-            m_glyphs.ecgPBegin = froz(rx.ecgPBegin);
+            m_glyphs.ecgPBegin = froz(lm.p_begin);
             m_glyphs.ecgQ = froz(lm.q_onset);
             m_glyphs.ecgQFound = lm.q_onset_found;
             m_glyphs.ecgQPeak = lm.q_onset_found ? froz(lm.q_peak) : -1.0;
@@ -1428,7 +1432,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         // each block's cross/circle close over its own axis and geometry.
         auto found = [&](double idx, bool ok) { ok ? cross(idx) : circle(idx); };
 
-        cross(rx.ecgPBegin);         // reactive: onset before the reactive P peak
+        cross(m_glyphs.ecgPBegin);   // detected, like every other transition
         cross(rx.ecgPPeak);          // reactive: P-onset bar -> Q-onset bar
         found(m_glyphs.ecgQ, m_glyphs.ecgQFound);
         cross(m_glyphs.ecgQPeak);

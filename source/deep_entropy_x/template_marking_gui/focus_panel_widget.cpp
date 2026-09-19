@@ -84,22 +84,28 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
     if (m_fitKind == FitKind::None) return out;   // nothing fitted it
     if (lo < 0 || hi >= (int)m_mean.size() || hi - lo < 3) return out;
 
-    // THE DETECTOR'S WINDOW, EXACTLY. bestPeakExtremum hardcodes
-    // kWindowHalfWidth, so this must too: any other value makes this panel fit
-    // a different span from the one that placed the mark, and then the dotted
-    // fiducial, the curves and the fid= readout all describe a position nothing
-    // else in the system uses. It was max(kWindowHalfWidth, round(sigma)) --
-    // +-12 for P, +-15 for T -- widened so a broad wave would show curvature,
-    // which silently changed the numbers to get a better-looking picture.
+    // THE DETECTOR'S WINDOW, EXACTLY -- which is now per landmark, handed in
+    // with the sigma by setFitKind rather than read off a global constant. Any
+    // other value makes this panel fit a different span from the one that
+    // placed the mark, and then the dotted fiducial, the curves and the fid=
+    // readout all describe a position nothing else in the system uses.
     //
-    // Widening the DRAWN span is fine and is what drawHw below is for; widening
-    // the FIT is not.
-    const int peakHw = subsample_refine::kWindowHalfWidth;
+    // THIS IS NOT THE max(<global constant>, round(sigma)) THAT WAS REVERTED.
+    // That widened the panel's fit ALONE, leaving the detector at +-7, so the
+    // drawn curve and the placed mark came from different fits. The widths are
+    // now in subsample_refine::peak_halfwidth and the detector reads the same
+    // table, so the two cannot diverge -- the sameness is what mattered, not
+    // the number 7.
+    // -1 when no peak is in focus; nothing below reads it on that path, since
+    // evalExtremum is only called from the peak branch. Floored at 3 anyway so
+    // a bad value cannot produce a degenerate window.
+    const int peakHw = std::max(3, m_peakHalfWidth);
 
-    // How far the curves are DRAWN. Wider than the fit for a broad landmark, so
-    // the shape is visible -- extrapolation of the same polynomial, not a
-    // different fit.
-    const int drawSpan = std::max(subsample_refine::kWindowHalfWidth,
+    // How far the curves are DRAWN. Still allowed to exceed the fit so a broad
+    // wave shows its shape, but the floor is now the landmark's own fit window
+    // rather than the global constant -- otherwise a P fitted over +-24 would
+    // be drawn over +-12 and look NARROWER than it was fitted.
+    const int drawSpan = std::max(peakHw,
         static_cast<int>(std::lround(m_peakSigma)));
 
     // drawHw defaults to the peak window. Each model is drawn only over the
@@ -124,6 +130,9 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
         };
 
     if (m_fitKind == FitKind::PeakQuadratic || m_fitKind == FitKind::PeakCubic) {
+        // A peak kind set through the transition overload has no width, and
+        // fitting at the floor would draw a curve the detector never produced.
+        if (m_peakHalfWidth < 3) return out;
         // SEED WHERE THE MARK IS, not where the bar is. m_landmarkCol is the
         // bar's column; the detector's position is m_detectorFid. Fitting at the
         // bar put the curves on a different part of the wave from the dotted
@@ -168,8 +177,8 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
             m_mean, seedCol, m_peakSigma, peakHw, m_panelPeakMode);
         int winIdx = 2;   // 0=quadratic, 1=cubic, 2=five-point
         switch (win.type) {
-        case subsample_refine::CurveType::QUADRATIC: winIdx = 0; break;
-        case subsample_refine::CurveType::CUBIC:     winIdx = 1; break;
+        case subsample_refine::PeakCurveType::QUADRATIC: winIdx = 0; break;
+        case subsample_refine::PeakCurveType::CUBIC:     winIdx = 1; break;
         default:                                     winIdx = 2; break;
         }
 

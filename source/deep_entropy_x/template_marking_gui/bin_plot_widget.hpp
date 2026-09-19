@@ -262,12 +262,22 @@ public:
     // way into the paint path -- so the glyph drew up to half a sample away
     // from the value the CSV reported for the same landmark.
     struct Reactive {
-        double ecgPBegin = -1.0;  // onset before the reactive P peak (same peak)
+        // (ecgPBegin removed: it was a copy of m_det.lm.p_begin under a second
+        //  name, which read as though the P onset were bar-derived like the two
+        //  peaks below. It is not -- it is detected, and the snapshot holds it.)
         double ecgPPeak = -1.0;   // between the P-onset and Q-onset bars
         double ecgTPeak = -1.0;   // between the S-end and T-end bars
         double ppgT50 = -1.0, ppgT80 = -1.0, ppgPeak2 = -1.0;
     };
     Reactive reactiveGlyphs() const;
+
+    // THE COLUMNS THE X GLYPHS ARE DRAWN AT. captureGlyphSnapshot reads m_det
+    // for every ECG glyph, so this is that same detection -- exposed so the
+    // viewer can put a bar on its glyph instead of seeding it separately.
+    const FeatureMarks::TemplateLandmarks& detectedLandmarks() const {
+        reactiveGlyphs();          // populates / reuses m_det
+        return m_det.lm;
+    }
 
     // Fit models for the DETECTED glyphs (the X marks): the transition fiducials
     // are drawn at the selected model's crossing. Setting them invalidates the

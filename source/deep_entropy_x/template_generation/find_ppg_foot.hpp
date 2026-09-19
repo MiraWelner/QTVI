@@ -10,6 +10,7 @@
 #pragma once
 
 #include "template_structs.hpp"
+#include "template_marking_gui\sample_extent.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -54,8 +55,8 @@ inline FootResult find_foot_pulseox(const std::vector<std::vector<double>>& data
         const auto& row = data[r];
 
         // Effective length (strip trailing NaNs)
-        size_t len = row.size();
-        while (len > 0 && std::isnan(row[len - 1])) --len;
+        const size_t len =
+            static_cast<size_t>(sample_extent::finiteLength(row));
 
         if (len < 4) {
             res.idx[r] = 0;

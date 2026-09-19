@@ -21,9 +21,9 @@
 
 #include "template_generation/template_io.hpp"
 #include "template_generation/pulse_matched_filter.hpp"
-#include "template_generation/build_templates.hpp"
+#include "template_generation/build_bins.hpp"
 #include "template_generation/premark_beats.hpp"
-#include "template_generation/bank_reload.hpp"
+#include "template_morphology_grouping/bank_reload.hpp"
 
 #include "annealing/anneal_handler.hpp"
 #include "config_file_handling/config_entry.hpp"

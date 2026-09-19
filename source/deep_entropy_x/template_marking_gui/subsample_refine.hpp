@@ -17,47 +17,41 @@
 
 namespace subsample_refine {
 
-    inline constexpr int kWindowHalfWidth = 7;     // 15-point window = seed +- 7
-    inline constexpr double kResidualGuardFrac = 0.10;   // 10% of peak amplitude
+    inline constexpr double residual_guard_frac = 0.10;   //percent of amplitude before going to fallback
 
-    // ONE source of truth for each peak's Gaussian-weighting sigma, shared by
-    // the DETECTOR (bestPeakExtremum call sites in feature_marks) and the focus
-    // panel's redraw. Duplicating these as literals in both places let the drawn
-    // fit and the placement fit diverge; centralize so they cannot.
     namespace peak_sigma {
         inline constexpr double R = 5.0;
         inline constexpr double P = 12.0;
         inline constexpr double T = 15.0;
-        inline constexpr double Q = 5.0;   // Q-peak: no dedicated detector site; sensible default
+        inline constexpr double Q = 5.0;
+        inline constexpr double S = 4.0;
     }
 
-    // ---------------------------------------------------------------------
-    // Exposed fit result for the peak finders. The finders previously returned
-    // only the sub-sample position and discarded the polynomial; this carries
-    // the fitted curve out so callers (the focus overlay, the CSV export) can
-    // draw it and record its parameters.
-    //
-    // coeff is in ASCENDING powers of (t - seed), t in samples: value(t) =
-    // coeff[0] + coeff[1]*(t-seed) + coeff[2]*(t-seed)^2 [+ coeff[3]*(t-seed)^3].
-    // order is 2 (QUADRATIC) or 3 (CUBIC); unused coeffs are 0. A fallback or a
-    // degenerate solve reports FIVE_POINT / SEED with order 0 and no usable
-    // coeffs -- there is no polynomial to draw or serialize in that case.
-    // ---------------------------------------------------------------------
-    enum class CurveType { SEED, QUADRATIC, CUBIC, FIVE_POINT };
+    namespace peak_halfwidth {
+        inline constexpr int R = 7;
+        inline constexpr int Q = 7;
+        inline constexpr int S = 7;
+        inline constexpr int P = 24;
+        inline constexpr int T = 30;
+    }
+
+    namespace pulse_halfwidth {
+        inline constexpr int Peak = 7;   // systolic peak (quadratic)
+        inline constexpr int Foot = 7;   // foot / end of cycle (cubic)
+        inline constexpr int Slope = 7;   // maxSlopePoint, on the derivative
+    }
+
+    enum class PeakCurveType { SEED, QUADRATIC, CUBIC, FIVE_POINT };
 
     struct peak_fit {
-        double     position = -1.0;          // sub-sample extremum, absolute samples
-        CurveType  type = CurveType::SEED;
+        double     position = -1.0;
         int        order = 0;                // 2, 3, or 0 (no polynomial)
         int        seed = 0;                 // absolute index where (t-seed)=0
         double     rss = std::numeric_limits<double>::quiet_NaN();
         int        npts = 0;                 // points the fit used (n, for BIC)
-        std::array<double, 4> coeff{ 0,0,0,0 };  // ascending powers of (t-seed)
-        // TRUE when a polynomial WAS solved but the residual guard rejected it.
-        // Only ever set on the applyGuard=false path; with the guard on, a
-        // rejected fit degrades to FIVE_POINT/order 0 as before and this stays
-        // false. Nothing in Auto detection reads it.
         bool       guardFailed = false;
+        PeakCurveType  type = PeakCurveType::SEED;
+        std::array<double, 4> coeff{ 0,0,0,0 };
 
         // Evaluate the fitted polynomial at absolute sample x. NaN if no curve.
         double eval(double x) const {
@@ -113,7 +107,7 @@ namespace subsample_refine {
     // ok=false if fewer than 5 usable samples remain (can't fit anything
     // meaningful).
     inline WindowSamples gatherWindow(const std::vector<double>& signal, int seed,
-        double sigma, int halfWidth = kWindowHalfWidth) {
+        double sigma, int halfWidth) {
         WindowSamples ws; ws.seedAbs = seed;
         const int N = static_cast<int>(signal.size());
         if (seed < 0 || seed >= N) return ws;
@@ -134,8 +128,7 @@ namespace subsample_refine {
     // Residual guard: weighted RMS residual of a fit against its window,
     // as a fraction of the window's peak amplitude (max |y - mean(y)|).
     // ---------------------------------------------------------------------
-    inline double weightedRmsResidualFrac(const WindowSamples& ws,
-        const std::vector<double>& fitted) {
+    inline double weightedRmsResidualFrac(const WindowSamples& ws, const std::vector<double>& fitted) {
         double wsum = 0.0, wsq = 0.0;
         double mean = 0.0, wsumForMean = 0.0;
         for (size_t i = 0; i < ws.y.size(); ++i) { mean += ws.w[i] * ws.y[i]; wsumForMean += ws.w[i]; }
@@ -176,7 +169,7 @@ namespace subsample_refine {
         std::vector<double> sol;
         if (!solveLinear({ {S4,S3,S2},{S3,S2,S1},{S2,S1,S0} }, { Y2,Y1,Y0 }, sol))
             return out;
-        out.type = CurveType::FIVE_POINT;
+        out.type = PeakCurveType::FIVE_POINT;
         out.order = 2;
         out.npts = static_cast<int>(t.size());
         out.coeff = { sol[2], sol[1], sol[0], 0.0 };   // c0=c, c1=b, c2=a
@@ -219,7 +212,7 @@ namespace subsample_refine {
     // other early return (too few samples, singular solve, no curvature) is
     // untouched: those are cases where no vertex exists to report.
     inline peak_fit quadratic_fit(const std::vector<double>& signal, int seed,
-        double sigma, int halfWidth = kWindowHalfWidth, bool applyGuard = true) {
+        double sigma, int halfWidth, bool applyGuard = true) {
         peak_fit out;
         out.seed = seed;
         out.position = static_cast<double>(seed);
@@ -237,7 +230,7 @@ namespace subsample_refine {
         std::vector<double> sol;
         const bool ok = solveLinear({ {S4,S3,S2},{S3,S2,S1},{S2,S1,S0} }, { Y2,Y1,Y0 }, sol);
         if (!ok || std::fabs(sol[0]) < 1e-12) {
-            out.type = CurveType::FIVE_POINT;
+            out.type = PeakCurveType::FIVE_POINT;
             out.position = fivePointParabolaExtremum(signal, seed);
             return out;
         }
@@ -254,15 +247,15 @@ namespace subsample_refine {
         // unweighted parabola. Skipped when applyGuard is false, in which case
         // execution falls through and the quadratic below is returned with
         // guardFailed set.
-        const bool tripped = (weightedRmsResidualFrac(ws, fitted) > kResidualGuardFrac);
+        const bool tripped = (weightedRmsResidualFrac(ws, fitted) > residual_guard_frac);
         if (tripped && applyGuard) {
-            out.type = CurveType::FIVE_POINT;
+            out.type = PeakCurveType::FIVE_POINT;
             out.position = fivePointParabolaExtremum(signal, seed);
             return out;
         }
 
         const double tVertex = -sol[1] / (2.0 * sol[0]);
-        out.type = CurveType::QUADRATIC;
+        out.type = PeakCurveType::QUADRATIC;
         out.order = 2;
         out.rss = rss;
         out.npts = static_cast<int>(ws.t.size());
@@ -276,19 +269,19 @@ namespace subsample_refine {
     // ---------------------------------------------------------------------
     // Symmetric extrema: Gaussian-weighted quadratic, vertex = extremum.
     // ---------------------------------------------------------------------
-    // NAME KEPT DELIBERATELY. Renaming this to quadratic_fit collides with the
-    // fit above -- the 4th/5th parameters have defaults, so a 3-argument call
-    // matches both overloads and is ambiguous, which is a hard compile error at
-    // the wrapper itself and at all four feature_marks.cpp call sites. It also
-    // pairs with asymmetricExtremum below.
-    inline double symmetricExtremum(const std::vector<double>& signal, int seed, double sigma) {
-        return quadratic_fit(signal, seed, sigma).position;
+    // NAME KEPT DELIBERATELY, and the ambiguity that forced it is now gone:
+    // quadratic_fit's halfWidth is required, so a 3-argument call no longer
+    // matches it and the overloads cannot collide. Kept anyway because the name
+    // pairs with asymmetricExtremum below and is used outside this snapshot.
+    inline double symmetricExtremum(const std::vector<double>& signal, int seed,
+        double sigma, int halfWidth) {
+        return quadratic_fit(signal, seed, sigma, halfWidth).position;
     }
 
     // Gaussian-weighted cubic, y = a t^3 + b t^2 + c t + d; dy/dt = 0 solved
     // analytically, root nearest the seed. applyGuard: see quadratic_fit.
     inline peak_fit cubic_fit(const std::vector<double>& signal, int seed,
-        double sigma, int halfWidth = kWindowHalfWidth, bool applyGuard = true) {
+        double sigma, int halfWidth, bool applyGuard = true) {
         peak_fit out;
         out.seed = seed;
         out.position = static_cast<double>(seed);
@@ -297,7 +290,7 @@ namespace subsample_refine {
         if (!ws.ok) return out;   // SEED, no polynomial
 
         auto fivePoint = [&]() {
-            out.type = CurveType::FIVE_POINT;
+            out.type = PeakCurveType::FIVE_POINT;
             out.order = 0;
             out.position = fivePointParabolaExtremum(signal, seed);
             return out;
@@ -329,7 +322,7 @@ namespace subsample_refine {
             rss += e * e;
         }
         // ---- THE RESIDUAL GUARD (see quadratic_fit) --------------------
-        const bool tripped = (weightedRmsResidualFrac(ws, fitted) > kResidualGuardFrac);
+        const bool tripped = (weightedRmsResidualFrac(ws, fitted) > residual_guard_frac);
         if (tripped && applyGuard) return fivePoint();
 
         // dy/dt = 3a t^2 + 2b t + c = 0
@@ -352,7 +345,7 @@ namespace subsample_refine {
             else if (r2In) tBest = r2;
             else return fivePoint();
         }
-        out.type = CurveType::CUBIC;
+        out.type = PeakCurveType::CUBIC;
         out.order = 3;
         out.rss = rss;
         out.npts = static_cast<int>(ws.t.size());
@@ -368,8 +361,9 @@ namespace subsample_refine {
     // dy/dt = 3a t^2 + 2b t + c = 0 analytically; pick the root inside the
     // window closest to t=0 (the seed).
     // ---------------------------------------------------------------------
-    inline double asymmetricExtremum(const std::vector<double>& signal, int seed, double sigma) {
-        return cubic_fit(signal, seed, sigma).position;
+    inline double asymmetricExtremum(const std::vector<double>& signal, int seed,
+        double sigma, int halfWidth) {
+        return cubic_fit(signal, seed, sigma, halfWidth).position;
     }
 
     // ---------------------------------------------------------------------
@@ -382,7 +376,7 @@ namespace subsample_refine {
     // quadratic.
     // ---------------------------------------------------------------------
     inline peak_fit bestPeakExtremumFit(const std::vector<double>& signal, int seed,
-        double sigma, int halfWidth = kWindowHalfWidth,
+        double sigma, int halfWidth,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto) {
         // GUARDED, for Auto only. These two are unchanged from before, so the
         // Auto branch at the bottom behaves exactly as it always has.
@@ -420,9 +414,13 @@ namespace subsample_refine {
         const double bicC = bic(c.rss, c.npts, 4);
         return (bicC < bicQ) ? c : q;     // strict: quadratic wins ties
     }
+    // halfWidth REQUIRED, and before peakMode because it is not optional.
+    // Pass subsample_refine::peak_halfwidth::<landmark>; there is deliberately
+    // no default to inherit.
     inline double best_peakfinding_algorithm(const std::vector<double>& signal, int seed, double sigma,
+        int halfWidth,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto) {
-        return bestPeakExtremumFit(signal, seed, sigma, kWindowHalfWidth, peakMode).position;
+        return bestPeakExtremumFit(signal, seed, sigma, halfWidth, peakMode).position;
     }
 
     // ---------------------------------------------------------------------
@@ -431,13 +429,14 @@ namespace subsample_refine {
     // is the point of maximum slope, same math as an extremum, just one
     // derivative order up).
     // ---------------------------------------------------------------------
-    inline double maxSlopePoint(const std::vector<double>& signal, int seed, double sigma) {
+    inline double maxSlopePoint(const std::vector<double>& signal, int seed,
+        double sigma, int halfWidth) {
         const int N = static_cast<int>(signal.size());
         std::vector<double> d1(N, std::numeric_limits<double>::quiet_NaN());
         for (int i = 1; i < N - 1; ++i)
             if (!std::isnan(signal[i - 1]) && !std::isnan(signal[i + 1]))
                 d1[i] = (signal[i + 1] - signal[i - 1]) / 2.0;
-        return symmetricExtremum(d1, seed, sigma);
+        return symmetricExtremum(d1, seed, sigma, halfWidth);
     }
 
     // ---------------------------------------------------------------------
@@ -468,18 +467,6 @@ namespace subsample_refine {
         TransitionCandidates* candOut = nullptr,
         curve_fit::FitMode mode = curve_fit::FitMode::Auto) {
         const int N = static_cast<int>(signal.size());
-        // If the caller supplies explicit bounds (e.g. already correctly
-        // one-sided, capped at a known extremum so the window can't cross
-        // it), use those directly. Otherwise fall back to the seed +-
-        // windowSamples/2 symmetric window, same as before. The symmetric
-        // default can accidentally reach across a nearby extremum if the
-        // seed sits close to one (the same class of bug found and fixed for
-        // compute_s_end/compute_t_end/compute_q_onset in an earlier pass) --
-        // callers that already know a safe one-sided range should supply it.
-        // Bounds arrive as sub-sample doubles so callers can pass a landmark
-        // straight through. The slice below is necessarily integer, so widen
-        // outward -- floor the lower, ceil the upper -- and the requested span
-        // is always covered rather than clipped.
         int lo, hi;
         if (boundLo >= 0.0 && boundHi >= 0.0 && boundHi > boundLo) {
             lo = std::max(0, static_cast<int>(std::floor(boundLo)));
@@ -587,4 +574,5 @@ namespace subsample_refine {
 
 
     inline int cubicSplineNotch(const std::vector<double>&, int lo, int, int*) { return lo; }
+
 }  // namespace subsample_refine

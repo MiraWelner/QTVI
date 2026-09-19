@@ -35,7 +35,7 @@
 #include "template_structs.hpp"
 #include "template_generation/normalize_template_amplitude.hpp"
 #include "pulse_matched_filter.hpp"
-#include "find_foot_pulseox.hpp"
+#include "find_ppg_foot.hpp"
 
 struct PPGTemplatesResult {
     vector<vector<double>> templates;   // [bin][sample]
