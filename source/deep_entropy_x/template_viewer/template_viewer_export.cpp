@@ -594,7 +594,16 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // t_end, P reports p_begin, J reports t_end. The intervals below
             // therefore resolve under R and Q, which hold q_onset, s_end and
             // t_end, and come back absent under P and J.
-            tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
+            // R AND J REPORT THEIR OWN CELLS, P AND Q THE CANONICAL SET.
+            // Those two alignments carry their own measurement of a landmark
+            // (anchor_view::ownsCanonicalBar), so a _user column in their block
+            // means "placed against THIS waveform" and must not be the shared
+            // bar translated in. P and Q own the shared bars, so userMarks --
+            // which reads the owner cells and converts -- is the right answer
+            // for them and for the R-block interval columns.
+            tbank::BankMarkerSet umk = anchor_view::hasOwnBars(anchor)
+                ? b.slotMarks(c, 0, anchor)
+                : b.userMarks(c, 0, anchor);
             // userMarks returns BARS ONLY, and BankMarkerSet no longer has a
             // p_peak field at all: P peak is a glyph. It is recomputed from the
             // two bars that bracket it, on this alignment's own waveform.
@@ -619,7 +628,16 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
                 exportLandmarks(bi, c, anchor);
             // Same owner-cell read as the block above: one bar set, this
             // alignment's columns. See the note there.
-            tbank::BankMarkerSet umk = b.userMarks(c, 0, anchor);
+            // R AND J REPORT THEIR OWN CELLS, P AND Q THE CANONICAL SET.
+            // Those two alignments carry their own measurement of a landmark
+            // (anchor_view::ownsCanonicalBar), so a _user column in their block
+            // means "placed against THIS waveform" and must not be the shared
+            // bar translated in. P and Q own the shared bars, so userMarks --
+            // which reads the owner cells and converts -- is the right answer
+            // for them and for the R-block interval columns.
+            tbank::BankMarkerSet umk = anchor_view::hasOwnBars(anchor)
+                ? b.slotMarks(c, 0, anchor)
+                : b.userMarks(c, 0, anchor);
             const std::vector<double>& ecgA = b.chFor(c, anchor).ecgTemplate_raw;
             const FeatureMarks::ReactiveEcg rxA = FeatureMarks::reactive_ecg(
                 ecgA, (int)std::lround(aa.p_begin), (int)std::lround(aa.q_onset),

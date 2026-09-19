@@ -84,6 +84,26 @@ namespace anchor_view {
         return isBar(marker) && anchorFor(marker) == a;
     }
 
+    // ---- TWO KINDS OF ALIGNMENT ------------------------------------------
+    //
+    // P_ONSET and Q_ONSET OWN the canonical bars: p_begin lives in P, and
+    // q_onset / s_end / t_end in Q (anchorFor). Automatic shows that set, and
+    // forcing P or Q shows the part of it that alignment carries -- the SAME
+    // bars, so one value, one colour, one set of output columns.
+    //
+    // R_PEAK and J_POINT are separately aligned averages. A P onset measured
+    // on the R-aligned average is not the P-aligned one moved sideways; it is
+    // a different measurement of a different waveform. So those two get their
+    // own cells, drawn in their own style, reported in their own columns.
+    inline constexpr bool ownsCanonicalBar(AnchorType a) {
+        return a == anchorFor(kPBegin) || a == anchorFor(kQBegin);
+    }
+
+    // The complement: this alignment's bars are its own, not the canonical set.
+    inline constexpr bool hasOwnBars(AnchorType a) {
+        return !ownsCanonicalBar(a);
+    }
+
     inline constexpr bool showsBar(AnchorType a, int marker) {
         if (!isBar(marker)) return false;
         switch (a) {

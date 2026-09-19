@@ -945,21 +945,56 @@ tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const BinPlotWidget* pw,
     if (!pw) return out;
 
     const AnchorType a = currentGridAnchor();
-    const tbank::BankMarkerSet& edits = b.slotMarks(lead, slot, a);
     const FeatureMarks::TemplateLandmarks& lm = pw->detectedLandmarks();
 
     // showsBar GATES A FORCED VIEW ONLY. Automatic draws all four bars whatever
     // alignment it is anchored on -- and it re-anchors on a bar CLICK, so
     // gating it here made clicking the P bar hide the three Q bars.
-    const auto pick = [&](int marker, double edit, double detected) -> double {
+    // EACH BAR'S EDIT COMES FROM THE CELL THE DRAG WROTE IT TO -- its OWNER
+    // anchor (anchor_view::anchorFor), not the alignment on screen. Reading
+    // them all from currentGridAnchor() worked only in Automatic, where a bar
+    // click re-anchors the grid to that bar's own anchor so the two coincide;
+    // force any alignment afterwards and every bar read an empty cell and fell
+    // back to the detection, which looked like the edit being thrown away.
+    //
+    // The stored value is in the owner's columns, so it is converted into the
+    // drawn frame here -- the inverse of the view -> owner conversion
+    // moveEcgMarker applies on the way in.
+    // WHICH CELL AN EDIT LIVES IN depends on the alignment, and that is the
+    // point -- see anchor_view::ownsCanonicalBar.
+    //
+    //   forced R or J : this alignment's OWN cell, in its own columns, so no
+    //                   conversion -- it was measured on the waveform drawn.
+    //   otherwise     : the bar's canonical owner cell (P for p_begin, Q for
+    //                   the rest), converted into the drawn frame. Automatic
+    //                   and forced P/Q therefore show and edit one shared bar.
+    const bool ownBars = m_forceAlign && anchor_view::hasOwnBars(a);
+
+    const auto field = [](const tbank::BankMarkerSet& s, int marker) {
+        if (marker == anchor_view::kPBegin) return s.p_begin;
+        if (marker == anchor_view::kQBegin) return s.q_onset;
+        if (marker == anchor_view::kSEnd)   return s.s_end;
+        if (marker == anchor_view::kTEnd)   return s.t_end;
+        return -1.0;
+        };
+
+    const auto pick = [&](int marker, double detected) -> double {
         if (m_forceAlign && !anchor_view::showsBar(a, marker)) return -1.0;
-        if (edit >= 0.0) return edit;          // the operator placed it
+        if (ownBars) {
+            const double edit = field(b.slotMarks(lead, slot, a), marker);
+            if (edit >= 0.0) return edit;
+        }
+        else {
+            const AnchorType owner = anchor_view::anchorFor(marker);
+            const double edit = field(b.slotMarks(lead, slot, owner), marker);
+            if (edit >= 0.0) return edit + b.frameShift(lead, owner, a);
+        }
         return lm.valid ? detected : -1.0;     // otherwise the detection
         };
-    out.p_begin = pick(anchor_view::kPBegin, edits.p_begin, lm.p_begin);
-    out.q_onset = pick(anchor_view::kQBegin, edits.q_onset, lm.q_onset);
-    out.s_end = pick(anchor_view::kSEnd, edits.s_end, lm.s_end);
-    out.t_end = pick(anchor_view::kTEnd, edits.t_end, lm.t_end);
+    out.p_begin = pick(anchor_view::kPBegin, lm.p_begin);
+    out.q_onset = pick(anchor_view::kQBegin, lm.q_onset);
+    out.s_end = pick(anchor_view::kSEnd, lm.s_end);
+    out.t_end = pick(anchor_view::kTEnd, lm.t_end);
     return out;
 }
 
@@ -1233,13 +1268,14 @@ void TemplateViewerWindow::applyBinCommonToWidget(BinPlotWidget* pw,
         if (BinPlotWidget::markerIsPpg(f.marker)) continue;
         pw->setMarker(static_cast<BinPlotWidget::Marker>(f.marker), b.*f.field);
     }
-    // NO ALIGNMENT BADGE. It switched the ECG bars to dotted align_bar_color
-    // (see the `overlay` branch in paintEvent) to say "these are this
-    // alignment's own bars, not the assembled set". That distinction is gone:
-    // every view now draws the same bars -- the panel's detection, or the
-    // operator's edit -- so a different colour in a forced view said something
-    // untrue about what was being edited.
-    pw->setAlignmentBadge(nullptr);
+    // BADGE FOR R AND J ONLY: dotted, one colour, labelled (the `overlay`
+    // branch in paintEvent). Those two alignments carry their own bars, so the
+    // different style says something true -- the operator is editing this
+    // alignment's measurement, not the shared one. P and Q show the canonical
+    // bars and keep the per-landmark palette.
+    const bool ownBadge = m_forceAlign && anchor_view::hasOwnBars(m_forcedAlign);
+    pw->setAlignmentBadge(ownBadge ? anchor_view::label(m_forcedAlign)
+        : nullptr);
 
     // Glyphs in the frame of the alignment the grid is drawing.
 

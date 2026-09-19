@@ -383,7 +383,12 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
     // Forced P or Q: m_forcedAlign IS the bar's owner, so this writes the
     // canonical cell -- the same one Automatic reads. Forced R or J: that
     // alignment's own cell, which only it displays. Automatic: the owner.
-    const AnchorType owner = m_forceAlign ? m_forcedAlign
+    // THE SAME CELL barsForPanel READS. Forced R or J edits that alignment's
+    // own bar; everything else edits the canonical one (anchorFor). See
+    // anchor_view::ownsCanonicalBar for why those two are different things.
+    const AnchorType owner =
+        (m_forceAlign && anchor_view::hasOwnBars(m_forcedAlign))
+        ? m_forcedAlign
         : anchor_view::anchorFor(marker);
     if (!anchor_view::showsBar(owner, marker)) return;
 
