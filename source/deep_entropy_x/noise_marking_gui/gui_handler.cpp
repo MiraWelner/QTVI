@@ -505,7 +505,12 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     m_notchFilterEnabled = false;
     connect(ui->notch_filter, &QCheckBox::toggled, this, [this](bool on) {
         m_notchFilterEnabled = on;
-        loadChunkFromFile(current_chunk_index, /*resetScroll=*/false);
+        // NO loadChunkFromFile. The chunk in memory does not change when this
+        // bool does -- the notch is applied at render time to the visible
+        // window (see notchedSpan in signal_renderer.cpp) -- and the reload
+        // that used to sit here re-read every channel and every raw block from
+        // disk, then refiltered 8 hours of signal, for a redraw of one window.
+        // That was the multi-second stall.
         handle_data_plot();
         updateAmpogramCursor();
         });

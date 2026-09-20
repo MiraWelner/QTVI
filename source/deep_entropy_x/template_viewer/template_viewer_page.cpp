@@ -1369,15 +1369,13 @@ BinPlotWidget::State TemplateViewerWindow::panelState(int binIdx, int leadIdx,
     const TemplateBin& b = m_bins[binIdx];
 
     bool ecgBad = false, ppgBad = false;
-    if (leadIdx >= 0 && leadIdx <= 2 && templateIdx >= 0
-        && templateIdx < b.ecg_bank[leadIdx].size())
+    if (leadIdx >= 0 && leadIdx <= 2 && templateIdx >= 0  && templateIdx < b.ecg_bank[leadIdx].size())
         ecgBad = b.ecg_bank[leadIdx].templates[templateIdx].marked_invalid_template;
-    if (templateIdx >= 0 && templateIdx < b.ppg_bank.size())
+    if (templateIdx >= 0 && templateIdx < b.ppg_bank.size()) {
         ppgBad = b.ppg_bank.templates[templateIdx].marked_invalid_template;
-    // Slot 0 also carries the bin-level flags; OR them in.
-    if (templateIdx == 0) {
-        if (b.bad_ppg != 0) ppgBad = true;
-        if (leadIdx >= 0 && leadIdx <= 2 && b.bad_r_ch[leadIdx]) ecgBad = true;
+    }
+    if (templateIdx == 0 && leadIdx >= 0 && leadIdx <= 2 && b.bad_r_ch[leadIdx]) {
+        ecgBad = true;
     }
     return (ecgBad && ppgBad) ? BinPlotWidget::State::BadBoth
         : ppgBad ? BinPlotWidget::State::BadPPG

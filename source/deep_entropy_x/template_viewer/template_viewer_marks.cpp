@@ -320,7 +320,7 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         const int gi = m_pageGlobalIdx[li];
         const int slot = m_pageTemplateIdx[li];
         if (gi < 0 || slot < 0) continue;
-        if (m_bins[gi].bad_ppg != 0) continue;
+        if (m_bins[gi].bad_ppg == 1) continue;
         ppgSeed(gi, slot);
         const double cur = ppgGet(gi, slot);
         if (cur < 0.0) continue;

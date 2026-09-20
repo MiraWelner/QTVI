@@ -239,32 +239,9 @@ double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracket
         : static_cast<double>(best);
 }
 
-double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs,
-    curve_fit::PeakFitMode peakMode)
+double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs,  curve_fit::PeakFitMode peakMode)
 {
-    // P PEAK = A RAW ARGMAX BETWEEN THE TWO POLES, refined to sub-sample.
-    //
-    // The largest SAMPLE in [loIn, hiIn], with no baseline term of any kind.
-    // This used to subtract an endpoint chord -- a straight line between
-    // v[a] and v[b] -- and take the largest deviation from it. That made both
-    // poles do two jobs at once: they bounded the search AND they anchored the
-    // baseline, so moving either bar rotated the chord about the other and
-    // could hand the maximum to a different sample even while the P hump
-    // stayed comfortably inside the window. A raw argmax cannot do that: the
-    // poles only bound the search, so a bar move changes the answer only when
-    // it moves a pole across the peak itself.
-    //
-    // POLARITY IS ASSUMED UPRIGHT. argmax finds the largest value, so an
-    // inverted P would return the baseline shoulder instead. Note that this is
-    // also the one finder here that does NOT apply the qrs_positive_at flip its
-    // neighbours do (compute_p_begin and detect_p_end both flip into an
-    // `upright` copy and then call this one on the RAW array), so an inverted
-    // lead has to be excluded upstream rather than handled here.
-    //
-    // The window is clamped into the trace's FINITE region, so it always
-    // contains signal and the argmax always resolves. There is no failure
-    // branch and no fallback: the only -1 is a trace with no finite sample at
-    // all, which is not a P-detection case but an empty trace.
+    //found coarsely by the max deviation from the qonset, 
     const int N = static_cast<int>(v.size());
     if (N < 1 || fs <= 0.0) return -1.0;
 
@@ -286,20 +263,27 @@ double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, d
     (void)anyFinite;   // each caller's own sentinel follows
     if (b < a) return static_cast<double>(fFin);   // window was a NaN gap
 
-    // The argmax itself is a COLUMN. Ties go to the earliest sample, which on
-    // a flat-topped P is the left shoulder rather than the middle -- the
-    // refinement below is what resolves the vertex, so the tie rule only
-    // decides where that fit is seeded.
-    int best = a; double bv = -std::numeric_limits<double>::infinity();
+    // FURTHEST FROM BASELINE, NOT LARGEST -- an inverted P is a real waveform
+    // and an argmax returns the shoulder of its neighbour instead.
+    //
+    // ONE END, NOT TWO. compute_t_peak averages both ends of its bracket, but
+    // P's left end is p_begin, which is derived FROM the P peak and so does not
+    // exist yet. v[b] is the right end: hi is q_onset less the 20 ms trim, i.e.
+    // a sample on the PQ segment, which is the isoelectric reference anyway.
+    const double B = v[b];
+    int best = a; double bd = -1.0;
     for (int i = a; i <= b; ++i) {
         if (std::isnan(v[i])) continue;
-        if (v[i] > bv) { bv = v[i]; best = i; }
+        const double d = std::abs(v[i] - B);
+        if (d > bd) { bd = d; best = i; }
     }
 
     // SUB-SAMPLE COMES FROM HERE, not from the argmax: Gaussian-weighted
     // quadratic/cubic over best +- peak_halfwidth::P, sigma = peak_sigma::P.
     // The coarse column stands if the refinement is non-finite -- that is
     // still the detected column, not a fallback default.
+    std::vector<double> u = v;
+    if (v[best] < B) for (double& x : u) x = -x;
     const double p = subsample_refine::best_peakfinding_algorithm(v, best,
         subsample_refine::peak_sigma::P,
         subsample_refine::peak_halfwidth::P, peakMode);
@@ -517,7 +501,7 @@ double FeatureMarks::compute_p_begin(const std::vector<double>& v, double fs, in
     if (!(pPeak >= 0.0)) {
         const double q = FeatureMarks::compute_q_onset(v, fs, r_idx);
         const double hi = (q >= 0.0) ? q : static_cast<double>(r_idx);
-        pPeak = FeatureMarks::compute_p_peak(v, static_cast<double>(fFin), hi, fs);
+        pPeak = FeatureMarks::compute_p_peak(v, std::max(static_cast<double>(fFin), static_cast<double>(r_idx) - 0.300 * fs), hi, fs);
     }
     const int pUser = std::clamp(static_cast<int>(std::lround(pPeak)), fFin, N - 1);
     const int w = std::max(1, static_cast<int>(std::lround(0.150 * fs))); //150ms window before the p peak - the p wave can be wide
@@ -1325,16 +1309,6 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     const int n = static_cast<int>(tmplIn.size());
     if (n < 2 || nominal_r_col < 0 || nominal_r_col >= n || sampleRate <= 0.0)
         return out;
-
-    // EDGE MARGIN, ONE PLACE, ALL FINDERS. A steep noise spike at the very
-    // first or last drawn sample can look like the largest deviation in the
-    // trace, so an argmax-based finder (the P peak especially) locks onto it
-    // instead of the real wave. Every finder below already walks in from NaN
-    // edges, so blanking a margin at each end of a working copy makes that edge
-    // invisible to all of them at once -- no per-finder change. R is refined on
-    // the ORIGINAL trace (it is interior by construction and its column must not
-    // move); every landmark search then runs on the margined copy. 40 ms is the
-    // same order as the finders' own bracket slack.
     const int margin = std::max(1, static_cast<int>(std::lround(0.040 * sampleRate)));
     std::vector<double> tmpl = tmplIn;
     if (2 * margin < n) {
@@ -1354,38 +1328,15 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
         r = static_cast<double>(seed);   // refinement failed; nominal stands
     const int r_anchor = static_cast<int>(r);
 
-    // CALL ORDER IS LOAD-BEARING: the J-point feeds T-offset, the P-peak feeds
-    // P-onset, and the Q-peak feeds Q-onset. Each of those parameters exists to
-    // stop a second, slightly different search for the same landmark, so
-    // reordering these lines changes the answers even though every call looks
-    // independent.
     const double j = FeatureMarks::compute_j_point(tmpl, sampleRate, r_anchor, &out.s_end_cand, fitMode);
     const double te = FeatureMarks::compute_t_end(tmpl, sampleRate, r_anchor, j, &out.t_end_cand, fitMode);
-
     const double qp = FeatureMarks::compute_q_peak(tmpl, r_anchor, sampleRate, peakMode);
     bool qFound = false;
     const double q = FeatureMarks::compute_q_onset(tmpl, sampleRate, r_anchor, qp, &qFound, &out.q_onset_cand, fitMode);
-    // P-PEAK UPPER BRACKET, ALWAYS VALID. The P-peak search is an argmax over
-    // [0, bracket]; the only way it returns -1 on a template that has a P
-    // region is a bracket that is itself invalid. q_onset is the bracket we
-    // want, but it is -1 on a monophasic-R (no-Q) beat -- and passing that
-    // straight through let a failed Q-onset erase the P wave, which is the bug
-    // this fixes. Fall back to a fixed 50 ms before R so the window is never
-    // empty and the argmax always runs.
     double pHi = q;
     if (!(pHi >= 0.0)) pHi = r - 0.050 * sampleRate;
-    const double pp = FeatureMarks::compute_p_peak(tmpl, 0.0, pHi, sampleRate, peakMode);
-    // pPeakIn = -1, NOT pp. compute_p_begin derives the peak itself over
-    // [firstFinite, q_onset]; handing it `pp` -- computed just above from a
-    // DIFFERENT bracket, [0, pHi] -- made lm.p_begin a second, disagreeing
-    // answer. Every other caller already passes -1, so this was the odd one
-    // out, and it was the number the focus panel's fiducial and the marking
-    // CSV's p_begin_auto both reported while the bar reported the other.
-    //
-    // ONE P ONSET NOW: this, seed_bank_template's bar and reactiveGlyphs' X are
-    // the same call on the same trace.
-    const double pb = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_anchor,
-        -1.0, &out.p_begin_cand, fitMode, iqr);
+    const double p_peak = FeatureMarks::compute_p_peak(tmpl, std::max(0.0, static_cast<double>(r_anchor) - 0.300 * sampleRate), pHi, sampleRate, peakMode);
+    const double pb = FeatureMarks::compute_p_begin(tmpl, sampleRate, r_anchor, -1.0, &out.p_begin_cand, fitMode, iqr);
 
     // Out-of-range is folded to -1 (absent), NOT clamped to an edge column. A
     // landmark pinned to column 0 is indistinguishable from one genuinely found
@@ -1396,12 +1347,37 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
         return x;
         };
 
+    // R AGAIN, NOW THAT ITS BRACKETS EXIST. The pass above refined the
+    // alignment's nominal column, which cannot see polarity: on a negative QRS
+    // the refiner walks uphill away from the true R. With q_onset and s_end in
+    // hand, R is the sample furthest from the mean of those two ends -- the
+    // same rule compute_t_peak uses on s_end/t_end.
+    if (q >= 0.0 && j > q) {
+        const int qa = std::clamp((int)std::lround(q), 0, n - 1);
+        const int jb = std::clamp((int)std::lround(j), 0, n - 1);
+        if (jb > qa && !std::isnan(tmpl[qa]) && !std::isnan(tmpl[jb])) {
+            const double B = 0.5 * (tmpl[qa] + tmpl[jb]);
+            int best = qa; double bd = -1.0;
+            for (int i = qa; i <= jb; ++i) {
+                if (std::isnan(tmpl[i])) continue;
+                const double d = std::abs(tmpl[i] - B);
+                if (d > bd) { bd = d; best = i; }
+            }
+            std::vector<double> u = tmpl;
+            if (tmpl[best] < B) for (double& x : u) x = -x;
+            const double rr = subsample_refine::best_peakfinding_algorithm(
+                u, best, subsample_refine::peak_sigma::R,
+                subsample_refine::peak_halfwidth::R, peakMode);
+            if (std::isfinite(rr) && rr >= 0.0 && rr <= (double)(n - 1)) r = rr;
+        }
+    }
+
     out.r_peak = r;
     out.q_peak = keep(qp);   // -1 on a monophasic R is the RIGHT answer
     out.q_onset = keep(q);
     out.s_end = keep(j);
     out.t_end = keep(te);
-    out.p_peak = keep(pp);   // -1 on a ventricular template is the RIGHT answer
+    out.p_peak = keep(p_peak);   // -1 on a ventricular template is the RIGHT answer
     out.p_begin = keep(pb);
     // A flag that outlives its position would be a lie, so it is anded with the
     // position surviving keep().

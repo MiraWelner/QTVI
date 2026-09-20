@@ -16,6 +16,7 @@
 #include "logging/user_mark_log.hpp"
 #include "theme/theme.h"
 #include "annotation_types.hpp"
+#include "peak_finding/FilterUtils.hpp"   // notch_filter, for the render-time window notch
 
 
 #include <QtCharts/QAreaSeries>
@@ -126,6 +127,94 @@ namespace {
         return idx;
     }
 
+    // ---------------------------------------------------------------------
+    // RENDER-TIME POWERLINE NOTCH
+    // ---------------------------------------------------------------------
+    //
+    // The notch used to be applied in loadChunkFromFile, to the whole 8-hour
+    // chunk, which cost 6 s at 500 Hz and 12 s at 1 kHz for seven channels --
+    // and the toggle ALSO forced a full reload of every channel from disk,
+    // which nothing about a bool needed. Both are gone; this filters only the
+    // window being drawn.
+    //
+    // DISPLAY ONLY, BY CONSTRUCTION. The filtered samples live in a local
+    // buffer that dies with the redraw. The stored arrays stay pristine, which
+    // is the whole point: detectPeaks reads the same *dataRaw this function
+    // draws, so filtering it in place would put the notch into beat positions
+    // and into _log.csv. It must not. (bin_chunk_loader's old comment claimed
+    // detection saw the notch; it never did -- the detector reads the raw
+    // block, and only the upsampled arrays were being filtered.)
+    //
+    // Nor does anything on the analysis path: analysis_job::prepare reads the
+    // annealed .bin and filters none of it. The template viewer's own notch
+    // checkbox is the same kind of thing as this one -- it filters the template
+    // being drawn, not the template that was built. Notching is a viewing aid
+    // in this program, everywhere, with no exceptions.
+    //
+    // WHY PADDING AND NOT JUST THE WINDOW. A zero-phase IIR has a transient at
+    // each edge. The notch's poles sit at radius ~0.995, so the transient
+    // decays to 1e-3 in about 1400 samples (~2.8 s at 500 Hz). Filtering
+    // kNotchPadSec beyond each edge and cropping back makes the visible
+    // samples interior to the filter run, so what is drawn does not depend on
+    // where the window edge falls -- the same argument, and the same number,
+    // as kDetectMargin further down.
+    constexpr double kNotchPadSec = 5.0;
+
+    // Would this notch do anything at this rate? FilterUtils' notch_filter
+    // returns its input UNCHANGED when the stop band reaches Nyquist, which is
+    // correct but indistinguishable from a real result -- so the helpers below
+    // would copy a whole window to no effect. Asking first lets the draw loops
+    // take their zero-allocation path instead. Mirrors FilterUtils' own test
+    // (Q = 30 there; bandwidth = notch_hz / Q).
+    bool notchWouldApply(double sr, int notchHz) {
+        if (notchHz <= 0 || sr <= 0.0) return false;
+        const double hz = static_cast<double>(notchHz);
+        const double halfBw = 0.5 * hz / 30.0;
+        return (hz - halfBw) > 0.0 && (hz + halfBw) < (sr / 2.0);
+    }
+
+    // Filter [from, to) of `src` and return exactly that many samples.
+    // Returns empty if there is nothing to do, which callers read as "draw the
+    // original".
+    std::vector<double> notchedSpan(const QVector<double>& src, int from, int to,
+        double sr, int notchHz)
+    {
+        if (to <= from || !notchWouldApply(sr, notchHz)) return {};
+        const int pad = static_cast<int>(kNotchPadSec * sr);
+        const int lo = std::max(0, from - pad);
+        const int hi = std::min(static_cast<int>(src.size()), to + pad);
+        if (hi - lo < 4) return {};
+        std::vector<double> buf(static_cast<size_t>(hi - lo));
+        for (int i = lo; i < hi; ++i) buf[static_cast<size_t>(i - lo)] = src[i];
+        // FilterUtils' notch_filter: (x, notch_hz, fs). It is NaN-aware, so
+        // gaps survive as gaps instead of poisoning the whole buffer, and it
+        // no-ops (returning the input unchanged) when the notch would land at
+        // or past Nyquist for this rate.
+        buf = notch_filter(buf, static_cast<double>(notchHz), sr);
+        if (buf.size() != static_cast<size_t>(hi - lo)) return {};
+        return std::vector<double>(buf.begin() + (from - lo),
+            buf.begin() + (from - lo) + (to - from));
+    }
+
+    // Same, for a raw (t, v) block. Indices are into the point vector; the
+    // y values are filtered at the block's own NATIVE rate. Returns the
+    // filtered y values for [from, to), or empty to mean "draw the original".
+    std::vector<double> notchedSpanRaw(const QVector<QPointF>& src, int from, int to,
+        double nativeSr, int notchHz)
+    {
+        if (to <= from || !notchWouldApply(nativeSr, notchHz)) return {};
+        const int pad = static_cast<int>(kNotchPadSec * nativeSr);
+        const int lo = std::max(0, from - pad);
+        const int hi = std::min(static_cast<int>(src.size()), to + pad);
+        if (hi - lo < 4) return {};
+        std::vector<double> buf(static_cast<size_t>(hi - lo));
+        for (int i = lo; i < hi; ++i) buf[static_cast<size_t>(i - lo)] = src[i].y();
+        buf = notch_filter(buf, static_cast<double>(notchHz), nativeSr);
+        if (buf.size() != static_cast<size_t>(hi - lo)) return {};
+        return std::vector<double>(buf.begin() + (from - lo),
+            buf.begin() + (from - lo) + (to - from));
+    }
+
     QCategoryAxis* make_time_labled_xaxis(double startLocal, double duration, double globalOffset, bool labelsVisible)
     {
         auto* xAxis = new QCategoryAxis();
@@ -148,7 +237,11 @@ namespace {
     }
 
     std::pair<double, double> renderWindowedChart(QChartView* view, const QList<markable_data_series>& serieses, QList<QLineSeries*>& persistentLines, QList<QScatterSeries*>& persistentRawScatter,
-        double currentStartTime, double windowDuration, double globalOffset, double ecgSR, bool labelsVisible, bool useScatterMode, bool forceLineForUpsampled, double yScale = 1.0) {
+        double currentStartTime, double windowDuration, double globalOffset, double ecgSR, bool labelsVisible, bool useScatterMode, bool forceLineForUpsampled, double yScale = 1.0,
+        // Powerline notch, applied to the drawn window only. 0 = off, which is
+        // also the default, so plot_nonmarkable and any other caller that does
+        // not opt in is unchanged.
+        int notchHz = 0, double rawNativeSR = 0.0) {
         if (!view || !view->chart()) return { 1e9, -1e9 };
         QChart* chart = view->chart();
         chart->legend()->hide();
@@ -248,10 +341,19 @@ namespace {
                 center = *mid;
             }
 
+            // The drawn samples, notched if the toggle is on. Empty means
+            // "no notch" and the loop below reads d.data directly, so the
+            // off path allocates nothing.
+            const std::vector<double> notched =
+                notchedSpan(*d.data, startIdx, endIdx, ecgSR, notchHz);
+            const bool useNotched = !notched.empty();
+
             QList<QPointF> pts;
             if (plotSeries) pts.reserve(endIdx - startIdx);
             for (int i = startIdx; i < endIdx; ++i) {
-                const double raw = (*d.data)[i];
+                const double raw = useNotched
+                    ? notched[static_cast<size_t>(i - startIdx)]
+                    : (*d.data)[i];
                 if (std::isnan(raw)) continue;   // gap: don't feed NaN to the OpenGL line
                 if (raw < gMin) gMin = raw;
                 if (raw > gMax) gMax = raw;
@@ -295,10 +397,20 @@ namespace {
             constexpr int kMaxDots = 3000;
             const int stride = std::max(1, inWindow / kMaxDots);
 
+            // Notched BEFORE striding: the filter needs consecutive samples,
+            // and the stride below is a display decimation that would otherwise
+            // hand the IIR a signal at 1/stride of the rate it was designed for.
+            const std::vector<double> rawNotched =
+                notchedSpanRaw(*r.rawData, firstIdx, lastIdx, rawNativeSR, notchHz);
+            const bool useRawNotched = !rawNotched.empty();
+
             rawPts.reserve(std::min(inWindow, kMaxDots) + 1);
             for (int i = firstIdx; i < lastIdx; i += stride) {
                 const QPointF& p = (*r.rawData)[i];
-                rawPts.append({ p.x(), (p.y() - r.center) * yScale + r.center });
+                const double y = useRawNotched
+                    ? rawNotched[static_cast<size_t>(i - firstIdx)]
+                    : p.y();
+                rawPts.append({ p.x(), (y - r.center) * yScale + r.center });
             }
 
             rawScatter->replace(rawPts);
@@ -1024,7 +1136,12 @@ void noise_marking_gui::handle_data_plot() {
             r.chartView == xLabelOwnerRight,
             m_plotMode == PlotMode::Scatter,
             m_plotMode == PlotMode::Line,
-            yScaleForSignal(label));
+            yScaleForSignal(label),
+            // Notch the drawn window only. Gated on the checkbox AND on the
+            // config having a powerline frequency, exactly as the old
+            // whole-chunk block was.
+            (m_notchFilterEnabled ? m_cfg.notch_filter_hz : 0),
+            nativeHz);
 
 
         if (label == "PPG") {

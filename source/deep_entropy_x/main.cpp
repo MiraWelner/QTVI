@@ -3,7 +3,7 @@
  * @brief  Entry point for the noise marking and template marking pipeline. Handles user input for dataset selection, initials, and file processing.
  */
 
-#include "post_process.hpp"
+#include "analysis_job.hpp"
 #include "config_file_handling/config_loader.hpp"
 #include "noise_marking_gui/gui_handler.h"
 #include "noise_marking_gui/user_annotation_handler.h"
@@ -19,7 +19,6 @@
 #include <QFileInfo>
 
 #include <algorithm>
-#include <atomic>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -27,7 +26,6 @@
 #include <string>
 #include <system_error>
 #include <thread>
-#include <functional>
 #include <QtWidgets/QMessageBox>
 #include <vector>
 
@@ -143,11 +141,12 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
 // TemplateViewerWindow on the templates file and blocks (local event loop)
 // until the viewer finishes. It used to open one window per alignment.
 // ---------------------------------------------------------------------------
-static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_process_detail::ViewerJob> job, const QString& fileId, std::function<void()> ensureWorkerDone) {
+static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis_job::AnalysisJob> job, const QString& fileId,
+    std::vector<analysis_job::BankSnapshot>& outBanks) {
     const QString displayId = fileId;
 
     // ---- EVERY ALIGNMENT BUILT ONCE, BEFORE THE WINDOW OPENS ----------
-    // The anchor alignments are built in prepareViewerJob now -- all four are
+    // The anchor alignments are built in analysis_job::prepare now -- all four are
     // folded into job.tmpl before the provisional templates file is written,
     // while job.beats is still the pristine R-pass matrix. So there is nothing
     // to do here: the file the viewer is about to open already carries them.
@@ -186,7 +185,7 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
 
         viewer.show();
         // FROM MEMORY, NOT FROM A FILE. This passed
-        // job->viewerTemplatePath, which meant prepareViewerJob had to write
+        // job->viewerTemplatePath, which meant analysis_job::prepare had to write
         // templates.bin before the squared/absval blocks existed -- a file
         // that looked complete and was not. The TemplateFile is already in
         // this process; the disk round trip produced nothing but a filename.
@@ -203,45 +202,29 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<post_pro
             cfg.notch_filter_hz);
         loop.exec();
 
-        // ---- TEMPLATES.BIN AGAIN, NOW THAT IT CAN SAY SOMETHING --------
+        // ---- THE OPERATOR'S BANKS, OUT TO THE CALLER -------------------
         //
-        // prepareViewerJob wrote it BEFORE this window opened, so every
-        // template's confirmed_by_operator was false and the `confirmed`
-        // column read "presumed" for the whole record no matter how much
-        // marking had been done.
-        //
-        // The flags live on the VIEWER's m_bins -- showPage sets
+        // The confirmation flags live on the VIEWER's m_bins -- showPage sets
         // confirmed_by_operator as each panel is built, and a right-click sets
-        // marked_invalid_template -- while job->tmpl is a separate
-        // TemplateFile that nothing touches after that first write. So the
-        // banks are copied back and the file rewritten here, once, after the
-        // operator is done.
+        // marked_invalid_template -- while job->tmpl is a separate TemplateFile
+        // that nothing touches after prepare(). They have to be copied back or
+        // the `confirmed` column reads "presumed" for the whole record no
+        // matter how much marking was done.
         //
-        // BANKS ONLY. The waveforms, r_cols and per-bin scalars in job->tmpl
-        // are the generated ones and the viewer never edits them; copying the
-        // whole bin back would overwrite the squared/absval blocks the
-        // finalize worker packed into it.
-        {
-            const auto& vb = viewer.bins();
-            for (size_t i = 0; i < job->tmpl.bins.size() && i < vb.size(); ++i) {
-                job->tmpl.bins[i].ecg_bank = vb[i].ecg_bank;
-                job->tmpl.bins[i].ppg_bank = vb[i].ppg_bank;
-            }
-            // The job's own path, composed once in prepareViewerJob. Rebuilding
-            // it from cfg + stem here is a second place for the name to live
-            // and drift from.
-            const std::filesystem::path tp = job->binsPath;
-            try {
-                template_io::write_template_binfile(tp.string(), job->tmpl);
-                std::cerr << "  [templates] rewrote " << tp.string()
-                    << " with the operator's confirmations\n";
-            }
-            catch (const std::exception& e) {
-                std::cerr << "  [templates] WARNING: could not rewrite "
-                    << tp.string() << ": " << e.what()
-                    << " -- the file still holds the pre-marking state\n";
-            }
-        }
+        // The copy-back AND the write used to happen right here, and both were
+        // wrong in the same way: the finalize worker is very often STILL
+        // RUNNING at this point (nothing joined it -- ensureWorkerDone was
+        // built and never called), and mergeTemplatesSlow mutates job->tmpl.
+        // So the write raced the worker over the same object, and which blocks
+        // reached disk depended on the timing of a background thread.
+        //
+        // The banks are handed out instead, and the caller joins the worker
+        // before calling analysis_job::commit. Copied, not referenced: the
+        // viewer is destroyed at the closing brace below.
+        outBanks.clear();
+        outBanks.reserve(viewer.bins().size());
+        for (const TemplateBin& b : viewer.bins())
+            outBanks.push_back(analysis_job::BankSnapshot{ b.ecg_bank, b.ppg_bank });
         // viewer is destroyed here (window closes).
     }
 }
@@ -279,51 +262,29 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Background squared/absval finalize jobs that are still running. We do
-    // NOT join a file's worker before moving to the next file -- that's what
-    // caused the stall after the template file was saved. Instead the worker
-    // is parked here, the loop advances immediately to the next file, and we
-    // reap finished workers opportunistically (and drain the rest at exit).
-    struct Outstanding {
-        std::thread th;
-        std::shared_ptr<post_process_detail::ViewerJob> job;
-        std::shared_ptr<std::atomic<bool>> done;
-    };
-    std::vector<Outstanding> outstanding;
+    // NO WORKER PARKING. There used to be a vector of outstanding threads here,
+    // with a reap()/force-drain pair and a kMaxOutstanding cap, so the loop could
+    // advance to the next file while a finalize worker was still running.
+    //
+    // That is no longer possible, and the reason is worth stating: _bins.bin is
+    // written by analysis_job::commit, commit has to follow the join (it
+    // serializes the very object finalize mutates), and it has to precede the
+    // next file. A worker therefore cannot outlive its own iteration, so there
+    // is nothing left to park, reap or cap.
+    //
+    // What that costs: one file's squared/absval compute no longer overlaps the
+    // NEXT file's marking. It still overlaps its OWN marking, which is where the
+    // time actually was -- the old cap comment said as much ("in normal use human
+    // marking is slower than the compute, so this is rarely hit").
 
-    auto finishJob = [](const std::shared_ptr<post_process_detail::ViewerJob>& job) {
-        if (!job->error.empty()) {
-            std::cerr << "  ERROR (squared/absval finalize) " << job->stem << ": "
-                << job->error << "\n";
-        }
-        // NO CLEANUP. This removed the _templates.partial.bin that
-        // prepareViewerJob used to write for the viewer to open. There is no
-        // provisional file: templates.bin is written directly and then
-        // rewritten once after marking, so nothing is left over to delete.
+    auto reportFinalizeError = [](const analysis_job::AnalysisJob& job) {
+        if (!job.error.empty())
+            std::cerr << "  ERROR (squared/absval finalize) " << job.stem << ": "
+            << job.error << "\n";
+        // NO CLEANUP. This removed the _templates.partial.bin that prepare()
+        // used to write for the viewer to open. There is no provisional file:
+        // _bins.bin is written once, by commit(), so nothing is left over.
         };
-
-    // Reap completed background jobs. force==true joins everything (used at
-    // shutdown); force==false only joins workers that have already finished,
-    // so it never blocks the main thread / the next file from loading.
-    auto reap = [&](bool force) {
-        for (size_t i = 0; i < outstanding.size();) {
-            Outstanding& o = outstanding[i];
-            if (force || o.done->load(std::memory_order_acquire)) {
-                if (o.th.joinable()) o.th.join();
-                finishJob(o.job);
-                outstanding.erase(outstanding.begin() + i);
-            }
-            else {
-                ++i;
-            }
-        }
-        };
-
-    // Safety valve: if marking races far ahead of compute, cap how many
-    // background jobs (and their in-memory peak/template data) pile up by
-    // blocking on the oldest. In normal use human marking is slower than
-    // the compute, so this is rarely hit.
-    constexpr size_t kMaxOutstanding = 4;
 
     for (const std::filesystem::path& binFs : binFiles) {
         const std::string stem = binFs.stem().string();
@@ -377,58 +338,59 @@ int main(int argc, char* argv[]) {
 
         // ---- Stage 2 (fast) + Stage 3 (marking), with the squared/absval
         //      half of Stage 2 running in parallel --------------------------
-        // prepareViewerJob does anneal + raw R-peaks + raw/unfiltered/PPG
-        // templates and writes a provisional file for the viewer. The
-        // squared/absval R-peak detection and templating are deferred to a
-        // worker thread that runs while the user marks templates.
-        auto jobOpt = post_process_detail::prepareViewerJob(cfg, effBin,
+        // analysis_job::prepare does anneal, the hardware lag, raw R-peaks and
+        // the raw/unfiltered/PPG templates, and hands back in-memory state --
+        // no provisional file. The squared/absval R-peak detection and
+        // templating are deferred to a worker that runs while the operator
+        // marks templates.
+        auto jobOpt = analysis_job::prepare(cfg, effBin,
             ecg1Inverted, ecg2Inverted, ecg3Inverted);
-        // shared_ptr so the worker lambda safely co-owns the job; it is
-        // joined later (reaped when finished, or drained at shutdown), so the
-        // job data always outlives the worker.
-        auto job = std::make_shared<post_process_detail::ViewerJob>(std::move(*jobOpt));
+        if (!jobOpt) {
+            // prepare() returns nullopt when the recording is shorter than one
+            // bin; it has already said so on stderr. Dereferencing it was
+            // unconditional here, so that case was a crash.
+            std::cout << "  prep failed or skipped; nothing to mark.\n";
+            continue;
+        }
+        // shared_ptr so the worker lambda co-owns the job: the job data always
+        // outlives the worker, whatever order they unwind in.
+        auto job = std::make_shared<analysis_job::AnalysisJob>(std::move(*jobOpt));
 
-        auto done = std::make_shared<std::atomic<bool>>(false);
+        // The `done` atomic IS GONE with the parking machinery. It existed
+        // purely so reap() could test a worker for completion without blocking;
+        // with a single worker that is always joined below, std::thread::join
+        // is the whole of what is needed.
         std::thread worker;
         if (job->needsFinalize) {
-            worker = std::thread([job, done] {
+            worker = std::thread([job] {
                 // Pure compute + file writes to canonical paths. No Qt here.
-                post_process_detail::finalizeViewerJob(*job);
-                done->store(true, std::memory_order_release);
+                analysis_job::finalize(*job);
                 });
         }
 
         // ---- Stage 3: template marking --------------------------------
-        // ensureWorkerDone is kept for the parking logic below. The anchor
-        // build that used to need it has moved into prepareViewerJob, which
-        // runs before any worker starts.
-        auto ensureWorkerDone = [&worker]() { if (worker.joinable()) worker.join(); };
-        runTemplateMarking(cfg, job, QString::fromStdString(job->stem), ensureWorkerDone);
+        std::vector<analysis_job::BankSnapshot> operatorBanks;
+        runTemplateMarking(cfg, job, QString::fromStdString(job->stem), operatorBanks);
 
-        // The worker is normally already joined by the line above, so this
-        // usually finishes the job here rather than parking it. Both branches
-        // are kept: needsFinalize == false means no worker ever started, and a
-        // build that threw before ensureWorkerDone() could leave one running.
-        if (worker.joinable())
-            outstanding.push_back(Outstanding{ std::move(worker), job, done });
-        else if (job->needsFinalize)
-            finishJob(job);   // no worker was ever started
-
-        // Clean up any background jobs that have already finished (non-blocking).
-        reap(/*force=*/false);
-
-        // Bound how many in-flight jobs may accumulate.
-        while (outstanding.size() > kMaxOutstanding) {
-            Outstanding& o = outstanding.front();
-            if (o.th.joinable()) o.th.join();
-            finishJob(o.job);
-            outstanding.erase(outstanding.begin());
-        }
-    }
-
-    // Drain remaining background jobs before exiting.
-    if (!outstanding.empty()) {
-        reap(/*force=*/true);
+        // ---- Commit: join, THEN write -----------------------------------
+        //
+        // THE JOIN IS A CORRECTNESS REQUIREMENT, NOT A PERFORMANCE CHOICE.
+        // commit() writes job->tmpl; finalize() mutates job->tmpl, because
+        // mergeTemplatesSlow packs the squared/absval blocks into it. Running
+        // the two concurrently is a data race on the object being serialized,
+        // and it fails by producing a plausible file rather than by crashing.
+        //
+        // That race was live. The old inline write sat immediately after the
+        // viewer's event loop with nothing joining the worker first --
+        // ensureWorkerDone was constructed at this line and never called -- so
+        // which blocks reached disk depended on the timing of a background
+        // thread.
+        //
+        // In practice the operator has been marking for minutes and the worker
+        // finished long ago, so this join returns immediately.
+        if (worker.joinable()) worker.join();
+        if (job->needsFinalize) reportFinalizeError(*job);
+        analysis_job::commit(*job, operatorBanks);
     }
 
     std::cout << "\nAll files processed.\n";

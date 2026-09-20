@@ -7,7 +7,6 @@
 #include "gui_handler.h"
 #include "chart_utils.hpp"
 #include "annotation_types.hpp"
-#include "notch_filter.hpp"
 #include "user_annotation_handler.h"
 #include "vcg_lead.hpp"
 
@@ -545,24 +544,33 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
     loadSignal(m_flow, CH_FLOW);    loadSignal(m_thor, CH_THOR);
     loadSignal(m_abdo, CH_ABDO);    loadSignal(m_spo2, CH_SPO2);
 
-    // Powerline notch (config-driven Hz, toggled by the repurposed "Notch
-    // Filter" checkbox). Applied once per chunk load, zero-phase, so both the
-    // display and downstream peak detection see the same cleaned signal.
-    if (m_notchFilterEnabled && m_cfg.notch_filter_hz != 0) {
-        auto notch = [&](QVector<double>& sig, double rateHz) {
-            if (is_missing_signal(sig)) return;
-            std::vector<double> tmp(sig.begin(), sig.end());
-            tmp = notch_filter::apply(tmp, rateHz, m_cfg.notch_filter_hz);
-            sig = QVector<double>(tmp.begin(), tmp.end());
-            };
-        notch(m_ecg1, channel_upsampled_rates[CH_ECG1]);
-        notch(m_ecg2, channel_upsampled_rates[CH_ECG2]);
-        notch(m_ecg3, channel_upsampled_rates[CH_ECG3]);
-        notch(m_ppg, channel_upsampled_rates[CH_PPG]);
-        notch(m_abp, channel_upsampled_rates[CH_ABP]);
-        notch(m_art, channel_upsampled_rates[CH_ART]);
-        notch(m_artPulm, channel_upsampled_rates[CH_ART_PULM]);
-    }
+    // THE WHOLE-CHUNK POWERLINE NOTCH USED TO BE HERE, AND IS GONE.
+    //
+    // It filtered seven upsampled channels across the entire 8-hour chunk on
+    // every toggle -- 6 s at 500 Hz, 12 s at 1 kHz -- and the checkbox handler
+    // additionally re-read every channel and every raw block from disk, which
+    // nothing about flipping a bool required. Between them that was the
+    // multi-second stall on clicking "Notch Filter".
+    //
+    // The notch is now applied at RENDER time, to the visible window only
+    // (notchedSpan / notchedSpanRaw in signal_renderer.cpp): about 7 ms for
+    // seven channels at a 30 s window, so the toggle is immediate and costs no
+    // extra memory.
+    //
+    // AND IT IS DISPLAY-ONLY, DELIBERATELY. The arrays loaded here stay
+    // pristine because detectPeaks reads *dataRaw -- the same block the
+    // renderer draws -- so filtering in place would push the notch into beat
+    // positions and into the per-beat log. The comment that used to sit here
+    // claimed "both the display and downstream peak detection see the same
+    // cleaned signal"; that was never true -- detection reads the raw block,
+    // and only the upsampled arrays were being filtered -- and it is now
+    // explicitly not the design.
+    //
+    // NOTHING ON THE ANALYSIS PATH IS EVER NOTCHED. The annealed .bin is read
+    // fresh by analysis_job::prepare and filtered by nothing, so every R peak,
+    // template, envelope and CSV comes from unfiltered signal. This checkbox,
+    // and the matching one in the template viewer, change what is DRAWN and
+    // nothing else.
 
     loadRaw(m_ecg1Raw, CH_ECG1);   loadRaw(m_ecg2Raw, CH_ECG2);
     loadRaw(m_ecg3Raw, CH_ECG3);   loadRaw(m_ppgRaw, CH_PPG);

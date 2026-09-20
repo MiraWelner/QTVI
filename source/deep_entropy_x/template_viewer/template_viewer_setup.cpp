@@ -314,9 +314,8 @@ void TemplateViewerWindow::loadSubject(const template_io::TemplateFile& tf,
     initAfterBinsLoaded();
 }
 
-// The shared tail of both overloads: the four seeding passes, the markings
-// restore, the global refs and the first page.
 void TemplateViewerWindow::initAfterBinsLoaded() {
+    //various bookeeping after the bins are loaded
     max_leads = 1;
     for (const auto& b : m_bins) {
         int nl = (int)leadsForBin(b).size();
@@ -324,84 +323,10 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
     }
     m_currentPage = 0;
     buildPages();
-
-    // Seed markers for every bin so per-subject global refs (which need
-    // R/S and foot/peak positions across all bins) can be computed once
-    // and stay stable across paging.
-    // ---- FOUR SEEDING PASSES, ONE LOAD --------------------------------
-    //
-    // seed_all detects on ch1..3, so each alignment's templates take that slot
-    // for the length of its own call, and R goes last -- leaving the flat
-    // ch1..3 and the flat *_auto_ch fields holding R, which is what the grid
-    // draws and what every existing consumer of those fields expects.
-    //
-    // Every alignment's glyphs are kept (auto_by_anchor) because a glyph is
-    // reported on all four; every alignment's bar is seeded into its own
-    // markers_by_anchor entry, and the exclusive mask in maskFor means each
-    // pass seeds only the one bar it owns.
-    //
-    // This loop is what four separate windows used to be.
-    // ONE PASS OVER THE BINS, SPREAD ACROSS CORES. The body is seedOneBin().
-    // SAFE BECAUSE THE WORK IS PER-BIN. seed_all and seedSlotBars write only
-    // into the TemplateBin handed to them, and detect_template_landmarks and
-    // everything under curve_fit are pure functions of a trace plus scalars --
-    // no globals, no statics, no I/O. Distinct elements of one std::vector are
-    // distinct objects and nothing resizes m_bins here, so no locking is
-    // needed. seedOneBin only READS m_sampleRate / m_ppgRateHz / the fit modes.
-    //
-    // STILL BLOCKING, and it has to be: compute_global_refs() at the end of
-    // this function reduces over EVERY bin (it reads the bars seed_all writes),
-    // and normalizeEcgTrace scales every trace the grid draws by that result.
-    // Show the page before this finishes and the traces come up at the wrong
-    // amplitude and then jump, which in a marking tool is worse than waiting.
-    // blockingMap keeps the ordering guarantee and just uses the other cores.
-    //
-    // NOT QProgressDialog::exec(): that opens a nested event loop, which is
-    // the same re-entrancy shape as the panel-deletion hang above. A wait
-    // cursor costs nothing and cannot re-enter. If this still feels slow on a
-    // long record, a QFutureWatcher driving a modeless progress bar is the
-    // next step -- not exec().
     QGuiApplication::setOverrideCursor(Qt::WaitCursor);
     QtConcurrent::blockingMap(m_bins,
         [this](TemplateBin& b) { seedOneBin(b); });
     QGuiApplication::restoreOverrideCursor();
-
-    // ---- SEED EACH BAR FROM ITS OWN ALIGNMENT'S DETECTION -----------------
-    //
-    // Every bar starts on its own glyph. The glyph for a landmark is that
-    // landmark detected on the alignment that owns it (P-onset on the P-aligned
-    // average, where the P is sharp; Q-onset on Q; S-end on R; T-end on J), and
-    // the bar is seeded from that same per-alignment detection -- so on the
-    // alignment where a bar is placed, it and its glyph coincide. seed_all no
-    // longer seeds bars; the per-anchor detections captured above
-    // (auto_by_anchor / autoFor) are the one source. Bars live in their owner
-    // slots and userMarks shifts each into whatever frame the grid draws.
-    {
-        // ---- SEED EVERY (lead, slot, alignment) THROUGH ONE CALL --------
-        //
-        // SLOT 0 IS NOT A SPECIAL CASE. It used to be seeded here, from its own
-        // block with its own detection, while slots 1+ went through
-        // seedIfNeeded -> FeatureMarks::seed_bank_template. Two paths for one
-        // job, and they disagreed: slot 0's P onset matched the glyph and every
-        // other slot's did not, because only one of the two passed
-        // pPeakIn = -1 to compute_p_begin. That rule now lives inside
-        // seed_bank_template, so it cannot differ per slot.
-        //
-        // slotView supplies the waveform AND its R column for the alignment
-        // being seeded -- the same pair the panel draws, so a seeded bar cannot
-        // land outside the window it is shown in.
-        // (This loop moved into seedOneBin so each bin's bar seeding runs on
-        //  the same worker that just did its per-anchor detections, in the
-        //  same order as before within a bin. The comment above still
-        //  describes what it does and why slot 0 is not special.)
-    }
-
-    // ---- SEED THE R-ALIGNED OVERLAY BARS (ecg_r_markers), PER SLOT --------
-    // (The R-overlay seeding loop lived here. It ran
-    //  detect_template_landmarks once per lead per bank slot at LOAD, for a
-    //  bar set that forced-R now marks through the ordinary per-anchor path --
-    //  which seeds lazily, on first display, from the same detection.)
-    //load markers from previous session
     const QDir markingDir(m_markingPath);
     const QString canonical = markingDir.filePath(m_subjectId + "_template_markings.bin");
 
@@ -411,6 +336,12 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
         if (markersReloaded) {
             for (auto& b : m_bins) b.syncReactivePpg();
         }
+    }
+
+    for (TemplateBin& b : m_bins) {
+        if (b.bad_ppg != 1) continue;
+        for (tbank::BankTemplate& t : b.ppg_bank.templates)
+            t.marked_invalid_template = true;
     }
     compute_global_refs();
     showPage();
