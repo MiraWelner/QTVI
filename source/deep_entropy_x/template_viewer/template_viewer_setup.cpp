@@ -76,7 +76,9 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
         // the reactive P-onset glyph moved, since the detected Q/S/T glyphs are
         // frozen in the snapshot. In place, per panel: no page rebuild, no
         // shift, dragged BARS untouched. Then the focus panel recolors.
-        m_lastTransKey = -1;
+        // (m_lastTransKey = -1 was here: the focus path no longer caches a
+        //  detection of its own, so there is nothing to invalidate --
+        //  setFitModes below clears the panel caches that do exist.)
         const AnchorType frame = currentGridAnchor();
         for (int li = 0; li < (int)m_binPlots.size()
             && li < (int)m_pageGlobalIdx.size(); ++li) {
@@ -89,7 +91,7 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
             }
         }
         if (m_focusMarker >= 0)
-            refreshFocus(m_focusBin, m_focusLead, m_focusSlot, m_focusMarker, m_focusCol);
+            refreshFocus(m_focusWidget, m_focusBin, m_focusLead, m_focusSlot, m_focusMarker, m_focusCol);
         };
     auto wireOnOffset = [this, applyFitMode](const char* name, curve_fit::FitMode mode) {
         if (auto* rb = findChild<QRadioButton*>(name))
@@ -543,7 +545,7 @@ void TemplateViewerWindow::applyAlignmentSelection(bool force, AnchorType a) {
     m_forcedAlign = a;
     showPage();
     if (m_lastFocusMarker >= 0)
-        refreshFocus(m_lastFocusBinIdx, m_lastFocusLeadIdx,
+        refreshFocus(m_focusWidget, m_lastFocusBinIdx, m_lastFocusLeadIdx,
             m_lastFocusTemplateIdx, m_lastFocusMarker, m_lastFocusCol);
 }
 

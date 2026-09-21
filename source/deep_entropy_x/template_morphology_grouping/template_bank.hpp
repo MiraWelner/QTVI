@@ -373,8 +373,45 @@ namespace tbank {
     // ---------------------------------------------------------------------
 
     struct BankMarkerSet {
-        //the four ECG markers which are stored
+        // THE FOUR DRAGGABLE BARS. Operator-owned: -1 means untouched, and an
+        // untouched bar falls back to the auto value below.
         double p_begin = -1, q_onset = -1, s_end = -1, t_end = -1;
+
+        // THE DETECTOR'S ANSWER, STORED. seed_bank_template already computed
+        // every one of these and then threw all but the bars away, so each
+        // reader re-ran the detection to recover them -- the widget, the focus
+        // panel and the export each independently, and a landmark detected
+        // several times is a landmark that can be several values.
+        //
+        // Same treatment BankPulseMarkerSet already gives the pulse glyphs
+        // (onset_auto, peak_auto, ...), which is why the pulse side never had
+        // the bar-vs-glyph disagreements the ECG side did.
+        //
+        // NOT SERIALIZED, like the pulse autos and for the same reason:
+        // template_bank_serialize.hpp stores nothing derived, and
+        // markers_by_anchor is deliberately absent from the file. These are
+        // recomputed at load, so adding them changes no format.
+        // FIXED LANDMARKS ONLY. No p_peak_auto and no t_peak_auto: those two
+        // are reactive glyphs, bracketed by the bars and recomputed by
+        // FeatureMarks::reactive_ecg at every read. p_peak was deliberately
+        // removed from this struct once before, because a stored copy drifted
+        // from the X on screen as soon as a bracket bar moved; putting it back
+        // would undo that.
+        double p_begin_auto = -1;
+        double q_onset_auto = -1, q_peak_auto = -1;
+        double r_peak_auto = -1;
+        double s_peak_auto = -1, s_end_auto = -1;
+        double t_end_auto = -1;
+        bool   q_onset_found_auto = false;
+
+        // WHETHER THE DETECTOR HAS RUN, which is not the same question as
+        // "does this set hold a bar". hasDetectedMarks used to answer the
+        // second: an alignment owning no bar (R and J, once the J-point and
+        // T-end bars moved onto Q) seeded an all -1 set, reported "never
+        // seeded" forever, and re-detected on EVERY display -- R being the
+        // alignment the operator starts on. seed_bank_template sets this
+        // whether or not it had a bar to store.
+        bool   seeded = false;
 
         bool isUnset() const {
             return p_begin < 0 && q_onset < 0 && s_end < 0 && t_end < 0;
@@ -473,9 +510,12 @@ namespace tbank {
         BankMarkerSet& marks(int32_t a) { return markers_by_anchor[a]; }
 
         // Non-inserting, and asks about CONTENT rather than key presence.
+        // ASKS WHETHER THE DETECTOR RAN, not whether a bar survived it. The
+        // !isUnset() form re-ran the detection forever on any alignment that
+        // owns no bar; see BankMarkerSet::seeded.
         bool hasDetectedMarks(int32_t a) const {
             auto it = markers_by_anchor.find(a);
-            return it != markers_by_anchor.end() && !it->second.isUnset();
+            return it != markers_by_anchor.end() && it->second.seeded;
         }
         const BankMarkerSet& marks(int32_t a) const {
             static const BankMarkerSet kEmpty;

@@ -74,6 +74,7 @@ void FocusPanelWidget::clearFocus() {
     m_landmarkCol = -1;
     m_fitKind = FitKind::Transition;
     m_transCands = subsample_refine::TransitionCandidates{};
+    m_peakCands = subsample_refine::PeakCandidates{};
     m_detectorFid = -1.0;   // stale for the new landmark until re-supplied
     update();
 }
@@ -130,78 +131,35 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
         };
 
     if (m_fitKind == FitKind::PeakQuadratic || m_fitKind == FitKind::PeakCubic) {
-        // A peak kind set through the transition overload has no width, and
-        // fitting at the floor would draw a curve the detector never produced.
-        if (m_peakHalfWidth < 3) return out;
-        // SEED WHERE THE MARK IS, not where the bar is. m_landmarkCol is the
-        // bar's column; the detector's position is m_detectorFid. Fitting at the
-        // bar put the curves on a different part of the wave from the dotted
-        // fiducial -- two views of one landmark, drawn a window apart.
-        //
-        // Rounding the detector's sub-sample position is within a sample of the
-        // integer argmax it fitted around, so the curves sit on the peak the
-        // line marks. Falls back to the bar when nothing was supplied.
-        //
-        // AND IT MUST BE INSIDE THE DRAWN WINDOW. evalExtremum clips to
-        // [lo, hi], so a seed outside it produces a > b and an all-NaN curve --
-        // the fits vanish with no indication why. The window is centred on the
-        // bar, so that happens exactly when the fiducial and the bar disagree
-        // by more than half the view. Fall back to the bar in that case: a
-        // curve on the bar is wrong by the same amount the fiducial is, but it
-        // is visible, and the dotted line shows the disagreement.
-        int seedCol = m_landmarkCol;
-        if (m_detectorFid >= 0.0 && m_detectorFid < (double)m_mean.size()) {
-            const int c = static_cast<int>(std::lround(m_detectorFid));
-            if (c >= lo && c <= hi) seedCol = c;
-        }
-        if (seedCol < 0 || seedCol >= (int)m_mean.size()) return out;
-        // DRAW-ONLY fits (applyGuard=false). The guarded versions collapse a
-        // residual-rejected quadratic/cubic to FIVE_POINT with order 0 and no
-        // coefficients, and the order>=2 test below then dropped them -- which
-        // is why, on a broad peak where BOTH were rejected, the 5-point
-        // parabola was the only curve on screen. The guard decides what may
-        // PLACE the mark; it should not decide what is VISIBLE, since the
-        // rejected curve is exactly what shows why the fallback was taken.
-        const auto qD = subsample_refine::quadratic_fit(
-            m_mean, seedCol, m_peakSigma, peakHw, /*applyGuard=*/false);
-        const auto cD = subsample_refine::cubic_fit(
-            m_mean, seedCol, m_peakSigma, peakHw, /*applyGuard=*/false);
-        const auto fp5 = subsample_refine::fivePointParabolaFit(m_mean, seedCol);
+        // NOTHING IS FITTED HERE. The three curves, the winner and the
+        // placement all arrive in m_peakCands, run once by
+        // subsample_refine::peakCandidates. The panel used to re-run the whole
+        // contest on a seed it chose itself, so the drawn curve and the marked
+        // line came from two different fits of the same data.
+        if (!m_peakCands.valid || m_peakCands.winner < 0) return out;
 
-        // The GUARDED contest, honouring the Fit-Peaks radio: this is the model
-        // that actually places the mark, and win.position is where. The winner
-        // is read off the returned TYPE rather than re-derived from the radio,
-        // so a forced model that degenerated shows its fallback as green
-        // instead of colouring a curve that placed nothing.
-        const auto win = subsample_refine::bestPeakExtremumFit(
-            m_mean, seedCol, m_peakSigma, peakHw, m_panelPeakMode);
-        int winIdx = 2;   // 0=quadratic, 1=cubic, 2=five-point
-        switch (win.type) {
-        case subsample_refine::PeakCurveType::QUADRATIC: winIdx = 0; break;
-        case subsample_refine::PeakCurveType::CUBIC:     winIdx = 1; break;
-        default:                                     winIdx = 2; break;
-        }
-
-        auto push = [&](const subsample_refine::peak_fit& f, int idx,
-            const QString& name, int drawHw = -1) {
-                if (f.order < 2) return;   // genuinely no polynomial: nothing to draw
-                Candidate cd;
-                cd.curve = evalExtremum(f, drawHw);
-                cd.selected = (idx == winIdx);
-                cd.label = f.guardFailed
-                    ? name + QStringLiteral(" (rejected)") : name;
-                // The winner reports the placement the detector would make;
-                // the losers report their own vertex.
-                cd.position = (idx == winIdx) ? win.position : f.position;
-                out.push_back(std::move(cd));
+        auto push = [&](int idx, const QString& name, int drawHw = -1) {
+            const subsample_refine::peak_fit& f = m_peakCands.draw[idx];
+            if (f.order < 2) return;   // genuinely no polynomial: nothing to draw
+            Candidate cd;
+            cd.curve = evalExtremum(f, drawHw);
+            cd.selected = (idx == m_peakCands.winner);
+            cd.label = f.guardFailed
+                ? name + QStringLiteral(" (rejected)") : name;
+            // The winner reports the placement every consumer uses; the
+            // losers report their own vertex.
+            cd.position = (idx == m_peakCands.winner)
+                ? m_peakCands.placement : f.position;
+            out.push_back(std::move(cd));
             };
-        push(qD, 0, QStringLiteral("Quadratic"));
-        push(cD, 1, QStringLiteral("Cubic"));
+        push(0, QStringLiteral("Quadratic"));
+        push(1, QStringLiteral("Cubic"));
         // ALWAYS draw the 5-point parabola so a broad/flat peak (e.g. P) still
         // has a visible curve. Green when it IS the placement (both models
         // degenerated) or the operator forced it, red otherwise.
-        push(fp5, 2, QStringLiteral("5-pt parabola"), 4);
+        push(2, QStringLiteral("5-pt parabola"), 4);
     }
+
     else {
         // Prefer the EXACT candidates the detector fit (supplied via
         // setTransitionCandidates): sample-indexed closures over the upsampled

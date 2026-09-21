@@ -778,6 +778,78 @@ inline FeatureMarks::TemplateLandmarks alignedLandmarks(
         fitMode, peakMode);
 }
 
+// ---------------------------------------------------------------------------
+// PEAK PLACEMENT -- the one conversion from a detector seed to a drawn,
+// focused and written position. The glyph, the focus mark and the CSV all go
+// through this, or they are three numbers for one landmark.
+//
+// Returns the fit WHOLE: position and provenance together, so a caller cannot
+// report the model from here and the location from elsewhere.
+//
+// seedPos is the detector's answer (detect_template_landmarks / ecgDetect): it
+// decides where to look. The returned position is the placement.
+//
+// This makes the consumers agree, not correct -- the seed's bracket search
+// cannot distinguish an inverted monophasic R from an upright biphasic one, so
+// where the seed is wrong all three are wrong together.
+// ---------------------------------------------------------------------------
+enum class EcgPeak { P, Q, R, S, T };
+
+// Per-landmark fit windows, resolved in one place so no call site carries its
+// own copy of the mapping.
+inline double peakSigmaFor(EcgPeak w) {
+    switch (w) {
+    case EcgPeak::P: return subsample_refine::peak_sigma::P;
+    case EcgPeak::Q: return subsample_refine::peak_sigma::Q;
+    case EcgPeak::S: return subsample_refine::peak_sigma::S;
+    case EcgPeak::T: return subsample_refine::peak_sigma::T;
+    default:         return subsample_refine::peak_sigma::R;
+    }
+}
+inline int peakHalfWidthFor(EcgPeak w) {
+    switch (w) {
+    case EcgPeak::P: return subsample_refine::peak_halfwidth::P;
+    case EcgPeak::Q: return subsample_refine::peak_halfwidth::Q;
+    case EcgPeak::S: return subsample_refine::peak_halfwidth::S;
+    case EcgPeak::T: return subsample_refine::peak_halfwidth::T;
+    default:         return subsample_refine::peak_halfwidth::R;
+    }
+}
+
+// The contest, once. Callers that only need the position use placeEcgPeak
+// below; the focus panel needs the curves too and takes the whole thing.
+inline subsample_refine::PeakCandidates ecgPeakCandidates(
+    const std::vector<double>& tmpl, EcgPeak which, double seedPos,
+    curve_fit::PeakFitMode mode)
+{
+    subsample_refine::PeakCandidates none;
+    const int n = static_cast<int>(tmpl.size());
+    // Absent stays absent: -1 means absent everywhere downstream, and clamping
+    // to column 0 would make a missing landmark look like one found at an edge.
+    if (n < 5 || !(seedPos >= 0.0) || seedPos > static_cast<double>(n - 1))
+        return none;
+    const int seed = std::clamp(static_cast<int>(std::lround(seedPos)), 0, n - 1);
+    // max(3, ...) so a bad table entry cannot give a degenerate fit window.
+    return subsample_refine::peakCandidates(
+        tmpl, seed, peakSigmaFor(which),
+        std::max(3, peakHalfWidthFor(which)), mode);
+}
+
+inline subsample_refine::peak_fit placeEcgPeak(
+    const std::vector<double>& tmpl, EcgPeak which, double seedPos,
+    curve_fit::PeakFitMode mode)
+{
+    const subsample_refine::PeakCandidates pc =
+        ecgPeakCandidates(tmpl, which, seedPos, mode);
+    subsample_refine::peak_fit out;
+    if (!pc.valid || pc.winner < 0) return out;   // position stays -1 = absent
+    out = pc.draw[pc.winner];
+    out.position = pc.placement;   // the guarded contest's answer, not the
+    // unguarded draw fit's own vertex
+    return out;
+}
+
+
 // ONE ACCESSOR FOR "THIS SLOT, THIS ALIGNMENT". The waveform and its R column
 // travel together: handing out one without the other is how a bar came to hold
 // a number measured in a different alignment's frame.
@@ -793,20 +865,16 @@ inline SlotView slotView(const TemplateBin& b, int lead, int slot, AnchorType a)
     SlotView v;
     if (lead < 0 || lead > 2 || slot < 0) return v;
 
-    if (a == AnchorType::R_PEAK) {
-        // R is the base: the slot's own BankTemplate IS the R-aligned average.
-        const tbank::TemplateBank& bank = b.ecg_bank[lead];
-        if (slot >= bank.size()) return v;
-        const tbank::BankTemplate& tp = bank.templates[slot];
-        if (tp.tmpl.empty()) return v;
-        v.tmpl = &tp.tmpl;
-        v.iqr = &tp.tmpl_iqr;
-        // No fallback to the bin's r_peak_ch: a slot without its own R column
-        // is not measurable.
-        v.r_col = tp.r_col;
-        v.valid = (v.r_col >= 0);
-        return v;
-    }
+    // NO SPECIAL CASE FOR R. It used to return the slot's BankTemplate::tmpl
+    // -- that slot averaged over ALL its members -- while leadsForBinTemplate
+    // and the focus panel draw bankSlotFor(.., R)->tmpl, averaged over
+    // members_clean. Two different populations, so the detector measured one
+    // waveform and the glyph was painted over another: the X sat at its own
+    // array's apex, several samples off the apex of the trace beneath it.
+    //
+    // prepareViewerJob aligns all four anchors INCLUDING R, so the R entry
+    // exists and no fallback is needed. A null here is a writer gap, which the
+    // caller reports -- not a reason to substitute a different average.
 
     // Row subsets of the bin's aligned matrix, so the bin's per-anchor r_col
     // is their R column.
@@ -847,7 +915,24 @@ inline bool hasVisiblePanel(const TemplateBin& b, int lead, int slot,
     const tbank::BankTemplate& tp = bank.templates[slot];
     if (tp.tmpl.empty()) return false;
     if (tp.tooFewBeats(/*is_ppg=*/false)) return false;
-    if (slot != 0 && !tp.wantsLandmarkMarking()) return false;
+    // EVERY SLOT, INCLUDING 0. This was `slot != 0 && ...`, exempting slot 0
+    // from the predicate that governed every other column -- and
+    // leadsForBinTemplate carried the same exemption, so the two had to be
+    // removed together or the page would count a column it could not draw.
+    //
+    // REPORTED, because a rejected slot 0 is a bin losing its dominant
+    // morphology from the grid AND from the markings CSV, and that must not be
+    // silent. seed_pool seeds slot 0 from the clean pool, so a non-REGULAR
+    // slot 0 means the seed pool was contaminated -- a fact worth seeing
+    // rather than a column worth faking.
+    if (!tp.wantsLandmarkMarking()) {
+        if (slot == 0)
+            fprintf(stderr, "[visible] bin %llu lead %d slot 0 is not REGULAR"
+                " (presumed category %d) -- NO _A COLUMN for this bin\n",
+                (unsigned long long)b.index, lead,
+                static_cast<int>(tp.presumedCategory()));
+        return false;
+    }
     // A thin pulse cohort suppresses the ECG panel for that slot.
     if (slot < b.ppg_bank.size()
         && b.ppg_bank.templates[slot].tooFewBeats(/*is_ppg=*/true))

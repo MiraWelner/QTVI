@@ -613,6 +613,40 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
             m_det = ecgDetect(*m_bin, m_leadIndex, m_templateIndex, m_frame,
                 m_rates[static_cast<size_t>(Channel::Ecg)],
                 m_onOffsetFitMode, m_peakFitMode);
+
+            // ecgDetect's peak fields are a SEED, not a placement.
+            // placeEcgPeak converts them; the focus panel and the CSV call it
+            // too, so all three show the same number.
+            //
+            // On m_det.tmpl -- the array the landmarks were measured on -- so
+            // the fit and the seed see the same samples. NOT m_ecg, which is
+            // normalized and optionally notched per the note above.
+            // THE CONTEST IS RUN HERE AND NOWHERE ELSE, and the candidates it
+            // produced are KEPT -- the focus panel takes them from
+            // peakCandidatesFor() instead of fitting again. It used to re-fit
+            // seeded from this result, which is one fit iteration more than the
+            // glyph got: bestPeakExtremumFit searches only +-peak_halfwidth
+            // around its seed, so two rounds land closer to the apex than one.
+            // That extra round is why the focus mark sat on the peak and the
+            // glyph sat short of it.
+            m_peakCands = {};
+            if (m_det.valid && m_det.tmpl) {
+                const std::vector<double>& t = *m_det.tmpl;
+                auto place = [&](EcgPeak which, double& fid) {
+                    const auto pc = ecgPeakCandidates(t, which, fid, m_peakFitMode);
+                    m_peakCands[static_cast<size_t>(which)] = pc;
+                    // A failed fit leaves the seed standing rather than
+                    // blanking a landmark the detector did find.
+                    if (pc.valid && pc.placement >= 0.0) fid = pc.placement;
+                    };
+                place(EcgPeak::R, m_det.lm.r_peak);
+                place(EcgPeak::Q, m_det.lm.q_peak);
+                place(EcgPeak::P, m_det.lm.p_peak);
+                place(EcgPeak::S, m_det.s_peak);
+                // t_peak excluded: it is the reactive glyph, recomputed from
+                // the S-end / T-end bars on every repaint.
+            }
+
             m_detBin = m_bin;
             m_detFrame = m_frame;
             m_detSlot = m_templateIndex;

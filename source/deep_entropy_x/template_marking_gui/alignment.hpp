@@ -924,36 +924,6 @@ namespace alignment {
         return out;
     }
 
-    inline int find_q_column(const std::vector<double>& b, int R_anchor, double fs) {
-        /*Finds Q column by negative 1st derivative followed by positive first dirivative and the whole thing
-        has positive second derivative. Closets to R peak wins. If none found, */
-        const int Wsh = static_cast<int>(b.size());
-        if (Wsh == 0 || R_anchor < 1 || fs <= 0.0) return -1;
-
-        const int q_window = std::max(2, static_cast<int>(std::lround(0.100 * fs)));
-        const int lo = std::max(1, R_anchor - q_window);
-
-        for (int k = R_anchor - 1; k > lo; --k) {
-            if (k + 1 >= Wsh) continue;
-            if (std::isnan(b[k - 1]) || std::isnan(b[k]) || std::isnan(b[k + 1])) continue;
-
-            const double d1_prev = b[k] - b[k - 1];              // slope into k
-            const double d1_next = b[k + 1] - b[k];              // slope out of k
-            const double d2 = b[k + 1] - 2.0 * b[k] + b[k - 1];  // curvature at k
-
-            if (d1_prev <= 0.0 && d1_next >= 0.0 && d2 > 0.0) return k;
-        }
-        std::cout << "No Q peak found in QAlign, falling back to steepest slope in R-upstroke region\n";
-        int fallback = -1;
-        double maxSlope = -std::numeric_limits<double>::infinity();
-        for (int k = lo; k < R_anchor && k + 1 < Wsh; ++k) {
-            if (std::isnan(b[k]) || std::isnan(b[k + 1])) continue;
-            const double s = b[k + 1] - b[k];
-            if (s > maxSlope) { maxSlope = s; fallback = k; }
-        }
-        return fallback;
-    }
-
     // =========================================================================
     // Q-align a bin's cached (R-aligned) snippets and re-median.
     //
@@ -1144,9 +1114,9 @@ namespace alignment {
         // Snap to the local peak within +/-5 ms of that passed-in position.
         // The window is far too tight to reach Q or S, so it only cleans up
         // sub-window drift of the R spike.
-        const int w5 = std::max(1, static_cast<int>(std::lround(0.005 * fs)));
-        const int rlo = std::max(0, rc - w5);
-        const int rhi = std::min(Wsh - 1, rc + w5);
+        const int width_to_curve_fit_r_peak = std::max(1, static_cast<int>(std::lround(0.040 * fs)));
+        const int rlo = std::max(0, rc - width_to_curve_fit_r_peak);
+        const int rhi = std::min(Wsh - 1, rc + width_to_curve_fit_r_peak);
         double rbest = -std::numeric_limits<double>::infinity();
         for (int i = rlo; i <= rhi; ++i) {
             if (!std::isnan(res.tmpl[i]) && res.tmpl[i] > rbest) { rbest = res.tmpl[i]; rc = i; }

@@ -239,7 +239,7 @@ double FeatureMarks::compute_t_peak(const std::vector<double>& v, double bracket
         : static_cast<double>(best);
 }
 
-double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs,  curve_fit::PeakFitMode peakMode)
+double FeatureMarks::compute_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs, curve_fit::PeakFitMode peakMode)
 {
     //found coarsely by the max deviation from the qonset, 
     const int N = static_cast<int>(v.size());
@@ -1391,6 +1391,10 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
     curve_fit::FitMode fitMode, curve_fit::PeakFitMode peakMode)
 {
     out = tbank::BankMarkerSet{};          // all -1
+    // SET BEFORE ANY RETURN. `seeded` records that the detector RAN, not that
+    // it succeeded -- a template it legitimately finds nothing on must not be
+    // re-detected on every display for the rest of the session.
+    out.seeded = true;
     const TemplateLandmarks lm =
         FeatureMarks::detect_template_landmarks(tmpl, r_col, sampleRate, fitMode, peakMode);
     if (!lm.valid) return;
@@ -1425,6 +1429,36 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
     // set now reports "never seeded" permanently. Callers that seed lazily on
     // that test must skip an anchor with no owned bar, or they will re-run this
     // detection on every display.
+    // ---- THE WHOLE DETECTION, KEPT ------------------------------------
+    // `lm` above is every landmark on this waveform, and this function used to
+    // discard all but the bars -- so the widget, the focus panel and the
+    // export each re-ran detect_template_landmarks to get them back. Stored
+    // here, there is one detection per (slot, anchor) and every reader looks
+    // the answer up.
+    //
+    // UNMASKED, deliberately. showsBar gates which BARS an alignment owns,
+    // because a bar is editable and an edit has to belong somewhere. A glyph is
+    // a measurement of this waveform and every alignment has one, which is the
+    // rule seed_all already follows.
+    // FIXED LANDMARKS ONLY. P-peak and T-peak are NOT stored: they are
+    // reactive, bracketed by the operator's bars and recomputed by
+    // reactive_ecg on every read, so a detector-sourced copy here would be a
+    // second answer that drifts the moment a bracket bar moves -- which is the
+    // note above, and the reason p_peak was taken off BankMarkerSet in the
+    // first place. (TemplateLandmarks has no t_peak field at all, for the same
+    // reason.)
+    out.p_begin_auto = lm.p_begin;
+    out.q_onset_auto = lm.q_onset;
+    out.q_peak_auto = lm.q_peak;
+    out.r_peak_auto = lm.r_peak;
+    out.s_end_auto = lm.s_end;
+    out.t_end_auto = lm.t_end;
+    out.q_onset_found_auto = lm.q_onset_found;
+    // S peak has no TemplateLandmarks field; same finder the interval code and
+    // ecgDetect use, on this alignment's trace and R column.
+    out.s_peak_auto = FeatureMarks::compute_s_peak(tmpl, r_col, sampleRate,
+        peakMode);
+
     if (anchor_view::showsBar(anchor, anchor_view::kQBegin)) out.q_onset = lm.q_onset;
     if (anchor_view::showsBar(anchor, anchor_view::kSEnd))   out.s_end = lm.s_end;
     if (anchor_view::showsBar(anchor, anchor_view::kTEnd))   out.t_end = lm.t_end;

@@ -447,6 +447,61 @@ namespace subsample_refine {
     // 4x upsample mapping are baked into the closure. `winner` is the index the
     // BIC selector chose (0=piecewise, 1=sigmoid, 2=fractional). Populated only
     // when a caller passes candOut, so the detection hot path pays nothing.
+    // ---------------------------------------------------------------------
+    // PEAK CANDIDATES -- the peak analogue of TransitionCandidates below.
+    //
+    // The three tested curves, which one the selector chose, and the placement
+    // it produced, all from ONE run of the contest. The viewer needs the
+    // position; FocusPanelWidget needs the coefficients to draw. Both used to
+    // run the contest themselves, on seeds they each chose, so the drawn curve
+    // and the marked line came from different fits.
+    //
+    // draw[] are UNGUARDED fits, deliberately. The guarded versions collapse a
+    // residual-rejected quadratic or cubic to FIVE_POINT with order 0 and no
+    // coefficients, and a renderer's order>=2 test then drops them -- so on a
+    // broad peak where both were rejected the 5-point parabola was the only
+    // curve on screen. The guard decides what may PLACE the mark; it must not
+    // decide what is VISIBLE, since the rejected curve is exactly what shows
+    // why the fallback was taken.
+    //
+    // `placement` is the GUARDED contest's answer -- the number that is drawn,
+    // focused and written. winner is read off the returned TYPE rather than
+    // from the requested mode, so a forced model that degenerated is shown as
+    // its fallback instead of colouring a curve that placed nothing.
+    // ---------------------------------------------------------------------
+    struct PeakCandidates {
+        peak_fit draw[3];              // 0 = quadratic, 1 = cubic, 2 = five-point
+        int      winner = -1;          // index into draw[]
+        double   placement = -1.0;     // the position all consumers must use
+        int      seed = -1;            // integer seed the contest ran around
+        bool     valid = false;
+    };
+
+    inline PeakCandidates peakCandidates(const std::vector<double>& signal,
+        int seed, double sigma, int halfWidth,
+        curve_fit::PeakFitMode mode = curve_fit::PeakFitMode::Auto)
+    {
+        PeakCandidates pc;
+        const int n = static_cast<int>(signal.size());
+        if (n < 5 || seed < 0 || seed >= n || halfWidth < 3) return pc;
+
+        pc.seed = seed;
+        pc.draw[0] = quadratic_fit(signal, seed, sigma, halfWidth, /*applyGuard=*/false);
+        pc.draw[1] = cubic_fit(signal, seed, sigma, halfWidth, /*applyGuard=*/false);
+        pc.draw[2] = fivePointParabolaFit(signal, seed);
+
+        const peak_fit win = bestPeakExtremumFit(signal, seed, sigma, halfWidth, mode);
+        pc.placement = win.position;
+        switch (win.type) {
+        case PeakCurveType::QUADRATIC: pc.winner = 0; break;
+        case PeakCurveType::CUBIC:     pc.winner = 1; break;
+        default:                       pc.winner = 2; break;
+        }
+        pc.valid = true;
+        return pc;
+    }
+
+
     struct TransitionCandidates {
         std::function<double(double)> curve[5];   // 0=piecewise 1=sigmoid 2=fractional 3=cubic-spline 4=cubic
         double cross[5] = { -1.0, -1.0, -1.0, -1.0, -1.0 };  // fiducial crossing per model (sample-indexed)

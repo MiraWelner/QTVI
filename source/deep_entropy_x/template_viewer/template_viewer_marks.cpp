@@ -308,7 +308,7 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
                     static_cast<double>(placed));
 
     if (m_moveMode == MoveMode::Individual || oldIdx < 0) {
-        refreshFocus(binIdx, leadIdx, templateIdx, marker, placed);
+        refreshFocus(qobject_cast<BinPlotWidget*>(sender()), binIdx, leadIdx, templateIdx, marker, placed);
         return;
     }
 
@@ -341,7 +341,7 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
                     pw->setMarker(static_cast<BinPlotWidget::Marker>(marker),
                         target);
     }
-    refreshFocus(binIdx, leadIdx, templateIdx, marker, placed);
+    refreshFocus(qobject_cast<BinPlotWidget*>(sender()), binIdx, leadIdx, templateIdx, marker, placed);
 }
 
 // ---------------------------------------------------------------------------
@@ -491,7 +491,7 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
         m_touchedMarks[touchKey(binIdx, leadIdx, marker, owner)] = placed;
 
     if (m_moveMode == MoveMode::Individual || oldIdx < 0) {
-        refreshFocus(binIdx, leadIdx, templateIdx, marker, placed);
+        refreshFocus(qobject_cast<BinPlotWidget*>(sender()), binIdx, leadIdx, templateIdx, marker, placed);
         return;
     }
 
@@ -543,7 +543,7 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
     }
 
     // The dragged panel's own focus view (J-point refreshes both QRS and JT).
-    refreshFocus(binIdx, leadIdx, templateIdx, marker, placed);
+    refreshFocus(qobject_cast<BinPlotWidget*>(sender()), binIdx, leadIdx, templateIdx, marker, placed);
 }
 
 void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
@@ -657,7 +657,7 @@ void TemplateViewerWindow::user_clicked_on_bar(int binIdx, int leadIdx, int temp
     // Against the alignment on screen: that is the cell whose bar was clicked.
     if (binIdx >= 0 && leadIdx >= 0 && col >= 0)
         m_touchedMarks[touchKey(binIdx, leadIdx, marker, currentGridAnchor())] = col;
-    refreshFocus(binIdx, leadIdx, templateIdx, marker, col);
+    refreshFocus(qobject_cast<BinPlotWidget*>(sender()), binIdx, leadIdx, templateIdx, marker, col);
     if (!m_forceAlign && BinPlotWidget::markerIsEcg(marker) && anchor_view::isBar(marker))
     {
         const AnchorType a = anchor_view::anchorFor(marker);

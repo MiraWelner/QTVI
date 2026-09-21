@@ -113,8 +113,12 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             && templateIdx < bank.size()
             && !bank.templates[templateIdx].tmpl.empty()
             && !bank.templates[templateIdx].tooFewBeats(/*is_ppg=*/false)
-            && (templateIdx == 0
-                || bank.templates[templateIdx].wantsLandmarkMarking())) {
+            // wantsLandmarkMarking FOR EVERY SLOT. Slot 0 used to bypass it
+            // (`templateIdx == 0 ||`), so the _A column appeared whatever the
+            // template said about wanting landmarks while B and C obeyed the
+            // rule. Either the predicate means something or it does not; it
+            // cannot mean something for two columns out of three.
+            && bank.templates[templateIdx].wantsLandmarkMarking()) {
             const tbank::BankTemplate& t = bank.templates[templateIdx];
 
             // ---- ONE SOURCE: THIS SLOT, THIS ALIGNMENT -------------------
@@ -151,34 +155,23 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             // -- so a slot with no members, or whose member indices fall
             // outside the aligned matrix, comes back correctly sized and
             // entirely NaN. Checked for a finite sample instead.
-            const AnchoredBankSlot* asl =
-                b.bankSlotFor(c, templateIdx, gridAnchor);
-            bool anchoredOk = false;
-            if (asl)
-                for (double v : asl->tmpl)
-                    if (!std::isnan(v)) { anchoredOk = true; break; }
-            if (!anchoredOk) {
-                // Reported, because a missing panel with no explanation is the
-                // same problem one layer over. Three causes, distinguished:
-                // no map entry means the anchor pass never ran; a short vector
-                // means it ran before the bank existed; all-NaN means it ran
-                // against members that do not index the matrix it reduced.
-                const char* why = "all-nan";
-                if (!asl) {
-                    const int key = static_cast<int>(gridAnchor) * 4 + c;
-                    auto it = b.anchored_bank.find(key);
-                    why = (it == b.anchored_bank.end()) ? "no-anchor-entry"
-                        : (static_cast<size_t>(templateIdx) >= it->second.size())
-                        ? "slot-out-of-range" : "empty-tmpl";
-                }
+            // THROUGH slotView, the shared accessor -- so this trace and the
+            // array ecgDetect measures on are the same object by construction.
+            // This block used to call bankSlotFor itself and check for a finite
+            // sample; bankSlotFor already rejects empty and all-NaN, and
+            // slotView pairs the waveform with its r_col so the two cannot be
+            // taken from different places.
+            const SlotView svT = slotView(b, c, templateIdx, gridAnchor);
+            if (!svT.valid || !svT.tmpl) {
+                const char* why = "no-per-slot-average";
                 fprintf(stderr, "[bank-trace] bin %llu lead %d slot %d anchor %s:"
                     " NO PER-SLOT AVERAGE (%s) -- no panel\n",
                     (unsigned long long)b.index, c, templateIdx,
                     anchor_view::label(gridAnchor), why);
                 continue;
             }
-            trace = &asl->tmpl;
-            traceIqr = &asl->tmpl_iqr;
+            trace = svT.tmpl;
+            traceIqr = svT.iqr;
             nMembers = t.memberCount();
             labelCode = t.label_code;
             // subtype is no longer read here: tbank::letterRanks applies the
@@ -299,16 +292,13 @@ bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
     int loCol = std::numeric_limits<int>::max();
     int hiCol = -1;
     for (AnchorType a : kFour) {
-        // Same trace source leadsForBinTemplate draws: the per-anchor bank
-        // slot if present, else the pre-bank chN_raw fallback for slot 0.
-        const std::vector<double>* trace = nullptr;
-        const AnchoredBankSlot* asl = b.bankSlotFor(lead, templateIdx, a);
-        if (asl && !asl->tmpl.empty()) trace = &asl->tmpl;
-        else if (templateIdx == 0) {
-            const ChannelTemplateData& cd = b.chFor(lead, a);
-            if (!cd.ecgTemplate_raw.empty()) trace = &cd.ecgTemplate_raw;
-        }
-        if (!trace) continue;
+        // THROUGH slotView, like every other reader. The chN_raw fallback for
+        // slot 0 is gone with it: sizing the frame from the bin's average while
+        // the panel draws the per-slot one gave slot 0 an x-window belonging to
+        // a different waveform.
+        const SlotView svU = slotView(b, lead, templateIdx, a);
+        if (!svU.valid || !svU.tmpl) continue;
+        const std::vector<double>* trace = svU.tmpl;
 
         int f = -1, l = -1;
         for (int i = 0; i < (int)trace->size(); ++i)
@@ -847,8 +837,8 @@ void TemplateViewerWindow::showPage() {
             // Glyph click: focus only -- refresh the panel, do NOT record a
             // touch or re-align (the glyph is the detector's answer, not a bar).
             connect(pw, &BinPlotWidget::landmarkFocusOnly, this,
-                [this](int binIdx, int leadIdx, int templateIdx, int marker, double col) {
-                    refreshFocus(binIdx, leadIdx, templateIdx, marker, col);
+                [this, pw](int binIdx, int leadIdx, int templateIdx, int marker, double col) {
+                    refreshFocus(pw, binIdx, leadIdx, templateIdx, marker, col);
                 });
             // (The two R-overlay connects lived here: rMarkerDragStarted,
             //  which forced the view to R so the drag happened on the R
@@ -1215,10 +1205,33 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
     pw->setMarker(BinPlotWidget::EcgPPeak, reBank.p_peak);
     pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_onset);
-    // R's column ON THE DRAWN ALIGNMENT. rColR is the R-frame one; every
-    // anchor's average has its own, which is what frameShift is built out of.
-    pw->setMarker(BinPlotWidget::EcgRPeak,
-        svDraw.valid ? static_cast<double>(svDraw.r_col) : rColR);
+    // R FROM THE DETECTION, NOT THE BOOKKEPT COLUMN.
+    //
+    // svDraw.r_col is alignment.hpp's R_anchor + median(applied shifts) with a
+    // +-5 ms snap: a bookkeeping reference column, never refined and never put
+    // through a peak fit. The GLYPH draws the refined position
+    // (m_glyphs.ecgRPeak, from detect_template_landmarks), so setting the bar
+    // from r_col left the two a few samples apart -- and on a P/Q/J average,
+    // where the snap window cannot reach the smeared apex, several samples
+    // apart. That is the bar sitting off the peak while the focus panel, which
+    // re-fits, sits on it.
+    //
+    // bin_plot_widget.cpp's glyph hit-test already documented the mismatch:
+    // "NOT m_markers[EcgRPeak], which holds r_col_raw and sits a few samples
+    // off the drawn cross -- that mismatch is why clicking the R glyph used to
+    // do nothing." Taking both from one detection closes that too: the bar and
+    // its glyph are now the same column, so the X is clickable.
+    //
+    // setAuto above has already run, so detectedLandmarks() is populated for
+    // this bin and this alignment. r_col remains the fallback for a template
+    // whose detection did not produce an R at all.
+    {
+        const FeatureMarks::TemplateLandmarks& lmR = pw->detectedLandmarks();
+        const double rFallback =
+            svDraw.valid ? static_cast<double>(svDraw.r_col) : rColR;
+        pw->setMarker(BinPlotWidget::EcgRPeak,
+            (lmR.valid && lmR.r_peak >= 0.0) ? lmR.r_peak : rFallback);
+    }
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
 
@@ -1369,7 +1382,7 @@ BinPlotWidget::State TemplateViewerWindow::panelState(int binIdx, int leadIdx,
     const TemplateBin& b = m_bins[binIdx];
 
     bool ecgBad = false, ppgBad = false;
-    if (leadIdx >= 0 && leadIdx <= 2 && templateIdx >= 0  && templateIdx < b.ecg_bank[leadIdx].size())
+    if (leadIdx >= 0 && leadIdx <= 2 && templateIdx >= 0 && templateIdx < b.ecg_bank[leadIdx].size())
         ecgBad = b.ecg_bank[leadIdx].templates[templateIdx].marked_invalid_template;
     if (templateIdx >= 0 && templateIdx < b.ppg_bank.size()) {
         ppgBad = b.ppg_bank.templates[templateIdx].marked_invalid_template;

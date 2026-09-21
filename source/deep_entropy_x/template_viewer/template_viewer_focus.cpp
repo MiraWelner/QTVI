@@ -172,12 +172,18 @@ void TemplateViewerWindow::focusPulse(TemplateBin& b, int templateIdx,
     return;
 }
 
-void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
+// pw may be null on a re-fire path; m_focusWidget keeps the last real one.
+void TemplateViewerWindow::refreshFocus(BinPlotWidget* pw, int binIdx, int leadIdx,
     int templateIdx, int marker, double col)
 {
     if (!zoomed_in_section_top) return;   // panels not created (nothing to do)
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
     // Remember this focus so a fit-mode radio change can replay it in place.
+    // THE PANEL TOO, and only when a real one was named: the re-fire paths pass
+    // m_focusWidget back in, so overwriting it with their own nullptr would
+    // lose the panel on the first replay. QPointer means a panel destroyed by
+    // a page rebuild reads back as null rather than as garbage.
+    if (pw) m_focusWidget = pw;
     m_focusBin = binIdx; m_focusLead = leadIdx; m_focusSlot = templateIdx;
     m_focusMarker = marker; m_focusCol = col;
     TemplateBin& b = m_bins[binIdx];
@@ -240,7 +246,10 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
             binIdx, leadIdx, marker, anchor_view::label(focusAnchor));
         return;
     }
-    const ChannelTemplateData& ch = *chP;
+    // (`const ChannelTemplateData& ch = *chP;` removed: the waveform now
+    //  comes from slotView for every slot, so nothing reads the bin-level
+    //  channel template here. chForStrict is still called above as the
+    //  "is this alignment in the file at all" check.)
 
 
     // Templates + iqr are stored PRE-reference-division; scale by the same
@@ -261,55 +270,43 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
     // NO FALLBACK for a slot that exists but is empty: the panels are cleared
     // and the function returns, because a focus view of the wrong morphology is
     // worse than none.
-    const std::vector<double>* meanRawEcg = &ch.ecgTemplate_raw;
-    const std::vector<double>* sdRawEcg = &ch.ecg_template_raw_iqr;
+    // ---- ONE ACCESSOR, EVERY SLOT ---------------------------------------
+    //
+    // slotView is what leadsForBinTemplate draws and what ecgDetect measures
+    // on, so taking the focus waveform from it means the panel shows the same
+    // array the grid shows and the same array the landmarks were found on.
+    //
+    // THIS USED TO FORK ON templateIdx > 0. Slot 0 took ch.ecgTemplate_raw --
+    // the WHOLE BIN's average, built before the partition exists -- while the
+    // grid drew the per-slot anchored average for the same column. Two
+    // different waveforms with different apexes, which is why the glyph sat
+    // off the peak on the _A column specifically.
+    //
+    // NO FALLBACK. A null is build_templates failing to write the per-slot
+    // average for this anchor: a writer bug to go and fix, not a state to
+    // render under a header naming an alignment it is not.
+    const SlotView svF = slotView(b, leadIdx, templateIdx, focusAnchor);
+    if (!svF.valid || !svF.tmpl) {
+        clearFocusPanels();
+        fprintf(stderr, "[focus] bin=%d lead=%d slot=%d anchor=%s"
+            " NO PER-SLOT ALIGNED AVERAGE -- build_templates did not write it\n",
+            binIdx, leadIdx, templateIdx, anchor_view::label(focusAnchor));
+        return;
+    }
+    const std::vector<double>* meanRawEcg = svF.tmpl;
+    const std::vector<double>* sdRawEcg = svF.iqr;
+
+    // The count belongs to the waveform above: the bank slot's clean member
+    // count when the slot exists, the bin total only on a file with no bank.
     const uint64_t nb[3] = { b.ch1_n_beats_raw, b.ch2_n_beats_raw, b.ch3_n_beats_raw };
     int nBeats = static_cast<int>(nb[leadIdx]);
-    if (templateIdx > 0) {
+    {
         const tbank::TemplateBank& bank = b.ecg_bank[leadIdx];
-        if (templateIdx >= bank.size()
-            || bank.templates[templateIdx].tmpl.empty()) {
-            clearFocusPanels();
-            return;
-        }
-        const tbank::BankTemplate& tp = bank.templates[templateIdx];
-        meanRawEcg = &tp.tmpl;
-        sdRawEcg = &tp.tmpl_iqr;
-        nBeats = tp.cleanCount();
-
-        // ---- THIS SLOT'S OWN ALIGNED AVERAGE ---------------------------
-        //
-        // THIS IS THE BUG THIS BRANCH HAD. focusAnchor was computed and
-        // chFor fetched the right aligned waveform two dozen lines above --
-        // and then the two assignments right here threw both away, because
-        // tp.tmpl is the slot's single R-aligned average with no anchor
-        // dimension at all. So on an _A column the panel showed the same trace
-        // and the same spread under every bar, while the header named whichever
-        // alignment the bar belonged to.
-        //
-        // Per-slot aligned averages are computed in alignTemplatesFromCache,
-        // as a reduction over the beats it already aligns.
-        //
-        // NO FALLBACK. Showing the slot's R-aligned average under a header
-        // naming another alignment is the defect this branch existed to
-        // label, and a label is not a fix. There is one format version and
-        // every section is written unconditionally (template_io.cpp), so a
-        // null here is not an old file -- it is build_templates failing to
-        // write the per-slot average for this anchor, which is a writer bug to
-        // go and fix, not a state to render.
-        const AnchoredBankSlot* asl =
-            b.bankSlotFor(leadIdx, templateIdx, focusAnchor);
-        if (!asl) {
-            clearFocusPanels();
-            fprintf(stderr, "[focus] bin=%d lead=%d slot=%d anchor=%s"
-                " NO PER-SLOT ALIGNED AVERAGE -- build_templates did not write"
-                " it\n", binIdx, leadIdx, templateIdx,
-                anchor_view::label(focusAnchor));
-            return;
-        }
-        meanRawEcg = &asl->tmpl;
-        sdRawEcg = &asl->tmpl_iqr;
+        if (templateIdx >= 0 && templateIdx < bank.size())
+            nBeats = bank.templates[templateIdx].cleanCount();
     }
+
+
     const std::vector<double> mean = normalize_features::scale_array_by_ref(*meanRawEcg, eref);
     const std::vector<double> sd = normalize_features::scale_array_by_ref(*sdRawEcg, eref);
     if (mean.empty()) return;
@@ -418,87 +415,48 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
         // that never detects keeps the old behaviour.
         bool qOnsetFound = true;
         {
-            // Peaks need this block as well: it is where the detector runs on
-            // `mean`, and its peak fields are the only way the panel can know
-            // where the mark actually is. The transition CANDIDATES are
-            // selected by the `marker` switch below; the `isTrans` flag that
-            // used to be computed here was never read -- it stopped gating the
-            // detection and nothing replaced its use.
-            if (!mean.empty()) {
-                // The detector's fit depends on the TEMPLATE, not on where the
-                // operator drags the bar -- so it is identical on every mouse-
-                // move of the same landmark. refreshFocus fires on each drag
-                // move; recomputing detect_template_landmarks every time was
-                // the drag lag. Cache by (bin,slot,lead,marker,anchor) and only
-                // re-detect when the focused landmark actually changes.
-                const long long tkey =
-                    (((((static_cast<long long>(binIdx) * 64 + templateIdx) * 4
-                        + leadIdx) * 32 + marker) * 8)
-                        + static_cast<int>(focusAnchor));
-                if (tkey == m_lastTransKey) {
-                    transCand = m_lastTransCand;
-                }
-                else {
-                    // Seed with the DISPLAYED alignment's own R column -- the
-                    // same one the main-plot glyphs use (chFor(frame).r_col_raw)
-                    // -- NOT r_peak_ch + frameShift, a computed value that
-                    // drifted and put the P/T detection window on the wrong part
-                    // of the wave. detect runs on the displayed (e.g. P-aligned)
-                    // mean, which is correct; only the R seed was off.
-                    const int rColInMean = std::clamp(
-                        b.chFor(leadIdx, focusAnchor).r_col_raw,
-                        0, static_cast<int>(mean.size()) - 1);
-                    const FeatureMarks::TemplateLandmarks lm =
-                        FeatureMarks::detect_template_landmarks(mean, rColInMean, m_sampleRate,
-                            curve_fit::FitMode::Auto, curve_fit::PeakFitMode::Auto);
-                    qOnsetFound = lm.q_onset_found;
-                    switch (marker) {
-                    case BinPlotWidget::EcgPBegin: transCand = lm.p_begin_cand; break;
-                    case BinPlotWidget::EcgQBegin: transCand = lm.q_onset_cand; break;
-                    case BinPlotWidget::EcgSEnd:   transCand = lm.s_end_cand;   break;
-                    case BinPlotWidget::EcgTEnd:   transCand = lm.t_end_cand;   break;
-                    default: break;
-                    }
-                    // The expensive half, on the same key. ecgDetect pairs the
-                    // trace with its own R column, so this panel cannot pair
-                    // them differently from the seeding or the grid glyphs.
-                    m_lastDet = ecgDetect(b, leadIdx, templateIdx, focusAnchor,
-                        m_sampleRate, m_onOffsetFitMode, m_peakFitMode);
-                    m_lastTransKey = tkey;
-                    m_lastTransCand = transCand;
-                }
+            // ---- THE COLUMNS THE GLYPHS ARE DRAWN AT -------------------
+            //
+            // Taken from the panel, not re-detected. BinPlotWidget runs exactly
+            // one detection (cached on the trace) and draws every X glyph from
+            // it; detectedLandmarks() exists to hand that same answer out, and
+            // reactiveGlyphs() gives the two bar-bracketed peaks. Reading them
+            // is what makes the focus mark and the glyph the same number rather
+            // than two computations that have to be kept in step.
+            //
+            // The detection, the transition candidates, the fiducial assembly
+            // and the (bin,slot,lead,marker,anchor) cache that used to live here
+            // are all gone with it -- the panel already caches on the trace.
+            //
+            // pw == nullptr on a path that could not name its panel: leave the
+            // fiducial absent rather than substitute a second measurement. The
+            // panel then draws its dotted line at the bar column, which is the
+            // same fallback it has always had for a landmark with no placement.
+            if (!mean.empty() && pw) {
+                const FeatureMarks::TemplateLandmarks& lm = pw->detectedLandmarks();
+                const BinPlotWidget::Reactive rx = pw->reactiveGlyphs();
+                qOnsetFound = lm.q_onset_found;
 
-                // ---- THE FIDUCIAL, RE-BRACKETED EVERY CALL ---------------
-                //
-                // Outside the cache: the peaks follow the bars, which move
-                // without changing the key.
-                //
-                // userMarks, NOT slotMarks. The P peak is bracketed by the
-                // P-onset and Q-onset bars, which live in DIFFERENT anchors'
-                // sets -- one anchor's set holds only the bars it admits, so
-                // the bracket arrived half-empty and compute_p_peak clamped it
-                // to the trace edge, putting the fiducial outside the window.
-                // userMarks assembles all four and translates them into
-                // focusAnchor's columns: the same set the grid draws its X
-                // from. It is also the const accessor -- slotMarks' non-const
-                // overload inserts through operator[].
-                const EcgFiducials fid = ecgFiducialsFrom(m_lastDet,
-                    m_sampleRate, m_peakFitMode,
-                    b.userMarks(leadIdx, templateIdx, focusAnchor));
                 switch (marker) {
-                case BinPlotWidget::EcgPPeak:  detFid = fid.p_peak;  break;
-                    // T PEAK WAS MISSING FROM THIS SWITCH, so the T-peak focus
-                    // never received a fiducial at all and the panel fell back to
-                    // the bar column for its dotted line.
-                case BinPlotWidget::EcgTPeak:  detFid = fid.t_peak;  break;
-                case BinPlotWidget::EcgQPeak:  detFid = fid.q_peak;  break;
-                case BinPlotWidget::EcgRPeak:  detFid = fid.r_peak;  break;
-                case BinPlotWidget::EcgPBegin: detFid = fid.p_begin; break;
-                case BinPlotWidget::EcgQBegin: detFid = fid.q_onset; break;
-                case BinPlotWidget::EcgSEnd:   detFid = fid.s_end;   break;
-                case BinPlotWidget::EcgTEnd:   detFid = fid.t_end;   break;
+                    // Transitions carry candidate curves as well as a position.
+                case BinPlotWidget::EcgPBegin:
+                    transCand = lm.p_begin_cand; detFid = lm.p_begin; break;
+                case BinPlotWidget::EcgQBegin:
+                    transCand = lm.q_onset_cand; detFid = lm.q_onset; break;
+                case BinPlotWidget::EcgSEnd:
+                    transCand = lm.s_end_cand;   detFid = lm.s_end;   break;
+                case BinPlotWidget::EcgTEnd:
+                    transCand = lm.t_end_cand;   detFid = lm.t_end;   break;
+                    // Detected peaks.
+                case BinPlotWidget::EcgRPeak: detFid = lm.r_peak; break;
+                case BinPlotWidget::EcgQPeak: detFid = lm.q_peak; break;
+                    // Reactive peaks: bracketed by the bars, so they come from
+                    // reactiveGlyphs rather than the detection.
+                case BinPlotWidget::EcgPPeak: detFid = rx.ecgPPeak; break;
+                case BinPlotWidget::EcgTPeak: detFid = rx.ecgTPeak; break;
                 default: break;
                 }
+
                 // The candidates are computed in Auto (a stable window). The
                 // radio only recolors WHICH is green -- override the winner
                 // index here, without re-fitting, so switching the model never
@@ -557,25 +515,54 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                 ? FocusPanelWidget::FitKind::None
                 : (isPeak ? FocusPanelWidget::FitKind::PeakQuadratic
                     : FocusPanelWidget::FitKind::Transition);
-            // Only read on the peak branch below, so the initialisers are
-            // unreachable placeholders rather than a fallback for a real
-            // landmark -- every peak marker sets both explicitly.
+            // Fit window for this landmark, from the shared table. Only read
+            // on the peak branch below, so the 0 defaults are unreachable
+            // placeholders rather than a fallback for a real landmark.
             double peakSigma = 0.0;
             int peakHalfWidth = 0;
+            bool isEcgPeakMarker = true;
+            EcgPeak whichPeak = EcgPeak::R;
+            subsample_refine::PeakCandidates peakCand;   // for the panel to DRAW
             switch (marker) {
-            case BinPlotWidget::EcgRPeak:
-                peakSigma = subsample_refine::peak_sigma::R;
-                peakHalfWidth = subsample_refine::peak_halfwidth::R; break;
-            case BinPlotWidget::EcgPPeak:
-                peakSigma = subsample_refine::peak_sigma::P;
-                peakHalfWidth = subsample_refine::peak_halfwidth::P; break;
-            case BinPlotWidget::EcgTPeak:
-                peakSigma = subsample_refine::peak_sigma::T;
-                peakHalfWidth = subsample_refine::peak_halfwidth::T; break;
-            case BinPlotWidget::EcgQPeak:
-                peakSigma = subsample_refine::peak_sigma::Q;
-                peakHalfWidth = subsample_refine::peak_halfwidth::Q; break;
-            default: break;
+            case BinPlotWidget::EcgRPeak: whichPeak = EcgPeak::R; break;
+            case BinPlotWidget::EcgPPeak: whichPeak = EcgPeak::P; break;
+            case BinPlotWidget::EcgTPeak: whichPeak = EcgPeak::T; break;
+            case BinPlotWidget::EcgQPeak: whichPeak = EcgPeak::Q; break;
+            default: isEcgPeakMarker = false; break;
+            }
+            if (isEcgPeakMarker) {
+                peakSigma = peakSigmaFor(whichPeak);
+                peakHalfWidth = peakHalfWidthFor(whichPeak);
+
+                // THE CURVES ONLY. detFid is already the panel's own
+                // placement, read from the glyph detection above -- nothing
+                // here may change it, or the focus mark and the glyph part
+                // company again. What the panel still needs is the fitted
+                // curves, and it needs them on `mean` so their amplitudes are
+                // in the units it draws.
+                //
+                // Seeding from detFid is safe in x: the detector is
+                // scale-invariant (Q_MIN_DEPTH is a fraction of the R
+                // amplitude, not an absolute mV), so the normalized copy
+                // yields the same columns.
+                //
+                // T-peak excluded: reactive glyph, defined by the S-end /
+                // T-end brackets rather than by a fit of its own.
+                // pw IS TESTED HERE, not inherited. The detection block above
+                // is inside `if (!mean.empty() && pw)`; this one is not, so
+                // without its own test a null or destroyed panel reaches a
+                // `->`. That is the access violation on switching alignment:
+                // the switch tears the panels down and the re-fire hands this
+                // function the stale pointer.
+                if (pw && whichPeak != EcgPeak::T) {
+                    peakCand = pw->peakCandidatesFor(whichPeak);
+                    // Coefficients are in the RAW array's amplitude units while
+                    // this panel draws the /ref-normalized copy; positions are
+                    // columns and need no conversion.
+                    if (peakCand.valid && eref > 0.0 && eref != 1.0)
+                        for (auto& f : peakCand.draw)
+                            for (double& cf : f.coeff) cf /= eref;
+                }
             }
             setFocusSplit(false);
             if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
@@ -589,7 +576,8 @@ void TemplateViewerWindow::refreshFocus(int binIdx, int leadIdx,
                         peakHalfWidth);
                 else
                     zoomed_in_section_top->setFitKind(fk);
-                zoomed_in_section_top->setPeakFitMode(m_peakFitMode);
+                // The fits themselves, not the mode: the panel draws them.
+                zoomed_in_section_top->setPeakCandidates(peakCand);
                 zoomed_in_section_top->setTransitionCandidates(transCand);   // invalid for peaks -> ignored
                 zoomed_in_section_top->setDetectorFiducial(detFid);
                 zoomed_in_section_top->setSdMs(sdMs, floorMask, absSlope, floor);

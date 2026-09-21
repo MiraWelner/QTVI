@@ -119,8 +119,16 @@ public:
         m_peakHalfWidth = std::max(3, peakHalfWidth);
         update();
     }
-    // Forced peak model (Fit-Peaks radio); Auto = BIC quad-vs-cubic.
-    void setPeakFitMode(curve_fit::PeakFitMode m) { m_panelPeakMode = m; update(); }
+    // Supply the EXACT peak fits the detector ran, so the panel DRAWS the
+    // contest that placed the mark instead of re-running it. Peak analogue of
+    // setTransitionCandidates below, and it exists for the same reason: the
+    // panel cannot reproduce the detector's answer from sigma and half-width
+    // alone, because it does not know the integer seed the detector fitted
+    // around. Cleared by clearFocus; ignored for transitions.
+    void setPeakCandidates(const subsample_refine::PeakCandidates& c) {
+        m_peakCands = c; update();
+    }
+
 
     // Supply the EXACT candidate curves the detector fit for this transition
     // landmark (sample-indexed closures + winner), so the panel draws the fits
@@ -151,7 +159,10 @@ private:
     FitKind m_fitKind = FitKind::Transition;
     double  m_peakSigma = 4.0;
     int     m_peakHalfWidth = -1;   // -1 = no peak in focus
-    curve_fit::PeakFitMode m_panelPeakMode = curve_fit::PeakFitMode::Auto;
+    // m_panelPeakMode IS GONE. The panel no longer selects a model, so it has
+    // no use for the Fit-Peaks radio: the winner arrives in m_peakCands.
+    subsample_refine::PeakCandidates m_peakCands;           // supplied exact peak fits
+
     subsample_refine::TransitionCandidates m_transCands;   // supplied exact transition fits
     std::vector<double> m_mean;
     std::vector<double> m_sd;

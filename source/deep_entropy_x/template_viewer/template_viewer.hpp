@@ -2,6 +2,7 @@
 
 #include <QMainWindow>
 #include <QEvent>
+#include <QPointer>
 #include <vector>
 #include <utility>
 #include <map>
@@ -317,7 +318,13 @@ private:
     // column that does carry the bin's marker set.
     void refreshBankMarkers(int binIdx, int templateIdx);
     //if you don't refresh, after switching from j alingnment to another alignment, the focus panel will still show the j alignment
-    void refreshFocus(int binIdx, int leadIdx, int templateIdx, int marker, double col);
+    // pw IS THE PANEL THE FOCUS IS ABOUT, and it is where the landmark
+    // columns come from: BinPlotWidget::detectedLandmarks() / reactiveGlyphs()
+    // are the detection the X glyphs are drawn at. This used to re-detect here
+    // instead, so the focus mark and the glyph were two answers.
+    // No default: every call site must say which panel it means. nullptr is
+    // allowed and falls back to m_focusWidget (the re-fire paths).
+    void refreshFocus(BinPlotWidget* pw, int binIdx, int leadIdx, int templateIdx, int marker, double col);
     void pageIn();   // showPage, re-seeding this page with active fit modes first
 
     FocusPanelWidget* zoomed_in_section_top = nullptr; //for most close ups, they only use focus top
@@ -350,13 +357,23 @@ private:
     // Cache of the last focused landmark's detector fit, so a drag (which
     // re-fires refreshFocus every mouse-move) reuses it instead of re-running
     // detect_template_landmarks each time. Keyed by (bin,slot,lead,marker,anchor).
-    long long m_lastTransKey = -1;
-    subsample_refine::TransitionCandidates m_lastTransCand;
+    // The panel the current focus belongs to, for the re-fire paths (a
+    // fit-mode change, an alignment change) that have no widget of their own.
+    // QPointer, NOT a raw pointer. clearPlots() deleteLater()s every panel on
+    // each page build and on each alignment re-skin, so a raw pointer held
+    // across one of those is dangling -- and the re-fire paths
+    // (fit-mode change, alignment change) pass exactly this pointer straight
+    // into refreshFocus. QPointer nulls itself when the widget is destroyed,
+    // which turns a use-after-free into the "no panel named" path that
+    // refreshFocus already handles.
+    QPointer<BinPlotWidget> m_focusWidget;
+    // m_lastTransKey / m_lastTransCand / m_lastDet ARE GONE with the
+    // duplicate detection they cached: BinPlotWidget caches its own
+    // detection on the trace, and refreshFocus reads that.
 
     // THE DETECTION, not the finished position: P and T peak are bracketed by
     // the operator's bars, which move without changing this key, so caching
     // the column replayed a pre-drag fiducial. Re-bracketed per call.
-    EcgDetection m_lastDet;
 
     // Operator-selected fit models (the on/offset and Fit-Peaks radio groups).
     // Auto = the BIC contest; any other value forces that model so the focus

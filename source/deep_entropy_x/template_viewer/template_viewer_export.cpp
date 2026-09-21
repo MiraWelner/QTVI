@@ -367,16 +367,20 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
             // is the record of what placed each mark, so it has to fit the
             // same span the detector fitted -- a hardcoded +-7 here would
             // report a different polynomial from the one on screen for P.
-            auto peak = [&](const char* name, double pos, double sigma,
-                int halfWidth) {
-                    if (pos < 0.0 || pos > N - 1) { emitRow(name, "NONE", -1.0, NaNv, {}); return; }
-                    const subsample_refine::peak_fit fit =
-                        subsample_refine::bestPeakExtremumFit(ecg,
-                            static_cast<int>(std::lround(pos)), sigma,
-                            halfWidth, m_peakFitMode);   // halfWidth: no default
-                    emitRow(name, peakTypeName(fit.type),
-                        static_cast<double>(fit.seed), fit.rss,
-                        { fit.coeff[0], fit.coeff[1], fit.coeff[2], fit.coeff[3] });
+            // Returns the fit whole, so the reported model and the position
+            // written below come from one computation. sigma and halfWidth are
+            // resolved inside placeEcgPeak from the shared table.
+            auto peak = [&](const char* name, EcgPeak which, double pos) {
+                const subsample_refine::peak_fit fit =
+                    placeEcgPeak(ecg, which, pos, m_peakFitMode);
+                if (fit.position < 0.0) {
+                    emitRow(name, "NONE", -1.0, NaNv, {});
+                    return fit;
+                }
+                emitRow(name, peakTypeName(fit.type),
+                    static_cast<double>(fit.seed), fit.rss,
+                    { fit.coeff[0], fit.coeff[1], fit.coeff[2], fit.coeff[3] });
+                return fit;
                 };
             // ONSETS/OFFSETS: the selected transition model (Auto = BIC) over
             // +-100 ms.
@@ -389,12 +393,11 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
                 emitRow(name, transTypeName(fit.type), (double)lo, fit.rss, fit.params);
                 };
 
-            peak("p_peak", aa.p_peak, subsample_refine::peak_sigma::P,
-                subsample_refine::peak_halfwidth::P);
-            peak("q_peak", aa.q_peak, subsample_refine::peak_sigma::Q,
-                subsample_refine::peak_halfwidth::Q);
-            peak("r_peak", aa.r_peak, subsample_refine::peak_sigma::R,
-                subsample_refine::peak_halfwidth::R);
+            // Kept: the position columns below read these fits, not aa.*.
+            const auto plP = peak("p_peak", EcgPeak::P, aa.p_peak);
+            const auto plQ = peak("q_peak", EcgPeak::Q, aa.q_peak);
+            const auto plR = peak("r_peak", EcgPeak::R, aa.r_peak);
+            (void)plP; (void)plQ; (void)plR;   // read by the emitters below
             trans("p_begin", aa.p_begin);
             trans("q_onset", aa.q_onset);
             trans("s_end", aa.s_end);
@@ -644,11 +647,22 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
                 (int)std::lround(aa.s_end), (int)std::lround(aa.t_end), m_sampleRate);
             const FeatureMarks::ReactiveEcg rxU = FeatureMarks::reactive_ecg(ecgA, umk.p_begin, umk.q_onset, umk.s_end, umk.t_end, m_sampleRate);
 
+            // Same placement the glyph and the focus panel draw: aa.r_peak is
+            // a seed, placeEcgPeak turns it into a position. On a failed fit
+            // the seed stands, so a found landmark is never blanked.
+            //
+            // ecgA, not ecg: this block's own alignment, whose columns these
+            // numbers are expressed in.
+            const auto plRa = placeEcgPeak(ecgA, EcgPeak::R, aa.r_peak,
+                m_peakFitMode);
+            const double rPeakOut = (plRa.position >= 0.0) ? plRa.position
+                : aa.r_peak;
+
             ecgAuto[c][0] = aa.p_begin;
             ecgAuto[c][1] = rxA.p_peak;          // reactive glyph, detector brackets
             ecgAuto[c][2] = aa.q_onset;
             ecgAuto[c][3] = ftAuto[c].q_idx;
-            ecgAuto[c][4] = aa.r_peak;
+            ecgAuto[c][4] = rPeakOut;
             ecgAuto[c][5] = ftAuto[c].s_idx;
             ecgAuto[c][6] = aa.s_end;
             ecgAuto[c][7] = aa.t_end;

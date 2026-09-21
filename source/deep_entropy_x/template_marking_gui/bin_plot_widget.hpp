@@ -279,6 +279,13 @@ public:
         return m_det.lm;
     }
 
+    // The fitted curves behind one peak glyph, for a viewer that wants to DRAW
+    // the contest rather than re-run it. Same cache, same call.
+    const subsample_refine::PeakCandidates& peakCandidatesFor(EcgPeak w) const {
+        reactiveGlyphs();          // populates / reuses m_det + m_peakCands
+        return m_peakCands[static_cast<size_t>(w)];
+    }
+
     // Fit models for the DETECTED glyphs (the X marks): the transition fiducials
     // are drawn at the selected model's crossing. Setting them invalidates the
     // glyph snapshot so the next paint re-detects with the new model.
@@ -560,6 +567,10 @@ private:
     // only P and T peak react to the bars (see ecgDetect). m_det.tmpl points
     // INTO the bin, so the identity fields are part of the guard -- a rebuild
     // can hand this panel another bin or slot without going through setData.
+    // The peak contest for this trace, indexed by EcgPeak. Filled by the same
+    // pass that places the glyphs, so the fit the panel DRAWS is the fit that
+    // placed the mark -- one contest, not one per viewer.
+    mutable std::array<subsample_refine::PeakCandidates, 5> m_peakCands{};
     mutable EcgDetection       m_det;
     mutable bool               m_detValid = false;
     mutable const TemplateBin* m_detBin = nullptr;
