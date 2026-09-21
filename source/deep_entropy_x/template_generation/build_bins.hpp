@@ -505,6 +505,9 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
             alignment::aligned_beats q = alignment::align_beat_matrix(
                 perBin[i], blk.r_col, fs, /*compute_iqr=*/true,
                 ref_beat_of_median_length, locate,
+                // Same floor the bank groups on -- one config value, one
+                // meaning: does this beat correlate with this template.
+                tbank::matchFloorEcg(),
                 exclRows.empty() ? nullptr : &exclRows);
             if (q.tmpl.empty()) continue;
 

@@ -983,6 +983,13 @@ namespace alignment {
         int R_anchor, double fs, bool compute_iqr,
         const std::vector<double>& ref_beat_of_median_length,
         const std::function<double(const std::vector<double>&)>& locate,
+        // The per-beat correlation floor, tbank::matchFloorEcg() from
+        // config.csv. PASSED IN, not read here: this header keeps its own
+        // TukeyOutcome enum rather than tbank's (see the note above) precisely
+        // so it does not depend on the bank, and one getter is not worth
+        // breaking that. No default -- a silent 0.0 would disable the guard
+        // and let every beat through however badly it correlated.
+        double corrFloor,
         const std::vector<char>* exclude_from_median = nullptr)
     {
         aligned_beats res;
@@ -1021,11 +1028,40 @@ namespace alignment {
         if (markerD >= 0.0) {
             const double NaNv = std::numeric_limits<double>::quiet_NaN();
             shifts.reserve(beats.size());
+            // ---- PER-BEAT SHIFT BY CROSS-CORRELATION --------------------
+            //
+            // This ran `locate(beats[i])` -- the FULL landmark finder, with its
+            // Q-peak search, sigma-4 refine, 4x cubic upsample and four-model
+            // BIC selection -- once per beat, and used the result for exactly
+            // one thing: markerD - mi. Cost scaled with window width rather
+            // than beat count (~20.9 ms/beat at 40 samples, ~268.9 ms at 200),
+            // which is why the P pass ran ~6.9x the Q pass.
+            //
+            // The landmark is measured ONCE, on the reference beat, above
+            // (markerD). A beat only owes the alignment its offset from that,
+            // and xcorrShift returns it at ~0.011 ms/beat, agreeing with the
+            // per-beat fit to 0.009 ms. Per-beat model switching goes with it:
+            // BIC picking different models on different beats put the ~5 ms
+            // inter-model bias difference into the beat-to-beat spread.
+            //
+            // WINDOW: centred on the reference landmark, +-halfWin. It has to
+            // contain the transition being aligned and nothing else -- a window
+            // holding two transitions locks onto the larger one.
+            //
+            // FLOOR: tbank::matchFloorEcg(), the config.csv correlation floor
+            // the bank already uses to decide whether a beat belongs to a
+            // morphology. Below it there is NO estimate and the beat is
+            // skipped, exactly as a locator returning -1 was skipped.
+            const int halfWin = std::max(5,
+                static_cast<int>(std::lround(0.030 * fs)));   // +-30 ms
+            const int xlo = static_cast<int>(std::lround(markerD)) - halfWin;
+            const int xhi = static_cast<int>(std::lround(markerD)) + halfWin;
+            size_t nNoCorr = 0;
             for (size_t i = 0; i < beats.size(); ++i) {
-                const double mi = locate(beats[i]);
-                if (!(mi >= 0.0)) continue;
-                locatedPos.push_back(mi);              // DIAG
-                const double shiftD = markerD - mi;   // may be negative
+                const double shiftD = subsample_refine::xcorrShift(
+                    beats[i], ref_beat_of_median_length, xlo, xhi, corrFloor);
+                if (!std::isfinite(shiftD)) { ++nNoCorr; continue; }
+                locatedPos.push_back(markerD - shiftD);   // DIAG: implied landmark
                 shifts.push_back(static_cast<int>(std::lround(shiftD)));
 
                 // A shift under a thousandth of a sample is not worth a

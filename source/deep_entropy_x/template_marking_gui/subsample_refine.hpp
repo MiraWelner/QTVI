@@ -9,6 +9,7 @@
  *         -- the class of bug found and fixed in Phase B).
  */
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <array>
 #include <algorithm>
@@ -515,6 +516,121 @@ namespace subsample_refine {
     // (Section 4.2 machinery, Phase A) on the upsampled window, returning a
     // sub-sample position in the ORIGINAL sample-rate coordinate.
     // ---------------------------------------------------------------------
+    // ---------------------------------------------------------------------
+    // PER-BEAT SHIFT BY CROSS-CORRELATION.
+    //
+    // Replaces running the full landmark finder on every beat. That produced a
+    // landmark per beat whose only use was the difference from the template's
+    // landmark -- so it paid for a Q-peak search, a sigma-4 refine, a 4x cubic
+    // upsample and a four-model BIC selection to compute one scalar offset.
+    // Cost scaled with WINDOW WIDTH, not beat count: ~20.9 ms/beat at a
+    // 40-sample window and ~268.9 ms at 200, which is why the P pass (widest
+    // window) ran ~6.9x the Q pass and J ~3.6x.
+    //
+    // The landmark itself belongs on the TEMPLATE, which has roughly 30x the
+    // signal-to-noise ratio of one beat, and is fitted there once. All a beat
+    // owes the alignment is how far it sits from that template.
+    //
+    // NOT AN APPROXIMATION. Benchmarked at 0.011 ms/beat and agreeing with the
+    // full per-beat fit to 0.009 ms on subject 3010104.
+    //
+    // IT ALSO REMOVES PER-BEAT MODEL SWITCHING. With a fit per beat, BIC could
+    // pick different models on different beats, and models carry different
+    // systematic biases (~5 ms between them) -- so the choice itself entered
+    // the beat-to-beat spread and inflated QT variability by up to 12%. One
+    // model, fitted once on the template, cannot do that.
+    //
+    // Returns the shift in samples to ADD to the beat's position so its
+    // feature coincides with the template's, or NaN when the peak correlation
+    // falls below `corrFloor`. NaN means NO ESTIMATE -- the caller skips the
+    // beat rather than substituting zero, because a beat that does not
+    // correlate with the template is not a beat sitting at zero offset.
+    //
+    // corrFloor IS PASSED IN, not read here: it is tbank::matchFloorEcg() from
+    // config.csv -- the same correlation floor the bank uses to decide whether
+    // a beat joins a morphology group -- and this header stays free of the
+    // bank dependency. Note the floor is applied to a LANDMARK WINDOW here
+    // rather than a whole beat, so the same number is a stricter gate than in
+    // its grouping use; a short window over a low-amplitude feature correlates
+    // worse at equal quality.
+    inline double xcorrShift(const std::vector<double>& beat,
+        const std::vector<double>& tmpl, int lo, int hi,
+        double corrFloor, int maxLagSamples = 0)
+    {
+        const double kNaN = std::numeric_limits<double>::quiet_NaN();
+        const int nB = static_cast<int>(beat.size());
+        const int nT = static_cast<int>(tmpl.size());
+        lo = std::max(0, lo);
+        hi = std::min(std::min(nB, nT) - 1, hi);
+        const int w = hi - lo + 1;
+        if (w < 5) return kNaN;
+        if (maxLagSamples <= 0) maxLagSamples = std::max(2, w / 2);
+
+        // Template window, mean-removed once.
+        std::vector<double> t; t.reserve(w);
+        double tm = 0.0; int tn = 0;
+        for (int i = lo; i <= hi; ++i)
+            if (!std::isnan(tmpl[i])) { tm += tmpl[i]; ++tn; }
+        if (tn < 5) return kNaN;
+        tm /= tn;
+        double tss = 0.0;
+        for (int i = lo; i <= hi; ++i) {
+            const double v = std::isnan(tmpl[i]) ? 0.0 : tmpl[i] - tm;
+            t.push_back(v);
+            tss += v * v;
+        }
+        if (!(tss > 0.0)) return kNaN;
+
+        // Normalized correlation at integer lags.
+        auto corrAt = [&](int lag) -> double {
+            double bm = 0.0; int bn = 0;
+            for (int k = 0; k < w; ++k) {
+                const int j = lo + k + lag;
+                if (j < 0 || j >= nB || std::isnan(beat[j])) continue;
+                bm += beat[j]; ++bn;
+            }
+            if (bn < 5) return kNaN;
+            bm /= bn;
+            double num = 0.0, bss = 0.0;
+            for (int k = 0; k < w; ++k) {
+                const int j = lo + k + lag;
+                const double bv = (j < 0 || j >= nB || std::isnan(beat[j]))
+                    ? 0.0 : beat[j] - bm;
+                num += bv * t[k];
+                bss += bv * bv;
+            }
+            if (!(bss > 0.0)) return kNaN;
+            return num / std::sqrt(bss * tss);
+            };
+
+        int bestLag = 0; double bestC = -2.0;
+        for (int lag = -maxLagSamples; lag <= maxLagSamples; ++lag) {
+            const double c = corrAt(lag);
+            if (std::isnan(c)) continue;
+            if (c > bestC) { bestC = c; bestLag = lag; }
+        }
+        if (!(bestC >= corrFloor)) return kNaN;          // the guard
+
+        // Parabolic interpolation of the correlation peak -> sub-sample lag.
+        // Skipped at the search edges, where one side is missing; the integer
+        // lag stands rather than being extrapolated.
+        double frac = 0.0;
+        if (bestLag > -maxLagSamples && bestLag < maxLagSamples) {
+            const double cm = corrAt(bestLag - 1), cp = corrAt(bestLag + 1);
+            if (!std::isnan(cm) && !std::isnan(cp)) {
+                const double den = cm - 2.0 * bestC + cp;
+                if (std::abs(den) > 1e-12) {
+                    frac = 0.5 * (cm - cp) / den;
+                    if (!(std::abs(frac) <= 1.0)) frac = 0.0;
+                }
+            }
+        }
+        // corrAt(lag) reads beat[lo+k+lag] against tmpl[lo+k], so a positive
+        // best lag means the beat's feature sits LATER than the template's and
+        // the beat must move back by that much.
+        return -(static_cast<double>(bestLag) + frac);
+    }
+
     inline double transitionAnchor(const std::vector<double>& signal, int seed,
         double fraction, int windowSamples = 40,
         double externalBaseline = std::numeric_limits<double>::quiet_NaN(),

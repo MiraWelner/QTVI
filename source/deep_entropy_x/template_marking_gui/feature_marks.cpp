@@ -314,11 +314,58 @@ double FeatureMarks::compute_j_point(const std::vector<double>& v, double fs, in
     // still reports the refined S position rather than a rounded one.
     const int sPeak = cl(static_cast<int>(std::floor(sPeakD)));
     const int lo = cl(sPeak);
-    const int hi = cl(sPeak + ms(J_POINT_WIN_S));
+
+    // ---- BOUNDED BY THE NEXT FEATURE, NOT BY A CLOCK --------------------
+    //
+    // This was a flat sPeak + J_POINT_WIN_S. A window that wide can reach the
+    // T, and one sigmoid fits ONE transition -- it locks onto whichever is
+    // larger, so on a tall or early T the fit describes the T rather than the
+    // ST recovery this function measures. That error is ~13 ms, which swamps
+    // the 0.2-2.5 ms spread between fit methods.
+    //
+    // Every other transition window here is already bounded by its neighbour:
+    // Q-onset ends AT the Q peak, so the R upstroke is outside by
+    // construction, and T-end starts AT the T apex, so the T upslope is
+    // excluded. This was the one still sized by a constant alone. The constant
+    // stays, as the CAP.
+    //
+    // THE BOUND IS THE FIRST TURNING POINT after the S trough. On the upright
+    // copy the ST segment recovers away from the S monotonically; where that
+    // slope reverses is where the recovery ends and the T begins, so the window
+    // holds exactly one transition.
+    //
+    // NOT "the sample furthest from the right-edge baseline", which was the
+    // obvious formulation and is wrong: the right edge sits ON the T's flank,
+    // so the S trough is further from it than the T apex is and the search
+    // returns the S. Slope reversal has no such circularity.
+    //
+    // WORKS FOR AN INVERTED T without special-casing. The recovery still rises
+    // from the S; an inverted T simply reverses it sooner, and the window ends
+    // before the T rather than inside it.
+    //
+    // Smoothed over +-6 ms so sample-level noise on a flat ST does not read as
+    // a reversal. If no reversal is found the cap stands, which is the previous
+    // behaviour and the safe direction.
+    int hi = cl(sPeak + ms(J_POINT_WIN_S));
+    if (hi - lo < 4) return cld(sPeakD);
+    {
+        const int sm = std::max(1, ms(0.006));
+        auto slopeAt = [&](int i) {
+            const int a = std::max(lo, i - sm), b = std::min(hi, i + sm);
+            if (b <= a || std::isnan(u[a]) || std::isnan(u[b])) return 0.0;
+            return (u[b] - u[a]) / static_cast<double>(b - a);
+            };
+        double s0 = 0.0; int k = lo + 1;
+        for (; k <= hi; ++k) { s0 = slopeAt(k); if (std::abs(s0) > 1e-12) break; }
+        for (int j = k + 1; j <= hi && k <= hi; ++j) {
+            if (s0 * slopeAt(j) < 0.0) { if (j > lo + 3) hi = j; break; }
+        }
+    }
     if (hi - lo < 4) return cld(sPeakD);
 
     // Baseline reference = right edge of the J-point window (recovered ST
-    // level); extremum = the S trough at lo.
+    // level); extremum = the S trough at lo. Re-read AFTER the bound above,
+    // since hi may have moved onto the T apex.
     const double baseline = u[hi];
 
     // 4x cubic-upsample transition fit-and-select. Offset anchor at the
@@ -1391,10 +1438,6 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
     curve_fit::FitMode fitMode, curve_fit::PeakFitMode peakMode)
 {
     out = tbank::BankMarkerSet{};          // all -1
-    // SET BEFORE ANY RETURN. `seeded` records that the detector RAN, not that
-    // it succeeded -- a template it legitimately finds nothing on must not be
-    // re-detected on every display for the rest of the session.
-    out.seeded = true;
     const TemplateLandmarks lm =
         FeatureMarks::detect_template_landmarks(tmpl, r_col, sampleRate, fitMode, peakMode);
     if (!lm.valid) return;
@@ -1429,36 +1472,6 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
     // set now reports "never seeded" permanently. Callers that seed lazily on
     // that test must skip an anchor with no owned bar, or they will re-run this
     // detection on every display.
-    // ---- THE WHOLE DETECTION, KEPT ------------------------------------
-    // `lm` above is every landmark on this waveform, and this function used to
-    // discard all but the bars -- so the widget, the focus panel and the
-    // export each re-ran detect_template_landmarks to get them back. Stored
-    // here, there is one detection per (slot, anchor) and every reader looks
-    // the answer up.
-    //
-    // UNMASKED, deliberately. showsBar gates which BARS an alignment owns,
-    // because a bar is editable and an edit has to belong somewhere. A glyph is
-    // a measurement of this waveform and every alignment has one, which is the
-    // rule seed_all already follows.
-    // FIXED LANDMARKS ONLY. P-peak and T-peak are NOT stored: they are
-    // reactive, bracketed by the operator's bars and recomputed by
-    // reactive_ecg on every read, so a detector-sourced copy here would be a
-    // second answer that drifts the moment a bracket bar moves -- which is the
-    // note above, and the reason p_peak was taken off BankMarkerSet in the
-    // first place. (TemplateLandmarks has no t_peak field at all, for the same
-    // reason.)
-    out.p_begin_auto = lm.p_begin;
-    out.q_onset_auto = lm.q_onset;
-    out.q_peak_auto = lm.q_peak;
-    out.r_peak_auto = lm.r_peak;
-    out.s_end_auto = lm.s_end;
-    out.t_end_auto = lm.t_end;
-    out.q_onset_found_auto = lm.q_onset_found;
-    // S peak has no TemplateLandmarks field; same finder the interval code and
-    // ecgDetect use, on this alignment's trace and R column.
-    out.s_peak_auto = FeatureMarks::compute_s_peak(tmpl, r_col, sampleRate,
-        peakMode);
-
     if (anchor_view::showsBar(anchor, anchor_view::kQBegin)) out.q_onset = lm.q_onset;
     if (anchor_view::showsBar(anchor, anchor_view::kSEnd))   out.s_end = lm.s_end;
     if (anchor_view::showsBar(anchor, anchor_view::kTEnd))   out.t_end = lm.t_end;
