@@ -1,6 +1,5 @@
 #include "focus_panel_widget.hpp"
-#include "subsample_refine.hpp" 
-#include "template_anchoring\curve_fit.hpp"
+#include "subsample_refine.hpp"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -31,17 +30,26 @@ void FocusPanelWidget::setFocus(const std::vector<double>& mean,
     m_framingBias = framingBias;
     m_active = (landmarkCol >= 0 && !mean.empty());
 
-    // A NEW LANDMARK INVALIDATES THE DERIVED ARRAYS. They describe the
-    // PREVIOUS waveform, and every caller that has them supplies them through
-    // setSdMs immediately after this call -- so clearing here costs those
-    // callers nothing and stops the ones that DON'T (the pulse path, which has
-    // no slope model) from printing the last ECG landmark's sd and slope at
-    // this landmark's column.
+    // A NEW LANDMARK INVALIDATES EVERY DERIVED ARRAY, the supplied fits
+    // included. They describe the PREVIOUS landmark on the PREVIOUS waveform,
+    // and every caller that has replacements supplies them immediately after
+    // this call -- so clearing here costs those callers nothing.
+    //
+    // THE FITS WERE NOT CLEARED HERE, and only clearFocus did it. A caller
+    // that supplied none therefore inherited the last caller's: select an ECG
+    // Q-onset, then a PPG landmark, and the panel drew the ECG's five
+    // transition closures over the pulse, named an ECG model in the header, and
+    // put the dotted fiducial at the ECG's detector column. Clearing is the
+    // fix, not a cleanup -- a panel holding another landmark's fit has no
+    // correct way to draw itself.
     m_sdMs.clear();
     m_floorMask.clear();
     m_deriv.clear();
     m_slopeFloor = 0.0;
     m_lastFidCol = -1.0;
+    m_detectorFid = -1.0;
+    m_transCands = subsample_refine::TransitionCandidates{};
+    m_peakCands = subsample_refine::PeakCandidates{};
 
     update();
 }
@@ -123,13 +131,6 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
         }
         return c;
         };
-    auto evalModel = [&](const curve_fit::FitResult& f) {
-        std::vector<double> c(m_mean.size(),
-            std::numeric_limits<double>::quiet_NaN());
-        if (f.f) for (int i = lo; i <= hi; ++i) c[i] = f.f(static_cast<double>(i));
-        return c;
-        };
-
     if (m_fitKind == FitKind::PeakQuadratic || m_fitKind == FitKind::PeakCubic) {
         // NOTHING IS FITTED HERE. The three curves, the winner and the
         // placement all arrive in m_peakCands, run once by
@@ -161,10 +162,18 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
     }
 
     else {
-        // Prefer the EXACT candidates the detector fit (supplied via
-        // setTransitionCandidates): sample-indexed closures over the upsampled
-        // one-sided window the panel can't reconstruct itself. Fall back to a
-        // live re-fit over the visible window only when none were supplied.
+        // THE EXACT CANDIDATES THE DETECTOR FIT, or nothing. Supplied via
+        // setTransitionCandidates: sample-indexed closures over the upsampled
+        // one-sided window the panel cannot reconstruct itself.
+        //
+        // A live re-fit used to stand behind this -- fitPiecewiseLinear /
+        // fitSigmoid / fitFractionalPolynomial over the visible window -- and
+        // it was worse than drawing nothing. It answered a different question
+        // from the detector's (a different span, a different weighting) and it
+        // was reached by every landmark with no contest behind it, including
+        // every PULSE landmark, where it fitted onset/offset models across a
+        // whole pulse and drew three curves nothing had placed. The panel
+        // renders supplied answers; it does not produce them.
         if (m_transCands.valid) {
             static const char* kNames[5] = { "Piecewise", "Sigmoid", "Fractional", "Cubic Spline", "Cubic" };
             for (int k = 0; k < 5; ++k) {
@@ -187,17 +196,7 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
                     : std::numeric_limits<double>::quiet_NaN();
                 out.push_back(std::move(cd));
             }
-            return out;
         }
-        // Same three candidates and same winner as selectBestFit, over the
-        // visible window (fallback; see header note on the transition window).
-        const auto pw = curve_fit::fitPiecewiseLinear(m_mean, lo, hi);
-        const auto sig = curve_fit::fitSigmoid(m_mean, lo, hi, pw);
-        const auto frac = curve_fit::fitFractionalPolynomial(m_mean, lo, hi);
-        const auto win = curve_fit::selectBestFit(m_mean, lo, hi);
-        out.push_back({ evalModel(pw),  pw.type == win.type, QStringLiteral("Piecewise") });
-        out.push_back({ evalModel(sig), sig.type == win.type, QStringLiteral("Sigmoid") });
-        out.push_back({ evalModel(frac), frac.type == win.type, QStringLiteral("Fractional") });
     }
     return out;
 }
@@ -369,10 +368,14 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         if (m_fitKind == FitKind::None) {
             // The line that would name the winning model says why there is
             // none, rather than sitting blank and reading as "still loading".
+            // GENERIC, because two things reach it: an ECG Q with no trough
+            // (compute_q_onset's R-upstroke fallback) and every PULSE landmark,
+            // none of which is placed by a model contest. Both are "the
+            // detector's position, with no curve behind it".
             p.setPen(QColor(120, 120, 120));
             p.drawText(QRect(ml, 4 + kHeadLine, width() - ml - mr, kSubLine),
                 Qt::AlignLeft | Qt::AlignVCenter,
-                QStringLiteral("no fit - fallback position (no Q trough)"));
+                QStringLiteral("no fit - detector position"));
         }
         else for (const Candidate& c : cands)
             if (c.selected && !c.label.isEmpty()) {

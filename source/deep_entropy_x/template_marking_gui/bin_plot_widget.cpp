@@ -435,8 +435,9 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     // union of the channels rather than a sample count over one of them.
     m_rAnchor[static_cast<size_t>(Channel::Ecg)] = rPeakSample;
 
-    m_glyphsValid = false;   // trace changed: glyph snapshot must be recaptured
-    m_detValid = false;      // ... and so is the cached landmark detection
+    // NEW OCCUPANT: both detections describe the previous one.
+    m_detValid = false;
+    m_pdetValid = false;
     recomputeFrame();
     updateGeometry();
     update();
@@ -460,8 +461,7 @@ void BinPlotWidget::setEcgData(const std::vector<double>& ecg,
     m_rPeakSample = rPeakSample;
     m_rAnchor[static_cast<size_t>(Channel::Ecg)] = rPeakSample;
 
-    m_glyphsValid = false;   // trace changed: glyph snapshot must be recaptured
-    m_detValid = false;      // ... and so is the cached landmark detection
+    m_detValid = false;   // ECG trace changed; the pulse channels did not
     recomputeFrame();
     updateGeometry();
     update();
@@ -1107,61 +1107,87 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
         double barDist = std::numeric_limits<double>::infinity();
         const int mBar = markerAtX(px, &barDist);
 
-        // GLYPHS ARE READ-ONLY, hit-tested at the positions ACTUALLY DRAWN
-        // (what the operator sees): R from the frozen snapshot
-        // (m_glyphs.ecgRPeak), P from the reactive fit (reactiveGlyphs). NOT
-        // m_markers[EcgRPeak], which holds r_col_raw and sits a few samples
-        // off the drawn cross -- that mismatch is why clicking the R glyph used
-        // to do nothing.
+        // GLYPHS ARE READ-ONLY, hit-tested at the positions ACTUALLY DRAWN:
+        // the same detectedLandmarks() / detectedPulse() / reactiveGlyphs()
+        // drawFeatureGlyphs paints from. NOT m_markers[...], which for R holds
+        // r_col_raw and sits a few samples off the drawn cross -- that mismatch
+        // is why clicking the R glyph used to do nothing.
         int    glyphMarker = -1;
         double glyphIdx = -1.0;
         double glyphDist = click_radius_around_marker;   // must be within radius
+
+        // MEASURED IN 2D, because that is what separates a glyph from the bar
+        // sitting on top of it. A bar is a full-height vertical line -- it has
+        // no y -- while a glyph is a small X on the trace. Clicking the line
+        // anywhere away from the trace means the bar; clicking the X means the
+        // glyph.
+        //
+        // ONE TEST FOR BOTH CHANNELS. It was ECG-only, so no pulse glyph was
+        // clickable at all and every PPG click resolved to a bar -- which is
+        // half of why the pulse focus panel showed the bar column and the X sat
+        // somewhere else.
+        const double py = e->position().y();
+        const bool haveY = (m_lastPh > 0);
+        struct GlyphHit { int marker; double idx; };
+        auto testGlyphs = [&](Channel ch, const std::vector<double>& v,
+            double axLo, double axHi, const GlyphHit* g, int n) {
+                const int wall = lastDrawnSample(ch);
+                const double yRange = (axHi - axLo > 1e-10) ? (axHi - axLo) : 1.0;
+                for (int k = 0; k < n; ++k) {
+                    if (g[k].idx < 0.0) continue;
+                    if (wall >= 0 && g[k].idx > static_cast<double>(wall)) continue;
+                    const double dx = px - xFromSample(ch, g[k].idx);
+                    double d = std::abs(dx);
+                    if (haveY) {
+                        // Same y the glyph was DRAWN at: the trace value at
+                        // that column, on the axis the last paint used. NaN
+                        // draws at the axis floor, so test it there too.
+                        const double raw = FeatureMarks::sample_at(v, g[k].idx);
+                        const double val = std::isnan(raw) ? axLo : raw;
+                        const double gy = margin_top + m_lastPh
+                            - (val - axLo) / yRange * m_lastPh;
+                        const double dy = py - gy;
+                        d = std::sqrt(dx * dx + dy * dy);
+                    }
+                    if (d < glyphDist) {
+                        glyphDist = d; glyphMarker = g[k].marker; glyphIdx = g[k].idx;
+                    }
+                }
+            };
+
         if (m_showEcgTrace && !m_ecg.empty()) {
             const Reactive rx = reactiveGlyphs();
-            const int wall = lastDrawnSample(Channel::Ecg);
-            struct GlyphHit { int marker; double idx; };
+            const FeatureMarks::TemplateLandmarks& lm = detectedLandmarks();
             const GlyphHit glyphs[] = {
-                { EcgRPeak, m_glyphs.ecgRPeak },
+                { EcgRPeak, lm.r_peak },
                 { EcgPPeak, rx.ecgPPeak },
-                { EcgQPeak, m_glyphs.ecgQPeak },   // -1 unless q_onset_found
+                { EcgQPeak, lm.q_onset_found ? lm.q_peak : -1.0 },
                 { EcgTPeak, rx.ecgTPeak },
                 // Transition fiducials at their DRAWN (detected) positions --
                 // independent of the bars, so clickable where they're shown even
                 // after the bar has been dragged elsewhere.
-                { EcgPBegin, m_glyphs.ecgPBegin },
-                { EcgQBegin, m_glyphs.ecgQ },
-                { EcgSEnd,   m_glyphs.ecgS },
-                { EcgTEnd,   m_glyphs.ecgTend },
+                { EcgPBegin, lm.p_begin },
+                { EcgQBegin, lm.q_onset },
+                { EcgSEnd,   lm.s_end },
+                { EcgTEnd,   lm.t_end },
             };
-            // MEASURED IN 2D, because that is what separates a glyph from the
-            // bar sitting on top of it. A bar is a full-height vertical line --
-            // it has no y -- while a glyph is a small X on the trace. Clicking
-            // the line anywhere away from the trace means the bar; clicking the
-            // X means the glyph.
-            const double py = e->position().y();
-            const bool haveY = (m_lastPh > 0);
-            const double yRange = (m_lastYHi - m_lastYLo > 1e-10)
-                ? (m_lastYHi - m_lastYLo) : 1.0;
-            for (const GlyphHit& g : glyphs) {
-                if (g.idx < 0.0) continue;
-                if (wall >= 0 && g.idx > static_cast<double>(wall)) continue;
-                const double dx = px - xFromSample(Channel::Ecg, g.idx);
-                double d = std::abs(dx);
-                if (haveY) {
-                    // Same y the glyph was DRAWN at: the trace value at that
-                    // column, on the axis the last paint used. NaN draws at the
-                    // axis floor, so test it there too.
-                    const double raw = FeatureMarks::sample_at(m_ecg, g.idx);
-                    const double val = std::isnan(raw) ? m_lastYLo : raw;
-                    const double gy = margin_top + m_lastPh
-                        - (val - m_lastYLo) / yRange * m_lastPh;
-                    const double dy = py - gy;
-                    d = std::sqrt(dx * dx + dy * dy);
-                }
-                if (d < glyphDist) {
-                    glyphDist = d; glyphMarker = g.marker; glyphIdx = g.idx;
-                }
-            }
+            testGlyphs(Channel::Ecg, m_ecg, m_lastYLo, m_lastYHi,
+                glyphs, (int)(sizeof(glyphs) / sizeof(glyphs[0])));
+        }
+        if (m_showPpgTrace && m_hasPPG && !m_ppg.empty()) {
+            const Reactive rx = reactiveGlyphs();
+            const FeatureMarks::PpgFiducials& pf = detectedPulse();
+            const GlyphHit glyphs[] = {
+                { PpgOnset,    pf.onset },
+                { PpgT50,      rx.ppgT50 },
+                { PpgPeak,     pf.peak },
+                { PpgDicrotic, pf.dicrotic },
+                { PpgPeak2,    pf.peak2 },
+                { PpgT80,      rx.ppgT80 },
+                { PpgEnd,      pf.end },
+            };
+            testGlyphs(Channel::Ppg, m_ppg, m_lastPLo, m_lastPHi,
+                glyphs, (int)(sizeof(glyphs) / sizeof(glyphs[0])));
         }
 
         // THE GLYPH WINS ONLY ON A GENUINE 2D HIT.
@@ -1307,93 +1333,40 @@ void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
     m_dragMarker = -1;
 }
 
-void BinPlotWidget::captureGlyphSnapshot(const TemplateBin& b,
-    AnchorType frame) {
-    if (m_glyphsValid) return;   // trace unchanged since last capture
-    m_glyphs = GlyphSnapshot{};
+// ---- THE PULSE DETECTION, ONCE PER (BIN, SLOT) -------------------------
+//
+// The twin of reactiveGlyphs' m_det block, and it exists for the same reason:
+// one run of the detector whose answer is both PAINTED and READ. captureGlyph-
+// Snapshot and overridePulseGlyphs used to sit here -- a frozen copy of the ECG
+// detection plus a stored BankPulseMarkerSet pushed in from the viewer -- and
+// between them they gave every landmark two positions on two invalidation
+// schedules.
+//
+// ON THE SLOT'S OWN STORED AVERAGE, through the bank, NOT on m_ppg: m_ppg is
+// the perfusion-normalised display copy, and the pulse finders are no more
+// scale-invariant than the ECG ones. Same array seed_pulse_bank_template runs
+// on, so the viewer's stored *_auto and this agree by construction. Columns are
+// columns -- the axis is shared -- so the positions drop straight onto m_ppg.
+const FeatureMarks::PpgFiducials& BinPlotWidget::detectedPulse() const {
+    const double rate = m_rates[static_cast<size_t>(Channel::Ppg)];
+    if (m_pdetValid && m_pdetBin == m_bin && m_pdetSlot == m_templateIndex)
+        return m_pdet;
 
-    // ---- THE ECG GLYPHS COME FROM reactiveGlyphs' CACHED DETECTION -------
-    //
-    // This block used to run detect_template_landmarks itself, on m_ecg, with
-    // the operator's fit modes -- correct on both counts -- and then
-    // applyTemplateToWidget's overrideEcgGlyphs overwrote all seven with a
-    // SECOND detection on the raw per-slot array in Auto mode. One full
-    // detector run per panel per apply, discarded; and the surviving answer was
-    // the one that ignored both the notch filter and the fit-mode radios.
-    //
-    // There is now one detection, in reactiveGlyphs, on m_ecg, in the
-    // operator's modes, cached on the trace. The frozen snapshot reads it
-    // rather than repeating it, so all seven glyphs and the two bar-bracketed
-    // peaks come from the same measurement of the same waveform.
-    if ((int)m_ecg.size() >= 3) {
-        const int N = (int)m_ecg.size();
-        auto froz = [&](double v) {
-            return (v >= 0.0 && v <= static_cast<double>(N - 1)) ? v : -1.0;
-            };
-        const Reactive rx = reactiveGlyphs();   // populates/reuses m_det
-        if (m_det.valid) {
-            const FeatureMarks::TemplateLandmarks& lm = m_det.lm;
-            m_glyphs.ecgPBegin = froz(lm.p_begin);
-            m_glyphs.ecgQ = froz(lm.q_onset);
-            m_glyphs.ecgQFound = lm.q_onset_found;
-            m_glyphs.ecgQPeak = lm.q_onset_found ? froz(lm.q_peak) : -1.0;
-            m_glyphs.ecgRPeak = froz(lm.r_peak);
-            m_glyphs.ecgS = froz(lm.s_end);
-            m_glyphs.ecgTend = froz(lm.t_end);
-        }
-    }
+    m_pdet = FeatureMarks::PpgFiducials{};
+    m_pdetBin = m_bin;
+    m_pdetSlot = m_templateIndex;
+    m_pdetValid = true;
 
-    if (m_hasPPG && (int)m_ppg.size() >= 3) {
-        const int N = (int)m_ppg.size();
-        // The ppg_*_auto source fields are still int in TemplateBin (a
-        // versioned on-disk struct), so nothing is gained here yet -- but the
-        // lambda is double so the glyph path stops being the thing that
-        // narrows once those fields widen.
-        auto frozen = [&](double v) {
-            return (v >= 0.0 && v <= static_cast<double>(N - 1)) ? v : -1.0;
-            };
-        m_glyphs.ppgFoot = frozen(b.ppg_onset_auto);
-        m_glyphs.ppgP1 = frozen(b.ppg_peak_auto);
-        m_glyphs.ppgP2 = frozen(b.ppg_peak2_auto);
-        m_glyphs.ppgDic = frozen(b.ppg_dicrotic_auto);
-        m_glyphs.ppgEnd = frozen(b.ppg_end_auto);
-        m_glyphs.vpgU = frozen(b.ppg_u_auto);
-        m_glyphs.vpgV = frozen(b.ppg_v_auto);
-        m_glyphs.vpgW = frozen(b.ppg_w_auto);
-        m_glyphs.apgA = frozen(b.ppg_a_auto);
-        m_glyphs.apgB = frozen(b.ppg_b_auto);
-        m_glyphs.apgC = frozen(b.ppg_c_auto);
-        m_glyphs.apgD = frozen(b.ppg_d_auto);
-        m_glyphs.apgE = frozen(b.ppg_e_auto);
-        m_glyphs.apgF = frozen(b.ppg_f_auto);
-        m_glyphs.jpgP1 = frozen(b.ppg_p1_auto);
-        m_glyphs.jpgP2 = frozen(b.ppg_p2_auto);
+    if (!m_bin || rate <= 0.0 || m_templateIndex < 0) return m_pdet;
+    if (m_templateIndex >= m_bin->ppg_bank.size()) return m_pdet;
+    const std::vector<double>& t =
+        m_bin->ppg_bank.templates[m_templateIndex].tmpl;
+    if (t.size() < 3) return m_pdet;
 
-    }
-    m_glyphsValid = true;
+    m_pdet = FeatureMarks::detect_ppg_fiducials(t, static_cast<int>(t.size()),
+        rate);
+    return m_pdet;
 }
-
-// Replace the BIN's pulse glyphs with this bank slot's own. captureGlyphSnapshot
-// reads b.ppg_*_auto, which describes b.ppgTemplate -- the wrong waveform for
-// every slot the panel actually draws. Called AFTER captureGlyphSnapshot.
-void BinPlotWidget::overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm) {
-    if ((int)m_ppg.size() < 3) return;
-    const int N = (int)m_ppg.size();
-    auto froz = [&](double v) {
-        return (v >= 0.0 && v <= (double)(N - 1)) ? v : -1.0;
-        };
-    m_glyphs.ppgFoot = froz(pm.onset_auto);
-    m_glyphs.ppgP1 = froz(pm.peak_auto);
-    m_glyphs.ppgDic = froz(pm.dicrotic_auto);  m_glyphs.ppgNotchFound = pm.notch_found;
-    m_glyphs.ppgP2 = froz(pm.peak2_auto);
-    m_glyphs.ppgEnd = froz(pm.end_auto);
-    update();
-}
-
-// Replace the BIN's ECG glyphs with this panel's own. Bounds-checked against
-// m_ecg -- the trace actually drawn -- so a column past the end of a short slot
-// template is dropped rather than pinned to the edge. Called AFTER
-// captureGlyphSnapshot, which is what setAuto() performs.
 
 void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
     double yLo, double yHi, double pLo, double pHi, int ph) const
@@ -1401,8 +1374,11 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
     // Reactive columns, recomputed every paint from the current bars.
     const Reactive rx = reactiveGlyphs();
 
-    // Remembered for the hit test: see m_lastYLo.
-    m_lastYLo = yLo; m_lastYHi = yHi; m_lastPh = ph;
+    // Remembered for the hit test: see m_lastYLo. BOTH axes, because the hit
+    // test covers the pulse glyphs too and they sit on the right-hand scale.
+    m_lastYLo = yLo; m_lastYHi = yHi;
+    m_lastPLo = pLo; m_lastPHi = pHi;
+    m_lastPh = ph;
 
     auto plot_y = [&](double val, double lo, double hi) {
         const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
@@ -1466,14 +1442,18 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         // each block's cross/circle close over its own axis and geometry.
         auto found = [&](double idx, bool ok) { ok ? cross(idx) : circle(idx); };
 
-        cross(m_glyphs.ecgPBegin);   // detected, like every other transition
+        // STRAIGHT FROM THE DETECTION every reader of this panel gets.
+        const FeatureMarks::TemplateLandmarks& lm = detectedLandmarks();
+        cross(lm.p_begin);           // detected, like every other transition
         cross(rx.ecgPPeak);          // reactive: P-onset bar -> Q-onset bar
-        found(m_glyphs.ecgQ, m_glyphs.ecgQFound);
-        cross(m_glyphs.ecgQPeak);
-        cross(m_glyphs.ecgRPeak);    // R wave
-        cross(m_glyphs.ecgS);        // S end
+        found(lm.q_onset, lm.q_onset_found);
+        // No Q trough means no Q peak: q_peak comes back -1 there, and the
+        // circle above already says the onset was a fallback.
+        if (lm.q_onset_found) cross(lm.q_peak);
+        cross(lm.r_peak);            // R wave
+        cross(lm.s_end);             // S end
         cross(rx.ecgTPeak);          // reactive: between the S-end/T-end bars
-        cross(m_glyphs.ecgTend);     // T end
+        cross(lm.t_end);             // T end
     }
     // ---- PPG --------------------------------------------------------------
     if (m_showPpgTrace && m_hasPPG && (int)m_ppg.size() >= 3) {
@@ -1496,12 +1476,17 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         // X when the shape detection succeeded, O when it fell back.
         auto found = [&](double idx, bool ok) { ok ? cross(idx) : circle(idx); };
 
-        cross(m_glyphs.ppgFoot);
+        // SAME TERMS AS THE ECG BLOCK ABOVE: this slot's own detection, the
+        // one detectedPulse() hands the focus panel. These used to be
+        // b.ppg_*_auto -- the BIN's marks, measured on b.ppgTemplate, which is
+        // not the waveform any column draws -- pushed in by overridePulseGlyphs.
+        const FeatureMarks::PpgFiducials& pf = detectedPulse();
+        cross(pf.onset);
         cross(rx.ppgT50);            // reactive: 50% onset->peak
-        cross(m_glyphs.ppgP1);       // systolic peak
-        found(m_glyphs.ppgDic, m_glyphs.ppgNotchFound);
-        cross(m_glyphs.ppgP2);
-        cross(m_glyphs.ppgEnd);
+        cross(pf.peak);              // systolic peak
+        found(pf.dicrotic, pf.notch_found);
+        cross(pf.peak2);
+        cross(pf.end);
         cross(rx.ppgT80);            // reactive: 80% peak->end
         // Derivative landmarks: auto-only, no draggable bar, so a horizontal
         // dash rather than an X, coloured by derivative order. Horizontal
@@ -1511,17 +1496,17 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         // Behind their own checkbox: eleven extra marks on one pulse is noise
         // while the operator is dragging bars.
         if (m_showPpgDerivMarkers) {
-            dash(m_glyphs.vpgU, vpg_mark_color);
-            dash(m_glyphs.vpgV, vpg_mark_color);
-            dash(m_glyphs.vpgW, vpg_mark_color);
-            dash(m_glyphs.apgA, apg_mark_color);
-            dash(m_glyphs.apgB, apg_mark_color);
-            dash(m_glyphs.apgC, apg_mark_color);
-            dash(m_glyphs.apgD, apg_mark_color);
-            dash(m_glyphs.apgE, apg_mark_color);
-            dash(m_glyphs.apgF, apg_mark_color);
-            dash(m_glyphs.jpgP1, jpg_mark_color);
-            dash(m_glyphs.jpgP2, jpg_mark_color);
+            dash(pf.u, vpg_mark_color);
+            dash(pf.v, vpg_mark_color);
+            dash(pf.w, vpg_mark_color);
+            dash(pf.a, apg_mark_color);
+            dash(pf.b, apg_mark_color);
+            dash(pf.c, apg_mark_color);
+            dash(pf.d, apg_mark_color);
+            dash(pf.e, apg_mark_color);
+            dash(pf.f, apg_mark_color);
+            dash(pf.p1, jpg_mark_color);
+            dash(pf.p2, jpg_mark_color);
         }
     }
 }

@@ -37,6 +37,45 @@ static std::vector<double> get_savitzky_golay_derivative_for_every_sample_in_vec
     return s;
 }
 
+// The sd-in-msec model: each column's amplitude SD divided by the template's
+// own |dV/dt| there, floored at 5% of that template's max slope so the divide
+// cannot blow up in a flat region and the threshold scales with the waveform
+// instead of being an absolute constant.
+//
+// ONE COPY, BOTH CHANNELS. This was inline in the ECG branch, which is the
+// whole reason the pulse panel printed "sd = --": there was nothing wrong with
+// the model on a pulse, it just lived somewhere a pulse could not reach.
+struct SdMsModel {
+    std::vector<double>  sdMs;        // per column, NaN where floored
+    std::vector<uint8_t> floorMask;   // 1 where the floor engaged (shaded)
+    std::vector<double>  absSlope;    // per column |dV/dt|, amp/sample
+    double               floor = 0.0;
+};
+
+static SdMsModel sd_in_msec(const std::vector<double>& mean,
+    const std::vector<double>& sd, double fs)
+{
+    SdMsModel m;
+    m.absSlope =
+        get_savitzky_golay_derivative_for_every_sample_in_vector(mean, fs);
+    double maxSlope = 0.0;
+    for (double v : m.absSlope)
+        if (std::isfinite(v) && v > maxSlope) maxSlope = v;
+    m.floor = 0.05 * maxSlope;
+
+    const double msPerSample = (fs > 0.0) ? 1000.0 / fs : 0.0;
+    const double NaNv = std::numeric_limits<double>::quiet_NaN();
+    m.sdMs.assign(sd.size(), NaNv);
+    m.floorMask.assign(sd.size(), 0u);
+    for (size_t k = 0; k < sd.size() && k < m.absSlope.size(); ++k) {
+        if (std::isnan(sd[k]) || !std::isfinite(m.absSlope[k])) continue;
+        const double slope = m.absSlope[k];
+        if (slope < m.floor) { m.floorMask[k] = 1u; continue; }   // leaves NaN
+        m.sdMs[k] = sd[k] / slope * msPerSample;
+    }
+    return m;
+}
+
 // Rebuild the focus panel(s) for one landmark from the current bin/lead's
 // anchored-average stats. Reads mean/sd/n straight from the template the
 // viewer already holds:
@@ -72,8 +111,8 @@ void TemplateViewerWindow::setFocusSplit(bool split) {
 // foot-anchored once and have no QRS/JT split and no alignment dimension.
 //
 // Split out of refreshFocus, which was 500 lines doing three unrelated jobs.
-void TemplateViewerWindow::focusPulse(TemplateBin& b, int templateIdx,
-    int marker, double col)
+void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
+    int templateIdx, int marker, double col)
 {
     const std::vector<double>* meanRaw = nullptr;
     const std::vector<double>* iqrRaw = nullptr;
@@ -104,7 +143,12 @@ void TemplateViewerWindow::focusPulse(TemplateBin& b, int templateIdx,
             return;
         }
         meanRaw = &ps->tmpl;           iqrRaw = &ps->tmpl_iqr;
-        pulseChan = 0; footIdx = b.ppg_onset;  chLabel = "PPG";
+        // THE SLOT'S OWN FOOT, not the bin's. The perfusion transform divides
+        // by the value AT this column, and b.ppg_onset was measured on
+        // b.ppgTemplate -- a different pulse. showPage normalizes the same
+        // trace by ps->pulse_marks.onset, so this is the foot the trace on
+        // screen was divided by.
+        pulseChan = 0; footIdx = ps->pulse_marks.onset;  chLabel = "PPG";
         nPulseBeats = ps->memberCount();
     }
     else if (BinPlotWidget::markerIsAbp(marker)) {
@@ -116,7 +160,7 @@ void TemplateViewerWindow::focusPulse(TemplateBin& b, int templateIdx,
     else if (BinPlotWidget::markerIsArtPulm(marker)) {
         meanRaw = &b.artPulmTemplate;  iqrRaw = &b.artPulmTemplate_iqr;  pulseChan = 3; footIdx = b.art_pulm_onset; chLabel = "ART_PULM";
     }
-    if (!meanRaw || meanRaw->empty()) return;
+    if (!meanRaw || meanRaw->empty()) { clearFocusPanels(); return; }
 
     // Pulse channels are NOT normalized by a plain scalar (that was the
     // bug -- it left the trace flat). The displayed trace uses a per-
@@ -124,13 +168,19 @@ void TemplateViewerWindow::focusPulse(TemplateBin& b, int templateIdx,
     // then /ref (normalize_ppg_or_similar -> normalize_pulse_trace, see
     // the main plot ~line 508). The mean MUST use that same transform.
     const std::vector<double> mean = normalize_ppg_or_similar(*meanRaw, footIdx, pulseChan);
-    // The *_iqr is ALREADY in perfusion-index space (local_ratio_iqr at
-    // build time), so it only needs the scalar /ref -- NOT the perfusion
-    // transform again (main plot ~line 492). It's a true IQR (Q3-Q1), so
-    // convert to an SD estimate (IQR/1.349) for the 95% CI.
+    // THE SPREAD GETS THE SPREAD TRANSFORM, and it is the one showPage uses
+    // for the band on the main plot -- scale_pulse_spread_by_ref, which is
+    // 100/|foot_y|/|ref|, the scale factor of the affine perfusion transform
+    // applied to the mean. This was scale_array_by_ref (the ECG's plain /ref)
+    // plus an IQR/1.349 conversion, on a comment describing a field the code
+    // no longer reads: ps->tmpl_iqr comes from the bank (template_assign's
+    // q3 - q1 over RAW members), not from build-time local_ratio_iqr. So the
+    // mean was in perfusion units and the band was in raw units over ref, and
+    // the /1.349 made this panel's band a different size from the band the
+    // same beats draw on the panel it is zooming into.
     const double ref = (pulseChan >= 0 && pulseChan < 4) ? m_pulseGlobalRef[pulseChan] : std::nan("");
-    std::vector<double> sd = normalize_features::scale_array_by_ref(*iqrRaw, ref);
-    for (double& s : sd) if (!std::isnan(s)) s /= 1.349;
+    const std::vector<double> sd = normalize_features::scale_pulse_spread_by_ref(
+        *iqrRaw, normalize_features::sample_y(*meanRaw, footIdx), ref);
 
     const int nBeats = (nPulseBeats >= 0)
         ? nPulseBeats : static_cast<int>(b.ppg_n_beats);
@@ -161,15 +211,64 @@ void TemplateViewerWindow::focusPulse(TemplateBin& b, int templateIdx,
         return QStringLiteral("landmark");
         };
 
+    // ---- THE DETECTOR'S POSITION FOR THIS LANDMARK --------------------
+    //
+    // From the panel, exactly as the ECG branch takes detFid from
+    // pw->detectedLandmarks(): detectedPulse() is the detection the X glyphs
+    // are drawn at, so the dotted fiducial and the X are one number.
+    //
+    // This call is the whole of the second bug. There was none, so the panel
+    // fell through to its last resort -- m_landmarkCol, the draggable BAR,
+    // truncated to an int -- while the X was painted at the detector's
+    // sub-sample column. Two positions for one landmark, and neither knew about
+    // the other.
+    //
+    // pw == nullptr on a re-fire path that could not name its panel: leave the
+    // fiducial absent rather than substitute a second measurement, same as the
+    // ECG branch.
+    double detFid = -1.0;
+    if (pw) {
+        const FeatureMarks::PpgFiducials& pf = pw->detectedPulse();
+        // T50 and T80 come from the REACTIVE set, because that is where their
+        // X marks come from: they are bar-bracketed crossings, the pulse twin
+        // of the ECG P and T peak. Reading pf.t50 here would be the detector's
+        // own bracket, which is not the glyph on screen the moment a bar moves.
+        const BinPlotWidget::Reactive rx = pw->reactiveGlyphs();
+        switch (marker) {
+        case BinPlotWidget::PpgOnset:    detFid = pf.onset;    break;
+        case BinPlotWidget::PpgPeak:     detFid = pf.peak;     break;
+        case BinPlotWidget::PpgDicrotic: detFid = pf.dicrotic; break;
+        case BinPlotWidget::PpgPeak2:    detFid = pf.peak2;    break;
+        case BinPlotWidget::PpgEnd:      detFid = pf.end;      break;
+        case BinPlotWidget::PpgT50:      detFid = rx.ppgT50;   break;
+        case BinPlotWidget::PpgT80:      detFid = rx.ppgT80;   break;
+        default: break;   // arterial: no per-channel detection to read
+        }
+    }
+
     // Pulse channels have no alignment dimension: they are foot-anchored,
-    // once, and raw_anchors is ECG-only. One panel, no suffix.
-    // Pulse landmarks bound one part of the wave: top third only.
+    // once, and raw_anchors is ECG-only. One panel, no suffix, and no frame
+    // conversion -- `col` is already in this trace's columns.
     setFocusSplit(false);
     if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
-    if (zoomed_in_section_top)
-        zoomed_in_section_top->setFocus(mean, sd, nBeats, col, chLabel + " " + pulseLabel(marker));
-    zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::Transition);
-    return;
+    if (!zoomed_in_section_top) return;
+
+    const SdMsModel sm = sd_in_msec(mean, sd, m_ppgRateHz);
+    zoomed_in_section_top->setFocus(mean, sd, nBeats, static_cast<int>(col),
+        chLabel + " " + pulseLabel(marker));
+    // NO FIT BEHIND A PULSE LANDMARK. detect_ppg_fiducials places these by
+    // bracketed extrema and interpolated amplitude crossings, not by a model
+    // contest -- PpgFiducials has no candidate curves to hand over, the way
+    // TemplateLandmarks has *_cand for the four ECG transitions. FitKind::None
+    // is what says so, and the panel then draws the position and no curves.
+    //
+    // This was FitKind::Transition for EVERY pulse marker, peaks included, and
+    // with no candidates supplied it reached the panel's live re-fit: three
+    // onset/offset models fitted across a whole pulse, drawn over the systolic
+    // peak. That re-fit is gone and so is this.
+    zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::None);
+    zoomed_in_section_top->setDetectorFiducial(detFid);
+    zoomed_in_section_top->setSdMs(sm.sdMs, sm.floorMask, sm.absSlope, sm.floor);
 }
 
 // pw may be null on a re-fire path; m_focusWidget keeps the last real one.
@@ -192,7 +291,7 @@ void TemplateViewerWindow::refreshFocus(BinPlotWidget* pw, int binIdx, int leadI
     // self-contained path (focusPulse) rather than threading through the ECG
     // slot and anchor selection below.
     if (!BinPlotWidget::markerIsEcg(marker)) {
-        focusPulse(b, templateIdx, marker, col);
+        focusPulse(pw, b, templateIdx, marker, col);
         return;
     }
 
@@ -360,23 +459,13 @@ void TemplateViewerWindow::refreshFocus(BinPlotWidget* pw, int binIdx, int leadI
     if (zoomed_in_section_top) //if the zoomed in top section is activated (it will always be with any focus)                                                                                                                                                   
     {
 
-        const std::vector<double> absSlope = get_savitzky_golay_derivative_for_every_sample_in_vector(mean, m_sampleRate);
-        // Floor at 5% of the template's OWN max slope: the divide can't blow up
-        // in flat regions, and the threshold scales with the waveform instead
-        // of being a fixed amplitude constant.
-        double maxSlope = 0.0;
-        for (double s : absSlope) if (std::isfinite(s) && s > maxSlope) maxSlope = s;
-        const double floor = 0.05 * maxSlope;
-        const double msPerSample = (m_sampleRate > 0.0) ? 1000.0 / m_sampleRate : 0.0;
-        const double NaNv = std::numeric_limits<double>::quiet_NaN();
-        std::vector<double>  sdMs(sd.size(), NaNv);
-        std::vector<uint8_t> floorMask(sd.size(), 0u);
-        for (size_t k = 0; k < sd.size() && k < absSlope.size(); ++k) {
-            if (std::isnan(sd[k]) || !std::isfinite(absSlope[k])) continue;
-            double slope = absSlope[k];
-            if (slope < floor) { floorMask[k] = 1u; continue; }   // leaves NaN
-            sdMs[k] = sd[k] / slope * msPerSample;
-        }
+        // Shared with focusPulse; the four names below are what the setSdMs
+        // calls in this function take.
+        const SdMsModel sm = sd_in_msec(mean, sd, m_sampleRate);
+        const std::vector<double>& absSlope = sm.absSlope;
+        const std::vector<double>& sdMs = sm.sdMs;
+        const std::vector<uint8_t>& floorMask = sm.floorMask;
+        const double                floor = sm.floor;
 
         // (The sd at the bar is no longer read here: FocusPanelWidget already
         //  holds m_sdMs and prints it on its own two lines below the plot, so a

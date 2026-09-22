@@ -1143,14 +1143,12 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     const tbank::BankMarkerSet mk =
         barsForPanel(pw, b, channel, templateIdx);
     // Bin first, for the arterial markers (a bank slot has no ABP/ART waveform
-    // of its own). The seven ECG bars are overridden below; the PULSE bars and
-    // glyphs are overridden here, from this slot's own waveform.
+    // of its own). The seven ECG bars are overridden below; the PULSE bars are
+    // overridden here, from this slot's own waveform.
     //
-    // The old comment claimed "there is ONE PPG template per bin, so every
-    // column must show the SAME pulse markers." That stopped being true when
-    // ppg_bank arrived: showPage draws ppg_bank.templates[templateIdx], so the
-    // bin's marks were indices into a different pulse. That is why the foot sat
-    // nowhere near a minimum.
+    // BARS ONLY. A glyph push used to follow them (overridePulseGlyphs), and
+    // the panel paints the pulse glyphs from its own detectedPulse() now -- on
+    // this same ps.tmpl, so the bars and the X marks are one measurement.
     applyBinCommonToWidget(pw, b);
 
     if (templateIdx >= 0 && templateIdx < b.ppg_bank.size()
@@ -1174,7 +1172,6 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
             pw->setMarker(BinPlotWidget::PpgEnd, pm.end);
             pw->setMarker(BinPlotWidget::PpgT50, rp.t50);
             pw->setMarker(BinPlotWidget::PpgT80, rp.t80);
-            pw->overridePulseGlyphs(pm);
         }
     }
     else {
@@ -1237,23 +1234,15 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
 
     // ---- THIS SLOT'S OWN GLYPHS, ON THE TRACE THIS PANEL DRAWS -----------
     //
-    // applyBinToWidget above ended in setAuto(), which captured the BIN's
-    // detection: b.autoForStrict(frame), measured on the bin's anchored channel
-    // average. For a bank column that is the wrong waveform. Same argument
-    // overridePulseGlyphs already makes for the pulse marks, and it applies
-    // just as much to ECG -- the bin's R and the slot's R coincide under R
-    // alignment only, because every beat in the bank shares R's column by
-    // construction and nothing else. A slot holding a different morphology has
-    // a different landmark-to-R distance, so once the beats are shifted onto
-    // their own P / Q / J its R lands on a different column of the shared
-    // frame, and the bin's glyph does not follow it.
-    //
-    // (A per-slot glyph override ran here, re-detecting on the raw slot array
-    //  in Auto fit modes and overwriting the detection setAuto had just made on
-    //  the DISPLAYED trace in the operator's modes. It existed because m_ecg
-    //  used to be the bin's average; leadsForBinTemplate now puts this slot's
-    //  own waveform there, so the override was overwriting a better answer with
-    //  a worse one -- and costing a full detector run per panel to do it.)
+    // (NOTHING PUSHES GLYPHS ANY MORE, on either channel. setAuto names the
+    //  (bin, slot, alignment) and the panel detects that waveform itself, once,
+    //  when something asks -- the paint that draws the X marks, the hit test
+    //  that makes them clickable, the R bar above, and the focus panel, all off
+    //  one answer. Two override passes lived here, each re-detecting on the raw
+    //  slot array in Auto fit modes and overwriting the detection setAuto had
+    //  just made in the operator's modes: a full detector run per panel per
+    //  apply, discarded, and the surviving answer was the one that ignored the
+    //  radios.)
 }
 
 // ---------------------------------------------------------------------------

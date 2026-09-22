@@ -6,8 +6,8 @@
 // renders that landmark's anchored average, zoomed in around the landmark
 // column, with:
 //   - the mean trace (center line),
-//   - the fitted curve (from curve_fit::selectBestFit over the zoom
-//     window), and
+//   - the candidate curves the DETECTOR fit for this landmark, supplied by
+//     the owner (the panel fits nothing of its own), and
 //   - a 95% confidence band: mean +/- 1.96 * se per column, where
 //     se = sd / sqrt(nBeats).
 //

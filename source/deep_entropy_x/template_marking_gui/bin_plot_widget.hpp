@@ -154,13 +154,16 @@ public:
     // an anchor is what produced the misalignment this replaces.
     // ----------------------------------------------------------------------
 
-    // The slot selects which waveform ecgDetect measures, so it invalidates
-    // m_det -- but NOT m_glyphs, which is measured on m_ecg and would then
-    // re-detect on a waveform this panel is no longer showing.
+    // The slot selects which waveform BOTH detectors measure, so it drops both
+    // caches. There is no third copy to keep in step any more: the glyphs are
+    // DRAWN from these two detections rather than from a frozen snapshot of
+    // them, so nothing can be invalidated on one schedule and painted on
+    // another.
     void setTemplateIndex(int t) {
         if (t == m_templateIndex) return;
         m_templateIndex = t;
         m_detValid = false;
+        m_pdetValid = false;
     }
     int  templateIndex() const { return m_templateIndex; }
 
@@ -228,27 +231,26 @@ public:
     void setMarker(Marker m, double idx);
     double marker(Marker m) const { return m_markers[m]; }
 
-    // Recaptures the frozen glyph snapshot and repaints. Call this LAST in a
-    // seeding pass (see applyBinToWidget): m_glyphs.ecgRPeak reads the R bar,
-    // which must already be set.
-    // frame = the alignment whose waveform this panel is drawing. The FROZEN
-    // glyphs are re-expressed in it, because each landmark is detected once
-    // per alignment and the positions differ; the draggable BARS are not, and
-    // stay in the R frame where they are stored and edited.
+    // WHICH TEMPLATE THIS PANEL IS. frame = the alignment whose waveform it
+    // draws; both detectors measure on that alignment's own array, through
+    // slotView, so the landmarks come back in the columns this panel plots.
+    // Non-owning -- the bins outlive the panels, and setAuto is called on
+    // every rebuild.
+    //
+    // ORDER NO LONGER MATTERS. This used to have to run LAST in a seeding pass
+    // because it took a frozen snapshot that read the R bar. It captures
+    // nothing now: it points the panel at a waveform and drops the caches, and
+    // the detections are taken on demand by whoever draws or reads them.
     void setAuto(const TemplateBin& b,
         AnchorType frame = AnchorType::R_PEAK) {
-        // WHICH TEMPLATE THIS PANEL IS, kept so reactiveGlyphs can call the
-        // shared ecgFiducials instead of assembling the detector's arguments
-        // from its own copies (m_ecg, m_rPeakSample). Those copies are what
-        // drifted: the bin-wide array instead of the slot's, R's column instead
-        // of the alignment's. Non-owning -- the bins outlive the panels, and
-        // setAuto is called on every rebuild.
         // A new bin or alignment is a new waveform. Covers the in-place
         // re-skin, which changes the frame without going through setData.
-        if (m_bin != &b || m_frame != frame) m_detValid = false;
+        if (m_bin != &b || m_frame != frame) {
+            m_detValid = false;
+            m_pdetValid = false;
+        }
         m_bin = &b;
         m_frame = frame;
-        captureGlyphSnapshot(b, frame);
         update();
     }
 
@@ -271,13 +273,21 @@ public:
     };
     Reactive reactiveGlyphs() const;
 
-    // THE COLUMNS THE X GLYPHS ARE DRAWN AT. captureGlyphSnapshot reads m_det
-    // for every ECG glyph, so this is that same detection -- exposed so the
-    // viewer can put a bar on its glyph instead of seeding it separately.
+    // THE COLUMNS THE ECG X GLYPHS ARE DRAWN AT -- drawFeatureGlyphs paints
+    // straight out of this, so a reader of it cannot be looking at a different
+    // number from the operator.
     const FeatureMarks::TemplateLandmarks& detectedLandmarks() const {
         reactiveGlyphs();          // populates / reuses m_det
         return m_det.lm;
     }
+
+    // THE COLUMNS THE PULSE GLYPHS ARE DRAWN AT, on the same terms: one
+    // detection of this slot's own pulse average, cached on (bin, slot), drawn
+    // from and read from. The pulse side used to have a setter and no getter --
+    // overridePulseGlyphs pushed a stored BankPulseMarkerSet in and nothing
+    // could read it back -- which is why the focus panel had no fiducial to
+    // draw and fell back to the bar column.
+    const FeatureMarks::PpgFiducials& detectedPulse() const;
 
     // The fitted curves behind one peak glyph, for a viewer that wants to DRAW
     // the contest rather than re-run it. Same cache, same call.
@@ -291,8 +301,9 @@ public:
     // glyph snapshot so the next paint re-detects with the new model.
     void setFitModes(curve_fit::FitMode onOffset, curve_fit::PeakFitMode peak) {
         m_onOffsetFitMode = onOffset; m_peakFitMode = peak;
-        // Both caches: the fit modes are detector inputs.
-        m_glyphsValid = false; m_detValid = false; update();
+        // The fit modes are detector inputs, so the detection is dropped. The
+        // glyphs follow it with nothing to invalidate of their own.
+        m_detValid = false; update();
     }
 
     // Per-trace marker visibility. When false, that group's markers
@@ -356,25 +367,16 @@ public:
     // then scaled to fill whatever width the cell receives.
     QSize sizeHint() const override { return QSize(220, 120); }
     QSize minimumSizeHint() const override { return QSize(40, 60); }
-    void overridePulseGlyphs(const tbank::BankPulseMarkerSet& pm);
-
-    // Replace the BIN's ECG glyphs with columns measured on THIS panel's own
-    // waveform. Counterpart to overridePulseGlyphs, and needed for exactly the
-    // same reason: captureGlyphSnapshot reads the bin's *_auto_ch fields, which
-    // describe the bin's anchored channel average, and a bank slot draws its
-    // own. The two coincide under R alignment -- every beat in the bank has R
-    // on one column by construction -- and under nothing else.
-    //
-    // A POD rather than FeatureMarks::TemplateLandmarks: this header is
-    // included by every panel and pulling feature_marks.hpp in would drag
-    // template_bank.hpp and annotation_types.hpp along with it. The caller
-    // already holds the detector result and does the conversion.
-    // (EcgGlyphColumns / overrideEcgGlyphs lived here. They pushed a SECOND
-    // detection -- raw per-slot array, Auto fit modes -- over the one
-    // captureGlyphSnapshot had just made on the displayed trace in the
-    // operator's modes. One detector run per panel per apply, thrown away, and
-    // the answer that won ignored both the notch filter and the radios. There
-    // is one detection now, in reactiveGlyphs, on m_ecg.)
+    // (overridePulseGlyphs and overrideEcgGlyphs lived here, and the frozen
+    //  GlyphSnapshot they wrote into lived below. All three are gone. They
+    //  existed to push a SECOND measurement over the one the detections had
+    //  already made, and a second measurement of the same landmark is the
+    //  defect, not the fix: the snapshot was invalidated on trace changes
+    //  while the detections were invalidated on (bin, slot, frame), so the X
+    //  on screen and the number every reader got came from two runs of the
+    //  same detector over two different windows. The glyphs are painted from
+    //  detectedLandmarks() / detectedPulse() now, which is where the focus
+    //  panel reads them, so the two are one number by construction.)
 
 
 signals:
@@ -519,50 +521,6 @@ private:
     double m_ecgFrameLo = 0.0;
     double m_ecgFrameHi = 0.0;
 
-    // FROZEN glyph columns only -- every field here is a copy of an m_auto
-    // value (bounds-checked against the trace), so nothing in this struct can
-    // drift as the user drags. The reactive glyphs (ECG T-peak, PPG T50/T80)
-    // are deliberately NOT here: they are recomputed on demand by
-    // reactiveGlyphs(), because a stored copy of a derived value is exactly
-    // what has to be manually refreshed and therefore exactly what goes
-    // stale. The one bar-dependent field is ecgRPeak, and R is not draggable.
-    // All sub-sample. Every one of these comes from a refined finder, so an
-    // int field here re-quantised what the refinement had resolved.
-    struct GlyphSnapshot {
-        // ecgPPeak is NOT here: the P peak is REACTIVE, bracketed by the
-        // P-onset and Q-onset bars, so a frozen copy would go stale the moment
-        // either bar moved. It stays reactive on purpose -- see reactiveGlyphs.
-        //
-        // What made the reactive X land on the PR baseline was the BRACKET, not
-        // the search: compute_p_begin fits the onset in a window centred on the
-        // rough seed, so a seed off the P wave produced an onset past the bump
-        // and the argmax between it and Q-onset had nothing but baseline to
-        // pick from. detect_template_landmarks now refits the onset from the
-        // re-measured peak, so the bracket contains the P wave and the reactive
-        // search finds it.
-        double ecgPBegin = -1.0, ecgQPeak = -1.0, ecgQ = -1.0,
-            ecgRPeak = -1.0, ecgS = -1.0, ecgTend = -1.0;
-        bool ecgQFound = false;
-        double ppgFoot = -1.0;    // = ppgOnset auto
-        double ppgP1 = -1.0;      // = ppgPeak auto
-        double ppgP2 = -1.0;      bool ppgPeak2Found = false;
-        double ppgDic = -1.0;     bool ppgNotchFound = false;
-        double ppgEnd = -1.0;
-        double vpgU = -1.0, vpgV = -1.0, vpgW = -1.0;
-        double apgA = -1.0, apgB = -1.0, apgC = -1.0, apgD = -1.0, apgE = -1.0,
-            apgF = -1.0;
-        double jpgP1 = -1.0, jpgP2 = -1.0;
-    };
-
-    GlyphSnapshot m_glyphs;
-
-    // The glyph snapshot depends ONLY on the trace/bin, never on bar positions,
-    // so it is recomputed only when the trace is (re)set -- on build and on an
-    // alignment change (a bar click). setData/setEcgData clear this; during a
-    // drag nothing re-sets the trace, so captureGlyphSnapshot returns early and
-    // the expensive detect does not run per mouse-move.
-    bool m_glyphsValid = false;
-
     // The reactive glyphs' expensive half, held while the trace is unchanged:
     // only P and T peak react to the bars (see ecgDetect). m_det.tmpl points
     // INTO the bin, so the identity fields are part of the guard -- a rebuild
@@ -576,6 +534,14 @@ private:
     mutable const TemplateBin* m_detBin = nullptr;
     mutable AnchorType         m_detFrame = AnchorType::R_PEAK;
     mutable int                m_detSlot = -1;
+
+    // THE PULSE TWIN, same cache and same guard minus the alignment: pulse
+    // channels are foot-anchored once, so there is no per-anchor pulse average
+    // and no frame to key on.
+    mutable FeatureMarks::PpgFiducials m_pdet;
+    mutable bool               m_pdetValid = false;
+    mutable const TemplateBin* m_pdetBin = nullptr;
+    mutable int                m_pdetSlot = -1;
 
     // Alignment letter for the overlay bar style; empty in Automatic.
     QString m_alignBadge;
@@ -593,15 +559,15 @@ private:
     // falls back to testing x alone.
     mutable double m_lastYLo = 0.0;
     mutable double m_lastYHi = 0.0;
+    // The PULSE axis the same paint used. The hit test covers both channels
+    // now, and a pulse glyph's y is on the right-hand scale, not the ECG's.
+    mutable double m_lastPLo = 0.0;
+    mutable double m_lastPHi = 0.0;
     mutable int    m_lastPh = 0;
 
     curve_fit::FitMode     m_onOffsetFitMode = curve_fit::FitMode::Auto;
     curve_fit::PeakFitMode m_peakFitMode = curve_fit::PeakFitMode::Auto;
 
-
-    // Compute the glyph snapshot from current trace + marker state.
-    void captureGlyphSnapshot(const TemplateBin& b,
-        AnchorType frame = AnchorType::R_PEAK);
 
     // Arterial trace vectors (own sample space; drawn foot-anchored at the
     // PPG origin). Empty when the channel is absent.

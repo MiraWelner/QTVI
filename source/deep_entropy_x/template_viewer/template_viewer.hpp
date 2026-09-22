@@ -515,7 +515,11 @@ private:
     // The pulse/arterial half of refreshFocus. Foot-anchored, no alignment
     // dimension, one panel -- it shares nothing with the ECG half but the two
     // panel pointers, so it is its own function.
-    void focusPulse(TemplateBin& b, int templateIdx, int marker, double col);
+    // pw IS THE PANEL, for the same reason the ECG path takes it: the
+    // detector's position for the focused pulse landmark comes from
+    // pw->detectedPulse(), which is the answer the X glyph is drawn at.
+    void focusPulse(BinPlotWidget* pw, TemplateBin& b, int templateIdx,
+        int marker, double col);
 
     int max_leads = 1;
 
