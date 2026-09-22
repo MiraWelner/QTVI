@@ -14,7 +14,7 @@
 #include <array>
 #include <algorithm>
 #include <functional>
-#include "template_anchoring\curve_fit.hpp"
+#include "template_marking_gui\curve_fit.hpp"
 
 namespace subsample_refine {
 
@@ -40,6 +40,16 @@ namespace subsample_refine {
         inline constexpr int Peak = 7;   // systolic peak (quadratic)
         inline constexpr int Foot = 7;   // foot / end of cycle (cubic)
         inline constexpr int Slope = 7;   // maxSlopePoint, on the derivative
+    }
+
+    // The pulse weighting, alongside its half-widths for the same reason the
+    // ECG's peak_sigma sits next to peak_halfwidth: the detector and anything
+    // DRAWING the detector's fit must read one number, not two copies of it.
+    // detect_ppg_fiducials had 8.0 written out three times and the focus panel
+    // had no way to learn it at all.
+    namespace pulse_sigma {
+        inline constexpr double Peak = 8.0;
+        inline constexpr double Foot = 8.0;
     }
 
     enum class PeakCurveType { SEED, QUADRATIC, CUBIC, FIVE_POINT };
@@ -362,10 +372,12 @@ namespace subsample_refine {
     // dy/dt = 3a t^2 + 2b t + c = 0 analytically; pick the root inside the
     // window closest to t=0 (the seed).
     // ---------------------------------------------------------------------
-    inline double asymmetricExtremum(const std::vector<double>& signal, int seed,
-        double sigma, int halfWidth) {
-        return cubic_fit(signal, seed, sigma, halfWidth).position;
-    }
+    // (asymmetricExtremum lived here: `cubic_fit(...).position`, i.e. the fit
+    //  thrown away and only the vertex kept. Its two callers -- the pulse foot
+    //  and the pulse end -- now take the whole PeakCandidates so the focus
+    //  panel can draw the cubic that placed the mark, and nothing else called
+    //  it. Deleting it removes the last way to get a pulse position without
+    //  the curve behind it.)
 
     // ---------------------------------------------------------------------
     // Best-of quadratic vs cubic for a peak: fit BOTH over the same window and
@@ -510,49 +522,6 @@ namespace subsample_refine {
         bool valid = false;
     };
 
-    // ---------------------------------------------------------------------
-    // Transition onsets/offsets: locally upsample a 40-sample window from
-    // its native rate to 4x via cubic interpolation, then fit-and-select
-    // (Section 4.2 machinery, Phase A) on the upsampled window, returning a
-    // sub-sample position in the ORIGINAL sample-rate coordinate.
-    // ---------------------------------------------------------------------
-    // ---------------------------------------------------------------------
-    // PER-BEAT SHIFT BY CROSS-CORRELATION.
-    //
-    // Replaces running the full landmark finder on every beat. That produced a
-    // landmark per beat whose only use was the difference from the template's
-    // landmark -- so it paid for a Q-peak search, a sigma-4 refine, a 4x cubic
-    // upsample and a four-model BIC selection to compute one scalar offset.
-    // Cost scaled with WINDOW WIDTH, not beat count: ~20.9 ms/beat at a
-    // 40-sample window and ~268.9 ms at 200, which is why the P pass (widest
-    // window) ran ~6.9x the Q pass and J ~3.6x.
-    //
-    // The landmark itself belongs on the TEMPLATE, which has roughly 30x the
-    // signal-to-noise ratio of one beat, and is fitted there once. All a beat
-    // owes the alignment is how far it sits from that template.
-    //
-    // NOT AN APPROXIMATION. Benchmarked at 0.011 ms/beat and agreeing with the
-    // full per-beat fit to 0.009 ms on subject 3010104.
-    //
-    // IT ALSO REMOVES PER-BEAT MODEL SWITCHING. With a fit per beat, BIC could
-    // pick different models on different beats, and models carry different
-    // systematic biases (~5 ms between them) -- so the choice itself entered
-    // the beat-to-beat spread and inflated QT variability by up to 12%. One
-    // model, fitted once on the template, cannot do that.
-    //
-    // Returns the shift in samples to ADD to the beat's position so its
-    // feature coincides with the template's, or NaN when the peak correlation
-    // falls below `corrFloor`. NaN means NO ESTIMATE -- the caller skips the
-    // beat rather than substituting zero, because a beat that does not
-    // correlate with the template is not a beat sitting at zero offset.
-    //
-    // corrFloor IS PASSED IN, not read here: it is tbank::matchFloorEcg() from
-    // config.csv -- the same correlation floor the bank uses to decide whether
-    // a beat joins a morphology group -- and this header stays free of the
-    // bank dependency. Note the floor is applied to a LANDMARK WINDOW here
-    // rather than a whole beat, so the same number is a stricter gate than in
-    // its grouping use; a short window over a low-amplitude feature correlates
-    // worse at equal quality.
     inline double xcorrShift(const std::vector<double>& beat,
         const std::vector<double>& tmpl, int lo, int hi,
         double corrFloor, int maxLagSamples = 0)

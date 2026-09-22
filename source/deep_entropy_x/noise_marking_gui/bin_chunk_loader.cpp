@@ -294,7 +294,6 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     {
         const QString stem = QFileInfo(filePath).completeBaseName();
         const QString dir = QString::fromStdString(m_cfg.vcg_output);
-        QDir().mkpath(dir);   // nothing upstream creates vcg_output/
         m_vcgCfg.basisCsvPath = (dir + stem + "_vcg_basis.csv").toStdString();
         m_vcgCfg.basisCsvSubject = stem.toStdString();
     }

@@ -285,7 +285,7 @@ bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
     // The same four alignments the ring walks. Kept local so this does not
     // depend on the anonymous-namespace kAlignRing defined further down.
     static const AnchorType kFour[4] = {
-        AnchorType::P_ONSET, AnchorType::Q_ONSET,
+        AnchorType::P_PEAK, AnchorType::Q_ONSET,
         AnchorType::R_PEAK,  AnchorType::J_POINT,
     };
 
@@ -961,10 +961,10 @@ tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const BinPlotWidget* pw,
     const bool ownBars = m_forceAlign && anchor_view::hasOwnBars(a);
 
     const auto field = [](const tbank::BankMarkerSet& s, int marker) {
-        if (marker == anchor_view::kPBegin) return s.p_begin;
-        if (marker == anchor_view::kQBegin) return s.q_onset;
-        if (marker == anchor_view::kSEnd)   return s.s_end;
-        if (marker == anchor_view::kTEnd)   return s.t_end;
+        if (marker == anchor_view::p_begin) return s.p_begin;
+        if (marker == anchor_view::q_begin) return s.q_onset;
+        if (marker == anchor_view::j_point)   return s.s_end;
+        if (marker == anchor_view::t_end)   return s.t_end;
         return -1.0;
         };
 
@@ -981,10 +981,10 @@ tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const BinPlotWidget* pw,
         }
         return lm.valid ? detected : -1.0;     // otherwise the detection
         };
-    out.p_begin = pick(anchor_view::kPBegin, lm.p_begin);
-    out.q_onset = pick(anchor_view::kQBegin, lm.q_onset);
-    out.s_end = pick(anchor_view::kSEnd, lm.s_end);
-    out.t_end = pick(anchor_view::kTEnd, lm.t_end);
+    out.p_begin = pick(anchor_view::p_begin, lm.p_begin);
+    out.q_onset = pick(anchor_view::q_begin, lm.q_onset);
+    out.s_end = pick(anchor_view::j_point, lm.s_end);
+    out.t_end = pick(anchor_view::t_end, lm.t_end);
     return out;
 }
 
@@ -1097,7 +1097,7 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
             return true;
         };
 
-    for (AnchorType a4 : anchor_view::kAllAnchors) {
+    for (AnchorType a4 : anchor_view::anchor_array) {
         const int tag4 = static_cast<int>(a4);
         if (tp.hasDetectedMarks(tag4)) continue;
 

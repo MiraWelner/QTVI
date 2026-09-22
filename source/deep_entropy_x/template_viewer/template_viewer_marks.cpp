@@ -684,7 +684,7 @@ void TemplateViewerWindow::resetMarks() {
         TemplateBin& b = m_bins[gi];
 
         for (int lead = 0; lead < 3; ++lead) {
-            for (AnchorType a : anchor_view::kAllAnchors) {
+            for (AnchorType a : anchor_view::anchor_array) {
                 tbank::BankMarkerSet& m = b.slotMarks(lead, slot, a);
                 m.p_begin = -1.0;
                 m.q_onset = -1.0;
@@ -693,13 +693,13 @@ void TemplateViewerWindow::resetMarks() {
                 // The bar is no longer operator-confirmed either, so the
                 // boundary log must not report it as ground truth.
                 m_touchedMarks.erase(
-                    touchKey(gi, lead, anchor_view::kPBegin, a));
+                    touchKey(gi, lead, anchor_view::p_begin, a));
                 m_touchedMarks.erase(
-                    touchKey(gi, lead, anchor_view::kQBegin, a));
+                    touchKey(gi, lead, anchor_view::q_begin, a));
                 m_touchedMarks.erase(
-                    touchKey(gi, lead, anchor_view::kSEnd, a));
+                    touchKey(gi, lead, anchor_view::j_point, a));
                 m_touchedMarks.erase(
-                    touchKey(gi, lead, anchor_view::kTEnd, a));
+                    touchKey(gi, lead, anchor_view::t_end, a));
             }
         }
     }

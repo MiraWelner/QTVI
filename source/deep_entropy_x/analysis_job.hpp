@@ -47,125 +47,58 @@ namespace analysis_job {
         return "?";
     }
 
-    // ---------------------------------------------------------------------
-    // ONE RECORD, THREE CALLS.
-    //
-    // This file owns everything derived from a single input .bin. It is split
-    // by LATENCY, not by meaning: the operator waits on the first call and not
-    // on the second.
-    //
-    //   prepare()  the minimum needed to open the viewer -- anneal, hardware
-    //              lag, raw R-peak detection, raw/unfiltered/PPG templates,
-    //              the prior morphology split, and ALL FOUR anchor alignments.
-    //              Blocks the marking UI, so nothing that is merely output
-    //              belongs here. Writes no template file: the viewer is handed
-    //              job.tmpl in memory.
-    //
-    //   finalize() the deferred squared/absval R-peak detection and templating,
-    //              plus every pure-output checkpoint (wave markings, feature
-    //              time series, envelope report, pre-marking, SQI). Runs on a
-    //              worker thread concurrently with marking. MUST NOT TOUCH Qt,
-    //              and is Qt-free by construction: this header includes no Qt
-    //              and must stay that way -- that is the whole reason it is not
-    //              folded into main.cpp.
-    //
-    //   commit()   after the viewer closes. Copies the operator's bank
-    //              confirmations back and writes _bins.bin.
-    //
-    // ONE WRITE, AT THE END. _bins.bin is created by commit() and nowhere else,
-    // so its existence means COMPLETE and a run killed mid-marking leaves
-    // nothing that could be mistaken for a finished record. That is what the
-    // old _templates.partial.bin and its remove+rename promote were emulating;
-    // the viewer no longer opens a file during marking, so both are gone.
-    //
-    // (The four-anchor cycle -- regenerateWithAnchor, anchorSequence,
-    //  anchorStep, anchorAccum, bankAnchorAccum -- is GONE. Every alignment is
-    //  built up front in prepare() over anchor_view::kAllAnchors, so nothing
-    //  called any of it. Its one live side effect, the per-anchor SQI write,
-    //  moved into finalize(); see the note there.)
-    // ---------------------------------------------------------------------
     struct AnalysisJob {
-        bool needsFinalize = false;                 // false => everything already cached
-
-        // Carried fast -> slow (only meaningful when needsFinalize):
         std::string stem;
         std::string fileID;
-        double samplingRate = 0.0;   // ECG rate (used by non-template callers below)
+        double samplingRate = 0.0;
         SignalRates rates;           // full per-channel rate set for template pipeline
         std::filesystem::path rPeakPath, binsPath;
         std::filesystem::path annealedPath;
-        // qAlignPath and beatsPath ARE GONE, as is the Q-align pass
-        // annealedPath used to be reloaded for. Declared, never assigned,
-        // never read -- the last traces of the two-pass Q-align design the
-        // four-alignment window replaced.
-        bool needSqabsDetection = false;            // false when wave_markings already had them
-
         std::vector<output_binfile_data> peakResults;
         template_io::TemplateFile tmpl;
         template_io::BeatsFile beats;
+        // Per-bin TemplateInfo, carried from the fast build so finalize's
+        // mergeTemplatesSlow can pack the squared/absval blocks into tmpl.
+        // Non-const by reference there, so it has to live somewhere that
+        // outlives prepare.
         std::vector<TemplateInfo> info;
-
-        // Carried into the finalize step so it can rerun the squared/absval
-        // R-peak detection on the worker thread. Cheaper than re-plumbing
-        // the whole cfg into the worker; these are the only fields
-        // augment_ecg_ppg_pairs_sqabs actually reads.
         config_entry cfg{};
-        bool use_R_algorithm = true;    // = cfg.use_consensus_rpeak in prepare
+        bool use_consensus_peakfind_alg = true;    // = cfg.use_consensus_rpeak in prepare
         bool ecg1_inverted = false;
         bool ecg2_inverted = false;
         bool ecg3_inverted = false;
-
         std::string error;                          // set by finalize on failure
-
-        template_io::TemplateFile tmplR;      //  R-pass template to be reused by re-alignment
-
+        template_io::TemplateFile r_aligned_template;      //  R-pass template to be reused by re-alignment
     };
 
 
-    inline std::optional<AnalysisJob> prepare(const config_entry& cfg, const std::filesystem::path& binPath,
-        bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
+    inline std::optional<AnalysisJob> prepare(const config_entry& cfg, const std::filesystem::path& binPath, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
     {
         const std::string stem = binPath.stem().string();
-        const std::filesystem::path noisePath = std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
+        const std::filesystem::path noise_bin_path = std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
         const std::filesystem::path annealedPath = std::filesystem::path(cfg.annealed_data_path) / (stem + "_annealed.bin");
         const std::filesystem::path rPeakPath = std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
         const std::filesystem::path binsPath = std::filesystem::path(cfg.template_path) / (stem + "_bins.bin");
 
-        // ---- Step 1: Anneal (always -- freshness check removed) ----
-        //
-        // TIMED AND ANNOUNCED, because this step prints nothing of its own and
-        // sits between "Saved Noise Markings" and the first [timing] line. A
-        // stall here was indistinguishable from a hang: no output, no progress,
-        // and the two existing instrumentation lines both live downstream of it.
-        const auto _a0 = std::chrono::steady_clock::now();
-        std::cerr << "[stage] anneal " << stem << " ...\n" << std::flush;
-        annealOneFile(binPath, noisePath, annealedPath, cfg.bin_size_minutes, ecg1_inverted, ecg2_inverted, ecg3_inverted);
-        const auto _a1 = std::chrono::steady_clock::now();
-        std::cerr << "[stage] anneal " << stem << " done in "
-            << std::chrono::duration<double>(_a1 - _a0).count() << " s\n" << std::flush;
+        anneal_one_file(binPath, noise_bin_path, annealedPath, cfg.bin_size_minutes, ecg1_inverted, ecg2_inverted, ecg3_inverted);
 
         AnalysisJob job;
         job.stem = stem;
         job.fileID = stem;
         job.samplingRate = cfg.ecg_upsample_rate;
-        // Per-channel rates, forwarded to the template-generation pipeline.
-        // A rate of 0 means the channel is absent for this dataset (the
-        // slicer skips it silently).
+        //rate of 0 means absent channel
         job.rates = SignalRates{
             cfg.ecg_upsample_rate,
             cfg.ppg_upsample_rate,
             cfg.abp_upsample_rate,
             cfg.art_upsample_rate,
             cfg.art_pulm_upsample_rate,
-            // Seconds, not Hz -- the morphology split's half-window. See
-            // SignalRates; positional, so these must stay last.
             cfg.region_around_Rpeak_for_morphology_split,
             cfg.region_around_PPGPeak_for_morphology_split
         };
-        // Everything finalize needs from cfg. Copy it once here rather than
-        // wiring individual fields piecewise later.
+
         job.cfg = cfg;
-        job.use_R_algorithm = cfg.use_consensus_rpeak;
+        job.use_consensus_peakfind_alg = cfg.use_consensus_rpeak;
         job.ecg1_inverted = ecg1_inverted;
         job.ecg2_inverted = ecg2_inverted;
         job.ecg3_inverted = ecg3_inverted;
@@ -175,7 +108,7 @@ namespace analysis_job {
 
         AnnealedData annealedData = read_input_binfile(annealedPath.string());
 
-        
+
         channel_offset::set(cfg.quality_metric, stem);
         channel_offset::Result chOffPpg, chOffArt;
         const bool wantChannelOffset = (cfg.dataset_type == "CHAOS");
@@ -271,15 +204,8 @@ namespace analysis_job {
             if (34 < up.size()) artSlots[i] = up[34];
             if (35 < up.size()) artpSlots[i] = up[35];
         }
+        job.peakResults = create_ecg_ppg_pairs_raw(std::move(annealedData.bins), true, stem, cfg, annealedData.ecg1_inverted, annealedData.ecg2_inverted, annealedData.ecg3_inverted);
 
-        auto t0 = std::chrono::steady_clock::now();
-        job.peakResults = create_ecg_ppg_pairs_raw(std::move(annealedData.bins), true, stem, cfg,
-            annealedData.ecg1_inverted, annealedData.ecg2_inverted, annealedData.ecg3_inverted);
-        auto t1 = std::chrono::steady_clock::now();
-        std::cerr << "  [timing] create_ecg_ppg_pairs_raw: "
-            << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()
-            << " ms  (use_consensus_rpeak=" << cfg.use_consensus_rpeak << ")\n";
-        job.needSqabsDetection = true;
 
         // create_ecg_ppg_pairs_raw doesn't carry the arterial pass-through
         // channels, so attach them here (parallel by bin index).
@@ -292,304 +218,124 @@ namespace analysis_job {
         std::cerr << "  Processing Raw Templates (fast stage): " << stem << "\n";
         ecg_move_log::set(cfg.quality_metric, stem);   // per-beat vertical move log
         morphology_csv::set(cfg.template_path, stem);
-        tbank::setMatchFloors(cfg.ecg_match_floor, cfg.ppg_match_floor);//morphology split floors for ecg and ppg loaded from config
         tbank::setMinBeats(cfg.min_beats_template_ecg, cfg.min_beats_template_ppg);//min beats for displayed templates in the viewer loaded from config
-        pulse_qc::setFitErrorPct(cfg.ppg_fit_error_pct); //ppg template fit error threshold loaded from config
 
-        // ---- SECTION 4.6 MORPHOLOGY THRESHOLDS, FROM config.csv ----------
-        //
-        // Applied here, once, before anything partitions. Every spawn and every
-        // merge in the record turns on these two numbers, so they must be in
-        // force before the first bin is built -- setting them later would leave
-        // earlier bins partitioned against the defaults, with nothing on disk
-        // saying which bins used which floor.
-        //
-        // EACH ONE FALLS BACK INDEPENDENTLY. A blank cell reaches here as 0.0,
-        // and pairing it with a configured value would fail validation and
-        // refuse BOTH -- so setting only the PPG floor, which is the likelier
-        // thing to want, would silently do nothing. Each unset floor keeps its
-        // own current value instead.
-        //
-        // AN UNUSABLE VALUE IS REFUSED, NOT CLAMPED. A floor of 0 accepts every
-        // beat against every template: one morphology per bin, no ectopy ever
-        // separated, and no error anywhere to explain it. Above 1 is the mirror
-        // image -- correlation cannot exceed 1, so everything spawns. Either
-        // way the defaults stand and the line below says so.
-        {
-            const bool have_ecg = (cfg.ecg_match_floor != 0.0);
-            const bool have_ppg = (cfg.ppg_match_floor != 0.0);
-            const double fe = have_ecg ? cfg.ecg_match_floor
-                : tbank::matchFloorEcg();
-            const double fp = have_ppg ? cfg.ppg_match_floor
-                : tbank::matchFloorPpg();
-
-            const char* src_ecg = have_ecg ? "config" : "default";
-            const char* src_ppg = have_ppg ? "config" : "default";
-
-
-            // Pulse QC threshold, same treatment: unset keeps the default,
-            // unusable is refused rather than clamped.
-            if (cfg.ppg_fit_error_pct == 0.0) {
-                std::cerr << "  [pulseqc] ppg_fit_error_pct absent from "
-                    "config.csv; using default "
-                    << 100.0 * pulse_qc::fitErrorFraction() << "%\n";
-            }
-            else if (!pulse_qc::setFitErrorPct(cfg.ppg_fit_error_pct)) {
-                std::cerr << "  [pulseqc] REFUSED ppg_fit_error_pct="
-                    << cfg.ppg_fit_error_pct << " -- must be in (0, 100]. "
-                    "Keeping " << 100.0 * pulse_qc::fitErrorFraction()
-                    << "%\n";
-            }
-            else {
-                std::cerr << "  [pulseqc] pulse fit error threshold "
-                    << 100.0 * pulse_qc::fitErrorFraction()
-                    << "% (config)\n";
-            }
+        // MORPHOLOGY SPLIT FLOORS. setMatchFloors takes both or neither: it
+        // returns false and sets NOTHING if either value is outside (0, 1],
+        // and a blank config cell arrives here as 0.0. So a refused pair
+        // leaves both floors at their defaults, which changes how every bin in
+        // the record is partitioned -- reported rather than silent.
+        if (!tbank::setMatchFloors(cfg.ecg_match_floor, cfg.ppg_match_floor)) {
+            std::cerr << "  [morphology] REFUSED match floors from config.csv (ecg="
+                << cfg.ecg_match_floor << ", ppg=" << cfg.ppg_match_floor
+                << ") -- both must be in (0, 1]. Keeping defaults ecg="
+                << tbank::matchFloorEcg() << ", ppg="
+                << tbank::matchFloorPpg() << "\n";
         }
-        // ---- THE PRIOR SPLIT IS READ BEFORE THE BUILD --------------------
-        //
-        // <stem>_templates.bin is REWRITTEN by the build below, inside
-        // morphology_csv::writeTemplatesBin. Reading it afterwards reads this
-        // run's own output: a file is found every time, the report claims a
-        // successful restore, and the fresh split is put back over itself -- so
-        // a config change is undone by the thing it was meant to survive, and
-        // nothing distinguishes that from working.
-        const std::filesystem::path splitPath =
-            std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
-        bank_reload::SplitArchive priorSplit =
-            bank_reload::readSplit(splitPath.string());
 
-        FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates, noisePath.string());
+        // Pulse QC threshold: unset keeps the default, unusable is refused
+        // rather than clamped. THE ONLY CALLER of setFitErrorPct -- there used
+        // to be an unconditional call above as well, which applied the value
+        // before this block could refuse it, so "REFUSED ... Keeping X" could
+        // print after X had already been replaced.
+        if (cfg.ppg_fit_error_pct == 0.0) {
+            std::cerr << "  [pulseqc] ppg_fit_error_pct absent from "
+                "config.csv; using default "
+                << 100.0 * pulse_qc::fitErrorFraction() << "%\n";
+        }
+        else if (!pulse_qc::setFitErrorPct(cfg.ppg_fit_error_pct)) {
+            std::cerr << "  [pulseqc] REFUSED ppg_fit_error_pct="
+                << cfg.ppg_fit_error_pct << " -- must be in (0, 100]. "
+                "Keeping " << 100.0 * pulse_qc::fitErrorFraction()
+                << "%\n";
+        }
+        else {
+            std::cerr << "  [pulseqc] pulse fit error threshold "
+                << 100.0 * pulse_qc::fitErrorFraction()
+                << "% (config)\n";
+        }
+
+        // THE PRIOR SPLIT IS READ BEFORE THE BUILD. <stem>_templates.bin is
+        // rewritten by the build below, inside morphology_csv::writeTemplatesBin,
+        // so reading it afterwards would read this run's own output.
+        const std::filesystem::path splitPath = std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
+        bank_reload::SplitArchive priorSplit = bank_reload::readSplit(splitPath.string());
+
+        FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates, noise_bin_path.string());
         if (fast.tmpl.bins.empty()) {
             std::cerr << "  no bins for " << stem << " (recording shorter than one bin?); skipping.\n";
-            return std::nullopt;   // main.cpp prints "prep failed or skipped"
+            return std::nullopt;
         }
         job.tmpl = std::move(fast.tmpl);
         job.beats = std::move(fast.beats);
         job.info = std::move(fast.info);
 
-        // ---- AND APPLIED AFTER IT ---------------------------------------
-        //
         // AFTER the fresh build, because it overwrites what that build
-        // partitioned; BEFORE the tmplR snapshot, so the R frame every anchor
-        // aligns from carries the reloaded banks.
+        // partitioned; BEFORE the r_aligned_template snapshot, so the R frame
+        // every anchor aligns from carries the reloaded banks.
         {
             const bank_reload::SplitReport rep =
                 bank_reload::applySplit(priorSplit, job.tmpl);
             bank_reload::printReport(rep);
         }
 
-        job.tmplR = job.tmpl;      // snapshot R frame (one copy, at prep time)
+        job.r_aligned_template = job.tmpl;      // snapshot R frame (one copy, at prep time)
 
-        // The R-pass checkpoints (bin archive, feature time series, envelope
-        // report) used to run here. They are pure output and cost minutes, so
-        // they moved to finalize, which runs concurrently with
-        // marking -- see the note at their new home.
-        // ---- ALL FOUR ALIGNMENTS, BEFORE THE FILE IS WRITTEN -------------
-        //
-        // The viewer's focus panel switches waveform per landmark
-        // (anchor_view::anchorFor -> TemplateBin::chFor), but chFor falls back
-        // to the R base for any alignment the file does not carry -- so with no
-        // anchor blocks every bar shows the same trace and the same spread,
-        // which is exactly "the alignment switch does nothing".
-        //
-        // HERE, not in the anchor cycle, for two reasons. job.beats is still
-        // the pristine R-pass beat matrix at this point -- augment_ecg_ppg_pairs_sqabs
-        // in finalize OVERWRITES it, which is the same fact that forces
-        // the bin_archive "R" checkpoint above it -- and it runs before the
-        // viewer is handed job.tmpl, so the operator opens on a state that
-        // already carries all four alignment blocks and needs no reload.
-        //
-        // Each anchor aligns FROM job.tmplR, never from the previous one:
-        // alignTemplatesFromCache leaves the R base untouched, so the calls
-        // compose. R_PEAK is not in the list -- it IS the base, in
-        // bins[i].chN_raw.
-        // ---- ALL FOUR, INCLUDING R ---------------------------------------
-        //
-        // anchorSequence() is P/Q/J: R is the scalar base, already in
-        // bins[i].chN_raw, and re-aligning it is a no-op because
-        // make_anchor_locator returns the constant r_col for R, so every shift
-        // is zero.
-        //
-        // THE PER-SLOT AVERAGES ARE NOT A NO-OP. bank_anchors is filled by the
-        // same pass, so skipping R left bankSlotFor(c, slot, R_PEAK) null for
-        // every slot -- and R is what the grid draws on Automatic, the
-        // alignment the operator starts on. The one view everybody sees was the
-        // one with no per-slot average, so leadsForBinTemplate fell back to the
-        // slot's R-aligned BankTemplate::tmpl or to the whole-bin
-        // ecgTemplate_raw: three populations under one label, chosen by which
-        // lookup happened to succeed.
-        for (AnchorType a : anchor_view::kAllAnchors) {
-            const auto _t0 = std::chrono::steady_clock::now();
-            template_io::TemplateFile atmpl = job.tmplR;
+        // Each anchor aligns FROM r_aligned_template, never from the previous
+        // one, so the calls compose. R_PEAK is in the list: chFor short-circuits
+        // it to the base, but its PER-SLOT averages are not a no-op and R is
+        // what the grid draws on Automatic.
+        for (AnchorType a : anchor_view::anchor_array) {
+            template_io::TemplateFile atmpl = job.r_aligned_template;
             alignTemplatesFromCache(atmpl, job.beats, job.rates, a);
 
             const int tag = static_cast<int>(a);
+
             auto it = atmpl.raw_anchors.find(tag);
-            size_t filled = 0;
-            if (it != atmpl.raw_anchors.end()) {
-                // COUNT WHAT ALIGNED. alignTemplatesFromCache sizes the store to
-                // bins up front and leaves skipped slots empty, so the map entry
-                // existing says nothing about whether any bin aligned -- and an
-                // all-empty store round-trips through the file perfectly and then
-                // reads back as "use the R base". That is the one failure mode
-                // here that looks like success, so it is reported.
-                for (const auto& trip : it->second)
-                    if (!trip[0].ecgTemplate.empty()
-                        || !trip[1].ecgTemplate.empty()
-                        || !trip[2].ecgTemplate.empty()) ++filled;
+            if (it != atmpl.raw_anchors.end())
                 job.tmpl.raw_anchors[tag] = std::move(it->second);
-            }
 
             // The per-slot averages for this anchor. `atmpl` dies at the end of
             // this iteration, so anything left in it is lost.
-            size_t slotsFilled = 0;
-            {
-                auto bit = atmpl.bank_anchors.find(tag);
-                if (bit != atmpl.bank_anchors.end()) {
-                    for (const auto& trip : bit->second)
-                        for (int c = 0; c < 3; ++c)
-                            for (const auto& st : trip[c])
-                                if (!st.tmpl.empty()) ++slotsFilled;
-                    job.tmpl.bank_anchors[tag] = std::move(bit->second);
-                }
-            }
-
-            std::cerr << "  [anchors] " << anchorName(a) << ": " << filled << "/"
-                << job.tmpl.bins.size() << " bins aligned, "
-                << std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - _t0).count() << "ms\n";
-            if (filled == 0)
-                std::cerr << "  [anchors] WARNING: " << anchorName(a)
-                << " aligned 0 bins -- the focus panel will show the "
-                "R template under every landmark for it.\n";
-            // Reported separately from `filled`, because they fail separately:
-            // a bin can align while its per-slot reduction produces nothing,
-            // and it is the latter that bankSlotFor sees -- and now that
-            // leadsForBinTemplate has no fallback, 0 here means no panels.
-            std::cerr << "  [anchors] " << anchorName(a) << ": " << slotsFilled
-                << " per-slot average(s)\n";
-            if (slotsFilled == 0)
-                std::cerr << "  [anchors] WARNING: " << anchorName(a)
-                << " produced 0 per-slot averages -- no panel can be drawn "
-                "on this alignment.\n";
+            auto bit = atmpl.bank_anchors.find(tag);
+            if (bit != atmpl.bank_anchors.end())
+                job.tmpl.bank_anchors[tag] = std::move(bit->second);
         }
         std::cerr.flush();
-
-        // NO WRITE HERE. This wrote the provisional file purely so the viewer
-        // had a path to open, and the viewer is handed job.tmpl instead -- the
-        // TemplateFile is already in memory in this process, so reading it back
-        // off disk was a round trip whose only product was a filename. It was
-        // also the reason a half-populated templates.bin had to exist: at this
-        // point squared/absval are empty and only the R anchor block is folded
-        // in.
-        job.needsFinalize = true;
         return job;
     }
 
-    // Runs on a worker thread. Must not touch Qt. Stores any error in
-    // job.error rather than throwing across the thread boundary.
-    //
-    // Callers MUST join this worker before invoking regenerateWithAnchor:
-    // both operate on job.tmpl and would race if allowed to run
-    // concurrently. That discipline is already documented at
-    // regenerateWithAnchor's declaration.
     inline void finalize(AnalysisJob& job)
     {
-        // Cap OpenMP so the Qt UI thread always has at least one core to
-        // schedule on. Without this, augment_ecg_ppg_pairs_sqabs and the
-        // downstream template builders each grab omp_get_max_threads() cores
-        // by default; on an N-core machine that saturates all N cores at
-        // 100%, the Qt main thread gets starved by the scheduler, and the
-        // marking UI freezes -- even though it's technically off the Qt
-        // thread. Leaving one core for Qt keeps the GUI responsive.
-        // omp_set_nested(0) also blocks any internal parallel-for from
-        // spawning a nested team inside the outer one (the same nested-
-        // parallelism pattern that made create_arterial_templates slow
-        // before -- see its own omp_set_nested call).
+        // Leave one core for the Qt UI thread: without this, the OpenMP
+        // regions below each take omp_get_max_threads() and the marking GUI
+        // gets starved even though it is on another thread. omp_set_nested(0)
+        // stops an inner parallel-for spawning a nested team inside the
+        // outer one.
         const int hw = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
         const int workerThreads = std::max(1, hw - 1);
         omp_set_num_threads(workerThreads);
         omp_set_nested(0);
 
         try {
-            if (job.needSqabsDetection) {
-                // Fresh raw detection: persist the canonical (raw) r-peaks + CSV
-                // first, before squared/absval overwrite the beat lists.
-                auto t_io0 = std::chrono::steady_clock::now();
-                write_output_binfile(job.rPeakPath.string(), job.peakResults);
+            // POSITION IS LOAD-BEARING: these writes describe the RAW pass and
+            // must stay above augment_ecg_ppg_pairs_sqabs, which overwrites the
+            // beat lists in peakResults.
+            write_output_binfile(job.rPeakPath.string(), job.peakResults);
+            const std::filesystem::path csvDir = job.cfg.r_peak_data_path;
+            const std::filesystem::path rPeakCsv = csvDir / (job.stem + "_peak_locations_all_beats.csv");
+            write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
 
-                const std::filesystem::path csvDir = job.cfg.r_peak_data_path;
-                std::filesystem::create_directories(csvDir);
-                const std::filesystem::path rPeakCsv = csvDir / (job.stem + "_peak_locations_all_beats.csv");
-                write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
-                auto t_io1 = std::chrono::steady_clock::now();
-
-            }
-            // ---- R-PASS CHECKPOINTS, moved off the critical path ----------
-            // These three were in prepare, which BLOCKS the marking UI
-            // from opening. They are pure output -- nothing downstream in
-            // prepare reads them -- and poolBinQuality alone runs computeEcgSQI
-            // per beat, per channel, per bin, which on a 40-bin record with
-            // ~1000 beats a bin is ~120k evaluations. That was the wait.
-            //
-            // POSITION IS LOAD-BEARING: above augment_ecg_ppg_pairs_sqabs.
-            // All three describe the R pass, and augment overwrites the beat
-            // lists. Moving them below it would archive the squared/absval
-            // detection under the label "R".
             if (!job.cfg.template_path.empty()) {
-
-                // Section 5.5 length/area/volume time series, from the SAME
-                // pre-deformation R-pass data. job.peakResults still holds the
-                // raw per-channel ECG + detected R-peaks the proportional
-                // segmenter needs (job.tmpl has only averaged templates, which
-                // cannot be re-segmented).
-                const std::string ftsPath =
-                    job.cfg.template_path + "/" + job.stem + "_pq_and_qrs_data.csv";
-                const bool okf = normalize_features::writeFeatureTimeSeriesCsv(
-                    ftsPath, job.stem, job.peakResults, job.rates.ecg);
-                if (!okf)
-                    std::cerr << "  [feature_ts] " << job.stem
-                    << ": could not write " << ftsPath << "\n";
-                else
-                    std::cerr << "  [feature_ts] " << job.stem
-                    << ": wrote length/area/volume series\n";
-
-                // Section 4.7 dynamic envelopes, per beat per segment per
-                // channel. Serial by construction (see envelope_report.hpp):
-                // the rolling windows are sequential per channel, so this is
-                // the one checkpoint here that must not be parallelised over
-                // bins. Always written -- a report that only appears when
-                // someone remembers a flag is missing from the runs that
-                // matter.
-                const bool oke = envelope_report::writeEnvelopeReport(
-                    job.cfg.template_path, job.stem, job.tmpl.bins, job.beats,
-                    job.rates.ecg);
-                if (!oke)
-                    std::cerr << "  [envelopes] " << job.stem
-                    << ": could not write envelope report to "
-                    << job.cfg.template_path << "\n";
+                const std::string ftsPath = job.cfg.template_path + "/" + job.stem + "_pq_and_qrs_data.csv";
+                normalize_features::writeFeatureTimeSeriesCsv(ftsPath, job.stem, job.peakResults, job.rates.ecg);
+                envelope_report::writeEnvelopeReport(job.cfg.template_path, job.stem, job.tmpl.bins, job.beats, job.rates.ecg);
             }
 
-
-            // Squared/absval R-peak detection on ECG channels, then slow
-            // templating to pack the two extra per-bin blocks (squared,
-            // absval) plus their SAECG entries into job.tmpl. Runs entirely
-            // on this worker; no Qt access. The worker is expected to have
-            // been joined before regenerateWithAnchor is called (see
-            // comment above), so no race with the anchor path here.
-            auto t_sq0 = std::chrono::steady_clock::now();
-            augment_ecg_ppg_pairs_sqabs(job.peakResults, job.use_R_algorithm,
-                job.fileID, job.samplingRate, job.cfg,
-                job.ecg1_inverted, job.ecg2_inverted, job.ecg3_inverted);
-            auto t_aug = std::chrono::steady_clock::now();
+            augment_ecg_ppg_pairs_sqabs(job.peakResults, job.use_consensus_peakfind_alg, job.fileID, job.samplingRate, job.cfg, job.ecg1_inverted, job.ecg2_inverted, job.ecg3_inverted);
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
-            auto t_sq1 = std::chrono::steady_clock::now();
-
             premark::runAll(job.beats, job.tmpl, job.rates.ecg, job.cfg.quality_metric, job.stem);
-
             writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats, job.samplingRate);
-
             std::cout << "Processing Squared and Absolute Value Templates (slow) for " << job.stem << "\n";
         }
         catch (const std::exception& e) {
@@ -600,31 +346,7 @@ namespace analysis_job {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // commit
-    // ---------------------------------------------------------------------
-    //
-    // Called once, after the viewer window closes and the finalize worker has
-    // been joined. Writes _bins.bin -- the only place in the program that does.
-    //
-    // WHY THE BANKS HAVE TO BE COPIED BACK. The confirmation flags live on the
-    // VIEWER's bins: showPage() sets confirmed_by_operator as each panel is
-    // built and a right-click sets marked_invalid_template, while job.tmpl is a
-    // separate TemplateFile nothing touches after prepare(). Writing job.tmpl
-    // as-is reports "presumed" for every template in the record no matter how
-    // much marking was done.
-    //
-    // BANKS ONLY. The waveforms, r_cols and per-bin scalars in job.tmpl are the
-    // generated ones and the viewer never edits them; copying a whole bin back
-    // would overwrite the squared/absval blocks finalize() packed in.
-    //
-    // CALL ONLY AFTER JOINING THE FINALIZE WORKER. Both write job.tmpl.
-    //
-    // Takes a snapshot rather than the viewer's bins, so this header does not
-    // have to include template_marking_bin_io.hpp / anything Qt-adjacent to
-    // name TemplateBin -- see the Qt-free note at the top. tbank::TemplateBank
-    // is deliberately Qt-free, so the two fields that matter can be named here
-    // directly.
+
     struct BankSnapshot {
         std::array<tbank::TemplateBank, 3> ecg_bank;
         tbank::TemplateBank                ppg_bank;

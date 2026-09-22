@@ -285,7 +285,7 @@
         <item row="2" column="0">
          <widget class="QRadioButton" name="p_align_button">
           <property name="text">
-           <string>P Peak</string>
+           <string>P Onset</string>
           </property>
           <attribute name="buttonGroup">
            <string notr="true">buttonGroup_2</string>
@@ -598,9 +598,9 @@
   <slot>onNextPage()</slot>
  </slots>
  <buttongroups>
-  <buttongroup name="buttonGroup_2"/>
-  <buttongroup name="buttonGroup"/>
-  <buttongroup name="buttonGroup_4"/>
   <buttongroup name="buttonGroup_5"/>
+  <buttongroup name="buttonGroup"/>
+  <buttongroup name="buttonGroup_2"/>
+  <buttongroup name="buttonGroup_4"/>
  </buttongroups>
 </ui>

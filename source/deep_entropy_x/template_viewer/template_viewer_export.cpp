@@ -253,8 +253,8 @@ static bool mergeCsvParts(const std::string& canonicalPath,
 // a fixed four-element array that exists in full before any worker runs.
 int TemplateViewerWindow::anchorSlot(AnchorType a)
 {
-    for (std::size_t i = 0; i < anchor_view::kAllAnchors.size(); ++i)
-        if (anchor_view::kAllAnchors[i] == a) return static_cast<int>(i);
+    for (std::size_t i = 0; i < anchor_view::anchor_array.size(); ++i)
+        if (anchor_view::anchor_array[i] == a) return static_cast<int>(i);
     return -1;
 }
 
@@ -281,8 +281,8 @@ void TemplateViewerWindow::primeExportLandmarks()
     const double fs = m_sampleRate;
     QtConcurrent::blockingMap(idx, [this, fs](std::size_t bi) {
         const TemplateBin& bin = m_bins[bi];
-        for (std::size_t s = 0; s < anchor_view::kAllAnchors.size(); ++s) {
-            const AnchorType a = anchor_view::kAllAnchors[s];
+        for (std::size_t s = 0; s < anchor_view::anchor_array.size(); ++s) {
+            const AnchorType a = anchor_view::anchor_array[s];
             for (int c = 0; c < 3; ++c)
                 m_exportLm[s][bi][static_cast<std::size_t>(c)] =
                 alignedLandmarks(bin, c, a, fs);
@@ -714,7 +714,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
         // Derived T peak for the autodetect glyph group, bracketed by the AUTO J-point and T-end. The J-point is the left bracket because no T-onset
         double tPeakAutoGlyph[3];
         for (int gc = 0; gc < 3; ++gc)
-            tPeakAutoGlyph[gc] = FeatureMarks::compute_t_peak(
+            tPeakAutoGlyph[gc] = FeatureMarks::find_t_peak(
                 chs[gc]->ecgTemplate_raw,
                 b.s_end_auto_ch[gc], b.t_end_auto_ch[gc]);
 
@@ -781,7 +781,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
 // AnchorType -> short name for the boundary log's `anchor` column.
 static const char* anchorName_boundary(AnchorType a) {
     switch (a) {
-    case AnchorType::P_ONSET: return "P_ONSET";
+    case AnchorType::P_PEAK: return "P_ONSET";
     case AnchorType::Q_ONSET: return "Q_ONSET";
     case AnchorType::R_PEAK:  return "R_PEAK";
     case AnchorType::J_POINT: return "J_POINT";
@@ -1085,7 +1085,7 @@ void TemplateViewerWindow::save_bin_and_csv() {
         QGuiApplication::restoreOverrideCursor();
 
         std::vector<CsvPart> parts;
-        for (AnchorType a : anchor_view::kAllAnchors) {
+        for (AnchorType a : anchor_view::anchor_array) {
             std::string content = buildAlignedTemplateCsv(a);
             if (content.empty()) continue;
             parts.push_back(CsvPart{ anchor_view::label(a), std::move(content) });

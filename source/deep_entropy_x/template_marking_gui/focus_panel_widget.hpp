@@ -1,31 +1,20 @@
 #pragma once
 //
-// FocusPanelWidget.hpp  (B2 focus mode)
+// focus_panel_widget.hpp
 //
-// When the operator selects a landmark in a BinPlotWidget, this panel
-// renders that landmark's anchored average, zoomed in around the landmark
-// column, with:
-//   - the mean trace (center line),
-//   - the candidate curves the DETECTOR fit for this landmark, supplied by
-//     the owner (the panel fits nothing of its own), and
-//   - a 95% confidence band: mean +/- 1.96 * se per column, where
-//     se = sd / sqrt(nBeats).
+// The landmark close-up. When the operator selects a landmark in a
+// BinPlotWidget, this panel draws that landmark's anchored average zoomed in
+// around its column: the mean trace, a +/- 1 sd band, the candidate curves the
+// DETECTOR fit, and a dotted line at the detector's own placement.
 //
-// The panel reads the template's per-sample mean + sd + beat count directly
-// from the data the viewer already holds (TemplateBin.ecgTemplate_raw /
-// _raw_iqr [which holds STD, ddof=1] / n_beats_raw, and the PPG analogues),
-// so it needs no re-anchoring or beat matrix of its own.
+// THE PANEL FITS NOTHING AND DETECTS NOTHING. Everything it draws arrives
+// through the setters below, from whoever ran the detector. That is the only
+// invariant in this file that matters: a curve this panel produced itself would
+// answer a different question from the one that placed the mark (different
+// window, different weighting, different vertex) and would be drawn beside it.
 //
-// ONE PANEL PER SELECTION. There used to be two -- a QRS view and a JT view --
-// with the J-point drawn in both, framed to opposite edges, because with a
-// single alignment on screen neither panel alone could show both of its
-// neighbourhoods. TemplateViewerWindow now switches this panel's WAVEFORM to
-// the clicked landmark's own alignment (anchor_view::anchorFor), so there is
-// one view per landmark and nothing to keep in step.
-//
-// This class needed no change for that: it is driven entirely by
-// (marker, mean, sd, n, column), so which alignment the mean came from is the
-// caller's business.
+// It is driven entirely by (marker, mean, sd, n, column), so which alignment
+// the mean came from, and which channel, are the caller's business.
 //
 #include <QWidget>
 #include <QString>
@@ -33,7 +22,7 @@
 #include <limits>
 #include <vector>
 #include <algorithm>   // std::max in setPeakFitKind
-#include "subsample_refine.hpp"   // subsample_refine::TransitionCandidates
+#include "subsample_refine.hpp"   // PeakCandidates / TransitionCandidates
 
 class QPainter;
 
@@ -42,19 +31,18 @@ class FocusPanelWidget : public QWidget {
 public:
     explicit FocusPanelWidget(QWidget* parent = nullptr);
 
-    // Point the panel at one landmark of one anchored average.
-    //   mean    : per-column center line (the template mean).
-    //   sd      : per-column standard deviation (ddof=1) across contributing
-    //             beats -- same length as mean.
-    //   nBeats  : number of beats contributing (the n in se = sd/sqrt(n)).
-    //   landmarkCol : the column the selected landmark sits on; the zoom
-    //                 window is centered here.
-    //   label   : shown in the panel header (e.g. "R peak", "J-point (QRS)").
-    //   halfWindowSamples : zoom half-width in samples around landmarkCol.
+    // Point the panel at one landmark of one anchored average. Clears every
+    // derived array and every supplied fit, so a caller that supplies none
+    // cannot inherit the previous landmark's.
+    //   mean    : per-column center line.
+    //   sd      : per-column spread, SAME LENGTH AS MEAN or longer; a shorter
+    //             one disables the band.
+    //   nBeats  : beats contributing, for the header readout.
+    //   landmarkCol : zoom window centre.
+    //   label   : panel header, e.g. "R peak [P-aligned]".
     //   framingBias : -1 frames the landmark toward the RIGHT edge (it ENDS
-    //                 this segment, e.g. J-point as QRS-end), +1 toward the
-    //                 LEFT edge (it STARTS this segment, e.g. J-point as
-    //                 JT-start), 0 = centered (default).
+    //                 this segment), +1 toward the LEFT (it STARTS it),
+    //                 0 centered.
     void setFocus(const std::vector<double>& mean,
         const std::vector<double>& sd,
         int nBeats,
@@ -63,14 +51,11 @@ public:
         int halfWindowSamples = 100,
         int framingBias = 0);
 
-    // Per-sample SD in MSEC: each column's amplitude SD divided by the
-    // template's local |dV/dt| there (localAbsSlope / slopeFloor in
-    // TemplateViewerWindow.cpp). floorMask marks the columns where the slope
-    // was clamped at the floor -- flat regions, peak tops -- where the value
-    // is a lower bound rather than a measurement, and which are shaded.
-    //
-    // Display only: the band above is unchanged (it is the amplitude CI).
-    // Empty vectors leave the panel exactly as it was.
+    // Per-sample SD in MSEC: the amplitude SD divided by the template's local
+    // |dV/dt|. floorMask marks columns where the slope was clamped at the floor
+    // -- flat regions, peak tops -- where the value is a lower bound rather
+    // than a measurement, and which are shaded. Display only; the band above is
+    // the amplitude spread and is unaffected. Call after setFocus.
     void setSdMs(const std::vector<double>& sdMs,
         const std::vector<uint8_t>& floorMask,
         const std::vector<double>& deriv,
@@ -80,75 +65,58 @@ public:
     void clearFocus();
 
     // The detector's position for the focused landmark, in this trace's
-    // columns. Call after setFocus; -1 clears it.
+    // columns. The dotted fiducial is drawn here and nowhere else. Call after
+    // setFocus; -1 = not supplied, and the line falls back to the bar column.
     void setDetectorFiducial(double col);
 
-    // Which curve the red dashed overlay draws, so it matches the model that
-    // actually PLACED this landmark: a peak's weighted quadratic/cubic vs an
-    // onset/offset's curve_fit transition model. Set per landmark by the owner
-    // right after setFocus; defaults to Transition (the onset/offset case).
-    // None = THE MARK WAS NOT PLACED BY A FIT. Q onset has a fallback path --
-    // compute_q_onset's R-upstroke branch, taken on a monophasic-R beat with no
-    // Q trough -- and the grid says so by drawing a CIRCLE instead of an X.
-    // There is no curve behind such a mark, so the panel draws no candidates
-    // for it: showing three fitted curves would claim a contest that never
-    // happened, and the operator would be comparing models against a position
-    // none of them produced.
+    // Which family of curve placed this landmark, so the overlay matches the
+    // model the detector actually used. None = NOT PLACED BY A FIT at all: an
+    // ECG Q onset with no trough (compute_q_onset's R-upstroke fallback, drawn
+    // as a circle rather than an X on the grid), or any pulse landmark that is
+    // a bracketed search or an interpolated crossing. Drawing candidates there
+    // would claim a contest that never happened.
     enum class FitKind { None, Transition, PeakQuadratic, PeakCubic };
-    // peakSigma is the SAME weighting the detector used for this landmark (so
-    // the drawn fit and the placement fit can't diverge); ignored for
-    // transitions. Set per landmark by the owner right after setFocus.
-    // TWO OVERLOADS, NO DEFAULTS. Transition and None involve no peak fit --
-    // their curves come from setTransitionCandidates -- so there are no peak
-    // parameters to supply, and requiring them would force the caller to invent
-    // values. m_peakHalfWidth goes to -1 on that path so a width left over from
-    // a previous selection can never be read.
+
+    // TWO OVERLOADS, NO DEFAULTS. Transition and None have no peak parameters
+    // to supply and requiring them would force the caller to invent values;
+    // m_peakHalfWidth goes to -1 here so a width left from a previous selection
+    // can never be read.
     void setFitKind(FitKind k) {
         m_fitKind = k;
         m_peakHalfWidth = -1;
         update();
     }
 
-    // Peaks: both required, from subsample_refine::peak_sigma and
-    // ::peak_halfwidth for the landmark in focus. The panel must fit the same
-    // span the detector fitted, or the dotted fiducial, the curves and the fid=
-    // readout all describe a position nothing else in the system uses.
+    // Peaks: both required, and both must be the values the detector fitted
+    // with (subsample_refine::peak_sigma / peak_halfwidth for ECG,
+    // pulse_sigma / pulse_halfwidth for pulse). A different span here draws a
+    // curve over a fit nothing else in the system used.
     void setPeakFitKind(FitKind k, double peakSigma, int peakHalfWidth) {
         m_fitKind = k;
         m_peakSigma = peakSigma;
         m_peakHalfWidth = std::max(3, peakHalfWidth);
         update();
     }
-    // Supply the EXACT peak fits the detector ran, so the panel DRAWS the
-    // contest that placed the mark instead of re-running it. Peak analogue of
-    // setTransitionCandidates below, and it exists for the same reason: the
-    // panel cannot reproduce the detector's answer from sigma and half-width
-    // alone, because it does not know the integer seed the detector fitted
-    // around. Cleared by clearFocus; ignored for transitions.
+
+    // The exact fits the detector ran. Required for anything to be drawn: the
+    // panel cannot reproduce them from sigma and half-width alone, because it
+    // does not know the integer seed the detector fitted around. Ignored for
+    // the other family; cleared by setFocus and clearFocus.
     void setPeakCandidates(const subsample_refine::PeakCandidates& c) {
         m_peakCands = c; update();
     }
-
-
-    // Supply the EXACT candidate curves the detector fit for this transition
-    // landmark (sample-indexed closures + winner), so the panel draws the fits
-    // that placed the mark rather than a re-fit over the visible window. Cleared
-    // by clearFocus; ignored for peaks.
     void setTransitionCandidates(const subsample_refine::TransitionCandidates& c) {
         m_transCands = c; update();
     }
 
-    // One tested model curve, plus whether the selector chose it. Drawn green
-    // when selected, red otherwise.
+    // One tested model curve. Green when it is the one that placed the mark,
+    // red otherwise.
     struct Candidate {
         std::vector<double> curve;   // per-column, NaN outside the fit
         bool selected = false;
         QString label;               // model name (shown for the winner)
-        // WHERE THIS MODEL PUTS THE FIDUCIAL, in sub-sample columns; NaN if it
-        // has no placement to report. The dotted line is drawn at the SELECTED
-        // candidate's position, which is what makes it follow the fit-model
-        // radios -- it used to be pinned to the integer bar column and so never
-        // responded to them at all.
+        // Where THIS model puts the fiducial, in sub-sample columns; NaN if it
+        // has no placement to report.
         double position = std::numeric_limits<double>::quiet_NaN();
     };
 
@@ -159,47 +127,28 @@ private:
     FitKind m_fitKind = FitKind::Transition;
     double  m_peakSigma = 4.0;
     int     m_peakHalfWidth = -1;   // -1 = no peak in focus
-    // m_panelPeakMode IS GONE. The panel no longer selects a model, so it has
-    // no use for the Fit-Peaks radio: the winner arrives in m_peakCands.
-    subsample_refine::PeakCandidates m_peakCands;           // supplied exact peak fits
-
-    subsample_refine::TransitionCandidates m_transCands;   // supplied exact transition fits
-    std::vector<double> m_mean;
-    std::vector<double> m_sd;
+    subsample_refine::PeakCandidates       m_peakCands;
+    subsample_refine::TransitionCandidates m_transCands;
+    std::vector<double>  m_mean;
+    std::vector<double>  m_sd;
     std::vector<double>  m_sdMs;       // per-column SD in msec
-    std::vector<double>  m_deriv;      // per-column |dV/dt| (SG derivative), amp/sample
+    std::vector<double>  m_deriv;      // per-column |dV/dt|, amp/sample
     double  m_slopeFloor = 0.0;        // denominator used where the slope is below it
     std::vector<uint8_t> m_floorMask;  // 1 where the slope floor engaged
     int    m_nBeats = 0;
     int    m_landmarkCol = -1;
-    // Sub-sample column the fiducial was last DRAWN at. Recorded in paintEvent
-    // for the footer readout: quadratic and cubic vertices often differ by well
-    // under one sample, which at this zoom is a sub-pixel shift, so the number
-    // is the only reliable way to see that the mark moved with the radio.
+    // Sub-sample column the fiducial was last DRAWN at, recorded in paintEvent
+    // for the footer readout. Quadratic and cubic vertices can differ by well
+    // under one sample -- a sub-pixel shift at this zoom -- so the number is
+    // the only reliable way to see the mark move with the fit-model radio.
     double m_lastFidCol = -1.0;
-
-    // THE DETECTOR'S OWN ANSWER for this landmark on this trace, supplied by
-    // refreshFocus. The dotted fiducial is drawn here and nowhere else.
-    //
-    // The panel used to draw it at its own re-fit's vertex, and that cannot
-    // match: the detector fits a window centred on the integer argmax it
-    // found, while the panel seeds at the landmark's ALREADY-REFINED column.
-    // Different window, different weighted fit, different vertex -- so the line
-    // sat beside the mark it was supposed to be marking. -1 = not supplied.
     double m_detectorFid = -1.0;
     int    m_half = 30;
     int    m_framingBias = 0;   // -1 right-edge, +1 left-edge, 0 centered
     QString m_label;
     bool   m_active = false;
 
-    // Peak candidate curve over [lo, hi]: a weighted quadratic (cubic=false) or
-    // cubic (cubic=true). NaN if the fit degenerated. (Retained; candidateCurves
-    // is the live path.)
-
-    // Every model the DETECTOR tested for this landmark, over [lo, hi], with
-    // the selector's winner flagged. Peaks: quadratic + cubic (BIC). Onsets/
-    // offsets: piecewise-linear + sigmoid + fractional (selectBestFit).
-    // Uses the same fitting functions the detector uses, so the drawn curves
-    // are the tested curves.
+    // Every model the DETECTOR tested for this landmark over [lo, hi], winner
+    // flagged. Assembled from the supplied candidates; fits nothing.
     std::vector<Candidate> candidateCurves(int lo, int hi) const;
 };

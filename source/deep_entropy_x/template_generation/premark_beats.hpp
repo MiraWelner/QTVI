@@ -81,10 +81,10 @@ namespace premark {
     {
         SegmentCols s;
         if (tmpl.empty() || rCol < 0 || fs <= 0.0) return s;
-        const double q_onset = FeatureMarks::compute_q_onset(tmpl, fs, rCol);
-        const double j_point = FeatureMarks::compute_j_point(tmpl, fs, rCol);
-        const double t_end = FeatureMarks::compute_t_end(tmpl, fs, rCol, j_point);
-        const int    pEnd = FeatureMarks::detect_p_end(tmpl, rCol, fs);
+        const double q_onset = FeatureMarks::find_q_onset(tmpl, fs, rCol);
+        const double j_point = FeatureMarks::find_j_point(tmpl, fs, rCol);
+        const double t_end = FeatureMarks::find_t_end(tmpl, fs, rCol, j_point);
+        const int    pEnd = FeatureMarks::find_p_end(tmpl, rCol, fs);
 
         s.qrsStart = (q_onset >= 0.0) ? (int)std::lround(q_onset) : -1;
         s.qrsEnd = (j_point >= 0.0) ? (int)std::lround(j_point) : -1;

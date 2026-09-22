@@ -722,9 +722,9 @@ namespace normalize_features {
             // marks, and all that is wanted is the rough position that opens
             // detect_p_end's search. The seed is exactly that and nothing else
             // reads it.
-            const double qOnD = FeatureMarks::compute_q_onset(pb.samples, fs, pb.rCol);
-            const double pPeakD = FeatureMarks::compute_p_peak(pb.samples, 0.0, qOnD, fs);
-            const int pEnd = FeatureMarks::detect_p_end(pb.samples, pb.rCol, fs, pPeakD);
+            const double qOnD = FeatureMarks::find_q_onset(pb.samples, fs, pb.rCol);
+            const double pPeakD = FeatureMarks::find_p_peak(pb.samples, 0.0, qOnD, fs);
+            const int pEnd = FeatureMarks::find_p_end(pb.samples, pb.rCol, fs, pPeakD);
             // compute_q_onset's monophasic-R path can return r_idx itself, which
             // would run the PQ window into the R upstroke. Require a real gap.
             const int qGuard = pb.rCol - static_cast<int>(std::lround(0.020 * fs));
@@ -781,8 +781,8 @@ namespace normalize_features {
     // unavailable, which the callers treat as "skip this beat" (NaN).
     inline std::pair<int, int> qrs_window_of(const ProportionalBeat& pb, double fs) {
         if (pb.rCol < 0 || pb.samples.empty() || !(fs > 0.0)) return { -1, -1 };
-        const double qOnsetD = FeatureMarks::compute_q_onset(pb.samples, fs, pb.rCol);
-        const double jPointD = FeatureMarks::compute_j_point(pb.samples, fs, pb.rCol);
+        const double qOnsetD = FeatureMarks::find_q_onset(pb.samples, fs, pb.rCol);
+        const double jPointD = FeatureMarks::find_j_point(pb.samples, fs, pb.rCol);
         if (std::isnan(qOnsetD) || std::isnan(jPointD)) return { -1, -1 };
         const int lo = static_cast<int>(std::lround(qOnsetD));
         const int hi = static_cast<int>(std::lround(jPointD));

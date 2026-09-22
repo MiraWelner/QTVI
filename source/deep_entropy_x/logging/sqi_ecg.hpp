@@ -71,14 +71,14 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
     // this scores a template with no operator marks, and all that is wanted is
     // the rough position that opens detect_p_end's search. Renamed from
     // detect_p_peak so a call site cannot mistake a seed for a measurement.
-    const double qOnsetD = FeatureMarks::compute_q_onset(ecg, fs, r_col);
-    const double pPeakD = FeatureMarks::compute_p_peak(ecg, 0.0, qOnsetD, fs);
+    const double qOnsetD = FeatureMarks::find_q_onset(ecg, fs, r_col);
+    const double pPeakD = FeatureMarks::find_p_peak(ecg, 0.0, qOnsetD, fs);
     const int pPeak = (int)std::lround(pPeakD);
-    const int pEnd = FeatureMarks::detect_p_end(ecg, r_col, fs, pPeakD);
+    const int pEnd = FeatureMarks::find_p_end(ecg, r_col, fs, pPeakD);
     const int qBegin = (qOnsetD >= 0.0) ? (int)std::lround(qOnsetD) : -1;
-    const double jPointD = FeatureMarks::compute_j_point(ecg, fs, r_col);   // QRS end / J point
+    const double jPointD = FeatureMarks::find_j_point(ecg, fs, r_col);   // QRS end / J point
     const int jPoint = (int)std::lround(jPointD);
-    const int tEnd = (int)std::lround(FeatureMarks::compute_t_end(ecg, fs, r_col, jPointD));
+    const int tEnd = (int)std::lround(FeatureMarks::find_t_end(ecg, fs, r_col, jPointD));
 
     auto clampIdx = [&](int v) { return std::max(0, std::min(n - 1, v)); };
 

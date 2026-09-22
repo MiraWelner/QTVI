@@ -34,7 +34,7 @@
 #include <vector>
 #include "template_marking_bin_io.hpp"
 #include "global_interval_lines.hpp"
-#include "template_anchoring\curve_fit.hpp"   // curve_fit::FitMode / PeakFitMode
+#include "template_marking_gui/curve_fit.hpp"   // curve_fit::FitMode / PeakFitMode
 
 class QPainter;
 
@@ -132,33 +132,26 @@ public:
     //     x(t)     = margin_left + (t - tMin) / (tMax - tMin) * drawW
     //
     // R lands at t = 0 on every channel, so it lands at the same x on every
-    // trace by construction. There is nothing to subtract, no shared origin to
-    // assert, and no per-channel clip.
+    // trace by construction. Nothing to subtract, no shared origin to assert,
+    // no per-channel clip.
     //
-    // WHY IT IS DONE THIS WAY. Position used to be expressed four ways at once:
-    // a sample index, a per-channel start offset, a per-channel rate ratio, and
-    // a clip count. Every alignment fix added another correction term, and the
-    // terms disagreed -- the ECG's R column is 0.3 * the bin's LONGEST RR
-    // (alignment.hpp) while every pulse channel's is a fixed 0.3 s
-    // (create_arterial_templates.hpp), so asserting a shared sample 0 put the
-    // ECG most of a second ahead of the PPG on any bin holding a pause. Bands
-    // drifted from their own traces for the same reason: band and line reached
-    // the array through different terms.
+    // DO NOT ASSERT A SHARED SAMPLE 0. The ECG's R column is 0.3 * the bin's
+    // LONGEST RR (alignment.hpp) while every pulse channel's is a fixed 0.3 s
+    // (create_arterial_templates.hpp), so on any bin holding a pause that puts
+    // the ECG most of a second ahead of the PPG.
     //
     // The frame [tMin, tMax] is the UNION of every present channel's own drawn
-    // extent. Because it is a union, no channel can have a tail outside it --
-    // which is what makes a clip count unnecessary rather than merely
-    // inconvenient, and why a marker inside its own array is on screen.
+    // extent, which is why no clip count is needed: a channel cannot have a
+    // tail outside it, so a marker inside its own array is on screen.
     //
-    // A channel with no rate or no anchor is NOT DRAWN, deliberately: guessing
-    // an anchor is what produced the misalignment this replaces.
+    // A channel with no rate or no anchor is NOT DRAWN. Guessing an anchor is
+    // what produced the misalignment this geometry replaces.
     // ----------------------------------------------------------------------
 
     // The slot selects which waveform BOTH detectors measure, so it drops both
-    // caches. There is no third copy to keep in step any more: the glyphs are
-    // DRAWN from these two detections rather than from a frozen snapshot of
-    // them, so nothing can be invalidated on one schedule and painted on
-    // another.
+    // caches. There is no third copy to keep in step: the glyphs are DRAWN from
+    // these two detections, so nothing can be invalidated on one schedule and
+    // painted on another.
     void setTemplateIndex(int t) {
         if (t == m_templateIndex) return;
         m_templateIndex = t;
@@ -234,13 +227,12 @@ public:
     // WHICH TEMPLATE THIS PANEL IS. frame = the alignment whose waveform it
     // draws; both detectors measure on that alignment's own array, through
     // slotView, so the landmarks come back in the columns this panel plots.
-    // Non-owning -- the bins outlive the panels, and setAuto is called on
-    // every rebuild.
+    // Non-owning -- the bins outlive the panels, and setAuto runs on every
+    // rebuild.
     //
-    // ORDER NO LONGER MATTERS. This used to have to run LAST in a seeding pass
-    // because it took a frozen snapshot that read the R bar. It captures
-    // nothing now: it points the panel at a waveform and drops the caches, and
-    // the detections are taken on demand by whoever draws or reads them.
+    // Call order does not matter: this captures nothing. It points the panel at
+    // a waveform and drops the caches; the detections are taken on demand by
+    // whoever draws or reads them.
     void setAuto(const TemplateBin& b,
         AnchorType frame = AnchorType::R_PEAK) {
         // A new bin or alignment is a new waveform. Covers the in-place
@@ -367,39 +359,31 @@ public:
     // then scaled to fill whatever width the cell receives.
     QSize sizeHint() const override { return QSize(220, 120); }
     QSize minimumSizeHint() const override { return QSize(40, 60); }
-    // (overridePulseGlyphs and overrideEcgGlyphs lived here, and the frozen
-    //  GlyphSnapshot they wrote into lived below. All three are gone. They
-    //  existed to push a SECOND measurement over the one the detections had
-    //  already made, and a second measurement of the same landmark is the
-    //  defect, not the fix: the snapshot was invalidated on trace changes
-    //  while the detections were invalidated on (bin, slot, frame), so the X
-    //  on screen and the number every reader got came from two runs of the
-    //  same detector over two different windows. The glyphs are painted from
-    //  detectedLandmarks() / detectedPulse() now, which is where the focus
-    //  panel reads them, so the two are one number by construction.)
-
+    // DO NOT ADD A GLYPH SETTER HERE. Two once existed (overridePulseGlyphs,
+    // overrideEcgGlyphs) writing into a frozen snapshot, and they gave every
+    // landmark two positions on two invalidation schedules -- the snapshot
+    // dropped on trace changes, the detections on (bin, slot, frame) -- so the
+    // X on screen and the number every reader got came from two runs of the
+    // same detector over different windows. Glyphs are painted from
+    // detectedLandmarks() / detectedPulse(), which is where the focus panel
+    // reads them, so the two are one number by construction.
 
 signals:
-    // NEVER EMITTED -- superseded by markerMovedOnTemplate, which carries the
-    // slot. Kept only so an existing connect() still compiles.
-    void markerMoved(int binIndex, int leadIndex, int marker, int newIdx);
     void markerDragStarted(int binIndex, int leadIndex, int marker);
 
 
-    // B2 focus mode: emitted when the operator selects (clicks) a landmark,
-    // so the owner can render that landmark's focus panel. Distinct from
-    // markerDragStarted (which is about beginning a drag) -- selection fires
-    // on the same click but carries the intent "show this landmark's focus
-    // view," and the owner decides what to do (e.g. J-point refreshes both
-    // the QRS and JT panels).
-    // TEMPLATE INDEX INCLUDED, like the marker and quality signals. A panel
-    // is a (bin, template) pair, and the focus view reads mean/sd/n for the
-    // waveform under the landmark -- without the slot it read the BIN's
-    // waveform whichever panel was clicked.
-    // `col` IS A DOUBLE: it is the marker's position, and the focus panel
-    // measures against it. TemplateViewerWindow::onLandmarkSelected must
-    // match -- a Qt signal and slot with different parameter types connect at
-    // runtime and then silently never fire.
+    // The operator selected (clicked) a landmark: render its focus panel.
+    // Fires on the same click as markerDragStarted but carries a different
+    // intent -- "show this landmark's close-up" rather than "a drag is
+    // beginning" -- and the owner decides what to do with it.
+    //
+    // TEMPLATE INDEX INCLUDED. A panel is a (bin, template) pair and the focus
+    // view reads mean/sd/n for the waveform under the landmark; without the
+    // slot it reads the BIN's waveform whichever panel was clicked.
+    //
+    // `col` IS A DOUBLE and the receiving slot must match: a Qt signal and slot
+    // with different parameter types connect at runtime and then silently never
+    // fire.
     void landmarkSelected(int binIndex, int leadIndex, int templateIdx,
         int marker, double col);
 
@@ -543,20 +527,47 @@ private:
     mutable const TemplateBin* m_pdetBin = nullptr;
     mutable int                m_pdetSlot = -1;
 
+    // ---- THE REACTIVE GLYPHS' OWN CACHE --------------------------------
+    //
+    // reactiveGlyphs() is called several times per paint and the bracketed
+    // peaks inside it are two weighted polynomial fits each, so it is not
+    // free. Keyed on everything it reads: the eight bars it brackets with,
+    // the template identity, and whether the detection it brackets against
+    // was already valid on entry. Anything that changes one of those changes
+    // the key, so there is nothing to remember to invalidate.
+    struct ReactiveKey {
+        double pBegin, qOnset, sEnd, tEnd;
+        double ppgOnset, ppgPeak, ppgDicrotic, ppgEnd;
+        const TemplateBin* bin;
+        AnchorType frame;
+        int slot;
+        bool detValid;
+        bool operator==(const ReactiveKey& o) const {
+            return pBegin == o.pBegin && qOnset == o.qOnset
+                && sEnd == o.sEnd && tEnd == o.tEnd
+                && ppgOnset == o.ppgOnset && ppgPeak == o.ppgPeak
+                && ppgDicrotic == o.ppgDicrotic && ppgEnd == o.ppgEnd
+                && bin == o.bin && frame == o.frame && slot == o.slot
+                && detValid == o.detValid;
+        }
+    };
+    mutable Reactive    m_rx;
+    mutable ReactiveKey m_rxKey{};
+    mutable bool        m_rxValid = false;
+
     // Alignment letter for the overlay bar style; empty in Automatic.
     QString m_alignBadge;
 
-    // ---- THE ECG GEOMETRY THE LAST PAINT USED ---------------------------
+    // ---- THE AXIS GEOMETRY THE LAST PAINT USED --------------------------
     //
     // A glyph is a five-pixel X at one point ON THE TRACE, so hit-testing it
     // needs its y, which needs the axis range and plot height -- and those are
-    // computed in paintEvent and handed to drawFeatureGlyphs, so they do not
-    // exist when a mouse press arrives. Recorded here by the paint that drew
-    // them, which also means the hit test uses exactly the geometry the
-    // operator was looking at.
+    // computed in paintEvent, so they do not exist when a mouse press arrives.
+    // Recorded by the paint that drew them, which also means the hit test uses
+    // exactly the geometry the operator was looking at.
     //
-    // m_lastPh <= 0 means nothing has been painted yet; the press handler then
-    // falls back to testing x alone.
+    // m_lastPh <= 0 means nothing has been painted yet; the press handler falls
+    // back to testing x alone.
     mutable double m_lastYLo = 0.0;
     mutable double m_lastYHi = 0.0;
     // The PULSE axis the same paint used. The hit test covers both channels

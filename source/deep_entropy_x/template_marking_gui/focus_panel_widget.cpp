@@ -250,7 +250,16 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
     // the question this panel is for -- the spread of the beats is.
     const double NaN = std::numeric_limits<double>::quiet_NaN();
     std::vector<double> ci(N, NaN);
-    const bool haveSd = ((int)m_sd.size() == N);
+    // >=, NOT ==. The spread only has to COVER the window being drawn; the
+    // loop below reads lo..hi and `ci` is sized N regardless. Exact equality
+    // made the band an all-or-nothing function of two array lengths agreeing,
+    // and on the pulse they do not always: bank_reload trims trailing NaN off
+    // tmpl and not off tmpl_iqr, so a reloaded pulse slot has a spread LONGER
+    // than its waveform -- and the band vanished entirely rather than being
+    // drawn over the part that matches. draw_iqr_band on the main plot tests
+    // `sd.size() < visN`, which is this, so the two panels now agree about
+    // when a band exists.
+    const bool haveSd = ((int)m_sd.size() >= N);
     if (haveSd) {
         for (int i = lo; i <= hi; ++i) {
             if (std::isnan(m_sd[i])) continue;

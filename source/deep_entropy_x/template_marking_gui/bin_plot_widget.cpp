@@ -567,6 +567,32 @@ void BinPlotWidget::setMarker(Marker m, double idx) {
 // and the CSV/bin writers call the same functions with the bar set they're
 // reporting on, so the screen and the files agree by construction.
 BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
+    // ---- THE REACTIVE HALF IS CACHED ON THE BARS ------------------------
+    //
+    // "Reactive" means it is a function of the bar positions, NOT that it is
+    // cheap: compute_p_peak and compute_t_peak each run a Gaussian-weighted
+    // quadratic AND cubic with a BIC choice between them. Two of those per
+    // call.
+    //
+    // This function is called several times per paint -- drawFeatureGlyphs at
+    // its top, detectedLandmarks() inside it, the hit test, the focus panel --
+    // and Move-Subsequent update()s EVERY column after the dragged one on every
+    // mouse-move, so the per-move cost was (columns x calls-per-paint x 2 fits)
+    // and the page crawled. The bars change at most once per move, so one
+    // evaluation per distinct bar set is all that is ever needed.
+    //
+    // The key is the four bars plus the detection identity the reactive half
+    // brackets against. It is deliberately NOT time- or counter-based: a stale
+    // reactive glyph is a glyph drawn somewhere the bars no longer are.
+    const ReactiveKey key{
+        m_markers[EcgPBegin], m_markers[EcgQBegin],
+        m_markers[EcgSEnd],   m_markers[EcgTEnd],
+        m_markers[PpgOnset],  m_markers[PpgPeak],
+        m_markers[PpgDicrotic], m_markers[PpgEnd],
+        m_bin, m_frame, m_templateIndex, m_detValid
+    };
+    if (m_rxValid && m_rxKey == key) return m_rx;
+
     Reactive r;
 
     // P peak between the P-onset and Q-onset bars, T peak between S-end and
@@ -675,6 +701,19 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
         r.ppgT80 = p.t80;
         r.ppgPeak2 = p.peak2;
     }
+
+    // Keyed on the state read above, INCLUDING m_detValid as it is NOW: the
+    // detector may have run in this very call, which changes what the reactive
+    // half bracketed against.
+    m_rxKey = ReactiveKey{
+        m_markers[EcgPBegin], m_markers[EcgQBegin],
+        m_markers[EcgSEnd],   m_markers[EcgTEnd],
+        m_markers[PpgOnset],  m_markers[PpgPeak],
+        m_markers[PpgDicrotic], m_markers[PpgEnd],
+        m_bin, m_frame, m_templateIndex, m_detValid
+    };
+    m_rx = r;
+    m_rxValid = true;
     return r;
 }
 
@@ -799,7 +838,9 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // resolves them per template (ECG) and per bin (PPG). The old "n=" inside
     // the label was the per-template number and the trailing figure was the
     // per-bin one; nothing on screen said so.
-    p.setPen(QColor(150, 150, 150));
+    // TITLE IN BLACK, counts in gray. The identity line is what the operator
+    // reads to know which bin and lead they are looking at, so it is not
+    // secondary text; the axis labels and the beat counts around it are.
     { QFont f = p.font(); f.setPointSize(8); p.setFont(f); }
 
     QString titleLine = QString("Bin %1  %2").arg(m_binIndex).arg(m_leadLabel);
@@ -814,9 +855,12 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // Baselines rather than a rect: margin_top is 20 px and two 8 pt lines are
     // ~22, so an AlignBottom rect would push the second line into the plot
     // frame. 9 and 19 keep both clear of it.
+    p.setPen(Qt::black);
     p.drawText(margin_left, 9, titleLine);
-    if (!counts.isEmpty())
+    if (!counts.isEmpty()) {
+        p.setPen(QColor(150, 150, 150));
         p.drawText(margin_left, 19, counts.join("   "));
+    }
 
     // Y-axis rules for the normalized traces:
     //   Y-max is FIXED at 1.0 (one decimal) for every panel so bins share

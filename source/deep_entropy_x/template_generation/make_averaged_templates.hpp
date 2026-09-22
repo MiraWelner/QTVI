@@ -37,6 +37,7 @@
 #include <iostream>
 #include <chrono>
 #include <numeric>
+#include <algorithm>   // std::nth_element for the per-bin median RR
 #include <sstream>
 #include <string>
 #include <cstdio>
@@ -329,23 +330,58 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 ji.n_slices = static_cast<uint32_t>(nR - 1);
                 ji.bin_index = static_cast<uint64_t>(i);
 
-                // MORPHOLOGY SPLIT WINDOW, from config.csv
-                // (region_around_Rpeak_for_morphology_split and
-                // region_around_PPGPeak_for_morphology_split), seconds either
-                // side of the anchor -- the R peak at the ECG rate, the
-                // systolic peak at the PPG rate. Was hardcoded at 0.5 s.
+                // ---- MORPHOLOGY SPLIT WINDOW ------------------------
+                //
+                // PERCENT OF THIS BIN'S MEDIAN RR, from config.csv
+                // (region_around_Rpeak_for_morphology_split_pct_rr and
+                // region_around_PPGPeak_for_morphology_split_pct_rr), either
+                // side of the anchor -- the R peak on the ECG axis, the
+                // systolic peak on the pulse axis.
+                //
+                // PER BIN, which is the point: the median RR is a property of
+                // this bin, so the window tracks its heart rate instead of
+                // being one number for the whole record. The MEDIAN and not
+                // the mean or the longest -- one dropped R detection produces
+                // an RR several cycles long, and that must not stretch the
+                // comparison window for every beat in the bin.
                 //
                 // UNSET (0, the default) leaves corr_halfwin at -1, which jbank
-                // reads as "no window, correlate the whole beat" -- so blank
-                // cells now split on the whole beat, not on +-0.5 s. The
-                // trailing + 0.5 is rounding to the nearest sample, not the old
-                // window.
-                if (rates.ecg > 0.0 && rates.morph_halfwin_ecg_s > 0.0)
-                    ji.ecg_corr_halfwin = static_cast<int>(
-                        rates.morph_halfwin_ecg_s * rates.ecg + 0.5);
-                if (rates.ppg > 0.0 && rates.morph_halfwin_ppg_s > 0.0)
-                    ji.ppg_corr_halfwin = static_cast<int>(
-                        rates.morph_halfwin_ppg_s * rates.ppg + 0.5);
+                // reads as "no window, correlate the whole beat". The trailing
+                // + 0.5 is rounding to the nearest sample.
+                double medianRrSamples = 0.0;
+                {
+                    const auto& rp = wave_data[i].ch1.raw;
+                    std::vector<double> rrs;
+                    rrs.reserve(rp.size());
+                    for (size_t sIdx = 0; sIdx + 1 < rp.size(); ++sIdx) {
+                        const double d = (double)(rp[sIdx + 1] - rp[sIdx]);
+                        if (d > 0.0) rrs.push_back(d);
+                    }
+                    if (!rrs.empty()) {
+                        const size_t mid = rrs.size() / 2;
+                        std::nth_element(rrs.begin(), rrs.begin() + mid, rrs.end());
+                        medianRrSamples = rrs[mid];
+                    }
+                }
+                if (medianRrSamples > 0.0) {
+                    // The ECG window is already in ECG samples: the RR series
+                    // above is measured on the ECG axis.
+                    if (rates.ecg > 0.0 && rates.morph_halfwin_ecg_pct_rr > 0.0)
+                        ji.ecg_corr_halfwin = static_cast<int>(
+                            0.01 * rates.morph_halfwin_ecg_pct_rr
+                            * medianRrSamples + 0.5);
+                    // The pulse window is the same FRACTION OF THE SAME
+                    // INTERVAL, re-expressed on the pulse axis -- via seconds,
+                    // because the two channels are sampled at different rates
+                    // and corr_halfwin is a sample count on its own channel.
+                    if (rates.ecg > 0.0 && rates.ppg > 0.0
+                        && rates.morph_halfwin_ppg_pct_rr > 0.0) {
+                        const double rrSec = medianRrSamples / rates.ecg;
+                        ji.ppg_corr_halfwin = static_cast<int>(
+                            0.01 * rates.morph_halfwin_ppg_pct_rr
+                            * rrSec * rates.ppg + 0.5);
+                    }
+                }
 
                 const EcgChannelResult* ec[3] =
                 { &ecg_res.ch1, &ecg_res.ch2, &ecg_res.ch3 };

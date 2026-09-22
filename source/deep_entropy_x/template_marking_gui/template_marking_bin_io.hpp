@@ -76,7 +76,7 @@
 #include "template_generation\template_io.hpp"
 #include "template_marking_gui\feature_marks.hpp"
 #include "template_morphology_grouping\template_bank.hpp"
-#include "template_anchoring\anchor_view.hpp"
+#include "template_marking_gui\anchor_view.hpp"
 
 enum class MarkingsCsvSection { EcgOnly, PulseOnly, EcgAndPulse };
 
@@ -191,10 +191,10 @@ struct TemplateBin {
             if (v < 0.0) return;
             out.*field = v + frameShift(lead, owner, frame);
             };
-        pull(anchor_view::kPBegin, &tbank::BankMarkerSet::p_begin);
-        pull(anchor_view::kQBegin, &tbank::BankMarkerSet::q_onset);
-        pull(anchor_view::kSEnd, &tbank::BankMarkerSet::s_end);
-        pull(anchor_view::kTEnd, &tbank::BankMarkerSet::t_end);
+        pull(anchor_view::p_begin, &tbank::BankMarkerSet::p_begin);
+        pull(anchor_view::q_begin, &tbank::BankMarkerSet::q_onset);
+        pull(anchor_view::j_point, &tbank::BankMarkerSet::s_end);
+        pull(anchor_view::t_end, &tbank::BankMarkerSet::t_end);
         return out;
     }
 
@@ -682,10 +682,10 @@ inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, double p_p
     const int rInt = (r_peak >= 0.0) ? static_cast<int>(std::lround(r_peak)) : -1;
     // Q for the q_peak column: same canonical finder compute_q_onset uses.
     // Mirrors compute_s_peak's signature below. -1 when there is no Q trough.
-    f.q_idx = FeatureMarks::compute_q_peak(ecg, rInt, rateHz, peakMode);    // sub-sample
+    f.q_idx = FeatureMarks::find_q_peak(ecg, rInt, rateHz, peakMode);    // sub-sample
     // S for |R|+|S| = first opposite-polarity trough after R (robust; not the
     // max over [R, s_end], which depends on where s_end sits).
-    f.s_idx = FeatureMarks::compute_s_peak(ecg, rInt, rateHz, peakMode);   // sub-sample
+    f.s_idx = FeatureMarks::find_s_peak(ecg, rInt, rateHz, peakMode);   // sub-sample
     return f;
 }
 
@@ -1012,7 +1012,7 @@ inline EcgDetection ecgDetectOn(const std::vector<double>& tmpl, int r_col,
         onOffsetMode, peakMode);
     if (!d.lm.valid) return d;
 
-    d.s_peak = FeatureMarks::compute_s_peak(tmpl, r_col, sampleRate, peakMode);
+    d.s_peak = FeatureMarks::find_s_peak(tmpl, r_col, sampleRate, peakMode);
     d.tmpl = &tmpl;
     d.valid = true;
     return d;
@@ -1033,7 +1033,7 @@ inline EcgDetection ecgDetect(const TemplateBin& b, int lead, int slot,
 
     // S peak has no field on TemplateLandmarks; it is the same finder the
     // interval code uses, on this alignment's trace and R column.
-    d.s_peak = FeatureMarks::compute_s_peak(*sv.tmpl, sv.r_col, sampleRate,
+    d.s_peak = FeatureMarks::find_s_peak(*sv.tmpl, sv.r_col, sampleRate,
         peakMode);
     d.tmpl = sv.tmpl;
     d.valid = true;
@@ -1154,8 +1154,8 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     // EcgAndPulse.
     std::vector<AnchorType> anchors;
     if (section == MarkingsCsvSection::EcgAndPulse)
-        anchors.assign(anchor_view::kAllAnchors.begin(),
-            anchor_view::kAllAnchors.end());
+        anchors.assign(anchor_view::anchor_array.begin(),
+            anchor_view::anchor_array.end());
     else
         anchors.push_back(anchor);
     const bool suffixed = (section == MarkingsCsvSection::EcgAndPulse);
@@ -1558,10 +1558,10 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             tbank::BankMarkerSet umk;
                             {
                                 const tbank::BankMarkerSet& own = b.slotMarks(c, slot, anchor);
-                                if (anchor_view::owns(anchor, anchor_view::kPBegin)) umk.p_begin = own.p_begin;
-                                if (anchor_view::owns(anchor, anchor_view::kQBegin)) umk.q_onset = own.q_onset;
-                                if (anchor_view::owns(anchor, anchor_view::kSEnd))   umk.s_end = own.s_end;
-                                if (anchor_view::owns(anchor, anchor_view::kTEnd))   umk.t_end = own.t_end;
+                                if (anchor_view::owns(anchor, anchor_view::p_begin)) umk.p_begin = own.p_begin;
+                                if (anchor_view::owns(anchor, anchor_view::q_begin)) umk.q_onset = own.q_onset;
+                                if (anchor_view::owns(anchor, anchor_view::j_point))   umk.s_end = own.s_end;
+                                if (anchor_view::owns(anchor, anchor_view::t_end))   umk.t_end = own.t_end;
                             }
 
                             //bracket t peak by send tbegin

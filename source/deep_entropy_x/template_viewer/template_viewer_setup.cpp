@@ -357,7 +357,7 @@ void TemplateViewerWindow::seedOneBin(TemplateBin& b) const
 {
     const std::array<ChannelTemplateData, 3> savedR = { b.ch1, b.ch2, b.ch3 };
 
-    for (AnchorType a : anchor_view::kAllAnchors) {
+    for (AnchorType a : anchor_view::anchor_array) {
         // R IS SEEDED ONCE, AFTER THIS LOOP, NOT IN IT. kAllAnchors puts
         // R_PEAK first (anchor_view.hpp), so the old code seeded R here and
         // then seeded it AGAIN at the end -- five passes per bin for four
@@ -555,14 +555,14 @@ void TemplateViewerWindow::applyAlignmentSelection(bool force, AnchorType a) {
 // walk a beat in. Changing one must not change the other.
 namespace {
     constexpr std::array<AnchorType, 4> kAlignRing = {
-        AnchorType::P_ONSET,
+        AnchorType::P_PEAK,
         AnchorType::Q_ONSET,
         AnchorType::R_PEAK,
         AnchorType::J_POINT,
     };
     const char* alignRingButton(AnchorType a) {
         switch (a) {
-        case AnchorType::P_ONSET: return "p_align_button";
+        case AnchorType::P_PEAK: return "p_align_button";
         case AnchorType::Q_ONSET: return "q_align_button";
         case AnchorType::R_PEAK:  return "r_align_button";
         case AnchorType::J_POINT: return "j_point_align_button";
@@ -629,7 +629,7 @@ void TemplateViewerWindow::wireAlignButtons() {
     struct Btn { const char* name; bool force; AnchorType a; };
     static const Btn kBtns[] = {
         { "r_align_button",         true,  AnchorType::R_PEAK  },
-        { "p_align_button",         true,  AnchorType::P_ONSET },
+        { "p_align_button",         true,  AnchorType::P_PEAK },
         { "q_align_button",         true,  AnchorType::Q_ONSET },
         { "j_point_align_button",         true,  AnchorType::J_POINT },
         { "automatic_align_button", false, AnchorType::R_PEAK  },
@@ -652,7 +652,7 @@ void TemplateViewerWindow::wireAlignButtons() {
     struct Key { const char* seq; const char* btn; bool force; AnchorType a; };
     static const Key kKeys[] = {
         { "A", "automatic_align_button", false, AnchorType::R_PEAK  },
-        { "P", "p_align_button",         true,  AnchorType::P_ONSET },
+        { "P", "p_align_button",         true,  AnchorType::P_PEAK },
         { "Q", "q_align_button",         true,  AnchorType::Q_ONSET },
         { "R", "r_align_button",         true,  AnchorType::R_PEAK  },
         { "J", "j_point_align_button",   true,  AnchorType::J_POINT },

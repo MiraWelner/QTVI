@@ -421,8 +421,16 @@ namespace bank_reload {
                 tp.members_clean = blk.members_clean[k];
                 rep.beats_restored += tp.members.size();
 
+                // BOTH TRIMMED TO THE SAME LENGTH, or neither. The waveform
+                // was trimmed and the spread was not, so a reloaded slot came
+                // back with tmpl_iqr LONGER than tmpl -- and every consumer
+                // that pairs them by index and tests the two lengths for
+                // equality then decided there was no spread at all. That is
+                // why a reloaded pulse slot had no std band.
                 tp.tmpl = detail::trimTrailingNaN(blk.column(k), blk.width);
                 tp.tmpl_iqr = blk.tmpl_iqr[k];
+                if (tp.tmpl_iqr.size() > tp.tmpl.size())
+                    tp.tmpl_iqr.resize(tp.tmpl.size());
                 tp.r_col = rec.r_col;
                 tp.label_code = rec.label_code;
 

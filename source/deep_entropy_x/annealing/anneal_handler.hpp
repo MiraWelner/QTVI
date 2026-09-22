@@ -31,7 +31,7 @@
   * @param ecg2_inverted  Same, for CH2.
   * @param ecg3_inverted  Same, for CH3.
   */
-bool annealOneFile(const std::filesystem::path& binPath,
+bool anneal_one_file(const std::filesystem::path& binPath,
     const std::filesystem::path& noisePath,
     const std::filesystem::path& outPath,
     double binLengthMin,

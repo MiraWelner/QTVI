@@ -54,7 +54,7 @@
 #include "template_marking_gui/vcg_signal_average.hpp"
 #include "template_marking_gui/ppg_derivative.hpp"
 #include "template_marking_gui/subsample_refine.hpp"
-#include "template_anchoring/curve_fit.hpp"
+#include "template_marking_gui/curve_fit.hpp"
 #include "template_generation/normalize_template_amplitude.hpp"
 #include "peak_finding/FilterUtils.hpp"
 
@@ -515,9 +515,43 @@ private:
     // The pulse/arterial half of refreshFocus. Foot-anchored, no alignment
     // dimension, one panel -- it shares nothing with the ECG half but the two
     // panel pointers, so it is its own function.
-    // pw IS THE PANEL, for the same reason the ECG path takes it: the
-    // detector's position for the focused pulse landmark comes from
-    // pw->detectedPulse(), which is the answer the X glyph is drawn at.
+    // ---- THE SD-IN-MSEC MODEL, AND ITS CACHE ---------------------------
+    //
+    // Per-column amplitude SD divided by the template's own |dV/dt| there,
+    // with a slope floor. Computed by sd_in_msec (template_viewer_focus.cpp).
+    //
+    // CACHED because a drag re-fires the focus on every mouse-move with the
+    // same waveform and a different column, and the model is a
+    // Savitzky-Golay pass plus three N-length allocations. The key is what
+    // determines the waveform, so nothing has to be invalidated by hand.
+    struct SdMsModel {
+        std::vector<double>  sdMs;        // per column, NaN where floored
+        std::vector<uint8_t> floorMask;   // 1 where the floor engaged (shaded)
+        std::vector<double>  absSlope;    // per column |dV/dt|, amp/sample
+        double               floor = 0.0;
+    };
+    struct SdKey {
+        int bin = -1, lead = -1, slot = -1;
+        AnchorType anchor = AnchorType::R_PEAK;
+        bool operator==(const SdKey& o) const {
+            return bin == o.bin && lead == o.lead && slot == o.slot
+                && anchor == o.anchor;
+        }
+    };
+    static SdMsModel sd_in_msec(const std::vector<double>& mean,
+        const std::vector<double>& sd, double fs);
+    SdMsModel m_sdCache;
+    SdKey     m_sdCacheKey;
+    bool      m_sdCacheValid = false;
+
+    // THE TWO CHANNEL PATHS. refreshFocus is the dispatcher: it records the
+    // focus for the re-fire paths and hands off. pw IS THE PANEL, in both --
+    // the detector's position for the focused landmark comes from
+    // pw->detectedLandmarks() / pw->detectedPulse(), which is the answer the
+    // X glyph is drawn at. Both accept nullptr (a re-fire that could not name
+    // its panel) and leave the fiducial absent.
+    void focusEcg(BinPlotWidget* pw, TemplateBin& b, int binIdx, int leadIdx,
+        int templateIdx, int marker, double col);
     void focusPulse(BinPlotWidget* pw, TemplateBin& b, int templateIdx,
         int marker, double col);
 
