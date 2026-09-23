@@ -7,7 +7,7 @@
 
 #include "bin_plot_widget.hpp"
 #include "sample_extent.hpp"
-#include "template_anchoring\anchor_view.hpp"
+#include "template_marking_gui\anchor_view.hpp"
 #include "noise_marking_gui/annotation_types.hpp"
 #include <QMenu>
 #include <QAction>
@@ -185,7 +185,14 @@ namespace {
     // Vertical range of a trace, ignoring the std band, with room for the
     // glyphs. No sample-count argument: every finite sample is inside the frame
     // now, so the range is over the whole array.
-    void compute_visible_range(const std::vector<double>& v, double& lo, double& hi) {
+    //
+    // RETURNS WHETHER THE RANGE WAS MEASURED. It used to be void and to leave
+    // (0, 1) behind when the array held no finite sample -- which a caller
+    // merging several channels into one axis could not tell apart from a trace
+    // that genuinely spans 0 to 1. An arterial channel whose Global_Ref is
+    // unusable normalizes to all-NaN (pulse_norm returns NaN on a bad ref), so
+    // every such channel was voting a phantom 0..1 into the shared pulse axis.
+    bool compute_visible_range(const std::vector<double>& v, double& lo, double& hi) {
         lo = 0.0; hi = 1.0;
         bool have = false;
         for (double m : v) {
@@ -193,9 +200,18 @@ namespace {
             if (!have) { lo = m; hi = m; have = true; }
             else { lo = std::min(lo, m); hi = std::max(hi, m); }
         }
-        if (!have) { lo = 0.0; hi = 1.0; return; }
-        lo -= 0.1; //account for X size
-        hi += 0.1;
+        if (!have) { lo = 0.0; hi = 1.0; return false; }
+        // PROPORTIONAL PADDING, with a floor for a flat trace. It was a fixed
+        // +-0.1 in normalized units: about a tenth of a healthy pulse's
+        // excursion, but several times the whole excursion of a weak one -- so
+        // a low-amplitude PPG was drawn as a flat line through the middle of a
+        // frame sized almost entirely by its own padding. The glyphs need room,
+        // not a fixed amount of room.
+        const double span = hi - lo;
+        const double pad = (span > 1e-9) ? 0.05 * span : 0.05;
+        lo -= pad;
+        hi += pad;
+        return true;
     }
 
     // Draw the gray ±std band at a fixed pixels-per-sample scale using
@@ -829,24 +845,22 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     const int ph = h - margin_top - margin_bottom;
     p.fillRect(rect(), Qt::white);
 
-    // TITLE, TWO LINES: identity first, counts second. One line did not fit a
-    // panel at page width -- "Bin 1  [Ch1 PQRST_A n=365]  401 ECG beats" ran
-    // past the frame and clipped mid-number, which is worse than wrapping
-    // because a truncated count still looks like a count.
-    //
-    // The counts are now BOTH labelled and both come from the caller, which
-    // resolves them per template (ECG) and per bin (PPG). The old "n=" inside
-    // the label was the per-template number and the trailing figure was the
-    // per-bin one; nothing on screen said so.
-    // TITLE IN BLACK, counts in gray. The identity line is what the operator
-    // reads to know which bin and lead they are looking at, so it is not
-    // secondary text; the axis labels and the beat counts around it are.
     { QFont f = p.font(); f.setPointSize(8); p.setFont(f); }
 
-    QString titleLine = QString("Bin %1  %2").arg(m_binIndex).arg(m_leadLabel);
+    // ---- TWO WEIGHTS ON ONE LINE ----------------------------------------
+    //
+    // The bin number is the panel's IDENTITY -- it is what an operator reads
+    // when calling out a panel, and it is the key every CSV row is joined on --
+    // so it stays black. Everything after it (the channel, the template's class
+    // and letter, and on bin 0 the axis-units hint) is a DESCRIPTION of what is
+    // drawn, which the waveform itself mostly says, so it goes gray and stops
+    // competing with the number for the eye. Drawn as two runs rather than one
+    // string because a QString carries no colour.
+    const QString binPart = QString("Bin %1").arg(m_binIndex);
+    QString descPart = m_leadLabel;
     // Bin 0 carries the x-axis units hint, since it is the panel whose axis is
     // labelled for the page.
-    if (m_binIndex == 0) titleLine += "  (time in seconds)";
+    if (m_binIndex == 0) descPart += "  (time in seconds)";
 
     QStringList counts;
     if (m_nEcgBeats > 0) counts << QString("ECG beats %1").arg(m_nEcgBeats);
@@ -856,7 +870,15 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // ~22, so an AlignBottom rect would push the second line into the plot
     // frame. 9 and 19 keep both clear of it.
     p.setPen(Qt::black);
-    p.drawText(margin_left, 9, titleLine);
+    p.drawText(margin_left, 9, binPart);
+    if (!descPart.isEmpty()) {
+        // Advanced past the black run by the font's own metrics, so the gap
+        // holds at any point size rather than being a guessed pixel count.
+        const double gap = p.fontMetrics().horizontalAdvance("  ");
+        const double x = margin_left + p.fontMetrics().horizontalAdvance(binPart) + gap;
+        p.setPen(QColor(150, 150, 150));
+        p.drawText(QPointF(x, 9), descPart);
+    }
     if (!counts.isEmpty()) {
         p.setPen(QColor(150, 150, 150));
         p.drawText(margin_left, 19, counts.join("   "));
@@ -872,23 +894,47 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     compute_visible_range(m_ecg, yLo, yHi);
     if (yLo > 0.0) yLo = 0.0;
 
-    // Right axis range: shared by ALL pulse traces (PPG + arterial), so they
-    // sit on one common normalized scale shown on the right. Over the whole of
-    // each array -- there is no clip point now, because the frame is the union
-    // of the channels rather than the ECG's own extent, so nothing a channel
-    // holds falls outside it.
-    double pLo = 1e300, pHi = -1e300;
-    auto merge_pulse = [&](const std::vector<double>& v) {
-        if (v.size() < 2) return;
-        double lo, hi; compute_visible_range(v, lo, hi);
-        pLo = std::min(pLo, lo); pHi = std::max(pHi, hi);
+    // ---- TWO PULSE RANGES, NOT ONE --------------------------------------
+    //
+    // THE PPG IS SCALED ON ITS OWN. The right axis used to be the union of the
+    // PPG and all three arterial channels, and that is why the PPG was drawn as
+    // a sliver along the bottom of the panel on any record carrying an arterial
+    // line. Normalized PPG runs roughly 0 to 1 -- foot to systolic peak,
+    // divided by the subject's median PI -- while an arterial channel whose
+    // Global_Ref was unusable passes through in raw transducer units, and one
+    // that normalized to all-NaN used to contribute a phantom 0..1 of its own
+    // (see compute_visible_range). Anything with a wider excursion than the
+    // PPG set the axis, and the PPG lost its height to it.
+    //
+    // pLo/pHi now describe the PPG alone, and they are what the right axis is
+    // labelled with -- that axis reads "PPG (norm)", so it has to be the PPG's
+    // numbers on it. aLo/aHi describe the arterial channels, which still share
+    // one scale with each other so ABP/ART/ART_PULM stay comparable. Each side
+    // borrows the other's range when it has none, so a panel with only one kind
+    // of pulse tracing still labels the numbers it is actually drawing.
+    double pLo = 0.0, pHi = 1.0;   // PPG
+    double aLo = 0.0, aHi = 1.0;   // ABP / ART / ART_PULM, shared
+    bool havePpg = false, haveArt = false;
+    auto merge_into = [](const std::vector<double>& v,
+        double& lo, double& hi, bool& have) {
+            if (v.size() < 2) return;
+            double l = 0.0, h = 0.0;
+            if (!compute_visible_range(v, l, h)) return;   // nothing finite: no vote
+            if (!have) { lo = l; hi = h; have = true; }
+            else { lo = std::min(lo, l); hi = std::max(hi, h); }
         };
-    if (m_hasPPG) merge_pulse(m_ppg);
-    merge_pulse(m_abp);
-    merge_pulse(m_art);
-    merge_pulse(m_artPulm);
-    if (pLo > pHi) { pLo = 0.0; pHi = 1.0; }
+    if (m_hasPPG) merge_into(m_ppg, pLo, pHi, havePpg);
+    merge_into(m_abp, aLo, aHi, haveArt);
+    merge_into(m_art, aLo, aHi, haveArt);
+    merge_into(m_artPulm, aLo, aHi, haveArt);
+    if (!havePpg && haveArt) { pLo = aLo; pHi = aHi; }
+    if (!haveArt && havePpg) { aLo = pLo; aHi = pHi; }
+
+    // The 0.0 tick stays inside both frames: the foot is the zero of the pulse
+    // normalization, so a frame that excludes it has no visible baseline to
+    // read an amplitude against.
     if (pLo > 0.0) pLo = 0.0;
+    if (aLo > 0.0) aLo = 0.0;
 
     // ---- Axes: frame + ticks + dual labeled Y-axes ----
     {
@@ -998,9 +1044,10 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         w - margin_left - margin_right, ph));
 
     // -------- Arterial traces (ABP/ART/ART_PULM) --------
-    // Drawn on the SHARED right-axis range (pLo,pHi) so every pulse tracing
-    // sits on one scale. Each channel supplies its own x0/dx, which carry its
-    // rate AND its R column -- so a channel running at a different rate than
+    // Drawn on (aLo,aHi): the three arterial channels share ONE scale with each
+    // other, so they stay comparable, but no longer with the PPG -- see the
+    // two-range note above. Each channel supplies its own x0/dx, which carry
+    // its rate AND its R column, so a channel running at a different rate than
     // the ECG lands at the correct real time without a ratio applied here.
     {
         struct art_trace {
@@ -1025,9 +1072,9 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             if (!(dx > 0.0)) continue;          // no rate/anchor: not drawn
             const std::vector<double>& sd = *a.sd;
             if (static_cast<int>(sd.size()) >= n)
-                draw_iqr_band(p, v, sd, x0, margin_top, ph, dx, n, pLo, pHi, a.band);
+                draw_iqr_band(p, v, sd, x0, margin_top, ph, dx, n, aLo, aHi, a.band);
             draw_trace_fixed_scale(p, v, x0, margin_top, ph, dx,
-                QPen(with_trace_alpha(a.line), 1.3), n, pLo, pHi);
+                QPen(with_trace_alpha(a.line), 1.3), n, aLo, aHi);
         }
     }
 
@@ -1184,12 +1231,15 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
                     double d = std::abs(dx);
                     if (haveY) {
                         // Same y the glyph was DRAWN at: the trace value at
-                        // that column, on the axis the last paint used. NaN
-                        // draws at the axis floor, so test it there too.
+                        // that column, on the axis the last paint used. A NaN
+                        // sample is NOT drawn (see drawFeatureGlyphs), so it is
+                        // not hit-testable either -- the two rules have to be
+                        // the same rule or the operator can click a landmark
+                        // that is not on screen.
                         const double raw = FeatureMarks::sample_at(v, g[k].idx);
-                        const double val = std::isnan(raw) ? axLo : raw;
+                        if (std::isnan(raw)) continue;
                         const double gy = margin_top + m_lastPh
-                            - (val - axLo) / yRange * m_lastPh;
+                            - (raw - axLo) / yRange * m_lastPh;
                         const double dy = py - gy;
                         d = std::sqrt(dx * dx + dy * dy);
                     }
@@ -1505,11 +1555,19 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         const int N = (int)v.size();
         // Same rule as the ECG block, but PPG x-geometry (foot-anchored
         // start, PPG rate ratio) and the right-axis scale.
+        // NO GLYPH WHERE THERE IS NO SAMPLE. This used to substitute pLo for a
+        // NaN amplitude, which put the glyph on the axis floor -- and when the
+        // whole normalized trace came back NaN (an unusable pulse reference
+        // blanked it; see PulseDisplayScale) EVERY pulse fiducial lined up
+        // along the bottom of an empty panel. That reads as a detected waveform
+        // drawn too low to see, which is a far worse failure than a missing
+        // one: there is nothing on screen saying the positions are invented.
+        // A landmark with no amplitude under it is simply not drawn now.
         auto point = [&](double idx, QPointF& out) {
             if (idx < 0.0 || idx > static_cast<double>(N - 1)) return false;
             const double raw = FeatureMarks::sample_at(v, idx);
-            const double val = std::isnan(raw) ? pLo : raw;
-            out = QPointF(xFromSample(Channel::Ppg, idx), plot_y(val, pLo, pHi));
+            if (std::isnan(raw)) return false;
+            out = QPointF(xFromSample(Channel::Ppg, idx), plot_y(raw, pLo, pHi));
             return true;
             };
         auto cross = [&](double idx) { QPointF q; if (point(idx, q)) x_glyph(q.x(), q.y()); };

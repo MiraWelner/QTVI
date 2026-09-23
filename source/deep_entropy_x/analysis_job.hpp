@@ -20,10 +20,10 @@
 #include "peak_finding/peakfinding_io.hpp"
 
 #include "template_generation/template_io.hpp"
-#include "template_generation/pulse_matched_filter.hpp"
 #include "template_generation/build_bins.hpp"
 #include "template_generation/premark_beats.hpp"
 #include "template_morphology_grouping/bank_reload.hpp"
+#include "template_marking_gui/ppg_derivative.hpp"
 
 #include "annealing/anneal_handler.hpp"
 #include "config_file_handling/config_entry.hpp"
@@ -139,10 +139,9 @@ namespace analysis_job {
                     // two-arg overload, which this probe deliberately
                     // bypasses to stay fast). So ABP's raw samples are read
                     // straight out of the pass-through slot (33), and its
-                    // pulse locations detected fresh -- same detector
-                    // create_arterial_templates.hpp's foot-anchored builder
-                    // uses -- purely as a repeatable per-pulse fiducial for
-                    // this correlation, not a true "foot".
+                    // pulse locations detected fresh from the channel's own
+                    // derivative (ppg_deriv's E-0 census) -- purely as a
+                    // repeatable per-pulse fiducial for
                     std::vector<std::vector<std::size_t>> abpFeet;
                     abpFeet.reserve(probeResults.size());
                     if (cfg.abp_upsample_rate > 0.0) {
@@ -151,9 +150,7 @@ namespace analysis_job {
                         for (const auto& b : probeResults) {
                             std::vector<std::size_t> feet;
                             if (b.all_upsampled.size() > 33 && !b.all_upsampled[33].empty()) {
-                                const std::vector<int> locs =
-                                    pulse_matched_filter::derivativePulseLocations(
-                                        b.all_upsampled[33], minSep);
+                                const std::vector<int> locs = ppg_deriv::derivativePulseLocations(b.all_upsampled[33], minSep);
                                 feet.assign(locs.begin(), locs.end());
                             }
                             abpFeet.push_back(std::move(feet));
@@ -316,7 +313,7 @@ namespace analysis_job {
         const int workerThreads = std::max(1, hw - 1);
         omp_set_num_threads(workerThreads);
         omp_set_nested(0);
-
+        const LeadPolarity pol{ { job.ecg1_inverted, job.ecg2_inverted, job.ecg3_inverted } };
         try {
             // POSITION IS LOAD-BEARING: these writes describe the RAW pass and
             // must stay above augment_ecg_ppg_pairs_sqabs, which overwrites the
@@ -328,14 +325,14 @@ namespace analysis_job {
 
             if (!job.cfg.template_path.empty()) {
                 const std::string ftsPath = job.cfg.template_path + "/" + job.stem + "_pq_and_qrs_data.csv";
-                normalize_features::writeFeatureTimeSeriesCsv(ftsPath, job.stem, job.peakResults, job.rates.ecg);
-                envelope_report::writeEnvelopeReport(job.cfg.template_path, job.stem, job.tmpl.bins, job.beats, job.rates.ecg);
+                normalize_features::writeFeatureTimeSeriesCsv(ftsPath, job.stem, job.peakResults, job.rates.ecg, pol);
+                envelope_report::writeEnvelopeReport(job.cfg.template_path, job.stem, job.tmpl.bins, job.beats, job.rates.ecg, pol);
             }
 
             augment_ecg_ppg_pairs_sqabs(job.peakResults, job.use_consensus_peakfind_alg, job.fileID, job.samplingRate, job.cfg, job.ecg1_inverted, job.ecg2_inverted, job.ecg3_inverted);
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
-            premark::runAll(job.beats, job.tmpl, job.rates.ecg, job.cfg.quality_metric, job.stem);
-            writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats, job.samplingRate);
+            premark::runAll(job.beats, job.tmpl, job.rates.ecg, pol, job.cfg.quality_metric, job.stem);
+            writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats, job.samplingRate, pol);
             std::cout << "Processing Squared and Absolute Value Templates (slow) for " << job.stem << "\n";
         }
         catch (const std::exception& e) {

@@ -76,20 +76,26 @@ namespace premark {
     };
 
     // Auto-detect the four boundaries off one bin's template.
+    //
+    // sgn is this channel's polarity sign, from LeadPolarity::sign(lead). It is
+    // a parameter because this function is handed a bare trace with no channel
+    // index -- only the caller knows which lead this is. find_t_end takes none:
+    // it locates its extremum by distance from a local bracket baseline, so an
+    // inverted T on an upright lead is found either way.
     inline SegmentCols segmentsFromTemplate(const std::vector<double>& tmpl,
-        int rCol, double fs)
+        int rCol, double fs, double sgn)
     {
         SegmentCols s;
         if (tmpl.empty() || rCol < 0 || fs <= 0.0) return s;
-        const double q_onset = FeatureMarks::find_q_onset(tmpl, fs, rCol);
-        const double j_point = FeatureMarks::find_j_point(tmpl, fs, rCol);
+        const double q_onset = FeatureMarks::find_q_onset(tmpl, fs, rCol, sgn);
+        const double j_point = FeatureMarks::find_j_point(tmpl, fs, rCol, sgn);
         const double t_end = FeatureMarks::find_t_end(tmpl, fs, rCol, j_point);
-        const int    pEnd = FeatureMarks::find_p_end(tmpl, rCol, fs);
+        const int    pEnd = FeatureMarks::find_p_end(tmpl, rCol, fs, sgn);
 
         s.qrsStart = (q_onset >= 0.0) ? (int)std::lround(q_onset) : -1;
         s.qrsEnd = (j_point >= 0.0) ? (int)std::lround(j_point) : -1;
         s.tEnd = (t_end >= 0.0) ? (int)std::lround(t_end) : -1;
-        
+
         if (s.qrsEnd >= 0 && s.tEnd >= 0)
             s.tBegin = std::max(s.qrsEnd, std::min(s.tBegin, s.tEnd));
         s.pEnd = (pEnd >= 0) ? pEnd : s.qrsStart;
@@ -129,7 +135,7 @@ namespace premark {
 
     inline BinResult runBin(const std::vector<std::vector<double>>& beats,
         const std::vector<double>& tmpl,
-        int rCol, double fs,
+        int rCol, double fs, double sgn,
         BeatClassifier& classifier,
         int binIdx, const std::string& channel)
     {
@@ -142,7 +148,7 @@ namespace premark {
         }
 
         const int W = (int)beats[0].size();
-        r.seg = segmentsFromTemplate(tmpl, rCol, fs);
+        r.seg = segmentsFromTemplate(tmpl, rCol, fs, sgn);
         if (!r.seg.valid(W)) {
             // Landmark auto-detection failed or came back out of order.
             return r;
@@ -198,7 +204,7 @@ namespace premark {
         const std::string& channel,
         template_io::ChannelMethodTemplate
         template_io::BinTemplates::* methodPtr,
-        double fs, BeatClassifier& classifier)
+        double fs, double sgn, BeatClassifier& classifier)
     {
         std::vector<BinResult> out;
         auto it = beats.per_channel_beats.find(channel);
@@ -230,7 +236,7 @@ namespace premark {
         for (int i = 0; i < nBins; ++i) {
             if (i < (int)beats.bad_segment.size() && beats.bad_segment[i]) continue;
             const template_io::ChannelMethodTemplate& blk = tmpl.bins[i].*methodPtr;
-            binResults[i] = runBin(perBin[i], blk.ecgTemplate, blk.r_col, fs,
+            binResults[i] = runBin(perBin[i], blk.ecgTemplate, blk.r_col, fs, sgn,
                 classifier, i, channel);
         }
 
@@ -302,6 +308,7 @@ namespace premark {
     inline void runAll(const template_io::BeatsFile& beats,
         const template_io::TemplateFile& tmpl,
         double ecgRate,
+        const LeadPolarity& pol,
         const std::string& dirIn,
         const std::string& stemIn,
         const std::string& onnxModelPath = {})
@@ -331,24 +338,31 @@ namespace premark {
             }
         }
 
-        if (ecgRate <= 0.0) {  return;  }
+        if (ecgRate <= 0.0) { return; }
         BeatClassifier classifier(onnxModelPath);
 
+        // `lead` IS IN THE TABLE. The loop below is a range-for over this
+        // array, so there is no counter to index pol with, and keeping a
+        // separate one alongside would be a second thing to hold in step with
+        // the key. One row, one channel, one polarity index.
         struct Chan {
-            const char* key; template_io::ChannelMethodTemplate
+            const char* key;
+            int lead;                 // index into LeadPolarity; must match key
+            template_io::ChannelMethodTemplate
                 template_io::BinTemplates::* ptr;
         };
         const Chan chans[] = {
-            { "CH1", &template_io::BinTemplates::ch1_raw },
-            { "CH2", &template_io::BinTemplates::ch2_raw },
-            { "CH3", &template_io::BinTemplates::ch3_raw },
+            { "CH1", 0, &template_io::BinTemplates::ch1_raw },
+            { "CH2", 1, &template_io::BinTemplates::ch2_raw },
+            { "CH3", 2, &template_io::BinTemplates::ch3_raw },
         };
         bool first = true;
         for (const Chan& c : chans) {
-            const auto res = runChannel(beats, tmpl, c.key, c.ptr, ecgRate, classifier);
+            const auto res = runChannel(beats, tmpl, c.key, c.ptr, ecgRate,
+                pol.sign(c.lead), classifier);
             if (res.empty()) {
-                const bool haveKey =  beats.per_channel_beats.find(c.key) != beats.per_channel_beats.end();
-    
+                const bool haveKey = beats.per_channel_beats.find(c.key) != beats.per_channel_beats.end();
+
                 continue;
             }
             int nOk = 0, nBeats = 0;
@@ -365,9 +379,10 @@ namespace premark {
     inline void runAll(const template_io::BeatsFile& beats,
         const template_io::TemplateFile& tmpl,
         double ecgRate,
+        const LeadPolarity& pol,
         const std::string& onnxModelPath = {})
     {
-        runAll(beats, tmpl, ecgRate, g_dir, g_stem, onnxModelPath);
+        runAll(beats, tmpl, ecgRate, pol, g_dir, g_stem, onnxModelPath);
     }
 
 } // namespace premark

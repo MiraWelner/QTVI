@@ -232,43 +232,61 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
 }
 
 //back bins into pages in accordance with max bins 
+int TemplateViewerWindow::pageColumnBudget() const {
+    // compact == (max_leads <= 1): the panels wrap, so the whole grid is
+    // available and a page holds rows x cols of them. With several leads each
+    // column is a stack of leads and the row dimension is spent on them, so the
+    // budget is the column count alone.
+    return std::max(1, (max_leads <= 1)
+        ? n_template_cols * n_template_rows
+        : n_template_cols);
+}
+
+// ---- PAGES OF EXACTLY ONE SCREENFUL ------------------------------------
+// Bins are expanded to (bin, slot) columns FIRST, then the flat column list is
+// cut into pages of exactly `budget`. The previous version packed BINS and
+// refused to split one across a boundary, so a page ended early whenever the
+// next bin's column count would have overflowed -- which on a record with
+// two- and three-template bins meant most pages held 10 or 11 panels out of 12,
+// each page laid its panels out at a different size, and the number per screen
+// varied as the operator paged.
+//
+// The cost of exactness is that a bin holding several morphologies can now have
+// its columns split over two pages. That is a real tradeoff and it is taken
+// deliberately: the columns stay in order and stay adjacent everywhere except
+// at a boundary, and no propagation path assumes adjacency -- each one resolves
+// a (bin, slot) pair through m_pageColOf, which already reports a pair that is
+// not on the current page.
 void TemplateViewerWindow::buildPages() {
     m_pages.clear();
+    m_allColumns.clear();
+
     const int nBins = static_cast<int>(m_bins.size());
     if (nBins == 0) { m_pages.push_back({ 0, 0 }); m_totalPages = 1; return; }
 
-    const int budget = std::max(1, (max_leads <= 1) ? n_template_cols * n_template_rows : n_template_cols);
-    int i = 0;
-    while (i < nBins) {
-        int cols = 0, taken = 0;
-        while (i + taken < nBins) {
-            const int c = static_cast<int>(
-                markingSlotsForBin(m_bins[i + taken]).size());
-            // Always take at least one bin, even if it alone blows the budget:
-            // a page must make progress or paging never terminates. A bin
-            // contributing ZERO columns (every template below the configured
-            // minimum) is taken for the same reason -- skipping it would leave
-            // `taken` at 0 and the outer loop would never advance.
-            if (taken > 0 && c > 0 && cols + c > budget) break;
-            cols += c;
-            ++taken;
-        }
-        m_pages.push_back({ i, taken });
-        i += taken;
-    }
+    for (int gi = 0; gi < nBins; ++gi)
+        for (int t : markingSlotsForBin(m_bins[gi]))
+            m_allColumns.push_back({ gi, t });
+
+    const int budget = pageColumnBudget();
+    const int nCols = static_cast<int>(m_allColumns.size());
+
+    // A record where every template fell below the minimum-beats threshold has
+    // no columns at all. One empty page, so paging still terminates and the
+    // page controls have something to clamp against.
+    if (nCols == 0) { m_pages.push_back({ 0, 0 }); m_totalPages = 1; return; }
+
+    for (int first = 0; first < nCols; first += budget)
+        m_pages.push_back({ first, std::min(budget, nCols - first) });
+
     m_totalPages = static_cast<int>(m_pages.size());
 
-    int widest = 0;
-    for (const auto& pg : m_pages) {
-        int cols = 0;
-        for (int k = 0; k < pg.second; ++k)
-            cols += static_cast<int>(markingSlotsForBin(m_bins[pg.first + k]).size());
-        widest = std::max(widest, cols);
-    }
     std::fprintf(stderr,
-        "  [pages] %d bins -> %d pages (budget %d cols/page, widest %d)\n",
-        nBins, m_totalPages, budget, widest);
+        "  [pages] %d bins -> %d columns -> %d pages (%d cols/page, last %d)\n",
+        nBins, nCols, m_totalPages, budget, m_pages.back().second);
     std::fflush(stderr);
+
+    reportBinsWithNoColumns();
 }
 
 bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
@@ -285,7 +303,7 @@ bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
     // The same four alignments the ring walks. Kept local so this does not
     // depend on the anonymous-namespace kAlignRing defined further down.
     static const AnchorType kFour[4] = {
-        AnchorType::P_PEAK, AnchorType::Q_ONSET,
+        AnchorType::P_ONSET, AnchorType::Q_ONSET,
         AnchorType::R_PEAK,  AnchorType::J_POINT,
     };
 
@@ -411,40 +429,45 @@ void TemplateViewerWindow::clearPlots() {
         ui->plotGrid->setRowStretch(r, 0);
 }
 
-// ---- expand this page's bins into (bin, template) COLUMNS ----------------
-// A column used to be a bin. It is now a bin plus a bank member, so a bin
-// holding three morphologies occupies three adjacent columns and the sinus
-// seed stays leftmost. Columns per page therefore floats with the record's
-// ectopy: pages stay bin-aligned rather than column-count-aligned, because
-// splitting a bin across a page boundary would put its sinus template on one
-// page and its PVC template on the next.
+// ---- this page's (bin, template) COLUMNS ---------------------------------
+// A column is a bin plus a bank member, so a bin holding three morphologies
+// occupies three columns and the sinus seed stays leftmost. The expansion is
+// done once, for the whole record, in buildPages -- this is a slice of it, so
+// the page table's indices and the columns they name cannot come apart.
+//
+// `start` and `count` ARE COLUMN INDICES. They were bin indices, so the two
+// meanings differ by a factor of however many templates the bins hold; the
+// clamp keeps a stale page table from indexing off the end while the page is
+// being rebuilt, and is not a substitute for the table being right.
 std::vector<std::pair<int, int>>
 TemplateViewerWindow::pageColumns(int start, int count) const
 {
-    std::vector<std::pair<int, int>> cols;
-    for (int i = 0; i < count; ++i) {
-        const int gi = start + i;
-        for (int t : markingSlotsForBin(m_bins[gi])) cols.push_back({ gi, t });
-    }
+    const int nAll = static_cast<int>(m_allColumns.size());
+    start = std::clamp(start, 0, std::max(0, nAll));
+    count = std::clamp(count, 0, nAll - start);
+    return std::vector<std::pair<int, int>>(
+        m_allColumns.begin() + start, m_allColumns.begin() + start + count);
+}
 
-    // WHICH BINS HAVE NO COLUMNS AT ALL. With a minimum-beats threshold set,
-    // every template in a bin can fall below it, and that bin then shows
-    // nothing. Printed rather than left to be noticed, because a bin that
-    // silently has no panel is indistinguishable from a paging bug.
-    if (tbank::minBeatsEcg() > 0 || tbank::minBeatsPpg() > 0) {
-        std::string gone;
-        for (int i = 0; i < count; ++i) {
-            const int gi = start + i;
-            if (markingSlotsForBin(m_bins[gi]).empty())
-                gone += (gone.empty() ? "" : ",") + std::to_string(gi);
-        }
-        if (!gone.empty())
-            std::fprintf(stderr,
-                "  [min-beats] bins with NO displayable template "
-                "(every slot below ECG %d or PPG %d clean beats): %s\n",
-                tbank::minBeatsEcg(), tbank::minBeatsPpg(), gone.c_str());
-    }
-    return cols;
+// WHICH BINS HAVE NO COLUMNS AT ALL. With a minimum-beats threshold set, every
+// template in a bin can fall below it, and that bin then shows nothing. Printed
+// rather than left to be noticed, because a bin that silently has no panel is
+// indistinguishable from a paging bug. Reported once for the RECORD now, at the
+// end of pagination, rather than once per page: with exact column paging a page
+// no longer corresponds to a bin range, so "the bins on this page" is not a
+// question this diagnostic can ask any more.
+void TemplateViewerWindow::reportBinsWithNoColumns() const
+{
+    if (!(tbank::minBeatsEcg() > 0 || tbank::minBeatsPpg() > 0)) return;
+    std::string gone;
+    for (int gi = 0; gi < static_cast<int>(m_bins.size()); ++gi)
+        if (markingSlotsForBin(m_bins[gi]).empty())
+            gone += (gone.empty() ? "" : ",") + std::to_string(gi);
+    if (!gone.empty())
+        std::fprintf(stderr,
+            "  [min-beats] bins with NO displayable template "
+            "(every slot below ECG %d or PPG %d clean beats): %s\n",
+            tbank::minBeatsEcg(), tbank::minBeatsPpg(), gone.c_str());
 }
 
 // ---- row count -----------------------------------------------------------
@@ -452,9 +475,10 @@ TemplateViewerWindow::pageColumns(int start, int count) const
 // wraps PANELS and a bin can contribute several. Sizing the wrap from the bin
 // count let a page with banks overflow past kMaxGridCols columns while still
 // reporting a legal grid.
-int TemplateViewerWindow::pageGridRows(bool compact, int nCols,
-    int start, int end) const
+int TemplateViewerWindow::pageGridRows(bool compact,
+    const std::vector<std::pair<int, int>>& cols) const
 {
+    const int nCols = static_cast<int>(cols.size());
     if (compact) {
         // Not `auto [rows, cols]`: the caller's `cols` is the (bin, template)
         // vector, and a structured binding there would shadow it.
@@ -466,10 +490,20 @@ int TemplateViewerWindow::pageGridRows(bool compact, int nCols,
     // actually produce one (all three ECG channels present with an R column).
     // Without this the row count equals the lead count and there is no row
     // index left for the VCG to occupy.
+    // Over the page's COLUMNS, skipping a repeat of the bin just tested: a bin
+    // with three markable templates occupies three columns and the probe is a
+    // property of the bin, so testing it once per column would run the
+    // reconstruction three times for one answer.
     bool anyVcg = false;
-    for (int k = start; k < end && !anyVcg; ++k)
+    int lastBin = -1;
+    for (const std::pair<int, int>& c : cols) {
+        if (anyVcg) break;
+        if (c.first == lastBin) continue;
+        lastBin = c.first;
+        if (c.first < 0 || c.first >= static_cast<int>(m_bins.size())) continue;
         anyVcg = !vcg_avg::derivedTraceOnChannelAxis(
-            m_bins[k], 0, vcg::DerivedLead::VectorMagnitude).empty();
+            m_bins[c.first], 0, vcg::DerivedLead::VectorMagnitude).empty();
+    }
 
     // Capped like the compact path. Three leads plus VCG already sits at the
     // cap; a fourth lead would drop the VCG row rather than grow the stack,
@@ -532,20 +566,25 @@ void TemplateViewerWindow::addVcgPanel(int gi, int column, int gridRows,
 void TemplateViewerWindow::showPage() {
     clearPlots();
 
-    // Page bounds come from the packed table, not from multiplication: pages
-    // hold a variable number of bins so the COLUMN count stays bounded.
+    // Page bounds come from the packed table, not from multiplication. The
+    // table is in COLUMNS: `first` is this page's first column and `second` is
+    // how many it holds, which is the full budget on every page but the last.
+    // It used to be (first bin, bin count), which is what made the panel count
+    // per page float with how many morphologies the next bin happened to hold.
     if (m_pages.empty()) buildPages();
     m_currentPage = std::clamp(m_currentPage, 0, (int)m_pages.size() - 1);
-    int start = m_pages[m_currentPage].first;
-    int count = m_pages[m_currentPage].second;
-    int end = start + count;
+    const int firstCol = m_pages[m_currentPage].first;
+    const int colCount = m_pages[m_currentPage].second;
 
     bool compact = (max_leads <= 1);
 
-    const std::vector<std::pair<int, int>> cols = pageColumns(start, count);
+    const std::vector<std::pair<int, int>> cols = pageColumns(firstCol, colCount);
     const int nCols = static_cast<int>(cols.size());
 
-    const int gridRows = pageGridRows(compact, nCols, start, end);
+    // TAKES THE COLUMNS, not a bin range. The bins on a page are no longer a
+    // contiguous [start, end) -- a bin can be split across a page boundary --
+    // so the VCG probe has to read the bins the columns actually name.
+    const int gridRows = pageGridRows(compact, cols);
 
     m_binPlots.resize(nCols);
     m_pageGlobalIdx.resize(nCols);
@@ -669,7 +708,13 @@ void TemplateViewerWindow::showPage() {
             // morphology it drew a band sized by the difference BETWEEN
             // morphologies.
             std::vector<double> ppgIqr = empty;
-            int ppgFootIdx = -1;
+            // A DOUBLE, because pulse_marks.onset is one. This was `int`, so
+            // the sub-sample foot the detector worked to produce was truncated
+            // to a whole column before sample_y -- which interpolates -- ever
+            // saw it. Worse, a negative onset (the detector's "no foot found",
+            // which it can now legitimately report) has to survive as a
+            // negative number for sample_y to reject it.
+            double ppgFootIdx = -1.0;
             if (hasPPG) {
                 if (!ppgSlot->hasDetectedPulseMarks())
                     FeatureMarks::seed_pulse_bank_template(ppgSlot->tmpl,
@@ -1122,7 +1167,8 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
                 anchor_view::label(a4));
             continue;
         }
-        FeatureMarks::seed_bank_template(*w4, rc4, m_sampleRate, a4,
+        FeatureMarks::seed_bank_template(*w4, rc4, m_sampleRate,
+            b.polarity.sign(channel), a4,
             tp.marks(tag4));
     }
     // (no glyph sync: p_peak is derived at every read now -- see the

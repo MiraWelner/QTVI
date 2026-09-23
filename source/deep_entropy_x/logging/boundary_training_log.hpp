@@ -28,7 +28,7 @@
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
-#include "template_anchoring\curve_fit.hpp"   // curve_fit::FitType
+#include "template_marking_gui\curve_fit.hpp"   // curve_fit::FitType
 
 namespace boundary_training {
 

@@ -32,9 +32,9 @@
 #include <theme/theme.h>
 
 static int get_dataset_choice() {
-	// Prompt the user to select a MESA, Bittium, Chaos, or SHHS dataset
+    // Prompt the user to select a MESA, Bittium, Chaos, or SHHS dataset
     static constexpr int n_valid_datasets = 4;
-    std::cout << "Select Dataset:\n1: MESA\n2: Bittium\n3: CHAOS\n 4: SHHS\nChoice: ";
+    std::cout << "Select Dataset:\n1: MESA\n2: Bittium\n3: CHAOS\n4: SHHS\nChoice: ";
     int choice;
     if (!(std::cin >> choice)) return -1;
     while (choice < 1 || choice > n_valid_datasets) {
@@ -53,7 +53,13 @@ static std::string get_initials() {
     for (char c : raw)
         if (std::isalnum(static_cast<unsigned char>(c)))
             out += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (out.empty()) out = "";
+    // "anon", NOT "". out is empty whenever the operator types nothing or types
+    // only punctuation, and log_path is output_path + "/log_" + this -- so an
+    // empty fallback gives every no-initials reviewer the SAME folder, and the
+    // skip-if-logged check at the top of the file loop then has them skipping
+    // each other's files. The whole point of the per-reviewer folder is that it
+    // is per reviewer.
+    if (out.empty()) out = "anon";
     return out;
 }
 
@@ -80,8 +86,7 @@ static bool runNoiseMarking(const config_entry& cfg, const std::filesystem::path
         const QRect available = screen->availableGeometry();
         gui->setMaximumHeight(available.height() - 40);
     }
-    gui->setWindowTitle(
-        QString::fromStdString("Marking: " + binFs.filename().string()));
+    gui->setWindowTitle(QString::fromStdString("Marking: " + binFs.filename().string()));
     gui->setFileSource(QString::fromStdString(binFs.string()));
 
     if (gui->exec() != QDialog::Accepted)
@@ -129,29 +134,37 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
 }
 
 static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis_job::AnalysisJob> job, const QString& fileId, std::vector<analysis_job::BankSnapshot>& outBanks) {
-        //Launch the template marking GUI
-        TemplateViewerWindow viewer;
-        viewer.setBoundaryTrainingDir(QString::fromStdString(cfg.training_log));
-        viewer.set_vcg_output_dir(QString::fromStdString(cfg.vcg_output));
-        viewer.setNormOutputDir(QString::fromStdString(cfg.template_path));
-        QEventLoop loop;
-        QObject::connect(&viewer, &TemplateViewerWindow::finished,  &loop, &QEventLoop::quit, Qt::QueuedConnection);
+    //Launch the template marking GUI
+    TemplateViewerWindow viewer;
+    viewer.setBoundaryTrainingDir(QString::fromStdString(cfg.training_log));
+    viewer.set_vcg_output_dir(QString::fromStdString(cfg.vcg_output));
+    viewer.setNormOutputDir(QString::fromStdString(cfg.template_path));
+    // BEFORE loadSubject. loadSubject stamps this onto every bin and the
+    // seeding pass reads it from there, so a setter called afterwards leaves
+    // the whole record detected as upright -- and a wrong polarity is not
+    // just a wrong answer, it makes every transition fit poor, which sends
+    // curve_fit to its fractional-polynomial escalation on every landmark.
+    viewer.setLeadPolarity(LeadPolarity{ { job->ecg1_inverted,
+                                           job->ecg2_inverted,
+                                           job->ecg3_inverted } });
+    QEventLoop loop;
+    QObject::connect(&viewer, &TemplateViewerWindow::finished, &loop, &QEventLoop::quit, Qt::QueuedConnection);
 
-        viewer.show();
-        viewer.loadSubject(job->tmpl,
-            QString::fromStdString(cfg.template_path),
-            QString::fromStdString(cfg.fiducial_marker_locations),
-            fileId, cfg.ecg_upsample_rate,
-            cfg.ppg_upsample_rate, cfg.abp_upsample_rate,
-            cfg.art_upsample_rate, cfg.art_pulm_upsample_rate,
-            cfg.notch_filter_hz);
-        loop.exec();
+    viewer.show();
+    viewer.loadSubject(job->tmpl,
+        QString::fromStdString(cfg.template_path),
+        QString::fromStdString(cfg.fiducial_marker_locations),
+        fileId, cfg.ecg_upsample_rate,
+        cfg.ppg_upsample_rate, cfg.abp_upsample_rate,
+        cfg.art_upsample_rate, cfg.art_pulm_upsample_rate,
+        cfg.notch_filter_hz);
+    loop.exec();
 
-        outBanks.clear();
-        outBanks.reserve(viewer.bins().size());
-        for (const TemplateBin& b : viewer.bins()) {
-            outBanks.push_back(analysis_job::BankSnapshot{ b.ecg_bank, b.ppg_bank });
-        }
+    outBanks.clear();
+    outBanks.reserve(viewer.bins().size());
+    for (const TemplateBin& b : viewer.bins()) {
+        outBanks.push_back(analysis_job::BankSnapshot{ b.ecg_bank, b.ppg_bank });
+    }
 }
 
 
@@ -159,6 +172,12 @@ int main(int argc, char* argv[]) {
     //set up gui
     QApplication app(argc, argv);
     Theme::apply(app);
+    // This program drives its own nested event loops and never calls app.exec(),
+    // so the default quit-on-last-window-closed would fire when the template
+    // viewer closes and set the application-wide quit flag -- after which every
+    // remaining file's marking dialog returns immediately and the batch
+    // "finishes" in seconds having skipped everything.
+    app.setQuitOnLastWindowClosed(false);
 
     //get data type and initials for logging
     const int dataset_choice = get_dataset_choice();
@@ -170,8 +189,9 @@ int main(int argc, char* argv[]) {
     const std::string initials = get_initials();
     cfg.log_path = cfg.output_path + "/log_" + initials;
     std::filesystem::create_directories(cfg.log_path);
+    std::cout << "Logging to: " << cfg.log_path << "\n";
 
-	//load the bin files
+    //load the bin files
     const std::vector<std::filesystem::path> binFiles = load_binfiles(cfg);
     if (binFiles.empty()) {
         std::cerr << "No .bin files in: " << cfg.bin_file_path << "\n";
@@ -180,7 +200,7 @@ int main(int argc, char* argv[]) {
 
     for (const std::filesystem::path& binFs : binFiles) {
         const std::string stem = binFs.stem().string();
-        std::cout << "\n running" << stem;
+        std::cout << "\nProcessing " << stem << "\n";
 
         // Skip files that already have a log - if they don't have a log, make one
         const std::string logPath = cfg.log_path + "/" + stem + "_log.csv";
@@ -191,11 +211,22 @@ int main(int argc, char* argv[]) {
         beat_log beatLog;
         beatLog.setDefaultParams(cfg.blanking_period, cfg.threshold);
 
-		// Run the noise marking GUI
+        // Run the noise marking GUI
         std::cout << "Noise marking: " << binFs.filename().string() << "\n";
         QVector<GenExcStruct> allMarkings;
         std::filesystem::path currentBinFile;
         bool ecg1Inverted = false, ecg2Inverted = false, ecg3Inverted = false;
+
+        // THE CALL THAT FILLS ALL FIVE OF THE ABOVE. Without it nothing opens,
+        // the markings land under an empty stem (so the anneal step finds no
+        // exclusions file and excises nothing), and the inversion flags stay
+        // false for every lead. The giveaway is "Saved Noise Markings for "
+        // with no filename after it: exportMarkings was handed an empty path.
+        if (!runNoiseMarking(cfg, binFs, allMarkings, currentBinFile, beatLog,
+            ecg1Inverted, ecg2Inverted, ecg3Inverted)) {
+            std::cout << "  skipped by user; not processing/templating.\n";
+            continue;
+        }
 
         // this is normally a no-op if the user loaded a bin file then this switches to the loaded file
         const std::filesystem::path effBin = currentBinFile.empty() ? binFs : currentBinFile;
@@ -207,7 +238,11 @@ int main(int argc, char* argv[]) {
 
         //export noise markings and load them in the template
         if (allMarkings.isEmpty()) {
-            exportMarkings(cfg, currentBinFile, nullptr);
+            // effBin, NOT currentBinFile: this branch names the output file, and
+            // an empty path here writes "_noise_markings.bin" -- which the
+            // anneal step then never finds, so the recording is annealed with
+            // no exclusions at all and nothing says so.
+            exportMarkings(cfg, effBin, nullptr);
         }
         else {
             for (const GenExcStruct& m : allMarkings) {
@@ -217,7 +252,7 @@ int main(int argc, char* argv[]) {
 
         auto jobOpt = analysis_job::prepare(cfg, effBin, ecg1Inverted, ecg2Inverted, ecg3Inverted);
         if (!jobOpt) {
-            std::cout << "Bin Not Loaded\n";
+            std::cout << "  no bins produced; skipping " << effStem << "\n";
             continue;
         }
 
@@ -228,6 +263,11 @@ int main(int argc, char* argv[]) {
             });
         std::vector<analysis_job::BankSnapshot> operatorBanks;
         runTemplateMarking(cfg, job, QString::fromStdString(job->stem), operatorBanks);
+        // THE JOIN IS A CORRECTNESS REQUIREMENT, NOT A PERFORMANCE CHOICE.
+        // commit() writes job.tmpl and finalize() mutates it (mergeTemplatesSlow
+        // packs the squared/absval blocks in), so running the two concurrently
+        // is a data race on the object being serialized -- and it fails by
+        // producing a plausible file rather than by crashing.
         worker.join();
         analysis_job::commit(*job, operatorBanks);
     }

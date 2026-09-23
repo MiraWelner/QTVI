@@ -155,8 +155,12 @@ namespace envelope_report {
     // SegmentSpans::has() reads as "absent" and measure() turns into NaN rather
     // than zero -- the distinction that keeps a ventricular beat's missing P
     // wave out of the P statistics instead of in them as a zero.
+    // sgn is this channel's polarity sign, from LeadPolarity::sign(channel).
+    // A parameter rather than something derived here: this function is handed
+    // one channel's template block with no channel index, so only the caller
+    // knows which lead it is.
     inline envelopes::SegmentSpans spansForChannel(
-        const template_io::ChannelMethodTemplate& chRaw, double fs)
+        const template_io::ChannelMethodTemplate& chRaw, double fs, double sgn)
     {
         envelopes::SegmentSpans sp;
         const std::vector<double>& ecg = chRaw.ecgTemplate;
@@ -170,7 +174,7 @@ namespace envelope_report {
         // disagree with the displayed ones make every envelope in the report
         // incomparable with what an operator sees.
         const FeatureMarks::TemplateLandmarks lm =
-            FeatureMarks::detect_template_landmarks(ecg, rPeak, fs);
+            FeatureMarks::detect_template_landmarks(ecg, rPeak, fs, sgn);
         if (!lm.valid) return sp;
 
         // -1 stays -1: SegmentSpans::has() reads it as absent and measure()
@@ -233,7 +237,7 @@ namespace envelope_report {
     inline void buildChannel(std::vector<EnvelopeRecord>& out,
         const std::vector<template_io::BinTemplates>& bins,
         const template_io::BeatsFile& beats,
-        int channel, double fs)
+        int channel, double fs, const LeadPolarity& pol)
     {
         const char* key = kChannelKeys[channel];
         const auto it = beats.per_channel_beats.find(key);
@@ -249,7 +253,8 @@ namespace envelope_report {
 
             const template_io::ChannelMethodTemplate* chs[kNumEcgCh] = {
                 &bt.ch1_raw, &bt.ch2_raw, &bt.ch3_raw };
-            const envelopes::SegmentSpans sp = spansForChannel(*chs[channel], fs);
+            const envelopes::SegmentSpans sp = spansForChannel(*chs[channel], fs,
+                pol.sign(channel));
 
             const auto& binBeats = perBin[b];
             for (size_t k = 0; k < binBeats.size(); ++k) {
@@ -323,14 +328,14 @@ namespace envelope_report {
     // that differ only in row order. Reproducibility is worth one copy.
     inline std::vector<EnvelopeRecord> buildEnvelopeReport(
         const std::vector<template_io::BinTemplates>& bins,
-        const template_io::BeatsFile& beats, double fs)
+        const template_io::BeatsFile& beats, double fs, const LeadPolarity& pol)
     {
         std::vector<std::vector<EnvelopeRecord>> per(kNumEcgCh);
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(kNumEcgCh) schedule(static)
 #endif
         for (int c = 0; c < kNumEcgCh; ++c)
-            buildChannel(per[c], bins, beats, c, fs);
+            buildChannel(per[c], bins, beats, c, fs, pol);
 
         size_t total = 0;
         for (const auto& v : per) total += v.size();
@@ -463,10 +468,10 @@ namespace envelope_report {
      */
     inline bool writeEnvelopeReport(const std::string& dir, const std::string& subjectId,
         const std::vector<template_io::BinTemplates>& bins,
-        const template_io::BeatsFile& beats, double fs)
+        const template_io::BeatsFile& beats, double fs, const LeadPolarity& pol)
     {
         const std::vector<EnvelopeRecord> rows =
-            buildEnvelopeReport(bins, beats, fs);
+            buildEnvelopeReport(bins, beats, fs, pol);
 
         const std::string base = dir + "/" + subjectId + "_envelopes";
         const bool ok = writeBin(base + ".bin", rows, fs);

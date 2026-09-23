@@ -1,27 +1,13 @@
 /**
  * @file   create_arterial_templates.hpp
- * @brief  Two distinct pipelines, per spec:
+ * @brief  ONE pipeline: R-anchored pulse templates for every pulse channel.
  *
- *         PPG: R-anchored, same real-time windows the ECG uses --
- *             [t_R_i - pad, t_R_{i+1} + pad], driven by ch1.raw R-peaks
- *             (ECG-frame samples), converted to this channel's own samples
- *             via the rate ratio (channelRate / ecgRate). See
- *             CreatePulseTemplates / build_pulse_template_pair_windowed.
+ *         PPG, ABP, ART and ART_PULM are all sliced on the same real-time
+ *         windows the ECG uses -- [t_R_i - pad, t_R_{i+1} + pad], driven by
+ *         ch1.raw R-peaks (ECG-frame samples), converted to this channel's own
+ *         samples via the rate ratio (channelRate / ecgRate). See
+ *         CreatePulseTemplates / build_pulse_template_pair_windowed.
  *
- *         ABP / ART / ART_PULM: FOOT-anchored. Per spec, these are NOT
- *             sliced from borrowed ECG R-peaks -- systolic peaks are
- *             self-detected directly from each channel's own waveform, and
- *             find_foot_pulseox (the intersecting-tangent method) locates
- *             each beat's true foot within its own peak-to-peak segment.
- *             Every beat is re-sliced so its OWN foot lands at a fixed
- *             column. See CreateArterialTemplates /
- *             build_arterial_template_foot_anchored.
- *
- *         Both pipelines share the same matched-filter QC (pulse_matched_
- *         filter.hpp): two-pass median-based rejection. Build a reference
- *         template as the median of ALL candidate beats, then reject any
- *         candidate whose normalized error against that reference exceeds
- *         5%. The final template is rebuilt from the survivors.
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -34,8 +20,6 @@
 #include "template_marking_gui/alignment.hpp"
 #include "template_structs.hpp"
 #include "template_generation/normalize_template_amplitude.hpp"
-#include "pulse_matched_filter.hpp"
-#include "find_ppg_foot.hpp"
 
 struct PPGTemplatesResult {
     vector<vector<double>> templates;   // [bin][sample]
@@ -74,31 +58,31 @@ struct PPGTemplatesResult {
  *         Shared by CreatePulseTemplates for every channel (PPG, ABP, ART,
  *         ART_PULM) via a member-pointer for the signal.
  */
-// ==========================================================================
-// PULSE QC: ONE ERROR THRESHOLD, FROM config.csv
-// ==========================================================================
-//
-// A candidate pulse is kept when its normalized foot-to-foot fit error against
-// the bin's median reference is below this fraction:
-//
-//     err = || beat - reference || / || reference ||   over the f2f window
-//
-// So 0.10 means "within 10% of the reference by RMS". Set from config.csv as a
-// PERCENT (ppg_fit_error_pct), converted once here.
-//
-// WHY IT IS A RUNTIME VALUE. It is the single number that decides how much of
-// the pulse channel survives, and it needs to differ by dataset: an arterial
-// line is far more repeatable than a sleep-study pulse-ox, and a threshold
-// tuned on one throws away most of the other. On a MESA record 10% retained
-// 7.5% of the channel.
-//
-// WORTH KNOWING WHAT THE METRIC IS BLIND TO. This error is SCALE-SENSITIVE: a
-// pulse of identical shape with 15% more amplitude scores 0.15 and is rejected
-// at a 10% threshold. Pulse amplitude modulates with respiration and vasomotion
-// as a matter of course, so part of what this threshold controls is tolerance
-// to normal amplitude variation rather than to shape. The ECG side judges shape
-// by correlation, which is immune to exactly that. Raising the percentage is a
-// workaround for the metric, not a fix to it.
+ // ==========================================================================
+ // PULSE QC: ONE ERROR THRESHOLD, FROM config.csv
+ // ==========================================================================
+ //
+ // A candidate pulse is kept when its normalized foot-to-foot fit error against
+ // the bin's median reference is below this fraction:
+ //
+ //     err = || beat - reference || / || reference ||   over the f2f window
+ //
+ // So 0.10 means "within 10% of the reference by RMS". Set from config.csv as a
+ // PERCENT (ppg_fit_error_pct), converted once here.
+ //
+ // WHY IT IS A RUNTIME VALUE. It is the single number that decides how much of
+ // the pulse channel survives, and it needs to differ by dataset: an arterial
+ // line is far more repeatable than a sleep-study pulse-ox, and a threshold
+ // tuned on one throws away most of the other. On a MESA record 10% retained
+ // 7.5% of the channel.
+ //
+ // WORTH KNOWING WHAT THE METRIC IS BLIND TO. This error is SCALE-SENSITIVE: a
+ // pulse of identical shape with 15% more amplitude scores 0.15 and is rejected
+ // at a 10% threshold. Pulse amplitude modulates with respiration and vasomotion
+ // as a matter of course, so part of what this threshold controls is tolerance
+ // to normal amplitude variation rather than to shape. The ECG side judges shape
+ // by correlation, which is immune to exactly that. Raising the percentage is a
+ // workaround for the metric, not a fix to it.
 namespace pulse_qc {
 
     inline constexpr double kDefaultFitErrorFraction = 0.10;   // 10%
@@ -122,32 +106,39 @@ namespace pulse_qc {
 
 }  // namespace pulse_qc
 
-static inline void build_pulse_template_pair_windowed(
+// One bin's worth of output. WAS SEVEN OUT-PARAMETERS -- three vector refs,
+// two int refs and an optional pointer -- written into six parallel arrays of
+// PPGTemplatesResult by the single caller, which then had to clear all six by
+// hand in its catch block. Add a seventh output to that arrangement and the
+// catch has to learn about it too, or a bin survives half-written: a template
+// with stale keptSlices, or a peakCol from an attempt that threw.
+//
+// Returned by value instead, so the empty state IS the default state and the
+// failure path is one assignment.
+struct PulseTemplateBin {
+    std::vector<double> tmpl;                 // column-wise NaN-skipping median
+    std::vector<double> iqr;                  // local-ratio IQR about footCol
+    std::vector<std::vector<double>> kept;    // [beat][sample] retained snips
+    std::vector<uint32_t> keptSlices;         // R-pair ordinal per retained snip
+    int peakCol = -1;                         // systolic peak column
+    int footCol = -1;                         // foot column
+};
+
+static inline PulseTemplateBin build_pulse_template_pair_windowed(
     const std::vector<double>& signal,
     double channelRate,
     const std::vector<size_t>& masterPeaksEcg,
     double ecgRate,
     double padSeconds,
-    std::vector<double>& outTemplate,
-    std::vector<double>& outIqr,
-    std::vector<std::vector<double>>& outKeptBeats,
-    int& outPeakCol,
-    int& outFootCol,
-    std::vector<uint32_t>* outKeptSlices,
     // For the [pulseqc] line only. Passed rather than inferred because this
     // function has no other way to name the bin it is working on, and a
     // retention report that cannot say WHICH bin is nearly useless.
     size_t bin_index = 0)
 {
-    outTemplate.clear();
-    outIqr.clear();
-    outKeptBeats.clear();
-    if (outKeptSlices) outKeptSlices->clear();
-    outPeakCol = -1;
-    outFootCol = -1;
+    PulseTemplateBin out;
 
     if (signal.empty() || masterPeaksEcg.size() < 2 ||
-        channelRate <= 0.0 || ecgRate <= 0.0) return;
+        channelRate <= 0.0 || ecgRate <= 0.0) return out;
 
     const double scale = channelRate / ecgRate;
 
@@ -160,7 +151,7 @@ static inline void build_pulse_template_pair_windowed(
 
     // Per-bin peak-aligned + foot-vertical-aligned beat matrix.
     const auto aligned = alignment::extract_ppg_beats_and_align(signal, peaksCh, channelRate);
-    if (aligned.beats.empty()) return;
+    if (aligned.beats.empty()) return out;
 
     // ---- Matched-filter QC, two-pass, per spec:
     //   (a) build a REFERENCE template as the column-wise NaN-skipping
@@ -237,7 +228,7 @@ static inline void build_pulse_template_pair_windowed(
 
         // Normalized error restricted to [f2fLo, f2fHi): ||beat - ref|| /
         // ||ref|| over that column band, non-NaN overlap only. Same formula
-        // as pulse_matched_filter::normalizedError, just windowed to the
+        // as ppg_deriv's deleted normalizedError was, just windowed to the
         // foot-to-foot span.
         auto footToFootError = [&](const std::vector<double>& bt) -> double {
             double num = 0.0, den = 0.0; int overlap = 0;
@@ -333,25 +324,24 @@ static inline void build_pulse_template_pair_windowed(
                     medHere = fin[fin.size() / 2];
                 }
             }
-            return;
+            return out;
         }
 
         // Waveform and ordinal appended in the SAME loop, so they cannot fall
         // out of step.
         filteredBeats.reserve(survivorRows.size());
-        if (outKeptSlices) outKeptSlices->reserve(survivorRows.size());
+        out.keptSlices.reserve(survivorRows.size());
         const bool ordinalsUsable =
             aligned.original_index.size() == aligned.beats.size();
         for (const size_t k : survivorRows) {
             filteredBeats.push_back(aligned.beats[k]);
-            if (outKeptSlices)
-                outKeptSlices->push_back(ordinalsUsable
-                    ? aligned.original_index[k] : static_cast<uint32_t>(k));
+            out.keptSlices.push_back(ordinalsUsable
+                ? aligned.original_index[k] : static_cast<uint32_t>(k));
         }
         // Said out loud rather than papered over. Falling back to the row index
         // produces a mapping of the right SHAPE and the wrong CONTENT, and every
         // consumer downstream would treat it as a valid join key.
-        if (outKeptSlices && !ordinalsUsable)
+        if (!ordinalsUsable)
         {
             diag_survivors = static_cast<int>(filteredBeats.size());
         }
@@ -397,7 +387,7 @@ static inline void build_pulse_template_pair_windowed(
     const size_t maxLen = beatsForTemplate.front().size();
 
     // Column-wise NaN-skipping median => template.
-    outTemplate.assign(maxLen, NaN);
+    out.tmpl.assign(maxLen, NaN);
     for (size_t c = 0; c < maxLen; ++c) {
         std::vector<double> col;
         col.reserve(beatsForTemplate.size());
@@ -414,7 +404,7 @@ static inline void build_pulse_template_pair_windowed(
         const size_t mid = nc / 2;
         std::nth_element(col.begin(), col.begin() + mid, col.end());
         const double hi = col[mid];
-        outTemplate[c] = (nc % 2)
+        out.tmpl[c] = (nc % 2)
             ? hi
             : 0.5 * (*std::max_element(col.begin(), col.begin() + mid) + hi);
     }
@@ -425,9 +415,9 @@ static inline void build_pulse_template_pair_windowed(
     // systolic peak as the max in [R1, R2] (exactly one pulse -> no risk of
     // grabbing a later pulse) and the foot as the min in [R1, peak]. Using the
     // true R-pair interval (not a fixed window) makes these exact.
-    // Computed BEFORE the spread below, since the spread needs outFootCol.
+    // Computed BEFORE the spread below, since the spread needs out.footCol.
     {
-        const int N = static_cast<int>(outTemplate.size());
+        const int N = static_cast<int>(out.tmpl.size());
         const int r1 = std::clamp(
             static_cast<int>(std::llround(padSeconds * channelRate)), 0,
             std::max(0, N - 1));
@@ -447,16 +437,16 @@ static inline void build_pulse_template_pair_windowed(
         if (N > 0 && r2 > r1) {
             int pk = r1; double pmax = -std::numeric_limits<double>::infinity();
             for (int i = r1; i <= r2; ++i)
-                if (!std::isnan(outTemplate[i]) && outTemplate[i] > pmax) {
-                    pmax = outTemplate[i]; pk = i;
+                if (!std::isnan(out.tmpl[i]) && out.tmpl[i] > pmax) {
+                    pmax = out.tmpl[i]; pk = i;
                 }
             int ft = r1; double fmin = std::numeric_limits<double>::infinity();
             for (int i = r1; i <= pk; ++i)
-                if (!std::isnan(outTemplate[i]) && outTemplate[i] < fmin) {
-                    fmin = outTemplate[i]; ft = i;
+                if (!std::isnan(out.tmpl[i]) && out.tmpl[i] < fmin) {
+                    fmin = out.tmpl[i]; ft = i;
                 }
-            outPeakCol = pk;
-            outFootCol = ft;
+            out.peakCol = pk;
+            out.footCol = ft;
         }
     }
 
@@ -464,18 +454,18 @@ static inline void build_pulse_template_pair_windowed(
     // eventually be displayed/exported in (minus only the final /ref
     // division, which normalize_features::scale_array_by_ref applies at
     // display time -- never here). Each beat is first converted to its own
-    // local perfusion-index ratio using ITS OWN foot (outFootCol), per the
+    // local perfusion-index ratio using ITS OWN foot (out.footCol), per the
     // documented algorithm -- never a median/global foot -- then the
     // cross-beat IQR is taken of those local-ratio values. This is NOT the
     // same as taking the IQR of raw amplitudes, because the per-sample
     // transform's slope differs beat-to-beat (each beat has its own foot).
-    outIqr = (outFootCol >= 0)
-        ? normalize_features::local_ratio_iqr(beatsForTemplate, outFootCol)
+    out.iqr = (out.footCol >= 0)
+        ? normalize_features::local_ratio_iqr(beatsForTemplate, out.footCol)
         : std::vector<double>(maxLen, 0.0);
 
     // Retain aligned per-beat slices for downstream (snips CSV, etc).
-    outKeptBeats.reserve(beatsForTemplate.size());
-    for (const auto& sl : beatsForTemplate) outKeptBeats.push_back(sl);
+    out.kept.reserve(beatsForTemplate.size());
+    for (const auto& sl : beatsForTemplate) out.kept.push_back(sl);
 
     (void)padSeconds; (void)channelRate; (void)ecgRate;
 }
@@ -514,297 +504,23 @@ inline PPGTemplatesResult CreatePulseTemplates(
         if (b.bad_segment || (b.*sigMember).empty() || b.ch1.raw.size() < 2)
             continue;
         try {
-            build_pulse_template_pair_windowed(
-                b.*sigMember, channelRate,
-                b.ch1.raw, ecgRate,
-                padSeconds,
-                out.templates[i], out.iqrs[i], out.kept[i],
-                out.peakCol[i], out.footCol[i], &out.keptSlices[i], i);
+            PulseTemplateBin r = build_pulse_template_pair_windowed(
+                b.*sigMember, channelRate, b.ch1.raw, ecgRate, padSeconds, i);
+            out.templates[i] = std::move(r.tmpl);
+            out.iqrs[i] = std::move(r.iqr);
+            out.kept[i] = std::move(r.kept);
+            out.keptSlices[i] = std::move(r.keptSlices);
+            out.peakCol[i] = r.peakCol;
+            out.footCol[i] = r.footCol;
         }
         catch (...) {
-            out.templates[i] = {};
-            out.iqrs[i] = {};
-            out.kept[i] = {};
-            // Cleared WITH kept, not separately: a bin whose waveforms were
-            // discarded but whose ordinals survived would present a join key
-            // pointing at beats that are no longer there.
-            out.keptSlices[i] = {};
-            out.peakCol[i] = -1;
-            out.footCol[i] = -1;
-        }
-    }
-
-    return out;
-}
-
-/**
- * @brief  Foot-anchored pulse template for ONE arterial channel of ONE bin,
- *         per spec. Unlike PPG above, this is entirely self-contained --
- *         no borrowed ECG R-peaks. Pipeline:
- *           (1) self-detect systolic peaks in TWO steps:
- *               1a) derivative-max census (pulse_matched_filter): finds each
- *                   pulse's steepest upstroke, the sharpest and least-
- *                   variable landmark in an arterial waveform;
- *               1b) apex-walk: from each upstroke, walk forward to the
- *                   local maximum (the true systolic peak), bounded by
- *                   the next upstroke so we can't cross into the next beat.
- *           (2) slice [prevPeak, thisPeak] segments and batch them through
- *               find_foot_pulseox to locate each beat's true foot;
- *           (3) re-slice on a shared axis so every beat's OWN foot lands at
- *               a fixed column (padSamples), one foot-to-foot interval
- *               (median-length fallback for the last beat) plus trailing
- *               pad wide, NaN-padding short beats;
- *           (4) two-pass matched-filter QC:
- *               4a) reference template = column-wise median of ALL
- *                   candidate beats (robust to outliers, no need to pick
- *                   a fixed "seed" count);
- *               4b) score every candidate by normalized error against the
- *                   reference; keep beats whose error is below 5%.
- *           (5) column-wise NaN-skipping median across survivors ->
- *               final template. (This is the "re-median from survivors"
- *               half of the two-pass approach.)
- */
-static inline void build_arterial_template_foot_anchored(
-    const std::vector<double>& signal,
-    double channelRate,
-    double padSeconds,
-    std::vector<double>& outTemplate,
-    std::vector<double>& outIqr,
-    std::vector<std::vector<double>>& outKeptBeats,
-    int& outPeakCol,
-    int& outFootCol)
-{
-    outTemplate.clear();
-    outIqr.clear();
-    outKeptBeats.clear();
-    outPeakCol = -1;
-    outFootCol = -1;
-    if (signal.empty() || channelRate <= 0.0) return;
-
-    const int n = static_cast<int>(signal.size());
-
-    // ---- (1) self-detect systolic peaks in TWO steps, per spec:
-    //   1a) derivative-max census: run pulse_matched_filter's derivative-max
-    //       detector to get a rough list of where each pulse's steepest
-    //       upstroke sits. The upstroke is the sharpest, least-variable
-    //       part of an arterial pulse -- more reliable to detect than the
-    //       apex or dicrotic notch, both of which vary beat-to-beat.
-    //   1b) apex-walk: from each detected upstroke, walk forward through
-    //       the signal to the local maximum -- the actual systolic peak.
-    //       Bounded by the next upstroke's location so we can't overshoot
-    //       into the following beat.
-    // -------------------------------------------------------------------
-    const int minSep = std::max(1, static_cast<int>(std::llround(0.25 * channelRate)));
-    const std::vector<int> upstrokes =
-        pulse_matched_filter::derivativePulseLocations(signal, minSep);
-    if (upstrokes.size() < 2) return;
-
-    std::vector<int> peaks;
-    peaks.reserve(upstrokes.size());
-    for (size_t k = 0; k < upstrokes.size(); ++k) {
-        const int start = upstrokes[k];
-        // Search up to the next upstroke (exclusive), or to the end of the
-        // signal for the last one; cap at start + minSep as a safety belt
-        // in case an upstroke got dropped and the "next" one is far away.
-        const int hardEnd = (k + 1 < upstrokes.size())
-            ? upstrokes[k + 1]
-            : n;
-        const int end = std::min(hardEnd, start + minSep);
-        int pk = start;
-        double pkVal = -Inf;
-        for (int i = start; i < end && i < n; ++i) {
-            const double v = signal[i];
-            if (std::isnan(v)) continue;
-            if (v > pkVal) { pkVal = v; pk = i; }
-        }
-        if (std::isfinite(pkVal)) peaks.push_back(pk);
-    }
-    if (peaks.size() < 2) return;
-
-    // ---- (2) [prevPeak, thisPeak] segments -> find_foot_pulseox --------
-    const size_t nBeatsRaw = peaks.size() - 1;
-    std::vector<std::vector<double>> segments(nBeatsRaw);
-    for (size_t k = 0; k < nBeatsRaw; ++k) {
-        const int a = peaks[k], b = peaks[k + 1];
-        segments[k].assign(signal.begin() + a, signal.begin() + b + 1);
-    }
-    const FootResult feet = find_foot_pulseox(segments);
-
-    std::vector<int> footAbs(nBeatsRaw);
-    for (size_t k = 0; k < nBeatsRaw; ++k)
-        footAbs[k] = peaks[k] + static_cast<int>(feet.idx[k]);
-
-    // ---- (3) re-slice: every beat's OWN foot lands at column padSamples.
-    // Width = one foot-to-foot interval (median-length fallback for the
-    // last beat, which has no "next foot") plus lead/trail pad. -----------
-    const int padSamples = std::max(0, static_cast<int>(std::llround(padSeconds * channelRate)));
-    std::vector<int> gaps;
-    gaps.reserve(nBeatsRaw);
-    for (size_t k = 0; k + 1 < nBeatsRaw; ++k) gaps.push_back(footAbs[k + 1] - footAbs[k]);
-    int medGap = std::max(1, padSamples * 4);
-    if (!gaps.empty()) {
-        std::vector<int> g = gaps;
-        std::sort(g.begin(), g.end());
-        medGap = std::max(1, g[g.size() / 2]);
-    }
-    const int width = padSamples + medGap + padSamples;
-
-    std::vector<std::vector<double>> beats;
-    beats.reserve(nBeatsRaw);
-    for (size_t k = 0; k < nBeatsRaw; ++k) {
-        const int foot = footAbs[k];
-        const int start = foot - padSamples;
-        std::vector<double> beat(width, NaN);
-        for (int c = 0; c < width; ++c) {
-            const int idx = start + c;
-            if (idx >= 0 && idx < n) beat[c] = signal[idx];
-        }
-        beats.push_back(std::move(beat));
-    }
-    if (beats.empty()) return;
-
-    // ---- (4) Matched-filter QC, two-pass, per spec:
-    //   4a) build a REFERENCE template as the column-wise NaN-skipping
-    //       median across ALL candidate beats. The median is robust to
-    //       outliers without needing to pick a fixed "seed" count.
-    //   4b) score every candidate against the reference by normalized
-    //       error ||beat - ref|| / ||ref||; keep beats whose error is
-    //       below 5%.
-    // The final template (step 5 below) is rebuilt from the survivors,
-    // giving the two-pass: median-of-all -> reject high-error ->
-    // re-median. Same wave-score pruning logic as ECG, adapted to PPG's
-    // normalized-error metric. Falls back to keeping everything if the
-    // filter would otherwise reject the whole set (degenerate reference).
-    // ---------------------------------------------------------------------
-    std::vector<std::vector<double>> filteredBeats;
-    {
-        // 4a) reference = column-wise median of ALL candidates.
-        std::vector<double> reference(width, NaN);
-        for (int c = 0; c < width; ++c) {
-            std::vector<double> col;
-            col.reserve(beats.size());
-            for (const auto& sl : beats)
-                if (!std::isnan(sl[c])) col.push_back(sl[c]);
-            if (col.empty()) continue;
-            const size_t nc = col.size();
-            const size_t mid = nc / 2;
-            std::nth_element(col.begin(), col.begin() + mid, col.end());
-            reference[c] = (nc % 2)
-                ? col[mid]
-                : 0.5 * (*std::max_element(col.begin(), col.begin() + mid) + col[mid]);
-        }
-
-        // 4b) per-pulse accept/reject on normalized error against reference.
-        filteredBeats.reserve(beats.size());
-        for (const auto& bt : beats) {
-            const double err = pulse_matched_filter::normalizedError(bt, reference);
-            if (err < 0.05) filteredBeats.push_back(bt);
-        }
-        if (filteredBeats.empty()) filteredBeats = beats;   // degenerate ref -> keep all
-    }
-
-    // ---- (5) column-wise NaN-skipping median -> template. --------------
-    outTemplate.assign(width, NaN);
-    for (int c = 0; c < width; ++c) {
-        std::vector<double> col;
-        col.reserve(filteredBeats.size());
-        for (const auto& sl : filteredBeats) {
-            const double v = sl[c];
-            if (!std::isnan(v)) col.push_back(v);
-        }
-        if (col.empty()) continue;
-        const size_t nc = col.size();
-        const size_t mid = nc / 2;
-        std::nth_element(col.begin(), col.begin() + mid, col.end());
-        const double hi = col[mid];
-        if (nc % 2) {
-            outTemplate[c] = hi;
-        }
-        else {
-            // lower median = max of the left partition nth_element already
-            // produced -- no second full sort needed.
-            const double lo = *std::max_element(col.begin(), col.begin() + mid);
-            outTemplate[c] = 0.5 * (lo + hi);
-        }
-    }
-
-    // The foot is fixed by construction -- every beat's own foot was
-    // shifted to this column when it was re-sliced in step (3).
-    outFootCol = padSamples;
-    {
-        int pk = outFootCol; double pmax = -Inf;
-        for (int i = outFootCol; i < width; ++i)
-            if (!std::isnan(outTemplate[i]) && outTemplate[i] > pmax) { pmax = outTemplate[i]; pk = i; }
-        outPeakCol = pk;
-    }
-
-    outIqr = (outFootCol >= 0)
-        ? normalize_features::local_ratio_iqr(filteredBeats, outFootCol)
-        : std::vector<double>(width, 0.0);
-
-    outKeptBeats.reserve(filteredBeats.size());
-    for (const auto& sl : filteredBeats) outKeptBeats.push_back(sl);
-}
-
-/**
- * @brief  Foot-anchored templates for every bin of ONE arterial channel
- *         (ABP / ART / ART_PULM), per spec. No ECG R-peaks involved --
- *         self-detected and self-anchored, see
- *         build_arterial_template_foot_anchored.
- *
- * @param bins        Input bins.
- * @param sigMember   Member-pointer selecting the channel (abpSignal /
- *                     artSignal / artPulmSignal).
- * @param channelRate Sample rate of that channel.
- * @param padSeconds  Lead-in before the foot / trail-out pad. 0.25 matches
- *                     the PPG/ECG convention.
- */
-inline PPGTemplatesResult CreateArterialTemplates(
-    const vector<output_binfile_data>& bins,
-    std::vector<double> output_binfile_data::* sigMember,
-    double channelRate,
-    double padSeconds = 0.4)
-{
-    size_t n = bins.size();
-    PPGTemplatesResult out;
-    out.templates.assign(n, {});
-    out.iqrs.assign(n, {});
-    out.kept.assign(n, {});
-    out.peakCol.assign(n, -1);
-    out.footCol.assign(n, -1);
-
-    if (channelRate <= 0.0) return out;   // channel absent from this dataset
-
-    // find_foot_pulseox (called per-bin below) has its OWN internal
-    // #pragma omp parallel for over beat rows. Without this cap, that
-    // becomes a nested parallel region inside the per-bin loop just below --
-    // either real thread oversubscription (if nesting is enabled somewhere
-    // else in this process) or repeated fork/join overhead on every single
-    // bin x channel call (if it isn't). omp_set_nested(0) forces the inner
-    // region to always collapse to the calling thread; parallelism stays at
-    // the per-bin level, where it's actually worth it.
-    // (omp_set_max_active_levels is OpenMP 3.0+ and isn't available under
-    // MSVC's default /openmp flag, which only implements OpenMP 2.0 --
-    // omp_set_nested is the 2.0-era equivalent and does the same thing.)
-    omp_set_nested(0);
-
-    int threads = std::min(8, static_cast<int>(n > 0 ? n : 1));
-#pragma omp parallel for schedule(dynamic) num_threads(threads)
-    for (int i = 0; i < static_cast<int>(n); ++i) {
-        const auto& b = bins[i];
-        if (b.bad_segment || (b.*sigMember).empty()) continue;
-        try {
-            build_arterial_template_foot_anchored(
-                b.*sigMember, channelRate, padSeconds,
-                out.templates[i], out.iqrs[i], out.kept[i],
-                out.peakCol[i], out.footCol[i]);
-        }
-        catch (...) {
-            out.templates[i] = {};
-            out.iqrs[i] = {};
-            out.kept[i] = {};
-            out.peakCol[i] = -1;
-            out.footCol[i] = -1;
+            // NOTHING TO CLEAR. The six assignments above are the last thing
+            // the try does, so a throw leaves this bin at the empty state the
+            // arrays were initialised to -- and that state cannot go stale as
+            // fields are added, which is what the by-hand version could not
+            // promise (a bin whose waveforms were discarded but whose
+            // keptSlices survived would present a join key pointing at beats
+            // that are no longer there).
         }
     }
 

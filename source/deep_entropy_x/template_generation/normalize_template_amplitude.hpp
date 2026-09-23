@@ -102,7 +102,7 @@ namespace normalize_features {
             // lead, so the old per-lead subscripts are gone. The reference is a
             // per-subject quantity measured on the sinus seed, so slot 0 is the
             // right slot as well as the only one this ever read.
-            const tbank::BankMarkerSet& rmk =  b.slotMarks(ch, 0, AnchorType::R_PEAK);
+            const tbank::BankMarkerSet& rmk = b.slotMarks(ch, 0, AnchorType::R_PEAK);
             // p_peak is no longer stored on BankMarkerSet: it is a reactive
             // glyph, fully determined by the P-onset and Q-onset bars, so it is
             // derived here from the same bars the screen and the CSV use.
@@ -110,7 +110,7 @@ namespace normalize_features {
                 ecg, rmk.p_begin, rmk.q_onset, rmk.s_end, rmk.t_end, sampleRateHz);
             EcgFeatures f = computeEcgFeatures(ecg,
                 rx.p_peak, rmk.q_onset, b.r_peak_ch[ch],
-                rmk.s_end, rmk.t_end, sampleRateHz);
+                rmk.s_end, rmk.t_end, sampleRateHz, b.polarity.sign(ch));
             const double ry = sample_y(ecg, f.r_idx);
             const double sy = sample_y(ecg, f.s_idx);
             if (std::isnan(ry) || std::isnan(sy)) continue;
@@ -203,17 +203,178 @@ namespace normalize_features {
     // Spread (IQR, sd) in RAW pulse units -> normalized units.
 
 
+    // ==================================================================
+    // DISPLAY SCALE FOR A PULSE TRACE: FOUR TIERS, NEVER A BLANK PANEL
+    // ==================================================================
+    //
+    // WHAT THIS EXISTS TO PREVENT. pulse_norm returns NaN for EVERY SAMPLE when
+    // ref is not finite, and calculate_perfusion_index does the same when
+    // |foot_y| < 1e-12. One unusable scalar therefore erased the whole
+    // waveform -- and erased it invisibly: the trace draw skips NaN, so nothing
+    // was painted; compute_visible_range found no finite sample and left the
+    // axis at its 0..1 default; and drawFeatureGlyphs draws a glyph whose
+    // sample is NaN at the axis FLOOR, so the pulse fiducials lined up along
+    // the bottom of the panel and read as a real detection of a real waveform
+    // sitting too low to see. A bank slot with 878 clean beats rendered as an
+    // empty panel with marks on the floor.
+    //
+    // Both inputs fail for ordinary reasons. ref comes from
+    // compute_pulse_global_ref, which reads the BIN-level ppgTemplate and its
+    // marks -- a different object from the ppg_bank slot the panel draws, and
+    // one that is empty or unmarked on records whose pulse waveform only ever
+    // existed per bank slot, so median_finite gets nothing and returns NaN.
+    // foot_y fails when the slot's own onset is unset, or when the template is
+    // stored baseline-subtracted and its foot sits at zero.
+    //
+    // THE ECG SIDE ALREADY DEGRADES: ecg_norm passes the raw value through on
+    // an unusable ref rather than returning NaN, which is why an ECG panel
+    // still draws when its reference is missing. This makes the pulse path
+    // agree with it -- and with normalize_pulse_trace's own documented contract
+    // ("If the ref or foot is not usable, returns raw unchanged"), which the
+    // code did not honour.
+    //
+    // FOR DISPLAY ONLY. pulse_norm and pulse_ratio_norm keep their strictness,
+    // deliberately: an extracted FEATURE that could not be normalized must be
+    // NaN, because a number in unknown units is worse than an absent one. A
+    // TRACE is different -- its units are written on the axis beside it, and
+    // the operator marking landmarks on it needs to see its shape.
+    struct PulseDisplayScale {
+        // Which transform was applied, worst case last. The caller can label
+        // the axis with it; nothing here decides anything from it.
+        // ---- WHY EVERY TIER DRAWS SOMETHING -----------------------------
+        //
+        // REJECTION IS AN UPSTREAM DECISION, NOT A DIVISION THAT FAILED. A
+        // pulse slot is legitimately refused a panel for reasons that are about
+        // the pulse: no template, no members, tooFewBeats() below the
+        // configured minimum. Those produce hasPPG == false and an empty panel,
+        // which is correct and is what an operator should see.
+        //
+        // An unusable `ref` or `foot_y` is NOT one of those reasons. Both are
+        // scalars that sit outside the waveform:
+        //
+        //   ref     is Global_Ref_person -- ONE number for the whole SUBJECT,
+        //           from compute_pulse_global_ref, which reads the BIN-level
+        //           ppgTemplate and its marks rather than the ppg_bank slot any
+        //           panel draws. When it comes back NaN, nothing has been
+        //           rejected and no individual pulse is at fault -- yet the
+        //           strict path blanked every panel in the record, hundreds of
+        //           clean slots included.
+        //   foot_y  is one detected landmark. A foot that could not be located,
+        //           or that sits at zero on a baseline-subtracted template, is
+        //           a failure to MEASURE a waveform that is sitting right
+        //           there with several hundred beats behind it.
+        //
+        // AND THE DISPLAY DOES NOT NEED EITHER ONE. The operator's job on this
+        // panel is to place landmarks, which is a judgement about SHAPE, and
+        // every tier below is an affine transform -- shape is invariant to all
+        // of them. Normalization buys cross-subject amplitude comparability,
+        // which matters to the exported features and not to the picture. So
+        // nothing here returns NaN: the trace is drawn in the best units
+        // available and the axis says which, and the operator can still work.
+        //
+        // The strictness stays where a wrong number would be believed:
+        // pulse_norm and pulse_ratio_norm, the FEATURE path, still return NaN
+        // rather than a number in unknown units.
+        enum class Tier {
+            PerfusionIndexOverRef,   // 100*(y-foot)/|foot| / |ref|  -- the full transform
+            PerfusionIndex,          // 100*(y-foot)/|foot|          -- ref unusable
+            FootZeroed,              // y - foot                     -- |foot| too small to divide by
+            Raw                      // y                            -- no usable foot at all
+        };
+        Tier   tier = Tier::Raw;
+        double foot_y = std::numeric_limits<double>::quiet_NaN();
+        double ref = std::numeric_limits<double>::quiet_NaN();
+
+        // What the axis beside the trace should read. "norm" is reserved for
+        // the full transform: an axis that says normalized while the trace is
+        // in PI units is how a fallback gets mistaken for the real thing three
+        // months later.
+        // What the axis beside the trace should read. "norm" is reserved for
+        // the full transform: an axis that says normalized while the trace is
+        // in PI or raw units is how a fallback gets mistaken for the real thing
+        // three months later.
+        const char* axisUnits() const {
+            switch (tier) {
+            case Tier::PerfusionIndexOverRef: return "norm";
+            case Tier::PerfusionIndex:        return "PI, no ref";
+            case Tier::FootZeroed:            return "foot-zeroed";
+            default:                          return "raw, no foot";
+            }
+        }
+        // True when the trace is in the cross-subject comparable units the
+        // normalization is FOR.
+        bool normalized() const { return tier == Tier::PerfusionIndexOverRef; }
+
+        static PulseDisplayScale resolve(double foot_y, double ref) {
+            PulseDisplayScale s;
+            s.foot_y = foot_y;
+            s.ref = ref;
+            const bool footFinite = !std::isnan(foot_y);
+            // |foot_y| >= 1e-12 gates only the DIVISION by it. A foot at zero
+            // on a baseline-subtracted template is still a perfectly good
+            // vertical origin to subtract, which is what FootZeroed does.
+            const bool footDivisible = footFinite && std::abs(foot_y) >= 1e-12;
+            const bool refOk = std::isfinite(ref) && ref != 0.0;
+            if (footDivisible && refOk) s.tier = Tier::PerfusionIndexOverRef;
+            else if (footDivisible)     s.tier = Tier::PerfusionIndex;
+            else if (footFinite)        s.tier = Tier::FootZeroed;
+            else                        s.tier = Tier::Raw;
+            return s;
+        }
+
+        // The AMPLITUDE transform: affine, so it shifts and scales. Every tier
+        // preserves shape, which is why a fallback is still markable.
+        double value(double y) const {
+            if (std::isnan(y)) return y;
+            switch (tier) {
+            case Tier::PerfusionIndexOverRef:
+                return (100.0 * (y - foot_y) / std::abs(foot_y)) / std::abs(ref);
+            case Tier::PerfusionIndex:
+                return 100.0 * (y - foot_y) / std::abs(foot_y);
+            case Tier::FootZeroed:
+                return y - foot_y;
+            default:
+                return y;
+            }
+        }
+
+        // The SPREAD transform: the SCALE FACTOR of `value` with the shift
+        // dropped, because a spread is a difference and a shift cancels in it.
+        // Taking `value` on a spread instead is how a band ends up offset from
+        // the trace it belongs to by a whole foot-height.
+        double spread(double s) const {
+            if (std::isnan(s)) return s;
+            switch (tier) {
+            case Tier::PerfusionIndexOverRef:
+                return (100.0 * s / std::abs(foot_y)) / std::abs(ref);
+            case Tier::PerfusionIndex:
+                return 100.0 * s / std::abs(foot_y);
+            default:
+                return s;   // FootZeroed and Raw both scale by 1
+            }
+        }
+
+        std::vector<double> applyTrace(const std::vector<double>& raw) const {
+            std::vector<double> out(raw.size());
+            for (size_t i = 0; i < raw.size(); ++i) out[i] = value(raw[i]);
+            return out;
+        }
+        std::vector<double> applySpread(const std::vector<double>& raw) const {
+            std::vector<double> out(raw.size());
+            for (size_t i = 0; i < raw.size(); ++i) out[i] = spread(raw[i]);
+            return out;
+        }
+    };
+
     inline std::vector<double> scale_pulse_spread_by_ref(const std::vector<double>& raw, double foot_y, double ref) {
         //this scales things so the std band in the ppg is visible in the viewer.
         //The spread is computed in raw units, then scaled to normalized units by dividing by the global reference (median PI) and the local foot value.
-        std::vector<double> out(raw.size());
-        const bool ok = std::isfinite(ref) && ref != 0.0
-            && !std::isnan(foot_y) && std::abs(foot_y) >= 1e-12;
-        for (size_t i = 0; i < raw.size(); ++i)
-            out[i] = (ok && !std::isnan(raw[i]))
-            ? (100.0 * raw[i] / std::abs(foot_y)) / std::abs(ref)
-            : std::numeric_limits<double>::quiet_NaN();
-        return out;
+        //
+        // TIERED, via PulseDisplayScale: an unusable ref or foot used to blank
+        // the band exactly as it blanked the trace. The tier is derived from
+        // (foot_y, ref), so as long as the caller passes the SAME pair it used
+        // for the trace, the band lands in the same units by construction.
+        return PulseDisplayScale::resolve(foot_y, ref).applySpread(raw);
     }
     inline std::vector<double> normalize_ecg_trace(const std::vector<double>& raw, double ref) {
         return scale_array_by_ref(raw, ref);
@@ -222,11 +383,31 @@ namespace normalize_features {
     // Pulse: local ratio (per-sample, using THIS trace's own foot) then
     // divide by ref. Works for the mean template or any individual beat --
     // never uses a median/global foot value, per the documented algorithm.
-    inline std::vector<double> normalize_pulse_trace(const std::vector<double>& raw, int footIdx, double ref) {
-        const double footY = sample_y(raw, footIdx);
-        std::vector<double> out(raw.size());
-        for (size_t i = 0; i < raw.size(); ++i) out[i] = pulse_norm(raw[i], footY, ref);
-        return out;
+    //
+    // DEGRADES RATHER THAN BLANKING when the ref or the foot is unusable --
+    // which is what this function's declaration has always said it did and
+    // what, through pulse_norm, it did not: one unusable scalar returned NaN
+    // for every sample and the trace vanished from the panel. See
+    // PulseDisplayScale for the tiers and for why the feature path keeps
+    // pulse_norm's strictness instead.
+    //
+    // footIdx IS A DOUBLE. It was an int, and every pulse foot reaching it is
+    // sub-sample -- BankPulseMarkerSet::onset is a double, and
+    // normalize_ppg_or_similar's own parameter is a double -- so the int
+    // narrowed the foot to a whole column twice on the way in (once at the
+    // viewer's `int ppgFootIdx`, once here) and then handed it to sample_y,
+    // which interpolates. Two truncations to reach a function that did not
+    // need either.
+    inline std::vector<double> normalize_pulse_trace(const std::vector<double>& raw, double footIdx, double ref) {
+        return PulseDisplayScale::resolve(sample_y(raw, footIdx), ref)
+            .applyTrace(raw);
+    }
+
+    // The tier a trace WOULD be drawn in, without building the trace. For a
+    // caller that wants to label the axis or log the fallback.
+    inline PulseDisplayScale pulse_display_scale(const std::vector<double>& raw,
+        double footIdx, double ref) {
+        return PulseDisplayScale::resolve(sample_y(raw, footIdx), ref);
     }
 
     // ------------------------------------------------------------------
@@ -656,6 +837,13 @@ namespace normalize_features {
         std::vector<double> samples;   // R at column rCol; PQ-zeroed when pqBaseline is not NaN
         int    rCol = -1;
         int    rrLen = -1;             // this beat's own RR, in samples
+        // THIS BEAT'S CHANNEL POLARITY, from LeadPolarity::sign(lead), stamped
+        // by the slicer. Carried on the beat rather than threaded through
+        // qrs_window_of / build_feature_time_series / _3ch, because those three
+        // are handed a beat with no channel index -- and a ProportionalBeat
+        // already carries its own rCol and rrLen, so its own sign belongs here
+        // too. Defaults to upright so an un-stamped beat behaves as before.
+        double sgn = 1.0;
         double pqBaseline = std::numeric_limits<double>::quiet_NaN();   // subtracted DC level; NaN if PQ unavailable
     };
 
@@ -667,6 +855,7 @@ namespace normalize_features {
 
     inline ProportionalBeatSet segment_beats_proportional(
         const std::vector<double>& ecg, const std::vector<size_t>& rPeaks, double fs,
+        double sgn,
         double beforeFrac = 0.25, double afterFrac = 0.75)
     {
         ProportionalBeatSet out;
@@ -710,6 +899,7 @@ namespace normalize_features {
                 pb.samples[static_cast<size_t>(k - start)] = ecg[static_cast<size_t>(k)];
             pb.rCol = static_cast<int>(before);
             pb.rrLen = static_cast<int>(rr);
+            pb.sgn = sgn;
 
             // PQ isoelectric zero, in this beat's own local (sliced)
             // coordinates: seed_p_peak / detect_p_end / compute_q_onset all take
@@ -722,9 +912,9 @@ namespace normalize_features {
             // marks, and all that is wanted is the rough position that opens
             // detect_p_end's search. The seed is exactly that and nothing else
             // reads it.
-            const double qOnD = FeatureMarks::find_q_onset(pb.samples, fs, pb.rCol);
+            const double qOnD = FeatureMarks::find_q_onset(pb.samples, fs, pb.rCol, sgn);
             const double pPeakD = FeatureMarks::find_p_peak(pb.samples, 0.0, qOnD, fs);
-            const int pEnd = FeatureMarks::find_p_end(pb.samples, pb.rCol, fs, pPeakD);
+            const int pEnd = FeatureMarks::find_p_end(pb.samples, pb.rCol, fs, sgn, pPeakD);
             // compute_q_onset's monophasic-R path can return r_idx itself, which
             // would run the PQ window into the R upstroke. Require a real gap.
             const int qGuard = pb.rCol - static_cast<int>(std::lround(0.020 * fs));
@@ -781,8 +971,8 @@ namespace normalize_features {
     // unavailable, which the callers treat as "skip this beat" (NaN).
     inline std::pair<int, int> qrs_window_of(const ProportionalBeat& pb, double fs) {
         if (pb.rCol < 0 || pb.samples.empty() || !(fs > 0.0)) return { -1, -1 };
-        const double qOnsetD = FeatureMarks::find_q_onset(pb.samples, fs, pb.rCol);
-        const double jPointD = FeatureMarks::find_j_point(pb.samples, fs, pb.rCol);
+        const double qOnsetD = FeatureMarks::find_q_onset(pb.samples, fs, pb.rCol, pb.sgn);
+        const double jPointD = FeatureMarks::find_j_point(pb.samples, fs, pb.rCol, pb.sgn);
         if (std::isnan(qOnsetD) || std::isnan(jPointD)) return { -1, -1 };
         const int lo = static_cast<int>(std::lround(qOnsetD));
         const int hi = static_cast<int>(std::lround(jPointD));
@@ -1139,7 +1329,8 @@ namespace normalize_features {
     // needs .ecgSignal/.ecgSignal2/.ecgSignal3 and .ch1/.ch2/.ch3.raw.
     template <class Bins>
     inline bool writeFeatureTimeSeriesCsv(const std::string& path,
-        const std::string& subjectId, const Bins& bins, double ecgFs)
+        const std::string& subjectId, const Bins& bins, double ecgFs,
+        const LeadPolarity& pol)
     {
         std::ofstream f(path, std::ios::trunc);
         if (!f) return false;
@@ -1159,7 +1350,8 @@ namespace normalize_features {
 
             normalize_features::ProportionalBeatSet segs[3];
             for (int c = 0; c < 3; ++c)
-                segs[c] = normalize_features::segment_beats_proportional(*sig[c], *rp[c], ecgFs);
+                segs[c] = normalize_features::segment_beats_proportional(*sig[c], *rp[c], ecgFs,
+                    pol.sign(c));
 
             // 3-lead series (length/area from ch1 + cross-lead volume), plus
             // per-channel length/area for ch2/ch3 from their own segments.

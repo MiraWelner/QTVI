@@ -318,6 +318,9 @@ void TemplateViewerWindow::loadSubject(const template_io::TemplateFile& tf,
 
 void TemplateViewerWindow::initAfterBinsLoaded() {
     //various bookeeping after the bins are loaded
+
+    for (TemplateBin& b : m_bins) b.polarity = m_polarity;
+
     max_leads = 1;
     for (const auto& b : m_bins) {
         int nl = (int)leadsForBin(b).size();
@@ -370,12 +373,12 @@ void TemplateViewerWindow::seedOneBin(TemplateBin& b) const
         auto it = b.anchored.find(static_cast<int>(a));
         if (it == b.anchored.end()) continue;   // no block -> nothing to seed
         b.ch1 = it->second[0]; b.ch2 = it->second[1]; b.ch3 = it->second[2];
-        FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, a);
+        FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, a, b.polarity);
     }
 
     // R last so the flat state the grid reads is R's.
     b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
-    FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK);
+    FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK, b.polarity);
 
     // NO ECG GLYPH SYNC: p_peak is not stored any more, so there is nothing to
     // cache. The PPG reactive values ARE cached (t50 / t80 / t80_rise / pw80 /
@@ -555,14 +558,14 @@ void TemplateViewerWindow::applyAlignmentSelection(bool force, AnchorType a) {
 // walk a beat in. Changing one must not change the other.
 namespace {
     constexpr std::array<AnchorType, 4> kAlignRing = {
-        AnchorType::P_PEAK,
+        AnchorType::P_ONSET,
         AnchorType::Q_ONSET,
         AnchorType::R_PEAK,
         AnchorType::J_POINT,
     };
     const char* alignRingButton(AnchorType a) {
         switch (a) {
-        case AnchorType::P_PEAK: return "p_align_button";
+        case AnchorType::P_ONSET: return "p_align_button";
         case AnchorType::Q_ONSET: return "q_align_button";
         case AnchorType::R_PEAK:  return "r_align_button";
         case AnchorType::J_POINT: return "j_point_align_button";
@@ -629,7 +632,7 @@ void TemplateViewerWindow::wireAlignButtons() {
     struct Btn { const char* name; bool force; AnchorType a; };
     static const Btn kBtns[] = {
         { "r_align_button",         true,  AnchorType::R_PEAK  },
-        { "p_align_button",         true,  AnchorType::P_PEAK },
+        { "p_align_button",         true,  AnchorType::P_ONSET },
         { "q_align_button",         true,  AnchorType::Q_ONSET },
         { "j_point_align_button",         true,  AnchorType::J_POINT },
         { "automatic_align_button", false, AnchorType::R_PEAK  },
@@ -652,7 +655,7 @@ void TemplateViewerWindow::wireAlignButtons() {
     struct Key { const char* seq; const char* btn; bool force; AnchorType a; };
     static const Key kKeys[] = {
         { "A", "automatic_align_button", false, AnchorType::R_PEAK  },
-        { "P", "p_align_button",         true,  AnchorType::P_PEAK },
+        { "P", "p_align_button",         true,  AnchorType::P_ONSET },
         { "Q", "q_align_button",         true,  AnchorType::Q_ONSET },
         { "R", "r_align_button",         true,  AnchorType::R_PEAK  },
         { "J", "j_point_align_button",   true,  AnchorType::J_POINT },

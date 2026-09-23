@@ -103,7 +103,12 @@ void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
     // they keep the bin-wide pulse beat count, which for them IS the whole
     // population -- there is no per-group arterial cohort to get wrong.
     int nPulseBeats = -1;
-    int footIdx = -1;     // this channel's foot/onset column (perfusion-index baseline)
+    // A DOUBLE, like every pulse field it is assigned from (pulse_marks.onset,
+    // b.abp_onset and the rest are all sub-sample). As an int it truncated the
+    // foot to a whole column before sample_y, which interpolates, was given it
+    // -- and the grid panel this one zooms into made the same conversion, so
+    // the two agreed only by both being wrong in the same direction.
+    double footIdx = -1.0;   // this channel's foot/onset column (perfusion-index baseline)
     QString chLabel;
     if (BinPlotWidget::markerIsPpg(marker)) {
         // THE GROUP'S PULSE, NOT THE BIN'S: ppg_bank slot i is group i, on
@@ -570,13 +575,22 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
                 //     curves were drawn at raw amplitudes on a normalized
                 //     axis and sat off the trace by a factor of eref.
                 //
-                //  2. SIGN. compute_p_begin, compute_q_onset and
-                //     compute_j_point all fit `u`, which is -v when the QRS
-                //     is negative in this lead, so on those leads the curve
-                //     is the mirror of the trace it is drawn over.
-                //     compute_t_end fits v directly and needs no flip, but it
-                //     rides the same closures, so the sign is resolved per
-                //     LANDMARK, not per lead.
+                //  2. SIGN. find_p_begin, find_q_onset and find_j_point all
+                //     fit upright_copy(v, sgn), which is -v when the operator
+                //     marked this lead reversed, so on those leads the curve is
+                //     the mirror of the trace it is drawn over. find_t_end fits
+                //     v directly and needs no flip, but it rides the same
+                //     closures, so the sign is resolved per LANDMARK, not per
+                //     lead.
+                //
+                //     THE POLARITY COMES FROM THE BIN, not from the waveform.
+                //     This line used to re-run qrs_positive_at on *meanRawEcg
+                //     while the finder had run it on whatever array IT was
+                //     handed -- two independent derivations of one fact, and had
+                //     they ever disagreed the drawn curve would have been
+                //     mirrored relative to its own trace with nothing saying
+                //     why. Both now read TemplateBin::polarity, the operator's
+                //     per-channel "Lead Reversed" answer.
                 //
                 // Negating the closure is exact and is not a re-fit: it is the
                 // same fitted model, read in v's units instead of u's.
@@ -585,7 +599,7 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
                         (marker == BinPlotWidget::EcgPBegin
                             || marker == BinPlotWidget::EcgQBegin
                             || marker == BinPlotWidget::EcgSEnd)
-                        && !FeatureMarks::qrs_positive_at(*meanRawEcg, svF.r_col);
+                        && b.polarity.isInverted(leadIdx);
                     const double amp = (fitsInverted ? -1.0 : 1.0) / eref;
                     if (amp != 1.0)
                         for (auto& fn : transCand.curve)
@@ -623,7 +637,7 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
                     || marker == BinPlotWidget::EcgPPeak
                     || marker == BinPlotWidget::EcgQPeak
                     || marker == BinPlotWidget::EcgTPeak);
-            // NO Q TROUGH => NO FIT. compute_q_onset falls back to its
+            // NO Q TROUGH => NO FIT. find_q_onset falls back to its
             // R-upstroke branch on a monophasic-R beat, and lm.q_onset_found is
             // false -- the same flag the grid uses to draw a CIRCLE there
             // instead of an X, and the reason lm.q_peak comes back -1. Neither

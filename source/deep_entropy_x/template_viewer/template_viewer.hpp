@@ -11,13 +11,6 @@
 #include <unordered_map>
 #include <cmath>
 #include <QString>
-#include "template_marking_gui/template_marking_bin_io.hpp"
-#include "template_marking_gui/bin_plot_widget.hpp"
-#include "template_marking_gui/focus_panel_widget.hpp"
-#include "template_anchoring/anchor_view.hpp"
-#include "logging/boundary_training_log.hpp"
-
-// Needed by the template_viewer_*.cpp units, which include only this header.
 #include <QMessageBox>
 #include <QRadioButton>
 #include <QPushButton>
@@ -45,8 +38,11 @@
 #include <iostream>
 #include <cstdio>
 #include <cassert>
-#include <set>
-#include "ui_template_viewer.h"
+
+#include "template_marking_gui/template_marking_bin_io.hpp"
+#include "template_marking_gui/bin_plot_widget.hpp"
+#include "template_marking_gui/focus_panel_widget.hpp"
+#include "template_marking_gui/anchor_view.hpp"
 #include "template_marking_gui/feature_marks.hpp"
 #include "template_marking_gui/alignment.hpp"
 #include "template_marking_gui/global_intervals.hpp"
@@ -55,8 +51,11 @@
 #include "template_marking_gui/ppg_derivative.hpp"
 #include "template_marking_gui/subsample_refine.hpp"
 #include "template_marking_gui/curve_fit.hpp"
+
 #include "template_generation/normalize_template_amplitude.hpp"
 #include "peak_finding/FilterUtils.hpp"
+#include "logging/boundary_training_log.hpp"
+#include "ui_template_viewer.h"
 
 // addVcgPanel takes one by const reference and nothing here needs its
 // layout, so a declaration is enough -- global_intervals.hpp is included
@@ -98,6 +97,15 @@ public:
 
     void set_vcg_output_dir(const QString& dir) { m_vcgOutputPath = dir; }
     void setNormOutputDir(const QString& dir) { m_normOutputPath = dir; } //write <id>_feature_norm.csv and <id>_cv_check.csv 
+
+    // THE OPERATOR'S PER-CHANNEL "Lead Reversed" ANSWER, from the noise-
+    // marking stage via AnalysisJob::ecg{1,2,3}_inverted. MUST BE CALLED
+    // BEFORE loadSubject: loadSubject stamps it onto every bin and the
+    // seeding pass reads it from there, so a setter called afterwards would
+    // leave the whole record detected as upright -- and unlike the empty-path
+    // setters above, the default here is silently WRONG rather than visibly
+    // absent. Same trap as set_vcg_output_dir, worse consequence.
+    void setLeadPolarity(const LeadPolarity& pol) { m_polarity = pol; }
 
     void loadSubject(const QString& templatePath, const QString& markingPath,
         const QString& subjectId, double sampleRateHz,
@@ -212,13 +220,22 @@ private:
     // part of a 480-line function that could be moved without a compiler in
     // hand. Both const: they read m_bins and the page table and build a value.
 
-    /// This page's (global bin index, template index) columns, in draw order.
-    /// A bin holding several morphologies occupies several adjacent columns.
+    /// This page's (global bin index, template index) columns, in draw order --
+    /// a slice of m_allColumns. `start` and `count` are COLUMN indices now, not
+    /// bin indices, so that a page can be filled exactly.
     std::vector<std::pair<int, int>> pageColumns(int start, int count) const;
 
+    /// stderr note listing bins that produced no column at all, because every
+    /// one of their templates fell below the minimum-beats threshold. Once per
+    /// pagination pass, for the whole record.
+    void reportBinsWithNoColumns() const;
+
     /// Grid row count for this page. `compact` wraps panels, so it has to be
-    /// computed from the COLUMN count, not the bin count.
-    int pageGridRows(bool compact, int nCols, int start, int end) const;
+    /// computed from the COLUMN count, not the bin count. Takes the page's
+    /// columns because the VCG probe needs the bins they belong to, and with
+    /// column-indexed pages that set is no longer a contiguous [start, end).
+    int pageGridRows(bool compact,
+        const std::vector<std::pair<int, int>>& cols) const;
 
     /// The VCG panel on the bottom row of one column. Display only -- no
     /// markers, no marker signals. Takes what it draws explicitly rather than
@@ -459,6 +476,9 @@ private:
     QString m_templateDir;   // folder containing templates.bin/.csv (screenshot target)
     QString m_vcgOutputPath;   // cfg.vcg_output; <id>_vcg.csv lands here
     QString m_normOutputPath;  // feature_norm / cv_check CSVs land here
+    // Stamped onto every TemplateBin in loadSubject; the bins are what every
+    // detector call reads, so this member is only the inbound copy.
+    LeadPolarity m_polarity;
     QString m_subjectId;
     double  m_sampleRate = 0.0;    // ECG rate; also feeds ECG-only feature/ms code below
     double  m_ppgRateHz = 0.0;
@@ -566,11 +586,37 @@ private:
     // more markable templates in one bin means the bank over-segmented).
     int m_maxColsPerPage = 8;
 
-    // (first bin, bin count) per page, packed by column budget. Rebuilt whenever
-    // marking eligibility changes, because confirming a template's class can add
-    // or remove a column and therefore move every later page boundary.
+    // ---- THE PAGE TABLE IS IN COLUMNS, NOT BINS -------------------------
+    //
+    // Every (bin, marking slot) pair in the record, in draw order. Built once
+    // per pagination pass so the page table can index into it directly.
+    std::vector<std::pair<int, int>> m_allColumns;
+
+    // (first COLUMN, column count) per page. This used to be (first bin, bin
+    // count), packed so that a bin's columns never straddled a page boundary --
+    // and since a bin contributes one column per markable morphology, that made
+    // the page size float: a page whose next bin held three templates stopped at
+    // ten or eleven panels rather than taking two of the three, so most screens
+    // were short of the 12 the grid is laid out for and the panel sizes changed
+    // from page to page.
+    //
+    // Pages are exact now. Every page holds the full budget except the last,
+    // which holds the remainder, and a bin with several templates is split
+    // across the boundary when that is what filling the page takes. Nothing
+    // downstream requires a bin's columns to be adjacent: propagation resolves a
+    // (bin, slot) to a column through m_pageColOf, which already answers "not on
+    // this page" for a pair that is not.
+    //
+    // Rebuilt whenever marking eligibility changes, because confirming a
+    // template's class can add or remove a column and therefore move every
+    // later page boundary.
     std::vector<std::pair<int, int>> m_pages;
     void buildPages();
+
+    /// Columns a page may hold: the full compact grid when panels wrap, one
+    /// column per bin-width otherwise (the leads occupy the rows there). One
+    /// function so buildPages and the grid layout cannot disagree.
+    int pageColumnBudget() const;
 
     int m_currentPage = 0;
     int m_totalPages = 1;
