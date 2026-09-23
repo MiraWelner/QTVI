@@ -749,7 +749,24 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
             // The contest did not run: leave `out` as it came back, so the
             // focus panel does not draw a cubic as the placing model for a fit
             // that does not exist.
-            if (!out.valid || !(out.draw[1].position >= 0.0)) return -1.0;
+            // FALL BACK TO THE SEED, NOT TO -1.
+            //
+            // Returning -1 here is what made the pulse end disappear. The
+            // version of this detector that worked refined through
+            // subsample_refine::asymmetricExtremum wrapped in cld(), i.e. it
+            // CLAMPED and therefore always produced a position; the fit was a
+            // refinement of the seed, never a veto on it. peakCandidates bails
+            // on n < 5 / seed out of range / halfWidth < 3, and the end's
+            // fallback seed is Wc-1, which is exactly where the fit cannot run
+            // -- so every bin whose end landed near the window edge reported no
+            // end at all, and t80, peak2, the notch clamp and pw80 lost their
+            // right bracket with it.
+            //
+            // The integer seed IS a trough: trough_in or the local-minimum
+            // walk found it on real samples. Handing it back unrefined is a
+            // whole-column answer instead of a sub-sample one, which is what
+            // the old cld() path delivered in the same situation.
+            const bool fitRan = out.valid && (out.draw[1].position >= 0.0);
 
             // CLAMPED INTO THE SEARCH WINDOW, NOT REJECTED FOR LEAVING IT.
             // The cubic's vertex is free to move +-halfWidth from the seed, so
@@ -760,8 +777,10 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
             // after the first finite sample, so clamping to it also keeps the
             // result out of the leading NaN pad, which is what the bound was
             // for in the first place.
-            double pos = std::max(cld(out.draw[1].position),
-                static_cast<double>(searchLo));
+            double pos = cld(std::max(
+                fitRan ? cld(out.draw[1].position)
+                : static_cast<double>(seed),
+                static_cast<double>(searchLo)));
 
             // A LANDMARK STILL NEEDS A SAMPLE UNDER IT. This is the one
             // condition that turns into an all-NaN trace downstream (the
@@ -770,8 +789,14 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
             // refined trough is refused.
             if (std::isnan(sample_at(v, pos))) return -1.0;
 
-            out.winner = 1;
-            out.placement = pos;
+            // winner/placement ONLY when the contest actually ran, so the
+            // focus panel never draws a cubic as the placing model for a fit
+            // that does not exist. On the fallback path `out` is left exactly
+            // as peakCandidates returned it.
+            if (fitRan) {
+                out.winner = 1;
+                out.placement = pos;
+            }
             return pos;
         };
 
@@ -796,34 +821,28 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     // -- which divides by the sample AT the foot -- is measured against the
     // wrong baseline.
     //
-    // Walking back to the FIRST local minimum is the anchoring-independent
-    // answer: the foot of the pulse that owns this peak is the trough
-    // immediately before it, whatever else the window contains. The lookback is
-    // bounded because a pulse upstroke is short -- 400 ms is generous for the
-    // foot-to-peak rise at any plausible heart rate -- so an absent trough
-    // cannot send the search back into a previous cycle.
+    // The bounded local-minimum walk that used to sit here is described in the
+    // block below, with why it was reverted.
     {
+        // THE GLOBAL MINIMUM BEFORE THE PEAK, which is what the working
+        // detector used: trough_in(v, 0, iFloor(g.peak) - 1).
+        //
+        // The bounded walk back to the nearest local minimum replaced it to
+        // stop the foot landing on the PREVIOUS pulse's trough a cycle early.
+        // That hazard is real in principle, but on these templates the walk
+        // was stopping short -- the first interior minimum inside a 400 ms
+        // lookback is as often a wobble on the upstroke as it is the foot --
+        // and alignment.hpp is unchanged from the build where the global
+        // minimum placed this correctly, so the window it searches is the same
+        // window it was verified on.
+        //
+        // searchLo stays lo0: the leading-NaN skip protects the peak seed and
+        // has to protect this one, or refine_trough's clamp can put the foot
+        // in the pad. That bound is the one part of the bounded version worth
+        // keeping.
         const int hi = iFloor(g.peak) - 1;
-        // Bounded lookback, and never past the first finite sample: the
-        // leading-NaN skip protects the peak seed and has to protect this one.
-        const int back = std::max(1, static_cast<int>(std::lround(0.40 * ppgRate)));
-        const int searchLo = std::max(lo0, iFloor(g.peak) - back);
-
-        int seed = -1;
-        // Interior local minimum, scanning backwards from just under the peak.
-        // Non-strict on the left and strict on the right, so a flat-bottomed
-        // trough reports its LAST sample -- the one closest to the upstroke --
-        // rather than wherever the plateau happens to begin.
-        for (int i = hi; i > searchLo; --i) {
-            if (std::isnan(v[i]) || std::isnan(v[i - 1]) || std::isnan(v[i + 1]))
-                continue;
-            if (v[i] <= v[i - 1] && v[i] < v[i + 1]) { seed = i; break; }
-        }
-        // No interior minimum in the lookback (a monotonic rise into the peak,
-        // which is what the first pulse in a window looks like when its own
-        // foot precedes the window): the lowest sample IN THE BOUNDED range,
-        // not in the whole pre-peak span.
-        if (seed < 0) seed = trough_in(v, searchLo, hi);
+        const int searchLo = lo0;
+        const int seed = trough_in(v, searchLo, hi);
         g.onset = refine_trough(seed >= 0 ? seed : searchLo, searchLo,
             g.onset_cand);
     }
@@ -835,42 +854,29 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     // read a whole cycle too long, and every landmark bracketed by (peak, end)
     // -- the notch fallback, t80, peak2, t50's ceiling -- inherits it.
     //
-    // Diastole is longer than the upstroke, so the forward bound is wider: one
-    // full cycle at 30 bpm. Still bounded, so the search cannot run to the end
-    // of a window holding two pulses.
     {
+        // THE GLOBAL MINIMUM AFTER THE PEAK, to the end of the window --
+        // trough_in(v, min(iCeil(g.peak) + 1, Wc - 1), Wc - 1), as the working
+        // detector had it.
+        //
+        // The forward walk to the first local minimum replaced it to stop the
+        // end landing on the NEXT pulse's foot. Same trade as the foot above,
+        // and the same verdict: on a pulse with any dicrotic activity the
+        // first local minimum after systole is the NOTCH, so the walk
+        // systematically reported the end too early -- and when it found
+        // nothing it handed the refiner the search bound, which is where the
+        // fit cannot run.
         const int lo = std::min(iCeil(g.peak) + 1, Wc - 1);
-        const int fwd = std::max(1, static_cast<int>(std::lround(2.0 * ppgRate)));
-        const int searchHi = std::min(Wc - 1, iCeil(g.peak) + fwd);
+        const int seed = trough_in(v, lo, Wc - 1);
+        g.end = refine_trough(seed >= 0 ? seed : Wc - 1, lo0, g.end_cand);
 
-        int seed = -1;
-        for (int i = lo; i < searchHi; ++i) {
-            if (std::isnan(v[i]) || std::isnan(v[i - 1]) || std::isnan(v[i + 1]))
-                continue;
-            // Strict on the left, non-strict on the right: a flat-bottomed
-            // trough reports its FIRST sample, the one closest to the
-            // downstroke -- the opposite tie-break from the foot, and
-            // deliberately so, since each wants the edge nearer its own peak.
-            if (v[i] < v[i - 1] && v[i] <= v[i + 1]) { seed = i; break; }
-        }
-        if (seed < 0) seed = trough_in(v, lo, searchHi);
-        g.end = refine_trough(seed >= 0 ? seed : searchHi, lo0, g.end_cand);
-
-        // SAID OUT LOUD, as the foot is. refine_trough returns -1 on two
-        // conditions -- the sub-sample contest not running at the seed, and a
-        // refined position with no finite sample under it -- and the end had
-        // no message for either, so a -1 propagated in silence through
-        // everything bracketed by (peak, end): t80 fell back to the midpoint,
-        // peak2 lost its right bound, the notch fallback lost the clamp that
-        // keeps it on the drawn waveform, and pw80 measured a width between
-        // two levels that were never located. The three numbers below say
-        // which path was taken: seed < 0 means neither the forward walk nor
-        // trough_in found a trough in [peak+1, peak+2s] and the bound itself
-        // was handed to the refiner.
+        // Kept from the stricter version: refine_trough can still return -1
+        // when the position it lands on has no finite sample under it, and
+        // everything bracketed by (peak, end) degrades silently when it does.
         if (!(g.end >= 0.0))
             std::fprintf(stderr, "[ppg] no end located (peak %.2f, seed %d,"
-                " search [%d,%d), W=%d): t80/peak2/notch bounds unset\n",
-                g.peak, seed, lo, searchHi, Wc);
+                " search [%d,%d], W=%d): t80/peak2/notch bounds unset\n",
+                g.peak, seed, lo, Wc - 1, Wc);
     }
 
     // The foot is the anchor of every amplitude the pulse reports -- the
