@@ -140,6 +140,33 @@ public:
     // templateDir IS EXPLICIT. The path overload derives it from the
     // filename; there is no filename here, and captureCurrentPage and the
     // bins CSV both write into it.
+    // ---- THE PER-BEAT MATRIX, FROM MEMORY ------------------------------
+    //
+    // SET THIS BEFORE loadSubject. post_process already holds the BeatsFile in
+    // the same process -- job.beats, the very matrix the morphology pass built
+    // -- and the operator re-stack needs exactly that. Reading it back off
+    // <stem>_beats.bin instead was a round trip whose only product was a
+    // filename, and a broken one: that file is written by a DEFERRED task on
+    // the worker thread that finalize() runs concurrently with this window, so
+    // for the first minutes of a session -- and for the whole of a first run
+    // on a subject -- there was nothing on disk to read, every pulse gesture
+    // reported "No per-beat pulse data", and a gesture during the write would
+    // have re-averaged over a truncated file while reporting success.
+    //
+    // Same argument, and the same fix, as the in-memory loadSubject overload
+    // below.
+    //
+    // A BORROWED POINTER, NOT A COPY. One record's beats are hundreds of
+    // megabytes. Every consumer on the finalize thread (premark::runAll,
+    // writeEnvelopeReport, writeEcgSQICsv) takes the BeatsFile by const
+    // reference, so concurrent reads are safe -- but the object has to outlive
+    // this window, which it does: main.cpp holds the job in a shared_ptr
+    // across runTemplateMarking and joins the worker afterwards.
+    //
+    // Null (never set) falls back to the file, which is what the path overload
+    // of loadSubject has to do.
+    void setBeats(const template_io::BeatsFile* beats) { m_beatsInMemory = beats; }
+
     void loadSubject(const template_io::TemplateFile& tf,
         const QString& templateDir, const QString& markingPath,
         const QString& subjectId, double sampleRateHz,
@@ -313,7 +340,17 @@ private:
     // Re-anchor this slot's pulse on a corrected foot column: each member
     // beat's own trough is re-found near it and the stack is re-medianed. THE
     // COHORT IS NOT RE-SELECTED -- see ppg_realign.hpp.
-    void realignPulseFromFoot(int binIdx, int templateIdx, double footCol);
+    // `announce` false suppresses the per-column status line. A whole-page
+    // re-stack (realignAllVisiblePulses) calls this once per column, and each
+    // message would overwrite the last -- so the operator would be shown
+    // whichever column happened to be done last and nothing about the rest.
+    //
+    // RETURNS whether the waveform was replaced. The bulk path needs that as
+    // an answer rather than inferring it from m_ppgRealigned: a slot already
+    // in that set stays in it when a later re-stack is REFUSED, so a
+    // membership test would report a refusal as a success.
+    bool realignPulseFromFoot(int binIdx, int templateIdx, double footCol,
+        bool announce = true);
 
     // <stem>_beats.bin, where the per-beat pulse matrix lives. Built from the
     // same directory and stem morphology_csv::set was given, rather than
@@ -326,6 +363,82 @@ private:
     // so -- but inventing a file field for it here would put a claim in the
     // archive that the pipeline never wrote.
     std::set<int> m_ppgRealigned;
+
+    // ---- THE BUILD'S OWN PULSE, KEPT SO "Auto" HAS SOMEWHERE TO GO ------
+    //
+    // (bin, slot) -> the (tmpl, tmpl_iqr) pair the pipeline produced, stashed
+    // at the moment the FIRST re-stack is about to overwrite it. A re-stack
+    // writes slot.tmpl in place -- that is what makes the panel update -- and
+    // that was fine while the only control was a drag, because there is no
+    // un-drag. "Auto" is a radio position the operator can come back to, and
+    // a control that returns to a state has to have kept the state.
+    //
+    // VIEWER-ONLY and not serialized, for the same reason m_ppgRealigned is
+    // not: it is a copy of what the archive already holds, kept so this
+    // window can put it back.
+    std::map<int, std::pair<std::vector<double>, std::vector<double>>> m_ppgBuilt;
+    void stashBuiltPulse(int binIdx, int templateIdx,
+        const tbank::BankTemplate& slot);
+    bool restorePulseAsBuilt(int binIdx, int templateIdx);
+
+    // Normalize one slot's pulse through pulseTraceForSlot and push it into
+    // every panel of its column, in place. Shared by the re-stack and the
+    // restore, so the two cannot come to normalize against different feet.
+    void pushPulseToPanels(int binIdx, int templateIdx,
+        bool alsoFocus = true);
+
+    // ---- THE FOOT BAR'S OWN GESTURE, ON THE OTHER AXIS ------------------
+    //
+    // Level every member row to a common baseline at the column the operator
+    // dragged the foot bar to, then re-median. NO sample moves sideways: the
+    // foot is the pulse's vertical reference (normalize_ppg_or_similar
+    // subtracts and divides by it), so "re-do the foot alignment" is a
+    // levelling -- the horizontal axis belongs to the "Align PPG Horizontal"
+    // group instead.
+    //
+    // Returns whether the waveform was replaced; `announce` as
+    // realignPulseFromFoot.
+    bool relevelPulseAtFoot(int binIdx, int templateIdx, double footCol,
+        bool announce = true);
+
+    // ---- ONE BIN'S BEAT MATRIX, CACHED ONE DEEP -------------------------
+    //
+    // Exactly the cache the old comment in realignPulseFromFoot said to add if
+    // the read ever showed up as a delay: the LAST bin, not all of them. A
+    // percent change re-stacks every column on the page and several of those
+    // are usually sibling slots of one bin, so an uncached read walks the file
+    // once per column to return the same rows.
+    //
+    // Keyed on bin ALONE, so it must be dropped when the subject changes
+    // (clearBeatsCache, from initAfterBinsLoaded) -- bin 3 of the next record
+    // would otherwise be served bin 3 of this one. beatsBinPath() is derived
+    // per call for that same reason and the cache has to follow suit.
+    const template_io::BeatsFile* m_beatsInMemory = nullptr;
+    // KEYED ON (bin, channel), not bin alone: the ECG re-stack reads "CH1".."CH3"
+    // out of the same BeatsFile the pulse path reads "PPG" from, and a cache
+    // ignoring the channel would serve lead 0's rows for lead 2.
+    int m_beatsCacheBin = -1;
+    std::string m_beatsCacheChan;
+    ppg_realign::BinBeats m_beatsCache;
+    const ppg_realign::BinBeats& beatsForBin(int binIdx,
+        const char* channel = "PPG");
+    void clearBeatsCache();
+
+    // ---- THE ECG COUNTERPART OF THE PULSE RE-STACK ----------------------
+    //
+    // Re-stack one (bin, lead, slot) about an operator-corrected landmark and
+    // replace that anchor's per-slot average in place. HORIZONTAL: the P onset
+    // is a time landmark, unlike the pulse foot, so each member beat's own P
+    // onset is re-found and shifted onto the operator's column.
+    //
+    // `barCol` is the column as the RELEASE SIGNAL delivers it -- a DRAWN-frame
+    // column, because moveEcgMarker clamps and stores through getView/setView.
+    // The conversion to the R-framed beat rows happens inside.
+    //
+    // Returns whether the average was replaced.
+    bool realignEcgFromBar(int binIdx, int leadIdx, int templateIdx,
+        AnchorType anchor, double barCol, bool announce = true);
+
     void clearPlots();
     void captureCurrentPage();
     std::string buildAlignedTemplateCsv(AnchorType anchor);
@@ -408,6 +521,59 @@ private:
     // chances for one of them to forget the focus refresh.
     void applyAlignmentSelection(bool force, AnchorType a);
 
+    // ---- "Align PPG Horizontal" -----------------------------------------
+    //
+    // Auto    the stacking the build produced. extract_ppg_beats_and_align
+    //         anchors every beat to the median up50 column -- its 50%
+    //         foot-to-peak crossing -- so Auto is not "something decides", it
+    //         is one specific alignment, and it is the same one Percent(50)
+    //         asks for. Nothing is re-stacked here and any column that has
+    //         been is put back (restorePulseAsBuilt).
+    // Foot    every beat's own trough, at the operator's foot column.
+    // Percent m_ppgAlignPercent percent UP THE UPSTROKE IN AMPLITUDE: the
+    //         first column at which the pulse reaches
+    //         foot_y + pct/100 * (peak_y - foot_y). So 0 IS the foot -- Foot
+    //         and Percent(0) are one alignment and deliberately not two code
+    //         paths -- and 10 is a tenth of the way up the systolic rise.
+    //
+    // IN AMPLITUDE AND NOT IN TIME, because upstroke DURATION varies with rate
+    // and contractility while the fraction of the rise does not: a time
+    // fraction would be a different physiological instant on every beat and
+    // would smear the feature it was meant to sharpen.
+    //
+    // WHY THE FRACTION IS WORTH A CONTROL. The foot is the worst-conditioned
+    // landmark on a pulse -- a turning point, zero slope through it by
+    // definition, tens of milliseconds of movement per millivolt of noise.
+    // Partway up the upstroke the slope is steepest and the same noise moves
+    // the crossing by almost nothing, which is why the build itself aligns on
+    // a half-rise point rather than the trough.
+    enum class PpgAlign { Auto, Foot, Percent };
+    PpgAlign m_ppgAlignMode = PpgAlign::Auto;
+    int      m_ppgAlignPercent = 0;
+
+    // ONE PLACE THAT CHANGES THE PULSE ALIGNMENT, as applyAlignmentSelection
+    // is for the ECG one: sets the members, syncs the controls, re-stacks the
+    // page. The radios and the spin box all land here.
+    void applyPpgAlignSelection(PpgAlign mode, int pct);
+
+    // Mode only, NO re-stack. The path a foot DRAG uses to make the group say
+    // "Foot": that gesture's re-stack is its own, on the dragged column alone,
+    // and a whole-page one from here would re-stack every other column on the
+    // page as a side effect of touching one bar.
+    void setPpgAlignMode(PpgAlign mode);
+
+    // Re-stack every pulse column on the CURRENT PAGE at the selected
+    // alignment. The page and not the record: a record is thousands of columns
+    // and re-stacking all of them on a radio click would read every bin's beat
+    // matrix to produce waveforms nobody may ever look at.
+    void realignAllVisiblePulses();
+
+    void wirePpgAlignButtons();
+    // Push the members back into the radio group and the spin box with their
+    // signals blocked, so the checked button always names the alignment the
+    // panels are actually drawn on.
+    void syncPpgAlignControls();
+
     // The anchor the grid draws in when NOT in a forced alignment (i.e. in
     // Automatic). Set to the last ECG bar the operator clicked, so Automatic
     // follows that bar the same way the focus panel does. Its own member,
@@ -459,7 +625,10 @@ private:
     // rather than rebuilding the grid, so it is safe to call mid-click and a
     // drag in progress is not disturbed. Used by Automatic alignment when a
     // bar is clicked.
-    void reskinGridForAnchor();
+    // onlyBin >= 0 restricts the pass to that one (bin, slot) column. The
+    // per-panel body re-detects glyphs, so a whole-page re-skin to show a
+    // change in one column is 36 detections to redraw one.
+    void reskinGridForAnchor(int onlyBin = -1, int onlySlot = -1);
 
     // Advance the forced alignment one step round P -> Q -> R -> J -> P.
     // Prefers checking the matching radio button, so the visible selection

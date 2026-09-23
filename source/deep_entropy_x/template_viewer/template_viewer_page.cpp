@@ -943,6 +943,18 @@ void TemplateViewerWindow::showPage() {
 
     applyMarkerVisibility();
     updatePageControls();
+
+    // THE SELECTION HAS TO BE TRUE OF WHAT IS ON SCREEN. A page rebuild brings
+    // columns in from their stored state, which for a column never displayed
+    // under this selection is the build's own stacking -- so paging forward
+    // under a 10% alignment would show a page of up50-aligned pulses with the
+    // 10% radio checked. AFTER m_pageColOf is built, because the re-stack
+    // resolves its panels through it.
+    //
+    // Auto costs nothing here: restorePulseAsBuilt returns false at once for
+    // any slot that was never re-stacked, which on a freshly shown page is all
+    // of them.
+    if (m_ppgAlignMode != PpgAlign::Auto) realignAllVisiblePulses();
 }
 
 // ===========================================================================
@@ -1321,7 +1333,7 @@ void TemplateViewerWindow::applyBinCommonToWidget(BinPlotWidget* pw,
 // band, R column and count only) and re-applies the glyphs, leaving the pulse
 // channels, the layout and the widgets themselves alone. That is what lets it
 // run mid-click without breaking a drag.
-void TemplateViewerWindow::reskinGridForAnchor() {
+void TemplateViewerWindow::reskinGridForAnchor(int onlyBin, int onlySlot) {
     const bool notchActive = m_notchFilterOn && m_notchFilterHz > 0;
 
     for (int i = 0; i < (int)m_binPlots.size()
@@ -1331,6 +1343,14 @@ void TemplateViewerWindow::reskinGridForAnchor() {
         const int gi = m_pageGlobalIdx[i];
         const int templateIndex = m_pageTemplateIdx[i];
         if (gi < 0 || gi >= (int)m_bins.size()) continue;
+        // ONE COLUMN WHEN THE CALLER KNOWS WHICH. The per-panel body below
+        // re-normalizes a trace AND re-captures the glyph snapshot, which
+        // re-runs detect_template_landmarks -- so a whole-page pass is twelve
+        // columns times three leads of detection to show a change that
+        // happened in one of them. Automatic alignment still asks for all of
+        // them (every panel's frame moves), and it is the default.
+        if (onlyBin >= 0 && (gi != onlyBin || templateIndex != onlySlot))
+            continue;
         const TemplateBin& b = m_bins[gi];
 
         const auto leads = leadsForBinTemplate(b, templateIndex);

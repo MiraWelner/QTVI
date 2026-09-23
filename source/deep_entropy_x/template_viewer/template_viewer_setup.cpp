@@ -204,6 +204,7 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
         addDockWidget(Qt::RightDockWidgetArea, dock);
     }
     wireAlignButtons();
+    wirePpgAlignButtons();
 }
 
 TemplateViewerWindow::~TemplateViewerWindow() { delete ui; }
@@ -319,6 +320,15 @@ void TemplateViewerWindow::loadSubject(const template_io::TemplateFile& tf,
 
 void TemplateViewerWindow::initAfterBinsLoaded() {
     //various bookeeping after the bins are loaded
+
+    // PER-SUBJECT STATE, DROPPED HERE AND NOWHERE ELSE. All three are keyed on
+    // (bin, slot) or on bin alone, so carrying them across a subject change
+    // serves bin 3 of the next record with bin 3 of this one: a beat matrix
+    // from another patient, and a "built" waveform that would be restored over
+    // a template it never described.
+    clearBeatsCache();
+    m_ppgBuilt.clear();
+    m_ppgRealigned.clear();
 
     for (TemplateBin& b : m_bins) b.polarity = m_polarity;
 
@@ -678,4 +688,91 @@ void TemplateViewerWindow::wireAlignButtons() {
     }
     // TAB IS NOT A QShortcut. See eventFilter.
     if (qApp) qApp->installEventFilter(this);
+}
+
+// ---- THE PULSE ALIGNMENT RADIO GROUP --------------------------------------
+//
+// These four widgets existed in the .ui with NOTHING behind them: three radios
+// and a spin box that changed no state and ran no code, while the pulse was
+// always stacked on whatever the build chose. A control that does nothing is
+// worse than an absent one -- it is a claim about the waveform beside it.
+//
+// findChild rather than ui->ppg_foot_align, following wireAlignButtons: a
+// widget missing from the .ui leaves that option unavailable instead of
+// failing the build, and says so on stderr rather than silently.
+void TemplateViewerWindow::wirePpgAlignButtons() {
+    // KEYBOARD TRACKING OFF, which is what makes the spin box affordable.
+    // valueChanged fires per KEYSTROKE by default, so typing "10" would run a
+    // whole-page re-stack at 1 and again at 10 -- the first one on a
+    // percentage the operator never chose. With tracking off Qt emits once, on
+    // Return or focus-out, and once per arrow click. No debounce timer,
+    // because Qt already has the concept.
+    if (auto* sp = findChild<QSpinBox*>(QStringLiteral("ppg_align_percent"))) {
+        sp->setKeyboardTracking(false);
+        sp->setRange(0, 100);
+        sp->setSuffix(QStringLiteral(" %"));
+        sp->setValue(m_ppgAlignPercent);
+        connect(sp, qOverload<int>(&QSpinBox::valueChanged), this,
+            [this](int v) {
+                // TYPING A PERCENTAGE IS CHOOSING THE PERCENT ALIGNMENT. It
+                // was otherwise possible for the box to read 10 while Foot was
+                // checked, which is a number on screen describing nothing;
+                // syncPpgAlignControls moves the radio to match.
+                applyPpgAlignSelection(PpgAlign::Percent, v);
+            });
+    }
+    else {
+        fprintf(stderr, "[ppg-align] NOT WIRED: ppg_align_percent\n");
+    }
+
+    struct Btn { const char* name; PpgAlign mode; };
+    static const Btn kBtns[] = {
+        { "ppg_auto_align",    PpgAlign::Auto },
+        { "ppg_foot_align",    PpgAlign::Foot },
+        { "ppg_specify_align", PpgAlign::Percent },
+    };
+    for (const Btn& b : kBtns) {
+        QRadioButton* rb =
+            findChild<QRadioButton*>(QString::fromLatin1(b.name));
+        if (!rb) {
+            fprintf(stderr, "[ppg-align] NOT WIRED: %s\n", b.name);
+            continue;
+        }
+        const PpgAlign mode = b.mode;
+        connect(rb, &QRadioButton::toggled, this, [this, mode](bool on) {
+            if (!on) return;              // only the newly-checked one acts
+            applyPpgAlignSelection(mode, m_ppgAlignPercent);
+            });
+        // Sync the member to whichever button Designer has checked, WITHOUT
+        // re-stacking: this runs during construction, before any page or panel
+        // exists. (ppg_auto_align carries checked="true" in the .ui, so the
+        // startup state is "as built" -- the honest default, since the window
+        // has not re-aligned anything yet.)
+        if (rb->isChecked()) m_ppgAlignMode = mode;
+    }
+}
+
+// Blocked signals, not a re-entrancy flag: the handlers above call
+// applyPpgAlignSelection, which calls this, which would re-fire them. Qt has
+// the switch, so use it.
+void TemplateViewerWindow::syncPpgAlignControls() {
+    struct Btn { const char* name; PpgAlign mode; };
+    static const Btn kBtns[] = {
+        { "ppg_auto_align",    PpgAlign::Auto },
+        { "ppg_foot_align",    PpgAlign::Foot },
+        { "ppg_specify_align", PpgAlign::Percent },
+    };
+    for (const Btn& b : kBtns) {
+        QRadioButton* rb =
+            findChild<QRadioButton*>(QString::fromLatin1(b.name));
+        if (!rb) continue;
+        const bool was = rb->blockSignals(true);
+        rb->setChecked(b.mode == m_ppgAlignMode);
+        rb->blockSignals(was);
+    }
+    if (auto* sp = findChild<QSpinBox*>(QStringLiteral("ppg_align_percent"))) {
+        const bool was = sp->blockSignals(true);
+        sp->setValue(m_ppgAlignPercent);
+        sp->blockSignals(was);
+    }
 }

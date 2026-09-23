@@ -125,7 +125,7 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
                 markings->threshold[i], markings->blanking[i]);
         }
     }
-    const std::filesystem::path base =  std::filesystem::path(cfg.noise_data_path) / (binFile.stem().string() + "_noise_markings");
+    const std::filesystem::path base = std::filesystem::path(cfg.noise_data_path) / (binFile.stem().string() + "_noise_markings");
     nm.exportCSV(base.string() + ".csv");
     nm.exportBinary(base.string() + ".bin");
     std::cout << "Saved Noise Markings \n";
@@ -145,6 +145,10 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis
     viewer.setLeadPolarity(LeadPolarity{ { job->ecg1_inverted,
                                            job->ecg2_inverted,
                                            job->ecg3_inverted } });
+    // BEFORE loadSubject, like setLeadPolarity above. The pulse re-stack and
+    // re-level read this; without it they fall back to <stem>_beats.bin, which
+    // the worker thread below has not written yet when the window opens.
+    viewer.setBeats(&job->beats);
     QEventLoop loop;
     QObject::connect(&viewer, &TemplateViewerWindow::finished, &loop, &QEventLoop::quit, Qt::QueuedConnection);
 

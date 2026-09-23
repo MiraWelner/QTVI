@@ -206,6 +206,21 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     // elsewhere is what let the slot-0 and bank paths drift apart historically.
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
 
+    // [ppg-dbg] WHICH BAR IS THIS, REALLY. The whole pulse path is gated on
+    // markerIsPpg (PpgOnset..PpgEnd); an ART or ABP onset bar looks identical
+    // on screen and routes to the arterial branch below instead, where none of
+    // the re-level or re-stack code runs. Strip this block once the question
+    // is answered.
+    fprintf(stderr, "[ppg-dbg] moved: bin=%d lead=%d slot=%d marker=%d "
+        "-> ppg=%d abp=%d art=%d artpulm=%d ecg=%d (PpgOnset=%d)\n",
+        binIdx, leadIdx, templateIdx, marker,
+        (int)BinPlotWidget::markerIsPpg(marker),
+        (int)BinPlotWidget::markerIsAbp(marker),
+        (int)BinPlotWidget::markerIsArt(marker),
+        (int)BinPlotWidget::markerIsArtPulm(marker),
+        (int)BinPlotWidget::markerIsEcg(marker),
+        (int)BinPlotWidget::PpgOnset);
+
     if (BinPlotWidget::markerIsPpg(marker)) {
         movePpgMarker(binIdx, leadIdx, templateIdx, marker, newIdx);
         return;
@@ -307,6 +322,23 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
                 pw->setMarker(static_cast<BinPlotWidget::Marker>(marker),
                     static_cast<double>(placed));
 
+    // ---- THE FOOT IS THIS PANEL'S VERTICAL ZERO -------------------------
+    //
+    // So moving it has to re-normalize the trace and the band, not just move a
+    // bar: pulseTraceForSlot re-reads pulse_marks.onset, which
+    // normalize_ppg_or_similar subtracts and divides by and
+    // scale_pulse_spread_by_ref scales the spread about. Without this the bar
+    // slid and the waveform under it did not react at all, which is what made
+    // the gesture look dead.
+    //
+    // DURING THE DRAG, not on release. It is one normalize over one array --
+    // no file read, no page rebuild -- so it is affordable at mouse-move rate,
+    // and a level that only snapped into place on mouse-up would make the drag
+    // itself look like it had done nothing. The release does the expensive
+    // half: re-levelling the cohort off _beats.bin (relevelPulseAtFoot).
+    if (marker == BinPlotWidget::PpgOnset)
+        pushPulseToPanels(binIdx, templateIdx, /*alsoFocus=*/false);
+
     if (m_moveMode == MoveMode::Individual || oldIdx < 0) {
         refreshFocus(qobject_cast<BinPlotWidget*>(sender()), binIdx, leadIdx, templateIdx, marker, placed);
         return;
@@ -340,6 +372,12 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
                 if (pw)
                     pw->setMarker(static_cast<BinPlotWidget::Marker>(marker),
                         target);
+
+        // A propagated foot is a foot: the same re-normalize as the dragged
+        // column, or the bars would agree across the page while the traces
+        // underneath them stayed levelled on the old columns.
+        if (marker == BinPlotWidget::PpgOnset)
+            pushPulseToPanels(gi, slot, /*alsoFocus=*/false);
     }
     refreshFocus(qobject_cast<BinPlotWidget*>(sender()), binIdx, leadIdx, templateIdx, marker, placed);
 }
