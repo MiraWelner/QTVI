@@ -274,17 +274,17 @@ int TemplateViewerWindow::pageColumnBudget() const {
 // not on the current page.
 void TemplateViewerWindow::buildPages() {
     m_pages.clear();
-    m_allColumns.clear();
+    m_columnTable.clear();
 
     const int nBins = static_cast<int>(m_bins.size());
     if (nBins == 0) { m_pages.push_back({ 0, 0 }); m_totalPages = 1; return; }
 
     for (int gi = 0; gi < nBins; ++gi)
         for (int t : markingSlotsForBin(m_bins[gi]))
-            m_allColumns.push_back({ gi, t });
+            m_columnTable.push_back({ gi, t });
 
     const int budget = pageColumnBudget();
-    const int nCols = static_cast<int>(m_allColumns.size());
+    const int nCols = static_cast<int>(m_columnTable.size());
 
     // A record where every template fell below the minimum-beats threshold has
     // no columns at all. One empty page, so paging still terminates and the
@@ -300,8 +300,6 @@ void TemplateViewerWindow::buildPages() {
         "  [pages] %d bins -> %d columns -> %d pages (%d cols/page, last %d)\n",
         nBins, nCols, m_totalPages, budget, m_pages.back().second);
     std::fflush(stderr);
-
-    reportBinsWithNoColumns();
 }
 
 bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
@@ -457,32 +455,11 @@ void TemplateViewerWindow::clearPlots() {
 std::vector<std::pair<int, int>>
 TemplateViewerWindow::pageColumns(int start, int count) const
 {
-    const int nAll = static_cast<int>(m_allColumns.size());
+    const int nAll = static_cast<int>(m_columnTable.size());
     start = std::clamp(start, 0, std::max(0, nAll));
     count = std::clamp(count, 0, nAll - start);
     return std::vector<std::pair<int, int>>(
-        m_allColumns.begin() + start, m_allColumns.begin() + start + count);
-}
-
-// WHICH BINS HAVE NO COLUMNS AT ALL. With a minimum-beats threshold set, every
-// template in a bin can fall below it, and that bin then shows nothing. Printed
-// rather than left to be noticed, because a bin that silently has no panel is
-// indistinguishable from a paging bug. Reported once for the RECORD now, at the
-// end of pagination, rather than once per page: with exact column paging a page
-// no longer corresponds to a bin range, so "the bins on this page" is not a
-// question this diagnostic can ask any more.
-void TemplateViewerWindow::reportBinsWithNoColumns() const
-{
-    if (!(tbank::minBeatsEcg() > 0 || tbank::minBeatsPpg() > 0)) return;
-    std::string gone;
-    for (int gi = 0; gi < static_cast<int>(m_bins.size()); ++gi)
-        if (markingSlotsForBin(m_bins[gi]).empty())
-            gone += (gone.empty() ? "" : ",") + std::to_string(gi);
-    if (!gone.empty())
-        std::fprintf(stderr,
-            "  [min-beats] bins with NO displayable template "
-            "(every slot below ECG %d or PPG %d clean beats): %s\n",
-            tbank::minBeatsEcg(), tbank::minBeatsPpg(), gone.c_str());
+        m_columnTable.begin() + start, m_columnTable.begin() + start + count);
 }
 
 // ---- row count -----------------------------------------------------------

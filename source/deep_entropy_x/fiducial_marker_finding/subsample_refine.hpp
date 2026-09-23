@@ -14,7 +14,7 @@
 #include <array>
 #include <algorithm>
 #include <functional>
-#include "template_marking_gui\curve_fit.hpp"
+#include "fiducial_marker_finding\curve_fit.hpp"
 
 namespace subsample_refine {
 

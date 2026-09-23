@@ -29,7 +29,7 @@
 #include "template_io.hpp"
 #include "template_generation/morphology_envelope.hpp"
 #include "template_generation/beat_classifier.hpp"
-#include "template_marking_gui/feature_marks.hpp"
+#include "fiducial_marker_finding/feature_marks.hpp"
 
 #include <algorithm>
 #include <cmath>

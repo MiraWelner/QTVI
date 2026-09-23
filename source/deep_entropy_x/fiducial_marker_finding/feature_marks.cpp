@@ -13,8 +13,8 @@ See feature_marks.hpp for the public interface*/
 
 #include "feature_marks.hpp"
 #include "sample_extent.hpp"
-#include "template_marking_gui\template_marking_bin_io.hpp"
-#include "template_marking_gui\anchor_view.hpp"
+#include "fiducial_marker_finding\template_marking_bin_io.hpp"
+#include "fiducial_marker_finding\anchor_view.hpp"
 #include "subsample_refine.hpp"
 #include "ppg_derivative.hpp"
 #include "ppg_dicrotic.hpp"
@@ -855,6 +855,22 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         }
         if (seed < 0) seed = trough_in(v, lo, searchHi);
         g.end = refine_trough(seed >= 0 ? seed : searchHi, lo0, g.end_cand);
+
+        // SAID OUT LOUD, as the foot is. refine_trough returns -1 on two
+        // conditions -- the sub-sample contest not running at the seed, and a
+        // refined position with no finite sample under it -- and the end had
+        // no message for either, so a -1 propagated in silence through
+        // everything bracketed by (peak, end): t80 fell back to the midpoint,
+        // peak2 lost its right bound, the notch fallback lost the clamp that
+        // keeps it on the drawn waveform, and pw80 measured a width between
+        // two levels that were never located. The three numbers below say
+        // which path was taken: seed < 0 means neither the forward walk nor
+        // trough_in found a trough in [peak+1, peak+2s] and the bound itself
+        // was handed to the refiner.
+        if (!(g.end >= 0.0))
+            std::fprintf(stderr, "[ppg] no end located (peak %.2f, seed %d,"
+                " search [%d,%d), W=%d): t80/peak2/notch bounds unset\n",
+                g.peak, seed, lo, searchHi, Wc);
     }
 
     // The foot is the anchor of every amplitude the pulse reports -- the

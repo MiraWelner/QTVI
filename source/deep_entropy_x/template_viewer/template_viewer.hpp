@@ -39,23 +39,23 @@
 #include <cstdio>
 #include <cassert>
 
-#include "template_marking_gui/template_marking_bin_io.hpp"
-#include "template_marking_gui/bin_plot_widget.hpp"
-#include "template_marking_gui/focus_panel_widget.hpp"
-#include "template_marking_gui/anchor_view.hpp"
-#include "template_marking_gui/feature_marks.hpp"
-#include "template_marking_gui/alignment.hpp"
-#include "template_marking_gui/global_intervals.hpp"
-#include "template_marking_gui/global_interval_lines.hpp"
-#include "template_marking_gui/vcg_signal_average.hpp"
-#include "template_marking_gui/ppg_derivative.hpp"
-#include "template_marking_gui/subsample_refine.hpp"
-#include "template_marking_gui/curve_fit.hpp"
+#include "fiducial_marker_finding/template_marking_bin_io.hpp"
+#include "fiducial_marker_finding/bin_plot_widget.hpp"
+#include "fiducial_marker_finding/focus_panel_widget.hpp"
+#include "fiducial_marker_finding/anchor_view.hpp"
+#include "fiducial_marker_finding/feature_marks.hpp"
+#include "fiducial_marker_finding/alignment.hpp"
+#include "fiducial_marker_finding/global_intervals.hpp"
+#include "fiducial_marker_finding/global_interval_lines.hpp"
+#include "fiducial_marker_finding/vcg_signal_average.hpp"
+#include "fiducial_marker_finding/ppg_derivative.hpp"
+#include "fiducial_marker_finding/subsample_refine.hpp"
+#include "fiducial_marker_finding/curve_fit.hpp"
+#include "ui_template_viewer.h"
 
 #include "template_generation/normalize_template_amplitude.hpp"
 #include "peak_finding/FilterUtils.hpp"
 #include "logging/boundary_training_log.hpp"
-#include "ui_template_viewer.h"
 
 // addVcgPanel takes one by const reference and nothing here needs its
 // layout, so a declaration is enough -- global_intervals.hpp is included

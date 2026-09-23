@@ -67,7 +67,7 @@
 
 #include "envelopes.hpp"
 #include "template_generation\template_io.hpp"
-#include "template_marking_gui\feature_marks.hpp"
+#include "fiducial_marker_finding\feature_marks.hpp"
 
 #include <cmath>
 #include <cstdint>

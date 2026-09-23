@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
-#include "template_marking_gui/alignment.hpp"
+#include "fiducial_marker_finding/alignment.hpp"
 #include "template_structs.hpp"
 #include "template_generation/normalize_template_amplitude.hpp"
 
@@ -166,6 +166,12 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
     // normalized-error metric. Falls back to keeping everything if the
     // filter would otherwise reject the whole set (degenerate reference).
     std::vector<std::vector<double>> filteredBeats;
+    // The survivor ROW INDICES, kept alongside the waveforms. filteredBeats
+    // loses them -- it is a copy of the rows, not a view of them -- and the
+    // fiducial block below needs them to read aligned.peak_cols/foot_cols for
+    // the same beats the template was medianed from. Same loop fills both, so
+    // they cannot fall out of step.
+    std::vector<size_t> survivorsForMarks;
     // Diagnostic accumulators, populated inside the QC block.
     int diag_ref_col_early = 0, diag_ref_col_mid = 0, diag_ref_col_late = 0;
     int diag_ref_defined_cols = 0;
@@ -232,7 +238,9 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
         // foot-to-foot span.
         auto footToFootError = [&](const std::vector<double>& bt) -> double {
             double num = 0.0, den = 0.0; int overlap = 0;
-            const int hi = std::min<int>(f2fHi, std::min<int>(bt.size(), reference.size()));
+            const int hi = std::min<int>(f2fHi,
+                std::min<int>(static_cast<int>(bt.size()),
+                    static_cast<int>(reference.size())));
             for (int c = std::max(0, f2fLo); c < hi; ++c) {
                 if (std::isnan(bt[c]) || std::isnan(reference[c])) continue;
                 const double e = bt[c] - reference[c];
@@ -333,8 +341,10 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
         out.keptSlices.reserve(survivorRows.size());
         const bool ordinalsUsable =
             aligned.original_index.size() == aligned.beats.size();
+        survivorsForMarks.reserve(survivorRows.size());
         for (const size_t k : survivorRows) {
             filteredBeats.push_back(aligned.beats[k]);
+            survivorsForMarks.push_back(k);
             out.keptSlices.push_back(ordinalsUsable
                 ? aligned.original_index[k] : static_cast<uint32_t>(k));
         }
@@ -409,42 +419,71 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
             : 0.5 * (*std::max_element(col.begin(), col.begin() + mid) + hi);
     }
 
-    // ---- Deterministic PPG fiducials from the real R-peaks -------------
-    // The template is R-anchored: R1 lands at column padSeconds*channelRate
-    // (0.25 s in) by construction. R2 = R1 + one RR interval. We compute the
-    // systolic peak as the max in [R1, R2] (exactly one pulse -> no risk of
-    // grabbing a later pulse) and the foot as the min in [R1, peak]. Using the
-    // true R-pair interval (not a fixed window) makes these exact.
+    // ---- PPG fiducials FROM THE ALIGNER'S OWN PER-BEAT MARKS -------------
+    //
+    // TWO WRONG VERSIONS PRECEDED THIS ONE, and both failed the same way: they
+    // decided WHERE to look without anything entitling them to.
+    //
+    //   (1) "R1 lands at column padSeconds*channelRate by construction", then
+    //       peak = argmax over [R1, R1+RR], foot = argmin over [R1, peak].
+    //       True of the SLICER's frame, false of this one:
+    //       extract_ppg_beats_and_align shifts every beat so its 50%-upslope
+    //       crossing lands on the median up50 column, so the shared axis has
+    //       its origin at up50_aligned_col and R1 is at no fixed column at
+    //       all. When padSeconds*channelRate landed past the true foot the
+    //       window [r1, peak] collapsed onto the apex and argmin returned a
+    //       sample beside the peak -- the peak was marked as the foot.
+    //
+    //   (2) detect_ppg_fiducials over the WHOLE template. Right detector,
+    //       no bracket: the window spans [R_i - pad, R_i+1 + pad], so it
+    //       opens inside the PREVIOUS pulse's diastolic tail. The first
+    //       upstroke peak in it can be that tail's rebound, and the walk-back
+    //       from there lands the foot near the left edge of the window.
+    //
+    // The aligner already measured both marks on every beat, in THIS frame,
+    // with the same primitives (detect_ppg_upstroke_peak bounded to the beat's
+    // own R-R window, then trough_in back from it), and shifted them onto the
+    // shared axis alongside the samples: peak_cols[k] = prepend + peak,
+    // foot_cols[k] = prepend + foot. Those were computed and then read by
+    // nobody. The template is the column-wise median of the same beats, so the
+    // median of their marks is the mark of the median -- no search, no window,
+    // no constant, and nothing that can drift from the alignment axis because
+    // it IS the alignment axis.
+    //
+    // NEGATIVES EXCLUDED, not clamped. A beat whose up50 sat right of the
+    // anchor had its leading samples clipped, so its foot column can be < 0
+    // (see the `prepend` note in extract_ppg_beats_and_align). Clamping those
+    // to 0 would drag the median toward the left edge; they are simply not
+    // evidence about where the foot is.
+    //
+    // ONLY THE SURVIVORS vote. survivorRows indexes aligned.beats, and the
+    // template was built from exactly those rows, so the marks and the
+    // waveform describe one population.
     // Computed BEFORE the spread below, since the spread needs out.footCol.
     {
         const int N = static_cast<int>(out.tmpl.size());
-        const int r1 = std::clamp(
-            static_cast<int>(std::llround(padSeconds * channelRate)), 0,
-            std::max(0, N - 1));
-        // Median RR in ECG samples -> channel samples.
-        std::vector<double> gaps;
-        gaps.reserve(masterPeaksEcg.size());
-        for (size_t k = 1; k < masterPeaksEcg.size(); ++k)
-            gaps.push_back(static_cast<double>(masterPeaksEcg[k] - masterPeaksEcg[k - 1]));
-        int rrCh = 0;
-        if (!gaps.empty()) {
-            std::sort(gaps.begin(), gaps.end());
-            const double medGapEcg = gaps[gaps.size() / 2];
-            rrCh = static_cast<int>(std::llround(medGapEcg * scale));
+        auto medianOf = [](std::vector<int> v) -> int {
+            if (v.empty()) return -1;
+            std::sort(v.begin(), v.end());
+            return v[v.size() / 2];
+            };
+        std::vector<int> pks, fts;
+        pks.reserve(survivorsForMarks.size());
+        fts.reserve(survivorsForMarks.size());
+        for (const size_t k : survivorsForMarks) {
+            if (k < aligned.peak_cols.size() && aligned.peak_cols[k] >= 0
+                && aligned.peak_cols[k] < N) pks.push_back(aligned.peak_cols[k]);
+            if (k < aligned.foot_cols.size() && aligned.foot_cols[k] >= 0
+                && aligned.foot_cols[k] < N) fts.push_back(aligned.foot_cols[k]);
         }
-        const int r2 = (rrCh > 0) ? std::min(N - 1, r1 + rrCh) : (N - 1);
-
-        if (N > 0 && r2 > r1) {
-            int pk = r1; double pmax = -std::numeric_limits<double>::infinity();
-            for (int i = r1; i <= r2; ++i)
-                if (!std::isnan(out.tmpl[i]) && out.tmpl[i] > pmax) {
-                    pmax = out.tmpl[i]; pk = i;
-                }
-            int ft = r1; double fmin = std::numeric_limits<double>::infinity();
-            for (int i = r1; i <= pk; ++i)
-                if (!std::isnan(out.tmpl[i]) && out.tmpl[i] < fmin) {
-                    fmin = out.tmpl[i]; ft = i;
-                }
+        const int pk = medianOf(std::move(pks));
+        const int ft = medianOf(std::move(fts));
+        // FOOT BEFORE PEAK or neither is trusted. The two medians are taken
+        // independently, so a bin whose beats disagree badly enough to invert
+        // them has no usable foot -- and -1 is the state every caller already
+        // reads as "no pulse fiducial for this bin", rather than a pair that
+        // would make local_ratio_iqr integrate about a maximum.
+        if (pk >= 0 && ft >= 0 && ft < pk) {
             out.peakCol = pk;
             out.footCol = ft;
         }
@@ -467,7 +506,26 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
     out.kept.reserve(beatsForTemplate.size());
     for (const auto& sl : beatsForTemplate) out.kept.push_back(sl);
 
+    // padSeconds is genuinely unused HERE now. It sizes the slice upstream and
+    // nothing in this function depends on where that puts R1 any more, which is
+    // the point of the change above -- so the 0.4 in this function's signature
+    // disagreeing with the 0.25 in CreatePulseTemplates' doc block can no
+    // longer move a fiducial. Worth reconciling anyway, since the slice width
+    // still comes from it.
     (void)padSeconds; (void)channelRate; (void)ecgRate;
+
+    // THE SUCCESS PATH HAD NO RETURN. Every early exit above returns
+    // `out` explicitly, so the one path that actually builds a template
+    // fell off the end of a non-void function -- undefined behaviour, and
+    // MSVC reports it as C4715 (a WARNING, which is why a build that looked
+    // clean shipped it). What the caller received was a return object that
+    // kept the two ints and lost all four vectors, so every bin came back
+    // with a plausible peakCol/footCol and an EMPTY waveform: template_good
+    // stayed false for the whole record, ppg_template_good with it, and the
+    // pulse channel went missing from the joint bank, the panels, the
+    // templates file and the viewer -- while this function did all the work
+    // and charged the 500 ms for it.
+    return out;
 }
 
 /**

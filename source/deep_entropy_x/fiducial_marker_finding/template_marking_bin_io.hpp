@@ -74,9 +74,9 @@
 #include <cstring>
 
 #include "template_generation\template_io.hpp"
-#include "template_marking_gui\feature_marks.hpp"
+#include "fiducial_marker_finding\feature_marks.hpp"
 #include "template_morphology_grouping\template_bank.hpp"
-#include "template_marking_gui\anchor_view.hpp"
+#include "fiducial_marker_finding\anchor_view.hpp"
 
 enum class MarkingsCsvSection { EcgOnly, PulseOnly, EcgAndPulse };
 

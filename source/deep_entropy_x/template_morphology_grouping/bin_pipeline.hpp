@@ -21,7 +21,7 @@
 #include "template_assign.hpp"
 #include "pvc_filter.hpp"
 #include "seed_pool.hpp"
-#include "template_marking_gui/alignment.hpp"
+#include "fiducial_marker_finding/alignment.hpp"
 
 namespace bin_pipeline {
 

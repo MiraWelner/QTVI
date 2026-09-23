@@ -23,11 +23,11 @@
 #include "template_generation/build_bins.hpp"
 #include "template_generation/premark_beats.hpp"
 #include "template_morphology_grouping/bank_reload.hpp"
-#include "template_marking_gui/ppg_derivative.hpp"
+#include "fiducial_marker_finding/ppg_derivative.hpp"
 
 #include "annealing/anneal_handler.hpp"
 #include "config_file_handling/config_entry.hpp"
-#include "template_marking_gui/alignment.hpp"
+#include "fiducial_marker_finding/alignment.hpp"
 #include "logging/sqi_ecg.hpp"
 #include "template_morphology_grouping/morphology_csv.hpp"
 #include "template_morphology_grouping/envelope_report.hpp"

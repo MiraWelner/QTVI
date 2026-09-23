@@ -34,7 +34,7 @@
 #include <vector>
 #include "template_marking_bin_io.hpp"
 #include "global_interval_lines.hpp"
-#include "template_marking_gui/curve_fit.hpp"   // curve_fit::FitMode / PeakFitMode
+#include "fiducial_marker_finding/curve_fit.hpp"   // curve_fit::FitMode / PeakFitMode
 
 class QPainter;
 

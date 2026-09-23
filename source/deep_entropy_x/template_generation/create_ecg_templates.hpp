@@ -23,9 +23,8 @@
 #pragma once
 
 #include "template_structs.hpp"
-#include "template_marking_gui/alignment.hpp"
+#include "fiducial_marker_finding/alignment.hpp"
 #include "template_morphology_grouping/bin_pipeline.hpp"
- // selectSeedPool: the ectopic mask on the Phase 1 reference.
 #include "template_morphology_grouping/seed_pool.hpp"
 #include "template_morphology_grouping/morphology_csv.hpp"
 #include <chrono>

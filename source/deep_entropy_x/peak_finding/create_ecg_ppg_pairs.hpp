@@ -15,6 +15,7 @@
 #include <string>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <iostream>
 #include "peakfinding_io.hpp"
 #include "SegmentPPG.hpp"
@@ -217,7 +218,26 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
                 d.ppgMinAmps = ppgResult.minAmps;
                 d.ppgMaxAmps = ppgResult.maxAmps;
             }
+            catch (const std::exception& e) {
+                // REPORTED, not just absorbed. The valleys are no longer a
+                // precondition for pulse TEMPLATES (see the has_ppg note in
+                // make_averaged_templates.hpp), but they are still what
+                // pairRtoPPGBeat needs below, so losing them costs the R-to-pulse
+                // pairing and has to be visible rather than inferred from a
+                // missing column three stages later.
+                std::fprintf(stderr,
+                    "  [ppg-seg] SegmentPPG failed (%s) -- no PPG valleys for "
+                    "this bin; R-to-pulse pairing skipped, pulse templates "
+                    "unaffected\n", e.what());
+                std::fflush(stderr);
+                d.ppgMinAmps.clear();
+                d.ppgMaxAmps.clear();
+            }
             catch (...) {
+                std::fprintf(stderr,
+                    "  [ppg-seg] SegmentPPG failed (unknown exception) -- no PPG"
+                    " valleys for this bin\n");
+                std::fflush(stderr);
                 d.ppgMinAmps.clear();
                 d.ppgMaxAmps.clear();
             }

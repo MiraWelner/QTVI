@@ -21,9 +21,9 @@ The PPG Normalization algorithm is as follows:
 
 */
 
-#include "template_marking_gui\template_marking_bin_io.hpp"
-#include "template_marking_gui\global_intervals.hpp"
-#include "template_marking_gui\vcg_signal_average.hpp"
+#include "fiducial_marker_finding\template_marking_bin_io.hpp"
+#include "fiducial_marker_finding\global_intervals.hpp"
+#include "fiducial_marker_finding\vcg_signal_average.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -497,16 +497,39 @@ namespace normalize_features {
     // samples, one sample-index unit of run per step. A NaN sample breaks
     // the run at that step (a gap contributes nothing, rather than a
     // phantom straight line jumping across it).
-    inline double segment_length(const std::vector<double>& v, int lo, int hi) {
-        lo = std::max(0, lo);
-        hi = std::min(hi, static_cast<int>(v.size()) - 1);
-        if (hi <= lo) return std::nan("");
+    // SUB-SAMPLE BOUNDS. Every landmark that reaches these integrators is a
+    // fractional double (BankMarkerSet, FeatureMarks, TemplateBin's pulse
+    // fields), so the window they describe has fractional ends and rounding
+    // them here would undo the widening -- a half-sample error on each end of
+    // a 40-sample QRS is a 2.5% error in the area that feeds
+    // Global_Ref_person. The sample interval containing each end contributes
+    // only its overlapped fraction. Whole-number bounds reduce to the old
+    // whole-sample sum exactly, so integer callers are unaffected.
+    //
+    // NOT VIA sample_y, deliberately. Each endpoint is interpolated from the
+    // two samples of the interval being integrated, which this loop has
+    // already checked are both non-NaN. sample_y would read the endpoint as a
+    // position in the ARRAY: at a whole-number e it brackets [e, e+1], so a
+    // NaN one sample PAST the window returns NaN for a sample that is
+    // perfectly good, and that NaN then propagates through the whole sum
+    // instead of being skipped as a gap.
+    inline double segment_length(const std::vector<double>& v, double lo, double hi) {
+        lo = std::max(0.0, lo);
+        hi = std::min(hi, static_cast<double>(v.size()) - 1.0);
+        if (!(hi > lo)) return std::nan("");
         double len = 0.0;
         bool any = false;
-        for (int i = lo; i < hi; ++i) {
-            if (std::isnan(v[i]) || std::isnan(v[i + 1])) continue;
-            const double dy = v[i + 1] - v[i];
-            len += std::sqrt(1.0 + dy * dy);
+        const int first = static_cast<int>(std::floor(lo));
+        const int last = static_cast<int>(std::ceil(hi)) - 1;
+        for (int i = first; i <= last; ++i) {
+            const double a = v[i], b = v[i + 1];
+            if (std::isnan(a) || std::isnan(b)) continue;   // gap: no phantom line across it
+            const double s = std::max(lo, static_cast<double>(i));
+            const double e = std::min(hi, static_cast<double>(i) + 1.0);
+            if (!(e > s)) continue;
+            const double slope = b - a;
+            const double dy = (e - s) * slope;             // (a + (e-i)*slope) - (a + (s-i)*slope)
+            len += std::sqrt((e - s) * (e - s) + dy * dy);
             any = true;
         }
         return any ? len : std::nan("");
@@ -516,18 +539,40 @@ namespace normalize_features {
     // integrating -- the conventional way to report QRS/T-wave area, since a
     // biphasic complex would otherwise partially cancel itself in a signed
     // integral. NaN samples are skipped (that trapezoid contributes nothing,
-    // rather than propagating NaN across the whole sum).
-    inline double segment_area(const std::vector<double>& v, int lo, int hi, bool absolute = true) {
-        lo = std::max(0, lo);
-        hi = std::min(hi, static_cast<int>(v.size()) - 1);
-        if (hi <= lo) return std::nan("");
+    // rather than propagating NaN across the whole sum). Sub-sample bounds,
+    // as segment_length above -- see the note there.
+    //
+    // `baseline` is subtracted from each endpoint INSIDE the loop, which is
+    // what lets a caller integrate a foot-zeroed pulse without materializing
+    // a zeroed copy of the trace. It cannot be done by subtracting
+    // baseline*(hi-lo) from the result afterward: NaN trapezoids are skipped,
+    // so the width actually integrated is not hi-lo whenever the window
+    // contains a gap, and the correction would over-subtract by exactly the
+    // skipped width.
+    inline double segment_area(const std::vector<double>& v, double lo, double hi,
+        bool absolute = true, double baseline = 0.0) {
+        lo = std::max(0.0, lo);
+        hi = std::min(hi, static_cast<double>(v.size()) - 1.0);
+        if (!(hi > lo)) return std::nan("");
         double area = 0.0;
         bool any = false;
-        for (int i = lo; i < hi; ++i) {
-            double a = v[i], b = v[i + 1];
-            if (std::isnan(a) || std::isnan(b)) continue;
+        const int first = static_cast<int>(std::floor(lo));
+        const int last = static_cast<int>(std::ceil(hi)) - 1;
+        for (int i = first; i <= last; ++i) {
+            const double v0 = v[i], v1 = v[i + 1];
+            if (std::isnan(v0) || std::isnan(v1)) continue;
+            const double s = std::max(lo, static_cast<double>(i));
+            const double e = std::min(hi, static_cast<double>(i) + 1.0);
+            if (!(e > s)) continue;
+            const double slope = v1 - v0;
+            double a = v0 + (s - static_cast<double>(i)) * slope - baseline;
+            double b = v0 + (e - static_cast<double>(i)) * slope - baseline;
+            // Rectified at the ENDPOINTS, as before: a trapezoid straddling
+            // zero is still approximated by |f| at its two ends rather than
+            // split at the crossing. Unchanged convention, stated because
+            // fractional ends make it easier to mistake for exact.
             if (absolute) { a = std::abs(a); b = std::abs(b); }
-            area += 0.5 * (a + b);   // trapezoid, unit width
+            area += 0.5 * (a + b) * (e - s);   // trapezoid, width e-s
             any = true;
         }
         return any ? area : std::nan("");
@@ -541,22 +586,37 @@ namespace normalize_features {
     // vcg_signal_average.hpp's loopFromTemplates/perBeatLoops already
     // produce. This function does not align them; it only integrates.
     inline double segment_volume(const std::vector<double>& ch1, const std::vector<double>& ch2,
-        const std::vector<double>& ch3, int lo, int hi) {
-        const int n = static_cast<int>(std::min({ ch1.size(), ch2.size(), ch3.size() }));
-        lo = std::max(0, lo);
-        hi = std::min(hi, n - 1);
-        if (hi <= lo) return std::nan("");
-        auto mag = [&](int i) -> double {
-            const double x = ch1[i], y = ch2[i], z = ch3[i];
-            if (std::isnan(x) || std::isnan(y) || std::isnan(z)) return std::nan("");
-            return std::sqrt(x * x + y * y + z * z);
-            };
+        const std::vector<double>& ch3, double lo, double hi) {
+        const double n = static_cast<double>(std::min({ ch1.size(), ch2.size(), ch3.size() }));
+        lo = std::max(0.0, lo);
+        hi = std::min(hi, n - 1.0);
+        if (!(hi > lo)) return std::nan("");
+        // MAGNITUDE OF THE INTERPOLATED SAMPLES, not an interpolation of the
+        // magnitude: each lead is interpolated at the same sub-sample position
+        // within the interval and the vector is formed there, which is the
+        // same order of operations the whole-sample version used. Interval-
+        // local, for the reason given on segment_length.
         double vol = 0.0;
         bool any = false;
-        for (int i = lo; i < hi; ++i) {
-            const double a = mag(i), b = mag(i + 1);
-            if (std::isnan(a) || std::isnan(b)) continue;
-            vol += 0.5 * (a + b);
+        const int first = static_cast<int>(std::floor(lo));
+        const int last = static_cast<int>(std::ceil(hi)) - 1;
+        for (int i = first; i <= last; ++i) {
+            const double x0 = ch1[i], x1 = ch1[i + 1];
+            const double y0 = ch2[i], y1 = ch2[i + 1];
+            const double z0 = ch3[i], z1 = ch3[i + 1];
+            if (std::isnan(x0) || std::isnan(x1) || std::isnan(y0)
+                || std::isnan(y1) || std::isnan(z0) || std::isnan(z1)) continue;
+            const double s = std::max(lo, static_cast<double>(i));
+            const double e = std::min(hi, static_cast<double>(i) + 1.0);
+            if (!(e > s)) continue;
+            auto mag = [&](double t) -> double {
+                const double f = t - static_cast<double>(i);
+                const double x = x0 + f * (x1 - x0);
+                const double y = y0 + f * (y1 - y0);
+                const double z = z0 + f * (z1 - z0);
+                return std::sqrt(x * x + y * y + z * z);
+                };
+            vol += 0.5 * (mag(s) + mag(e)) * (e - s);
             any = true;
         }
         return any ? vol : std::nan("");
@@ -615,9 +675,13 @@ namespace normalize_features {
             // quantity, so it always reads the R-pass markers.
             const tbank::BankMarkerSet& rmk =
                 b.slotMarks(ch, 0, AnchorType::R_PEAK);
-            const int qBegin = rmk.q_onset;
-            const int jPoint = rmk.s_end;   // S_END == J_POINT (AnchorType comment)
-            if (qBegin < 0 || jPoint <= qBegin) continue;
+            // STRAIGHT THROUGH AS DOUBLES. These are BankMarkerSet's
+            // sub-sample landmarks and segment_area integrates over
+            // fractional bounds, so there is nothing to round; -1 means
+            // absent, which the qBegin < 0 test below rejects.
+            const double qBegin = rmk.q_onset;
+            const double jPoint = rmk.s_end;   // S_END == J_POINT (AnchorType comment)
+            if (qBegin < 0.0 || jPoint <= qBegin) continue;
             const double area = segment_area(ecg, qBegin, jPoint, /*absolute=*/true);
             if (!std::isnan(area)) vals.push_back(area);
         }
@@ -682,26 +746,29 @@ namespace normalize_features {
             const PulseChannel pc = pulseChan(b, which);
             if (pc.issue != 0) continue;
             if (pc.trace->empty()) continue;
-            // ROUNDED DELIBERATELY: the integration below walks whole samples
-            // (`zeroed[k - lo]`), so the bounds round here, visibly, rather than
-            // truncating through a silent int conversion.
-            if (pc.foot_idx < 0.0) continue;
-            const double hiD = (pc.end_idx > pc.foot_idx) ? pc.end_idx : pc.dicrotic_idx;
-            const int lo = static_cast<int>(std::lround(pc.foot_idx));
-            int hi = (hiD < 0.0) ? -1 : static_cast<int>(std::lround(hiD));
-            if (hi <= lo) continue;
-            if (hi >= static_cast<int>(pc.trace->size())) hi = static_cast<int>(pc.trace->size()) - 1;
-            if (hi <= lo) continue;
+            // SUB-SAMPLE BRACKETS. These are TemplateBin's fractional pulse
+            // fields and segment_area integrates over fractional bounds, so
+            // nothing rounds: the temporary foot-zeroed array this used to
+            // build (`zeroed[k - lo]`) was the only reason the brackets had
+            // to land on whole samples.
+            const double lo = pc.foot_idx;
+            if (lo < 0.0) continue;
+            double hi = (pc.end_idx > lo) ? pc.end_idx : pc.dicrotic_idx;
+            if (hi < 0.0) continue;
+            const double last = static_cast<double>(pc.trace->size()) - 1.0;
+            if (hi > last) hi = last;
+            if (!(hi > lo)) continue;
 
-            // Foot-zeroed, then integrated. segment_area's absolute=true is
-            // deliberately NOT used -- see the note above.
             const double footY = sample_y(*pc.trace, lo);
             if (std::isnan(footY)) continue;
-            std::vector<double> zeroed(static_cast<size_t>(hi - lo + 1));
-            for (int k = lo; k <= hi; ++k)
-                zeroed[static_cast<size_t>(k - lo)] = sample_y(*pc.trace, k) - footY;
-            const double a = segment_area(zeroed, 0, static_cast<int>(zeroed.size()) - 1,
-                /*absolute=*/false);
+
+            // Foot-zeroed via segment_area's own baseline, which subtracts it
+            // per trapezoid -- see the note on that parameter for why a
+            // correction applied to the finished integral would be wrong on
+            // any trace with a NaN gap inside the brackets. absolute=false
+            // remains deliberate: see the header note above.
+            const double a = segment_area(*pc.trace, lo, hi,
+                /*absolute=*/false, /*baseline=*/footY);
             if (!std::isnan(a)) vals.push_back(a);
         }
         return median_finite(std::move(vals));
@@ -969,15 +1036,16 @@ namespace normalize_features {
     // Locate a beat's QRS window [q_onset, j_point] in its own local
     // coordinates (rCol is R). Returns {-1,-1} if either landmark is
     // unavailable, which the callers treat as "skip this beat" (NaN).
-    inline std::pair<int, int> qrs_window_of(const ProportionalBeat& pb, double fs) {
-        if (pb.rCol < 0 || pb.samples.empty() || !(fs > 0.0)) return { -1, -1 };
-        const double qOnsetD = FeatureMarks::find_q_onset(pb.samples, fs, pb.rCol, pb.sgn);
-        const double jPointD = FeatureMarks::find_j_point(pb.samples, fs, pb.rCol, pb.sgn);
-        if (std::isnan(qOnsetD) || std::isnan(jPointD)) return { -1, -1 };
-        const int lo = static_cast<int>(std::lround(qOnsetD));
-        const int hi = static_cast<int>(std::lround(jPointD));
-        if (hi <= lo) return { -1, -1 };
-        return { lo, hi };
+    // SUB-SAMPLE, not rounded: the detectors return fractional positions and
+    // the three integrators take fractional bounds, so the window is carried
+    // at the precision it was measured at. -1 is still the absent sentinel.
+    inline std::pair<double, double> qrs_window_of(const ProportionalBeat& pb, double fs) {
+        if (pb.rCol < 0 || pb.samples.empty() || !(fs > 0.0)) return { -1.0, -1.0 };
+        const double qOnset = FeatureMarks::find_q_onset(pb.samples, fs, pb.rCol, pb.sgn);
+        const double jPoint = FeatureMarks::find_j_point(pb.samples, fs, pb.rCol, pb.sgn);
+        if (std::isnan(qOnset) || std::isnan(jPoint)) return { -1.0, -1.0 };
+        if (jPoint <= qOnset) return { -1.0, -1.0 };
+        return { qOnset, jPoint };
     }
 
     // Single-channel: length + area series (volume left empty). Use when
@@ -991,7 +1059,7 @@ namespace normalize_features {
         out.area.reserve(beats.beats.size());
         for (const ProportionalBeat& pb : beats.beats) {
             const auto [lo, hi] = qrs_window_of(pb, fs);
-            if (lo < 0) {
+            if (lo < 0.0) {
                 out.length.push_back(std::nan(""));
                 out.area.push_back(std::nan(""));
                 continue;
@@ -1020,7 +1088,7 @@ namespace normalize_features {
         for (size_t i = 0; i < n; ++i) {
             const ProportionalBeat& b1 = ch1.beats[i];
             const auto [lo, hi] = qrs_window_of(b1, fs);
-            if (lo < 0) {
+            if (lo < 0.0) {
                 out.length.push_back(std::nan(""));
                 out.area.push_back(std::nan(""));
                 out.volume.push_back(std::nan(""));

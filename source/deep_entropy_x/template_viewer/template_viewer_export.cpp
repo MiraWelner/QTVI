@@ -535,16 +535,20 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             double ref;      ///< global reference for this channel's scaling
             int    idx;      ///< channel index handed to the normalizer
             bool   isEcg;    ///< selects the normalizer
-            int    onset;    ///< pulse channels only: alignment onset
+            // SUB-SAMPLE, matching TemplateBin's widened pulse fields and
+            // normalize_ppg_or_similar's own `double footIdx` parameter. An
+            // int here is a narrowing conversion in brace init, which is an
+            // error, not a warning -- one per pulse row below.
+            double onset;    ///< pulse channels only: alignment onset
         };
         const Src src[num_chans] = {
             // THIS SIDECAR'S ALIGNMENT. One file per alignment, each holding
             // that alignment's own averages -- which is what makes the merged
             // <id>_template.csv four aligned views of the same subject rather
             // than four copies of one.
-            { &b.chFor(0, anchor).ecgTemplate_raw, &b.chFor(0, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[0],   0, true,  0 },
-            { &b.chFor(1, anchor).ecgTemplate_raw, &b.chFor(1, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[1],   1, true,  0 },
-            { &b.chFor(2, anchor).ecgTemplate_raw, &b.chFor(2, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[2],   2, true,  0 },
+            { &b.chFor(0, anchor).ecgTemplate_raw, &b.chFor(0, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[0],   0, true,  0.0 },
+            { &b.chFor(1, anchor).ecgTemplate_raw, &b.chFor(1, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[1],   1, true,  0.0 },
+            { &b.chFor(2, anchor).ecgTemplate_raw, &b.chFor(2, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[2],   2, true,  0.0 },
             { &b.ppgTemplate,         &b.ppg_template_iqr,         m_pulseGlobalRef[0], 0, false, b.ppg_onset },
             { &b.abpTemplate,         &b.abpTemplate_iqr,          m_pulseGlobalRef[1], 1, false, b.abp_onset },
             { &b.artTemplate,         &b.artTemplate_iqr,          m_pulseGlobalRef[2], 2, false, b.art_onset },

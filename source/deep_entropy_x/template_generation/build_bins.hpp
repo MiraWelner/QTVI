@@ -19,14 +19,14 @@
 #include <cstdlib>
 #include <iostream>
 #include <atomic>
-#include <string>   // noise_bin_path
+#include <string> 
 
 #include "template_io.hpp"
 #include "template_generation/make_averaged_templates.hpp"
 #include "template_structs.hpp"
 #include "template_generation/create_arterial_templates.hpp"
-#include "template_marking_gui/alignment.hpp"   // align_beat_matrix, QAlignResult
-#include "template_marking_gui/feature_marks.hpp"   // AnchorType, make_anchor_locator
+#include "fiducial_marker_finding/alignment.hpp"
+#include "fiducial_marker_finding/feature_marks.hpp"
 #include "peak_finding/peakfinding_io.hpp"
 
 namespace template_generation_detail {

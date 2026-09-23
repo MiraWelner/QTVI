@@ -7,7 +7,7 @@
 #include "config_file_handling/config_loader.hpp"
 #include "noise_marking_gui/gui_handler.h"
 #include "noise_marking_gui/user_annotation_handler.h"
-#include "template_marking_gui/parse_data_from_filename.hpp"
+#include "fiducial_marker_finding/parse_data_from_filename.hpp"
 #include "logging/user_mark_log.hpp"
 #include "template_viewer/template_viewer.hpp"
 

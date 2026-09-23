@@ -147,13 +147,50 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
             return std::chrono::duration<double, std::milli>(b - a).count(); };
     const auto _g0 = std::chrono::steady_clock::now();
 
-    // Check if any bin has PPG data
+    // Check if any bin has PPG data.
+    //
+    // THE SIGNAL AND THE R-PEAKS, AND NOTHING ELSE. This also required
+    // ppgMinAmps -- SegmentPPG's valley list -- which is a precondition Patch B
+    // removed and this gate kept. The pulse templates are built by
+    // build_pulse_template_pair_windowed, whose inputs are the signal, the
+    // channel rate, ch1.raw and the ECG rate; neither it nor
+    // extract_ppg_beats_and_align reads a valley. ppgMinAmps was what the old
+    // find_foot -> AlignWaves aligner needed, and that aligner is gone.
+    //
+    // Requiring it meant any SegmentPPG throw -- whose catch(...) in
+    // create_ecg_ppg_pairs clears the array -- skipped the entire pulse
+    // channel, on a record whose PPG samples and R-peaks were sufficient to
+    // build every template. The symptom is a channel that silently does not
+    // exist: no pulse panels, no pulse columns, no message, and no response to
+    // any pulse-QC setting because the QC never ran.
+    //
+    // ch1.raw is checked because the slicer needs at least two R-peaks to form
+    // one [R_i - pad, R_i+1 + pad] window; it is the real precondition, and it
+    // is the one CreatePulseTemplates itself tests per bin.
     bool has_ppg = false;
     for (size_t i = 0; i < n; ++i) {
-        if (!wave_data[i].ppgSignal.empty() && !wave_data[i].ppgMinAmps.empty()) {
+        if (!wave_data[i].ppgSignal.empty() && wave_data[i].ch1.raw.size() >= 2) {
             has_ppg = true;
             break;
         }
+    }
+
+    // SAID OUT LOUD, either way. An absent pulse channel and a pulse channel
+    // lost to a failed precondition produced identical silence before, which is
+    // what made this unfindable from a log.
+    {
+        size_t nSig = 0, nValleys = 0, nPeaks = 0;
+        for (size_t i = 0; i < n; ++i) {
+            if (!wave_data[i].ppgSignal.empty())  ++nSig;
+            if (!wave_data[i].ppgMinAmps.empty()) ++nValleys;
+            if (wave_data[i].ch1.raw.size() >= 2) ++nPeaks;
+        }
+        std::fprintf(stderr,
+            "  [ppg-gate] has_ppg=%d rate=%.3f | bins with signal=%zu/%zu, "
+            "with >=2 R-peaks=%zu/%zu, with SegmentPPG valleys=%zu/%zu"
+            " (valleys not required)\n",
+            has_ppg ? 1 : 0, rates.ppg, nSig, n, nPeaks, n, nValleys, n);
+        std::fflush(stderr);
     }
 
     // PPG templates (+ per-sample std, parallel shape). Under Patch B they
@@ -436,6 +473,34 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                         ji.ppg_phase1_spread = ppg_template_iqrs[i];
                 }
 
+                // ---- DOES THE PULSE REACH THE JOINT BANK? ----------------
+                // Everything about the pulse channel downstream of here keys
+                // off ji.ppg_beats being non-null, and the four ways it can
+                // come back null are indistinguishable without this: no
+                // signal, an all-NaN template, a bin the QC emptied, or a
+                // short kept/keptSlices array. Printed per bin because the
+                // failure is per bin -- one degenerate bin is a gap, all 36 is
+                // a channel that does not exist.
+                {
+                    size_t nFinite = 0;
+                    const size_t tmplW = (i < ppg_templates.size())
+                        ? ppg_templates[i].size() : 0;
+                    if (i < ppg_templates.size())
+                        for (const double v : ppg_templates[i])
+                            if (!std::isnan(v)) ++nFinite;
+                    std::fprintf(stderr,
+                        "  [ppg-bin] bin %zu: good=%d tmpl_w=%zu finite=%zu "
+                        "kept=%zu keptSlices=%zu peakCol=%d footCol=%d "
+                        "-> joint=%d\n",
+                        i, ppg_template_good ? 1 : 0, tmplW, nFinite,
+                        (i < ppg_kept.size()) ? ppg_kept[i].size() : 0,
+                        (i < ppg_kept_slices.size()) ? ppg_kept_slices[i].size() : 0,
+                        (i < ppg_peak_cols.size()) ? ppg_peak_cols[i] : -1,
+                        (i < ppg_onset_cols.size()) ? ppg_onset_cols[i] : -1,
+                        ji.ppg_beats ? 1 : 0);
+                    std::fflush(stderr);
+                }
+
                 // ---- PER-SLICE RR, FOR THE POST-PARTITION STAGE ----------
                 // Straight off the R-peak vector that DEFINES the slices, so
                 // there is no index map between the prematurity test and the
@@ -517,6 +582,24 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                     bin_pipeline::ChannelOutput co;
                     co.bank = jbank::projectToChannel(info.joint.bank, cs, c,
                         &info.joint.flags, &info.joint.rr_after_ms);
+
+                    // THE PULSE FACE OF EACH GROUP, which is what the viewer
+                    // draws and what hasVisiblePanel's pulse gate reads. A
+                    // slot with an empty waveform here is an invisible pulse
+                    // panel AND, via that gate, a suppressed ECG panel.
+                    if (c == jbank::kPpg) {
+                        size_t withWave = 0, totalMembers = 0;
+                        for (const tbank::BankTemplate& tp : co.bank.templates) {
+                            if (!tp.tmpl.empty()) ++withWave;
+                            totalMembers += tp.members.size();
+                        }
+                        std::fprintf(stderr,
+                            "  [ppg-proj] bin %zu: in_channelset=%d slots=%d "
+                            "with_waveform=%zu members_total=%zu\n",
+                            i, cs[jbank::kPpg].present() ? 1 : 0,
+                            co.bank.size(), withWave, totalMembers);
+                        std::fflush(stderr);
+                    }
                     // BOTH IN SLICE SPACE, and the same length. flags and
                     // assignment used to be indexed by a channel's aligned row,
                     // which is why they could not be shared between channels;

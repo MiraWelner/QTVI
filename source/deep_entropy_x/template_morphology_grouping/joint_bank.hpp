@@ -16,7 +16,7 @@
 
 #include "template_bank.hpp"
 #include "template_assign.hpp"
-#include "template_marking_gui/alignment.hpp"
+#include "fiducial_marker_finding/alignment.hpp"
 #include "pvc_filter.hpp"
 #include "beat_substitute.hpp"
 
@@ -1758,10 +1758,23 @@ namespace jbank {
             // construction, since premature beats are exactly what cleaning
             // removed. 4.6 never reassigns a category, it only excludes, so the
             // premature row and the class row are reported side by side.
+            // ALL FIVE ZEROED, and that is the whole point of this block.
+            // `t` is a COPY of g.ch[channel] (above), so it arrives carrying
+            // whatever census that template already held -- from an earlier
+            // projection of the same JointBank, or from bank_reload, which
+            // restores these counts off disk. Every counter below is written
+            // with ++, so one missing reset does not read as zero: it reads as
+            // last time's count plus this time's. n_tukey_members was the one
+            // left out, and because eligible is computed from the FRESHLY
+            // counted premature/voted totals, the inflated Tukey count then
+            // satisfies n_tukey_members >= eligible in tukeyWordAgg -- which
+            // reports "removed", which drops the template out of the
+            // _templates file as "all members Tukey-removed".
             t.n_premature_members = 0;
             t.n_blended_members = 0;
             t.n_voted_members = 0;
             t.n_noise_members = 0;
+            t.n_tukey_members = 0;
             if (flags) {
                 for (const uint32_t slice : g.members) {
                     if (slice >= flags->size()) continue;

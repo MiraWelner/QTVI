@@ -7,7 +7,7 @@
 
 #include "bin_plot_widget.hpp"
 #include "sample_extent.hpp"
-#include "template_marking_gui\anchor_view.hpp"
+#include "fiducial_marker_finding\anchor_view.hpp"
 #include "noise_marking_gui/annotation_types.hpp"
 #include <QMenu>
 #include <QAction>
@@ -868,13 +868,13 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // frame. 9 and 19 keep both clear of it.
     p.setPen(Qt::black);
     p.drawText(margin_left, 9, binPart);
-    if (!descPart.isEmpty()) {
+    if (!restPart.isEmpty()) {
         // Advanced past the black run by the font's own metrics, so the gap
         // holds at any point size rather than being a guessed pixel count.
         const double gap = p.fontMetrics().horizontalAdvance("  ");
         const double x = margin_left + p.fontMetrics().horizontalAdvance(binPart) + gap;
         p.setPen(QColor(150, 150, 150));
-        p.drawText(QPointF(x, 9), descPart);
+        p.drawText(QPointF(x, 9), restPart);
     }
     if (!counts.isEmpty()) {
         p.setPen(QColor(150, 150, 150));
