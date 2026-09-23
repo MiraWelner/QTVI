@@ -12,7 +12,7 @@ enum class AnchorType { P_ONSET, Q_ONSET, R_PEAK, J_POINT };
 namespace anchor_view {
 
     // Every alignment the session holds, in the order sidecar CSVs are merged.
-    inline constexpr std::array<AnchorType, 4> anchor_array = { AnchorType::R_PEAK, AnchorType::P_ONSET, AnchorType::Q_ONSET, AnchorType::J_POINT };
+    inline constexpr std::array<AnchorType, 4> anchor_array = {AnchorType::R_PEAK, AnchorType::P_ONSET, AnchorType::Q_ONSET, AnchorType::J_POINT};
 
     //defines the suffix for the column headers printed to the csv
     inline constexpr const char* label(AnchorType a) {
@@ -25,21 +25,14 @@ namespace anchor_view {
         return "R";
     }
 
-    // ---- ECG marker ids, mirroring BinPlotWidget::Marker -------------------
-    enum EcgMarker : int {
-        p_begin = 0,
-        p_peak = 1,
-        q_begin = 2,
-        r_peak = 3,
-        s_end = 4,
-        t_end = 5,
-        j_point = s_end   // the J point and the end of S are one landmark
-    };
+    //this enum makes it easier to list the fiducial marker locations in order
+    enum EcgMarker : int { p_begin = 0,  p_peak = 1,  q_begin = 2, r_peak = 3, j_point = 4,  t_end = 5};
+
     inline constexpr bool isEcgMarker(int m) { return m >= p_begin && m <= t_end; }
 
     inline constexpr bool isBar(int marker) {
         //only these 4 locations have user movable bars
-        return marker == p_begin || marker == q_begin || marker == s_end || marker == t_end;
+        return marker == p_begin || marker == q_begin || marker == j_point || marker == t_end;
     }
     inline constexpr bool isGlyph(int marker) {
         //the rest are just glyphs
@@ -51,7 +44,7 @@ namespace anchor_view {
         switch (marker) {
         case p_begin: return AnchorType::P_ONSET;
         case q_begin: return AnchorType::Q_ONSET;
-        case s_end:   return AnchorType::Q_ONSET;
+        case j_point:   return AnchorType::Q_ONSET;
         case t_end:   return AnchorType::Q_ONSET;
         }
         return AnchorType::R_PEAK;
@@ -73,7 +66,7 @@ namespace anchor_view {
         switch (a) {
         case AnchorType::R_PEAK:  return true;
         case AnchorType::P_ONSET: return marker == p_begin;
-        case AnchorType::Q_ONSET: return marker == q_begin || marker == s_end || marker == t_end;
+        case AnchorType::Q_ONSET: return marker == q_begin || marker == j_point || marker == t_end;
         case AnchorType::J_POINT: return marker == t_end;
         }
         return false;
@@ -81,7 +74,7 @@ namespace anchor_view {
     inline int markerForPoint(const char* pointName) {
         if (std::strcmp(pointName, "p_begin") == 0) return p_begin;
         if (std::strcmp(pointName, "q_onset") == 0) return q_begin;
-        if (std::strcmp(pointName, "s_end") == 0) return s_end;
+        if (std::strcmp(pointName, "s_end") == 0) return j_point;
         if (std::strcmp(pointName, "t_end") == 0) return t_end;
         return -1;
     }

@@ -5,10 +5,10 @@
  *         bin/channel's own median template (and absolute-value template)
  *         that the template-generation pipeline already builds.
  *
- *         Wiring: writeEcgSQICsv() is called from finalizeViewerJob()
- *         (post_process.hpp) right after mergeTemplatesSlow() has produced
- *         the canonical job.tmpl / job.beats for a file. It writes one CSV
- *         per input file into cfg.quality_metric.
+ *         Wiring: writeEcgSQICsv() is called from analysis_job::finalize()
+ *         right after mergeTemplatesSlow() has produced the canonical
+ *         job.tmpl / job.beats for a file. It writes one CSV per input file
+ *         into cfg.quality_metric.
  *
  *         Segment boundaries (P/QRS/ST) are derived from FeatureMarks'
  *         existing auto-detectors -- the same ones that seed the viewer's
@@ -16,6 +16,15 @@
  *         The one boundary FeatureMarks doesn't expose directly (P onset)
  *         is estimated here; search "ASSUMPTION" below if that needs
  *         tightening.
+ *
+ *         LEAD POLARITY COMES IN FROM THE CALLER. The Q- and S-side finders
+ *         are defined by polarity (Q is the first NEGATIVE deflection before
+ *         R), so they need the lead the right way up. That answer is the
+ *         operator's per-channel "Lead Reversed" checkbox, carried here as a
+ *         LeadPolarity and turned into a sign per channel -- NOT re-derived
+ *         from the waveform, which is what the old qrs_positive_at did and
+ *         which could disagree with the operator on a complex sitting near
+ *         isoelectric.
  */
 
 #include <algorithm>
@@ -28,7 +37,7 @@
 
 #include "config_file_handling/config_entry.hpp"
 #include "template_generation/template_io.hpp"
-#include "template_marking_gui/feature_marks.hpp"   // FeatureMarks
+#include "template_marking_gui/feature_marks.hpp"   // FeatureMarks, LeadPolarity
 
  // P/QRS/ST sample ranges for one beat, in the beat's own sample coordinates
  // (the R-aligned template / kept-beat coordinate system).
@@ -43,40 +52,48 @@ struct Segments {
 // Builds a Segments from FeatureMarks' auto-detectors, anchored on r_col
 // (the same R column the template was built around) at sample rate fs.
 //
+// sgn is this channel's polarity sign, from LeadPolarity::sign(lead). It is a
+// parameter rather than something derived here because this function is handed
+// a bare trace with no channel index -- the caller is the only one that knows
+// which lead this is.
+//
 // The isoelectric window used for the noise metric is [tHi, nextPLo] = [this
 // beat's T-end, the NEXT beat's P-onset] -- the TP segment, the true flat
 // baseline between two consecutive beats. tHi is a direct FeatureMarks
 // landmark; nextPLo has no direct detector (it belongs to a beat this
-// function was never handed), so it's found the same way a normal p_begin
-// is -- detect a peak, then FeatureMarks::compute_p_begin's anchor-fit -- just
-// with the peak search restricted to [t_end, t_end+600ms]. If the array
-// doesn't extend that far (no next beat in view), nextPLo falls back to tHi
-// (a zero-width window, handled gracefully by the noise metric).
+// function was never handed), so it falls back to tHi (a zero-width window,
+// handled gracefully by the noise metric).
 //
 // ASSUMPTION: P onset (pLo) is estimated by reflecting the detected P-end
-// around the detected P-peak (symmetric-P-wave assumption) -- FeatureMarks
-// has no plain "P onset" detector (it's reactive / GUI-seeded elsewhere).
-// Swap this for something more precise if you have a better source for it.
-inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double fs) {
+// around the detected P-peak (symmetric-P-wave assumption). NOTE that
+// FeatureMarks::find_p_begin is a real anchor-fit P-onset detector and would
+// be a better source than this reflection -- swapping to it is a detector
+// change and belongs on its own, but the "no plain P onset detector exists"
+// justification this comment used to carry is no longer true.
+inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double fs, double sgn) {
     Segments s{};
     const int n = static_cast<int>(ecg.size());
     if (n == 0 || r_col < 0) return s;
 
-    // Each landmark computed ONCE and reused: detect_p_end would otherwise
+    // Each landmark computed ONCE and reused: find_p_end would otherwise
     // re-run the P seed, and the two T detectors would each re-run
-    // compute_j_point (a full transitionAnchor fit).
+    // find_j_point (a full transitionAnchor fit).
     //
-    // seed_p_peak, NOT the P landmark. The reported P peak is compute_p_peak,
+    // A P-PEAK SEED, NOT THE P LANDMARK. The reported P peak is find_p_peak
     // bracketed by the P-onset and Q-onset bars -- but there are no bars here:
     // this scores a template with no operator marks, and all that is wanted is
-    // the rough position that opens detect_p_end's search. Renamed from
-    // detect_p_peak so a call site cannot mistake a seed for a measurement.
-    const double qOnsetD = FeatureMarks::find_q_onset(ecg, fs, r_col);
+    // the rough position that opens find_p_end's search.
+    //
+    // find_p_peak and find_t_end take no sgn: both find their extremum by
+    // distance from a local bracket baseline, in either direction, so an
+    // inverted P or T on an upright lead is found on equal footing. Only the
+    // Q/S-side finders need the lead sign.
+    const double qOnsetD = FeatureMarks::find_q_onset(ecg, fs, r_col, sgn);
     const double pPeakD = FeatureMarks::find_p_peak(ecg, 0.0, qOnsetD, fs);
     const int pPeak = (int)std::lround(pPeakD);
-    const int pEnd = FeatureMarks::find_p_end(ecg, r_col, fs, 1.0, pPeakD);
+    const int pEnd = FeatureMarks::find_p_end(ecg, r_col, fs, sgn, pPeakD);
     const int qBegin = (qOnsetD >= 0.0) ? (int)std::lround(qOnsetD) : -1;
-    const double jPointD = FeatureMarks::find_j_point(ecg, fs, r_col);   // QRS end / J point
+    const double jPointD = FeatureMarks::find_j_point(ecg, fs, r_col, sgn);   // QRS end / J point
     const int jPoint = (int)std::lround(jPointD);
     const int tEnd = (int)std::lround(FeatureMarks::find_t_end(ecg, fs, r_col, jPointD));
 
@@ -112,8 +129,8 @@ struct BeatSQI {
 
 // NaN-aware Pearson correlation (same convention as alignment.hpp's local
 // pearson() lambda, factored out here so sqi_ecg.hpp has no dependency on it).
-// pearsonSQI signature change: add lo/hi bounds (default = whole array,
-// so any other caller is unaffected)
+// pearsonSQI signature: lo/hi bounds default to the whole array, so any other
+// caller is unaffected.
 inline double pearsonSQI(const std::vector<double>& a, const std::vector<double>& b,
     int lo = 0, int hi = -1) {
     const int n = static_cast<int>(std::min(a.size(), b.size()));
@@ -158,7 +175,8 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
     int motionFlag,
     double fs) {
     BeatSQI q{};
-    q.templateCorr = pearsonSQI(beat, tmpl, 0, seg.tHi + 0.050 * fs);
+    q.templateCorr = pearsonSQI(beat, tmpl, 0,
+        seg.tHi + static_cast<int>(std::lround(0.050 * fs)));
     auto chi = [&](const std::vector<double>& ref, int a, int b) {
         double s = 0.0;
         const int hi = std::min(b, static_cast<int>(std::min(beat.size(), ref.size())));
@@ -219,7 +237,9 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
 // every bin, against that bin/channel's own raw + absval templates, and
 // writes one row per beat to <cfg.quality_metric>/<stem>_quality.csv.
 //
-// Called from finalizeViewerJob() once job.tmpl/job.beats are final.
+// Called from analysis_job::finalize() once job.tmpl/job.beats are final.
+// `pol` is built there from the job's per-channel inversion flags.
+//
 // motionFlag is left at -1 (unavailable): at this stage of the pipeline
 // there's no finer per-beat motion signal available than bad_segment
 // (already filtered out above), so composite falls back to the
@@ -229,7 +249,8 @@ inline void writeEcgSQICsv(const config_entry& cfg,
     const std::string& stem,
     const template_io::TemplateFile& tmpl,
     const template_io::BeatsFile& beats,
-    double ecgFs) {
+    double ecgFs,
+    const LeadPolarity& pol) {
     const std::string outPath = cfg.quality_metric + "/" + stem + "_quality.csv";
     std::ofstream f(outPath);
     if (!f.is_open()) {
@@ -240,15 +261,20 @@ inline void writeEcgSQICsv(const config_entry& cfg,
     f << "bin,channel,beat,template_corr,chiSq0,chiSqAbs,chiSq0_P,chiSq0_QRS,chiSq0_ST,"
         "baseline,noise,motion,composite,is_included\n";
 
+    // `lead` IS IN THE TABLE, not derived from the loop. The loop below is a
+    // range-for over this array, so there is no counter to index pol with --
+    // and adding one alongside would be a second thing to keep in step with
+    // the key. One row, one channel, one polarity index.
     struct ChannelSpec {
         const char* key;
+        int lead;   // index into LeadPolarity; must match key
         template_io::ChannelMethodTemplate template_io::BinTemplates::* raw;
         template_io::ChannelMethodTemplate template_io::BinTemplates::* absval;
     };
     const ChannelSpec channels[] = {
-        { "CH1", &template_io::BinTemplates::ch1_raw, &template_io::BinTemplates::ch1_absval },
-        { "CH2", &template_io::BinTemplates::ch2_raw, &template_io::BinTemplates::ch2_absval },
-        { "CH3", &template_io::BinTemplates::ch3_raw, &template_io::BinTemplates::ch3_absval },
+        { "CH1", 0, &template_io::BinTemplates::ch1_raw, &template_io::BinTemplates::ch1_absval },
+        { "CH2", 1, &template_io::BinTemplates::ch2_raw, &template_io::BinTemplates::ch2_absval },
+        { "CH3", 2, &template_io::BinTemplates::ch3_raw, &template_io::BinTemplates::ch3_absval },
     };
     static const char* const included_levels[] = { "INCLUDE", "SUBSTITUTE", "EXCLUDE" };
 
@@ -268,7 +294,8 @@ inline void writeEcgSQICsv(const config_entry& cfg,
             const auto& binBeats = it->second[bin];   // [beat][sample]
             if (binBeats.empty()) continue;
 
-            const Segments seg = buildSegments(rawBlk.ecgTemplate, rawBlk.r_col, ecgFs);
+            const Segments seg = buildSegments(rawBlk.ecgTemplate, rawBlk.r_col, ecgFs,
+                pol.sign(ch.lead));
 
             for (size_t bi = 0; bi < binBeats.size(); ++bi) {
                 const BeatSQI q = computeEcgSQI(binBeats[bi], rawBlk.ecgTemplate,

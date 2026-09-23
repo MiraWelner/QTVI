@@ -349,15 +349,8 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         p.drawPath(path);
     }
 
-    // ---- fitted curve(s): every tested model; winner green, others gray ---
-    // SOLID, BOTH. The curves were dashed, which at this zoom broke each one
-    // into a row of ticks that read as sample markers rather than as a fitted
-    // model, and the dashes of a loser crossing the winner were hard to tell
-    // apart from the winner's own gaps. Colour carries the distinction on its
-    // own: green is the fit that placed the mark, gray is a model that was
-    // tested and did not. The losers were red, which is the colour this GUI
-    // uses for a fault -- a rejected candidate is not one, it is the contest
-    // working.
+    // ---- fitted curve(s): every tested model; winner green and solid, the
+    // models that lost gray and dashed ----
     {
         auto drawCurve = [&](const std::vector<double>& fit, QColor col, Qt::PenStyle style) {
             QPen pen(col); pen.setWidthF(1.4); pen.setStyle(style);
@@ -370,10 +363,18 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
             }
             p.drawPath(path);
             };
-        // Losers first, winner (green) on top.
+        // Losers first, winner on top.
+        //
+        // THE LOSERS ARE GRAY AND THE WINNER IS SOLID. They were red dashes and
+        // a green dash, which gave the models that lost a contest the strongest
+        // colour on the panel -- red reads as an error rather than as "this
+        // model was tested and scored worse" -- and left the winner sharing the
+        // losers' line style, so the one curve the landmark is actually placed
+        // from had only its hue to distinguish it. Gray dashes recede, and a
+        // solid green line is the only unbroken fitted curve in the panel.
         const std::vector<Candidate> cands = candidateCurves(lo, hi);
         for (const Candidate& c : cands)
-            if (!c.selected) drawCurve(c.curve, QColor(150, 150, 150), Qt::SolidLine);
+            if (!c.selected) drawCurve(c.curve, QColor(150, 150, 150), Qt::DashLine);
         for (const Candidate& c : cands)
             if (c.selected)  drawCurve(c.curve, QColor(0, 150, 0), Qt::SolidLine);
 

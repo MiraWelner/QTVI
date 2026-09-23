@@ -103,7 +103,12 @@ void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
     // they keep the bin-wide pulse beat count, which for them IS the whole
     // population -- there is no per-group arterial cohort to get wrong.
     int nPulseBeats = -1;
-    int footIdx = -1;     // this channel's foot/onset column (perfusion-index baseline)
+    // A DOUBLE, like every pulse field it is assigned from (pulse_marks.onset,
+    // b.abp_onset and the rest are all sub-sample). As an int it truncated the
+    // foot to a whole column before sample_y, which interpolates, was given it
+    // -- and the grid panel this one zooms into made the same conversion, so
+    // the two agreed only by both being wrong in the same direction.
+    double footIdx = -1.0;   // this channel's foot/onset column (perfusion-index baseline)
     QString chLabel;
     if (BinPlotWidget::markerIsPpg(marker)) {
         // THE GROUP'S PULSE, NOT THE BIN'S: ppg_bank slot i is group i, on
@@ -562,7 +567,7 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
                     || marker == BinPlotWidget::EcgPPeak
                     || marker == BinPlotWidget::EcgQPeak
                     || marker == BinPlotWidget::EcgTPeak);
-            // NO Q TROUGH => NO FIT. compute_q_onset falls back to its
+            // NO Q TROUGH => NO FIT. find_q_onset falls back to its
             // R-upstroke branch on a monophasic-R beat, and lm.q_onset_found is
             // false -- the same flag the grid uses to draw a CIRCLE there
             // instead of an X, and the reason lm.q_peak comes back -1. Neither

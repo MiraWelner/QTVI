@@ -713,27 +713,160 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     // shoulder. Both landmarks use one lambda: they had two, identical down to
     // the constants, which is two places for the pulse foot's window to drift.
     // winner = 1 names the cubic as the placing model.
-    auto refine_trough = [&](int seed, subsample_refine::PeakCandidates& out) {
-        out = subsample_refine::peakCandidates(v, seed,
-            subsample_refine::pulse_sigma::Foot,
-            subsample_refine::pulse_halfwidth::Foot);
-        const double pos = cld(out.draw[1].position);
-        out.winner = 1;
-        out.placement = pos;
-        return pos;
+    //
+    // ---- WHY THIS RETURNS -1 AND DOES NOT CLAMP ------------------------
+    //
+    // cld() IS NOT SAFE ON A FIT RESULT. peakCandidates bails early --
+    // n < 5, seed out of range, halfWidth < 3 -- and returns a
+    // DEFAULT-CONSTRUCTED PeakCandidates: valid = false, draw[].position = -1.
+    // Running that -1 through cld() is std::clamp(-1.0, 0.0, Wc-1), which is
+    // 0.0. So a fit that never ran reported the foot AT SAMPLE 0, and sample 0
+    // is inside the leading NaN pad every template carries (construction pads
+    // `pad` seconds before the first R). That is not a cosmetic error:
+    //
+    //   onset = 0  ->  footY = sample_y(tmpl, 0) = NaN
+    //              ->  calculate_perfusion_index returns NaN for EVERY sample
+    //              ->  the whole normalized pulse trace is NaN
+    //              ->  nothing is drawn, the pulse axis falls back to its
+    //                  0..1 default, and drawFeatureGlyphs paints every
+    //                  fiducial at the axis floor
+    //
+    // -- i.e. an empty panel with a row of X's along the bottom, on a slot
+    // holding hundreds of clean beats. And it was STICKY: BankPulseMarkerSet::
+    // isUnset() tests onset < 0, so the laundered 0 counted as a real
+    // detection and the lazy re-seed in showPage never fired again.
+    //
+    // The peak never had this failure because it is validated immediately
+    // after placement (`if (g.peak < 3) return g;`). The trough path lost that
+    // guard when the two lambdas were consolidated into this one. -1 is the
+    // sentinel every consumer of PpgFiducials already handles as "not found";
+    // 0 is a position, and a wrong one.
+    auto refine_trough = [&](int seed, int searchLo,
+        subsample_refine::PeakCandidates& out) -> double {
+            out = subsample_refine::peakCandidates(v, seed,
+                subsample_refine::pulse_sigma::Foot,
+                subsample_refine::pulse_halfwidth::Foot);
+            // The contest did not run: leave `out` as it came back, so the
+            // focus panel does not draw a cubic as the placing model for a fit
+            // that does not exist.
+            if (!out.valid || !(out.draw[1].position >= 0.0)) return -1.0;
+
+            // CLAMPED INTO THE SEARCH WINDOW, NOT REJECTED FOR LEAVING IT.
+            // The cubic's vertex is free to move +-halfWidth from the seed, so
+            // a trough sitting near the window edge routinely refines to a
+            // position a sample or two outside it. That is a good foot placed
+            // slightly left, not a failed detection -- and rejecting it threw
+            // away the pulse on a large fraction of bins. searchLo is at or
+            // after the first finite sample, so clamping to it also keeps the
+            // result out of the leading NaN pad, which is what the bound was
+            // for in the first place.
+            double pos = std::max(cld(out.draw[1].position),
+                static_cast<double>(searchLo));
+
+            // A LANDMARK STILL NEEDS A SAMPLE UNDER IT. This is the one
+            // condition that turns into an all-NaN trace downstream (the
+            // perfusion-index transform divides by the amplitude AT the foot),
+            // so it is worth testing -- but it is now the ONLY reason a
+            // refined trough is refused.
+            if (std::isnan(sample_at(v, pos))) return -1.0;
+
+            out.winner = 1;
+            out.placement = pos;
+            return pos;
         };
 
-    // Systolic foot: the trough before the peak.
+    // ---- THE FOOT IS THE NEAREST TROUGH, NOT THE LOWEST ----------------
+    //
+    // trough_in is a GLOBAL minimum over its range, and that was the right
+    // answer while pulse templates were FOOT-ANCHORED: every beat was re-sliced
+    // so its own foot sat at a fixed column, so the window held one pulse and
+    // its lowest pre-peak sample WAS the foot.
+    //
+    // Pulse templates are R-anchored now -- [t_R - pad, t_R_next + pad], pad =
+    // 0.4 s -- and pulse transit time puts this beat's pulse 100-300 ms AFTER
+    // its R. So the window opens before this pulse begins and routinely
+    // contains the previous pulse's diastolic tail and a partial pulse at the
+    // front. The lowest sample before the systolic peak is then frequently the
+    // PRECEDING pulse's trough, a full cycle early.
+    //
+    // That failure is quieter than the sentinel one and worse for the data: it
+    // lands on a real, finite sample, so nothing blanks and nothing warns. The
+    // panel draws, the foot glyph sits on a plausible-looking trough one cycle
+    // back, and every amplitude the perfusion-index transform produces from it
+    // -- which divides by the sample AT the foot -- is measured against the
+    // wrong baseline.
+    //
+    // Walking back to the FIRST local minimum is the anchoring-independent
+    // answer: the foot of the pulse that owns this peak is the trough
+    // immediately before it, whatever else the window contains. The lookback is
+    // bounded because a pulse upstroke is short -- 400 ms is generous for the
+    // foot-to-peak rise at any plausible heart rate -- so an absent trough
+    // cannot send the search back into a previous cycle.
     {
-        const int seed = trough_in(v, 0, iFloor(g.peak) - 1);
-        g.onset = refine_trough(seed >= 0 ? seed : 0, g.onset_cand);
+        const int hi = iFloor(g.peak) - 1;
+        // Bounded lookback, and never past the first finite sample: the
+        // leading-NaN skip protects the peak seed and has to protect this one.
+        const int back = std::max(1, static_cast<int>(std::lround(0.40 * ppgRate)));
+        const int searchLo = std::max(lo0, iFloor(g.peak) - back);
+
+        int seed = -1;
+        // Interior local minimum, scanning backwards from just under the peak.
+        // Non-strict on the left and strict on the right, so a flat-bottomed
+        // trough reports its LAST sample -- the one closest to the upstroke --
+        // rather than wherever the plateau happens to begin.
+        for (int i = hi; i > searchLo; --i) {
+            if (std::isnan(v[i]) || std::isnan(v[i - 1]) || std::isnan(v[i + 1]))
+                continue;
+            if (v[i] <= v[i - 1] && v[i] < v[i + 1]) { seed = i; break; }
+        }
+        // No interior minimum in the lookback (a monotonic rise into the peak,
+        // which is what the first pulse in a window looks like when its own
+        // foot precedes the window): the lowest sample IN THE BOUNDED range,
+        // not in the whole pre-peak span.
+        if (seed < 0) seed = trough_in(v, searchLo, hi);
+        g.onset = refine_trough(seed >= 0 ? seed : searchLo, searchLo,
+            g.onset_cand);
     }
 
-    // Pulse end: the trough after the peak.
+    // Pulse end: the trough after the peak -- the MIRROR of the foot, and it
+    // needs the same treatment for the same reason. The window runs to
+    // t_R_next + pad, so the lowest sample after the systolic peak can belong
+    // to the NEXT pulse's foot; taking a global minimum there makes the pulse
+    // read a whole cycle too long, and every landmark bracketed by (peak, end)
+    // -- the notch fallback, t80, peak2, t50's ceiling -- inherits it.
+    //
+    // Diastole is longer than the upstroke, so the forward bound is wider: one
+    // full cycle at 30 bpm. Still bounded, so the search cannot run to the end
+    // of a window holding two pulses.
     {
-        const int seed = trough_in(v, std::min(iCeil(g.peak) + 1, Wc - 1), Wc - 1);
-        g.end = refine_trough(seed >= 0 ? seed : Wc - 1, g.end_cand);
+        const int lo = std::min(iCeil(g.peak) + 1, Wc - 1);
+        const int fwd = std::max(1, static_cast<int>(std::lround(2.0 * ppgRate)));
+        const int searchHi = std::min(Wc - 1, iCeil(g.peak) + fwd);
+
+        int seed = -1;
+        for (int i = lo; i < searchHi; ++i) {
+            if (std::isnan(v[i]) || std::isnan(v[i - 1]) || std::isnan(v[i + 1]))
+                continue;
+            // Strict on the left, non-strict on the right: a flat-bottomed
+            // trough reports its FIRST sample, the one closest to the
+            // downstroke -- the opposite tie-break from the foot, and
+            // deliberately so, since each wants the edge nearer its own peak.
+            if (v[i] < v[i - 1] && v[i] <= v[i + 1]) { seed = i; break; }
+        }
+        if (seed < 0) seed = trough_in(v, lo, searchHi);
+        g.end = refine_trough(seed >= 0 ? seed : searchHi, lo0, g.end_cand);
     }
+
+    // The foot is the anchor of every amplitude the pulse reports -- the
+    // perfusion-index transform divides by the sample under it -- so a pulse
+    // with no locatable foot is worth one line on stderr rather than a silently
+    // degraded panel. Not a bail: the peak, end and notch are still meaningful,
+    // and normalize_pulse_trace now falls back to a foot-zeroed or raw trace so
+    // the operator still sees the waveform.
+    if (!(g.onset >= 0.0))
+        std::fprintf(stderr, "[ppg] no foot located (peak at %.2f, first finite %d,"
+            " W=%d): pulse amplitudes will not be PI-normalized\n",
+            g.peak, lo0, Wc);
 
     // Dicrotic notch (placeholder tier for now). Fallback = 120 ms after the
     // peak, but BOUNDED to sit before the pulse end: on a fast/short pulse

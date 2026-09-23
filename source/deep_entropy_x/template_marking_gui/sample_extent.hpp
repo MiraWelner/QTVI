@@ -35,10 +35,6 @@
 
 namespace sample_extent {
 
-    // (FeatureMarks::sample_at lives in feature_marks.cpp. It was duplicated
-    //  here, inside this namespace, where a member of FeatureMarks cannot be
-    //  defined at all.)
-
     // First / last non-NaN column; -1 when the array is empty or all NaN.
     inline int firstFinite(const std::vector<double>& v) {
         const int n = static_cast<int>(v.size());

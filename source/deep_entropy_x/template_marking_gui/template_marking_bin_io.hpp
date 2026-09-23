@@ -127,6 +127,22 @@ struct TemplateBin {
     uint64_t ch3_n_beats_raw = 0;
     uint64_t ppg_n_beats = 0;
     ChannelTemplateData ch1, ch2, ch3;
+
+    // THE OPERATOR'S PER-CHANNEL "Lead Reversed" ANSWER, stamped on every bin
+    // by the viewer at load (TemplateViewerWindow::setLeadPolarity) and by
+    // template generation when it builds the bins. Carried HERE, on the bin,
+    // rather than threaded through alignedLandmarks / ecgDetect / seedSlotBars
+    // and the CSV emitters: every one of those already has a TemplateBin and a
+    // lead index in hand, so the sign and the channel cannot get out of step.
+    // The two functions that take a BARE TRACE with no lead -- computeEcgFeatures
+    // and ecgDetectOn -- take an explicit sgn instead, because there is nothing
+    // on their inputs to read it from.
+    //
+    // NOT SERIALIZED. This is a per-RECORD fact duplicated across bins, not
+    // per-bin state, and writeTemplateMarkingsBin does not persist it -- the
+    // checkbox is re-read from the noise-marking stage on every run, so a copy
+    // on disk would be a second source that could disagree with it.
+    LeadPolarity polarity;
     std::map<int, std::array<ChannelTemplateData, 3>> anchored;
     struct AnchorAuto {
         double p_begin[3] = { -1, -1, -1 };
@@ -197,25 +213,6 @@ struct TemplateBin {
         pull(anchor_view::t_end, &tbank::BankMarkerSet::t_end);
         return out;
     }
-
-    // ---- NO STORED GLYPH ANY MORE ----------------------------------------
-    //
-    // syncReactiveGlyphs lived here. It cached the reactive P-peak into
-    // BankMarkerSet::p_peak, and that field is gone: the bars fully determine
-    // it, so a stored copy was a second answer that could disagree with them,
-    // and persisting it made the disagreement survive a reload.
-    //
-    // Every reader now calls FeatureMarks::reactive_ecg on the bar set it
-    // already has. The markings CSV below does exactly that (rxUser / rxAuto),
-    // and BinPlotWidget::reactiveGlyphs does it per paint, so the X on screen
-    // and the CSV column come from one function with one set of brackets.
-    //
-    // CALLERS TO UPDATE: TemplateViewerWindow called this after every bar edit
-    // and once after seeding. Those calls should simply be deleted -- there is
-    // nothing left to sync -- but the marker get/set switches that read and
-    // wrote BankMarkerSet::p_peak for BinPlotWidget::EcgPPeak need to return
-    // reactive_ecg's result instead, and setMarker on EcgPPeak should be a
-    // no-op because a glyph is not draggable.
 
     std::vector<double> ppgTemplate;
     std::vector<double> ppg_template_iqr;
@@ -669,7 +666,7 @@ struct EcgFeatures {
 // finders below still take an int R column, so the rounding happens HERE, at
 // the one call that needs it, instead of at every caller.
 inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, double p_peak, double q_onset, double r_peak, double s_end, double t_end,
-    double rateHz, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
+    double rateHz, double sgn, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
 {
     EcgFeatures f;
     const double N = static_cast<double>(ecg.size());
@@ -774,8 +771,8 @@ inline FeatureMarks::TemplateLandmarks alignedLandmarks(
     const ChannelTemplateData& cd = b.chFor(lead, a);
     if (cd.ecgTemplate_raw.empty() || cd.r_col_raw < 0) return lm;
     return FeatureMarks::detect_template_landmarks(cd.ecgTemplate_raw,
-        static_cast<int>(std::lround(cd.r_col_raw)), sampleRate, 1.0,
-        fitMode, peakMode);
+        static_cast<int>(std::lround(cd.r_col_raw)), sampleRate,
+        b.polarity.sign(lead), fitMode, peakMode);
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,18 +998,18 @@ struct EcgDetection {
 // under them. `tmpl` has to outlive the returned EcgDetection, which holds a
 // pointer to it for the reactive half.
 inline EcgDetection ecgDetectOn(const std::vector<double>& tmpl, int r_col,
-    double sampleRate,
+    double sampleRate, double sgn,
     curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
 {
     EcgDetection d;
     if (tmpl.size() < 3 || r_col < 0) return d;
 
-    d.lm = FeatureMarks::detect_template_landmarks(tmpl, r_col, sampleRate, 1.0,
+    d.lm = FeatureMarks::detect_template_landmarks(tmpl, r_col, sampleRate, sgn,
         onOffsetMode, peakMode);
     if (!d.lm.valid) return d;
 
-    d.s_peak = FeatureMarks::find_s_peak(tmpl, r_col, sampleRate, 1.0, peakMode);
+    d.s_peak = FeatureMarks::find_s_peak(tmpl, r_col, sampleRate, sgn, peakMode);
     d.tmpl = &tmpl;
     d.valid = true;
     return d;
@@ -1028,13 +1025,13 @@ inline EcgDetection ecgDetect(const TemplateBin& b, int lead, int slot,
     if (!sv.valid) return d;
 
     d.lm = FeatureMarks::detect_template_landmarks(*sv.tmpl, sv.r_col,
-        sampleRate, 1.0, onOffsetMode, peakMode);
+        sampleRate, b.polarity.sign(lead), onOffsetMode, peakMode);
     if (!d.lm.valid) return d;
 
     // S peak has no field on TemplateLandmarks; it is the same finder the
     // interval code uses, on this alignment's trace and R column.
     d.s_peak = FeatureMarks::find_s_peak(*sv.tmpl, sv.r_col, sampleRate,
-        1.0, peakMode);
+        b.polarity.sign(lead), peakMode);
     d.tmpl = sv.tmpl;
     d.valid = true;
     return d;
@@ -1105,7 +1102,8 @@ inline bool seedSlotBars(TemplateBin& b, int lead, int slot, AnchorType a,
 {
     const SlotView sv = slotView(b, lead, slot, a);
     if (!sv.valid) return false;
-    FeatureMarks::seed_bank_template(*sv.tmpl, sv.r_col, sampleRate, 1.0, a,
+    FeatureMarks::seed_bank_template(*sv.tmpl, sv.r_col, sampleRate,
+        b.polarity.sign(lead), a,
         b.slotMarks(lead, slot, a), onOffsetMode, peakMode);
     return true;
 }
@@ -1195,7 +1193,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                     alignedLandmarks(b, c, AnchorType::R_PEAK, sampleRateHz,
                         fitMode, peakMode);
                 if (!aaR.valid) continue;
-                EcgFeatures ft = computeEcgFeatures(ecg, aaR.p_peak, aaR.q_onset, aaR.r_peak, aaR.s_end, aaR.t_end, sampleRateHz, peakMode);
+                EcgFeatures ft = computeEcgFeatures(ecg, aaR.p_peak, aaR.q_onset, aaR.r_peak, aaR.s_end, aaR.t_end, sampleRateHz, b.polarity.sign(c), peakMode);
                 if (ft.r_idx < 0.0 || ft.s_idx < 0.0) continue;
                 const double last = static_cast<double>(ecg.size()) - 1.0;
                 if (ft.r_idx > last || ft.s_idx > last) continue;
@@ -1554,7 +1552,8 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                                     std::lround(b.chFor(c, anchor).r_col_raw));
                                 const FeatureMarks::TemplateLandmarks lm =
                                     FeatureMarks::detect_template_landmarks(
-                                        asl->tmpl, rSeed, sampleRateHz, 1.0, fitMode, peakMode);
+                                        asl->tmpl, rSeed, sampleRateHz,
+                                        b.polarity.sign(c), fitMode, peakMode);
                                 aa.p_begin[c] = lm.p_begin;  aa.p_peak[c] = lm.p_peak;
                                 aa.q_onset[c] = lm.q_onset;  aa.r_peak[c] = lm.r_peak;
                                 aa.s_end[c] = lm.s_end;    aa.t_end[c] = lm.t_end;
@@ -1589,7 +1588,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             // Empty, not computed, with no trace: computeEcgFeatures on an
                             // empty vector still returns an s_idx.
                             EcgFeatures ftAuto = asl
-                                ? computeEcgFeatures(ecg, aa.p_peak[c], aa.q_onset[c], aa.r_peak[c], aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode)
+                                ? computeEcgFeatures(ecg, aa.p_peak[c], aa.q_onset[c], aa.r_peak[c], aa.s_end[c], aa.t_end[c], sampleRateHz, b.polarity.sign(c), peakMode)
                                 : EcgFeatures{};
                             // Derived from the assembled bars, not from `umk`: q_peak,
                             // s_peak and the QRS/QT intervals need a whole beat's
@@ -1598,7 +1597,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             // blocks (a duration is frame-free), which is exactly why only
                             // the R block emits their user half.
                             EcgFeatures ftUser = asl
-                                ? computeEcgFeatures(ecg, user_placed_s_and_t_bars_for_bracketing_tpeak.p_peak, whole.q_onset, b.r_peak_ch[c], whole.s_end, whole.t_end, sampleRateHz, peakMode)
+                                ? computeEcgFeatures(ecg, user_placed_s_and_t_bars_for_bracketing_tpeak.p_peak, whole.q_onset, b.r_peak_ch[c], whole.s_end, whole.t_end, sampleRateHz, b.polarity.sign(c), peakMode)
                                 : EcgFeatures{};   // see ftAuto
 
                             // Order MUST match ecgPointNames:
@@ -1669,7 +1668,8 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                                     std::lround(b.chFor(c, anchor).r_col_raw));
                                 const FeatureMarks::TemplateLandmarks lm =
                                     FeatureMarks::detect_template_landmarks(
-                                        asl2->tmpl, rSeed, sampleRateHz, 1.0, fitMode, peakMode);
+                                        asl2->tmpl, rSeed, sampleRateHz,
+                                        b.polarity.sign(c), fitMode, peakMode);
                                 aa.p_begin[c] = lm.p_begin;  aa.p_peak[c] = lm.p_peak;
                                 aa.q_onset[c] = lm.q_onset;  aa.r_peak[c] = lm.r_peak;
                                 aa.s_end[c] = lm.s_end;    aa.t_end[c] = lm.t_end;

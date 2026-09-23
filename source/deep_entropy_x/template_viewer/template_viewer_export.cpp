@@ -47,7 +47,8 @@ void TemplateViewerWindow::writeNormalizationCsvs() {
             const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
                 ecg, rmk.p_begin, rmk.q_onset, rmk.s_end, rmk.t_end, m_sampleRate);
             EcgFeatures f = computeEcgFeatures(ecg, rx.p_peak, rmk.q_onset,
-                b.r_peak_ch[ch], rmk.s_end, rmk.t_end, m_sampleRate);
+                b.r_peak_ch[ch], rmk.s_end, rmk.t_end, m_sampleRate,
+                b.polarity.sign(ch));
             const double ry = normalize_features::sample_y(ecg, f.r_idx);
             const double sy = normalize_features::sample_y(ecg, f.s_idx);
             if (std::isnan(ry) || std::isnan(sy)) continue;
@@ -582,7 +583,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // double, and the qrs/qt milliseconds this feeds are sub-sample.
             ftAuto[c] = computeEcgFeatures(ecg,
                 aaF.p_peak, aaF.q_onset, aaF.r_peak,
-                aaF.s_end, aaF.t_end, m_sampleRate);
+                aaF.s_end, aaF.t_end, m_sampleRate, b.polarity.sign(c));
             // Per lead, because slotMarks selects the lead -- the old bin-wide
             // MarkerSet held all three leads in one object and was fetched once
             // per bin.
@@ -614,7 +615,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
                 ecg, umk.p_begin, umk.q_onset, umk.s_end, umk.t_end, m_sampleRate);
             ftUser[c] = computeEcgFeatures(ecg,
                 rxF.p_peak, umk.q_onset, b.r_peak_ch[c],
-                umk.s_end, umk.t_end, m_sampleRate);
+                umk.s_end, umk.t_end, m_sampleRate, b.polarity.sign(c));
         }
 
         // ECG marker positions, indices aligned with ECG_MARKERS.

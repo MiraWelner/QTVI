@@ -318,6 +318,9 @@ void TemplateViewerWindow::loadSubject(const template_io::TemplateFile& tf,
 
 void TemplateViewerWindow::initAfterBinsLoaded() {
     //various bookeeping after the bins are loaded
+
+    for (TemplateBin& b : m_bins) b.polarity = m_polarity;
+
     max_leads = 1;
     for (const auto& b : m_bins) {
         int nl = (int)leadsForBin(b).size();
@@ -370,12 +373,12 @@ void TemplateViewerWindow::seedOneBin(TemplateBin& b) const
         auto it = b.anchored.find(static_cast<int>(a));
         if (it == b.anchored.end()) continue;   // no block -> nothing to seed
         b.ch1 = it->second[0]; b.ch2 = it->second[1]; b.ch3 = it->second[2];
-        FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, a);
+        FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, a, b.polarity);
     }
 
     // R last so the flat state the grid reads is R's.
     b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
-    FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK);
+    FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK, b.polarity);
 
     // NO ECG GLYPH SYNC: p_peak is not stored any more, so there is nothing to
     // cache. The PPG reactive values ARE cached (t50 / t80 / t80_rise / pw80 /

@@ -11,13 +11,6 @@
 #include <unordered_map>
 #include <cmath>
 #include <QString>
-#include "template_marking_gui/template_marking_bin_io.hpp"
-#include "template_marking_gui/bin_plot_widget.hpp"
-#include "template_marking_gui/focus_panel_widget.hpp"
-#include "template_marking_gui/anchor_view.hpp"
-#include "logging/boundary_training_log.hpp"
-
-// Needed by the template_viewer_*.cpp units, which include only this header.
 #include <QMessageBox>
 #include <QRadioButton>
 #include <QPushButton>
@@ -45,8 +38,11 @@
 #include <iostream>
 #include <cstdio>
 #include <cassert>
-#include <set>
-#include "ui_template_viewer.h"
+
+#include "template_marking_gui/template_marking_bin_io.hpp"
+#include "template_marking_gui/bin_plot_widget.hpp"
+#include "template_marking_gui/focus_panel_widget.hpp"
+#include "template_marking_gui/anchor_view.hpp"
 #include "template_marking_gui/feature_marks.hpp"
 #include "template_marking_gui/alignment.hpp"
 #include "template_marking_gui/global_intervals.hpp"
@@ -55,8 +51,11 @@
 #include "template_marking_gui/ppg_derivative.hpp"
 #include "template_marking_gui/subsample_refine.hpp"
 #include "template_marking_gui/curve_fit.hpp"
+
 #include "template_generation/normalize_template_amplitude.hpp"
 #include "peak_finding/FilterUtils.hpp"
+#include "logging/boundary_training_log.hpp"
+#include "ui_template_viewer.h"
 
 // addVcgPanel takes one by const reference and nothing here needs its
 // layout, so a declaration is enough -- global_intervals.hpp is included
@@ -98,6 +97,15 @@ public:
 
     void set_vcg_output_dir(const QString& dir) { m_vcgOutputPath = dir; }
     void setNormOutputDir(const QString& dir) { m_normOutputPath = dir; } //write <id>_feature_norm.csv and <id>_cv_check.csv 
+
+    // THE OPERATOR'S PER-CHANNEL "Lead Reversed" ANSWER, from the noise-
+    // marking stage via AnalysisJob::ecg{1,2,3}_inverted. MUST BE CALLED
+    // BEFORE loadSubject: loadSubject stamps it onto every bin and the
+    // seeding pass reads it from there, so a setter called afterwards would
+    // leave the whole record detected as upright -- and unlike the empty-path
+    // setters above, the default here is silently WRONG rather than visibly
+    // absent. Same trap as set_vcg_output_dir, worse consequence.
+    void setLeadPolarity(const LeadPolarity& pol) { m_polarity = pol; }
 
     void loadSubject(const QString& templatePath, const QString& markingPath,
         const QString& subjectId, double sampleRateHz,
@@ -462,6 +470,9 @@ private:
     QString m_templateDir;   // folder containing templates.bin/.csv (screenshot target)
     QString m_vcgOutputPath;   // cfg.vcg_output; <id>_vcg.csv lands here
     QString m_normOutputPath;  // feature_norm / cv_check CSVs land here
+    // Stamped onto every TemplateBin in loadSubject; the bins are what every
+    // detector call reads, so this member is only the inbound copy.
+    LeadPolarity m_polarity;
     QString m_subjectId;
     double  m_sampleRate = 0.0;    // ECG rate; also feeds ECG-only feature/ms code below
     double  m_ppgRateHz = 0.0;
@@ -581,6 +592,11 @@ private:
     // move every later page boundary.
     std::vector<std::pair<int, int>> m_pages;
     void buildPages();
+
+    /// Columns a page may hold: the full compact grid when panels wrap, one
+    /// column per bin-width otherwise (the leads occupy the rows there). One
+    /// function so buildPages and the grid layout cannot disagree.
+    int pageColumnBudget() const;
 
     int m_currentPage = 0;
     int m_totalPages = 1;
