@@ -21,6 +21,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QCheckBox>
+#include <QSpinBox>   // ppg_align_percent, wired in template_viewer_setup.cpp
 #include <QDockWidget>
 #include <QVBoxLayout>
 #include <QShortcut>
@@ -50,6 +51,7 @@
 #include "fiducial_marker_finding/vcg_signal_average.hpp"
 #include "fiducial_marker_finding/ppg_derivative.hpp"
 #include "fiducial_marker_finding/subsample_refine.hpp"
+#include "template_generation/ppg_realign.hpp"
 #include "fiducial_marker_finding/curve_fit.hpp"
 #include "ui_template_viewer.h"
 
@@ -156,6 +158,13 @@ public slots:
 
 private slots:
     void onMarkerMovedOnTemplate(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
+
+    // END OF THE GESTURE, not every step of it. Only the pulse foot bar does
+    // anything here: releasing it re-stacks that slot's pulse about the
+    // corrected column (realignPulseFromFoot). Every other bar's consequences
+    // are reactive and were applied during the drag, so this returns at once
+    // for them.
+    void onMarkerReleasedOnTemplate(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
     void movePpgMarker(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
     void moveEcgMarker(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
     void onMarkerMoved(int binIdx, int leadIdx, int marker, int newIdx);
@@ -275,6 +284,48 @@ private:
     void initAfterBinsLoaded();
 
     void showPage();
+
+    // ---- ONE DEFINITION OF "THE DISPLAY-READY PULSE" --------------------
+    //
+    // showPage built the notch + normalize + band sequence inline, and the
+    // operator re-stack needs the identical sequence to push a new trace into
+    // a live panel. Two copies of it is how a re-stacked pulse would end up
+    // normalized against a different foot from the one the page drew it
+    // against, so both call these.
+    //
+    // maybeNotchTrace: the display-time notch, with the rebase that keeps
+    // normalize_pulse_trace's divisor stable. A no-op unless the notch_filter
+    // box is ticked and loadSubject was given a frequency.
+    std::vector<double> maybeNotchTrace(const std::vector<double>& sig,
+        double fs, double footIdx) const;
+
+    // The trace, its band and the foot they are both measured against, for one
+    // pulse-bank slot. Seeds the slot's pulse marks if they have never been
+    // seeded, which is why it is not const. False when the slot has no usable
+    // pulse.
+    bool pulseTraceForSlot(tbank::BankTemplate& slot,
+        std::vector<double>& outTrace,
+        std::vector<double>& outIqr,
+        double& outFootIdx);
+
+    // ---- OPERATOR RE-STACK ON MOUSE-UP ----------------------------------
+    //
+    // Re-anchor this slot's pulse on a corrected foot column: each member
+    // beat's own trough is re-found near it and the stack is re-medianed. THE
+    // COHORT IS NOT RE-SELECTED -- see ppg_realign.hpp.
+    void realignPulseFromFoot(int binIdx, int templateIdx, double footCol);
+
+    // <stem>_beats.bin, where the per-beat pulse matrix lives. Built from the
+    // same directory and stem morphology_csv::set was given, rather than
+    // stored at load time, so it cannot go stale against m_subjectId.
+    QString beatsBinPath() const;
+
+    // (bin, slot) pairs whose pulse the operator has re-stacked. VIEWER-ONLY
+    // and deliberately not serialized: the waveform on screen is no longer the
+    // one the build produced, and anything exporting it should be able to say
+    // so -- but inventing a file field for it here would put a claim in the
+    // archive that the pipeline never wrote.
+    std::set<int> m_ppgRealigned;
     void clearPlots();
     void captureCurrentPage();
     std::string buildAlignedTemplateCsv(AnchorType anchor);

@@ -197,7 +197,7 @@ void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
     // The fits behind the three landmarks that HAVE one, for the panel to draw.
     // Invalid for every other pulse marker, which the panel then renders as the
     // detector's position and no curves.
-    subsample_refine::PeakCandidates peakCand;
+    upsample_for_fit::PeakCandidates peakCand;
     FocusPanelWidget::FitKind fk = FocusPanelWidget::FitKind::None;
     double peakSigma = 0.0;
     int    peakHalfWidth = 0;
@@ -230,20 +230,20 @@ void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
         case BinPlotWidget::PpgOnset:
             peakCand = pf.onset_cand;
             fk = FocusPanelWidget::FitKind::PeakCubic;
-            peakSigma = subsample_refine::pulse_sigma::Foot;
-            peakHalfWidth = subsample_refine::pulse_halfwidth::Foot;
+            peakSigma = upsample_for_fit::pulse_sigma::Foot;
+            peakHalfWidth = upsample_for_fit::pulse_halfwidth::Foot;
             break;
         case BinPlotWidget::PpgEnd:
             peakCand = pf.end_cand;
             fk = FocusPanelWidget::FitKind::PeakCubic;
-            peakSigma = subsample_refine::pulse_sigma::Foot;
-            peakHalfWidth = subsample_refine::pulse_halfwidth::Foot;
+            peakSigma = upsample_for_fit::pulse_sigma::Foot;
+            peakHalfWidth = upsample_for_fit::pulse_halfwidth::Foot;
             break;
         case BinPlotWidget::PpgPeak:
             peakCand = pf.peak_cand;
             fk = FocusPanelWidget::FitKind::PeakQuadratic;
-            peakSigma = subsample_refine::pulse_sigma::Peak;
-            peakHalfWidth = subsample_refine::pulse_halfwidth::Peak;
+            peakSigma = upsample_for_fit::pulse_sigma::Peak;
+            peakHalfWidth = upsample_for_fit::pulse_halfwidth::Peak;
             break;
         default: break;
         }
@@ -271,7 +271,7 @@ void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
                 }
             }
             else {
-                peakCand = subsample_refine::PeakCandidates{};   // cannot place a curve
+                peakCand = upsample_for_fit::PeakCandidates{};   // cannot place a curve
             }
         }
     }
@@ -466,7 +466,7 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
         const QString head = QString("%1%2").arg(labelFor(marker), tag);
         // Only the transition bars carry candidates; the peak branch below
         // supplies its own and ignores an invalid set.
-        subsample_refine::TransitionCandidates transCand;
+        upsample_for_fit::TransitionCandidates transCand;
         // The detector's own position for the focused landmark, in `mean`'s
         // columns. -1 until the block below supplies it.
         double detFid = -1.0;
@@ -588,7 +588,7 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
             int peakHalfWidth = 0;
             bool isEcgPeakMarker = true;
             EcgPeak whichPeak = EcgPeak::R;
-            subsample_refine::PeakCandidates peakCand;   // for the panel to DRAW
+            upsample_for_fit::PeakCandidates peakCand;   // for the panel to DRAW
             switch (marker) {
             case BinPlotWidget::EcgRPeak: whichPeak = EcgPeak::R; break;
             case BinPlotWidget::EcgPPeak: whichPeak = EcgPeak::P; break;

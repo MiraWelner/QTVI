@@ -16,7 +16,7 @@
 #include <functional>
 #include "fiducial_marker_finding\curve_fit.hpp"
 
-namespace subsample_refine {
+namespace upsample_for_fit {
 
     inline constexpr double residual_guard_frac = 0.10;   //percent of amplitude before going to fallback
 
@@ -430,7 +430,7 @@ namespace subsample_refine {
     // halfWidth REQUIRED, and before peakMode because it is not optional.
     // Pass subsample_refine::peak_halfwidth::<landmark>; there is deliberately
     // no default to inherit.
-    inline double best_peakfinding_algorithm(const std::vector<double>& signal, int seed, double sigma,
+    inline double find_peak(const std::vector<double>& signal, int seed, double sigma,
         int halfWidth,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto) {
         return bestPeakExtremumFit(signal, seed, sigma, halfWidth, peakMode).position;
@@ -600,12 +600,8 @@ namespace subsample_refine {
         return -(static_cast<double>(bestLag) + frac);
     }
 
-    inline double transitionAnchor(const std::vector<double>& signal, int seed,
-        double fraction, int windowSamples = 40,
-        double externalBaseline = std::numeric_limits<double>::quiet_NaN(),
-        double boundLo = -1.0, double boundHi = -1.0,
-        TransitionCandidates* candOut = nullptr,
-        curve_fit::FitMode mode = curve_fit::FitMode::Auto) {
+    inline double upsample_transition_and_curve_fit(const std::vector<double>& signal, int seed, double fraction, int windowSamples = 40, double externalBaseline = std::numeric_limits<double>::quiet_NaN(),
+        double boundLo = -1.0, double boundHi = -1.0, TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto) {
         const int N = static_cast<int>(signal.size());
         int lo, hi;
         if (boundLo >= 0.0 && boundHi >= 0.0 && boundHi > boundLo) {

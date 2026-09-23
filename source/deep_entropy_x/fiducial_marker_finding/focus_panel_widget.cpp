@@ -48,8 +48,8 @@ void FocusPanelWidget::setFocus(const std::vector<double>& mean,
     m_slopeFloor = 0.0;
     m_lastFidCol = -1.0;
     m_detectorFid = -1.0;
-    m_transCands = subsample_refine::TransitionCandidates{};
-    m_peakCands = subsample_refine::PeakCandidates{};
+    m_transCands = upsample_for_fit::TransitionCandidates{};
+    m_peakCands = upsample_for_fit::PeakCandidates{};
 
     update();
 }
@@ -81,8 +81,8 @@ void FocusPanelWidget::clearFocus() {
     m_nBeats = 0;
     m_landmarkCol = -1;
     m_fitKind = FitKind::Transition;
-    m_transCands = subsample_refine::TransitionCandidates{};
-    m_peakCands = subsample_refine::PeakCandidates{};
+    m_transCands = upsample_for_fit::TransitionCandidates{};
+    m_peakCands = upsample_for_fit::PeakCandidates{};
     m_detectorFid = -1.0;   // stale for the new landmark until re-supplied
     update();
 }
@@ -120,7 +120,7 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
     // drawHw defaults to the peak window. Each model is drawn only over the
     // span it was FIT on: the 5-point parabola over +-4 rather than +-sigma,
     // where a 5-sample parabola extrapolates straight off the top of the panel.
-    auto evalExtremum = [&](const subsample_refine::peak_fit& f, int drawHw = -1) {
+    auto evalExtremum = [&](const upsample_for_fit::peak_fit& f, int drawHw = -1) {
         std::vector<double> c(m_mean.size(),
             std::numeric_limits<double>::quiet_NaN());
         if (f.order >= 2) {
@@ -140,7 +140,7 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
         if (!m_peakCands.valid || m_peakCands.winner < 0) return out;
 
         auto push = [&](int idx, const QString& name, int drawHw = -1) {
-            const subsample_refine::peak_fit& f = m_peakCands.draw[idx];
+            const upsample_for_fit::peak_fit& f = m_peakCands.draw[idx];
             if (f.order < 2) return;   // genuinely no polynomial: nothing to draw
             Candidate cd;
             cd.curve = evalExtremum(f, drawHw);

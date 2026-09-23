@@ -483,6 +483,27 @@ void BinPlotWidget::setEcgData(const std::vector<double>& ecg,
     update();
 }
 
+// Replace ONLY the pulse trace, its band and its beat count. The twin of
+// setEcgData, and used for the same kind of in-place update: an operator
+// re-stack of this slot's pulse on mouse-up. m_hasPPG is deliberately NOT
+// recomputed from the argument -- a re-stack that came back empty must not
+// silently turn the channel off; the caller refuses instead and never gets
+// here.
+void BinPlotWidget::setPpgData(const std::vector<double>& ppg,
+    const std::vector<double>& ppgIqr,
+    int nPpgBeats)
+{
+    if (ppg.empty()) return;
+    m_ppg = ppg;
+    m_ppgIqr = ppgIqr;
+    if (nPpgBeats >= 0) m_nPpgBeats = nPpgBeats;
+
+    m_pdetValid = false;   // pulse trace changed; the ECG detection did not
+    recomputeFrame();
+    updateGeometry();
+    update();
+}
+
 void BinPlotWidget::setHasPPG(bool has) { m_hasPPG = has; }
 
 void BinPlotWidget::setEcgFrame(double tMinSec, double tMaxSec) {
@@ -1305,6 +1326,7 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
         }
         if (mBar >= 0) {
             m_dragMarker = mBar;
+            m_dragMoved = false;   // a press is not yet a move
             emit markerDragStarted(m_binIndex, m_leadIndex, mBar);
             emit landmarkSelected(m_binIndex, m_leadIndex, m_templateIndex,
                 mBar, m_markers[mBar]);
@@ -1399,6 +1421,7 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
     // columns (sampleFromX), so the rounded compare loses nothing.
     if (s == static_cast<int>(std::lround(m_markers[m_dragMarker]))) return;
     m_markers[m_dragMarker] = s;
+    m_dragMoved = true;
     // TEMPLATE-AWARE signal only. markerMoved carried no slot, so a drag on a
     // sub-template column was indistinguishable from one on slot 0 and wrote
     // into the bin's marker set either way -- which is why sub-templates could
@@ -1413,14 +1436,23 @@ void BinPlotWidget::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
-    // NOTHING IS EMITTED HERE, deliberately. A release used to fire a
-    // markerDragFinished so the owner could re-apply the whole page once per
-    // gesture -- but m_dragMarker is armed by any bar CLICK, not just a drag,
-    // and an automatic alignment shift IS a bar click, so every one of those
-    // paid for a full-page re-detect on mouse-up. The pass had no work to do
-    // either: everything that follows a bar is reactive (P and T peak through
-    // reactiveGlyphs, T50/T80 likewise) or was already pushed by the
-    // propagation loops' setMarker calls.
+    // ONE SIGNAL, AND ONLY FOR A GESTURE THAT MOVED A BAR. The old
+    // markerDragFinished fired on every release, including the bar CLICKS that
+    // automatic alignment performs, and paid for a full-page re-detect each
+    // time. Nothing that merely FOLLOWS a bar needs this -- P and T peak come
+    // back through reactiveGlyphs, T50/T80 likewise, and the propagation loops
+    // already pushed their setMarker calls during the drag.
+    //
+    // What does need it is work that cannot run at mouse-move rate: the pulse
+    // re-stack reads this bin's beat matrix off disk and re-medians it. So the
+    // release is emitted when, and only when, mouseMoveEvent actually changed
+    // the column -- the receiver decides whether it cares which bar it was.
+    if (m_dragMarker >= 0 && m_dragMoved) {
+        emit markerReleasedOnTemplate(m_binIndex, m_leadIndex, m_templateIndex,
+            m_dragMarker,
+            static_cast<int>(std::lround(m_markers[m_dragMarker])));
+    }
+    m_dragMoved = false;
     m_dragMarker = -1;
 }
 

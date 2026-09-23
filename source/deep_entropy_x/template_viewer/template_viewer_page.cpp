@@ -699,24 +699,22 @@ void TemplateViewerWindow::showPage() {
             // range across every pulse in the bin, so under a group holding one
             // morphology it drew a band sized by the difference BETWEEN
             // morphologies.
+            // THE PULSE TRACE, ITS BAND AND ITS FOOT, from the one helper the
+            // operator re-stack also uses (pulseTraceForSlot). The notch, the
+            // /ref normalization and the band scaling were inline here and are
+            // now behind that call -- so a re-stacked pulse pushed into a live
+            // panel cannot be prepared differently from one drawn by a page
+            // rebuild.
+            //
+            // ppgFootIdx stays a DOUBLE, because pulse_marks.onset is one. It
+            // was `int` once, which truncated the sub-sample foot the detector
+            // worked to produce before sample_y -- which interpolates -- ever
+            // saw it, and destroyed the detector's negative "no foot found".
             std::vector<double> ppgIqr = empty;
-            // A DOUBLE, because pulse_marks.onset is one. This was `int`, so
-            // the sub-sample foot the detector worked to produce was truncated
-            // to a whole column before sample_y -- which interpolates -- ever
-            // saw it. Worse, a negative onset (the detector's "no foot found",
-            // which it can now legitimately report) has to survive as a
-            // negative number for sample_y to reject it.
+            std::vector<double> ppgN = empty;
             double ppgFootIdx = -1.0;
-            if (hasPPG) {
-                if (!ppgSlot->hasDetectedPulseMarks())
-                    FeatureMarks::seed_pulse_bank_template(ppgSlot->tmpl,
-                        m_ppgRateHz, ppgSlot->pulse_marks);
-                ppgFootIdx = ppgSlot->pulse_marks.onset;
-                ppgIqr = normalize_features::scale_pulse_spread_by_ref(
-                    ppgSlot->tmpl_iqr,
-                    normalize_features::sample_y(ppgSlot->tmpl, ppgFootIdx),
-                    m_pulseGlobalRef[0]);
-            };
+            if (hasPPG)
+                pulseTraceForSlot(*ppgSlot, ppgN, ppgIqr, ppgFootIdx);
             // ECG beats for THIS TEMPLATE, not for the bin. Lead::nMembers is
             // the bank member's own beat count; it is 0 only on the pre-bank
             // fallback path (slot 0 of a bin whose bank never arrived), where
@@ -759,31 +757,23 @@ void TemplateViewerWindow::showPage() {
             // and the visible effect really is just the notch, not a
             // baseline-hunt-induced squash.
 
-            const bool notchActive = m_notchFilterOn && m_notchFilterHz > 0;
-            auto maybeNotch = [&](const std::vector<double>& sig, double fs, int footIdx) -> std::vector<double> {
-                if (!notchActive || sig.empty() || fs <= 0.0) return sig;
-                std::vector<double> out = notch_filter(sig, static_cast<double>(m_notchFilterHz), fs);
-                if (footIdx >= 0 && footIdx < (int)sig.size() && footIdx < (int)out.size()) {
-                    const double shift = sig[footIdx] - out[footIdx];
-                    if (std::isfinite(shift) && shift != 0.0)
-                        for (auto& v : out) v += shift;
-                }
-                return out;
+            // ONE IMPLEMENTATION, in maybeNotchTrace. This was a lambda whose
+            // body the pulse helper would otherwise have had to copy.
+            auto maybeNotch = [this](const std::vector<double>& sig, double fs,
+                double footIdx) -> std::vector<double> {
+                    return maybeNotchTrace(sig, fs, footIdx);
                 };
-            const std::vector<double> ecgSrc = maybeNotch(ecg, m_sampleRate, -1);   // ECG uses /ref, not a foot; no rebase needed
-            const std::vector<double> ppgSrc = hasPPG
-                ? maybeNotch(ppgSlot->tmpl, m_ppgRateHz, b.ppg_onset) : empty;
+            const std::vector<double> ecgSrc = maybeNotch(ecg, m_sampleRate, -1.0);   // ECG uses /ref, not a foot; no rebase needed
+            // (No ppgSrc: the pulse trace was prepared above, notch included.)
             const std::vector<double> abpSrc = !b.abpTemplate.empty() ? maybeNotch(b.abpTemplate, m_abpRateHz, b.abp_onset) : b.abpTemplate;
             const std::vector<double> artSrc = !b.artTemplate.empty() ? maybeNotch(b.artTemplate, m_artRateHz, b.art_onset) : b.artTemplate;
             const std::vector<double> artPSrc = !b.artPulmTemplate.empty() ? maybeNotch(b.artPulmTemplate, m_artPulmRateHz, b.art_pulm_onset) : b.artPulmTemplate;
 
             const std::vector<double> ecgN = normalizeEcgTrace(ecgSrc, lead_index);
-            // ppgFootIdx, not b.ppg_onset: the trace being normalized is
-            // ppgSlot->tmpl, and b.ppg_onset was measured on b.ppgTemplate. The
-            // band above uses this same foot, so the two agree by construction.
-            const std::vector<double> ppgN = hasPPG
-                ? normalize_ppg_or_similar(ppgSrc, ppgFootIdx, 0)
-                : empty;
+            // ppgN was filled by pulseTraceForSlot above, against ppgFootIdx --
+            // the SLOT's foot, not b.ppg_onset, because the trace is
+            // ppgSlot->tmpl and b.ppg_onset was measured on b.ppgTemplate. The
+            // band uses the same foot, so the two agree by construction.
             const std::vector<double> abpN = !abpSrc.empty()
                 ? normalize_ppg_or_similar(abpSrc, b.abp_onset, 1)
                 : abpSrc;
@@ -869,6 +859,9 @@ void TemplateViewerWindow::showPage() {
             pw->setState(panelState(gi, lead_index, template_index));
 
             connect(pw, &BinPlotWidget::markerMovedOnTemplate, this, &TemplateViewerWindow::onMarkerMovedOnTemplate);
+            // The end of the gesture, for work too heavy to do per mouse-move:
+            // the pulse re-stack. Fires only when a bar actually moved.
+            connect(pw, &BinPlotWidget::markerReleasedOnTemplate, this, &TemplateViewerWindow::onMarkerReleasedOnTemplate);
             connect(pw, &BinPlotWidget::markerDragStarted, this, &TemplateViewerWindow::onMarkerDragStarted);
             connect(pw, &BinPlotWidget::landmarkSelected, this, &TemplateViewerWindow::user_clicked_on_bar);
             // Glyph click: focus only -- refresh the panel, do NOT record a

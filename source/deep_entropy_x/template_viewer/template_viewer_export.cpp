@@ -321,11 +321,11 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
     const int half = std::max(2, static_cast<int>(std::lround(0.100 * m_sampleRate)));
     const double NaNv = std::numeric_limits<double>::quiet_NaN();
 
-    auto peakTypeName = [](subsample_refine::PeakCurveType t) -> const char* {
+    auto peakTypeName = [](upsample_for_fit::PeakCurveType t) -> const char* {
         switch (t) {
-        case subsample_refine::PeakCurveType::QUADRATIC:  return "QUADRATIC";
-        case subsample_refine::PeakCurveType::CUBIC:      return "CUBIC";
-        case subsample_refine::PeakCurveType::FIVE_POINT: return "FIVE_POINT";
+        case upsample_for_fit::PeakCurveType::QUADRATIC:  return "QUADRATIC";
+        case upsample_for_fit::PeakCurveType::CUBIC:      return "CUBIC";
+        case upsample_for_fit::PeakCurveType::FIVE_POINT: return "FIVE_POINT";
         default:                                      return "SEED";
         }
         };
@@ -372,7 +372,7 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
             // written below come from one computation. sigma and halfWidth are
             // resolved inside placeEcgPeak from the shared table.
             auto peak = [&](const char* name, EcgPeak which, double pos) {
-                const subsample_refine::peak_fit fit =
+                const upsample_for_fit::peak_fit fit =
                     placeEcgPeak(ecg, which, pos, m_peakFitMode);
                 if (fit.position < 0.0) {
                     emitRow(name, "NONE", -1.0, NaNv, {});

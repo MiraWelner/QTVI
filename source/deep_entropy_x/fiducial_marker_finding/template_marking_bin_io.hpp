@@ -796,30 +796,30 @@ enum class EcgPeak { P, Q, R, S, T };
 // own copy of the mapping.
 inline double peakSigmaFor(EcgPeak w) {
     switch (w) {
-    case EcgPeak::P: return subsample_refine::peak_sigma::P;
-    case EcgPeak::Q: return subsample_refine::peak_sigma::Q;
-    case EcgPeak::S: return subsample_refine::peak_sigma::S;
-    case EcgPeak::T: return subsample_refine::peak_sigma::T;
-    default:         return subsample_refine::peak_sigma::R;
+    case EcgPeak::P: return upsample_for_fit::peak_sigma::P;
+    case EcgPeak::Q: return upsample_for_fit::peak_sigma::Q;
+    case EcgPeak::S: return upsample_for_fit::peak_sigma::S;
+    case EcgPeak::T: return upsample_for_fit::peak_sigma::T;
+    default:         return upsample_for_fit::peak_sigma::R;
     }
 }
 inline int peakHalfWidthFor(EcgPeak w) {
     switch (w) {
-    case EcgPeak::P: return subsample_refine::peak_halfwidth::P;
-    case EcgPeak::Q: return subsample_refine::peak_halfwidth::Q;
-    case EcgPeak::S: return subsample_refine::peak_halfwidth::S;
-    case EcgPeak::T: return subsample_refine::peak_halfwidth::T;
-    default:         return subsample_refine::peak_halfwidth::R;
+    case EcgPeak::P: return upsample_for_fit::peak_halfwidth::P;
+    case EcgPeak::Q: return upsample_for_fit::peak_halfwidth::Q;
+    case EcgPeak::S: return upsample_for_fit::peak_halfwidth::S;
+    case EcgPeak::T: return upsample_for_fit::peak_halfwidth::T;
+    default:         return upsample_for_fit::peak_halfwidth::R;
     }
 }
 
 // The contest, once. Callers that only need the position use placeEcgPeak
 // below; the focus panel needs the curves too and takes the whole thing.
-inline subsample_refine::PeakCandidates ecgPeakCandidates(
+inline upsample_for_fit::PeakCandidates ecgPeakCandidates(
     const std::vector<double>& tmpl, EcgPeak which, double seedPos,
     curve_fit::PeakFitMode mode)
 {
-    subsample_refine::PeakCandidates none;
+    upsample_for_fit::PeakCandidates none;
     const int n = static_cast<int>(tmpl.size());
     // Absent stays absent: -1 means absent everywhere downstream, and clamping
     // to column 0 would make a missing landmark look like one found at an edge.
@@ -827,18 +827,18 @@ inline subsample_refine::PeakCandidates ecgPeakCandidates(
         return none;
     const int seed = std::clamp(static_cast<int>(std::lround(seedPos)), 0, n - 1);
     // max(3, ...) so a bad table entry cannot give a degenerate fit window.
-    return subsample_refine::peakCandidates(
+    return upsample_for_fit::peakCandidates(
         tmpl, seed, peakSigmaFor(which),
         std::max(3, peakHalfWidthFor(which)), mode);
 }
 
-inline subsample_refine::peak_fit placeEcgPeak(
+inline upsample_for_fit::peak_fit placeEcgPeak(
     const std::vector<double>& tmpl, EcgPeak which, double seedPos,
     curve_fit::PeakFitMode mode)
 {
-    const subsample_refine::PeakCandidates pc =
+    const upsample_for_fit::PeakCandidates pc =
         ecgPeakCandidates(tmpl, which, seedPos, mode);
-    subsample_refine::peak_fit out;
+    upsample_for_fit::peak_fit out;
     if (!pc.valid || pc.winner < 0) return out;   // position stays -1 = absent
     out = pc.draw[pc.winner];
     out.position = pc.placement;   // the guarded contest's answer, not the

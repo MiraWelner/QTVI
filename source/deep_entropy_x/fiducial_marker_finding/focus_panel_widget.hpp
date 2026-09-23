@@ -102,10 +102,10 @@ public:
     // panel cannot reproduce them from sigma and half-width alone, because it
     // does not know the integer seed the detector fitted around. Ignored for
     // the other family; cleared by setFocus and clearFocus.
-    void setPeakCandidates(const subsample_refine::PeakCandidates& c) {
+    void setPeakCandidates(const upsample_for_fit::PeakCandidates& c) {
         m_peakCands = c; update();
     }
-    void setTransitionCandidates(const subsample_refine::TransitionCandidates& c) {
+    void setTransitionCandidates(const upsample_for_fit::TransitionCandidates& c) {
         m_transCands = c; update();
     }
 
@@ -127,8 +127,8 @@ private:
     FitKind m_fitKind = FitKind::Transition;
     double  m_peakSigma = 4.0;
     int     m_peakHalfWidth = -1;   // -1 = no peak in focus
-    subsample_refine::PeakCandidates       m_peakCands;
-    subsample_refine::TransitionCandidates m_transCands;
+    upsample_for_fit::PeakCandidates       m_peakCands;
+    upsample_for_fit::TransitionCandidates m_transCands;
     std::vector<double>  m_mean;
     std::vector<double>  m_sd;
     std::vector<double>  m_sdMs;       // per-column SD in msec

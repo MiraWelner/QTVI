@@ -85,14 +85,14 @@ public:
     // matters.
     static double find_q_peak(const std::vector<double>& ecg, int r_idx, double fs, double sgn, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static double find_s_peak(const std::vector<double>& ecg, int r_idx, double fs, double sgn, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
-    static double find_j_point(const std::vector<double>& ecg, double fs, int r_col, double sgn, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
-    static double find_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double sgn, double qPeakIn = -1.0, bool* measured = nullptr, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
-    static double find_p_begin(const std::vector<double>& v, double fs, int r_idx, double sgn, double pPeakIn = -1.0, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double find_j_point(const std::vector<double>& ecg, double fs, int r_col, double sgn, upsample_for_fit::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double find_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double sgn, double qPeakIn = -1.0, bool* measured = nullptr, upsample_for_fit::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double find_p_begin(const std::vector<double>& v, double fs, int r_idx, double sgn, double pPeakIn = -1.0, upsample_for_fit::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
     static int    find_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double sgn, double pPeakIn = -1.0);
 
     // Locally-polarised finders -- no sgn, see the note above.
     static double find_t_peak(const std::vector<double>& ecg, double bracketSEnd, double bracketTEnd, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
-    static double find_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double find_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0, upsample_for_fit::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
     static double find_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
 
 
@@ -111,10 +111,10 @@ public:
         // its own. That is the whole invariant in focus_panel_widget.hpp: a
         // curve the panel produced itself would answer a different question
         // from the one that placed the mark.
-        subsample_refine::TransitionCandidates q_onset_cand;
-        subsample_refine::TransitionCandidates s_end_cand;
-        subsample_refine::TransitionCandidates t_end_cand;
-        subsample_refine::TransitionCandidates p_begin_cand;
+        upsample_for_fit::TransitionCandidates q_onset_cand;
+        upsample_for_fit::TransitionCandidates s_end_cand;
+        upsample_for_fit::TransitionCandidates t_end_cand;
+        upsample_for_fit::TransitionCandidates p_begin_cand;
     };
 
     static TemplateLandmarks detect_template_landmarks(const std::vector<double>& tmpl, int nominal_r_col, double sampleRate, double sgn,
@@ -141,9 +141,9 @@ public:
         double a = -1.0, b = -1.0, c = -1.0, d = -1.0, e = -1.0, f = -1.0;
         double p1 = -1.0, p2 = -1.0;
 
-        subsample_refine::PeakCandidates peak_cand;    // systolic peak
-        subsample_refine::PeakCandidates onset_cand;   // foot
-        subsample_refine::PeakCandidates end_cand;     // end of cycle
+        upsample_for_fit::PeakCandidates peak_cand;    // systolic peak
+        upsample_for_fit::PeakCandidates onset_cand;   // foot
+        upsample_for_fit::PeakCandidates end_cand;     // end of cycle
 
         int    dn_tier = 3;         //we have not implemented this yet
         double dn_confidence = 0.0;

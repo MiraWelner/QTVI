@@ -1058,7 +1058,7 @@ namespace alignment {
             const int xhi = static_cast<int>(std::lround(markerD)) + halfWin;
             size_t nNoCorr = 0;
             for (size_t i = 0; i < beats.size(); ++i) {
-                const double shiftD = subsample_refine::xcorrShift(
+                const double shiftD = upsample_for_fit::xcorrShift(
                     beats[i], ref_beat_of_median_length, xlo, xhi, corrFloor);
                 if (!std::isfinite(shiftD)) { ++nNoCorr; continue; }
                 locatedPos.push_back(markerD - shiftD);   // DIAG: implied landmark

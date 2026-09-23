@@ -39,22 +39,6 @@ struct SignalRates {
     double abp = 0.0;
     double art = 0.0;
     double artPulm = 0.0;
-
-    // NOT RATES, AND NOT SECONDS -- PERCENT OF THE BIN'S MEDIAN RR. The
-    // morphology split's half-window either side of its anchor: the R peak for
-    // ECG, the systolic peak for the pulse.
-    //
-    // A FRACTION, BECAUSE THE WINDOW IS A FRACTION OF A CARDIAC CYCLE. At a
-    // fixed 0.5 s the window covered most of a beat at 120 bpm and less than
-    // half of one at 45 bpm, so the same setting compared different parts of
-    // the waveform depending on heart rate -- and on a bin holding a pause it
-    // stopped before the T wave on some beats and ran past the next P on
-    // others. 40 means +-40% of the median RR, which is the same anatomy at
-    // any rate. Converted to samples per bin in make_averaged_templates,
-    // where the RR series is.
-    //
-    // UNSET = 0 = correlate the whole beat, which is what corr_halfwin <= 0
-    // means downstream.
     double morph_halfwin_ecg_pct_rr = 0.0;
     double morph_halfwin_ppg_pct_rr = 0.0;
 };

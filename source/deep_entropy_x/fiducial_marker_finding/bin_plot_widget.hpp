@@ -189,6 +189,16 @@ public:
         const std::vector<double>& ecgIqr,
         double rPeakSample,
         int nEcgBeats = 0);
+
+    // The pulse twin of setEcgData: replace ONLY the PPG trace, its band and
+    // its beat count, leaving the ECG, the arterial channels and every marker
+    // where they are. For an operator re-stack on mouse-up (see
+    // TemplateViewerWindow::realignPulseFromFoot): the pulse average changes
+    // and nothing else does, and the bars must NOT move -- the whole point of
+    // re-anchoring on the dragged foot is that the trace comes to the bar.
+    void setPpgData(const std::vector<double>& ppg,
+        const std::vector<double>& ppgIqr,
+        int nPpgBeats = 0);
     bool hasPPG() const { return m_hasPPG; }
 
     // Pin the ECG channel's contribution to the x-frame to a FIXED window, in
@@ -283,7 +293,7 @@ public:
 
     // The fitted curves behind one peak glyph, for a viewer that wants to DRAW
     // the contest rather than re-run it. Same cache, same call.
-    const subsample_refine::PeakCandidates& peakCandidatesFor(EcgPeak w) const {
+    const upsample_for_fit::PeakCandidates& peakCandidatesFor(EcgPeak w) const {
         reactiveGlyphs();          // populates / reuses m_det + m_peakCands
         return m_peakCands[static_cast<size_t>(w)];
     }
@@ -401,6 +411,20 @@ signals:
     void markerMovedOnTemplate(int binIndex, int leadIndex, int templateIdx,
         int marker, int newIdx);
 
+    // GESTURE FINISHED, and only when the bar actually moved. Emitted from
+    // mouseReleaseEvent for work that is too expensive to do per mouse-move --
+    // the pulse re-stack reads a beat matrix off disk and re-medians it, which
+    // cannot run at drag rate.
+    //
+    // THE OLD markerDragFinished WAS REMOVED FOR A GOOD REASON and this is not
+    // a revival of it: m_dragMarker is armed by any bar CLICK, and an automatic
+    // alignment shift IS a bar click, so that signal fired a full-page
+    // re-detect on every one of them. This fires only if mouseMoveEvent
+    // actually changed the bar's column, so a click that moved nothing is
+    // silent.
+    void markerReleasedOnTemplate(int binIndex, int leadIndex, int templateIdx,
+        int marker, int newIdx);
+
     // TEMPLATE INDEX ADDED, for the same reason the marker signals carry it. A
     // panel is a (bin, template) pair, and without the slot the receiver could
     // only record the verdict against the BIN -- so one right-click on one
@@ -512,7 +536,7 @@ private:
     // The peak contest for this trace, indexed by EcgPeak. Filled by the same
     // pass that places the glyphs, so the fit the panel DRAWS is the fit that
     // placed the mark -- one contest, not one per viewer.
-    mutable std::array<subsample_refine::PeakCandidates, 5> m_peakCands{};
+    mutable std::array<upsample_for_fit::PeakCandidates, 5> m_peakCands{};
     mutable EcgDetection       m_det;
     mutable bool               m_detValid = false;
     mutable const TemplateBin* m_detBin = nullptr;
@@ -604,6 +628,11 @@ private:
     bool  m_showArtTrace = true;
     bool  m_showArtPulmTrace = true;
     int   m_dragMarker = -1;
+    // DID THIS GESTURE MOVE ANYTHING. Set by mouseMoveEvent when a bar's
+    // column actually changes, cleared on press and on release. It is what
+    // separates "the operator dragged the foot" from "the operator, or an
+    // automatic alignment shift, clicked it" -- see markerReleasedOnTemplate.
+    bool  m_dragMoved = false;
     // Slice counts (post drop-rules) fed to the median for this widget's
     // ECG channel and the PPG. Displayed in the title when non-zero.
     int   m_nEcgBeats = 0;
