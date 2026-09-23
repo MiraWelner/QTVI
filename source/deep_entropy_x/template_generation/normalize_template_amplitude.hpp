@@ -102,7 +102,7 @@ namespace normalize_features {
             // lead, so the old per-lead subscripts are gone. The reference is a
             // per-subject quantity measured on the sinus seed, so slot 0 is the
             // right slot as well as the only one this ever read.
-            const tbank::BankMarkerSet& rmk =  b.slotMarks(ch, 0, AnchorType::R_PEAK);
+            const tbank::BankMarkerSet& rmk = b.slotMarks(ch, 0, AnchorType::R_PEAK);
             // p_peak is no longer stored on BankMarkerSet: it is a reactive
             // glyph, fully determined by the P-onset and Q-onset bars, so it is
             // derived here from the same bars the screen and the CSV use.
@@ -724,7 +724,7 @@ namespace normalize_features {
             // reads it.
             const double qOnD = FeatureMarks::find_q_onset(pb.samples, fs, pb.rCol);
             const double pPeakD = FeatureMarks::find_p_peak(pb.samples, 0.0, qOnD, fs);
-            const int pEnd = FeatureMarks::find_p_end(pb.samples, pb.rCol, fs, pPeakD);
+            const int pEnd = FeatureMarks::find_p_end(pb.samples, pb.rCol, fs, 1.0, pPeakD);
             // compute_q_onset's monophasic-R path can return r_idx itself, which
             // would run the PQ window into the R upstroke. Require a real gap.
             const int qGuard = pb.rCol - static_cast<int>(std::lround(0.020 * fs));

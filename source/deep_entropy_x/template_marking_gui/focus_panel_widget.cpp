@@ -157,7 +157,7 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
         push(1, QStringLiteral("Cubic"));
         // ALWAYS draw the 5-point parabola so a broad/flat peak (e.g. P) still
         // has a visible curve. Green when it IS the placement (both models
-        // degenerated) or the operator forced it, red otherwise.
+        // degenerated) or the operator forced it, gray otherwise.
         push(2, QStringLiteral("5-pt parabola"), 4);
     }
 
@@ -349,7 +349,15 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         p.drawPath(path);
     }
 
-    // ---- fitted curve(s): every tested model; winner green, others red ----
+    // ---- fitted curve(s): every tested model; winner green, others gray ---
+    // SOLID, BOTH. The curves were dashed, which at this zoom broke each one
+    // into a row of ticks that read as sample markers rather than as a fitted
+    // model, and the dashes of a loser crossing the winner were hard to tell
+    // apart from the winner's own gaps. Colour carries the distinction on its
+    // own: green is the fit that placed the mark, gray is a model that was
+    // tested and did not. The losers were red, which is the colour this GUI
+    // uses for a fault -- a rejected candidate is not one, it is the contest
+    // working.
     {
         auto drawCurve = [&](const std::vector<double>& fit, QColor col, Qt::PenStyle style) {
             QPen pen(col); pen.setWidthF(1.4); pen.setStyle(style);
@@ -365,15 +373,15 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         // Losers first, winner (green) on top.
         const std::vector<Candidate> cands = candidateCurves(lo, hi);
         for (const Candidate& c : cands)
-            if (!c.selected) drawCurve(c.curve, QColor(200, 60, 60), Qt::DashLine);
+            if (!c.selected) drawCurve(c.curve, QColor(150, 150, 150), Qt::SolidLine);
         for (const Candidate& c : cands)
-            if (c.selected)  drawCurve(c.curve, QColor(0, 150, 0), Qt::DashLine);
+            if (c.selected)  drawCurve(c.curve, QColor(0, 150, 0), Qt::SolidLine);
 
         // HEADER LINE 2: the selected model's name, in GRAY, on its own line
         // under the landmark. It was green and right-aligned on the landmark's
         // own line, which read as part of the landmark's name and competed with
         // it. The winning CURVE keeps its green -- that is what the colour is
-        // for, and it is unambiguous next to the red losers.
+        // for, and it is unambiguous next to the gray losers.
         if (m_fitKind == FitKind::None) {
             // The line that would name the winning model says why there is
             // none, rather than sitting blank and reading as "still loading".

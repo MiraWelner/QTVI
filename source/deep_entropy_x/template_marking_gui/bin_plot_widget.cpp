@@ -7,7 +7,7 @@
 
 #include "bin_plot_widget.hpp"
 #include "sample_extent.hpp"
-#include "template_anchoring\anchor_view.hpp"
+#include "template_marking_gui\anchor_view.hpp"
 #include "noise_marking_gui/annotation_types.hpp"
 #include <QMenu>
 #include <QAction>
@@ -843,10 +843,17 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // secondary text; the axis labels and the beat counts around it are.
     { QFont f = p.font(); f.setPointSize(8); p.setFont(f); }
 
-    QString titleLine = QString("Bin %1  %2").arg(m_binIndex).arg(m_leadLabel);
+    // TWO TONES ON ONE LINE. "Bin 12" is black and the rest -- the channel,
+    // the template name, how it was split, the axis hint -- is gray. Pages are
+    // packed by column now, so a bin's templates can straddle a page boundary
+    // and the bin number is the only thing on screen that says whether the
+    // panel beside this one is the same bin. The template name is secondary to
+    // that, and was competing with it at equal weight.
+    const QString binPart = QString("Bin %1").arg(m_binIndex);
+    QString restPart = "  " + m_leadLabel;
     // Bin 0 carries the x-axis units hint, since it is the panel whose axis is
     // labelled for the page.
-    if (m_binIndex == 0) titleLine += "  (time in seconds)";
+    if (m_binIndex == 0) restPart += "  (time in seconds)";
 
     QStringList counts;
     if (m_nEcgBeats > 0) counts << QString("ECG beats %1").arg(m_nEcgBeats);
@@ -856,7 +863,12 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // ~22, so an AlignBottom rect would push the second line into the plot
     // frame. 9 and 19 keep both clear of it.
     p.setPen(Qt::black);
-    p.drawText(margin_left, 9, titleLine);
+    p.drawText(margin_left, 9, binPart);
+    // Measured with the font already set above, so the gray half starts where
+    // the black half actually ended rather than at a guessed offset.
+    p.setPen(QColor(150, 150, 150));
+    p.drawText(margin_left + p.fontMetrics().horizontalAdvance(binPart), 9,
+        restPart);
     if (!counts.isEmpty()) {
         p.setPen(QColor(150, 150, 150));
         p.drawText(margin_left, 19, counts.join("   "));

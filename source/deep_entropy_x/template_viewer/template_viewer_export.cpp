@@ -781,7 +781,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
 // AnchorType -> short name for the boundary log's `anchor` column.
 static const char* anchorName_boundary(AnchorType a) {
     switch (a) {
-    case AnchorType::P_PEAK: return "P_ONSET";
+    case AnchorType::P_ONSET: return "P_ONSET";
     case AnchorType::Q_ONSET: return "Q_ONSET";
     case AnchorType::R_PEAK:  return "R_PEAK";
     case AnchorType::J_POINT: return "J_POINT";

@@ -35,17 +35,9 @@
 
 namespace sample_extent {
 
-    double FeatureMarks::sample_at(const std::vector<double>& v, double p) {
-        const int n = static_cast<int>(v.size());
-        const double NaND = std::numeric_limits<double>::quiet_NaN();
-        if (n == 0 || !std::isfinite(p) || p < 0.0 || p > n - 1) return NaND;
-        const int i = static_cast<int>(std::floor(p));
-        const double f = p - static_cast<double>(i);
-        if (f == 0.0) return v[i];
-        const double a = v[i], b = v[std::min(n - 1, i + 1)];
-        if (std::isnan(a) || std::isnan(b)) return NaND;   // a gap stays a gap
-        return a + f * (b - a);
-    }
+    // (FeatureMarks::sample_at lives in feature_marks.cpp. It was duplicated
+    //  here, inside this namespace, where a member of FeatureMarks cannot be
+    //  defined at all.)
 
     // First / last non-NaN column; -1 when the array is empty or all NaN.
     inline int firstFinite(const std::vector<double>& v) {

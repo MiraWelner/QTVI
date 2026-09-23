@@ -450,7 +450,7 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
         // R-frame number in the P-onset bar.
         const SlotView sv = slotView(m_bins[binI], leadIdx, slot, owner);
         if (!sv.valid) return;
-        FeatureMarks::seed_bank_template(*sv.tmpl, sv.r_col, m_sampleRate,
+        FeatureMarks::seed_bank_template(*sv.tmpl, sv.r_col, m_sampleRate, 1.0,
             owner, tgt.marks(static_cast<int>(owner)));
         };
 

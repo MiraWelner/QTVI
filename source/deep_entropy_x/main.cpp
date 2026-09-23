@@ -120,12 +120,10 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
                 markings->threshold[i], markings->blanking[i]);
         }
     }
-    const std::filesystem::path base =
-        std::filesystem::path(cfg.noise_data_path)
-        / (binFile.stem().string() + "_noise_markings");
+    const std::filesystem::path base =  std::filesystem::path(cfg.noise_data_path) / (binFile.stem().string() + "_noise_markings");
     nm.exportCSV(base.string() + ".csv");
     nm.exportBinary(base.string() + ".bin");
-    std::cout << "Saved Noise Markings for " << binFile.filename().string() << "\n";
+    std::cout << "Saved Noise Markings \n";
 }
 
 static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis_job::AnalysisJob> job, const QString& fileId, std::vector<analysis_job::BankSnapshot>& outBanks) {
@@ -180,7 +178,7 @@ int main(int argc, char* argv[]) {
 
     for (const std::filesystem::path& binFs : binFiles) {
         const std::string stem = binFs.stem().string();
-        std::cout << "\n running" << stem;
+        std::cout << "\nProcessing file:" << stem << "\n";
 
         // Skip files that already have a log - if they don't have a log, make one
         const std::string logPath = cfg.log_path + "/" + stem + "_log.csv";

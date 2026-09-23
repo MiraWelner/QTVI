@@ -345,17 +345,6 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
     m_lastFocusMarker = marker;
     m_lastFocusCol = col;
 
-    // A BAR TAKES ITS OWN ALIGNMENT; A GLYPH TAKES THE ONE ON SCREEN.
-    //
-    // anchorFor returns R_PEAK for every glyph, deliberately -- a glyph is
-    // measured on all four averages and has no alignment of its own -- so a
-    // glyph must magnify the waveform it was DRAWN on, which is the one
-    // currently displayed.
-    //
-    // Bars use anchorFor rather than currentGridAnchor() because of ORDERING:
-    // user_clicked_on_bar calls refreshFocus BEFORE it moves m_autoGridAnchor
-    // and re-skins, so currentGridAnchor() here is still the alignment being
-    // left. A glyph click moves no anchor, so for glyphs it is current.
     const AnchorType focusAnchor = m_forceAlign
         ? m_forcedAlign
         : (anchor_view::isBar(marker) ? anchor_view::anchorFor(marker)
@@ -377,26 +366,6 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
     // unlike the pulse channels, whose bank spread is a true interquartile
     // range.
     const double eref = m_ecgGlobalRef[leadIdx];
-
-    // ---- WHICH WAVEFORM THIS PANEL IS SHOWING --------------------------
-    // Slot 0 is the bin's chN template. Every other slot is a bank member with
-    // its own median, its own spread and its own beat count, and this path used
-    // ch.ecgTemplate_raw and the bin's chN_n_beats_raw regardless -- so the
-    // focus view for a PVC column plotted the sinus average and reported the
-    // whole bin's beat count under it.
-    //
-    // NO FALLBACK for a slot that exists but is empty: the panels are cleared
-    // and the function returns, because a focus view of the wrong morphology is
-    // worse than none.
-    // ---- ONE ACCESSOR, EVERY SLOT ---------------------------------------
-    //
-    // slotView is what leadsForBinTemplate draws and what ecgDetect measures
-    // on, so taking the focus waveform from it means the panel shows the same
-    // array the grid shows and the same array the landmarks were found on.
-    //
-    // NO FALLBACK. A null is build_templates failing to write the per-slot
-    // average for this anchor: a writer bug to go and fix, not a state to
-    // render under a header naming an alignment it is not.
     const SlotView svF = slotView(b, leadIdx, templateIdx, focusAnchor);
     if (!svF.valid || !svF.tmpl) {
         clearFocusPanels();
@@ -554,38 +523,8 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
                     }
                 }
 
-                // ---- INTO THE UNITS THE PANEL DRAWS ---------------------
-                //
-                // The transition curves come back as CLOSURES OVER THE ARRAY
-                // THE DETECTOR FITTED, which is not the array this panel
-                // plots, in two independent ways. Both are pure y-axis
-                // scalings, so the crossings in cross[] are unaffected and
-                // only the drawn curve moves.
-                //
-                //  1. /eref. ecgDetect measures on the RAW stored slot
-                //     average; `mean` above is that array divided by the
-                //     per-lead reference. The peak branch below already
-                //     divides its coefficients by eref for exactly this
-                //     reason -- the transition branch never did, so its
-                //     curves were drawn at raw amplitudes on a normalized
-                //     axis and sat off the trace by a factor of eref.
-                //
-                //  2. SIGN. compute_p_begin, compute_q_onset and
-                //     compute_j_point all fit `u`, which is -v when the QRS
-                //     is negative in this lead, so on those leads the curve
-                //     is the mirror of the trace it is drawn over.
-                //     compute_t_end fits v directly and needs no flip, but it
-                //     rides the same closures, so the sign is resolved per
-                //     LANDMARK, not per lead.
-                //
-                // Negating the closure is exact and is not a re-fit: it is the
-                // same fitted model, read in v's units instead of u's.
                 if (transCand.valid && std::isfinite(eref) && eref != 0.0) {
-                    const bool fitsInverted =
-                        (marker == BinPlotWidget::EcgPBegin
-                            || marker == BinPlotWidget::EcgQBegin
-                            || marker == BinPlotWidget::EcgSEnd)
-                        && !FeatureMarks::qrs_positive_at(*meanRawEcg, svF.r_col);
+                    const bool fitsInverted = false;
                     const double amp = (fitsInverted ? -1.0 : 1.0) / eref;
                     if (amp != 1.0)
                         for (auto& fn : transCand.curve)

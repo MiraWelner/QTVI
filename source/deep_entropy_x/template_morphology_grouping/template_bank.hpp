@@ -27,6 +27,28 @@ namespace tbank {
     }
 
     inline double matchFloorEcg() { return correlation_floors::g_ecg; }
+    // ---- BankTemplate::split_source encoding ------------------------------
+    // Channel index PLUS ONE, so that zero stays free for "no split / not
+    // recorded". Writing the raw channel index would make CH1 indistinguishable
+    // from an unset field, and every seed template would read as "split by
+    // CH1".
+    inline constexpr uint8_t kSplitUnknown = 0;
+    inline constexpr uint8_t kSplitCh1 = 1;
+    inline constexpr uint8_t kSplitCh2 = 2;
+    inline constexpr uint8_t kSplitCh3 = 3;
+    inline constexpr uint8_t kSplitPpg = 4;
+
+
+    inline const char* splitSourceLabel(uint8_t s) {
+        switch (s) {
+        case kSplitCh1:
+        case kSplitCh2:
+        case kSplitCh3: return "ECG";
+        case kSplitPpg: return "PPG";
+        default:        return nullptr;
+        }
+    }
+
     inline double matchFloorPpg() { return correlation_floors::g_ppg; }
 
     namespace minimum_beats {
@@ -88,27 +110,6 @@ namespace tbank {
     // which nothing downstream can undo.
     inline constexpr double kFallbackCorridorFrac = 0.15;
 
-    // ESTIMATION INFLATION, sqrt(1 + 1/n). A corridor describes the spread of
-    // the POPULATION around its median, but it is centred on a median estimated
-    // from n members, and a beat is compared against that estimate, not the
-    // population. The difference between a fresh draw and an n-member centre has
-    // variance sigma^2 * (1 + 1/n), so a corridor sized for sigma alone is too
-    // narrow by that factor, and most narrow at exactly n = 1.
-    //
-    // MEASURED, not derived and hoped for. Held-out beats from a homogeneous
-    // population, scored against a 300-member corridor of that same population:
-    // min 0.910, mean 0.942 -- comfortably over the 0.85 floor. The same beats
-    // against a 1-member template of the same population: min 0.740, mean 0.832,
-    // max 0.885. Almost every one FAILS. So without this correction a template
-    // cannot acquire its second member no matter how right it is, every beat of a
-    // real morphology spawns its own slot, and the bank saturates on one
-    // morphology -- 80 spawns and 75 merges on a synthetic bin holding three.
-    //
-    // At n = 1 the factor is 1.414; by n = 30 it is 1.008 and stops mattering.
-    // This is not a second threshold: the floor is untouched and the same
-    // comparison is being made. It corrects the corridor's WIDTH for how well
-    // its own centre is known, which is a property of the corridor, not of the
-    // decision rule.
     inline double corridorInflation(int n_members) {
         if (n_members < 1) return 1.0;
         return std::sqrt(1.0 + 1.0 / static_cast<double>(n_members));
@@ -469,6 +470,23 @@ namespace tbank {
         int32_t n_tukey_members = 0;// how many members were rejected due to tukey? this is the FINAL rejection step after morphology split and premature/voting split
         uint32_t n_blended_members = 0;//how many members were blended with the ones beside them due to being PVC or voted PVC
         double mean_rr_ms = 0.0;// mean R-R over member slices, ms; 60000/this = bpm
+
+        // ---- WHICH CHANNEL SPLIT THIS TEMPLATE OFF ----------------------
+        //
+        // The partition is joint over three ECG leads and the pulse, so a new
+        // template is spawned when the best existing group is rejected -- and
+        // ONE channel is the one that rejected it. That channel is the answer
+        // to "is this bin splitting on cardiac morphology or on pulse noise",
+        // which was previously only available as a per-bin tally
+        // (jbank::BankCounts::n_rejected_by) and so could not be shown beside
+        // the template it explains.
+        //
+        // 0 IS "NOT A SPLIT", which covers both the seed (spawn_seq 0, nothing
+        // was rejected to create it) and an archive written before the field
+        // existed. Readers must not render 0 as a channel; use
+        // tbank::splitSourceLabel, which returns nullptr for it.
+        uint8_t split_source = kSplitUnknown;
+
         bool marked_invalid_template = false;// operator/pipeline flagged this template as invalid
 
         // ---- THE OPERATOR'S QUALITY VERDICT ON THIS PANEL -----------------
@@ -697,45 +715,12 @@ namespace tbank {
         uint8_t  label_b = kUnlabeled;
     };
 
-    // ---------------------------------------------------------------------
-    // Bin-level verdict
-    // ---------------------------------------------------------------------
-
-    struct PolymorphicVerdict {
-        int  count = 0;      // max over channels of confirmed PVC templates
-        int  driving_channel = -1;     // which channel produced the max
-        std::array<int, 3> per_channel = { 0, 0, 0 };  // stored for audit
-        bool polymorphic() const { return count >= 2; }
-        bool monomorphic() const { return count == 1; }
-    };
-
-    // Max across ECG channels. Per-channel counts are kept alongside the max
-    // so the verdict is auditable and can be recomputed under a different
-    // rule later without rerunning the marking. PPG is excluded on purpose: a
-    // split in the PPG bank is far more likely perfusion or motion than a
-    // second ventricular focus, and it is reported separately.
-    inline PolymorphicVerdict polymorphicVerdict(const TemplateBank& ch1,
-        const TemplateBank& ch2,
-        const TemplateBank& ch3,
-        uint8_t code = kCodePvc)
-    {
-        const TemplateBank* bk[3] = { &ch1, &ch2, &ch3 };
-        PolymorphicVerdict v;
-        for (int c = 0; c < 3; ++c) {
-            v.per_channel[c] = bk[c]->countLabeled(code);
-            if (v.per_channel[c] > v.count) {
-                v.count = v.per_channel[c];
-                v.driving_channel = c;
-            }
-        }
-        return v;
-    }
-
-    inline PolymorphicVerdict polymorphicVerdict(
-        const std::array<TemplateBank, 3>& ecg_banks, uint8_t code = kCodePvc)
-    {
-        return polymorphicVerdict(ecg_banks[0], ecg_banks[1], ecg_banks[2], code);
-    }
+    // (PolymorphicVerdict / polymorphicVerdict REMOVED. It took the max over
+    //  three channels and reported which one drove it, because three
+    //  per-channel partitions could disagree about how many morphologies a bin
+    //  held. There is one partition now, so the count is just a count and
+    //  "which channel drove it" is not a question that exists;
+    //  jbank::polymorphyVerdict counts groups and is what the pipeline calls.)
 
     // ---------------------------------------------------------------------
     // Label propagation
@@ -744,9 +729,9 @@ namespace tbank {
     // that beat is assigned to -> and from there to every other beat in that
     // template. One click labels a whole morphology cluster.
     //
-    // Keyed on the beat, not the template, so a single confirmation reaches
-    // every channel's bank correctly even though the banks disagree on
-    // template indices.
+    // KEYED ON THE SLOT. Under the joint partition template i is group i on
+    // every channel, so the slot is the shared handle and there is one
+    // function below rather than a beat-keyed family beside it.
     // ---------------------------------------------------------------------
 
     struct PropagationResult {
@@ -754,38 +739,12 @@ namespace tbank {
         std::array<int32_t, 3> subtype = { -1, -1, -1 };
         int beats_relabeled = 0;
 
-        // The PPG bank's outcome, kept separate from the ECG array rather than
-        // appended to it: a fourth entry in `labeled_template` would be read as
-        // a fourth ECG lead by anything that iterates the array, and several
-        // things do.
         int32_t ppg_labeled_template = -1;
         int32_t ppg_subtype = -1;
         int     ppg_beats_relabeled = 0;
     };
 
-    // ---- SLOT-KEYED PROPAGATION, FOR THE JOINT PARTITION -----------------
-    //
-    // Use THIS one, not the beat-keyed pair below, on any bank that came out of
-    // jbank::projectToChannel.
-    //
-    // The beat-keyed versions exist because three independently built banks
-    // disagreed about which slot a morphology occupied, so a beat index was the
-    // only shared handle. Under the joint partition template i IS group i on
-    // every channel -- projectToChannel walks bank.groups in order, and
-    // copyBanks preserves that order into BinTemplates -- so the slot is itself
-    // the shared handle, and the beat lookup is not just unnecessary but wrong:
-    // findByBeat searches `members`, which the projection fills with CHANNEL
-    // LOCAL ROW indices. A representative beat's row number on CH1 means a
-    // different beat on CH2 and a different one again on PPG, so keying on it
-    // labels whichever unrelated morphology happens to hold that row number.
-    //
-    // AND IT REACHES PPG. The beat-keyed three-bank overload never touched the
-    // pulse channel at all, so a confirmed PVC left its pulse cohort unlabeled.
-    inline PropagationResult propagateLabelBySlot(
-        std::array<TemplateBank, 3>& ecg_banks,
-        TemplateBank& ppg_bank,
-        int slot,
-        uint8_t label_code)
+    inline PropagationResult propagateLabelBySlot(std::array<TemplateBank, 3>& ecg_banks, TemplateBank& ppg_bank, int slot, uint8_t label_code)
     {
         PropagationResult out;
         if (label_code == kUnlabeled || slot < 0) return out;
@@ -816,245 +775,6 @@ namespace tbank {
         return out;
     }
 
-    inline PropagationResult propagateLabel(std::array<TemplateBank, 3>& banks,
-        uint32_t beat_idx,
-        uint8_t label_code)
-    {
-        PropagationResult out;
-        if (label_code == kUnlabeled) return out;
-
-        for (int c = 0; c < 3; ++c) {
-            TemplateBank& bk = banks[c];
-            const int ti = bk.findByBeat(beat_idx);
-            if (ti < 0) continue;
-
-            BankTemplate& t = bk.templates[ti];
-
-            // Subtype is issued once and then immutable. A re-confirmation, or
-            // a confirmation of a different beat in an already-labeled
-            // template, must not mint a new index.
-            if (t.subtype < 0 || t.label_code != label_code) {
-                if (t.label_code != label_code)
-                    t.subtype = bk.nextSubtypeFor(label_code);
-                t.label_code = label_code;
-            }
-            t.confirmed_by_operator = true;
-
-            out.labeled_template[c] = ti;
-            out.subtype[c] = t.subtype;
-            out.beats_relabeled += t.memberCount();
-        }
-        return out;
-    }
-
-    // ---------------------------------------------------------------------
-    // ONE BANK, for PPG. The rule -- "the class label propagates to the
-    // template that beat is assigned to, and from there to every other beat
-    // assigned to the same template" -- says nothing about ECG, and the PPG
-    // bank obeys it or it has confirmed members that no operator ever
-    // confirmed. Split out of the three-bank version rather than duplicated:
-    // subtype issuance and the confirmation flag are the two things that must
-    // not diverge between channel types.
-    //
-    // TAKES A PPG BEAT INDEX, WHICH IS NOT AN ECG BEAT INDEX. The PPG kept set
-    // is filtered independently, so beat k of CH1 and beat k of PPG are
-    // different beats. The caller has to map the operator's click into PPG
-    // space before calling this; passing an ECG index would label a pulse
-    // morphology chosen at random.
-    // ---------------------------------------------------------------------
-    inline void propagateLabelToBank(TemplateBank& bank,
-        uint32_t beat_idx,
-        uint8_t label_code,
-        int32_t* out_template = nullptr,
-        int32_t* out_subtype = nullptr,
-        int* out_beats = nullptr)
-    {
-        if (label_code == kUnlabeled) return;
-        const int ti = bank.findByBeat(beat_idx);
-        if (ti < 0) return;
-
-        BankTemplate& t = bank.templates[ti];
-
-        // Subtype is issued once and then immutable, exactly as in the ECG
-        // path: a re-confirmation, or a confirmation of a different beat in an
-        // already-labeled template, must not mint a new index.
-        if (t.subtype < 0 || t.label_code != label_code) {
-            if (t.label_code != label_code)
-                t.subtype = bank.nextSubtypeFor(label_code);
-            t.label_code = label_code;
-        }
-        t.confirmed_by_operator = true;
-
-        if (out_template) *out_template = ti;
-        if (out_subtype)  *out_subtype = t.subtype;
-        if (out_beats)    *out_beats = t.memberCount();
-    }
-
-    // Three ECG banks plus the PPG bank, for a confirmation the caller has
-    // already mapped into both index spaces. ecg_beat_idx and ppg_beat_idx are
-    // separate parameters precisely because they are separate index spaces --
-    // see propagateLabelToBank.
-    inline PropagationResult propagateLabel(std::array<TemplateBank, 3>& banks,
-        TemplateBank& ppg_bank,
-        uint32_t ecg_beat_idx,
-        uint32_t ppg_beat_idx,
-        uint8_t label_code)
-    {
-        PropagationResult out = propagateLabel(banks, ecg_beat_idx, label_code);
-        propagateLabelToBank(ppg_bank, ppg_beat_idx, label_code,
-            &out.ppg_labeled_template, &out.ppg_subtype,
-            &out.ppg_beats_relabeled);
-        return out;
-    }
-
-    // ---------------------------------------------------------------------
-    // Merge candidate selection
-    //
-    // Never merge two templates that both have confirmed members, even at the
-    // cap. Merging them does not lose a beat -- it changes a clinical
-    // finding, silently, because the merged template looks perfectly normal
-    // afterwards. It collapses polymorphic ectopy into monomorphic, which is
-    // the one distinction this section exists to preserve. Given that the
-    // bin-level verdict counts only CONFIRMED templates, such a merge would
-    // destroy the sole evidence for polymorphy.
-    //
-    // TIER ORDER, AND WHY IT DEPARTS FROM "MERGE THE TWO CLOSEST".
-    //
-    // The spec says merge the two closest templates. Taken literally on real
-    // data that rule inverts its own intent. Measured on one record, bin 0,
-    // CH1: T0 was sinus (996 members), T5 was a real second morphology (152
-    // members, r = 0.750 against sinus), and T1-T4 were single-beat noise
-    // templates correlating with everything at 0.1-0.2. The CLOSEST pair in
-    // that bank is T0 and T5 -- the two real morphologies -- because noise,
-    // being non-reproducible, is by construction the FURTHEST from everything.
-    // So "closest" merges the finding and preserves the junk, and it does so
-    // every time the cap saturates: that bin logged 34 spawns and 29 merges,
-    // and a neighbouring bin 72 and 67.
-    //
-    // Hence tier 1: templates that do not earn a column (below
-    // kMinMembersForColumn) are merged first, closest pair among them. That is
-    // garbage collection, and the product correlates with nothing so it will
-    // not steal real beats afterwards. Only when no such pair exists does
-    // tier 2 fall back to the spec's rule over the whole bank.
-    //
-    // This is the spec's own reasoning applied one level down. It forbids a
-    // merge that would "silently collapse polymorphic ectopy into
-    // monomorphic", and protects confirmed templates for that reason -- but
-    // confirmation happens during review, long after the bank is built, so at
-    // build time nothing is confirmed and nothing is protected. Member count
-    // is the only evidence available at that point about which templates are
-    // real.
-    //
-    // Unlabeled-to-unlabeled and unlabeled-to-confirmed merges remain allowed.
-    // ---------------------------------------------------------------------
-
-    struct MergeCandidate {
-        int    a = -1;
-        int    b = -1;
-        double closeness = -std::numeric_limits<double>::infinity();
-        bool   both_confirmed = false;   // true => raise the cap instead
-
-        // MISNAMED, DELIBERATELY NOT RENAMED YET. This reads true whenever the
-        // closest pair contained a confirmed template, not only when BOTH were
-        // confirmed. findMergePair blocks any pair touching a confirmed
-        // template -- stricter than 4.6's literal "both", because merging a
-        // confirmed template into an unconfirmed one would absorb unlabelled
-        // beats into a labelled class, which is the label-by-similarity
-        // inference the section forbids elsewhere. The consequence is more cap
-        // raises than the literal rule produces, which is the safe direction.
-        //
-        // Anyone reading a CapRaiseEvent should treat this as
-        // "confirmed_involved". Renaming it touches template_assign.hpp,
-        // bin_pipeline.hpp and joint_bank.hpp together and is left for a change
-        // that can be compiled and run, not folded into a comment fix.
-        bool   garbage_pair = false;   // both below the column threshold
-        bool   valid() const { return a >= 0 && b >= 0; }
-    };
-
-    // `sim` returns the closeness of two templates. Returns the closest
-    // MERGEABLE pair; if the closest pair is blocked by the confirmed-member
-    // rule, it comes back with both_confirmed set so the caller raises the cap
-    // and logs, rather than merging.
-    //
-    // THE SPEC'S RULE, SINGLE TIER: merge the two closest. The junk-first tier
-    // that used to sit in front of it is gone. What it was for is on record and
-    // is not hypothetical -- measured on one record, bin 0, CH1: T0 sinus (996
-    // members), T5 a real second morphology (152 members, closeness 0.750
-    // against sinus), T1-T4 single-beat noise templates scoring 0.1-0.2 against
-    // everything. The closest pair in that bank is T0 and T5, the two REAL
-    // morphologies, because noise is non-reproducible and therefore furthest
-    // from everything. So "closest" merges the finding and preserves the junk,
-    // and it does so every time the cap saturates: that bin logged 34 spawns
-    // and 29 merges, a neighbouring one 72 and 67.
-    //
-    // That behaviour is restored deliberately, on instruction, because the rule
-    // is the spec's. n_merges_garbage and n_merges_real still classify every
-    // merge, so the damage is counted rather than argued about: a bin with many
-    // REAL merges lost morphologies to cap pressure and its template count
-    // understates what was there. Watch that counter.
-    //
-    // WHY ANY PAIR CONTAINING A CONFIRMED TEMPLATE IS BLOCKED, not only
-    // confirmed-confirmed. The spec blocks confirmed-confirmed (rule 7) and
-    // separately forbids inferring a label (rule 6). A confirmed-into-unlabeled
-    // merge satisfies the first and breaks the second: labels are per template
-    // and propagate to every beat in it, so absorbing an unlabeled template into
-    // a confirmed PVC labels its beats PVC on the evidence of a correlation --
-    // which is the operator's judgment, made by the algorithm. The two clauses
-    // together therefore imply a stronger restriction than either states, and
-    // this is it. Blocked pairs raise the cap, which rule 7 already establishes
-    // as the correct response to an unmergeable bank.
-    template <class SimFn>
-    inline MergeCandidate findMergePair(const TemplateBank& bank, SimFn sim)
-    {
-        MergeCandidate best_any, best_blocked;
-        const int n = bank.size();
-        for (int i = 0; i < n; ++i) {
-            for (int j = i + 1; j < n; ++j) {
-                const double s = sim(bank.templates[i], bank.templates[j]);
-                if (std::isnan(s)) continue;
-                if (bank.templates[i].confirmed() || bank.templates[j].confirmed()) {
-                    if (s > best_blocked.closeness) {
-                        best_blocked.a = i; best_blocked.b = j;
-                        best_blocked.closeness = s;
-                        best_blocked.both_confirmed = true;
-                    }
-                    continue;
-                }
-                if (s > best_any.closeness) {
-                    best_any.a = i; best_any.b = j;
-                    best_any.closeness = s;
-                    // Reported, never used for selection. The spec's rule is
-                    // "the two closest" and this is only how the outcome is
-                    // classified afterwards.
-                    best_any.garbage_pair = bank.templates[i].isJunk()
-                        && bank.templates[j].isJunk();
-                }
-            }
-        }
-        if (best_any.valid()) return best_any;   // the spec's rule
-        return best_blocked;   // only confirmed-touching pairs remain
-    }
-
-    // ---------------------------------------------------------------------
-    // Display letter per bank slot: A, B, C ... contiguous over the
-    // templates that actually exist.
-    //
-    // THE ONE DEFINITION. The viewer and the morphology CSV/bin writers both
-    // name templates, and they used to letter them independently -- the CSV
-    // ranked non-empty templates, the viewer used the raw slot index. They
-    // agree only when no lower slot is empty and spawn order matches slot
-    // order, so the same template could appear as PQRST_C in one place and
-    // PQRST_F in the other. Both now call this.
-    //
-    // ORDERED BY spawn_seq, NOT BY SLOT. A merge erases an element and shifts
-    // everything after it, so slot position is not stable between runs while
-    // spawn order is. Empty slots are skipped rather than consuming a letter,
-    // which is what keeps the sequence contiguous.
-    //
-    // A CONFIRMED template takes its letter from the subtype the bank issued
-    // (PVC_A, PVC_B are per-class), so its letter tracks the class rather than
-    // the bank-wide rank. Returns one entry per slot, indexed by slot.
-    // ---------------------------------------------------------------------
     inline std::vector<uint8_t> letterRanks(const TemplateBank& bank) {
         const int n = bank.size();
         std::vector<int> order;

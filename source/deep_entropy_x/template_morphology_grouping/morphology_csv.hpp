@@ -955,7 +955,11 @@ namespace morphology_csv {
             uint8_t  marked_invalid_template = 0;
             uint8_t  operator_state = 0;
             uint8_t  confirmed_by_operator = 0;
-            uint8_t  pad0 = 0;
+            // Was pad0. Reusing the spare byte keeps the trailer at 64 and the
+            // python reader's stride intact; the encoding starts at 1 so a
+            // pre-existing archive's zero means "not recorded", which is what
+            // it is. See tbank::splitSourceLabel.
+            uint8_t  split_source = 0;
             int32_t  configured_cap = 0;
             int32_t  effective_cap = 0;
             uint32_t next_spawn_seq = 0;
@@ -1233,6 +1237,7 @@ namespace morphology_csv {
                     tr.operator_state = tp.operator_state;
                     tr.confirmed_by_operator =
                         tp.confirmed_by_operator ? 1u : 0u;
+                    tr.split_source = tp.split_source;
                     // Per bank, repeated per record. See TemplateTrailer.
                     tr.configured_cap = out.bank.configured_cap;
                     tr.effective_cap = out.bank.effective_cap;

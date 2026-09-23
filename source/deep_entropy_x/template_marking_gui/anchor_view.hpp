@@ -1,7 +1,7 @@
 #pragma once
 /*
 * anchor_view.hpp
-* @brief handle the 
+* @brief handle the
 */
 
 #include <array>
@@ -12,7 +12,7 @@ enum class AnchorType { P_ONSET, Q_ONSET, R_PEAK, J_POINT };
 namespace anchor_view {
 
     // Every alignment the session holds, in the order sidecar CSVs are merged.
-    inline constexpr std::array<AnchorType, 4> all_anchors = {AnchorType::R_PEAK, AnchorType::P_ONSET, AnchorType::Q_ONSET, AnchorType::J_POINT};
+    inline constexpr std::array<AnchorType, 4> anchor_array = { AnchorType::R_PEAK, AnchorType::P_ONSET, AnchorType::Q_ONSET, AnchorType::J_POINT };
 
     //defines the suffix for the column headers printed to the csv
     inline constexpr const char* label(AnchorType a) {
@@ -32,7 +32,8 @@ namespace anchor_view {
         q_begin = 2,
         r_peak = 3,
         s_end = 4,
-        t_end = 5
+        t_end = 5,
+        j_point = s_end   // the J point and the end of S are one landmark
     };
     inline constexpr bool isEcgMarker(int m) { return m >= p_begin && m <= t_end; }
 

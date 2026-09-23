@@ -40,7 +40,7 @@
 *      {name}_y_norm_auto [, _user], _y_mv_auto [, _user], _x_ms_auto [, _user]
 *    The PPG channel has THREE bars among its eight columns -- onset,
 *    dicrotic, end -- because markerAtX skips PpgPeak, PpgT50, PpgT80 and
-*    PpgPeak2. p50, peak, peak2, t80 and t80_rise are auto-only, and their
+*    PpgPeak2. t50, peak, peak2, t80 and t80_rise are auto-only, and their
 *    _user half was reactive_ppg re-measured between the three bars they do
 *    own, labelled as a placement. The ARTERIAL channels are not like this:
 *    all five of their markers are draggable, so all five keep both halves.
@@ -682,10 +682,10 @@ inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, double p_p
     const int rInt = (r_peak >= 0.0) ? static_cast<int>(std::lround(r_peak)) : -1;
     // Q for the q_peak column: same canonical finder compute_q_onset uses.
     // Mirrors compute_s_peak's signature below. -1 when there is no Q trough.
-    f.q_idx = FeatureMarks::find_q_peak(ecg, rInt, rateHz, peakMode);    // sub-sample
+    f.q_idx = FeatureMarks::find_q_peak(ecg, rInt, rateHz, 1.0, peakMode);    // sub-sample
     // S for |R|+|S| = first opposite-polarity trough after R (robust; not the
     // max over [R, s_end], which depends on where s_end sits).
-    f.s_idx = FeatureMarks::find_s_peak(ecg, rInt, rateHz, peakMode);   // sub-sample
+    f.s_idx = FeatureMarks::find_s_peak(ecg, rInt, rateHz, 1.0, peakMode);   // sub-sample
     return f;
 }
 
@@ -694,7 +694,7 @@ inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, double p_p
 //  is emphatically not true now that four bars and a set of glyphs are
 //  distinguished. The live column order is ecgPointNames, inside
 //  writeTemplateMarkingsCsv.)
-inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_p50","ppg_peak","ppg_dicr","ppg_peak2","ppg_t80","ppg_t80_rise","ppg_end" };
+inline constexpr const char* ppgCols[] = { "ppg_onset","ppg_t50","ppg_peak","ppg_dicr","ppg_peak2","ppg_t80","ppg_t80_rise","ppg_end" };
 inline constexpr const char* abpCols[] = { "abp_onset","abp_peak","abp_dicr","abp_peak2","abp_end" };
 inline constexpr const char* artCols[] = { "art_onset","art_peak","art_dicr","art_peak2","art_end" };
 inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak","art_pulm_dicr","art_pulm_peak2","art_pulm_end" };
@@ -720,7 +720,7 @@ inline constexpr const char* artPulmCols[] = { "art_pulm_onset","art_pulm_peak",
 // positions written there are the ones that earn a user column.
 inline bool pulseHasUserColumn(const char* pointName) {
     static const char* kAutoOnly[] = {
-        "ppg_p50", "ppg_peak", "ppg_peak2", "ppg_t80", "ppg_t80_rise"
+        "ppg_t50", "ppg_peak", "ppg_peak2", "ppg_t80", "ppg_t80_rise"
     };
     for (const char* a : kAutoOnly)
         if (std::strcmp(pointName, a) == 0) return false;
@@ -774,7 +774,7 @@ inline FeatureMarks::TemplateLandmarks alignedLandmarks(
     const ChannelTemplateData& cd = b.chFor(lead, a);
     if (cd.ecgTemplate_raw.empty() || cd.r_col_raw < 0) return lm;
     return FeatureMarks::detect_template_landmarks(cd.ecgTemplate_raw,
-        static_cast<int>(std::lround(cd.r_col_raw)), sampleRate,
+        static_cast<int>(std::lround(cd.r_col_raw)), sampleRate, 1.0,
         fitMode, peakMode);
 }
 
@@ -1008,11 +1008,11 @@ inline EcgDetection ecgDetectOn(const std::vector<double>& tmpl, int r_col,
     EcgDetection d;
     if (tmpl.size() < 3 || r_col < 0) return d;
 
-    d.lm = FeatureMarks::detect_template_landmarks(tmpl, r_col, sampleRate,
+    d.lm = FeatureMarks::detect_template_landmarks(tmpl, r_col, sampleRate, 1.0,
         onOffsetMode, peakMode);
     if (!d.lm.valid) return d;
 
-    d.s_peak = FeatureMarks::find_s_peak(tmpl, r_col, sampleRate, peakMode);
+    d.s_peak = FeatureMarks::find_s_peak(tmpl, r_col, sampleRate, 1.0, peakMode);
     d.tmpl = &tmpl;
     d.valid = true;
     return d;
@@ -1028,13 +1028,13 @@ inline EcgDetection ecgDetect(const TemplateBin& b, int lead, int slot,
     if (!sv.valid) return d;
 
     d.lm = FeatureMarks::detect_template_landmarks(*sv.tmpl, sv.r_col,
-        sampleRate, onOffsetMode, peakMode);
+        sampleRate, 1.0, onOffsetMode, peakMode);
     if (!d.lm.valid) return d;
 
     // S peak has no field on TemplateLandmarks; it is the same finder the
     // interval code uses, on this alignment's trace and R column.
     d.s_peak = FeatureMarks::find_s_peak(*sv.tmpl, sv.r_col, sampleRate,
-        peakMode);
+        1.0, peakMode);
     d.tmpl = sv.tmpl;
     d.valid = true;
     return d;
@@ -1105,7 +1105,7 @@ inline bool seedSlotBars(TemplateBin& b, int lead, int slot, AnchorType a,
 {
     const SlotView sv = slotView(b, lead, slot, a);
     if (!sv.valid) return false;
-    FeatureMarks::seed_bank_template(*sv.tmpl, sv.r_col, sampleRate, a,
+    FeatureMarks::seed_bank_template(*sv.tmpl, sv.r_col, sampleRate, 1.0, a,
         b.slotMarks(lead, slot, a), onOffsetMode, peakMode);
     return true;
 }
@@ -1255,7 +1255,14 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     //
     // bad_ppg is 1 when the pulse is absent as well as when it was marked bad:
     // the file says whether there is a usable pulse, not why there isn't.
-    f << "file_id,bin_index,channel,template,bad_ecg,bad_ppg,n_members,n_clean";
+    // rr_interval_ms is the template's OWN mean R-R, not the bin's: it is
+    // averaged over this template's member slices, so a PVC column and its
+    // sinus sibling in the same bin report different intervals, which is the
+    // point of having it per row. Blank when no interval was measured --
+    // a reloaded pre-v5 bank, or a template whose slices carried no RR -- and
+    // never 0, which would read as a measured zero-length cycle.
+    f << "file_id,bin_index,channel,template,bad_ecg,bad_ppg,n_members,n_clean"
+        ",rr_interval_ms";
 
     // ECG point columns + 2 interval columns per channel.
     //
@@ -1361,8 +1368,11 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
             emitAutoFeatHeader(nb);
             if (gl.foundName) f << ',' << gl.foundName;
         }
-        for (const char* g : { "vpg_u_auto", "vpg_v_auto", "vpg_w_auto" })
-            emitAutoFeatHeader(g);
+        // (vpg_u/v/w ARE NOT EMITTED AGAIN HERE. They are already in
+        //  ppg_and_artpulse_automated_markers, which the loop above walks and
+        //  which the row loop walks exactly once -- so this second pass added
+        //  six header names that no row ever filled, leaving every data row
+        //  six fields short of the header it was written under.)
     }
     f << '\n';
 
@@ -1486,6 +1496,11 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                 const bool haveBankTmpl = (slot < bank.size());
                 const int nMembers = haveBankTmpl ? bank.templates[slot].memberCount() : 0;
                 const int nClean = haveBankTmpl ? bank.templates[slot].cleanCount() : 0;
+                // 0.0 is the unset value of mean_rr_ms, so it is tested rather
+                // than written: the pre-bank slot-0 fallback has no template to
+                // ask at all, and both cases mean "not measured".
+                const double rrMs = haveBankTmpl
+                    ? bank.templates[slot].mean_rr_ms : 0.0;
                 // NO FALLBACK TO THE R BASE for a missing alignment. bankSlotFor is
                 // explicit that substituting the R-aligned average under a non-R tag is
                 // worse than omitting it, so a slot with no average for an alignment
@@ -1503,6 +1518,8 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                     << ',' << ((b.bad_ppg != 0) ? 1 : 0)
                     << ',' << nMembers
                     << ',' << nClean;
+                f << ',';
+                if (rrMs > 0.0) f << rrMs;
 
                 // (every ECG lookup below goes through b.bankSlotFor(c, slot, anchor),
                 //  which selects this row's template in this block's alignment.)
@@ -1537,7 +1554,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                                     std::lround(b.chFor(c, anchor).r_col_raw));
                                 const FeatureMarks::TemplateLandmarks lm =
                                     FeatureMarks::detect_template_landmarks(
-                                        asl->tmpl, rSeed, sampleRateHz, fitMode, peakMode);
+                                        asl->tmpl, rSeed, sampleRateHz, 1.0, fitMode, peakMode);
                                 aa.p_begin[c] = lm.p_begin;  aa.p_peak[c] = lm.p_peak;
                                 aa.q_onset[c] = lm.q_onset;  aa.r_peak[c] = lm.r_peak;
                                 aa.s_end[c] = lm.s_end;    aa.t_end[c] = lm.t_end;
@@ -1652,7 +1669,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                                     std::lround(b.chFor(c, anchor).r_col_raw));
                                 const FeatureMarks::TemplateLandmarks lm =
                                     FeatureMarks::detect_template_landmarks(
-                                        asl2->tmpl, rSeed, sampleRateHz, fitMode, peakMode);
+                                        asl2->tmpl, rSeed, sampleRateHz, 1.0, fitMode, peakMode);
                                 aa.p_begin[c] = lm.p_begin;  aa.p_peak[c] = lm.p_peak;
                                 aa.q_onset[c] = lm.q_onset;  aa.r_peak[c] = lm.r_peak;
                                 aa.s_end[c] = lm.s_end;    aa.t_end[c] = lm.t_end;
@@ -1672,7 +1689,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                     }
                 // (bad_ecg and bad_ppg are row keys -- emitted once, above.)
                 if (wantPulse) {
-                    // PPG: onset, p50, peak, dicrotic, peak2, t80, t80_rise, end
+                    // PPG: onset, t50, peak, dicrotic, peak2, t80, t80_rise, end
                     //onset, dicrotic, and end are the only user movable bars
                     // THIS SLOT'S PULSE AND THIS SLOT'S BARS. The rows here
                     // are already per (lead, slot); only the pulse columns were
@@ -1709,7 +1726,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                     // to nobody), so its user half is the detector's column --
                     // not a placement, and the same answer the bin fields gave.
                     emitPulsePoint("ppg_onset", pulseU, pmU.onset_auto, pmU.onset, pmU.onset_auto, pmU.onset, refPpg);
-                    emitPulsePoint("ppg_p50", pulseU, rxAuto.t50, rxUser.t50, pmU.onset_auto, pmU.onset, refPpg);
+                    emitPulsePoint("ppg_t50", pulseU, rxAuto.t50, rxUser.t50, pmU.onset_auto, pmU.onset, refPpg);
                     emitPulsePoint("ppg_peak", pulseU, pmU.peak_auto, pmU.peak_auto, pmU.onset_auto, pmU.onset, refPpg);
                     emitPulsePoint("ppg_dicr", pulseU, pmU.dicrotic_auto, pmU.dicrotic, pmU.onset_auto, pmU.onset, refPpg);
                     emitPulsePoint("ppg_peak2", pulseU, rxAuto.peak2, rxUser.peak2, pmU.onset_auto, pmU.onset, refPpg);

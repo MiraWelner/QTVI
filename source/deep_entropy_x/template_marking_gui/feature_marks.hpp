@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <limits>
 
+#include "template_marking_gui/anchor_view.hpp"   // AnchorType
 #include "template_marking_gui/curve_fit.hpp"
 #include "template_morphology_grouping/template_bank.hpp"
 #include "subsample_refine.hpp"
@@ -49,15 +50,17 @@ public:
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static ReactivePpg reactive_ppg(const std::vector<double>& ppg, double onset, double peak, double dicrotic, double end);
 
-    static double find_q_peak(const std::vector<double>& ecg, int r_idx, double fs, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
-    static double find_s_peak(const std::vector<double>& ecg, int r_idx, double fs, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+    // sgn is LeadPolarity::sign() for this lead: +1 recorded upright, -1
+    // flagged reversed. Callers with no channel to ask pass +1.
+    static double find_q_peak(const std::vector<double>& ecg, int r_idx, double fs, double sgn = 1.0, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+    static double find_s_peak(const std::vector<double>& ecg, int r_idx, double fs, double sgn = 1.0, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static double find_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
-    static double find_p_begin(const std::vector<double>& v, double fs, int r_idx, double pPeakIn = -1.0, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);        const std::vector<double>* iqr = nullptr);
+    static double find_p_begin(const std::vector<double>& v, double fs, int r_idx, double sgn = 1.0, double pPeakIn = -1.0, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
     static double find_t_peak(const std::vector<double>& ecg, double bracketSEnd, double bracketTEnd, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
-    static double find_j_point(const std::vector<double>& ecg, double fs, int r_col, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
-    static double find_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double qPeakIn = -1.0, bool* measured = nullptr, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double find_j_point(const std::vector<double>& ecg, double fs, int r_col, double sgn = 1.0, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    static double find_q_onset(const std::vector<double>& ecg, double fs, int r_idx, double sgn = 1.0, double qPeakIn = -1.0, bool* measured = nullptr, subsample_refine::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
     static double find_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
-    static int find_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double pPeakIn = -1.0);
+    static int find_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double sgn = 1.0, double pPeakIn = -1.0);
 
 
     struct TemplateLandmarks {
@@ -78,11 +81,12 @@ public:
     };
 
     static TemplateLandmarks detect_template_landmarks(const std::vector<double>& tmpl, int nominal_r_col, double sampleRate,
+        double sgn = 1.0,
         curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
 
     static void seed_bank_template(const std::vector<double>& tmpl, int r_col,
-        double sampleRate, AnchorType anchor, tbank::BankMarkerSet& out,
+        double sampleRate, double sgn, AnchorType anchor, tbank::BankMarkerSet& out,
         curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
 
@@ -127,7 +131,6 @@ public:
     static int trough_in(const std::vector<double>& v, int lo, int hi);
     static double steepest_slope_in(const std::vector<double>& v, int lo, int hi);
     static double first_crossing(const std::vector<double>& v, int a, int b, double frac);
-    static bool qrs_positive_at(const std::vector<double>& ecg_signal, int r_idx);
     static int detect_ppg_upstroke_peak(const std::vector<double>& v, int lo = 0, int hi = -1);
     static int detect_ppg_onset(const std::vector<double>& pulse);
     static double detect_ppg_peak(const std::vector<double>& pulse);
@@ -136,6 +139,7 @@ public:
     static int detect_ppg_end(const std::vector<double>& pulse);
 
     static void seed_all(TemplateBin& bin, double sampleRate, double ppgRate, AnchorType anchor,
+        const LeadPolarity& pol = LeadPolarity{},
         double heightMeters = NAN,
         curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);

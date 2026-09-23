@@ -14,7 +14,7 @@
 #include "template_marking_gui/template_marking_bin_io.hpp"
 #include "template_marking_gui/bin_plot_widget.hpp"
 #include "template_marking_gui/focus_panel_widget.hpp"
-#include "template_anchoring/anchor_view.hpp"
+#include "template_marking_gui/anchor_view.hpp"
 #include "logging/boundary_training_log.hpp"
 
 // Needed by the template_viewer_*.cpp units, which include only this header.
@@ -213,12 +213,15 @@ private:
     // hand. Both const: they read m_bins and the page table and build a value.
 
     /// This page's (global bin index, template index) columns, in draw order.
-    /// A bin holding several morphologies occupies several adjacent columns.
+    /// A window onto m_columnTable: `start` and `count` are COLUMN indices,
+    /// so a bin's columns can straddle a page boundary.
     std::vector<std::pair<int, int>> pageColumns(int start, int count) const;
 
-    /// Grid row count for this page. `compact` wraps panels, so it has to be
-    /// computed from the COLUMN count, not the bin count.
-    int pageGridRows(bool compact, int nCols, int start, int end) const;
+    /// Grid row count for this page, from the page's own column list. The
+    /// bins on the page are read off it rather than passed separately: a
+    /// page is a column range now and has no single bin range.
+    int pageGridRows(bool compact,
+        const std::vector<std::pair<int, int>>& cols) const;
 
     /// The VCG panel on the bottom row of one column. Display only -- no
     /// markers, no marker signals. Takes what it draws explicitly rather than
@@ -566,9 +569,16 @@ private:
     // more markable templates in one bin means the bank over-segmented).
     int m_maxColsPerPage = 8;
 
-    // (first bin, bin count) per page, packed by column budget. Rebuilt whenever
-    // marking eligibility changes, because confirming a template's class can add
-    // or remove a column and therefore move every later page boundary.
+    // EVERY COLUMN IN THE RECORD, in draw order: (global bin index, template
+    // slot). Built by buildPages, which is the only thing that writes it.
+    // Pages index into this.
+    std::vector<std::pair<int, int>> m_columnTable;
+
+    // (first column, column count) per page -- NOT bins. Every page holds a
+    // full grid's worth of columns except the last, which is what packing by
+    // bin could not do. Rebuilt whenever marking eligibility changes, because
+    // confirming a template's class can add or remove a column and therefore
+    // move every later page boundary.
     std::vector<std::pair<int, int>> m_pages;
     void buildPages();
 
