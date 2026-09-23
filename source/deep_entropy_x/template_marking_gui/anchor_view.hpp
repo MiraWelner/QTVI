@@ -1,7 +1,7 @@
 #pragma once
 /*
 * anchor_view.hpp
-* @brief handle the 
+* @brief handle the
 */
 
 #include <array>

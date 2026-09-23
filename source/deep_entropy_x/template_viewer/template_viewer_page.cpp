@@ -107,6 +107,7 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         const std::vector<double>* traceIqr = nullptr;
         int nMembers = 0;
         uint8_t labelCode = tbank::kUnlabeled;
+        uint8_t splitSource = tbank::kSplitUnknown;
 
         const bool pulseThin = templateIdx < b.ppg_bank.size() && b.ppg_bank.templates[templateIdx].tooFewBeats(/*is_ppg=*/true); //is there fewer ppgs than the given limit
         if (!pulseThin
@@ -174,6 +175,7 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             traceIqr = svT.iqr;
             nMembers = t.memberCount();
             labelCode = t.label_code;
+            splitSource = t.split_source;
             // subtype is no longer read here: tbank::letterRanks applies the
             // confirmed-subtype rule itself, from the same BankTemplate.
         }
@@ -224,7 +226,20 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         // bin -- two counts of different things, one line, neither labelled
         // as to which. The name is now just the name; the count travels on
         // Lead::nMembers and the widget prints it as the ECG beat count.
-        const QString lbl = QString("%1 %2_%3").arg(kNames[c]).arg(cls).arg(letter);
+        QString lbl = QString("%1 %2_%3").arg(kNames[c]).arg(cls).arg(letter);
+
+        // WHICH SIGNAL SPLIT THIS TEMPLATE OFF. A joint partition spawns a
+        // group when one channel rejects the best existing one, and whether
+        // that channel was an ECG lead or the pulse is the difference between
+        // "this bin holds two morphologies" and "the pulse was noisy here".
+        // The bin used to report that only as a per-bin tally in the log.
+        //
+        // ABSENT ON THE SEED, and on anything from an archive written before
+        // the field existed: splitSourceLabel returns nullptr and nothing is
+        // appended, rather than a word standing in for a value nobody
+        // measured.
+        if (const char* src = tbank::splitSourceLabel(splitSource))
+            lbl += QString("  split %1").arg(src);
 
         out.push_back({ trace, traceIqr, c, lbl, nMembers });
     }

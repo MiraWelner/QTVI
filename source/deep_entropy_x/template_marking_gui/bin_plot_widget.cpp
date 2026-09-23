@@ -847,20 +847,17 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
     { QFont f = p.font(); f.setPointSize(8); p.setFont(f); }
 
-    // ---- TWO WEIGHTS ON ONE LINE ----------------------------------------
-    //
-    // The bin number is the panel's IDENTITY -- it is what an operator reads
-    // when calling out a panel, and it is the key every CSV row is joined on --
-    // so it stays black. Everything after it (the channel, the template's class
-    // and letter, and on bin 0 the axis-units hint) is a DESCRIPTION of what is
-    // drawn, which the waveform itself mostly says, so it goes gray and stops
-    // competing with the number for the eye. Drawn as two runs rather than one
-    // string because a QString carries no colour.
+    // TWO TONES ON ONE LINE. "Bin 12" is black and the rest -- the channel,
+    // the template name, how it was split, the axis hint -- is gray. Pages are
+    // packed by column now, so a bin's templates can straddle a page boundary
+    // and the bin number is the only thing on screen that says whether the
+    // panel beside this one is the same bin. The template name is secondary to
+    // that, and was competing with it at equal weight.
     const QString binPart = QString("Bin %1").arg(m_binIndex);
-    QString descPart = m_leadLabel;
+    QString restPart = "  " + m_leadLabel;
     // Bin 0 carries the x-axis units hint, since it is the panel whose axis is
     // labelled for the page.
-    if (m_binIndex == 0) descPart += "  (time in seconds)";
+    if (m_binIndex == 0) restPart += "  (time in seconds)";
 
     QStringList counts;
     if (m_nEcgBeats > 0) counts << QString("ECG beats %1").arg(m_nEcgBeats);

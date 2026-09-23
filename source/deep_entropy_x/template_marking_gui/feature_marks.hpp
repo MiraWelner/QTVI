@@ -19,7 +19,7 @@
 #include <cstdint>
 #include <limits>
 
-#include "template_marking_gui/anchor_view.hpp"   // AnchorType (re-exported for existing users)
+#include "template_marking_gui/anchor_view.hpp"   // AnchorType
 #include "template_marking_gui/curve_fit.hpp"
 #include "template_morphology_grouping/template_bank.hpp"
 #include "subsample_refine.hpp"

@@ -1,66 +1,8 @@
 #pragma once
 //
 // bank_reload.hpp
-//
-// A PRIOR templates.bin IS THE RECORD'S MORPHOLOGY SPLIT.
-//
-// GenerateTemplatesFast repartitions every bin from the beats on every run
-// (~1 s per bin), and nothing ever read the previous answer back -- so editing
-// a morphology threshold in config.csv silently discarded a split that may
-// already have been reviewed and labelled by an operator, with no way to get
-// it back except restoring the old config and hoping the rest of the pipeline
-// was byte-identical.
-//
-// The split is already on disk. writeTemplateInfoBin persists it as four
-// trailing sections: v3 (ECG banks, per bin per channel), v4 (PPG bank, per
-// bin), v5 (per-template extras -- confirmed_by_operator, members_clean, the
-// census), v6 (per-anchor bank slot averages). read_template_binfile reads all
-// four back. What was missing was a caller that preferred them.
-//
-// THE RULE: if the file exists, its banks replace the freshly built ones.
-// Unconditionally. No validation, no per-bin fallback, no config flag. THE
-// EXISTENCE OF THE FILE IS THE SWITCH -- normally there is no prior file and
-// the fresh split stands; when there is one, a config change is deliberately a
-// no-op on the partition. Anything that made the reuse conditional would
-// defeat the purpose.
-//
-// ---------------------------------------------------------------------------
-// WHAT THIS MEANS IF THE BEAT SET MOVED
-// ---------------------------------------------------------------------------
-//
-// A slot's membership (BankTemplate::members / members_clean) is a list of
-// R-pair SLICE ORDINALS, meaningful only against the slicing that produced
-// them. If a config change altered the slicing itself -- bin_size_minutes,
-// ecg_upsample_rate, the drop rules, or anything upstream that re-runs R-peak
-// detection -- the reloaded memberships name slices that either do not exist
-// or are different heartbeats, and consumers that resolve a member to a beat
-// resolve it wrongly.
-//
-// Accepted by design. A guard that rejected those bins would hand the
-// partition back to config.csv for exactly the bins where an operator's review
-// is most expensive to lose. TO FORCE A REPARTITION, DELETE templates.bin --
-// that is the documented way, and the only one.
-//
-// ---------------------------------------------------------------------------
-// WHAT IS AND IS NOT RELOADED
-// ---------------------------------------------------------------------------
-//
-// RELOADED: the bank, and everything riding inside it -- tmpl, tmpl_iqr,
-// r_col, label_code, subtype, confirmed_by_operator, operator_state, members,
-// members_clean, spawn_seq, n_ppg_members, the per-template counts. All are
-// fields of tbank::TemplateBank, so copying the bank carries them. That is why
-// the bank is taken WHOLE rather than merged: an operator confirmation belongs
-// to the split it was made against, and half of one split plus half of another
-// describes no beat set that ever existed.
-//
-// NOT RELOADED, because templates.bin does not carry it: the per-slice
-// bookkeeping in TemplateInfo::joint -- group_of_slice, flags, pvc,
-// excluded_reason, rr_after_ms, and the counts/clean/subs census. Those are
-// rebuilt fresh every run. So after a reload the templates on screen are the
-// prior split while _bins.csv and the NSVT rows describe the newly computed
-// one, and the two will disagree. Closing that needs a v7 section carrying the
-// per-bin JointBinResult -- which is also the prerequisite for skipping
-// buildBinBank altogether and recovering the ~1 s per bin.
+// if a user marked the templates, the template markings are reloaded. but maybe the config file or algorithm changes - then the bins get recalculated 
+// and the markings are wrong. This file reloads the old templates which were split however they were when the user made the markings.
 //
 
 #include <array>
@@ -227,6 +169,7 @@ namespace bank_reload {
     //   marked_invalid_template,    the right-click quality marks
     //   operator_state
     //   mean_rr_ms                  mean R-R over member slices
+    //   split_source                which channel's rejection spawned it
     //   the census counts           n_premature / n_voted / n_noise /
     //                               n_tukey / n_blended / n_ppg, which is what
     //                               presumedCategory() reads -- absent, an
@@ -451,6 +394,7 @@ namespace bank_reload {
                 tp.marked_invalid_template = (tr.marked_invalid_template != 0);
                 tp.operator_state = tr.operator_state;
                 tp.confirmed_by_operator = (tr.confirmed_by_operator != 0);
+                tp.split_source = tr.split_source;
 
                 // Bank scalars ride on every record of the bank -- the format
                 // has no per-bank framing to hang them on. The values agree by

@@ -220,20 +220,14 @@ private:
     // part of a 480-line function that could be moved without a compiler in
     // hand. Both const: they read m_bins and the page table and build a value.
 
-    /// This page's (global bin index, template index) columns, in draw order --
-    /// a slice of m_allColumns. `start` and `count` are COLUMN indices now, not
-    /// bin indices, so that a page can be filled exactly.
+    /// This page's (global bin index, template index) columns, in draw order.
+    /// A window onto m_columnTable: `start` and `count` are COLUMN indices,
+    /// so a bin's columns can straddle a page boundary.
     std::vector<std::pair<int, int>> pageColumns(int start, int count) const;
 
-    /// stderr note listing bins that produced no column at all, because every
-    /// one of their templates fell below the minimum-beats threshold. Once per
-    /// pagination pass, for the whole record.
-    void reportBinsWithNoColumns() const;
-
-    /// Grid row count for this page. `compact` wraps panels, so it has to be
-    /// computed from the COLUMN count, not the bin count. Takes the page's
-    /// columns because the VCG probe needs the bins they belong to, and with
-    /// column-indexed pages that set is no longer a contiguous [start, end).
+    /// Grid row count for this page, from the page's own column list. The
+    /// bins on the page are read off it rather than passed separately: a
+    /// page is a column range now and has no single bin range.
     int pageGridRows(bool compact,
         const std::vector<std::pair<int, int>>& cols) const;
 
@@ -586,30 +580,16 @@ private:
     // more markable templates in one bin means the bank over-segmented).
     int m_maxColsPerPage = 8;
 
-    // ---- THE PAGE TABLE IS IN COLUMNS, NOT BINS -------------------------
-    //
-    // Every (bin, marking slot) pair in the record, in draw order. Built once
-    // per pagination pass so the page table can index into it directly.
-    std::vector<std::pair<int, int>> m_allColumns;
+    // EVERY COLUMN IN THE RECORD, in draw order: (global bin index, template
+    // slot). Built by buildPages, which is the only thing that writes it.
+    // Pages index into this.
+    std::vector<std::pair<int, int>> m_columnTable;
 
-    // (first COLUMN, column count) per page. This used to be (first bin, bin
-    // count), packed so that a bin's columns never straddled a page boundary --
-    // and since a bin contributes one column per markable morphology, that made
-    // the page size float: a page whose next bin held three templates stopped at
-    // ten or eleven panels rather than taking two of the three, so most screens
-    // were short of the 12 the grid is laid out for and the panel sizes changed
-    // from page to page.
-    //
-    // Pages are exact now. Every page holds the full budget except the last,
-    // which holds the remainder, and a bin with several templates is split
-    // across the boundary when that is what filling the page takes. Nothing
-    // downstream requires a bin's columns to be adjacent: propagation resolves a
-    // (bin, slot) to a column through m_pageColOf, which already answers "not on
-    // this page" for a pair that is not.
-    //
-    // Rebuilt whenever marking eligibility changes, because confirming a
-    // template's class can add or remove a column and therefore move every
-    // later page boundary.
+    // (first column, column count) per page -- NOT bins. Every page holds a
+    // full grid's worth of columns except the last, which is what packing by
+    // bin could not do. Rebuilt whenever marking eligibility changes, because
+    // confirming a template's class can add or remove a column and therefore
+    // move every later page boundary.
     std::vector<std::pair<int, int>> m_pages;
     void buildPages();
 

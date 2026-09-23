@@ -914,7 +914,7 @@ namespace normalize_features {
             // reads it.
             const double qOnD = FeatureMarks::find_q_onset(pb.samples, fs, pb.rCol, sgn);
             const double pPeakD = FeatureMarks::find_p_peak(pb.samples, 0.0, qOnD, fs);
-            const int pEnd = FeatureMarks::find_p_end(pb.samples, pb.rCol, fs, sgn, pPeakD);
+            const int pEnd = FeatureMarks::find_p_end(pb.samples, pb.rCol, fs, 1.0, pPeakD);
             // compute_q_onset's monophasic-R path can return r_idx itself, which
             // would run the PQ window into the R upstroke. Require a real gap.
             const int qGuard = pb.rCol - static_cast<int>(std::lround(0.020 * fs));

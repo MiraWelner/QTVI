@@ -109,8 +109,8 @@ public:
         m_transCands = c; update();
     }
 
-    // One tested model curve. Green when it is the one that placed the mark,
-    // red otherwise.
+    // One tested model curve. Solid green when it is the one that placed the
+    // mark, solid gray otherwise.
     struct Candidate {
         std::vector<double> curve;   // per-column, NaN outside the fit
         bool selected = false;

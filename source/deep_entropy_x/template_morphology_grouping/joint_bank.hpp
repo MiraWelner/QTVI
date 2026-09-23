@@ -205,6 +205,17 @@ namespace jbank {
         int32_t  subtype = -1;
         uint32_t spawn_seq = 0;
 
+        // WHICH CHANNEL REJECTED THE BEST GROUP AND SO FORCED THIS SPAWN,
+        // encoded as tbank::kSplitCh1..kSplitPpg. tbank::kSplitUnknown on the
+        // seed, which was not spawned by a rejection, and on a group produced
+        // by a merge, where two provenances would have to collapse into one
+        // and neither is the answer.
+        //
+        // Only the FIRST failing channel of the best rejected group, which is
+        // what JointScore already keeps: a beat can fail several channels at
+        // once and the summary stays a single attribution rather than a set.
+        uint8_t split_source = tbank::kSplitUnknown;
+
         // Every member NOISE-categorized -> this is not a morphology, it is a
         // clump of noise beats. Set in cleanGroups; makes averagedMembers()
         // return nothing so the template comes out empty and is dropped, rather
@@ -747,6 +758,12 @@ namespace jbank {
 
         BeatGroup g;
         g.spawn_seq = bank.next_spawn_seq++;
+        // THE REASON THIS GROUP EXISTS, kept on the group. out.failing_channel
+        // was already computed above for the per-bin tally; storing it here is
+        // what lets a panel say which signal split it off, instead of the
+        // record only knowing how many splits each channel caused.
+        if (out.failing_channel >= 0 && out.failing_channel < num_channels)
+            g.split_source = static_cast<uint8_t>(out.failing_channel + 1);
         // The new group belongs to the spawning slice's class, permanently.
         // A class with no group yet gets its first one here: there is no
         // separate per-partition seeding step, because only the unlabeled
@@ -948,100 +965,18 @@ namespace jbank {
     }
 
     // ---------------------------------------------------------------------
-    // Label propagation
-    // ---------------------------------------------------------------------
-
-    // ONE call covers every channel, which is the point of a joint partition:
-    // "the class label propagates to the template that beat is assigned to, and
-    // from there to every other beat assigned to the same template" is now a
-    // single statement rather than four that have to be kept consistent.
+    // (PropagationResult / propagateLabel / presumedCategory / letterRanks
+    //  REMOVED from this side. Each had a tbank twin and no caller here.
     //
-    // Takes a SLICE index, not a channel's beat index. An operator clicking a
-    // beat on the CH2 panel is confirming a slice; the caller maps CH2's local
-    // row back through local_of_slice before calling.
-    struct PropagationResult {
-        int32_t group = -1;
-        int32_t subtype = -1;
-        int     beats_relabeled = 0;
-    };
-
-    inline PropagationResult propagateLabel(JointBank& bank, uint32_t slice,
-        uint8_t label_code)
-    {
-        PropagationResult out;
-        if (label_code == tbank::kUnlabeled) return out;
-        const int gi = bank.findBySlice(slice);
-        if (gi < 0) return out;
-
-        BeatGroup& g = bank.groups[gi];
-        // Subtype issued once, then immutable: a re-confirmation, or a
-        // confirmation of a different beat in an already-labeled group, must
-        // not mint a new index.
-        if (g.subtype < 0 || g.label_code != label_code) {
-            if (g.label_code != label_code)
-                g.subtype = bank.nextSubtypeFor(label_code);
-            g.label_code = label_code;
-        }
-        g.confirmed_by_operator = true;
-
-        out.group = gi;
-        out.subtype = g.subtype;
-        out.beats_relabeled = g.memberCount();
-        return out;
-    }
-
+    //  THE DIRECTION IS DELIBERATE AND IT IS THE OPPOSITE OF THE MERGE ABOVE:
+    //  the partition is joint, so the ALGORITHM lives in this file -- but
+    //  nothing outside the pipeline ever sees a JointBank. The GUI, the CSV
+    //  writers and the marking bin are all handed projected per-channel banks
+    //  by projectToChannel, so naming a template, presuming its category and
+    //  propagating an operator's label are all questions asked of a
+    //  tbank::TemplateBank. Keeping a joint copy meant two answers available
+    //  for one question, and the reachable one was always tbank's.)
     // ---------------------------------------------------------------------
-    // Presumed category, and the display letter
-    // ---------------------------------------------------------------------
-
-    // Presumed, NOT confirmed. A confirmed label overrides the presumption
-    // outright -- the operator's verdict is not a hypothesis to be re-derived.
-    // Unlabeled is PQRST, not a third "unknown" state.
-    inline tbank::Category presumedCategory(const BeatGroup& g,
-        uint32_t n_premature_members = 0, uint32_t n_voted_members = 0)
-    {
-        if (g.confirmed_by_operator) {
-            if (g.label_code == tbank::kCodeMinorNoise) return tbank::Category::NOISE;
-            if (g.label_code == tbank::kCodePvc || g.label_code == tbank::kCodePac
-                || g.label_code == tbank::kCodeVt) return tbank::Category::ECTOPIC;
-            return tbank::Category::REGULAR;
-        }
-        if (!g.earnsColumn()) return tbank::Category::NOISE;
-        const uint32_t n = static_cast<uint32_t>(g.members.size());
-        if (n == 0) return tbank::Category::NOISE;
-        if ((n_premature_members + n_voted_members) * 2 > n)
-            return tbank::Category::ECTOPIC;
-        return tbank::Category::REGULAR;
-    }
-
-    // Contiguous letters over the groups that exist, ordered by spawn_seq --
-    // the joint counterpart of tbank::letterRanks, and for the same reason: a
-    // merge erases an element and shifts everything after it, so slot position
-    // is not stable between runs while spawn order is. One letter per group now
-    // names the morphology on ALL FOUR channels, which is what the joint
-    // partition buys.
-    inline std::vector<uint8_t> letterRanks(const JointBank& bank) {
-        const int n = bank.size();
-        std::vector<int> order;
-        order.reserve(n);
-        for (int i = 0; i < n; ++i)
-            if (bank.groups[i].memberCount() > 0) order.push_back(i);
-        std::sort(order.begin(), order.end(), [&](int a, int b) {
-            return bank.groups[a].spawn_seq < bank.groups[b].spawn_seq;
-            });
-
-        std::vector<uint8_t> letter(n, 0);
-        int rank = 0;
-        for (int i : order) {
-            const BeatGroup& g = bank.groups[i];
-            const int idx = (g.label_code != tbank::kUnlabeled && g.subtype > 0)
-                ? g.subtype - 1 : rank;
-            letter[i] = static_cast<uint8_t>(idx % 26);
-            ++rank;
-        }
-        return letter;
-    }
-
     // ---------------------------------------------------------------------
     // POST-PARTITION: REMOVE AND FLAG PREMATURE, THEN TUKEY ON WHAT IS LEFT
     // ---------------------------------------------------------------------
@@ -1812,6 +1747,7 @@ namespace jbank {
             t.confirmed_by_operator = g.confirmed_by_operator;
             t.subtype = g.subtype;
             t.spawn_seq = g.spawn_seq;
+            t.split_source = g.split_source;
             t.markers_by_anchor = g.markers_by_anchor;
             t.n_ppg_members = static_cast<int32_t>(g.memberCountOn(kPpg));
 
