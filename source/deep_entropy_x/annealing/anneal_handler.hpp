@@ -13,7 +13,7 @@
  */
 
 #include <filesystem>
-#include "config_file_handling/config_entry.hpp"
+#include "config_file_handling/config.hpp"
 
  /**
   * @brief Anneal one recording. Reads `binPath` and (optionally) `noisePath`,

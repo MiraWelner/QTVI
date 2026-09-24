@@ -135,7 +135,7 @@ bool TemplateViewerWindow::pulseTraceForSlot(tbank::BankTemplate& slot,
 // be. The build has the same property at each beat's own foot; a shared column
 // simply puts it in one place, where it can be read.
 static void adoptPulsePair(tbank::BankTemplate& slot,
-    std::vector<double> tmpl, std::vector<double> iqr)
+    std::vector<double> tmpl, std::vector<double> iqr, double ppgRate)
 {
     const std::size_t keep = slot.tmpl.size();
     if (keep > 0 && tmpl.size() > keep) {
@@ -146,6 +146,22 @@ static void adoptPulsePair(tbank::BankTemplate& slot,
     slot.tmpl_iqr = std::move(iqr);
     slot.band_lo.clear();
     slot.band_hi.clear();
+    // THE MARKS ARE DERIVED FROM tmpl, LIKE THE BANDS ABOVE, and this is the
+    // only function that replaces it -- so re-seeding here is what makes NO
+    // pulse cell stale on any path.
+    //
+    // Left behind, onset / dicrotic / end are columns of the array this just
+    // replaced, and the lazy seed in applyBankTemplateToWidget never fires
+    // again because isUnset() is false. All three bars then described a
+    // waveform that no longer existed while the glyphs were detected on the
+    // one that did. Onset and Dicrotic hid it -- the foot is the column the
+    // re-level pins every row to, and the notch is arithmetic off the peak,
+    // so neither moves far. End is a trough search over the flat tail, so its
+    // stale value was far enough out to leave the panel: column 835.9 on a
+    // pulse drawn to 753, where the marker loop drops it and it is neither
+    // visible nor clickable.
+    FeatureMarks::seed_pulse_bank_template(slot.tmpl, ppgRate,
+        slot.pulse_marks);
 }
 
 
@@ -395,8 +411,28 @@ void TemplateViewerWindow::pushPulseToPanels(int binIdx, int templateIdx,
         "iqr=%zu panels=%d\n", binIdx, templateIdx, footIdx, trace.size(),
         iqr.size(), col ? (int)col->size() : -1);
     if (col) {
-        for (auto* pw : *col)
-            if (pw) pw->setPpgData(trace, iqr, slot.memberCount());
+        for (auto* pw : *col) {
+            if (!pw) continue;
+            pw->setPpgData(trace, iqr, slot.memberCount());
+            // AND THE THREE BARS, NOT JUST THE TRACE. adoptPulsePair has
+            // re-seeded pulse_marks on the new waveform, but the panels still
+            // hold the columns applyBankTemplateToWidget pushed BEFORE the
+            // re-level -- showPage builds the panels and then calls
+            // realignAllVisiblePulses at its tail, so on the initial page the
+            // bars were a page older than the trace under them. It took a bar
+            // click to reskin the column and pick the new cells up, which is
+            // the whole "not until I click another bar" symptom.
+            const tbank::BankPulseMarkerSet& pm = slot.pulse_marks;
+            const FeatureMarks::ReactivePpg rp = FeatureMarks::reactive_ppg(
+                slot.tmpl, pm.onset, pm.peak_auto, pm.dicrotic, pm.end);
+            pw->setMarker(BinPlotWidget::PpgOnset, pm.onset);
+            pw->setMarker(BinPlotWidget::PpgPeak, pm.peak_auto);
+            pw->setMarker(BinPlotWidget::PpgDicrotic, pm.dicrotic);
+            pw->setMarker(BinPlotWidget::PpgPeak2, rp.peak2);
+            pw->setMarker(BinPlotWidget::PpgEnd, pm.end);
+            pw->setMarker(BinPlotWidget::PpgT50, rp.t50);
+            pw->setMarker(BinPlotWidget::PpgT80, rp.t80);
+        }
     }
 
     // The focus panel, if it is showing this pulse, is re-run from the new
@@ -535,9 +571,8 @@ void TemplateViewerWindow::realignAllVisiblePulses()
         // that has never been displayed has no foot yet, and -1 is not a hint.
         //
         // FOR EVERY MODE INCLUDING AUTO. Auto used to return above this, put
-        // the build's waveform back and never look at the pulse marks at all;
-        // it now stacks on the foot like the other positions, so it needs the
-        // same hint they need.
+        // Seed before reading, as every other pulse-mark reader does: a column
+        // that has never been displayed has no foot yet, and -1 is not a hint.
         if (!slot.hasDetectedPulseMarks())
             FeatureMarks::seed_pulse_bank_template(slot.tmpl, m_ppgRateHz,
                 slot.pulse_marks);
@@ -675,7 +710,13 @@ bool TemplateViewerWindow::relevelPulseAtFoot(int binIdx, int templateIdx,
     // during the drag and the rows have come to it. Stash the build's pair
     // first -- this is the last moment it exists. See stashBuiltPulse.
     stashBuiltPulse(binIdx, templateIdx, slot);
-    adoptPulsePair(slot, res.tmpl, res.iqr);
+    // THE DRAG'S OWN CLAIM SURVIVES THE RE-SEED. adoptPulsePair re-detects
+    // every pulse cell on the new waveform, which is right for dicrotic and
+    // end and wrong for the foot the operator just placed -- so it is read
+    // back out first and restored.
+    const double operatorFoot = slot.pulse_marks.onset;
+    adoptPulsePair(slot, res.tmpl, res.iqr, m_ppgRateHz);
+    slot.pulse_marks.onset = operatorFoot;
 
     m_ppgRealigned.insert(slotKey(binIdx, templateIdx));
     pushPulseToPanels(binIdx, templateIdx);
@@ -786,7 +827,7 @@ bool TemplateViewerWindow::relevelPulseAtPct(int binIdx, int templateIdx,
     // during the drag and the rows have come to it. Stash the build's pair
     // first -- this is the last moment it exists. See stashBuiltPulse.
     stashBuiltPulse(binIdx, templateIdx, slot);
-    adoptPulsePair(slot, res.tmpl, res.iqr);
+    adoptPulsePair(slot, res.tmpl, res.iqr, m_ppgRateHz);
 
     m_ppgRealigned.insert(slotKey(binIdx, templateIdx));
     pushPulseToPanels(binIdx, templateIdx);

@@ -1,13 +1,7 @@
 #pragma once
 /**
  * @file   config_entry.hpp
- * @brief  a struct containing all the rates, paths, and labels
- *
- *         Every signal channel carries an explicit (raw_rate,
- *         upsample_rate) pair straight from config.csv. There is no
- *         single global upsample rate -- each channel is upsampled to its
- *         own configured target rate. Channels with no configured rate
- *         (or no label) are written as missing-channel placeholders.
+ * @brief  config_entry is a struct containing all the rates, paths, lables, etc in the config.csv file.
  */
 
 #include <string>
@@ -15,8 +9,8 @@
 struct config_entry {
     //params set by the config.csv
     std::string dataset_type;
-    std::string main_file_extention;
-    std::string sleep_file_extention;
+    std::string main_file_extension;
+    std::string sleep_file_extension;
     std::string input_path;
     std::string output_path;
 
@@ -61,21 +55,7 @@ struct config_entry {
     int min_beats_template_ecg = 0;
     int min_beats_template_ppg = 0;
 
-    // MORPHOLOGY SPLIT WINDOW, IN SECONDS EITHER SIDE OF THE ANCHOR. The
-    // split correlation compares beats over this region only -- around the R
-    // peak for ECG, around the systolic peak for the pulse -- so a difference
-    // outside it does not separate two morphologies. Converted to samples at
-    // each channel's own rate in GenerateTemplatesFast.
-    //
-    // UNSET MEANS THE WHOLE BEAT. 0 is the default and it is a real setting,
-    // not a missing one: jbank::CandidateBank::corr_halfwin <= 0 already meant
-    // "no window, correlate the whole slice", so a blank cell gets you the
-    // full-beat comparison rather than a guessed window.
-    //
-    // NOTE this is NOT what the code did before. The window was hardcoded at
-    // 0.5 s, so a config.csv with these columns blank now splits on the whole
-    // beat where it used to split on +-0.5 s around the anchor. Put 0.5 in the
-    // cells to keep the old behaviour.
+
     double region_around_Rpeak_for_morphology_split = 0.0;
     double region_around_PPGPeak_for_morphology_split = 0.0;
 
@@ -94,11 +74,10 @@ struct config_entry {
     std::string training_log;
     std::string vcg_output;
 
-    /*
-    Different filetypes have different terms for the same type of signal,
-    If only one filetype has a given type of data (ie only bittium has accelration) then the label
-    name is set here. Otherwise, it is set in the apply_dataset_specific_channel_labels function in config_loader.cpp
-    */
+    
+    // Different filetypes have different terms for the same type of signal,
+    // If only one filetype has a given type of data (ie only bittium has accelration) then the label
+    // name is set here. Otherwise, it is set in the apply_dataset_specific_channel_labels function in config_loader.cpp
     std::string ecg_1_label;
     std::string ecg_2_label;
     std::string ecg_3_label;
@@ -136,17 +115,13 @@ struct config_entry {
     std::string dhr_label = "DHR";
 
 
-    //determine what r peak finding method to utilize
     bool use_consensus_rpeak = true;
-    // --- Filtering options ---
-    // Powerline notch filter. 0 = disabled; valid enabled values are 50 or 60 Hz.
     int notch_filter_hz = 0;
-    // Waveform high-pass cutoff in Hz. 0 = disabled; default 0.5 when enabled.
-    double waveform_highpass_hz = 0.5;
+    double waveform_highpass_hz = 0.0;
 
     // --- Subject demographics (stored only; no downstream use yet) ---
     int    age = 0;
-    std::string sex;               // stored verbatim, not interpreted
+    std::string sex;
     double weight_kg = 0.0;
     double height_cm = 0.0;
     int    hr_rest = 0;

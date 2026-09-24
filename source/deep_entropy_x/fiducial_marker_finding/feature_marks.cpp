@@ -669,12 +669,25 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
             }
             return pos;
         };
-    
+
     const int coarse_seed_for_onset = trough_in(v, lo0, iFloor(g.peak) - 1);
     g.onset = refine_trough(coarse_seed_for_onset, lo0, g.onset_cand);
     {
         const int seed = trough_in(v, std::min(iCeil(g.peak) + 1, Wc - 1), Wc - 1);
-        g.end = refine_trough(seed >= 0 ? seed : Wc - 1, lo0, g.end_cand);
+        // NOT FOUND IS -1, NOT Wc - 1. The old fallback pinned the end to the
+        // LAST COLUMN OF THE ARRAY whenever no trough resolved after the peak
+        // -- and Wc is the full template length, padded far tail included, so
+        // that column sits outside the drawn extent by construction. The bar
+        // then landed past the right edge of the pulse, where the marker loop
+        // drops it: invisible and unclickable, and no amount of re-seeding
+        // could rescue it because the freshly detected value was itself out of
+        // range.
+        //
+        // -1 is the sentinel every consumer of PpgFiducials already handles,
+        // for exactly the reason the refine_trough note above gives about 0:
+        // Wc - 1 is a position, and a wrong one. An unresolvable end now reads
+        // as no mark rather than as a mark at the wall.
+        g.end = (seed >= 0) ? refine_trough(seed, lo0, g.end_cand) : -1.0;
     }
     g.dicrotic = cld(g.peak + 0.12 * ppgRate);
     if (g.end > g.peak && g.dicrotic >= g.end)
@@ -1228,7 +1241,7 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
 }
 
 
-void FeatureMarks::seed_pulse_bank_template(const std::vector<double>& tmpl, double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters){
+void FeatureMarks::seed_pulse_bank_template(const std::vector<double>& tmpl, double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters) {
     out = tbank::BankPulseMarkerSet{};
     const int W = static_cast<int>(tmpl.size());
     if (W < 3 || ppgRate <= 0.0) return;

@@ -35,7 +35,7 @@
 #include <string>
 #include <vector>
 
-#include "config_file_handling/config_entry.hpp"
+#include "config_file_handling/config.hpp"
 #include "template_generation/template_io.hpp"
 #include "fiducial_marker_finding/feature_marks.hpp"   // FeatureMarks, LeadPolarity
 

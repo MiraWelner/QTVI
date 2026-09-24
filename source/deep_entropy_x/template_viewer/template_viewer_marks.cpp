@@ -6,6 +6,7 @@
 // ========================================================================
 
 #include "template_viewer.hpp"
+#include "fiducial_marker_finding/sample_extent.hpp"
 
 
 // ---- SHARED PULSE FIELD TABLE -------------------------------------------
@@ -282,15 +283,29 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         if (ps.tmpl.empty() || ps.hasDetectedPulseMarks()) return;
         FeatureMarks::seed_pulse_bank_template(ps.tmpl, m_ppgRateHz, ps.pulse_marks);
         };
-    // Drawn length of this column's pulse (clipped to the ECG window).
+    // Placeable length of this column's pulse: the DRAWN extent, not the array.
+    //
+    // It was min(tmpl.size(), ecgClip) -- the array clipped to the ECG window
+    // -- which still includes the padded far tail that recomputeFrame trims
+    // off the painted trace. So both callers below would happily put a bar out
+    // there: the dragged one through clamp(placed, 0, dragLen - 1), and a
+    // propagated one through the target > n - 1 test. Move-Subsequent then
+    // pushed End off the right of the panel, where the marker loop drops it
+    // and it is neither visible nor clickable.
+    //
+    // lastDrawn falls back to the finite extent by itself when tmpl_iqr is
+    // empty or a different length, so a slot with no band behaves as before.
     auto ppgLen = [&](int gi, int slot) -> int {
         TemplateBin& tb = m_bins[gi];
         // This slot's own pulse, not the bin's -- it is the trace the column
         // draws and therefore the one its bars are columns of.
-        const int rawLen = (slot >= 0 && slot < (int)tb.ppg_bank.size())
-            ? (int)tb.ppg_bank.templates[slot].tmpl.size() : 0;
+        if (slot < 0 || slot >= (int)tb.ppg_bank.size()) return 0;
+        const tbank::BankTemplate& ps = tb.ppg_bank.templates[slot];
+        int len = (int)ps.tmpl.size();
+        const int lastOk = sample_extent::lastDrawn(ps.tmpl, ps.tmpl_iqr);
+        if (lastOk >= 0) len = std::min(len, lastOk + 1);
         const int ecgClip = ecgClipLenFor(tb);
-        return (ecgClip > 0) ? std::min(rawLen, ecgClip) : rawLen;
+        return (ecgClip > 0) ? std::min(len, ecgClip) : len;
         };
     // O(1), from the index showPage builds.
     int dragCol = -1;

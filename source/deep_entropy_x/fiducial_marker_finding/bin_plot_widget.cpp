@@ -800,8 +800,32 @@ void BinPlotWidget::ensureExtents(Channel ch) const {
         last = sample_extent::lastDrawn(m_ecg, m_ecgIqr);
     }
     else if (v) {
-        first = sample_extent::firstFinite(*v);
-        last = sample_extent::lastFinite(*v);
+        // firstDrawn / lastDrawn FOR THE PULSE CHANNELS TOO, not just the ECG.
+        // The finite extent runs on into the far tail that recomputeFrame
+        // already trims off the PAINTED trace -- align_beat_matrix leaves IQR
+        // 0.0 wherever fewer than two beats reached -- so the wall sat past the
+        // end of the drawn pulse, and a bar out there was drawn on blank panel.
+        // sample_extent.hpp names this exact difference; it was applied to one
+        // channel and not the other four.
+        //
+        // AN EMPTY IQR IS SAFE: firstDrawn / lastDrawn fall back to the finite
+        // extent by themselves when the band is absent.
+        const std::vector<double>* iqr = nullptr;
+        switch (ch) {
+        case Channel::Ppg:     iqr = &m_ppgIqr;     break;
+        case Channel::Abp:     iqr = &m_abpIqr;     break;
+        case Channel::Art:     iqr = &m_artIqr;     break;
+        case Channel::ArtPulm: iqr = &m_artPulmIqr; break;
+        default: break;
+        }
+        if (iqr) {
+            first = sample_extent::firstDrawn(*v, *iqr);
+            last = sample_extent::lastDrawn(*v, *iqr);
+        }
+        else {
+            first = sample_extent::firstFinite(*v);
+            last = sample_extent::lastFinite(*v);
+        }
     }
 
     m_extFirst[ci] = first;
@@ -1517,9 +1541,7 @@ const FeatureMarks::PpgFiducials& BinPlotWidget::detectedPulse() const {
     return m_pdet;
 }
 
-void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
-    double yLo, double yHi, double pLo, double pHi, int ph) const
-{
+void BinPlotWidget::drawFeatureGlyphs(QPainter& p, double yLo, double yHi, double pLo, double pHi, int ph) const {
     // Reactive columns, recomputed every paint from the current bars.
     const Reactive rx = reactiveGlyphs();
 
@@ -1618,11 +1640,26 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         // drawn too low to see, which is a far worse failure than a missing
         // one: there is nothing on screen saying the positions are invented.
         // A landmark with no amplitude under it is simply not drawn now.
+        //
+        // AND THE SAME WALL THE BAR LOOP USES (see wallR / wallL in the marker
+        // loop). The only bound here was the raw array length, so a fiducial
+        // sitting in the untrimmed far tail was PAINTED while its own bar was
+        // skipped by the bar loop's wall test -- one landmark, two positions on
+        // screen, on a page nobody had touched yet. Clamping left rather than
+        // dropping matches the bar loop exactly, so the X and the bar cannot
+        // disagree about a landmark that is off either end.
+        const int wallR = lastDrawnSample(Channel::Ppg);
+        const int wallL = firstDrawnSample(Channel::Ppg);
         auto point = [&](double idx, QPointF& out) {
             if (idx < 0.0 || idx > static_cast<double>(N - 1)) return false;
-            const double raw = FeatureMarks::sample_at(v, idx);
+            if (wallR < 0 || idx > static_cast<double>(wallR)) return false;
+            const double drawIdx =
+                (wallL >= 0 && idx < static_cast<double>(wallL))
+                ? static_cast<double>(wallL) : idx;
+            const double raw = FeatureMarks::sample_at(v, drawIdx);
             if (std::isnan(raw)) return false;
-            out = QPointF(xFromSample(Channel::Ppg, idx), plot_y(raw, pLo, pHi));
+            out = QPointF(xFromSample(Channel::Ppg, drawIdx),
+                plot_y(raw, pLo, pHi));
             return true;
             };
         auto cross = [&](double idx) { QPointF q; if (point(idx, q)) x_glyph(q.x(), q.y()); };
@@ -1638,7 +1675,16 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p,
         // b.ppg_*_auto -- the BIN's marks, measured on b.ppgTemplate, which is
         // not the waveform any column draws -- pushed in by overridePulseGlyphs.
         const FeatureMarks::PpgFiducials& pf = detectedPulse();
-        cross(pf.onset);
+        fprintf(stderr, "[ppg-end] bin=%d slot=%d | ppg=%zu ppgIqr=%zu "
+            "wallL=%d wallR=%d | pf.end=%.2f pf.peak2=%.2f t80=%.2f | "
+            "bar=%.2f tmpl=%zu\n",
+            m_binIndex, m_templateIndex, m_ppg.size(), m_ppgIqr.size(),
+            wallL, wallR, pf.end, pf.peak2, rx.ppgT80,
+            m_markers[PpgEnd],
+            (m_bin && m_templateIndex >= 0
+                && m_templateIndex < m_bin->ppg_bank.size())
+            ? m_bin->ppg_bank.templates[m_templateIndex].tmpl.size()
+            : (std::size_t)0);        cross(pf.onset);
         cross(rx.ppgT50);            // reactive: 50% onset->peak
         cross(pf.peak);              // systolic peak
         found(pf.dicrotic, pf.notch_found);

@@ -1,18 +1,15 @@
 #pragma once
 /**
  * @file   config_loader.hpp
- * 
- * @brief  Loads the config.csv file, parses it based on the dataset type selected by the user, and fills up a config_entry struct with the relevant paths,
- *         rates, and channel labels. The channel labels (eg. "ECG_1" vs "EKG") are dataset-specific but not in the config file, so they are assigned in 
- *         apply_dataset_specific_channel_labels() based on the dataset type. The output paths are either found in the config file, or prompted for manually if 
- *         the config file cells are blank. The output_path is used to create the subfolders where the specific types of output are found.
- * 
- * @author Mira Welner
- * @email mew386@pitt.edu
- * @date 20265-09-24
+ * @brief  Loads the config.csv file, parses it based on the datset type selected by the user, and fills up a config_entry struct with the relevant paths, rates, and channel labels.
+ *         The channel labels (eg. "ECG_1" vs "EKG") are dataset-specific but not in the config file, so they are assigned in apply_dataset_specific_channel_labels() based on the dataset type.
+ *         The output paths are either found in the config file, or prompted for manually if the config file cells are blank. The output_path is used to create the subfolders where the
+ *         specific types of output are found.
+ 
  */
 
-#include <QString>
+#include "config.hpp"
+
 #include <QFileDialog>
 
 #include <algorithm>
@@ -23,19 +20,17 @@
 #include <unordered_map>
 #include <vector>
 
-#include "config_entry.hpp"
-
 namespace config_loader_detail {
 
-    inline double stod_or_default(const std::string& s, double dflt) {
-        if (s.empty()) return dflt;
+    inline double stod_or_default(const std::string& s, double default_value) {
+        //string to double, or return default if the string is not a number
         try { return std::stod(s); }
-        catch (...) { return dflt; }
+        catch (...) { return default_value; }
     }
 
-    inline std::string column_header_to_lowercase(std::string s) {
-        for (char& c : s)
-            c = (char)std::tolower((unsigned char)c);
+    inline std::string normalize_key(std::string s) {
+        for (char& ch : s)
+            ch = (char)std::tolower((unsigned char)ch);
         return s;
     }
 
@@ -58,7 +53,7 @@ namespace config_loader_detail {
     }
 
     inline bool parseBool(const std::string& s, bool dflt) {
-        //this is for the the peakfinding consensus variable in the config.csv file
+        //this is for the the r consensus variable in the config.csv file
         if (s.empty()) return dflt;
         std::string t; for (char c : s) t += std::tolower((unsigned char)c);
         if (t == "1" || t == "true" || t == "yes") return true;
@@ -113,35 +108,28 @@ namespace config_loader_detail {
     }
 
 
-    inline void deriveSubpaths(config_entry& cfg) {
-        /* This script yeilds different types of outputs, each of which are saved in their own
-        subfolder of output_path. The folders are CREATED here, so every writer
-        downstream can open a file in one without checking first. */
-        if (cfg.output_path.empty()) return;   // nothing to hang the subfolders off
-
-        auto sub = [&cfg](const char* name) {
+    inline void create_output_folders(config_entry& cfg) {
+        //make the subfolders to organize the output data
+        auto create_subfolder = [&cfg](const char* name) {
             const std::string p = cfg.output_path + "/" + name + "/";
             std::error_code ec;
             std::filesystem::create_directories(p, ec);
-            if (ec) std::cerr << "[config] could not create " << p
-                << ": " << ec.message() << "\n";
             return p;
             };
 
-        cfg.annealed_data_path = sub("annealed_output");
-        cfg.noise_data_path = sub("noise_marking_output");
-        cfg.r_peak_data_path = sub("r_peak_finding_output");
-        cfg.template_path = sub("template_outputs");
-        cfg.fiducial_marker_locations = sub("fiducial_marker_locations");
-        cfg.quality_metric = sub("quality_metric");
-        cfg.training_log = sub("training_log");
-        cfg.snapshot_path = sub("snapshot_path");
-        cfg.vcg_output = sub("vcg_output");
+        cfg.annealed_data_path = create_subfolder("annealed_output");
+        cfg.noise_data_path = create_subfolder("noise_marking_output");
+        cfg.r_peak_data_path = create_subfolder("r_peak_finding_output");
+        cfg.template_path = create_subfolder("template_outputs");
+        cfg.fiducial_marker_locations = create_subfolder("fiducial_marker_locations");
+        cfg.quality_metric = create_subfolder("quality_metric");
+        cfg.training_log = create_subfolder("training_log");
+        cfg.snapshot_path = create_subfolder("snapshot_path");
+        cfg.vcg_output = create_subfolder("vcg_output");
     }
 
     inline bool manually_select_folder(config_entry& cfg) {
-        /* If a folder is not in the config.csv (i.e. its field is empty),
-            prompt the user to select it.  */
+        // If the input or output folder is not in the config.csv (i.e. its field is empty), prompt the user to select it.
         if (cfg.bin_file_path.empty() && !cfg.input_path.empty())
             cfg.bin_file_path = cfg.input_path;
         const std::vector<std::pair<const char*, std::string*>> fields = {
@@ -162,7 +150,7 @@ namespace config_loader_detail {
             if (fieldPtr == &cfg.output_path) outputChanged = true;
         }
 
-        if (outputChanged) deriveSubpaths(cfg);
+        if (outputChanged) create_output_folders(cfg);
         return true;
     }
 }
@@ -193,14 +181,18 @@ inline bool load_config(int dataType, config_entry& out) {
     std::vector<std::string> headerFields = parse_config_row(header);
     std::unordered_map<std::string, int> col;
     for (int i = 0; i < (int)headerFields.size(); ++i) {
-        std::string h = column_header_to_lowercase(headerFields[i]);
-        col[h] = i;
+        col[normalize_key(headerFields[i])] = i;
     }
     std::string line;
     while (std::getline(file, line)) {
         std::vector<std::string> row = parse_config_row(line);
         auto cell = [&](const std::string& name) -> std::string {
-            auto it = col.find(column_header_to_lowercase(name));
+            // normalize_key on the LOOKUP too, not just the header. Without
+            // it a mixed-case name can never match a lowercased key, and the
+            // miss is indistinguishable from a blank cell -- which is how
+            // region_around_Rpeak_for_morphology_split silently defaulted to
+            // 0 ("split on the whole beat") whatever the config said.
+            auto it = col.find(normalize_key(name));
             if (it == col.end() || it->second >= (int)row.size()) return {};
             return row[it->second];
             };
@@ -210,8 +202,9 @@ inline bool load_config(int dataType, config_entry& out) {
 
 
         out.dataset_type = user_selected_dataset;
-        out.main_file_extention = cell("main_file_extention");
-        out.sleep_file_extention = cell("sleep_file_extention");
+        out.main_file_extension = cell("main_file_extension");
+        out.sleep_file_extension = cell("sleep_file_extension");
+
         out.ecg_raw_rate = stod_or_default(cell("ecg_raw_rate"), 0.0);
         out.ecg_upsample_rate = stod_or_default(cell("ecg_upsampled_rate"), 0.0);
         out.ppg_raw_rate = stod_or_default(cell("ppg_raw_rate"), 0.0);
@@ -277,17 +270,12 @@ inline bool load_config(int dataType, config_entry& out) {
         out.ppg_fit_error_pct = stod_or_default(cell("ppg_fit_error_pct"), 0.0);
         out.min_beats_template_ecg = stod_or_default(cell("min_beats_template_ecg"), 0);
         out.min_beats_template_ppg = stod_or_default(cell("min_beats_template_ppg"), 0);
-        out.region_around_Rpeak_for_morphology_split = stod_or_default(cell("region_around_rpeak_for_morphology_split"), 0.0);
-        out.region_around_PPGPeak_for_morphology_split = stod_or_default(cell("region_around_ppgpeak_for_morphology_split"), 0.0);
+        out.region_around_Rpeak_for_morphology_split = stod_or_default(cell("region_around_Rpeak_for_morphology_split"), 0.0);
+        out.region_around_PPGPeak_for_morphology_split = stod_or_default(cell("region_around_PPGPeak_for_morphology_split"), 0.0);
         out.input_path = cell("original_file_path");
         out.output_path = cell("output_folder");
         out.use_consensus_rpeak = parseBool(cell("use_consensus_rpeak"), true);
-
-
-        // --- Filtering options ---
-        // Notch: blank -> 0 (disabled). Only 0/50/60 are valid; anything else
-        // warns and falls back to disabled.
-        out.notch_filter_hz = stod_or_default(cell("notch_filter_hz"), 0);
+        out.notch_filter_hz = stod_or_default(cell("notch_filter_hz"), 0); //the spec limits notch filter to 0 (none) 50, or 60
         if (out.notch_filter_hz != 0 &&
             out.notch_filter_hz != 50 &&
             out.notch_filter_hz != 60) {
@@ -295,16 +283,11 @@ inline bool load_config(int dataType, config_entry& out) {
                 << " is not 50 or 60; disabling notch filter\n";
             out.notch_filter_hz = 0;
         }
-
-        // High-pass: blank -> documented default 0.5 (i.e. enabled at 0.5 Hz).
-        // An explicit 0 in the cell means disabled.
-        // NOTE: if a blank cell should instead mean *disabled*, change the
-        // default below from 0.5 to 0.0.
-        out.waveform_highpass_hz = stod_or_default(cell("waveform_highpass_hz"), 0.5);
+        out.waveform_highpass_hz = stod_or_default(cell("waveform_highpass_hz"), 0.0);
 
         // --- Subject demographics (stored only, ignored downstream for now) ---
         out.age = stod_or_default(cell("age"), 0);
-        out.sex = cell("sex");                       // stored verbatim
+        out.sex = cell("sex");
         out.weight_kg = stod_or_default(cell("weight_kg"), 0.0);
         out.height_cm = stod_or_default(cell("height_cm"), 0.0);
         out.hr_rest = stod_or_default(cell("hr_rest"), 0);
@@ -313,10 +296,10 @@ inline bool load_config(int dataType, config_entry& out) {
         apply_dataset_specific_channel_labels(out);
 
         bool ok = manually_select_folder(out);
-        if (ok) deriveSubpaths(out);   // always derive, whether paths came from
-        // the config or the manual prompt
+        if (ok) create_output_folders(out);
         return ok;
     }
-    std::cerr << "ERROR: no row with data_type=" << user_selected_dataset << " in " << CONFIG_PATH << "\n";
+    std::cerr << "ERROR: no row with data_type=" << user_selected_dataset
+        << " in " << CONFIG_PATH << "\n";
     return false;
 }

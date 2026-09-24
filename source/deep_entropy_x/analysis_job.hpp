@@ -26,7 +26,7 @@
 #include "fiducial_marker_finding/ppg_derivative.hpp"
 
 #include "annealing/anneal_handler.hpp"
-#include "config_file_handling/config_entry.hpp"
+#include "config_file_handling/config.hpp"
 #include "fiducial_marker_finding/alignment.hpp"
 #include "logging/sqi_ecg.hpp"
 #include "template_morphology_grouping/morphology_csv.hpp"
