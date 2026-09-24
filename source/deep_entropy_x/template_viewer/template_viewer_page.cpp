@@ -407,6 +407,14 @@ void TemplateViewerWindow::pageIn() {
 // ========================================================================
 
 void TemplateViewerWindow::clearPlots() {
+    // EVERY PANEL POINTER THE FOCUS KEY MIGHT HOLD IS ABOUT TO DIE. The key
+    // includes the panel address so a rebuild misses on its own, but a new
+    // panel can be allocated at a freed one's address -- so say it outright
+    // rather than rely on the allocator. Same for the dirty-column set, whose
+    // indices are about to mean different panels.
+    invalidateFocusFastPath();
+    m_dragDirtyCols.clear();
+
     // deleteLater, NOT delete. showPage() reaches this from a panel's own
     // signal -- mousePressEvent opens a context menu and emits
     // classConfirmRequested from inside its exec() loop -- so a plain delete
@@ -951,10 +959,15 @@ void TemplateViewerWindow::showPage() {
     // 10% radio checked. AFTER m_pageColOf is built, because the re-stack
     // resolves its panels through it.
     //
-    // Auto costs nothing here: restorePulseAsBuilt returns false at once for
-    // any slot that was never re-stacked, which on a freshly shown page is all
-    // of them.
-    if (m_ppgAlignMode != PpgAlign::Auto) realignAllVisiblePulses();
+    // AUTO IS NO LONGER FREE, AND NO LONGER EXEMPT. It used to mean "the
+    // build's own stacking", so on a freshly shown page there was nothing to
+    // put back and the call was skipped. It now decides an alignment per
+    // column (TemplateViewerWindow::autoPctForSlot) and re-stacks like every
+    // other position, so a page turn costs one beat-matrix median per visible
+    // pulse column -- the matrix itself is normally already in memory and
+    // cached one bin deep (beatsForBin), so this is arithmetic rather than
+    // file work, but it is not nothing.
+    realignAllVisiblePulses();
 }
 
 // ===========================================================================
@@ -1084,90 +1097,49 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     tbank::BankTemplate& tp = bank.templates[templateIdx];
     if (tp.tmpl.empty()) return;
 
-    // Retained only to key marks() below for the *display* fetch; every
-    // alignment is seeded above and the bars are assembled from all four.
-    // SEED EVERY ALIGNMENT, not just the one this window was opened for.
+    // ---- NO BAR SEEDING HERE. A CELL HOLDS OPERATOR EDITS AND NOTHING ELSE.
     //
-    // SEEDED ON CONTENT, NOT ON KEY PRESENCE. hasDetectedMarks tests for a
-    // VALUE; testing markers_by_anchor.find(tag) == end() does not work,
-    // because marks() is operator[] and so any read of this template's marker
-    // set -- from the subsequent-move propagation loop, or anywhere else that
-    // touches a bin it is not displaying -- inserts an empty all -1 entry. That
-    // test then reported "already seeded", auto-detection never ran, the
-    // template drew with no bars at all, and serialization persisted the empty
-    // set so a reload did not recover. Slot 0 was unaffected because it draws
-    // from the bin's marker set, which seed_all always populates -- which is
-    // exactly why it only ever showed up on the non-_A columns. With four
-    // alignments per slot there are now four chances to trip it, so the guard
-    // matters more, not less.
+    // There used to be a four-anchor loop below that ran seed_bank_template
+    // into tp.marks(tag) for every alignment whose set was not yet "seeded".
+    // It was the last survivor of the pre-barsForPanel design, and it broke the
+    // P-onset gesture outright in three separate ways:
     //
-    // ---- THIS SLOT'S AVERAGE FOR ONE ALIGNMENT ---------------------------
+    //   1. IT OVERWROTE THE OPERATOR. seed_bank_template opens with
+    //      `out = BankMarkerSet{}`, so every call wiped the cell and wrote the
+    //      detection back into it. This function runs on every apply --
+    //      including the reskinGridForAnchor() that realignEcgFromBar performs
+    //      on mouse-up -- so the bar the operator had just dragged was replaced
+    //      by the detector's answer one instant after the re-stack adopted it.
+    //      That is the bar "snapping back to where it was" after a drag.
     //
-    // R is tp.tmpl: that is what an R-aligned slot average IS, and
-    // alignTemplatesFromCache does not accumulate R into bank_anchors -- only
-    // the re-aligned anchors go there. Every other alignment comes from
-    // bankSlotFor, and a null is a WRITER GAP, not a state to render.
+    //   2. THE GUARD NEVER HELD. hasDetectedMarks(tag) reads
+    //      BankMarkerSet::seeded, and nothing in the tree ever sets that flag
+    //      -- readTemplateMarkingsBin does not write it either, so a RELOADED
+    //      session's marks were wiped on first display too. The loop therefore
+    //      re-ran four detect_template_landmarks passes per panel per apply,
+    //      forever: the most expensive call in the GUI, times three leads,
+    //      times every column on a whole-page reskin. That is the sluggishness.
     //
-    // NO FALLBACK TO tp.tmpl FOR A NON-R ANCHOR. There is one format version
-    // and every section is written unconditionally (see template_io.cpp), so
-    // "the file predates this section" is not a case. Substituting the
-    // R-aligned average would put a bar in the R frame under a non-R tag, and
-    // userMarks would then translate it OUT of a frame it was never in --
-    // displacing it by r_col(R) - r_col(anchor), which is the defect this
-    // whole function is being fixed for.
+    //   3. IT MADE AUTO VALUES LOOK PLACED. userMarks() reads these cells and
+    //      the markings CSV emits a _user column only where an operator value
+    //      exists (template_marking_bin_io.hpp, shape 1 vs shape 2), so a cell
+    //      pre-filled with a detection reported the detector as the operator.
     //
-    // r_col comes from the template when it has one, otherwise from the bin's
-    // channel: every beat in the bank was aligned on the same R column by
+    // Nothing is lost by dropping it. barsForPanel returns the PANEL'S OWN
+    // detection (pw->detectedLandmarks(), cached on the trace) for any bar
+    // whose cell is -1 -- the same answer the glyphs are drawn from, and one
+    // detection rather than four. seedOneBin stopped seeding bars for exactly
+    // this reason; this site was missed.
+    //
+    // r_col still comes from the template when it has one, otherwise from the
+    // bin's channel: every beat in the bank was aligned on the same R column by
     // construction, so the bin's value is correct rather than a guess when the
-    // template's own field was never filled. detect_template_landmarks refines
-    // it only locally -- symmetricExtremum is clamped to +/-7 samples and drops
-    // to a five-point parabola when the residual guard trips on a sharp R -- so
-    // this is not a rough hint, it is very nearly the answer, and it is the
-    // search origin every other finder brackets on.
+    // template's own field was never filled. It is kept because the R bar below
+    // falls back to it when the detection produces no R at all.
     const int rColR = (tp.r_col >= 0)
         ? tp.r_col
         : static_cast<int>(std::lround(b.r_peak_ch[channel]));
 
-    // slotView is shared, so the bar-seeding sites elsewhere use the same
-    // answer -- they used to seed from the R-aligned average under another
-    // alignment's tag because this logic was a lambda they could not call.
-    auto slotWaveform = [&](AnchorType a, const std::vector<double>*& w,
-        int& rc) -> bool {
-            const SlotView sv = slotView(b, channel, templateIdx, a);
-            if (!sv.valid) return false;
-            w = sv.tmpl; rc = sv.r_col;
-            return true;
-        };
-
-    for (AnchorType a4 : anchor_view::anchor_array) {
-        const int tag4 = static_cast<int>(a4);
-        if (tp.hasDetectedMarks(tag4)) continue;
-
-        // THIS ANCHOR'S WAVEFORM AND THIS ANCHOR'S R COLUMN. Both used to be
-        // the R-frame ones on all four passes -- every bar measured on tp.tmpl
-        // and stored under its owner's tag -- so a sub-template's Q-onset bar
-        // came back from userMarks displaced by r_col(R) - r_col(Q).
-        //
-        // The per-slot anchored averages are row subsets of the bin's aligned
-        // matrix, so they share the bin's frame and the bin's per-anchor r_col
-        // is the right seed for them.
-        const std::vector<double>* w4 = nullptr;
-        int rc4 = -1;
-        if (!slotWaveform(a4, w4, rc4)) {
-            // Reported, not papered over: this is build_templates failing to
-            // write a per-slot average for an anchor it aligned. The bar stays
-            // absent, which is the same answer refreshFocus gives for the same
-            // gap.
-            fprintf(stderr, "[bank-seed] bin=%llu lead=%d slot=%d anchor=%s"
-                " NO PER-SLOT ALIGNED AVERAGE -- bar not seeded\n",
-                (unsigned long long)b.index, channel, templateIdx,
-                anchor_view::label(a4));
-            continue;
-        }
-        FeatureMarks::seed_bank_template(*w4, rc4, m_sampleRate,
-            b.polarity.sign(channel), a4,
-            tp.marks(tag4));
-    }
     // (no glyph sync: p_peak is derived at every read now -- see the
     //  reactive_ecg call in applyBankTemplateToWidget below.)
     // ASSEMBLED, NOT FETCHED. Each bar lives in its owning alignment's set;

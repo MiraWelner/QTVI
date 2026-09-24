@@ -377,6 +377,13 @@ int BinPlotWidget::sampleFromX(Channel ch, double x) const {
 }
 
 void BinPlotWidget::recomputeFrame() {
+    // THE ONE INVALIDATION POINT FOR THE DRAWN EXTENTS. Every setter that
+    // touches a trace array calls this (setData, setEcgData, setPpgData,
+    // setArterialTraces, setEcgFrame, the constructor), and nothing else can
+    // change where a channel's usable samples start and end -- so the extent
+    // cache lives and dies with the frame that was built from it.
+    invalidateExtents();
+
     // FRAME = THE UNION OF EVERY PRESENT CHANNEL'S OWN DRAWN EXTENT, in seconds
     // relative to R. Because it is a union, no channel can have a tail outside
     // it, which is what makes a per-channel clip count unnecessary rather than
@@ -597,6 +604,7 @@ void BinPlotWidget::setMarker(Marker m, double idx) {
     // per-slot array now, so a P onset cannot precede the window, and pinning
     // it would only hide a real disagreement at the edge.
     m_markers[m] = idx;
+    rebaseDragOrigin(m, idx);
     update();
 }
 
@@ -761,7 +769,21 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
 // converting into it and clipping at its right edge. The frame is now the union
 // of every channel's extent in time, so a marker inside its own array is on
 // screen, and its x comes from xFromSample(ch, i).
-int BinPlotWidget::lastDrawnSample(Channel ch) const {
+// ---- THE DRAWN EXTENTS, COMPUTED ONCE PER TRACE ---------------------------
+//
+// The bodies are the old ones, unchanged: the finite extent, and on the ECG
+// the zero-IQR trim as well (align_beat_matrix leaves 0.0 wherever fewer than
+// two beats contributed, recomputeFrame trims those off, and the painter will
+// not draw them -- so a bar dropped there would sit outside the drawn extent
+// even though the sample is not NaN). What changed is that they run ONCE per
+// trace instead of once per question: see the note on m_extValid. firstDrawn
+// and lastDrawn fall back to the finite extent by themselves when the band is
+// a different length, which is exactly the size guard these used to make.
+void BinPlotWidget::ensureExtents(Channel ch) const {
+    const size_t ci = static_cast<size_t>(ch);
+    if (ci >= static_cast<size_t>(Channel::Count)) return;
+    if (m_extValid[ci]) return;
+
     const std::vector<double>* v = nullptr;
     switch (ch) {
     case Channel::Ecg:     v = &m_ecg;      break;
@@ -769,36 +791,35 @@ int BinPlotWidget::lastDrawnSample(Channel ch) const {
     case Channel::Abp:     v = &m_abp;      break;
     case Channel::Art:     v = &m_art;      break;
     case Channel::ArtPulm: v = &m_artPulm;  break;
-    default: return -1;
+    default: break;
     }
-    int last = sample_extent::lastFinite(*v);
-    // SAME TRIM recomputeFrame applies, and it has to be the same or the wall
-    // this reports is not the wall that was drawn.
-    if (ch == Channel::Ecg && m_ecgIqr.size() == m_ecg.size())
+
+    int first = -1, last = -1;
+    if (ch == Channel::Ecg) {
+        first = sample_extent::firstDrawn(m_ecg, m_ecgIqr);
         last = sample_extent::lastDrawn(m_ecg, m_ecgIqr);
-    return last;
+    }
+    else if (v) {
+        first = sample_extent::firstFinite(*v);
+        last = sample_extent::lastFinite(*v);
+    }
+
+    m_extFirst[ci] = first;
+    m_extLast[ci] = last;
+    m_extValid[ci] = true;
+}
+
+int BinPlotWidget::lastDrawnSample(Channel ch) const {
+    const size_t ci = static_cast<size_t>(ch);
+    if (ci >= static_cast<size_t>(Channel::Count)) return -1;
+    ensureExtents(ch);
+    return m_extLast[ci];
 }
 int BinPlotWidget::firstDrawnSample(Channel ch) const {
-    const std::vector<double>* v = nullptr;
-    switch (ch) {
-    case Channel::Ecg:     v = &m_ecg;      break;
-    case Channel::Ppg:     v = &m_ppg;      break;
-    case Channel::Abp:     v = &m_abp;      break;
-    case Channel::Art:     v = &m_art;      break;
-    case Channel::ArtPulm: v = &m_artPulm;  break;
-    default: return -1;
-    }
-    int first = sample_extent::firstFinite(*v);
-    // SAME TRIM lastDrawnSample applies, mirrored. align_beat_matrix leaves
-    // IQR == 0.0 on columns that had fewer than two beats, and recomputeFrame
-    // trims them off both ends -- so a bar dropped there would sit outside the
-    // drawn extent even though the sample is not NaN.
-    // sample_extent::firstDrawn IS this trim -- one definition, shared with
-    // compute_p_begin so the detector and the painter agree on where the
-    // drawn extent starts.
-    if (ch == Channel::Ecg)
-        first = sample_extent::firstDrawn(m_ecg, m_ecgIqr);
-    return first;
+    const size_t ci = static_cast<size_t>(ch);
+    if (ci >= static_cast<size_t>(Channel::Count)) return -1;
+    ensureExtents(ch);
+    return m_extFirst[ci];
 }
 
 bool BinPlotWidget::markerTrace(int m, const std::vector<double>*& vec,
@@ -1327,6 +1348,10 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
         if (mBar >= 0) {
             m_dragMarker = mBar;
             m_dragMoved = false;   // a press is not yet a move
+            // WHERE THIS GESTURE STARTS. Captured before anything downstream of
+            // the two signals below can move or re-frame the bar; see
+            // rebaseDragOrigin for the re-frame case.
+            m_dragOrigin = m_markers[mBar];
             emit markerDragStarted(m_binIndex, m_leadIndex, mBar);
             emit landmarkSelected(m_binIndex, m_leadIndex, m_templateIndex,
                 mBar, m_markers[mBar]);
@@ -1454,6 +1479,7 @@ void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
     }
     m_dragMoved = false;
     m_dragMarker = -1;
+    m_dragOrigin = -1.0;
 }
 
 // ---- THE PULSE DETECTION, ONCE PER (BIN, SLOT) -------------------------

@@ -206,20 +206,12 @@ void TemplateViewerWindow::onMarkerMovedOnTemplate(int binIdx, int leadIdx,
     // elsewhere is what let the slot-0 and bank paths drift apart historically.
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
 
-    // [ppg-dbg] WHICH BAR IS THIS, REALLY. The whole pulse path is gated on
-    // markerIsPpg (PpgOnset..PpgEnd); an ART or ABP onset bar looks identical
-    // on screen and routes to the arterial branch below instead, where none of
-    // the re-level or re-stack code runs. Strip this block once the question
-    // is answered.
-    fprintf(stderr, "[ppg-dbg] moved: bin=%d lead=%d slot=%d marker=%d "
-        "-> ppg=%d abp=%d art=%d artpulm=%d ecg=%d (PpgOnset=%d)\n",
-        binIdx, leadIdx, templateIdx, marker,
-        (int)BinPlotWidget::markerIsPpg(marker),
-        (int)BinPlotWidget::markerIsAbp(marker),
-        (int)BinPlotWidget::markerIsArt(marker),
-        (int)BinPlotWidget::markerIsArtPulm(marker),
-        (int)BinPlotWidget::markerIsEcg(marker),
-        (int)BinPlotWidget::PpgOnset);
+    // (The [ppg-dbg] "which bar is this, really" trace that used to sit here is
+    //  gone -- it said "strip this block once the question is answered", and it
+    //  was a synchronous, unbuffered stderr write on EVERY mouse-move of EVERY
+    //  drag, ECG bars included. With a console attached that is milliseconds per
+    //  move of pure I/O in the middle of the gesture. The release-path trace
+    //  below fires once per gesture and is left alone.)
 
     if (BinPlotWidget::markerIsPpg(marker)) {
         movePpgMarker(binIdx, leadIdx, templateIdx, marker, newIdx);
@@ -363,6 +355,10 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         const double target = cur + delta * (tgtSpan / dragSpan);
         if (target < 0.0 || target > n - 1) continue;
         ppgSet(gi, slot, target);
+        // FOR THE RELEASE: this column's cohort has to be re-levelled on its
+        // new foot, the same way the dragged column's is. See
+        // onMarkerReleasedOnTemplate.
+        m_dragPropCols.insert(li);
 
         // PUSH ONE BAR -- as the ECG path, and likewise the whole update.
         // Pulse marks are per (bin, slot), shared across a column's leads, so
@@ -475,21 +471,31 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
         if (it != m_pageColOf.end()) dragCol = it->second;
     }
 
-    // SEED BEFORE READING, for every slot (marks() is operator[]; a read
-    // inserts, which used to suppress a slot's auto-detection permanently).
-    auto seedIfNeeded = [&](int binI, int slot) {
-        // No slot-0 exclusion: one seeding call for every slot.
-        tbank::TemplateBank& bk = m_bins[binI].ecg_bank[leadIdx];
-        if (slot >= (int)bk.templates.size()) return;
-        tbank::BankTemplate& tgt = bk.templates[slot];
-        if (tgt.hasDetectedMarks(static_cast<int>(owner))) return;
-        // This alignment's average, not the R-aligned one: tgt.tmpl/tgt.r_col
-        // are the R-frame pair, and filing that under `owner` is what put an
-        // R-frame number in the P-onset bar.
-        const SlotView sv = slotView(m_bins[binI], leadIdx, slot, owner);
-        if (!sv.valid) return;
-        FeatureMarks::seed_bank_template(*sv.tmpl, sv.r_col, m_sampleRate, 1.0,
-            owner, tgt.marks(static_cast<int>(owner)));
+    // ---- THE BAR AS DRAWN, FOR A COLUMN WITH NO EDIT YET -----------------
+    //
+    // A cell holds operator edits and nothing else, so an untouched column's
+    // cell is -1 and a propagation has nothing to shift FROM. barsForPanel has
+    // already resolved edit-or-detection into the panel's m_markers, in the
+    // drawn frame, so the panel is the answer -- and it is a pointer chase
+    // rather than the detector run this used to pay for.
+    //
+    // WHAT WAS HERE: a seedIfNeeded that ran seed_bank_template into the cell.
+    // Two defects, both of which the operator felt. seed_bank_template opens by
+    // clearing the set, so it destroyed an edit rather than filling a gap; and
+    // hasDetectedMarks reads BankMarkerSet::seeded, which nothing ever sets, so
+    // the guard never held and every mouse-move ran a full
+    // detect_template_landmarks for the dragged column AND one for every
+    // propagated column. That is most of why dragging a bar felt like wading.
+    //
+    // NOT VALID FOR THE DRAGGED COLUMN'S OLD POSITION: mouseMoveEvent writes
+    // m_markers before it emits, so this returns the NEW column there. See
+    // dragOrigin() below for where the gesture began.
+    auto drawnBar = [&](int li) -> double {
+        if (li < 0 || li >= (int)m_binPlots.size()) return -1.0;
+        for (auto* pw : m_binPlots[li])
+            if (pw && pw->leadIndex() == leadIdx)
+                return pw->marker(static_cast<BinPlotWidget::Marker>(marker));
+        return -1.0;
         };
 
     // ---- ONE FRAME FOR ALL THE ARITHMETIC --------------------------------
@@ -513,9 +519,28 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
         };
 
     // ---- the dragged bar --------------------------------------------------
-    seedIfNeeded(binIdx, templateIdx);
-    const double oldIdx = getView(b, templateIdx);
-    if (m_dragStartIdx < 0) m_dragStartIdx = oldIdx;   // first move of this drag
+    //
+    // WHERE IT WAS: the cell when the operator has already placed this bar (an
+    // earlier move of this same drag, or an earlier session), otherwise the
+    // detection the panel is drawing.
+    BinPlotWidget* const srcPanel = qobject_cast<BinPlotWidget*>(sender());
+    double oldIdx = getView(b, templateIdx);
+    if (oldIdx < 0.0) oldIdx = drawnBar(dragCol);
+
+    // WHERE THE GESTURE BEGAN, from the panel sending it -- both halves of a
+    // propagated shift are anchored to the press (see onMarkerDragStarted), so
+    // this number has to be the press position and not the first move's.
+    //
+    // READ ON THE FIRST MOVE, NOT AT DRAG-START, and the timing is the point:
+    // the same press also emits landmarkSelected, and in Automatic that
+    // re-anchors the grid to this bar's own alignment and re-frames every bar
+    // on the page (user_clicked_on_bar -> reskinGridForAnchor). BinPlotWidget
+    // re-bases its origin when that push lands, so by the time a move arrives
+    // dragOrigin() is in the frame the arithmetic below is done in.
+    if (m_dragStartIdx < 0) {
+        const double grabbed = srcPanel ? srcPanel->dragOrigin() : -1.0;
+        m_dragStartIdx = (grabbed >= 0.0) ? grabbed : oldIdx;
+    }
 
     const int dragWall = wallAt(dragCol);
 
@@ -547,9 +572,9 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
         const int wall = wallAt(li);
         if (wall <= 0) continue;
 
-        seedIfNeeded(gi, slot);
-        const double cur = getView(m_bins[gi], slot);
-        if (cur < 0) continue;   // this landmark was not found on this one
+        double cur = getView(m_bins[gi], slot);
+        if (cur < 0.0) cur = drawnBar(li);
+        if (cur < 0.0) continue;   // this landmark was not found on this one
 
         const int key = slotKey(gi, slot);
         if (!original_location_of_bar.count(key))
@@ -574,11 +599,27 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
         // are reactive at paint time -- so this push is the whole update, not
         // a cheap stand-in for one. `target` is already a drawn-frame column,
         // which is what setMarker wants.
+        //
+        // QUIET, AND REPAINTED ON A CLOCK. setMarker's own update() made this
+        // loop request one full repaint per panel per drag pixel; the value is
+        // stored here exactly as before and flushDragRepaints decides when the
+        // pixels follow. The DRAGGED panel is not in this loop and is
+        // unaffected -- it still paints on every move, which is what keeps the
+        // bar under the cursor.
         for (auto* pw : m_binPlots[li])
             if (pw && pw->leadIndex() == leadIdx)
-                pw->setMarker(static_cast<BinPlotWidget::Marker>(marker),
+                pw->setMarkerQuiet(static_cast<BinPlotWidget::Marker>(marker),
                     static_cast<double>(target));
+        m_dragDirtyCols.insert(li);
+        // AND SEPARATELY, FOR THE RELEASE. m_dragDirtyCols is a repaint queue
+        // that flushDragRepaints empties mid-gesture; the re-stack needs the
+        // whole list at mouse-up. See m_dragPropCols.
+        m_dragPropCols.insert(li);
     }
+
+    // The followers, if the interval has elapsed. Before refreshFocus, so a
+    // slow focus path cannot postpone the page's own catch-up.
+    flushDragRepaints(/*force=*/false);
 
     // The dragged panel's own focus view (J-point refreshes both QRS and JT).
     refreshFocus(qobject_cast<BinPlotWidget*>(sender()), binIdx, leadIdx, templateIdx, marker, placed);
@@ -687,6 +728,34 @@ int TemplateViewerWindow::originFor(int col, int cur) const {
 void TemplateViewerWindow::onMarkerDragStarted(int, int, int) {
     m_dragStartIdx = -1;              // dragged bar's start; set on the first move
     original_location_of_bar.clear(); // per-panel starts; filled lazily below
+    // A NEW GESTURE OWES NOTHING FROM THE LAST ONE. The clock starts here so
+    // the first move of a drag paints the followers immediately rather than
+    // waiting out the remainder of an interval from minutes ago.
+    m_dragDirtyCols.clear();
+    m_dragPropCols.clear();   // nothing to re-stack until this drag moves one
+    m_dragPaintClock.start();
+}
+
+// ---- PAINT THE FOLLOWERS, AT MOST EVERY kDragRepaintMs --------------------
+//
+// The bars themselves were already written by setMarkerQuiet, so this decides
+// only WHEN the page catches up, never WHAT it shows. force is the end of a
+// gesture (mouse-up, and any path that is about to rebuild or re-stack): the
+// last mouse-move of a drag is usually inside the interval, and dropping its
+// repaint would leave the propagated columns one pixel behind for as long as
+// the operator looked at them.
+void TemplateViewerWindow::flushDragRepaints(bool force) {
+    if (m_dragDirtyCols.empty()) return;
+    if (!force && m_dragPaintClock.isValid()
+        && m_dragPaintClock.elapsed() < kDragRepaintMs) return;
+
+    for (const int li : m_dragDirtyCols) {
+        if (li < 0 || li >= (int)m_binPlots.size()) continue;
+        for (auto* pw : m_binPlots[li])
+            if (pw) pw->update();
+    }
+    m_dragDirtyCols.clear();
+    m_dragPaintClock.restart();
 }
 
 void TemplateViewerWindow::user_clicked_on_bar(int binIdx, int leadIdx, int templateIdx, int marker, double col)

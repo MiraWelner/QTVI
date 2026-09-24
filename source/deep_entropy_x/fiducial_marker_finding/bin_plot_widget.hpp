@@ -232,7 +232,38 @@ public:
     // and reactive_* (double). A drag still lands on a whole column, because
     // sampleFromX maps a pixel to a sample -- but nothing else quantises.
     void setMarker(Marker m, double idx);
+
+    // THE SAME WRITE WITHOUT THE REPAINT REQUEST, for a caller that is about
+    // to write several panels and wants to pay for ONE round of painting
+    // rather than one per panel per mouse-move.
+    //
+    // WHY IT IS WORTH A SECOND ENTRY POINT. A Move-Subsequent drag pushes the
+    // new column into every panel right of the dragged one, so at twelve
+    // columns of three leads that is ~36 update()s per drag pixel; each of
+    // those repaints re-brackets P and T peak (the bar set changed, so the
+    // reactive cache misses) and redraws four traces and their bands. The
+    // dragged panel must stay live, but the others only have to be live
+    // ENOUGH -- see TemplateViewerWindow::flushDragRepaints, which paints them
+    // at a fixed rate during the drag and once more on release.
+    //
+    // The bar is stored immediately either way, so a hit test, an export or a
+    // capture in between reads the new value, not the painted one.
+    void setMarkerQuiet(Marker m, double idx) {
+        m_markers[m] = idx;
+        rebaseDragOrigin(m, idx);
+    }
     double marker(Marker m) const { return m_markers[m]; }
+
+    // ---- WHERE THE BAR BEING DRAGGED SAT WHEN IT WAS GRABBED -------------
+    //
+    // In this panel's CURRENT frame, and -1 when no drag is armed. A
+    // propagated shift is "the dragged bar has moved N% of its plot SINCE THE
+    // PRESS" (TemplateViewerWindow::onMarkerDragStarted), so the press position
+    // has to survive the gesture. The viewer used to recover it from the marker
+    // CELL on the first move, which only worked while something pre-filled that
+    // cell with a detection -- and a cell now holds operator edits and nothing
+    // else, so an untouched bar had no origin at all.
+    double dragOrigin() const { return m_dragOrigin; }
 
     // WHICH TEMPLATE THIS PANEL IS. frame = the alignment whose waveform it
     // draws; both detectors measure on that alignment's own array, through
@@ -529,6 +560,31 @@ private:
     double m_ecgFrameLo = 0.0;
     double m_ecgFrameHi = 0.0;
 
+    // ---- THE DRAWN EXTENTS, CACHED PER CHANNEL -------------------------
+    //
+    // firstDrawnSample / lastDrawnSample are O(N) SCANS, and they were on the
+    // hot path four times over: the marker loop in paintEvent asked for BOTH
+    // walls once per bar (~8 bars), markerAtX asks once per marker, the glyph
+    // hit test asks per channel, and mouseMoveEvent asks twice per drag pixel.
+    // Each call is really two passes -- lastDrawnSample runs lastFinite and
+    // then lastDrawn, which runs lastFinite again -- so one repaint of one
+    // panel was ~30 full walks of the trace before a pixel was drawn, and a
+    // Move-Subsequent drag repaints every column right of the dragged one.
+    //
+    // THE EXTENTS ARE A FUNCTION OF THE TRACE ARRAYS AND NOTHING ELSE, so the
+    // cache is dropped in recomputeFrame() -- which every trace setter already
+    // calls, and which needs the same numbers itself. Bars, markers, fit
+    // modes, visibility toggles and the frame cannot change an extent, so
+    // there is deliberately nothing else to invalidate.
+    mutable int  m_extFirst[static_cast<size_t>(Channel::Count)] = { -1, -1, -1, -1, -1 };
+    mutable int  m_extLast[static_cast<size_t>(Channel::Count)] = { -1, -1, -1, -1, -1 };
+    mutable bool m_extValid[static_cast<size_t>(Channel::Count)] = { false, false, false, false, false };
+    void invalidateExtents() const {
+        for (bool& v : m_extValid) v = false;
+    }
+    // Fill both ends for one channel if they are not already held.
+    void ensureExtents(Channel ch) const;
+
     // The reactive glyphs' expensive half, held while the trace is unchanged:
     // only P and T peak react to the bars (see ecgDetect). m_det.tmpl points
     // INTO the bin, so the identity fields are part of the guard -- a rebuild
@@ -628,11 +684,32 @@ private:
     bool  m_showArtTrace = true;
     bool  m_showArtPulmTrace = true;
     int   m_dragMarker = -1;
+    // The dragged bar's position at the press, re-based while the gesture has
+    // not moved anything yet -- see rebaseDragOrigin.
+    double m_dragOrigin = -1.0;
     // DID THIS GESTURE MOVE ANYTHING. Set by mouseMoveEvent when a bar's
     // column actually changes, cleared on press and on release. It is what
     // separates "the operator dragged the foot" from "the operator, or an
     // automatic alignment shift, clicked it" -- see markerReleasedOnTemplate.
     bool  m_dragMoved = false;
+
+    // ---- A PRESS CAN RE-FRAME THE BAR IT JUST ARMED ----------------------
+    //
+    // mousePressEvent emits markerDragStarted and then landmarkSelected, and in
+    // Automatic the second of those re-anchors the grid to this bar's own
+    // alignment (user_clicked_on_bar -> reskinGridForAnchor), which pushes every
+    // bar on the page back in through setMarker in the NEW frame. So the origin
+    // captured at the press is a column in the OLD frame one signal later.
+    //
+    // Re-based only while m_dragMoved is false, i.e. only for pushes that land
+    // between the press and the first move. Once the operator has moved the bar,
+    // every push for this marker is a consequence OF the drag (the propagation
+    // loops, a re-stack adopting a new average) and must not move the origin the
+    // drag is measured from.
+    void rebaseDragOrigin(Marker m, double idx) {
+        if (!m_dragMoved && static_cast<int>(m) == m_dragMarker)
+            m_dragOrigin = idx;
+    }
     // Slice counts (post drop-rules) fed to the median for this widget's
     // ECG channel and the PPG. Displayed in the title when non-zero.
     int   m_nEcgBeats = 0;

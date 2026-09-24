@@ -10,6 +10,8 @@
 
 // Both panels to "nothing selected".
 void TemplateViewerWindow::clearFocusPanels() {
+    // The panels no longer hold what the key says they hold.
+    invalidateFocusFastPath();
     setFocusSplit(false);
     if (zoomed_in_section_top) zoomed_in_section_top->clearFocus();
     if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
@@ -353,7 +355,32 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
     const AnchorType focusAnchor = m_forceAlign
         ? m_forcedAlign
         : (anchor_view::isBar(marker) ? anchor_view::anchorFor(marker)
-            : currentGridAnchor());    // NO FALLBACK: chForStrict returns nullptr when this alignment is absent
+            : currentGridAnchor());
+
+    // ---- THE DRAG PATH: ONLY THE COLUMN MOVED --------------------------
+    //
+    // Same landmark, same slot, same alignment, same panel, same fit modes:
+    // the trace, the band, the msec model and the fitted curves are all
+    // unchanged, and every one of them is already in the panels. So the whole
+    // of the update is the crosshair. See FocusKey for why each field is in
+    // the key.
+    //
+    // The column is translated and clamped exactly as the full pass does it
+    // below -- one conversion, against the length that pass recorded.
+    const FocusKey fkey{ binIdx, leadIdx, templateIdx, marker, focusAnchor,
+        static_cast<const void*>(pw), m_onOffsetFitMode, m_peakFitMode };
+    if (m_focusFastValid && m_focusFastLen > 0 && m_focusFastKey == fkey) {
+        int colFast = static_cast<int>(
+            col + b.frameShift(leadIdx, AnchorType::R_PEAK, focusAnchor));
+        if (colFast < 0) colFast = 0;
+        if (colFast >= m_focusFastLen) colFast = m_focusFastLen - 1;
+        if (zoomed_in_section_top) zoomed_in_section_top->setLandmarkCol(colFast);
+        if (m_focusFastSplit && zoomed_in_section_bottom)
+            zoomed_in_section_bottom->setLandmarkCol(colFast);
+        return;
+    }
+
+    // NO FALLBACK: chForStrict returns nullptr when this alignment is absent
     // from the file, and the panel is cleared rather than showing the R-aligned
     // average under this bar's header. chFor's fallback did the latter, which
     // is what made every bar look identical.
@@ -643,5 +670,18 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
                 zoomed_in_section_top->setSdMs(sdMs, floorMask, absSlope, floor);
             }
         }
+
+        // ---- THE PANELS NOW HOLD WHAT THIS KEY NAMES -------------------
+        //
+        // Recorded only here, at the end of a pass that actually pushed
+        // everything, so a path that returned early (no such alignment in the
+        // file, no per-slot average, an empty mean) cannot leave the fast path
+        // pointing at panels that were never filled. From here a re-fire that
+        // differs only in `col` -- which is every mouse-move of a drag -- is
+        // one setLandmarkCol.
+        m_focusFastKey = fkey;
+        m_focusFastLen = static_cast<int>(mean.size());
+        m_focusFastSplit = (marker == BinPlotWidget::EcgSEnd);
+        m_focusFastValid = true;
     }
 }

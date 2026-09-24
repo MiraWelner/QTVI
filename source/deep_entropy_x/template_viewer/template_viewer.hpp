@@ -3,6 +3,7 @@
 #include <QMainWindow>
 #include <QEvent>
 #include <QPointer>
+#include <QElapsedTimer>   // drag repaint clock; see flushDragRepaints
 #include <vector>
 #include <utility>
 #include <map>
@@ -349,8 +350,14 @@ private:
     // an answer rather than inferring it from m_ppgRealigned: a slot already
     // in that set stays in it when a later re-stack is REFUSED, so a
     // membership test would report a refusal as a success.
+    //
+    // pctOverride >= 0 REPLACES THE RADIO GROUP for this one call, and only
+    // Auto passes one: Auto's percentage is decided per column (see
+    // autoPctForSlot) rather than read off a control, so it cannot come from
+    // m_ppgAlignPercent. Negative = "ask the controls", which is every other
+    // caller including the foot drag.
     bool realignPulseFromFoot(int binIdx, int templateIdx, double footCol,
-        bool announce = true);
+        bool announce = true, double pctOverride = -1.0);
 
     // <stem>_beats.bin, where the per-beat pulse matrix lives. Built from the
     // same directory and stem morphology_csv::set was given, rather than
@@ -523,12 +530,22 @@ private:
 
     // ---- "Align PPG Horizontal" -----------------------------------------
     //
-    // Auto    the stacking the build produced. extract_ppg_beats_and_align
-    //         anchors every beat to the median up50 column -- its 50%
-    //         foot-to-peak crossing -- so Auto is not "something decides", it
-    //         is one specific alignment, and it is the same one Percent(50)
-    //         asks for. Nothing is re-stacked here and any column that has
-    //         been is put back (restorePulseAsBuilt).
+    // Auto    PER COLUMN: the foot, unless the stack at the foot is tighter
+    //         than kAutoFootIqrMax, in which case kAutoFallbackPct up the
+    //         upstroke. See autoPctForSlot.
+    //
+    //         IT NO LONGER MEANS "AS BUILT". It used to be exactly the
+    //         stacking extract_ppg_beats_and_align produced -- every beat on
+    //         the median up50 column -- and it re-stacked nothing, putting
+    //         back any column a gesture had changed (restorePulseAsBuilt).
+    //         That made it free, and it made the radio group a place the
+    //         operator could always return to. Auto now re-stacks like any
+    //         other position, which costs a beat-matrix median per visible
+    //         column on every page turn, and leaves restorePulseAsBuilt with
+    //         no caller: if "as built" is still wanted it should be a fourth
+    //         position of its own rather than folded back in here, because
+    //         the two answers are different waveforms and one control cannot
+    //         name both.
     // Foot    every beat's own trough, at the operator's foot column.
     // Percent m_ppgAlignPercent percent UP THE UPSTROKE IN AMPLITUDE: the
     //         first column at which the pulse reaches
@@ -550,6 +567,26 @@ private:
     enum class PpgAlign { Auto, Foot, Percent };
     PpgAlign m_ppgAlignMode = PpgAlign::Auto;
     int      m_ppgAlignPercent = 0;
+
+    // ---- WHAT "Auto" DECIDES WITH ---------------------------------------
+    //
+    // kAutoFootIqrMax is in tmpl_iqr's units: RAW AMPLITUDE, q3 - q1, the
+    // same units as tmpl -- NOT the perfusion band on screen, which is this
+    // divided by the foot amplitude (pulseTraceForSlot), a factor that runs
+    // into the hundreds on a pulse whose stored baseline is near zero. Retune
+    // it against slot.tmpl_iqr values, never against the panel.
+    //
+    // The window is a span about the foot rather than the foot column alone,
+    // because one column of a median spread is as noisy as the foot itself is
+    // -- which is the whole reason this control exists.
+    static constexpr double kAutoFootIqrMax = 0.01;
+    static constexpr int    kAutoFallbackPct = 10;
+    static constexpr double kAutoIqrWindowSec = 0.030;   // +-30 ms about the foot
+
+    // 0 (the foot) or kAutoFallbackPct, for one slot. Reads the BUILD'S
+    // spread, not the slot's current one -- see the definition.
+    int autoPctForSlot(int binIdx, int templateIdx,
+        const tbank::BankTemplate& slot, double footCol) const;
 
     // ONE PLACE THAT CHANGES THE PULSE ALIGNMENT, as applyAlignmentSelection
     // is for the ECG one: sets the members, syncs the controls, re-stacks the
@@ -778,6 +815,43 @@ private:
     SdKey     m_sdCacheKey;
     bool      m_sdCacheValid = false;
 
+    // ---- THE COLUMN-ONLY REFRESH -----------------------------------------
+    //
+    // A drag re-fires refreshFocus on every mouse-move, and everything
+    // focusEcg does except place the crosshair is a function of
+    // (bin, lead, slot, anchor, marker, panel, fit modes) -- NOT of the
+    // column. When the key below is unchanged the only thing that moved is the
+    // bar, so the panels take setLandmarkCol and the rest is skipped: no
+    // scale_array_by_ref pair, no mean/sd/sdMs/floorMask/absSlope copies into
+    // the widget, no candidate re-wrap, no clear-and-re-push of the fits.
+    //
+    // THE FIT MODES ARE IN THE KEY because they change the candidate curves
+    // and the winner without changing the waveform; the PANEL POINTER is in it
+    // because a page rebuild deletes the panels and a new one must re-supply
+    // everything. The mean's LENGTH is kept because the fast path still has to
+    // clamp the column to the trace, and it cannot see the trace.
+    struct FocusKey {
+        int bin = -1, lead = -1, slot = -1, marker = -1;
+        AnchorType anchor = AnchorType::R_PEAK;
+        const void* panel = nullptr;
+        curve_fit::FitMode onOffset = curve_fit::FitMode::Auto;
+        curve_fit::PeakFitMode peak = curve_fit::PeakFitMode::Auto;
+        bool operator==(const FocusKey& o) const {
+            return bin == o.bin && lead == o.lead && slot == o.slot
+                && marker == o.marker && anchor == o.anchor
+                && panel == o.panel && onOffset == o.onOffset
+                && peak == o.peak;
+        }
+    };
+    FocusKey m_focusFastKey;
+    bool     m_focusFastValid = false;
+    int      m_focusFastLen = 0;      // mean.size() the last full pass saw
+    bool     m_focusFastSplit = false;// whether the bottom panel is in use
+    // Anything that changes what the panels hold without changing the key
+    // above calls this. clearFocusPanels does, so every path that blanks the
+    // panels is covered.
+    void invalidateFocusFastPath() { m_focusFastValid = false; }
+
     // THE TWO CHANNEL PATHS. refreshFocus is the dispatcher: it records the
     // focus for the re-fire paths and hands off. pw IS THE PANEL, in both --
     // the detector's position for the focused landmark comes from
@@ -830,6 +904,38 @@ private:
     // from this, not from the previous event, so the total percentage is
     // computed and rounded once per drag instead of once per mouse-move.
     double m_dragStartIdx = -1.0;
+
+    // ---- PROPAGATED COLUMNS REPAINT AT A RATE, NOT AT EVENT RATE --------
+    //
+    // Move-Subsequent pushes the dragged bar's shift into every column right
+    // of it, and a repaint of one panel is four traces, four bands, ~eight
+    // bars and a re-bracketing of P and T peak (the bar set changed, so the
+    // reactive cache misses). At twelve columns of three leads that was ~36 of
+    // those per drag pixel, which is what made the bar lag the cursor while
+    // the arithmetic behind it was never the problem.
+    //
+    // So the propagated bars are STORED on every move (setMarkerQuiet, so a
+    // hit test or an export in between reads the new value) and PAINTED on a
+    // clock: the dragged panel stays live at event rate, the rest follow at
+    // kDragRepaintMs, and the release flushes whatever is outstanding so the
+    // page is never left showing a stale column.
+    static constexpr int kDragRepaintMs = 40;   // ~25 fps for the followers
+    std::set<int> m_dragDirtyCols;              // page column indices
+
+    // ---- WHICH COLUMNS THIS GESTURE ACTUALLY WROTE A BAR INTO -----------
+    //
+    // Page column indices, and deliberately NOT m_dragDirtyCols. That one is a
+    // repaint queue: flushDragRepaints empties it several times during a drag,
+    // so by mouse-up it holds only the last interval's columns. This one
+    // accumulates for the whole gesture and is cleared by onMarkerDragStarted,
+    // because the RELEASE has to re-stack every column the propagation moved --
+    // a bar that moved without its waveform following it is exactly the defect
+    // the re-stack exists to fix, and it is no less wrong on a propagated
+    // column than on the one under the cursor.
+    std::set<int> m_dragPropCols;
+    QElapsedTimer m_dragPaintClock;
+    // force = the end of a gesture: paint now regardless of the clock.
+    void flushDragRepaints(bool force);
 
     // (m_qAlignPass / m_anchorStep / m_anchorPassCount / m_anchorLabel /
     //  m_currentAnchor removed with the cycle. No member holds "the current

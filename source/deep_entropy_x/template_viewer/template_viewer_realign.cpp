@@ -159,19 +159,35 @@ QString TemplateViewerWindow::beatsBinPath() const {
     return m_templateDir + "/" + m_subjectId + "_beats.bin";
 }
 
-// Release of a dragged bar. ONE BAR MATTERS HERE -- the pulse foot. Every other
-// marker's consequences are reactive and were already applied during the drag,
-// so this returns immediately for them rather than doing work per gesture.
+// Release of a dragged bar. TWO KINDS OF BAR MATTER HERE: the four ECG landmark
+// bars, whose anchor's per-slot average is re-stacked on the operator's column,
+// and the pulse foot, whose cohort is re-levelled on it. Everything else is
+// reactive and was already applied during the drag, so this returns immediately
+// for those rather than doing work per gesture.
 //
 // ON RELEASE, NOT ON MOVE, AND THAT IS THE WHOLE REASON THIS SLOT EXISTS. A
 // re-stack reads the bin's beat matrix off disk and re-medians a few hundred
 // rows; hanging that off markerMoved would run it once per mouse-move event
 // for the entire drag, so the bar would lurch and every intermediate column
-// would produce a template nobody asked for. The gesture is "the foot is
+// would produce a template nobody asked for. The gesture is "the landmark is
 // HERE", and a gesture is only complete on mouse-up.
+//
+// AND IT IS A GESTURE, NOT A PANEL. In Move-Subsequent the operator's claim
+// covers every column right of the dragged one -- m_dragPropCols is the list
+// the propagation wrote -- so each of those is re-stacked too, on its own
+// propagated column. Doing only the dragged panel left the other eleven with a
+// bar in one place and a stack built around another, which is the exact defect
+// this slot exists to remove, hidden on the panels nobody was watching.
 void TemplateViewerWindow::onMarkerReleasedOnTemplate(int binIdx, int leadIdx,
     int templateIdx, int marker, int newIdx)
 {
+    // FIRST, BEFORE ANY BRANCH RETURNS. The propagated columns were painted on
+    // a clock during the drag (see flushDragRepaints) and the last move is
+    // usually inside the interval, so the gesture is not finished on screen
+    // until this runs -- and it has to run for every marker, including the
+    // ones this function then ignores.
+    flushDragRepaints(/*force=*/true);
+
     // ---- THE ECG BARS: RE-STACK THAT ANCHOR'S AVERAGE ------------------
     //
     // A landmark bar's own alignment is the one built by aligning every beat on
@@ -183,9 +199,81 @@ void TemplateViewerWindow::onMarkerReleasedOnTemplate(int binIdx, int leadIdx,
     if (BinPlotWidget::markerIsEcg(marker) && anchor_view::isBar(marker)
         && marker != BinPlotWidget::EcgRPeak) {
         const AnchorType a = anchor_view::anchorFor(marker);
-        if (a != AnchorType::R_PEAK)
-            realignEcgFromBar(binIdx, leadIdx, templateIdx, a,
-                static_cast<double>(newIdx));
+        if (a == AnchorType::R_PEAK) return;
+
+        // ---- EVERY COLUMN THE GESTURE MOVED, NOT JUST THE ONE UNDER THE
+        //      CURSOR ---------------------------------------------------
+        //
+        // Move-Subsequent means "this landmark is HERE on this column, and by
+        // the same screen distance on every column right of it". That claim is
+        // about the waveforms, not about the bars: a propagated bar that lands
+        // on a new column while its average stays stacked on the old one
+        // re-creates, on eleven columns, precisely the disagreement this
+        // gesture exists to remove -- and it is worse there than on the dragged
+        // column, because the operator is not looking at those panels and has
+        // no cue that the trace under the bar did not follow.
+        //
+        // READ EVERY BAR FIRST, THEN RE-STACK. realignEcgFromBar reskins the
+        // column it writes, which re-pushes bars and re-runs a detection, so
+        // collecting the targets up front keeps the values being acted on the
+        // ones the drag actually produced.
+        //
+        // ASCENDING COLUMN ORDER IS ALSO CACHE ORDER: a bin owns one column per
+        // bank slot and those columns are adjacent on the page, so sibling
+        // slots of one bin are re-stacked back to back and beatsForBin's
+        // one-deep cache serves all of them from a single read.
+        struct Pending { int bin; int slot; double col; };
+        std::vector<Pending> also;
+        also.reserve(m_dragPropCols.size());
+        for (const int li : m_dragPropCols) {
+            if (li < 0 || li >= (int)m_pageGlobalIdx.size()
+                || li >= (int)m_pageTemplateIdx.size()) continue;
+            const int gi = m_pageGlobalIdx[li];
+            const int sl = m_pageTemplateIdx[li];
+            if (gi < 0 || gi >= (int)m_bins.size() || sl < 0) continue;
+            if (gi == binIdx && sl == templateIdx) continue;   // the dragged one
+            // THE BAR AS DRAWN, on the panel for the DRAGGED LEAD -- an ECG bar
+            // is per lead and the propagation wrote only that lead's cells, so
+            // a column whose panel for this lead is absent has nothing to
+            // re-stack.
+            double col = -1.0;
+            if (li < (int)m_binPlots.size())
+                for (auto* pw : m_binPlots[li])
+                    if (pw && pw->leadIndex() == leadIdx) {
+                        col = pw->marker(
+                            static_cast<BinPlotWidget::Marker>(marker));
+                        break;
+                    }
+            if (col >= 0.0) also.push_back(Pending{ gi, sl, col });
+        }
+        m_dragPropCols.clear();
+
+        // ONE MESSAGE FOR THE WHOLE GESTURE when there is more than one column
+        // in it: the per-column message would be overwritten eleven times and
+        // the operator would read whichever column happened to be last.
+        const bool many = !also.empty();
+        const bool draggedOk = realignEcgFromBar(binIdx, leadIdx, templateIdx,
+            a, static_cast<double>(newIdx), /*announce=*/!many);
+        if (!many) return;
+
+        // A CURSOR, BECAUSE THIS IS NOW O(COLUMNS) BEAT MATRICES. One column's
+        // re-stack is a locator run per member beat (parallelised inside
+        // realignAt); a page of them is that many times over, plus a file read
+        // per distinct bin that is not already in memory.
+        QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+        int ok = 0;
+        for (const Pending& pcol : also)
+            if (realignEcgFromBar(pcol.bin, leadIdx, pcol.slot, a, pcol.col,
+                /*announce=*/false)) ++ok;
+        QGuiApplication::restoreOverrideCursor();
+
+        statusBar()->showMessage(tr("%1 re-stacked on %2 of %3 columns "
+            "(the dragged column %4). A refused column keeps the average it "
+            "had and its bar still moved. Cohorts unchanged - not re-filtered.")
+            .arg(anchor_view::label(a))
+            .arg(ok + (draggedOk ? 1 : 0))
+            .arg(static_cast<int>(also.size()) + 1)
+            .arg(draggedOk ? tr("included") : tr("refused")), 8000);
         return;
     }
 
@@ -205,7 +293,52 @@ void TemplateViewerWindow::onMarkerReleasedOnTemplate(int binIdx, int leadIdx,
     // the gesture appeared to do nothing at all. The radio group owns the
     // horizontal axis; the foot bar owns the vertical one. Two gestures, two
     // axes, and this one no longer touches the radio group.
-    relevelPulseAtFoot(binIdx, templateIdx, static_cast<double>(newIdx));
+    // ---- AND EVERY PROPAGATED FOOT, FOR THE SAME REASON ----------------
+    //
+    // movePpgMarker re-normalizes the DISPLAY of each propagated column during
+    // the drag (pushPulseToPanels), which is the cheap half; the cohort
+    // re-level off _beats.bin is the half that only a mouse-up can afford, and
+    // it was being done for the dragged column alone. So every other column's
+    // trace was drawn against a foot its member beats had never been levelled
+    // on. The foot is read from each column's own pulse_marks -- pulse marks
+    // are per (bin, slot) and every lead of a column shares them.
+    std::vector<std::pair<int, int> > alsoPulse;   // (bin, slot)
+    alsoPulse.reserve(m_dragPropCols.size());
+    for (const int li : m_dragPropCols) {
+        if (li < 0 || li >= (int)m_pageGlobalIdx.size()
+            || li >= (int)m_pageTemplateIdx.size()) continue;
+        const int gi = m_pageGlobalIdx[li];
+        const int sl = m_pageTemplateIdx[li];
+        if (gi < 0 || gi >= (int)m_bins.size() || sl < 0) continue;
+        if (gi == binIdx && sl == templateIdx) continue;   // the dragged one
+        alsoPulse.push_back(std::make_pair(gi, sl));
+    }
+    m_dragPropCols.clear();
+
+    const bool manyPulse = !alsoPulse.empty();
+    const bool footOk = relevelPulseAtFoot(binIdx, templateIdx,
+        static_cast<double>(newIdx), /*announce=*/!manyPulse);
+    if (!manyPulse) return;
+
+    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+    int okPulse = 0;
+    for (const std::pair<int, int>& pc : alsoPulse) {
+        const TemplateBin& tb = m_bins[pc.first];
+        if (pc.second >= (int)tb.ppg_bank.size()) continue;
+        const double foot =
+            tb.ppg_bank.templates[pc.second].pulse_marks.onset;
+        if (!(foot >= 0.0)) continue;
+        if (relevelPulseAtFoot(pc.first, pc.second, foot, /*announce=*/false))
+            ++okPulse;
+    }
+    QGuiApplication::restoreOverrideCursor();
+
+    statusBar()->showMessage(tr("Pulse re-levelled on %1 of %2 columns "
+        "(the dragged column %3). A refused column keeps the average it had "
+        "and its bar still moved. Cohorts unchanged - not re-filtered.")
+        .arg(okPulse + (footOk ? 1 : 0))
+        .arg(static_cast<int>(alsoPulse.size()) + 1)
+        .arg(footOk ? tr("included") : tr("refused")), 8000);
 }
 
 // ---- ONE BIN'S BEAT MATRIX, CACHED ONE DEEP --------------------------------
@@ -295,6 +428,13 @@ void TemplateViewerWindow::stashBuiltPulse(int binIdx, int templateIdx,
     m_ppgBuilt[key] = { slot.tmpl, slot.tmpl_iqr };
 }
 
+// NO CALLER AS OF THE Auto REWRITE, AND KEPT ON PURPOSE. "Auto" used to mean
+// "the stacking the build produced" and this was how it got back there; Auto
+// now decides an alignment per column like every other position of the group,
+// so nothing asks for the built pair any more. The pair is still STASHED on
+// every first overwrite (stashBuiltPulse) -- autoPctForSlot depends on it to
+// keep its verdict stable -- so the state this restores is still there, and a
+// fourth "As built" radio position would need only to call this.
 bool TemplateViewerWindow::restorePulseAsBuilt(int binIdx, int templateIdx)
 {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return false;
@@ -362,7 +502,7 @@ void TemplateViewerWindow::pushPulseToPanels(int binIdx, int templateIdx,
 }
 
 bool TemplateViewerWindow::realignPulseFromFoot(int binIdx, int templateIdx,
-    double footCol, bool announce)
+    double footCol, bool announce, double pctOverride)
 {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return false;
     TemplateBin& b = m_bins[binIdx];
@@ -412,9 +552,17 @@ bool TemplateViewerWindow::realignPulseFromFoot(int binIdx, int templateIdx,
     // resolvable anywhere it is resolvable there, whereas a single beat is the
     // noisy measurement the percent alignment exists to get away from. The
     // beats are then each located individually and shifted ONTO that column.
-    const double pct = (m_ppgAlignMode == PpgAlign::Percent)
-        ? std::clamp(static_cast<double>(m_ppgAlignPercent), 0.0, 100.0)
-        : 0.0;
+    //
+    // AN OVERRIDE WINS OVER THE CONTROLS, and only the Auto path passes one:
+    // Auto's percentage is a per-column verdict (autoPctForSlot) and there is
+    // no control holding it, so it arrives as an argument rather than through
+    // m_ppgAlignPercent. Negative means "ask the radio group", which is what
+    // the foot drag and both explicit positions do.
+    const double pct = (pctOverride >= 0.0)
+        ? std::clamp(pctOverride, 0.0, 100.0)
+        : ((m_ppgAlignMode == PpgAlign::Percent)
+            ? std::clamp(static_cast<double>(m_ppgAlignPercent), 0.0, 100.0)
+            : 0.0);
 
     double anchorCol = footCol;
     if (pct > 0.0) {
@@ -497,6 +645,43 @@ bool TemplateViewerWindow::realignPulseFromFoot(int binIdx, int templateIdx,
 // The "Align PPG Horizontal" selection
 // ========================================================================
 
+// ---- WHAT "Auto" DECIDES, PER COLUMN --------------------------------------
+//
+// The foot is the worst-conditioned landmark on a pulse -- zero slope through
+// it by definition -- so the percent alignment exists for the columns where
+// stacking on it cannot be trusted. Auto asks one question of each column: how
+// tight is the stack at the foot? Under kAutoFootIqrMax it takes
+// kAutoFallbackPct up the upstroke instead; above it, the foot.
+//
+// THE BUILD'S SPREAD, NOT THE SLOT'S CURRENT ONE. A re-stack overwrites
+// slot.tmpl_iqr with the spread of its own output, so reading that field would
+// have the second Auto pass over a column judge the result of the first -- and
+// a column could flip between the foot and 10% on nothing but a page turn.
+// m_ppgBuilt holds the build's pair from the first overwrite onward; before
+// that there has been no overwrite and the slot's own field IS the build's.
+// Either way the verdict for a given column is the same every time it is
+// asked, which is what makes "Auto" a position rather than a history.
+int TemplateViewerWindow::autoPctForSlot(int binIdx, int templateIdx,
+    const tbank::BankTemplate& slot, double footCol) const
+{
+    const auto it = m_ppgBuilt.find(slotKey(binIdx, templateIdx));
+    const std::vector<double>& iqr = (it != m_ppgBuilt.end())
+        ? it->second.second
+        : slot.tmpl_iqr;
+
+    const int halfwin = std::max(1, static_cast<int>(
+        std::lround(kAutoIqrWindowSec * m_ppgRateHz)));
+    const double spread = ppg_realign::iqrAbout(iqr, footCol, halfwin);
+
+    // NO SPREAD MEASURABLE -> THE FOOT. An absent or all-zero band is not
+    // evidence for the fallback: it means this slot's spread was never
+    // written, or fewer than two beats reached the columns around the foot.
+    // The foot is where the operator's bar is and what they would expect.
+    if (!(spread >= 0.0)) return 0;
+
+    return (spread < kAutoFootIqrMax) ? kAutoFallbackPct : 0;
+}
+
 // ONE PLACE THAT CHANGES THE PULSE ALIGNMENT, for the same reason
 // applyAlignmentSelection is the one place that changes the ECG one: the radio
 // buttons, the spin box and the foot-drag override all land here, and each of
@@ -547,7 +732,13 @@ void TemplateViewerWindow::setPpgAlignMode(PpgAlign mode)
 // each of them.
 void TemplateViewerWindow::realignAllVisiblePulses()
 {
-    int nDone = 0, nSkipped = 0, nRestored = 0;
+    int nDone = 0, nSkipped = 0;
+    // Auto's split, which is the only thing worth reporting about it: how many
+    // columns it judged stackable on their own foot and how many it moved up
+    // the upstroke. (nRestored went with restorePulseAsBuilt -- Auto no longer
+    // puts the build's stacking back, it decides an alignment like every other
+    // position of the group.)
+    int nAutoFoot = 0, nAutoPct = 0;
     // [ppg-dbg] An empty page table means no column was considered at all,
     // which is a different problem from every column refusing.
     fprintf(stderr, "[ppg-dbg] realign page: mode=%d pct=%d cols=%zu/%zu\n",
@@ -569,23 +760,34 @@ void TemplateViewerWindow::realignAllVisiblePulses()
         // that has been excluded.
         if (b.bad_ppg == 1 || slot.marked_invalid_template) continue;
 
-        if (m_ppgAlignMode == PpgAlign::Auto) {
-            if (restorePulseAsBuilt(gi, slotIdx)) ++nRestored;
-            continue;
-        }
-
         // Seed before reading, as every other pulse-mark reader does: a column
         // that has never been displayed has no foot yet, and -1 is not a hint.
+        //
+        // FOR EVERY MODE INCLUDING AUTO. Auto used to return above this, put
+        // the build's waveform back and never look at the pulse marks at all;
+        // it now stacks on the foot like the other positions, so it needs the
+        // same hint they need.
         if (!slot.hasDetectedPulseMarks())
             FeatureMarks::seed_pulse_bank_template(slot.tmpl, m_ppgRateHz,
                 slot.pulse_marks);
         const double foot = slot.pulse_marks.onset;
         if (!(foot >= 0.0)) { ++nSkipped; continue; }
 
+        // AUTO DECIDES HERE, PER COLUMN, and passes its answer down as an
+        // override -- there is no control holding it. Every other mode leaves
+        // this negative and realignPulseFromFoot reads the radio group.
+        double pctOverride = -1.0;
+        if (m_ppgAlignMode == PpgAlign::Auto) {
+            pctOverride = static_cast<double>(
+                autoPctForSlot(gi, slotIdx, slot, foot));
+            if (pctOverride > 0.0) ++nAutoPct; else ++nAutoFoot;
+        }
+
         // THE RETURN VALUE, not a membership test on m_ppgRealigned. A slot
         // already in that set stays in it when a later re-stack is REFUSED, so
         // asking the set would report a refusal as a success.
-        if (realignPulseFromFoot(gi, slotIdx, foot, /*announce=*/false)) ++nDone;
+        if (realignPulseFromFoot(gi, slotIdx, foot, /*announce=*/false,
+            pctOverride)) ++nDone;
         else ++nSkipped;
     }
 
@@ -595,8 +797,14 @@ void TemplateViewerWindow::realignAllVisiblePulses()
     // selection actually reached, not what happened to any one of them.
     if (auto* sb = statusBar()) {
         if (m_ppgAlignMode == PpgAlign::Auto) {
-            sb->showMessage(tr("Pulse alignment: as built (%1 column(s) "
-                "returned to the build's own stacking).").arg(nRestored), 6000);
+            // THE SPLIT, NOT A TOTAL. "Auto - 6 columns re-stacked" would hide
+            // the only thing the operator cannot see on a thumbnail: which
+            // columns were judged too tight at the foot to stack on it.
+            sb->showMessage(tr("Pulse alignment: auto - %1 on the foot, "
+                "%2 at %3% (foot IQR below %4), %5 unchanged. "
+                "Cohorts unchanged - not re-filtered.")
+                .arg(nAutoFoot).arg(nAutoPct).arg(kAutoFallbackPct)
+                .arg(kAutoFootIqrMax).arg(nSkipped), 8000);
         }
         else {
             const QString where = (m_ppgAlignMode == PpgAlign::Percent
@@ -734,6 +942,26 @@ static AnchoredBankSlot* anchoredSlotMut(TemplateBin& b, int lead, int slot,
     return &v[slot];
 }
 
+// ---- ONE FRAME'S COLUMNS INTO ANOTHER'S ------------------------------------
+//
+// A whole-array shift, NaN-filled at the end it moves away from, which is the
+// same thing align_beat_matrix does to a row and the same thing frameShift
+// describes for a single column. Used to convert a re-stacked average out of
+// the beat matrix's R frame and into the columns of the anchored slot it is
+// about to replace.
+static void shiftColumnsInPlace(std::vector<double>& v, int delta)
+{
+    if (delta == 0 || v.empty()) return;
+    const int n = static_cast<int>(v.size());
+    std::vector<double> out(v.size(),
+        std::numeric_limits<double>::quiet_NaN());
+    for (int i = 0; i < n; ++i) {
+        const int j = i + delta;
+        if (j >= 0 && j < n) out[static_cast<std::size_t>(j)] = v[static_cast<std::size_t>(i)];
+    }
+    v.swap(out);
+}
+
 bool TemplateViewerWindow::realignEcgFromBar(int binIdx, int leadIdx,
     int templateIdx, AnchorType anchor, double barCol, bool announce)
 {
@@ -804,6 +1032,30 @@ bool TemplateViewerWindow::realignEcgFromBar(int binIdx, int leadIdx,
     // emitting the full width stretches the panel's x-frame into the far tail.
     std::vector<double> tmpl = res.tmpl;
     std::vector<double> iqr = res.iqr;
+
+    // ---- BACK OUT OF THE ROW FRAME, BEFORE ANYTHING ELSE ----------------
+    //
+    // realignAt worked on _beats.bin's slices, which are R-framed, and it put
+    // every member's landmark on targetR -- an R-frame column. The slot it is
+    // about to replace is read through slotView, which pairs it with
+    // chFor(lead, anchor).r_col_raw: its columns are the ANCHOR'S, and the
+    // panel plots them straight onto its axis while the BAR is converted into
+    // the drawn frame from its own cell (barsForPanel). Storing an R-framed
+    // array under the anchor's tag therefore displaced the whole waveform by
+    // r_col(anchor) - r_col(R) from the bar that produced it: the trace slid
+    // sideways on mouse-up and the landmark came to rest somewhere other than
+    // under the bar the operator had just placed.
+    //
+    // ZERO ON EXACTLY THE BINS THAT ALREADY LOOKED RIGHT. frameShift is 0 when
+    // either r_col is missing, and 0 when this anchor's alignment came out
+    // byte-identical to R -- the NOT ALIGNED bins the [anchors] summary counts,
+    // which ecg_realign.hpp's own header says is roughly half of them. That is
+    // why the gesture appeared to work on some bins and to throw the waveform
+    // off on others.
+    const int frameDelta = b.frameShift(leadIdx, AnchorType::R_PEAK, anchor);
+    shiftColumnsInPlace(tmpl, frameDelta);
+    shiftColumnsInPlace(iqr, frameDelta);
+
     const std::size_t keep = dst->tmpl.size();
     if (keep > 0 && tmpl.size() > keep) {
         tmpl.resize(keep);
@@ -827,6 +1079,12 @@ bool TemplateViewerWindow::realignEcgFromBar(int binIdx, int leadIdx,
     // SCOPED TO THIS COLUMN: one slot's average changed, and the unscoped pass
     // re-detects glyphs on every panel of every column on the page.
     reskinGridForAnchor(binIdx, templateIdx);
+    // THE WAVEFORM CHANGED UNDER AN UNCHANGED FOCUS KEY -- the one case the
+    // column-only fast path cannot detect for itself, since (bin, lead, slot,
+    // anchor, marker, panel) all still name this view. Say so, or the refresh
+    // below would move the crosshair on the OLD average.
+    invalidateFocusFastPath();
+    m_sdCacheValid = false;   // same reason: the msec model was built on it
     if (m_focusMarker >= 0 && m_focusBin == binIdx && m_focusSlot == templateIdx)
         refreshFocus(m_focusWidget, m_focusBin, m_focusLead, m_focusSlot,
             m_focusMarker, m_focusCol);
@@ -838,7 +1096,8 @@ bool TemplateViewerWindow::realignEcgFromBar(int binIdx, int leadIdx,
         sb->showMessage(tr("%1 re-stacked on col %2: %3 of %4 beats "
             "(median shift %5, max %6 samples). Cohort unchanged - not re-filtered.")
             .arg(anchor_view::label(anchor))
-            .arg(res.anchor_col).arg(res.n_used).arg(res.n_members)
+            .arg(res.anchor_col + frameDelta)   // the anchored slot's own columns
+            .arg(res.n_used).arg(res.n_members)
             .arg(res.median_shift).arg(res.max_shift), 8000);
     return true;
 }

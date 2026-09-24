@@ -64,6 +64,27 @@ public:
     // Clear the panel (no landmark selected).
     void clearFocus();
 
+    // ---- MOVE THE COLUMN, KEEP EVERYTHING ELSE -------------------------
+    //
+    // The drag path: same landmark, same waveform, same fits, new column. It
+    // exists because setFocus is the WRONG call for that, twice over -- it
+    // copies the mean and the sd in, and it CLEARS the derived arrays and the
+    // supplied fits, which the caller then has to recompute and re-push. At
+    // mouse-move rate that was five vector copies plus a re-wrap of every
+    // candidate curve per drag pixel, to change one integer.
+    //
+    // Nothing here is derived from the column: the band, the msec/slope
+    // arrays and the candidate curves all belong to the trace, and the zoom
+    // window is computed from m_landmarkCol at paint time. A caller whose MEAN
+    // has changed must still use setFocus.
+    void setLandmarkCol(int col) {
+        if (col == m_landmarkCol) return;   // a repaint would show the same thing
+        m_landmarkCol = col;
+        m_active = (col >= 0 && !m_mean.empty());
+        update();
+    }
+    int landmarkCol() const { return m_landmarkCol; }
+
     // The detector's position for the focused landmark, in this trace's
     // columns. The dotted fiducial is drawn here and nowhere else. Call after
     // setFocus; -1 = not supplied, and the line falls back to the bar column.

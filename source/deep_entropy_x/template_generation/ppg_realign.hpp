@@ -219,6 +219,46 @@ namespace ppg_realign {
         return out;
     }
 
+    // ---- HOW TIGHT IS THE STACK AT ONE COLUMN ---------------------------
+    //
+    // Median per-column IQR over +-halfwin about `col`; NaN when the window
+    // holds nothing usable. The statistic the viewer's Auto rule reads to
+    // decide whether a slot is worth stacking on its foot at all.
+    //
+    // MEDIAN, AND EXACT ZEROS EXCLUDED. align_beat_matrix leaves 0.0 on any
+    // column fewer than two beats reached, and a single such shoulder inside
+    // the window would pull a mean under any threshold -- which would decide
+    // the alignment on missing data rather than on a tight stack.
+    //
+    // UNITS ARE tmpl_iqr's: raw amplitude, q3 - q1, the same units as tmpl.
+    // NOT the band drawn on the panel, which pulseTraceForSlot divides by the
+    // foot amplitude first -- so a threshold picked by eye off the screen is
+    // roughly 1/foot times the one to use here. See rawIqrColumns.
+    inline double iqrAbout(const std::vector<double>& iqr, double col,
+        int halfwin)
+    {
+        const double kNaN = std::numeric_limits<double>::quiet_NaN();
+        const int n = static_cast<int>(iqr.size());
+        const int c = static_cast<int>(std::lround(col));
+        if (n == 0 || c < 0 || c >= n) return kNaN;
+        if (halfwin < 0) halfwin = 0;
+        const int lo = std::max(0, c - halfwin);
+        const int hi = std::min(n - 1, c + halfwin);
+
+        std::vector<double> v;
+        v.reserve(static_cast<size_t>(hi - lo + 1));
+        for (int i = lo; i <= hi; ++i)
+            if (std::isfinite(iqr[i]) && iqr[i] != 0.0) v.push_back(iqr[i]);
+        if (v.empty()) return kNaN;
+
+        const size_t mid = v.size() / 2;
+        std::nth_element(v.begin(), v.begin() + mid, v.end());
+        const double hiV = v[mid];
+        return (v.size() % 2)
+            ? hiV
+            : 0.5 * (*std::max_element(v.begin(), v.begin() + mid) + hiV);
+    }
+
     struct Result {
         bool ok = false;
         std::string why;                 // set when !ok, for the status bar
