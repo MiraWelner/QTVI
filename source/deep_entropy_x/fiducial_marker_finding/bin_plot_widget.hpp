@@ -193,7 +193,7 @@ public:
     // The pulse twin of setEcgData: replace ONLY the PPG trace, its band and
     // its beat count, leaving the ECG, the arterial channels and every marker
     // where they are. For an operator re-stack on mouse-up (see
-    // TemplateViewerWindow::realignPulseFromFoot): the pulse average changes
+    // TemplateViewerWindow::relevelPulseAtPct): the pulse average changes
     // and nothing else does, and the bars must NOT move -- the whole point of
     // re-anchoring on the dragged foot is that the trace comes to the bar.
     void setPpgData(const std::vector<double>& ppg,

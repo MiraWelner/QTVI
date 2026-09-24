@@ -189,7 +189,7 @@ private slots:
 
     // END OF THE GESTURE, not every step of it. Only the pulse foot bar does
     // anything here: releasing it re-stacks that slot's pulse about the
-    // corrected column (realignPulseFromFoot). Every other bar's consequences
+    // corrected column (relevelPulseAtFoot). Every other bar's consequences
     // are reactive and were applied during the drag, so this returns at once
     // for them.
     void onMarkerReleasedOnTemplate(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
@@ -336,29 +336,6 @@ private:
         std::vector<double>& outIqr,
         double& outFootIdx);
 
-    // ---- OPERATOR RE-STACK ON MOUSE-UP ----------------------------------
-    //
-    // Re-anchor this slot's pulse on a corrected foot column: each member
-    // beat's own trough is re-found near it and the stack is re-medianed. THE
-    // COHORT IS NOT RE-SELECTED -- see ppg_realign.hpp.
-    // `announce` false suppresses the per-column status line. A whole-page
-    // re-stack (realignAllVisiblePulses) calls this once per column, and each
-    // message would overwrite the last -- so the operator would be shown
-    // whichever column happened to be done last and nothing about the rest.
-    //
-    // RETURNS whether the waveform was replaced. The bulk path needs that as
-    // an answer rather than inferring it from m_ppgRealigned: a slot already
-    // in that set stays in it when a later re-stack is REFUSED, so a
-    // membership test would report a refusal as a success.
-    //
-    // pctOverride >= 0 REPLACES THE RADIO GROUP for this one call, and only
-    // Auto passes one: Auto's percentage is decided per column (see
-    // autoPctForSlot) rather than read off a control, so it cannot come from
-    // m_ppgAlignPercent. Negative = "ask the controls", which is every other
-    // caller including the foot drag.
-    bool realignPulseFromFoot(int binIdx, int templateIdx, double footCol,
-        bool announce = true, double pctOverride = -1.0);
-
     // <stem>_beats.bin, where the per-beat pulse matrix lives. Built from the
     // same directory and stem morphology_csv::set was given, rather than
     // stored at load time, so it cannot go stale against m_subjectId.
@@ -400,17 +377,34 @@ private:
     // dragged the foot bar to, then re-median. NO sample moves sideways: the
     // foot is the pulse's vertical reference (normalize_ppg_or_similar
     // subtracts and divides by it), so "re-do the foot alignment" is a
-    // levelling -- the horizontal axis belongs to the "Align PPG Horizontal"
-    // group instead.
+    // levelling -- the per-beat-crossing reference belongs to the alignment
+    // group instead (whose .ui label still reads "Align PPG Horizontal").
     //
     // Returns whether the waveform was replaced; `announce` as
-    // realignPulseFromFoot.
+    // relevelPulseAtPct.
     bool relevelPulseAtFoot(int binIdx, int templateIdx, double footCol,
         bool announce = true);
 
+    // ---- THE ALIGNMENT GROUP: LEVEL AT EACH BEAT'S OWN CROSSING ---------
+    //
+    // The page-wide vertical reference, where relevelPulseAtFoot above is the
+    // per-column one. Same result type, same cohort rule, same refusals; the
+    // difference is which column each row is read at -- a shared column for
+    // the bar, each row's own foot or own pct crossing here.
+    //
+    // `pct` is percent up each beat's OWN upstroke IN AMPLITUDE, per
+    // upstrokePctCol: 0 levels on the feet, 100 on the systolic peaks. Auto
+    // decides it per column (autoPctForSlot); the other two positions of the
+    // group read m_ppgAlignPercent.
+    //
+    // NO HORIZONTAL EFFECT. realignPulseFromFoot, which shifted rows sideways,
+    // is gone -- rows keep the build's up50 time alignment.
+    bool relevelPulseAtPct(int binIdx, int templateIdx, double footCol,
+        double pct, bool announce = true);
+
     // ---- ONE BIN'S BEAT MATRIX, CACHED ONE DEEP -------------------------
     //
-    // Exactly the cache the old comment in realignPulseFromFoot said to add if
+    // Exactly the cache the old horizontal re-stack said to add if
     // the read ever showed up as a delay: the LAST bin, not all of them. A
     // percent change re-stacks every column on the page and several of those
     // are usually sibling slots of one bin, so an uncached read walks the file
@@ -430,21 +424,6 @@ private:
     const ppg_realign::BinBeats& beatsForBin(int binIdx,
         const char* channel = "PPG");
     void clearBeatsCache();
-
-    // ---- THE ECG COUNTERPART OF THE PULSE RE-STACK ----------------------
-    //
-    // Re-stack one (bin, lead, slot) about an operator-corrected landmark and
-    // replace that anchor's per-slot average in place. HORIZONTAL: the P onset
-    // is a time landmark, unlike the pulse foot, so each member beat's own P
-    // onset is re-found and shifted onto the operator's column.
-    //
-    // `barCol` is the column as the RELEASE SIGNAL delivers it -- a DRAWN-frame
-    // column, because moveEcgMarker clamps and stores through getView/setView.
-    // The conversion to the R-framed beat rows happens inside.
-    //
-    // Returns whether the average was replaced.
-    bool realignEcgFromBar(int binIdx, int leadIdx, int templateIdx,
-        AnchorType anchor, double barCol, bool announce = true);
 
     void clearPlots();
     void captureCurrentPage();

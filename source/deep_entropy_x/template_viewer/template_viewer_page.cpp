@@ -962,7 +962,7 @@ void TemplateViewerWindow::showPage() {
     // AUTO IS NO LONGER FREE, AND NO LONGER EXEMPT. It used to mean "the
     // build's own stacking", so on a freshly shown page there was nothing to
     // put back and the call was skipped. It now decides an alignment per
-    // column (TemplateViewerWindow::autoPctForSlot) and re-stacks like every
+    // column (TemplateViewerWindow::autoPctForSlot) and re-levels like every
     // other position, so a page turn costs one beat-matrix median per visible
     // pulse column -- the matrix itself is normally already in memory and
     // cached one bin deep (beatsForBin), so this is arithmetic rather than
@@ -1107,7 +1107,7 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     //   1. IT OVERWROTE THE OPERATOR. seed_bank_template opens with
     //      `out = BankMarkerSet{}`, so every call wiped the cell and wrote the
     //      detection back into it. This function runs on every apply --
-    //      including the reskinGridForAnchor() that realignEcgFromBar performs
+    //      including the reskinGridForAnchor() that a mouse-up performs
     //      on mouse-up -- so the bar the operator had just dragged was replaced
     //      by the detector's answer one instant after the re-stack adopted it.
     //      That is the bar "snapping back to where it was" after a drag.

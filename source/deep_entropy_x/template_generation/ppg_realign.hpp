@@ -704,6 +704,191 @@ namespace ppg_realign {
         return out;
     }
 
+    // ---- LEVEL EACH ROW AT ITS OWN CROSSING ----------------------------
+    //
+    // THE VERTICAL COUNTERPART OF realignAt. The difference from relevelAt
+    // above is WHICH COLUMN EACH ROW IS READ AT: relevelAt reads every row at
+    // one shared column -- the operator's assertion "the foot is here" -- so
+    // timing jitter between rows leaks straight into their levels. This locates
+    // each row's own foot and its own pct crossing, with the same two calls and
+    // the same bounds realignAt uses, and reads the level there.
+    //
+    // A ROW WHOSE UPSTROKE WILL NOT RESOLVE IS SKIPPED, not levelled at its
+    // foot instead. A cohort held half at the 10% level and half at their feet
+    // is levelled on neither, and n_used would stop meaning what it says.
+    //
+    // pct <= 0 IS THE FOOT, per row -- upstrokePctCol returns the foot itself
+    // there, so this is one code path and not two.
+    //
+    // ROWS ARE NOT SHIFTED. Their time alignment is whatever the build left
+    // (extract_ppg_beats_and_align's median-up50 anchoring) and nothing here
+    // touches it. This function has no horizontal effect of any kind.
+    //
+    // WHAT THE PERCENTAGE MEANS ON THIS AXIS, WHICH IS NOT WHAT IT MEANS ON THE
+    // OTHER ONE. upstrokePctCol's crossing is defined in AMPLITUDE as
+    // foot_y + (pct/100)*(peak_y - foot_y), so bringing every row's own crossing
+    // to a common level is algebraically "hold foot_y_i + (pct/100)*amp_i common
+    // across rows": 0 matches feet, 100 matches systolic peaks, in between
+    // blends the two. The argument at upstrokePctCol for preferring a percent
+    // over the foot -- that the foot is a turning point whose LOCATION moves
+    // tens of ms under a millivolt of noise -- is a TIMING argument and does
+    // NOT carry over here. Levelled at 10%, a row's offset depends on its peak
+    // as well as its foot, so it is MORE noise-sensitive than the foot, not
+    // less. The control is still a real choice; it needs its own justification,
+    // and that justification has not been written yet.
+    inline RelevelResult relevelAtOwnCrossing(const BinBeats& beats,
+        const std::vector<uint32_t>& rows,
+        double footCol,
+        int search_halfwin,
+        int mean_halfwin,
+        double pct)
+    {
+        RelevelResult out;
+        out.n_members = static_cast<int>(rows.size());
+        if (beats.empty()) { out.why = "no beat matrix for this bin"; return out; }
+        const int w = beats.width;
+        const int foot_target = static_cast<int>(std::lround(footCol));
+        if (foot_target < 0 || foot_target >= w) {
+            out.why = "foot bar outside the beat window";
+            return out;
+        }
+        if (search_halfwin < 1) search_halfwin = 1;
+        if (mean_halfwin < 0)   mean_halfwin = 0;
+        out.foot_col = foot_target;
+        const double p = (pct > 0.0) ? std::min(pct, 100.0) : 0.0;
+
+        // ---- pass one: each row's own crossing, and its level there ------
+        std::vector<const std::vector<double>*> src;
+        std::vector<double> level;
+        src.reserve(rows.size());
+        level.reserve(rows.size());
+        for (const uint32_t r : rows) {
+            if (r >= beats.rows.size()) continue;       // stale member list
+            const std::vector<double>& row = beats.rows[r];
+
+            // Its own trough, bounded to the hint window -- the same call and
+            // the same bounds realignAt uses, so the two cannot disagree about
+            // where a row's foot is.
+            const int foot = FeatureMarks::trough_in(row,
+                foot_target - search_halfwin, foot_target + search_halfwin);
+            if (foot < 0) continue;
+
+            int anchor = foot;
+            if (p > 0.0) {
+                const double c = upstrokePctCol(row, foot, p);
+                if (!(c >= 0.0)) continue;
+                anchor = static_cast<int>(std::lround(c));
+            }
+
+            // MEAN OVER +-mean_halfwin ABOUT THIS ROW'S OWN ANCHOR. One sample
+            // would otherwise set the row's entire offset, which is why
+            // relevelAt averages too -- the window just travels with the row
+            // here instead of sitting on a column shared by all of them.
+            const int lo = std::max(0, anchor - mean_halfwin);
+            const int hi = std::min<int>(static_cast<int>(row.size()) - 1,
+                anchor + mean_halfwin);
+            double sum = 0.0; int n = 0;
+            for (int k = lo; k <= hi; ++k)
+                if (!std::isnan(row[static_cast<size_t>(k)])) {
+                    sum += row[static_cast<size_t>(k)]; ++n;
+                }
+            // ALL NaN THERE means this beat's samples do not reach its own
+            // anchor -- a clipped row, skipped rather than levelled on a guess.
+            if (n == 0) continue;
+            src.push_back(&row);
+            level.push_back(sum / static_cast<double>(n));
+        }
+
+        out.n_used = static_cast<int>(src.size());
+        // TWO IS NOT A TEMPLATE -- the same refusal as realignAt and relevelAt.
+        if (out.n_used < 3) {
+            out.why = (p > 0.0)
+                ? "fewer than 3 beats have a resolvable upstroke near that column"
+                : "fewer than 3 beats have a foot near that column";
+            return out;
+        }
+
+        // ---- FROM HERE THIS IS relevelAt's TAIL, COPIED -------------------
+        //
+        // Median of the levels, pass two, the column-wise median and the raw
+        // IQR: identical to relevelAt above, and deliberately not shared only
+        // because factoring it would mean editing relevelAt, which works. IF
+        // EITHER COPY CHANGES, CHANGE BOTH -- or lift these lines into a
+        // finishRelevel(out, src, level, w) that both call, which is the better
+        // shape and a one-step follow-up.
+
+        // The common baseline: the median of the levels themselves. Robust to
+        // a row whose baseline is an outlier, and guaranteed to be a value
+        // this cohort actually exhibits.
+        {
+            std::vector<double> s = level;
+            std::sort(s.begin(), s.end());
+            out.baseline = s[s.size() / 2];
+        }
+
+        // ---- pass two: bring every row to it ----------------------------
+        const double kNaN = std::numeric_limits<double>::quiet_NaN();
+        std::vector<std::vector<double>> levelled;
+        levelled.reserve(src.size());
+        std::vector<double> offs;
+        offs.reserve(src.size());
+        for (std::size_t i = 0; i < src.size(); ++i) {
+            const double off = out.baseline - level[i];
+            std::vector<double> dst(static_cast<size_t>(w), kNaN);
+            const int n = std::min<int>(w, static_cast<int>(src[i]->size()));
+            for (int k = 0; k < n; ++k) {
+                const double v = (*src[i])[static_cast<size_t>(k)];
+                if (!std::isnan(v)) dst[static_cast<size_t>(k)] = v + off;
+            }
+            levelled.push_back(std::move(dst));
+            offs.push_back(off);
+            if (std::abs(off) > std::abs(out.max_level)) out.max_level = off;
+        }
+        {
+            std::vector<double> s = offs;
+            std::sort(s.begin(), s.end());
+            out.median_level = s[s.size() / 2];
+        }
+
+        // Column-wise NaN-skipping median, the same statistic in the same
+        // nth_element form realignAt and the build both use. A different
+        // average here would make the re-levelled template incomparable with
+        // the one it replaces.
+        out.tmpl.assign(static_cast<size_t>(w), kNaN);
+        std::vector<double> col;
+        col.reserve(levelled.size());
+        for (int c = 0; c < w; ++c) {
+            col.clear();
+            for (const auto& b : levelled)
+                if (!std::isnan(b[static_cast<size_t>(c)]))
+                    col.push_back(b[static_cast<size_t>(c)]);
+            if ((int)col.size() < minColumnRows(out.n_used)) continue;
+            const size_t nc = col.size();
+            const size_t mid = nc / 2;
+            std::nth_element(col.begin(), col.begin() + mid, col.end());
+            const double hi = col[mid];
+            out.tmpl[static_cast<size_t>(c)] = (nc % 2)
+                ? hi
+                : 0.5 * (*std::max_element(col.begin(), col.begin() + mid) + hi);
+        }
+
+        // ---- ON THE LEVELLED ROWS, IN RAW UNITS ---------------------------
+        //
+        // THE LEVELLED ONES, because the corridor is the EVIDENCE the levelling
+        // took: if the beats really do share a baseline at the operator's
+        // column then their spread must be small there and grow away from it,
+        // and that is exactly what the operator needs to see. The spread at the
+        // bar comes out at 0 because every row was brought to the same value
+        // there -- that is the signal, not a defect.
+        //
+        // RAW AMPLITUDE, not a perfusion ratio: the display divides this field
+        // by the foot amplitude itself. See rawIqrColumns.
+        out.iqr = rawIqrColumns(levelled, out.n_used);
+
+        out.ok = true;
+        return out;
+    }
+
     // 10 ms either side of the foot, the baseline-mean window. Short enough
     // that it cannot climb the upstroke at any plausible rate, long enough to
     // average a few samples of noise out of the level.
