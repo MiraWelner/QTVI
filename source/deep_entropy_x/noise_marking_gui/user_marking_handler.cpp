@@ -9,7 +9,7 @@
 #include "chart_utils.hpp"
 #include "logging/user_mark_log.hpp"
 #include "annotation_types.hpp"
-#include "annotation_eraser.h"
+#include "annotation_eraser.hpp"
 
 #include <QtCharts/QAreaSeries>
 #include <QtCharts/QLineSeries>
@@ -31,17 +31,16 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX, const Q
     const double snappedS = std::round(std::min(globalStart, globalEnd) * sr) / sr;
     const double snappedE = std::round(std::max(globalStart, globalEnd) * sr) / sr;
 
-    m_noiseManager->addSegment(
-        static_cast<int>(snappedS * sr), static_cast<int>(snappedE * sr),
-        signalLabel.toStdString(), m_currentMarkingType.toStdString(), sr);
-    // appendMarking rather than three appends: the struct now carries five
-    // parallel vectors and keeping them in step by hand at every call site is
-    // how one gets dropped. An ordinary annotation has no threshold or blanking
-    // value, so both default to NaN.
-    m_genExc.appendMarking(snappedS, snappedE, signalLabel, m_currentMarkingType);
+    // ONE STORE. A marking used to be written twice -- here in seconds, and to
+    // m_noiseManager in sample indices -- and kept in step by hand. The
+    // sample-indexed copy is gone; exportMarkings builds it on demand, which is
+    // the only place samples are wanted. An ordinary annotation has no
+    // threshold or blanking value, so both default to NaN.
+    m_genExc.appendMarking(snappedS, snappedE, signalLabel.toStdString(),
+        m_currentMarkingType.toStdString());
 
     if (m_beatLog) {
-        
+
         m_beatLog->removeInRange(beat_log::channelForLabel(signalLabel), snappedS, snappedE);
     }
 
@@ -107,7 +106,7 @@ void noise_marking_gui::clearStartMarker(ChannelMarkingState& state) {
     }
 }
 
-void noise_marking_gui::showStartMarker(QChartView* cv, double xValue,  ChannelMarkingState& state, const QColor& color, QPushButton* stopBtn){
+void noise_marking_gui::showStartMarker(QChartView* cv, double xValue, ChannelMarkingState& state, const QColor& color, QPushButton* stopBtn) {
     //Draws the dashed vertical line marking a click-click span's start on one channel's chart; no-op if that chart has no axes yet.
     clearStartMarker(state);
     if (!cv || !cv->chart()) return;
@@ -128,7 +127,7 @@ void noise_marking_gui::showStartMarker(QChartView* cv, double xValue,  ChannelM
     if (stopBtn) stopBtn->setEnabled(true);
 }
 
-void noise_marking_gui::updateDragPreview(QChartView* cv, double x0, double x1, const QColor& color){
+void noise_marking_gui::updateDragPreview(QChartView* cv, double x0, double x1, const QColor& color) {
     if (!cv || !cv->chart()) return;
     auto vAxes = cv->chart()->axes(Qt::Vertical);
     auto hAxes = cv->chart()->axes(Qt::Horizontal);
@@ -259,7 +258,8 @@ bool noise_marking_gui::eventFilter(QObject* watched, QEvent* event) {
 }
 
 bool noise_marking_gui::handleMousePress(QChartView* cv, QWidget* viewport, QMouseEvent* me)
-{;
+{
+    ;
     if (me->button() != Qt::LeftButton) return false;
 
     double clickedX = cv->chart()->mapToValue(me->pos()).x();

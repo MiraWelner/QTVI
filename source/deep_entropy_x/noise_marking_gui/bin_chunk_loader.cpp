@@ -33,16 +33,7 @@ void noise_marking_gui::setFileSource(const QString& filePath) {
 }
 
 namespace {
-    // ADAPTER over noise_markings::loadRows(), which is the only function that
-    // knows this file's byte layout (see the comment on loadRows in
-    // user_annotation_handler.h). This reader needs the widest projection of
-    // the three: seconds, channel NAMES, type LABELS, and the two parameter
-    // columns, because it is the one that rehydrates the GUI's threshold and
-    // blanking overrides. Legacy rows arrive with those two as NaN, which
-    // rehydrateParamOverrides() already reads as "unset" rather than
-    // substituting cfg.threshold / cfg.blanking_period.
-    GenExcStruct readNoiseMarkingsBin(const std::filesystem::path& path,
-        const QString& filePath) {
+    GenExcStruct read_noise_markings_bin(const std::filesystem::path& path, const QString& filePath) {
         namespace nm = noise_markings;
         GenExcStruct g;
         g.filePath = filePath;
@@ -55,23 +46,10 @@ namespace {
             return g;
         }
         if (rr.legacy)
-            std::fprintf(stderr,
-                "[noise-markings] %s predates parameter storage; read as a "
-                "legacy file with %zu row(s). Any parameter-edit span in it "
-                "has no recorded threshold/blanking and loads as unset.\n",
-                path.string().c_str(), rr.rows.size());
-        if (!rr.error.empty())   // partial read: kept what parsed
-            std::fprintf(stderr, "[noise-markings] %s: %s\n",
-                path.string().c_str(), rr.error.c_str());
+            std::fprintf(stderr,  "[noise-markings] %s is old lecacy file\n",  path.string().c_str());
 
         for (std::size_t i = 0; i < rr.rows.size(); ++i) {
             const nm::Row& row = rr.rows[i];
-
-            // Both lookups read the tables the writer wrote from, so a miss
-            // here means the file names something this build does not know.
-            // Worth a line each rather than a silent skip -- silent skipping
-            // is what hid the writer/reader channel-map divergence before the
-            // tables were unified.
             const char* chan = nm::channel_for_code(row.channel_code);
             if (!chan) {
                 std::fprintf(stderr, "[noise-markings] %s row %zu: unknown "
@@ -91,8 +69,7 @@ namespace {
                 continue;
             }
 
-            g.appendMarking(row.start_sec, row.end_sec,
-                QString::fromLatin1(chan), QString::fromLatin1(type),
+            g.appendMarking(row.start_sec, row.end_sec, chan, type,
                 row.threshold, row.blanking_ms);
         }
         return g;
@@ -161,14 +138,11 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
             std::filesystem::path(m_cfg.noise_data_path)
             / (QFileInfo(filePath).completeBaseName().toStdString() + "_noise_markings.bin");
         if (std::filesystem::exists(nb)) {
-            GenExcStruct g = readNoiseMarkingsBin(nb, filePath);
-            if (!g.noiseExc.isEmpty()) m_fileMarkings[filePath] = g;
+            GenExcStruct g = read_noise_markings_bin(nb, filePath);
+            if (!g.marks.isEmpty()) m_fileMarkings[filePath] = g;
         }
     }
 
-    // Per-file VCG state: clear the cached basis so the next chunk rebuilds
-    // it for THIS recording, and tell vcg_lead where to file it. Both belong
-    // here and not in loadChunkFromFile -- a basis rebuilt per chunk gives a
     // markable channel whose meaning drifts as the operator scrolls.
     m_vcgCfg.ortho = vcg::OrthoBasis{};
     m_vcgCfg.orthoAcc.reset();
@@ -183,23 +157,13 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     }
 
     if (m_fileMarkings.contains(filePath)) {
+        // No replay into a second store any more: m_genExc IS the store.
         m_genExc = m_fileMarkings[filePath];
-        m_noiseManager = std::make_unique<annotation_handler>();
-        for (int i = 0; i < m_genExc.noiseExc.size(); ++i) {
-            double sr = sampleRateForSignal(m_genExc.data_type[i]);
-            m_noiseManager->addSegment(
-                static_cast<int>(m_genExc.noiseExc[i].first * sr),
-                static_cast<int>(m_genExc.noiseExc[i].second * sr),
-                m_genExc.data_type[i].toStdString(),
-                m_genExc.marking_type[i].toStdString(),
-                sr);
-        }
         rehydrateParamOverrides();
     }
     else {
         m_genExc = GenExcStruct();
         m_genExc.filePath = filePath;
-        m_noiseManager = std::make_unique<annotation_handler>();
         m_thresholdOverrides.clear();
         m_blankingOverrides.clear();
         m_invertOverrides.clear();
@@ -219,34 +183,20 @@ void noise_marking_gui::rehydrateParamOverrides() {
     m_blankingOverrides.clear();
     m_invertOverrides.clear();
 
-    std::fprintf(stderr, "[rehydrate] %d marking(s), consistent=%d\n",
-        m_genExc.noiseExc.size(), (int)m_genExc.consistent());
-
-    if (!m_genExc.consistent()) {
-        std::fprintf(stderr, "[rehydrate] INCONSISTENT: %d/%d/%d/%d/%d\n",
-            m_genExc.noiseExc.size(), m_genExc.data_type.size(),
-            m_genExc.marking_type.size(), m_genExc.threshold.size(),
-            m_genExc.blanking.size());
-        return;
-    }
-
-    const QString paramLabel = QString::fromUtf8(annotation_types::kParamEditLabel);
-    const QString invertLabel = QString::fromUtf8(annotation_types::kInvertEditLabel);
-
-    for (int i = 0; i < m_genExc.noiseExc.size(); ++i) {
-        const double lo = m_genExc.noiseExc[i].first;
-        const double hi = m_genExc.noiseExc[i].second;
-        const QString& ch = m_genExc.data_type[i];
-        const QString& ty = m_genExc.marking_type[i];
-
-        if (ty == paramLabel) {
-            if (!std::isnan(m_genExc.threshold[i]))
-                m_thresholdOverrides.append(ParamOverride{ ch, lo, hi, m_genExc.threshold[i] });
-            if (!std::isnan(m_genExc.blanking[i]))
-                m_blankingOverrides.append(ParamOverride{ ch, lo, hi, m_genExc.blanking[i] });
+    // ParamOverride still keys on QString because the renderer compares it
+    // against chart labels; that conversion happens once per override here,
+    // not once per marking per frame.
+    for (const Marking& m : m_genExc.marks) {
+        if (m.type == annotation_types::kParamEditLabel) {
+            const QString ch = QString::fromStdString(m.channel);
+            if (!std::isnan(m.threshold))
+                m_thresholdOverrides.append(ParamOverride{ ch, m.start, m.end, m.threshold });
+            if (!std::isnan(m.blanking))
+                m_blankingOverrides.append(ParamOverride{ ch, m.start, m.end, m.blanking });
         }
-        else if (ty == invertLabel) {
-            m_invertOverrides.append(ParamOverride{ ch, lo, hi, 1.0 });
+        else if (m.type == annotation_types::kInvertEditLabel) {
+            m_invertOverrides.append(ParamOverride{
+                QString::fromStdString(m.channel), m.start, m.end, 1.0 });
         }
     }
 }
@@ -345,18 +295,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
         const float nativeHz = channel_native_rates[chIdx];
         if (nativeHz <= 0.0f) return;
 
-        // Slice the raw block by TIME, not by a pair count. The raw pairs are
-        // stored with x = row-index time (row index / grid rate) and are
-        // monotonic in x, but they are NOT uniformly dense at nativeHz -- gaps
-        // and 2x-packing corrections mean a chunk holds fewer pairs than
-        // 8h * nativeHz. The old "firstPair = chunkIndex * 8h * nativeHz"
-        // slicing assumed density and so overshot on every chunk after the
-        // first (landing past the real chunk data -> no scatter). Instead,
-        // load exactly the pairs whose stored time falls in this chunk's
-        // [chunkStart, chunkStart + 8h) window. This matches loadSignal's
-        // time-based chunking so raw and upsampled always cover the same span.
-        const double chunkStartT =
-            static_cast<double>(chunkIndex) * seconds_in_memory_at_once;
+        const double chunkStartT = static_cast<double>(chunkIndex) * seconds_in_memory_at_once;
         const double chunkEndT = chunkStartT + seconds_in_memory_at_once;
 
         const qint64 baseBytes = FILE_HEADER_SIZE
@@ -443,21 +382,6 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
         { &m_spo2,      &m_spo2Raw,      CH_SPO2            },
     };
     for (const ChannelLoad& c : kChannels) loadSignal(*c.up, c.ch);
-
-    // THE ARRAYS LOADED HERE ARE NEVER FILTERED, DELIBERATELY.
-    //
-    // The powerline notch is applied at RENDER time to the visible window only
-    // (notchedSpan / notchedSpanRaw in signal_renderer.cpp), which keeps it
-    // display-only: detectPeaks reads *dataRaw, the same block the renderer
-    // draws, so filtering in place would push the notch into beat positions
-    // and into the per-beat log. Nothing on the analysis path is notched
-    // either -- analysis_job::prepare re-reads the annealed .bin and filters
-    // nothing, so every R peak, template, envelope and CSV comes from
-    // unfiltered signal. This checkbox and the one in the template viewer
-    // change what is DRAWN and nothing else.
-
-    // The raw (t, v) block is stored on the same clock as the upsampled block,
-    // so the scatter lands on the trace with no re-timing needed here.
     for (const ChannelLoad& c : kChannels) loadRaw(*c.raw, c.ch);
 
     {
@@ -494,11 +418,6 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
 
     if (ui->abp_axis)
         ui->abp_axis->setVisible(!bittium && !is_missing_signal(m_abp));
-    // SaO2 has its own chart at the bottom of the main plot column. It is set
-    // here rather than inside the per-dataset branches below because it is the
-    // one non-markable chart that is NOT a shared slot: no other dataset has
-    // anything to put in it, so leaving it visible would cost a stretch slot in
-    // main_plots and show an empty chart.
     if (ui->spo2_shhs_plot)
         ui->spo2_shhs_plot->setVisible(shhs && !is_missing_signal(m_spo2));
     if (ui->ppg_ampogram_axis)
@@ -552,10 +471,7 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
 }
 
 void noise_marking_gui::on_next8hours_clicked() {
-    /*
-        If the 'w' key or the next 8 hours button is clicked, see if there is another 8 hour chunk of data to load, if so, load it.
-        If there is additional data less than 8 hours, that data is loaded.
-    */
+    //load subsequent chunk of data
     const uint64_t ecgPerChunk = static_cast<uint64_t>(seconds_in_memory_at_once * channel_upsampled_rates[CH_ECG1]);
     const uint64_t nextStart = (current_chunk_index + 1) * ecgPerChunk;
     if (nextStart >= upsampled_channel_sizes[CH_ECG1]) return;   // no data ahead

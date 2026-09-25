@@ -33,45 +33,24 @@
 #include "config_file_handling/config.hpp"
 #include "grid_overlay.hpp"
 
+struct Marking {
+    double  start = 0.0;
+    double  end = 0.0;
+    std::string channel;
+    std::string type;
+    double  threshold = std::numeric_limits<double>::quiet_NaN();
+    double  blanking = std::numeric_limits<double>::quiet_NaN();
+};
+
 struct GenExcStruct {
-    QString filePath;                          ///< Source file these markings belong to.
-    QVector<QPair<double, double>> noiseExc;   ///< [start, end] in global seconds.
-    QStringList data_type;                     ///< "ECG1", "ECG2", "ECG3", "PPG", or "ABP".
-    QStringList marking_type;                  ///< "Noise/Artifact", "AF", "SVT", ...
+    QString filePath;            ///< Source file these markings belong to.
+    QVector<Marking> marks;      ///< In creation order.
 
-    /// Detection threshold and blanking period that apply INSIDE each span, or
-    /// NaN where the marking type carries neither. Parallel to noiseExc, so an
-    /// append to that vector must append here too -- appendMarking() below does
-    /// all four at once precisely so they cannot come apart.
-    ///
-    /// These exist because a parameter-edit span is an instruction, not an
-    /// observation: it says "use this threshold here". Carrying the extent
-    /// without the values reloaded the highlight and lost its meaning, and the
-    /// R peaks inside it moved back to the config defaults with nothing
-    /// reporting it.
-    QVector<double> threshold;
-    QVector<double> blanking;
-
-    /// Append one marking with all four vectors kept in step. Every call site
-    /// used to append to three vectors by hand, which is three chances to drop
-    /// one and no way to notice until an index went out of range somewhere else.
-    void appendMarking(double start, double end, const QString& channel,
-        const QString& type,
+    void appendMarking(double start, double end, const std::string& channel,
+        const std::string& type,
         double thr = std::numeric_limits<double>::quiet_NaN(),
         double blk = std::numeric_limits<double>::quiet_NaN()) {
-        noiseExc.append({ start, end });
-        data_type.append(channel);
-        marking_type.append(type);
-        threshold.append(thr);
-        blanking.append(blk);
-    }
-
-    /// True when every parallel vector agrees on length. Cheap, and the one
-    /// invariant the whole struct rests on.
-    bool consistent() const {
-        const int n = noiseExc.size();
-        return data_type.size() == n && marking_type.size() == n
-            && threshold.size() == n && blanking.size() == n;
+        marks.append(Marking{ start, end, channel, type, thr, blk });
     }
 };
 
@@ -105,26 +84,7 @@ public:
     enum class PlotMode { Line, Scatter };
     void setBeatLog(beat_log* log) { m_beatLog = log; }
     bool invertedForSignal(const QString& label) const;
-    // Measures, rather than asks, which (if any) of ECG1/ECG2/ECG3 is
-    // polarity-inverted relative to the other two (Einthoven's law -- see
-    // vcg::checkLimbLeadPolarity in vcg.hpp), and PRE-SETS the corresponding
-    // ecg_N_reverse checkbox to match. The checkbox remains the visible,
-    // overridable source of truth -- invertedForSignal() and everything
-    // downstream of it still just reads whatever the checkbox says, exactly
-    // as before; this only changes what the checkbox defaults to. Leaves
-    // the checkboxes untouched (at whatever they already were) when no sign
-    // combination is consistent with limb leads at all -- forcing a "best
-    // of 8" answer onto channels this measurement cannot adjudicate would
-    // be a different kind of guess, not a fix. Call ONCE per newly opened
-    // file, on the first loaded chunk -- NOT once per chunk -- since lead
-    // polarity is a property of the recording, not of a time window.
-    void autoDetectLeadPolarity();
-    // Re-reads the live ecg_N_reverse checkbox state into m_vcgCfg, clears
-    // m_vcg/m_vcgRaw, and calls vcg_lead::rebuild(). Shared by
-    // loadChunkFromFile (runs on every chunk load) and the ecg_N_reverse
-    // toggled connection (runs on every checkbox click) -- a click must
-    // recompute the SAME way a chunk load does, not just redraw stale data.
-    // Does NOT call handle_data_plot() itself; callers that need an
+    void autoDetectLeadPolarity(); //right now the polarity is detected by the user 
     // immediate redraw (the checkbox handler) must call it afterward.
     void refreshVcgFromLeadFlags();
     void set_params_to_config_defaults(const config_entry& cfg) {
@@ -195,7 +155,6 @@ private:
     ChannelMarkingState  mark_state_art_pulm;
 
     std::unique_ptr<Ui::noise_marking_gui> ui;
-    std::unique_ptr<annotation_handler>       m_noiseManager;
     std::unique_ptr<user_control_handler>     m_buttonHandler;
     std::unique_ptr<pulse_overlay>            m_pulseOverlay;
     std::unique_ptr<annotation_eraser>        m_annotationEraser;
@@ -245,12 +204,7 @@ private:
     // --- Signal data (upsampled, 1 kHz unless otherwise noted) ---
     QVector<double> m_ecg1, m_ecg2, m_ecg3, m_ppg, m_accelX, m_accelY, m_accelZ, m_resp;
     QVector<double> m_cvp, m_abp, m_temp, m_marker, m_pacemaker, m_sleepStages, m_art, m_artPulm;
-    // SHHS respiratory effort / airflow / oximetry. Non-markable context
-    // channels: loaded for every dataset (an absent channel comes back as the
-    // missing-channel placeholder and costs one read), but only plotted on the
-    // SHHS branch of determine_which_nonmarkable_charts_to_plot().
     QVector<double> m_flow, m_thor, m_abdo, m_spo2;
-
 
     QVector<QPointF> m_ecg1Raw, m_ecg2Raw, m_ecg3Raw, m_ppgRaw, m_abpRaw;
     QVector<QPointF> m_accelXRaw, m_accelYRaw, m_accelZRaw, m_respRaw, m_cvpRaw;

@@ -19,6 +19,7 @@
 #include <QFileInfo>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -104,8 +105,11 @@ static bool runNoiseMarking(const config_entry& cfg, const std::filesystem::path
 
 static void exportMarkings(const config_entry& cfg, const std::filesystem::path& binFile, const GenExcStruct* markings) {
     // Export the recorded markings to <noise_data_path>/<stem>_noise_markings.{csv,bin}. The .bin is the file the anneal step (processOneFile) reads back in.
+    // The ONLY place sample indices are wanted: the binary format stores them.
+    // The GUI keeps markings in seconds, so the sample-indexed view is built
+    // here, once, on the way out.
     annotation_handler nm;
-    auto rateForLabel = [&](const QString& label) -> double {
+    auto rateForLabel = [&](const std::string& label) -> double {
         if (label == "PPG")      return cfg.ppg_upsample_rate;
         if (label == "ABP")      return cfg.abp_upsample_rate;
         if (label == "ACCEL")    return cfg.accel_upsample_rate;
@@ -115,14 +119,16 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
         };
 
     if (markings) {
-        for (int i = 0; i < markings->noiseExc.size(); ++i) {
-            const double sr = rateForLabel(markings->data_type[i]);
+        for (const Marking& m : markings->marks) {
+            const double sr = rateForLabel(m.channel);
+            // llround, not a truncating cast: snappedS*sr is an integer in
+            // exact arithmetic (finalizeMarking snaps to the sample grid) but
+            // not in floating point, so a cast could land a sample early.
             nm.addSegment(
-                static_cast<int>(markings->noiseExc[i].first * sr),
-                static_cast<int>(markings->noiseExc[i].second * sr),
-                markings->data_type[i].toStdString(),
-                markings->marking_type[i].toStdString(), sr,
-                markings->threshold[i], markings->blanking[i]);
+                static_cast<int>(std::llround(m.start * sr)),
+                static_cast<int>(std::llround(m.end * sr)),
+                m.channel, m.type, sr,
+                m.threshold, m.blanking);
         }
     }
     const std::filesystem::path base = std::filesystem::path(cfg.noise_data_path) / (binFile.stem().string() + "_noise_markings");

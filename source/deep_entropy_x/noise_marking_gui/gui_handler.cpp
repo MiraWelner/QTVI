@@ -10,7 +10,7 @@
 #include "grid_overlay.hpp"
 #include "config_file_handling/config_loader.hpp"
 #include "logging/user_mark_log.hpp"
-#include "annotation_eraser.h"
+#include "annotation_eraser.hpp"
 #include "annotation_types.hpp"
 #include <algorithm>
 
@@ -416,7 +416,6 @@ void noise_marking_gui::mousePressEvent(QMouseEvent* event) {
 noise_marking_gui::noise_marking_gui(QWidget* parent)
     : QDialog(parent)
     , ui(std::make_unique<Ui::noise_marking_gui>())
-    , m_noiseManager(std::make_unique<annotation_handler>())
     , m_buttonHandler(std::make_unique<user_control_handler>(this))
 {
     ui->setupUi(this);
@@ -680,53 +679,15 @@ QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
     QMap<QString, GenExcStruct> all = m_fileMarkings;
     GenExcStruct current = m_genExc;
     current.filePath = m_binFilePath;
-    // marking_type comes from the annotation table, looked up by the FLAG that
-    // defines each of these override kinds -- paramEdit for threshold/blanking,
-    // invertEdit for inversion. The labels used to be typed here as literals,
-    // which made this function a second place the strings lived and a silent one:
-    // a retitled table row would leave these spans resolving to nothing and
-    // exporting as code 0, with no error anywhere. Resolved at compile time; see
-    // the static_asserts in annotation_types.hpp.
-    // THE VALUES TRAVEL WITH THE SPAN. applyParamOverrides() writes a threshold
-    // and a blanking period for the same extent on the same channel, so the two
-    // vectors hold matched entries and one output row can carry both. Pairing
-    // them here by (channel, start, end) rather than by index is deliberate:
-    // editParamOverrideAt() can replace one vector's entry without the other's,
-    // so equal indices are not a safe assumption.
-    //
-    // m_blankingOverrides was previously never written out at all -- only the
-    // threshold spans were, and only as extents. So a reloaded file lost both
-    // numbers and every override reverted to the config defaults, moving the R
-    // peaks inside it with nothing to indicate why.
     const QString paramLabel = QString::fromUtf8(annotation_types::kParamEditLabel);
     const QString invertLabel = QString::fromUtf8(annotation_types::kInvertEditLabel);
-
-    // ---- STRIP THE STALE OVERRIDE ROWS BEFORE APPENDING THE LIVE ONES ----
-    //
-    // m_genExc carries paramEdit / invertEdit rows on any file that was
-    // RELOADED: readNoiseMarkingsBin appends every row it reads, override rows
-    // included, and loadFile copies the lot into m_genExc. The three
-    // ParamOverride vectors are the authority for those spans -- rehydrated
-    // from the same rows on load, and the only thing applyParamOverrides and
-    // editParamOverrideAt ever touch -- so appending from them on top of what
-    // m_genExc already holds emits the span TWICE: once with the values and
-    // once with the NaN that the extent-only row carries. Whichever the reader
-    // hits last wins, which is how a threshold survived a save and vanished on
-    // the reload after it.
-    //
-    // Rebuilt rather than deduplicated: an override edited this session has a
-    // different extent from the one on disk (applyParamOverrides replaces any
-    // overlapping entry), so there is no key the two rows agree on.
     {
         GenExcStruct kept;
         kept.filePath = current.filePath;
-        for (int i = 0; i < current.noiseExc.size(); ++i) {
-            const QString& ty = current.marking_type[i];
-            if (ty == paramLabel || ty == invertLabel) continue;
-            kept.appendMarking(current.noiseExc[i].first,
-                current.noiseExc[i].second, current.data_type[i], ty,
-                current.threshold[i], current.blanking[i]);
-        }
+        for (const Marking& m : current.marks)
+            if (m.type != annotation_types::kParamEditLabel
+                && m.type != annotation_types::kInvertEditLabel)
+                kept.marks.append(m);
         current = kept;
     }
 
@@ -736,7 +697,8 @@ QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
             if (b.channel == o.channel && b.start == o.start && b.end == o.end) {
                 blk = b.value; break;
             }
-        current.appendMarking(o.start, o.end, o.channel, paramLabel, o.value, blk);
+        current.appendMarking(o.start, o.end, o.channel.toStdString(),
+            annotation_types::kParamEditLabel, o.value, blk);
     }
     // A blanking override with no matching threshold override. Should not happen
     // -- applyParamOverrides always writes both -- but a file that ends up with
@@ -749,17 +711,19 @@ QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
                 paired = true; break;
             }
         if (!paired)
-            current.appendMarking(b.start, b.end, b.channel, paramLabel,
+            current.appendMarking(b.start, b.end, b.channel.toStdString(),
+                annotation_types::kParamEditLabel,
                 std::numeric_limits<double>::quiet_NaN(), b.value);
     }
     for (const ParamOverride& o : m_invertOverrides) {
-        current.appendMarking(o.start, o.end, o.channel, invertLabel);
+        current.appendMarking(o.start, o.end, o.channel.toStdString(),
+            annotation_types::kInvertEditLabel);
     }
 
     all[m_binFilePath] = current;
     QVector<GenExcStruct> result;
     for (auto it = all.cbegin(); it != all.cend(); ++it)
-        if (!it->noiseExc.isEmpty()) result.append(it.value());
+        if (!it->marks.isEmpty()) result.append(it.value());
 
     // ---- WHAT IS ACTUALLY LEAVING THIS FUNCTION --------------------------
     //
@@ -771,17 +735,13 @@ QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
     {
         int nParam = 0, nWithValues = 0;
         for (const GenExcStruct& g : result)
-            for (int i = 0; i < g.noiseExc.size(); ++i)
-                if (g.marking_type[i] == paramLabel) {
+            for (const Marking& m : g.marks)
+                if (m.type == annotation_types::kParamEditLabel) {
                     ++nParam;
-                    if (!std::isnan(g.threshold[i]) || !std::isnan(g.blanking[i]))
+                    if (!std::isnan(m.threshold) || !std::isnan(m.blanking))
                         ++nWithValues;
                 }
-        std::fprintf(stderr, "[markings] out: %d file(s), %d paramEdit row(s),"
-            " %d carrying values (overrides held: thr=%d blk=%d inv=%d)\n",
-            result.size(), nParam, nWithValues,
-            m_thresholdOverrides.size(), m_blankingOverrides.size(),
-            m_invertOverrides.size());
+        std::fprintf(stderr, "Noise and arrhythmias were marked");
     }
     return result;
 }

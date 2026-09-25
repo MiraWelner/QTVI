@@ -235,9 +235,9 @@ void user_control_handler::handle_clearall_button() {
         return;
 
     auto& exc = m_gui->m_genExc;
-    exc.noiseExc.clear();
-    exc.data_type.clear();
-    exc.marking_type.clear();
-    m_gui->m_noiseManager = std::make_unique<annotation_handler>();
+    // One clear for the whole marking list. This used to clear three of five
+    // parallel vectors, leaving threshold and blanking populated with stale
+    // entries after Clear All.
+    exc.marks.clear();
     m_gui->handle_data_plot();
 }

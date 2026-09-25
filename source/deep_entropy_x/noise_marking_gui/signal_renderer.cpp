@@ -34,6 +34,7 @@
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <QtCharts/QLegendMarker>
 #include <iostream>
@@ -107,14 +108,13 @@ namespace {
         }
     };
 
-    MarkSpanIndex buildMarkSpanIndex(const annotation_handler* mgr,
-        const std::string& label, double sr) {
+    MarkSpanIndex buildMarkSpanIndex(const QVector<Marking>& marks,
+        const std::string& label) {
         MarkSpanIndex idx;
-        if (!mgr) return idx;
-        for (const auto& seg : mgr->getSegments()) {
-            if (seg.label != label) continue;
-            idx.spans.push_back({ seg.startSample / sr, seg.endSample / sr,
-                                  annotation_types::markCode(seg.marking_type) });
+        for (const Marking& m : marks) {
+            if (m.channel != label) continue;
+            idx.spans.push_back({ m.start, m.end,
+                                  annotation_types::markCode(m.type) });
         }
         std::sort(idx.spans.begin(), idx.spans.end(),
             [](const MarkSpanIndex::Span& a, const MarkSpanIndex::Span& b) { return a.s < b.s; });
@@ -509,23 +509,22 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     //   postSpans:   the five post-eligible annotations (AF/SVT/VT/PVC/PAC),
     //                reduced to (end, tag) for marking the beat that follows.
     constexpr double kRefSec = gui_peak_finder::previous_seconds_to_train_on;
-    const double sr = sampleRateForSignal(label);
     std::vector<std::pair<double, double>> do_not_learn_from_region, no_peaks_in_region, withinSpans;
     std::vector<PostSpan> postSpans;
     const std::string labelStd = label.toStdString();   // convert once, not per segment
-    if (m_noiseManager) {
-        for (const auto& seg : m_noiseManager->getSegments()) {
-            if (seg.label != labelStd) continue;        // std::string compare, no per-seg QString alloc
-            const double s = seg.startSample / sr - globalOffset;
-            const double e = seg.endSample / sr - globalOffset;
+    {
+        for (const Marking& mk : m_genExc.marks) {
+            if (mk.channel != labelStd) continue;       // std::string compare, no per-seg QString alloc
+            const double s = mk.start - globalOffset;   // already seconds
+            const double e = mk.end - globalOffset;
             // Most markings are excluded from the reference-window stats
             // (threshold gate + mean R-R). Types flagged includeInThreshold
             // (e.g. Minor Noise) are kept in those stats, so they have no
             // effect on detection or on where the following R peaks land.
-            const bool inclThr = annotation_types::includeInThreshold(seg.marking_type);
+            const bool inclThr = annotation_types::includeInThreshold(mk.type);
             if (!inclThr)
                 do_not_learn_from_region.push_back({ s, e });
-            if (annotation_types::suppressesDetection(seg.marking_type))
+            if (annotation_types::suppressesDetection(mk.type))
             {
                 no_peaks_in_region.push_back({ s, e });
             }
@@ -533,7 +532,7 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
             {
                 withinSpans.push_back({ s, e });
             }
-            const int tag = annotation_types::postCode(seg.marking_type);
+            const int tag = annotation_types::postCode(mk.type);
             if (tag != 0) postSpans.push_back({ e, tag });
         }
     }
@@ -1188,7 +1187,7 @@ void noise_marking_gui::handle_data_plot() {
 
             if (m_beatLog) {
                 const MarkSpanIndex markIdx =
-                    buildMarkSpanIndex(m_noiseManager.get(), label.toStdString(), r.sampleRate);
+                    buildMarkSpanIndex(m_genExc.marks, label.toStdString());
                 // Anchor rows to ECG1 beat times (accel produces no beats of its own).
                 const QVector<QPointF> ecgPeaks = display_peaks_in_window("ECG1");
                 for (const QPointF& p : ecgPeaks) {
@@ -1224,7 +1223,7 @@ void noise_marking_gui::handle_data_plot() {
         if (m_beatLog) {
             const beat_log::ChannelIdx ch = beat_log::channelForLabel(label);
             const MarkSpanIndex markIdx =
-                buildMarkSpanIndex(m_noiseManager.get(), label.toStdString(), r.sampleRate);
+                buildMarkSpanIndex(m_genExc.marks, label.toStdString());
             for (int k = 0; k < peaks.size(); ++k) {
                 const double gt = peaks[k].x() + globalOffset;
                 m_beatLog->logPeak(ch, gt, peaks[k].y(),
@@ -1349,27 +1348,25 @@ void noise_marking_gui::updateNoiseHighlights() {
     const double viewStart = current_start_time;
     const double viewEnd = viewStart + visible_window_size;
 
-    // Per-channel sample rate keyed by std::string so off-screen segments
-    // (the vast majority at high marking counts) are filtered with no
-    // per-segment QString allocation; the QString is built only for segments
-    // that actually fall in the visible window.
-    std::unordered_map<std::string, double> srByLabel;
+    // Active-channel set keyed by std::string so off-screen segments (the vast
+    // majority at high marking counts) are filtered with no per-segment QString
+    // allocation; the QString is built only for segments that actually fall in
+    // the visible window. No sample rate needed: marks are already in seconds.
+    std::unordered_set<std::string> activeLabels;
     for (const QString& lbl : markableChannelLabels())
         if (isChannelActive(lbl))
-            srByLabel.emplace(lbl.toStdString(), sampleRateForSignal(lbl));
+            activeLabels.insert(lbl.toStdString());
 
-    for (const auto& seg : m_noiseManager->getSegments()) {
-        auto srIt = srByLabel.find(seg.label);
-        if (srIt == srByLabel.end()) continue;          // not an active channel; no alloc
-        const double sr = srIt->second;
-        const double segStart = seg.startSample / sr - globalOffset;
-        const double segEnd = seg.endSample / sr - globalOffset;
+    for (const Marking& mk : m_genExc.marks) {
+        if (!activeLabels.count(mk.channel)) continue;  // not an active channel; no alloc
+        const double segStart = mk.start - globalOffset;   // already seconds
+        const double segEnd = mk.end - globalOffset;
         if (segEnd < viewStart || segStart > viewEnd) continue;   // off-screen; no alloc
-        const QString segLabel = QString::fromStdString(seg.label);   // visible segments only
+        const QString segLabel = QString::fromStdString(mk.channel);   // visible segments only
 
         const double ds = std::max(segStart, viewStart);
         const double de = std::min(segEnd, viewEnd);
-        const QColor color = annotation_types::colorFor(QString::fromStdString(seg.marking_type));
+        const QColor color = annotation_types::colorFor(QString::fromStdString(mk.type));
 
         const ChartAxes& ca = axesMap[segLabel];
         if (!ca.chart || !ca.xAxis || !ca.yAxis) continue;
