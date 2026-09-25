@@ -80,7 +80,7 @@ namespace analysis_job {
         const std::filesystem::path rPeakPath = std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
         const std::filesystem::path binsPath = std::filesystem::path(cfg.template_path) / (stem + "_bins.bin");
 
-        anneal_one_file(binPath, noise_bin_path, annealedPath, cfg.bin_size_minutes, ecg1_inverted, ecg2_inverted, ecg3_inverted);
+        anneal_one_file(binPath, noise_bin_path, annealedPath, cfg.bin_size_minutes, cfg.waveform_highpass_hz, ecg1_inverted, ecg2_inverted, ecg3_inverted);
 
         AnalysisJob job;
         job.stem = stem;

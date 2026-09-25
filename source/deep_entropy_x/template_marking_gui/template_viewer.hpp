@@ -122,7 +122,7 @@ public:
         // regardless of the checkbox state; typically comes from
         // cfg.notch_filter_hz so the display filter matches whatever was
         // (or would have been) applied at build time.
-        int notchFilterHz = 0);
+        double notchFilterHz = 0.0);
 
     // ---- THE IN-MEMORY OVERLOAD ------------------------------------------
     //
@@ -173,7 +173,7 @@ public:
         const QString& subjectId, double sampleRateHz,
         double ppgRateHz = 0.0, double abpRateHz = 0.0,
         double artRateHz = 0.0, double artPulmRateHz = 0.0,
-        int notchFilterHz = 0);
+        double notchFilterHz = 0.0);
 
 signals:
     void finished();
@@ -936,7 +936,7 @@ private:
     bool m_showPpgDerivMarkers = false;
 
     bool m_notchFilterOn = false;
-    int  m_notchFilterHz = 0;
+    double m_notchFilterHz = 0.0;
 
     //Global references - earliest QRS onset, latest QRS offset, etc
     double m_ecgGlobalRef[3] = { std::nan(""), std::nan(""), std::nan("") };

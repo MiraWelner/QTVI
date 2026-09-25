@@ -200,14 +200,53 @@ namespace noise_markings {
     // never captured anywhere, in this format or any other -- and that is a
     // concern for AnnotationSegment/the GUI's override lists, not for this
     // Span-only reader.
-    inline LoadResult loadSpans(const std::string& path) {
-        LoadResult out;
+    // ONE ROW, ALL COLUMNS, BOTH LAYOUTS. The parse lives here and only here.
+    //
+    // Three consumers read this file and each wants a different projection of
+    // it: the marking GUI wants seconds, channel NAMES, type LABELS and the
+    // two parameter columns; the annealer wants seconds bucketed per channel
+    // and no types at all; make_averaged_templates wants sample indices and
+    // the raw annotation code. They used to be three independent parsers,
+    // which meant three magic checks, three count guards and three legacy
+    // branches -- and they drifted: loadSpans refused legacy files while the
+    // GUI read them, so every pre-versioned record showed its markings on
+    // screen as applied while the analysis path excluded nothing. Fixing that
+    // in one reader left anneal_handler still refusing them, i.e. the same
+    // divergence one layer over.
+    //
+    // So: loadRows() is the only function in the codebase that knows the byte
+    // layout, and the three readers are adapters over it. Legacy support is
+    // now a property of the format, not of whichever reader remembered it.
+    struct Row {
+        double  start_sample = 0.0;
+        double  end_sample = 0.0;
+        double  start_sec = 0.0;
+        double  end_sec = 0.0;
+        uint8_t channel_code = 0;
+        uint8_t annotation_code = 0;
+        // NaN both for "this marking type carries no parameters" and for every
+        // row of a legacy file, which has no columns for them. Callers that
+        // care already treat NaN as "unset"; callers that do not ignore these.
+        double  threshold = std::numeric_limits<double>::quiet_NaN();
+        double  blanking_ms = std::numeric_limits<double>::quiet_NaN();
+    };
+
+    struct RowsResult {
+        bool read = false;          // the file opened and a layout was recognized
+        bool legacy = false;        // it was the pre-versioned layout
+        std::string path;
+        std::string error;          // set on failure, or on a partial read
+        std::vector<Row> rows;
+    };
+
+    inline RowsResult loadRows(const std::string& path) {
+        RowsResult out;
         out.path = path;
 
         std::ifstream f(path, std::ios::binary);
         if (!f) { out.error = "not found"; return out; }
 
-        char header[8] = {};
+        char header[sizeof(kMagic)] = {};
         if (!f.read(header, sizeof(header))) {
             out.error = "truncated header"; return out;
         }
@@ -220,10 +259,10 @@ namespace noise_markings {
             // LEGACY LAYOUT. The same 8 bytes just read are a bare uint64 row
             // count instead of a magic; each row is six raw doubles --
             // start_sample, end_sample, start_sec, end_sec, channel_code,
-            // annotation_code, in that order and nothing else. Mirrors
-            // bin_chunk_loader.cpp's appendLegacyNoiseMarkingRows exactly
-            // (same layout, same guard), except this reader only needs four
-            // of those six columns.
+            // annotation_code, in that order and nothing else. The two
+            // layouts share their first 8 bytes only by coincidence of size,
+            // so one read tells them apart: if it is not the magic, it IS the
+            // count, not a corrupted magic.
             uint64_t legacyCount = 0;
             std::memcpy(&legacyCount, header, sizeof(legacyCount));
             // A COUNT OFF DISK IS NOT A COUNT UNTIL IT IS CHECKED -- same
@@ -236,7 +275,8 @@ namespace noise_markings {
             }
 
             out.read = true;
-            out.spans.reserve(static_cast<std::size_t>(legacyCount));
+            out.legacy = true;
+            out.rows.reserve(static_cast<std::size_t>(legacyCount));
             enum LegacyColumn : int {
                 kLStartSample = 0, kLEndSample, kLStartSec, kLEndSec,
                 kLChannelCode, kLAnnotationCode, kLegacyColumns
@@ -247,15 +287,15 @@ namespace noise_markings {
                     out.error = "truncated at row (legacy) " + std::to_string(r);
                     break;      // keep what parsed; the rest is unreadable
                 }
-                Span sp;
-                sp.start_sample = static_cast<int64_t>(row[kLStartSample]);
-                sp.end_sample = static_cast<int64_t>(row[kLEndSample]);
-                sp.channel_code = static_cast<uint8_t>(row[kLChannelCode]);
-                sp.annotation_code = static_cast<uint8_t>(row[kLAnnotationCode]);
-                // Drawn right-to-left: the GUI stores the drag as-is.
-                if (sp.end_sample < sp.start_sample)
-                    std::swap(sp.start_sample, sp.end_sample);
-                out.spans.push_back(sp);
+                Row rw;
+                rw.start_sample = row[kLStartSample];
+                rw.end_sample = row[kLEndSample];
+                rw.start_sec = row[kLStartSec];
+                rw.end_sec = row[kLEndSec];
+                rw.channel_code = static_cast<uint8_t>(row[kLChannelCode]);
+                rw.annotation_code = static_cast<uint8_t>(row[kLAnnotationCode]);
+                // threshold / blanking_ms stay NaN: no columns for them here.
+                out.rows.push_back(rw);
             }
             return out;
         }
@@ -266,6 +306,9 @@ namespace noise_markings {
             || !f.read(reinterpret_cast<char*>(&count), sizeof(count))) {
             out.error = "truncated header"; return out;
         }
+        // A version mismatch is a hard stop, not a best-effort read: guessing
+        // the row stride is how spans land at the wrong times while looking
+        // plausible.
         if (version != kVersion) {
             out.error = "version " + std::to_string(version)
                 + " != " + std::to_string(kVersion);
@@ -279,7 +322,7 @@ namespace noise_markings {
         }
 
         out.read = true;
-        out.spans.reserve(static_cast<std::size_t>(count));
+        out.rows.reserve(static_cast<std::size_t>(count));
         for (uint64_t r = 0; r < count; ++r) {
             std::array<double, kColumns> row{};
             if (!f.read(reinterpret_cast<char*>(row.data()),
@@ -287,11 +330,37 @@ namespace noise_markings {
                 out.error = "truncated at row " + std::to_string(r);
                 break;      // keep what parsed; the rest is unreadable
             }
+            Row rw;
+            rw.start_sample = row[kStartSample];
+            rw.end_sample = row[kEndSample];
+            rw.start_sec = row[kStartSec];
+            rw.end_sec = row[kEndSec];
+            rw.channel_code = static_cast<uint8_t>(row[kChannelCode]);
+            rw.annotation_code = static_cast<uint8_t>(row[kAnnotationCode]);
+            rw.threshold = row[kThreshold];
+            rw.blanking_ms = row[kBlankingMs];
+            out.rows.push_back(rw);
+        }
+        return out;
+    }
+
+    // ADAPTER. Sample indices and raw codes only; make_averaged_templates
+    // partitions morphology by annotation_code, so it needs the code rather
+    // than a label, and works in samples rather than seconds.
+    inline LoadResult loadSpans(const std::string& path) {
+        const RowsResult rr = loadRows(path);
+
+        LoadResult out;
+        out.path = rr.path;
+        out.error = rr.error;
+        out.read = rr.read;
+        out.spans.reserve(rr.rows.size());
+        for (const Row& rw : rr.rows) {
             Span sp;
-            sp.start_sample = static_cast<int64_t>(row[kStartSample]);
-            sp.end_sample = static_cast<int64_t>(row[kEndSample]);
-            sp.channel_code = static_cast<uint8_t>(row[kChannelCode]);
-            sp.annotation_code = static_cast<uint8_t>(row[kAnnotationCode]);
+            sp.start_sample = static_cast<int64_t>(rw.start_sample);
+            sp.end_sample = static_cast<int64_t>(rw.end_sample);
+            sp.channel_code = rw.channel_code;
+            sp.annotation_code = rw.annotation_code;
             // Drawn right-to-left: the GUI stores the drag as-is.
             if (sp.end_sample < sp.start_sample)
                 std::swap(sp.start_sample, sp.end_sample);

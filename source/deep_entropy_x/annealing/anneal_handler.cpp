@@ -30,6 +30,7 @@
 
 #include "anneal_handler.hpp"
 #include "../noise_marking_gui/user_annotation_handler.h"
+#include "../peak_finding/FilterUtils.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -64,9 +65,6 @@ namespace {
         double scoring_epoch_size_sec = 0;
     };
 
-    /// Per-channel noise markings as time intervals (seconds).
-    /// ECG noise is only excluded when all 3 channels overlap.
-    /// PPG noise is excluded independently.
     struct NoiseMarkings {
         std::vector<std::pair<double, double>> ecg1, ecg2, ecg3, ppg;
         std::vector<std::pair<double, double>> accel, abp, art, art_pulm;
@@ -77,9 +75,6 @@ namespace {
         int bin_start, bin_end;
     };
 
-    /// A contiguous good section of signal.
-    ///   dir:  0 = stationary, 1 = move left, 2 = move right
-    ///   flag: 1 = too small, needs merging with a neighbour
     struct Section {
         uint64_t begin, end;
         int dir = 0;
@@ -651,70 +646,44 @@ namespace {
         uint32_t signal_rate = 0, boolean_rate = 0, pacemaker_rate = 0, sleep_rate = 0;
     };
 
-    // Noise reader
+    // Noise reader -- ADAPTER over noise_markings::loadRows(), which is the
+    // only function that knows this file's byte layout (see the comment on
+    // loadRows in user_annotation_handler.h).
     //
-    // Format: [uint64 count] then count x [6 doubles per row]
-    //   Row: startSample, endSample, startSec, endSec, labelId, typeId
-    //   labelId: 0=unknown, 1=PPG, 2=ECG1, 3=ECG2, 4=ECG3, 5=ABP
-    // (typeId is unused here -- we only care about which channel was marked.)
+    // This projection is the narrowest of the three: second-pairs bucketed per
+    // channel, because the exclusion rule is per channel -- ECG noise only
+    // excludes where all three leads overlap, PPG excludes independently.
+    // The marking type is deliberately dropped, and so are kThreshold and
+    // kBlankingMs: the anneal excises noisy regions, while a threshold
+    // override is an instruction to the peak detector and means nothing here.
+    //
+    // LEGACY FILES NOW READ. This function used to refuse anything without the
+    // magic and anneal with no exclusions at all, while the marking GUI showed
+    // those same markings on screen as applied -- markings visible in the GUI
+    // but silently not excluded from processing, which is the exact bug that
+    // was already fixed once in loadSpans. Going through loadRows makes legacy
+    // support a property of the format rather than of whichever reader
+    // remembered it.
     NoiseMarkings read_noise_bin(const std::filesystem::path& path) {
         NoiseMarkings m;
-        std::ifstream f(path, std::ios::binary);
-        if (!f.is_open()) return m;
 
-        // ---- FORMAT: magic, version, count, rows of kColumns doubles -------
-        //
-        // THIS READER WAS MISSED when the noise-markings binary gained its magic
-        // header and its threshold/blanking columns, and the failure mode was
-        // the worst available one. The old code read the first 8 bytes as the
-        // row count; those bytes are now the ASCII magic, which as a uint64 is
-        // about 5.6e18. It then looped that many times reading 48 bytes each
-        // WITHOUT CHECKING THE STREAM, so past EOF every read failed silently,
-        // `row` kept its stale values, and an interval was pushed on nearly
-        // every iteration. Not a crash and not an error -- an effectively
-        // infinite loop that also grew four vectors without bound, which
-        // presents as the program hanging immediately after the anneal starts.
-        //
-        // The stream check inside the loop is not incidental to the fix. Without
-        // it, ANY future format change turns into a hang instead of a message,
-        // which is exactly how one missed reader cost a day.
-        char magic[sizeof(noise_markings::kMagic)] = {};
-        f.read(magic, sizeof(magic));
-        if (!f || std::memcmp(magic, noise_markings::kMagic, sizeof(magic)) != 0) {
-            std::cerr << "  noise markings " << path
-                << " has no magic header (pre-versioned file); ignoring it and "
-                "annealing with no exclusions\n";
+        const noise_markings::RowsResult rr =
+            noise_markings::loadRows(path.string());
+        if (!rr.read) {
+            std::cerr << "  noise markings " << path << ": "
+                << (rr.error.empty() ? "unreadable" : rr.error)
+                << " -- annealing with no exclusions\n";
             return m;
         }
+        if (rr.legacy)
+            std::cerr << "  noise markings " << path << " is a pre-versioned "
+            "(legacy) file; read " << rr.rows.size() << " row(s)\n";
+        if (!rr.error.empty())   // partial read: kept what parsed
+            std::cerr << "  noise markings " << path << ": " << rr.error << "\n";
 
-        uint32_t version = 0;
-        f.read(reinterpret_cast<char*>(&version), sizeof(version));
-        if (!f) return m;
-        if (version != noise_markings::kVersion) {
-            std::cerr << "  noise markings " << path << " is version " << version
-                << "; this build reads version " << noise_markings::kVersion
-                << " only -- annealing with no exclusions\n";
-            return m;
-        }
-
-        uint64_t count = 0;
-        f.read(reinterpret_cast<char*>(&count), 8);
-        if (!f) return m;
-
-        for (uint64_t i = 0; i < count; ++i) {
-            double row[noise_markings::kColumns];
-            f.read(reinterpret_cast<char*>(row), sizeof(row));
-            if (!f) {
-                std::cerr << "  noise markings " << path << " ended after " << i
-                    << " of " << count << " rows\n";
-                break;
-            }
-            // Columns kThreshold and kBlankingMs are deliberately unread here.
-            // The anneal excises noisy regions; a threshold override is an
-            // instruction to the peak detector and means nothing to it.
-            std::pair<double, double> iv = { row[noise_markings::kStartSec],
-                                             row[noise_markings::kEndSec] };
-            switch (static_cast<int>(row[noise_markings::kChannelCode])) {
+        for (const noise_markings::Row& row : rr.rows) {
+            const std::pair<double, double> iv = { row.start_sec, row.end_sec };
+            switch (static_cast<int>(row.channel_code)) {
             case 1: m.ppg.push_back(iv);      break;
             case 2: m.ecg1.push_back(iv);     break;
             case 3: m.ecg2.push_back(iv);     break;
@@ -989,14 +958,19 @@ namespace {
 bool anneal_one_file(const std::filesystem::path& binPath,
     const std::filesystem::path& noisePath,
     const std::filesystem::path& outPath,
-    double binLengthMin,
+    double binLengthMin, double highpassHz,
     bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
 {
     try {
         RawData raw;
         Extras  extras;
         read_data_bin(binPath, raw, extras);
-
+        if (highpassHz > 0.0) { //if the highpass is set in the config, run it on the ecg/ppg signals to remove baseline wander
+            raw.ecg1 = waveform_highpass(raw.ecg1, highpassHz, raw.ecgSR);
+            raw.ecg2 = waveform_highpass(raw.ecg2, highpassHz, raw.ecgSR);
+            raw.ecg3 = waveform_highpass(raw.ecg3, highpassHz, raw.ecgSR);
+            raw.ppg = waveform_highpass(raw.ppg, highpassHz, raw.ppgSR);
+        }
         NoiseMarkings noise;
         if (std::filesystem::exists(noisePath))
             noise = read_noise_bin(noisePath);

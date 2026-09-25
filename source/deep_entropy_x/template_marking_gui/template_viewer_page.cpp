@@ -1306,7 +1306,7 @@ void TemplateViewerWindow::applyBinCommonToWidget(BinPlotWidget* pw,
 // channels, the layout and the widgets themselves alone. That is what lets it
 // run mid-click without breaking a drag.
 void TemplateViewerWindow::reskinGridForAnchor(int onlyBin, int onlySlot) {
-    const bool notchActive = m_notchFilterOn && m_notchFilterHz > 0;
+    const bool notchActive = m_notchFilterOn && m_notchFilterHz > 0.0;
 
     for (int i = 0; i < (int)m_binPlots.size()
         && i < (int)m_pageGlobalIdx.size()
@@ -1351,7 +1351,7 @@ void TemplateViewerWindow::reskinGridForAnchor(int onlyBin, int onlySlot) {
             std::vector<double> ecgSrc = ecgRaw;
             if (notchActive && !ecgSrc.empty())
                 ecgSrc = notch_filter(ecgSrc,
-                    static_cast<double>(m_notchFilterHz), m_sampleRate);
+                    m_notchFilterHz, m_sampleRate);
 
             const std::vector<double> ecgN = normalizeEcgTrace(ecgSrc, lead_index);
             const double ecgRef = m_ecgGlobalRef[lead_index];

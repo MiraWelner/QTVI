@@ -227,7 +227,7 @@ void TemplateViewerWindow::setTitleForSubject() {
 void TemplateViewerWindow::loadSubject(const QString& templatePath, const QString& markingPath,
     const QString& subjectId, double sampleRateHz,
     double ppgRateHz, double abpRateHz, double artRateHz, double artPulmRateHz,
-    int notchFilterHz) {
+    double notchFilterHz) {
 
     m_markingPath = markingPath;
     m_templateDir = QFileInfo(templatePath).absolutePath();
@@ -286,7 +286,7 @@ void TemplateViewerWindow::loadSubject(const template_io::TemplateFile& tf,
     const QString& templateDir, const QString& markingPath,
     const QString& subjectId, double sampleRateHz,
     double ppgRateHz, double abpRateHz, double artRateHz, double artPulmRateHz,
-    int notchFilterHz) {
+    double notchFilterHz) {
 
     m_markingPath = markingPath;
     // EXPLICIT, not derived. The path overload takes it from the filename;

@@ -51,11 +51,11 @@
 std::vector<double> TemplateViewerWindow::maybeNotchTrace(
     const std::vector<double>& sig, double fs, double footIdx) const
 {
-    if (!(m_notchFilterOn && m_notchFilterHz > 0)) return sig;
+    if (!(m_notchFilterOn && m_notchFilterHz > 0.0)) return sig;
     if (sig.empty() || fs <= 0.0) return sig;
 
     std::vector<double> out =
-        notch_filter(sig, static_cast<double>(m_notchFilterHz), fs);
+        notch_filter(sig, m_notchFilterHz, fs);
 
     const int fi = static_cast<int>(std::lround(footIdx));
     if (footIdx >= 0.0 && fi >= 0

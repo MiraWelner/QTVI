@@ -33,183 +33,67 @@ void noise_marking_gui::setFileSource(const QString& filePath) {
 }
 
 namespace {
-    // Read a noise-markings .bin. TWO layouts, both handled here -- see
-    // noise_markings in user_annotation_handler.h, which the writer shares
-    // for the constants and lookup tables used by both:
-    //
-    //   CURRENT (starts with the 8-byte magic): magic, version, count, then
-    //   rows of noise_markings::kColumns doubles indexed by the Column enum.
-    //
-    //   LEGACY (pre-versioned, no magic): a bare uint64 row count followed by
-    //   rows of six doubles -- start_sample, end_sample, start_sec, end_sec,
-    //   channel_code, annotation_code, in that order and nothing else. These
-    //   files predate threshold/blanking storage entirely, so a
-    //   parameter-edit span in one carries no recorded value. It is loaded
-    //   with threshold/blanking as NaN -- the same sentinel the current
-    //   format uses for "not applicable to this marking type" -- so
-    //   rehydrateParamOverrides() treats it as an unset override rather than
-    //   silently defaulting it to cfg.threshold / cfg.blanking_period.
-    //
-    // The two layouts share their first 8 bytes only by coincidence of size:
-    // the legacy row count and the current magic are both exactly 8 bytes, so
-    // one read tells us which layout follows -- if it doesn't match the
-    // magic, it IS the legacy count, not a corrupted magic value.
-
-    // Appends rows from a legacy (pre-versioned) noise-markings .bin. `f` is
-    // already positioned right after the 8-byte count; this reads exactly
-    // `count` rows of six bare doubles.
-    void appendLegacyNoiseMarkingRows(std::ifstream& f, uint64_t count,
-        const std::filesystem::path& path, GenExcStruct& g) {
-        namespace nm = noise_markings;
-        enum LegacyColumn : int {
-            kLStartSample = 0, kLEndSample, kLStartSec, kLEndSec,
-            kLChannelCode, kLAnnotationCode, kLegacyColumns
-        };
-
-        for (uint64_t i = 0; i < count; ++i) {
-            double row[kLegacyColumns];
-            f.read(reinterpret_cast<char*>(row), sizeof(row));
-            if (!f) {
-                std::fprintf(stderr,
-                    "[noise-markings] %s (legacy) ended after %llu of %llu "
-                    "rows\n", path.string().c_str(),
-                    static_cast<unsigned long long>(i),
-                    static_cast<unsigned long long>(count));
-                break;
-            }
-
-            // Both lookups read the same tables the current-format reader
-            // uses below, so a miss here means the file names a channel or
-            // marking type this build does not know -- worth a line each
-            // rather than a silent skip.
-            const char* chan = nm::channel_for_code(
-                static_cast<uint8_t>(row[kLChannelCode]));
-            if (!chan) {
-                std::fprintf(stderr,
-                    "[noise-markings] %s (legacy) row %llu: unknown channel "
-                    "code %d, skipped\n", path.string().c_str(),
-                    static_cast<unsigned long long>(i),
-                    static_cast<int>(row[kLChannelCode]));
-                continue;
-            }
-            const char* type = nullptr;
-            for (const auto& t : annotation_types::noise_types)
-                if (t.code == static_cast<int>(row[kLAnnotationCode])) {
-                    type = t.label; break;
-                }
-            if (!type) {
-                std::fprintf(stderr,
-                    "[noise-markings] %s (legacy) row %llu: unknown marking "
-                    "code %d, skipped\n", path.string().c_str(),
-                    static_cast<unsigned long long>(i),
-                    static_cast<int>(row[kLAnnotationCode]));
-                continue;
-            }
-
-            // threshold/blanking default to NaN inside appendMarking -- there
-            // is no column for them in this layout.
-            g.appendMarking(row[kLStartSec], row[kLEndSec],
-                QString::fromLatin1(chan), QString::fromLatin1(type));
-        }
-    }
-
+    // ADAPTER over noise_markings::loadRows(), which is the only function that
+    // knows this file's byte layout (see the comment on loadRows in
+    // user_annotation_handler.h). This reader needs the widest projection of
+    // the three: seconds, channel NAMES, type LABELS, and the two parameter
+    // columns, because it is the one that rehydrates the GUI's threshold and
+    // blanking overrides. Legacy rows arrive with those two as NaN, which
+    // rehydrateParamOverrides() already reads as "unset" rather than
+    // substituting cfg.threshold / cfg.blanking_period.
     GenExcStruct readNoiseMarkingsBin(const std::filesystem::path& path,
         const QString& filePath) {
         namespace nm = noise_markings;
         GenExcStruct g;
         g.filePath = filePath;
-        std::ifstream f(path, std::ios::binary);
-        if (!f.is_open()) return g;
 
-        char header[sizeof(nm::kMagic)] = {};
-        f.read(header, sizeof(header));
-        if (!f) return g;   // truncated before header/count could even be told apart
-
-        if (std::memcmp(header, nm::kMagic, sizeof(header)) != 0) {
-            // No magic -- these 8 bytes are the legacy row count instead (see
-            // the comment above appendLegacyNoiseMarkingRows). Guard against
-            // an implausible count before looping over it, the same way
-            // loadSpans() does for the current format's count: a garbage
-            // value here is a sign this isn't actually a legacy file, not
-            // something to read millions of rows against.
-            uint64_t legacyCount = 0;
-            std::memcpy(&legacyCount, header, sizeof(legacyCount));
-            if (legacyCount > (1ull << 22)) {
-                std::fprintf(stderr,
-                    "[noise-markings] %s has neither a valid magic header "
-                    "nor a plausible legacy row count (%llu); refusing to "
-                    "read it.\n", path.string().c_str(),
-                    static_cast<unsigned long long>(legacyCount));
-                return g;
-            }
-            std::fprintf(stderr,
-                "[noise-markings] %s has no magic header, so it predates "
-                "parameter storage; reading it as a legacy file with %llu "
-                "row(s). Any parameter-edit span in it has no recorded "
-                "threshold/blanking and loads as unset.\n",
-                path.string().c_str(),
-                static_cast<unsigned long long>(legacyCount));
-            appendLegacyNoiseMarkingRows(f, legacyCount, path, g);
+        const nm::RowsResult rr = nm::loadRows(path.string());
+        if (!rr.read) {
+            if (!rr.error.empty())
+                std::fprintf(stderr, "[noise-markings] %s: %s\n",
+                    path.string().c_str(), rr.error.c_str());
             return g;
         }
-
-        uint32_t version = 0;
-        f.read(reinterpret_cast<char*>(&version), sizeof(version));
-        if (!f) return g;
-        // A version mismatch is a hard stop, not a best-effort read: guessing
-        // the row stride is how spans land at the wrong times while looking
-        // plausible.
-        if (version != nm::kVersion) {
+        if (rr.legacy)
             std::fprintf(stderr,
-                "[noise-markings] %s is version %u; this build reads version %u "
-                "only.\n", path.string().c_str(), version, nm::kVersion);
-            return g;
-        }
+                "[noise-markings] %s predates parameter storage; read as a "
+                "legacy file with %zu row(s). Any parameter-edit span in it "
+                "has no recorded threshold/blanking and loads as unset.\n",
+                path.string().c_str(), rr.rows.size());
+        if (!rr.error.empty())   // partial read: kept what parsed
+            std::fprintf(stderr, "[noise-markings] %s: %s\n",
+                path.string().c_str(), rr.error.c_str());
 
-        uint64_t count = 0;
-        f.read(reinterpret_cast<char*>(&count), sizeof(count));
-        if (!f) return g;
+        for (std::size_t i = 0; i < rr.rows.size(); ++i) {
+            const nm::Row& row = rr.rows[i];
 
-        for (uint64_t i = 0; i < count; ++i) {
-            double row[nm::kColumns];
-            f.read(reinterpret_cast<char*>(row), sizeof(row));
-            if (!f) {
-                std::fprintf(stderr,
-                    "[noise-markings] %s ended after %llu of %llu rows\n",
-                    path.string().c_str(),
-                    static_cast<unsigned long long>(i),
-                    static_cast<unsigned long long>(count));
-                break;
-            }
-
-            // Both lookups read the tables the writer wrote from, so a miss here
-            // means the file names something this build does not know. Worth a
-            // line each rather than a silent skip -- silent skipping is what hid
-            // the writer/reader channel-map divergence before the tables were
-            // unified.
-            const char* chan = nm::channel_for_code(
-                static_cast<uint8_t>(row[nm::kChannelCode]));
+            // Both lookups read the tables the writer wrote from, so a miss
+            // here means the file names something this build does not know.
+            // Worth a line each rather than a silent skip -- silent skipping
+            // is what hid the writer/reader channel-map divergence before the
+            // tables were unified.
+            const char* chan = nm::channel_for_code(row.channel_code);
             if (!chan) {
-                std::fprintf(stderr, "[noise-markings] row %llu: unknown channel "
-                    "code %d, skipped\n", static_cast<unsigned long long>(i),
-                    static_cast<int>(row[nm::kChannelCode]));
+                std::fprintf(stderr, "[noise-markings] %s row %zu: unknown "
+                    "channel code %d, skipped\n", path.string().c_str(), i,
+                    static_cast<int>(row.channel_code));
                 continue;
             }
             const char* type = nullptr;
             for (const auto& t : annotation_types::noise_types)
-                if (t.code == static_cast<int>(row[nm::kAnnotationCode])) {
+                if (t.code == static_cast<int>(row.annotation_code)) {
                     type = t.label; break;
                 }
             if (!type) {
-                std::fprintf(stderr, "[noise-markings] row %llu: unknown marking "
-                    "code %d, skipped\n", static_cast<unsigned long long>(i),
-                    static_cast<int>(row[nm::kAnnotationCode]));
+                std::fprintf(stderr, "[noise-markings] %s row %zu: unknown "
+                    "marking code %d, skipped\n", path.string().c_str(), i,
+                    static_cast<int>(row.annotation_code));
                 continue;
             }
 
-            g.appendMarking(row[nm::kStartSec], row[nm::kEndSec],
+            g.appendMarking(row.start_sec, row.end_sec,
                 QString::fromLatin1(chan), QString::fromLatin1(type),
-                row[nm::kThreshold], row[nm::kBlankingMs]);
+                row.threshold, row.blanking_ms);
         }
         return g;
     }
@@ -355,10 +239,6 @@ void noise_marking_gui::rehydrateParamOverrides() {
         const QString& ch = m_genExc.data_type[i];
         const QString& ty = m_genExc.marking_type[i];
 
-        std::fprintf(stderr, "[rehydrate] %d: ch=%s ty='%s' %.3f-%.3f thr=%.3f blk=%.3f\n",
-            i, ch.toStdString().c_str(), ty.toStdString().c_str(),
-            lo, hi, m_genExc.threshold[i], m_genExc.blanking[i]);
-
         if (ty == paramLabel) {
             if (!std::isnan(m_genExc.threshold[i]))
                 m_thresholdOverrides.append(ParamOverride{ ch, lo, hi, m_genExc.threshold[i] });
@@ -369,17 +249,14 @@ void noise_marking_gui::rehydrateParamOverrides() {
             m_invertOverrides.append(ParamOverride{ ch, lo, hi, 1.0 });
         }
     }
-    std::fprintf(stderr, "[rehydrate] thr=%d blk=%d inv=%d, paramLabel='%s'\n",
-        m_thresholdOverrides.size(), m_blankingOverrides.size(),
-        m_invertOverrides.size(), paramLabel.toStdString().c_str());
 }
 
 void noise_marking_gui::handleBrowseFile() {
     QString startDir;
     if (!m_binFilePath.isEmpty())
         startDir = QFileInfo(m_binFilePath).absolutePath();
-    else if (!m_cfg.bin_file_path.empty())
-        startDir = QString::fromStdString(m_cfg.bin_file_path);
+    else if (!m_cfg.input_path.empty())
+        startDir = QString::fromStdString(m_cfg.input_path);
 
     QString binPath = QFileDialog::getOpenFileName(
         this, "Select Bin File", startDir,
@@ -508,7 +385,14 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
         constexpr uint64_t kBlockPairs = 1u << 20;   // 1M pairs = 16 MB per read
         uint64_t remaining = totalPairs - firstPair;
         bool done = false;
-        dest.reserve(static_cast<int>(std::min<uint64_t>(remaining,
+        // Reserve for THIS chunk, not for the rest of the channel: remaining
+        // counts every pair from here to EOF, so on chunk 0 of a long
+        // recording reserve(remaining) asked for the whole raw block up front.
+        // nativeHz * chunk seconds bounds what the window can hold.
+        const uint64_t expectedPairs = static_cast<uint64_t>(
+            static_cast<double>(nativeHz) * seconds_in_memory_at_once) + 1;
+        dest.reserve(static_cast<int>(std::min<uint64_t>(
+            std::min(remaining, expectedPairs),
             static_cast<uint64_t>(std::numeric_limits<int>::max()))));
         std::vector<double> buf;
         while (remaining > 0 && !done) {
@@ -532,62 +416,49 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
         }
         };
 
-    loadSignal(m_ecg1, CH_ECG1);   loadSignal(m_ecg2, CH_ECG2);
-    loadSignal(m_ecg3, CH_ECG3);   loadSignal(m_ppg, CH_PPG);
-    loadSignal(m_accelX, CH_ACCEL_X); loadSignal(m_accelY, CH_ACCEL_Y);
-    loadSignal(m_accelZ, CH_ACCEL_Z); loadSignal(m_cvp, CH_CVP);
-    loadSignal(m_resp, CH_RESP);    loadSignal(m_abp, CH_ABP);
-    loadSignal(m_art, CH_ART); loadSignal(m_artPulm, CH_ART_PULM);
-    loadSignal(m_temp, CH_TEMP);    loadSignal(m_marker, CH_MARKER);
-    loadSignal(m_pacemaker, CH_PACEMAKER_EVENT);
-    loadSignal(m_flow, CH_FLOW);    loadSignal(m_thor, CH_THOR);
-    loadSignal(m_abdo, CH_ABDO);    loadSignal(m_spo2, CH_SPO2);
+    // One table, so the upsampled and raw loads cannot drift apart. These were
+    // two hand-maintained lists of the same 19 channels in different orders;
+    // adding a channel to one and forgetting the other gives a trace with no
+    // scatter, or a scatter with no trace.
+    struct ChannelLoad { QVector<double>* up; QVector<QPointF>* raw; int ch; };
+    const ChannelLoad kChannels[] = {
+        { &m_ecg1,      &m_ecg1Raw,      CH_ECG1            },
+        { &m_ecg2,      &m_ecg2Raw,      CH_ECG2            },
+        { &m_ecg3,      &m_ecg3Raw,      CH_ECG3            },
+        { &m_ppg,       &m_ppgRaw,       CH_PPG             },
+        { &m_accelX,    &m_accelXRaw,    CH_ACCEL_X         },
+        { &m_accelY,    &m_accelYRaw,    CH_ACCEL_Y         },
+        { &m_accelZ,    &m_accelZRaw,    CH_ACCEL_Z         },
+        { &m_cvp,       &m_cvpRaw,       CH_CVP             },
+        { &m_resp,      &m_respRaw,      CH_RESP            },
+        { &m_abp,       &m_abpRaw,       CH_ABP             },
+        { &m_art,       &m_artRaw,       CH_ART             },
+        { &m_artPulm,   &m_artPulmRaw,   CH_ART_PULM        },
+        { &m_temp,      &m_tempRaw,      CH_TEMP            },
+        { &m_marker,    &m_markerRaw,    CH_MARKER          },
+        { &m_pacemaker, &m_pacemakerRaw, CH_PACEMAKER_EVENT },
+        { &m_flow,      &m_flowRaw,      CH_FLOW            },
+        { &m_thor,      &m_thorRaw,      CH_THOR            },
+        { &m_abdo,      &m_abdoRaw,      CH_ABDO            },
+        { &m_spo2,      &m_spo2Raw,      CH_SPO2            },
+    };
+    for (const ChannelLoad& c : kChannels) loadSignal(*c.up, c.ch);
 
-    // THE WHOLE-CHUNK POWERLINE NOTCH USED TO BE HERE, AND IS GONE.
+    // THE ARRAYS LOADED HERE ARE NEVER FILTERED, DELIBERATELY.
     //
-    // It filtered seven upsampled channels across the entire 8-hour chunk on
-    // every toggle -- 6 s at 500 Hz, 12 s at 1 kHz -- and the checkbox handler
-    // additionally re-read every channel and every raw block from disk, which
-    // nothing about flipping a bool required. Between them that was the
-    // multi-second stall on clicking "Notch Filter".
-    //
-    // The notch is now applied at RENDER time, to the visible window only
-    // (notchedSpan / notchedSpanRaw in signal_renderer.cpp): about 7 ms for
-    // seven channels at a 30 s window, so the toggle is immediate and costs no
-    // extra memory.
-    //
-    // AND IT IS DISPLAY-ONLY, DELIBERATELY. The arrays loaded here stay
-    // pristine because detectPeaks reads *dataRaw -- the same block the
-    // renderer draws -- so filtering in place would push the notch into beat
-    // positions and into the per-beat log. The comment that used to sit here
-    // claimed "both the display and downstream peak detection see the same
-    // cleaned signal"; that was never true -- detection reads the raw block,
-    // and only the upsampled arrays were being filtered -- and it is now
-    // explicitly not the design.
-    //
-    // NOTHING ON THE ANALYSIS PATH IS EVER NOTCHED. The annealed .bin is read
-    // fresh by analysis_job::prepare and filtered by nothing, so every R peak,
-    // template, envelope and CSV comes from unfiltered signal. This checkbox,
-    // and the matching one in the template viewer, change what is DRAWN and
-    // nothing else.
+    // The powerline notch is applied at RENDER time to the visible window only
+    // (notchedSpan / notchedSpanRaw in signal_renderer.cpp), which keeps it
+    // display-only: detectPeaks reads *dataRaw, the same block the renderer
+    // draws, so filtering in place would push the notch into beat positions
+    // and into the per-beat log. Nothing on the analysis path is notched
+    // either -- analysis_job::prepare re-reads the annealed .bin and filters
+    // nothing, so every R peak, template, envelope and CSV comes from
+    // unfiltered signal. This checkbox and the one in the template viewer
+    // change what is DRAWN and nothing else.
 
-    loadRaw(m_ecg1Raw, CH_ECG1);   loadRaw(m_ecg2Raw, CH_ECG2);
-    loadRaw(m_ecg3Raw, CH_ECG3);   loadRaw(m_ppgRaw, CH_PPG);
-    loadRaw(m_abpRaw, CH_ABP);    loadRaw(m_accelXRaw, CH_ACCEL_X);
-    loadRaw(m_accelYRaw, CH_ACCEL_Y); loadRaw(m_accelZRaw, CH_ACCEL_Z);
-    loadRaw(m_respRaw, CH_RESP);   loadRaw(m_cvpRaw, CH_CVP);
-    loadRaw(m_artRaw, CH_ART); loadRaw(m_artPulmRaw, CH_ART_PULM);
-    loadRaw(m_tempRaw, CH_TEMP);   loadRaw(m_markerRaw, CH_MARKER);
-    loadRaw(m_pacemakerRaw, CH_PACEMAKER_EVENT);
-    loadRaw(m_flowRaw, CH_FLOW);   loadRaw(m_thorRaw, CH_THOR);
-    loadRaw(m_abdoRaw, CH_ABDO);   loadRaw(m_spo2Raw, CH_SPO2);
-
-    // The raw (t, v) block is stored with x = row-index time (row index /
-    // grid rate), the same clock the upsampled block uses, so the raw scatter
-    // already lands exactly on the upsampled trace -- no re-timing needed. (The
-    // old code rewrote x to per-channel ordinal time here, which desynced the
-    // two blocks at every gap; that rewrite, and the gap_indicator it fed, have
-    // been removed.)
+    // The raw (t, v) block is stored on the same clock as the upsampled block,
+    // so the scatter lands on the trace with no re-timing needed here.
+    for (const ChannelLoad& c : kChannels) loadRaw(*c.raw, c.ch);
 
     {
         uint64_t perChunk = static_cast<uint64_t>(seconds_in_memory_at_once * m_sleepSR);

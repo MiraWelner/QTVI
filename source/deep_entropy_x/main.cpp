@@ -9,7 +9,7 @@
 #include "noise_marking_gui/user_annotation_handler.h"
 #include "fiducial_marker_finding/parse_data_from_filename.hpp"
 #include "logging/user_mark_log.hpp"
-#include "template_viewer/template_viewer.hpp"
+#include "template_marking_gui/template_viewer.hpp"
 
 #include <QtWidgets/QApplication>
 #include <QGuiApplication>
@@ -66,7 +66,7 @@ static std::string get_initials() {
 static std::vector<std::filesystem::path> load_binfiles(const config_entry& cfg) {
     std::vector<std::filesystem::path> binFiles;
     for (const auto& entry :
-        std::filesystem::directory_iterator(cfg.bin_file_path)) {
+        std::filesystem::directory_iterator(cfg.input_path)) {
         if (entry.is_regular_file() && entry.path().extension() == ".bin")
             binFiles.push_back(entry.path());
     }
@@ -196,7 +196,7 @@ int main(int argc, char* argv[]) {
     //load the bin files
     const std::vector<std::filesystem::path> binFiles = load_binfiles(cfg);
     if (binFiles.empty()) {
-        std::cerr << "No .bin files in: " << cfg.bin_file_path << "\n";
+        std::cerr << "No .bin files in: " << cfg.input_path << "\n";
         return 0;
     }
 

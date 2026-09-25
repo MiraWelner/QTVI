@@ -1,6 +1,6 @@
 #pragma once
 /**
- * @file   config_entry.hpp
+ * @file   config.hpp
  * @brief  config_entry is a struct containing all the rates, paths, lables, etc in the config.csv file.
  */
 
@@ -50,8 +50,8 @@ struct config_entry {
     double threshold = 0.0;
     double bin_size_minutes = 0.0;
     double ecg_match_floor = 0.0;
-    double ppg_match_floor = 0.0; // The band match score between 2 ppg signals to merge in the same template
-    double ppg_fit_error_pct = 0.0; //percent similarity between a ppg signal and the ppg template for the ppg signal to be not thrown away
+    double ppg_match_floor = 0.0;
+    double ppg_fit_error_pct = 0.0;
     int min_beats_template_ecg = 0;
     int min_beats_template_ppg = 0;
 
@@ -62,7 +62,6 @@ struct config_entry {
     // Output subpaths used by the marking / viewer pipeline. output_path is
     // the user-set parent; the rest are derived from it by deriveSubpaths()
     // in config_loader. Ignored by the bin maker.
-    std::string bin_file_path;
     std::string noise_data_path;
     std::string annealed_data_path;
     std::string r_peak_data_path;
@@ -74,7 +73,7 @@ struct config_entry {
     std::string training_log;
     std::string vcg_output;
 
-    
+
     // Different filetypes have different terms for the same type of signal,
     // If only one filetype has a given type of data (ie only bittium has accelration) then the label
     // name is set here. Otherwise, it is set in the apply_dataset_specific_channel_labels function in config_loader.cpp
@@ -116,7 +115,7 @@ struct config_entry {
 
 
     bool use_consensus_rpeak = true;
-    int notch_filter_hz = 0;
+    double notch_filter_hz = 0.0;
     double waveform_highpass_hz = 0.0;
 
     // --- Subject demographics (stored only; no downstream use yet) ---
@@ -124,6 +123,6 @@ struct config_entry {
     std::string sex;
     double weight_kg = 0.0;
     double height_cm = 0.0;
-    int    hr_rest = 0;
-    int    hr_max = 0;
+    double hr_rest = 0.0;
+    double hr_max = 0.0;
 };

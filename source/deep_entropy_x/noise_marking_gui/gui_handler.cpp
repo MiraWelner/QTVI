@@ -293,13 +293,6 @@ void applyMarkStyle(QPushButton* btn, const char* phase) {
     btn->update();
 }
 
-QPushButton* noise_marking_gui::startButtonForSignal(const QString& label) const {
-    return channelRefs(label).startButton;
-}
-QPushButton* noise_marking_gui::stopButtonForSignal(const QString& label) const {
-    return channelRefs(label).stopButton;
-}
-
 void noise_marking_gui::setMarkScope(MarkScope scope) {
     m_markScope = scope;
 }
@@ -681,12 +674,6 @@ noise_marking_gui::~noise_marking_gui() {
 // ============================================================================
 // Accessors
 // ============================================================================
-
-GenExcStruct noise_marking_gui::getMarkings() const {
-    GenExcStruct result = m_genExc;
-    result.filePath = m_binFilePath;
-    return result;
-}
 
 QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
     //get all markings - both annotations and threshold/invert overrides

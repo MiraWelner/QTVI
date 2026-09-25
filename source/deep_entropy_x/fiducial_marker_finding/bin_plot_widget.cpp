@@ -1,5 +1,5 @@
 /*
-* @brief BinPlotWidget.cpp
+* @brief bin_plot_widget.cpp
 *
 * Handles the drawing of a single plot on the template marking GUI.
 *

@@ -93,7 +93,6 @@ public:
     // @param parent Optional Qt parent widget.
     explicit noise_marking_gui(QWidget* parent = nullptr);
     ~noise_marking_gui() override;
-    GenExcStruct getMarkings() const;
     QVector<GenExcStruct> getAllMarkings() const;
     QString getFilePath() const { return m_binFilePath; }
     void setFileSource(const QString& filePath);
@@ -221,7 +220,6 @@ private:
     QLineSeries* ppg_ampogram_series = nullptr;
     QLineSeries* m_ecgCursorBar = nullptr;
     QLineSeries* m_ppgCursorBar = nullptr;
-    QLineSeries* m_respCursorBar = nullptr;
     QLineSeries* m_cvpCursorBar = nullptr;
     QLineSeries* m_hypnoCursorBar = nullptr;
     QList<QAreaSeries*>     m_highlights;
@@ -300,9 +298,6 @@ private:
 
     double totalChunkDuration() const; //duration of chunk loaded in memory in SECONDS
 
-    // --- Per-channel button helpers ---
-    QPushButton* startButtonForSignal(const QString& label) const;
-    QPushButton* stopButtonForSignal(const QString& label) const;
     bool loadChunkFromFile(uint64_t chunkIndex, bool resetScroll = true);
     void handle_data_plot();
     void determine_which_nonmarkable_charts_to_plot();

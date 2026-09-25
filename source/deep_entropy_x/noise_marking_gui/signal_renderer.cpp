@@ -166,9 +166,9 @@ namespace {
     // would copy a whole window to no effect. Asking first lets the draw loops
     // take their zero-allocation path instead. Mirrors FilterUtils' own test
     // (Q = 30 there; bandwidth = notch_hz / Q).
-    bool notchWouldApply(double sr, int notchHz) {
-        if (notchHz <= 0 || sr <= 0.0) return false;
-        const double hz = static_cast<double>(notchHz);
+    bool notchWouldApply(double sr, double notchHz) {
+        if (notchHz <= 0.0 || sr <= 0.0) return false;
+        const double hz = notchHz;
         const double halfBw = 0.5 * hz / 30.0;
         return (hz - halfBw) > 0.0 && (hz + halfBw) < (sr / 2.0);
     }
@@ -177,7 +177,7 @@ namespace {
     // Returns empty if there is nothing to do, which callers read as "draw the
     // original".
     std::vector<double> notchedSpan(const QVector<double>& src, int from, int to,
-        double sr, int notchHz)
+        double sr, double notchHz)
     {
         if (to <= from || !notchWouldApply(sr, notchHz)) return {};
         const int pad = static_cast<int>(kNotchPadSec * sr);
@@ -190,7 +190,7 @@ namespace {
         // gaps survive as gaps instead of poisoning the whole buffer, and it
         // no-ops (returning the input unchanged) when the notch would land at
         // or past Nyquist for this rate.
-        buf = notch_filter(buf, static_cast<double>(notchHz), sr);
+        buf = notch_filter(buf, notchHz, sr);
         if (buf.size() != static_cast<size_t>(hi - lo)) return {};
         return std::vector<double>(buf.begin() + (from - lo),
             buf.begin() + (from - lo) + (to - from));
@@ -200,7 +200,7 @@ namespace {
     // y values are filtered at the block's own NATIVE rate. Returns the
     // filtered y values for [from, to), or empty to mean "draw the original".
     std::vector<double> notchedSpanRaw(const QVector<QPointF>& src, int from, int to,
-        double nativeSr, int notchHz)
+        double nativeSr, double notchHz)
     {
         if (to <= from || !notchWouldApply(nativeSr, notchHz)) return {};
         const int pad = static_cast<int>(kNotchPadSec * nativeSr);
@@ -209,7 +209,7 @@ namespace {
         if (hi - lo < 4) return {};
         std::vector<double> buf(static_cast<size_t>(hi - lo));
         for (int i = lo; i < hi; ++i) buf[static_cast<size_t>(i - lo)] = src[i].y();
-        buf = notch_filter(buf, static_cast<double>(notchHz), nativeSr);
+        buf = notch_filter(buf, notchHz, nativeSr);
         if (buf.size() != static_cast<size_t>(hi - lo)) return {};
         return std::vector<double>(buf.begin() + (from - lo),
             buf.begin() + (from - lo) + (to - from));
@@ -241,7 +241,7 @@ namespace {
         // Powerline notch, applied to the drawn window only. 0 = off, which is
         // also the default, so plot_nonmarkable and any other caller that does
         // not opt in is unchanged.
-        int notchHz = 0, double rawNativeSR = 0.0) {
+        double notchHz = 0.0, double rawNativeSR = 0.0) {
         if (!view || !view->chart()) return { 1e9, -1e9 };
         QChart* chart = view->chart();
         chart->legend()->hide();
@@ -1140,7 +1140,7 @@ void noise_marking_gui::handle_data_plot() {
             // Notch the drawn window only. Gated on the checkbox AND on the
             // config having a powerline frequency, exactly as the old
             // whole-chunk block was.
-            (m_notchFilterEnabled ? m_cfg.notch_filter_hz : 0),
+            (m_notchFilterEnabled ? m_cfg.notch_filter_hz : 0.0),
             nativeHz);
 
 
