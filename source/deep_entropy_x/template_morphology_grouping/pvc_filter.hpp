@@ -1,75 +1,8 @@
 #pragma once
 /**
  * @file   pvc_filter.hpp
- * @brief  Section 4.6 prematurity filter and 5-of-8 voting, run across ALL
+ * @brief  Prematurity filter and 5-of-8 voting, run across ALL
  *         detected beats as a standalone step.
- *
- *         THE FUNCTIONS ARE UNMODIFIED. The spec's isPremature() indexes rr[t]
- *         as beat t's OWN interval -- the interval PRECEDING beat t -- and takes
- *         its median over rr[t-10 .. t-1]. Your data is not stored that way:
- *         alignment.hpp's rr_lens[i] holds the interval FOLLOWING beat i
- *         (R[i+1] - R[i]), because that is the span the slice covers.
- *
- *         Rather than rewrite the spec function to chase the offset, the INPUT
- *         is converted once by toPrecedingIntervals(). Two reasons that is the
- *         right way round: the function stays byte-identical to the document so
- *         it can be diffed against it, and the convention shift lives in exactly
- *         one place instead of being smeared through index arithmetic at every
- *         use.
- *
- *         With the adapter in place this reproduces alignment.hpp's internal
- *         filter exactly: its median over rr_lens[t-11 .. t-2] compared against
- *         rr_lens[t-1] is, in preceding-interval terms, the median over
- *         rr_pre[t-10 .. t-1] against rr_pre[t] -- which is what the spec's
- *         function computes.
- *
- *         WHY THIS EXISTS SEPARATELY FROM alignment.hpp. alignment.hpp already
- *         implements both tests (lines ~247-273), correctly and in the right
- *         place: after slicing, before the Tukey passes, because Tukey rejects
- *         on RR length at 1.5*IQR and a premature beat is short by definition,
- *         so flagging after pruning would find nothing left to flag. But those
- *         flags live on `out.premature` / `out.voted`, which are compacted by
- *         every apply_mask alongside `beats` -- so a beat that Tukey rejects
- *         loses its flag with it.
- *
- *         The pipeline order requires the filter to run across all beats, and
- *         the archive requires three flags for EVERY beat, including the ones
- *         alignment discarded. A beat rejected by Tukey and premature is one of
- *         the more interesting rows in the file: it is the case where the two
- *         gates agree that something is wrong, and it is invisible if the flag
- *         was compacted away with the beat.
- *
- *         So this runs on the detected R-peak list before any pruning, keyed on
- *         the ORIGINAL beat index, and its output is never compacted. It is not
- *         a reimplementation competing with alignment's copy -- alignment needs
- *         its own internal flags to drive the line-175 pruning exemption, and
- *         those must agree with these. runFilter() is written to produce
- *         identical verdicts on the beats the two share; see kVoteWindow.
- *
- *         TWO PATHS, DISJOINT COMPETENCE, COUNTED SEPARATELY. The raw
- *         prematurity test catches isolated ectopy. The vote only rescues beats
- *         inside consecutive runs. Alternating patterns fall between them and
- *         neither works:
- *
- *           - Perfect bigeminy: exactly 4 of any 8 consecutive beats are
- *             ectopic, the count never reaches 5, THE VOTE NEVER FIRES.
- *           - Trigeminy: ~2.7 of 8. Never fires.
- *           - VT run / salvo: the neighborhood is densely flagged, the vote
- *             fires, and it is the only thing that catches the mid-run beats
- *             whose trailing-ten median has already collapsed.
- *
- *         Which means the COUNT PATTERN IDENTIFIES THE RHYTHM. High raw with
- *         zero vote is bigeminy. High vote is a run. That is why the two are
- *         never summed into one number.
- *
- *         AND THE RAW TEST DECAYS INSIDE A RUN. RR(t) < 0.80 * median of the
- *         trailing ten stops firing once the trailing ten are themselves short
- *         -- by beat 11 of a VT run the ratio approaches 1.0 and the test goes
- *         quiet on exactly the beats that matter most. The vote is the patch
- *         for that, and it is a timing-domain patch for a timing-domain blind
- *         spot: it votes over prematurity flags and never looks at a waveform.
- *         Morphology has no equivalent decay, which is why the bank and this
- *         filter are independent gates rather than one gate twice.
  */
 
 #include <algorithm>
@@ -100,25 +33,6 @@ namespace pvc_filter {
         for (int i = lo; i < hi; ++i) c += flag[i];
         return c >= 5;
     }
-
-    // ---------------------------------------------------------------------
-    // Convention adapter
-    // ---------------------------------------------------------------------
-
-    // rr_after[i] = R[i+1] - R[i], alignment.hpp's rr_lens convention.
-    // Returns rr_pre[i] = the interval PRECEDING beat i, which is what the
-    // spec's isPremature() reads at index t.
-    //
-    // A beat is premature when the interval BEFORE it is short. Feeding rr_lens
-    // straight in tests the interval AFTER each beat, which flags the beat
-    // PRECEDING every PVC instead of the PVC -- and since the beat before a PVC
-    // looks normal while the beat after is a compensatory pause, that detector
-    // fires at roughly the right rate in roughly the right places. It looks
-    // exactly like a detector that nearly works.
-    //
-    // rr_pre[0] has no predecessor and is NaN, not 0.0, so nothing can mistake
-    // "no preceding beat" for "a zero-length interval". isPremature() returns
-    // false for t < 10 anyway, so it is never read there.
     inline std::vector<double> toPrecedingIntervals(
         const std::vector<double>& rr_after)
     {
@@ -133,8 +47,8 @@ namespace pvc_filter {
     // them without a second definition drifting from the first.
     inline constexpr double kPrematureRatio = 0.80;
     inline constexpr int    kTrailingWindow = 10;
-    inline constexpr int    kVoteWindow     = 8;
-    inline constexpr int    kVoteRequired   = 5;
+    inline constexpr int    kVoteWindow = 8;
+    inline constexpr int    kVoteRequired = 5;
     inline constexpr size_t kMinBeatsForFilter = 12;
 
     struct FilterResult {
@@ -147,9 +61,9 @@ namespace pvc_filter {
         // median was available.
         std::vector<double> ratio;
 
-        uint32_t n_premature  = 0;
-        uint32_t n_vote_only  = 0;   // voted but not itself premature
-        uint32_t n_no_median  = 0;   // t < 10, no trailing window
+        uint32_t n_premature = 0;
+        uint32_t n_vote_only = 0;   // voted but not itself premature
+        uint32_t n_no_median = 0;   // t < 10, no trailing window
         uint32_t n_vote_blind = 0;   // vote window clamped below 5 beats
     };
 
@@ -223,12 +137,5 @@ namespace pvc_filter {
         return out;
     }
 
-    // Diagnostic for the bigeminy blind spot, read off the verdicts rather than
-    // the rhythm. A substantial premature count with zero votes is alternating
-    // ectopy -- the pattern where the vote is arithmetically incapable of
-    // firing. A substantial vote count means runs.
-    inline bool looksAlternating(const FilterResult& r) {
-        return r.n_premature >= 8 && r.n_vote_only == 0;
-    }
 
 }  // namespace pvc_filter

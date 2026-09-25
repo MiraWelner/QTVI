@@ -177,7 +177,7 @@ namespace ppg_realign {
     // ---- THE SPREAD THE BANK SLOT FIELD ACTUALLY HOLDS ------------------
     //
     // RAW-AMPLITUDE q3 - q1 PER COLUMN, in the same units as tmpl. Copied
-    // from template_assign.hpp, which is what writes tbank::BankTemplate::
+    // from template_bank.hpp, which is what writes tbank::BankTemplate::
     // tmpl_iqr at build time -- and the units are the whole point:
     //
     //   pulseTraceForSlot draws the band as

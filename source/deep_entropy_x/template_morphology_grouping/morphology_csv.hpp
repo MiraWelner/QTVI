@@ -24,7 +24,7 @@
 #include <string>
 #include <vector>
 
-#include "bin_pipeline.hpp"
+#include "joint_bank.hpp"
 
 namespace morphology_csv {
 
@@ -167,7 +167,7 @@ namespace morphology_csv {
         // record, or a bin the pulse channel found no usable beat in. Its slices
         // still get columns, with no samples: a slice that produced no beat on
         // this channel is a fact the archive has to be able to state.
-        std::vector<const bin_pipeline::ChannelOutput*> per_bin;
+        std::vector<const tbank::ChannelOutput*> per_bin;
 
         // This channel's captured beats for the bin, [row][sample], on the
         // shared axis. Indexed by ROW, which is not a slice; local_of_slice
@@ -192,7 +192,7 @@ namespace morphology_csv {
         bool empty() const { return per_bin.empty(); }
         size_t nBins() const { return per_bin.size(); }
 
-        const bin_pipeline::ChannelOutput* out(size_t b) const {
+        const tbank::ChannelOutput* out(size_t b) const {
             return (b < per_bin.size()) ? per_bin[b] : nullptr;
         }
         const std::vector<std::vector<double>>* binBeats(size_t b) const {
@@ -453,7 +453,7 @@ namespace morphology_csv {
         // premature removal left behind, so a premature member has no Tukey
         // verdict to report and must not be counted as one that passed.
         inline std::string tukeyWordAgg(const tbank::BankTemplate& t,
-            const bin_pipeline::ChannelOutput&)
+            const tbank::ChannelOutput&)
         {
             const int32_t n = static_cast<int32_t>(t.members.size());
             const int32_t flagged = t.n_premature_members + t.n_voted_members;
@@ -493,7 +493,7 @@ namespace morphology_csv {
         // -- which reads as "this bin had no normal beats" rather than "the seed
         // had a bad night".
         inline bool belongsInTemplatesFile(const tbank::BankTemplate& tp,
-            const bin_pipeline::ChannelOutput& out, const char** why)
+            const tbank::ChannelOutput& out, const char** why)
         {
             if (tp.isSeed()) return true;
             if (tukeyWordAgg(tp, out) == "removed") {
@@ -565,7 +565,7 @@ namespace morphology_csv {
             int n = 0;
             for (const ChannelBlock& blk : blocks) {
                 if (blk.empty()) continue;
-                const bin_pipeline::ChannelOutput* op = blk.out(b);
+                const tbank::ChannelOutput* op = blk.out(b);
                 if (!op) continue;
                 n = std::max(n, static_cast<int>(op->bank.size()));
             }
@@ -597,7 +597,7 @@ namespace morphology_csv {
                     c.tmplIdx = t;
                     c.bin = std::to_string(b);
 
-                    const bin_pipeline::ChannelOutput* op =
+                    const tbank::ChannelOutput* op =
                         blk.empty() ? nullptr : blk.out(b);
 
                     // ---- THE PLACEHOLDER CASES -----------------------------
@@ -1061,7 +1061,7 @@ namespace morphology_csv {
             uint32_t width = 0;
             uint64_t nCols = 0;
             for (size_t b = 0; b < blk.nBins(); ++b) {
-                const bin_pipeline::ChannelOutput* out = blk.out(b);
+                const tbank::ChannelOutput* out = blk.out(b);
                 if (!out) continue;
                 nCols += out->flags.size();
                 if (const auto* bb = blk.binBeats(b))
@@ -1079,9 +1079,9 @@ namespace morphology_csv {
             row.reserve(width);
 
             for (size_t b = 0; b < blk.nBins(); ++b) {
-                const bin_pipeline::ChannelOutput* outp = blk.out(b);
+                const tbank::ChannelOutput* outp = blk.out(b);
                 if (!outp) continue;
-                const bin_pipeline::ChannelOutput& out = *outp;
+                const tbank::ChannelOutput& out = *outp;
 
                 // Letters for this bin's bank, contiguous over the surviving
                 // templates. Computed once per bin, not per column.
@@ -1160,9 +1160,9 @@ namespace morphology_csv {
             // identical order, both loops.
             uint32_t width = 0;
             uint64_t nCols = 0;
-            for (const bin_pipeline::ChannelOutput* op : blk.per_bin) {
+            for (const tbank::ChannelOutput* op : blk.per_bin) {
                 if (!op) continue;
-                const bin_pipeline::ChannelOutput& out = *op;
+                const tbank::ChannelOutput& out = *op;
                 for (int t = 0; t < out.bank.size(); ++t) {
                     const tbank::BankTemplate& tp = out.bank.templates[t];
                     if (tp.tmpl.empty()) continue;
@@ -1176,9 +1176,9 @@ namespace morphology_csv {
 
             const double nan = std::numeric_limits<double>::quiet_NaN();
             for (size_t b = 0; b < blk.nBins(); ++b) {
-                const bin_pipeline::ChannelOutput* op = blk.out(b);
+                const tbank::ChannelOutput* op = blk.out(b);
                 if (!op) continue;
-                const bin_pipeline::ChannelOutput& out = *op;
+                const tbank::ChannelOutput& out = *op;
                 // Letters for this bin's bank, contiguous over the surviving
                 // templates. Computed once per bin, not per template.
                 const std::vector<uint8_t> letters = detail::letterRanks(out.bank);

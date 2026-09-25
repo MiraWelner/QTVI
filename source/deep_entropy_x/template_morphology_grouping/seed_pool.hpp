@@ -1,24 +1,20 @@
 #pragma once
 /**
  * @file   seed_pool.hpp
- * @brief  The ectopic mask that was specified but never built: selects the
- *         beats allowed to form bank slot 0, so that "seed the bank with the
- *         sinus template" is true rather than aspirational.
+ * @brief  The ectopic mask: selects the beats allowed to form the Phase 1
+ *         reference and bank slot 0, so that "seed the bank with the sinus
+ *         template" is true rather than aspirational.
  *
- *         WHAT IS ACTUALLY IN THE TREE TODAY. alignment.hpp assigns the
- *         prematurity and 5-of-8 vote flags before pruning and exempts flagged
- *         beats from every apply_mask (line 175), so ectopic beats survive to
- *         the template stage -- and the comment at line 171 says excluding
- *         them is "the ectopic mask's job (create_ecg_templates.hpp)". That
- *         mask does not exist. create_ecg_templates.hpp:155 builds the median
- *         over `usable`, and `usable` is filtered on exactly one condition:
- *         baseline_source == NONE. No rhythm test. The flags then travel from
- *         kept_rhythm through make_averaged_templates into
- *         beats.per_channel_rhythm and are read by nothing.
- *
- *         So the current net effect of the flags is to INCREASE ectopic
- *         contamination: they rescue beats from RR-length pruning and then
- *         nothing excludes them from the median.
+ *         WHERE IT IS CALLED FROM. create_ecg_templates.hpp builds its median
+ *         over selectSeedPool()'s members rather than over every usable beat.
+ *         That closes a loop that used to run the wrong way: alignment.hpp
+ *         assigns the prematurity and 5-of-8 vote flags before pruning and
+ *         exempts flagged beats from apply_mask, so ectopic beats survive to
+ *         the template stage on purpose -- and with no mask at the far end,
+ *         the flags' only net effect was to rescue those beats from RR-length
+ *         pruning and then let them into the median. The flags themselves also
+ *         travel on, through kept_rhythm into beats.per_channel_rhythm, where
+ *         envelope_report reads them per beat.
  *
  *         WHY SLOT 0 IS THE ONE PLACE A FLAG SHOULD HARD-GATE ANYTHING. Every
  *         spawn decision in the bank is scored against slot 0. A seed whose
@@ -38,10 +34,11 @@
  *         costs one beat's contribution to a median over hundreds. Reject on
  *         any doubt.
  *
- *         SCOPE. This selects the pool. Relocating Tukey to run INSIDE the
- *         selected pool is a separate change in alignment.hpp, where the three
- *         Tukey passes currently run over all sliced beats -- see the note on
- *         tukey_relocation_pending below.
+ *         SCOPE. This selects the pool, and nothing else. The Tukey fences
+ *         run upstream in alignment.hpp over all sliced beats, so they were
+ *         computed over a mixed population and are wider than fences over the
+ *         selected pool would be. Relocating them inside this pool is a
+ *         separate change, in that file.
  */
 
 #include <algorithm>
@@ -106,14 +103,7 @@ namespace seed_pool {
         // including real artifact. Pair it with the fence IQR from BinCounts.
         double ectopic_fraction = 0.0;
 
-        // True while the three Tukey passes still run upstream over all
-        // sliced beats rather than inside this pool. Left as a field rather
-        // than a comment so the condition is queryable from the archive: the
-        // fences that trimmed these beats were computed over a mixed
-        // population, so they were wider than they should have been.
-        bool tukey_relocation_pending = true;
 
-        bool contaminated() const { return basis == SeedBasis::ALL_USABLE; }
     };
 
     // rhythm: 0 NORMAL, 1 PVC (premature), 2 VOTED_PVC -- the kept_rhythm

@@ -66,13 +66,6 @@ namespace envelopes {
     inline constexpr int kSpectralBands = 3;
 
     enum class Segment : uint8_t { P = 0, QRS = 1, T = 2 };
-    inline const char* segmentName(Segment s) {
-        switch (s) {
-        case Segment::P:   return "P";
-        case Segment::QRS: return "QRS";
-        default:           return "T";
-        }
-    }
 
     // Sample span of each wave within a beat, from the template's landmarks.
     // Half-open [begin, end). A segment whose landmarks are missing (-1) is
@@ -420,7 +413,7 @@ namespace envelopes {
     class Tracker {
     public:
         Tracker(int shortWindow = kShortWindow, int longWindow = kLongWindow)
-            : m_short(shortWindow), m_long(longWindow) {
+        {
             for (int s = 0; s < 3; ++s) {
                 m_sAmp[s] = RollingEnvelope(shortWindow);
                 m_sCent[s] = RollingEnvelope(shortWindow);
@@ -453,11 +446,8 @@ namespace envelopes {
             return out;
         }
 
-        int shortWindow() const { return m_short; }
-        int longWindow()  const { return m_long; }
 
     private:
-        int m_short, m_long;
         RollingEnvelope m_sAmp[3]{ RollingEnvelope(kShortWindow),
             RollingEnvelope(kShortWindow), RollingEnvelope(kShortWindow) };
         RollingEnvelope m_sCent[3]{ RollingEnvelope(kShortWindow),

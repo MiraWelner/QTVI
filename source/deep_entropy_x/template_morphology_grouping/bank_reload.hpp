@@ -19,140 +19,23 @@
 
 namespace bank_reload {
 
-    struct Report {
-        bool   prior_read = false;      // the file opened and parsed
-        std::string prior_path;
-        std::string error;              // set when prior_read is false
-        size_t prior_bins = 0;
-        size_t fresh_bins = 0;
-        size_t ecg_reloaded = 0;        // (bin, channel) banks replaced
-        size_t ppg_reloaded = 0;
-        size_t anchor_slot_sets = 0;    // (anchor, bin, channel) slot vectors carried over
 
-        bool anythingReloaded() const { return ecg_reloaded || ppg_reloaded; }
-    };
 
-    // ------------------------------------------------------------------------
-    // Replace `fresh`'s banks with `priorPath`'s, for every bin the prior file
-    // covers. Call after the build and before write_template_binfile.
-    //
-    // A missing or unreadable prior file is not an error -- it is the first
-    // run, which is the normal case. `fresh` is left untouched and
-    // Report::prior_read stays false.
-    //
-    // BINS BEYOND THE PRIOR FILE'S COUNT keep their freshly built banks, since
-    // there is nothing on disk to put there. That is the only case where a
-    // fresh bank survives a reload.
-    // ------------------------------------------------------------------------
-    inline Report reloadBanks(const std::string& priorPath,
-        template_io::TemplateFile& fresh) {
-        Report rep;
-        rep.prior_path = priorPath;
-        rep.fresh_bins = fresh.bins.size();
-
-        template_io::TemplateFile prior;
-        try {
-            prior = template_io::read_template_binfile(priorPath);
-        }
-        catch (const std::exception& e) {
-            rep.error = e.what();
-            return rep;
-        }
-        rep.prior_read = true;
-        rep.prior_bins = prior.bins.size();
-
-        const size_t n = (fresh.bins.size() < prior.bins.size())
-            ? fresh.bins.size() : prior.bins.size();
-
-        // ---- v3 / v4 / v5: the banks themselves ---------------------------
-        //
-        // An EMPTY prior bank is skipped rather than copied. That is not a
-        // validation check -- it is the difference between "the prior file says
-        // this bin has one group" and "the prior file has nothing for this bin"
-        // (a pre-v3 file, or a bin its build skipped). Copying an empty bank
-        // over a real one would delete the split rather than reload it.
-        for (size_t i = 0; i < n; ++i) {
-            for (int c = 0; c < 3; ++c) {
-                if (prior.bins[i].ecg_bank[c].templates.empty()) continue;
-                fresh.bins[i].ecg_bank[c] = prior.bins[i].ecg_bank[c];
-                ++rep.ecg_reloaded;
-            }
-            if (!prior.bins[i].ppg_bank.templates.empty()) {
-                fresh.bins[i].ppg_bank = prior.bins[i].ppg_bank;
-                ++rep.ppg_reloaded;
-            }
-        }
-
-        // ---- v6: per-anchor slot averages ---------------------------------
-        //
-        // Averages OF the slots, so they belong with the bank they came from
-        // and are copied for the same (bin, channel) pairs. A fresh anchor
-        // entry is created sized to fresh.bins.size() when the prior file
-        // carries an anchor this build does not, so the indexing contract
-        // (parallel to `bins`) holds either way.
-        for (const auto& kv : prior.bank_anchors) {
-            const int tag = kv.first;
-            const auto& priorPerBin = kv.second;
-
-            auto& freshPerBin = fresh.bank_anchors[tag];
-            if (freshPerBin.size() < fresh.bins.size())
-                freshPerBin.resize(fresh.bins.size());
-
-            for (size_t i = 0; i < n && i < priorPerBin.size(); ++i) {
-                for (int c = 0; c < 3; ++c) {
-                    if (priorPerBin[i][c].empty()) continue;
-                    freshPerBin[i][c] = priorPerBin[i][c];
-                    ++rep.anchor_slot_sets;
-                }
-            }
-        }
-
-        return rep;
-    }
-
-    inline void printReport(const Report& rep, std::FILE* out = stderr) {
-        if (!rep.prior_read) {
-            std::fprintf(out, "[bank-reload] no prior split at %s%s%s\n",
-                rep.prior_path.c_str(),
-                rep.error.empty() ? " (absent -- fresh split stands)" : " -- ",
-                rep.error.c_str());
-            return;
-        }
-        std::fprintf(out,
-            "[bank-reload] %s: %zu prior bins vs %zu fresh | ECG %zu bank(s) reloaded"
-            " | PPG %zu | %zu anchor slot sets\n",
-            rep.prior_path.c_str(), rep.prior_bins, rep.fresh_bins,
-            rep.ecg_reloaded, rep.ppg_reloaded, rep.anchor_slot_sets);
-
-        // A bin-count difference means the SLICING changed, not just a
-        // threshold -- so the reloaded memberships refer to a beat set that is
-        // no longer there. Said plainly, once, because the reload proceeds
-        // anyway and this is the only warning of it.
-        if (rep.fresh_bins > rep.prior_bins)
-            std::fprintf(out, "[bank-reload] %zu bin(s) beyond the prior file keep"
-                " their freshly built split\n",
-                rep.fresh_bins - rep.prior_bins);
-        if (rep.prior_bins > rep.fresh_bins)
-            std::fprintf(out, "[bank-reload] WARNING: prior file has %zu MORE bin(s)"
-                " than this build -- the slicing changed, so reloaded slot"
-                " memberships name slices that no longer exist. Delete"
-                " templates.bin to repartition.\n",
-                rep.prior_bins - rep.fresh_bins);
-    }
 
     // =======================================================================
     // THE SPLIT, RELOADED FROM THE MORPHOLOGY ARCHIVE
     // =======================================================================
     //
-    // reloadBanks above takes whole tbank::TemplateBank objects out of a prior
-    // template_io file. That file is <stem>_bins.bin -- the per-bin averages,
-    // written and never read -- so the banks in it are not the source of truth
-    // for the split any more. This reloader takes the split from
+    // THE SPLIT COMES FROM THE MORPHOLOGY ARCHIVE, not from <stem>_bins.bin.
+    // A previous reloader (reloadBanks, removed) took whole
+    // tbank::TemplateBank objects out of that template_io file, but it holds
+    // the per-bin averages and is written and never read, so the banks in it
+    // are not the source of truth for the split. This reloader takes it from
     // <stem>_templates.bin instead: morphology_csv's archive, one record per
     // TEMPLATE, which since v4 carries `members` / `members_clean` and since v5
     // carries every remaining BankTemplate field and the bank's own scalars.
     //
-    // SAME RULE AS reloadBanks: the existence of the file is the switch. No
+    // THE EXISTENCE OF THE FILE IS THE SWITCH. No
     // validation, no config flag. Normally there is no prior archive and the
     // fresh split stands; when there is one, a config change is deliberately a
     // no-op on the partition.
@@ -319,7 +202,7 @@ namespace bank_reload {
             // no per-bin header. So the highest template_id per bin is what
             // says how many slots the prior partition had, and it has to be
             // known before anything is written -- a bin is reloaded whole or
-            // not at all, for the same reason reloadBanks takes a bank whole.
+            // not at all: a partially reloaded bank is a partition of no population.
             std::vector<int> needSlots(fresh.bins.size(), -1);
             for (const auto& rec : blk.records) {
                 if (rec.bin >= fresh.bins.size()) continue;

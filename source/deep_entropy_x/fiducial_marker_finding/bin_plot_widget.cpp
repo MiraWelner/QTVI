@@ -1675,16 +1675,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p, double yLo, double yHi, doubl
         // b.ppg_*_auto -- the BIN's marks, measured on b.ppgTemplate, which is
         // not the waveform any column draws -- pushed in by overridePulseGlyphs.
         const FeatureMarks::PpgFiducials& pf = detectedPulse();
-        fprintf(stderr, "[ppg-end] bin=%d slot=%d | ppg=%zu ppgIqr=%zu "
-            "wallL=%d wallR=%d | pf.end=%.2f pf.peak2=%.2f t80=%.2f | "
-            "bar=%.2f tmpl=%zu\n",
-            m_binIndex, m_templateIndex, m_ppg.size(), m_ppgIqr.size(),
-            wallL, wallR, pf.end, pf.peak2, rx.ppgT80,
-            m_markers[PpgEnd],
-            (m_bin && m_templateIndex >= 0
-                && m_templateIndex < m_bin->ppg_bank.size())
-            ? m_bin->ppg_bank.templates[m_templateIndex].tmpl.size()
-            : (std::size_t)0);        cross(pf.onset);
+        cross(pf.onset);
         cross(rx.ppgT50);            // reactive: 50% onset->peak
         cross(pf.peak);              // systolic peak
         found(pf.dicrotic, pf.notch_found);

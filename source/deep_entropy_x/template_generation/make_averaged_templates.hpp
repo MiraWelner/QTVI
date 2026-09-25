@@ -27,7 +27,6 @@
 #include "template_morphology_grouping/joint_bank.hpp"
 #include "template_morphology_grouping/morphology_csv.hpp"
 #include "template_morphology_grouping/nsvt_detect.hpp"
-#include "template_morphology_grouping/bin_pipeline.hpp"
 #include "noise_marking_gui/annotation_types.hpp"
  // noise_markings::Span / LoadResult / loadSpans / code_for_channel. The
  // operator class labels are an INPUT to template generation -- Section 4.6
@@ -45,32 +44,7 @@
 #include <functional>
 #include <memory>
 
- // ---------------------------------------------------------------------------
- // THE DEFERRED _beats.bin WRITE.
- //
- // _beats.bin is the largest artefact the morphology pass produces -- millions
- // of cells, ~3.8 s of the ~4.7 s the three writers spend between them -- and
- // nothing in the same run reads it. So GenerateTemplatesFast fills this slot
- // instead of writing inline, and AugmentTemplatesSlow drains it: the write
- // lands on whatever thread runs the squared/absval pass, and no new thread is
- // created.
- //
- // THE CLOSURE OWNS WHAT IT NEEDS. `blocks` is a vector of non-owning
- // ChannelBlocks, and exactly one of the things it points at used to die when
- // GenerateTemplatesFast returned: local_of_slice, a function local. That is now
- // heap-owned and captured through its shared_ptr. Everything else points into
- // the returned TemplateInfo vector, which is sized once and never resized, so
- // both maps hold their values at stable addresses.
- //
- // WHICH MEANS: THE TemplateInfo VECTOR MUST BE ALIVE AND UNMUTATED WHEN
- // runPending() FIRES. AugmentTemplatesSlow takes it by reference, so that holds
- // for the drain site below. Any other drain site has to satisfy it too.
- //
- // A PATH THAT NEVER DRAINS PRODUCES NO FILE. buildTemplatesAndBeatsFast is
- // public and returns without the slow merge; if anything calls it directly,
- // call runPending() at the end of that subject's processing. It is a no-op once
- // drained, so a belt-and-braces call costs nothing.
- // ---------------------------------------------------------------------------
+
 namespace morphology_writer {
     inline std::function<void()>& pending() {
         static std::function<void()> f;
@@ -82,25 +56,6 @@ namespace morphology_writer {
     }
 }
 
-// ---- OPERATOR CLASS PER SLICE ------------------------------------------
-//
-// MAPPED BY THE R PEAK, NOT BY OVERLAP. A slice is [R_i - pad, R_{i+1} + pad],
-// wider than a beat and overlapping its neighbours at both ends, so
-// "does this span overlap this slice" marks two or three beats per span -- and
-// a PVC span drawn tightly around one complex would drag the sinus beats either
-// side of it into the PVC partition. Same category error, different route. The
-// R peak is the one sample that belongs to exactly one beat.
-//
-// PPG rows are ignored: a mark on the pulse trace is a signal-quality
-// statement, not a rhythm class. paramEdit / invertEdit rows are ignored too --
-// "3) Blank.+Thresh." and "Invert/Noninvert" are instructions to the detector.
-//
-// A slice claimed by two classes takes the FIRST in file order and the conflict
-// is counted. Not a precedence ladder over the classes: the operator drew both,
-// and preferring one silently is a judgement this code has no basis for.
-// TEMPLATED ON THE PEAK CONTAINER. output_binfile_data's R-peak vector is
-// whatever integral type peak finding produces, and hard-coding uint64_t here
-// would either fail to compile or force a copy at every call site.
 template <class PeakVec>
 static std::vector<uint8_t> sliceMarkCodes(
     const PeakVec& rPeaks, uint32_t n_slices,
@@ -175,23 +130,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         }
     }
 
-    // SAID OUT LOUD, either way. An absent pulse channel and a pulse channel
-    // lost to a failed precondition produced identical silence before, which is
-    // what made this unfindable from a log.
-    {
-        size_t nSig = 0, nValleys = 0, nPeaks = 0;
-        for (size_t i = 0; i < n; ++i) {
-            if (!wave_data[i].ppgSignal.empty())  ++nSig;
-            if (!wave_data[i].ppgMinAmps.empty()) ++nValleys;
-            if (wave_data[i].ch1.raw.size() >= 2) ++nPeaks;
-        }
-        std::fprintf(stderr,
-            "  [ppg-gate] has_ppg=%d rate=%.3f | bins with signal=%zu/%zu, "
-            "with >=2 R-peaks=%zu/%zu, with SegmentPPG valleys=%zu/%zu"
-            " (valleys not required)\n",
-            has_ppg ? 1 : 0, rates.ppg, nSig, n, nPeaks, n, nValleys, n);
-        std::fflush(stderr);
-    }
 
     // PPG templates (+ per-sample std, parallel shape). Under Patch B they
     // come out already R-anchored by construction (slice = [R_i-pad, R_i+1+pad]
@@ -236,10 +174,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // translation needs to reach the slicer.
     EcgTemplateResult ecg_res = CreateEcgTemplatesFast(wave_data, rates.ecg);
     const auto _ecg1 = std::chrono::steady_clock::now();
-    std::fprintf(stderr,
-        "[fast-phases] bins=%zu | PPG %8.1f  ECG(align+template) %8.1f ms"
-        "  <- ECG is where alignment lives\n",
-        n, _ms(_ppg0, _ppg1), _ms(_ppg1, _ecg1));
+    std::fprintf(stderr,  "[fast-phases] bins=%zu | PPG %8.1f  ECG(align+template) %8.1f ms\n", n, _ms(_ppg0, _ppg1), _ms(_ppg1, _ecg1));
 
     // Assemble TemplateInfo
     auto fill_channel = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {
@@ -579,7 +514,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                         *ji.ppg_forward, ji.n_slices, ji.ppg_peak_col);
 
                 for (int c = 0; c < 4; ++c) {
-                    bin_pipeline::ChannelOutput co;
+                    tbank::ChannelOutput co;
                     co.bank = jbank::projectToChannel(info.joint.bank, cs, c,
                         &info.joint.flags, &info.joint.rr_after_ms);
 
@@ -690,16 +625,14 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 if (i < ecg_res.ch1.kept_rhythm_raw.size())
                     info.kept_rhythm_by_channel["CH1"] = std::move(ecg_res.ch1.kept_rhythm_raw[i]);
 
-                // bank_by_channel["CH1"] IS NOT WRITTEN HERE. It was, from
-                // ecg_res.ch1.bank_out_raw -- and that assignment landed AFTER
-                // the projection above and silently overwrote it, so the joint
-                // bank was built, projected, and then replaced by the very
-                // per-channel partition it exists to abolish. Same for CH2,
-                // CH3 and PPG. The projection is the only writer now.
-                //
-                // bank_out_raw still EXISTS: it is what the morphology writers
-                // in create_ecg_templates.hpp read. Until those move onto the
-                // projection it stays built, unread by anything on screen.
+                // bank_by_channel["CH1"] IS NOT WRITTEN HERE, and there is no
+                // longer anything that could write it. It used to be assigned
+                // from a per-channel bank built inside create_ecg_templates,
+                // AFTER the joint projection above -- so the joint bank was
+                // built, projected, and then silently overwritten by the very
+                // per-channel partition it exists to abolish. Both that bank
+                // and its last reader (the morphology writers, now on the
+                // projection) are gone. The projection is the only writer.
                 info.ref_index_by_channel["CH1"] = (i < ecg_res.ch1.ref_index_raw.size()) ? ecg_res.ch1.ref_index_raw[i] : -1;
             }
             if (i < ecg_res.ch2.kept_beats_raw.size()) {
@@ -886,14 +819,4 @@ inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
         fill_slow(templates[i].ch3, ecg_res.ch3, i);
     }
     morphology_writer::runPending();//the beats.bin write takes ~3 so it is deferred with the abs and sqr processing
-}
-
-// Original all-methods entry point, preserved by composition.
-inline vector<TemplateInfo> GenerateTemplates(const vector<output_binfile_data>& wave_data,
-    const SignalRates& rates,
-    const std::string& noise_bin_path = {}) {
-    vector<TemplateInfo> templates =
-        GenerateTemplatesFast(wave_data, rates, noise_bin_path);
-    AugmentTemplatesSlow(wave_data, templates, rates);
-    return templates;
 }

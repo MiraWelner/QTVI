@@ -1,12 +1,17 @@
 #pragma once
 /**
  * @file   template_bank.hpp
- * @brief  Multi-template morphology segregation (Spec Section 4.6).
+ * @brief  Multi-template morphology segregation (Spec Section 4.6): the bank
+ *         state, and the scoring primitives that operate on it.
  *
  *        This file handles the bank of templates which each new beat is compared to.
  *        If it resembles an existing template, it is assigned to that template.
  *        If it does not resemble any existing template, a new template is spawned.
  *
+ *        The TYPES here are the pipeline's shared vocabulary -- the serializer,
+ *        the morphology writers and the whole viewer read them. The CLUSTERING
+ *        that makes the assignments is jbank::buildBinBank (joint_bank.hpp),
+ *        which is generation-side only and stays out of this header.
  */
 
 #include <algorithm>
@@ -52,8 +57,8 @@ namespace tbank {
     inline double matchFloorPpg() { return correlation_floors::g_ppg; }
 
     namespace minimum_beats {
-        inline int g_ecg = 0.0; //these are also set later by the config
-        inline int g_ppg = 0.0;
+        inline int g_ecg = 0; //these are also set later by the config
+        inline int g_ppg = 0;
     }
 
     inline int minBeatsEcg() { return minimum_beats::g_ecg; }
@@ -76,38 +81,9 @@ namespace tbank {
     }
 
     inline constexpr int max_templates_per_bin = 6;//num templates in bank before merging
-
-    // Minimum overlapping non-NaN columns for a correlation to mean anything.
-    // alignment.hpp's pearson() returns 0.0 below its own floor, and 0.0 is
-    // below every match floor, so an unscorable beat would spawn a template.
-    // Beats below this get kUnscorable instead of an assignment.
     inline constexpr int kMinOverlapColumns = 8;
-
-    inline constexpr int min_members_per_column = 2; //how many beats must be in a template to have a column at all
-
-    // Merge-eligibility ceiling for the garbage tier, deliberately ABOVE
-    // kMinMembersForColumn. Tying the two together is a trap: merging two
-    // 1-member noise templates yields a 2-member template, which earns a column
-    // and is therefore no longer garbage -- so junk gets promoted out of the
-    // tier that exists to collect it, accumulates as 2-member zombies holding
-    // slots, and total churn rises rather than falls. A ceiling of 3 lets a
-    // merged pair remain collectable once more.
     inline constexpr int kMaxJunkMembers = 3;
-
-    // Members below which a template's own 2.5/97.5 corridor is not an estimate
-    // of anything and slot 0's spread is inherited instead (design note 1).
-    // Four is the fewest that gives the 2.5 and 97.5 percentiles two distinct
-    // values to interpolate between at all; below it they collapse onto the
-    // min and max, which is a range, not a percentile.
     inline constexpr int kMinMembersForCorridor = 4;
-
-    // Corridor half-width when even slot 0 has no usable spread at a column --
-    // an all-NaN column, or a bin so sparse that slot 0 itself is degenerate.
-    // Expressed as a fraction of the template's own peak-to-peak amplitude so
-    // it carries no unit and survives normalization. Deliberately generous: a
-    // corridor that is too wide admits a beat that should have spawned, which
-    // pass 2 can still move; one that is too narrow spawns a template per beat,
-    // which nothing downstream can undo.
     inline constexpr double kFallbackCorridorFrac = 0.15;
 
     inline double corridorInflation(int n_members) {
@@ -120,26 +96,6 @@ namespace tbank {
 
     inline constexpr uint8_t kUnlabeled = 0;   // label_code sentinel
 
-    // Class codes, READ FROM annotation_types.hpp rather than mirrored.
-    //
-    // These used to be literals duplicating that table, because the table
-    // header pulled in QString and QColor and everything in this namespace --
-    // bin_pipeline, seed_pool, nsvt_detect -- runs on the template-generation
-    // side, which is Qt-free and should stay that way. The duplication was a
-    // known drift risk and annotation_code_check.hpp existed to catch it at
-    // startup. It was never called from anywhere, so for as long as the mirror
-    // existed the drift was entirely unguarded.
-    //
-    // annotation_table.hpp is the table with the Qt helpers split off, so there
-    // is nothing left to mirror: each constant is the table entry, resolved at
-    // compile time by label. A renamed or removed label is a build failure on
-    // the static_assert below rather than a 0 that silently becomes "unlabeled",
-    // and there is no second copy for anyone to update out of step.
-    //
-    // Note that the Section 4.6 addendum asserts "PVC is annotation type 5",
-    // while the table has 4) PVC at code 4 and 5) PAC at code 5. The table wins,
-    // and now it wins structurally: taking the spec's number would mean writing
-    // a literal here again.
     inline constexpr uint8_t kCodeMinorNoise = annotation_types::code_for_label("2) Minor Noise");
     inline constexpr uint8_t kCodePvc = annotation_types::code_for_label("4) PVC");
     inline constexpr uint8_t kCodePac = annotation_types::code_for_label("5) PAC");
@@ -175,7 +131,7 @@ namespace tbank {
     };
 
     // An operator mark code -> the 4.5 category it implies. ONE definition, and
-    // it is here because this is where the codes are named: bin_pipeline had its
+    // it is here because this is where the codes are named: a downstream copy had its
     // own copy written as bare literals (case 4: case 5: case 9:), which is the
     // same table with nothing tying it to annotation_types, so a renumbered
     // annotation would silently reclassify beats there and not here.
@@ -192,46 +148,12 @@ namespace tbank {
         // Previously only Minor Noise was recognized here, so R-Peak-Noise
         // beats fell through to REGULAR and were averaged into the plotted
         // template despite being marked.
-        if (code == kCodeMinorNoise
-            || annotation_types::code_suppresses_detection(code))
+        if (code == kCodeMinorNoise || annotation_types::code_suppresses_detection(code))
             return Category::NOISE;
         if (code == kCodePvc || code == kCodePac || code == kCodeVt)
             return Category::ECTOPIC;
         return Category::REGULAR;
     }
-
-    // Per-beat categories from a mark vector, WITH THE POST-ECTOPIC RULE.
-    //
-    // The beat FOLLOWING an ectopic one inherits ECTOPIC when it carries no mark
-    // of its own. That beat is the compensatory pause -- its RR is long, its
-    // baseline is still recovering -- and admitting it to the sinus reference
-    // contaminates the template with post-ectopic morphology. It is a separate
-    // rule from categoryForLabelCode and cannot be derived from a single mark,
-    // which is why this takes the whole vector.
-    //
-    // A MARKED BEAT IS NEVER OVERWRITTEN: the operator's verdict on beat i wins
-    // over what beat i-1 implies about it.
-    //
-    // Moved here from bin_pipeline::categoryFromMarks, which died with
-    // runChannel. Its postEligibleCode() also listed AF and SVT, but they only
-    // mattered in conjunction with an ECTOPIC verdict on the same mark and both
-    // map to REGULAR -- so the set that can actually trigger inheritance is
-    // PVC / PAC / VT, and that is what this tests. Same behaviour, one fewer
-    // table.
-    inline std::vector<Category> categoriesFromMarks(
-        const std::vector<uint8_t>& mark_code)
-    {
-        const size_t n = mark_code.size();
-        std::vector<Category> out(n, Category::REGULAR);
-        for (size_t i = 0; i < n; ++i) {
-            out[i] = categoryForLabelCode(mark_code[i]);
-            if (i > 0 && mark_code[i] == 0
-                && categoryForLabelCode(mark_code[i - 1]) == Category::ECTOPIC)
-                out[i] = Category::ECTOPIC;
-        }
-        return out;
-    }
-
 
 
     // The two paths are recorded separately because their competence is
@@ -276,41 +198,6 @@ namespace tbank {
         bool substituted = false;
     };
 
-    // ---------------------------------------------------------------------
-    // Per-bin counts. This defect class produces output that looks fine and
-    // shows up only in the counts, so they are first-class state, not
-    // debug logging.
-    //
-    // Tukey assumes one dominant population. With ectopy in the minority both
-    // quartiles sit in the sinus cluster and every ectopic beat falls outside
-    // the fence. As ectopy approaches half the bin the IQR widens across both
-    // clusters and Tukey stops rejecting anything, including real artifact.
-    // Moving Tukey inside the classified pool does not remove that failure --
-    // it makes Tukey's correctness CONDITIONAL ON THE CLASSIFIER'S RECALL,
-    // one layer deeper and quieter, with no backstop behind it. The two
-    // mechanisms also degrade together rather than independently: at high
-    // burden the trailing-ten median is dragged down by ectopic RRs, so
-    // RR(t) < 0.80*median fires less often at exactly the burden where the
-    // fences have widened past usefulness.
-    //
-    // Hence fence_iqr alongside the rejection counts. Counts give the
-    // outcome; the IQR gives the cause, and it is continuous where the counts
-    // are discrete. The signature to watch for is LOW REJECTION RATE WITH
-    // WIDE IQR -- indistinguishable from "the bin is genuinely clean" if you
-    // only have the counts.
-    // ---------------------------------------------------------------------
-
-    struct TukeyPassCounts {
-        uint32_t beats_in = 0;
-        uint32_t beats_out = 0;
-        uint32_t rejected = 0;
-        double   q1 = std::numeric_limits<double>::quiet_NaN();
-        double   q3 = std::numeric_limits<double>::quiet_NaN();
-        double   fence_lo = std::numeric_limits<double>::quiet_NaN();
-        double   fence_hi = std::numeric_limits<double>::quiet_NaN();
-        double   iqr() const { return q3 - q1; }
-    };
-
     struct BinCounts {
         uint32_t beats_detected = 0;
 
@@ -323,22 +210,13 @@ namespace tbank {
         uint32_t n_premature = 0;
         uint32_t n_vote_only = 0;   // voted but not itself premature
 
-        // Tukey inside category 1, one entry per pass.
-        TukeyPassCounts tukey_rr, tukey_amplitude, tukey_r_location,
-            tukey_wave_score;
-
-        // Category-1 beats Tukey rejected on RR length: the cheapest estimate
-        // of classifier recall you will get. A sinus-labeled beat rejected for
-        // being short is very likely ectopy that was missed.
-        uint32_t n_regular_rejected_on_rr = 0;
-
         // Bank churn. Merges are mostly garbage collection of lone noise
         // templates, so this doubles as a noise metric: heavy merge activity
         // means a high noise fraction in the bin.
         uint32_t n_spawns = 0;
         uint32_t n_merges = 0;
         // Merges split by tier. n_merges_garbage collected two templates that
-        // both sat below kMinMembersForColumn; n_merges_real absorbed at least
+        // both sat in the junk tier; n_merges_real absorbed at least
         // one template with real membership, which is the case worth watching --
         // a bin with many real merges lost morphologies to cap pressure and its
         // template count understates what was there.
@@ -377,27 +255,6 @@ namespace tbank {
         // THE FOUR DRAGGABLE BARS. Operator-owned: -1 means untouched, and an
         // untouched bar falls back to the auto value below.
         double p_begin = -1, q_onset = -1, s_end = -1, t_end = -1;
-
-        // THE DETECTOR'S ANSWER, STORED. seed_bank_template already computed
-        // every one of these and then threw all but the bars away, so each
-        // reader re-ran the detection to recover them -- the widget, the focus
-        // panel and the export each independently, and a landmark detected
-        // several times is a landmark that can be several values.
-        //
-        // Same treatment BankPulseMarkerSet already gives the pulse glyphs
-        // (onset_auto, peak_auto, ...), which is why the pulse side never had
-        // the bar-vs-glyph disagreements the ECG side did.
-        //
-        // NOT SERIALIZED, like the pulse autos and for the same reason:
-        // template_bank_serialize.hpp stores nothing derived, and
-        // markers_by_anchor is deliberately absent from the file. These are
-        // recomputed at load, so adding them changes no format.
-        // FIXED LANDMARKS ONLY. No p_peak_auto and no t_peak_auto: those two
-        // are reactive glyphs, bracketed by the bars and recomputed by
-        // FeatureMarks::reactive_ecg at every read. p_peak was deliberately
-        // removed from this struct once before, because a stored copy drifted
-        // from the X on screen as soon as a bracket bar moved; putting it back
-        // would undo that.
         double p_begin_auto = -1;
         double q_onset_auto = -1, q_peak_auto = -1;
         double r_peak_auto = -1;
@@ -551,29 +408,7 @@ namespace tbank {
         uint32_t n_voted_members = 0;
         uint32_t n_noise_members = 0;
 
-        // Presumed, NOT confirmed. Decides which templates go in front of an
-        // operator for landmark marking: only category 1 templates get
-        // landmarks, because only category 1 beats feed feature extraction -- a
-        // P-onset on a PVC template has nothing downstream that consumes it,
-        // and a PVC's QT is not comparable to a sinus QT.
-        //
-        // UNLABELED IS PQRST, NOT A THIRD STATE. Section 4.6: "A template with
-        // no confirmed member stays unlabeled. Unlabeled means not yet
-        // confirmed, NOT unknown class." That second sentence forbids exactly
-        // what an UNCONFIRMED category would be -- an unknown bucket that gets
-        // withheld from display. A template is displayed as PQRST until an
-        // operator marks it otherwise; being unconfirmed is a statement about
-        // the operator's progress, not about the morphology.
-        //
-        // What the clause DOES forbid is inferring a label from morphological
-        // similarity to a labeled template, and that prohibition is enforced
-        // where the inference actually happened: mergeTemplates() no longer
-        // copies a confirmed label onto the template it absorbs, and
-        // findMergePair() blocks any pair containing a confirmed template. That
-        // is the operation the spec names. This function is not it.
-        //
-        // A confirmed label overrides the presumption outright; the operator's
-        // verdict is not a hypothesis to be re-derived.
+
         Category presumedCategory() const {
             if (confirmed_by_operator) {
                 if (label_code == kCodeMinorNoise
@@ -604,10 +439,13 @@ namespace tbank {
         bool corridor_inherited = false;
 
         int  memberCount() const { return static_cast<int>(members.size()); }
-        bool earnsColumn() const { return memberCount() >= min_members_per_column; }
 
-        // Eligible for the garbage-collection merge tier. Not the negation of
-        // earnsColumn() -- see kMaxJunkMembers.
+        // Eligible for the garbage-collection merge tier. Deliberately not the
+        // complement of "has enough beats to keep" -- see kMaxJunkMembers. The
+        // ceiling sits ABOVE the keep-threshold on purpose: merging two
+        // 1-member noise templates yields a 2-member one, and if that were
+        // instantly no longer junk, junk would be promoted out of the tier
+        // that exists to collect it and accumulate as zombies holding slots.
         bool isJunk() const { return memberCount() <= kMaxJunkMembers; }
     };
 
@@ -618,22 +456,7 @@ namespace tbank {
     struct TemplateBank {
         std::vector<BankTemplate> templates;
 
-        // Per-bin, because the confirmed-member rule raises it. The addendum's
-        // assignToTemplate() takes maxTemplates by value and returns a single
-        // int, so it can neither persist a raise nor report one for logging;
-        // the cap lives here instead.
-        // max_templates_per_bin. A CONFIG VALUE with a default, which is what
-        // the spec says it is: "Cap the bank at max_templates_per_bin (default
-        // 6)". It was previously reachable only by editing
-        // kDefaultMaxTemplatesPerBin and recompiling, so the "default" was the
-        // only value the program had. Set from cfg at pipeline entry
-        // (BinInput::max_templates_per_bin); the constant is now only the
-        // fallback when nothing supplies one.
-        //
-        // configured_cap is the value the operator asked for and never changes.
-        // effective_cap starts equal to it and only ever RISES, by the
-        // confirmed-member rule. Keeping both means a raise is visible as a
-        // difference rather than having to be reconstructed from the log.
+
         int32_t configured_cap = max_templates_per_bin;
         int32_t effective_cap = max_templates_per_bin;
 
@@ -648,9 +471,6 @@ namespace tbank {
         // Total beats routed into this bank, for beat-share reporting.
         uint32_t assigned_beats = 0;
 
-        double matchFloorFor(bool is_ppg) const {
-            return is_ppg ? matchFloorPpg() : matchFloorEcg();
-        }
 
         int  size() const { return static_cast<int>(templates.size()); }
         bool atCap() const { return size() >= effective_cap; }
@@ -661,14 +481,6 @@ namespace tbank {
             return c;
         }
 
-        // Distinct templates confirmed as `code`, i.e. the highest subtype
-        // index reached for that class. One PVC template is monomorphic; two
-        // or more is polymorphic.
-        int countLabeled(uint8_t code) const {
-            int c = 0;
-            for (const auto& t : templates) if (t.label_code == code) ++c;
-            return c;
-        }
 
         // Next subtype index for a class, by order of first appearance. Reads
         // the highest index already issued rather than counting current
@@ -681,12 +493,6 @@ namespace tbank {
             return hi + 1;
         }
 
-        int findByBeat(uint32_t beat_idx) const {
-            for (int i = 0; i < size(); ++i)
-                for (uint32_t m : templates[i].members)
-                    if (m == beat_idx) return i;
-            return -1;
-        }
 
         double beatShare(int template_idx) const {
             if (template_idx < 0 || template_idx >= size() || assigned_beats == 0)
@@ -795,6 +601,262 @@ namespace tbank {
             ++rank;
         }
         return letter;
+    }
+
+    // =====================================================================
+    // SCORING PRIMITIVES
+    // =====================================================================
+    //
+    // correlate(), bandMatch() and recomputeTemplate(): measure similarity,
+    // measure band containment, rebuild a centroid and its corridor. These
+    // are the three operations every assignment decision is made of.
+    //
+    // They were template_assign.hpp, a file named for a job it no longer did:
+    // assignment, spawning, merge/cap-raise and pass-2 refinement over a
+    // PER-CHANNEL bank all moved into jbank::runBank when the partition became
+    // joint across CH1/CH2/CH3/PPG, because a per-channel assigner is a second
+    // partition of the same beats. What was left was three functions in
+    // namespace tbank operating on tbank state, so they are here with the
+    // state. correlate() is also called by nsvt_detect.hpp to match
+    // morphologies ACROSS bins, which is why it is a free function rather than
+    // a member of the bank.
+    // ---------------------------------------------------------------------
+    // Correlation
+    // ---------------------------------------------------------------------
+
+    struct CorrResult {
+        double r = std::numeric_limits<double>::quiet_NaN();
+        int    n_overlap = 0;
+        bool   scorable() const { return n_overlap >= kMinOverlapColumns && !std::isnan(r); }
+    };
+
+    inline CorrResult correlate(const std::vector<double>& a,
+        const std::vector<double>& b, int lo = 0, int hi = std::numeric_limits<int>::max())
+    {
+        CorrResult out;
+        double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+        int n = 0;
+        const size_t w = std::min(a.size(), b.size());
+        const size_t kLo = (lo > 0) ? static_cast<size_t>(lo) : 0;
+        const size_t kHi = (hi < 0) ? 0
+            : std::min(w, static_cast<size_t>(hi) + 1);
+        for (size_t k = kLo; k < kHi; ++k) {
+            if (std::isnan(a[k]) || std::isnan(b[k])) continue;
+            sa += a[k]; sb += b[k];
+            saa += a[k] * a[k]; sbb += b[k] * b[k]; sab += a[k] * b[k];
+            ++n;
+        }
+        out.n_overlap = n;
+        if (n < kMinOverlapColumns) return out;
+
+        const double ma = sa / n, mb = sb / n;
+        const double cov = sab / n - ma * mb;
+        const double va = saa / n - ma * ma, vb = sbb / n - mb * mb;
+        if (va <= 0.0 || vb <= 0.0) return out;   // flat vector: r undefined
+        out.r = cov / std::sqrt(va * vb);
+        return out;
+    }
+
+    // ---------------------------------------------------------------------
+    // The band-match score (Section 4.6's metric)
+    // ---------------------------------------------------------------------
+
+    struct BandResult {
+        // THE CORRELATION, in [-1, 1]. This is what every floor is compared
+        // against; see bandMatch below for why it stopped being a fraction.
+        double score = std::numeric_limits<double>::quiet_NaN();
+        int    n_overlap = 0;
+        double r = std::numeric_limits<double>::quiet_NaN();      // == score
+        // Fraction of comparable columns inside the corridor: what `score`
+        // used to be. Kept as a DIAGNOSTIC and filled only for the winning
+        // template, by assignBeat. Nothing routes on it.
+        double frac_in_band = std::numeric_limits<double>::quiet_NaN();
+        bool   scorable() const {
+            return n_overlap >= kMinOverlapColumns && !std::isnan(score);
+        }
+    };
+    inline BandResult bandMatch(const std::vector<double>& beat,
+        const BankTemplate& t)
+    {
+        BandResult out;
+        if (t.tmpl.empty()) return out;
+
+        CorrResult cr;
+        if (t.corr_halfwin > 0 && t.r_col >= 0) {
+            cr = correlate(beat, t.tmpl,
+                t.r_col - t.corr_halfwin, t.r_col + t.corr_halfwin);
+        }
+        else {
+            cr = correlate(beat, t.tmpl);
+        }
+        out.n_overlap = cr.n_overlap;
+        out.score = cr.r;
+        out.r = cr.r;
+        // frac_in_band stays NaN: it costs another pass over the overlap for
+        // every beat against every template, and only the winner's value is
+        // ever read. assignBeat fills it there.
+        return out;
+    }
+
+    inline void recomputeTemplate(BankTemplate& t,
+        const std::vector<std::vector<double>>& beats,
+        int width,
+        const std::vector<double>* floor_corridor = nullptr)
+    {
+        const double NaN = std::numeric_limits<double>::quiet_NaN();
+        t.tmpl.assign(width, NaN);
+        t.tmpl_iqr.assign(width, NaN);
+        t.band_lo.assign(width, NaN);
+        t.band_hi.assign(width, NaN);
+        t.corridor_inherited = false;
+        if (t.members.empty() || width <= 0) return;
+
+        // Own corridor only when there are enough members for percentiles to
+        // mean something; otherwise widths come from the floor below.
+        const bool own_corridor = t.memberCount() >= kMinMembersForCorridor;
+        t.corridor_inherited = !own_corridor;
+
+        std::vector<double> col;
+        col.reserve(t.members.size());
+        for (int c = 0; c < width; ++c) {
+            col.clear();
+            for (uint32_t m : t.members) {
+                if (m >= beats.size()) continue;
+                const auto& b = beats[m];
+                if (c < static_cast<int>(b.size()) && !std::isnan(b[c]))
+                    col.push_back(b[c]);
+            }
+            if (col.empty()) continue;
+            const size_t n = col.size();
+
+            // nth_element, not sort. Only three order statistics are needed per
+            // column (median, Q1, Q3), and this runs once per column per
+            // template per recompute -- on a 991-member slot 0 across a 200
+            // column axis that is the single hottest loop in the pass. Partial
+            // selection is O(n) against sort's O(n log n) and measured roughly
+            // 3x faster here at these sizes.
+            //
+            // The nth_element calls are ordered low-to-high so each one only
+            // has to partition the range the previous one left, rather than the
+            // whole column again.
+            const size_t iq1 = n / 4;
+            const size_t imid = n / 2;
+            const size_t iq3 = std::min(n - 1, (3 * n) / 4);
+
+            std::nth_element(col.begin(), col.begin() + iq1, col.end());
+            const double q1 = col[iq1];
+            std::nth_element(col.begin() + iq1, col.begin() + imid, col.end());
+            const double hi_mid = col[imid];
+            std::nth_element(col.begin() + imid, col.begin() + iq3, col.end());
+            const double q3 = col[iq3];
+
+            if (n % 2) {
+                t.tmpl[c] = hi_mid;
+            }
+            else {
+                // Even n: the median averages the two central values, and the
+                // lower one is the max of everything below imid -- already
+                // partitioned there by the nth_element calls above, so no
+                // further selection is needed.
+                const double lo_mid =
+                    *std::max_element(col.begin(), col.begin() + imid);
+                t.tmpl[c] = 0.5 * (lo_mid + hi_mid);
+            }
+            // IQR as the spread measure, consistent with the *_iqr fields
+            // already carried alongside every template in TemplateBin.
+            t.tmpl_iqr[c] = q3 - q1;
+
+            // --- the 2.5/97.5 corridor -------------------------------------
+            if (own_corridor) {
+
+                if (n < static_cast<size_t>(kMinMembersForCorridor)) {
+                    double half = std::numeric_limits<double>::quiet_NaN();
+                    if (floor_corridor && c < static_cast<int>(floor_corridor->size()))
+                        half = (*floor_corridor)[c];
+                    if (std::isnan(half) || half <= 0.0) {
+                        double plo = std::numeric_limits<double>::infinity();
+                        double phi = -std::numeric_limits<double>::infinity();
+                        for (int k = 0; k < width; ++k) {
+                            if (std::isnan(t.tmpl[k])) continue;
+                            plo = std::min(plo, t.tmpl[k]);
+                            phi = std::max(phi, t.tmpl[k]);
+                        }
+                        const double ptp = (phi > plo) ? (phi - plo) : 0.0;
+                        half = kFallbackCorridorFrac * ptp;
+                    }
+                    if (half > 0.0) {
+                        half *= corridorInflation(static_cast<int>(n));
+                        t.band_lo[c] = t.tmpl[c] - half;
+                        t.band_hi[c] = t.tmpl[c] + half;
+                    }
+                    continue;
+                }
+
+                // Percentiles by position with linear interpolation, over the
+                // column's values. nth_element, NOT sort -- for the reason the
+                // median block above states and which the first version of this
+                // block ignored. A std::sort here runs per column, per
+                // template, per recompute, inside the hottest loop in the pass.
+                // Four extra order statistics, ordered ascending so each
+                // partitions only what the previous left.
+                const double x_lo = 0.025 * (static_cast<double>(n) - 1.0);
+                const double x_hi = 0.975 * (static_cast<double>(n) - 1.0);
+                const size_t i_lo = static_cast<size_t>(std::floor(x_lo));
+                const size_t i_lo1 = std::min(n - 1, i_lo + 1);
+                const size_t i_hi = static_cast<size_t>(std::floor(x_hi));
+                const size_t i_hi1 = std::min(n - 1, i_hi + 1);
+                const double f_lo = x_lo - static_cast<double>(i_lo);
+                const double f_hi = x_hi - static_cast<double>(i_hi);
+                std::nth_element(col.begin(), col.begin() + i_lo, col.end());
+                const double p2a = col[i_lo];
+                std::nth_element(col.begin() + i_lo, col.begin() + i_lo1, col.end());
+                const double p2b = col[i_lo1];
+                std::nth_element(col.begin() + i_lo1, col.begin() + i_hi, col.end());
+                const double p97a = col[i_hi];
+                std::nth_element(col.begin() + i_hi, col.begin() + i_hi1, col.end());
+                const double p97b = col[i_hi1];
+                const double p2 = p2a * (1.0 - f_lo) + p2b * f_lo;
+                const double p97 = p97a * (1.0 - f_hi) + p97b * f_hi;
+                const double mid = 0.5 * (p2 + p97);
+                const double half = 0.5 * (p97 - p2)
+                    * corridorInflation(t.memberCount());
+                t.band_lo[c] = mid - half;
+                t.band_hi[c] = mid + half;
+            }
+        }
+
+        // --- inherited corridor ---------------------------------------------
+        // Centred on THIS template's own median, widened by slot 0's spread.
+        // Centring on the inheritor and not the donor is the whole point: the
+        // shape being scored against is this template's, only the tolerance is
+        // borrowed. Centring on slot 0 would make every young template a
+        // restatement of sinus and no beat would ever fail to match it.
+        if (!own_corridor) {
+            for (int c = 0; c < width; ++c) {
+                if (std::isnan(t.tmpl[c])) continue;
+                double half = std::numeric_limits<double>::quiet_NaN();
+                if (floor_corridor && c < static_cast<int>(floor_corridor->size()))
+                    half = (*floor_corridor)[c];
+                if (std::isnan(half) || half <= 0.0) {
+                    // Neither this template nor slot 0 has a spread here. Fall
+                    // back to a fraction of the template's own amplitude, which
+                    // is unitless and survives normalization.
+                    double lo = std::numeric_limits<double>::infinity();
+                    double hi = -std::numeric_limits<double>::infinity();
+                    for (int k = 0; k < width; ++k) {
+                        if (std::isnan(t.tmpl[k])) continue;
+                        lo = std::min(lo, t.tmpl[k]);
+                        hi = std::max(hi, t.tmpl[k]);
+                    }
+                    const double ptp = (hi > lo) ? (hi - lo) : 0.0;
+                    half = kFallbackCorridorFrac * ptp;
+                    if (half <= 0.0) continue;   // flat template: leave NaN
+                }
+                half *= corridorInflation(t.memberCount());
+                t.band_lo[c] = t.tmpl[c] - half;
+                t.band_hi[c] = t.tmpl[c] + half;
+            }
+        }
     }
 
 }  // namespace tbank

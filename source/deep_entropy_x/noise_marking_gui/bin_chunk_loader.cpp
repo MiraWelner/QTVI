@@ -156,6 +156,13 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
         m_vcgCfg.basisCsvSubject = stem.toStdString();
     }
 
+    // ONE ASSIGNMENT, THEN ONE DERIVATION, on both branches. The stash in
+    // m_fileMarkings now carries parameter edits and inversion spans like any
+    // other marking, so coming back to a file restores its overrides --
+    // previously the stash held only annotations (the override vectors were a
+    // separate store that nothing folded in before switching away) and the
+    // disk re-read below was skipped because m_fileMarkings already had an
+    // entry, so every override set on that file was silently gone.
     m_genExc = m_fileMarkings.contains(filePath)
         ? m_fileMarkings[filePath]
         : AllFileMarkings();
@@ -172,12 +179,35 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
 }
 
 void noise_marking_gui::rebuildParamIndex() {
+    // THE ONLY WAY THESE THREE VECTORS ARE EVER POPULATED. Called on load and
+    // after every mutation of m_genExc (applyParamOverrides,
+    // applyInvertOverride, the eraser, Clear All), so the index cannot
+    // disagree with the store -- there is nothing in it that was not derived
+    // from the store one call ago.
+    //
+    // It was previously called ONCE, on load, while applyParamOverrides wrote
+    // to the vectors directly. That made it a rehydration of a parallel store
+    // rather than a derivation, and the two drifted in every direction: marks
+    // without index entries (after a file switch), index entries without
+    // marks (in-session edits), and a mark plus an index entry for the same
+    // span both drawn (after a reload).
     m_thresholdOverrides.clear();
     m_blankingOverrides.clear();
     m_invertOverrides.clear();
+
+    // ParamOverride still keys on QString because the renderer compares it
+    // against chart labels; that conversion happens once per override here,
+    // not once per marking per frame.
     for (const Marking& m : m_genExc.marks) {
         if (m.type == annotation_types::kParamEditLabel) {
             const QString ch = QString::fromStdString(m.channel);
+            // NaN CONTRIBUTES NO SEGMENT, and that is load-bearing rather than
+            // tidy: ParamIndex interpolates nothing, it returns the stored
+            // value, so a NaN segment would make `gate = vMin + NaN * span`
+            // and every `yv >= gate` comparison false -- no peaks at all
+            // inside the span, with no error and no visible cause. A legacy
+            // row has no parameter columns, so both of its values are NaN and
+            // both lookups correctly fall through to the config defaults.
             if (!std::isnan(m.threshold))
                 m_thresholdOverrides.append(ParamOverride{ ch, m.start, m.end, m.threshold });
             if (!std::isnan(m.blanking))

@@ -231,7 +231,7 @@ namespace alignment {
         std::vector<double> pq_shift;
     };
 
-    // ---- FRAGMENT SEAMS: WHERE THIS BIN'S SIGNAL IS SPLICED ---------------
+    // ---- A SPLICED BIN, AND WHY A LONG RR IS DROPPED ---------------------
     //
     // An annealed bin is not one continuous stretch of recording. The annealer
     // excises the noise-marked regions and redistributes the surviving good
@@ -240,36 +240,25 @@ namespace alignment {
     // the ecg_bin_indexs it emits). So two samples adjacent in this array can
     // be seconds apart in the recording.
     //
-    // WHICH MAKES AN RR ACROSS A SEAM MEANINGLESS. The loop below computes
+    // WHICH MAKES AN RR ACROSS A JOIN MEANINGLESS. The loop below computes
     // rr = rPeaks[i+1] - rPeaks[i] and treats it as a cardiac interval. For an
-    // R-pair straddling a splice that number is the distance across a join, and
-    // because fragments are redistributed between bins it can be large -- so
-    // the slicer cuts a 0.4*rr before / 1.3*rr after window from it and
-    // produces one "beat" spanning several cardiac cycles. That is the
-    // multi-QRS template with the over-long axis, and the column median out
-    // past the real RR is that slice's LATER complexes.
+    // R-pair straddling a splice that number is the distance across the join,
+    // and because fragments are redistributed between bins it can be large --
+    // so the slicer would cut a 0.4*rr before / 1.3*rr after window from it and
+    // produce one "beat" spanning several cardiac cycles. That is the multi-QRS
+    // template with the over-long axis, and the column median out past the real
+    // RR is that slice's LATER complexes.
     //
-    // A pair whose two peaks sit in different fragments is not a beat. Dropping
-    // it needs no knowledge of annotations, no span coordinates and no
-    // translation between coordinate systems: the caller derives the seams from
-    // ecg_bin_indexs, which it already holds.
+    // THE RR CAP IS WHAT HANDLES IT, and it is the only thing that does. An
+    // earlier attempt derived the splice positions from ecg_bin_indexs and
+    // dropped pairs crossing one (FragmentSeams / pair_crosses_seam, both
+    // removed): switching it on emptied every bin, because the positions it
+    // derived did not describe this signal and nearly every pair looked
+    // spliced. The cap below covers the same case from the other direction --
+    // a join shows up as a long RR, and a long RR is dropped whatever caused
+    // it -- without needing to know where the joins are.
     //
-    // SEAMS ARE BIN-LOCAL: each entry is the index, in this array, of the FIRST
-    // sample of a fragment other than the first. Empty (or null) means one
-    // continuous fragment -- which is every bin of an un-annealed record, and
-    // every bin the operator never marked.
-    using FragmentSeams = std::vector<int64_t>;
-
-    // Does [r0, r1] cross a splice? True when a seam lies in (r0, r1].
-    inline bool pair_crosses_seam(int64_t r0, int64_t r1,
-        const FragmentSeams& seams) {
-        for (const int64_t s : seams)
-            if (s > r0 && s <= r1) return true;
-        return false;
-    }
-
-    inline ecg_beat_set extract_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs,
-        const FragmentSeams* seams = nullptr) {
+    inline ecg_beat_set extract_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs) {
         ecg_beat_set out;
         const int64_t N = static_cast<int64_t>(signal.size());
         if (N == 0 || rPeaks.size() < 2) {
@@ -363,8 +352,7 @@ namespace alignment {
             // SPLICED ACROSS: not a beat, whatever `rr` says. Dropped BEFORE
             // slice_index is pushed, like every other guard in this loop, so
             // the parallel arrays stay in step.
-            if (seams && pair_crosses_seam(r0,
-                static_cast<int64_t>(rPeaks[i + 1]), *seams)) continue;
+
 
             const int64_t before = rr_before_samples(rr);
             const int64_t after = rr_after_samples(rr);
@@ -1235,8 +1223,7 @@ namespace alignment {
         int    ref_beat_index = -1;
     };
 
-    inline PpgBeatSet extract_ppg_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs,
-        const FragmentSeams* seams = nullptr)
+    inline PpgBeatSet extract_ppg_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs)
     {
         PpgBeatSet out;
         const int64_t N = static_cast<int64_t>(signal.size());
@@ -1297,10 +1284,7 @@ namespace alignment {
             }
             // Same splice drop as the ECG slicer, counted with the other RR
             // drops so the denominator stays honest.
-            if (seams && pair_crosses_seam(r0,
-                static_cast<int64_t>(rPeaks[i + 1]), *seams)) {
-                ++out.n_dropped_rr; continue;
-            }
+
 
             const int64_t rr_w = (rr_cap > 0) ? std::min(rr, rr_cap) : rr;
             const int64_t before = rr_before_samples(rr_w);

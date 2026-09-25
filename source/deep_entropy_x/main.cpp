@@ -220,16 +220,10 @@ int main(int argc, char* argv[]) {
         beatLog.setDefaultParams(cfg.blanking_period, cfg.threshold);
 
         // Run the noise marking GUI
-        std::cout << "Noise marking: " << binFs.filename().string() << "\n";
         QVector<AllFileMarkings> allMarkings;
         std::filesystem::path currentBinFile;
         bool ecg1Inverted = false, ecg2Inverted = false, ecg3Inverted = false;
 
-        // THE CALL THAT FILLS ALL FIVE OF THE ABOVE. Without it nothing opens,
-        // the markings land under an empty stem (so the anneal step finds no
-        // exclusions file and excises nothing), and the inversion flags stay
-        // false for every lead. The giveaway is "Saved Noise Markings for "
-        // with no filename after it: exportMarkings was handed an empty path.
         if (!runNoiseMarking(cfg, binFs, allMarkings, currentBinFile, beatLog,
             ecg1Inverted, ecg2Inverted, ecg3Inverted)) {
             std::cout << "  skipped by user; not processing/templating.\n";

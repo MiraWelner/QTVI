@@ -15,10 +15,49 @@
 #include <vector>
 
 #include "template_bank.hpp"
-#include "template_assign.hpp"
 #include "fiducial_marker_finding/alignment.hpp"
 #include "pvc_filter.hpp"
+#include "seed_pool.hpp"
 #include "beat_substitute.hpp"
+
+ // ---------------------------------------------------------------------------
+ // ONE CHANNEL'S VIEW OF ONE BIN'S PARTITION
+ // ---------------------------------------------------------------------------
+ //
+ // What projectToChannel fills and the morphology writers read: the bank as
+ // that channel sees it, plus the per-slice verdicts decided once for all four
+ // channels. The four copies per bin are VIEWS of a single partition, not four
+ // partitions -- which is the whole point of this file.
+ //
+ // IN namespace tbank, NOT jbank, because every member is a tbank type or a
+ // type that depends on one, and because the readers (morphology_csv, the
+ // serializer) speak tbank. It cannot live in template_bank.hpp: seed_pool.hpp
+ // and pvc_filter.hpp both include that header for tbank::Category and
+ // tbank::PvcFilter, so aggregating them there is a cycle. It has to sit
+ // downstream of all three, and this file already is.
+ //
+ // It used to live in bin_pipeline.hpp beside a per-channel driver
+ // (runChannel) that one joint partition replaced. After that driver went, the
+ // file held this struct and six static_asserts pinning
+ // alignment::TukeyOutcome to tbank::TukeyOutcome -- and nothing converts one
+ // to the other any more: alignment's per-beat tukey_outcome has no reader
+ // outside alignment.hpp, and the only writer of BeatFlags::tukey is
+ // tukeyOutcomeFor below, which maps ExcludeReason through an explicit switch.
+ // So the file is gone. If a value-level conversion is ever reintroduced, the
+ // assert belongs next to that cast.
+namespace tbank {
+
+    struct ChannelOutput {
+        TemplateBank               bank;
+        std::vector<int32_t>       assignment;   // per beat
+        seed_pool::SeedSelection   seed;
+        std::vector<CapRaiseEvent> cap_raises;
+        BinCounts                  counts;
+        std::vector<BeatFlags>     flags;
+        pvc_filter::FilterResult   pvc;
+    };
+
+}  // namespace tbank
 
 namespace jbank {
 
@@ -42,15 +81,6 @@ namespace jbank {
             : tbank::matchFloorEcg();
     }
 
-    inline const char* channelName(int c) {
-        switch (c) {
-        case kCh1: return "CH1";
-        case kCh2: return "CH2";
-        case kCh3: return "CH3";
-        case kPpg: return "PPG";
-        }
-        return "?";
-    }
 
     // ---------------------------------------------------------------------
     // One channel's beats, plus the map from the shared key into them
@@ -238,12 +268,6 @@ namespace jbank {
             return static_cast<int>(members_clean.empty()
                 ? 0 : members.size() - members_clean.size());
         }
-        // The clean count, not the full one. A group whose two members were
-        // both excluded has nothing behind its waveform and must not present as
-        // a markable morphology.
-        bool earnsColumn() const {
-            return cleanCount() >= tbank::min_members_per_column;
-        }
         // Which list the waveform is built from.
         const std::vector<uint32_t>& averagedMembers() const {
             if (all_noise) { static const std::vector<uint32_t> none; return none; }
@@ -285,13 +309,6 @@ namespace jbank {
             return n;
         }
 
-        // Which group holds this slice, or -1.
-        int findBySlice(uint32_t slice) const {
-            for (int i = 0; i < size(); ++i)
-                for (uint32_t m : groups[i].members)
-                    if (m == slice) return i;
-            return -1;
-        }
 
         // Next subtype index for a class, in order of first appearance. Same
         // rule as the per-channel bank: the operator never supplies one.
@@ -615,7 +632,7 @@ namespace jbank {
         // across bins and cannot say how many beats it rested on. The writer
         // divides.
         //
-        // These were filled by bin_pipeline::runChannel, per channel, over a
+        // These were filled by a per-channel driver (removed), over a
         // per-channel partition. A category is a property of the beat, so
         // counting it per channel gave three answers to a one-answer question.
         // Counted here once, over slices.
@@ -639,8 +656,6 @@ namespace jbank {
     struct PolymorphyVerdict {
         int count = 0;
         int n_unconfirmed_groups = 0;   // proposed, not yet ruled on
-        bool polymorphic() const { return count >= 2; }
-        bool monomorphic() const { return count == 1; }
     };
 
     inline PolymorphyVerdict polymorphyVerdict(const JointBank& bank,
@@ -888,7 +903,7 @@ namespace jbank {
 
     // ---- THE PARTITION KEY, WITH INHERITANCE ----------------------------
     //
-    // tbank::categoriesFromMarks applies the post-ectopic inheritance rule --
+    // partitionKeys applies the post-ectopic inheritance rule --
     // the beat AFTER a PVC/PAC/VT inherits ECTOPIC when it carries no mark of
     // its own -- but returns tbank::Category, which collapses PVC, PAC and VT
     // into one value. The spec partitions by CLASS, not by category: PVC and
@@ -1038,20 +1053,6 @@ namespace jbank {
         TUKEY_RR_LENGTH = 8
     };
 
-    inline const char* excludeReasonName(uint8_t r) {
-        switch (static_cast<ExcludeReason>(r)) {
-        case ExcludeReason::KEPT:             return "kept";
-        case ExcludeReason::NOT_A_MEMBER:     return "not_a_member";
-        case ExcludeReason::PREMATURE:        return "premature";
-        case ExcludeReason::VOTE:             return "vote";
-        case ExcludeReason::TUKEY_R_LOCATION: return "tukey_r_location";
-        case ExcludeReason::TUKEY_AMPLITUDE:  return "tukey_amplitude";
-        case ExcludeReason::TUKEY_WAVE_SCORE: return "tukey_wave_score";
-        case ExcludeReason::TUKEY_RR_LENGTH:  return "tukey_rr_length";
-        case ExcludeReason::CATEGORY:         return "category";
-        }
-        return "?";
-    }
 
     // ExcludeReason -> the per-beat Tukey verdict the archive already carries.
     // BeatFlags::tukey is tbank::TukeyOutcome, a separate enumeration from the
@@ -1659,13 +1660,13 @@ namespace jbank {
         // against. Computing them here rather than before runBank() is what
         // makes that structural instead of a convention.
         out.flags.assign(in.n_slices, tbank::BeatFlags{});
-        // categoriesFromMarks, not categoryForLabelCode per slice: the beat
+        // FROM pkeys, not a second pass over the marks: the beat
         // AFTER an ectopic one inherits ECTOPIC when it carries no mark of its
         // own, and that rule needs the neighbouring mark, so it cannot be
         // applied one beat at a time.
         // FROM pkeys, THE SAME VECTOR THE PARTITION USED. partitionKeys
         // already applied the post-ectopic inheritance, so mapping each key
-        // through categoryForLabelCode reproduces categoriesFromMarks exactly
+        // through categoryForLabelCode reproduces those categories exactly
         // -- with the guarantee that the flags and the partition describe one
         // population rather than two computed from the same input by two
         // functions that could drift.
@@ -1815,18 +1816,5 @@ namespace jbank {
         return out;
     }
 
-    // All four at once, rebuilding the ChannelSet the bank was run against.
-    // The caller must pass the SAME ChannelSet, or the local index spaces will
-    // not match the ones the members were resolved from.
-    inline std::array<tbank::TemplateBank, num_channels> projectAll(
-        const JointBank& bank, const ChannelSet& chans,
-        const std::vector<tbank::BeatFlags>* flags = nullptr,
-        const std::vector<double>* rr_after_ms = nullptr)
-    {
-        std::array<tbank::TemplateBank, num_channels> out;
-        for (int c = 0; c < num_channels; ++c)
-            out[c] = projectToChannel(bank, chans, c, flags, rr_after_ms);
-        return out;
-    }
 
 }  // namespace jbank

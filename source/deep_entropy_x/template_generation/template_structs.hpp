@@ -14,7 +14,6 @@
  */
 #pragma once
 #include "template_io.hpp"
-#include "template_morphology_grouping/bin_pipeline.hpp"
 #include "template_morphology_grouping/joint_bank.hpp"
 
 #include <map>
@@ -100,7 +99,7 @@ struct TemplateInfo {
     // vector and the kept-beat matrix stop corresponding the moment the Tukey
     // passes run.
     std::map<std::string, std::vector<uint8_t>> kept_rhythm_by_channel;
-    std::map<std::string, bin_pipeline::ChannelOutput> bank_by_channel;
+    std::map<std::string, tbank::ChannelOutput> bank_by_channel;
     jbank::BinBankOutput joint;
     bool joint_valid = false;
 };

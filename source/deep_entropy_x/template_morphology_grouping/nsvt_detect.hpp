@@ -40,7 +40,6 @@
 #include <vector>
 
 #include "template_bank.hpp"
-#include "template_assign.hpp"
 
 namespace nsvt {
 
@@ -382,23 +381,6 @@ namespace nsvt {
         return runs;
     }
 
-    // The spec says a run of 30 s or more "is sustained VT and is escalated
-    // rather than logged as NSVT", but NsvtRun carries a `sustained` flag,
-    // which implies it IS logged, with the flag set. Both are honoured: every
-    // run stays in the one list with its flag, and these accessors split it, so
-    // an escalation path can consume one view while the NSVT archive consumes
-    // the other. Nothing is dropped, because a run silently absent from both
-    // lists would be the worst outcome available.
-    inline std::vector<NsvtRun> nonSustained(const std::vector<NsvtRun>& runs) {
-        std::vector<NsvtRun> out;
-        for (const auto& r : runs) if (!r.sustained) out.push_back(r);
-        return out;
-    }
-    inline std::vector<NsvtRun> escalate(const std::vector<NsvtRun>& runs) {
-        std::vector<NsvtRun> out;
-        for (const auto& r : runs) if (r.sustained) out.push_back(r);
-        return out;
-    }
 
     // Measures the blind spot rather than leaving it as a comment. Counts
     // stretches of kMinRun or more consecutive beats that are all on

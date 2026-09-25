@@ -15,7 +15,6 @@
 #include <vector>
 #include <limits>
 #include <algorithm>
-#include <random>
 #include <cstdlib>
 #include <iostream>
 #include <atomic>
@@ -235,12 +234,11 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
     }
 
     // Arterial background-context templates (ABP / ART / ART_PULM). All
-    // three are now R-anchored, same as PPG (CreatePulseTemplates --
-    // borrows ch1.raw ECG R-peaks, same [R_i-pad, R_{i+1}+pad] slicer).
-    // The old foot-anchored self-detection path (build_arterial_template_
-    // foot_anchored / CreateArterialTemplates) is no longer called from
-    // here for any pulse channel; it's kept in create_arterial_templates.hpp
-    // only in case a future channel still needs self-detected anchoring.
+    // three are R-anchored, same as PPG (CreatePulseTemplates -- borrows
+    // ch1.raw ECG R-peaks, same [R_i-pad, R_{i+1}+pad] slicer). There is no
+    // foot-anchored self-detection path any more; the functions this comment
+    // used to point at (build_arterial_template_foot_anchored,
+    // CreateArterialTemplates) no longer exist.
     // Present-only; a channel with rate=0 in SignalRates yields an empty
     // result and is silently skipped when packed into the bins.
     {
@@ -306,25 +304,6 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
             v[i] = kv.second;
         }
     }
-    /*
-    // DEBUG/TEST: corrupt ~50% of bin 0's beats with additive noise (remove when done).
-    {
-        const double sigma = 3.0;   // mV noise stddev
-        static std::mt19937 rng(2025);
-        std::normal_distribution<double> gauss(0.0, sigma);
-        std::bernoulli_distribution coin(0.5);   // 50% of beats get hit
-        const size_t targetBin = 0;
-        for (auto& kv : out.beats.per_channel_beats) {
-            auto& binsVec = kv.second;               // [bin][beat][sample]
-            if (targetBin >= binsVec.size()) continue;
-            for (auto& beat : binsVec[targetBin]) {
-                if (!coin(rng)) continue;            // skip half, leave them clean
-                for (double& s : beat)
-                    if (!std::isnan(s)) s += gauss(rng);
-            }
-        }
-    }
-    */
 
     return out;
 }
@@ -685,15 +664,4 @@ inline void mergeTemplatesSlow(const std::vector<output_binfile_data>& peakResul
         const TemplateInfo& bi = (i < info.size()) ? info[i] : TemplateInfo{};
         packBinSlow(tmpl.bins[i], bi);
     }
-}
-
-inline std::pair<template_io::TemplateFile, template_io::BeatsFile>
-buildTemplatesAndBeatsFromPeakResults(const std::vector<output_binfile_data>& peakResults,
-    const SignalRates& rates,
-    const std::string& noise_bin_path = {})
-{
-    FastTemplateBuild fast =
-        buildTemplatesAndBeatsFast(peakResults, rates, noise_bin_path);
-    mergeTemplatesSlow(peakResults, fast.tmpl, fast.info, rates);
-    return { std::move(fast.tmpl), std::move(fast.beats) };
 }

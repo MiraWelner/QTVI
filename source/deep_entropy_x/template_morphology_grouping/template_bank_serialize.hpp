@@ -170,7 +170,7 @@ namespace tbank_ser {
         //   confirmed_by_operator -- was persisted NOWHERE. A confirmed
         //     template reloaded with label_code set and confirmed() false, and
         //     confirmed() is what blocks a merge from collapsing two
-        //     morphologies, what countLabeled counts, and what makes
+        //     morphologies, what the label census counts, and what makes
         //     presumedCategory honour the operator's verdict over the
         //     algorithm's presumption. The operator's work survived the file
         //     only as a label nothing treated as authoritative.
