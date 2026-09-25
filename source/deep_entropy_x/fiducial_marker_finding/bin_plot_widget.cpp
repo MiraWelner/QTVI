@@ -23,15 +23,30 @@
 
 namespace {
 
-    // The slicer's lead-in. Every pulse template is R-anchored with R1 at
-    // padSeconds * channelRate (create_arterial_templates.hpp:501), and all
-    // four CreatePulseTemplates call sites -- PPG in make_averaged_templates,
-    // ABP/ART/ART_PULM in build_templates -- omit the argument and so take its
-    // 0.3 default. Keep in step with that default.
+    // ---- kSlicePadSeconds IS GONE, AND THAT WAS THE PPG TIME SHIFT -------
     //
-    // The ECG's R column is NOT this: alignment.hpp puts it at 0.4 * the bin's
-    // longest RR, which varies per bin, so it arrives through setData instead.
-    constexpr double kSlicePadSeconds = 0.4;
+    // It was 0.4, and it claimed every pulse template was R-anchored with R1
+    // at padSeconds * channelRate. Three things were wrong with that:
+    //
+    //   * padSeconds was never passed to the thing that slices the beats
+    //     (alignment::extract_ppg_beats_and_align), so it could not have set
+    //     the lead-in;
+    //   * the real lead-in is rr_before_samples(rr) = 0.5 * THAT BEAT'S RR,
+    //     so it is not a duration and not the same for two beats;
+    //   * the beats are then shifted onto a shared up50 column, which moves
+    //     the R columns again.
+    //
+    // Net effect on screen: the pulse was drawn (0.5 * RR_median - 0.4 s) too
+    // far right -- about right at 75 bpm, 100 ms late at 60, 200 ms at 50,
+    // and early above 75. It read like a constant that needed tuning and was
+    // a quantity that had to be measured.
+    //
+    // Each pulse channel's R column is now measured at build time and carried
+    // in the template file (TemplateBin::*_r_construct); it reaches this
+    // widget through setPulseAnchor, exactly as the ECG's arrives through
+    // setData. A channel with no anchor is NOT DRAWN -- see timeAt and
+    // recomputeFrame, which both skip an anchor < 0 -- because a pulse at an
+    // assumed time is worse than no pulse.
 
     // ------------------------------------------------------------------
     // ------------------------------------------------------------------
@@ -308,14 +323,32 @@ void BinPlotWidget::setChannelRate(Channel ch, double hz) {
     const size_t i = static_cast<size_t>(ch);
     if (m_rates[i] == hz) return;
     m_rates[i] = hz;
-    // A pulse channel's R column is a fixed number of SECONDS into its
-    // template, so it follows the rate. Derived here rather than asked of the
-    // caller, because the caller would have to know kSlicePadSeconds and the
-    // two would drift apart. The ECG's anchor is not derivable this way -- it is
-    // 0.3 * the bin's longest RR, which only alignment knows -- so it comes in
-    // through setData as rPeakSample.
-    if (ch != Channel::Ecg && hz > 0.0)
-        m_rAnchor[i] = kSlicePadSeconds * hz;
+    // NO ANCHOR DERIVED HERE, for any channel. This used to set a pulse
+    // channel's R column to kSlicePadSeconds * hz on the theory that it was a
+    // fixed number of seconds into the template; it is not (see the note at
+    // the top of this file). Every channel's anchor now arrives as a measured
+    // column -- the ECG's through setData, each pulse channel's through
+    // setPulseAnchor -- and a channel whose anchor never arrives stays at -1
+    // and is not drawn.
+    recomputeFrame();
+    update();
+}
+
+// One pulse channel's R column, in ITS OWN template's columns, from that
+// channel's *_r_construct. -1 (or any negative value) means the build could
+// not measure one, and is stored as such: timeAt returns NaN for a negative
+// anchor and recomputeFrame then leaves the channel out of the frame
+// entirely, so the trace is absent rather than misplaced.
+//
+// ECG IS REJECTED HERE. Its anchor is per-alignment and arrives with the
+// waveform it belongs to (setData / setEcgData); accepting it through this
+// path as well would give two writers for one number.
+void BinPlotWidget::setPulseAnchor(Channel ch, double col) {
+    if (ch == Channel::Ecg) return;
+    const size_t i = static_cast<size_t>(ch);
+    const double v = (col >= 0.0) ? col : -1.0;
+    if (m_rAnchor[i] == v) return;
+    m_rAnchor[i] = v;
     recomputeFrame();
     update();
 }

@@ -457,7 +457,7 @@ void TemplateViewerWindow::realignAllVisiblePulses()
 {
     int nDone = 0, nSkipped = 0;
     int nAutoFoot = 0, nAutoPct = 0;
-  
+
 
     for (int li = 0; li < (int)m_pageGlobalIdx.size()
         && li < (int)m_pageTemplateIdx.size(); ++li) {
@@ -488,7 +488,11 @@ void TemplateViewerWindow::realignAllVisiblePulses()
 
         // AUTO DECIDES HERE, PER COLUMN, and passes its answer down as an
         // override -- there is no control holding it. Every other mode leaves
-    // this negative and relevelPulseAtPct reads the radio group.
+        // this negative, and relevelPulseAtPct then reads the radio group
+        // through pctForAlignMode. That sentence was already the comment here
+        // and was not true: nothing read the group, so Foot, Percent and Peak
+        // all arrived at relevelAtOwnCrossing as pct = -1 and came out as the
+        // foot.
         double pctOverride = -1.0;
         if (m_ppgAlignMode == PpgAlign::Auto) {
             pctOverride = static_cast<double>(
@@ -527,7 +531,7 @@ bool TemplateViewerWindow::relevelPulseAtFoot(int binIdx, int templateIdx,
     const QString path = beatsBinPath();
     if (path.isEmpty()) return false;
     const ppg_realign::BinBeats& beats = beatsForBin(binIdx);
-   
+
     if (beats.empty()) {
         return false;
     }
@@ -559,8 +563,19 @@ bool TemplateViewerWindow::relevelPulseAtFoot(int binIdx, int templateIdx,
     return true;
 }
 
-bool TemplateViewerWindow::relevelPulseAtPct(int binIdx, int templateIdx,  double footCol, double pct, bool announce)
+bool TemplateViewerWindow::relevelPulseAtPct(int binIdx, int templateIdx, double footCol, double pct, bool announce)
 {
+    // ---- A NEGATIVE pct MEANS "ASK THE CONTROL" -------------------------
+    //
+    // Only Auto passes a real number here, because only Auto decides per
+    // column. Foot, Percent and Peak are held in the radio group, and this is
+    // where the group is read -- see pctForAlignMode for what each resolves
+    // to, and for why the value used to stop at the spin box.
+    //
+    // RESOLVED BEFORE THE EARLY RETURNS, so the status line below reports the
+    // percentage the stack was actually built on rather than the sentinel.
+    if (pct < 0.0) pct = pctForAlignMode();
+
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return false;
     TemplateBin& b = m_bins[binIdx];
     if (templateIdx < 0 || templateIdx >= (int)b.ppg_bank.size()) return false;

@@ -673,6 +673,21 @@ void TemplateViewerWindow::showPage() {
             pw->setChannelRate(BinPlotWidget::Channel::Art, m_artRateHz);
             pw->setChannelRate(BinPlotWidget::Channel::ArtPulm, m_artPulmRateHz);
 
+            // ---- EACH PULSE CHANNEL'S R COLUMN ---------------------------
+            //
+            // PER BIN, not per subject, and per channel, not shared: each is
+            // the median of that channel's own surviving beats' R columns, so
+            // a bin with a slow heart rate genuinely has a later one. The rate
+            // no longer implies it -- see setPulseAnchor.
+            //
+            // A -1 here (build could not measure one) leaves that channel off
+            // the time axis and undrawn, which is deliberate: the alternative
+            // is the assumed column that put every pulse at the wrong time.
+            pw->setPulseAnchor(BinPlotWidget::Channel::Ppg, b.ppg_r_construct);
+            pw->setPulseAnchor(BinPlotWidget::Channel::Abp, b.abp_r_construct);
+            pw->setPulseAnchor(BinPlotWidget::Channel::Art, b.art_r_construct);
+            pw->setPulseAnchor(BinPlotWidget::Channel::ArtPulm, b.art_pulm_r_construct);
+
             static const std::vector<double> empty;
             const auto& ecg = leads[li].ecg ? *leads[li].ecg : empty;
             const auto& ppg = hasPPG ? ppgSlot->tmpl : empty;

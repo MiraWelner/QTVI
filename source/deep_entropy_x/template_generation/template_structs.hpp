@@ -82,6 +82,9 @@ struct TemplateInfo {
     // R-pair interval: peak = max in [R1,R2], foot = min in [R1,peak].
     // -1 when no PPG for this bin.
     int ppg_peak_col = -1;
+    // The pulse template's measured R column (PulseTemplateBin::rCol). -1 =
+    // unmeasurable, and then the channel has no R-relative time axis.
+    int ppg_r_col = -1;
     int ppg_onset_col = -1;
     // Surviving beats from ch1 raw method (each entry is one beat's
     // samples, all of equal length, possibly with NaN tails). Only

@@ -114,6 +114,21 @@ struct AnchoredBankSlot {
     uint32_t n_members = 0;
 };
 
+// Key for TemplateBin::final_bars: (lead, slot, anchor tag). A plain struct
+// with an ordering rather than a packed integer, because the three fields are
+// read back individually by anything inspecting the map and a packed key hides
+// which dimension collided.
+struct FinalBarKey {
+    int lead = -1;
+    int slot = -1;
+    int anchorTag = 0;
+    bool operator<(const FinalBarKey& o) const {
+        if (lead != o.lead) return lead < o.lead;
+        if (slot != o.slot) return slot < o.slot;
+        return anchorTag < o.anchorTag;
+    }
+};
+
 struct TemplateBin {
     std::array<tbank::TemplateBank, 3> ecg_bank;
     tbank::TemplateBank ppg_bank;
@@ -196,6 +211,16 @@ struct TemplateBin {
         const int b = chFor(lead, to).r_col_raw;
         return (a < 0 || b < 0) ? 0 : (b - a);
     }
+    // WHETHER frameShift ABOVE IS A MEASUREMENT OR A SHRUG. It returns 0 for a
+    // missing r_col_raw, which is indistinguishable from a genuine zero shift
+    // -- fine for display, where an untranslated column is a pixel or two out,
+    // and NOT fine for a value that is about to be copied into another
+    // alignment's cell and written to a file as that alignment's measurement.
+    // Callers that are recording rather than drawing ask this first.
+    bool canFrameShift(int lead, AnchorType from, AnchorType to) const {
+        return chFor(lead, from).r_col_raw >= 0
+            && chFor(lead, to).r_col_raw >= 0;
+    }
     tbank::BankMarkerSet userMarks(int lead, int slot,
         AnchorType frame = AnchorType::R_PEAK) const
     {
@@ -266,6 +291,23 @@ struct TemplateBin {
         return static_cast<int>(ecg_bank[lead].templates.size());
     }
 
+    // ---- WHERE EVERY BAR ENDED UP, AS READ BACK FROM A MARKING FILE ------
+    //
+    // Keyed (lead, slot, anchor tag). Populated ONLY by
+    // readTemplateMarkingsBin, and deliberately NOT by anything in the
+    // session: it is what a previous save recorded, not live state. The live
+    // answer is barsForPanel, which resolves the edit cells against the
+    // panel's own detection on every paint.
+    //
+    // SEPARATE FROM slotMarks FOR ONE REASON. A cell in markers_by_anchor
+    // means "the operator moved this bar here". Loading a detection into one
+    // would make every untouched bar read as placed -- suppressing the
+    // detection fallback, and reporting the detector as the operator in the
+    // next CSV written. That is the exact defect the seeding pass was removed
+    // to fix. So the recorded positions land here instead, where nothing that
+    // draws or writes marks will mistake them for edits.
+    std::map<FinalBarKey, tbank::BankMarkerSet> final_bars;
+
     // R peak column: auto-only, re-derived each pass from the template r_col;
     // NOT per-anchor and NOT persisted. Kept flat, and now DOUBLE like every
     // other position -- the refine stage produces a sub-sample R.
@@ -315,6 +357,24 @@ struct TemplateBin {
     // of re-detecting the peak on the multi-pulse template. -1 if unavailable.
     double ppg_peak_construct = -1;
     double ppg_onset_construct = -1;
+
+    // ---- EACH PULSE CHANNEL'S R COLUMN, FROM THE TEMPLATE FILE -----------
+    //
+    // The pulse twin of r_peak_ch, and the one number that puts a pulse on the
+    // same time axis as the QRS: column r_construct of that channel's template
+    // IS the R peak. Measured at build time as the median of the surviving
+    // beats' own R columns (alignment::PpgBeatSet::r_cols) and carried through
+    // template_io, because it is NOT derivable from the template.
+    //
+    // It used to be assumed: BinPlotWidget put it at kSlicePadSeconds * rate,
+    // a fixed 0.4 s, when the true column is near 0.5 * the bin's RR -- so the
+    // pulse was drawn ~100 ms late at 60 bpm, ~200 ms late at 50, and early
+    // above ~75. -1 = unmeasurable, and a channel with -1 is left OFF the
+    // shared axis rather than drawn at a guess.
+    double ppg_r_construct = -1;
+    double abp_r_construct = -1;
+    double art_r_construct = -1;
+    double art_pulm_r_construct = -1;
 
     // Arterial channels (ABP / ART / ART_PULM): same marker set as PPG
     // (onset, peak, dicrotic, peak2, end) and same issue flag semantics
@@ -402,6 +462,10 @@ inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::Template
         // template_io carries these as whole columns; widening is exact.
         dst.ppg_peak_construct = src.ppg_peak_col;
         dst.ppg_onset_construct = src.ppg_onset_col;
+        dst.ppg_r_construct = src.ppg_r_col;
+        dst.abp_r_construct = src.abp_r_col;
+        dst.art_r_construct = src.art_r_col;
+        dst.art_pulm_r_construct = src.art_pulm_r_col;
         dst.ppgTemplate = src.ppgTemplate;
         dst.ppg_template_iqr = src.ppg_template_iqr;
 
@@ -488,7 +552,7 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
 //
 //   header:
 //     uint32  magic   = kMarkMagic ("TMRK")
-//     uint32  version = kMarkVersion (1)
+//     uint32  version = kMarkVersion (2; 1 also reads -- see below)
 //     uint64  numBins
 //
 //   per bin:
@@ -544,114 +608,111 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
 // "TMRK", little-endian. Any 4 bytes would do; these are readable in a hex
 // dump, which is worth something the first time a file will not open.
 inline constexpr uint32_t kMarkMagic = 0x4B524D54u;
-inline constexpr uint32_t kMarkVersion = 1u;
+// VERSION 2: THE AUTO DETECTIONS ARE PERSISTED TOO.
+//
+// v1 stored only what the operator placed -- four ECG bars per
+// (lead, slot, anchor), three PPG bars per slot, five per arterial channel --
+// on the reasoning that every *_auto field is a pure function of the templates
+// and can be recomputed by seed_all on load. True, and still not enough: the
+// recomputation depends on the fit modes in force, the detector version and
+// the template file it runs against, so a marking file could not be read back
+// as a record of what the operator was looking at when they placed a bar. The
+// auto half of every CSV column was reproducible only by re-running the same
+// build over the same templates.
+//
+// v2 appends an AUTO section per bin, after the arterial block: the ECG
+// per-channel detections, the bin-level pulse and arterial detections with
+// their found flags and derived indices, and each pulse slot's frozen
+// detector output. Positions stay float64 and -1 stays the sentinel.
+//
+// A v1 FILE STILL READS. The auto section is simply absent, and the *_auto
+// fields keep the values seed_all computed -- exactly v1 behaviour. Only the
+// auto section is version-gated; everything before it is byte-identical.
+inline constexpr uint32_t kMarkVersion = 2u;
 
-inline void writeTemplateMarkingsBin(const std::string& path,
-    const std::vector<TemplateBin>& bins) {
-    std::ofstream f(path, std::ios::binary);
-    if (!f.is_open())
-        throw std::runtime_error("cannot open for write: " + path);
+// ---------------------------------------------------------------------------
+// ONE OPERATOR EDIT, READ BACK IN ANY ALIGNMENT'S COLUMNS
+// ---------------------------------------------------------------------------
+//
+// A bar edit is stored in exactly ONE cell, and which one depends on the view
+// it was made in (TemplateViewerWindow::barsForPanel, `ownBars`):
+//
+//   forced R or forced J : that alignment's own cell, in its own columns
+//   Automatic, forced P/Q: the bar's canonical owner cell -- P_ONSET for
+//                          p_begin, Q_ONSET for q_onset / s_end / t_end
+//
+// One cell is the right amount of storage: the .bin writes markers_by_anchor
+// verbatim and the reader restores under the same tag, so a mark round-trips
+// to the cell the drag wrote and barsForPanel finds it by the same rule it
+// used to draw it. Nothing needs copying into storage, and copying WOULD hurt
+// -- four copies of one number can diverge the moment the operator moves the
+// bar again in a different view.
+//
+// What needs translating is the CSV, which carries all four alignments in one
+// row. A t_end placed while forced to R is stored under R_PEAK; the Q block
+// reports the same landmark in Q's columns. That conversion happens HERE, on
+// the way out, from a const bin:
+//
+//   userBar(b, lead, slot, anchor, marker) -> the EDIT in `anchor`'s columns,
+//                                             or -1 if there is no edit
+//
+// -1 MEANS "NOT MOVED", NOT "NO POSITION". A bar the operator left alone is
+// still at a position -- the detection it was drawn on -- and that is what the
+// user column reports for it. This function does not know the detection, so
+// the caller substitutes it: see the umk block in the row loop and
+// finalBarsFor below. Splitting it this way keeps one function answering one
+// question, and keeps "was this moved" recoverable by comparing the two
+// columns.
+//
+// WHY EVERY ALIGNMENT IS SEARCHED. The edit may be under any tag (the table
+// above), and the writer cannot ask which view the operator was in -- that is
+// session state, not a property of the file. Canonical first, so that when two
+// cells hold values (a mark placed in Automatic and later adjusted in forced
+// R) the one the operator sees in the alignment most of the session is spent
+// in wins, rather than map order deciding.
+//
+// IT MANUFACTURES NOTHING. A bar placed nowhere returns -1 and the CSV leaves
+// its three user fields blank, so an untouched landmark is never the detection
+// dressed up as a placement -- the reason bar seeding was removed from
+// applyBankTemplateToWidget in the first place.
+inline double userBar(const TemplateBin& b, int lead, int slot,
+    AnchorType anchor, int marker)
+{
+    if (lead < 0 || lead > 2 || slot < 0) return -1.0;
+    // THE SAME GATE THE HEADER USES. An alignment without this bar has no
+    // column for it and nothing to resolve.
+    if (!anchor_view::hasUserColumnFor(anchor, marker)) return -1.0;
 
-    // header: magic, version, bin count
-    uint32_t magic = kMarkMagic;
-    uint32_t ver = kMarkVersion;
-    f.write(reinterpret_cast<const char*>(&magic), 4);
-    f.write(reinterpret_cast<const char*>(&ver), 4);
-    uint64_t n = bins.size();
-    f.write(reinterpret_cast<const char*>(&n), 8);
+    const auto field = [](const tbank::BankMarkerSet& m, int mk) -> double {
+        if (mk == anchor_view::p_begin) return m.p_begin;
+        if (mk == anchor_view::q_begin) return m.q_onset;
+        if (mk == anchor_view::j_point) return m.s_end;
+        if (mk == anchor_view::t_end)   return m.t_end;
+        return -1.0;
+        };
 
-    auto w8 = [&](uint8_t v) { f.write(reinterpret_cast<const char*>(&v), 1); };
-    auto w32 = [&](int v) { int32_t i = v; f.write(reinterpret_cast<const char*>(&i), 4); };
-    auto w64d = [&](double v) { f.write(reinterpret_cast<const char*>(&v), 8); };
-
-    for (const auto& b : bins) {
-        uint64_t idx = b.index;
-        f.write(reinterpret_cast<const char*>(&idx), 8);
-
-        w8(b.bad_r_ch[0] ? 1 : 0);
-        w8(b.bad_r_ch[1] ? 1 : 0);
-        w8(b.bad_r_ch[2] ? 1 : 0);
-        w8(b.bad_ppg);
-
-        // ECG user landmarks, PER LEAD, PER SLOT, PER ANCHOR:
-        //
-        //   per lead 0..2:
-        //     int32    slotCount
-        //     per slot:
-        //       int32    anchorCount
-        //       per anchor:
-        //         int32    anchorTag
-        //         float64  p_begin, q_onset, s_end, t_end
-        //
-        // FOUR FIELDS: THE BARS ONLY. p_peak left with t_begin -- it is a
-        // reactive glyph, fully determined by the bars that bracket it, so
-        // storing it only created a second answer that could disagree with
-        // them. Readers call FeatureMarks::reactive_ecg instead.
-        //
-        // THE SLOT DIMENSION IS THE POINT. The old layout was per anchor only,
-        // with each field an array of 3 leads -- it could store slot 0 and
-        // nothing else, so a sub-template column's landmarks had nowhere to go
-        // in this file and were kept in _templates.bin instead, where the
-        // pipeline overwrote them on the next anchor pass.
-        //
-        // LEAD IS THE OUTER LOOP because a bank is per lead and the leads
-        // legitimately disagree on slot count: a morphology separable on CH1 may
-        // not be on CH2. A single shared slotCount would have to be the max and
-        // pad the rest.
-        //
-        // Counts and tags stay int32: they are structure, not position.
-        //
-        // R peak is auto-only, re-derived from each template's own r_col every
-        // pass, and is not written here.
-        for (int lead = 0; lead < 3; ++lead) {
-            const int nSlots = b.slotCount(lead);
-            w32(nSlots);
-            for (int slot = 0; slot < nSlots; ++slot) {
-                const auto& byAnchor =
-                    b.ecg_bank[lead].templates[slot].markers_by_anchor;
-                w32(static_cast<int>(byAnchor.size()));
-                for (const auto& kv : byAnchor) {
-                    w32(kv.first);                      // AnchorType tag
-                    const tbank::BankMarkerSet& m = kv.second;
-                    w64d(m.p_begin); w64d(m.q_onset);
-                    w64d(m.s_end);   w64d(m.t_end);
-                }
-            }
+    // Canonical cell first, then the rest.
+    AnchorType src = anchor_view::anchorFor(marker);
+    double v = field(b.slotMarks(lead, slot, src), marker);
+    if (v < 0.0) {
+        v = -1.0;
+        for (AnchorType a : anchor_view::anchor_array) {
+            const double cand = field(b.slotMarks(lead, slot, a), marker);
+            if (cand >= 0.0) { src = a; v = cand; break; }
         }
-
-        // PPG: THE THREE BARS ONLY, PER SLOT. t50 / peak / peak2 / t80 /
-        // t80_rise / pw80 are auto-only glyphs -- markerAtX refuses to hand any
-        // of them out -- and all five reactive ones come back from reactive_ppg
-        // bracketed by these bars, so storing them would be storing a cache.
-        //
-        // PER SLOT, because each morphology column draws its OWN pulse
-        // (ppg_bank.templates[slot].tmpl). Three bin-level values meant every
-        // column shared one set of bars against a different waveform each.
-        // Slot 0 is a slot like any other here.
-        {
-            const int nPulse = static_cast<int>(b.ppg_bank.templates.size());
-            w32(nPulse);
-            for (int slot = 0; slot < nPulse; ++slot) {
-                const tbank::BankPulseMarkerSet& pm =
-                    b.ppg_bank.templates[slot].pulse_marks;
-                w64d(pm.onset);
-                w64d(pm.dicrotic);
-                w64d(pm.end);
-            }
-        }
-
-        // Arterial block: ABP, ART, ART_PULM (issue + 5 positions each). All
-        // five ARE bars on these channels -- see the struct note.
-        w8(b.abp_issue);
-        w64d(b.abp_onset); w64d(b.abp_peak); w64d(b.abp_dicrotic); w64d(b.abp_peak2); w64d(b.abp_end);
-        w8(b.art_issue);
-        w64d(b.art_onset); w64d(b.art_peak); w64d(b.art_dicrotic); w64d(b.art_peak2); w64d(b.art_end);
-        w8(b.art_pulm_issue);
-        w64d(b.art_pulm_onset); w64d(b.art_pulm_peak); w64d(b.art_pulm_dicrotic);
-        w64d(b.art_pulm_peak2); w64d(b.art_pulm_end);
     }
-}
+    if (v < 0.0) return -1.0;
+    if (src == anchor) return v;
 
+    // NO UNTRANSLATED FALLBACK. frameShift returns 0 for a missing r_col_raw,
+    // which is indistinguishable from a real zero shift -- tolerable when
+    // drawing, not when the number is about to be filed under another
+    // alignment's column heading as that alignment's measurement. Unknown
+    // shift means that one block's user fields stay blank.
+    if (!b.canFrameShift(lead, src, anchor)) return -1.0;
+    const double moved = v + b.frameShift(lead, src, anchor);
+    return (moved >= 0.0) ? moved : -1.0;
+}
 
 struct EcgFeatures {
     // Sub-sample peak positions throughout. q and s come from the refined
@@ -1037,6 +1098,278 @@ inline EcgDetection ecgDetect(const TemplateBin& b, int lead, int slot,
     return d;
 }
 
+// ---------------------------------------------------------------------------
+// BELOW ecgDetect ON PURPOSE. writeTemplateMarkingsBin resolves, per
+// (lead, slot, alignment), where each bar ended up -- and an unmoved bar's
+// position is that alignment's detection, so the writer needs ecgDetect and
+// EcgDetection, both declared just above. It used to sit up with the format
+// documentation near kMarkMagic, which read better and did not compile.
+// ---------------------------------------------------------------------------
+//
+// WHERE THE BAR IS, in one alignment's columns: the operator's edit if they
+// moved it, otherwise the detection on that alignment's own average.
+// ---------------------------------------------------------------------------
+//
+// THE SAME RULE barsForPanel DRAWS WITH, which is the point: the number in the
+// file is the number that was on screen. `detected` is this (lead, slot,
+// anchor)'s own detection -- the caller has it either way, because the _auto
+// columns are made of it -- so this function does no detecting and cannot
+// disagree with the auto half of the same row.
+inline tbank::BankMarkerSet finalBarsFor(const TemplateBin& b, int lead,
+    int slot, AnchorType anchor,
+    const FeatureMarks::TemplateLandmarks& detected)
+{
+    tbank::BankMarkerSet out;
+    struct Bar { int marker; double tbank::BankMarkerSet::* out; double det; };
+    const Bar kBars[4] = {
+        { anchor_view::p_begin, &tbank::BankMarkerSet::p_begin, detected.p_begin },
+        { anchor_view::q_begin, &tbank::BankMarkerSet::q_onset, detected.q_onset },
+        { anchor_view::j_point, &tbank::BankMarkerSet::s_end,   detected.s_end   },
+        { anchor_view::t_end,   &tbank::BankMarkerSet::t_end,   detected.t_end   },
+    };
+    for (const Bar& bar : kBars) {
+        // NOT A BAR HERE, NOT A VALUE HERE. The detection exists for all four
+        // landmarks on every average, but this alignment does not offer all
+        // four as bars, and this function reports bars.
+        if (!anchor_view::hasUserColumnFor(anchor, bar.marker)) {
+            out.*bar.out = -1.0;
+            continue;
+        }
+        const double edit = userBar(b, lead, slot, anchor, bar.marker);
+        // NOT std::max: an edit BELOW the detection is a legitimate edit. The
+        // test is "is there an edit", and only then does the detection stand.
+        out.*bar.out = (edit >= 0.0) ? edit
+            : (detected.valid ? bar.det : -1.0);
+    }
+    return out;
+}
+
+// sampleRate AND THE TWO FIT MODES ARE REQUIRED, and that is a change of kind:
+// this writer used to be a pure dump of whatever was in memory. It now also
+// records WHERE EVERY BAR ENDED UP -- edit or detection -- for all four
+// alignments, and a detection cannot be resolved without the rate the finders
+// work in and the models the operator had selected. Passing them makes the
+// dependency visible instead of letting the file silently describe a different
+// detector run from the CSV written beside it.
+inline void writeTemplateMarkingsBin(const std::string& path,
+    const std::vector<TemplateBin>& bins,
+    double sampleRateHz,
+    curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
+    curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f.is_open())
+        throw std::runtime_error("cannot open for write: " + path);
+
+    // header: magic, version, bin count
+    uint32_t magic = kMarkMagic;
+    uint32_t ver = kMarkVersion;
+    f.write(reinterpret_cast<const char*>(&magic), 4);
+    f.write(reinterpret_cast<const char*>(&ver), 4);
+    uint64_t n = bins.size();
+    f.write(reinterpret_cast<const char*>(&n), 8);
+
+    auto w8 = [&](uint8_t v) { f.write(reinterpret_cast<const char*>(&v), 1); };
+    auto w32 = [&](int v) { int32_t i = v; f.write(reinterpret_cast<const char*>(&i), 4); };
+    auto w64d = [&](double v) { f.write(reinterpret_cast<const char*>(&v), 8); };
+
+    for (const auto& b : bins) {
+        uint64_t idx = b.index;
+        f.write(reinterpret_cast<const char*>(&idx), 8);
+
+        w8(b.bad_r_ch[0] ? 1 : 0);
+        w8(b.bad_r_ch[1] ? 1 : 0);
+        w8(b.bad_r_ch[2] ? 1 : 0);
+        w8(b.bad_ppg);
+
+        // ECG user landmarks, PER LEAD, PER SLOT, PER ANCHOR:
+        //
+        //   per lead 0..2:
+        //     int32    slotCount
+        //     per slot:
+        //       int32    anchorCount
+        //       per anchor:
+        //         int32    anchorTag
+        //         float64  p_begin, q_onset, s_end, t_end
+        //
+        // FOUR FIELDS: THE BARS ONLY. p_peak left with t_begin -- it is a
+        // reactive glyph, fully determined by the bars that bracket it, so
+        // storing it only created a second answer that could disagree with
+        // them. Readers call FeatureMarks::reactive_ecg instead.
+        //
+        // THE SLOT DIMENSION IS THE POINT. The old layout was per anchor only,
+        // with each field an array of 3 leads -- it could store slot 0 and
+        // nothing else, so a sub-template column's landmarks had nowhere to go
+        // in this file and were kept in _templates.bin instead, where the
+        // pipeline overwrote them on the next anchor pass.
+        //
+        // LEAD IS THE OUTER LOOP because a bank is per lead and the leads
+        // legitimately disagree on slot count: a morphology separable on CH1 may
+        // not be on CH2. A single shared slotCount would have to be the max and
+        // pad the rest.
+        //
+        // Counts and tags stay int32: they are structure, not position.
+        //
+        // R peak is auto-only, re-derived from each template's own r_col every
+        // pass, and is not written here.
+        for (int lead = 0; lead < 3; ++lead) {
+            const int nSlots = b.slotCount(lead);
+            w32(nSlots);
+            for (int slot = 0; slot < nSlots; ++slot) {
+                const auto& byAnchor =
+                    b.ecg_bank[lead].templates[slot].markers_by_anchor;
+                w32(static_cast<int>(byAnchor.size()));
+                for (const auto& kv : byAnchor) {
+                    w32(kv.first);                      // AnchorType tag
+                    const tbank::BankMarkerSet& m = kv.second;
+                    w64d(m.p_begin); w64d(m.q_onset);
+                    w64d(m.s_end);   w64d(m.t_end);
+                }
+            }
+        }
+
+        // PPG: THE THREE BARS ONLY, PER SLOT. t50 / peak / peak2 / t80 /
+        // t80_rise / pw80 are auto-only glyphs -- markerAtX refuses to hand any
+        // of them out -- and all five reactive ones come back from reactive_ppg
+        // bracketed by these bars, so storing them would be storing a cache.
+        //
+        // PER SLOT, because each morphology column draws its OWN pulse
+        // (ppg_bank.templates[slot].tmpl). Three bin-level values meant every
+        // column shared one set of bars against a different waveform each.
+        // Slot 0 is a slot like any other here.
+        {
+            const int nPulse = static_cast<int>(b.ppg_bank.templates.size());
+            w32(nPulse);
+            for (int slot = 0; slot < nPulse; ++slot) {
+                const tbank::BankPulseMarkerSet& pm =
+                    b.ppg_bank.templates[slot].pulse_marks;
+                w64d(pm.onset);
+                w64d(pm.dicrotic);
+                w64d(pm.end);
+            }
+        }
+
+        // Arterial block: ABP, ART, ART_PULM (issue + 5 positions each). All
+        // five ARE bars on these channels -- see the struct note.
+        w8(b.abp_issue);
+        w64d(b.abp_onset); w64d(b.abp_peak); w64d(b.abp_dicrotic); w64d(b.abp_peak2); w64d(b.abp_end);
+        w8(b.art_issue);
+        w64d(b.art_onset); w64d(b.art_peak); w64d(b.art_dicrotic); w64d(b.art_peak2); w64d(b.art_end);
+        w8(b.art_pulm_issue);
+        w64d(b.art_pulm_onset); w64d(b.art_pulm_peak); w64d(b.art_pulm_dicrotic);
+        w64d(b.art_pulm_peak2); w64d(b.art_pulm_end);
+
+        // ---- v2: EVERY AUTO DETECTION ---------------------------------
+        //
+        // Order here is the order readTemplateMarkingsBin reads it in, and
+        // the two lists must be edited together. No counts: every field is
+        // fixed-arity, and the per-slot pulse block carries its own count
+        // because a bank's size is not.
+        //
+        // ECG, per channel. r_peak_ch leads because it is the anchor every
+        // other column is measured against, and it was the one position in
+        // the file with no persisted form at all.
+        for (int lead = 0; lead < 3; ++lead) {
+            w64d(b.r_peak_ch[lead]);
+            w64d(b.p_begin_auto_ch[lead]);
+            w64d(b.p_peak_auto_ch[lead]);
+            w64d(b.q_onset_auto_ch[lead]);
+            w64d(b.q_peak_auto_ch[lead]);
+            w64d(b.r_peak_auto_ch[lead]);
+            w64d(b.s_end_auto_ch[lead]);
+            w64d(b.t_end_auto_ch[lead]);
+            // A FLAG, NOT A POSITION, and it changes what the Q columns
+            // mean: find_q_onset falls back to its R-upstroke branch on a
+            // monophasic R, and q_peak comes back -1 on purpose there.
+            w8(b.q_onset_found_auto_ch[lead] ? 1 : 0);
+        }
+
+        // Pulse, bin level: positions, then flags, then the derived indices.
+        w64d(b.ppg_onset_auto); w64d(b.ppg_peak_auto);
+        w64d(b.ppg_dicrotic_auto); w64d(b.ppg_peak2_auto);
+        w64d(b.ppg_end_auto);
+        w64d(b.ppg_t50_auto); w64d(b.ppg_t80_auto);
+        w64d(b.ppg_u_auto); w64d(b.ppg_v_auto); w64d(b.ppg_w_auto);
+        w64d(b.ppg_a_auto); w64d(b.ppg_b_auto); w64d(b.ppg_c_auto);
+        w64d(b.ppg_d_auto); w64d(b.ppg_e_auto); w64d(b.ppg_f_auto);
+        w64d(b.ppg_p1_auto); w64d(b.ppg_p2_auto);
+        w8(b.ppg_dicrotic_found_auto ? 1 : 0);
+        w8(b.ppg_peak2_found_auto ? 1 : 0);
+        w32(b.ppg_dn_tier_auto);
+        w64d(b.ppg_dn_confidence_auto);
+        // NaN, not -1, is the unset value for these eight -- they are ratios
+        // and 0 is a legal one. w64d writes the bit pattern, so NaN survives.
+        w64d(b.ppg_ba_auto); w64d(b.ppg_ca_auto); w64d(b.ppg_da_auto);
+        w64d(b.ppg_ea_auto); w64d(b.ppg_fa_auto);
+        w64d(b.ppg_agi_auto); w64d(b.ppg_ri_auto); w64d(b.ppg_si_auto);
+        w32(static_cast<int>(b.ppg_found_mask_auto));
+
+        // Arterial, bin level.
+        w64d(b.abp_onset_auto); w64d(b.abp_peak_auto); w64d(b.abp_dicrotic_auto);
+        w64d(b.abp_peak2_auto); w64d(b.abp_end_auto);
+        w64d(b.art_onset_auto); w64d(b.art_peak_auto); w64d(b.art_dicrotic_auto);
+        w64d(b.art_peak2_auto); w64d(b.art_end_auto);
+        w64d(b.art_pulm_onset_auto); w64d(b.art_pulm_peak_auto);
+        w64d(b.art_pulm_dicrotic_auto); w64d(b.art_pulm_peak2_auto);
+        w64d(b.art_pulm_end_auto);
+
+        // Per pulse slot: the frozen detector output the glyphs are painted
+        // from. Its own count, matching the bars block above -- the two walk
+        // the same bank but are written apart so a v1 reader stops cleanly at
+        // the end of the arterial block.
+        {
+            const int nPulse = static_cast<int>(b.ppg_bank.templates.size());
+            w32(nPulse);
+            for (int slot = 0; slot < nPulse; ++slot) {
+                const tbank::BankPulseMarkerSet& pm =
+                    b.ppg_bank.templates[slot].pulse_marks;
+                w64d(pm.onset_auto); w64d(pm.peak_auto);
+                w64d(pm.dicrotic_auto); w64d(pm.peak2_auto);
+                w64d(pm.end_auto);
+                w8(pm.notch_found ? 1 : 0);
+            }
+        }
+
+        // ---- v2: WHERE EVERY BAR ENDED UP, ALL FOUR ALIGNMENTS --------
+        //
+        // Four bars x four alignments per (lead, slot), each in that
+        // alignment's own columns: the operator's edit where they moved it,
+        // that alignment's detection where they left it. The same numbers the
+        // CSV's _user columns carry, and the same rule barsForPanel drew with.
+        //
+        // WHY IT IS STORED AND NOT LEFT DERIVABLE. Everything needed to
+        // recompute it is above -- the edit cells and the per-channel
+        // detections -- except the per-(slot, alignment) detection, which is
+        // not a stored quantity anywhere: it is detect_template_landmarks over
+        // that slot's anchored average, and the answer depends on the fit
+        // modes and the detector build. Re-deriving it later gives a number
+        // this session never displayed. This block is the record.
+        //
+        // The anchors are written in anchor_array order and the tag goes with
+        // each one, so a reader neither assumes the order nor has to.
+        for (int lead = 0; lead < 3; ++lead) {
+            const int nSlots = b.slotCount(lead);
+            w32(nSlots);
+            for (int slot = 0; slot < nSlots; ++slot) {
+                w32(static_cast<int>(anchor_view::anchor_array.size()));
+                for (AnchorType a : anchor_view::anchor_array) {
+                    w32(static_cast<int>(a));
+                    // The detection for THIS (lead, slot, alignment). An
+                    // absent average gives an invalid EcgDetection, and
+                    // finalBarsFor then reports the edit alone, or -1 where
+                    // there is not even an edit -- never a position borrowed
+                    // from another alignment.
+                    const EcgDetection d = ecgDetect(b, lead, slot, a,
+                        sampleRateHz, onOffsetMode, peakMode);
+                    const tbank::BankMarkerSet fin =
+                        finalBarsFor(b, lead, slot, a, d.lm);
+                    w64d(fin.p_begin); w64d(fin.q_onset);
+                    w64d(fin.s_end);   w64d(fin.t_end);
+                }
+            }
+        }
+    }
+}
+
 // `bars` is the REACTIVE input: p_peak and t_peak are re-measured between the
 // operator's P-onset/Q-onset and S-end/T-end bars, so they follow a drag. Pass
 // a default-constructed set to get the detector's own brackets instead.
@@ -1162,11 +1495,24 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
             : std::string();
         };
 
-    // The R block is the one that carries the interval user columns. See
-    // emitIntervalHeader. Reassigned per alignment in both loops below;
-    // emitIntervalPair captures it by reference.
-    auto intervalUserIn = [](AnchorType a) { return a == AnchorType::R_PEAK; };
-    bool intervalUserHere = intervalUserIn(anchors.front());
+    // AN INTERVAL'S USER HALF NEEDS BOTH ITS BARS IN THIS ALIGNMENT. qrs is
+    // s_end - q_onset, qt is t_end - q_onset:
+    //
+    //   _R : qrs, qt     _Q : qrs, qt     _P : neither     _J : neither
+    //
+    // P has no q_onset bar and J has no q_onset bar, so neither can report a
+    // difference whose inputs it does not carry.
+    //
+    // BY NAME, because the two differ in their second bar and J has t_end
+    // without q_onset -- a single per-alignment answer could not say that.
+    auto intervalUserIn = [](AnchorType a, const char* name) {
+        const bool haveQ = anchor_view::showsBar(a, anchor_view::q_begin);
+        if (std::strcmp(name, "qrs") == 0)
+            return haveQ && anchor_view::showsBar(a, anchor_view::j_point);
+        if (std::strcmp(name, "qt") == 0)
+            return haveQ && anchor_view::showsBar(a, anchor_view::t_end);
+        return false;
+        };
 
 
     // ---- helpers -----------------------------------------------------------
@@ -1305,13 +1651,12 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     auto emitIntervalHeader = [&](const char* name,
         AnchorType anchor, const std::string& sfx) {
             f << ',' << name << "_ms_auto" << sfx;
-            // NO OWNING BLOCK. qrs needs q_onset and s_end, qt needs q_onset and
-            // t_end -- bars from three different alignments -- so `owns` cannot
-            // answer for an interval the way it does for a point. A duration is
-            // frame-free, so the one copy under R is the whole answer rather than
-            // an arbitrary pick, and the other three blocks carried identical
-            // numbers.
-            if (intervalUserIn(anchor))
+            // The user half needs BOTH its bars to be placeable in this
+            // alignment -- qrs needs q_onset and s_end, qt needs q_onset and
+            // t_end -- so it appears under _R and _Q and not under _P or _J.
+            // See intervalUserIn; the row loop calls the same function with the
+            // same two arguments, so header and body cannot disagree.
+            if (intervalUserIn(anchor, name))
                 f << ',' << name << "_ms_user" << sfx;
         };
     // Pulse: 6 cols for a BAR, 3 for a glyph. Five of the eight PPG points are
@@ -1449,11 +1794,16 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
             if (userToo) { f << ','; if (idx_user >= 0.0) f << (idx_user * toMs); }
         };
 
-    // Interval pair. The user half only in the R block -- see
-    // emitIntervalHeader for why an interval has no owning alignment.
-    auto emitIntervalPair = [&](double auto_ms, double user_ms) {
-        f << ',';   if (std::isfinite(auto_ms)) f << auto_ms;
-        if (intervalUserHere) { f << ','; if (std::isfinite(user_ms)) f << user_ms; }
+    // Interval pair. The user half wherever both the interval's bars are
+    // placeable -- see intervalUserIn.
+    // THE GATE IS COMPUTED HERE, not captured: the two intervals in a block can differ
+    // (see intervalUserIn), and a shared flag set per anchor could only be
+    // right for one of them.
+    auto emitIntervalPair = [&](const char* name, AnchorType anchor,
+        double auto_ms, double user_ms) {
+            const bool intervalUserHere = intervalUserIn(anchor, name);
+            f << ',';   if (std::isfinite(auto_ms)) f << auto_ms;
+            if (intervalUserHere) { f << ','; if (std::isfinite(user_ms)) f << user_ms; }
         };
 
     // Autodetected computed feature point (used by both ECG and PPG glyph
@@ -1530,7 +1880,6 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                 // ECG auto-features) no longer lines up with it.
                 if (wantEcg)
                     for (AnchorType anchor : anchors) {
-                        intervalUserHere = intervalUserIn(anchor);
                         {
                             // EVERYTHING ECG IN THIS BLOCK IS MEASURED ON THIS ALIGNMENT.
                             // Its own average supplies the amplitudes, its own detections
@@ -1547,6 +1896,15 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             // supplied a struct, and with it the flat-field fallback that
                             // hands back R's positions for another alignment.
                             TemplateBin::AnchorAuto aa{};
+                            // HOISTED OUT OF THE if. finalBarsFor needs this
+                            // block's detection as the fallback for an unmoved
+                            // bar, and aa flattens it into six fields keyed by
+                            // channel -- fine for the auto columns, not enough
+                            // for a BankMarkerSet. Default-constructed means
+                            // valid == false, which finalBarsFor reads as "no
+                            // detection either", so a block with no average
+                            // yields -1 rather than a stale position.
+                            FeatureMarks::TemplateLandmarks lmBlock;
                             if (asl) {
                                 const int rSeed = static_cast<int>(
                                     std::lround(b.chFor(c, anchor).r_col_raw));
@@ -1557,6 +1915,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                                 aa.p_begin[c] = lm.p_begin;  aa.p_peak[c] = lm.p_peak;
                                 aa.q_onset[c] = lm.q_onset;  aa.r_peak[c] = lm.r_peak;
                                 aa.s_end[c] = lm.s_end;    aa.t_end[c] = lm.t_end;
+                                lmBlock = lm;
                             }
                             else {
                                 aa.p_begin[c] = aa.p_peak[c] = aa.q_onset[c] =
@@ -1571,17 +1930,31 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             // different number from one measured against R, so reporting
                             // it under another suffix would attribute it to a waveform it
                             // was never compared to.
-                            tbank::BankMarkerSet umk;
-                            {
-                                const tbank::BankMarkerSet& own = b.slotMarks(c, slot, anchor);
-                                if (anchor_view::owns(anchor, anchor_view::p_begin)) umk.p_begin = own.p_begin;
-                                if (anchor_view::owns(anchor, anchor_view::q_begin)) umk.q_onset = own.q_onset;
-                                if (anchor_view::owns(anchor, anchor_view::j_point))   umk.s_end = own.s_end;
-                                if (anchor_view::owns(anchor, anchor_view::t_end))   umk.t_end = own.t_end;
-                            }
+                            // THE BARS THIS ALIGNMENT HAS, in its own columns,
+                            // AS DRAWN: the operator's edit where they moved
+                            // the bar -- resolved out of whichever cell the
+                            // drag wrote it to and frame-shifted into this
+                            // alignment -- and this alignment's own detection
+                            // where they left it. barsForPanel's rule exactly,
+                            // so the _user column is the position that was on
+                            // screen when Finish was pressed. A bar this
+                            // alignment does not have is -1 and has no column.
+                            //
+                            // lmBlock is the same detection the _auto columns
+                            // below are made of (aa was filled from it), so the
+                            // two halves of a row cannot describe different
+                            // waveforms, and user == auto is the readable
+                            // signal for "not moved".
+                            const tbank::BankMarkerSet umk =
+                                finalBarsFor(b, c, slot, anchor, lmBlock);
 
                             //bracket t peak by send tbegin
-                            const tbank::BankMarkerSet whole = asl ? b.userMarks(c, slot, anchor)
+                            // THIS BLOCK'S BARS, the same umk the point columns
+                            // print. userMarks() reads the canonical cells
+                            // only, so it would disagree with the printed
+                            // columns for a forced-R or forced-J edit, which
+                            // never reaches a canonical cell.
+                            const tbank::BankMarkerSet whole = asl ? umk
                                 : tbank::BankMarkerSet{};
                             const FeatureMarks::ReactiveEcg user_placed_s_and_t_bars_for_bracketing_tpeak = FeatureMarks::reactive_ecg(ecg, whole.p_begin, whole.q_onset, whole.s_end, whole.t_end, sampleRateHz, peakMode);
                             const FeatureMarks::ReactiveEcg auto_s_and_t_bars_for_bracketing_tpeak = FeatureMarks::reactive_ecg(ecg, aa.p_begin[c], aa.q_onset[c], aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode);
@@ -1597,7 +1970,18 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             // blocks (a duration is frame-free), which is exactly why only
                             // the R block emits their user half.
                             EcgFeatures ftUser = asl
-                                ? computeEcgFeatures(ecg, user_placed_s_and_t_bars_for_bracketing_tpeak.p_peak, whole.q_onset, b.r_peak_ch[c], whole.s_end, whole.t_end, sampleRateHz, b.polarity.sign(c), peakMode)
+                                // R TRANSLATED INTO THIS BLOCK'S FRAME.
+                                // r_peak_ch is an R-frame column and every
+                                // other argument here is in `anchor`'s columns;
+                                // mixing them put the Q and S glyph searches a
+                                // frame-shift away from the bars bracketing
+                                // them. The two intervals are differences and
+                                // were unaffected, which is why it survived.
+                                ? computeEcgFeatures(ecg, user_placed_s_and_t_bars_for_bracketing_tpeak.p_peak, whole.q_onset,
+                                    (b.r_peak_ch[c] >= 0.0
+                                        ? b.r_peak_ch[c] + b.frameShift(c, AnchorType::R_PEAK, anchor)
+                                        : -1.0),
+                                    whole.s_end, whole.t_end, sampleRateHz, b.polarity.sign(c), peakMode)
                                 : EcgFeatures{};   // see ftAuto
 
                             // Order MUST match ecgPointNames:
@@ -1634,15 +2018,15 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             // ---- INTERVALS: ecgIntervalNames ORDER, qrs THEN qt -------
                             // A duration is frame-free -- (s_end - q_onset) is the same
                             // number whichever alignment's columns it was measured in --
-                            // so the auto side is emitted per block (the column set has to
-                            // be the same shape within a part) while the user side appears
-                            // once, under R. emitIntervalPair applies that gate.
+                            // so the auto side is emitted in every block, and the user
+                            // side wherever both its bars are placeable: R and Q, not P
+                            // or J. emitIntervalPair applies that gate per interval.
                             //
                             // Both come from computeEcgFeatures, which now takes doubles,
                             // so the user side is a sub-sample duration rather than a
                             // whole number of samples times the sample period.
-                            emitIntervalPair(ftAuto.qrs_ms, ftUser.qrs_ms);
-                            emitIntervalPair(ftAuto.qt_ms, ftUser.qt_ms);
+                            emitIntervalPair("qrs", anchor, ftAuto.qrs_ms, ftUser.qrs_ms);
+                            emitIntervalPair("qt", anchor, ftAuto.qt_ms, ftUser.qt_ms);
                         }
 
                         // Autodetected ECG glyph columns (p_wave, q_onset, r_wave, t_peak).
@@ -1836,11 +2220,16 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         throw std::runtime_error(
             "not a template-markings file (bad magic), or written before the "
             "version field existed -- re-mark: " + path);
-    if (ver != kMarkVersion)
+    // v1 AND v2 BOTH READ. Everything up to the arterial block is identical;
+    // v2 only appends. A v1 file therefore restores every operator mark and
+    // leaves the *_auto fields as seed_all computed them, which is precisely
+    // what v1 did. Anything else is rejected rather than guessed at.
+    if (ver != 1u && ver != 2u)
         throw std::runtime_error(
             "template-markings version " + std::to_string(ver)
-            + " is not supported (this build writes and reads version "
+            + " is not supported (this build reads version 1 and "
             + std::to_string(kMarkVersion) + "): " + path);
+    const bool haveAuto = (ver >= 2u);
 
     uint64_t n = 0;
     f.read(reinterpret_cast<char*>(&n), 8);
@@ -1896,6 +2285,85 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         b.art_pulm_issue = r8();
         b.art_pulm_onset = r64d(); b.art_pulm_peak = r64d(); b.art_pulm_dicrotic = r64d();
         b.art_pulm_peak2 = r64d(); b.art_pulm_end = r64d();
+
+        // ---- v2: EVERY AUTO DETECTION, in the writer's order ----------
+        if (!haveAuto) continue;
+        for (int lead = 0; lead < 3; ++lead) {
+            b.r_peak_ch[lead] = r64d();
+            b.p_begin_auto_ch[lead] = r64d();
+            b.p_peak_auto_ch[lead] = r64d();
+            b.q_onset_auto_ch[lead] = r64d();
+            b.q_peak_auto_ch[lead] = r64d();
+            b.r_peak_auto_ch[lead] = r64d();
+            b.s_end_auto_ch[lead] = r64d();
+            b.t_end_auto_ch[lead] = r64d();
+            b.q_onset_found_auto_ch[lead] = (r8() != 0);
+        }
+
+        b.ppg_onset_auto = r64d(); b.ppg_peak_auto = r64d();
+        b.ppg_dicrotic_auto = r64d(); b.ppg_peak2_auto = r64d();
+        b.ppg_end_auto = r64d();
+        b.ppg_t50_auto = r64d(); b.ppg_t80_auto = r64d();
+        b.ppg_u_auto = r64d(); b.ppg_v_auto = r64d(); b.ppg_w_auto = r64d();
+        b.ppg_a_auto = r64d(); b.ppg_b_auto = r64d(); b.ppg_c_auto = r64d();
+        b.ppg_d_auto = r64d(); b.ppg_e_auto = r64d(); b.ppg_f_auto = r64d();
+        b.ppg_p1_auto = r64d(); b.ppg_p2_auto = r64d();
+        b.ppg_dicrotic_found_auto = (r8() != 0);
+        b.ppg_peak2_found_auto = (r8() != 0);
+        b.ppg_dn_tier_auto = r32();
+        b.ppg_dn_confidence_auto = r64d();
+        b.ppg_ba_auto = r64d(); b.ppg_ca_auto = r64d(); b.ppg_da_auto = r64d();
+        b.ppg_ea_auto = r64d(); b.ppg_fa_auto = r64d();
+        b.ppg_agi_auto = r64d(); b.ppg_ri_auto = r64d(); b.ppg_si_auto = r64d();
+        b.ppg_found_mask_auto = static_cast<uint16_t>(r32());
+
+        b.abp_onset_auto = r64d(); b.abp_peak_auto = r64d();
+        b.abp_dicrotic_auto = r64d(); b.abp_peak2_auto = r64d();
+        b.abp_end_auto = r64d();
+        b.art_onset_auto = r64d(); b.art_peak_auto = r64d();
+        b.art_dicrotic_auto = r64d(); b.art_peak2_auto = r64d();
+        b.art_end_auto = r64d();
+        b.art_pulm_onset_auto = r64d(); b.art_pulm_peak_auto = r64d();
+        b.art_pulm_dicrotic_auto = r64d(); b.art_pulm_peak2_auto = r64d();
+        b.art_pulm_end_auto = r64d();
+
+        {
+            const int nPulse = r32();
+            if (nPulse > 0) {
+                if (static_cast<int>(b.ppg_bank.templates.size()) < nPulse)
+                    b.ppg_bank.templates.resize(static_cast<size_t>(nPulse));
+                for (int slot = 0; slot < nPulse; ++slot) {
+                    tbank::BankPulseMarkerSet& pm =
+                        b.ppg_bank.templates[slot].pulse_marks;
+                    pm.onset_auto = r64d(); pm.peak_auto = r64d();
+                    pm.dicrotic_auto = r64d(); pm.peak2_auto = r64d();
+                    pm.end_auto = r64d();
+                    pm.notch_found = (r8() != 0);
+                }
+            }
+        }
+
+        // ---- v2: WHERE EVERY BAR ENDED UP --------------------------------
+        //
+        // INTO final_bars, NOT INTO slotMarks. The marker cells hold operator
+        // EDITS AND NOTHING ELSE -- that invariant is why bar seeding was
+        // removed from applyBankTemplateToWidget, and loading a detection into
+        // them would make every untouched bar read as placed, suppress the
+        // fallback in barsForPanel, and report the detector as the operator in
+        // the next CSV. This is a separate, read-only record of the session.
+        for (int lead = 0; lead < 3; ++lead) {
+            const int nSlots = r32();
+            for (int slot = 0; slot < nSlots; ++slot) {
+                const int nAnchors = r32();
+                for (int k = 0; k < nAnchors; ++k) {
+                    const int tag = r32();
+                    tbank::BankMarkerSet m;
+                    m.p_begin = r64d(); m.q_onset = r64d();
+                    m.s_end = r64d();   m.t_end = r64d();
+                    b.final_bars[FinalBarKey{ lead, slot, tag }] = m;
+                }
+            }
+        }
     }
     return bins;
 }

@@ -118,6 +118,7 @@ namespace template_generation_detail {
         bt.ppg_n_beats = info.ppg_n_beats;
         bt.ppg_peak_col = info.ppg_peak_col;
         bt.ppg_onset_col = info.ppg_onset_col;
+        bt.ppg_r_col = info.ppg_r_col;
 
         // ---- Section 4.6 template banks ---------------------------------
         // TemplateInfo carries a whole ChannelOutput per channel (bank plus the
@@ -167,6 +168,7 @@ namespace template_generation_detail {
         bt.ppg_n_beats = info.ppg_n_beats;
         bt.ppg_peak_col = info.ppg_peak_col;
         bt.ppg_onset_col = info.ppg_onset_col;
+        bt.ppg_r_col = info.ppg_r_col;
 
         // ---- Section 4.6 template banks ---------------------------------
         // TemplateInfo carries a whole ChannelOutput per channel (bank plus the
@@ -250,17 +252,27 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
             peakResults, &output_binfile_data::artPulmSignal, rates.ecg, rates.artPulm);
         for (size_t i = 0; i < out.tmpl.bins.size(); ++i) {
             if (out.tmpl.bins[i].bad_segment) continue;
+            // THE R COLUMN TRAVELS WITH THE WAVEFORM. Each arterial channel
+            // has its own rate and its own beat survivors, so each measures
+            // its own -- they are NOT interchangeable, and they are not
+            // derivable from the PPG's.
             if (i < abp.templates.size()) {
                 out.tmpl.bins[i].abpTemplate = std::move(abp.templates[i]);
                 out.tmpl.bins[i].abpTemplate_iqr = std::move(abp.iqrs[i]);
+                if (i < abp.rCol.size())
+                    out.tmpl.bins[i].abp_r_col = abp.rCol[i];
             }
             if (i < art.templates.size()) {
                 out.tmpl.bins[i].artTemplate = std::move(art.templates[i]);
                 out.tmpl.bins[i].artTemplate_iqr = std::move(art.iqrs[i]);
+                if (i < art.rCol.size())
+                    out.tmpl.bins[i].art_r_col = art.rCol[i];
             }
             if (i < artp.templates.size()) {
                 out.tmpl.bins[i].artPulmTemplate = std::move(artp.templates[i]);
                 out.tmpl.bins[i].artPulmTemplate_iqr = std::move(artp.iqrs[i]);
+                if (i < artp.rCol.size())
+                    out.tmpl.bins[i].art_pulm_r_col = artp.rCol[i];
             }
         }
 

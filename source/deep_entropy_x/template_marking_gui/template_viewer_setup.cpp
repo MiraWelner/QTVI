@@ -725,11 +725,17 @@ void TemplateViewerWindow::wirePpgAlignButtons() {
         fprintf(stderr, "[ppg-align] NOT WIRED: ppg_align_percent\n");
     }
 
+    // ppg_peak_align IS IN THIS TABLE NOW. It was in the .ui and not here, so
+    // it had no handler at all -- and the NOT WIRED warning below only fires
+    // for a widget that is MISSING, which it was not. A radio button present
+    // in the form, absent from this table and absent from the PpgAlign enum is
+    // invisible to every check in the file.
     struct Btn { const char* name; PpgAlign mode; };
     static const Btn kBtns[] = {
         { "ppg_auto_align",    PpgAlign::Auto },
         { "ppg_foot_align",    PpgAlign::Foot },
         { "ppg_specify_align", PpgAlign::Percent },
+        { "ppg_peak_align",    PpgAlign::Peak },
     };
     for (const Btn& b : kBtns) {
         QRadioButton* rb =
@@ -745,9 +751,17 @@ void TemplateViewerWindow::wirePpgAlignButtons() {
             });
         // Sync the member to whichever button Designer has checked, WITHOUT
         // re-stacking: this runs during construction, before any page or panel
-        // exists. (ppg_auto_align carries checked="true" in the .ui, so the
-        // startup state is "as built" -- the honest default, since the window
-        // has not re-aligned anything yet.)
+        // exists.
+        //
+        // ppg_auto_align carries checked="true" in the .ui, so the member
+        // starts at Auto. THAT IS NOT "AS BUILT", whatever the note here used
+        // to say: Auto re-stacks like any other position (the foot, or
+        // kAutoFallbackPct up the upstroke per column). What IS as-built is the
+        // state on screen until something triggers the first re-stack -- so
+        // the radio and the waveform disagree until then, and there is no
+        // control that returns to as-built afterwards. restorePulseAsBuilt is
+        // written and has no caller; if that state is wanted it needs a fifth
+        // radio, since Auto cannot name two different waveforms.
         if (rb->isChecked()) m_ppgAlignMode = mode;
     }
 }
@@ -756,11 +770,16 @@ void TemplateViewerWindow::wirePpgAlignButtons() {
 // applyPpgAlignSelection, which calls this, which would re-fire them. Qt has
 // the switch, so use it.
 void TemplateViewerWindow::syncPpgAlignControls() {
+    // THE SAME FOUR AS wirePpgAlignButtons. A button wired there and missing
+    // here would act on a click and then never be unchecked by a change made
+    // from anywhere else -- which is what ppg_peak_align did once it joined
+    // buttonGroup_3 but before it reached this table.
     struct Btn { const char* name; PpgAlign mode; };
     static const Btn kBtns[] = {
         { "ppg_auto_align",    PpgAlign::Auto },
         { "ppg_foot_align",    PpgAlign::Foot },
         { "ppg_specify_align", PpgAlign::Percent },
+        { "ppg_peak_align",    PpgAlign::Peak },
     };
     for (const Btn& b : kBtns) {
         QRadioButton* rb =

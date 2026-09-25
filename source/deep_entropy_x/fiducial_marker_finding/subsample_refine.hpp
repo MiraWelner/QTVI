@@ -36,49 +36,12 @@ namespace upsample_for_fit {
         inline constexpr int T = 30;
     }
 
-    // ---- THE PULSE FIT WINDOWS -----------------------------------------
-    //
-    // IN SECONDS, NOT SAMPLES, and that is the whole change. These were
-    // `pulse_halfwidth::Peak = Foot = Slope = 7` and `pulse_sigma::Peak =
-    // Foot = 8.0`, both fixed sample counts, and both wrong for two separate
-    // reasons:
-    //
-    //   1. SIGMA EXCEEDED THE HALF-WIDTH. The Gaussian weight at the window
-    //      edge was exp(-49/128) ~ 0.68, i.e. effectively no weighting at
-    //      all, so a 15-sample window that straddles the fast upstroke and
-    //      the slow decay was fitted as though every sample in it were
-    //      equally a description of the apex. The ECG's ratios are 5/7 for R
-    //      and Q, 4/7 for S, 12/24 for P and 15/30 for T -- between 0.5 and
-    //      0.71, edge weights 0.13 to 0.37 -- so the tails genuinely recede.
-    //
-    //   2. A SAMPLE COUNT IS NOT A DURATION. +-7 samples is +-28 ms at 250 Hz
-    //      and +-109 ms at 64 Hz. The same constant therefore fitted a small
-    //      neighbourhood of the apex on one recording and most of systole on
-    //      another, and the 10% residual guard then rejected the second one
-    //      for being a bad parabola -- which it was, over that span.
-    //
-    // The ECG's peak_sigma / peak_halfwidth above are UNTOUCHED: they are
-    // sample counts at the ECG rate and every ECG landmark was tuned against
-    // them. This is a pulse-only table.
-    //
-    // WHY THESE DURATIONS. A pulse upstroke runs ~100-150 ms, so +-40 ms
-    // around the systolic apex is the part of it a quadratic can honestly
-    // describe. The foot and the end of cycle are broader and flatter, and
-    // the extra width buys amplitude for the guard's denominator (which is
     // the window's own excursion), hence +-50 ms there.
     namespace pulse_window {
         inline constexpr double peak_half_seconds = 0.040;   // systolic apex
         inline constexpr double foot_half_seconds = 0.050;   // foot / end
         inline constexpr double slope_half_seconds = 0.040;  // maxSlopePoint
-
-        // ONE RATIO, NOT A SECOND TABLE. sigma is derived from the half-width
-        // rather than stored beside it, so the two cannot be edited out of
-        // step -- which is how sigma came to exceed the half-width in the
-        // first place. 0.55 sits inside the ECG's own range.
         inline constexpr double sigma_over_halfwidth = 0.55;
-
-        // peakCandidates rejects halfWidth < 3, and gatherWindow needs five
-        // usable samples, so this is a floor and not a preference.
         inline constexpr int min_halfwidth = 3;
 
         inline int halfwidth(double seconds, double fs) {
@@ -414,28 +377,6 @@ namespace upsample_for_fit {
             + std::clamp(tBest, (double)-halfWidth, (double)halfWidth);
         return out;
     }
-
-    // ---------------------------------------------------------------------
-    // Asymmetric extrema: cubic fit on Gaussian-weighted samples, solve
-    // dy/dt = 3a t^2 + 2b t + c = 0 analytically; pick the root inside the
-    // window closest to t=0 (the seed).
-    // ---------------------------------------------------------------------
-    // (asymmetricExtremum lived here: `cubic_fit(...).position`, i.e. the fit
-    //  thrown away and only the vertex kept. Its two callers -- the pulse foot
-    //  and the pulse end -- now take the whole PeakCandidates so the focus
-    //  panel can draw the cubic that placed the mark, and nothing else called
-    //  it. Deleting it removes the last way to get a pulse position without
-    //  the curve behind it.)
-
-    // ---------------------------------------------------------------------
-    // Best-of quadratic vs cubic for a peak: fit BOTH over the same window and
-    // keep the lower BIC. BIC = n*ln(RSS/n) + k*ln(n), with k the parameter
-    // count (quadratic 3, cubic 4). Unlike raw RSS -- which a cubic, nesting the
-    // quadratic, almost always wins -- BIC charges the cubic ln(n) for its extra
-    // parameter, so the cubic is kept only when its lower RSS actually earns it
-    // (a genuinely skewed peak). Ties and degenerate cubics fall to the
-    // quadratic.
-    // ---------------------------------------------------------------------
     inline peak_fit bestPeakExtremumFit(const std::vector<double>& signal, int seed,
         double sigma, int halfWidth,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto) {
@@ -443,17 +384,6 @@ namespace upsample_for_fit {
         // Auto branch at the bottom behaves exactly as it always has.
         const peak_fit q = quadratic_fit(signal, seed, sigma, halfWidth);
         const peak_fit c = cubic_fit(signal, seed, sigma, halfWidth);
-
-        // FORCED by the Fit-Peaks radio: that model, guard or no guard, via a
-        // re-fit with applyGuard=false.
-        //
-        // This is why forced mode did nothing before. q and c above are the
-        // GUARDED fits: when the residual guard fires, they come back as
-        // FIVE_POINT with order 0 and no coefficients -- they ARE the fallback,
-        // not a quadratic that failed a test. So "(q.order >= 2) ? q : c" could
-        // only ever return the five-point, whichever branch it took. The guard
-        // is a model-SELECTION decision and belongs to Auto; an operator
-        // overriding the selection must not be overridden by it in turn.
         if (peakMode == curve_fit::PeakFitMode::FivePoint) return fivePointParabolaFit(signal, seed);
         if (peakMode == curve_fit::PeakFitMode::Parabola)
             return quadratic_fit(signal, seed, sigma, halfWidth, false);
@@ -500,36 +430,6 @@ namespace upsample_for_fit {
         return symmetricExtremum(d1, seed, sigma, halfWidth);
     }
 
-    // ---------------------------------------------------------------------
-    // The three models transitionAnchor tests, exposed for display so the
-    // focus panel can draw the EXACT fits that placed the mark (not a re-fit
-    // over a different window). Each curve is SAMPLE-INDEXED already: the
-    // caller evaluates curve[k](sampleIndex) directly -- the lo offset and the
-    // 4x upsample mapping are baked into the closure. `winner` is the index the
-    // BIC selector chose (0=piecewise, 1=sigmoid, 2=fractional). Populated only
-    // when a caller passes candOut, so the detection hot path pays nothing.
-    // ---------------------------------------------------------------------
-    // PEAK CANDIDATES -- the peak analogue of TransitionCandidates below.
-    //
-    // The three tested curves, which one the selector chose, and the placement
-    // it produced, all from ONE run of the contest. The viewer needs the
-    // position; FocusPanelWidget needs the coefficients to draw. Both used to
-    // run the contest themselves, on seeds they each chose, so the drawn curve
-    // and the marked line came from different fits.
-    //
-    // draw[] are UNGUARDED fits, deliberately. The guarded versions collapse a
-    // residual-rejected quadratic or cubic to FIVE_POINT with order 0 and no
-    // coefficients, and a renderer's order>=2 test then drops them -- so on a
-    // broad peak where both were rejected the 5-point parabola was the only
-    // curve on screen. The guard decides what may PLACE the mark; it must not
-    // decide what is VISIBLE, since the rejected curve is exactly what shows
-    // why the fallback was taken.
-    //
-    // `placement` is the GUARDED contest's answer -- the number that is drawn,
-    // focused and written. winner is read off the returned TYPE rather than
-    // from the requested mode, so a forced model that degenerated is shown as
-    // its fallback instead of colouring a curve that placed nothing.
-    // ---------------------------------------------------------------------
     struct PeakCandidates {
         peak_fit draw[3];              // 0 = quadratic, 1 = cubic, 2 = five-point
         int      winner = -1;          // index into draw[]

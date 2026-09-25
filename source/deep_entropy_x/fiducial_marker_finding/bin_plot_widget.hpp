@@ -209,6 +209,14 @@ public:
     void setChannelRate(Channel ch, double hz);
     double channelRate(Channel ch) const { return m_rates[static_cast<size_t>(ch)]; }
 
+    // A PULSE CHANNEL'S R COLUMN, MEASURED, not derived from its rate. Pass
+    // that channel's TemplateBin::*_r_construct; a negative value leaves the
+    // channel off the shared time axis, which is the correct outcome when the
+    // build could not measure one. See the note at the top of
+    // bin_plot_widget.cpp for what assuming this number cost.
+    void setPulseAnchor(Channel ch, double col);
+    double pulseAnchor(Channel ch) const { return m_rAnchor[static_cast<size_t>(ch)]; }
+
     // Frame bounds in seconds relative to R; negative before it.
     double frameTMin() const { return m_tMin; }
     double frameTMax() const { return m_tMax; }

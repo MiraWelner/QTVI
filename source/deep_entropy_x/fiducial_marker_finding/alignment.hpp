@@ -5,7 +5,11 @@
 // Per-bin beat alignment for ECG and PPG. Runs BEFORE any normalization
 // or template averaging.
 //
-//   1) Slice one beat per RR window as 0.4*RR before R to 1.3*RR after R (integer-truncated).
+//   1) Slice one beat per RR window as 0.5*RR before R to 1.3*RR after R
+//      (integer-truncated) -- percent_interval_preceeding_rpeak /
+//      percent_interval_following_rpeak below, which are the only definition.
+//      This line said 0.4 and bin_plot_widget's copy said 0.3; neither was
+//      ever the value, and the pulse time axis was built on the guess.
 //   2) Tukey outlier rejection: ECG is based on RR length and distance from max to min, PPG is based on 50% upslope location and distance from max to min.
 //   3) Horizontal align the ECG such that R peaks are aligned, if it is the Q peak screening then after align by Q peak
 //   4) Vertical DC shift:
@@ -244,7 +248,7 @@ namespace alignment {
     // rr = rPeaks[i+1] - rPeaks[i] and treats it as a cardiac interval. For an
     // R-pair straddling a splice that number is the distance across the join,
     // and because fragments are redistributed between bins it can be large --
-    // so the slicer would cut a 0.4*rr before / 1.3*rr after window from it and
+    // so the slicer would cut a 0.5*rr before / 1.3*rr after window from it and
     // produce one "beat" spanning several cardiac cycles. That is the multi-QRS
     // template with the over-long axis, and the column median out past the real
     // RR is that slice's LATER complexes.
@@ -1157,6 +1161,32 @@ namespace alignment {
         std::vector<int> peak_cols;               // per-beat systolic peak column (varies)
         std::vector<int> foot_cols;               // per-beat foot column (varies)
 
+        // ---- WHERE THIS BEAT'S OWN R PEAK LANDED IN THE SHARED FRAME -----
+        //
+        // THE ONLY WAY TO PUT A PULSE ON AN R-RELATIVE TIME AXIS, and it was
+        // being thrown away. Every consumer that needs "how long after the
+        // QRS did this happen" -- the viewer's shared ECG/pulse time axis, the
+        // construction-time peak/foot brackets in
+        // create_arterial_templates -- was instead ASSUMING a fixed lead-in of
+        // padSeconds * rate, and there is no fixed lead-in:
+        //
+        //   * a beat is sliced at r0 - rr_before_samples(rr), i.e.
+        //     0.5 * THAT BEAT'S OWN RR, so its R column varies with its RR;
+        //   * every beat is then shifted so its up50 lands on up50_anchor, so
+        //     the R columns move again, by a different amount each.
+        //
+        // The consequence of the assumption was a pulse drawn at a time offset
+        // of roughly (0.5 * RR_median - padSeconds) seconds -- zero near
+        // 75 bpm, +200 ms at 50 bpm, -100 ms at 100 bpm. It looked like a
+        // constant that needed tuning and was a quantity that had to be
+        // measured.
+        //
+        // Parallel to `beats`, like peak_cols and foot_cols, and subject to
+        // the same caveat: a heavily shifted beat can have its R clipped off
+        // the left edge, so an entry may be < 0. Take the MEDIAN over the
+        // beats that actually built a template, not the mean.
+        std::vector<int> r_cols;
+
         // R-PAIR ORDINAL of each surviving beat, parallel to `beats`.
         //
         // WHY IT HAS TO BE CARRIED. This set is pruned twice -- beats with no
@@ -1229,7 +1259,10 @@ namespace alignment {
         const int64_t N = static_cast<int64_t>(signal.size());
         if (N == 0 || rPeaks.size() < 2) return out;
 
-        struct Raw { std::vector<double> data; int peak; int foot; int up50; };
+        // `r` is the beat's own R column inside `data` -- rr_before_samples of
+        // its RR. Carried per beat because it IS per beat; apply_mask moves
+        // the whole struct, so it cannot desynchronise from the waveform.
+        struct Raw { std::vector<double> data; int peak; int foot; int up50; int r; };
         std::vector<Raw> raw;
         std::vector<int> rr_lens;
         // R-pair ordinals, parallel to `raw`. See PpgBeatSet::original_index.
@@ -1353,7 +1386,7 @@ namespace alignment {
             // 4x-upsample fit-and-select refinement was pure overhead here;
             // the real fiducials used downstream (outPeakCol/outFootCol)
             // are recomputed independently from the final median template.
-            raw.push_back({ std::move(beat), peak, foot, up50 });
+            raw.push_back({ std::move(beat), peak, foot, up50, r_col });
             rr_lens.push_back(static_cast<int>(rr));
             // Pushed HERE, in the same statement group as the beat itself, and
             // after every `continue` above. A beat and its ordinal have to be
@@ -1400,6 +1433,7 @@ namespace alignment {
         out.beats.reserve(raw.size());
         out.peak_cols.reserve(raw.size());
         out.foot_cols.reserve(raw.size());
+        out.r_cols.reserve(raw.size());
         out.original_index.reserve(raw.size());
         for (size_t ri = 0; ri < raw.size(); ++ri) {
             const auto& b = raw[ri];
@@ -1413,6 +1447,9 @@ namespace alignment {
             out.beats.push_back(std::move(a));
             out.peak_cols.push_back(prepend + b.peak);   // may be < 0 for clipped beats
             out.foot_cols.push_back(prepend + b.foot);   // may be < 0 for clipped beats
+            // The same shift the waveform got, applied to the R column: this
+            // is the one number that ties the pulse frame back to the QRS.
+            out.r_cols.push_back(prepend + b.r);
         }
         out.up50_aligned_col = up50_anchor;
 

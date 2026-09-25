@@ -7,12 +7,23 @@
 #include "template_morphology_grouping/template_bank_serialize.hpp"
 
 #include <cmath>
+#include <cstring>     // memcmp, for the file magic
+#include <string>      // to_string, in the version mismatch message
 #include <fstream>
 #include <stdexcept>
 #include <iomanip>
 #include <algorithm> 
 
 namespace template_io {
+
+    // ---- FILE IDENTITY ---------------------------------------------------
+    //
+    // v3: SECTION 1 gained ppg/abp/art/art_pulm r_col. There is no backward
+    // read path and deliberately so -- a file written before v3 has no pulse
+    // R column anywhere in it, and the viewer cannot place a pulse on the
+    // shared time axis without one. Re-run the template build.
+    inline constexpr char     kTemplateFileMagic[8] = { 'P','T','M','P','L','\0','\0','\0' };
+    inline constexpr uint32_t kTemplateFileVersion = 3;
 
     namespace {
 
@@ -57,6 +68,18 @@ namespace template_io {
         char wbuf[1 << 16];
         f.rdbuf()->pubsetbuf(wbuf, sizeof(wbuf));
 
+        // ---- MAGIC + VERSION, so a layout change fails LOUDLY -------------
+        //
+        // This file had no header at all: the first eight bytes were nBins, so
+        // adding a field anywhere made every older file parse as plausible
+        // garbage -- vectors sized from the wrong offset, or a length_error
+        // thrown tens of kilobytes past the real cause (see the note in
+        // SECTION 3 for what that costs to debug). v3 adds the four pulse R
+        // columns to SECTION 1; an older file now fails on the magic instead.
+        f.write(kTemplateFileMagic, 8);
+        uint32_t version = kTemplateFileVersion;
+        f.write(reinterpret_cast<const char*>(&version), 4);
+
         uint64_t nBins = data.bins.size();
         f.write(reinterpret_cast<const char*>(&nBins), 8);
 
@@ -81,6 +104,13 @@ namespace template_io {
             f.write(reinterpret_cast<const char*>(&b.ppg_n_beats), 8);
             f.write(reinterpret_cast<const char*>(&b.ppg_peak_col), 4);
             f.write(reinterpret_cast<const char*>(&b.ppg_onset_col), 4);
+            // v3: the four pulse R columns. int32 like the two above, and
+            // whole columns for the same reason -- the slicer works in
+            // samples.
+            f.write(reinterpret_cast<const char*>(&b.ppg_r_col), 4);
+            f.write(reinterpret_cast<const char*>(&b.abp_r_col), 4);
+            f.write(reinterpret_cast<const char*>(&b.art_r_col), 4);
+            f.write(reinterpret_cast<const char*>(&b.art_pulm_r_col), 4);
             uint8_t bad = b.bad_segment ? 1 : 0;
             f.write(reinterpret_cast<const char*>(&bad), 1);
         }
@@ -259,6 +289,22 @@ namespace template_io {
 
         TemplateFile out;
 
+        {
+            char magic[8] = { 0 };
+            uint32_t version = 0;
+            if (!f.read(magic, 8) || !f.read(reinterpret_cast<char*>(&version), 4))
+                throw std::runtime_error("template file truncated: " + path);
+            if (std::memcmp(magic, kTemplateFileMagic, 8) != 0)
+                throw std::runtime_error(
+                    "not a template file, or written before the v3 header "
+                    "(re-run the template build): " + path);
+            if (version != kTemplateFileVersion)
+                throw std::runtime_error(
+                    "template file version " + std::to_string(version)
+                    + ", expected " + std::to_string(kTemplateFileVersion)
+                    + " (re-run the template build): " + path);
+        }
+
         uint64_t nBins = 0;
         if (!f.read(reinterpret_cast<char*>(&nBins), 8))
             throw std::runtime_error("template file truncated: " + path);
@@ -288,6 +334,15 @@ namespace template_io {
             if (!f.read(reinterpret_cast<char*>(&b.ppg_peak_col), 4) ||
                 !f.read(reinterpret_cast<char*>(&b.ppg_onset_col), 4))
                 throw std::runtime_error("template file truncated (missing ppg fiducials): " + path);
+            // v3, and FATAL ON A SHORT READ like everything else in this
+            // section: the version check above has already established that
+            // these four are present, so a file that cannot produce them is
+            // truncated, not old.
+            if (!f.read(reinterpret_cast<char*>(&b.ppg_r_col), 4) ||
+                !f.read(reinterpret_cast<char*>(&b.abp_r_col), 4) ||
+                !f.read(reinterpret_cast<char*>(&b.art_r_col), 4) ||
+                !f.read(reinterpret_cast<char*>(&b.art_pulm_r_col), 4))
+                throw std::runtime_error("template file truncated (missing pulse R columns): " + path);
             uint8_t bad = 0;
             f.read(reinterpret_cast<char*>(&bad), 1);
             b.bad_segment = (bad != 0);

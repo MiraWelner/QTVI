@@ -941,7 +941,21 @@ void TemplateViewerWindow::save_bin_and_csv() {
         // have no alignment dimension) had to survive the gap. One session, one
         // write: the file already carries every alignment's marker set, keyed
         // by anchor tag, so there is nothing in flight to stage.
-        writeTemplateMarkingsBin(canonicalBin.toStdString(), m_bins);
+        // NOTHING TO NORMALISE BEFORE THE WRITES. A bar edit lives in one
+        // cell -- the one the drag wrote, chosen by the view it was made in
+        // (barsForPanel's ownBars rule) -- and both writers read it from
+        // there: the .bin persists markers_by_anchor verbatim, and the CSV
+        // translates into each block's columns on the way out (userBars).
+        // Copying the value into all four cells first was tried and removed:
+        // four copies of one number diverge the moment the operator moves
+        // that bar again in a different alignment.
+        // THE RATE AND THE FIT MODES: the writer records where every bar
+        // ended up in every alignment, and an unmoved bar's position is that
+        // alignment's detection -- which cannot be resolved without them.
+        // Same three arguments the CSV below is given, so the two files
+        // describe one detector run.
+        writeTemplateMarkingsBin(canonicalBin.toStdString(), m_bins,
+            m_sampleRate, m_onOffsetFitMode, m_peakFitMode);
         std::cout << "Saved: " << canonicalBin.toStdString() << "\n";
         logBoundaryTrainingAtSave();
 

@@ -142,6 +142,9 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     vector<vector<vector<double>>> ppg_kept(n);
     vector<int> ppg_peak_cols(n, -1);
     vector<int> ppg_onset_cols(n, -1);
+    // Per bin, the pulse template's measured R column; see
+    // alignment::PpgBeatSet::r_cols for why it cannot be a constant.
+    vector<int> ppg_r_cols(n, -1);
     // R-pair ordinals of the retained pulses, per bin. Hoisted out of the
     // ppg_res scope below because the joint bank needs them: without the
     // ordinal there is no way to say a pulse and a QRS are the same heartbeat.
@@ -156,6 +159,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         ppg_kept = std::move(ppg_res.kept);
         ppg_peak_cols = std::move(ppg_res.peakCol);
         ppg_onset_cols = std::move(ppg_res.footCol);
+        ppg_r_cols = std::move(ppg_res.rCol);
         ppg_kept_slices = std::move(ppg_res.keptSlices);
 
         for (size_t i = 0; i < n; ++i)
@@ -505,6 +509,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
             info.ppg_template_iqr = ppg_template_iqrs[i];
             info.ppg_peak_col = ppg_peak_cols[i];
             info.ppg_onset_col = ppg_onset_cols[i];
+            info.ppg_r_col = ppg_r_cols[i];
             if (i < ppg_kept.size()) {
                 info.ppg_n_beats = ppg_kept[i].size();
 

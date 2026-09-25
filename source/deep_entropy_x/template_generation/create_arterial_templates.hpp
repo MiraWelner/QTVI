@@ -27,6 +27,10 @@ struct PPGTemplatesResult {
     vector<vector<vector<double>>> kept; // [bin][beat][sample] retained snips
     vector<int> peakCol;                // [bin] systolic peak column (R1..R2)
     vector<int> footCol;                // [bin] foot column (R1..peak)
+    // [bin] the template's MEASURED R column, -1 where unmeasurable. The
+    // pulse has no R-relative time axis without it; see
+    // alignment::PpgBeatSet::r_cols for why it is not a constant.
+    vector<int> rCol;
 
     // R-PAIR ORDINAL of each retained snip: keptSlices[bin][beat] is the index
     // of the R-pair that snip was sliced from, parallel to kept[bin].
@@ -122,6 +126,12 @@ struct PulseTemplateBin {
     std::vector<uint32_t> keptSlices;         // R-pair ordinal per retained snip
     int peakCol = -1;                         // systolic peak column
     int footCol = -1;                         // foot column
+    // THE TEMPLATE'S R COLUMN, median of the surviving beats' own R columns
+    // in the shared frame (alignment::PpgBeatSet::r_cols). -1 = not
+    // measurable, which every consumer must read as "this pulse has no
+    // R-relative time axis" rather than substituting a constant. See the note
+    // on r_cols for what the constant used to cost.
+    int rCol = -1;
 };
 
 static inline PulseTemplateBin build_pulse_template_pair_windowed(
@@ -129,7 +139,11 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
     double channelRate,
     const std::vector<size_t>& masterPeaksEcg,
     double ecgRate,
-    double padSeconds,
+    // padSeconds IS GONE, and its absence is the fix. It was never passed to
+    // extract_ppg_beats_and_align -- the only thing that decides where a beat
+    // starts -- so it could not have been the lead-in it was documented as.
+    // It was used in exactly one place, the [R1, R2] bracket below, where it
+    // stood in for the R column that out.rCol now measures.
     // For the [pulseqc] line only. Passed rather than inferred because this
     // function has no other way to name the bin it is working on, and a
     // retention report that cannot say WHICH bin is nearly useless.
@@ -329,6 +343,27 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
             return out;
         }
 
+        // ---- THE TEMPLATE'S R COLUMN --------------------------------------
+        //
+        // Median over THE SURVIVORS, not over every candidate: the template is
+        // the column-wise median of these rows and of no others, so its R
+        // column is theirs. Clipped beats (r_cols[k] < 0, an R shifted off the
+        // left edge by up50 anchoring) are excluded rather than clamped -- a
+        // clamp to 0 would drag the median toward the pad.
+        {
+            std::vector<int> rc;
+            rc.reserve(survivorRows.size());
+            const bool rcUsable =
+                aligned.r_cols.size() == aligned.beats.size();
+            if (rcUsable)
+                for (const size_t k : survivorRows)
+                    if (aligned.r_cols[k] >= 0) rc.push_back(aligned.r_cols[k]);
+            if (!rc.empty()) {
+                std::sort(rc.begin(), rc.end());
+                out.rCol = rc[rc.size() / 2];
+            }
+        }
+
         // Waveform and ordinal appended in the SAME loop, so they cannot fall
         // out of step.
         filteredBeats.reserve(survivorRows.size());
@@ -412,17 +447,23 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
     }
 
     // ---- Deterministic PPG fiducials from the real R-peaks -------------
-    // The template is R-anchored: R1 lands at column padSeconds*channelRate
-    // (0.25 s in) by construction. R2 = R1 + one RR interval. We compute the
-    // systolic peak as the max in [R1, R2] (exactly one pulse -> no risk of
-    // grabbing a later pulse) and the foot as the min in [R1, peak]. Using the
-    // true R-pair interval (not a fixed window) makes these exact.
-    // Computed BEFORE the spread below, since the spread needs out.footCol.
-    {
+    // R1 IS out.rCol, MEASURED, not padSeconds*channelRate. R2 = R1 + one RR
+    // interval. We compute the systolic peak as the max in [R1, R2] (exactly
+    // one pulse -> no risk of grabbing a later pulse) and the foot as the min
+    // in [R1, peak].
+    //
+    // THE OLD BRACKET WAS OFF BY (0.5*RR - padSeconds) SECONDS, the same error
+    // the viewer's time axis had, from the same false premise -- so on a slow
+    // bin the window opened ~200 ms early and the "max in [R1, R2]" could
+    // still be climbing the previous pulse's decay.
+    //
+    // NO FALLBACK. rCol < 0 means no surviving beat had a locatable R in the
+    // shared frame; peakCol and footCol then stay -1, which is the state every
+    // caller already reads as "no pulse fiducials for this bin". Substituting
+    // a column here is what the pad was.
+    if (out.rCol >= 0) {
         const int N = static_cast<int>(out.tmpl.size());
-        const int r1 = std::clamp(
-            static_cast<int>(std::llround(padSeconds * channelRate)), 0,
-            std::max(0, N - 1));
+        const int r1 = std::clamp(out.rCol, 0, std::max(0, N - 1));
         // Median RR in ECG samples -> channel samples.
         std::vector<double> gaps;
         gaps.reserve(masterPeaksEcg.size());
@@ -469,7 +510,7 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
     out.kept.reserve(beatsForTemplate.size());
     for (const auto& sl : beatsForTemplate) out.kept.push_back(sl);
 
-    (void)padSeconds; (void)channelRate; (void)ecgRate;
+    (void)channelRate; (void)ecgRate;
 
     // THE SUCCESS PATH HAD NO RETURN. Every early exit above returns `out`
     // explicitly; the one path that builds a template fell off the end of a
@@ -490,14 +531,19 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
  * @param bins        Input bins.
  * @param ecgRate     ECG sample rate (for R-peak time base).
  * @param ppgRate     PPG sample rate.
- * @param padSeconds  0.25 (matches CreateEcgTemplates).
+ *
+ * NO padSeconds PARAMETER. It documented a fixed lead-in that the slicer
+ * never had (see build_pulse_template_pair_windowed), and the doc value
+ * (0.25), the default (0.4) and bin_plot_widget's copy of it (0.3, then 0.4)
+ * had all drifted apart -- three numbers for a quantity that is measured per
+ * bin and reported as PulseTemplateBin::rCol. Every call site already omitted
+ * the argument, so removing it is source-compatible.
  */
 inline PPGTemplatesResult CreatePulseTemplates(
     const vector<output_binfile_data>& bins,
     std::vector<double> output_binfile_data::* sigMember,
     double ecgRate,
-    double channelRate,
-    double padSeconds = 0.4)
+    double channelRate)
 {
     size_t n = bins.size();
     PPGTemplatesResult out;
@@ -507,6 +553,7 @@ inline PPGTemplatesResult CreatePulseTemplates(
     out.keptSlices.assign(n, {});
     out.peakCol.assign(n, -1);
     out.footCol.assign(n, -1);
+    out.rCol.assign(n, -1);
 
     if (channelRate <= 0.0) return out;   // channel absent from this dataset
 
@@ -518,13 +565,14 @@ inline PPGTemplatesResult CreatePulseTemplates(
             continue;
         try {
             PulseTemplateBin r = build_pulse_template_pair_windowed(
-                b.*sigMember, channelRate, b.ch1.raw, ecgRate, padSeconds, i);
+                b.*sigMember, channelRate, b.ch1.raw, ecgRate, i);
             out.templates[i] = std::move(r.tmpl);
             out.iqrs[i] = std::move(r.iqr);
             out.kept[i] = std::move(r.kept);
             out.keptSlices[i] = std::move(r.keptSlices);
             out.peakCol[i] = r.peakCol;
             out.footCol[i] = r.footCol;
+            out.rCol[i] = r.rCol;
         }
         catch (...) {
             // NOTHING TO CLEAR. The six assignments above are the last thing

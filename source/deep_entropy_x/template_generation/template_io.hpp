@@ -44,6 +44,12 @@
  *         [uint64 ppg_n_beats]
  *         [int32  ppg_peak_col][int32 ppg_onset_col]
  *
+ *       Then each pulse channel's MEASURED R column in its own template's
+ *       columns (v3; -1 = unmeasurable, and the channel then has no
+ *       R-relative time axis and is not drawn on one):
+ *         [int32  ppg_r_col][int32 abp_r_col]
+ *         [int32  art_r_col][int32 art_pulm_r_col]
+ *
  *       Then bad-segment flag:
  *         [uint8 bad_segment]
  *
@@ -109,6 +115,18 @@ namespace template_io {
         uint64_t              ppg_n_beats = 0;
         int                   ppg_peak_col = -1;   // construction-time fiducials
         int                   ppg_onset_col = -1;
+        // ---- EACH PULSE CHANNEL'S MEASURED R COLUMN ----------------------
+        //
+        // The pulse analogue of ChannelMethodTemplate::r_col, and it exists
+        // for the same reason: a template's anchor column is a property of
+        // that template and has to travel with it. Deriving it from a
+        // constant (bin_plot_widget's kSlicePadSeconds, now deleted) put the
+        // whole pulse trace at the wrong time by an amount that scaled with
+        // heart rate. -1 = unmeasurable.
+        int                   ppg_r_col = -1;
+        int                   abp_r_col = -1;
+        int                   art_r_col = -1;
+        int                   art_pulm_r_col = -1;
         bool                  bad_segment = false;
 
         // Section 4.6 template bank per ECG channel, raw method only. Slot 0 is

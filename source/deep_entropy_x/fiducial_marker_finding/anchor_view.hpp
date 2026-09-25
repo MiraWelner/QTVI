@@ -79,8 +79,22 @@ namespace anchor_view {
         return -1;
     }
 
+    // THE BARS THIS ALIGNMENT HAS -- showsBar, and nothing else:
+    //
+    //   _R : p_begin, q_onset, s_end, t_end
+    //   _P : p_begin
+    //   _Q : q_onset, s_end, t_end
+    //   _J : t_end
+    //
+    // A user column exists where a bar exists. No column is emitted for a bar
+    // the alignment does not have.
+    //
+    // WHAT THE COLUMN CONTAINS is where that bar IS: the operator's edit if
+    // they moved it, the detection they left it on if they did not. See
+    // finalBarsFor -- barsForPanel's rule, so the number in the file is the
+    // number that was on screen.
     inline constexpr bool hasUserColumnFor(AnchorType a, int marker) {
-        return isBar(marker) && (a == AnchorType::R_PEAK || owns(a, marker));
+        return showsBar(a, marker);
     }
     inline bool hasUserColumn(const char* pointName, AnchorType a) {
         const int m = markerForPoint(pointName);

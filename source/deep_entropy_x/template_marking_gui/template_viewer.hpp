@@ -526,6 +526,7 @@ private:
     //         the two answers are different waveforms and one control cannot
     //         name both.
     // Foot    every beat's own trough, at the operator's foot column.
+    //         Percent(0) is the same alignment; see below.
     // Percent m_ppgAlignPercent percent UP THE UPSTROKE IN AMPLITUDE: the
     //         first column at which the pulse reaches
     //         foot_y + pct/100 * (peak_y - foot_y). So 0 IS the foot -- Foot
@@ -543,7 +544,19 @@ private:
     // Partway up the upstroke the slope is steepest and the same noise moves
     // the crossing by almost nothing, which is why the build itself aligns on
     // a half-rise point rather than the trough.
-    enum class PpgAlign { Auto, Foot, Percent };
+    // Peak    the systolic peak, which is Percent(100) and is implemented as
+    //         exactly that: upstrokePctCol's target at pct = 100 is
+    //         foot_y + 1.0 * (peak_y - foot_y), so first_crossing lands on the
+    //         apex. A separate anchor here would be a second definition of
+    //         "the peak" alongside detect_ppg_upstroke_peak's, and the two
+    //         would drift.
+    //
+    //         IT WAS IN THE .ui AND NOT IN THIS ENUM. ppg_peak_align existed
+    //         as a radio button with no enumerator, no entry in
+    //         wirePpgAlignButtons' table and no handler, so clicking it did
+    //         nothing -- and until its buttonGroup attribute was added it did
+    //         not even uncheck the others, leaving two positions lit at once.
+    enum class PpgAlign { Auto, Foot, Percent, Peak };
     PpgAlign m_ppgAlignMode = PpgAlign::Auto;
     int      m_ppgAlignPercent = 0;
 
@@ -566,6 +579,30 @@ private:
     // spread, not the slot's current one -- see the definition.
     int autoPctForSlot(int binIdx, int templateIdx,
         const tbank::BankTemplate& slot, double footCol) const;
+
+    // THE PERCENTAGE THE MODE ASKS FOR, in the units relevelPulseAtPct and
+    // ppg_realign::upstrokePctCol take: 0 = the foot, 100 = the peak.
+    //
+    // WHY THIS FUNCTION EXISTS. m_ppgAlignPercent was written by the spin box
+    // and read by nothing but the spin box: realignAllVisiblePulses passed -1
+    // for every mode except Auto, relevelPulseAtPct handed that straight to
+    // relevelAtOwnCrossing, and `(pct > 0.0) ? pct : 0.0` there turned it into
+    // the foot. So Percent produced the same waveform as Foot whatever number
+    // was in the box, and Peak produced nothing at all. One lookup, in one
+    // place, so no caller can forget it again.
+    double pctForAlignMode() const {
+        switch (m_ppgAlignMode) {
+        case PpgAlign::Foot:    return 0.0;
+        case PpgAlign::Percent: return static_cast<double>(m_ppgAlignPercent);
+        case PpgAlign::Peak:    return 100.0;
+            // AUTO NEVER ARRIVES HERE. It decides per column in
+            // realignAllVisiblePulses (autoPctForSlot) and passes its answer down
+            // as an explicit override, because there is no control holding it.
+            // Returning the foot is the safe reading if it ever does.
+        case PpgAlign::Auto:
+        default:                return 0.0;
+        }
+    }
 
     // ONE PLACE THAT CHANGES THE PULSE ALIGNMENT, as applyAlignmentSelection
     // is for the ECG one: sets the members, syncs the controls, re-stacks the
