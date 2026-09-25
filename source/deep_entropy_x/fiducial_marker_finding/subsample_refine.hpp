@@ -36,20 +36,68 @@ namespace upsample_for_fit {
         inline constexpr int T = 30;
     }
 
-    namespace pulse_halfwidth {
-        inline constexpr int Peak = 7;   // systolic peak (quadratic)
-        inline constexpr int Foot = 7;   // foot / end of cycle (cubic)
-        inline constexpr int Slope = 7;   // maxSlopePoint, on the derivative
-    }
+    // ---- THE PULSE FIT WINDOWS -----------------------------------------
+    //
+    // IN SECONDS, NOT SAMPLES, and that is the whole change. These were
+    // `pulse_halfwidth::Peak = Foot = Slope = 7` and `pulse_sigma::Peak =
+    // Foot = 8.0`, both fixed sample counts, and both wrong for two separate
+    // reasons:
+    //
+    //   1. SIGMA EXCEEDED THE HALF-WIDTH. The Gaussian weight at the window
+    //      edge was exp(-49/128) ~ 0.68, i.e. effectively no weighting at
+    //      all, so a 15-sample window that straddles the fast upstroke and
+    //      the slow decay was fitted as though every sample in it were
+    //      equally a description of the apex. The ECG's ratios are 5/7 for R
+    //      and Q, 4/7 for S, 12/24 for P and 15/30 for T -- between 0.5 and
+    //      0.71, edge weights 0.13 to 0.37 -- so the tails genuinely recede.
+    //
+    //   2. A SAMPLE COUNT IS NOT A DURATION. +-7 samples is +-28 ms at 250 Hz
+    //      and +-109 ms at 64 Hz. The same constant therefore fitted a small
+    //      neighbourhood of the apex on one recording and most of systole on
+    //      another, and the 10% residual guard then rejected the second one
+    //      for being a bad parabola -- which it was, over that span.
+    //
+    // The ECG's peak_sigma / peak_halfwidth above are UNTOUCHED: they are
+    // sample counts at the ECG rate and every ECG landmark was tuned against
+    // them. This is a pulse-only table.
+    //
+    // WHY THESE DURATIONS. A pulse upstroke runs ~100-150 ms, so +-40 ms
+    // around the systolic apex is the part of it a quadratic can honestly
+    // describe. The foot and the end of cycle are broader and flatter, and
+    // the extra width buys amplitude for the guard's denominator (which is
+    // the window's own excursion), hence +-50 ms there.
+    namespace pulse_window {
+        inline constexpr double peak_half_seconds = 0.040;   // systolic apex
+        inline constexpr double foot_half_seconds = 0.050;   // foot / end
+        inline constexpr double slope_half_seconds = 0.040;  // maxSlopePoint
 
-    // The pulse weighting, alongside its half-widths for the same reason the
-    // ECG's peak_sigma sits next to peak_halfwidth: the detector and anything
-    // DRAWING the detector's fit must read one number, not two copies of it.
-    // detect_ppg_fiducials had 8.0 written out three times and the focus panel
-    // had no way to learn it at all.
-    namespace pulse_sigma {
-        inline constexpr double Peak = 8.0;
-        inline constexpr double Foot = 8.0;
+        // ONE RATIO, NOT A SECOND TABLE. sigma is derived from the half-width
+        // rather than stored beside it, so the two cannot be edited out of
+        // step -- which is how sigma came to exceed the half-width in the
+        // first place. 0.55 sits inside the ECG's own range.
+        inline constexpr double sigma_over_halfwidth = 0.55;
+
+        // peakCandidates rejects halfWidth < 3, and gatherWindow needs five
+        // usable samples, so this is a floor and not a preference.
+        inline constexpr int min_halfwidth = 3;
+
+        inline int halfwidth(double seconds, double fs) {
+            if (!(fs > 0.0) || !(seconds > 0.0)) return min_halfwidth;
+            return std::max(min_halfwidth,
+                static_cast<int>(std::lround(seconds * fs)));
+        }
+        // Floored at 1.0: a sigma below one sample makes every weight but the
+        // seed's vanish and the fit degenerates.
+        inline double sigma(int halfWidth) {
+            return std::max(1.0,
+                sigma_over_halfwidth * static_cast<double>(halfWidth));
+        }
+
+        inline int    peakHalfwidth(double fs) { return halfwidth(peak_half_seconds, fs); }
+        inline int    footHalfwidth(double fs) { return halfwidth(foot_half_seconds, fs); }
+        inline int    slopeHalfwidth(double fs) { return halfwidth(slope_half_seconds, fs); }
+        inline double peakSigma(double fs) { return sigma(peakHalfwidth(fs)); }
+        inline double footSigma(double fs) { return sigma(footHalfwidth(fs)); }
     }
 
     enum class PeakCurveType { SEED, QUADRATIC, CUBIC, FIVE_POINT };

@@ -5,17 +5,8 @@
 // The landmark close-up. When the operator selects a landmark in a
 // BinPlotWidget, this panel draws that landmark's anchored average zoomed in
 // around its column: the mean trace, a +/- 1 sd band, the candidate curves the
-// DETECTOR fit, and a dotted line at the detector's own placement.
-//
-// THE PANEL FITS NOTHING AND DETECTS NOTHING. Everything it draws arrives
-// through the setters below, from whoever ran the detector. That is the only
-// invariant in this file that matters: a curve this panel produced itself would
-// answer a different question from the one that placed the mark (different
-// window, different weighting, different vertex) and would be drawn beside it.
-//
-// It is driven entirely by (marker, mean, sd, n, column), so which alignment
-// the mean came from, and which channel, are the caller's business.
-//
+// DETECTOR fit, and two vertical fiducial lines.
+
 #include <QWidget>
 #include <QString>
 #include <cstdint>
@@ -38,7 +29,9 @@ public:
     //   sd      : per-column spread, SAME LENGTH AS MEAN or longer; a shorter
     //             one disables the band.
     //   nBeats  : beats contributing, for the header readout.
-    //   landmarkCol : zoom window centre.
+    //   landmarkCol : the landmark's own column, and the zoom window centre.
+    //             NOT where the thick bar line is drawn -- that is
+    //             setUserFiducial, which a glyph never gets.
     //   label   : panel header, e.g. "R peak [P-aligned]".
     //   framingBias : -1 frames the landmark toward the RIGHT edge (it ENDS
     //                 this segment), +1 toward the LEFT (it STARTS it),
@@ -64,38 +57,46 @@ public:
     // Clear the panel (no landmark selected).
     void clearFocus();
 
-    // ---- MOVE THE COLUMN, KEEP EVERYTHING ELSE -------------------------
-    //
-    // The drag path: same landmark, same waveform, same fits, new column. It
-    // exists because setFocus is the WRONG call for that, twice over -- it
-    // copies the mean and the sd in, and it CLEARS the derived arrays and the
-    // supplied fits, which the caller then has to recompute and re-push. At
-    // mouse-move rate that was five vector copies plus a re-wrap of every
-    // candidate curve per drag pixel, to change one integer.
-    //
-    // Nothing here is derived from the column: the band, the msec/slope
-    // arrays and the candidate curves all belong to the trace, and the zoom
-    // window is computed from m_landmarkCol at paint time. A caller whose MEAN
-    // has changed must still use setFocus.
+
     void setLandmarkCol(int col) {
         if (col == m_landmarkCol) return;   // a repaint would show the same thing
         m_landmarkCol = col;
+        if (m_userFid >= 0.0) m_userFid = static_cast<double>(col);
         m_active = (col >= 0 && !m_mean.empty());
         update();
     }
     int landmarkCol() const { return m_landmarkCol; }
 
     // The detector's position for the focused landmark, in this trace's
-    // columns. The dotted fiducial is drawn here and nowhere else. Call after
-    // setFocus; -1 = not supplied, and the line falls back to the bar column.
+    // columns. The dotted AUTO line is drawn here and nowhere else. Call after
+    // setFocus.
+    //
+    // -1 = NOT SUPPLIED, and no auto line is drawn. It does NOT mean "use the
+    // landmark column": a landmark with no detector placement has no auto
+    // position to report, and drawing one at the bar would attribute the
+    // operator's choice to the detector.
     void setDetectorFiducial(double col);
 
-    // Which family of curve placed this landmark, so the overlay matches the
-    // model the detector actually used. None = NOT PLACED BY A FIT at all: an
-    // ECG Q onset with no trough (compute_q_onset's R-upstroke fallback, drawn
-    // as a circle rather than an X on the grid), or any pulse landmark that is
-    // a bracketed search or an interpolated crossing. Drawing candidates there
-    // would claim a contest that never happened.
+    // The OPERATOR's position for the focused landmark, in this trace's
+    // columns. The THICK BAR LINE is drawn here and nowhere else, and it is
+    // drawn for as long as the focus is on a MOVABLE bar -- not just during
+    // the drag. The line is what says "this landmark is yours to move and it
+    // is currently here"; the dotted auto line beside it is what the detector
+    // said. Both readings belong on screen the whole time the bar is selected,
+    // and the gap between them is the edit.
+    //
+    // -1 = THIS LANDMARK CANNOT HAVE ONE, and no bar line is drawn. Every
+    // auto-only glyph (R/P/Q/T peak, the pulse T50/peak/peak2/T80) lands here:
+    // its column is the detector's answer, so a bar drawn at it would
+    // attribute a detection to the operator, and the footer's "bar =" would
+    // report an operator placement that was never made.
+    //
+    // NOTHING WAS CALLING THIS, which is why the line never appeared at all:
+    // m_userFid stayed at -1 for the life of the panel and the paint block
+    // guarded by it was dead code. setLandmarkCol could not bootstrap one
+    // either -- it only TRACKS a fiducial that is already set.
+    void setUserFiducial(double col);
+    double userFiducial() const { return m_userFid; }
     enum class FitKind { None, Transition, PeakQuadratic, PeakCubic };
 
     // TWO OVERLOADS, NO DEFAULTS. Transition and None have no peak parameters
@@ -110,8 +111,9 @@ public:
 
     // Peaks: both required, and both must be the values the detector fitted
     // with (subsample_refine::peak_sigma / peak_halfwidth for ECG,
-    // pulse_sigma / pulse_halfwidth for pulse). A different span here draws a
-    // curve over a fit nothing else in the system used.
+    // pulse_window::{peak,foot}Halfwidth + ::sigma for pulse, resolved
+    // against that channel's rate). A different span here draws a curve over
+    // a fit nothing else in the system used.
     void setPeakFitKind(FitKind k, double peakSigma, int peakHalfWidth) {
         m_fitKind = k;
         m_peakSigma = peakSigma;
@@ -157,11 +159,12 @@ private:
     double  m_slopeFloor = 0.0;        // denominator used where the slope is below it
     std::vector<uint8_t> m_floorMask;  // 1 where the slope floor engaged
     int    m_nBeats = 0;
+    // The landmark's own column: the zoom window centre and the index the
+    // footer's sd lookups use. NOT the thick line's position.
     int    m_landmarkCol = -1;
-    // Sub-sample column the fiducial was last DRAWN at, recorded in paintEvent
-    // for the footer readout. Quadratic and cubic vertices can differ by well
-    // under one sample -- a sub-pixel shift at this zoom -- so the number is
-    // the only reliable way to see the mark move with the fit-model radio.
+    // The operator's own position, or -1 for a landmark that cannot have one.
+    // The thick line is drawn here and nowhere else.
+    double m_userFid = -1.0;
     double m_lastFidCol = -1.0;
     double m_detectorFid = -1.0;
     int    m_half = 30;

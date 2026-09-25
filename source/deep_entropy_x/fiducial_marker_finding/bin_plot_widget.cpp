@@ -881,8 +881,8 @@ int BinPlotWidget::markerAtX(double x, double* distOut) const {
         const double idx = m_markers[m];
         if (idx < 0.0) continue;
         // Auto-only marks: drawn as glyphs, never as draggable bars.
-        if (m == EcgRPeak || m == EcgPPeak || m == PpgPeak || m == PpgT80
-            || m == PpgT50 || m == PpgPeak2) continue;
+        // isDraggableMarker is the one list; see bin_plot_widget.hpp.
+        if (!isDraggableMarker(m)) continue;
         const std::vector<double>* vec = nullptr;
         Channel ch = Channel::Ecg;
         bool visible = false;
@@ -1183,8 +1183,10 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     for (int m = 0; m < MarkerCount; ++m) {
         double idx = m_markers[m];
         if (idx < 0.0) continue;
-        if (m == EcgRPeak || m == EcgPPeak || m == PpgPeak || m == PpgT80
-            || m == PpgT50 || m == PpgPeak2) continue;
+        // Glyphs are drawn by the glyph pass, not as bars here. SAME
+        // PREDICATE markerAtX uses, so what is drawn as a bar and what can be
+        // grabbed as one cannot drift apart.
+        if (!isDraggableMarker(m)) continue;
         const std::vector<double>* vec = nullptr;
         Channel ch = Channel::Ecg;
         bool visible = false;
@@ -1522,12 +1524,17 @@ void BinPlotWidget::mouseReleaseEvent(QMouseEvent*) {
 // columns -- the axis is shared -- so the positions drop straight onto m_ppg.
 const FeatureMarks::PpgFiducials& BinPlotWidget::detectedPulse() const {
     const double rate = m_rates[static_cast<size_t>(Channel::Ppg)];
-    if (m_pdetValid && m_pdetBin == m_bin && m_pdetSlot == m_templateIndex)
+    // THE FIT MODE IS PART OF THE KEY now that the pulse detector takes one:
+    // without it the Fit-Peaks radio would change the ECG glyphs and leave a
+    // cached pulse detection in place. setFitModes drops this flag too.
+    if (m_pdetValid && m_pdetBin == m_bin && m_pdetSlot == m_templateIndex
+        && m_pdetPeakMode == m_peakFitMode)
         return m_pdet;
 
     m_pdet = FeatureMarks::PpgFiducials{};
     m_pdetBin = m_bin;
     m_pdetSlot = m_templateIndex;
+    m_pdetPeakMode = m_peakFitMode;
     m_pdetValid = true;
 
     if (!m_bin || rate <= 0.0 || m_templateIndex < 0) return m_pdet;
@@ -1536,8 +1543,12 @@ const FeatureMarks::PpgFiducials& BinPlotWidget::detectedPulse() const {
         m_bin->ppg_bank.templates[m_templateIndex].tmpl;
     if (t.size() < 3) return m_pdet;
 
+    // THE OPERATOR'S PEAK MODEL, same argument the ECG detection is given a
+    // few hundred lines up. The pulse peak, foot and end run
+    // upsample_for_fit::peakCandidates exactly as the ECG peaks do, so a
+    // forced quadratic/cubic/5-point applies to both channels or to neither.
     m_pdet = FeatureMarks::detect_ppg_fiducials(t, static_cast<int>(t.size()),
-        rate);
+        rate, std::numeric_limits<double>::quiet_NaN(), m_peakFitMode);
     return m_pdet;
 }
 
@@ -1682,13 +1693,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p, double yLo, double yHi, doubl
         cross(pf.peak2);
         cross(pf.end);
         cross(rx.ppgT80);            // reactive: 80% peak->end
-        // Derivative landmarks: auto-only, no draggable bar, so a horizontal
-        // dash rather than an X, coloured by derivative order. Horizontal
-        // because the PPG upstroke is near-vertical at u and a, where a
-        // vertical dash lies along the trace and vanishes into it.
-        //
-        // Behind their own checkbox: eleven extra marks on one pulse is noise
-        // while the operator is dragging bars.
+
         if (m_showPpgDerivMarkers) {
             dash(pf.u, vpg_mark_color);
             dash(pf.v, vpg_mark_color);

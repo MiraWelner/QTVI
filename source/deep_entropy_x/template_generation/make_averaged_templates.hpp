@@ -33,16 +33,16 @@
  // partitions the bank by class BEFORE clustering -- so this pass reads the
  // noise-marking bin the GUI wrote.
 #include "noise_marking_gui/user_annotation_handler.h"
-#include <iostream>
-#include <chrono>
-#include <numeric>
 #include <algorithm>   // std::nth_element for the per-bin median RR
-#include <sstream>
-#include <string>
+#include <array>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
-#include <utility>
 #include <functional>
+#include <limits>      // numeric_limits<double>::quiet_NaN in the NSVT series
 #include <memory>
+#include <string>
+#include <utility>
 
 
 namespace morphology_writer {
@@ -56,8 +56,10 @@ namespace morphology_writer {
     }
 }
 
+// NOT static. A template already has vague linkage, so `static` only gave
+// every translation unit its own copy of an identical instantiation.
 template <class PeakVec>
-static std::vector<uint8_t> sliceMarkCodes(
+std::vector<uint8_t> sliceMarkCodes(
     const PeakVec& rPeaks, uint32_t n_slices,
     const std::vector<noise_markings::Span>& spans,
     uint64_t bin_index)
@@ -100,7 +102,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     auto _ms = [](std::chrono::steady_clock::time_point a,
         std::chrono::steady_clock::time_point b) {
             return std::chrono::duration<double, std::milli>(b - a).count(); };
-    const auto _g0 = std::chrono::steady_clock::now();
 
     // Check if any bin has PPG data.
     //
@@ -174,7 +175,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // translation needs to reach the slicer.
     EcgTemplateResult ecg_res = CreateEcgTemplatesFast(wave_data, rates.ecg);
     const auto _ecg1 = std::chrono::steady_clock::now();
-    std::fprintf(stderr,  "[fast-phases] bins=%zu | PPG %8.1f  ECG(align+template) %8.1f ms\n", n, _ms(_ppg0, _ppg1), _ms(_ppg1, _ecg1));
+    std::fprintf(stderr, "[fast-phases] bins=%zu | PPG %8.1f  ECG(align+template) %8.1f ms\n", n, _ms(_ppg0, _ppg1), _ms(_ppg1, _ecg1));
 
     // Assemble TemplateInfo
     auto fill_channel = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {
@@ -251,8 +252,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         std::make_shared<std::vector<std::array<std::vector<int32_t>, 4>>>(n);
     auto& local_of_slice = *local_of_slice_owned;
 
-    // One row per bin for <stem>_bins.csv: the 4.5 category census, the
-    // partition's shape, and why beats left their group's average.
     // ---- OPERATOR CLASS LABELS, ONCE PER RECORD ------------------------
     //
     // Read here rather than per bin: the spans are record-wide and the file is
@@ -269,6 +268,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     if (!noise_bin_path.empty())
         noiseSpans = noise_markings::loadSpans(noise_bin_path);
 
+    // One row per bin for <stem>_bins.csv: the 4.5 category census, the
+    // partition's shape, and why beats left their group's average.
     std::vector<morphology_csv::BinRow> binRows;
     binRows.reserve(n);
 
@@ -283,43 +284,19 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         // bad_segment, so we use that here.
         const bool ecg_good = (i < wave_data.size()) && !wave_data[i].bad_segment;
 
-        // ---- SECTION 4.6: ONE PARTITION FOR THIS BIN ----------------------
-        // Built BEFORE the per-channel fills below move their beat vectors out,
-        // because it reads them. Every channel is keyed by the R-pair slice
-        // ordinal, so an ECG split carries its PPG beats with it and each
-        // group's pulse cohort differs from its siblings'. That is the point:
-        // the per-channel banks gave every column of a bin the same bin-wide
-        // PPG count, which is what made the split look like it ignored PPG.
-        //
-        // n_slices is the R-PAIR COUNT, the shared denominator for all four
-        // channels. ch1.raw drives both slicers, so rPeaks.size() - 1 is the
-        // one number every forward map indexes into; a per-channel beat count
-        // would line up for one channel and be silently wrong for the rest.
+        // THE THREE ECG LEADS, BY INDEX. Every per-channel step below is the
+        // same six statements three times over, and writing them out invited
+        // the class of bug where ch3 keeps ch2's subscript.
+        EcgChannelResult* const chRes[3] =
+        { &ecg_res.ch1, &ecg_res.ch2, &ecg_res.ch3 };
+        ChannelTemplates* const chDst[3] = { &info.ch1, &info.ch2, &info.ch3 };
+
         if (ecg_good) {
             const size_t nR = (i < wave_data.size()) ? wave_data[i].ch1.raw.size() : 0;
             if (nR >= 2) {
                 jbank::BinBankInput ji;
                 ji.n_slices = static_cast<uint32_t>(nR - 1);
                 ji.bin_index = static_cast<uint64_t>(i);
-
-                // ---- MORPHOLOGY SPLIT WINDOW ------------------------
-                //
-                // PERCENT OF THIS BIN'S MEDIAN RR, from config.csv
-                // (region_around_Rpeak_for_morphology_split_pct_rr and
-                // region_around_PPGPeak_for_morphology_split_pct_rr), either
-                // side of the anchor -- the R peak on the ECG axis, the
-                // systolic peak on the pulse axis.
-                //
-                // PER BIN, which is the point: the median RR is a property of
-                // this bin, so the window tracks its heart rate instead of
-                // being one number for the whole record. The MEDIAN and not
-                // the mean or the longest -- one dropped R detection produces
-                // an RR several cycles long, and that must not stretch the
-                // comparison window for every beat in the bin.
-                //
-                // UNSET (0, the default) leaves corr_halfwin at -1, which jbank
-                // reads as "no window, correlate the whole beat". The trailing
-                // + 0.5 is rounding to the nearest sample.
                 double medianRrSamples = 0.0;
                 {
                     const auto& rp = wave_data[i].ch1.raw;
@@ -355,48 +332,17 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                     }
                 }
 
-                const EcgChannelResult* ec[3] =
-                { &ecg_res.ch1, &ecg_res.ch2, &ecg_res.ch3 };
                 for (int c = 0; c < 3; ++c) {
-                    if (i >= ec[c]->kept_beats_raw.size()) continue;
-                    // kept_index[c][bin][slot] is the R-PAIR SLICE that beat
-                    // was cut from, which is what this struct's own comment
-                    // always said it was. It used to be filled with the ALIGNED
-                    // ROW instead, and the two differ silently: the slicer skips
-                    // pairs with rr <= 3 samples or rr > 4 s, so `beats` is
-                    // already compacted against the R-pair list. That told the
-                    // bank captured slot k was slice k -- true only on a bin
-                    // where nothing was skipped, and on a bin with a dropout gap
-                    // it pairs each ECG complex with a later heartbeat's pulse,
-                    // further off the deeper into the bin you go. Every score
-                    // against every group is then computed across mismatched
-                    // beats, so PPG fails its 0.80 floor almost everywhere and
-                    // the bin fills with tiny groups while a clean neighbour
-                    // partitions normally.
+                    if (i >= chRes[c]->kept_beats_raw.size()) continue;
                     if (i >= ecg_res.kept_index[c].size()) continue;
-                    ji.ecg_beats[c] = &ec[c]->kept_beats_raw[i];
+                    ji.ecg_beats[c] = &chRes[c]->kept_beats_raw[i];
                     ji.ecg_forward[c] = &ecg_res.kept_index[c][i];
-                    ji.ecg_r_col[c] = (i < ec[c]->r_col_raw.size())
-                        ? ec[c]->r_col_raw[i] : -1;
-                    // "SEED THE BANK WITH THE SINUS TEMPLATE FROM PHASE 1."
-                    // This was simply never assigned -- only ppg_phase1 was --
-                    // so seedBank fell through to the median over its first 20
-                    // slices. On bigeminy those first twenty are about ten sinus
-                    // and ten ectopic, so slot 0 was a chimera of both and every
-                    // spawn decision in the bin was scored against it: either
-                    // both morphologies clear 0.85 and the bank collapses to one
-                    // template, or neither does and it fragments. This template
-                    // is now the ectopic-masked reference from
-                    // create_ecg_templates (see seed_pool there), so slot 0 is
-                    // sinus and a PVC fails against it on the merits.
-                    if (i < ec[c]->ecgTemplates_raw.size())
-                        ji.ecg_phase1[c] = ec[c]->ecgTemplates_raw[i];
-                    // And its spread, which is what slot 0's CORRIDOR is built
-                    // from. Both come from the same ectopic-masked pool in
-                    // create_ecg_templates, so the band means the same thing as
-                    // the line it surrounds.
-                    if (i < ec[c]->ecgTemplates_raw_iqr.size())
-                        ji.ecg_phase1_spread[c] = ec[c]->ecgTemplates_raw_iqr[i];
+                    ji.ecg_r_col[c] = (i < chRes[c]->r_col_raw.size())
+                        ? chRes[c]->r_col_raw[i] : -1;
+                    if (i < chRes[c]->ecgTemplates_raw.size())
+                        ji.ecg_phase1[c] = chRes[c]->ecgTemplates_raw[i];
+                    if (i < chRes[c]->ecgTemplates_raw_iqr.size())
+                        ji.ecg_phase1_spread[c] = chRes[c]->ecgTemplates_raw_iqr[i];
                 }
                 if (ppg_template_good && i < ppg_kept.size()
                     && i < ppg_kept_slices.size()) {
@@ -407,47 +353,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                     if (i < ppg_template_iqrs.size())
                         ji.ppg_phase1_spread = ppg_template_iqrs[i];
                 }
-
-                // ---- DOES THE PULSE REACH THE JOINT BANK? ----------------
-                // Everything about the pulse channel downstream of here keys
-                // off ji.ppg_beats being non-null, and the four ways it can
-                // come back null are indistinguishable without this: no
-                // signal, an all-NaN template, a bin the QC emptied, or a
-                // short kept/keptSlices array. Printed per bin because the
-                // failure is per bin -- one degenerate bin is a gap, all 36 is
-                // a channel that does not exist.
-                {
-                    size_t nFinite = 0;
-                    const size_t tmplW = (i < ppg_templates.size())
-                        ? ppg_templates[i].size() : 0;
-                    if (i < ppg_templates.size())
-                        for (const double v : ppg_templates[i])
-                            if (!std::isnan(v)) ++nFinite;
-                    std::fprintf(stderr,
-                        "  [ppg-bin] bin %zu: good=%d tmpl_w=%zu finite=%zu "
-                        "kept=%zu keptSlices=%zu peakCol=%d footCol=%d "
-                        "-> joint=%d\n",
-                        i, ppg_template_good ? 1 : 0, tmplW, nFinite,
-                        (i < ppg_kept.size()) ? ppg_kept[i].size() : 0,
-                        (i < ppg_kept_slices.size()) ? ppg_kept_slices[i].size() : 0,
-                        (i < ppg_peak_cols.size()) ? ppg_peak_cols[i] : -1,
-                        (i < ppg_onset_cols.size()) ? ppg_onset_cols[i] : -1,
-                        ji.ppg_beats ? 1 : 0);
-                    std::fflush(stderr);
-                }
-
-                // ---- PER-SLICE RR, FOR THE POST-PARTITION STAGE ----------
-                // Straight off the R-peak vector that DEFINES the slices, so
-                // there is no index map between the prematurity test and the
-                // partition and none to get wrong. A per-channel aligned RR
-                // series would be indexed by that channel's rows, which is the
-                // mismatch that made the flags describe other beats.
-                //
-                // rr_after_ms[s] = R[s+1] - R[s]. Samples -> ms via rates.ecg,
-                // because pvc_filter's 0.80-of-trailing-median test is a ratio
-                // and only needs consistent units, but the archive reports the
-                // interval and a sample count would read as a nonsense heart
-                // rate.
                 if (rates.ecg > 0.0) {
                     const auto& rp = wave_data[i].ch1.raw;
                     ji.rr_after_ms.assign(ji.n_slices, 0.0);
@@ -459,43 +364,14 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 
                 // ---- THE PARTITION KEY -------------------------------
                 //
-                // OUTSIDE the rates.ecg guard above. An operator class is a
-                // statement about a heartbeat and does not depend on knowing
-                // the sample rate; nesting it there meant a record with no
-                // configured ECG rate silently lost every class label as well
-                // as its RR series.
-                //
                 // Empty when nothing was marked, which jbank reads as one
                 // partition. See BeatGroup::partition.
                 if (!noiseSpans.spans.empty())
                     ji.mark_code = sliceMarkCodes(wave_data[i].ch1.raw,
                         ji.n_slices, noiseSpans.spans, i);
 
-
-                // ---- PER-BIN, ALWAYS, NOT GATED ON BEING SLOW ------------
-                // The old per-channel line printed only when a bin took over
-                // 50 ms or spawned more than 20 times, so the bins that printed
-                // nothing were indistinguishable from bins that had not started
-                // -- and a stall looked identical to a finished run. Every bin
-                // reports. It is one line per bin per record: 40 lines.
-                const auto _j0 = std::chrono::steady_clock::now();
                 info.joint = jbank::buildBinBank(ji);
                 info.joint_valid = true;
-                {
-                    const double _jms = std::chrono::duration<double, std::milli>(
-                        std::chrono::steady_clock::now() - _j0).count();
-                    const jbank::BankCounts& bc = info.joint.counts;
-                    std::fprintf(stderr,
-                        "[set n bin to morphology template split] bin %zu/%zu slices=%u groups=%d spawns=%u "
-                        "merges=%u caps=%u unscorable=%u "
-                        "rejby=%u/%u/%u/%u  %.1f ms\n",
-                        i + 1, n, ji.n_slices, info.joint.bank.size(),
-                        bc.n_spawns, bc.n_merges, bc.n_cap_raises,
-                        bc.n_unscorable,
-                        bc.n_rejected_by[0], bc.n_rejected_by[1],
-                        bc.n_rejected_by[2], bc.n_rejected_by[3], _jms);
-                    std::fflush(stderr);
-                }
 
                 // PROJECT IT INTO bank_by_channel, so the joint partition is
                 // the ONLY partition. Nothing computes a per-channel bank
@@ -518,23 +394,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                     co.bank = jbank::projectToChannel(info.joint.bank, cs, c,
                         &info.joint.flags, &info.joint.rr_after_ms);
 
-                    // THE PULSE FACE OF EACH GROUP, which is what the viewer
-                    // draws and what hasVisiblePanel's pulse gate reads. A
-                    // slot with an empty waveform here is an invisible pulse
-                    // panel AND, via that gate, a suppressed ECG panel.
-                    if (c == jbank::kPpg) {
-                        size_t withWave = 0, totalMembers = 0;
-                        for (const tbank::BankTemplate& tp : co.bank.templates) {
-                            if (!tp.tmpl.empty()) ++withWave;
-                            totalMembers += tp.members.size();
-                        }
-                        std::fprintf(stderr,
-                            "  [ppg-proj] bin %zu: in_channelset=%d slots=%d "
-                            "with_waveform=%zu members_total=%zu\n",
-                            i, cs[jbank::kPpg].present() ? 1 : 0,
-                            co.bank.size(), withWave, totalMembers);
-                        std::fflush(stderr);
-                    }
                     // BOTH IN SLICE SPACE, and the same length. flags and
                     // assignment used to be indexed by a channel's aligned row,
                     // which is why they could not be shared between channels;
@@ -613,46 +472,32 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                     binRows.push_back(row);
                 }
             }
-        }
 
-        if (ecg_good) {
-            fill_channel(info.ch1, ecg_res.ch1, i);
-            fill_channel(info.ch2, ecg_res.ch2, i);
-            fill_channel(info.ch3, ecg_res.ch3, i);
-
-            if (i < ecg_res.ch1.kept_beats_raw.size()) {
-                info.kept_beats_by_channel["CH1"] = std::move(ecg_res.ch1.kept_beats_raw[i]);
-                if (i < ecg_res.ch1.kept_rhythm_raw.size())
-                    info.kept_rhythm_by_channel["CH1"] = std::move(ecg_res.ch1.kept_rhythm_raw[i]);
-
-                // bank_by_channel["CH1"] IS NOT WRITTEN HERE, and there is no
-                // longer anything that could write it. It used to be assigned
-                // from a per-channel bank built inside create_ecg_templates,
-                // AFTER the joint projection above -- so the joint bank was
-                // built, projected, and then silently overwritten by the very
-                // per-channel partition it exists to abolish. Both that bank
-                // and its last reader (the morphology writers, now on the
-                // projection) are gone. The projection is the only writer.
-                info.ref_index_by_channel["CH1"] = (i < ecg_res.ch1.ref_index_raw.size()) ? ecg_res.ch1.ref_index_raw[i] : -1;
-            }
-            if (i < ecg_res.ch2.kept_beats_raw.size()) {
-                info.kept_beats_by_channel["CH2"] = std::move(ecg_res.ch2.kept_beats_raw[i]);
-                if (i < ecg_res.ch2.kept_rhythm_raw.size())
-                    info.kept_rhythm_by_channel["CH2"] = std::move(ecg_res.ch2.kept_rhythm_raw[i]);
-                info.ref_index_by_channel["CH2"] = (i < ecg_res.ch2.ref_index_raw.size()) ? ecg_res.ch2.ref_index_raw[i] : -1;
-            }
-            if (i < ecg_res.ch3.kept_beats_raw.size()) {
-                info.kept_beats_by_channel["CH3"] = std::move(ecg_res.ch3.kept_beats_raw[i]);
-                if (i < ecg_res.ch3.kept_rhythm_raw.size())
-                    info.kept_rhythm_by_channel["CH3"] = std::move(ecg_res.ch3.kept_rhythm_raw[i]);
-                info.ref_index_by_channel["CH3"] = (i < ecg_res.ch3.ref_index_raw.size()) ? ecg_res.ch3.ref_index_raw[i] : -1;
+            // ---- PER-CHANNEL FILL, AND THE BEATS MOVED OUT ---------------
+            //
+            // bank_by_channel IS NOT WRITTEN HERE, and there is no longer
+            // anything that could write it. It used to be assigned from a
+            // per-channel bank built inside create_ecg_templates, AFTER the
+            // joint projection above -- so the joint bank was built,
+            // projected, and then silently overwritten by the very
+            // per-channel partition it exists to abolish. Both that bank and
+            // its last reader (the morphology writers, now on the projection)
+            // are gone. The projection is the only writer.
+            for (int c = 0; c < 3; ++c) {
+                fill_channel(*chDst[c], *chRes[c], i);
+                if (i >= chRes[c]->kept_beats_raw.size()) continue;
+                info.kept_beats_by_channel[kChanKeys[c]] =
+                    std::move(chRes[c]->kept_beats_raw[i]);
+                if (i < chRes[c]->kept_rhythm_raw.size())
+                    info.kept_rhythm_by_channel[kChanKeys[c]] =
+                    std::move(chRes[c]->kept_rhythm_raw[i]);
+                info.ref_index_by_channel[kChanKeys[c]] =
+                    (i < chRes[c]->ref_index_raw.size())
+                    ? chRes[c]->ref_index_raw[i] : -1;
             }
         }
         else {
-            clear_channel(info.ch1);
-            clear_channel(info.ch2);
-            clear_channel(info.ch3);
-            info.kept_beats_ch1_raw.clear();
+            for (int c = 0; c < 3; ++c) clear_channel(*chDst[c]);
         }
 
         if (ppg_template_good) {
@@ -737,6 +582,10 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
             }
         }
 
+        // NSVT IS OPERATOR-GATED: detectRuns only considers global templates
+        // carrying a VENTRICULAR label, and labels come from marks. On an
+        // unmarked record no run can be produced by any input, so an empty
+        // result here is unfalsifiable rather than a clean verdict.
         const nsvt::GlobalMap flat = nsvt::asGlobalMap(gm);
         const std::vector<nsvt::NsvtRun> runs = nsvt::detectRuns(di, flat);
         polyCandidates = nsvt::countPolymorphicCandidates(di, flat);
@@ -763,27 +612,30 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
             gm.morphologies.size(), di.global_template.size(),
             runs.size(), polyCandidates);
         std::fflush(stderr);
-
-        // ---- the two NSVT acceptance rows -----------------------------
-        // NSVT IS OPERATOR-GATED: detectRuns only considers global templates
-        // carrying a VENTRICULAR label, and labels come from marks. On an
-        // unmarked record no run can be produced by any input, so both of these
-        // tests are unfalsifiable and say so rather than reporting a pass.
-
-        morphology_csv::writeBins(binRows);
-        morphology_csv::writeNsvt(nsvtRows, polyCandidates);
-        morphology_csv::writeTemplates(blocks);
-
-        // DEFERRED, NOT WRITTEN. The ~3.8 s this used to cost lands on the
-        // squared/absval pass instead -- see AugmentTemplatesSlow, which drains it.
-        morphology_writer::pending() = [blocks, local_of_slice_owned] {
-            morphology_csv::writeBeatsBin(blocks);
-            };
-
-        morphology_csv::writeTemplatesBin(blocks);
-
-        return result;
     }
+
+    morphology_csv::writeBins(binRows);
+    morphology_csv::writeNsvt(nsvtRows, polyCandidates);
+    morphology_csv::writeTemplates(blocks);
+
+    // DEFERRED, NOT WRITTEN. The ~3.8 s this used to cost lands on the
+    // squared/absval pass instead -- see AugmentTemplatesSlow, which drains it.
+    //
+    // THE CLOSURE OUTLIVES THIS FUNCTION AND BORROWS FROM `result`. `blocks`
+    // holds raw pointers into result[i].bank_by_channel and
+    // kept_beats_by_channel -- std::map nodes, whose addresses survive the move
+    // of `result` into the caller's variable, which is why this is sound today.
+    // It is NOT sound if the caller drops (or copies and drops) that vector
+    // before AugmentTemplatesSlow runs: the deferred write would then read
+    // freed beats. local_of_slice_owned is a shared_ptr for exactly this
+    // reason; the map interiors have no equivalent guard, only this contract.
+    morphology_writer::pending() = [blocks, local_of_slice_owned] {
+        morphology_csv::writeBeatsBin(blocks);
+        };
+
+    morphology_csv::writeTemplatesBin(blocks);
+
+    return result;
 }
 
 // SLOW: fill the squared/absval ECG templates onto an existing

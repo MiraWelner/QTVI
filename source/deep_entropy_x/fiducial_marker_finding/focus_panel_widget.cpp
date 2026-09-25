@@ -48,6 +48,7 @@ void FocusPanelWidget::setFocus(const std::vector<double>& mean,
     m_slopeFloor = 0.0;
     m_lastFidCol = -1.0;
     m_detectorFid = -1.0;
+    m_userFid = -1.0;   // a glyph keeps it; a bar's caller re-supplies it
     m_transCands = upsample_for_fit::TransitionCandidates{};
     m_peakCands = upsample_for_fit::PeakCandidates{};
 
@@ -71,6 +72,11 @@ void FocusPanelWidget::setDetectorFiducial(double col) {
     update();
 }
 
+void FocusPanelWidget::setUserFiducial(double col) {
+    m_userFid = col;
+    update();
+}
+
 void FocusPanelWidget::clearFocus() {
     m_active = false;
     m_mean.clear();
@@ -83,7 +89,9 @@ void FocusPanelWidget::clearFocus() {
     m_fitKind = FitKind::Transition;
     m_transCands = upsample_for_fit::TransitionCandidates{};
     m_peakCands = upsample_for_fit::PeakCandidates{};
+    m_lastFidCol = -1.0;    // no auto line drawn for a cleared panel
     m_detectorFid = -1.0;   // stale for the new landmark until re-supplied
+    m_userFid = -1.0;
     update();
 }
 
@@ -233,8 +241,16 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
     // bias -1 -> landmark near the RIGHT edge (it ends this segment), so the
     // window extends mostly to the LEFT; bias +1 -> landmark near the LEFT
     // edge (starts this segment), window extends mostly RIGHT; 0 = centered.
+    //
+    // THE SIGN WAS INVERTED, and that is the QRS/JT mislabelling. `center` is
+    // the window's MIDDLE, so framing the landmark toward the RIGHT edge means
+    // moving the middle LEFT of it -- a NEGATIVE shift for bias -1. With the
+    // signs the other way round the top panel (bias -1, labelled "(QRS)")
+    // centred its window to the RIGHT of the J point and drew the JT segment,
+    // and the bottom panel (bias +1, "(JT)") drew the QRS: each header named
+    // the segment the other one was showing.
     const int biasShift = (m_framingBias == 0) ? 0
-        : (m_framingBias < 0 ? +(m_half * 3 / 4) : -(m_half * 3 / 4));
+        : (m_framingBias < 0 ? -(m_half * 3 / 4) : +(m_half * 3 / 4));
     const int center = m_landmarkCol + biasShift;
     const int lo = std::max(0, center - m_half);
     const int hi = std::min(N - 1, center + m_half);
@@ -403,52 +419,89 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
                 break;
             }
 
-        // ---- fiducial marker: gray vertical dotted line, at the column the
-        // SELECTED model places the landmark on --------------------------
+        // ---- TWO FIDUCIALS: THE LANDMARK, AND THE AUTO PLACEMENT --------
         //
-        // Same single gray line as before; the only change is WHERE. It used to
-        // be drawn at m_landmarkCol -- the integer bar column, which does not
-        // depend on the fit at all -- so changing either fit-model radio
-        // recoloured the curves and left the line sitting still.
-        // THE DETECTOR'S POSITION, not a re-fit's. See m_detectorFid: the
-        // panel cannot reproduce the detector's vertex because it does not know
-        // the integer seed the detector fitted around. The transition path is
-        // exempt -- its cross[winner] comes from transitionAnchor itself, so it
-        // already IS the detector's answer -- and the selected candidate's own
-        // position is the last resort when nothing was supplied.
-        double winPos = std::numeric_limits<double>::quiet_NaN();
+        // TWO LINES, TWO QUANTITIES, NEITHER STANDING IN FOR THE OTHER. This
+        // was ONE line with a fallback: the detector's position when it had
+        // one, m_landmarkCol only when it did not. With a detector position
+        // supplied -- the normal case -- that meant the single line sat
+        // perfectly still through a drag, so moving a marker changed the zoom
+        // window and nothing else, and the operator's own position (the only
+        // thing they were adjusting, and the only one the CSV reports as
+        // _user) was the one quantity the close-up never drew.
+
+        // THE OPERATOR'S BAR, THICK AND SOLID. m_userFid is written by
+        // setLandmarkCol on every drag pixel, so this is the line that moves.
+        // Drawn FIRST: where the two coincide -- an unmoved bar still sitting
+        // on the detection -- the dots below stay legible on top rather than
+        // being painted over.
+        //
+        // -1 MEANS A REGULAR FIDUCIAL AND DRAWS NOTHING. Every glyph lands
+        // here: markerAtX will not hand one out for a drag, so there is no
+        // operator position, and the panel shows the auto line alone exactly
+        // as it always did.
+        if (m_userFid >= 0.0 && m_userFid >= lo && m_userFid <= hi) {
+            QPen lp(QColor(30, 110, 200));
+            lp.setWidthF(2.6);
+            p.setPen(lp);
+            const double lx = xOf(m_userFid);
+            p.drawLine(QPointF(lx, mt), QPointF(lx, mt + ph));
+        }
+
+        // THE AUTO PLACEMENT, THIN GRAY DOTTED, stationary. The DETECTOR's
+        // position, not a re-fit's: the panel cannot reproduce the detector's
+        // vertex because it does not know the integer seed it fitted around.
+        // The transition path is exempt -- its cross[winner] comes from
+        // transitionAnchor itself, so it already IS the detector's answer --
+        // and the selected candidate's own position is the last resort when
+        // nothing was supplied.
+        //
+        // NO FALLBACK TO m_landmarkCol. A landmark the detector never placed
+        // (a rejected fit with no vertex, or the transition re-fit path, which
+        // has no crossing to hand back) has no auto position, so no auto line
+        // is drawn at all. The old fallback put a dotted line under the
+        // operator's own choice and labelled it the detector's, which is the
+        // same mislabelling the _user CSV columns had.
+        double autoPos = std::numeric_limits<double>::quiet_NaN();
         if (m_detectorFid >= 0.0) {
-            winPos = m_detectorFid;
+            autoPos = m_detectorFid;
         }
         else {
             for (const Candidate& c : cands)
-                if (c.selected) { winPos = c.position; break; }
+                if (c.selected) { autoPos = c.position; break; }
         }
-        // The bar column stays the fallback: a selected model with no placement
-        // to report (a rejected fit with no vertex, or the transition re-fit
-        // path, which has no crossing to hand back) leaves the line exactly
-        // where it has always been rather than dropping it off the panel.
-        const double fidCol = std::isfinite(winPos)
-            ? winPos : static_cast<double>(m_landmarkCol);
-        m_lastFidCol = fidCol;
-        if (fidCol >= lo && fidCol <= hi) {
-            QPen pen(QColor(130, 130, 130)); pen.setWidthF(1.2); pen.setStyle(Qt::DotLine);
+        // -1, NOT the bar column, when there is no auto position: the footer
+        // prints this and a number there would claim a placement that was
+        // never made.
+        m_lastFidCol = std::isfinite(autoPos) ? autoPos : -1.0;
+        if (std::isfinite(autoPos) && autoPos >= lo && autoPos <= hi) {
+            QPen pen(QColor(130, 130, 130));
+            pen.setWidthF(1.2);
+            pen.setStyle(Qt::DotLine);
             p.setPen(pen);
-            const double x = xOf(fidCol);
+            const double x = xOf(autoPos);
             p.drawLine(QPointF(x, mt), QPointF(x, mt + ph));
         }
     }
 
     // ---- THE SD, TWO LINES, BELOW THE PLOT -----------------------------
     //
-    // Line 1 is the number: sd in milliseconds at the bar's own column.
-    // Line 2 is the equation behind it -- sd_ms = raw_sd / slope x (1000/fs) --
-    // so the result and its two inputs are both visible without reading the
-    // header. Where the column's own slope is below the floor (the orange/pink
-    // shading) the divide used the floor, not the near-zero slope, so the floor
-    // is printed and flagged; otherwise raw_sd/slope would look like a
-    // divide-by-nothing. Slope is at 3 decimals so a small-but-nonzero value is
-    // not shown as 0.0.
+    // Line 1 is the number: sd in milliseconds at the bar's own column, then
+    // the two fiducial COLUMNS -- the auto placement and the landmark -- and
+    // their difference. The lines above show that the mark has moved; these
+    // say by how much, which at this zoom a sub-sample shift cannot.
+    // m_lastFidCol was assigned in paintEvent and never read by anything: the
+    // comment on it claimed it was "for the footer readout" and the footer did
+    // not print it, so the sub-sample difference between a quadratic and a
+    // cubic vertex -- the thing it exists to expose -- was invisible.
+    //
+    // Line 2 is the equation behind the sd -- sd_ms = raw_sd / slope x
+    // (1000/fs) -- so the result and its two inputs are both visible without
+    // reading the header. Where the column's own slope is below the floor (the
+    // orange/pink shading) the divide used the floor, not the near-zero slope,
+    // so the floor is printed and flagged; otherwise raw_sd/slope would look
+    // like a divide-by-nothing. Slope is at 3 decimals so a
+    // small-but-nonzero value is not shown as 0.0.
     //
     // BELOW the plot, not inside it: this used to draw at mt + ph - 14, i.e.
     // over the bottom of the trace and the band.
@@ -472,6 +525,20 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
             l1 = std::isfinite(sdMs)
                 ? QStringLiteral("sd = %1 ms").arg(sdMs, 0, 'f', 1)
                 : QStringLiteral("sd = --");
+
+            // THE TWO POSITIONS, AND THE GAP. Each "--" is a real reading,
+            // not a missing one: "auto = --" is a landmark the detector never
+            // placed, "bar = --" is a regular fiducial with no operator
+            // position at all. A zero in either would read as agreement.
+            const QString autoStr = (m_lastFidCol >= 0.0)
+                ? QString::number(m_lastFidCol, 'f', 2) : QStringLiteral("--");
+            const QString barStr = (m_userFid >= 0.0)
+                ? QString::number(m_userFid, 'f', 2) : QStringLiteral("--");
+            l1 += QStringLiteral("   auto = %1   bar = %2").arg(autoStr, barStr);
+            // The difference only exists when both do.
+            if (m_lastFidCol >= 0.0 && m_userFid >= 0.0)
+                l1 += QStringLiteral("   d = %1")
+                .arg(QString::number(m_userFid - m_lastFidCol, 'f', 2));
 
             const QString sdStr = std::isfinite(rawSd)
                 ? QString::number(rawSd, 'f', 4) : QStringLiteral("--");

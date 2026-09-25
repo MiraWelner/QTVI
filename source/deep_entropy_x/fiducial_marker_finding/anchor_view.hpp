@@ -12,7 +12,7 @@ enum class AnchorType { P_ONSET, Q_ONSET, R_PEAK, J_POINT };
 namespace anchor_view {
 
     // Every alignment the session holds, in the order sidecar CSVs are merged.
-    inline constexpr std::array<AnchorType, 4> anchor_array = {AnchorType::R_PEAK, AnchorType::P_ONSET, AnchorType::Q_ONSET, AnchorType::J_POINT};
+    inline constexpr std::array<AnchorType, 4> anchor_array = { AnchorType::R_PEAK, AnchorType::P_ONSET, AnchorType::Q_ONSET, AnchorType::J_POINT };
 
     //defines the suffix for the column headers printed to the csv
     inline constexpr const char* label(AnchorType a) {
@@ -26,7 +26,7 @@ namespace anchor_view {
     }
 
     //this enum makes it easier to list the fiducial marker locations in order
-    enum EcgMarker : int { p_begin = 0,  p_peak = 1,  q_begin = 2, r_peak = 3, j_point = 4,  t_end = 5};
+    enum EcgMarker : int { p_begin = 0, p_peak = 1, q_begin = 2, r_peak = 3, j_point = 4, t_end = 5 };
 
     inline constexpr bool isEcgMarker(int m) { return m >= p_begin && m <= t_end; }
 
@@ -78,9 +78,13 @@ namespace anchor_view {
         if (std::strcmp(pointName, "t_end") == 0) return t_end;
         return -1;
     }
+
+    inline constexpr bool hasUserColumnFor(AnchorType a, int marker) {
+        return isBar(marker) && (a == AnchorType::R_PEAK || owns(a, marker));
+    }
     inline bool hasUserColumn(const char* pointName, AnchorType a) {
         const int m = markerForPoint(pointName);
-        return m >= 0 && showsBar(a, m);
+        return m >= 0 && hasUserColumnFor(a, m);
     }
 
 } // namespace anchor_view

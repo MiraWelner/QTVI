@@ -164,7 +164,14 @@ public:
     //
     // NO sgn: a pulse waveform has a physical sign, so there is no polarity
     // question to answer. Same for the arterial channels.
-    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN);
+    //
+    // peakMode IS THE ECG'S peakMode, threaded for the same reason every ECG
+    // finder takes one: the systolic peak, the foot and the end are placed by
+    // upsample_for_fit::peakCandidates, which is the same guarded contest the
+    // ECG peaks run, so the Fit-Peaks radio has to reach it or the pulse is
+    // the one channel the control silently does not apply to.
+    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static double amplitude_crossing(const std::vector<double>& v, int a, int b, double frac);
     static double crossing_at_level(const std::vector<double>& v, int a, int b, double target);
     static int trough_in(const std::vector<double>& v, int lo, int hi);
@@ -172,7 +179,12 @@ public:
     static double first_crossing(const std::vector<double>& v, int a, int b, double frac);
     static int detect_ppg_upstroke_peak(const std::vector<double>& v, int lo = 0, int hi = -1);
     static int detect_ppg_onset(const std::vector<double>& pulse);
-    static double detect_ppg_peak(const std::vector<double>& pulse);
+    // ppgRate IS REQUIRED, no default: the fit window is a DURATION
+    // (upsample_for_fit::pulse_window), so a rate-less call would have to
+    // invent one and would silently fit a different span per recording.
+    static double detect_ppg_peak(const std::vector<double>& pulse,
+        double ppgRate,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static int detect_ppg_dicrotic(const std::vector<double>& pulse, int peak);
     static double detect_ppg_peak2(const std::vector<double>& v, int sysPeak, double t80, int end);
     static int detect_ppg_end(const std::vector<double>& pulse);
@@ -185,5 +197,6 @@ public:
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
 
     static void seed_pulse_bank_template(const std::vector<double>& tmpl,
-        double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters = NAN);
+        double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters = NAN,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
 };

@@ -569,7 +569,8 @@ double FeatureMarks::steepest_slope_in(const std::vector<double>& v, int lo, int
     return static_cast<double>(best);
 }
 
-FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters)
+FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters,
+    curve_fit::PeakFitMode peakMode)
 {
     PpgFiducials g;
     const int N = static_cast<int>(v.size());
@@ -601,19 +602,48 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     }
     if (pkSeed < 0) return g;              // all-NaN window: nothing to mark
 
-    // THE SAME QUADRATIC AS BEFORE, PLUS THE CURVES. peakCandidates fits the
-    // quadratic, the cubic and the 5-point parabola over one window; draw[0]
-    // IS the guarded quadratic this line used to call directly, so the
-    // placement below is byte-for-byte the position it always produced. The
-    // winner is then forced to 0 rather than left at peakCandidates' BIC
-    // choice, because the pulse peak is DEFINED as the weighted quadratic's
-    // vertex -- switching it to a contest would move detected peaks, which is
-    // a detector change and not this one. The other two curves are drawn red.
+    // ---- THE SAME CONTEST THE ECG PEAKS RUN ----------------------------
+    //
+    // peakCandidates runs bestPeakExtremumFit -- guarded quadratic vs guarded
+    // cubic, lower BIC wins, 5-point parabola when both trip the residual
+    // guard -- and `placement` is its answer. That is exactly what an ECG peak
+    // takes (BinPlotWidget::detectedLandmarks: `if (pc.valid &&
+    // pc.placement >= 0.0) fid = pc.placement;`), so the two channels now
+    // differ only in their seed, sigma and half-width.
+    //
+    // WHAT THIS REPLACED, AND WHY IT HAD TO GO. The placement used to be
+    // draw[0].position with `winner = 0` written over the contest's choice:
+    // draw[] are UNGUARDED fits, so the pulse peak was the raw weighted
+    // quadratic's vertex whether or not it fitted, and the guard could not
+    // demote it because nothing read the guarded result. Two consequences,
+    // both visible in the focus panel: a quadratic that failed the 10%
+    // residual test still placed the mark (the "Quadratic (rejected)" in
+    // green), and the Fit-Peaks radio did nothing on a pulse.
+    //
+    // THIS MOVES DETECTED PULSE PEAKS. That is the intended effect -- a
+    // skewed pulse apex is what the cubic is for, and a misfitted one is what
+    // the 5-point fallback is for -- but stored *_auto columns and the pulse
+    // CSVs will differ from a build before this change.
+    //
+    // THE WINDOW IS A DURATION, resolved against this channel's own rate --
+    // see upsample_for_fit::pulse_window for why a fixed sample count was
+    // fitting a tenth of a pulse on one recording and half of systole on
+    // another. The focus panel resolves the same two numbers from the same
+    // helpers, so the drawn curve is still the fit that placed the mark.
+    const int    peakHw = upsample_for_fit::pulse_window::peakHalfwidth(ppgRate);
+    const double peakSg = upsample_for_fit::pulse_window::peakSigma(ppgRate);
     g.peak_cand = upsample_for_fit::peakCandidates(v, pkSeed,
-        upsample_for_fit::pulse_sigma::Peak,
-        upsample_for_fit::pulse_halfwidth::Peak);
-    g.peak = cld(g.peak_cand.draw[0].position);
-    g.peak_cand.winner = 0;
+        peakSg, peakHw, peakMode);
+    // SEED STANDS WHEN THE CONTEST HAS NO ANSWER, exactly as the ECG path
+    // leaves the detector's column standing. cld() on a -1 placement would
+    // clamp it to column 0, which is inside the template's leading NaN pad --
+    // see the note on refine_trough below for what that does downstream.
+    g.peak = (g.peak_cand.valid && g.peak_cand.placement >= 0.0)
+        ? cld(g.peak_cand.placement)
+        : static_cast<double>(pkSeed);
+    // The contest's own winner and placement stand; the panel colours the
+    // curve that actually placed the mark, and reports "(rejected)" only on a
+    // model the operator forced.
     g.peak_cand.placement = g.peak;
 
     // A systolic peak with no room for a foot before it is a head fragment,
@@ -652,21 +682,28 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     // guard when the two lambdas were consolidated into this one. -1 is the
     // sentinel every consumer of PpgFiducials already handles as "not found";
     // 0 is a position, and a wrong one.
+    //
+    // THE CONTEST HERE TOO, for the same reason as the peak above. This used
+    // to read draw[1].position -- the unguarded CUBIC -- and then write
+    // `winner = 1` over the contest's choice, so a trough was placed by the
+    // cubic whether or not the cubic fitted it, and "Cubic (rejected)" in the
+    // focus panel was a guard the detector had already ignored.
+    const int    footHw = upsample_for_fit::pulse_window::footHalfwidth(ppgRate);
+    const double footSg = upsample_for_fit::pulse_window::footSigma(ppgRate);
     auto refine_trough = [&](int seed, int searchLo,
         upsample_for_fit::PeakCandidates& out) -> double {
             out = upsample_for_fit::peakCandidates(v, seed,
-                upsample_for_fit::pulse_sigma::Foot,
-                upsample_for_fit::pulse_halfwidth::Foot);
-            const bool fitRan = out.valid && (out.draw[1].position >= 0.0);
+                footSg, footHw, peakMode);
+            const bool fitRan = out.valid && (out.placement >= 0.0);
             double pos = cld(std::max(
-                fitRan ? cld(out.draw[1].position)
+                fitRan ? cld(out.placement)
                 : static_cast<double>(seed),
                 static_cast<double>(searchLo)));
             if (std::isnan(sample_at(v, pos))) return -1.0;
-            if (fitRan) {
-                out.winner = 1;
-                out.placement = pos;
-            }
+            // The placement follows the searchLo clamp so the panel's green
+            // curve reports the column the mark is actually at; the WINNER is
+            // the contest's, untouched.
+            if (fitRan) out.placement = pos;
             return pos;
         };
 
@@ -893,16 +930,26 @@ int FeatureMarks::detect_ppg_onset(const std::vector<double>& pulse) {
 }
 
 // PPG systolic peak, sub-sample refined. Coarse seed = FIRST peak via the
-// upstroke (was argmax, i.e. the tallest peak); refined with a Gaussian-
-// weighted quadratic (symmetric extremum, sigma = 8, the per-landmark PPG-peak
-// sigma). Returns a FLOAT position so downstream fiducials that key off the
-// peak (onset/t80/dicrotic/end brackets) inherit the sub-sample peak.
-double FeatureMarks::detect_ppg_peak(const std::vector<double>& pulse) {
+// upstroke (was argmax, i.e. the tallest peak); refined by find_peak -- THE
+// SAME FUNCTION EVERY ECG PEAK USES, guarded quadratic vs cubic on BIC with
+// the 5-point parabola as the fallback. Returns a FLOAT position so downstream
+// fiducials that key off the peak (onset/t80/dicrotic/end brackets) inherit
+// the sub-sample peak.
+//
+// This called quadratic_fit directly, with 8.0 written out where the pulse
+// sigma belongs and no contest at all -- a third placement rule for one
+// landmark, next to detect_ppg_fiducials' and the ECG's.
+double FeatureMarks::detect_ppg_peak(const std::vector<double>& pulse,
+    double ppgRate, curve_fit::PeakFitMode peakMode) {
     if (pulse.empty()) return 0.0;
     const int seed = detect_ppg_upstroke_peak(pulse);
     if (seed < 0) return 0.0;
-    return upsample_for_fit::quadratic_fit(pulse, seed, 8.0,
-        upsample_for_fit::pulse_halfwidth::Peak).position;
+    const int hw = upsample_for_fit::pulse_window::peakHalfwidth(ppgRate);
+    const double pos = upsample_for_fit::find_peak(pulse, seed,
+        upsample_for_fit::pulse_window::sigma(hw), hw, peakMode);
+    // Seed stands on a failed refinement, as everywhere else.
+    return (std::isfinite(pos) && pos >= 0.0)
+        ? pos : static_cast<double>(seed);
 }
 
 int FeatureMarks::detect_ppg_end(const std::vector<double>& pulse) {
@@ -1010,7 +1057,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
         // fields (see BinPlotWidget::captureGlyphSnapshot), so "peak" (etc.)
         // can never mean two different things in two different places.
         {
-            const auto pf = FeatureMarks::detect_ppg_fiducials(v, W, ppgRate, heightMeters);
+            const auto pf = FeatureMarks::detect_ppg_fiducials(v, W, ppgRate, heightMeters, peakMode);
             b.ppg_peak_auto = pf.peak;
             b.ppg_onset_auto = pf.onset;
             b.ppg_peak2_auto = pf.peak2;
@@ -1112,7 +1159,7 @@ void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, A
                 onset = peak = dicrotic = peak2 = end = -1;
                 return;
             }
-            const FeatureMarks::PpgFiducials pf = FeatureMarks::detect_ppg_fiducials(trace, static_cast<int>(trace.size()), sampleRate, NAN);
+            const FeatureMarks::PpgFiducials pf = FeatureMarks::detect_ppg_fiducials(trace, static_cast<int>(trace.size()), sampleRate, NAN, peakMode);
             onset_auto = pf.onset; peak_auto = pf.peak; dic_auto = pf.dicrotic;
             p2_auto = pf.peak2; end_auto = pf.end;
             if (onset < 0) onset = pf.onset;
@@ -1241,12 +1288,13 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
 }
 
 
-void FeatureMarks::seed_pulse_bank_template(const std::vector<double>& tmpl, double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters) {
+void FeatureMarks::seed_pulse_bank_template(const std::vector<double>& tmpl, double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters,
+    curve_fit::PeakFitMode peakMode) {
     out = tbank::BankPulseMarkerSet{};
     const int W = static_cast<int>(tmpl.size());
     if (W < 3 || ppgRate <= 0.0) return;
 
-    const PpgFiducials pf = detect_ppg_fiducials(tmpl, W, ppgRate, heightMeters);
+    const PpgFiducials pf = detect_ppg_fiducials(tmpl, W, ppgRate, heightMeters, peakMode);
     out.onset_auto = pf.onset;
     out.onset = pf.onset;
     out.peak_auto = pf.peak;

@@ -121,9 +121,6 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
     if (markings) {
         for (const Marking& m : markings->marks) {
             const double sr = rateForLabel(m.channel);
-            // llround, not a truncating cast: snappedS*sr is an integer in
-            // exact arithmetic (finalizeMarking snaps to the sample grid) but
-            // not in floating point, so a cast could land a sample early.
             nm.addSegment(
                 static_cast<int>(std::llround(m.start * sr)),
                 static_cast<int>(std::llround(m.end * sr)),
@@ -134,7 +131,6 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
     const std::filesystem::path base = std::filesystem::path(cfg.noise_data_path) / (binFile.stem().string() + "_noise_markings");
     nm.exportCSV(base.string() + ".csv");
     nm.export_marking_binfile(base.string() + ".bin");
-    std::cout << "Saved Noise Markings \n";
 }
 
 static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis_job::AnalysisJob> job, const QString& fileId, std::vector<analysis_job::BankSnapshot>& outBanks) {

@@ -42,27 +42,14 @@ class BinPlotWidget : public QWidget {
     Q_OBJECT
 public:
 
-    // Right-click cycle: Good -> BadR -> BadPPG -> BadBoth -> Good.
-    // BadPPG is PULSE ONLY (ECG good) and BadBoth is both, so the two verdicts
-    // are independent rather than alternatives. With no pulse channel the
-    // cycle is just Good -> BadR -> Good.
     enum class State { Good, BadR, BadPPG, BadBoth };
 
-    // Each enum value MUST be unique (it's used as an array index into
-    // m_markers). ECG markers come first, then PPG markers, so
-    // markerIsEcg / markerIsPpg can use range checks.
     enum Marker : int {
         EcgPBegin = 0,
         EcgPPeak = 1,
         EcgQBegin = 2,
         EcgRPeak = 3,
         EcgSEnd = 4,
-        // T begin removed and the numbering CLOSED UP, not left as a hole.
-        // Nothing persists a marker id -- m_touchedMarks is keyed within a
-        // session and every file format stores landmarks by field, not by enum
-        // value -- so the renumbering is invisible outside this process.
-        // anchor_view.hpp mirrors these values and BinPlotWidget.cpp
-        // static_asserts them, so a missed shift is a build error.
         EcgTEnd = 5,
         // --- PPG markers (contiguous, immediately after ECG) ---
         PpgOnset = 6,
@@ -77,11 +64,7 @@ public:
         ArtOnset = 18, ArtPeak = 19, ArtDicrotic = 20, ArtPeak2 = 21, ArtEnd = 22,
         ArtPulmOnset = 23, ArtPulmPeak = 24, ArtPulmDicrotic = 25,
         ArtPulmPeak2 = 26, ArtPulmEnd = 27,
-        // Q-peak and T-peak glyph ids, APPENDED (not in the [0,5] ECG range) so
-        // the shared 0..5 values anchor_view mirrors and static_asserts stay
-        // put. They exist only so a click on those glyphs can open a read-only
-        // focus view; they are never bars, never stored in a file, and
-        // markerIsEcg is widened by hand to include them.
+
         EcgQPeak = 28, EcgTPeak = 29,
         MarkerCount = 30
     };
@@ -89,6 +72,17 @@ public:
     static bool markerIsEcg(int m) {
         return (m >= EcgPBegin && m <= EcgTEnd)   // contiguous bars + P/R-peak glyphs
             || m == EcgQPeak || m == EcgTPeak;     // appended glyph ids (focus only)
+    }
+
+    static bool isDraggableMarker(int m) {
+        //returns true if it is a draggable bar, false otherwise
+        switch (m) {
+        case EcgPPeak: case EcgRPeak: case EcgQPeak: case EcgTPeak:
+        case PpgT50:   case PpgPeak:  case PpgPeak2: case PpgT80:
+            return false;
+        default:
+            return m >= 0 && m < MarkerCount;
+        }
     }
     static bool markerIsPpg(int m) { return m >= PpgOnset && m <= PpgEnd; }
     static bool markerIsAbp(int m) { return m >= AbpOnset && m <= AbpEnd; }
@@ -336,7 +330,12 @@ public:
         m_onOffsetFitMode = onOffset; m_peakFitMode = peak;
         // The fit modes are detector inputs, so the detection is dropped. The
         // glyphs follow it with nothing to invalidate of their own.
-        m_detValid = false; update();
+        //
+        // BOTH DETECTIONS. The pulse peak/foot/end now take peakMode through
+        // detect_ppg_fiducials -- the same contest the ECG peaks run -- so a
+        // radio change that dropped only m_detValid would move the ECG glyphs
+        // and leave the pulse ones on the previous model.
+        m_detValid = false; m_pdetValid = false; update();
     }
 
     // Per-trace marker visibility. When false, that group's markers
@@ -604,6 +603,8 @@ private:
     // and no frame to key on.
     mutable FeatureMarks::PpgFiducials m_pdet;
     mutable bool               m_pdetValid = false;
+    // Part of the pulse cache key: see detectedPulse().
+    mutable curve_fit::PeakFitMode m_pdetPeakMode = curve_fit::PeakFitMode::Auto;
     mutable const TemplateBin* m_pdetBin = nullptr;
     mutable int                m_pdetSlot = -1;
 

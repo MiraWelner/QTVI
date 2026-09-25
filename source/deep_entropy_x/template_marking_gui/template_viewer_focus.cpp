@@ -228,24 +228,35 @@ void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
         // placeholder), the diastolic peak (bracketed search), T50/T80
         // (interpolated crossings) -- is not placed by a polynomial and stays
         // FitKind::None.
+        //
+        // THE SAME TWO NUMBERS THE DETECTOR USED, resolved from the same
+        // helpers against the same rate. The window is a DURATION now
+        // (upsample_for_fit::pulse_window), so hard-coding a sample count here
+        // would draw a curve over a span nothing fitted -- the exact failure
+        // the note on setPeakFitKind warns about.
+        //
+        // m_ppgRateHz, not a per-channel rate: only the three PPG markers
+        // below reach this switch. The arterial channels have no
+        // detectedPulse() of their own, so they leave fk at None and draw no
+        // curves at all.
         switch (marker) {
         case BinPlotWidget::PpgOnset:
             peakCand = pf.onset_cand;
             fk = FocusPanelWidget::FitKind::PeakCubic;
-            peakSigma = upsample_for_fit::pulse_sigma::Foot;
-            peakHalfWidth = upsample_for_fit::pulse_halfwidth::Foot;
+            peakHalfWidth = upsample_for_fit::pulse_window::footHalfwidth(m_ppgRateHz);
+            peakSigma = upsample_for_fit::pulse_window::sigma(peakHalfWidth);
             break;
         case BinPlotWidget::PpgEnd:
             peakCand = pf.end_cand;
             fk = FocusPanelWidget::FitKind::PeakCubic;
-            peakSigma = upsample_for_fit::pulse_sigma::Foot;
-            peakHalfWidth = upsample_for_fit::pulse_halfwidth::Foot;
+            peakHalfWidth = upsample_for_fit::pulse_window::footHalfwidth(m_ppgRateHz);
+            peakSigma = upsample_for_fit::pulse_window::sigma(peakHalfWidth);
             break;
         case BinPlotWidget::PpgPeak:
             peakCand = pf.peak_cand;
             fk = FocusPanelWidget::FitKind::PeakQuadratic;
-            peakSigma = upsample_for_fit::pulse_sigma::Peak;
-            peakHalfWidth = upsample_for_fit::pulse_halfwidth::Peak;
+            peakHalfWidth = upsample_for_fit::pulse_window::peakHalfwidth(m_ppgRateHz);
+            peakSigma = upsample_for_fit::pulse_window::sigma(peakHalfWidth);
             break;
         default: break;
         }
@@ -288,6 +299,15 @@ void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
     const SdMsModel sm = sd_in_msec(mean, sd, m_ppgRateHz);
     zoomed_in_section_top->setFocus(mean, sd, nBeats, static_cast<int>(col),
         chLabel + " " + pulseLabel(marker));
+    // AFTER setFocus, which clears it. The bar line stays up for as long as a
+    // movable pulse bar (onset / dicrotic / end) is the focus; the auto-only
+    // glyphs -- T50, peak, peak2, T80 -- get -1 and no line, because their
+    // column is the detector's answer and not an operator placement.
+    //
+    // `col` UNTRUNCATED: pulse marks are sub-sample, and setFocus takes an int
+    // only because the zoom window is a whole-column range.
+    zoomed_in_section_top->setUserFiducial(
+        BinPlotWidget::isDraggableMarker(marker) ? col : -1.0);
     // Peaks carry a sigma and a window; the rest carry neither, and the
     // one-argument overload is the one that says so -- same split as focusEcg.
     if (fk == FocusPanelWidget::FitKind::PeakQuadratic
@@ -374,9 +394,24 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
             col + b.frameShift(leadIdx, AnchorType::R_PEAK, focusAnchor));
         if (colFast < 0) colFast = 0;
         if (colFast >= m_focusFastLen) colFast = m_focusFastLen - 1;
-        if (zoomed_in_section_top) zoomed_in_section_top->setLandmarkCol(colFast);
-        if (m_focusFastSplit && zoomed_in_section_bottom)
+        // THE OPERATOR'S OWN COLUMN, every move -- this is the line that
+        // MOVES, and setLandmarkCol cannot supply it: it only follows a
+        // fiducial that is ALREADY set, so on the first move of a drag there
+        // was nothing to follow and the thick line never came up.
+        //
+        // -1 for an auto-only glyph. isDraggableMarker is the same list
+        // markerAtX hit-tests against, so "can be dragged" and "can have an
+        // operator position" are one predicate rather than two that drift.
+        const double userFast = BinPlotWidget::isDraggableMarker(marker)
+            ? static_cast<double>(colFast) : -1.0;
+        if (zoomed_in_section_top) {
+            zoomed_in_section_top->setLandmarkCol(colFast);
+            zoomed_in_section_top->setUserFiducial(userFast);
+        }
+        if (m_focusFastSplit && zoomed_in_section_bottom) {
             zoomed_in_section_bottom->setLandmarkCol(colFast);
+            zoomed_in_section_bottom->setUserFiducial(userFast);
+        }
         return;
     }
 
@@ -572,6 +607,11 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
             setFocusSplit(true);
             if (zoomed_in_section_top) {
                 zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head + QStringLiteral("  (QRS)"), 100, -1);
+                // AFTER setFocus, which clears it. The J point is a bar,
+                // always, so no isDraggableMarker test -- and BOTH panels get
+                // it: they are two framings of one landmark, so the bar is in
+                // both or the JT view would show the detector's line alone.
+                zoomed_in_section_top->setUserFiducial(colHere);
                 zoomed_in_section_top->setFitKind(FocusPanelWidget::FitKind::Transition);
                 zoomed_in_section_top->setTransitionCandidates(transCand);
                 zoomed_in_section_top->setDetectorFiducial(detFid);
@@ -579,6 +619,7 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
             }
             if (zoomed_in_section_bottom) {
                 zoomed_in_section_bottom->setFocus(mean, sd, nBeats, colHere, head + QStringLiteral("  (JT)"), 100, +1);
+                zoomed_in_section_bottom->setUserFiducial(colHere);
                 zoomed_in_section_bottom->setFitKind(FocusPanelWidget::FitKind::Transition);
                 zoomed_in_section_bottom->setTransitionCandidates(transCand);
                 zoomed_in_section_bottom->setDetectorFiducial(detFid);
@@ -655,6 +696,13 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
             if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
             if (zoomed_in_section_top) {
                 zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head, 100, 0);
+                // AFTER setFocus, which clears it. -1 for the glyph-only
+                // landmarks (R/P/Q/T peak): they are the detector's answer,
+                // have no operator position, and a bar drawn at their column
+                // would report a detection as an operator placement.
+                zoomed_in_section_top->setUserFiducial(
+                    BinPlotWidget::isDraggableMarker(marker)
+                    ? static_cast<double>(colHere) : -1.0);
                 // Peaks carry a sigma and a window; transitions have neither,
                 // and the one-argument overload is the one that says so.
                 if (fk == FocusPanelWidget::FitKind::PeakQuadratic
