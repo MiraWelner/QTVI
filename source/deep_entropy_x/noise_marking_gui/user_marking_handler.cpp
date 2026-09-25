@@ -31,11 +31,6 @@ void noise_marking_gui::finalizeMarking(QChartView* /*cv*/, double endX, const Q
     const double snappedS = std::round(std::min(globalStart, globalEnd) * sr) / sr;
     const double snappedE = std::round(std::max(globalStart, globalEnd) * sr) / sr;
 
-    // ONE STORE. A marking used to be written twice -- here in seconds, and to
-    // m_noiseManager in sample indices -- and kept in step by hand. The
-    // sample-indexed copy is gone; exportMarkings builds it on demand, which is
-    // the only place samples are wanted. An ordinary annotation has no
-    // threshold or blanking value, so both default to NaN.
     m_genExc.appendMarking(snappedS, snappedE, signalLabel.toStdString(),
         m_currentMarkingType.toStdString());
 
@@ -269,6 +264,8 @@ bool noise_marking_gui::handleMousePress(QChartView* cv, QWidget* viewport, QMou
     const QString label = signalLabelForChartView(cv);
     if (!label.isEmpty()) {
         if (!isChannelActive(label)) return false;       // drag needs no arming
+       
+        if (!isMarkableChannel(label)) return false;
         const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
 
         // Second click of an armed click-click: commit start..here across scope.

@@ -10,6 +10,7 @@
 #pragma once
 
 #include <QObject>
+#include <QString>
 
 class noise_marking_gui;
 
@@ -21,7 +22,7 @@ public:
     ~user_control_handler() = default;
 
     /// Wire up every button on the bottom toolbar to its handler.
-    void setupConnections();
+    void set_up_qt_connections();
 
 private:
     // --- Button Presses
@@ -30,6 +31,8 @@ private:
     void handle_skip_button();
     void save_current_plot();
     void save_current_csv();
+
+    QString snapshotBasePath() const;
 
     // --- Window-length selector ---------------------------------------------
     void handle_window_toggle(bool checked, double duration);

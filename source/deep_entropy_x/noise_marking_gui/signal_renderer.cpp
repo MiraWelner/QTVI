@@ -113,6 +113,9 @@ namespace {
         MarkSpanIndex idx;
         for (const Marking& m : marks) {
             if (m.channel != label) continue;
+            // displace a real annotation on the same span.
+            if (m.type == annotation_types::kParamEditLabel
+                || m.type == annotation_types::kInvertEditLabel) continue;
             idx.spans.push_back({ m.start, m.end,
                                   annotation_types::markCode(m.type) });
         }
@@ -127,51 +130,10 @@ namespace {
         return idx;
     }
 
-    // ---------------------------------------------------------------------
-    // RENDER-TIME POWERLINE NOTCH
-    // ---------------------------------------------------------------------
-    //
-    // The notch used to be applied in loadChunkFromFile, to the whole 8-hour
-    // chunk, which cost 6 s at 500 Hz and 12 s at 1 kHz for seven channels --
-    // and the toggle ALSO forced a full reload of every channel from disk,
-    // which nothing about a bool needed. Both are gone; this filters only the
-    // window being drawn.
-    //
-    // DISPLAY ONLY, BY CONSTRUCTION. The filtered samples live in a local
-    // buffer that dies with the redraw. The stored arrays stay pristine, which
-    // is the whole point: detectPeaks reads the same *dataRaw this function
-    // draws, so filtering it in place would put the notch into beat positions
-    // and into _log.csv. It must not. (bin_chunk_loader's old comment claimed
-    // detection saw the notch; it never did -- the detector reads the raw
-    // block, and only the upsampled arrays were being filtered.)
-    //
-    // Nor does anything on the analysis path: analysis_job::prepare reads the
-    // annealed .bin and filters none of it. The template viewer's own notch
-    // checkbox is the same kind of thing as this one -- it filters the template
-    // being drawn, not the template that was built. Notching is a viewing aid
-    // in this program, everywhere, with no exceptions.
-    //
-    // WHY PADDING AND NOT JUST THE WINDOW. A zero-phase IIR has a transient at
-    // each edge. The notch's poles sit at radius ~0.995, so the transient
-    // decays to 1e-3 in about 1400 samples (~2.8 s at 500 Hz). Filtering
-    // kNotchPadSec beyond each edge and cropping back makes the visible
-    // samples interior to the filter run, so what is drawn does not depend on
-    // where the window edge falls -- the same argument, and the same number,
-    // as kDetectMargin further down.
-    constexpr double kNotchPadSec = 5.0;
-
-    // Would this notch do anything at this rate? FilterUtils' notch_filter
-    // returns its input UNCHANGED when the stop band reaches Nyquist, which is
-    // correct but indistinguishable from a real result -- so the helpers below
-    // would copy a whole window to no effect. Asking first lets the draw loops
-    // take their zero-allocation path instead. Mirrors FilterUtils' own test
-    // (Q = 30 there; bandwidth = notch_hz / Q).
-    bool notchWouldApply(double sr, double notchHz) {
-        if (notchHz <= 0.0 || sr <= 0.0) return false;
-        const double hz = notchHz;
-        const double halfBw = 0.5 * hz / 30.0;
-        return (hz - halfBw) > 0.0 && (hz + halfBw) < (sr / 2.0);
-    }
+    //The notch is a zero-phase IIR, and an IIR has a transient
+    // at each edge of whatever buffer you hand it. If you filtered exactly the visible window, the first and last few seconds of the drawn trace
+    // would be filter startup artifact rather than signal, so this bufferes
+    constexpr double notch_filter_pad = 5.0;
 
     // Filter [from, to) of `src` and return exactly that many samples.
     // Returns empty if there is nothing to do, which callers read as "draw the
@@ -179,8 +141,7 @@ namespace {
     std::vector<double> notchedSpan(const QVector<double>& src, int from, int to,
         double sr, double notchHz)
     {
-        if (to <= from || !notchWouldApply(sr, notchHz)) return {};
-        const int pad = static_cast<int>(kNotchPadSec * sr);
+        const int pad = static_cast<int>(notch_filter_pad * sr);
         const int lo = std::max(0, from - pad);
         const int hi = std::min(static_cast<int>(src.size()), to + pad);
         if (hi - lo < 4) return {};
@@ -199,11 +160,9 @@ namespace {
     // Same, for a raw (t, v) block. Indices are into the point vector; the
     // y values are filtered at the block's own NATIVE rate. Returns the
     // filtered y values for [from, to), or empty to mean "draw the original".
-    std::vector<double> notchedSpanRaw(const QVector<QPointF>& src, int from, int to,
-        double nativeSr, double notchHz)
+    std::vector<double> notchedSpanRaw(const QVector<QPointF>& src, int from, int to, double nativeSr, double notchHz)
     {
-        if (to <= from || !notchWouldApply(nativeSr, notchHz)) return {};
-        const int pad = static_cast<int>(kNotchPadSec * nativeSr);
+        const int pad = static_cast<int>(notch_filter_pad * nativeSr);
         const int lo = std::max(0, from - pad);
         const int hi = std::min(static_cast<int>(src.size()), to + pad);
         if (hi - lo < 4) return {};
@@ -341,11 +300,8 @@ namespace {
                 center = *mid;
             }
 
-            // The drawn samples, notched if the toggle is on. Empty means
-            // "no notch" and the loop below reads d.data directly, so the
-            // off path allocates nothing.
-            const std::vector<double> notched =
-                notchedSpan(*d.data, startIdx, endIdx, ecgSR, notchHz);
+            // The drawn samples, notched if the toggle is on. 
+            const std::vector<double> notched = notchedSpan(*d.data, startIdx, endIdx, ecgSR, notchHz);
             const bool useNotched = !notched.empty();
 
             QList<QPointF> pts;
@@ -497,17 +453,6 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     double detStart, double detEnd, std::vector<int>* outPostTags) const {
     data_channel_features r = channelRefs(label);
     const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
-
-    // Marked regions on THIS channel (chunk-local seconds). Two exclusion
-    // lists are built here and passed to the peak finder as its do_not_learn_from_region
-    // and no_peaks_in_region parameters:
-    //   do_not_learn_from_region:  R peaks in this region are not used to set threshold
-    //   no_peaks_in_region:        This has been marked with R peak noise and no R peaks detected here.
-    //   withinSpans: non-noise annotations longer than the reference window;
-    //                beats inside them take stats from WITHIN the annotation
-    //                rather than reaching back to clean pre-annotation data.
-    //   postSpans:   the five post-eligible annotations (AF/SVT/VT/PVC/PAC),
-    //                reduced to (end, tag) for marking the beat that follows.
     constexpr double kRefSec = gui_peak_finder::previous_seconds_to_train_on;
     std::vector<std::pair<double, double>> do_not_learn_from_region, no_peaks_in_region, withinSpans;
     std::vector<PostSpan> postSpans;
@@ -515,11 +460,10 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     {
         for (const Marking& mk : m_genExc.marks) {
             if (mk.channel != labelStd) continue;       // std::string compare, no per-seg QString alloc
+            if (mk.type == annotation_types::kParamEditLabel
+                || mk.type == annotation_types::kInvertEditLabel) continue;
             const double s = mk.start - globalOffset;   // already seconds
             const double e = mk.end - globalOffset;
-            // Most markings are excluded from the reference-window stats
-            // (threshold gate + mean R-R). Types flagged includeInThreshold
-            // (e.g. Minor Noise) are kept in those stats, so they have no
             // effect on detection or on where the following R peaks land.
             const bool inclThr = annotation_types::includeInThreshold(mk.type);
             if (!inclThr)
@@ -637,15 +581,7 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     return peaks;
 }
 
-// Padding (seconds) added on each side of the requested window before
-// detection, then cropped away. The reference/gate is already window-
-// independent (it reads fixed chunk-anchored frames), so the only window-
-// sensitive parts are short-range -- the local-max neighbour, the blanking
-// run-up, and the post-beat tag distance, all under ~2 s. Detecting this far
-// past each edge makes every *visible* beat interior to the detection range,
-// so its detection and red/blue classification are independent of where the
-// window edge falls. 5 s is comfortably above all those reaches.
-static constexpr double kDetectMargin = 5.0;
+static constexpr double detect_margin = 5.0;
 
 // On-screen peaks: detect over a padded interval, then crop to the visible
 // window. Cropping (not a narrower detection) is what makes the result
@@ -654,9 +590,9 @@ QVector<QPointF> noise_marking_gui::display_peaks_in_window(const QString& label
     const double winStart = current_start_time;
     const double winEnd = current_start_time + visible_window_size;
     const double chunkDur = totalChunkDuration();
-    const double detStart = std::max(0.0, winStart - kDetectMargin);
-    const double detEnd = (chunkDur > 0.0) ? std::min(chunkDur, winEnd + kDetectMargin)
-        : winEnd + kDetectMargin;
+    const double detStart = std::max(0.0, winStart - detect_margin);
+    const double detEnd = (chunkDur > 0.0) ? std::min(chunkDur, winEnd + detect_margin)
+        : winEnd + detect_margin;
 
     std::vector<int> allTags;
     const QVector<QPointF> all = detectPeaks(label, detStart, detEnd,
@@ -695,9 +631,9 @@ QVector<QPointF> noise_marking_gui::get_bpm(const QString& label, double& outDur
     // Same padded-detect-then-crop as display_peaks_in_window, so the rate
     // agrees with the drawn beats and doesn't shift with scroll position.
     const double chunkDur = totalChunkDuration();
-    const double detStart = std::max(0.0, tStart - kDetectMargin);
-    const double detEnd = (chunkDur > 0.0) ? std::min(chunkDur, tVisEnd + kDetectMargin)
-        : tVisEnd + kDetectMargin;
+    const double detStart = std::max(0.0, tStart - detect_margin);
+    const double detEnd = (chunkDur > 0.0) ? std::min(chunkDur, tVisEnd + detect_margin)
+        : tVisEnd + detect_margin;
 
     const QVector<QPointF> all = detectPeaks(label, detStart, detEnd);
     QVector<QPointF> out;
@@ -741,15 +677,6 @@ void noise_marking_gui::setupHypnogram() {
         m_hypnoStageSeries.append(s);
     }
 
-    // The five rows above are the AASM collapse (N3 and N4 merged, REM last),
-    // which is what MESA bins already carry. Compumedics staging -- what the
-    // SHHS annotation XML actually contains -- numbers the stages 0=Wake,
-    // 1=N1, 2=N2, 3=N3, 4=N4, 5=REM, 9=unscored. A file whose staging was NOT
-    // collapsed on the way into the .bin therefore loses every REM epoch here
-    // and draws N4 on the row LABELLED REM, which looks plausible rather than
-    // broken. The collapse belongs in file_to_bin next to the XML parse, so
-    // this reports the mismatch instead of guessing a remap at draw time.
-    // (Codes below 0 are placeholder padding and are not counted.)
     {
         int unplotted = 0;
         int firstCode = 0;
@@ -759,11 +686,6 @@ void noise_marking_gui::setupHypnogram() {
                 if (unplotted++ == 0) firstCode = code;
             }
         }
-        if (unplotted > 0)
-            std::cerr << "[hypnogram] " << m_cfg.dataset_type << ": " << unplotted
-            << " of " << m_sleepStages.size() << " epochs in this chunk carry a "
-            "stage code above 4 (first: " << firstCode << ") and are not drawn -- "
-            "staging may not be collapsed to Wake/N1/N2/N3/REM\n";
     }
 
     for (QAbstractAxis* axis : chart->axes()) {
@@ -987,13 +909,6 @@ void noise_marking_gui::determine_which_nonmarkable_charts_to_plot() {
                 { { &m_resp, COLOR_RESP, &m_respRaw } }, channel_upsampled_rates[CH_RESP]);
     }
     if (m_cfg.dataset_type == "SHHS") {
-        // AIRFLOW, THOR RES and ABDO RES share cvp_eeg_axis. They are all in
-        // arbitrary units, so one y axis is not a unit clash -- the shape is
-        // what a reviewer reads off this chart -- but they must share a TIME
-        // base, because plot_nonmarkable takes a single rate for the whole
-        // chart. Config gives the three the same upsample rate in every SHHS
-        // row so far; a channel that disagrees is left out rather than drawn
-        // at the wrong times.
         const float respRate = (channel_upsampled_rates[CH_THOR] > 0.0f)
             ? channel_upsampled_rates[CH_THOR]
             : channel_upsampled_rates[CH_FLOW];
@@ -1215,7 +1130,16 @@ void noise_marking_gui::handle_data_plot() {
             if (dur > 0.0) bpm = bpmPeaks.size() * 60.0 / dur;
         }
         r.chartView->setProperty("bpm", bpm);
-        r.chartView->chart()->setTitle(get_chart_title(label, nativeHz, pxPerSample, bpm, r.sampleRate));
+        {
+            QString title = get_chart_title(label, nativeHz, pxPerSample, bpm, r.sampleRate);
+            // SAY SO ON THE CHART. A panel that quietly ignores clicks reads
+            // as a broken panel; one labelled view only reads as a decision.
+            // VCG is the only channel this applies to today, and it is
+            // derived from the three ECG leads -- mark those instead.
+            if (!isMarkableChannel(label))
+                title += QString(QChar(0x00A0)).repeated(4) + "(view only)";
+            r.chartView->chart()->setTitle(title);
+        }
 
         // Log every detected beat: value, the blanking/threshold in effect,
         // which annotation (if any) covers it, its post-arrhythmia tag, and
@@ -1359,6 +1283,12 @@ void noise_marking_gui::updateNoiseHighlights() {
 
     for (const Marking& mk : m_genExc.marks) {
         if (!activeLabels.count(mk.channel)) continue;  // not an active channel; no alloc
+        // Parameter edits and inversion spans are drawn by drawOverride below,
+        // from the derived index, which is where their colour convention
+        // lives. Drawing them here as well is what put two stacked grey
+        // rectangles on every reloaded threshold span.
+        if (mk.type == annotation_types::kParamEditLabel
+            || mk.type == annotation_types::kInvertEditLabel) continue;
         const double segStart = mk.start - globalOffset;   // already seconds
         const double segEnd = mk.end - globalOffset;
         if (segEnd < viewStart || segStart > viewEnd) continue;   // off-screen; no alloc
@@ -1383,9 +1313,8 @@ void noise_marking_gui::updateNoiseHighlights() {
         m_highlights.append(area);
     }
 
-    // Translucent rectangle behind any region where a per-channel threshold or
-    // blanking override is in effect, so the user gets confirmation the edit
-    // registered. Gray = threshold override, blue = blanking override.
+    //an override changes the behavior of the region rather than simply annotating a thing. 
+    // Gray means blanking and threshold edit, orange means invert/noninvert. ECG leads only.
     auto drawOverride = [&](const ParamOverride& o, const QColor& fill) {
         if (!axesMap.contains(o.channel)) return;
         const double s = o.start - globalOffset;
@@ -1408,7 +1337,7 @@ void noise_marking_gui::updateNoiseHighlights() {
         m_highlights.append(area);
         };
     for (const ParamOverride& o : m_thresholdOverrides)
-        drawOverride(o, QColor(200, 200, 200, 70));   // gray = threshold override
+        drawOverride(o, QColor(200, 200, 200, 70));   // gray = parameter edit
     for (const ParamOverride& o : m_invertOverrides)
         drawOverride(o, QColor(180, 100, 0, 70));   // orange = inversion region
 }

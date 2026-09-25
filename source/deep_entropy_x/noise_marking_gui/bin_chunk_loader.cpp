@@ -33,9 +33,9 @@ void noise_marking_gui::setFileSource(const QString& filePath) {
 }
 
 namespace {
-    GenExcStruct read_noise_markings_bin(const std::filesystem::path& path, const QString& filePath) {
+    AllFileMarkings read_noise_markings_bin(const std::filesystem::path& path, const QString& filePath) {
         namespace nm = noise_markings;
-        GenExcStruct g;
+        AllFileMarkings g;
         g.filePath = filePath;
 
         const nm::RowsResult rr = nm::loadRows(path.string());
@@ -46,7 +46,7 @@ namespace {
             return g;
         }
         if (rr.legacy)
-            std::fprintf(stderr,  "[noise-markings] %s is old lecacy file\n",  path.string().c_str());
+            std::fprintf(stderr, "[noise-markings] %s is old lecacy file\n", path.string().c_str());
 
         for (std::size_t i = 0; i < rr.rows.size(); ++i) {
             const nm::Row& row = rr.rows[i];
@@ -138,7 +138,7 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
             std::filesystem::path(m_cfg.noise_data_path)
             / (QFileInfo(filePath).completeBaseName().toStdString() + "_noise_markings.bin");
         if (std::filesystem::exists(nb)) {
-            GenExcStruct g = read_noise_markings_bin(nb, filePath);
+            AllFileMarkings g = read_noise_markings_bin(nb, filePath);
             if (!g.marks.isEmpty()) m_fileMarkings[filePath] = g;
         }
     }
@@ -156,18 +156,11 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
         m_vcgCfg.basisCsvSubject = stem.toStdString();
     }
 
-    if (m_fileMarkings.contains(filePath)) {
-        // No replay into a second store any more: m_genExc IS the store.
-        m_genExc = m_fileMarkings[filePath];
-        rehydrateParamOverrides();
-    }
-    else {
-        m_genExc = GenExcStruct();
-        m_genExc.filePath = filePath;
-        m_thresholdOverrides.clear();
-        m_blankingOverrides.clear();
-        m_invertOverrides.clear();
-    }
+    m_genExc = m_fileMarkings.contains(filePath)
+        ? m_fileMarkings[filePath]
+        : AllFileMarkings();
+    m_genExc.filePath = filePath;
+    rebuildParamIndex();
 
     current_start_time = 0.0;
     m_markArmed = false;
@@ -178,14 +171,10 @@ void noise_marking_gui::loadSelectedFile(const QString& filePath) {
     autoDetectLeadPolarity(); //technically you should be able to figure out lead polarity via vcg but in practice this has never actually worked
 }
 
-void noise_marking_gui::rehydrateParamOverrides() {
+void noise_marking_gui::rebuildParamIndex() {
     m_thresholdOverrides.clear();
     m_blankingOverrides.clear();
     m_invertOverrides.clear();
-
-    // ParamOverride still keys on QString because the renderer compares it
-    // against chart labels; that conversion happens once per override here,
-    // not once per marking per frame.
     for (const Marking& m : m_genExc.marks) {
         if (m.type == annotation_types::kParamEditLabel) {
             const QString ch = QString::fromStdString(m.channel);

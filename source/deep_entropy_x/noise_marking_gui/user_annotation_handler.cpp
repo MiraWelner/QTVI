@@ -39,8 +39,7 @@ void annotation_handler::exportCSV(const std::string& filename) const {
     // Parameters last, after the identity of the span. Reading left to right the
     // row says where, on what, of what kind, and then under what settings --
     // which is also the order in which those fields become relevant.
-    file << "start_sample,end_sample,start_sec,end_sec,label,marking_type,"
-            "threshold,blanking_ms\n";
+    file << "start_sample,end_sample,start_sec,end_sec,label,marking_type,threshold,blanking_ms\n";
     for (const auto& seg : m_segments) {
         file << seg.startSample << ","
             << seg.endSample << ","
@@ -59,51 +58,41 @@ void annotation_handler::exportCSV(const std::string& filename) const {
     }
 }
 
-void annotation_handler::exportBinary(const std::string& filename) const {
+void annotation_handler::export_marking_binfile(const std::string& filename) const {
+    //create the binary file which is loaded and used
     std::ofstream file(filename, std::ios::binary);
     if (!file.is_open()) return;
 
     namespace nm = noise_markings;
-
-    // Rows are built first, so the count in the header agrees with what follows
-    // it. A row whose channel label or marking type is not in its table is
-    // dropped and counted: both lookups come from the tables this build defines,
-    // so a miss is a programming error rather than operator data, and it is
-    // reported rather than silently omitted -- silent omission is what hid the
-    // writer/reader channel-map divergence before the two were unified.
-    std::vector<std::array<double, nm::kColumns>> rows;
+    std::vector<std::array<double, nm::columns>> rows;
     rows.reserve(m_segments.size());
-    std::size_t unknown_channel = 0, unknown_type = 0;
+    std::size_t unknown_channel = 0, unknown_type = 0, half_param = 0;
 
     for (const auto& seg : m_segments) {
         const uint8_t chan = nm::code_for_channel(seg.label);
         if (chan == 0) { ++unknown_channel; continue; }
         const int type = annotation_types::markCode(seg.marking_type);
         if (type == 0) { ++unknown_type; continue; }
+        if (type == static_cast<int>(annotation_types::kParamEditCode)
+            && std::isnan(seg.threshold) != std::isnan(seg.blanking))
+            ++half_param;
 
-        std::array<double, nm::kColumns> row{};
-        row[nm::kStartSample] = static_cast<double>(seg.startSample);
-        row[nm::kEndSample] = static_cast<double>(seg.endSample);
-        row[nm::kStartSec] = seg.startSample / seg.sampleRate;
-        row[nm::kEndSec] = seg.endSample / seg.sampleRate;
-        row[nm::kChannelCode] = static_cast<double>(chan);
-        row[nm::kAnnotationCode] = static_cast<double>(type);
-        row[nm::kThreshold] = seg.threshold;
-        row[nm::kBlankingMs] = seg.blanking;
+        std::array<double, nm::columns> row{};
+        row[nm::start_location_in_samples] = static_cast<double>(seg.startSample);
+        row[nm::end_location_in_samples] = static_cast<double>(seg.endSample);
+        row[nm::start_location_in_seconds] = seg.startSample / seg.sampleRate;
+        row[nm::end_location_in_seconds] = seg.endSample / seg.sampleRate;
+        row[nm::channel_marked] = static_cast<double>(chan);
+        row[nm::marking_type] = static_cast<double>(type);
+        row[nm::threshold_value] = seg.threshold;
+        row[nm::blanking_miliseconds] = seg.blanking;
         rows.push_back(row);
     }
-
-    if (unknown_channel || unknown_type)
-        std::fprintf(stderr,
-            "[noise-markings] dropped %zu row(s) with an unknown channel and "
-            "%zu with an unknown marking type while writing %s\n",
-            unknown_channel, unknown_type, filename.c_str());
 
     const uint64_t count = rows.size();
     file.write(nm::kMagic, sizeof(nm::kMagic));
     file.write(reinterpret_cast<const char*>(&nm::kVersion), sizeof(nm::kVersion));
     file.write(reinterpret_cast<const char*>(&count), sizeof(count));
     for (const auto& row : rows)
-        file.write(reinterpret_cast<const char*>(row.data()),
-            sizeof(double) * nm::kColumns);
+        file.write(reinterpret_cast<const char*>(row.data()), sizeof(double) * nm::columns);
 }

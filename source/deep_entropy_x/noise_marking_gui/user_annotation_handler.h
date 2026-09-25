@@ -120,20 +120,20 @@ namespace noise_markings {
     // Column order. Reader and writer both index by these names, so neither can
     // drift from the other by a position.
     enum Column : int {
-        kStartSample = 0,
-        kEndSample,
-        kStartSec,
-        kEndSec,
-        kChannelCode,
-        kAnnotationCode,
+        start_location_in_samples = 0,
+        end_location_in_samples,
+        start_location_in_seconds,
+        end_location_in_seconds,
+        channel_marked,
+        marking_type,
         // NaN where the marking type carries no parameters, which is every type
         // but the paramEdit one. NaN rather than 0 because a threshold of 0 is a
         // meaningful value (detect everything) and has to stay distinguishable
         // from "this row never carried one". NaN round-trips exactly through an
         // IEEE-754 double, so no separate presence flag is needed.
-        kThreshold,
-        kBlankingMs,
-        kColumns
+        threshold_value,
+        blanking_miliseconds,
+        columns
     };
 
 
@@ -324,21 +324,21 @@ namespace noise_markings {
         out.read = true;
         out.rows.reserve(static_cast<std::size_t>(count));
         for (uint64_t r = 0; r < count; ++r) {
-            std::array<double, kColumns> row{};
+            std::array<double, columns> row{};
             if (!f.read(reinterpret_cast<char*>(row.data()),
-                sizeof(double) * kColumns)) {
+                sizeof(double) * columns)) {
                 out.error = "truncated at row " + std::to_string(r);
                 break;      // keep what parsed; the rest is unreadable
             }
             Row rw;
-            rw.start_sample = row[kStartSample];
-            rw.end_sample = row[kEndSample];
-            rw.start_sec = row[kStartSec];
-            rw.end_sec = row[kEndSec];
-            rw.channel_code = static_cast<uint8_t>(row[kChannelCode]);
-            rw.annotation_code = static_cast<uint8_t>(row[kAnnotationCode]);
-            rw.threshold = row[kThreshold];
-            rw.blanking_ms = row[kBlankingMs];
+            rw.start_sample = row[start_location_in_samples];
+            rw.end_sample = row[end_location_in_samples];
+            rw.start_sec = row[start_location_in_seconds];
+            rw.end_sec = row[end_location_in_seconds];
+            rw.channel_code = static_cast<uint8_t>(row[channel_marked]);
+            rw.annotation_code = static_cast<uint8_t>(row[marking_type]);
+            rw.threshold = row[threshold_value];
+            rw.blanking_ms = row[blanking_miliseconds];
             out.rows.push_back(rw);
         }
         return out;
@@ -409,7 +409,7 @@ public:
     void addSegment(int start, int end, const std::string& label, const std::string& marking_type,
         double sampleRate, double threshold, double blanking);
     void exportCSV(const std::string& filename)    const;
-    void exportBinary(const std::string& filename) const;
+    void export_marking_binfile(const std::string& filename) const;
     const std::vector<AnnotationSegment>& getSegments() const { return m_segments; }
 
 private:

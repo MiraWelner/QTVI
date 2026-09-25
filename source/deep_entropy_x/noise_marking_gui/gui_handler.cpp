@@ -46,6 +46,15 @@ const QStringList& noise_marking_gui::markableChannelLabels() {
     return lables;
 }
 
+bool noise_marking_gui::isMarkableChannel(const QString& label) {
+    // ASKED OF THE ONE TABLE, not a hardcoded exception for VCG. A channel is
+    // markable exactly when export_marking_binfile can write a row for it, so
+    // adding a channel to noise_markings::channel_codes makes it markable here
+    // with no second edit, and the GUI can never again accept a span it will
+    // silently fail to store.
+    return noise_markings::code_for_channel(label.toStdString()) != 0;
+}
+
 noise_marking_gui::data_channel_features
 noise_marking_gui::channelRefs(const QString& label) const {
     auto* self = const_cast<noise_marking_gui*>(this);
@@ -314,7 +323,14 @@ void noise_marking_gui::toggleAnnotationArm() {
 }
 
 void noise_marking_gui::updateMarkingButtons() {
-    const bool anyActive = !m_activeChannels.isEmpty();
+    // A CHANNEL THAT CANNOT BE STORED DOES NOT ENABLE THE MARKING CONTROLS.
+    // This was !m_activeChannels.isEmpty(), which counted VCG -- so on a
+    // record whose only usable trace was the derived VCG, the arm button and
+    // the scope radios came up enabled and every span drawn with them was
+    // discarded at save.
+    bool anyActive = false;
+    for (const QString& l : m_activeChannels)
+        if (isMarkableChannel(l)) { anyActive = true; break; }
     const bool anyEcg = isChannelActive("ECG1") || isChannelActive("ECG2") || isChannelActive("ECG3");
     if (!anyActive) m_markArmed = false;
 
@@ -327,18 +343,25 @@ void noise_marking_gui::updateMarkingButtons() {
 }
 
 QStringList noise_marking_gui::scopeChannels(const QString& clickedLabel) const {
+    // ACTIVE AND MARKABLE, in all three scopes. "All" walks the charted
+    // channels, which includes VCG; without the second test a span drawn
+    // anywhere in All scope would be recorded on VCG too and then dropped by
+    // the writer, so the saved file would silently disagree with the screen.
     QStringList out;
+    auto usable = [this](const QString& l) {
+        return isChannelActive(l) && isMarkableChannel(l);
+        };
     switch (m_markScope) {
     case MarkScope::One:
-        if (isChannelActive(clickedLabel)) out << clickedLabel;
+        if (usable(clickedLabel)) out << clickedLabel;
         break;
     case MarkScope::Ecg:
         for (const char* l : { "ECG1", "ECG2", "ECG3" })
-            if (isChannelActive(l)) out << l;
+            if (usable(l)) out << l;
         break;
     case MarkScope::All:
         for (const QString& l : markableChannelLabels())
-            if (isChannelActive(l)) out << l;
+            if (usable(l)) out << l;
         break;
     }
     return out;
@@ -419,7 +442,7 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
     , m_buttonHandler(std::make_unique<user_control_handler>(this))
 {
     ui->setupUi(this);
-    m_buttonHandler->setupConnections();
+    m_buttonHandler->set_up_qt_connections();
     for (QRadioButton* r : { ui->mark_one_chan, ui->mark_ecg, ui->mark_all_chan })
         r->setFocusPolicy(Qt::NoFocus);
     ui->mark_one_chan->setChecked(true);
@@ -674,74 +697,59 @@ noise_marking_gui::~noise_marking_gui() {
 // Accessors
 // ============================================================================
 
-QVector<GenExcStruct> noise_marking_gui::getAllMarkings() const {
-    //get all markings - both annotations and threshold/invert overrides
-    QMap<QString, GenExcStruct> all = m_fileMarkings;
-    GenExcStruct current = m_genExc;
+QVector<AllFileMarkings> noise_marking_gui::getAllMarkings() const {
+    // ---- NOTHING TO REASSEMBLE ------------------------------------------
+    //
+    // Annotations, parameter edits and inversion spans all live in
+    // m_genExc.marks, so this is a copy of the store plus the per-file stash.
+    //
+    // What used to be here: strip every paramEdit/invertEdit mark out of the
+    // current file's list, then rebuild those same marks from
+    // m_thresholdOverrides / m_blankingOverrides / m_invertOverrides, pairing
+    // a threshold entry with a blanking entry by exact (channel, start, end)
+    // match. That was the only place the two representations were reconciled,
+    // which is why an override lost anywhere else in the session was
+    // unrecoverable here, and why an unpaired blanking entry had to be
+    // emitted as a row with a NaN threshold rather than dropped. Both
+    // problems were the second store.
+    QMap<QString, AllFileMarkings> all = m_fileMarkings;
+    AllFileMarkings current = m_genExc;
     current.filePath = m_binFilePath;
-    const QString paramLabel = QString::fromUtf8(annotation_types::kParamEditLabel);
-    const QString invertLabel = QString::fromUtf8(annotation_types::kInvertEditLabel);
-    {
-        GenExcStruct kept;
-        kept.filePath = current.filePath;
-        for (const Marking& m : current.marks)
-            if (m.type != annotation_types::kParamEditLabel
-                && m.type != annotation_types::kInvertEditLabel)
-                kept.marks.append(m);
-        current = kept;
-    }
-
-    for (const ParamOverride& o : m_thresholdOverrides) {
-        double blk = std::numeric_limits<double>::quiet_NaN();
-        for (const ParamOverride& b : m_blankingOverrides)
-            if (b.channel == o.channel && b.start == o.start && b.end == o.end) {
-                blk = b.value; break;
-            }
-        current.appendMarking(o.start, o.end, o.channel.toStdString(),
-            annotation_types::kParamEditLabel, o.value, blk);
-    }
-    // A blanking override with no matching threshold override. Should not happen
-    // -- applyParamOverrides always writes both -- but a file that ends up with
-    // one would otherwise drop the span entirely on save, and losing an operator
-    // edit silently is worse than emitting a row whose threshold reads NaN.
-    for (const ParamOverride& b : m_blankingOverrides) {
-        bool paired = false;
-        for (const ParamOverride& o : m_thresholdOverrides)
-            if (o.channel == b.channel && o.start == b.start && o.end == b.end) {
-                paired = true; break;
-            }
-        if (!paired)
-            current.appendMarking(b.start, b.end, b.channel.toStdString(),
-                annotation_types::kParamEditLabel,
-                std::numeric_limits<double>::quiet_NaN(), b.value);
-    }
-    for (const ParamOverride& o : m_invertOverrides) {
-        current.appendMarking(o.start, o.end, o.channel.toStdString(),
-            annotation_types::kInvertEditLabel);
-    }
-
     all[m_binFilePath] = current;
-    QVector<GenExcStruct> result;
+
+    QVector<AllFileMarkings> result;
     for (auto it = all.cbegin(); it != all.cend(); ++it)
         if (!it->marks.isEmpty()) result.append(it.value());
 
     // ---- WHAT IS ACTUALLY LEAVING THIS FUNCTION --------------------------
     //
-    // One line, kept in the build. A threshold that is right in
-    // m_thresholdOverrides and NaN in the file has three places to go missing
-    // between here and disk -- this map, the QVector copy, and exportMarkings'
-    // choice of which struct to write -- and none of them is visible from the
-    // symptom, which is a grey bar that looks correct and does nothing.
+    // Kept, and now able to say something true: a parameter edit that reaches
+    // disk with both values NaN is a span that will reload as a highlight
+    // meaning nothing, and the symptom on screen (a grey bar that looks
+    // correct and does nothing) is identical either way.
     {
-        int nParam = 0, nWithValues = 0;
-        for (const GenExcStruct& g : result)
-            for (const Marking& m : g.marks)
-                if (m.type == annotation_types::kParamEditLabel) {
-                    ++nParam;
-                    if (!std::isnan(m.threshold) || !std::isnan(m.blanking))
-                        ++nWithValues;
-                }
-        std::fprintf(stderr, "Noise and arrhythmias were marked");
+        int nMarks = 0, nParam = 0, nParamHalf = 0, nParamEmpty = 0;
+        for (const AllFileMarkings& g : result)
+            for (const Marking& m : g.marks) {
+                ++nMarks;
+                if (m.type != annotation_types::kParamEditLabel) continue;
+                ++nParam;
+                const bool haveThr = !std::isnan(m.threshold);
+                const bool haveBlk = !std::isnan(m.blanking);
+                if (haveThr != haveBlk) ++nParamHalf;
+                else if (!haveThr)      ++nParamEmpty;
+            }
+        std::fprintf(stderr,
+            "[noise-markings] saving %d marking(s) across %d file(s); "
+            "%d parameter edit(s)\n",
+            nMarks, static_cast<int>(result.size()), nParam);
+        if (nParamHalf)
+            std::fprintf(stderr, "[noise-markings] WARNING: %d parameter "
+                "edit(s) carry only one of threshold/blanking\n", nParamHalf);
+        if (nParamEmpty)
+            std::fprintf(stderr, "[noise-markings] note: %d parameter edit(s) "
+                "carry neither value (legacy span, reverts to config "
+                "defaults)\n", nParamEmpty);
     }
     return result;
 }
@@ -811,18 +819,34 @@ bool noise_marking_gui::promptThresholdBlanking(const QString& header,
 
 void noise_marking_gui::applyParamOverrides(const QStringList& channels,
     double lo, double hi, double thrVal, double blkVal) {
+    // ONE MARKING CARRIES BOTH NUMBERS. This used to append to
+    // m_thresholdOverrides and m_blankingOverrides and touch m_genExc not at
+    // all, which is what made the two halves of a parameter edit separately
+    // losable: a right-click that took the threshold entry left the blanking
+    // entry behind, invisible and still in force, and save then had to invent
+    // a row with a NaN threshold to avoid dropping it. Stored as one mark,
+    // there are no halves.
     for (const QString& label : channels) {
-        auto applyTo = [&](QVector<ParamOverride>& vec, double val) {
-            vec.erase(std::remove_if(vec.begin(), vec.end(),
-                [&](const ParamOverride& o) {
-                    return o.channel == label && o.start <= hi && lo <= o.end;
-                }), vec.end());
-            vec.append(ParamOverride{ label, lo, hi, val });
-            };
-        applyTo(m_thresholdOverrides, thrVal);
-        applyTo(m_blankingOverrides, blkVal);
+        const std::string labelStd = label.toStdString();
+        // Overlapping parameter edits on this channel are replaced, not
+        // stacked -- the same rule the override vectors enforced, applied to
+        // the store instead. Annotations and inversion spans are untouched:
+        // only a previous parameter edit is superseded by this one.
+        m_genExc.marks.erase(
+            std::remove_if(m_genExc.marks.begin(), m_genExc.marks.end(),
+                [&](const Marking& m) {
+                    return m.channel == labelStd
+                        && m.type == annotation_types::kParamEditLabel
+                        && m.start <= hi && lo <= m.end;
+                }),
+            m_genExc.marks.end());
+
+        m_genExc.appendMarking(lo, hi, labelStd,
+            annotation_types::kParamEditLabel, thrVal, blkVal);
+
         if (m_beatLog) m_beatLog->removeInRange(beat_log::channelForLabel(label), lo, hi);
     }
+    rebuildParamIndex();
     handle_data_plot();
 }
 
@@ -912,9 +936,15 @@ void noise_marking_gui::applyInvertOverride(const QStringList& channels,
     double globalStart, double globalEnd) {
     const double lo = std::min(globalStart, globalEnd);
     const double hi = std::max(globalStart, globalEnd);
+    // Same store as every other span. Inversion spans are NOT deduplicated
+    // against each other, because invertedAt() reads the first covering span
+    // and flips once -- two overlapping flips have never meant "flip twice",
+    // and stacking them is how the operator undoes one by drawing another.
     for (const QString& label : channels) {
-        m_invertOverrides.append(ParamOverride{ label, lo, hi, 1.0 });
+        m_genExc.appendMarking(lo, hi, label.toStdString(),
+            annotation_types::kInvertEditLabel);
         if (m_beatLog) m_beatLog->removeInRange(beat_log::channelForLabel(label), lo, hi);   // re-detect/re-log in span
     }
+    rebuildParamIndex();
     handle_data_plot();
 }

@@ -75,7 +75,7 @@ static std::vector<std::filesystem::path> load_binfiles(const config_entry& cfg)
     return binFiles;
 }
 
-static bool runNoiseMarking(const config_entry& cfg, const std::filesystem::path& binFs, QVector<GenExcStruct>& outAll, std::filesystem::path& outCurrent, beat_log& beatLog, bool& out_ecg1_inv, bool& out_ecg2_inv, bool& outEcg3Inverted) {
+static bool runNoiseMarking(const config_entry& cfg, const std::filesystem::path& binFs, QVector<AllFileMarkings>& outAll, std::filesystem::path& outCurrent, beat_log& beatLog, bool& out_ecg1_inv, bool& out_ecg2_inv, bool& outEcg3Inverted) {
     // Launch the GUI to do the noise marking. One important thing that takes place is that the gui object (a noise_marking_gui) has
     // an invertedForSignal attribute for each channel
     auto gui = std::make_unique<noise_marking_gui>();
@@ -103,7 +103,7 @@ static bool runNoiseMarking(const config_entry& cfg, const std::filesystem::path
     return true;
 }
 
-static void exportMarkings(const config_entry& cfg, const std::filesystem::path& binFile, const GenExcStruct* markings) {
+static void exportMarkings(const config_entry& cfg, const std::filesystem::path& binFile, const AllFileMarkings* markings) {
     // Export the recorded markings to <noise_data_path>/<stem>_noise_markings.{csv,bin}. The .bin is the file the anneal step (processOneFile) reads back in.
     // The ONLY place sample indices are wanted: the binary format stores them.
     // The GUI keeps markings in seconds, so the sample-indexed view is built
@@ -133,7 +133,7 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
     }
     const std::filesystem::path base = std::filesystem::path(cfg.noise_data_path) / (binFile.stem().string() + "_noise_markings");
     nm.exportCSV(base.string() + ".csv");
-    nm.exportBinary(base.string() + ".bin");
+    nm.export_marking_binfile(base.string() + ".bin");
     std::cout << "Saved Noise Markings \n";
 }
 
@@ -221,7 +221,7 @@ int main(int argc, char* argv[]) {
 
         // Run the noise marking GUI
         std::cout << "Noise marking: " << binFs.filename().string() << "\n";
-        QVector<GenExcStruct> allMarkings;
+        QVector<AllFileMarkings> allMarkings;
         std::filesystem::path currentBinFile;
         bool ecg1Inverted = false, ecg2Inverted = false, ecg3Inverted = false;
 
@@ -253,7 +253,7 @@ int main(int argc, char* argv[]) {
             exportMarkings(cfg, effBin, nullptr);
         }
         else {
-            for (const GenExcStruct& m : allMarkings) {
+            for (const AllFileMarkings& m : allMarkings) {
                 exportMarkings(cfg, std::filesystem::path(m.filePath.toStdString()), &m);
             }
         }

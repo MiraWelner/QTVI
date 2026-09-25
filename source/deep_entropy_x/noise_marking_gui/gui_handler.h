@@ -42,9 +42,9 @@ struct Marking {
     double  blanking = std::numeric_limits<double>::quiet_NaN();
 };
 
-struct GenExcStruct {
-    QString filePath;            ///< Source file these markings belong to.
-    QVector<Marking> marks;      ///< In creation order.
+struct AllFileMarkings {
+    QString filePath; 
+    QVector<Marking> marks;
 
     void appendMarking(double start, double end, const std::string& channel,
         const std::string& type,
@@ -72,7 +72,7 @@ public:
     // @param parent Optional Qt parent widget.
     explicit noise_marking_gui(QWidget* parent = nullptr);
     ~noise_marking_gui() override;
-    QVector<GenExcStruct> getAllMarkings() const;
+    QVector<AllFileMarkings> getAllMarkings() const;
     QString getFilePath() const { return m_binFilePath; }
     void setFileSource(const QString& filePath);
     double currentStartTime() const { return current_start_time; }
@@ -142,7 +142,26 @@ private:
     QStringList scopeChannels(const QString& clickedLabel) const;
 
     data_channel_features channelRefs(const QString& label) const;
+
+    // ---- CHARTED IS NOT THE SAME AS MARKABLE ----------------------------
+    //
+    // markableChannelLabels() is every channel with a chart of its own, and
+    // it is used for far more than marking: the snapshot CSV's columns, the
+    // pulse overlay, the grid overlay, and which chart carries the bottom
+    // time axis all walk this list. VCG belongs in all of those.
+    //
+    // isMarkableChannel() is the narrower question -- can a span drawn here
+    // be STORED -- and the answer is exactly "does this channel have a code
+    // in noise_markings::channel_codes". VCG does not: it is computed at
+    // display time from the three ECG leads through the Kors matrix and
+    // exists nowhere on disk, so there is no channel for the anneal step to
+    // excise from or for morphology partitioning to key on. A VCG span used
+    // to be accepted by the GUI, written to the CSV, and then dropped from
+    // the .bin by code_for_channel() returning 0 -- silently, since the
+    // writer counted the drop and never reported it. An operator could mark
+    // the Kors panel all session and have none of it reach processing.
     static const QStringList& markableChannelLabels();
+    static bool isMarkableChannel(const QString& label);
 
     // --- Per-channel marking state ---
     ChannelMarkingState  mark_state_ecg1;
@@ -161,8 +180,8 @@ private:
 
     QSet<QString>               m_activeChannels;
     QString                     m_currentMarkingType;
-    GenExcStruct                m_genExc;
-    QMap<QString, GenExcStruct> m_fileMarkings;  ///< stashed markings per file path
+    AllFileMarkings                m_genExc;
+    QMap<QString, AllFileMarkings> m_fileMarkings;  ///< stashed markings per file path
 
     // --- Sampling rates ---
     double m_sleepSR = 0.0;   ///< sleep epochs per second (= 1 / sleep_epoch_length)
@@ -290,6 +309,27 @@ private:
 
     void resetUnpinnedGains();
 
+    // ---- DERIVED INDEX, NOT A STORE -------------------------------------
+    //
+    // These three vectors are a lookup structure rebuilt from m_genExc.marks
+    // by rebuildParamIndex(); they are never edited directly and nothing is
+    // ever recovered from them that is not already in m_genExc. m_genExc is
+    // the one store, for parameter edits exactly as for annotations.
+    //
+    // They USED TO BE a second store, written by applyParamOverrides and read
+    // back by getAllMarkings on save. Two stores for one fact, reconciled in
+    // three places that disagreed: save folded overrides into marks and
+    // stripped the mark copies, load rebuilt the overrides but left the mark
+    // copies in place (so a reloaded span drew twice and took two right-clicks
+    // to clear), and the per-file stash in loadSelectedFile did neither (so
+    // switching files and back lost every override). Deriving them removes all
+    // three failure modes rather than patching each conversion site.
+    //
+    // A marking whose threshold or blanking is NaN contributes no segment to
+    // that vector -- see rebuildParamIndex. That is what keeps a legacy row
+    // (no parameter columns at all, both NaN) from installing a NaN default
+    // into ParamIndex, which would make every gate comparison false and
+    // silently detect nothing in the span.
     QVector<ParamOverride> m_thresholdOverrides;
     QVector<ParamOverride> m_blankingOverrides;
     QVector<ParamOverride> m_invertOverrides;
@@ -297,7 +337,7 @@ private:
     bool invertedAt(const QString& label, double globalTime) const;
     void applyInvertOverride(const QStringList& channels, double globalStart, double globalEnd);
     void   finalizeParamEdit(const QStringList& channels, double globalStart, double globalEnd);
-    void   rehydrateParamOverrides();
+    void   rebuildParamIndex();
     bool   editParamOverrideAt(QChartView* cv, const QPoint& pos);
     bool   promptThresholdBlanking(const QString& header, double& thr, double& blk);
     void   applyParamOverrides(const QStringList& channels, double lo, double hi, double thrVal, double blkVal);
