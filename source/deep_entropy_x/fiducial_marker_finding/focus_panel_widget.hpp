@@ -112,9 +112,17 @@ public:
     // either -- it only TRACKS a fiducial that is already set.
     void setUserFiducial(double col);
     double userFiducial() const { return m_userFid; }
-    enum class FitKind { None, Transition, PeakQuadratic, PeakCubic };
+    // None      -- nothing placed this landmark by a model contest at all
+    //               (every pulse landmark, the notch, T50/T80).
+    // Fallback   -- a contest was SUPPOSED to run and could not, so the
+    //               detector used a secondary rule. Distinct from None because
+    //               the panel must say "this is a fallback, not an absence":
+    //               find_q_onset's R-upstroke branch on a monophasic-R beat
+    //               reaches it, and drawing nothing there reads as the fitting
+    //               having silently failed.
+    enum class FitKind { None, Fallback, Transition, PeakQuadratic, PeakCubic };
 
-    // TWO OVERLOADS, NO DEFAULTS. Transition and None have no peak parameters
+    // TWO OVERLOADS, NO DEFAULTS. Transition, Fallback and None have no peak parameters
     // to supply and requiring them would force the caller to invent values;
     // m_peakHalfWidth goes to -1 here so a width left from a previous selection
     // can never be read.
@@ -180,7 +188,9 @@ private:
     // The operator's own position, or -1 for a landmark that cannot have one.
     // The thick line is drawn here and nowhere else.
     double m_userFid = -1.0;
-    // Footer units; 0 = unknown, print columns. See setSampleRate.
+    // THIS CHANNEL'S OWN RATE, for the footer's seconds. 0 means no caller
+    // supplied one, which is a bug now rather than a mode: the footer prints
+    // "--" rather than inventing a unit. See setSampleRate.
     double m_rateHz = 0.0;
     double m_lastFidCol = -1.0;
     double m_detectorFid = -1.0;

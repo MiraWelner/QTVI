@@ -202,6 +202,13 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
         holder->setLayout(vlay);
         dock->setWidget(holder);
         addDockWidget(Qt::RightDockWidgetArea, dock);
+        // OPENED WIDE ENOUGH TO READ, not at the layout's minimum. The panel's
+        // own minimumWidth is measured from its widest footer, so the dock can
+        // never be dragged narrower than the text -- but a dock opens at its
+        // size hint, which was narrower than that, and the footer's rightmost
+        // fields were clipped until the operator resized it by hand.
+        resizeDocks({ dock }, { holder->sizeHint().width() + 32 },
+            Qt::Horizontal);
     }
     wireAlignButtons();
     wirePpgAlignButtons();

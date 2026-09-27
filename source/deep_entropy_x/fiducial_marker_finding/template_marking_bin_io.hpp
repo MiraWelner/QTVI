@@ -238,7 +238,7 @@ struct TemplateBin {
     }
 
     std::vector<double> ppgTemplate;
-    std::vector<double> ppg_template_iqr;
+    std::vector<double> ppg_template_std;
 
     // Foot-anchored arterial background traces (empty when absent).
     std::vector<double> abpTemplate;
@@ -246,9 +246,9 @@ struct TemplateBin {
     std::vector<double> artPulmTemplate;
     // Per-sample std for each arterial template (empty when absent / not
     // computed). Same length as the matching template when present.
-    std::vector<double> abpTemplate_iqr;
-    std::vector<double> artTemplate_iqr;
-    std::vector<double> artPulmTemplate_iqr;
+    std::vector<double> abp_template_std;
+    std::vector<double> art_template_std;
+    std::vector<double> art_pulm_template_std;
 
     //error markings made via user right click
     bool    bad_r_ch[3] = { false, false, false };
@@ -465,7 +465,7 @@ inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::Template
         dst.art_r_construct = src.art_r_col;
         dst.art_pulm_r_construct = src.art_pulm_r_col;
         dst.ppgTemplate = src.ppgTemplate;
-        dst.ppg_template_iqr = src.ppg_template_std;
+        dst.ppg_template_std = src.ppg_template_std;
 
         // Section 4.6 banks. Empty when no bank reached this bin, which is the
         // correct reading: one template per channel IS a bank of size one, and
@@ -476,9 +476,9 @@ inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::Template
         dst.abpTemplate = src.abpTemplate;
         dst.artTemplate = src.artTemplate;
         dst.artPulmTemplate = src.artPulmTemplate;
-        dst.abpTemplate_iqr = src.abp_template_std;
-        dst.artTemplate_iqr = src.art_template_std;
-        dst.artPulmTemplate_iqr = src.artPulmTemplate_iqr;
+        dst.abp_template_std = src.abp_template_std;
+        dst.art_template_std = src.art_template_std;
+        dst.art_pulm_template_std = src.artPulmTemplate_iqr;
 
         // chN is ALWAYS the R base: what the grid draws, and the frame every
         // other alignment's columns are translated into.
@@ -525,7 +525,7 @@ inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::Template
                     dst.anchored_bank[kv.first * 4 + c][sl].tmpl =
                         kv.second[i][c][sl].tmpl;
                     dst.anchored_bank[kv.first * 4 + c][sl].tmpl_iqr =
-                        kv.second[i][c][sl].tmpl_iqr;
+                        kv.second[i][c][sl].tmpl_std;
                     dst.anchored_bank[kv.first * 4 + c][sl].n_members =
                         kv.second[i][c][sl].n_members;
                 }
@@ -1114,6 +1114,13 @@ struct EcgFiducials {
     double t_peak = -1.0, t_end = -1.0;
     bool   q_onset_found = false;
     bool   valid = false;
+
+    // The refinement contests behind p_peak and t_peak. Both landmarks are
+    // bracket-derived and THEN peak-fitted, so these are the curves that
+    // placed them -- carried so the focus panel can draw the same fit rather
+    // than showing an empty panel for a landmark that was fitted.
+    upsample_for_fit::PeakCandidates p_peak_cand;
+    upsample_for_fit::PeakCandidates t_peak_cand;
 };
 
 // SPLIT ALONG THE LINE THE BARS DRAW. ecgDetect is a pure function of the
@@ -1520,6 +1527,8 @@ inline EcgFiducials ecgFiducialsFrom(const EcgDetection& d, double sampleRate,
         sampleRate, peakMode);
     out.p_peak = rx.p_peak;
     out.t_peak = rx.t_peak;
+    out.p_peak_cand = rx.p_peak_cand;
+    out.t_peak_cand = rx.t_peak_cand;
 
     out.valid = true;
     return out;

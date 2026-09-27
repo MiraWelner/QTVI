@@ -125,7 +125,32 @@ double FeatureMarks::find_s_peak(const std::vector<double>& ecg, int r_idx, doub
 // upright lead is ordinary pathology, not lead reversal, so this decides
 // deflection direction locally -- from the sample at the bracket extremum
 // versus the mean of the bracket ends. Lead polarity is the wrong input here.
-double FeatureMarks::find_t_peak(const std::vector<double>& v, double bracketSEnd, double bracketTEnd, curve_fit::PeakFitMode peakMode) {
+// ---- THE REFINEMENT, WITH ITS CANDIDATES KEPT ---------------------------
+//
+// find_p_peak and find_t_peak both search a flipped copy when the deflection
+// is negative, so the contest runs on `u` and its curves are upside down
+// relative to the trace the caller draws. Negating the coefficients puts them
+// back: eval() is a polynomial in the coefficients, so negating every one
+// negates the curve, and `position` is a column and needs no conversion.
+//
+// Same shape as template_viewer_focus.cpp's `cf /= eref` for the normalized
+// panel -- a unit conversion on the coefficients rather than on the curve.
+static double refine_peak_keeping_candidates(const std::vector<double>& u,
+    int seed, double sigma, int halfWidth, curve_fit::PeakFitMode peakMode,
+    bool flipped, upsample_for_fit::PeakCandidates* cand)
+{
+    if (!cand)
+        return upsample_for_fit::find_peak(u, seed, sigma, halfWidth, peakMode);
+
+    *cand = upsample_for_fit::peakCandidates(u, seed, sigma, halfWidth, peakMode);
+    if (flipped)
+        for (auto& f : cand->draw)
+            for (double& cf : f.coeff) cf = -cf;
+    return cand->placement;
+}
+
+double FeatureMarks::find_t_peak(const std::vector<double>& v, double bracketSEnd, double bracketTEnd, curve_fit::PeakFitMode peakMode,
+    upsample_for_fit::PeakCandidates* cand) {
     const int N = static_cast<int>(v.size());
     if (N < 1) return -1.0;
 
@@ -152,13 +177,17 @@ double FeatureMarks::find_t_peak(const std::vector<double>& v, double bracketSEn
         if (!std::isnan(v[i]) && std::abs(v[i] - B) > bd) { bd = std::abs(v[i] - B); best = i; }
 
     std::vector<double> u = v;
-    if (v[best] < B) for (auto& x : u) x = -x;
-    return std::clamp(upsample_for_fit::find_peak(u, best, upsample_for_fit::peak_sigma::T, upsample_for_fit::peak_halfwidth::T, peakMode), static_cast<double>(lo), static_cast<double>(hi));
+    const bool flipped = (v[best] < B);
+    if (flipped) for (auto& x : u) x = -x;
+    return std::clamp(refine_peak_keeping_candidates(u, best,
+        upsample_for_fit::peak_sigma::T, upsample_for_fit::peak_halfwidth::T,
+        peakMode, flipped, cand), static_cast<double>(lo), static_cast<double>(hi));
 }
 
 // Local deflection direction, same reasoning as find_t_peak: an inverted P is a
 // real waveform on an upright lead. No sgn parameter.
-double FeatureMarks::find_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs, curve_fit::PeakFitMode peakMode)
+double FeatureMarks::find_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs, curve_fit::PeakFitMode peakMode,
+    upsample_for_fit::PeakCandidates* cand)
 {
     //found coarsely by the max deviation from the qonset,
     const int N = static_cast<int>(v.size());
@@ -186,8 +215,11 @@ double FeatureMarks::find_p_peak(const std::vector<double>& v, double loIn, doub
         if (d > bd) { bd = d; best = i; }
     }
     std::vector<double> u = v;
-    if (v[best] < B) for (double& x : u) x = -x;
-    return std::clamp(upsample_for_fit::find_peak(u, best, upsample_for_fit::peak_sigma::P, upsample_for_fit::peak_halfwidth::P, peakMode), static_cast<double>(fFin), static_cast<double>(lFin));
+    const bool flipped = (v[best] < B);
+    if (flipped) for (double& x : u) x = -x;
+    return std::clamp(refine_peak_keeping_candidates(u, best,
+        upsample_for_fit::peak_sigma::P, upsample_for_fit::peak_halfwidth::P,
+        peakMode, flipped, cand), static_cast<double>(fFin), static_cast<double>(lFin));
 }
 
 double FeatureMarks::find_j_point(const std::vector<double>& v, double fs, int r_col, double sgn, upsample_for_fit::TransitionCandidates* candOut, curve_fit::FitMode mode) {
@@ -397,8 +429,9 @@ FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(const std::vector<double>& 
     ReactiveEcg r;
     if (static_cast<int>(ecg.size()) < 3) return r;
     // Both reactive peaks are locally-polarised finders, so neither needs sgn.
-    r.p_peak = find_p_peak(ecg, p_begin, q_onset, sampleRate, peakMode);
-    r.t_peak = find_t_peak(ecg, s_end, t_end, peakMode);
+    r.p_peak = find_p_peak(ecg, p_begin, q_onset, sampleRate, peakMode,
+        &r.p_peak_cand);
+    r.t_peak = find_t_peak(ecg, s_end, t_end, peakMode, &r.t_peak_cand);
     return r;
 }
 

@@ -549,10 +549,10 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             { &b.chFor(0, anchor).ecgTemplate_raw, &b.chFor(0, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[0],   0, true,  0.0 },
             { &b.chFor(1, anchor).ecgTemplate_raw, &b.chFor(1, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[1],   1, true,  0.0 },
             { &b.chFor(2, anchor).ecgTemplate_raw, &b.chFor(2, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[2],   2, true,  0.0 },
-            { &b.ppgTemplate,         &b.ppg_template_iqr,         m_pulseGlobalRef[0], 0, false, b.ppg_onset },
-            { &b.abpTemplate,         &b.abpTemplate_iqr,          m_pulseGlobalRef[1], 1, false, b.abp_onset },
-            { &b.artTemplate,         &b.artTemplate_iqr,          m_pulseGlobalRef[2], 2, false, b.art_onset },
-            { &b.artPulmTemplate,     &b.artPulmTemplate_iqr,      m_pulseGlobalRef[3], 3, false, b.art_pulm_onset },
+            { &b.ppgTemplate,         &b.ppg_template_std,         m_pulseGlobalRef[0], 0, false, b.ppg_onset },
+            { &b.abpTemplate,         &b.abp_template_std,          m_pulseGlobalRef[1], 1, false, b.abp_onset },
+            { &b.artTemplate,         &b.art_template_std,          m_pulseGlobalRef[2], 2, false, b.art_onset },
+            { &b.artPulmTemplate,     &b.art_pulm_template_std,      m_pulseGlobalRef[3], 3, false, b.art_pulm_onset },
         };
 
         std::vector<double> norm[num_chans], normIqr[num_chans];

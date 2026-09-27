@@ -46,7 +46,7 @@ struct SignalRates {
 // Per-channel, per-method ECG template results
 struct ChannelTemplates {
     vector<double> ecgTemplate_raw;
-    vector<double> ecgTemplate_raw_iqr;       // per-sample std of the beats
+    vector<double> ecg_template_raw_std;       // per-sample std of the beats
     // contributing to ecgTemplate_raw.
     // Same length as ecgTemplate_raw,
     // or empty if not computed.
@@ -70,7 +70,7 @@ struct TemplateInfo {
     ChannelTemplates ch2;
     ChannelTemplates ch3;
     std::vector<double> ppgTemplate;
-    std::vector<double> ppg_template_iqr;      // per-sample std of the beats
+    std::vector<double> ppg_template_std;      // per-sample std of the beats
     // contributing to ppgTemplate
     // (post AlignWaves shift).
     // Slice count that fed the PPG median (post drop rules).
@@ -122,7 +122,7 @@ struct FootResult {
 
 struct EcgChannelResult {
     vector<vector<double>> ecgTemplates_raw;
-    vector<vector<double>> ecgTemplates_raw_iqr;   // parallel to ecgTemplates_raw
+    vector<vector<double>> ecgTemplates_raw_std;   // parallel to ecgTemplates_raw
     vector<vector<double>> ecgTemplates_squared;
     vector<vector<double>> ecgTemplates_absval;
     vector<vector<double>> ecgTemplates_unfiltered;

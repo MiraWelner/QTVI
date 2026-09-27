@@ -135,7 +135,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // AlignWaves -> NaN-strip pipeline is unnecessary. We just hand the
     // templates through.
     vector<vector<double>> ppg_templates;
-    vector<vector<double>> ppg_template_iqrs;
+    vector<vector<double>> ppg_template_stds;
     vector<vector<vector<double>>> ppg_kept(n);
     vector<int> ppg_peak_cols(n, -1);
     vector<int> ppg_onset_cols(n, -1);
@@ -152,7 +152,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     if (has_ppg && rates.ppg > 0.0) {
         PPGTemplatesResult ppg_res = CreatePulseTemplates(wave_data, &output_binfile_data::ppgSignal, rates.ecg, rates.ppg);
         ppg_templates = std::move(ppg_res.templates);
-        ppg_template_iqrs = std::move(ppg_res.iqrs);
+        ppg_template_stds = std::move(ppg_res.iqrs);
         ppg_kept = std::move(ppg_res.kept);
         ppg_peak_cols = std::move(ppg_res.peakCol);
         ppg_onset_cols = std::move(ppg_res.footCol);
@@ -169,14 +169,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // empty vectors through harmlessly, and AugmentTemplatesSlow fills
     // them later.
     const auto _ppg1 = std::chrono::steady_clock::now();
-    // NO SPAN PLUMBING HERE. An R-pair that straddles a splice in the annealed
-    // bin is not a beat, but the slicer does not need to know where the splices
-    // are to reject it: a join shows up as a long RR, and extract_beats_and_align
-    // drops any pair whose RR exceeds 2.5 s whatever caused it. Deriving the
-    // splice positions from ecg_bin_indexs was tried and removed -- the
-    // positions it produced did not describe the signal and it emptied every
-    // bin. Nothing about annotations, coordinates or span translation needs to
-    // reach the slicer.
     EcgTemplateResult ecg_res = CreateEcgTemplatesFast(wave_data, rates.ecg);
     const auto _ecg1 = std::chrono::steady_clock::now();
     std::fprintf(stderr, "[fast-phases] bins=%zu | PPG %8.1f  ECG(align+template) %8.1f ms\n", n, _ms(_ppg0, _ppg1), _ms(_ppg1, _ecg1));
@@ -186,8 +178,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         dst.ecgTemplate_raw = src.ecgTemplates_raw[i];
         // Per-sample std for the raw method only -- the other three
         // methods are never displayed, so they don't have std computed.
-        if (i < src.ecgTemplates_raw_iqr.size())
-            dst.ecgTemplate_raw_iqr = src.ecgTemplates_raw_iqr[i];
+        if (i < src.ecgTemplates_raw_std.size())
+            dst.ecg_template_raw_std = src.ecgTemplates_raw_std[i];
 
         dst.ecgTemplate_squared = src.ecgTemplates_squared[i];
         dst.ecgTemplate_absval = src.ecgTemplates_absval[i];
@@ -203,7 +195,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 
     auto clear_channel = [](ChannelTemplates& dst) {
         dst.ecgTemplate_raw = {};
-        dst.ecgTemplate_raw_iqr = {};
+        dst.ecg_template_raw_std = {};
         dst.ecgTemplate_squared = {};
         dst.ecgTemplate_absval = {};
         dst.ecgTemplate_unfiltered = {};
@@ -335,8 +327,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                         ? chRes[c]->r_col_raw[i] : -1;
                     if (i < chRes[c]->ecgTemplates_raw.size())
                         ji.ecg_phase1[c] = chRes[c]->ecgTemplates_raw[i];
-                    if (i < chRes[c]->ecgTemplates_raw_iqr.size())
-                        ji.ecg_phase1_spread[c] = chRes[c]->ecgTemplates_raw_iqr[i];
+                    if (i < chRes[c]->ecgTemplates_raw_std.size())
+                        ji.ecg_phase1_spread[c] = chRes[c]->ecgTemplates_raw_std[i];
                 }
                 if (ppg_template_good && i < ppg_kept.size()
                     && i < ppg_kept_slices.size()) {
@@ -344,8 +336,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                     ji.ppg_forward = &ppg_kept_slices[i];
                     ji.ppg_peak_col = ppg_peak_cols[i];
                     ji.ppg_phase1 = ppg_templates[i];
-                    if (i < ppg_template_iqrs.size())
-                        ji.ppg_phase1_spread = ppg_template_iqrs[i];
+                    if (i < ppg_template_stds.size())
+                        ji.ppg_phase1_spread = ppg_template_stds[i];
                 }
                 if (rates.ecg > 0.0) {
                     const auto& rp = wave_data[i].ch1.raw;
@@ -496,7 +488,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 
         if (ppg_template_good) {
             info.ppgTemplate = ppg_templates[i];
-            info.ppg_template_iqr = ppg_template_iqrs[i];
+            info.ppg_template_std = ppg_template_stds[i];
             info.ppg_peak_col = ppg_peak_cols[i];
             info.ppg_onset_col = ppg_onset_cols[i];
             info.ppg_r_col = ppg_r_cols[i];

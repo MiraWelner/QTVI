@@ -59,7 +59,17 @@ public:
     // a gap stays a gap.
     static double sample_at(const std::vector<double>& v, double p);
 
-    struct ReactiveEcg { double t_peak = -1.0, p_peak = -1.0; };
+    // P AND T PEAK, PLUS THE FITS THAT PLACED THEM. Both are found coarsely
+    // (furthest sample from a bracket baseline) and then REFINED by the same
+    // peak-fit contest every other peak runs. That refinement is what the
+    // reported column actually is, so its candidates have to travel with it:
+    // the focus panel draws the winning curve, and with nothing to draw it
+    // showed an empty panel for two landmarks that were fitted.
+    struct ReactiveEcg {
+        double t_peak = -1.0, p_peak = -1.0;
+        upsample_for_fit::PeakCandidates t_peak_cand;
+        upsample_for_fit::PeakCandidates p_peak_cand;
+    };
     struct ReactivePpg { double t50 = -1.0, t80 = -1.0, t80_rise = -1.0, pw80 = -1.0, peak2 = -1.0; };
     static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_onset, double s_end, double t_end, double sampleRate,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
@@ -91,9 +101,15 @@ public:
     static int    find_p_end(const std::vector<double>& ecg_signal, int r_idx, double fs, double sgn, double pPeakIn = -1.0);
 
     // Locally-polarised finders -- no sgn, see the note above.
-    static double find_t_peak(const std::vector<double>& ecg, double bracketSEnd, double bracketTEnd, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+    // `cand`, when non-null, receives the refinement contest's candidates.
+    // ALREADY IN THE TRACE'S OWN SIGN: the finders flip the signal to search a
+    // negative deflection upward, and the coefficients are flipped back before
+    // they are handed out, so a caller can draw them straight onto the trace.
+    static double find_t_peak(const std::vector<double>& ecg, double bracketSEnd, double bracketTEnd, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
+        upsample_for_fit::PeakCandidates* cand = nullptr);
     static double find_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0, upsample_for_fit::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
-    static double find_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+    static double find_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
+        upsample_for_fit::PeakCandidates* cand = nullptr);
 
 
     struct TemplateLandmarks {

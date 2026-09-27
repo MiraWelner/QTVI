@@ -68,18 +68,8 @@ namespace ecg_move_log {
 
 struct SingleMethodResult {
     vector<double> ecgTemplate;
-    vector<double> ecg_template_iqr;   // empty for methods that don't compute std
+    vector<double> ecg_template_std;   // empty for methods that don't compute std
     int r_col = -1;   // true R column (alignment's r_aligned_col)
-
-    // MEDIAN RR of the beats this template was built from, in samples.
-    //
-    // A DISPLAY WIDTH, NOT A STORAGE WIDTH. The beat matrix is framed on the
-    // bin's LONGEST RR so that no beat ever loses a sample -- that part must
-    // not change. But one 2.8 s pause then makes the array 5.6 s wide, and the
-    // viewer sized its x-axis from the array length, so a normal 0.9 s beat was
-    // drawn into a sixth of the panel. This is the number the axis should use
-    // instead. It is carried in memory only and is NOT serialized: the viewer
-    // receives TemplateBin directly, so no file format changes.
     int median_rr_samples = -1;
     // Verdict per beat handed downstream, parallel to out_kept_beats:
     //   0 NORMAL     1 PVC (premature)     2 VOTED_PVC (5-of-8 vote)
@@ -132,7 +122,7 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
     double ecgRate, vector<vector<double>>* out_kept_beats = nullptr, bool compute_iqr = false) {
     SingleMethodResult res;
     res.ecgTemplate = {};
-    res.ecg_template_iqr = {};
+    res.ecg_template_std = {};
     res.r_col = -1;
 
     if (rpeaks.size() < 2 || ecgSignal.empty() || ecgRate <= 0.0) return res;
@@ -348,7 +338,7 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
         // bigeminy it was roughly the distance between the two morphologies.
         const std::vector<const std::vector<double>*>& spreadSet =
             reference.empty() ? usable : reference;
-        res.ecg_template_iqr.assign(maxLen, 0.0);
+        res.ecg_template_std.assign(maxLen, 0.0);
         std::vector<double> col;
         col.reserve(spreadSet.size());
         for (size_t c = 0; c < maxLen; ++c) {
@@ -362,7 +352,7 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
             mean /= static_cast<double>(nc);
             double sumsq = 0.0;
             for (double v : col) sumsq += (v - mean) * (v - mean);
-            res.ecg_template_iqr[c] = std::sqrt(sumsq / static_cast<double>(nc - 1));   // ddof = 1
+            res.ecg_template_std[c] = std::sqrt(sumsq / static_cast<double>(nc - 1));   // ddof = 1
         }
     }
 
@@ -372,7 +362,7 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
 
 static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
     cr.ecgTemplates_raw.resize(n);
-    cr.ecgTemplates_raw_iqr.resize(n);
+    cr.ecgTemplates_raw_std.resize(n);
     cr.ecgTemplates_squared.resize(n);
     cr.ecgTemplates_absval.resize(n);
     cr.ecgTemplates_unfiltered.resize(n);
@@ -443,7 +433,7 @@ static inline void process_channel_fast(
         capture, /*compute_iqr=*/true);
     if (out_kept_idx) *out_kept_idx = std::move(raw_res.kept_idx);
     cr.ecgTemplates_raw[i] = raw_res.ecgTemplate;
-    cr.ecgTemplates_raw_iqr[i] = raw_res.ecg_template_iqr;
+    cr.ecgTemplates_raw_std[i] = raw_res.ecg_template_std;
     cr.r_col_raw[i] = raw_res.r_col;
     cr.n_beats_raw[i] = raw_res.n_beats;
     if (i < cr.kept_rhythm_raw.size())

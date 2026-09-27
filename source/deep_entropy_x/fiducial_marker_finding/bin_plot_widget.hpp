@@ -545,7 +545,7 @@ private:
     std::vector<double> m_ppg;
     std::vector<double> m_ppgIqr;
     std::vector<double> m_ecg;
-    std::vector<double> m_ecgIqr;
+    std::vector<double> ecg_std;
 
     double m_markers[MarkerCount];   // all -1 until seeded (filled in the ctor)
 

@@ -259,7 +259,7 @@ namespace template_io {
                         f.write(reinterpret_cast<const char*>(&nSlots), 4);
                         for (const auto& st : perBin[c]) {
                             writeVecD(f, st.tmpl);
-                            writeVecD(f, st.tmpl_iqr);
+                            writeVecD(f, st.tmpl_std);
                             uint32_t nm = st.n_members;
                             f.write(reinterpret_cast<const char*>(&nm), 4);
                         }
@@ -481,7 +481,7 @@ namespace template_io {
                             perBin[i][c].resize(nSlots);
                             for (uint32_t sl = 0; sl < nSlots && ok; ++sl) {
                                 if (!read_template_vector(f, perBin[i][c][sl].tmpl)) { ok = false; break; }
-                                if (!read_template_vector(f, perBin[i][c][sl].tmpl_iqr)) { ok = false; break; }
+                                if (!read_template_vector(f, perBin[i][c][sl].tmpl_std)) { ok = false; break; }
                                 uint32_t nm = 0;
                                 if (!f.read(reinterpret_cast<char*>(&nm), 4)) { ok = false; break; }
                                 perBin[i][c][sl].n_members = nm;

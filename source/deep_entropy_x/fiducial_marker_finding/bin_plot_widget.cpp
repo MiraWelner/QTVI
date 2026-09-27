@@ -438,16 +438,10 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_ppg = ppg;
     m_ppgIqr = ppgIqr;
     m_ecg = ecg;
-    m_ecgIqr = ecgIqr;
+    ecg_std = ecgIqr;
     m_rPeakSample = rPeakSample;
     m_hasPPG = !ppg.empty();
 
-    // The ECG's R column is the one anchor that cannot be derived from a rate:
-    // alignment.hpp puts it at 0.3 * the bin's LONGEST RR, so it varies per bin
-    // and only the caller knows it. Every other channel's follows its rate, in
-    // setChannelRate. recomputeFrame then does the rest -- there is no view
-    // width to compute here any more, because the frame is a time span over the
-    // union of the channels rather than a sample count over one of them.
     m_rAnchor[static_cast<size_t>(Channel::Ecg)] = rPeakSample;
 
     // NEW OCCUPANT: both detections describe the previous one.
@@ -458,13 +452,7 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     update();
 }
 
-// Replace ONLY the ECG trace, its band, R column and beat count, leaving the
-// PPG and arterial channels and every marker exactly as they are. Used when
-// Automatic alignment re-anchors the grid on a bar click: the ECG average
-// changes per anchor but nothing else does, so a full setData (which would
-// also re-take the unchanged pulse channels) is unnecessary -- and, crucially,
-// this leaves the widget object alive, so a re-skin mid-click does not disturb
-// an in-progress drag the way rebuilding the panel would.
+
 void BinPlotWidget::setEcgData(const std::vector<double>& ecg,
     const std::vector<double>& ecgIqr,
     double rPeakSample,
@@ -472,7 +460,7 @@ void BinPlotWidget::setEcgData(const std::vector<double>& ecg,
 {
     m_nEcgBeats = nEcgBeats;
     m_ecg = ecg;
-    m_ecgIqr = ecgIqr;
+    ecg_std = ecgIqr;
     m_rPeakSample = rPeakSample;
     m_rAnchor[static_cast<size_t>(Channel::Ecg)] = rPeakSample;
 
@@ -704,10 +692,14 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
                     };
                 place(EcgPeak::R, m_det.lm.r_peak);
                 place(EcgPeak::Q, m_det.lm.q_peak);
-                place(EcgPeak::P, m_det.lm.p_peak);
                 place(EcgPeak::S, m_det.s_peak);
-                // t_peak excluded: it is the reactive glyph, recomputed from
-                // the S-end / T-end bars on every repaint.
+                // P AND T ARE NOT PLACED HERE. Both are bracket-derived and
+                // refined inside reactive_ecg, which runs below on every
+                // repaint because the bars are read fresh -- so a contest
+                // seeded from the detector's own p_peak would be a SECOND
+                // refinement whose result is then overwritten by the reactive
+                // one. Their candidates come off the reactive pass instead,
+                // which is the fit that actually placed the glyph.
             }
 
             m_detBin = m_bin;
@@ -728,6 +720,13 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
             m_rates[static_cast<size_t>(Channel::Ecg)], m_peakFitMode, bars);
         r.ecgPPeak = fid.p_peak;
         r.ecgTPeak = fid.t_peak;
+        // The fits behind them, so peakCandidatesFor(P/T) returns the curve
+        // that placed the glyph. Written every repaint alongside the positions
+        // they belong to: the bars move without invalidating m_detValid, so a
+        // candidate set cached with the detection would describe a previous
+        // bracket.
+        m_peakCands[static_cast<size_t>(EcgPeak::P)] = fid.p_peak_cand;
+        m_peakCands[static_cast<size_t>(EcgPeak::T)] = fid.t_peak_cand;
     }
 
     if (m_hasPPG) {
@@ -788,8 +787,8 @@ void BinPlotWidget::ensureExtents(Channel ch) const {
 
     int first = -1, last = -1;
     if (ch == Channel::Ecg) {
-        first = sample_extent::firstDrawn(m_ecg, m_ecgIqr);
-        last = sample_extent::lastDrawn(m_ecg, m_ecgIqr);
+        first = sample_extent::firstDrawn(m_ecg, ecg_std);
+        last = sample_extent::lastDrawn(m_ecg, ecg_std);
     }
     else if (v) {
         // firstDrawn / lastDrawn FOR THE PULSE CHANNELS TOO, not just the ECG.
@@ -1158,7 +1157,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         // BAND AND LINE TAKE THE SAME x0 AND dx, so they cannot drift apart --
         // which they did when the band was reached through one set of
         // correction terms and the line through another.
-        draw_iqr_band(p, m_ecg, m_ecgIqr, x0, margin_top, ph, dx, n,
+        draw_iqr_band(p, m_ecg, ecg_std, x0, margin_top, ph, dx, n,
             yLo, yHi, color_iqrband_ecg);
 
         draw_trace_fixed_scale(p, m_ecg, x0, margin_top, ph, dx,

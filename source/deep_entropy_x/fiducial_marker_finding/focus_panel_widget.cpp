@@ -1,6 +1,7 @@
 #include "focus_panel_widget.hpp"
 #include "subsample_refine.hpp"
 
+#include <QFontMetrics>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPaintEvent>
@@ -10,7 +11,21 @@
 
 FocusPanelWidget::FocusPanelWidget(QWidget* parent) : QWidget(parent) {
     setMinimumHeight(180);
-    setMinimumWidth(240);
+
+    // MINIMUM WIDTH FROM THE WIDEST LINE THE PANEL DRAWS, not a round number.
+    // The footer carries four quantities -- sd, the auto placement, the bar and
+    // the signed difference, the last three in seconds to four places -- and at
+    // 240 px it was clipped from the right, so the two positions the operator
+    // is comparing were exactly the part that disappeared.
+    //
+    // MEASURED FROM THE WIDGET'S OWN FONT so a font or DPI change cannot
+    // silently re-break it. The sample string is the widest real footer: every
+    // field present, a negative difference, three-digit sd.
+    const QFontMetrics fm(font());
+    const int footerPx = fm.horizontalAdvance(QStringLiteral(
+        "sd = 000.0 ms   auto = 0.0000 s   bar = 0.0000 s   d = -0.0000 s"));
+    // ml + mr are the paint margins; the extra 8 keeps the text off the edge.
+    setMinimumWidth(std::max(240, footerPx + 8 + 8 + 8));
 }
 
 void FocusPanelWidget::setFocus(const std::vector<double>& mean,
@@ -107,6 +122,41 @@ FocusPanelWidget::candidateCurves(int lo, int hi) const {
     std::vector<Candidate> out;
     if (m_fitKind == FitKind::None) return out;   // nothing fitted it
     if (lo < 0 || hi >= (int)m_mean.size() || hi - lo < 3) return out;
+
+    // ---- FALLBACK: A LEVEL, NOT A CURVE --------------------------------
+    //
+    // No contest ran, so there is no polynomial to draw -- but an empty panel
+    // reads as the fitting having failed silently, which is the one thing this
+    // is not. A flat green line at the detector's own amplitude, drawn the full
+    // width of the window, says the mark was placed and says the shape behind
+    // it is constant: the same statement curve_fit::FitType::FLAT makes when it
+    // wins a contest outright.
+    //
+    // SELECTED, so it gets the winner's lime and solid style from the one
+    // drawing path every other curve uses. It is the placement, however it was
+    // reached.
+    if (m_fitKind == FitKind::Fallback) {
+        // The detector's own column when it reported one, else the landmark's.
+        // Rounded and clamped into the drawn window: a fiducial that sits
+        // outside it still has a level worth drawing at the nearer edge.
+        const double fidD = (m_detectorFid >= 0.0)
+            ? m_detectorFid : static_cast<double>(m_landmarkCol);
+        if (fidD < 0.0) return out;
+        int col = static_cast<int>(std::lround(fidD));
+        col = std::max(lo, std::min(hi, col));
+        const double lvl = m_mean[col];
+        if (std::isnan(lvl)) return out;
+
+        Candidate cd;
+        cd.curve.assign(m_mean.size(),
+            std::numeric_limits<double>::quiet_NaN());
+        for (int i = lo; i <= hi; ++i) cd.curve[i] = lvl;
+        cd.selected = true;
+        cd.label = QStringLiteral("fallback - no curve fit");
+        cd.position = fidD;
+        out.push_back(std::move(cd));
+        return out;
+    }
 
     // THE DETECTOR'S WINDOW, EXACTLY -- which is now per landmark, handed in
     // with the sigma by setFitKind rather than read off a global constant. Any
@@ -412,14 +462,24 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         if (m_fitKind == FitKind::None) {
             // The line that would name the winning model says why there is
             // none, rather than sitting blank and reading as "still loading".
-            // GENERIC, because two things reach it: an ECG Q with no trough
-            // (compute_q_onset's R-upstroke fallback) and every PULSE landmark,
-            // none of which is placed by a model contest. Both are "the
-            // detector's position, with no curve behind it".
+            // This is the NO-CONTEST case: every PULSE landmark, none of which
+            // is placed by a model. "The detector's position, with no curve
+            // behind it." The Q fallback is FitKind::Fallback and says so
+            // separately below -- the two were one message, and it could not
+            // distinguish "never fitted" from "fitting could not run here".
             p.setPen(QColor(120, 120, 120));
             p.drawText(QRect(ml, 4 + kHeadLine, width() - ml - mr, kSubLine),
                 Qt::AlignLeft | Qt::AlignVCenter,
                 QStringLiteral("no fit - detector position"));
+        }
+        else if (m_fitKind == FitKind::Fallback) {
+            // Named, not blank, and in the SAME gray as a winning model's name:
+            // the flat green line above is the placement, so this line's job is
+            // to say which rule produced it.
+            p.setPen(QColor(120, 120, 120));
+            p.drawText(QRect(ml, 4 + kHeadLine, width() - ml - mr, kSubLine),
+                Qt::AlignLeft | Qt::AlignVCenter,
+                QStringLiteral("no Q trough - R-upstroke fallback"));
         }
         else for (const Candidate& c : cands)
             if (c.selected && !c.label.isEmpty()) {
@@ -542,32 +602,31 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
             // position at all. A zero in either would read as agreement.
             // IN SECONDS, to four places -- 0.1 ms, finer than any rate this
             // runs at, so the sub-sample precision the fitters work to is not
-            // rounded away in the one place it is reported.
+            // rounded away in the one place it is reported. Seconds from
+            // column 0 of this channel's own trace, on this channel's own rate.
             //
-            // COLUMNS WHEN THE RATE IS UNKNOWN (m_rateHz == 0), labelled
-            // "col" so the number is never mistaken for a time. A wrong time
-            // is worse than an honest raw index.
-            const bool inSec = (m_rateHz > 0.0);
+            // SECONDS OR NOTHING. There was a column fallback for m_rateHz == 0,
+            // and it was the only branch that ever ran, because nothing called
+            // setSampleRate -- so the footer printed raw indices under labels
+            // every consumer reads as times. Every caller now supplies its
+            // channel's rate, which makes a missing rate a bug rather than a
+            // mode, and a bug should read as no measurement.
+            //
             // THE UNIT TRAVELS WITH THE NUMBER, so a "--" does not acquire
             // one: "auto = -- s" reads as a measurement of nothing.
             const auto posStr = [&](double col) -> QString {
-                if (!(col >= 0.0)) return QStringLiteral("--");
-                return inSec
-                    ? QStringLiteral("%1 s").arg(col / m_rateHz, 0, 'f', 4)
-                    : QStringLiteral("%1 col").arg(col, 0, 'f', 2);
+                if (!(col >= 0.0) || !(m_rateHz > 0.0))
+                    return QStringLiteral("--");
+                return QStringLiteral("%1 s").arg(col / m_rateHz, 0, 'f', 4);
                 };
 
             l1 += QStringLiteral("   auto = %1   bar = %2")
                 .arg(posStr(m_lastFidCol), posStr(m_userFid));
-            // The difference only exists when both do. SIGNED, and in the same
-            // units: it is the correction the operator made.
-            if (m_lastFidCol >= 0.0 && m_userFid >= 0.0) {
-                const double d = inSec
-                    ? (m_userFid - m_lastFidCol) / m_rateHz
-                    : (m_userFid - m_lastFidCol);
-                l1 += inSec
-                    ? QStringLiteral("   d = %1 s").arg(d, 0, 'f', 4)
-                    : QStringLiteral("   d = %1 col").arg(d, 0, 'f', 2);
+            // The difference only exists when both positions and a rate do.
+            // SIGNED: it is the correction the operator made.
+            if (m_lastFidCol >= 0.0 && m_userFid >= 0.0 && m_rateHz > 0.0) {
+                const double d = (m_userFid - m_lastFidCol) / m_rateHz;
+                l1 += QStringLiteral("   d = %1 s").arg(d, 0, 'f', 4);
             }
 
             const QString sdStr = std::isfinite(rawSd)

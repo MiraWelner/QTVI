@@ -74,23 +74,23 @@ namespace template_generation_detail {
         // vector via the default-constructed std::vector<double>{}.
         const std::vector<double> noStd;
 
-        copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw, info.ch1.ecgTemplate_raw_iqr, info.ch1.r_col_raw);
+        copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw, info.ch1.ecg_template_raw_std, info.ch1.r_col_raw);
         copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd, info.ch1.r_col_squared);
         copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval, noStd, info.ch1.r_col_absval);
         copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, noStd, info.ch1.r_col_unfiltered);
 
-        copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw, info.ch2.ecgTemplate_raw_iqr, info.ch2.r_col_raw);
-        copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd,info.ch2.r_col_squared);
+        copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw, info.ch2.ecg_template_raw_std, info.ch2.r_col_raw);
+        copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd, info.ch2.r_col_squared);
         copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval, noStd, info.ch2.r_col_absval);
-        copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, noStd,  info.ch2.r_col_unfiltered);
+        copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, noStd, info.ch2.r_col_unfiltered);
 
-        copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw, info.ch3.ecgTemplate_raw_iqr, info.ch3.r_col_raw);
+        copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw, info.ch3.ecg_template_raw_std, info.ch3.r_col_raw);
         copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd, info.ch3.r_col_squared);
         copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval, noStd, info.ch3.r_col_absval);
         copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered, noStd, info.ch3.r_col_unfiltered);
 
         bt.ppgTemplate = info.ppgTemplate;
-        bt.ppg_template_std = info.ppg_template_iqr;
+        bt.ppg_template_std = info.ppg_template_std;
 
         // Per-channel + PPG slice counts (post drop-rules).
         bt.ch1_n_beats_raw = info.ch1.n_beats_raw;
@@ -121,17 +121,17 @@ namespace template_generation_detail {
         bt.bad_segment = bad_segment;
         if (bad_segment) return;
 
-        copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw,info.ch1.ecgTemplate_raw_iqr, info.ch1.r_col_raw);
-        copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, {},info.ch1.r_col_unfiltered);
+        copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw, info.ch1.ecg_template_raw_std, info.ch1.r_col_raw);
+        copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, {}, info.ch1.r_col_unfiltered);
 
-        copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw, info.ch2.ecgTemplate_raw_iqr, info.ch2.r_col_raw);
+        copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw, info.ch2.ecg_template_raw_std, info.ch2.r_col_raw);
         copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, {}, info.ch2.r_col_unfiltered);
 
-        copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw, info.ch3.ecgTemplate_raw_iqr,info.ch3.r_col_raw);
+        copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw, info.ch3.ecg_template_raw_std, info.ch3.r_col_raw);
         copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered, {}, info.ch3.r_col_unfiltered);
 
         bt.ppgTemplate = info.ppgTemplate;
-        bt.ppg_template_std = info.ppg_template_iqr;
+        bt.ppg_template_std = info.ppg_template_std;
 
         // Per-channel + PPG slice counts (post drop-rules).
         bt.ch1_n_beats_raw = info.ch1.n_beats_raw;
@@ -163,9 +163,9 @@ namespace template_generation_detail {
         copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd, info.ch1.r_col_squared);
         copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval, noStd, info.ch1.r_col_absval);
         copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd, info.ch2.r_col_squared);
-        copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval, noStd,info.ch2.r_col_absval);
-        copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd,info.ch3.r_col_squared);
-        copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval, noStd,info.ch3.r_col_absval);
+        copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval, noStd, info.ch2.r_col_absval);
+        copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd, info.ch3.r_col_squared);
+        copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval, noStd, info.ch3.r_col_absval);
     }
 
 }  // namespace template_generation_detail
@@ -339,14 +339,15 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
     // message per bin. Declared out here because the summary is printed after
     // the channel loop; atomic because the bin loop inside it is an omp
     // parallel-for.
-    std::atomic<int> nRecovered{ 0 };   // target column taken from the template
+    // nRecovered is gone with the beat-based reference it counted: the target
+    // column now always comes from the median template, so there is no
+    // recovery to report.
     std::atomic<int> nNoAlign{ 0 };     // nothing moved: this bin equals R
 
     for (const auto& ch : channels) {
         auto it = beats.per_channel_beats.find(ch.key);
         if (it == beats.per_channel_beats.end()) continue;
         auto& perBin = it->second;
-        const auto refIt = beats.per_channel_ref_index.find(ch.key);
         // Bins are independent (each iteration touches only store[i], bins[i],
         // perBin[i]), so align them in parallel -- this is the dominant cost
         // of an anchor step. int index for OpenMP.
@@ -371,41 +372,31 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
             const int r_anchor = blk.r_col;
             AnchorLocator locate = make_anchor_locator(anchor, r_anchor, fs);
 
-            int refIdx = (refIt != beats.per_channel_ref_index.end()
-                && i < refIt->second.size()) ? refIt->second[i] : -1;
-            const std::vector<double>* refP =
-                (refIdx >= 0 && refIdx < (int)perBin[i].size())
-                ? &perBin[i][refIdx] : &blk.ecgTemplate;
-
-            // ---- LOCATE THE ANCHOR ON THE TEMPLATE WHEN THE BEAT FAILS ----
+            // ---- THE ANCHOR'S TARGET COLUMN COMES OFF THE TEMPLATE ----
             //
-            // The reference is ONE arbitrary beat, chosen for having the median
-            // length. That is the right choice for framing -- it is why no beat
-            // gets clipped -- but it is a poor signal to detect a P wave on: a
-            // single beat carries the full noise, and compute_p_begin returned
-            // -1 on roughly half the bins. align_beat_matrix wraps its whole
-            // shift loop in `if (marker >= 0)`, so one failed detection on that
-            // one beat silently turned the entire bin's alignment into a no-op
-            // and produced an anchor template byte-identical to R.
+            // NOT OFF ONE BEAT, WHICH IS WHAT THIS USED TO DO. The reference
+            // was per_channel_ref_index[i] -- ONE arbitrary beat, chosen for
+            // having the bin's median RR. That is the right choice for framing
+            // (median_length is what sizes the matrix so no beat is clipped)
+            // and a poor signal to detect a P wave on: a single beat carries
+            // the full noise, and compute_p_begin returned -1 on roughly half
+            // the bins. align_beat_matrix wraps its whole shift loop in
+            // `if (marker >= 0)`, so one failed detection on that one beat
+            // silently turned the entire bin's alignment into a no-op and
+            // produced an anchor template byte-identical to R.
+            //
+            // There was already a fallback to blk.ecgTemplate for exactly that
+            // case; it is now the only path. The argument for it was always
+            // unconditional.
             //
             // blk.ecgTemplate is the column-wise median of every beat in the
             // bin -- the same waveform, with the noise averaged down by sqrt(n).
-            // If the landmark is findable anywhere it is findable there. So when
-            // the beat-based reference fails, fall back to the template for the
-            // TARGET COLUMN only; the beats themselves are still located
-            // individually and shifted onto it.
+            // If the landmark is findable anywhere it is findable there.
             //
-            // Only on failure, not always: the beat and the template can differ
-            // in length, and the target column has to be inside the frame the
-            // beats are padded to.
-            if (!(locate(*refP) >= 0.0)
-                && !blk.ecgTemplate.empty()
-                && blk.ecgTemplate.size() == refP->size()
-                && locate(blk.ecgTemplate) >= 0.0) {
-                refP = &blk.ecgTemplate;
-                ++nRecovered;   // recovered, not failed -- see the summary line
-            }
-            const std::vector<double>& ref_beat_of_median_length = *refP;
+            // THE TARGET COLUMN ONLY. The beats themselves are still located
+            // individually and shifted onto this column; nothing here changes
+            // what a beat's own landmark is.
+            const std::vector<double>& ref_beat_of_median_length = blk.ecgTemplate;
 
 
             // ---- WHICH ROWS THE MEDIAN MAY DRAW ON --------------------
@@ -577,7 +568,7 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
                     auto& st = outSlots[sl];
                     st.n_members = static_cast<uint32_t>(mem.size());
                     st.tmpl.assign(W, std::numeric_limits<double>::quiet_NaN());
-                    st.tmpl_iqr.assign(W, std::numeric_limits<double>::quiet_NaN());
+                    st.tmpl_std.assign(W, std::numeric_limits<double>::quiet_NaN());
                     for (size_t c2 = 0; c2 < W; ++c2) {
                         col.clear();
                         for (const uint32_t m : mem) {
@@ -597,7 +588,7 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
                             mu /= static_cast<double>(col.size());
                             double ss = 0.0;
                             for (double x : col) ss += (x - mu) * (x - mu);
-                            st.tmpl_iqr[c2] =
+                            st.tmpl_std[c2] =
                                 std::sqrt(ss / static_cast<double>(col.size() - 1));
                         }
                     }
@@ -611,15 +602,12 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
 
     // ---- ONE LINE PER ANCHOR --------------------------------------------
     //
-    // recovered = the landmark was not findable on that bin's reference BEAT,
-    // so the target column came from its median template instead and the
-    // alignment ran normally. That is the fallback working, not a failure.
-    //
     // no-align = nothing moved at all, so that bin's template is a copy of the
-    // R one. This is the only number that means something went wrong.
+    // R one. The landmark was not findable on the median template either, which
+    // is the only remaining way this can happen and the only number here that
+    // means something went wrong.
     std::cerr << "  [anchors] " << anchorName_bt(anchor)
         << ": " << tmpl.bins.size() << " bins";
-    if (nRecovered > 0) std::cerr << ", " << nRecovered << " recovered via template";
     if (nNoAlign > 0)   std::cerr << ", " << nNoAlign << " NOT ALIGNED (copy of R)";
     std::cerr << "\n";
 }

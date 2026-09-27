@@ -119,7 +119,7 @@ namespace tbank_ser {
 
         inline void writeTemplate(std::ofstream& f, const tbank::BankTemplate& t) {
             wvecd(f, t.tmpl);
-            wvecd(f, t.tmpl_iqr);
+            wvecd(f, t.tmpl_std);
             w32(f, t.r_col);
             wvecu32(f, t.members);
             w8(f, t.label_code);
@@ -142,7 +142,7 @@ namespace tbank_ser {
         inline tbank::BankTemplate readTemplate(std::ifstream& f) {
             tbank::BankTemplate t;
             t.tmpl = rvecd(f);
-            t.tmpl_iqr = rvecd(f);
+            t.tmpl_std = rvecd(f);
             t.r_col = r32(f);
             t.members = rvecu32(f);
             t.label_code = r8(f);

@@ -298,7 +298,7 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         if (!ps.pulseVariant(homeVariant).built)
             buildPulseVariant(gi, slot, homeVariant,
                 (homeVariant == tbank::PulseAnchor::Peak)
-                ? 100.0 : pctForAlignMode());
+                ? 100.0 : percentage_for_aligning());
         // STILL NOTHING? The variant was refused (no beat matrix, too few
         // rows). Fall back to detecting on the displayed waveform so the bar
         // is movable, which is what the old unconditional seed did.
@@ -325,7 +325,7 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         if (slot < 0 || slot >= (int)tb.ppg_bank.size()) return 0;
         const tbank::BankTemplate& ps = tb.ppg_bank.templates[slot];
         int len = (int)ps.tmpl.size();
-        const int lastOk = sample_extent::lastDrawn(ps.tmpl, ps.tmpl_iqr);
+        const int lastOk = sample_extent::lastDrawn(ps.tmpl, ps.tmpl_std);
         if (lastOk >= 0) len = std::min(len, lastOk + 1);
         const int ecgClip = ecgClipLenFor(tb);
         return (ecgClip > 0) ? std::min(len, ecgClip) : len;

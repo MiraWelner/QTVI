@@ -1249,7 +1249,7 @@ namespace morphology_csv {
                     // the same length as tmpl by construction, and padding it
                     // would put NaNs into a reloaded tmpl_iqr that were never
                     // measured.
-                    detail::writeVecD(f, tp.tmpl_iqr);
+                    detail::writeVecD(f, tp.tmpl_std);
                 }
             }
         }

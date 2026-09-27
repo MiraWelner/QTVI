@@ -342,7 +342,7 @@ namespace tbank {
         // Column-wise NaN-skipping median over members, on the bin's shared
         // axis. Recomputed whenever membership changes (design note 3).
         std::vector<double> tmpl;
-        std::vector<double> tmpl_iqr;      // per-sample spread
+        std::vector<double> tmpl_std;      // per-sample spread
         int                 r_col = -1;
         // +-samples around r_col that the morphology-split correlation is
         // restricted to (0.5 s at the channel rate). <= 0 means unrestricted.
@@ -779,7 +779,7 @@ namespace tbank {
     {
         const double NaN = std::numeric_limits<double>::quiet_NaN();
         t.tmpl.assign(width, NaN);
-        t.tmpl_iqr.assign(width, NaN);
+        t.tmpl_std.assign(width, NaN);
         t.band_lo.assign(width, NaN);
         t.band_hi.assign(width, NaN);
         t.corridor_inherited = false;
@@ -803,26 +803,20 @@ namespace tbank {
             if (col.empty()) continue;
             const size_t n = col.size();
 
-            // nth_element, not sort. Only three order statistics are needed per
-            // column (median, Q1, Q3), and this runs once per column per
-            // template per recompute -- on a 991-member slot 0 across a 200
-            // column axis that is the single hottest loop in the pass. Partial
-            // selection is O(n) against sort's O(n log n) and measured roughly
-            // 3x faster here at these sizes.
+            // nth_element, not sort. One order statistic is needed per column
+            // (the median), and this runs once per column per template per
+            // recompute -- on a 991-member slot 0 across a 200 column axis that
+            // is the single hottest loop in the pass. Partial selection is O(n)
+            // against sort's O(n log n) and measured roughly 3x faster here at
+            // these sizes.
             //
-            // The nth_element calls are ordered low-to-high so each one only
-            // has to partition the range the previous one left, rather than the
-            // whole column again.
-            const size_t iq1 = n / 4;
+            // Q1 AND Q3 ARE NO LONGER SELECTED. They existed only to form the
+            // spread as q3 - q1; the spread is now the per-sample SD, which
+            // needs no order statistic at all. Two of the three nth_element
+            // calls are therefore gone.
             const size_t imid = n / 2;
-            const size_t iq3 = std::min(n - 1, (3 * n) / 4);
-
-            std::nth_element(col.begin(), col.begin() + iq1, col.end());
-            const double q1 = col[iq1];
-            std::nth_element(col.begin() + iq1, col.begin() + imid, col.end());
+            std::nth_element(col.begin(), col.begin() + imid, col.end());
             const double hi_mid = col[imid];
-            std::nth_element(col.begin() + imid, col.begin() + iq3, col.end());
-            const double q3 = col[iq3];
 
             if (n % 2) {
                 t.tmpl[c] = hi_mid;
@@ -836,9 +830,27 @@ namespace tbank {
                     *std::max_element(col.begin(), col.begin() + imid);
                 t.tmpl[c] = 0.5 * (lo_mid + hi_mid);
             }
-            // IQR as the spread measure, consistent with the *_iqr fields
-            // already carried alongside every template in TemplateBin.
-            t.tmpl_iqr[c] = q3 - q1;
+            // PER-SAMPLE SD (ddof = 1), NOT AN IQR, despite the field name.
+            // Every spread carried alongside a template in this pipeline is an
+            // SD -- create_ecg_templates and normalize_template_amplitude
+            // already computed one, and this column used to be a q3 - q1 while
+            // feeding the same field, so the field's contents depended on which
+            // producer filled it. For a normal column IQR is about 1.35 SD, so
+            // the two were roughly 35% apart in the same units and any
+            // threshold compared against the field was right for only one of
+            // them (see kAutoFootIqrMax).
+            //
+            // n < 2 leaves 0.0: one observation has no spread, and a NaN here
+            // would propagate into every band drawn from it.
+            if (n >= 2) {
+                double mean = 0.0;
+                for (double v : col) mean += v;
+                mean /= static_cast<double>(n);
+                double sumsq = 0.0;
+                for (double v : col) sumsq += (v - mean) * (v - mean);
+                t.tmpl_std[c] =
+                    std::sqrt(sumsq / static_cast<double>(n - 1));
+            }
 
             // --- the 2.5/97.5 corridor -------------------------------------
             if (own_corridor) {

@@ -127,7 +127,7 @@ void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
             clearFocusPanels();
             return;
         }
-        meanRaw = &ps->tmpl;           iqrRaw = &ps->tmpl_iqr;
+        meanRaw = &ps->tmpl;           iqrRaw = &ps->tmpl_std;
         // THE SLOT'S OWN FOOT, not the bin's. The perfusion transform divides
         // by the value AT this column, and b.ppg_onset was measured on
         // b.ppgTemplate -- a different pulse. showPage normalizes the same
@@ -137,13 +137,13 @@ void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
         nPulseBeats = ps->memberCount();
     }
     else if (BinPlotWidget::markerIsAbp(marker)) {
-        meanRaw = &b.abpTemplate;      iqrRaw = &b.abpTemplate_iqr;      pulseChan = 1; footIdx = b.abp_onset;      chLabel = "ABP";
+        meanRaw = &b.abpTemplate;      iqrRaw = &b.abp_template_std;      pulseChan = 1; footIdx = b.abp_onset;      chLabel = "ABP";
     }
     else if (BinPlotWidget::markerIsArt(marker)) {
-        meanRaw = &b.artTemplate;      iqrRaw = &b.artTemplate_iqr;      pulseChan = 2; footIdx = b.art_onset;      chLabel = "ART";
+        meanRaw = &b.artTemplate;      iqrRaw = &b.art_template_std;      pulseChan = 2; footIdx = b.art_onset;      chLabel = "ART";
     }
     else if (BinPlotWidget::markerIsArtPulm(marker)) {
-        meanRaw = &b.artPulmTemplate;  iqrRaw = &b.artPulmTemplate_iqr;  pulseChan = 3; footIdx = b.art_pulm_onset; chLabel = "ART_PULM";
+        meanRaw = &b.artPulmTemplate;  iqrRaw = &b.art_pulm_template_std;  pulseChan = 3; footIdx = b.art_pulm_onset; chLabel = "ART_PULM";
     }
     if (!meanRaw || meanRaw->empty()) { clearFocusPanels(); return; }
 
@@ -299,6 +299,17 @@ void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
     const SdMsModel sm = sd_in_msec(mean, sd, m_ppgRateHz);
     zoomed_in_section_top->setFocus(mean, sd, nBeats, static_cast<int>(col),
         chLabel + " " + pulseLabel(marker));
+    // FOOTER UNITS, PER CHANNEL. A column is 1/rate of a second and the four
+    // pulse channels do not share a rate, so the rate has to be this trace's
+    // own or the reported time is wrong for three of them. Without this the
+    // panel's rate stays 0 and the footer falls back to printing raw column
+    // indices, which is the honest reading of an unknown rate and not what
+    // anyone wants to read.
+    zoomed_in_section_top->setSampleRate(
+        (pulseChan == 0) ? m_ppgRateHz
+        : (pulseChan == 1) ? m_abpRateHz
+        : (pulseChan == 2) ? m_artRateHz
+        : (pulseChan == 3) ? m_artPulmRateHz : 0.0);
     // AFTER setFocus, which clears it. The bar line stays up for as long as a
     // movable pulse bar (onset / dicrotic / end) is the focus; the auto-only
     // glyphs -- T50, peak, peak2, T80 -- get -1 and no line, because their
@@ -607,6 +618,7 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
             setFocusSplit(true);
             if (zoomed_in_section_top) {
                 zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head + QStringLiteral("  (QRS)"), 100, -1);
+                zoomed_in_section_top->setSampleRate(m_sampleRate);
                 // AFTER setFocus, which clears it. The J point is a bar,
                 // always, so no isDraggableMarker test -- and BOTH panels get
                 // it: they are two framings of one landmark, so the bar is in
@@ -619,6 +631,7 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
             }
             if (zoomed_in_section_bottom) {
                 zoomed_in_section_bottom->setFocus(mean, sd, nBeats, colHere, head + QStringLiteral("  (JT)"), 100, +1);
+                zoomed_in_section_bottom->setSampleRate(m_sampleRate);
                 zoomed_in_section_bottom->setUserFiducial(colHere);
                 zoomed_in_section_bottom->setFitKind(FocusPanelWidget::FitKind::Transition);
                 zoomed_in_section_bottom->setTransitionCandidates(transCand);
@@ -630,6 +643,15 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
             // Peaks (R/P/Q/T) draw their tested candidates; onsets/offsets draw
             // theirs. peakSigma MUST match the detector's per-landmark sigma so
             // the drawn quadratic/cubic are the same fits that placed the mark.
+            //
+            // P AND T ARE PEAKS TOO. Both are bracketed coarsely and then
+            // refined by the same contest, so both have a curve to draw. T used
+            // to be excluded from the peakCand fill below while still counting
+            // as a peak here, which set FitKind::PeakQuadratic against an
+            // invalid candidate set: candidateCurves returned nothing AND the
+            // header's model-name line took the branch that iterates
+            // candidates, found none, and printed nothing. No curve, no
+            // explanation. Their candidates now come off the reactive pass.
             const bool isPeak =
                 (marker == BinPlotWidget::EcgRPeak
                     || marker == BinPlotWidget::EcgPPeak
@@ -641,12 +663,17 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
             // instead of an X, and the reason lm.q_peak comes back -1. Neither
             // the Q onset nor the Q peak was placed by a curve, so the panel
             // must not draw candidates for them.
+            //
+            // Fallback, NOT None. None is for a landmark no contest was ever
+            // meant to place; this one was, and could not. The panel draws a
+            // flat level and names the rule, so an empty panel cannot be read
+            // as the curve fitting having silently failed.
             const bool qUnfound =
                 (marker == BinPlotWidget::EcgQBegin
                     || marker == BinPlotWidget::EcgQPeak)
                 && !qOnsetFound;
             const FocusPanelWidget::FitKind fk = qUnfound
-                ? FocusPanelWidget::FitKind::None
+                ? FocusPanelWidget::FitKind::Fallback
                 : (isPeak ? FocusPanelWidget::FitKind::PeakQuadratic
                     : FocusPanelWidget::FitKind::Transition);
             // Fit window for this landmark, from the shared table. Only read
@@ -674,15 +701,16 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
                 // the fitted curves, on `mean`, so their amplitudes are in the
                 // units it draws.
                 //
-                // T-peak excluded: it is a reactive glyph, defined by the
-                // S-end / T-end brackets rather than by a fit of its own.
+                // T INCLUDED. peakCandidatesFor(T) now returns the reactive
+                // pass's own refinement contest, so there is a curve to draw
+                // and it is the one that placed the glyph.
                 //
                 // pw IS TESTED AGAIN HERE, not inherited from the block above:
                 // without it a destroyed panel reaches a `->`, which is the
                 // access violation on switching alignment -- the switch tears
                 // the panels down and the re-fire hands this function the
                 // stale pointer.
-                if (pw && whichPeak != EcgPeak::T) {
+                if (pw) {
                     peakCand = pw->peakCandidatesFor(whichPeak);
                     // Coefficients are in the RAW array's amplitude units while
                     // this panel draws the /ref-normalized copy; positions are
@@ -696,6 +724,9 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
             if (zoomed_in_section_bottom) zoomed_in_section_bottom->clearFocus();
             if (zoomed_in_section_top) {
                 zoomed_in_section_top->setFocus(mean, sd, nBeats, colHere, head, 100, 0);
+                // m_sampleRate is the ECG rate; see the pulse branch for why
+                // this is per channel rather than one panel-wide constant.
+                zoomed_in_section_top->setSampleRate(m_sampleRate);
                 // AFTER setFocus, which clears it. -1 for the glyph-only
                 // landmarks (R/P/Q/T peak): they are the detector's answer,
                 // have no operator position, and a bar drawn at their column

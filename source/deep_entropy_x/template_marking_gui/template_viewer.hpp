@@ -3,7 +3,7 @@
 #include <QMainWindow>
 #include <QEvent>
 #include <QPointer>
-#include <QElapsedTimer>   // drag repaint clock; see flushDragRepaints
+#include <QElapsedTimer> 
 #include <vector>
 #include <utility>
 #include <map>
@@ -22,7 +22,7 @@
 #include <QFileInfo>
 #include <QFile>
 #include <QCheckBox>
-#include <QSpinBox>   // ppg_align_percent, wired in template_viewer_setup.cpp
+#include <QSpinBox> 
 #include <QDockWidget>
 #include <QVBoxLayout>
 #include <QShortcut>
@@ -60,10 +60,7 @@
 #include "peak_finding/FilterUtils.hpp"
 #include "logging/boundary_training_log.hpp"
 
-// addVcgPanel takes one by const reference and nothing here needs its
-// layout, so a declaration is enough -- global_intervals.hpp is included
-// in the .cpp, and keeping it out of this header keeps it out of every
-// TU that only wants TemplateViewerWindow.
+//forward declares the earliest onset and latest offset of qrs complex
 namespace global_intervals { struct GlobalIntervals; }
 
 class QVBoxLayout;
@@ -186,12 +183,6 @@ public slots:
 
 private slots:
     void onMarkerMovedOnTemplate(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
-
-    // END OF THE GESTURE, not every step of it. Only the pulse foot bar does
-    // anything here: releasing it re-stacks that slot's pulse about the
-    // corrected column (relevelPulseAtFoot). Every other bar's consequences
-    // are reactive and were applied during the drag, so this returns at once
-    // for them.
     void onMarkerReleasedOnTemplate(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
     void movePpgMarker(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
     void moveEcgMarker(int binIdx, int leadIdx, int templateIdx, int marker, int newIdx);
@@ -214,75 +205,18 @@ private slots:
 private:
     struct Lead {
         const std::vector<double>* ecg;
-        // THE SPREAD THAT DESCRIBES THAT TRACE, not the bin's. showPage used to
-        // pick this by channel -- b.chN.ecg_template_raw_iqr -- while the trace
-        // came from a bank slot, so the band around a slot's waveform was the
-        // whole bin's spread. It is also what recomputeFrame's tail trim reads,
-        // so a mismatched spread moved the drawn extent of a trace it did not
-        // describe. Travels with the trace now; null means none.
-        const std::vector<double>* ecgIqr = nullptr;
+        const std::vector<double>* ecg_std = nullptr;
         int channelIndex;
         QString label;
-        // Beats in THIS bank member, not in the bin. The panel title reports
-        // it, so it has to travel with the lead rather than being looked up
-        // from the bin later -- a bin-level count is a different number and
-        // showing one where the other is meant is not visibly wrong.
-        // 0 means "unknown": the pre-bank fallback path, where only the bin
-        // total exists.
         int nMembers = 0;
     };
 
     std::vector<Lead> leadsForBin(const TemplateBin& b) const;
-
-    // Leads for one BANK MEMBER of a bin. templateIdx 0 is the sinus seed and
-    // returns the chN_raw templates exactly as leadsForBin() does, so a bin
-    // with no bank behaves identically to before. Higher indices return that
-    // channel's bank template, and a channel whose bank is shorter contributes
-    // no lead -- channels are allowed to disagree on template count, so the
-    // grid is ragged by design.
-    std::vector<Lead> leadsForBinTemplate(const TemplateBin& b,
-        int templateIdx) const;
-
-    // Number of grid columns a bin needs: 1 + the highest bank index that earns
-    // a column on any channel. Both pagination and layout must call this same
-    // function or the two disagree about where a bin's columns end.
-    // Bank slots in this bin that want landmark marking, sparse and ascending,
-    // always starting with slot 0. Replaces columnsForBin(), which returned a
-    // count and could therefore only describe a contiguous prefix.
+    std::vector<Lead> leadsForBinTemplate(const TemplateBin& b, int templateIdx) const;
     std::vector<int> markingSlotsForBin(const TemplateBin& b) const;
-
-    // ---- showPage() helpers ---------------------------------------------
-    // Lifted out of showPage() verbatim. They were the two blocks at its head
-    // with no dependency on anything the panel loop builds, so they are the
-    // part of a 480-line function that could be moved without a compiler in
-    // hand. Both const: they read m_bins and the page table and build a value.
-
-    /// This page's (global bin index, template index) columns, in draw order.
-    /// A window onto m_columnTable: `start` and `count` are COLUMN indices,
-    /// so a bin's columns can straddle a page boundary.
     std::vector<std::pair<int, int>> pageColumns(int start, int count) const;
-
-    /// Grid row count for this page, from the page's own column list. The
-    /// bins on the page are read off it rather than passed separately: a
-    /// page is a column range now and has no single bin range.
-    int pageGridRows(bool compact,
-        const std::vector<std::pair<int, int>>& cols) const;
-
-    /// The VCG panel on the bottom row of one column. Display only -- no
-    /// markers, no marker signals. Takes what it draws explicitly rather than
-    /// reading it back off the window, so it cannot disagree with the lead
-    /// panels above it about which alignment or axis it is on.
-    void addVcgPanel(int gi, int column, int gridRows, const TemplateBin& b,
-        const std::vector<double>& vcgTrace, double vcgRCol,
-        const global_intervals::GlobalIntervals& intervals,
-        std::vector<BinPlotWidget*>& group, int& usedRows, int& usedCols);
-
-    // The union of all four alignments' (P/Q/R/J) ECG extents for one
-    // (bin, lead, template), in seconds relative to R. Passed to
-    // BinPlotWidget::setEcgFrame so the x-axis holds the same window whichever
-    // anchor is displayed. Returns false (and leaves the outs untouched) when
-    // no anchor has a drawable average, in which case the caller lets the
-    // widget size the frame from the trace as before.
+    int pageGridRows(bool compact,  const std::vector<std::pair<int, int>>& cols) const;
+    void addVcgPanel(int gi, int column, int gridRows, const TemplateBin& b,  const std::vector<double>& vcgTrace, double vcgRCol,  const global_intervals::GlobalIntervals& intervals, std::vector<BinPlotWidget*>& group, int& usedRows, int& usedCols);
     bool unionEcgFrameSeconds(const TemplateBin& b, int lead, int templateIdx, double& tMinSec, double& tMaxSec) const;
 
     // Section 4.6 class confirmation, from BinPlotWidget::classConfirmRequested.
@@ -313,19 +247,7 @@ private:
 
     void showPage();
 
-    // ---- ONE DEFINITION OF "THE DISPLAY-READY PULSE" --------------------
-    //
-    // showPage built the notch + normalize + band sequence inline, and the
-    // operator re-stack needs the identical sequence to push a new trace into
-    // a live panel. Two copies of it is how a re-stacked pulse would end up
-    // normalized against a different foot from the one the page drew it
-    // against, so both call these.
-    //
-    // maybeNotchTrace: the display-time notch, with the rebase that keeps
-    // normalize_pulse_trace's divisor stable. A no-op unless the notch_filter
-    // box is ticked and loadSubject was given a frequency.
-    std::vector<double> maybeNotchTrace(const std::vector<double>& sig,
-        double fs, double footIdx) const;
+    std::vector<double> maybeNotchTrace(const std::vector<double>& sig,  double fs, double footIdx) const;
 
     // The trace, its band and the foot they are both measured against, for one
     // pulse-bank slot. Seeds the slot's pulse marks if they have never been
@@ -512,26 +434,7 @@ private:
     // selected by BIC). Recomputed at save, same window convention as the
     // boundary log.
     void writeLandmarkFitsCsv(const std::string& dir);
-
-    // ---- EXPORT LANDMARK CACHE ------------------------------------------
-    // alignedLandmarks() is a pure function of one alignment's average, its R
-    // column and the sample rate -- and the Finish export called it
-    // bins x 3 leads x 9 times: twice per bin per lead inside
-    // buildAlignedTemplateCsv (two consecutive `for c` loops asked for the
-    // same thing), once per each of the four anchors, and once more in
-    // writeLandmarkFitsCsv. Nothing in between changes its inputs; the
-    // operator moves bars, not templates.
-    //
-    // So it is computed once, across cores, and read from thereafter:
-    // bins x 3 x 4 detections instead of bins x 3 x 9, in parallel.
-    //
-    // Indexed by position in anchor_view::kAllAnchors, NOT by AnchorType's
-    // numeric value -- a std::map would have to be written to from the
-    // parallel fill, and std::map is not safe to index concurrently even when
-    // no insertion happens. A fixed array of pre-sized vectors has no such
-    // question: every element exists before the first worker starts.
-    std::array<std::vector<std::array<FeatureMarks::TemplateLandmarks, 3>>, 4>
-        m_exportLm;
+    std::array<std::vector<std::array<FeatureMarks::TemplateLandmarks, 3>>, 4>  m_exportLm;
 
     static int anchorSlot(AnchorType a);
     void primeExportLandmarks();
@@ -539,15 +442,6 @@ private:
         exportLandmarks(std::size_t bi, int lead, AnchorType a) const;
     void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
-
-    // Pushes the current bin's markings into every plot showing it.
-    // Used when a PPG marker drags (which propagates across channels).
-    // The ONE place a bin's marker positions and autodetect columns are
-    // pushed into a plot widget. Both the initial page build (showPage) and
-    // every later refresh go through it, so the bars and the glyphs are always
-    // written from the same TemplateBin in the same call.
-    // The per-bin half: arterial bars, alignment badge, glyph snapshot. Called
-    // only by applyTemplateToWidget.
     void applyBinCommonToWidget(BinPlotWidget* pw, const TemplateBin& b);
     void refreshBinMarkers(int binIdx);
 
@@ -556,23 +450,11 @@ private:
     // templateIdx 0 forwards to refreshBinMarkers, since slot 0 is the one
     // column that does carry the bin's marker set.
     void refreshBankMarkers(int binIdx, int templateIdx);
-    //if you don't refresh, after switching from j alingnment to another alignment, the focus panel will still show the j alignment
-    // pw IS THE PANEL THE FOCUS IS ABOUT, and it is where the landmark
-    // columns come from: BinPlotWidget::detectedLandmarks() / reactiveGlyphs()
-    // are the detection the X glyphs are drawn at. This used to re-detect here
-    // instead, so the focus mark and the glyph were two answers.
-    // No default: every call site must say which panel it means. nullptr is
-    // allowed and falls back to m_focusWidget (the re-fire paths).
     void refreshFocus(BinPlotWidget* pw, int binIdx, int leadIdx, int templateIdx, int marker, double col);
     void pageIn();   // showPage, re-seeding this page with active fit modes first
 
     FocusPanelWidget* zoomed_in_section_top = nullptr; //for most close ups, they only use focus top
     FocusPanelWidget* zoomed_in_section_bottom = nullptr;   // J point only - the bottom panel is used to show the JT segment (top is QRS)
-    // View-only override. When m_forceAlign is set the focus panel shows
-    // m_forcedAlign whichever bar is clicked; otherwise the alignment follows
-    // the bar. NOT read by any writer -- the CSVs iterate kAllAnchors on their
-    // own and a dragged bar is stored against anchor_view::anchorFor, so this
-    // cannot change an output value.
     bool m_forceAlign = false;
     AnchorType m_forcedAlign = AnchorType::R_PEAK;
     void wireAlignButtons();
@@ -585,98 +467,25 @@ private:
     // chances for one of them to forget the focus refresh.
     void applyAlignmentSelection(bool force, AnchorType a);
 
-    // ---- "Align PPG Horizontal" -----------------------------------------
-    //
-    // Auto    PER COLUMN: the foot, unless the stack at the foot is tighter
-    //         than kAutoFootIqrMax, in which case kAutoFallbackPct up the
-    //         upstroke. See autoPctForSlot.
-    //
-    //         IT NO LONGER MEANS "AS BUILT". It used to be exactly the
-    //         stacking extract_ppg_beats_and_align produced -- every beat on
-    //         the median up50 column -- and it re-stacked nothing, putting
-    //         back any column a gesture had changed (restorePulseAsBuilt).
-    //         That made it free, and it made the radio group a place the
-    //         operator could always return to. Auto now re-stacks like any
-    //         other position, which costs a beat-matrix median per visible
-    //         column on every page turn, and leaves restorePulseAsBuilt with
-    //         no caller: if "as built" is still wanted it should be a fourth
-    //         position of its own rather than folded back in here, because
-    //         the two answers are different waveforms and one control cannot
-    //         name both.
-    // Foot    every beat's own trough, at the operator's foot column.
-    //         Percent(0) is the same alignment; see below.
-    // Percent m_ppgAlignPercent percent UP THE UPSTROKE IN AMPLITUDE: the
-    //         first column at which the pulse reaches
-    //         foot_y + pct/100 * (peak_y - foot_y). So 0 IS the foot -- Foot
-    //         and Percent(0) are one alignment and deliberately not two code
-    //         paths -- and 10 is a tenth of the way up the systolic rise.
-    //
-    // IN AMPLITUDE AND NOT IN TIME, because upstroke DURATION varies with rate
-    // and contractility while the fraction of the rise does not: a time
-    // fraction would be a different physiological instant on every beat and
-    // would smear the feature it was meant to sharpen.
-    //
-    // WHY THE FRACTION IS WORTH A CONTROL. The foot is the worst-conditioned
-    // landmark on a pulse -- a turning point, zero slope through it by
-    // definition, tens of milliseconds of movement per millivolt of noise.
-    // Partway up the upstroke the slope is steepest and the same noise moves
-    // the crossing by almost nothing, which is why the build itself aligns on
-    // a half-rise point rather than the trough.
-    // Peak    the systolic peak, which is Percent(100) and is implemented as
-    //         exactly that: upstrokePctCol's target at pct = 100 is
-    //         foot_y + 1.0 * (peak_y - foot_y), so first_crossing lands on the
-    //         apex. A separate anchor here would be a second definition of
-    //         "the peak" alongside detect_ppg_upstroke_peak's, and the two
-    //         would drift.
-    //
-    //         IT WAS IN THE .ui AND NOT IN THIS ENUM. ppg_peak_align existed
-    //         as a radio button with no enumerator, no entry in
-    //         wirePpgAlignButtons' table and no handler, so clicking it did
-    //         nothing -- and until its buttonGroup attribute was added it did
-    //         not even uncheck the others, leaving two positions lit at once.
     enum class PpgAlign { Auto, Foot, Percent, Peak };
     PpgAlign m_ppgAlignMode = PpgAlign::Auto;
     int      m_ppgAlignPercent = 0;
 
-    // ---- WHAT "Auto" DECIDES WITH ---------------------------------------
-    //
-    // kAutoFootIqrMax is in tmpl_iqr's units: RAW AMPLITUDE, q3 - q1, the
-    // same units as tmpl -- NOT the perfusion band on screen, which is this
-    // divided by the foot amplitude (pulseTraceForSlot), a factor that runs
-    // into the hundreds on a pulse whose stored baseline is near zero. Retune
-    // it against slot.tmpl_iqr values, never against the panel.
-    //
-    // The window is a span about the foot rather than the foot column alone,
-    // because one column of a median spread is as noisy as the foot itself is
-    // -- which is the whole reason this control exists.
-    static constexpr double kAutoFootIqrMax = 0.01;
-    static constexpr int    kAutoFallbackPct = 10;
-    static constexpr double kAutoIqrWindowSec = 0.030;   // +-30 ms about the foot
 
-    // 0 (the foot) or kAutoFallbackPct, for one slot. Reads the BUILD'S
-    // spread, not the slot's current one -- see the definition.
-    int autoPctForSlot(int binIdx, int templateIdx,
-        const tbank::BankTemplate& slot, double footCol) const;
+    //sometimes the foot is noisy, and so rather than vertical align around foot, it vertical aligns a bit ahead.
+    static constexpr double max_foot_std_to_trigger_looking_ahead = 0.01;
+    static constexpr int    percent_up_upstroke_to_go_if_noisy = 10;
+    static constexpr double region_around_foot_to_measure_std = 0.030;   // +-30 ms about the foot
 
-    // THE PERCENTAGE THE MODE ASKS FOR, in the units relevelPulseAtPct and
-    // ppg_realign::upstrokePctCol take: 0 = the foot, 100 = the peak.
-    //
-    // WHY THIS FUNCTION EXISTS. m_ppgAlignPercent was written by the spin box
-    // and read by nothing but the spin box: realignAllVisiblePulses passed -1
-    // for every mode except Auto, relevelPulseAtPct handed that straight to
-    // relevelAtOwnCrossing, and `(pct > 0.0) ? pct : 0.0` there turned it into
-    // the foot. So Percent produced the same waveform as Foot whatever number
-    // was in the box, and Peak produced nothing at all. One lookup, in one
-    // place, so no caller can forget it again.
-    double pctForAlignMode() const {
+    //right now either p or q
+    int which_alignment_fiducial_marker_should_auto_use(int binIdx, int templateIdx,  const tbank::BankTemplate& slot, double footCol) const;
+
+    //without this, the percentage box is never read
+    double percentage_for_aligning() const {
         switch (m_ppgAlignMode) {
         case PpgAlign::Foot:    return 0.0;
         case PpgAlign::Percent: return static_cast<double>(m_ppgAlignPercent);
         case PpgAlign::Peak:    return 100.0;
-            // AUTO NEVER ARRIVES HERE. It decides per column in
-            // realignAllVisiblePulses (autoPctForSlot) and passes its answer down
-            // as an explicit override, because there is no control holding it.
-            // Returning the foot is the safe reading if it ever does.
         case PpgAlign::Auto:
         default:                return 0.0;
         }
@@ -712,31 +521,7 @@ private:
     // separate things and reading one from the other's state is how they end
     // up quietly coupled.
     AnchorType m_autoGridAnchor = AnchorType::R_PEAK;
-
-    // Cache of the last focused landmark's detector fit, so a drag (which
-    // re-fires refreshFocus every mouse-move) reuses it instead of re-running
-    // detect_template_landmarks each time. Keyed by (bin,slot,lead,marker,anchor).
-    // The panel the current focus belongs to, for the re-fire paths (a
-    // fit-mode change, an alignment change) that have no widget of their own.
-    // QPointer, NOT a raw pointer. clearPlots() deleteLater()s every panel on
-    // each page build and on each alignment re-skin, so a raw pointer held
-    // across one of those is dangling -- and the re-fire paths
-    // (fit-mode change, alignment change) pass exactly this pointer straight
-    // into refreshFocus. QPointer nulls itself when the widget is destroyed,
-    // which turns a use-after-free into the "no panel named" path that
-    // refreshFocus already handles.
     QPointer<BinPlotWidget> m_focusWidget;
-    // m_lastTransKey / m_lastTransCand / m_lastDet ARE GONE with the
-    // duplicate detection they cached: BinPlotWidget caches its own
-    // detection on the trace, and refreshFocus reads that.
-
-    // THE DETECTION, not the finished position: P and T peak are bracketed by
-    // the operator's bars, which move without changing this key, so caching
-    // the column replayed a pre-drag fiducial. Re-bracketed per call.
-
-    // Operator-selected fit models (the on/offset and Fit-Peaks radio groups).
-    // Auto = the BIC contest; any other value forces that model so the focus
-    // fit (and, after a re-seed, the placement) follows the radio.
     curve_fit::FitMode     m_onOffsetFitMode = curve_fit::FitMode::Auto;
     curve_fit::PeakFitMode m_peakFitMode = curve_fit::PeakFitMode::Auto;
     // Last focused landmark, so a fit-mode change re-runs refreshFocus in place.
@@ -760,19 +545,7 @@ private:
     // per-panel body re-detects glyphs, so a whole-page re-skin to show a
     // change in one column is 36 detections to redraw one.
     void reskinGridForAnchor(int onlyBin = -1, int onlySlot = -1);
-
-    // Advance the forced alignment one step round P -> Q -> R -> J -> P.
-    // Prefers checking the matching radio button, so the visible selection
-    // cannot drift from m_forcedAlign; falls back to applyAlignmentSelection
-    // when that button is not in the .ui.
-    void cycleAlignment(int step);
-
-    // Tab / Shift+Tab, filtered at the application level rather than bound as
-    // a QShortcut. Tab is consumed by focus navigation inside whichever child
-    // has focus -- a radio button, the page buttons -- so a window-context
-    // shortcut fires only some of the time depending on where the operator
-    // last clicked. The filter sees the key first, every time, and eats it so
-    // focus does not also move.
+    void cycleAlignment(int step); //move to next alignement if user presses tab
     bool eventFilter(QObject* obj, QEvent* ev) override;
 
     // Last focus selection, so a button press redraws the same landmark
@@ -785,29 +558,11 @@ private:
 
     QVBoxLayout* m_focusLay = nullptr;
     void setFocusSplit(bool split);
-
-    // Operator-confirmed boundary training data (Section 9.10). Destination
-    // set via setBoundaryTrainingDir (from cfg.training_log). logBoundary is
-    // called at the B2 focus-mode confirmation point.
     boundary_training::BoundaryTrainingLog m_boundaryLog;
 
-    // Operator-touched landmark positions, keyed by (binIdx, leadIdx, marker)
-    // packed into a single int, value = the bar position at the click. Filled
-    // in onLandmarkSelected (focus activation = bar click). logBoundaryTrainingAtSave
-    // reads this to fill confirmedIndex; landmarks never clicked stay blank.
-    // VALUE IS A DOUBLE: the click position is sub-sample. Only
-    // logBoundaryTrainingAtSave rounds it, where the record needs a whole
-    // sample offset into its own segment.
     std::map<long long, double> m_touchedMarks;
-    // ANCHOR IS PART OF THE KEY. A bar is one cell of the (alignment,
-    // landmark) grid, so "the operator confirmed p_begin" is only meaningful
-    // together with the alignment it was confirmed on -- p_begin under P and
-    // p_begin under R are different bars on different waveforms. Without the
-    // anchor, touching one marked all four as ground truth.
-    static long long touchKey(int binIdx, int leadIdx, int marker,
-        AnchorType a) {
-        return (((long long)binIdx * 100 + leadIdx) * 100 + marker) * 8
-            + static_cast<int>(a);
+    static long long touchKey(int binIdx, int leadIdx, int marker,  AnchorType a) {
+        return (((long long)binIdx * 100 + leadIdx) * 100 + marker) * 8  + static_cast<int>(a);
     }
 
     // Log boundary training data for all landmarks at save (auto_detect from
@@ -863,32 +618,9 @@ private:
     // each of the propagation paths. -1 when the bin has no drawable extent.
     double binSpanSeconds(int binIdx) const;
 
-    // Both focus panels to "nothing selected". Five sites had the three lines
-    // written out, and two of them cleared only one panel.
     void clearFocusPanels();
+    tbank::BankMarkerSet barsForPanel(const BinPlotWidget* pw,  const TemplateBin& b, int lead, int slot) const;
 
-    // THE BARS THIS PANEL DRAWS. In a FORCED alignment that is the alignment's
-    // own set, untranslated: every cell in it was measured on the waveform
-    // currently on screen, so there is no frame to convert from. In Automatic
-    // nobody has chosen, so userMarks assembles each bar's canonical copy and
-    // translates those into the drawn frame, exactly as before.
-    // The panel supplies the detection; the cell supplies operator edits.
-    // See the definition -- this is the only source of bar positions.
-    tbank::BankMarkerSet barsForPanel(const BinPlotWidget* pw,
-        const TemplateBin& b, int lead, int slot) const;
-
-    // The pulse/arterial half of refreshFocus. Foot-anchored, no alignment
-    // dimension, one panel -- it shares nothing with the ECG half but the two
-    // panel pointers, so it is its own function.
-    // ---- THE SD-IN-MSEC MODEL, AND ITS CACHE ---------------------------
-    //
-    // Per-column amplitude SD divided by the template's own |dV/dt| there,
-    // with a slope floor. Computed by sd_in_msec (template_viewer_focus.cpp).
-    //
-    // CACHED because a drag re-fires the focus on every mouse-move with the
-    // same waveform and a different column, and the model is a
-    // Savitzky-Golay pass plus three N-length allocations. The key is what
-    // determines the waveform, so nothing has to be invalidated by hand.
     struct SdMsModel {
         std::vector<double>  sdMs;        // per column, NaN where floored
         std::vector<uint8_t> floorMask;   // 1 where the floor engaged (shaded)
@@ -908,22 +640,6 @@ private:
     SdMsModel m_sdCache;
     SdKey     m_sdCacheKey;
     bool      m_sdCacheValid = false;
-
-    // ---- THE COLUMN-ONLY REFRESH -----------------------------------------
-    //
-    // A drag re-fires refreshFocus on every mouse-move, and everything
-    // focusEcg does except place the crosshair is a function of
-    // (bin, lead, slot, anchor, marker, panel, fit modes) -- NOT of the
-    // column. When the key below is unchanged the only thing that moved is the
-    // bar, so the panels take setLandmarkCol and the rest is skipped: no
-    // scale_array_by_ref pair, no mean/sd/sdMs/floorMask/absSlope copies into
-    // the widget, no candidate re-wrap, no clear-and-re-push of the fits.
-    //
-    // THE FIT MODES ARE IN THE KEY because they change the candidate curves
-    // and the winner without changing the waveform; the PANEL POINTER is in it
-    // because a page rebuild deletes the panels and a new one must re-supply
-    // everything. The mean's LENGTH is kept because the fast path still has to
-    // clamp the column to the trace, and it cannot see the trace.
     struct FocusKey {
         int bin = -1, lead = -1, slot = -1, marker = -1;
         AnchorType anchor = AnchorType::R_PEAK;

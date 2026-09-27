@@ -699,7 +699,7 @@ void TemplateViewerWindow::showPage() {
             // read that band to decide where the trace stopped.
             static const std::vector<double> emptyIqr;
             const std::vector<double>& ecgIqrRaw =
-                leads[li].ecgIqr ? *leads[li].ecgIqr : emptyIqr;
+                leads[li].ecg_std ? *leads[li].ecg_std : emptyIqr;
             const double ecgRef = (lead_index >= 0 && lead_index < 3) ? m_ecgGlobalRef[lead_index] : std::nan("");
             // Both ecgIqrRaw (Q3-Q1 of raw amplitude) and b.ppg_template_iqr
             // (Q3-Q1 of each beat's own local perfusion-index ratio, computed
@@ -827,7 +827,7 @@ void TemplateViewerWindow::showPage() {
             // Arterial traces for marker geometry/bounds. The arterial markers
             // themselves come from applyBinToWidget() with all the others.
             pw->setArterialTraces(abpN, artN, artPN,
-                b.abpTemplate_iqr, b.artTemplate_iqr, b.artPulmTemplate_iqr);
+                b.abp_template_std, b.art_template_std, b.art_pulm_template_std);
 
             // Seed every bar + every autodetect column, in one call, after all
             // traces are in place (the glyph capture needs them).
@@ -1327,7 +1327,7 @@ void TemplateViewerWindow::reskinGridForAnchor(int onlyBin, int onlySlot) {
 
             static const std::vector<double> emptyIqr;
             const std::vector<double>& ecgRaw = *L->ecg;
-            const std::vector<double>& ecgIqrRaw = L->ecgIqr ? *L->ecgIqr : emptyIqr;
+            const std::vector<double>& ecgIqrRaw = L->ecg_std ? *L->ecg_std : emptyIqr;
 
             // ECG notch, footIdx = -1 (no rebase; ECG normalizes by /ref, not a
             // foot) -- the same call showPage makes.

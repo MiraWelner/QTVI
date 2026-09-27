@@ -373,7 +373,7 @@ namespace alignment {
         // CreateEcgTemplates.hpp excludes it from the per-sample amplitude
         // aggregation (median/std) rather than silently contribute an
         // unreliable, unadjusted amplitude.
-        if (out.ref_beat_index >= 0 && out.ref_beat_index < static_cast<int>(out.beats.size()))
+        if (!out.beats.empty())
         {
             const int min_w = std::max(1, static_cast<int>(std::lround(0.010 * fs)));  // 10 ms window
             // RR-fraction bounds for the TP baseline window, and ms-before-R
@@ -471,27 +471,70 @@ namespace alignment {
                 return { tpLvl, tpOk, pqLvl, pqOk };
                 };
 
-            const auto [refTp, refTpOk, refPq, refPqOk] = both_levels(static_cast<size_t>(out.ref_beat_index));
-
             /*Two-pass vertical alignment. - Pass 2: level each beat on the TP segment (end of T to just before onset of
             next P). Estimate level with median over the flattest sub-window bounded by fitted landmarks. - Pass
             3: finalize the zero on the PQ segment (end of P to immediately before Q onset). PQ is the higher-priority reference.*/
-            double refTpTarget = refTpOk ? refTp : std::numeric_limits<double>::quiet_NaN();
-            double refPqTarget = refPqOk ? refPq : std::numeric_limits<double>::quiet_NaN();
-            if (std::isnan(refTpTarget) || std::isnan(refPqTarget)) {
-                for (size_t i = 0; i < out.beats.size(); ++i) {
-                    if (!std::isnan(refTpTarget) && !std::isnan(refPqTarget)) break;
-                    const auto [tTp, tTpOk, tPq, tPqOk] = both_levels(i);
-                    if (tTpOk && std::isnan(refTpTarget)) refTpTarget = tTp;
-                    if (tPqOk && std::isnan(refPqTarget)) refPqTarget = tPq;
-                }
+
+            // ---- EVERY BEAT'S LEVELS, MEASURED ONCE -------------------
+            //
+            // both_levels is two flattest_median scans and each of those is a
+            // variance sweep over its window, so it is the expensive call in
+            // this function. Held here rather than recomputed: the median
+            // below needs every beat's levels, and so does the apply loop
+            // further down. Two calls per beat total, which is what the
+            // previous arrangement already cost -- one for the reference, one
+            // per beat in the apply loop, plus a borrow pass when the
+            // reference came up short.
+            const size_t nb = out.beats.size();
+            std::vector<double> tpLvlOf(nb, std::numeric_limits<double>::quiet_NaN());
+            std::vector<double> pqLvlOf(nb, std::numeric_limits<double>::quiet_NaN());
+            std::vector<char>   tpOkOf(nb, 0), pqOkOf(nb, 0);
+            for (size_t i = 0; i < nb; ++i) {
+                const auto [tpLvl, tpOk, pqLvl, pqOk] = both_levels(i);
+                tpLvlOf[i] = tpLvl;  tpOkOf[i] = tpOk ? 1 : 0;
+                pqLvlOf[i] = pqLvl;  pqOkOf[i] = pqOk ? 1 : 0;
             }
+
+            // ---- THE TARGET IS A MEDIAN OVER THE BIN, NOT ONE BEAT ----
+            //
+            // WHAT THIS REPLACED, AND WHY. The target used to be the levels of
+            // ONE beat -- ref_beat_index, the first beat whose RR happened to
+            // equal the bin's median RR. That beat was selected for framing
+            // (median_length is what sizes the matrix so no beat is clipped)
+            // and then reused as the level every other beat is matched to,
+            // which it was never chosen for: it could be the noisiest beat in
+            // the bin, or an ectopic one with an ordinary interval, and nothing
+            // downstream could tell. A borrow pass existed underneath it for
+            // when that one beat had no usable segment, which is a fallback for
+            // a problem the median does not have.
+            //
+            // The choice of target is arbitrary in one sense -- shift every
+            // beat by the same extra amount and they are still mutually
+            // aligned, only the bin's absolute level moves -- so the median is
+            // taken to keep that level where a single-beat target put it,
+            // rather than moving the whole amplitude scale. Levelling to zero
+            // would work equally well for the alignment and is arguably the
+            // better convention (the PQ segment IS the isoelectric zero), but
+            // it shifts every raw template amplitude and anything reading one.
+            auto median_of = [](std::vector<double> v) -> double {
+                if (v.empty()) return std::numeric_limits<double>::quiet_NaN();
+                const size_t m = v.size() / 2;
+                std::nth_element(v.begin(), v.begin() + m, v.end());
+                const double hi = v[m];
+                if (v.size() % 2) return hi;
+                return 0.5 * (*std::max_element(v.begin(), v.begin() + m) + hi);
+                };
+            std::vector<double> tpPool, pqPool;
+            tpPool.reserve(nb);  pqPool.reserve(nb);
+            for (size_t i = 0; i < nb; ++i) {
+                if (tpOkOf[i]) tpPool.push_back(tpLvlOf[i]);
+                if (pqOkOf[i]) pqPool.push_back(pqLvlOf[i]);
+            }
+            const double refTpTarget = median_of(tpPool);
+            const double refPqTarget = median_of(pqPool);
             const bool haveAnyRef = !std::isnan(refTpTarget) || !std::isnan(refPqTarget);
 
-            // Which reference the passes below actually level against. Set
-            // from the resolved targets, not from the ref beat's own flags:
-            // the fallback loop above will borrow a target from another beat
-            // when the reference itself has no usable segment.
+            // Which segment the passes below level against, for the log line.
             const BaselineSource refSrc =
                 !std::isnan(refPqTarget) ? BaselineSource::PQ
                 : !std::isnan(refTpTarget) ? BaselineSource::TP
@@ -509,7 +552,11 @@ namespace alignment {
             out.pq_shift.assign(out.beats.size(), std::numeric_limits<double>::quiet_NaN());
             if (haveAnyRef) {
                 for (size_t i = 0; i < out.beats.size(); ++i) {
-                    const auto [tpLvl, tpOk, pqLvl, pqOk] = both_levels(i);
+                    // From the pass above, not re-measured.
+                    const double tpLvl = tpLvlOf[i];
+                    const double pqLvl = pqLvlOf[i];
+                    const bool   tpOk = tpOkOf[i] != 0;
+                    const bool   pqOk = pqOkOf[i] != 0;
                     if (tpOk && pqOk) out.tp_pq_delta[i] = pqLvl - tpLvl;
 
                     // Pass 2 (TP): coarse level, applied only if BOTH this

@@ -95,7 +95,7 @@ bool TemplateViewerWindow::pulseTraceForSlot(tbank::BankTemplate& slot,
 
     outTrace = normalize_ppg_or_similar(src, outFootIdx, 0);
     outIqr = normalize_features::scale_pulse_spread_by_ref(
-        slot.tmpl_iqr,
+        slot.tmpl_std,
         normalize_features::sample_y(slot.tmpl, outFootIdx),
         m_pulseGlobalRef[0]);
     return true;
@@ -145,7 +145,7 @@ static void adoptPulsePair(tbank::BankTemplate& slot,
         if (iqr.size() > keep) iqr.resize(keep);
     }
     slot.tmpl = std::move(tmpl);
-    slot.tmpl_iqr = std::move(iqr);
+    slot.tmpl_std = std::move(iqr);
     slot.band_lo.clear();
     slot.band_hi.clear();
     // THE MARKS ARE NOT TOUCHED HERE ANY MORE.
@@ -539,7 +539,7 @@ bool TemplateViewerWindow::showPulseVariant(int binIdx, int templateIdx,
     tbank::BankTemplate& slot = b.ppg_bank.templates[templateIdx];
 
     if (!slot.pulseVariant(v).built)
-        buildPulseVariant(binIdx, templateIdx, v, pctForAlignMode(), announce);
+        buildPulseVariant(binIdx, templateIdx, v, percentage_for_aligning(), announce);
     const tbank::PulseVariant& pv = slot.pulseVariant(v);
     if (!pv.ok()) return false;
 
@@ -559,7 +559,7 @@ void TemplateViewerWindow::stashBuiltPulse(int binIdx, int templateIdx,
 {
     const int key = slotKey(binIdx, templateIdx);
     if (m_ppgBuilt.count(key)) return;   // FIRST overwrite only
-    m_ppgBuilt[key] = { slot.tmpl, slot.tmpl_iqr };
+    m_ppgBuilt[key] = { slot.tmpl, slot.tmpl_std };
 }
 
 // NO CALLER AS OF THE Auto REWRITE, AND KEPT ON PURPOSE. "Auto" used to mean
@@ -580,7 +580,7 @@ bool TemplateViewerWindow::restorePulseAsBuilt(int binIdx, int templateIdx)
 
     tbank::BankTemplate& slot = b.ppg_bank.templates[templateIdx];
     slot.tmpl = it->second.first;
-    slot.tmpl_iqr = it->second.second;
+    slot.tmpl_std = it->second.second;
     // The corridor is dropped on the way out of a re-stack and is not part of
     // the stash, so it stays dropped: it described neither stacking and is
     // rebuilt by the next recomputeTemplate.
@@ -648,16 +648,16 @@ void TemplateViewerWindow::pushPulseToPanels(int binIdx, int templateIdx,
             m_focusMarker, m_focusCol);
 }
 
-int TemplateViewerWindow::autoPctForSlot(int binIdx, int templateIdx,
+int TemplateViewerWindow::which_alignment_fiducial_marker_should_auto_use(int binIdx, int templateIdx,
     const tbank::BankTemplate& slot, double footCol) const
 {
     const auto it = m_ppgBuilt.find(slotKey(binIdx, templateIdx));
     const std::vector<double>& iqr = (it != m_ppgBuilt.end())
         ? it->second.second
-        : slot.tmpl_iqr;
+        : slot.tmpl_std;
 
     const int halfwin = std::max(1, static_cast<int>(
-        std::lround(kAutoIqrWindowSec * m_ppgRateHz)));
+        std::lround(region_around_foot_to_measure_std * m_ppgRateHz)));
     const double spread = ppg_realign::iqrAbout(iqr, footCol, halfwin);
 
     // NO SPREAD MEASURABLE -> THE FOOT. An absent or all-zero band is not
@@ -666,7 +666,7 @@ int TemplateViewerWindow::autoPctForSlot(int binIdx, int templateIdx,
     // The foot is where the operator's bar is and what they would expect.
     if (!(spread >= 0.0)) return 0;
 
-    return (spread < kAutoFootIqrMax) ? kAutoFallbackPct : 0;
+    return (spread < max_foot_std_to_trigger_looking_ahead) ? percent_up_upstroke_to_go_if_noisy : 0;
 }
 
 // ONE PLACE THAT CHANGES THE PULSE ALIGNMENT, for the same reason
@@ -723,10 +723,10 @@ void TemplateViewerWindow::realignAllVisiblePulses()
         // tight to level on). Foot / Percent / Peak read the group through
         // pctForAlignMode. Either way it is _F's definition -- _P is 100 and
         // reads nothing.
-        double pctF = pctForAlignMode();
+        double pctF = percentage_for_aligning();
         if (m_ppgAlignMode == PpgAlign::Auto) {
             const double hint = ppgFootAnchor(gi, slotIdx);
-            pctF = static_cast<double>(autoPctForSlot(gi, slotIdx, slot, hint));
+            pctF = static_cast<double>(which_alignment_fiducial_marker_should_auto_use(gi, slotIdx, slot, hint));
             if (pctF > 0.0) ++nAutoPct; else ++nAutoFoot;
         }
 
@@ -801,7 +801,7 @@ bool TemplateViewerWindow::relevelPulseAtFoot(int binIdx, int templateIdx,
         b.ppg_bank.templates[templateIdx].pulseVariant(tbank::PulseAnchor::Foot);
     fv.built = false;
     if (!buildPulseVariant(binIdx, templateIdx, tbank::PulseAnchor::Foot,
-        pctForAlignMode(), announce)) return false;
+        percentage_for_aligning(), announce)) return false;
 
     if (m_ppgAlignMode == PpgAlign::Auto)
         m_ppgViewVariant = tbank::PulseAnchor::Foot;

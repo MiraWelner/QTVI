@@ -122,9 +122,8 @@ namespace jbank {
     // Building local_of_slice from what the pipeline already produces
     // ---------------------------------------------------------------------
     //
-    // BOTH SIDES ALREADY CARRY THE MAP, JUST INVERTED. The ECG path has
-    // ecg_beat_set::slice_index[alignedRow] = slice (NOT row_at_slice_time,
-    // which counts survivors), and the pulse path has
+    // BOTH SIDES ALREADY CARRY THE MAP, JUST INVERTED. alignment's BeatSet has
+    // original_index[alignedRow] = slice, and the pulse path now has
     // PPGTemplatesResult::keptSlices[bin][keptRow] = slice. Either is the
     // forward direction; ChannelBeats wants the reverse, slice -> local row,
     // because assignment walks slices and asks each channel what it has.
@@ -336,7 +335,7 @@ namespace jbank {
         tbank::BankTemplate& t = g.ch[c];
         t.members.clear();
         if (!cb.present()) {
-            t.tmpl.clear(); t.tmpl_iqr.clear();
+            t.tmpl.clear(); t.tmpl_std.clear();
             t.band_lo.clear(); t.band_hi.clear();
             return;
         }
@@ -1391,21 +1390,27 @@ namespace jbank {
     // variability: an RR or feature series with gaps reports a variance that
     // depends on which beats were dropped.
     //
-    // WHICH SCORE DECIDES "BORDERLINE", and why it is not the assignment score.
-    // beat_substitute's band is 0.60 to 0.85 and 0.85 is the assignment floor,
-    // so if the score were the one the bank assigned on, THE BAND WOULD BE
-    // EMPTY BY CONSTRUCTION -- every assigned beat cleared 0.85 and everything
-    // below it spawned its own group instead. The two 0.85s are different
-    // quantities: bandMatch's score is the FRACTION OF COLUMNS inside the
-    // corridor, while the spec's "morphology correlation threshold r < 0.85" is
-    // a CORRELATION. So this uses tbank::correlate against the beat's own
-    // group template, which is what the spec's sentence says, and which has a
-    // real spread among beats the corridor accepted.
+    // THE TRIGGER IS THE RHYTHM VERDICT, AND IT IS THE ONLY TRIGGER. A beat is
+    // substituted because it was flagged PREMATURE or VOTE and therefore left
+    // the reference average -- that is what leaves the hole this fills.
     //
-    // RUNS AFTER cleanGroups, so a beat already excluded for prematurity, for a
-    // category or by a Tukey fence is not also substituted -- substituting a
-    // beat that is not in the average is work with no consumer, and flagging it
-    // twice would double-count it in any burden statistic.
+    // CORRELATION PLAYS NO PART. There is no band and no minimum: 4.6
+    // substitutes every flagged beat, because a beat too poorly correlated to
+    // blend still leaves a hole in the RR series, which is the whole thing the
+    // blend exists to prevent. Correlation is what SPLITS MORPHOLOGIES -- a
+    // beat that matches nothing opens its own template -- and 4.6 says in the
+    // same breath not to introduce a second, looser threshold anywhere. The
+    // 0.5-to-0.6 figure in the spec is an OBSERVATION about how sinus and
+    // ectopic beats typically correlate, given as the reason partitioning
+    // matters; it is not a threshold, and a "band of 0.60 to 0.85" read out of
+    // it was this function refusing beats it exists to blend.
+    //
+    // RUNS AFTER cleanGroups, so a beat excluded on OTHER evidence -- a
+    // CATEGORY mark or a Tukey fence -- is not also substituted. Substituting a
+    // beat that is not in the average for a reason unrelated to its interval is
+    // work with no consumer, and flagging it twice would double-count it in any
+    // burden statistic. PREMATURE and VOTE are not exclusions here: they are
+    // the trigger.
     //
     // NOTHING IS OVERWRITTEN. The blend is stored beside the beat, never in
     // place of it: a substituted beat is not an observation. members_clean is
@@ -1416,14 +1421,20 @@ namespace jbank {
     struct Substitution {
         uint32_t slice = 0;
         uint8_t  channel = 0;
-        double   score = 0.0;          // correlation that put it in the band
+        // Correlation with the group template at the moment of blending.
+        // DIAGNOSTIC ONLY -- nothing gates on it; see the note above on why
+        // there is no threshold. Recorded because a blend whose beat barely
+        // resembled its group is worth being able to find after the fact.
+        double   score = 0.0;
         std::vector<double> blended;
     };
 
     struct SubstitutionCounts {
         uint32_t n_substituted = 0;    // beats, not beat-channels
         uint32_t n_channel_blends = 0;
-        uint32_t n_too_bad = 0;        // below the band: rejected, not blended
+        // n_too_bad is gone with the correlation band it counted. Nothing
+        // incremented it and nothing read it; morphology_csv dropped its
+        // n_sub_too_bad column for the same reason.
     };
 
     inline void substitute_premature(const JointBank& bank, const ChannelSet& chans, const std::vector<uint8_t>& excluded_reason, std::vector<tbank::BeatFlags>& flags, std::vector<Substitution>& out, SubstitutionCounts* counts = nullptr)
@@ -1438,14 +1449,40 @@ namespace jbank {
             // beats drift toward it rather than each being pulled the same
             // distance from it. members is sorted, so iterating it is time order.
             for (const uint32_t slice : g.members) {
-                if (slice < excluded_reason.size() && excluded_reason[slice] != static_cast<uint8_t>(ExcludeReason::KEPT)) {
-                    continue;
+                // THE TRIGGER, read off the rhythm verdict. A premature or
+                // voted beat carries ExcludeReason::PREMATURE / VOTE, so
+                // filtering on `excluded_reason == KEPT` admitted exactly the
+                // beats this function is not for and skipped every one it is --
+                // inverted everywhere except a group that was entirely
+                // premature, where cleanGroups resets the reasons to KEPT.
+                //
+                // flags[].pvc survives that reset, which is why it is the right
+                // thing to read: it says what the beat IS, not what happened to
+                // it afterwards.
+                const tbank::PvcFilter pv = (slice < flags.size())
+                    ? flags[slice].pvc : tbank::PvcFilter::NONE;
+                if (pv == tbank::PvcFilter::NONE) continue;
+
+                // Excluded on other evidence: not substituted. Everything
+                // except KEPT, PREMATURE and VOTE means a CATEGORY mark, a
+                // Tukey fence, or no group at all.
+                if (slice < excluded_reason.size()) {
+                    const ExcludeReason er =
+                        static_cast<ExcludeReason>(excluded_reason[slice]);
+                    if (er != ExcludeReason::KEPT
+                        && er != ExcludeReason::PREMATURE
+                        && er != ExcludeReason::VOTE) continue;
                 }
 
                 bool blended_any = false;
                 for (int c = 0; c < num_channels; ++c) {
                     const std::vector<double>* beat = chans[c].beatFor(slice);
                     if (!beat || avg[c].empty()) continue;
+                    // Scored for the record, not for a decision. An
+                    // unscorable beat -- too little axis overlap for a
+                    // correlation to mean anything -- has no score to record
+                    // and no average worth blending against on this lead, so
+                    // it is skipped here and may still be blended on another.
                     const tbank::CorrResult cr =
                         tbank::correlate(*beat, g.ch[c].tmpl);
                     if (!cr.scorable()) continue;

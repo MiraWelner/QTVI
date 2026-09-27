@@ -202,9 +202,10 @@ namespace ppg_realign {
 
     // ---- THE SPREAD THE BANK SLOT FIELD ACTUALLY HOLDS ------------------
     //
-    // RAW-AMPLITUDE q3 - q1 PER COLUMN, in the same units as tmpl. Copied
-    // from template_bank.hpp, which is what writes tbank::BankTemplate::
-    // tmpl_iqr at build time -- and the units are the whole point:
+    // RAW-AMPLITUDE PER-SAMPLE SD (ddof = 1) PER COLUMN, in the same units as
+    // tmpl. Matches template_bank.hpp, which is what writes
+    // tbank::BankTemplate::tmpl_iqr at build time -- and the units are the
+    // whole point:
     //
     //   pulseTraceForSlot draws the band as
     //     scale_pulse_spread_by_ref(slot.tmpl_iqr, sample_y(tmpl, foot), ref)
@@ -220,6 +221,12 @@ namespace ppg_realign {
     // (build_pulse_template_pair_windowed uses it, and nothing divides that
     // one again). It is the wrong statistic for a bank slot. The two fields
     // share a name and not a unit.
+    //
+    // WAS q3 - q1. Every spread in this pipeline is an SD now: the *_iqr names
+    // are historical, and a field fed a quartile range by one producer and an
+    // SD by another meant its contents depended on the code path. For a normal
+    // column IQR is about 1.35 SD, so any threshold tuned against the old
+    // values needs rescaling -- kAutoFootIqrMax is the one that matters.
     inline std::vector<double> rawIqrColumns(
         const std::vector<std::vector<double>>& rows, int n_used)
     {
@@ -234,13 +241,13 @@ namespace ppg_realign {
                 if (c < r.size() && !std::isnan(r[c])) col.push_back(r[c]);
             if ((int)col.size() < minColumnRows(n_used)) continue;
             const std::size_t n = col.size();
-            const std::size_t iq1 = n / 4;
-            const std::size_t iq3 = (3 * n) / 4;
-            std::nth_element(col.begin(), col.begin() + iq1, col.end());
-            const double q1 = col[iq1];
-            std::nth_element(col.begin() + iq1, col.begin() + iq3, col.end());
-            const double q3 = col[iq3];
-            out[c] = q3 - q1;
+            if (n < 2) continue;   // one observation has no spread; leave NaN
+            double mean = 0.0;
+            for (double v : col) mean += v;
+            mean /= static_cast<double>(n);
+            double sumsq = 0.0;
+            for (double v : col) sumsq += (v - mean) * (v - mean);
+            out[c] = std::sqrt(sumsq / static_cast<double>(n - 1));
         }
         return out;
     }
@@ -256,7 +263,7 @@ namespace ppg_realign {
     // the window would pull a mean under any threshold -- which would decide
     // the alignment on missing data rather than on a tight stack.
     //
-    // UNITS ARE tmpl_iqr's: raw amplitude, q3 - q1, the same units as tmpl.
+    // UNITS ARE tmpl_iqr's: raw amplitude, per-sample SD, same units as tmpl.
     // NOT the band drawn on the panel, which pulseTraceForSlot divides by the
     // foot amplitude first -- so a threshold picked by eye off the screen is
     // roughly 1/foot times the one to use here. See rawIqrColumns.

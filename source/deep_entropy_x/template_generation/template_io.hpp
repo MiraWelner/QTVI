@@ -130,7 +130,7 @@ namespace template_io {
         // Indexing: bank_anchors[anchorTag][bin][channel][slot].
         struct BankSlotTemplate {
             std::vector<double> tmpl;
-            std::vector<double> tmpl_iqr;
+            std::vector<double> tmpl_std;
             uint32_t n_members = 0;
         };
         std::map<int, std::vector<std::array<std::vector<BankSlotTemplate>, 3>>> bank_anchors;

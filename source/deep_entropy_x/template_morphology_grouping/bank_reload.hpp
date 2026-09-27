@@ -254,9 +254,9 @@ namespace bank_reload {
                 // equality then decided there was no spread at all. That is
                 // why a reloaded pulse slot had no std band.
                 tp.tmpl = detail::trimTrailingNaN(blk.column(k), blk.width);
-                tp.tmpl_iqr = blk.tmpl_iqr[k];
-                if (tp.tmpl_iqr.size() > tp.tmpl.size())
-                    tp.tmpl_iqr.resize(tp.tmpl.size());
+                tp.tmpl_std = blk.tmpl_iqr[k];
+                if (tp.tmpl_std.size() > tp.tmpl.size())
+                    tp.tmpl_std.resize(tp.tmpl.size());
                 tp.r_col = rec.r_col;
                 tp.label_code = rec.label_code;
 
