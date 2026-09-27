@@ -247,11 +247,20 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
     // (ppg_bank.templates[slot].tmpl) -- so slot 0's bars were indices into a
     // different waveform from the one under them, and the markings file now
     // serializes pulse_marks per slot, which the bin fields would never reach.
+    // ---- A BAR READS AND WRITES ITS HOME VARIANT ------------------------
+    //
+    // The foot lives in _F, the dicrotic notch and the end in _P
+    // (pulseVariantForMarker). pulse_marks is the COMPOSED set the panel
+    // draws, so it is written through composePulseMarks after the variant, not
+    // edited directly -- a bar written straight into it would be overwritten
+    // by the next compose and would never reach the variant the CSV reports.
+    const tbank::PulseAnchor homeVariant = pulseVariantForMarker(marker);
+
     auto ppgGet = [&](int gi, int slot) -> double {
         TemplateBin& tb = m_bins[gi];
         if (slot >= 0 && slot < (int)tb.ppg_bank.size()) {
             const tbank::BankPulseMarkerSet& pm =
-                tb.ppg_bank.templates[slot].pulse_marks;
+                tb.ppg_bank.templates[slot].pulseVariant(homeVariant).marks;
             switch (marker) {
             case BinPlotWidget::PpgOnset:    return pm.onset;
             case BinPlotWidget::PpgDicrotic: return pm.dicrotic;
@@ -263,25 +272,39 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
     auto ppgSet = [&](int gi, int slot, double v) {
         TemplateBin& tb = m_bins[gi];
         if (slot >= 0 && slot < (int)tb.ppg_bank.size()) {
-            tbank::BankPulseMarkerSet& pm =
-                tb.ppg_bank.templates[slot].pulse_marks;
+            tbank::BankTemplate& ps = tb.ppg_bank.templates[slot];
+            tbank::BankPulseMarkerSet& pm = ps.pulseVariant(homeVariant).marks;
             switch (marker) {
             case BinPlotWidget::PpgOnset:    pm.onset = v; break;
             case BinPlotWidget::PpgDicrotic: pm.dicrotic = v; break;
             case BinPlotWidget::PpgEnd:      pm.end = v; break;
             }
+            composePulseMarks(ps);
         }
         };
     // Every slot seeds its pulse marks lazily; seed before reading so a
     // never-displayed column still has a real bar to move from. Slot 0 was
     // exempt because its bars came from the bin; it no longer is.
+    // Seed before reading, so a never-displayed column still has a real bar to
+    // move from. THE VARIANT IS WHAT NEEDS SEEDING: buildPulseVariant detects
+    // that variant's own marks, and only if neither variant exists yet is
+    // there nothing at all to move.
     auto ppgSeed = [&](int gi, int slot) {
         if (slot < 0) return;
         TemplateBin& tb = m_bins[gi];
         if (slot >= (int)tb.ppg_bank.size()) return;
         tbank::BankTemplate& ps = tb.ppg_bank.templates[slot];
-        if (ps.tmpl.empty() || ps.hasDetectedPulseMarks()) return;
-        FeatureMarks::seed_pulse_bank_template(ps.tmpl, m_ppgRateHz, ps.pulse_marks);
+        if (ps.tmpl.empty()) return;
+        if (!ps.pulseVariant(homeVariant).built)
+            buildPulseVariant(gi, slot, homeVariant,
+                (homeVariant == tbank::PulseAnchor::Peak)
+                ? 100.0 : pctForAlignMode());
+        // STILL NOTHING? The variant was refused (no beat matrix, too few
+        // rows). Fall back to detecting on the displayed waveform so the bar
+        // is movable, which is what the old unconditional seed did.
+        if (!ps.pulseVariant(homeVariant).ok() && !ps.hasDetectedPulseMarks())
+            FeatureMarks::seed_pulse_bank_template(ps.tmpl, m_ppgRateHz,
+                ps.pulse_marks);
         };
     // Placeable length of this column's pulse: the DRAWN extent, not the array.
     //
@@ -780,6 +803,12 @@ void TemplateViewerWindow::user_clicked_on_bar(int binIdx, int leadIdx, int temp
     if (binIdx >= 0 && leadIdx >= 0 && col >= 0)
         m_touchedMarks[touchKey(binIdx, leadIdx, marker, currentGridAnchor())] = col;
     refreshFocus(qobject_cast<BinPlotWidget*>(sender()), binIdx, leadIdx, templateIdx, marker, col);
+
+    // THE PULSE MIRROR OF THE ECG RULE BELOW. In Auto, clicking a pulse bar
+    // shows the average that bar was measured on: the foot bar shows _F, the
+    // dicrotic notch and the end show _P.
+    followPulseBarSelection(marker);
+
     if (!m_forceAlign && BinPlotWidget::markerIsEcg(marker) && anchor_view::isBar(marker))
     {
         const AnchorType a = anchor_view::anchorFor(marker);

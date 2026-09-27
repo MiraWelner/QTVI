@@ -452,18 +452,14 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
         for (size_t i = 0; i < n; ++i) {
             TemplateBin& d = m_bins[i];
             const TemplateBin& s = saved[i];
-            const size_t ecgLen[3] = {
-                d.ch1.ecgTemplate_raw.size(), d.ch2.ecgTemplate_raw.size(), d.ch3.ecgTemplate_raw.size()
-            };
             const size_t ppgLen = d.ppgTemplate.size();
             const size_t abpLen = d.abpTemplate.size();
             const size_t artLen = d.artTemplate.size();
             const size_t artPLen = d.artPulmTemplate.size();
-            // ECG per-channel user markers (copied raw, bounds-checked). R is
-            // NOT copied: it's an auto-only anchor and must come from this
-            // pass's own template r_col (seeded above), never from a saved file.
-            // Copy every anchor's saved marker set (each independent), bounds-
-            // checked per channel. R is NOT copied (auto-only, re-derived).
+            // Every anchor's saved marker set, each independent, bounds-checked
+            // per channel. R is NOT copied: it is an auto-only anchor and must
+            // come from this pass's own template r_col (seeded above), never
+            // from a saved file.
             if (ecg) {
                 // LEAD, SLOT, ANCHOR -- the shape the marking file now has.
                 //
@@ -479,13 +475,22 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                     const int nNow =
                         static_cast<int>(d.ecg_bank[c].templates.size());
                     for (int slot = 0; slot < nSaved && slot < nNow; ++slot) {
-                        // Slot 0's length is the bin's own template; a deeper
-                        // slot's is its bank template's, which can be shorter.
-                        // Using the bin's for both would admit a position past a
-                        // sub-template's end.
-                        const size_t len = (slot == 0)
-                            ? ecgLen[c]
-                            : d.ecg_bank[c].templates[slot].tmpl.size();
+                        // THE SLOT'S OWN TEMPLATE LENGTH, for every slot
+                        // including _A. A saved position is only meaningful on
+                        // the waveform it was placed on, and each bank slot has
+                        // its own -- a sub-template can be shorter than the
+                        // bin's, so the bin's length would admit a position
+                        // past its end.
+                        //
+                        // NO FALLBACK FOR AN EMPTY SLOT, because the loop bound
+                        // above already excludes one: `slot < nNow` keeps the
+                        // walk inside the bank this pass built, and jbank only
+                        // ever pushes a template it has members for. The empty
+                        // slots that DO exist elsewhere in a bank come from
+                        // slotMarks growing it to reach a write, which cannot
+                        // happen from here.
+                        const size_t len =
+                            d.ecg_bank[c].templates[slot].tmpl.size();
                         for (const auto& kv :
                             s.ecg_bank[c].templates[slot].markers_by_anchor) {
                             const tbank::BankMarkerSet& sm = kv.second;
@@ -512,6 +517,69 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                 d.ppg_onset = safeIdx(s.ppg_onset, d.ppg_onset, ppgLen);
                 d.ppg_dicrotic = safeIdx(s.ppg_dicrotic, d.ppg_dicrotic, ppgLen);
                 d.ppg_end = safeIdx(s.ppg_end, d.ppg_end, ppgLen);
+
+                // ---- THE PER-SLOT PULSE BARS, AND EACH VARIANT'S ---------
+                //
+                // THE THREE FIELDS ABOVE ARE BIN-LEVEL and are not where the
+                // bars live. Every morphology column draws its own pulse
+                // (ppg_bank.templates[slot].tmpl) and carries its own
+                // BankPulseMarkerSet; the .bin has written them per slot since
+                // v1 and this merge never read them back, so a reload restored
+                // three bin-level numbers and left every column's actual bars
+                // at the auto seed. The operator's pulse marking did not
+                // survive a session.
+                //
+                // AND THE TWO VARIANTS (v3): the foot defines _F and the notch
+                // and end are measured on _P, so the composed set is not
+                // enough to reconstruct them -- see kMarkVersion.
+                {
+                    const int nSaved = static_cast<int>(s.ppg_bank.templates.size());
+                    const int nNow = static_cast<int>(d.ppg_bank.templates.size());
+                    for (int slot = 0; slot < nSaved && slot < nNow; ++slot) {
+                        const tbank::BankTemplate& ss = s.ppg_bank.templates[slot];
+                        tbank::BankTemplate& ds = d.ppg_bank.templates[slot];
+
+                        // THIS SLOT'S OWN PULSE LENGTH. A saved column is only
+                        // meaningful on the waveform it was placed on, and each
+                        // slot has its own; the bin's is a different array.
+                        const size_t len = ds.tmpl.size();
+                        if (len == 0) continue;   // no waveform, no valid column
+
+                        ds.pulse_marks.onset =
+                            safeIdx(ss.pulse_marks.onset, ds.pulse_marks.onset, len);
+                        ds.pulse_marks.dicrotic =
+                            safeIdx(ss.pulse_marks.dicrotic, ds.pulse_marks.dicrotic, len);
+                        ds.pulse_marks.end =
+                            safeIdx(ss.pulse_marks.end, ds.pulse_marks.end, len);
+
+                        // BARS ONLY, in the variants too. The *_auto cells are
+                        // the detector's answer on that variant's waveform,
+                        // which buildPulseVariant recomputes -- copying a saved
+                        // one would put a previous run's detection beside this
+                        // run's average.
+                        //
+                        // BOTH VARIANTS SHARE THIS LENGTH, because
+                        // relevelAtOwnCrossing only shifts rows vertically: a
+                        // column index means the same instant in _F, in _P and
+                        // in the as-built pulse.
+                        for (tbank::PulseAnchor pv : tbank::pulse_anchor_array) {
+                            const tbank::PulseVariant& sv = ss.pulseVariant(pv);
+                            tbank::PulseVariant& dv = ds.pulseVariant(pv);
+                            dv.marks.onset =
+                                safeIdx(sv.marks.onset, dv.marks.onset, len);
+                            dv.marks.dicrotic =
+                                safeIdx(sv.marks.dicrotic, dv.marks.dicrotic, len);
+                            dv.marks.end =
+                                safeIdx(sv.marks.end, dv.marks.end, len);
+                            // built STAYS FALSE: tmpl is not in the file and
+                            // has to be re-medianed off the beat matrix before
+                            // anything can be drawn on it. ok() is
+                            // built && !tmpl.empty(), so the first paint asks
+                            // buildPulseVariant for it and the bars restored
+                            // above are what it keeps.
+                        }
+                    }
+                }
                 d.abp_issue = s.abp_issue;
                 d.abp_onset = safeIdx(s.abp_onset, d.abp_onset, abpLen);
                 d.abp_peak = safeIdx(s.abp_peak, d.abp_peak, abpLen);

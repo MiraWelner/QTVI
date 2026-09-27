@@ -23,33 +23,6 @@
 
 namespace {
 
-    // ---- kSlicePadSeconds IS GONE, AND THAT WAS THE PPG TIME SHIFT -------
-    //
-    // It was 0.4, and it claimed every pulse template was R-anchored with R1
-    // at padSeconds * channelRate. Three things were wrong with that:
-    //
-    //   * padSeconds was never passed to the thing that slices the beats
-    //     (alignment::extract_ppg_beats_and_align), so it could not have set
-    //     the lead-in;
-    //   * the real lead-in is rr_before_samples(rr) = 0.5 * THAT BEAT'S RR,
-    //     so it is not a duration and not the same for two beats;
-    //   * the beats are then shifted onto a shared up50 column, which moves
-    //     the R columns again.
-    //
-    // Net effect on screen: the pulse was drawn (0.5 * RR_median - 0.4 s) too
-    // far right -- about right at 75 bpm, 100 ms late at 60, 200 ms at 50,
-    // and early above 75. It read like a constant that needed tuning and was
-    // a quantity that had to be measured.
-    //
-    // Each pulse channel's R column is now measured at build time and carried
-    // in the template file (TemplateBin::*_r_construct); it reaches this
-    // widget through setPulseAnchor, exactly as the ECG's arrives through
-    // setData. A channel with no anchor is NOT DRAWN -- see timeAt and
-    // recomputeFrame, which both skip an anchor < 0 -- because a pulse at an
-    // assumed time is worse than no pulse.
-
-    // ------------------------------------------------------------------
-    // ------------------------------------------------------------------
     constexpr QColor ecg_trace_color{ 10,  20,  90 };   // dark navy blue
     constexpr QColor ppg_trace_color{ 130,  10,  20 };   // dark red
 
@@ -89,19 +62,6 @@ namespace {
     constexpr QColor apg_mark_color{ 20, 120,  60 };  // green  (PPG'')
     constexpr QColor jpg_mark_color{ 190, 110,   0 };  // amber  (PPG''')
 
-    // Glyph geometry, in pixels. marker_half_size is the X's half-extent on
-    // both axes; dash_half_width is the dash's half-length. The dash is longer
-    // because it has one stroke to the X's two and needs the extra reach to
-    // stay findable where the trace is steep.
-    // ONE ALIGNMENT'S OWN BARS. Teal, the colour the R-aligned overlay used,
-    // because in a forced view every bar on screen was measured on the SAME
-    // waveform -- what distinguishes them is the landmark, which the label
-    // says, not the alignment, which is the same for all of them. The
-    // per-landmark palette above is for Automatic, where the bars genuinely
-    // come from four different alignments.
-    // A glyph is a small X, so it gets a small target -- tighter than
-    // click_radius_around_marker, which is sized for grabbing a full-height
-    // bar. Within this of the X means the glyph; outside it, the bar.
     constexpr double glyph_click_radius = 8.0;
 
     constexpr QColor align_bar_color{ 0, 140, 140 };
@@ -122,7 +82,6 @@ namespace {
     constexpr double dash_half_width = 5.0;
     constexpr double marker_pen_size = 1.25;
     constexpr double marker_circle_radius = 4.0;
-    constexpr double marker_circle_pen = 1.8;
 
     // Arterial markers (ABP green, ART purple, ART_PULM orange),
     // darkest-to-lightest within a group.
@@ -946,7 +905,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
 
     { QFont f = p.font(); f.setPointSize(8); p.setFont(f); }
 
-    // TWO TONES ON ONE LINE. "Bin 12" is black and the rest -- the channel,
+    // TWO TONES ON ONE LINE. "Bin 12" is coloured and the rest -- the channel,
     // the template name, how it was split, the axis hint -- is gray. Pages are
     // packed by column now, so a bin's templates can straddle a page boundary
     // and the bin number is the only thing on screen that says whether the
@@ -965,7 +924,25 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // Baselines rather than a rect: margin_top is 20 px and two 8 pt lines are
     // ~22, so an AlignBottom rect would push the second line into the plot
     // frame. 9 and 19 keep both clear of it.
-    p.setPen(Qt::black);
+    // ---- THE BIN NUMBER ROTATES THROUGH THREE COLOURS ------------------
+    //
+    // Pages are packed by column, so one bin's templates can straddle a page
+    // boundary and neighbouring panels can belong to different bins. The
+    // number said which, but in one colour it had to be READ to be compared;
+    // adjacent bins now differ at a glance and only the number confirms it.
+    //
+    // THREE, AND BY BIN INDEX rather than by column position, so a bin keeps
+    // its colour across a page turn and two panels of the same bin always
+    // match. Red / blue / purple are far apart in hue and all dark enough on
+    // white to stay legible at 8 pt, which the gray of the rest of the line is
+    // deliberately not.
+    static const QColor kBinTitleColours[3] = {
+        QColor(190,  30,  40),   // red
+        QColor(30,   80, 190),   // blue
+        QColor(120,  40, 160),   // purple
+    };
+    p.setPen(kBinTitleColours[
+        ((m_binIndex % 3) + 3) % 3]);   // % twice: m_binIndex may be negative
     p.drawText(margin_left, 9, binPart);
     if (!restPart.isEmpty()) {
         // Advanced past the black run by the font's own metrics, so the gap
@@ -1614,7 +1591,7 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p, double yLo, double yHi, doubl
     // *_found flag.
     auto circle_glyph = [&](double x, double y) {
         p.setBrush(Qt::NoBrush);
-        p.setPen(QPen(Qt::black, marker_circle_pen));
+        p.setPen(QPen(Qt::black, marker_pen_size));
         p.drawEllipse(QPointF(x, y), marker_circle_radius, marker_circle_radius);
         };
     // A derivative (VPG/APG/JPG) landmark: horizontal dash, coloured by

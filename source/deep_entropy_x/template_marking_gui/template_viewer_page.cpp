@@ -23,8 +23,6 @@ namespace tv_detail {
         { BinPlotWidget::PpgDicrotic,        &TemplateBin::ppg_dicrotic },
         { BinPlotWidget::PpgPeak2,           &TemplateBin::ppg_peak2 },
         { BinPlotWidget::PpgEnd,             &TemplateBin::ppg_end },
-        // T50/T80 are reactive glyphs: neither drawn from here nor draggable.
-        // Pushed anyway so the enum entries never hold a stale position.
         { BinPlotWidget::PpgT50,             &TemplateBin::ppg_t50 },
         { BinPlotWidget::PpgT80,             &TemplateBin::ppg_t80 },
         { BinPlotWidget::AbpOnset,           &TemplateBin::abp_onset },
@@ -114,11 +112,7 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             && templateIdx < bank.size()
             && !bank.templates[templateIdx].tmpl.empty()
             && !bank.templates[templateIdx].tooFewBeats(/*is_ppg=*/false)
-            // wantsLandmarkMarking FOR EVERY SLOT. Slot 0 used to bypass it
-            // (`templateIdx == 0 ||`), so the _A column appeared whatever the
-            // template said about wanting landmarks while B and C obeyed the
-            // rule. Either the predicate means something or it does not; it
-            // cannot mean something for two columns out of three.
+            // wantsLandmarkMarking for every slot, _A included.
             && bank.templates[templateIdx].wantsLandmarkMarking()) {
             const tbank::BankTemplate& t = bank.templates[templateIdx];
 
@@ -180,20 +174,20 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             // confirmed-subtype rule itself, from the same BankTemplate.
         }
         else {
-            // No chN_raw fallback and no unconditional slot 0: both drew a
-            // panel whose waveform was a different population from the
-            // template it claimed to be. Covers every old exit -- ragged bank,
-            // too few beats, thin pulse cohort, no average for this alignment.
+            // No column for a slot with no template of its own: a ragged bank,
+            // too few beats, a thin pulse cohort, or no average for this
+            // alignment all land here. Drawing one would show a waveform from
+            // a different population than the name claims.
             continue;
         }
 
         // NAMING. Bin, then the class, then an underscore and the letter the
-        // ALGORITHM assigned when it separated the morphologies: A, B, C in
-        // bank order. PQRST is the name for a template no operator has
-        // confirmed yet -- it says "an ordinary complex", not "this is normal
-        // and not ectopic", which is still the operator's call. Once a beat in
-        // the template is confirmed, the class replaces PQRST and the letter
-        // tracks the subtype index the bank issued (PVC_A, PVC_B).
+        // ALGORITHM assigned when it separated the morphologies. PQRST is the
+        // name for a template no operator has confirmed yet -- it says "an
+        // ordinary complex", not "this is normal and not ectopic", which is
+        // still the operator's call. Once a beat in the template is confirmed,
+        // the class replaces PQRST and the letter tracks the subtype index the
+        // bank issued (PVC_A, PVC_B).
         QString cls = "PQRST";
         if (labelCode != tbank::kUnlabeled) {
             switch (labelCode) {
@@ -206,12 +200,10 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         }
 
         // THE LETTER COMES FROM tbank::letterRanks, the same function the
-        // morphology CSV/bin writers use. It used to be the raw bank slot
-        // (`letterIdx = templateIdx`), which skipped letters whenever a lower
-        // slot was empty -- a bin showing slots 0, 1, 5 read A, B, F while the
-        // CSV called that third template C. One template, two names. The
-        // shared function also handles the confirmed-subtype case, so the
-        // local subtype override is gone with it.
+        // morphology CSV/bin writers use, so one template has one name
+        // everywhere. It ranks by spawn_seq among non-empty slots -- NOT by
+        // slot index, which skips letters when a lower slot is empty -- and
+        // applies the confirmed-subtype rule itself.
         int letterIdx = 0;
         if (templateIdx < bank.size()) {
             const std::vector<uint8_t> letters = tbank::letterRanks(bank);
@@ -323,10 +315,8 @@ bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
     int loCol = std::numeric_limits<int>::max();
     int hiCol = -1;
     for (AnchorType a : kFour) {
-        // THROUGH slotView, like every other reader. The chN_raw fallback for
-        // slot 0 is gone with it: sizing the frame from the bin's average while
-        // the panel draws the per-slot one gave slot 0 an x-window belonging to
-        // a different waveform.
+        // THROUGH slotView, like every other reader, so the frame is sized
+        // from the same waveform the panel draws.
         const SlotView svU = slotView(b, lead, templateIdx, a);
         if (!svU.valid || !svU.tmpl) continue;
         const std::vector<double>* trace = svU.tmpl;
@@ -738,20 +728,18 @@ void TemplateViewerWindow::showPage() {
             double ppgFootIdx = -1.0;
             if (hasPPG)
                 pulseTraceForSlot(*ppgSlot, ppgN, ppgIqr, ppgFootIdx);
-            // ECG beats for THIS TEMPLATE, not for the bin. Lead::nMembers is
-            // the bank member's own beat count; it is 0 only on the pre-bank
-            // fallback path (slot 0 of a bin whose bank never arrived), where
-            // the bin total is the only count that exists and the template IS
-            // the whole bin, so the two agree.
+            // ECG beats for THIS TEMPLATE, not for the bin, and NO FALLBACK
+            // TO THE BIN TOTAL. Lead::nMembers is the bank member's own beat
+            // count; 0 means this template has no members, and a per-bin raw
+            // total printed in a per-template field is a different measurement
+            // wearing the same label. The column is not drawn at all unless
+            // the slot has a non-empty template that passes tooFewBeats, so a
+            // zero here is a real answer rather than a missing one.
             //
             // The pulse count is per group too, resolved above from the pulse
             // bank slot. Nothing on this line derives it.
-            const uint64_t nEcgBinTotal = (lead_index == 0) ? b.ch1_n_beats_raw
-                : (lead_index == 1) ? b.ch2_n_beats_raw
-                : b.ch3_n_beats_raw;
-            const uint64_t nEcgBeats = (leads[li].nMembers > 0)
-                ? static_cast<uint64_t>(leads[li].nMembers)
-                : nEcgBinTotal;
+            const uint64_t nEcgBeats =
+                static_cast<uint64_t>(std::max(0, leads[li].nMembers));
 
             // Per-subject normalized traces for on-screen display.
             // ECG:   sample / Global_Ref_ecg(ch)
@@ -844,37 +832,28 @@ void TemplateViewerWindow::showPage() {
             // Seed every bar + every autodetect column, in one call, after all
             // traces are in place (the glyph capture needs them).
             //
-            // SLOT 0 ONLY. TemplateBin::marks() holds one MarkerSet per anchor
-            // for the bin, which describes the sinus template. A PVC's Q-onset
-            // sits at a different column than sinus's, so applying those bars to
-            // a bank column would draw landmarks that are simply wrong -- and a
-            // drag would then write them back. Bank members carry their own
-            // BankMarkerSet (tbank::BankTemplate::markers_by_anchor); until the
-            // marking path is threaded through to them, an ectopic column shows
-            // its waveform with no bars, which is honest.
-            // Slot 0 gets the bin's marker set, which describes the sinus
-            // template. Every other slot gets its OWN BankMarkerSet, seeded
-            // from its own median waveform -- not a copy of the bin's, because a
-            // PVC's Q-onset sits at a different column than sinus's and drawing
+            // EVERY SLOT GETS ITS OWN BankMarkerSet, seeded from its own
+            // median waveform -- not a copy of the bin's, because a PVC's
+            // Q-onset sits at a different column than sinus's and drawing
             // sinus's bars there would be wrong in a way a drag would then
-            // persist. That was the reason sub-templates had no bars at all.
-            // ONE CALL FOR EVERY COLUMN. This was a templateIdx == 0 fork into
-            // applyBinToWidget, which is what left slot 0 unseeded. m_bins[gi]
-            // rather than `b`: the loop binds `b` as const, and the lazy seed
-            // writes the marker set it just computed back into the template so
-            // the next repaint and any drag see the same positions.
+            // persist.
+            //
+            // m_bins[gi] rather than `b`: the loop binds `b` as const, and the
+            // lazy seed writes the marker set it just computed back into the
+            // template so the next repaint and any drag see the same
+            // positions.
             applyTemplateToWidget(pw, m_bins[gi], lead_index, template_index);
 
             pw->setReferenceLines(global_interval_lines::forChannel(b, gi_intervals, lead_index));
 
             // ---- RESTORE THIS PANEL'S OWN MARK -----------------------
-            // operator_state is per template. It used to read b.bad_ppg and
-            // b.bad_r_ch[c], which are per BIN, so a rebuild painted every
-            // panel of a marked bin -- the marks spread on a page turn.
+            // operator_state is per template, so a marked column stays the
+            // only marked column across a page turn.
             //
-            // Slot 0 falls back to the bin flags when it has no state of its
-            // own, so a record marked before operator_state existed, or one
-            // whose flags feature_marks set automatically, still shows them.
+            // The per-bin flags (b.bad_ppg, b.bad_r_ch[c]) are still consulted
+            // as a fallback for a slot with no state of its own, so a record
+            // marked before operator_state existed, or one whose flags
+            // feature_marks set automatically, still shows them.
             // The SAME function the right-click handlers repaint with, so a page
             // rebuild cannot disagree with a click. (This was inline, and it
             // tested marked_invalid_template == 2u for the pulse -- the field is
@@ -1264,31 +1243,20 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
 
     // ---- THIS SLOT'S OWN GLYPHS, ON THE TRACE THIS PANEL DRAWS -----------
     //
-    // (NOTHING PUSHES GLYPHS ANY MORE, on either channel. setAuto names the
-    //  (bin, slot, alignment) and the panel detects that waveform itself, once,
-    //  when something asks -- the paint that draws the X marks, the hit test
-    //  that makes them clickable, the R bar above, and the focus panel, all off
-    //  one answer. Two override passes lived here, each re-detecting on the raw
-    //  slot array in Auto fit modes and overwriting the detection setAuto had
-    //  just made in the operator's modes: a full detector run per panel per
-    //  apply, discarded, and the surviving answer was the one that ignored the
-    //  radios.)
+    // NOTHING IS PUSHED HERE, on either channel. setAuto names the
+    // (bin, slot, alignment) and the panel detects that waveform itself, once,
+    // when something asks -- the paint that draws the X marks, the hit test
+    // that makes them clickable, the R bar above, and the focus panel all read
+    // one answer.
 }
 
 // ---------------------------------------------------------------------------
 // THE BIN-WIDE HALF, SHARED BY EVERY COLUMN OF THE BIN.
 //
-// This was applyBinToWidget, "the slot 0 path", and it set the ECG bars, the
-// pulse bars and the arterial bars. That made slot 0 the one column nobody
-// seeded, the one column whose pulse bars came from the bin instead of from the
-// pulse it draws, and the one column whose P peak was measured on
-// chFor(c, R_PEAK) -- hardcoded R -- with bars in the current frame. Those were
-// three separate bugs with one cause: slot 0 was special.
-//
-// It now does only what is genuinely PER BIN: the arterial channels (one ABP /
-// ART / ART_PULM trace per bin, no bank to hang them off), the alignment badge
-// and the glyph snapshot. Everything per-template is in
-// applyTemplateToWidget, which every column goes through, slot 0 included.
+// Only what is genuinely PER BIN: the arterial channels (one ABP / ART /
+// ART_PULM trace per bin, with no bank to hang them off), the alignment badge
+// and the glyph snapshot. Everything per-template belongs in
+// applyTemplateToWidget, which every column goes through.
 // ---------------------------------------------------------------------------
 void TemplateViewerWindow::applyBinCommonToWidget(BinPlotWidget* pw,
     const TemplateBin& b) {
@@ -1374,10 +1342,10 @@ void TemplateViewerWindow::reskinGridForAnchor(int onlyBin, int onlySlot) {
                 normalize_features::scale_array_by_ref(ecgIqrRaw, ecgRef);
 
             const double rPeak = static_cast<double>(b.r_peak_ch[lead_index]);
-            const uint64_t nEcgBinTotal = (lead_index == 0) ? b.ch1_n_beats_raw
-                : (lead_index == 1) ? b.ch2_n_beats_raw : b.ch3_n_beats_raw;
-            const uint64_t nEcgBeats = (L->nMembers > 0)
-                ? static_cast<uint64_t>(L->nMembers) : nEcgBinTotal;
+            // THIS TEMPLATE'S OWN MEMBER COUNT, with no fallback to the bin
+            // total -- see the same line in showPage.
+            const uint64_t nEcgBeats =
+                static_cast<uint64_t>(std::max(0, L->nMembers));
 
             pw->setEcgData(ecgN, ecgIqr, rPeak, static_cast<int>(nEcgBeats));
 
@@ -1414,7 +1382,12 @@ BinPlotWidget::State TemplateViewerWindow::panelState(int binIdx, int leadIdx,
     if (templateIdx >= 0 && templateIdx < b.ppg_bank.size()) {
         ppgBad = b.ppg_bank.templates[templateIdx].marked_invalid_template;
     }
-    if (templateIdx == 0 && leadIdx >= 0 && leadIdx <= 2 && b.bad_r_ch[leadIdx]) {
+    // bad_r_ch IS PER BIN AND PER LEAD, so it applies to every slot of that
+    // lead. It was gated on templateIdx == 0, which turned _A red and left _B
+    // reading Good on a bin whose R detection the operator had condemned --
+    // the flag says the lead's R peaks are wrong, and _B is built from the
+    // same R peaks as _A.
+    if (leadIdx >= 0 && leadIdx <= 2 && b.bad_r_ch[leadIdx]) {
         ecgBad = true;
     }
     return (ecgBad && ppgBad) ? BinPlotWidget::State::BadBoth

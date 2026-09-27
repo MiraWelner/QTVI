@@ -866,28 +866,47 @@ int FeatureMarks::detect_ppg_upstroke_peak(const std::vector<double>& v, int lo,
     const int h = std::max(3, (hi - lo) / 50);
 
     // Smoothed central-difference derivative; NaN-safe.
-    std::vector<double> d(n, std::numeric_limits<double>::quiet_NaN());
+    //
+    // SIZED TO THE WINDOW, NOT THE SIGNAL. This allocated and NaN-filled a
+    // vector as long as the whole trace and then used [lo, hi) of it. Called
+    // once per landmark that is nothing; called once per BEAT by
+    // ppg_realign::upstrokePctCol, which is how a peak-anchored re-stack pays
+    // for it -- a few hundred allocations of a few thousand doubles per
+    // column, all but the window wasted. The foot-anchored path returns before
+    // reaching it (pct == 0 needs no crossing), which is why only peak
+    // alignment felt slow.
+    //
+    // `at(i)` DOES THE INDEX SHIFT IN ONE PLACE. Every loop below still runs
+    // in signal coordinates, so the arithmetic cannot drift between them, and
+    // the results are identical to the full-length version.
+    const int dlo = lo, dn = hi - lo;
+    std::vector<double> d(static_cast<size_t>(dn),
+        std::numeric_limits<double>::quiet_NaN());
+    const auto at = [&d, dlo](int i) -> double& {
+        return d[static_cast<size_t>(i - dlo)];
+        };
+
     for (int i = std::max(lo, h); i + h < hi; ++i) {
         if (std::isnan(v[i - h]) || std::isnan(v[i + h])) continue;
-        d[i] = (v[i + h] - v[i - h]) / (2.0 * h);
+        at(i) = (v[i + h] - v[i - h]) / (2.0 * h);
     }
 
     double maxSlope = 0.0;
     for (int i = lo; i < hi; ++i)
-        if (!std::isnan(d[i]) && d[i] > maxSlope) maxSlope = d[i];
+        if (!std::isnan(at(i)) && at(i) > maxSlope) maxSlope = at(i);
     if (maxSlope <= 0.0) return -1;                 // flat / no rise
     const double gate = 0.25 * maxSlope;
     const int minRun = std::max(2, h);
 
     int anchor = -1;
     for (int i = lo; i < hi; ++i) {
-        if (std::isnan(d[i]) || d[i] < gate) continue;
+        if (std::isnan(at(i)) || at(i) < gate) continue;
         int j = i, bestJ = i, held = 0;
-        double bestD = d[i];
-        while (j < hi && (std::isnan(d[j]) || d[j] >= gate)) {
-            if (!std::isnan(d[j])) {
+        double bestD = at(i);
+        while (j < hi && (std::isnan(at(j)) || at(j) >= gate)) {
+            if (!std::isnan(at(j))) {
                 ++held;
-                if (d[j] > bestD) { bestD = d[j]; bestJ = j; }
+                if (at(j) > bestD) { bestD = at(j); bestJ = j; }
             }
             ++j;
         }
@@ -898,8 +917,8 @@ int FeatureMarks::detect_ppg_upstroke_peak(const std::vector<double>& v, int lo,
 
     int pk = -1;
     for (int i = anchor; i + 1 < hi; ++i) {
-        if (std::isnan(d[i])) continue;
-        if (d[i] <= 0.0) { pk = i; break; }
+        if (std::isnan(at(i))) continue;
+        if (at(i) <= 0.0) { pk = i; break; }
     }
     if (pk < 0) pk = hi - 1;                        // apex at/past the boundary
 

@@ -36,6 +36,21 @@ public:
     //   framingBias : -1 frames the landmark toward the RIGHT edge (it ENDS
     //                 this segment), +1 toward the LEFT (it STARTS it),
     //                 0 centered.
+    // ---- THE RATE THE FOOTER READS POSITIONS IN --------------------------
+    //
+    // The footer's auto / bar / d used to print raw COLUMNS, which are only
+    // meaningful next to the trace they index: 402.35 says nothing about
+    // whether a correction was 4 ms or 40. Seconds are comparable across
+    // panels, across channels and against the x axis the operator is looking
+    // at, which is already labelled in seconds.
+    //
+    // SET PER FOCUS, not once at construction: the ECG and the pulse run at
+    // different rates and the same panel shows both. Left at 0 the footer
+    // falls back to columns rather than printing a wrong time.
+    //
+    // NOT CLEARED BY setFocus, so the order of the two calls does not matter.
+    void setSampleRate(double hz);
+
     void setFocus(const std::vector<double>& mean,
         const std::vector<double>& sd,
         int nBeats,
@@ -165,6 +180,8 @@ private:
     // The operator's own position, or -1 for a landmark that cannot have one.
     // The thick line is drawn here and nowhere else.
     double m_userFid = -1.0;
+    // Footer units; 0 = unknown, print columns. See setSampleRate.
+    double m_rateHz = 0.0;
     double m_lastFidCol = -1.0;
     double m_detectorFid = -1.0;
     int    m_half = 30;

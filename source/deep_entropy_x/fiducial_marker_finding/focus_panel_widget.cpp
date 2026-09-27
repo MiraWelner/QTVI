@@ -72,6 +72,13 @@ void FocusPanelWidget::setDetectorFiducial(double col) {
     update();
 }
 
+void FocusPanelWidget::setSampleRate(double hz) {
+    const double v = (hz > 0.0) ? hz : 0.0;
+    if (m_rateHz == v) return;
+    m_rateHz = v;
+    update();
+}
+
 void FocusPanelWidget::setUserFiducial(double col) {
     m_userFid = col;
     update();
@@ -392,7 +399,10 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
         for (const Candidate& c : cands)
             if (!c.selected) drawCurve(c.curve, QColor(150, 150, 150), Qt::DashLine);
         for (const Candidate& c : cands)
-            if (c.selected)  drawCurve(c.curve, QColor(0, 150, 0), Qt::SolidLine);
+            // LIME, not the darker green: this is the one curve that placed
+            // the mark, and at 1 px against a gray dashed sibling and a red
+            // loser the darker green was the least visible line in the panel.
+            if (c.selected)  drawCurve(c.curve, QColor(50, 205, 50), Qt::SolidLine);
 
         // HEADER LINE 2: the selected model's name, in GRAY, on its own line
         // under the landmark. It was green and right-aligned on the landmark's
@@ -530,15 +540,35 @@ void FocusPanelWidget::paintEvent(QPaintEvent*) {
             // not a missing one: "auto = --" is a landmark the detector never
             // placed, "bar = --" is a regular fiducial with no operator
             // position at all. A zero in either would read as agreement.
-            const QString autoStr = (m_lastFidCol >= 0.0)
-                ? QString::number(m_lastFidCol, 'f', 2) : QStringLiteral("--");
-            const QString barStr = (m_userFid >= 0.0)
-                ? QString::number(m_userFid, 'f', 2) : QStringLiteral("--");
-            l1 += QStringLiteral("   auto = %1   bar = %2").arg(autoStr, barStr);
-            // The difference only exists when both do.
-            if (m_lastFidCol >= 0.0 && m_userFid >= 0.0)
-                l1 += QStringLiteral("   d = %1")
-                .arg(QString::number(m_userFid - m_lastFidCol, 'f', 2));
+            // IN SECONDS, to four places -- 0.1 ms, finer than any rate this
+            // runs at, so the sub-sample precision the fitters work to is not
+            // rounded away in the one place it is reported.
+            //
+            // COLUMNS WHEN THE RATE IS UNKNOWN (m_rateHz == 0), labelled
+            // "col" so the number is never mistaken for a time. A wrong time
+            // is worse than an honest raw index.
+            const bool inSec = (m_rateHz > 0.0);
+            // THE UNIT TRAVELS WITH THE NUMBER, so a "--" does not acquire
+            // one: "auto = -- s" reads as a measurement of nothing.
+            const auto posStr = [&](double col) -> QString {
+                if (!(col >= 0.0)) return QStringLiteral("--");
+                return inSec
+                    ? QStringLiteral("%1 s").arg(col / m_rateHz, 0, 'f', 4)
+                    : QStringLiteral("%1 col").arg(col, 0, 'f', 2);
+                };
+
+            l1 += QStringLiteral("   auto = %1   bar = %2")
+                .arg(posStr(m_lastFidCol), posStr(m_userFid));
+            // The difference only exists when both do. SIGNED, and in the same
+            // units: it is the correction the operator made.
+            if (m_lastFidCol >= 0.0 && m_userFid >= 0.0) {
+                const double d = inSec
+                    ? (m_userFid - m_lastFidCol) / m_rateHz
+                    : (m_userFid - m_lastFidCol);
+                l1 += inSec
+                    ? QStringLiteral("   d = %1 s").arg(d, 0, 'f', 4)
+                    : QStringLiteral("   d = %1 col").arg(d, 0, 'f', 2);
+            }
 
             const QString sdStr = std::isfinite(rawSd)
                 ? QString::number(rawSd, 'f', 4) : QStringLiteral("--");

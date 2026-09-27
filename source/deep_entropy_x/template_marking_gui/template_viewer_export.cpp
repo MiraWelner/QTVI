@@ -1027,6 +1027,28 @@ void TemplateViewerWindow::save_bin_and_csv() {
             std::cout << "Wrote markings CSV: " << csvPath.toStdString() << "\n";
         }
 
+        // ---- THE DERIVATIVE LANDMARKS, SAME FOLDER -------------------
+        //
+        // vpg / apg / jpg only. They are not points on the pulse and have no
+        // operator bar, so they are not markings; see writePpgDerivativeCsv.
+        // Same row key and row set as the file above, so the two join on
+        // (file_id, bin_index, channel, template).
+        {
+            const QString dPath = csvDir.absolutePath() + "/"
+                + m_subjectId + "_ppg_derivative_markings.csv";
+            std::ofstream df(dPath.toStdString(), std::ios::trunc);
+            if (!df)
+                throw std::runtime_error("cannot open for write: "
+                    + dPath.toStdString());
+            writePpgDerivativeCsv(df, m_bins,
+                m_subjectId.toStdString(), m_ppgRateHz);
+            if (!df.good())
+                throw std::runtime_error("failed writing "
+                    + dPath.toStdString());
+            std::cout << "Wrote PPG derivative CSV: "
+                << dPath.toStdString() << "\n";
+        }
+
         // ---- WHAT THE OPERATOR ACTUALLY RULED ON ---------------------
         //
         // ITS OWN FILE, because templates.csv cannot carry it. That one is

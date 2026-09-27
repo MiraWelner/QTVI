@@ -286,11 +286,9 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
     // beats in memory with nothing marking it as the stale one -- which is how
     // the screen and the files came to describe different partitions.
     //
-    // IT WAS ALSO THE LAST PLACE THE ORDER RAN BACKWARDS. Its slot 0 came from
-    // seed_pool::selectSeedPool filtered by the Tukey verdict, so prematurity
-    // and Tukey steered the partition. The required order is partition first,
-    // then remove premature, then Tukey on what is left, and with this gone
-    // there is no code left that does it the other way.
+    // THE REQUIRED ORDER IS: partition first, then remove premature, then
+    // Tukey on what is left. Nothing here may filter by the Tukey verdict
+    // before the partition runs, or prematurity and Tukey steer the grouping.
 
     // ---- capture the beats handed downstream, with their rhythm verdicts --
     if (out_kept_beats) {

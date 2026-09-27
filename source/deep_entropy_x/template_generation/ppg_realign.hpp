@@ -52,10 +52,36 @@ namespace ppg_realign {
 
     // One bin's pulse beats, in the channel's LOCAL ROW SPACE -- the space
     // tbank::BankTemplate::members is in (see the join note on loadBin).
+    // ---- ONE BIN'S BEAT MATRIX, OWNED OR BORROWED ----------------------
+    //
+    // `rows` WAS AN OWNING VECTOR AND THAT WAS THE RE-STACK'S COST. The
+    // viewer already holds every bin's pulses in memory
+    // (BeatsFile::per_channel_beats), so the memory path of beatsForBin was
+    // deep-copying a few hundred rows of a couple of thousand doubles --
+    // several megabytes and a few hundred heap allocations -- to answer one
+    // gesture. With Move-Subsequent that happened once per COLUMN, and the
+    // cache is one deep and keyed by bin, so columns in different bins missed
+    // it every time.
+    //
+    // `external` POINTS AT THE CALLER'S ROWS and takes precedence; `owned` is
+    // filled only by loadBin, the disk fallback, which has nowhere to borrow
+    // from. Reading goes through rows() so neither the algorithms below nor
+    // their callers care which case they got.
+    //
+    // NEVER POINT external AT owned. A BinBeats is returned by value and
+    // cached by move, so a self-pointer would dangle the moment it moved;
+    // external is only ever set to storage that outlives the cache (the
+    // BeatsFile the window was handed). Copying or moving a BinBeats keeps a
+    // borrowed pointer valid precisely because it aims somewhere else.
     struct BinBeats {
         int width = 0;
-        std::vector<std::vector<double>> rows;
-        bool empty() const { return rows.empty() || width <= 0; }
+        std::vector<std::vector<double>> owned;                     // disk path
+        const std::vector<std::vector<double>>* external = nullptr; // memory path
+
+        const std::vector<std::vector<double>>& rows() const {
+            return external ? *external : owned;
+        }
+        bool empty() const { return rows().empty() || width <= 0; }
     };
 
     // ------------------------------------------------------------------
@@ -134,16 +160,16 @@ namespace ppg_realign {
             out.width = static_cast<int>(width);
             for (uint64_t k = 0; k < nCols; ++k) {
                 morphology_csv::BeatRecord rec;
-                if (!rd(&rec, recSize)) { out.rows.clear(); return out; }
+                if (!rd(&rec, recSize)) { out.owned.clear(); return out; }
                 const bool want = (rec.bin == bin) && (rec.became_beat != 0);
                 if (!want || width == 0) {
                     if (sampleBytes) f.seekg(sampleBytes, std::ios::cur);
-                    if (!f) { out.rows.clear(); return out; }
+                    if (!f) { out.owned.clear(); return out; }
                     continue;
                 }
                 std::vector<double> row(width);
-                if (!rd(row.data(), sampleBytes)) { out.rows.clear(); return out; }
-                out.rows.push_back(std::move(row));
+                if (!rd(row.data(), sampleBytes)) { out.owned.clear(); return out; }
+                out.owned.push_back(std::move(row));
             }
             return out;   // the block we came for; nothing after it matters
         }
@@ -420,8 +446,8 @@ namespace ppg_realign {
         const double kNaN = std::numeric_limits<double>::quiet_NaN();
 
         for (const uint32_t r : rows) {
-            if (r >= beats.rows.size()) continue;       // stale member list
-            const std::vector<double>& src = beats.rows[r];
+            if (r >= beats.rows().size()) continue;     // stale member list
+            const std::vector<double>& src = beats.rows()[r];
             // Each beat's OWN trough, bounded to the hint window. trough_in
             // clamps its own bounds and returns -1 when the window is all NaN,
             // which is a beat whose samples do not reach here -- skipped, not
@@ -605,8 +631,8 @@ namespace ppg_realign {
         src.reserve(rows.size());
         level.reserve(rows.size());
         for (const uint32_t r : rows) {
-            if (r >= beats.rows.size()) continue;       // stale member list
-            const std::vector<double>& row = beats.rows[r];
+            if (r >= beats.rows().size()) continue;     // stale member list
+            const std::vector<double>& row = beats.rows()[r];
             const int lo = std::max(0, target - mean_halfwin);
             const int hi = std::min<int>(static_cast<int>(row.size()) - 1,
                 target + mean_halfwin);
@@ -763,8 +789,8 @@ namespace ppg_realign {
         src.reserve(rows.size());
         level.reserve(rows.size());
         for (const uint32_t r : rows) {
-            if (r >= beats.rows.size()) continue;       // stale member list
-            const std::vector<double>& row = beats.rows[r];
+            if (r >= beats.rows().size()) continue;     // stale member list
+            const std::vector<double>& row = beats.rows()[r];
 
             // Its own trough, bounded to the hint window -- the same call and
             // the same bounds realignAt uses, so the two cannot disagree about

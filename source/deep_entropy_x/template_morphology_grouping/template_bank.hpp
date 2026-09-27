@@ -291,6 +291,53 @@ namespace tbank {
         }
     };
 
+    // ---- THE TWO PULSE ALIGNMENTS ----------------------------------------
+    //
+    // A pulse average exists in two versions of itself, the way an ECG average
+    // exists once per AnchorType. Both are the column-wise median of the SAME
+    // member beats over the SAME time axis; they differ only in what each beat
+    // was levelled on before the median was taken:
+    //
+    //   Foot  each beat's own trough (or pct up its own upstroke), located
+    //         from the operator's foot column. Rebuilt when that column or the
+    //         percentage changes -- it is the operator's alignment.
+    //   Peak  each beat's own systolic apex. No bar is among its inputs, so
+    //         there is exactly one answer per slot, for the life of the record.
+    //
+    // WHICH LANDMARK IS MEASURED ON WHICH. The foot is measured on Foot: it
+    // defines that alignment, so that is where it is sharp. The dicrotic notch
+    // and the end of cycle are measured on Peak: both sit on the decay, which
+    // a foot-levelled stack smears precisely because the beats were brought
+    // together at the other end of the pulse.
+    //
+    // VERTICAL ONLY, which is what makes the pair usable together.
+    // ppg_realign::relevelAtOwnCrossing adds a per-row offset and moves no row
+    // sideways, so both variants share one width and one time axis and a column
+    // index means the same instant in each. A foot read off Foot and a notch
+    // read off Peak are therefore directly comparable in time; only their
+    // AMPLITUDES belong to different waveforms, so a y value must always be
+    // read from the variant its column was measured on.
+    enum class PulseAnchor : int32_t { Foot = 0, Peak = 1 };
+
+    inline const char* pulseAnchorSuffix(PulseAnchor v) {
+        return (v == PulseAnchor::Peak) ? "_P" : "_F";
+    }
+    inline constexpr std::array<PulseAnchor, 2> pulse_anchor_array = {
+        PulseAnchor::Foot, PulseAnchor::Peak
+    };
+
+    struct PulseVariant {
+        std::vector<double> tmpl;
+        std::vector<double> tmpl_iqr;
+        BankPulseMarkerSet  marks;
+        // FALSE UNTIL THE MEDIAN HAS ACTUALLY BEEN TAKEN. An empty tmpl is not
+        // the same state: a slot whose re-level was refused (too few rows
+        // reaching the columns, no beat matrix) has to be distinguishable from
+        // one nobody has asked for yet, or every paint retries the refusal.
+        bool built = false;
+        bool ok() const { return built && !tmpl.empty(); }
+    };
+
     struct BankTemplate {
         // Column-wise NaN-skipping median over members, on the bin's shared
         // axis. Recomputed whenever membership changes (design note 3).
@@ -376,8 +423,35 @@ namespace tbank {
         // to treat -1 here as a valid state, not an error, or it will report
         // a PR interval measured from a P wave that does not exist.
         std::map<int32_t, BankMarkerSet> markers_by_anchor;   // key: AnchorType
+        // THE COMPOSED SET THE PANEL DRAWS, and the one every existing reader
+        // already knows about: the foot from the Foot variant, the dicrotic
+        // notch and the end from Peak, the derived crossings from those. It is
+        // written by composePulseMarks and is not itself a source of truth --
+        // pulse_by_variant is.
         BankPulseMarkerSet pulse_marks;   // meaningful only on ppg_bank slots
         bool hasDetectedPulseMarks() const { return !pulse_marks.isUnset(); }
+
+        // ---- THE TWO VARIANTS, KEYED LIKE markers_by_anchor ---------------
+        //
+        // NOT SERIALIZED IN THE BANK FILE. Both are derivable from the beat
+        // matrix and the foot column, so an archive carries neither; they are
+        // rebuilt on demand. What DOES have to persist is each variant's
+        // operator marks, which travel in the markings file.
+        std::map<int32_t, PulseVariant> pulse_by_variant;
+
+        PulseVariant& pulseVariant(PulseAnchor v) {
+            return pulse_by_variant[static_cast<int32_t>(v)];
+        }
+        // NON-INSERTING, unlike the overload above -- a read through
+        // operator[] is a write, the same trap marks() documents.
+        const PulseVariant& pulseVariant(PulseAnchor v) const {
+            static const PulseVariant kEmpty;
+            const auto it = pulse_by_variant.find(static_cast<int32_t>(v));
+            return (it == pulse_by_variant.end()) ? kEmpty : it->second;
+        }
+        bool hasPulseVariant(PulseAnchor v) const {
+            return pulseVariant(v).ok();
+        }
 
         // NOTE: INSERTS. markers_by_anchor[a] default-constructs an all -1 set
         // when the key is absent, so a read through this overload is a write.

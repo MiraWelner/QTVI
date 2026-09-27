@@ -361,6 +361,91 @@ private:
     // not: it is a copy of what the archive already holds, kept so this
     // window can put it back.
     std::map<int, std::pair<std::vector<double>, std::vector<double>>> m_ppgBuilt;
+
+    // ---- THE _F ANCHOR: THE COLUMN THAT DEFINES THE FOOT-ALIGNED STACK ---
+    //
+    // Per (bin, slot), and NOT slot.pulse_marks.onset, which is what made the
+    // re-stack unrepeatable. adoptPulsePair re-detects every pulse mark on the
+    // waveform it has just installed, so the foot BAR moves a little after
+    // each re-level; the old code then read that moved bar as the hint for the
+    // next one. Each run therefore started from the previous run's output:
+    //
+    //     run 1: hint f0  ->  tmpl_A, bar re-detected to f1
+    //     run 2: hint f1  ->  tmpl_B  (different median, same beats)
+    //     run 3: hint f2  ->  tmpl_C  ...
+    //
+    // It never settles. On a clean bin the shift is a fraction of a sample and
+    // trough_in lands on the same trough anyway, so nothing shows; on a messy
+    // one, rows with several local minima in the search window snap to
+    // different troughs and the median visibly moves.
+    //
+    // THE BAR STILL MOVES -- that is wanted, and ppg_onset_auto is meant to
+    // sit where the operator put it. What must not move is the DEFINITION, so
+    // it is kept here, written only by a foot drag, and seeded from the
+    // AS-BUILT average's own detected foot. Same anchor in, same stack out;
+    // drag the foot away and back and the original waveform returns exactly.
+    std::map<int, double> m_ppgFootAnchor;
+
+    // ---- WHICH VARIANT THE PAGE IS SHOWING -------------------------------
+    //
+    // Page-wide, not per column: the operator reads a page as one picture and
+    // two columns drawn on different alignments cannot be compared by eye.
+    //
+    // In Auto it FOLLOWS THE SELECTED BAR -- Foot until a dicrotic or end bar
+    // is clicked, Peak from then on, back to Foot on an onset click -- which is
+    // the same rule m_autoGridAnchor follows on the ECG side, and for the same
+    // reason: the operator is looking at the landmark they clicked, so they
+    // should be shown the average it was measured on. Forced Foot / Percent /
+    // Peak override it.
+    tbank::PulseAnchor m_ppgViewVariant = tbank::PulseAnchor::Foot;
+
+    // Which variant a pulse landmark's value lives in. ONE DEFINITION, so the
+    // drag path, the compose step and the CSV cannot disagree:
+    //
+    //   PpgOnset                    -> Foot   (it defines that alignment)
+    //   PpgDicrotic, PpgEnd         -> Peak   (both sit on the decay)
+    //   everything else             -> Peak   (peak, peak2, t50, t80: two of
+    //                                          the three brackets are Peak's)
+    static tbank::PulseAnchor pulseVariantForMarker(int marker);
+
+    // Build ONE variant of one slot's pulse from the AS-BUILT member rows, and
+    // detect that variant's own auto marks on the result. `pct` is ignored for
+    // Peak, which is always 100.
+    //
+    // Idempotent for fixed inputs, which is the entire point: Foot's inputs are
+    // the anchor column and the percentage, Peak's are neither. Nothing here
+    // reads slot.tmpl, so no build is ever fed a previous build's output.
+    bool buildPulseVariant(int binIdx, int templateIdx,
+        tbank::PulseAnchor v, double pct, bool announce = false);
+
+    // Install a built variant as the waveform the panels draw, compose
+    // pulse_marks from both variants, and push. Builds on demand if the
+    // variant is not there yet.
+    bool showPulseVariant(int binIdx, int templateIdx, tbank::PulseAnchor v,
+        bool announce = false);
+
+    // pulse_marks <- Foot's foot + Peak's notch/end/glyphs. The composed set is
+    // what every existing reader sees; pulse_by_variant is the source.
+    static void composePulseMarks(tbank::BankTemplate& slot);
+
+    // The variant the page draws: the forced positions say it outright, Auto
+    // defers to m_ppgViewVariant.
+    tbank::PulseAnchor pulseVariantToShow() const;
+
+    // Auto's view follows the last pulse BAR clicked. Returns whether the view
+    // changed (and therefore whether the page was re-shown).
+    bool followPulseBarSelection(int marker);
+
+    // The average the build produced, before any re-level: the stash when one
+    // has been taken, the live template when none has. Every anchor and every
+    // variant is measured against THIS, so no computation is ever fed its own
+    // output.
+    const std::vector<double>& ppgAsBuiltTmpl(int binIdx, int templateIdx) const;
+
+    // The _F anchor for one slot, seeded on first call from
+    // ppgAsBuiltTmpl's own detected foot. -1 when the slot has no usable
+    // pulse.
+    double ppgFootAnchor(int binIdx, int templateIdx);
     void stashBuiltPulse(int binIdx, int templateIdx,
         const tbank::BankTemplate& slot);
     bool restorePulseAsBuilt(int binIdx, int templateIdx);
@@ -385,22 +470,15 @@ private:
     bool relevelPulseAtFoot(int binIdx, int templateIdx, double footCol,
         bool announce = true);
 
-    // ---- THE ALIGNMENT GROUP: LEVEL AT EACH BEAT'S OWN CROSSING ---------
+    // ---- THE ALIGNMENT GROUP -------------------------------------------
     //
-    // The page-wide vertical reference, where relevelPulseAtFoot above is the
-    // per-column one. Same result type, same cohort rule, same refusals; the
-    // difference is which column each row is read at -- a shared column for
-    // the bar, each row's own foot or own pct crossing here.
-    //
-    // `pct` is percent up each beat's OWN upstroke IN AMPLITUDE, per
-    // upstrokePctCol: 0 levels on the feet, 100 on the systolic peaks. Auto
-    // decides it per column (autoPctForSlot); the other two positions of the
-    // group read m_ppgAlignPercent.
-    //
-    // NO HORIZONTAL EFFECT. realignPulseFromFoot, which shifted rows sideways,
-    // is gone -- rows keep the build's up50 time alignment.
-    bool relevelPulseAtPct(int binIdx, int templateIdx, double footCol,
-        double pct, bool announce = true);
+    // relevelPulseAtPct is gone. It re-levelled slot.tmpl in place, which made
+    // the alignment a destructive operation with no way back and, because
+    // adoptPulsePair re-detected the foot on its own output, an operation that
+    // did not reproduce. buildPulseVariant + showPulseVariant replace it: the
+    // two alignments are computed from fixed inputs and STORED, and choosing
+    // one selects rather than rebuilds.
+
 
     // ---- ONE BIN'S BEAT MATRIX, CACHED ONE DEEP -------------------------
     //

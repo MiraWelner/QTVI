@@ -1,27 +1,11 @@
 /**
  * @file   anneal_handler.cpp
- * @brief  Step 3 of the QTVi pipeline. Reads a v2 data .bin (from
- *         file_to_bin) plus an optional noise-markings .bin (from the
- *         marking GUI), runs the annealing algorithm, and writes an
- *         annealed .bin with all 40 channels preserved.
- *
- *         File-private structure:
- *           - Data types (RawData, FinalSegment, NoiseMarkings, ...)
- *           - Algorithm helpers (in anneal:: namespace)
- *           - AnnealSegments() entry point for the algorithm
- *           - File I/O (read_noise_bin, read_data_bin, write_output_bin)
- *           - annealOneFile() public dispatch
- *
- *         Algorithm summary: split the recording into fixed-length bins,
- *         excise noisy regions, redistribute leftover fragments to
- *         neighbouring bins when possible.
- *
- *         ECG noise is excluded only when EVERY ECG channel that the
- *         user marked agrees on the noisy region. Channels with no
- *         marks at all do not constrain (a missing channel does not
- *         mean "always clean"). Single-lead datasets like MESA where
- *         the user only marks ECG1 still get their noise excluded.
- *         PPG noise is excluded independently.
+ * @brief  Reads a data .bin file as well as the noise marking .bin file, and produces
+ *         an annealed .bin file. The point is to remove noise, and split the file after noise is removed.
+ * 
+ * 
+ * 
+ * 
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -86,12 +70,9 @@ namespace {
         int bin_count = 0;
     };
 
-    // ============================================================================
-    // MATLAB-compatible rounding
-    // ============================================================================
-
-    /// Banker's rounding (round half to even) to match MATLAB's round().
+   
     double matlab_round(double x) {
+        // In order to ensure identical results to original matlab code, matlab rounding is used.
         double r = std::round(x);
         double frac = x - std::floor(x);
         if (std::abs(frac - 0.5) < 1e-12) {
@@ -133,7 +114,7 @@ namespace {
             iv = std::move(m);
         }
 
-        /// Return the intersection of two sorted, non-overlapping interval lists.
+        // Return the intersection of two sorted, non-overlapping interval lists.
         std::vector<std::pair<double, double>> intersectIntervals(
             const std::vector<std::pair<double, double>>& a,
             const std::vector<std::pair<double, double>>& b)
@@ -205,16 +186,6 @@ namespace {
                 ? (int)std::floor((double)total_len / bin_size)
                 : (int)std::ceil((double)total_len / bin_size);
 
-            // Stride is (bin_size + 1), not bin_size, to match MATLAB's
-            // annealer. MATLAB places bin n+1 starting one sample after
-            // bin n's last sample, so consecutive bins do not share their
-            // boundary sample. With stride bin_size, C++ would have bins
-            // overlap by 1 sample on the boundary; the old code masked this
-            // with the per-bin --second fixup at step 11. With that fixup
-            // disabled (to keep the inclusive [first,second] range at
-            // bin_size+1 samples like MATLAB), the only way to also match
-            // MATLAB's bin start times is to advance breaks by bin_size+1
-            // each iteration.
             for (uint64_t b = bin_size + 1; b <= total_len; b += bin_size + 1)
                 r.bin_breaks.push_back(b);
 
@@ -226,11 +197,9 @@ namespace {
             return r;
         }
 
-        /// For each index, return the 1-based bin number it falls in.
-        std::vector<int> roundToClosestBin(
-            const std::vector<uint64_t>& breaks,
-            const std::vector<uint64_t>& indices)
+        std::vector<int> roundToClosestBin(const std::vector<uint64_t>& breaks, const std::vector<uint64_t>& indices)
         {
+            //For each index, return the 1-based bin number it falls in.
             std::vector<int> out(indices.size());
             for (size_t i = 0; i < indices.size(); ++i) {
                 out[i] = (int)breaks.size(); // default: last bin
@@ -241,17 +210,9 @@ namespace {
             return out;
         }
 
-        // ------------------------------------------------------------------------
-        // Exclusion splitting
-        // ------------------------------------------------------------------------
-
-        /// Split any exclusion spanning multiple bins so each piece sits in one bin.
-        /// MATLAB quirk: only iterates over the original size; appended entries
-        /// are not revisited.
-        void splitOverlappingBins(
-            std::vector<Exclusion>& ex,
-            const std::vector<uint64_t>& breaks)
+        void splitOverlappingBins( std::vector<Exclusion>& ex, const std::vector<uint64_t>& breaks)
         {
+            // Split any exclusion spanning multiple bins so each piece sits in one bin.
             size_t orig = ex.size();
             for (size_t i = 0; i < orig; ++i) {
                 if (ex[i].bin_start == ex[i].bin_end) continue;
@@ -405,17 +366,14 @@ namespace {
         using namespace anneal;
 
         const bool hasPpg = data.ppg.size() > 1 && data.ppgSR > 0.0;
-        const bool hasEcg = data.ecg1.size() > 1 && data.ecgSR > 0.0;
-        if (!hasPpg && !hasEcg) {
-            std::cerr << "  AnnealSegments empty: no usable channel (ppg n="
-                << data.ppg.size() << " sr=" << data.ppgSR
-                << ", ecg n=" << data.ecg1.size() << " sr=" << data.ecgSR << ")\n";
+        if (!(data.ecg1.size() > 1 && data.ecgSR > 0.0)) {
+            std::cerr << "  AnnealSegments empty: no usable ECG1 (n="
+                << data.ecg1.size() << " sr=" << data.ecgSR << ")\n";
             return {};
         }
 
-        const bool ecgOnly = !hasPpg && hasEcg;
-        const auto& primarySignal = ecgOnly ? data.ecg1 : data.ppg;
-        const double primarySR = ecgOnly ? data.ecgSR : data.ppgSR;
+        const auto& primarySignal = data.ecg1;
+        const double primarySR = data.ecgSR;
 
         const uint64_t bin_size = static_cast<uint64_t>(primarySR * 60.0 * targetLenMins);
         const double   min_mins = targetLenMins / 2.0;
@@ -519,25 +477,6 @@ namespace {
                 fb.po = mergeSegments(fb.po);
 
         // 11. Fix shared boundaries between adjacent bins
-        //
-        // DISABLED to match the MATLAB annealer, which does NOT apply this
-        // fixup. With it enabled, every bin except the last got its end
-        // sample decremented, producing 60000-sample bins at 1000 Hz. The
-        // MATLAB annealer leaves the inclusive [first, second] range alone,
-        // so its bins are 60001 samples. Disabling the fixup here makes the
-        // two pipelines produce the same bin lengths and identical R-peak
-        // detection times.
-        // for (size_t i = 0; i + 1 < final_idx.size(); ++i) {
-        //     if (!final_idx[i].po.empty() && !final_idx[i + 1].po.empty()) {
-        //         if (final_idx[i].po.back().second == final_idx[i + 1].po.front().first)
-        //             final_idx[i].po.back().second--;
-        //     }
-        // }
-
-        // 12. Compute secondary (cross-modality) index pairs
-        const double secondarySR = ecgOnly ? data.ppgSR : data.ecgSR;
-        const bool hasSecondary = ecgOnly ? hasPpg : hasEcg;
-
         struct BinIdxFull {
             std::vector<std::pair<uint64_t, uint64_t>> primary;
             std::vector<std::pair<uint64_t, uint64_t>> secondary;
@@ -546,13 +485,13 @@ namespace {
 
         for (size_t i = 0; i < final_idx.size(); ++i) {
             final_bins[i].primary = final_idx[i].po;
-            if (hasSecondary && secondarySR > 0) {
+            if (hasPpg) {
                 for (const auto& seg : final_idx[i].po) {
                     double t0 = (double)(seg.first - 1) / primarySR;
                     double t1 = (double)(seg.second - 1) / primarySR;
                     final_bins[i].secondary.push_back({
-                        closest_idx(t0, secondarySR),
-                        closest_idx(t1, secondarySR)
+                        closest_idx(t0, data.ppgSR),
+                        closest_idx(t1, data.ppgSR)
                         });
                 }
             }
@@ -596,17 +535,11 @@ namespace {
             r.ecgSampleRate = data.ecgSR;
             r.scoring_epoch_size_sec = data.scoringEpochSec;
 
-            if (ecgOnly) {
-                r.ecg_bin_indexs = final_bins[i].primary;
-                r.ppg_bin_indexs = final_bins[i].secondary;
-            }
-            else {
-                r.ppg_bin_indexs = final_bins[i].primary;
-                r.ecg_bin_indexs = final_bins[i].secondary;
-            }
+            r.ecg_bin_indexs = final_bins[i].primary;
+            r.ppg_bin_indexs = final_bins[i].secondary;
 
-            const auto& ecgIdx = ecgOnly ? final_bins[i].primary : final_bins[i].secondary;
-            const auto& ppgIdx = ecgOnly ? final_bins[i].secondary : final_bins[i].primary;
+            const auto& ecgIdx = final_bins[i].primary;
+            const auto& ppgIdx = final_bins[i].secondary;
 
             if (!data.ppg.empty() && !ppgIdx.empty()) extract(data.ppg, ppgIdx, r.ppg);
             if (!data.ecg1.empty() && !ecgIdx.empty()) extract(data.ecg1, ecgIdx, r.ecg1);
@@ -698,20 +631,9 @@ namespace {
         return m;
     }
 
-    // Header layout MUST match write_header_and_close() in file_to_bin.cpp:
-//   [uint32 header_version]
-//   [uint32 n_channels]
-//   [uint32 sleep_state_len]
-//   [NUM_CH x uint32 sizes_up]
-//   [NUM_CH x uint32 sizes_raw]
-//   [NUM_CH x float32 native_rates]
-//   [NUM_CH x float32 up_rates]
-//   [uint32 sleep_size]
-// NUM_CH = 36 (file_to_bin NUM_CHANNELS). Channel slots per file_to_bin
-// ChannelIdx: 0=timestamp, 1=ECG1, 2=ECG2, 3=ECG3, 4=PPG, ...
-    void read_data_bin(const std::filesystem::path& path,
-        RawData& data, Extras& extras)
+    void read_data_bin(const std::filesystem::path& path, RawData& data, Extras& extras)
     {
+        //read the .bin file from the standalone file to bin script
         std::ifstream f(path, std::ios::binary);
         if (!f.is_open()) throw std::runtime_error("cannot open: " + path.string());
 
@@ -803,10 +725,7 @@ namespace {
     //     an M-sample block of channel X. Avoids per-channel rate bookkeeping.
     //   - Raw slice: filter (t,v) pairs whose t falls inside the ECG time
     //     window. Timestamps stay in absolute seconds-from-recording-start.
-    void write_output_bin(const std::filesystem::path& path,
-        const std::vector<FinalSegment>& segs,
-        const Extras& extras,
-        bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
+    void write_output_bin(const std::filesystem::path& path, const std::vector<FinalSegment>& segs, const Extras& extras, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
     {
         std::ofstream out(path, std::ios::binary);
         if (!out.is_open())
@@ -951,46 +870,27 @@ namespace {
 
 }   // anonymous namespace
 
-// ============================================================================
-// Public entry point
-// ============================================================================
-
-bool anneal_one_file(const std::filesystem::path& binPath,
-    const std::filesystem::path& noisePath,
-    const std::filesystem::path& outPath,
-    double binLengthMin, double highpassHz,
-    bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
+bool anneal_one_file(const std::filesystem::path& binPath, const std::filesystem::path& noisePath,  const std::filesystem::path& outPath, double binLengthMin, double highpassHz,  bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
 {
-    try {
-        RawData raw;
-        Extras  extras;
-        read_data_bin(binPath, raw, extras);
-        if (highpassHz > 0.0) { //if the highpass is set in the config, run it on the ecg/ppg signals to remove baseline wander
-            raw.ecg1 = waveform_highpass(raw.ecg1, highpassHz, raw.ecgSR);
-            raw.ecg2 = waveform_highpass(raw.ecg2, highpassHz, raw.ecgSR);
-            raw.ecg3 = waveform_highpass(raw.ecg3, highpassHz, raw.ecgSR);
-            raw.ppg = waveform_highpass(raw.ppg, highpassHz, raw.ppgSR);
-        }
-        NoiseMarkings noise;
-        if (std::filesystem::exists(noisePath))
-            noise = read_noise_bin(noisePath);
-        else
-            std::cerr << "  no noise file at " << noisePath
-            << " -- annealing with no exclusions\n";
+    //anneals the file - includes noise if noise file exists, otherwise anneals with no noise
+    RawData raw;
+    Extras  extras;
+    read_data_bin(binPath, raw, extras);
+    if (highpassHz > 0.0) { //if the highpass is set in the config, run it on the ecg/ppg signals to remove baseline wander
+        raw.ecg1 = waveform_highpass(raw.ecg1, highpassHz, raw.ecgSR);
+        raw.ecg2 = waveform_highpass(raw.ecg2, highpassHz, raw.ecgSR);
+        raw.ecg3 = waveform_highpass(raw.ecg3, highpassHz, raw.ecgSR);
+        raw.ppg = waveform_highpass(raw.ppg, highpassHz, raw.ppgSR);
+    }
+    NoiseMarkings noise;
+    if (std::filesystem::exists(noisePath))
+        noise = read_noise_bin(noisePath);
+    else
+        std::cerr << "  no noise file at " << noisePath << ", annealing without noise removal\n";
 
-        auto results = AnnealSegments(raw, noise, binLengthMin);
-        write_output_bin(outPath, results, extras, ecg1_inverted, ecg2_inverted, ecg3_inverted);
+    auto results = AnnealSegments(raw, noise, binLengthMin);
+    write_output_bin(outPath, results, extras, ecg1_inverted, ecg2_inverted, ecg3_inverted);
 
-        std::cerr << "  -> " << results.size() << " bins -> "
-            << outPath.filename() << "\n";
-        return true;
-    }
-    catch (const std::exception& e) {
-        std::cerr << "  ERROR: " << e.what() << std::endl;
-        return false;
-    }
-    catch (...) {
-        std::cerr << "  ERROR: unknown exception type\n" << std::flush;
-        return false;
-    }
+    std::cerr << results.size() << " bins ->" << outPath.filename() << "\n";
+    return true;
 }
