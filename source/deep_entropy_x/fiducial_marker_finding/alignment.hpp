@@ -32,11 +32,21 @@
 
 namespace alignment {
 
-    // Which isoelectric segment supplied a beat's DC baseline. TP (T-end to
-    // next P-onset) is preferred over PQ; NONE means neither was usable for
-    // this beat -- it is left un-shifted, and CreateEcgTemplates.hpp excludes
-    // it from the per-sample amplitude aggregation (median/std) rather than
-    // silently contribute an unreliable, unadjusted amplitude.
+    // HOW FAR A BEAT'S VERTICAL LEVELING GOT, not which segment was chosen.
+    //
+    // Both passes are applied when both are usable. Pass 2 levels on TP (this
+    // beat's T-end to the NEXT beat's P-onset) as a coarse move; pass 3 then
+    // re-measures PQ (P-end to Q-onset) on the already-shifted beat and
+    // finalizes the zero there. PQ is the authoritative reference and runs
+    // last, so a beat that reaches it sits on PQ.
+    //
+    //   PQ   -- the PQ finalize ran. TP may have run first; this does NOT mean
+    //           PQ was used instead of TP.
+    //   TP   -- only TP ran; PQ's landmarks were not usable.
+    //   NONE -- neither was usable. The beat is left un-shifted, and
+    //           create_ecg_templates.hpp excludes it from the per-sample
+    //           amplitude aggregation (median/std) rather than let an
+    //           unreliable, unadjusted amplitude contribute.
     enum class BaselineSource { TP, PQ, NONE };
     constexpr double percent_interval_preceeding_rpeak = 0.5; //how far before the R peak the snip goes, in terms of percent of the RR interval length
     constexpr double percent_interval_following_rpeak = 1.4;   //how far after the R peak the snip goes, in terms of percent of the RR interval length
@@ -49,94 +59,6 @@ namespace alignment {
         return static_cast<int64_t>(percent_interval_following_rpeak * rr);
     }
 
-    // Quartiles, fences and rejection count for ONE Tukey pass. Reported out
-    // rather than recomputed downstream: bin_pipeline used to run its own Tukey
-    // over the RR values purely to obtain these numbers, which meant the beats
-    // went through a Tukey fence TWICE -- once here, once there -- over
-    // different populations (this one over all sliced beats, that one over the
-    // survivors), so the two disagreed by construction and the diagnostics
-    // described a pass that never decided anything.
-    //
-    // The counts matter more than they look. bin_pipeline's header argues that
-    // the signature to watch is LOW REJECTION RATE WITH WIDE IQR, which is
-    // indistinguishable from "this bin is genuinely clean" if you only have the
-    // rejection count -- so the quartiles have to travel with it. There is one
-    // Tukey in this codebase and it is here; everything else consumes what it
-    // decided.
-    struct TukeyStats {
-        uint32_t beats_in = 0;
-        uint32_t beats_out = 0;
-        uint32_t rejected = 0;
-        double   q1 = std::numeric_limits<double>::quiet_NaN();
-        double   q3 = std::numeric_limits<double>::quiet_NaN();
-        double   fence_lo = std::numeric_limits<double>::quiet_NaN();
-        double   fence_hi = std::numeric_limits<double>::quiet_NaN();
-        double   iqr() const { return q3 - q1; }
-    };
-
-    // Tukey outlier mask. keep[i] = false iff values[i] falls outside
-    // [Q1 - k*IQR, Q3 + k*IQR]. NaN entries are left keep=true; callers
-    // must skip them explicitly when needed. `stats`, when non-null, receives
-    // the pass's quartiles, fences and counts.
-    inline std::vector<bool> keep_within_tukey(
-        const std::vector<double>& values, double k,
-        TukeyStats* stats = nullptr)
-    {
-        std::vector<bool> keep(values.size(), true);
-        if (stats) {
-            *stats = TukeyStats{};
-            stats->beats_in = static_cast<uint32_t>(values.size());
-            stats->beats_out = stats->beats_in;
-        }
-        if (values.size() < 4) return keep;
-
-        std::vector<double> sorted;
-        sorted.reserve(values.size());
-        for (double v : values) if (!std::isnan(v)) sorted.push_back(v);
-        if (sorted.size() < 4) return keep;
-        std::sort(sorted.begin(), sorted.end());
-
-        auto quantile = [&](double q) {
-            const double h = q * (sorted.size() - 1);
-            const size_t lo = static_cast<size_t>(std::floor(h));
-            const size_t hi = static_cast<size_t>(std::ceil(h));
-            const double frac = h - lo;
-            return sorted[lo] * (1.0 - frac) + sorted[hi] * frac;
-            };
-        const double q1 = quantile(0.25);
-        const double q3 = quantile(0.75);
-        const double iqr = q3 - q1;
-        if (iqr <= 0.0) return keep;
-
-        const double lo_b = q1 - k * iqr;
-        const double hi_b = q3 + k * iqr;
-        uint32_t rejected = 0;
-        for (size_t i = 0; i < values.size(); ++i) {
-            if (std::isnan(values[i])) continue;
-            if (values[i] < lo_b || values[i] > hi_b) { keep[i] = false; ++rejected; }
-        }
-        if (stats) {
-            stats->q1 = q1;  stats->q3 = q3;
-            stats->fence_lo = lo_b;  stats->fence_hi = hi_b;
-            stats->rejected = rejected;
-            stats->beats_out = stats->beats_in - rejected;
-        }
-        return keep;
-    }
-
-    // Which pass rejected a beat, or that it survived all of them. Mirrors
-    // tbank::TukeyOutcome value for value; kept as its own enum because
-    // alignment.hpp is upstream of template_bank.hpp and must not depend on it.
-    // bin_pipeline converts, and annotation_code_check's lesson applies -- the
-    // mirror is checked rather than trusted (see the static_assert there).
-    enum class TukeyOutcome : uint8_t {
-        NOT_ELIGIBLE = 0,
-        KEPT = 1,
-        REJ_RR_LENGTH = 2,
-        REJ_AMPLITUDE = 3,
-        REJ_R_LOCATION = 4,
-        REJ_WAVE_SCORE = 5
-    };
     struct ecg_beat_set {
         //a set of individually-aligned beats that will become a template.
         std::vector<std::vector<double>> beats;
@@ -148,20 +70,14 @@ namespace alignment {
         int q_aligned_col = -1;
         int ref_beat_index = -1;
         // Parallel to `beats`: which segment supplied each beat's DC
-        // baseline (TP/PQ/NONE). Kept in sync with `beats` through every
-        // apply_mask() compaction, including the wave-score pruning pass.
+        // baseline (TP/PQ/NONE).
         std::vector<BaselineSource> baseline_source;
-        // Parallel to `beats`: the Section 4.6 rhythm verdict, assigned
-        // AFTER SLICING AND BEFORE ANY PRUNING, and compacted through every
-        // apply_mask() alongside `beats`.
-        //
-        // Why here and not downstream. The first Tukey pass below rejects on
-        // RR LENGTH, and a premature beat is short by definition -- so
-        // alignment itself throws ectopics out as length outliers, for outlier
-        // reasons, with no flag and no record. Anything that asks "was this
-        // beat premature" after that pass is asking about the beats that
-        // survived not being premature. Assigned here, the verdict exists for
-        // every sliced beat and survives whatever the pruning does next.
+        // Parallel to `beats`: the Section 4.6 rhythm verdict, assigned after
+        // slicing and before anything else, so it exists for every sliced beat.
+        // The RR-length fence in jbank::cleanGroups rejects on the LONG side
+        // only for this reason: a premature beat is short by definition, so a
+        // short-side rejection would throw ectopics out as length outliers for
+        // outlier reasons, with no flag and no record.
         //
         // premature: RR(i) < 0.80 * median of the trailing ten.
         // voted:     the 5-of-8 rule over the raw premature flags -- the
@@ -170,29 +86,14 @@ namespace alignment {
         std::vector<char> premature;
         std::vector<char> voted;
 
-        // ---- THE SINGLE TUKEY'S VERDICT, per ORIGINAL sliced beat ----------
+        // ---- ROW POSITION AT SLICE TIME, parallel to `beats` --------------
         //
-        // NEVER COMPACTED. Every other parallel vector here is squeezed by
-        // apply_mask alongside `beats`, which is why nothing downstream could
-        // ask what happened to a beat that did not survive -- only survivors
-        // existed, so "was this beat a Tukey outlier" could only be answered
-        // about beats that were not. That is the gap bin_pipeline filled by
-        // running its own Tukey over the survivors, and it is why the beats went
-        // through a fence twice.
-        //
-        // Indexed by the beat's index at SLICE time, so it stays valid across
-        // every compaction. Length is total_beats. Downstream consumers read
-        // this instead of re-deriving anything.
-        std::vector<TukeyOutcome> tukey_outcome;
-
-        // Per-pass quartiles, fences and counts, in pass order. Reported so the
-        // low-rejection-with-wide-IQR signature is visible without recomputing
-        // the pass that produced it.
-        TukeyStats tukey_rr, tukey_amplitude, tukey_r_location, tukey_wave_score;
-
-        // Beat index at slice time, parallel to `beats` and compacted with it.
-        // The bridge between a surviving beat and its entry in tukey_outcome.
-        std::vector<size_t> original_index;
+        // NOT AN R-PAIR ORDINAL, which is what slice_index below is for. This
+        // is seeded as the identity over `beats` AFTER the slicing loop has
+        // already skipped pairs, so it counts survivors, not pairs. It was
+        // called original_index, which collided with PpgBeatSet's field of that
+        // name -- and that one does hold ordinals.
+        std::vector<size_t> row_at_slice_time;
 
         // ---- THE R-PAIR ORDINAL, parallel to `beats` ----------------------
         //
@@ -202,17 +103,17 @@ namespace alignment {
         // channel, because every channel's slicer is driven by the same
         // ch1.raw R-peak vector.
         //
-        // NOT THE SAME AS original_index, and the difference is silent. The
+        // NOT THE SAME AS row_at_slice_time, and the difference is silent. The
         // slicing loop SKIPS pairs -- rr <= 3 samples, and rr > 4 s, which is a
         // dropout gap rather than a beat -- with `continue`, before anything is
         // pushed. So `beats` is already compacted against the R-pair list by
-        // the time original_index is seeded as the identity over it. On a bin
+        // the time row_at_slice_time is seeded as the identity over it. On a bin
         // where nothing was skipped the two coincide; on a bin with one dropout
         // gap every later beat's ordinal is short by one, and the error grows
         // with each skip.
         //
         // That is exactly the quantity jbank::ChannelSet keys on, and using
-        // original_index in its place pairs an ECG complex with an unrelated
+        // row_at_slice_time in its place pairs an ECG complex with an unrelated
         // pulse, progressively further through the bin. The pulse slicer below
         // has always recorded this (PpgBeatSet::original_index, from
         // raw_slice); the ECG path did not, which is why the two could not
@@ -271,81 +172,47 @@ namespace alignment {
             return out;
         }
 
-        // Compact the parallel (beats, r_indices, rr_lens) vectors, keeping
-        // only entries where keep[i] is true.
-        // RECORD BEFORE COMPACTING. apply_mask is about to discard the rejected
-        // beats, so this is the only moment at which "beat i was rejected by
-        // this pass" can be written down. `which` names the pass; the verdict
-        // lands in out.tukey_outcome at the beat's ORIGINAL slice index, which
-        // survives every later compaction.
-        //
-        // A beat already carrying a rejection keeps it: the first pass to reject
-        // a beat is the one that describes it, and a later pass never saw it.
-        auto record_tukey = [&](const std::vector<bool>& keep, TukeyOutcome which) {
-            if (out.original_index.size() != out.beats.size()) return;
-            for (size_t i = 0; i < keep.size() && i < out.original_index.size(); ++i) {
-                const size_t orig = out.original_index[i];
-                if (orig >= out.tukey_outcome.size()) continue;
-                if (out.tukey_outcome[orig] != TukeyOutcome::KEPT) continue;
-                if (!keep[i]) out.tukey_outcome[orig] = which;
-            }
-            };
-
         // ==================================================================
-        // TUKEY MEASURES HERE; IT NO LONGER PRUNES HERE.
+        // ALIGNMENT DOES NOT PRUNE, AT ALL. It slices, flags rhythm, aligns
+        // horizontally and levels vertically. Every R-pair that survived the
+        // slicing guards above is in `beats` when this function returns, so
+        // row_at_slice_time is the identity over it.
         //
-        // The correct order is: align -> partition and merge -> remove and flag
-        // premature beats -> Tukey on the CLEAN beats. Tukey used to run last
-        // in this function, which put it FIRST overall, and that inverts its
-        // meaning: the amplitude and wave-score passes reject beats that do not
-        // resemble the population, and before partitioning the population is
-        // every morphology mixed together. A PVC is then an outlier by
-        // construction and is deleted before the bank can ever see it, so the
-        // bank partitions a set from which the genuinely distinct morphologies
-        // have already been removed.
-        //
-        // That one ordering error accounts for the two-member templates, the
+        // THE TUKEY FENCES LIVE IN jbank::cleanGroups, deliberately. The RR,
+        // amplitude, R-location and wave-score fences all reject beats that do
+        // not resemble the population, and before partitioning the population
+        // is every morphology mixed together -- a PVC is an outlier by
+        // construction and would be deleted before the bank could ever see it.
+        // That ordering error accounted for the two-member templates, the
         // over-segmentation into _B/_C/_D, and the ECG and PPG survivor counts
         // disagreeing by a factor of ninety on the same R-peaks.
         //
-        // Every pass below still COMPUTES its fences and still RECORDS its
-        // verdict per beat through record_tukey -- those numbers are wanted for
-        // reporting, and the bank needs the verdicts at its own later stage.
-        // Nothing is discarded. tukey_outcome becomes advisory output rather
-        // than a description of what was thrown away.
-        //
-        // CONSEQUENCE FOR EVERY CONSUMER: `beats` is now the FULL aligned set,
-        // not a kept set. Anything that treated it as pre-filtered has to filter
-        // on the flags instead. original_index is consequently the identity,
-        // which is what the joint bank's slice mapping wants anyway.
-        //
-        // apply_mask() IS A NO-OP, KEPT ONLY AS A CALL TARGET. The Tukey
-        // passes below still call it after recording their verdicts, but
-        // alignment does not prune: it measures and records, and the pruning
-        // happens later, on the CLEAN beats, in jbank::cleanGroups -- running
-        // it here instead put it before the partition, where a PVC is an
-        // outlier by construction and got deleted before the bank could see it.
-        // The pruning body and its kTukeyPrunesInAlignment toggle are gone;
-        // the empty lambda stays so the call sites read unchanged and `beats`
-        // is unambiguously the full aligned set.
-        auto apply_mask = [&](const std::vector<bool>&) {};
+        // cleanGroups runs the same 1.5*IQR convention (keep_within_tukey, in
+        // stats_utils.hpp) per GROUP, after the partition is final, so
+        // each fence asks whether a beat is an outlier among beats of its OWN
+        // shape. It measures amplitude, R-location and template correlation
+        // itself and owns the per-beat verdict that reaches the morphology CSV.
+        // Alignment used to compute its own copies of those three fences and
+        // record verdicts nothing read; they are gone.
+        // ==================================================================
 
-        // Hard drop: a beat whose RR exceeds 4 s is not a real beat, it's a
-        // dropout/detection gap between R-peaks (missed beats, noise,
-        // signal loss) -- and unlike the PPG/pulse alignment above, THIS
-        // loop had no cap on RR-derived window size at all: window =
-        // 1.8*rr with no ceiling, and the bin's shared width is sized off
-        // the MAXIMUM rr_len across all its beats, so a single such outlier
-        // silently ballooned the whole bin's window (a sparse bin with only
-        // 1-3 real detections could produce a many-hundred-second template).
-        // MAX RR = 1.5 s. An R-pair longer than this is not a beat: at the
-        // slowest plausible rate it is a missed detection or a gap left by
-        // excised noise, and the slice cut from it spans
-        // 1.5 * (0.5 + 1.3) = 2.7 s -- several cardiac cycles, several QRS
-        // complexes, and it alone sets the bin's frame width (shared_w is sized
-        // on max_rr_len, so ONE survivor stretches every template in the bin).
+        // MAX RR = 2.5 s, a hard drop. An R-pair longer than this is not a
+        // beat: it is a missed detection, or a gap left where the annealer
+        // excised noise. The slice cut from one spans
+        // 2.5 * (percent_interval_preceeding_rpeak +
+        // percent_interval_following_rpeak) = 2.5 * 1.9 = 4.75 s, which still
+        // covers several cardiac cycles -- the cap bounds the damage rather
+        // than guaranteeing one complex per row.
         //
-        // Was 4.0 s, which only ever caught the extreme cases.
+        // IT ALSO SETS THE BIN'S FRAME WIDTH. shared_w is sized on
+        // max_rr_len, so ONE oversized survivor stretches every template in
+        // the bin; a sparse bin with a handful of real detections could
+        // produce a many-hundred-second template. That is why this is a cap
+        // and not left to the Tukey fences, which measure but no longer prune.
+        //
+        // THIS IS ALSO THE ONLY THING THAT HANDLES A SPLICED R-PAIR. See the
+        // block above: a join shows up as a long RR, and a long RR is dropped
+        // whatever caused it.
         const int64_t kMaxBeatSamplesEcg = (fs > 0.0) ? static_cast<int64_t>(2.5 * fs) : 0;
         // ---- slice every beat ------------------------------------------
         for (size_t i = 0; i + 1 < rPeaks.size(); ++i) {
@@ -353,10 +220,6 @@ namespace alignment {
             const int64_t rr = static_cast<int64_t>(rPeaks[i + 1]) - r0;
             if (rr <= 3) continue;
             if (kMaxBeatSamplesEcg > 0 && rr > kMaxBeatSamplesEcg) continue;
-            // SPLICED ACROSS: not a beat, whatever `rr` says. Dropped BEFORE
-            // slice_index is pushed, like every other guard in this loop, so
-            // the parallel arrays stay in step.
-
 
             const int64_t before = rr_before_samples(rr);
             const int64_t after = rr_after_samples(rr);
@@ -384,21 +247,18 @@ namespace alignment {
         if (out.beats.empty()) return out;
         out.baseline_source.assign(out.beats.size(), BaselineSource::NONE);
 
-        // ---- Section 4.6 rhythm verdict: after the slice, before the -----
-        // ---- pruning. Indexed with `beats`; compacted with them.      -----
-        // out.rr_lens[i] is beat i's own interval, so this is exact -- one
-        // interval per beat, none missing, which is precisely what stops being
-        // true the moment the Tukey passes below run.
+        // ---- Section 4.6 rhythm verdict, parallel to `beats` -------------
+        // out.rr_lens[i] is beat i's own interval, so the intervals this reads
+        // are exact: one per beat, none missing. Assigned here, on the full
+        // sliced set, so every beat has a verdict whatever cleanGroups later
+        // removes.
         {
             const size_t nb = out.beats.size();
             out.premature.assign(nb, 0);
-            // Seeded once, alongside the rhythm flags, for the same reason: this is
-            // after slicing and before any pruning, so every sliced beat gets an
-            // entry and it survives whatever the pruning does next. KEPT is the
-            // starting state -- a beat is kept until a pass rejects it.
-            out.original_index.resize(out.beats.size());
-            for (size_t i = 0; i < out.original_index.size(); ++i) out.original_index[i] = i;
-            out.tukey_outcome.assign(out.beats.size(), TukeyOutcome::KEPT);
+            // Seeded alongside the rhythm flags, so every sliced beat has an
+            // entry.
+            out.row_at_slice_time.resize(out.beats.size());
+            for (size_t i = 0; i < out.row_at_slice_time.size(); ++i) out.row_at_slice_time[i] = i;
             out.voted.assign(nb, 0);
             if (nb >= 12) {
                 // Beat t is premature when the interval BEFORE it is short.
@@ -432,45 +292,7 @@ namespace alignment {
             }
         }
 
-        //Tukey rejection: R-R interval (1.5*IQR)
-        {
-            std::vector<double> lens_d(out.rr_lens.begin(), out.rr_lens.end());
-            {
-                const std::vector<bool> keep =
-                    keep_within_tukey(lens_d, 1.5, &out.tukey_rr);
-                record_tukey(keep, TukeyOutcome::REJ_RR_LENGTH);
-                apply_mask(keep);
-            }
-        }
-        if (out.beats.empty()) return out;
-        //Tukey rejection: R peak from template min distance (1.5*IQR)
-        {
-            std::vector<double> amps;
-            amps.reserve(out.beats.size());
-            for (size_t i = 0; i < out.beats.size(); ++i) {
-                const int r_col = static_cast<int>(rr_before_samples(out.rr_lens[i]));
-                const auto& beat = out.beats[i];
-
-                if (r_col >= (int)beat.size() || std::isnan(beat[r_col])) {
-                    amps.push_back(std::numeric_limits<double>::quiet_NaN());
-                    continue;
-                }
-                double min_val = std::numeric_limits<double>::infinity();
-                for (double v : beat)
-                    if (!std::isnan(v) && v < min_val) min_val = v;
-
-                amps.push_back(std::isfinite(min_val)
-                    ? beat[r_col] - min_val
-                    : std::numeric_limits<double>::quiet_NaN());
-            }
-            auto keepA = keep_within_tukey(amps, 1.5, &out.tukey_amplitude);
-            for (size_t i = 0; i < keepA.size(); ++i)
-                if (std::isnan(amps[i])) keepA[i] = false;
-            record_tukey(keepA, TukeyOutcome::REJ_AMPLITUDE);
-            apply_mask(keepA);
-        }
         out.total_beats = out.beats.size();
-        if (out.beats.empty()) return out;
 
         // the Sangala document says use mode, in this case we use median length
         {
@@ -521,51 +343,6 @@ namespace alignment {
         out.beats = std::move(aligned);
         out.r_aligned_col = R_anchor;
 
-        // ---- Intermediate Tukey rejection: actual R location -----------
-        // Pass 1 placed every beat's ASSUMED R at R_anchor by pure RR
-        // arithmetic (rr_before_samples(rr_lens[i])) -- it never looked at
-        // the signal itself to check that the assumption held. Now that
-        // every beat shares one axis, search each beat's own trace for
-        // where its R actually is (largest-magnitude sample in a window
-        // around R_anchor) and reject on the SPREAD of (actual column -
-        // R_anchor) across the bin -- same 1.5*IQR convention as the RR-
-        // length and amplitude Tukey passes above. This catches a beat
-        // whose RR-derived placement was wrong for THAT beat specifically
-        // (an upstream detection glitch), which a length or amplitude
-        // outlier test would not: the beat can have a perfectly ordinary
-        // RR and amplitude while still being shifted relative to its peers
-        // because the peak that anchored it was mislocated.
-        {
-            constexpr double kRLocationSearchSec = 0.05;   // +/- 50 ms; a starting point, not a validated jitter bound
-            const int halfWin = std::max(1, static_cast<int>(std::lround(kRLocationSearchSec * fs)));
-            std::vector<double> rOffset(out.beats.size(), std::numeric_limits<double>::quiet_NaN());
-            for (size_t i = 0; i < out.beats.size(); ++i) {
-                const auto& b = out.beats[i];
-                const int lo = std::max(0, R_anchor - halfWin);
-                const int hi = std::min(static_cast<int>(b.size()) - 1, R_anchor + halfWin);
-                if (hi <= lo) continue;   // beat too short to search around R_anchor at all
-                int bestCol = -1;
-                double bestAbs = -1.0;
-                for (int c = lo; c <= hi; ++c) {
-                    const double v = b[c];
-                    if (std::isnan(v)) continue;
-                    // Largest MAGNITUDE, not largest value: R can be the
-                    // negative-going deflection on a channel whose polarity
-                    // this pass has no separate way to know, and this stays
-                    // self-contained rather than depending on that decision
-                    // having already been made correctly upstream.
-                    const double av = std::fabs(v);
-                    if (av > bestAbs) { bestAbs = av; bestCol = c; }
-                }
-                if (bestCol >= 0) rOffset[i] = static_cast<double>(bestCol - R_anchor);
-            }
-            auto keepR = keep_within_tukey(rOffset, 1.5, &out.tukey_r_location);
-            for (size_t i = 0; i < keepR.size(); ++i)
-                if (std::isnan(rOffset[i])) keepR[i] = false;   // no data to check -> can't vouch for it
-            record_tukey(keepR, TukeyOutcome::REJ_R_LOCATION);
-            apply_mask(keepR);
-        }
-        if (out.beats.empty()) return out;
 
         // ---- Passes 2 and 3: two-pass TP-then-PQ vertical DC alignment --
         // Pass 2 (TP): this beat's own T-end -> the NEXT beat's P-onset.
@@ -695,7 +472,6 @@ namespace alignment {
                 };
 
             const auto [refTp, refTpOk, refPq, refPqOk] = both_levels(static_cast<size_t>(out.ref_beat_index));
-            BaselineSource refSrc = BaselineSource::NONE;
 
             /*Two-pass vertical alignment. - Pass 2: level each beat on the TP segment (end of T to just before onset of
             next P). Estimate level with median over the flattest sub-window bounded by fitted landmarks. - Pass
@@ -711,6 +487,15 @@ namespace alignment {
                 }
             }
             const bool haveAnyRef = !std::isnan(refTpTarget) || !std::isnan(refPqTarget);
+
+            // Which reference the passes below actually level against. Set
+            // from the resolved targets, not from the ref beat's own flags:
+            // the fallback loop above will borrow a target from another beat
+            // when the reference itself has no usable segment.
+            const BaselineSource refSrc =
+                !std::isnan(refPqTarget) ? BaselineSource::PQ
+                : !std::isnan(refTpTarget) ? BaselineSource::TP
+                : BaselineSource::NONE;
 
             out.tp_pq_delta.assign(out.beats.size(), std::numeric_limits<double>::quiet_NaN());
 
@@ -786,132 +571,6 @@ namespace alignment {
                 }
             }
         }
-        // ---- Wave-score pruning ----------------------------------------
-        // Iterative template-matching QC, run AFTER R-alignment and PQ-
-        // baseline DC-shift (so beats are already on a common axis and
-        // vertical offset). Three tightening passes (4.0 -> 3.0 -> 2.5 SD);
-        // each pass rebuilds a column-wise NaN-skipping median template from
-        // the CURRENT survivors, then drops any beat whose:
-        //   (a) Pearson correlation with that template (over columns where
-        //       both are non-NaN) is below 0.30, OR
-        //   (b) worst single-sample deviation from the template exceeds
-        //       (pass threshold) x the template's own per-sample residual SD
-        //       (one scalar per pass, not per-column, to avoid overfitting a
-        //       591-column threshold vector to a handful of beats).
-        // ASSUMPTION: the spec's three SD numbers are read as three
-        // successive tightening passes, not three simultaneous per-metric
-        // thresholds -- flag if that's not the intended reading.
-        {
-            auto column_median = [&](const std::vector<std::vector<double>>& beats, int width) {
-                std::vector<double> tmpl(width, NaND);
-                std::vector<double> col;
-                col.reserve(beats.size());
-                for (int c = 0; c < width; ++c) {
-                    col.clear();
-                    for (const auto& b : beats)
-                        if (!std::isnan(b[c])) col.push_back(b[c]);
-                    if (col.empty()) continue;
-                    // nth_element, not sort -- one order statistic per column
-                    // does not need the whole column ordered. Same reasoning and
-                    // the same shape as create_ecg_templates.hpp's medianOver;
-                    // this one runs per method per channel per bin as well.
-                    const size_t nc = col.size();
-                    const size_t imid = nc / 2;
-                    std::nth_element(col.begin(), col.begin() + imid, col.end());
-                    const double hi_mid = col[imid];
-                    tmpl[c] = (nc % 2 == 0)
-                        ? 0.5 * (*std::max_element(col.begin(), col.begin() + imid)
-                            + hi_mid)
-                        : hi_mid;
-                }
-                return tmpl;
-                };
-
-            const double corr_min = 0.30;
-            const double sd_thresholds[3] = { 4.0, 3.0, 2.5 };
-
-            // Freeze the residual-SD SCALE once, from the population as it
-            // stands right before wave-score pruning starts (post length/
-            // amplitude Tukey). Recomputing this scale fresh each pass from
-            // an ever-shrinking, ever-more-homogeneous survivor set makes it
-            // collapse toward zero -- the absolute threshold (sdThresh x SD)
-            // then shrinks faster than intended and the last pass rejects
-            // everything, including clean beats. Only the TEMPLATE (shape)
-            // and the surviving set are allowed to refine across passes;
-            // the yardstick they're measured against does not shrink with
-            // them.
-            double frozenSD = -1.0;
-            {
-                const std::vector<double> tmpl0 = column_median(out.beats, shared_w);
-                double sumsq = 0.0; long n = 0;
-                for (const auto& b : out.beats)
-                    for (int c = 0; c < shared_w; ++c) {
-                        const double v = b[c], t = tmpl0[c];
-                        if (std::isnan(v) || std::isnan(t)) continue;
-                        sumsq += (v - t) * (v - t); ++n;
-                    }
-                if (n >= 2) frozenSD = std::sqrt(sumsq / (n - 1));
-            }
-
-            if (frozenSD > 0.0) {
-                for (double sdThresh : sd_thresholds) {
-                    if (out.beats.size() < 4) break;   // not enough left to keep pruning meaningfully
-
-                    const std::vector<double> tmpl = column_median(out.beats, shared_w);
-
-                    std::vector<bool> keep(out.beats.size(), true);
-                    for (size_t i = 0; i < out.beats.size(); ++i) {
-                        // ONE PASS, TWO STATISTICS. pearson() walked the beat
-                        // and the template, then the RMS loop walked the same
-                        // two arrays again with the same NaN test -- and every
-                        // accumulator the correlation needs was already being
-                        // summed. Fused, so the dominant loop of this block runs
-                        // once per beat per pass instead of twice.
-                        //
-                        // pearson() iterated a.size() while the RMS loop
-                        // iterated shared_w. Those are the same here: pass 1
-                        // rewrote every beat onto the shared axis, so each row
-                        // is exactly shared_w wide. That equivalence is what
-                        // lets one loop do both, and it would stop holding if
-                        // this block ever ran before pass 1.
-                        //
-                        // RMS deviation over this beat's own overlapping columns
-                        // -- NOT the single worst sample. With hundreds of
-                        // columns the max single-sample deviation is always
-                        // several SDs out (extreme-value statistics), regardless
-                        // of whether the beat is a good match; RMS is the
-                        // well-behaved, standard "how many SDs away is this
-                        // beat" measure.
-                        const auto& b = out.beats[i];
-                        double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
-                        double sumsq = 0.0; int n = 0;
-                        for (int c = 0; c < shared_w; ++c) {
-                            const double v = b[c], t = tmpl[c];
-                            if (std::isnan(v) || std::isnan(t)) continue;
-                            sa += v; sb += t; saa += v * v; sbb += t * t; sab += v * t;
-                            sumsq += (v - t) * (v - t); ++n;
-                        }
-                        // The guards pearson() carried, unchanged: fewer than 4
-                        // overlapping samples, or a degenerate variance on
-                        // either side, scores 0 -- which fails corr_min and
-                        // drops the beat, rather than dividing by ~0 and
-                        // producing a correlation that reads as agreement.
-                        double r = 0.0;
-                        if (n >= 4) {
-                            const double ma = sa / n, mb = sb / n;
-                            const double va = saa / n - ma * ma, vb = sbb / n - mb * mb;
-                            if (va > 0.0 && vb > 0.0)
-                                r = (sab / n - ma * mb) / std::sqrt(va * vb);
-                        }
-                        const double rms = (n > 0) ? std::sqrt(sumsq / n) : 0.0;
-                        keep[i] = (r >= corr_min) && (rms <= sdThresh * frozenSD);
-                    }
-                    record_tukey(keep, TukeyOutcome::REJ_WAVE_SCORE);
-                    apply_mask(keep);
-                }
-            }
-        }
-
         out.q_aligned_col = out.r_aligned_col;
         return out;
     }
@@ -976,11 +635,9 @@ namespace alignment {
         const std::vector<double>& ref_beat_of_median_length,
         const std::function<double(const std::vector<double>&)>& locate,
         // The per-beat correlation floor, tbank::matchFloorEcg() from
-        // config.csv. PASSED IN, not read here: this header keeps its own
-        // TukeyOutcome enum rather than tbank's (see the note above) precisely
-        // so it does not depend on the bank, and one getter is not worth
-        // breaking that. No default -- a silent 0.0 would disable the guard
-        // and let every beat through however badly it correlated.
+        // config.csv. PASSED IN, not read here, so this header does not depend
+        // on template_bank.hpp. No default -- a silent 0.0 would disable the
+        // guard and let every beat through however badly it correlated.
         double corrFloor,
         const std::vector<char>* exclude_from_median = nullptr)
     {
@@ -1285,23 +942,17 @@ namespace alignment {
             rr_lens.swap(filt_lens);
             };
 
-        // Physiological cap on the RR used to SIZE the beat window: 3.0 s
-        // (20 bpm). On long signal dropouts/artifacts the peak-finder can
-        // report an enormous RR; a single such beat sizes the shared window
-        // (Pass 1: shared_w = up50_anchor + max_tail) for the WHOLE bin,
-        // NaN-padding every beat out to tens of thousands of columns and
-        // hanging the template build. Clamp the window-sizing RR (rr_w).
-        // The beat is still sliced and kept -- only its width is clamped --
-        // and the raw rr is still recorded in rr_lens so median_length and
-        // the Tukey RR rejection see the true interval.
-        const int64_t rr_cap = (fs > 0.0) ? static_cast<int64_t>(3.0 * fs) : 0;
-
-        // Hard drop, distinct from rr_cap above: a beat whose RR exceeds
-        // 4 s is not "a long beat to window-clamp", it's not a real beat at
-        // all (a dropout/artifact gap between R-peaks) and is excluded
-        // entirely rather than sliced-and-clamped.
-        // MAX RR = 1.5 s, as the ECG slicer. Same reasoning; counted into
-        // n_dropped_rr with the other RR rejections.
+        // MAX RR = 1.5 s, a hard drop. An R-pair longer than this is a
+        // dropout or artifact gap between R-peaks, not a beat, and it also
+        // sizes the shared window for the WHOLE bin (Pass 1: shared_w =
+        // up50_anchor + max_tail) -- one such survivor NaN-pads every beat out
+        // to tens of thousands of columns. Counted into n_dropped_rr with the
+        // other RR rejections.
+        //
+        // TIGHTER THAN THE ECG SLICER, which caps at 2.5 s. The two paths are
+        // joined on the R-pair ordinal but do not drop the same pairs: a 2.0 s
+        // pair yields an ECG beat and no pulse beat. Deliberate or not, it is
+        // the current behaviour.
         const int64_t kMaxBeatSamples = (fs > 0.0) ? static_cast<int64_t>(1.5 * fs) : 0;
 
         // ---- slice + per-beat peak/foot --------------------------------
@@ -1319,9 +970,8 @@ namespace alignment {
             // drops so the denominator stays honest.
 
 
-            const int64_t rr_w = (rr_cap > 0) ? std::min(rr, rr_cap) : rr;
-            const int64_t before = rr_before_samples(rr_w);
-            const int64_t after = rr_after_samples(rr_w);
+            const int64_t before = rr_before_samples(rr);
+            const int64_t after = rr_after_samples(rr);
             const int64_t len = before + after;
             const int64_t start = r0 - before;
             const int64_t end = r0 + after;
@@ -1345,7 +995,7 @@ namespace alignment {
             // peak in the shared frame -- producing the peak-cutoff
             // plummet in the displayed template.
             const int peakSearchEnd = std::min(
-                static_cast<int>(r_col + rr_w),
+                static_cast<int>(r_col + rr),
                 static_cast<int>(beat.size()));
             // Upstroke-located FIRST peak, not the tallest sample in the window.
             // This is the site that matters most: the peak found here brackets

@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <limits> 
 
-using std::vector; 
+using std::vector;
 using std::pair;
 inline constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 inline constexpr double Inf = std::numeric_limits<double>::infinity();
@@ -115,4 +115,44 @@ inline vector<size_t> find(const vector<bool>& condition) {
     for (size_t i = 0; i < condition.size(); ++i)
         if (condition[i]) indices.push_back(i);
     return indices;
+}
+
+
+struct TukeyFences {
+    double fence_lo = std::numeric_limits<double>::quiet_NaN();
+    double fence_hi = std::numeric_limits<double>::quiet_NaN();
+};
+
+inline vector<bool> keep_within_tukey( const vector<double>& values, double k, TukeyFences* fences = nullptr)
+{
+    vector<bool> keep(values.size(), true);
+    if (fences) *fences = TukeyFences{};
+    if (values.size() < 4) return keep;
+
+    vector<double> sorted;
+    sorted.reserve(values.size());
+    for (double v : values) if (!std::isnan(v)) sorted.push_back(v);
+    if (sorted.size() < 4) return keep;
+    std::sort(sorted.begin(), sorted.end());
+
+    auto quantile = [&](double q) {
+        const double h = q * (sorted.size() - 1);
+        const size_t lo = static_cast<size_t>(std::floor(h));
+        const size_t hi = static_cast<size_t>(std::ceil(h));
+        const double frac = h - lo;
+        return sorted[lo] * (1.0 - frac) + sorted[hi] * frac;
+        };
+    const double q1 = quantile(0.25);
+    const double q3 = quantile(0.75);
+    const double iqr = q3 - q1;
+    if (iqr <= 0.0) return keep;
+
+    const double lo_b = q1 - k * iqr;
+    const double hi_b = q3 + k * iqr;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (std::isnan(values[i])) continue;
+        if (values[i] < lo_b || values[i] > hi_b) keep[i] = false;
+    }
+    if (fences) { fences->fence_lo = lo_b;  fences->fence_hi = hi_b; }
+    return keep;
 }

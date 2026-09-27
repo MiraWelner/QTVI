@@ -100,23 +100,31 @@ struct SingleMethodResult {
 
 
 
-    // THE JOIN KEY: kept_idx[k] is the R-PAIR SLICE that produced the beat at
-    // slot k of out_kept_beats.
+    // THE JOIN KEY: kept_idx[k] is the R-PAIR ORDINAL that produced the beat at
+    // slot k of out_kept_beats. It is alignment::ecg_beat_set::slice_index,
+    // carried through this channel's own pruning.
     //
-    // IT USED TO BE THE ALIGNED ROW (exactly usableIdx), and the difference is
-    // silent. Each channel prunes independently, so slot k of CH1 and slot k of
-    // PPG are different heartbeats and joining them needs an index they share;
-    // the aligned row is not one, because the slicer SKIPS R-pairs (rr <= 3
-    // samples, and rr > 4 s, which is a dropout gap rather than a beat) before
-    // anything is pushed. On a bin where nothing was skipped the row and the
-    // ordinal coincide; on a bin with one gap every later beat's ordinal is
-    // short by one, and the error grows with each skip -- so a partition keyed
-    // on it pairs each QRS with a later heartbeat's pulse, further off the
-    // deeper into the bin you go.
+    // WHY AN ORDINAL AND NOT A ROW. Two separate reasons, and conflating them
+    // is how this comment used to mislead:
     //
-    // The aligned row has no consumer left: it existed for the morphology
-    // writers, whose columns are now slices, and they resolve a waveform
-    // through jbank's slice -> row map instead. One map, one meaning.
+    //   (1) A row is not an ordinal on any channel. The slicing loop skips
+    //       R-pairs (rr <= 3 samples, and rr > 2.5 s, which is a dropout or a
+    //       splice rather than a beat) with `continue` before anything is
+    //       pushed, so row k is the k-th survivor, not pair k. Anything that
+    //       looks a beat up in R-peak space -- RR intervals, mark codes, the
+    //       pulse channel's slice list -- needs the ordinal.
+    //
+    //   (2) Rows are not comparable ACROSS channels. Every channel is sliced
+    //       from the same ch1.raw peaks and so skips the same pairs, but each
+    //       then prunes independently (shape QC, baseline_source == NONE, and
+    //       the pulse path's own outlier rules at its own rate). So slot k of
+    //       CH1 and slot k of PPG are different heartbeats. The ordinal is a
+    //       shared identity because the R-peak vector is shared; the row is
+    //       local bookkeeping.
+    //
+    // The row has no consumer left: it existed for the morphology writers,
+    // whose columns are now slices, and they resolve a waveform through jbank's
+    // slice -> row map instead. One map, one meaning.
     std::vector<size_t> kept_idx;
 };
 
@@ -358,7 +366,7 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
         }
     }
 
-   
+
     return res;
 }
 
@@ -486,7 +494,7 @@ static inline void process_channel_slow(
 
     // Method 3: absval (abs-value signal + master R-peaks). No std.
     const auto& abs_sig = ch.absval_signal.empty() ? ecgSignal : ch.absval_signal;
-    auto abs_res = build_ecg_template_for_method( abs_sig, masterPeaks, ecgRate,  nullptr, /*compute_iqr=*/false);
+    auto abs_res = build_ecg_template_for_method(abs_sig, masterPeaks, ecgRate, nullptr, /*compute_iqr=*/false);
     cr.ecgTemplates_absval[i] = abs_res.ecgTemplate;
     cr.r_col_absval[i] = abs_res.r_col;
 }

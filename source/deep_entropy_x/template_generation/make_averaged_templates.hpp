@@ -169,11 +169,14 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // empty vectors through harmlessly, and AugmentTemplatesSlow fills
     // them later.
     const auto _ppg1 = std::chrono::steady_clock::now();
-    // NO SPAN PLUMBING HERE. An R-pair that is not a beat is one that straddles
-    // a splice in the annealed bin, and process_channel_fast answers that from
-    // bin.ecg_bin_indexs, which it already holds -- see
-    // alignment::FragmentSeams. Nothing about annotations, coordinates or span
-    // translation needs to reach the slicer.
+    // NO SPAN PLUMBING HERE. An R-pair that straddles a splice in the annealed
+    // bin is not a beat, but the slicer does not need to know where the splices
+    // are to reject it: a join shows up as a long RR, and extract_beats_and_align
+    // drops any pair whose RR exceeds 2.5 s whatever caused it. Deriving the
+    // splice positions from ecg_bin_indexs was tried and removed -- the
+    // positions it produced did not describe the signal and it emptied every
+    // bin. Nothing about annotations, coordinates or span translation needs to
+    // reach the slicer.
     EcgTemplateResult ecg_res = CreateEcgTemplatesFast(wave_data, rates.ecg);
     const auto _ecg1 = std::chrono::steady_clock::now();
     std::fprintf(stderr, "[fast-phases] bins=%zu | PPG %8.1f  ECG(align+template) %8.1f ms\n", n, _ms(_ppg0, _ppg1), _ms(_ppg1, _ecg1));

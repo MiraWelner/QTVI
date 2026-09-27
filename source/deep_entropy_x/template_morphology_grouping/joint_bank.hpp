@@ -122,8 +122,9 @@ namespace jbank {
     // Building local_of_slice from what the pipeline already produces
     // ---------------------------------------------------------------------
     //
-    // BOTH SIDES ALREADY CARRY THE MAP, JUST INVERTED. alignment's BeatSet has
-    // original_index[alignedRow] = slice, and the pulse path now has
+    // BOTH SIDES ALREADY CARRY THE MAP, JUST INVERTED. The ECG path has
+    // ecg_beat_set::slice_index[alignedRow] = slice (NOT row_at_slice_time,
+    // which counts survivors), and the pulse path has
     // PPGTemplatesResult::keptSlices[bin][keptRow] = slice. Either is the
     // forward direction; ChannelBeats wants the reverse, slice -> local row,
     // because assignment walks slices and asks each channel what it has.
@@ -1282,9 +1283,9 @@ namespace jbank {
                         if (clean[k] < rr_after_ms->size())
                             rr[k] = (*rr_after_ms)[clean[k]];
 
-                    alignment::TukeyStats sRR;
+                    TukeyFences fRR;
                     const std::vector<bool> keepRR =
-                        alignment::keep_within_tukey(rr, 1.5, &sRR);
+                        keep_within_tukey(rr, 1.5, &fRR);
                     for (size_t k = 0; k < clean.size(); ++k) {
                         // Unmeasurable abstains, as everywhere else here.
                         if (std::isnan(rr[k])) continue;
@@ -1295,7 +1296,7 @@ namespace jbank {
                         // group of ectopics the fence is computed over ectopic
                         // intervals, so a short-side rejection there is a
                         // statement about ectopy rather than about detection.
-                        if (!(rr[k] > sRR.fence_hi)) continue;
+                        if (!(rr[k] > fRR.fence_hi)) continue;
                         reject[k] = static_cast<uint8_t>(
                             ExcludeReason::TUKEY_RR_LENGTH);
                     }
@@ -1306,13 +1307,14 @@ namespace jbank {
                     const detail::MemberMetrics mm =
                         detail::measureOnChannel(g, c, chans, clean);
 
-                    alignment::TukeyStats sA, sR, sW;
+                    // No fences out-param here: only the masks are used. The
+                    // RR pass above does read fence_hi, for its long-side rule.
                     const std::vector<bool> keepA =
-                        alignment::keep_within_tukey(mm.amp, 1.5, &sA);
+                        keep_within_tukey(mm.amp, 1.5);
                     const std::vector<bool> keepR =
-                        alignment::keep_within_tukey(mm.rloc, 1.5, &sR);
+                        keep_within_tukey(mm.rloc, 1.5);
                     const std::vector<bool> keepW =
-                        alignment::keep_within_tukey(mm.wave, 1.5, &sW);
+                        keep_within_tukey(mm.wave, 1.5);
 
                     for (size_t k = 0; k < clean.size(); ++k) {
                         // A metric that could not be measured does NOT reject.
