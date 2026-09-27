@@ -23,7 +23,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
-
+#include "peak_finding/stats_utils.hpp"
 #include "joint_bank.hpp"
 
 namespace morphology_csv {

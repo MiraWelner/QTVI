@@ -74,15 +74,8 @@ namespace template_io {
         // to this template. Same length as ecgTemplate, OR empty when not
         // computed (e.g. the squared/absval/unfiltered methods, which the
         // viewer doesn't display).
-        std::vector<double> ecg_template_iqr;
-        double alignment_point = 0.0;
-        int    r_col = -1;   // true R column in the template (was avg_r_expand)
-
-        // Median RR of the beats behind this template, in samples. A DISPLAY
-        // width for the viewer's x-axis -- the beat matrix stays framed on the
-        // bin's longest RR so no beat is ever clipped. NOT serialized: -1 after
-        // a read, and the viewer falls back to the array length, which is
-        // exactly today's behaviour.
+        std::vector<double> ecg_template_std;
+        int    r_col = -1;
         int    median_rr_samples = -1;
     };
 
@@ -93,7 +86,7 @@ namespace template_io {
         std::vector<double>   ppgTemplate;
         // Per-sample std for the PPG template, same length as ppgTemplate
         // (or empty if no PPG / not computed).
-        std::vector<double>   ppg_template_iqr;
+        std::vector<double>   ppg_template_std;
         // Foot-anchored averaged arterial templates (ABP / ART / ART_PULM),
         // shown as faint background-context traces in the viewer. Empty when
         // the channel wasn't present in the dataset. No std (background only).
@@ -102,8 +95,8 @@ namespace template_io {
         std::vector<double>   artPulmTemplate;
         // Per-sample std for each arterial template (same length when
         // present, or empty). Written right after each template vector.
-        std::vector<double>   abpTemplate_iqr;
-        std::vector<double>   artTemplate_iqr;
+        std::vector<double>   abp_template_std;
+        std::vector<double>   art_template_std;
         std::vector<double>   artPulmTemplate_iqr;
         // Per-channel slice counts (post drop-rules) fed to each raw-method
         // median. Under Patch B they're driven by ch1.raw R-pairs, so they
@@ -115,26 +108,13 @@ namespace template_io {
         uint64_t              ppg_n_beats = 0;
         int                   ppg_peak_col = -1;   // construction-time fiducials
         int                   ppg_onset_col = -1;
-        // ---- EACH PULSE CHANNEL'S MEASURED R COLUMN ----------------------
-        //
-        // The pulse analogue of ChannelMethodTemplate::r_col, and it exists
-        // for the same reason: a template's anchor column is a property of
-        // that template and has to travel with it. Deriving it from a
-        // constant (bin_plot_widget's kSlicePadSeconds, now deleted) put the
-        // whole pulse trace at the wrong time by an amount that scaled with
-        // heart rate. -1 = unmeasurable.
         int                   ppg_r_col = -1;
         int                   abp_r_col = -1;
         int                   art_r_col = -1;
         int                   art_pulm_r_col = -1;
         bool                  bad_segment = false;
 
-        // Section 4.6 template bank per ECG channel, raw method only. Slot 0 is
-        // the sinus seed and corresponds to chN_raw.ecgTemplate, except that it
-        // excludes ectopy -- the difference between the two is the contamination
-        // the ectopic mask was meant to remove. Empty on a v1/v2 file, which
-        // reads correctly as "one template per channel", i.e. a bank of size
-        // one.
+
         std::array<tbank::TemplateBank, 3> ecg_bank;
         tbank::TemplateBank ppg_bank;
     };

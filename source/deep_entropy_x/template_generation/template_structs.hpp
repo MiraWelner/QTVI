@@ -13,6 +13,7 @@
  * @date   2026-03-26
  */
 #pragma once
+#include "peak_finding/stats_utils.hpp"
 #include "template_io.hpp"
 #include "template_morphology_grouping/joint_bank.hpp"
 
@@ -52,10 +53,6 @@ struct ChannelTemplates {
     vector<double> ecgTemplate_squared;
     vector<double> ecgTemplate_absval;
     vector<double> ecgTemplate_unfiltered;
-    double alignment_point_raw = 0.0;
-    double alignment_point_squared = 0.0;
-    double alignment_point_absval = 0.0;
-    double alignment_point_unfiltered = 0.0;
     // True R column in the template (from alignment's r_aligned_col). This is
     // the detected-R fiducial the template was built around -- used directly
     // as the R marker, replacing the old avg_r_expand positioning constant.
@@ -130,11 +127,6 @@ struct EcgChannelResult {
     vector<vector<double>> ecgTemplates_absval;
     vector<vector<double>> ecgTemplates_unfiltered;
     std::vector<int> ref_index_raw;
-
-    vector<double> ppg_alignment_point_raw;
-    vector<double> ppg_alignment_point_squared;
-    vector<double> ppg_alignment_point_absval;
-    vector<double> ppg_alignment_point_unfiltered;
 
     vector<int> r_col_raw;
     vector<int> r_col_squared;

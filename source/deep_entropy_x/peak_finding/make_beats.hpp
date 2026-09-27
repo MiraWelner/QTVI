@@ -1,8 +1,8 @@
 ﻿/**
- * @file   create_ecg_ppg_pairs.hpp
- * @brief  Identify R-peaks on ECG channels using three preprocessing methods
- *         (raw, squared, abs-value), pair channel-1 raw R-peaks with PPG valleys.
- *         Original, preprocessed, and pre-bandpass signals are stored in the output.
+ * @file   make_beats.hpp
+ * @brief  Find the fiduical markers that mark the start and the end of each beat - ie the r peaks and ppg mins
+ *
+ *
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -17,32 +17,11 @@
 #include <cmath>
 #include <cstdio>
 #include <iostream>
-#include "peakfinding_io.hpp"
+#include "peakfinding_structs.hpp"
 #include "SegmentPPG.hpp"
 #include "JoinedRR.hpp"
-#include "pairRtoPPGBeat.hpp"
 #include "config_file_handling/config.hpp"
 
- /**
-  * @brief  Run R-peak detection on one preprocessed version of a signal.
-  *         Chooses between the full consensus ensemble (JoinedRR_full) and
-  *         a single-detector fallback (rpeakdetect) based on
-  *         cfg.use_consensus_rpeak. `inverted` tells both detectors whether
-  *         the true R-peak is the local max (upright) or local min
-  *         (inverted lead) -- sourced from the GUI's per-channel "Inverted
-  *         Lead?" checkbox, persisted through the annealed .bin, not
-  *         auto-detected.
-  *
-  * @param[in]  sig       Signal to detect on (raw / squared / absval).
-  * @param[in]  ecgRate   ECG sample rate in Hz.
-  * @param[in]  fileID    Study identifier forwarded to sub-algorithms.
-  * @param[in]  hasPPG    Whether PPG data is available for cross-validation.
-  * @param[in]  ppgCount  Number of PPG valleys (ignored when hasPPG is false).
-  * @param[out] rIndex    Detected R-peak sample indices.
-  * @param[out] noisy     Set true if detection failed or the R:PPG ratio is implausible.
-  * @param[in]  cfg       Config entry; cfg.use_consensus_rpeak selects the detector.
-  * @param[in]  inverted  True if this channel's lead is inverted (checkbox-sourced).
-  */
 static inline void run_rpeak_detection(const std::vector<double>& sig, double ecgRate, const std::string& fileID, bool hasPPG,
     std::size_t ppgCount, std::vector<std::size_t>& rIndex, bool& noisy, config_entry cfg, bool inverted) {
 
@@ -81,9 +60,7 @@ static inline void run_rpeak_detection(const std::vector<double>& sig, double ec
     }
 }
 
-// FAST half: raw-method detection only. Fills result.raw / raw_noisy.
-// This is everything the PPG pairing and the viewer-displayed templates
-// depend on.
+
 static inline void detect_channel_raw(ChannelRPeaks& result, const std::vector<double>& signal, double ecgRate,
     const std::string& fileID, bool hasPPG, std::size_t ppgCount, config_entry cfg, bool inverted)
 {
@@ -91,10 +68,7 @@ static inline void detect_channel_raw(ChannelRPeaks& result, const std::vector<d
     run_rpeak_detection(signal, ecgRate, fileID, hasPPG, ppgCount, result.raw, result.raw_noisy, cfg, inverted);
 }
 
-// SLOW half: squared + absolute-value preprocessing and detection.
-// Fills result.squared(_signal)/absval(_signal) and their noise flags.
-// Deferred off the critical path -- nothing the viewer reads depends on
-// these.
+
 static inline void detect_channel_sqabs(ChannelRPeaks& result, const std::vector<double>& signal, double ecgRate,
     const std::string& fileID, bool hasPPG, std::size_t ppgCount, config_entry cfg, bool inverted)
 {
@@ -134,27 +108,16 @@ static inline std::vector<std::vector<double>> build_unpaired(
     return pairs;
 }
 
-/**
- * @brief  Main processing pipeline: detect R-peaks using three methods on
- *         up to three ECG channels, segment PPG, and pair channel-1 raw
- *         R-peaks with PPG valleys.
- *
- * @param[in] annealedSegments  Per-segment ECG/PPG data (consumed via move).
- * @param[in] use_R_algorithm   When false, R-peak detection is skipped entirely.
- * @param[in] fileID            Study identifier forwarded to sub-algorithms.
- * @param[in] cfg               Config entry (ensemble toggle + sample rates).
- * @param[in] ecg1_inverted     "Inverted Lead?" checkbox state for CH1, persisted
- *                              through the annealed .bin (not auto-detected).
- * @param[in] ecg2_inverted     Same, for CH2.
- * @param[in] ecg3_inverted     Same, for CH3.
- * @return    One output_binfile_data per segment.
- */
+
 inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<AnnealedSegment> annealedSegments,
-    bool use_R_algorithm, std::string fileID, config_entry cfg,
+    std::string fileID, config_entry cfg,
     bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted) {
 
     std::vector<output_binfile_data> data(annealedSegments.size());
-    if (!cfg.use_consensus_rpeak) {
+    if (cfg.use_consensus_rpeak) {
+        std::cout << "Using consensus peak finding method\n";
+    }
+    else {
         std::cout << "Using only one r peak detection method\n";
     }
 
@@ -166,18 +129,16 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
 
         d.index = static_cast<int>(i);
 
-        /* Store original signals unmodified. Kept in-memory because the
-           squared/absval augment below (which may run later, on another
-           thread) re-derives its preprocessed signals from these. */
         d.ppgSignal = seg.ppg_signal;
         d.ecgSignal = seg.ecg_signal_1;
         d.ecgSignal2 = seg.ecg_signal_2;
         d.ecgSignal3 = seg.ecg_signal_3;
 
-        // CHAOS: subtract each ECG channel's whole-signal median ONCE, here,
-        // before any detection or alignment runs. Removes the per-segment DC
-        // pedestal globally (cheaper and simpler than doing it per beat, per
-        // method, per bin downstream).
+        // CHAOS: subtract the whole-signal median ONCE, here, before any
+        // detection or alignment runs -- from all three ECG channels AND
+        // from PPG. Removes the per-segment DC pedestal globally (cheaper
+        // and simpler than doing it per beat, per method, per bin
+        // downstream).
         if (cfg.dataset_type == "CHAOS") {
             auto subtract_median = [](std::vector<double>& sig) {
                 if (sig.empty()) return;
@@ -207,11 +168,18 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
         d.all_upsampled = std::move(seg.all_upsampled);
         d.all_raw_pairs_flat = std::move(seg.all_raw_pairs_flat);
 
+        // PRESENCE BY EMPTINESS ONLY, which is weaker than it looks:
+        // file_to_bin fills absent channels with placeholder vectors, so a
+        // non-empty ecgSignal2 does not prove CH2 exists. The detector's
+        // std_dev == 0 test catches a constant placeholder; a low-amplitude
+        // one gets detected on. CreateEcgTemplatesFast applies the stronger
+        // test (signal non-empty AND chN.raw non-empty) for this reason.
         bool hasPPG = !d.ppgSignal.empty();
         bool hasEcg2 = !d.ecgSignal2.empty();
         bool hasEcg3 = !d.ecgSignal3.empty();
 
-        /* Step 1 - PPG pulse segmentation */
+        /* Step 1 - PPG pulse segmentation. FIRST, because Step 2 consumes
+           d.ppgMinAmps.size() for its R:PPG plausibility check. */
         if (hasPPG) {
             try {
                 SegmentPPGResult ppgResult = SegmentPPG(d.ppgSignal, cfg.ppg_upsample_rate);
@@ -243,8 +211,9 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
             }
         }
 
-        /* Step 2 - ECG R-peak detection, RAW method only. */
-        if (use_R_algorithm && !d.ecgSignal.empty()) {
+        /* Step 2 - ECG R-peak detection, RAW method only. ch1 is
+           unconditional (given a signal); ch2/ch3 only when present. */
+        if (!d.ecgSignal.empty()) {
             detect_channel_raw(d.ch1, d.ecgSignal, cfg.ecg_upsample_rate, fileID, hasPPG, d.ppgMinAmps.size(), cfg, ecg1_inverted);
             if (hasEcg2)
                 detect_channel_raw(d.ch2, d.ecgSignal2, cfg.ecg_upsample_rate, fileID, hasPPG, d.ppgMinAmps.size(), cfg, ecg2_inverted);
@@ -252,45 +221,16 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
                 detect_channel_raw(d.ch3, d.ecgSignal3, cfg.ecg_upsample_rate, fileID, hasPPG, d.ppgMinAmps.size(), cfg, ecg3_inverted);
         }
 
-        /* Step 3 - Pair channel-1 raw R-peaks with PPG valleys */
-        d.bad_segment = false;
-        if (!d.ch1.raw.empty() && !d.ppgMinAmps.empty()) {
-            try {
-                d.pairs = pairRtoPPGBeat(d.ecgSignal, d.ppgSignal, d.ch1.raw, d.ppgMinAmps, cfg.ecg_upsample_rate, cfg.ppg_upsample_rate);
-            }
-            catch (...) {
-                d.pairs = build_unpaired(d.ppgMinAmps);
-                d.bad_segment = true;
-            }
-        }
-        else if (!d.ppgMinAmps.empty()) {
-            d.pairs = build_unpaired(d.ppgMinAmps);
-            d.bad_segment = true;
-        }
+        d.bad_segment = (d.ch1.raw.empty() && !d.ppgMinAmps.empty());//if there are no peaks in either ppg or ecg, that is a bad segment
     }
 
     return data;
 }
 
-/**
- * @brief  Fill the squared/absval R-peaks (and preprocessed signals) onto
- *         an existing peakResults produced by create_ecg_ppg_pairs_raw().
- *         Reads each channel's original ECG from d.ecgSignal/2/3, so the
- *         signals must still be present (they are, on both the in-memory
- *         and the re-hydrated-from-disk paths).
- *
- *         Touches only the squared/absval fields of each ChannelRPeaks --
- *         disjoint from everything the raw pass and the viewer read -- so
- *         this is safe to run on a worker thread while the raw results are
- *         consumed elsewhere, provided the raw pass has fully finished.
- *
- * @param[in] ecg1_inverted  Same per-channel "Inverted Lead?" flags as
- *                           create_ecg_ppg_pairs_raw -- must be passed the
- *                           same values used for the raw pass on this data.
- */
-inline void augment_ecg_ppg_pairs_sqabs(std::vector<output_binfile_data>& data, bool use_R_algorithm, std::string fileID,
-    double ecgRate, config_entry cfg, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
+
+inline void augment_ecg_ppg_pairs_sqabs(std::vector<output_binfile_data>& data, std::string fileID,  double ecgRate, config_entry cfg, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
 {
+    //runs peakfinding on the squared and abs val lines
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < static_cast<int>(data.size()); ++i) {
         auto& d = data[i];

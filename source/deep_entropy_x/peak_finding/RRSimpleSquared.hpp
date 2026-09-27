@@ -6,7 +6,7 @@
 #pragma once
 
 #include "PeakFinder.hpp"
-
+#include "stats_utils.hpp"
 inline pair<vector<size_t>, vector<double>> RRsimpleSquared(const vector<double>& ecg, double minDist) {
     if (ecg.size() < 3) return { {}, {} };
 

@@ -15,9 +15,8 @@
 #include <omp.h>
 
 #include "peak_finding/channel_offset.hpp"
-#include "peak_finding/run_find_r_peaks.hpp"
-#include "peak_finding/create_ecg_ppg_pairs.hpp"
 #include "peak_finding/peakfinding_io.hpp"
+#include "peak_finding/make_beats.hpp" 
 
 #include "template_generation/template_io.hpp"
 #include "template_generation/build_bins.hpp"
@@ -63,7 +62,6 @@ namespace analysis_job {
         // outlives prepare.
         std::vector<TemplateInfo> info;
         config_entry cfg{};
-        bool use_consensus_peakfind_alg = true;    // = cfg.use_consensus_rpeak in prepare
         bool ecg1_inverted = false;
         bool ecg2_inverted = false;
         bool ecg3_inverted = false;
@@ -98,7 +96,6 @@ namespace analysis_job {
         };
 
         job.cfg = cfg;
-        job.use_consensus_peakfind_alg = cfg.use_consensus_rpeak;
         job.ecg1_inverted = ecg1_inverted;
         job.ecg2_inverted = ecg2_inverted;
         job.ecg3_inverted = ecg3_inverted;
@@ -119,7 +116,7 @@ namespace analysis_job {
                     annealedData.bins, cfg.ecg_upsample_rate, cfg.ppg_upsample_rate);
                 if (!probeSegs.empty()) {
                     auto probeResults = create_ecg_ppg_pairs_raw(
-                        std::move(probeSegs), true, stem, cfg,
+                        std::move(probeSegs), stem, cfg,
                         annealedData.ecg1_inverted, annealedData.ecg2_inverted,
                         annealedData.ecg3_inverted);
 
@@ -201,7 +198,7 @@ namespace analysis_job {
             if (34 < up.size()) artSlots[i] = up[34];
             if (35 < up.size()) artpSlots[i] = up[35];
         }
-        job.peakResults = create_ecg_ppg_pairs_raw(std::move(annealedData.bins), true, stem, cfg, annealedData.ecg1_inverted, annealedData.ecg2_inverted, annealedData.ecg3_inverted);
+        job.peakResults = create_ecg_ppg_pairs_raw(std::move(annealedData.bins), stem, cfg, annealedData.ecg1_inverted, annealedData.ecg2_inverted, annealedData.ecg3_inverted);
 
 
         // create_ecg_ppg_pairs_raw doesn't carry the arterial pass-through
@@ -329,7 +326,7 @@ namespace analysis_job {
                 envelope_report::writeEnvelopeReport(job.cfg.template_path, job.stem, job.tmpl.bins, job.beats, job.rates.ecg, pol);
             }
 
-            augment_ecg_ppg_pairs_sqabs(job.peakResults, job.use_consensus_peakfind_alg, job.fileID, job.samplingRate, job.cfg, job.ecg1_inverted, job.ecg2_inverted, job.ecg3_inverted);
+            augment_ecg_ppg_pairs_sqabs(job.peakResults, job.fileID, job.samplingRate, job.cfg, job.ecg1_inverted, job.ecg2_inverted, job.ecg3_inverted);
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
             premark::runAll(job.beats, job.tmpl, job.rates.ecg, pol, job.cfg.quality_metric, job.stem);
             writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats, job.samplingRate, pol);

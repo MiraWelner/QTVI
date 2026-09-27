@@ -15,15 +15,8 @@
 #include <algorithm> 
 
 namespace template_io {
-
-    // ---- FILE IDENTITY ---------------------------------------------------
-    //
-    // v3: SECTION 1 gained ppg/abp/art/art_pulm r_col. There is no backward
-    // read path and deliberately so -- a file written before v3 has no pulse
-    // R column anywhere in it, and the viewer cannot place a pulse on the
-    // shared time axis without one. Re-run the template build.
     inline constexpr char     kTemplateFileMagic[8] = { 'P','T','M','P','L','\0','\0','\0' };
-    inline constexpr uint32_t kTemplateFileVersion = 3;
+    inline constexpr uint32_t template_file_version = 1;
 
     namespace {
 
@@ -36,8 +29,7 @@ namespace template_io {
         void writeMethod(std::ofstream& f, const ChannelMethodTemplate& m) {
             writeVecD(f, m.ecgTemplate);
             // Empty for methods that don't compute std (sz=0, no payload).
-            writeVecD(f, m.ecg_template_iqr);
-            f.write(reinterpret_cast<const char*>(&m.alignment_point), 8);
+            writeVecD(f, m.ecg_template_std);
             f.write(reinterpret_cast<const char*>(&m.r_col), 4);
         }
 
@@ -53,8 +45,7 @@ namespace template_io {
 
         bool readMethod(std::ifstream& f, ChannelMethodTemplate& m) {
             if (!read_template_vector(f, m.ecgTemplate)) return false;
-            if (!read_template_vector(f, m.ecg_template_iqr)) return false;
-            if (!f.read(reinterpret_cast<char*>(&m.alignment_point), 8)) return false;
+            if (!read_template_vector(f, m.ecg_template_std)) return false;
             if (!f.read(reinterpret_cast<char*>(&m.r_col), 4)) return false;
             return true;
         }
@@ -77,7 +68,7 @@ namespace template_io {
         // SECTION 3 for what that costs to debug). v3 adds the four pulse R
         // columns to SECTION 1; an older file now fails on the magic instead.
         f.write(kTemplateFileMagic, 8);
-        uint32_t version = kTemplateFileVersion;
+        uint32_t version = template_file_version;
         f.write(reinterpret_cast<const char*>(&version), 4);
 
         uint64_t nBins = data.bins.size();
@@ -91,11 +82,11 @@ namespace template_io {
             writeMethod(f, b.ch3_raw); writeMethod(f, b.ch3_squared);
             writeMethod(f, b.ch3_absval); writeMethod(f, b.ch3_unfiltered);
             writeVecD(f, b.ppgTemplate);
-            writeVecD(f, b.ppg_template_iqr);
+            writeVecD(f, b.ppg_template_std);
             writeVecD(f, b.abpTemplate);
-            writeVecD(f, b.abpTemplate_iqr);
+            writeVecD(f, b.abp_template_std);
             writeVecD(f, b.artTemplate);
-            writeVecD(f, b.artTemplate_iqr);
+            writeVecD(f, b.art_template_std);
             writeVecD(f, b.artPulmTemplate);
             writeVecD(f, b.artPulmTemplate_iqr);
             f.write(reinterpret_cast<const char*>(&b.ch1_n_beats_raw), 8);
@@ -298,10 +289,10 @@ namespace template_io {
                 throw std::runtime_error(
                     "not a template file, or written before the v3 header "
                     "(re-run the template build): " + path);
-            if (version != kTemplateFileVersion)
+            if (version != template_file_version)
                 throw std::runtime_error(
                     "template file version " + std::to_string(version)
-                    + ", expected " + std::to_string(kTemplateFileVersion)
+                    + ", expected " + std::to_string(template_file_version)
                     + " (re-run the template build): " + path);
         }
 
@@ -318,11 +309,11 @@ namespace template_io {
                 !readMethod(f, b.ch3_raw) || !readMethod(f, b.ch3_squared) ||
                 !readMethod(f, b.ch3_absval) || !readMethod(f, b.ch3_unfiltered) ||
                 !read_template_vector(f, b.ppgTemplate) ||
-                !read_template_vector(f, b.ppg_template_iqr) ||
+                !read_template_vector(f, b.ppg_template_std) ||
                 !read_template_vector(f, b.abpTemplate) ||
-                !read_template_vector(f, b.abpTemplate_iqr) ||
+                !read_template_vector(f, b.abp_template_std) ||
                 !read_template_vector(f, b.artTemplate) ||
-                !read_template_vector(f, b.artTemplate_iqr) ||
+                !read_template_vector(f, b.art_template_std) ||
                 !read_template_vector(f, b.artPulmTemplate) ||
                 !read_template_vector(f, b.artPulmTemplate_iqr))
                 throw std::runtime_error("template file truncated mid-bin: " + path);

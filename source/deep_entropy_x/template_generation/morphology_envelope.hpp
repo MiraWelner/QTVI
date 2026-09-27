@@ -42,7 +42,7 @@
  * @date   2026-08-19
  */
 #pragma once
-
+#include "peak_finding/stats_utils.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>

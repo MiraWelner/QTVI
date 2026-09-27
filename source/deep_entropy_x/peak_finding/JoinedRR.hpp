@@ -3,7 +3,7 @@
 // Ensemble R-R detection using multiple weighted algorithms (header-only)
 // ============================================================================
 #pragma once
-
+#include "stats_utils.hpp"
 #include "rpeakdetect.hpp"
 #include "pan_tompkin.hpp"
 #include "ecgLms.hpp"

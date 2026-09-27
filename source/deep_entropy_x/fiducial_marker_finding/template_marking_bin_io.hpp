@@ -88,9 +88,7 @@ enum class MarkingsCsvSection { EcgOnly, PulseOnly, EcgAndPulse };
 struct ChannelTemplateData {
     std::vector<double> ecgTemplate_raw;
     std::vector<double> ecg_template_raw_iqr;
-    std::vector<double> ecgTemplate_squared, ecgTemplate_absval;    // unused by viewer
-    double alignment_point_raw = 0, alignment_point_squared = 0;
-    double alignment_point_absval = 0;
+    std::vector<double> ecgTemplate_squared, ecgTemplate_absval;
     int r_col_raw = -1;
     int r_col_squared = -1;
     int r_col_absval = -1;
@@ -467,7 +465,7 @@ inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::Template
         dst.art_r_construct = src.art_r_col;
         dst.art_pulm_r_construct = src.art_pulm_r_col;
         dst.ppgTemplate = src.ppgTemplate;
-        dst.ppg_template_iqr = src.ppg_template_iqr;
+        dst.ppg_template_iqr = src.ppg_template_std;
 
         // Section 4.6 banks. Empty when no bank reached this bin, which is the
         // correct reading: one template per channel IS a bank of size one, and
@@ -478,8 +476,8 @@ inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::Template
         dst.abpTemplate = src.abpTemplate;
         dst.artTemplate = src.artTemplate;
         dst.artPulmTemplate = src.artPulmTemplate;
-        dst.abpTemplate_iqr = src.abpTemplate_iqr;
-        dst.artTemplate_iqr = src.artTemplate_iqr;
+        dst.abpTemplate_iqr = src.abp_template_std;
+        dst.artTemplate_iqr = src.art_template_std;
         dst.artPulmTemplate_iqr = src.artPulmTemplate_iqr;
 
         // chN is ALWAYS the R base: what the grid draws, and the frame every
@@ -487,8 +485,7 @@ inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::Template
         auto project = [](const template_io::ChannelMethodTemplate& c,
             ChannelTemplateData& d) {
                 d.ecgTemplate_raw = c.ecgTemplate;
-                d.ecg_template_raw_iqr = c.ecg_template_iqr;
-                d.alignment_point_raw = c.alignment_point;
+                d.ecg_template_raw_iqr = c.ecg_template_std;
                 d.r_col_raw = c.r_col;
                 d.median_rr_samples = c.median_rr_samples;
             };

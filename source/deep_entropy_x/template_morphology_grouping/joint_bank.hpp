@@ -13,7 +13,7 @@
 #include <limits>
 #include <map>
 #include <vector>
-
+#include "peak_finding/stats_utils.hpp"
 #include "template_bank.hpp"
 #include "fiducial_marker_finding/alignment.hpp"
 #include "pvc_filter.hpp"

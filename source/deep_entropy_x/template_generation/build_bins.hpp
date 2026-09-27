@@ -34,15 +34,11 @@ namespace template_generation_detail {
     // The non-raw methods pass an empty tmpl_iqr and the on-disk std
     // field stays sz=0 (no payload). Both writer and reader handle that
     // uniformly, so there's only ever one code path.
-    inline void copyMethod(template_io::ChannelMethodTemplate& dst,
-        const std::vector<double>& tmpl,
-        const std::vector<double>& tmpl_iqr,
-        double alignment, int rCol)
+    inline void copyMethod(template_io::ChannelMethodTemplate& dst, const std::vector<double>& tmpl, const std::vector<double>& tmpl_iqr, int rCol)                                  // line 40: was `double alignment, int rCol`
     {
         dst.ecgTemplate = tmpl;
-        dst.ecg_template_iqr = tmpl_iqr;
-        dst.alignment_point = std::isnan(alignment) ? 0.0 : alignment;
-        dst.r_col = rCol;
+        dst.ecg_template_std = tmpl_iqr;
+        dst.r_col = rCol;                          // line 44 deleted
     }
 
     // Lift the per-channel banks out of TemplateInfo's string-keyed map into
@@ -78,38 +74,23 @@ namespace template_generation_detail {
         // vector via the default-constructed std::vector<double>{}.
         const std::vector<double> noStd;
 
-        copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw,
-            info.ch1.ecgTemplate_raw_iqr,
-            info.ch1.alignment_point_raw, info.ch1.r_col_raw);
-        copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd,
-            info.ch1.alignment_point_squared, info.ch1.r_col_squared);
-        copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval, noStd,
-            info.ch1.alignment_point_absval, info.ch1.r_col_absval);
-        copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, noStd,
-            info.ch1.alignment_point_unfiltered, info.ch1.r_col_unfiltered);
+        copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw, info.ch1.ecgTemplate_raw_iqr, info.ch1.r_col_raw);
+        copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd, info.ch1.r_col_squared);
+        copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval, noStd, info.ch1.r_col_absval);
+        copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, noStd, info.ch1.r_col_unfiltered);
 
-        copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw,
-            info.ch2.ecgTemplate_raw_iqr,
-            info.ch2.alignment_point_raw, info.ch2.r_col_raw);
-        copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd,
-            info.ch2.alignment_point_squared, info.ch2.r_col_squared);
-        copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval, noStd,
-            info.ch2.alignment_point_absval, info.ch2.r_col_absval);
-        copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, noStd,
-            info.ch2.alignment_point_unfiltered, info.ch2.r_col_unfiltered);
+        copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw, info.ch2.ecgTemplate_raw_iqr, info.ch2.r_col_raw);
+        copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd,info.ch2.r_col_squared);
+        copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval, noStd, info.ch2.r_col_absval);
+        copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, noStd,  info.ch2.r_col_unfiltered);
 
-        copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw,
-            info.ch3.ecgTemplate_raw_iqr,
-            info.ch3.alignment_point_raw, info.ch3.r_col_raw);
-        copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd,
-            info.ch3.alignment_point_squared, info.ch3.r_col_squared);
-        copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval, noStd,
-            info.ch3.alignment_point_absval, info.ch3.r_col_absval);
-        copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered, noStd,
-            info.ch3.alignment_point_unfiltered, info.ch3.r_col_unfiltered);
+        copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw, info.ch3.ecgTemplate_raw_iqr, info.ch3.r_col_raw);
+        copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd, info.ch3.r_col_squared);
+        copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval, noStd, info.ch3.r_col_absval);
+        copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered, noStd, info.ch3.r_col_unfiltered);
 
         bt.ppgTemplate = info.ppgTemplate;
-        bt.ppg_template_iqr = info.ppg_template_iqr;
+        bt.ppg_template_std = info.ppg_template_iqr;
 
         // Per-channel + PPG slice counts (post drop-rules).
         bt.ch1_n_beats_raw = info.ch1.n_beats_raw;
@@ -140,26 +121,17 @@ namespace template_generation_detail {
         bt.bad_segment = bad_segment;
         if (bad_segment) return;
 
-        copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw,
-            info.ch1.ecgTemplate_raw_iqr,
-            info.ch1.alignment_point_raw, info.ch1.r_col_raw);
-        copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, {},
-            info.ch1.alignment_point_unfiltered, info.ch1.r_col_unfiltered);
+        copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw,info.ch1.ecgTemplate_raw_iqr, info.ch1.r_col_raw);
+        copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, {},info.ch1.r_col_unfiltered);
 
-        copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw,
-            info.ch2.ecgTemplate_raw_iqr,
-            info.ch2.alignment_point_raw, info.ch2.r_col_raw);
-        copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, {},
-            info.ch2.alignment_point_unfiltered, info.ch2.r_col_unfiltered);
+        copyMethod(bt.ch2_raw, info.ch2.ecgTemplate_raw, info.ch2.ecgTemplate_raw_iqr, info.ch2.r_col_raw);
+        copyMethod(bt.ch2_unfiltered, info.ch2.ecgTemplate_unfiltered, {}, info.ch2.r_col_unfiltered);
 
-        copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw,
-            info.ch3.ecgTemplate_raw_iqr,
-            info.ch3.alignment_point_raw, info.ch3.r_col_raw);
-        copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered, {},
-            info.ch3.alignment_point_unfiltered, info.ch3.r_col_unfiltered);
+        copyMethod(bt.ch3_raw, info.ch3.ecgTemplate_raw, info.ch3.ecgTemplate_raw_iqr,info.ch3.r_col_raw);
+        copyMethod(bt.ch3_unfiltered, info.ch3.ecgTemplate_unfiltered, {}, info.ch3.r_col_unfiltered);
 
         bt.ppgTemplate = info.ppgTemplate;
-        bt.ppg_template_iqr = info.ppg_template_iqr;
+        bt.ppg_template_std = info.ppg_template_iqr;
 
         // Per-channel + PPG slice counts (post drop-rules).
         bt.ch1_n_beats_raw = info.ch1.n_beats_raw;
@@ -188,18 +160,12 @@ namespace template_generation_detail {
     {
         if (bt.bad_segment) return;
         const std::vector<double> noStd;
-        copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd,
-            info.ch1.alignment_point_squared, info.ch1.r_col_squared);
-        copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval, noStd,
-            info.ch1.alignment_point_absval, info.ch1.r_col_absval);
-        copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd,
-            info.ch2.alignment_point_squared, info.ch2.r_col_squared);
-        copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval, noStd,
-            info.ch2.alignment_point_absval, info.ch2.r_col_absval);
-        copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd,
-            info.ch3.alignment_point_squared, info.ch3.r_col_squared);
-        copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval, noStd,
-            info.ch3.alignment_point_absval, info.ch3.r_col_absval);
+        copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd, info.ch1.r_col_squared);
+        copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval, noStd, info.ch1.r_col_absval);
+        copyMethod(bt.ch2_squared, info.ch2.ecgTemplate_squared, noStd, info.ch2.r_col_squared);
+        copyMethod(bt.ch2_absval, info.ch2.ecgTemplate_absval, noStd,info.ch2.r_col_absval);
+        copyMethod(bt.ch3_squared, info.ch3.ecgTemplate_squared, noStd,info.ch3.r_col_squared);
+        copyMethod(bt.ch3_absval, info.ch3.ecgTemplate_absval, noStd,info.ch3.r_col_absval);
     }
 
 }  // namespace template_generation_detail
@@ -258,13 +224,13 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
             // derivable from the PPG's.
             if (i < abp.templates.size()) {
                 out.tmpl.bins[i].abpTemplate = std::move(abp.templates[i]);
-                out.tmpl.bins[i].abpTemplate_iqr = std::move(abp.iqrs[i]);
+                out.tmpl.bins[i].abp_template_std = std::move(abp.iqrs[i]);
                 if (i < abp.rCol.size())
                     out.tmpl.bins[i].abp_r_col = abp.rCol[i];
             }
             if (i < art.templates.size()) {
                 out.tmpl.bins[i].artTemplate = std::move(art.templates[i]);
-                out.tmpl.bins[i].artTemplate_iqr = std::move(art.iqrs[i]);
+                out.tmpl.bins[i].art_template_std = std::move(art.iqrs[i]);
                 if (i < art.rCol.size())
                     out.tmpl.bins[i].art_r_col = art.rCol[i];
             }
@@ -532,7 +498,6 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
             // Store the aligned result in the per-anchor slot, leaving the R
             // base untouched so the NEXT anchor step still aligns from R.
             template_io::ChannelMethodTemplate& dst = store[i][ch.chIdx];
-            dst.alignment_point = blk.alignment_point;
             dst.r_col = alignedRcol;
 
             if (forScoring) {
@@ -541,7 +506,7 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
                 // (so QC scores beats in the same frame). Caller owns copies.
                 template_io::ChannelMethodTemplate& scalar = bin.*(ch.ptr);
                 scalar.ecgTemplate = q.tmpl;          // copy: also stored below
-                scalar.ecg_template_iqr = q.iqr;
+                scalar.ecg_template_std = q.iqr;
                 scalar.r_col = alignedRcol;
 
                 // Co-framed aligned ABSVAL template: |shifted raw beat| IS the
@@ -640,7 +605,7 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
             }
 
             dst.ecgTemplate = std::move(q.tmpl);
-            dst.ecg_template_iqr = std::move(q.iqr);
+            dst.ecg_template_std = std::move(q.iqr);
         }
     }
 

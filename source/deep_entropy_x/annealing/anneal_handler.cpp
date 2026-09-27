@@ -708,25 +708,20 @@ namespace {
         data.ppg = extras.upsampled[SLOT_PPG];
     }
 
-    // Output writer
-    //
-    // Layout:
-    //   Header: [uint64 nSegments][double ppgSR][double ecgSR][double epochSec]
-    //           [uint32 nChannels=36][36 x float32 nativeRates]
-    //           [uint8 ecg1_inverted][uint8 ecg2_inverted][uint8 ecg3_inverted]
-    //   Per segment:
-    //     ppg_bin_indexs, ecg_bin_indexs, ppg, ecg1, ecg2, ecg3, sleep,
-    //     then 36 x {upsampled_slice, raw_slice}.
-    //
-    // The 36 trailing per-channel slices preserve every input channel sliced
-    // to the segment's time window:
-    //   - Upsampled slice: indices proportional to ecg_bin_indexs. ECG-index
-    //     i in an N-sample ECG block maps to channel-X-index ceil(i*M/N) in
-    //     an M-sample block of channel X. Avoids per-channel rate bookkeeping.
-    //   - Raw slice: filter (t,v) pairs whose t falls inside the ECG time
-    //     window. Timestamps stay in absolute seconds-from-recording-start.
     void write_output_bin(const std::filesystem::path& path, const std::vector<FinalSegment>& segs, const Extras& extras, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
     {
+        /*183 byte header followed by: 
+        Slot	Channel
+            0	timestamp
+            1	ECG1
+            2	ECG2
+            3	ECG3
+            4	PPG
+            33	ABP
+            34	ART
+            35	ART_PULM
+         */
+
         std::ofstream out(path, std::ios::binary);
         if (!out.is_open())
             throw std::runtime_error("cannot create: " + path.string());

@@ -28,18 +28,15 @@
 #include "template_morphology_grouping/morphology_csv.hpp"
 #include "template_morphology_grouping/nsvt_detect.hpp"
 #include "noise_marking_gui/annotation_types.hpp"
- // noise_markings::Span / LoadResult / loadSpans / code_for_channel. The
- // operator class labels are an INPUT to template generation -- Section 4.6
- // partitions the bank by class BEFORE clustering -- so this pass reads the
- // noise-marking bin the GUI wrote.
+
 #include "noise_marking_gui/user_annotation_handler.h"
-#include <algorithm>   // std::nth_element for the per-bin median RR
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
-#include <limits>      // numeric_limits<double>::quiet_NaN in the NSVT series
+#include <limits> 
 #include <memory>
 #include <string>
 #include <utility>
@@ -193,11 +190,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         dst.ecgTemplate_absval = src.ecgTemplates_absval[i];
         dst.ecgTemplate_unfiltered = src.ecgTemplates_unfiltered[i];
 
-        dst.alignment_point_raw = std::isnan(src.ppg_alignment_point_raw[i]) ? 0.0 : src.ppg_alignment_point_raw[i];
-        dst.alignment_point_squared = std::isnan(src.ppg_alignment_point_squared[i]) ? 0.0 : src.ppg_alignment_point_squared[i];
-        dst.alignment_point_absval = std::isnan(src.ppg_alignment_point_absval[i]) ? 0.0 : src.ppg_alignment_point_absval[i];
-        dst.alignment_point_unfiltered = std::isnan(src.ppg_alignment_point_unfiltered[i]) ? 0.0 : src.ppg_alignment_point_unfiltered[i];
-
         dst.r_col_raw = src.r_col_raw[i];
         dst.r_col_squared = src.r_col_squared[i];
         dst.r_col_absval = src.r_col_absval[i];
@@ -212,11 +204,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         dst.ecgTemplate_squared = {};
         dst.ecgTemplate_absval = {};
         dst.ecgTemplate_unfiltered = {};
-
-        dst.alignment_point_raw = NaN;
-        dst.alignment_point_squared = NaN;
-        dst.alignment_point_absval = NaN;
-        dst.alignment_point_unfiltered = NaN;
 
         dst.r_col_raw = -1;
         dst.r_col_squared = -1;
@@ -662,8 +649,6 @@ inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
     auto fill_slow = [](ChannelTemplates& dst, const EcgChannelResult& src, size_t i) {
         dst.ecgTemplate_squared = src.ecgTemplates_squared[i];
         dst.ecgTemplate_absval = src.ecgTemplates_absval[i];
-        dst.alignment_point_squared = std::isnan(src.ppg_alignment_point_squared[i]) ? 0.0 : src.ppg_alignment_point_squared[i];
-        dst.alignment_point_absval = std::isnan(src.ppg_alignment_point_absval[i]) ? 0.0 : src.ppg_alignment_point_absval[i];
         dst.r_col_squared = src.r_col_squared[i];
         dst.r_col_absval = src.r_col_absval[i];
         };

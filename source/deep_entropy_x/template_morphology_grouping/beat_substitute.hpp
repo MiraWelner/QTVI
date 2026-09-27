@@ -10,6 +10,7 @@
 #include <limits>
 #include <vector>
 
+#include "peak_finding/stats_utils.hpp"
 #include "template_bank.hpp"
 
 namespace beat_substitute {
