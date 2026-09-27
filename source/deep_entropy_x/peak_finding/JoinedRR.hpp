@@ -11,9 +11,7 @@
 #include "FilterUtils.hpp"
 
 /**
- * @brief  Result from JoinedRR: the accepted R-peak indices plus
- *         the detrended (pre-bandpass) signal that was fed into the
- *         detection algorithms.
+ * @brief  Result from JoinedRR: the accepted R-peak indices.
  */
 struct JoinedRRResult {
     std::vector<std::size_t> peaks;         ///< Accepted R-peak sample indices
@@ -82,11 +80,10 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, double ecgRate
     vector<vector<size_t>> output(6);
     vector<double> weights = { 0.75, 0.25, 0.25, 1.25, 1.5, 0.75 };
 
-    // Algorithms 0-2 share threshold-independent preprocessing. Original code
-    // ran rpeakdetect() three times -- bandpass+filter+medfilt1 once each
-    // -- when only the threshold differs. We do the prep once and apply
-    // three thresholds. Output is bit-identical.
-    auto rpd_prep = rpeakdetect_prep(processedEcg, ecgRate, 0, fileID);
+    // Algorithms 0-2 share threshold-independent preprocessing
+    // (bandpass + filter + medfilt1) and differ only in threshold, so the prep
+    // runs once and three thresholds are applied to it.
+    auto rpd_prep = rpeakdetect_prep(processedEcg, ecgRate);
     output[0] = rpeakdetect_apply(rpd_prep, 0.2, inverted).r_peak_index;
     output[1] = rpeakdetect_apply(rpd_prep, 0.1, inverted).r_peak_index;
     output[2] = rpeakdetect_apply(rpd_prep, 0.4, inverted).r_peak_index;

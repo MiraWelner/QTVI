@@ -82,24 +82,3 @@ void RunLength(const vector<T>& X, vector<T>& B, vector<double>& N, vector<doubl
         }
     }
 }
-
-// Convenience overload returning a tuple
-template<typename T>
-tuple<vector<T>, vector<double>, vector<double>> RunLength(const vector<T>& X) {
-    vector<T> B;
-    vector<double> N, BI;
-    RunLength(X, B, N, BI);
-    return std::make_tuple(B, N, BI);
-}
-
-// Decode: expand (values, counts) back into a flat vector
-template<typename T>
-vector<T> RunLength(const vector<T>& B, const vector<double>& N) {
-    vector<T> X;
-    for (size_t i = 0; i < B.size(); ++i) {
-        for (int j = 0; j < static_cast<int>(N[i]); ++j) {
-            X.push_back(B[i]);
-        }
-    }
-    return X;
-}

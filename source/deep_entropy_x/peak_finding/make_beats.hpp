@@ -22,55 +22,49 @@
 #include "JoinedRR.hpp"
 #include "config_file_handling/config.hpp"
 
-static inline void run_rpeak_detection(const std::vector<double>& sig, double ecgRate, const std::string& fileID, bool hasPPG,
-    std::size_t ppgCount, std::vector<std::size_t>& rIndex, bool& noisy, config_entry cfg, bool inverted) {
+static inline void run_rpeak_detection(const std::vector<double>& sig, double ecgRate,
+    const std::string& fileID, std::vector<std::size_t>& rIndex, config_entry cfg, bool inverted) {
 
-    noisy = false;
     rIndex.clear();
 
-    if (std_dev(sig) == 0.0) {
-        noisy = true;
-        return;
-    }
+    // A zero-variance channel is file_to_bin's "channel absent" placeholder.
+    // Leaving rIndex empty here is what CreateEcgTemplatesFast's
+    // (signal non-empty AND chN.raw non-empty) presence test relies on.
+    if (std_dev(sig) == 0.0) return;
 
     try {
-        std::vector<size_t> rpeaks;
         if (cfg.use_consensus_rpeak) {
-            JoinedRRResult jrr = JoinedRR_full(sig, ecgRate, fileID, inverted); // existing default path
-            rpeaks = jrr.peaks;
+            JoinedRRResult jrr = JoinedRR_full(sig, ecgRate, fileID, inverted);
+            rIndex = std::move(jrr.peaks);
         }
         else {
             // single-detector fallback: custom rpeakdetect at its default threshold
-            RPeakDetectResult r = rpeakdetect(sig, ecgRate, 0.2, 0, fileID, inverted);
-            rpeaks = r.r_peak_index;
-        }
-        rIndex = std::move(rpeaks);
-
-        if (hasPPG && ppgCount > 0) {
-            double r = static_cast<double>(rIndex.size());
-            double p = static_cast<double>(ppgCount);
-            if (r < p / 2.0 || p * 1.5 < r) {
-                noisy = true;
-            }
+            RPeakDetectResult r = rpeakdetect(sig, ecgRate, 0.2, inverted);
+            rIndex = std::move(r.r_peak_index);
         }
     }
     catch (...) {
         rIndex.clear();
-        noisy = true;
+        std::fprintf(stderr, "  [rpeak] detector threw for %s -- no peaks for this "
+            "channel/bin\n", fileID.c_str());
+        std::fflush(stderr);
     }
 }
 
 
 static inline void detect_channel_raw(ChannelRPeaks& result, const std::vector<double>& signal, double ecgRate,
-    const std::string& fileID, bool hasPPG, std::size_t ppgCount, config_entry cfg, bool inverted)
+    const std::string& fileID, config_entry cfg, bool inverted)
 {
     if (signal.empty()) return;
-    run_rpeak_detection(signal, ecgRate, fileID, hasPPG, ppgCount, result.raw, result.raw_noisy, cfg, inverted);
+    run_rpeak_detection(signal, ecgRate, fileID, result.raw, cfg, inverted);
 }
 
 
+/* Squaring and rectification both map an R-peak to a positive excursion
+   whatever the lead polarity, so the peak is a local maximum on both derived
+   signals and no inverted-lead flag applies here. */
 static inline void detect_channel_sqabs(ChannelRPeaks& result, const std::vector<double>& signal, double ecgRate,
-    const std::string& fileID, bool hasPPG, std::size_t ppgCount, config_entry cfg, bool inverted)
+    const std::string& fileID, config_entry cfg)
 {
     if (signal.empty()) return;
 
@@ -79,35 +73,17 @@ static inline void detect_channel_sqabs(ChannelRPeaks& result, const std::vector
     for (std::size_t i = 0; i < signal.size(); ++i) {
         result.squared_signal[i] = signal[i] * signal[i];
     }
-    run_rpeak_detection(result.squared_signal, ecgRate, fileID, hasPPG, ppgCount,
-        result.squared, result.squared_noisy, cfg, inverted);
+    run_rpeak_detection(result.squared_signal, ecgRate, fileID, result.squared,
+        cfg, /*inverted=*/false);
 
     /* Method 3: absolute value signal */
     result.absval_signal.resize(signal.size());
     for (std::size_t i = 0; i < signal.size(); ++i) {
         result.absval_signal[i] = std::fabs(signal[i]);
     }
-    run_rpeak_detection(result.absval_signal, ecgRate, fileID, hasPPG, ppgCount,
-        result.absval, result.absval_noisy, cfg, inverted);
+    run_rpeak_detection(result.absval_signal, ecgRate, fileID, result.absval,
+        cfg, /*inverted=*/false);
 }
-
-/**
- * @brief  Build placeholder pairs when no valid ECG R-peaks are available.
- *
- * @param[in]  ppgMinAmps  PPG valley indices to preserve.
- * @return     Pair matrix with [ppg_valley_idx, -1.0] per row.
- */
-static inline std::vector<std::vector<double>> build_unpaired(
-    const std::vector<std::size_t>& ppgMinAmps)
-{
-    std::vector<std::vector<double>> pairs;
-    pairs.reserve(ppgMinAmps.size());
-    for (std::size_t k = 0; k < ppgMinAmps.size(); ++k) {
-        pairs.push_back({ static_cast<double>(ppgMinAmps[k]), -1.0 });
-    }
-    return pairs;
-}
-
 
 inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<AnnealedSegment> annealedSegments,
     std::string fileID, config_entry cfg,
@@ -168,18 +144,10 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
         d.all_upsampled = std::move(seg.all_upsampled);
         d.all_raw_pairs_flat = std::move(seg.all_raw_pairs_flat);
 
-        // PRESENCE BY EMPTINESS ONLY, which is weaker than it looks:
-        // file_to_bin fills absent channels with placeholder vectors, so a
-        // non-empty ecgSignal2 does not prove CH2 exists. The detector's
-        // std_dev == 0 test catches a constant placeholder; a low-amplitude
-        // one gets detected on. CreateEcgTemplatesFast applies the stronger
-        // test (signal non-empty AND chN.raw non-empty) for this reason.
-        bool hasPPG = !d.ppgSignal.empty();
-        bool hasEcg2 = !d.ecgSignal2.empty();
-        bool hasEcg3 = !d.ecgSignal3.empty();
+        const bool hasPPG = !d.ppgSignal.empty();
 
-        /* Step 1 - PPG pulse segmentation. FIRST, because Step 2 consumes
-           d.ppgMinAmps.size() for its R:PPG plausibility check. */
+        /* Step 1 - PPG pulse segmentation. Supplies the valley list that
+           bad_segment reads below. */
         if (hasPPG) {
             try {
                 SegmentPPGResult ppgResult = SegmentPPG(d.ppgSignal, cfg.ppg_upsample_rate);
@@ -211,15 +179,16 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
             }
         }
 
-        /* Step 2 - ECG R-peak detection, RAW method only. ch1 is
-           unconditional (given a signal); ch2/ch3 only when present. */
-        if (!d.ecgSignal.empty()) {
-            detect_channel_raw(d.ch1, d.ecgSignal, cfg.ecg_upsample_rate, fileID, hasPPG, d.ppgMinAmps.size(), cfg, ecg1_inverted);
-            if (hasEcg2)
-                detect_channel_raw(d.ch2, d.ecgSignal2, cfg.ecg_upsample_rate, fileID, hasPPG, d.ppgMinAmps.size(), cfg, ecg2_inverted);
-            if (hasEcg3)
-                detect_channel_raw(d.ch3, d.ecgSignal3, cfg.ecg_upsample_rate, fileID, hasPPG, d.ppgMinAmps.size(), cfg, ecg3_inverted);
-        }
+        /* Step 2 - ECG R-peak detection, RAW method only. detect_channel_raw
+           returns on an empty signal, and an emptiness test would not mean
+           much anyway: file_to_bin fills absent channels with placeholder
+           vectors, so a non-empty ecgSignal2 does not prove CH2 exists. The
+           zero-variance guard inside the detector leaves .raw empty for a
+           constant placeholder; the authoritative presence test is
+           CreateEcgTemplatesFast's (signal non-empty AND chN.raw non-empty). */
+        detect_channel_raw(d.ch1, d.ecgSignal, cfg.ecg_upsample_rate, fileID, cfg, ecg1_inverted);
+        detect_channel_raw(d.ch2, d.ecgSignal2, cfg.ecg_upsample_rate, fileID, cfg, ecg2_inverted);
+        detect_channel_raw(d.ch3, d.ecgSignal3, cfg.ecg_upsample_rate, fileID, cfg, ecg3_inverted);
 
         d.bad_segment = (d.ch1.raw.empty() && !d.ppgMinAmps.empty());//if there are no peaks in either ppg or ecg, that is a bad segment
     }
@@ -228,18 +197,14 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
 }
 
 
-inline void augment_ecg_ppg_pairs_sqabs(std::vector<output_binfile_data>& data, std::string fileID,  double ecgRate, config_entry cfg, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
+inline void augment_ecg_ppg_pairs_sqabs(std::vector<output_binfile_data>& data, std::string fileID, double ecgRate, config_entry cfg)
 {
     //runs peakfinding on the squared and abs val lines
 #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < static_cast<int>(data.size()); ++i) {
         auto& d = data[i];
-        bool hasPPG = !d.ppgSignal.empty();
-        if (!d.ecgSignal.empty())
-            detect_channel_sqabs(d.ch1, d.ecgSignal, ecgRate, fileID, hasPPG, d.ppgMinAmps.size(), cfg, ecg1_inverted);
-        if (!d.ecgSignal2.empty())
-            detect_channel_sqabs(d.ch2, d.ecgSignal2, ecgRate, fileID, hasPPG, d.ppgMinAmps.size(), cfg, ecg2_inverted);
-        if (!d.ecgSignal3.empty())
-            detect_channel_sqabs(d.ch3, d.ecgSignal3, ecgRate, fileID, hasPPG, d.ppgMinAmps.size(), cfg, ecg3_inverted);
+        detect_channel_sqabs(d.ch1, d.ecgSignal, ecgRate, fileID, cfg);
+        detect_channel_sqabs(d.ch2, d.ecgSignal2, ecgRate, fileID, cfg);
+        detect_channel_sqabs(d.ch3, d.ecgSignal3, ecgRate, fileID, cfg);
     }
 }

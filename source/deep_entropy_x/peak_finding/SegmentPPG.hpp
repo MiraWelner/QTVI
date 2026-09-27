@@ -85,14 +85,12 @@ inline SegmentPPGResult SegmentPPG(const vector<double>& ppg, double ppgRate) {
 
     if (peakidx.empty() || vallyidx.empty())
         throw std::runtime_error("Incomplete beat segmentation (flat signal)");
-    if (std::abs(static_cast<int>(peakidx.size()) - static_cast<int>(vallyidx.size())) > 1)
-        throw std::runtime_error("Peak/valley count mismatch exceeds tolerance");
 
     // 4. Detect outliers in timing
     vector<bool> peak_outliers = stdoutlier(
-        vector<double>(peakidx.begin(), peakidx.end()), 2.5, 100, "both", false);
+        vector<double>(peakidx.begin(), peakidx.end()), 2.5, 100, "both");
     vector<bool> valley_outliers = stdoutlier(
-        vector<double>(vallyidx.begin(), vallyidx.end()), 2.5, 100, "both", false);
+        vector<double>(vallyidx.begin(), vallyidx.end()), 2.5, 100, "both");
 
     // 5. Correct outlier valleys using neighboring peaks
     size_t pidx = (vallyidx[0] < peakidx[0]) ? 0 : 1;

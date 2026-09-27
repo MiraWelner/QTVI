@@ -312,25 +312,25 @@ namespace analysis_job {
         omp_set_nested(0);
         const LeadPolarity pol{ { job.ecg1_inverted, job.ecg2_inverted, job.ecg3_inverted } };
         try {
-            // POSITION IS LOAD-BEARING: these writes describe the RAW pass and
-            // must stay above augment_ecg_ppg_pairs_sqabs, which overwrites the
-            // beat lists in peakResults.
-            write_output_binfile(job.rPeakPath.string(), job.peakResults);
-            const std::filesystem::path csvDir = job.cfg.r_peak_data_path;
-            const std::filesystem::path rPeakCsv = csvDir / (job.stem + "_peak_locations_all_beats.csv");
-            write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
-
             if (!job.cfg.template_path.empty()) {
                 const std::string ftsPath = job.cfg.template_path + "/" + job.stem + "_pq_and_qrs_data.csv";
                 normalize_features::writeFeatureTimeSeriesCsv(ftsPath, job.stem, job.peakResults, job.rates.ecg, pol);
                 envelope_report::writeEnvelopeReport(job.cfg.template_path, job.stem, job.tmpl.bins, job.beats, job.rates.ecg, pol);
             }
 
-            augment_ecg_ppg_pairs_sqabs(job.peakResults, job.fileID, job.samplingRate, job.cfg, job.ecg1_inverted, job.ecg2_inverted, job.ecg3_inverted);
+            std::cout << "Processing Squared and Absolute Value Templates (slow) for " << job.stem << "\n";
+            augment_ecg_ppg_pairs_sqabs(job.peakResults, job.fileID, job.samplingRate, job.cfg);
+
+            // Below augment, so all 9 channel x method blocks are populated in
+            // both files rather than just the 3 raw ones.
+            write_output_binfile(job.rPeakPath.string(), job.peakResults);
+            const std::filesystem::path rPeakCsv =
+                std::filesystem::path(job.cfg.r_peak_data_path) / (job.stem + "_peak_locations_all_beats.csv");
+            write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
+
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
             premark::runAll(job.beats, job.tmpl, job.rates.ecg, pol, job.cfg.quality_metric, job.stem);
             writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats, job.samplingRate, pol);
-            std::cout << "Processing Squared and Absolute Value Templates (slow) for " << job.stem << "\n";
         }
         catch (const std::exception& e) {
             job.error = e.what();

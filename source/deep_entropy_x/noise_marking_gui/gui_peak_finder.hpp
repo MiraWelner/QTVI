@@ -121,35 +121,6 @@ namespace gui_peak_finder {
         }
     };
 
-    // True if t lies within any [start, end] span. (Linear; retained for the
-    // small `withinSpans` list and any legacy callers. Hot paths use SpanIndex.)
-    inline bool inExcludedSpan(const std::vector<std::pair<double, double>>& spans, double t) {
-        for (const auto& s : spans)
-            if (t >= s.first && t <= s.second) return true;
-        return false;
-    }
-
-    // Reference amplitude [min, max], excluding samples inside marked spans.
-    inline std::pair<double, double> referenceRange(
-        const QVector<QPointF>& rawPairs, int refFirst, int refLast,
-        const std::vector<std::pair<double, double>>& refExcluded) {
-        double vMin = 1e300, vMax = -1e300;
-        int kept = 0;
-        for (int i = refFirst; i <= refLast; ++i) {
-            if (inExcludedSpan(refExcluded, rawPairs[i].x())) continue;
-            const double v = rawPairs[i].y();
-            vMin = std::min(vMin, v); vMax = std::max(vMax, v); ++kept;
-        }
-        if (kept < 2 || vMax <= vMin) {
-            vMin = 1e300; vMax = -1e300;
-            for (int i = refFirst; i <= refLast; ++i) {
-                const double v = rawPairs[i].y();
-                vMin = std::min(vMin, v); vMax = std::max(vMax, v);
-            }
-        }
-        return { vMin, vMax };
-    }
-
     // Drop reference peaks inside marked spans, unless that empties the set.
     inline QVector<QPointF> cleanReferencePeaks(QVector<QPointF> refPeaks,
         const SpanIndex& refExcluded) {
@@ -175,19 +146,6 @@ namespace gui_peak_finder {
 
     using ParamFn = std::function<double(double)>;
 
-    inline std::pair<int, int> indexRange(const QVector<QPointF>& rawPairs,
-        double tStart, double tEnd) {
-        int firstIdx = -1, lastIdx = -1;
-        for (int i = 0; i < rawPairs.size(); ++i) {
-            const double t = rawPairs[i].x();
-            if (t < tStart) continue;
-            if (t > tEnd)   break;
-            if (firstIdx < 0) firstIdx = i;
-            lastIdx = i;
-        }
-        return { firstIdx, lastIdx };
-    }
-
     inline double meanInterval(const QVector<QPointF>& peaks) {
         if (peaks.size() < 2) return 0.0;
         return (peaks.last().x() - peaks.first().x()) / (peaks.size() - 1);
@@ -207,26 +165,6 @@ namespace gui_peak_finder {
         int lo = 0, hi = rp.size();
         while (lo < hi) { const int mid = (lo + hi) >> 1; if (rp[mid].x() < val) lo = mid + 1; else hi = mid; }
         return lo;
-    }
-
-    // Merge + sort excluded spans once, clipped to [0, tMax], dropping empties.
-    // (Retained for compatibility; SpanIndex::build now does the equivalent.)
-    inline std::vector<std::pair<double, double>> mergeExcluded(
-        double tMax, const std::vector<std::pair<double, double>>& spans) {
-        std::vector<std::pair<double, double>> c;
-        c.reserve(spans.size());
-        for (const auto& e : spans) {
-            const double a = std::max(0.0, e.first), b = std::min(tMax, e.second);
-            if (a < b) c.push_back({ a, b });
-        }
-        std::sort(c.begin(), c.end());
-        std::vector<std::pair<double, double>> m;
-        for (const auto& s : c) {
-            if (!m.empty() && s.first <= m.back().second)
-                m.back().second = std::max(m.back().second, s.second);
-            else m.push_back(s);
-        }
-        return m;
     }
 
     inline bool spanContaining(const std::vector<std::pair<double, double>>& spans,

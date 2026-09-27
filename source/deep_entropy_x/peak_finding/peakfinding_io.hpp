@@ -202,10 +202,6 @@ inline AnnealedData read_input_binfile(const std::string& path) {
  *     ch2.squared_signal, ch2.absval_signal
  *     ch3.squared_signal, ch3.absval_signal
  *
- *     // 9 noise flags, one byte each, in the same channel x method order
- *     // as the index arrays above:
- *     uint8    flags[9]
- *
  *     // Pairs (PPG-valley index, ECG-R-peak index):
  *     uint64   numPairs
  *     int64    pairBuf[2 * numPairs]    // interleaved (ppg, ecg); 1-based with -1 sentinel
@@ -273,20 +269,6 @@ inline void write_output_binfile(const std::string& path, const std::vector<outp
         writeSignal(bin.ch2.absval_signal);
         writeSignal(bin.ch3.squared_signal);
         writeSignal(bin.ch3.absval_signal);
-
-        /* 9 noise flags: 3 channels x 3 methods (raw/squared/absval). */
-        uint8_t flags[9] = {
-            static_cast<uint8_t>(bin.ch1.raw_noisy),
-            static_cast<uint8_t>(bin.ch1.squared_noisy),
-            static_cast<uint8_t>(bin.ch1.absval_noisy),
-            static_cast<uint8_t>(bin.ch2.raw_noisy),
-            static_cast<uint8_t>(bin.ch2.squared_noisy),
-            static_cast<uint8_t>(bin.ch2.absval_noisy),
-            static_cast<uint8_t>(bin.ch3.raw_noisy),
-            static_cast<uint8_t>(bin.ch3.squared_noisy),
-            static_cast<uint8_t>(bin.ch3.absval_noisy),
-        };
-        file.write(reinterpret_cast<const char*>(flags), 9);
 
         /* Pairs: uint64 count, then count interleaved (int64 ppg, int64 ecg).
            1-based with -1 sentinel for the unpaired side. */
@@ -490,7 +472,6 @@ inline void write_output_csvfile(const std::string& path, const std::vector<outp
  *             ppgMaxAmps, ppgMinAmps   (same uint64-count + 1-based layout)
  *             6 preprocessed signals (ch1/2/3 x squared/absval), each
  *               uint64 count + count * double samples
- *             uint8 flags[9]           (noise flags, channel-major then method)
  *             uint64 numPairs
  *             int64 pairBuf[2 * numPairs]    (interleaved ppg, ecg; -1 sentinel)
  *
@@ -545,13 +526,6 @@ inline std::vector<output_binfile_data> read_output_binfile(const std::string& p
         readSig(b.ch2.squared_signal); readSig(b.ch2.absval_signal);
         readSig(b.ch3.squared_signal); readSig(b.ch3.absval_signal);
 
-        // 9 noise-flag bytes (3 channels x 3 methods)
-        uint8_t flags[9];
-        f.read(reinterpret_cast<char*>(flags), 9);
-        b.ch1.raw_noisy = flags[0]; b.ch1.squared_noisy = flags[1]; b.ch1.absval_noisy = flags[2];
-        b.ch2.raw_noisy = flags[3]; b.ch2.squared_noisy = flags[4]; b.ch2.absval_noisy = flags[5];
-        b.ch3.raw_noisy = flags[6]; b.ch3.squared_noisy = flags[7]; b.ch3.absval_noisy = flags[8];
-
         // pairs (PPG - ECG matching), written as int64 with -1 sentinel
         uint64_t numPairs;
         f.read(reinterpret_cast<char*>(&numPairs), 8);
@@ -576,8 +550,8 @@ inline std::vector<output_binfile_data> read_output_binfile(const std::string& p
  *         the matching annealed .bin.
  *
  *         The wave_markings file holds R-peak indices, PPG event indices,
- *         the preprocessed (squared/absval) ECG channels, noise flags and
- *         pairs. Template generation also needs the raw ECG/PPG signals
+ *         the preprocessed (squared/absval) ECG channels and pairs.
+ *         Template generation also needs the raw ECG/PPG signals
  *         (to extract beats around each R-peak) and the bin-index ranges;
  *         those live in the annealed .bin. This overload reads both
  *         files and stitches the fields together so the returned vector

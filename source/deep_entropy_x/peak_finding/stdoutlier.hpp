@@ -27,8 +27,7 @@ using std::tuple;
 inline vector<bool> stdoutlier(const vector<double>& data,
     double multiplier,
     size_t mean_window,
-    const string& direction,
-    bool debug_plot = false)
+    const string& direction)
 {
     vector<double> d = diff(data);
     vector<double> x = movmean(d, mean_window);
