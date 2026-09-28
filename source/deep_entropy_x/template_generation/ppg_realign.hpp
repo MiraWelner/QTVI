@@ -199,36 +199,7 @@ namespace ppg_realign {
         return std::max(3, n_used / 2);
     }
 
-
-    // ---- THE SPREAD THE BANK SLOT FIELD ACTUALLY HOLDS ------------------
-    //
-    // RAW-AMPLITUDE PER-SAMPLE SD (ddof = 1) PER COLUMN, in the same units as
-    // tmpl. Matches template_bank.hpp, which is what writes
-    // tbank::BankTemplate::tmpl_iqr at build time -- and the units are the
-    // whole point:
-    //
-    //   pulseTraceForSlot draws the band as
-    //     scale_pulse_spread_by_ref(slot.tmpl_iqr, sample_y(tmpl, foot), ref)
-    //
-    // so the DISPLAY divides the stored spread by the foot amplitude. A
-    // perfusion-ratio spread (local_ratio_iqr) has already divided by that
-    // foot, so storing one here divides by it TWICE. On a pulse whose stored
-    // baseline is near zero -- and it is: -0.065 on a real record -- that is a
-    // factor of ~1500, and the band came out at 6.4 where the build's was
-    // 0.0049 and filled the entire panel.
-    //
-    // local_ratio_iqr is the right statistic for the BIN template
-    // (build_pulse_template_pair_windowed uses it, and nothing divides that
-    // one again). It is the wrong statistic for a bank slot. The two fields
-    // share a name and not a unit.
-    //
-    // WAS q3 - q1. Every spread in this pipeline is an SD now: the *_iqr names
-    // are historical, and a field fed a quartile range by one producer and an
-    // SD by another meant its contents depended on the code path. For a normal
-    // column IQR is about 1.35 SD, so any threshold tuned against the old
-    // values needs rescaling -- kAutoFootIqrMax is the one that matters.
-    inline std::vector<double> rawIqrColumns(
-        const std::vector<std::vector<double>>& rows, int n_used)
+    inline std::vector<double> raw_std_columns( const std::vector<std::vector<double>>& rows, int n_used)
     {
         std::size_t w = 0;
         for (const auto& r : rows) w = std::max(w, r.size());
@@ -267,7 +238,7 @@ namespace ppg_realign {
     // NOT the band drawn on the panel, which pulseTraceForSlot divides by the
     // foot amplitude first -- so a threshold picked by eye off the screen is
     // roughly 1/foot times the one to use here. See rawIqrColumns.
-    inline double iqrAbout(const std::vector<double>& iqr, double col,
+    inline double std_about(const std::vector<double>& iqr, double col,
         int halfwin)
     {
         const double kNaN = std::numeric_limits<double>::quiet_NaN();
@@ -538,7 +509,7 @@ namespace ppg_realign {
         // RAW-AMPLITUDE UNITS, because that is what this field is drawn as.
         // See rawIqrColumns -- a perfusion-ratio spread here is divided by the
         // foot twice and fills the panel.
-        out.iqr = rawIqrColumns(shifted, out.n_used);
+        out.iqr = raw_std_columns(shifted, out.n_used);
 
         out.ok = true;
         return out;
@@ -731,7 +702,7 @@ namespace ppg_realign {
         //
         // RAW AMPLITUDE, not a perfusion ratio: the display divides this field
         // by the foot amplitude itself. See rawIqrColumns.
-        out.iqr = rawIqrColumns(levelled, out.n_used);
+        out.iqr = raw_std_columns(levelled, out.n_used);
 
         out.ok = true;
         return out;
@@ -916,7 +887,7 @@ namespace ppg_realign {
         //
         // RAW AMPLITUDE, not a perfusion ratio: the display divides this field
         // by the foot amplitude itself. See rawIqrColumns.
-        out.iqr = rawIqrColumns(levelled, out.n_used);
+        out.iqr = raw_std_columns(levelled, out.n_used);
 
         out.ok = true;
         return out;

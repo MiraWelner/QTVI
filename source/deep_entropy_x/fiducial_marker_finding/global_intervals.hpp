@@ -216,20 +216,4 @@ namespace global_intervals {
         return computeGlobalIntervals(allLeadMarkers(bin, anchor, src), rateHz);
     }
 
-    /**
-     * @brief Largest disagreement between any lead's QRS onset and the global
-     *        onset, in ms. Expected to be small (a few ms up to a few tens);
-     *        a large value flags a suspect fiducial rather than physiology.
-     *
-     * @return NAN when there is nothing to compare.
-     */
-    inline double onsetSpread_ms(const GlobalIntervals& g, double rateHz) {
-        if (g.perLeadQrsOnset.empty() || std::isnan(g.qrsOnset) || rateHz <= 0.0)
-            return std::numeric_limits<double>::quiet_NaN();
-        double worst = 0.0;
-        for (const auto& [lead, rel] : g.perLeadQrsOnset)
-            worst = std::max(worst, rel - g.qrsOnset);
-        return worst * (1000.0 / rateHz);
-    }
-
 }  // namespace global_intervals#pragma once

@@ -658,7 +658,7 @@ int TemplateViewerWindow::which_alignment_fiducial_marker_should_auto_use(int bi
 
     const int halfwin = std::max(1, static_cast<int>(
         std::lround(region_around_foot_to_measure_std * m_ppgRateHz)));
-    const double spread = ppg_realign::iqrAbout(iqr, footCol, halfwin);
+    const double spread = ppg_realign::std_about(iqr, footCol, halfwin);
 
     // NO SPREAD MEASURABLE -> THE FOOT. An absent or all-zero band is not
     // evidence for the fallback: it means this slot's spread was never

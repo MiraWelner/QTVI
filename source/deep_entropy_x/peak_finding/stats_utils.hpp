@@ -73,17 +73,18 @@ inline pair<double, size_t> min_element_index(const vector<double>& x, size_t st
 }
 
 inline vector<double> movmean(const vector<double>& data, size_t window) {
-    vector<double> result(data.size());
-    size_t back = (window - 1) / 2;
-    size_t front = window / 2;
-    for (size_t i = 0; i < data.size(); ++i) {
-        size_t start = (i >= back) ? i - back : 0;
-        size_t end = std::min(i + front + 1, data.size());
-        double sum = 0.0;
-        size_t count = 0;
-        for (size_t j = start; j < end; ++j) {
-            if (!std::isnan(data[j])) { sum += data[j]; count++; }
-        }
+    const size_t n = data.size();
+    vector<double> result(n, NaN);
+    if (n == 0 || window == 0) return result;
+    const size_t back = (window - 1) / 2;
+    const size_t front = window / 2;
+    double sum = 0.0;
+    size_t count = 0, lo = 0, hi = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const size_t start = (i >= back) ? i - back : 0;
+        const size_t end = std::min(i + front + 1, n);
+        while (hi < end) { if (!std::isnan(data[hi])) { sum += data[hi]; ++count; } ++hi; }
+        while (lo < start) { if (!std::isnan(data[lo])) { sum -= data[lo]; --count; } ++lo; }
         result[i] = count > 0 ? sum / count : NaN;
     }
     return result;

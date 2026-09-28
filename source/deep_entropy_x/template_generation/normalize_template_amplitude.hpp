@@ -83,40 +83,83 @@ namespace normalize_features {
     }
 
     // ------------------------------------------------------------------
-    // ECG per-channel Global_Ref = median over bins of |R_peak| + |S_peak|.
+    // ECG reference: EACH SLOT IS ITS OWN REFERENCE.
     // ------------------------------------------------------------------
-    inline double compute_ecg_global_ref(const std::vector<TemplateBin>& bins, int ch, double sampleRateHz)
+    //
+    // A bank slot is one morphology, and its amplitude features are divided by
+    // THAT slot's own |R_peak| + |S_peak| -- measured on the slot's OWN
+    // template with the slot's OWN R-pass markers. Nothing is borrowed from
+    // slot 0 and nothing is read off the bin-level ecgTemplate_raw: the old
+    // code took the bin-level waveform and sampled it at slot 0's marker
+    // positions, which paired a waveform with landmarks placed on a different
+    // object, and then applied that one number to every slot.
+    //
+    // R-PASS MARKERS STILL, never the current anchor's: the reference must not
+    // move when the operator switches anchors.
+    //
+    // Consequence, stated so nobody is surprised by it: |R|+|S| of a slot's own
+    // template is 1 after its own normalization, so a PVC slot and a sinus slot
+    // no longer differ in QRS size in normalized units. Features describe each
+    // morphology against itself.
+
+    // The slot, or nullptr when this bin/channel has no such slot.
+    inline const tbank::BankTemplate* ecg_slot(const TemplateBin& b, int ch, int slot) {
+        if (ch < 0 || ch >= 3 || slot < 0) return nullptr;
+        const auto& t = b.ecg_bank[ch].templates;
+        return (static_cast<size_t>(slot) < t.size()) ? &t[slot] : nullptr;
+    }
+
+    // One slot's own |R| + |S|, in this bin. NaN when the slot is absent, empty,
+    // gated off, or R/S cannot be sampled on it.
+    inline double slot_rs_peak(const TemplateBin& b, int ch, int slot, double sampleRateHz)
+    {
+        if (b.bad_segment || b.bad_r_ch[ch]) return std::nan("");
+        const tbank::BankTemplate* tp = ecg_slot(b, ch, slot);
+        if (!tp || tp->tmpl.empty()) return std::nan("");
+        const std::vector<double>& ecg = tp->tmpl;
+
+        const tbank::BankMarkerSet& rmk = b.slotMarks(ch, slot, AnchorType::R_PEAK);
+        // THIS slot's R: its detected R if the detector ran, else the column
+        // the slot template was built around.
+        const double rIdx = (rmk.r_peak_auto >= 0.0)
+            ? rmk.r_peak_auto : static_cast<double>(tp->r_col);
+        if (rIdx < 0.0) return std::nan("");
+
+        // p_peak is no longer stored on BankMarkerSet: it is a reactive
+        // glyph, fully determined by the P-onset and Q-onset bars, so it is
+        // derived here from the same bars the screen and the CSV use.
+        const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
+            ecg, rmk.p_begin, rmk.q_onset, rmk.s_end, rmk.t_end, sampleRateHz);
+        EcgFeatures f = computeEcgFeatures(ecg,
+            rx.p_peak, rmk.q_onset, rIdx,
+            rmk.s_end, rmk.t_end, sampleRateHz, b.polarity.sign(ch));
+        const double ry = sample_y(ecg, f.r_idx);
+        const double sy = sample_y(ecg, f.s_idx);
+        if (std::isnan(ry) || std::isnan(sy)) return std::nan("");
+        return std::abs(ry) + std::abs(sy);
+    }
+
+    // Median over bins of slot `slot`'s own |R|+|S|. Only meaningful where the
+    // slot index names the same morphology in every bin (slot 0 does). Where it
+    // does not, use slot_rs_peak on the one bin instead.
+    //
+    // An old three-argument call (bins, ch, rate) still compiles and means
+    // slot 0; see the overload below.
+    inline double compute_ecg_global_ref(const std::vector<TemplateBin>& bins, int ch, int slot,
+        double sampleRateHz)
     {
         std::vector<double> vals;
         vals.reserve(bins.size());
-        for (const auto& b : bins) {
-            if (b.bad_segment) continue;
-            if (b.bad_r_ch[ch]) continue;
-            const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-            const auto& ecg = chs[ch]->ecgTemplate_raw;
-            if (ecg.empty()) continue;
-
-            // Normalization reference is a stable per-subject quantity, so it
-            // always reads the R-pass markers, never the current anchor's.
-            // Slot 0's marks, through the one accessor -- which selects the
-            // lead, so the old per-lead subscripts are gone. The reference is a
-            // per-subject quantity measured on the sinus seed, so slot 0 is the
-            // right slot as well as the only one this ever read.
-            const tbank::BankMarkerSet& rmk = b.slotMarks(ch, 0, AnchorType::R_PEAK);
-            // p_peak is no longer stored on BankMarkerSet: it is a reactive
-            // glyph, fully determined by the P-onset and Q-onset bars, so it is
-            // derived here from the same bars the screen and the CSV use.
-            const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
-                ecg, rmk.p_begin, rmk.q_onset, rmk.s_end, rmk.t_end, sampleRateHz);
-            EcgFeatures f = computeEcgFeatures(ecg,
-                rx.p_peak, rmk.q_onset, b.r_peak_ch[ch],
-                rmk.s_end, rmk.t_end, sampleRateHz, b.polarity.sign(ch));
-            const double ry = sample_y(ecg, f.r_idx);
-            const double sy = sample_y(ecg, f.s_idx);
-            if (std::isnan(ry) || std::isnan(sy)) continue;
-            vals.push_back(std::abs(ry) + std::abs(sy));
-        }
+        for (const auto& b : bins) vals.push_back(slot_rs_peak(b, ch, slot, sampleRateHz));
         return median_finite(std::move(vals));
+    }
+
+    // Old three-argument form: slot 0. Kept so existing callers
+    // (template_viewer_export.cpp) compile unchanged.
+    inline double compute_ecg_global_ref(const std::vector<TemplateBin>& bins, int ch,
+        double sampleRateHz)
+    {
+        return compute_ecg_global_ref(bins, ch, 0, sampleRateHz);
     }
 
     // ------------------------------------------------------------------
@@ -194,161 +237,43 @@ namespace normalize_features {
 
 
     // ==================================================================
-    // DISPLAY SCALE FOR A PULSE TRACE: FOUR TIERS, NEVER A BLANK PANEL
+    // PULSE TRACE NORMALIZATION: FULL TRANSFORM OR NOT SHOWN
     // ==================================================================
     //
-    // WHAT THIS EXISTS TO PREVENT. pulse_norm returns NaN for EVERY SAMPLE when
-    // ref is not finite, and calculate_perfusion_index does the same when
-    // |foot_y| < 1e-12. One unusable scalar therefore erased the whole
-    // waveform -- and erased it invisibly: the trace draw skips NaN, so nothing
-    // was painted; compute_visible_range found no finite sample and left the
-    // axis at its 0..1 default; and drawFeatureGlyphs draws a glyph whose
-    // sample is NaN at the axis FLOOR, so the pulse fiducials lined up along
-    // the bottom of the panel and read as a real detection of a real waveform
-    // sitting too low to see. A bank slot with 878 clean beats rendered as an
-    // empty panel with marks on the floor.
+    // A pulse trace is drawn only in normalized units:
+    //     100 * (y - foot) / |foot| / |ref|
+    // There is NO display fallback. When the foot cannot be found (or sits at
+    // zero, so it cannot be divided by) or the reference is unusable, the trace
+    // is NOT SHOWN -- these functions return an EMPTY vector.
     //
-    // Both inputs fail for ordinary reasons. ref comes from
-    // compute_pulse_global_ref, which reads the BIN-level ppgTemplate and its
-    // marks -- a different object from the ppg_bank slot the panel draws, and
-    // one that is empty or unmarked on records whose pulse waveform only ever
-    // existed per bank slot, so median_finite gets nothing and returns NaN.
-    // foot_y fails when the slot's own onset is unset, or when the template is
-    // stored baseline-subtracted and its foot sits at zero.
+    // EMPTY, NEVER A VECTOR OF NaN. A NaN-filled trace is what caused the old
+    // invisible failure: the draw skipped every sample, the axis fell back to
+    // 0..1, and drawFeatureGlyphs put the pulse fiducials on the axis FLOOR, so
+    // an empty panel looked like a real detection. An empty result gives the
+    // caller something to test: it must treat it exactly like hasPPG == false
+    // -- no trace, no band, and NO GLYPHS.
     //
-    // THE ECG SIDE ALREADY DEGRADES: ecg_norm passes the raw value through on
-    // an unusable ref rather than returning NaN, which is why an ECG panel
-    // still draws when its reference is missing. This makes the pulse path
-    // agree with it -- and with normalize_pulse_trace's own documented contract
-    // ("If the ref or foot is not usable, returns raw unchanged"), which the
-    // code did not honour.
+    // NOTE THE REFERENCE IS ONE OF THE CONDITIONS. ref comes from
+    // compute_pulse_global_ref, which reads the BIN-level ppgTemplate rather
+    // than the ppg_bank slot being drawn; when that comes back NaN, every pulse
+    // panel in the record is hidden, not just the ones missing a foot.
     //
-    // FOR DISPLAY ONLY. pulse_norm and pulse_ratio_norm keep their strictness,
-    // deliberately: an extracted FEATURE that could not be normalized must be
-    // NaN, because a number in unknown units is worse than an absent one. A
-    // TRACE is different -- its units are written on the axis beside it, and
-    // the operator marking landmarks on it needs to see its shape.
-    struct PulseDisplayScale {
-        // Which transform was applied, worst case last. The caller can label
-        // the axis with it; nothing here decides anything from it.
-        // ---- WHY EVERY TIER DRAWS SOMETHING -----------------------------
-        //
-        // REJECTION IS AN UPSTREAM DECISION, NOT A DIVISION THAT FAILED. A
-        // pulse slot is legitimately refused a panel for reasons that are about
-        // the pulse: no template, no members, tooFewBeats() below the
-        // configured minimum. Those produce hasPPG == false and an empty panel,
-        // which is correct and is what an operator should see.
-        //
-        // An unusable `ref` or `foot_y` is NOT one of those reasons. Both are
-        // scalars that sit outside the waveform:
-        //
-        //   ref     is Global_Ref_person -- ONE number for the whole SUBJECT,
-        //           from compute_pulse_global_ref, which reads the BIN-level
-        //           ppgTemplate and its marks rather than the ppg_bank slot any
-        //           panel draws. When it comes back NaN, nothing has been
-        //           rejected and no individual pulse is at fault -- yet the
-        //           strict path blanked every panel in the record, hundreds of
-        //           clean slots included.
-        //   foot_y  is one detected landmark. A foot that could not be located,
-        //           or that sits at zero on a baseline-subtracted template, is
-        //           a failure to MEASURE a waveform that is sitting right
-        //           there with several hundred beats behind it.
-        //
-        // AND THE DISPLAY DOES NOT NEED EITHER ONE. The operator's job on this
-        // panel is to place landmarks, which is a judgement about SHAPE, and
-        // every tier below is an affine transform -- shape is invariant to all
-        // of them. Normalization buys cross-subject amplitude comparability,
-        // which matters to the exported features and not to the picture. So
-        // nothing here returns NaN: the trace is drawn in the best units
-        // available and the axis says which, and the operator can still work.
-        //
-        // The strictness stays where a wrong number would be believed:
-        // pulse_norm and pulse_ratio_norm, the FEATURE path, still return NaN
-        // rather than a number in unknown units.
-        enum class Tier {
-            PerfusionIndexOverRef,   // 100*(y-foot)/|foot| / |ref|  -- the full transform
-            PerfusionIndex,          // 100*(y-foot)/|foot|          -- ref unusable
-            FootZeroed,              // y - foot                     -- |foot| too small to divide by
-            Raw                      // y                            -- no usable foot at all
-        };
-        Tier   tier = Tier::Raw;
-        double foot_y = std::numeric_limits<double>::quiet_NaN();
-        double ref = std::numeric_limits<double>::quiet_NaN();
-
-        // True when the trace is in the cross-subject comparable units the
-        // normalization is FOR.
-        bool normalized() const { return tier == Tier::PerfusionIndexOverRef; }
-
-        static PulseDisplayScale resolve(double foot_y, double ref) {
-            PulseDisplayScale s;
-            s.foot_y = foot_y;
-            s.ref = ref;
-            const bool footFinite = !std::isnan(foot_y);
-            // |foot_y| >= 1e-12 gates only the DIVISION by it. A foot at zero
-            // on a baseline-subtracted template is still a perfectly good
-            // vertical origin to subtract, which is what FootZeroed does.
-            const bool footDivisible = footFinite && std::abs(foot_y) >= 1e-12;
-            const bool refOk = std::isfinite(ref) && ref != 0.0;
-            if (footDivisible && refOk) s.tier = Tier::PerfusionIndexOverRef;
-            else if (footDivisible)     s.tier = Tier::PerfusionIndex;
-            else if (footFinite)        s.tier = Tier::FootZeroed;
-            else                        s.tier = Tier::Raw;
-            return s;
-        }
-
-        // The AMPLITUDE transform: affine, so it shifts and scales. Every tier
-        // preserves shape, which is why a fallback is still markable.
-        double value(double y) const {
-            if (std::isnan(y)) return y;
-            switch (tier) {
-            case Tier::PerfusionIndexOverRef:
-                return (100.0 * (y - foot_y) / std::abs(foot_y)) / std::abs(ref);
-            case Tier::PerfusionIndex:
-                return 100.0 * (y - foot_y) / std::abs(foot_y);
-            case Tier::FootZeroed:
-                return y - foot_y;
-            default:
-                return y;
-            }
-        }
-
-        // The SPREAD transform: the SCALE FACTOR of `value` with the shift
-        // dropped, because a spread is a difference and a shift cancels in it.
-        // Taking `value` on a spread instead is how a band ends up offset from
-        // the trace it belongs to by a whole foot-height.
-        double spread(double s) const {
-            if (std::isnan(s)) return s;
-            switch (tier) {
-            case Tier::PerfusionIndexOverRef:
-                return (100.0 * s / std::abs(foot_y)) / std::abs(ref);
-            case Tier::PerfusionIndex:
-                return 100.0 * s / std::abs(foot_y);
-            default:
-                return s;   // FootZeroed and Raw both scale by 1
-            }
-        }
-
-        std::vector<double> applyTrace(const std::vector<double>& raw) const {
-            std::vector<double> out(raw.size());
-            for (size_t i = 0; i < raw.size(); ++i) out[i] = value(raw[i]);
-            return out;
-        }
-        std::vector<double> applySpread(const std::vector<double>& raw) const {
-            std::vector<double> out(raw.size());
-            for (size_t i = 0; i < raw.size(); ++i) out[i] = spread(raw[i]);
-            return out;
-        }
-    };
+    // The band uses the same test and the same scale (without the shift, since
+    // a spread is a difference), so a band is shown exactly when its trace is.
+    inline bool pulse_trace_normalizable(double foot_y, double ref) {
+        return !std::isnan(foot_y) && std::abs(foot_y) >= 1e-12
+            && std::isfinite(ref) && ref != 0.0;
+    }
 
     inline std::vector<double> scale_pulse_spread_by_ref(const std::vector<double>& raw, double foot_y, double ref) {
-        //this scales things so the std band in the ppg is visible in the viewer.
-        //The spread is computed in raw units, then scaled to normalized units by dividing by the global reference (median PI) and the local foot value.
-        //
-        // TIERED, via PulseDisplayScale: an unusable ref or foot used to blank
-        // the band exactly as it blanked the trace. The tier is derived from
-        // (foot_y, ref), so as long as the caller passes the SAME pair it used
-        // for the trace, the band lands in the same units by construction.
-        return PulseDisplayScale::resolve(foot_y, ref).applySpread(raw);
+        // The spread is in raw units; scale it by the trace's factor,
+        // 100 / |foot| / |ref|. Empty when the trace itself is not shown.
+        if (!pulse_trace_normalizable(foot_y, ref)) return {};
+        const double k = 100.0 / std::abs(foot_y) / std::abs(ref);
+        std::vector<double> out(raw.size());
+        for (size_t i = 0; i < raw.size(); ++i)
+            out[i] = std::isnan(raw[i]) ? raw[i] : raw[i] * k;
+        return out;
     }
     inline std::vector<double> normalize_ecg_trace(const std::vector<double>& raw, double ref) {
         return scale_array_by_ref(raw, ref);
@@ -357,13 +282,7 @@ namespace normalize_features {
     // Pulse: local ratio (per-sample, using THIS trace's own foot) then
     // divide by ref. Works for the mean template or any individual beat --
     // never uses a median/global foot value, per the documented algorithm.
-    //
-    // DEGRADES RATHER THAN BLANKING when the ref or the foot is unusable --
-    // which is what this function's declaration has always said it did and
-    // what, through pulse_norm, it did not: one unusable scalar returned NaN
-    // for every sample and the trace vanished from the panel. See
-    // PulseDisplayScale for the tiers and for why the feature path keeps
-    // pulse_norm's strictness instead.
+    // EMPTY when the foot or the reference is unusable: not shown (see above).
     //
     // footIdx IS A DOUBLE. It was an int, and every pulse foot reaching it is
     // sub-sample -- BankPulseMarkerSet::onset is a double, and
@@ -373,8 +292,11 @@ namespace normalize_features {
     // which interpolates. Two truncations to reach a function that did not
     // need either.
     inline std::vector<double> normalize_pulse_trace(const std::vector<double>& raw, double footIdx, double ref) {
-        return PulseDisplayScale::resolve(sample_y(raw, footIdx), ref)
-            .applyTrace(raw);
+        const double foot_y = sample_y(raw, footIdx);
+        if (!pulse_trace_normalizable(foot_y, ref)) return {};
+        std::vector<double> out(raw.size());
+        for (size_t i = 0; i < raw.size(); ++i) out[i] = pulse_norm(raw[i], foot_y, ref);
+        return out;
     }
 
 
@@ -384,16 +306,11 @@ namespace normalize_features {
     // (that overlay-beat machinery has been removed; these summary
     // statistics are all that's kept).
     //
-    // NOTE: despite the name/callers still saying "iqr" (raw_amplitude_iqr,
-    // local_ratio_iqr, ecg_template_iqr, *_iqr columns in the CSV/bin
-    // export), this now computes per-sample STD (ddof=1), not a true
-    // interquartile range -- made consistent with the ECG side's step-7
-    // change in create_ecg_templates.hpp, so every channel's "*_iqr" column
-    // holds the same statistic. Renaming these identifiers throughout the
-    // codebase (TemplateTypes.hpp, BinPlotWidget, TemplateBinIO,
-    // template_io, TemplateViewerWindow's CSV header, ...) is a separate,
-    // larger follow-up; left as-is here to keep this change to the
-    // computation only.
+    // EVERY SPREAD IN THIS PIPELINE IS A PER-SAMPLE STD (ddof = 1). There is no
+    // interquartile range left anywhere except keep_within_tukey's own fence,
+    // which is a different thing entirely. The template_bank and ppg_realign
+    // producers that used to write q3 - q1 into the same fields now write an SD
+    // too, so a field's contents no longer depend on which code path filled it.
     // ------------------------------------------------------------------
 
     // ECG: pulse_norm-equivalent step is a plain scalar divide, so taking
@@ -594,9 +511,10 @@ namespace normalize_features {
     // Section 5.2 -- Global reference, Options A/B/C, and the CV check
     // ==================================================================
     //
-    // Three ways to reduce one subject's beats to a single scalar
-    // Global_Ref_person, all median-across-bins the same way Option A
-    // (compute_ecg_global_ref, above) always has:
+    // Three ways to reduce beats to a single reference scalar. A and B are
+    // PER SLOT -- each bank slot is its own reference, measured on its own
+    // template -- and median across bins for that slot. C still fuses the
+    // bin-level templates and is not yet per slot:
     //
     //   A (existing, above) : median(|R_peak| + |S_peak|)      -- two samples
     //   B (below)           : median(QRS area, Q-onset..J-point) -- integrates
@@ -624,36 +542,43 @@ namespace normalize_features {
     // built for that measurement's own reference). Widen the defaults if a
     // program's QRS is unusually broad.
 
-    // Option B: area-based Global_Ref_person for ONE channel. Mirrors
-    // compute_ecg_global_ref's per-channel shape and bad_r_ch/bad_segment
-    // gating exactly, swapping the |R|+|S| reduction for the QRS's
-    // rectified area (Q-onset -> J-point / s_end).
-    inline double compute_ecg_global_ref_area(const std::vector<TemplateBin>& bins, int ch, double sampleRateHz)
+    // Option B: area-based reference for ONE channel and ONE slot. Same rule as
+    // Option A -- each slot is its own reference, measured on its own template
+    // with its own R-pass markers -- swapping the |R|+|S| reduction for the
+    // QRS's rectified area (Q-onset -> J-point / s_end).
+    inline double slot_qrs_area(const TemplateBin& b, int ch, int slot)
     {
+        if (b.bad_segment || b.bad_r_ch[ch]) return std::nan("");
+        const tbank::BankTemplate* tp = ecg_slot(b, ch, slot);
+        if (!tp || tp->tmpl.empty()) return std::nan("");
+        const tbank::BankMarkerSet& rmk = b.slotMarks(ch, slot, AnchorType::R_PEAK);
+        // STRAIGHT THROUGH AS DOUBLES. These are BankMarkerSet's
+        // sub-sample landmarks and segment_area integrates over
+        // fractional bounds, so there is nothing to round; -1 means
+        // absent, which the qBegin < 0 test below rejects.
+        const double qBegin = rmk.q_onset;
+        const double jPoint = rmk.s_end;   // S_END == J_POINT (AnchorType comment)
+        if (qBegin < 0.0 || jPoint <= qBegin) return std::nan("");
+        return segment_area(tp->tmpl, qBegin, jPoint, /*absolute=*/true);
+    }
+
+    // Median over bins of slot `slot`'s own QRS area. Same caveat and same
+    // required-slot signature as compute_ecg_global_ref.
+    inline double compute_ecg_global_ref_area(const std::vector<TemplateBin>& bins, int ch, int slot,
+        double sampleRateHz)
+    {
+        (void)sampleRateHz;   // kept for signature parity with Option A
         std::vector<double> vals;
         vals.reserve(bins.size());
-        for (const auto& b : bins) {
-            if (b.bad_segment) continue;
-            if (b.bad_r_ch[ch]) continue;
-            const ChannelTemplateData* chs[3] = { &b.ch1, &b.ch2, &b.ch3 };
-            const auto& ecg = chs[ch]->ecgTemplate_raw;
-            if (ecg.empty()) continue;
-
-            // Same rule as Option A: the reference is a stable per-subject
-            // quantity, so it always reads the R-pass markers.
-            const tbank::BankMarkerSet& rmk =
-                b.slotMarks(ch, 0, AnchorType::R_PEAK);
-            // STRAIGHT THROUGH AS DOUBLES. These are BankMarkerSet's
-            // sub-sample landmarks and segment_area integrates over
-            // fractional bounds, so there is nothing to round; -1 means
-            // absent, which the qBegin < 0 test below rejects.
-            const double qBegin = rmk.q_onset;
-            const double jPoint = rmk.s_end;   // S_END == J_POINT (AnchorType comment)
-            if (qBegin < 0.0 || jPoint <= qBegin) continue;
-            const double area = segment_area(ecg, qBegin, jPoint, /*absolute=*/true);
-            if (!std::isnan(area)) vals.push_back(area);
-        }
+        for (const auto& b : bins) vals.push_back(slot_qrs_area(b, ch, slot));
         return median_finite(std::move(vals));
+    }
+
+    // Old three-argument form: slot 0. Kept so existing callers compile unchanged.
+    inline double compute_ecg_global_ref_area(const std::vector<TemplateBin>& bins, int ch,
+        double sampleRateHz)
+    {
+        return compute_ecg_global_ref_area(bins, ch, 0, sampleRateHz);
     }
 
     // Option C: spatial vector-magnitude Global_Ref_person, fusing all three
@@ -722,16 +647,9 @@ namespace normalize_features {
     inline double ratio_norm(double featurePeak, double gref) { return ecg_norm(featurePeak, gref); }
 
 
-    // ==================================================================
-    // Section 5.4 -- Percentile scaling
-    // ==================================================================
-    // Maps a ratio-normalized value onto 0-100 using the subject's OWN 2nd
-    // and 98th percentile ratio values (p2/p98), clamped at both ends so an
-    // outlier beyond the calibration range saturates rather than escaping
-    // the scale. NaN when the calibration range itself is degenerate
-    // (p98 <= p2) or the input ratio is NaN -- there is no meaningful
-    // position on a zero-width or undefined scale.
+
     inline double pct_scale(double ratio, double p2, double p98) {
+        //Places ratio between p2 and p98, turns that position into a score from 0 to 100 (p2 gives 0, p98 gives 100), and caps anything outside that range at 0 or 100.
         const double range = p98 - p2;
         if (std::isnan(ratio) || !(range > 0.0)) return std::nan("");
         return std::clamp((ratio - p2) / range * 100.0, 0.0, 100.0);

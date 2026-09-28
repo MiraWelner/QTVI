@@ -34,10 +34,6 @@ namespace anchor_view {
         //only these 4 locations have user movable bars
         return marker == p_begin || marker == q_begin || marker == j_point || marker == t_end;
     }
-    inline constexpr bool isGlyph(int marker) {
-        //the rest are just glyphs
-        return isEcgMarker(marker) && !isBar(marker);
-    }
 
     inline constexpr AnchorType anchorFor(int marker) {
         //right now we are focusing on PQ distance so p begin is p onset aligned while the rest are q aligned

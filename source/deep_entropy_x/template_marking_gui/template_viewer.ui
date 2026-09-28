@@ -123,13 +123,6 @@
        </widget>
       </item>
       <item>
-       <widget class="QCheckBox" name="notch_filter">
-        <property name="text">
-         <string>Notch Filter</string>
-        </property>
-       </widget>
-      </item>
-      <item>
        <widget class="QLabel" name="subjectLabel">
         <property name="maximumSize">
          <size>
@@ -655,10 +648,10 @@
   <slot>onNextPage()</slot>
  </slots>
  <buttongroups>
-  <buttongroup name="buttonGroup_2"/>
   <buttongroup name="buttonGroup_4"/>
-  <buttongroup name="buttonGroup_3"/>
   <buttongroup name="buttonGroup_5"/>
   <buttongroup name="buttonGroup"/>
+  <buttongroup name="buttonGroup_3"/>
+  <buttongroup name="buttonGroup_2"/>
  </buttongroups>
 </ui>

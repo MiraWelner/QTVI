@@ -107,7 +107,29 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
         uint8_t labelCode = tbank::kUnlabeled;
         uint8_t splitSource = tbank::kSplitUnknown;
 
-        const bool pulseThin = templateIdx < b.ppg_bank.size() && b.ppg_bank.templates[templateIdx].tooFewBeats(/*is_ppg=*/true); //is there fewer ppgs than the given limit
+        // ---- A THIN PULSE COHORT SUPPRESSES THIS LEAD ------------------
+        //
+        // MUST MATCH hasVisiblePanel'S TEST EXACTLY. That function decides
+        // whether the column exists and this one decides whether it has a
+        // trace, so a disagreement produces a built column with no waveform in
+        // it -- a panel reading "No ECG" over a correct time axis and a default
+        // 0..1 y range, which is what fixing one of the two and not the other
+        // gave.
+        //
+        // ONLY WHEN THERE IS A PULSE COHORT. On a record with no PPG,
+        // projectToChannel still creates one PPG slot per morphology and then
+        // translates every slice through that channel's localFor(), which
+        // returns -1 for all of them -- so the slot arrives with no members and
+        // no waveform, cleanCount() is 0, and 0 < min_beats_template_ppg is
+        // true. That reads an ABSENT channel as a THIN one and suppressed every
+        // ECG lead of every bin on SHHS and Bittium.
+        //
+        // tmpl.empty() is the discriminator: a genuinely thin cohort still
+        // produced a waveform from its few beats; an absent channel has none.
+        const bool pulseThin =
+            templateIdx < b.ppg_bank.size()
+            && !b.ppg_bank.templates[templateIdx].tmpl.empty()
+            && b.ppg_bank.templates[templateIdx].tooFewBeats(/*is_ppg=*/true);
         if (!pulseThin
             && templateIdx < bank.size()
             && !bank.templates[templateIdx].tmpl.empty()

@@ -1030,13 +1030,6 @@ inline bool ecgChannelPresent(const TemplateBin& b, int lead) {
     return !b.chFor(lead, AnchorType::R_PEAK).ecgTemplate_raw.empty();
 }
 
-// TRUE when the grid draws a panel for this (channel, slot) in this alignment.
-// Mirrors leadsForBinTemplate's two accepting branches: the bank branch, and
-// the pre-bank slot-0 fallback for a file with no bank at all.
-//
-// pulseThin is part of it on purpose -- a thin PPG cohort suppresses the ECG
-// panel, and it gates the fallback too, which is the defect that let slot 0
-// keep appearing however tightly the callers were gated.
 inline bool hasVisiblePanel(const TemplateBin& b, int lead, int slot,
     AnchorType gridAnchor)
 {
@@ -1046,32 +1039,23 @@ inline bool hasVisiblePanel(const TemplateBin& b, int lead, int slot,
     if (!ecgChannelPresent(b, lead)) return false;
 
     const tbank::TemplateBank& bank = b.ecg_bank[lead];
-    if (slot >= bank.size()) return false;              // ragged: shorter bank
+    if (slot >= bank.size()) return false;
     const tbank::BankTemplate& tp = bank.templates[slot];
     if (tp.tmpl.empty()) return false;
     if (tp.tooFewBeats(/*is_ppg=*/false)) return false;
-    // EVERY SLOT, INCLUDING 0. This was `slot != 0 && ...`, exempting slot 0
-    // from the predicate that governed every other column -- and
-    // leadsForBinTemplate carried the same exemption, so the two had to be
-    // removed together or the page would count a column it could not draw.
+    // Every slot, including 0.
+    if (!tp.wantsLandmarkMarking()) return false;
+
+    // ---- A THIN PULSE COHORT SUPPRESSES THE ECG PANEL ------------------
     //
-    // REPORTED, because a rejected slot 0 is a bin losing its dominant
-    // morphology from the grid AND from the markings CSV, and that must not be
-    // silent. seed_pool seeds slot 0 from the clean pool, so a non-REGULAR
-    // slot 0 means the seed pool was contaminated -- a fact worth seeing
-    // rather than a column worth faking.
-    if (!tp.wantsLandmarkMarking()) {
-        if (slot == 0)
-            fprintf(stderr, "[visible] bin %llu lead %d slot 0 is not REGULAR"
-                " (presumed category %d) -- NO _A COLUMN for this bin\n",
-                (unsigned long long)b.index, lead,
-                static_cast<int>(tp.presumedCategory()));
-        return false;
+    // Only when there is a pulse cohort at all. On a record with no PPG the
+    // pulse slot arrives with an empty waveform, and treating that as "too
+    // few beats" would hide every ECG panel. tmpl.empty() tells an absent
+    // channel from a thin one.
+    if (slot < b.ppg_bank.size()) {
+        const tbank::BankTemplate& pp = b.ppg_bank.templates[slot];
+        if (!pp.tmpl.empty() && pp.tooFewBeats(/*is_ppg=*/true)) return false;
     }
-    // A thin pulse cohort suppresses the ECG panel for that slot.
-    if (slot < b.ppg_bank.size()
-        && b.ppg_bank.templates[slot].tooFewBeats(/*is_ppg=*/true))
-        return false;
 
     return slotView(b, lead, slot, gridAnchor).valid;
 }

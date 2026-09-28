@@ -585,6 +585,34 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                             // buildPulseVariant for it and the bars restored
                             // above are what it keeps.
                         }
+
+                        // ---- OLDER FILES (v1/v2): NO PER-VARIANT BARS ----
+                        //
+                        // They carry only the composed set above, so the
+                        // variant loop just restored nothing and both
+                        // variants would be rebuilt from the detector on first
+                        // paint -- losing the operator's pulse marks. Each bar
+                        // goes to the variant that owns it: the ONSET to _F,
+                        // the DICROTIC notch and the END to _P.
+                        //
+                        // Only a bar still empty is filled, so a v3 file --
+                        // which restored its own variant bars in the loop
+                        // above -- is untouched.
+                        {
+                            tbank::PulseVariant& footV =
+                                ds.pulseVariant(tbank::PulseAnchor::Foot);
+                            tbank::PulseVariant& peakV =
+                                ds.pulseVariant(tbank::PulseAnchor::Peak);
+                            if (footV.marks.onset < 0.0)
+                                footV.marks.onset = safeIdx(ss.pulse_marks.onset,
+                                    footV.marks.onset, len);
+                            if (peakV.marks.dicrotic < 0.0)
+                                peakV.marks.dicrotic = safeIdx(ss.pulse_marks.dicrotic,
+                                    peakV.marks.dicrotic, len);
+                            if (peakV.marks.end < 0.0)
+                                peakV.marks.end = safeIdx(ss.pulse_marks.end,
+                                    peakV.marks.end, len);
+                        }
                     }
                 }
                 d.abp_issue = s.abp_issue;

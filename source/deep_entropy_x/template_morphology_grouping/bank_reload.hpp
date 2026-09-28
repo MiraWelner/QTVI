@@ -81,8 +81,6 @@ namespace bank_reload {
         size_t banks_restored = 0;       // (bin, channel) pairs
         size_t banks_skipped = 0;        // slot-count mismatch: left fresh
         size_t beats_restored = 0;       // member indices written back
-
-        bool anythingReloaded() const { return banks_restored != 0; }
     };
 
     namespace detail {

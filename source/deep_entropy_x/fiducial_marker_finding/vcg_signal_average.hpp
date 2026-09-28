@@ -30,13 +30,6 @@
 //   and nothing here re-applies the rules -- re-deriving them would let the two
 //   definitions drift.
 //
-//   Ectopic beats ARE in the set. create_ecg_templates captures out_kept_beats
-//   BEFORE the ectopic mask on purpose, so the per-beat record keeps the
-//   ectopy and flags it in the parallel kept_rhythm vector, even though the
-//   median the operator marks excludes it. So supplying BinBeats::rhythm is
-//   what makes the VCG match the templates; without it the loops would include
-//   PVCs that the per-lead templates do not.
-//
 // ---------------------------------------------------------------------------
 // AXIS
 // ---------------------------------------------------------------------------
@@ -69,38 +62,6 @@ namespace vcg_avg {
     inline constexpr int kNumEcgCh = 3;
     inline const double kNaN = std::numeric_limits<double>::quiet_NaN();
 
-    /// Rhythm verdict values, matching create_ecg_templates' kept_rhythm.
-    enum : std::uint8_t { RHYTHM_NORMAL = 0, RHYTHM_PVC = 1, RHYTHM_VOTED_PVC = 2 };
-
-    /// The kept, aligned beats for one bin: three channels, each a set of
-    /// equal-length beats on that channel's shared axis.
-    ///
-    /// EXCLUSIONS -- what is already applied and what this struct still has to
-    /// do:
-    ///   Tukey / wave-score / baseline-NONE  -- ALREADY GONE. out_kept_beats is
-    ///       captured after those rejections, so nothing here re-applies them.
-    ///   Ectopic (PVC / voted PVC)           -- STILL PRESENT. The capture in
-    ///       create_ecg_templates happens BEFORE the ectopic mask, precisely so
-    ///       the per-beat output keeps the ectopy and flags it. The median the
-    ///       operator marks excludes it; this beat set does not. Supply
-    ///       `rhythm` and the loops will.
-    struct BinBeats {
-        const std::vector<std::vector<double>>* beats[kNumEcgCh] = { nullptr,nullptr,nullptr };
-
-        /// Per-kept-beat verdict, parallel to beats[c] (create_ecg_templates'
-        /// kept_rhythm_raw / kept_beats_by_channel's rhythm vector). Null means
-        /// "no verdicts supplied": see excludeEctopic.
-        const std::vector<std::uint8_t>* rhythm[kNumEcgCh] = { nullptr,nullptr,nullptr };
-
-        int r_col[kNumEcgCh] = { -1,-1,-1 };
-
-        /// Drop any beat flagged non-NORMAL in ANY channel. A PVC's loop
-        /// differs morphologically by definition, so leaving even a few in
-        /// dominates loop variability and drags the averaged loop off the
-        /// sinus morphology every other feature is measured against.
-        bool excludeEctopic = true;
-    };
-
     /// One beat's loop, on the R-relative axis.
     struct Loop {
         std::vector<vcg::VCGSample> pts;
@@ -111,112 +72,6 @@ namespace vcg_avg {
         }
     };
 
-    // -----------------------------------------------------------------------
-    // Build per-beat loops and the signal-averaged loop
-    // -----------------------------------------------------------------------
-    /**
-     * @brief Transform every kept beat to XYZ on the shared R-relative axis.
-     *
-     *        Beat j of channel 0 is paired with beat j of channels 1 and 2:
-     *        under this pipeline all three channels are sliced from the same
-     *        R-pair list, so index j is the same cardiac cycle in each. If the
-     *        three sets differ in size that assumption is broken, and this
-     *        returns empty rather than pairing beats that are not the same
-     *        beat.
-     */
-    inline std::vector<Loop> perBeatLoops(const BinBeats& in, int pre, int post,
-        const vcg::VcgMatrix& mat = vcg::kIdentity,
-        int* outNumEctopicExcluded = nullptr) {
-        std::vector<Loop> out;
-        if (outNumEctopicExcluded) *outNumEctopicExcluded = 0;
-        for (int c = 0; c < kNumEcgCh; ++c)
-            if (!in.beats[c] || in.beats[c]->empty() || in.r_col[c] < 0) return out;
-
-        const std::size_t nBeats = in.beats[0]->size();
-        for (int c = 1; c < kNumEcgCh; ++c)
-            if (in.beats[c]->size() != nBeats) return out;   // not the same beats
-        if (pre < 0 || post < 0 || pre + post < 1) return out;
-
-        // Ectopic exclusion, taken as the UNION across channels: beat j is one
-        // cardiac cycle seen in three leads, so if any lead called it ectopic
-        // the cycle is ectopic and all three of its lanes go. Excluding it in
-        // one channel only would leave the remaining lanes contributing a
-        // vector with a missing component.
-        std::vector<bool> drop(nBeats, false);
-        std::size_t nDropped = 0;
-        if (in.excludeEctopic) {
-            for (int c = 0; c < kNumEcgCh; ++c) {
-                if (!in.rhythm[c]) continue;
-                // A verdict vector that does not line up with the beats cannot
-                // be trusted to name the right beats, so it is ignored rather
-                // than applied to whichever beats happen to be in range.
-                if (in.rhythm[c]->size() != nBeats) continue;
-                for (std::size_t j = 0; j < nBeats; ++j)
-                    if ((*in.rhythm[c])[j] != RHYTHM_NORMAL) drop[j] = true;
-            }
-            for (std::size_t j = 0; j < nBeats; ++j) if (drop[j]) ++nDropped;
-        }
-        if (outNumEctopicExcluded) *outNumEctopicExcluded = static_cast<int>(nDropped);
-
-        const int n = pre + post + 1;
-        out.reserve(nBeats);
-        for (std::size_t j = 0; j < nBeats; ++j) {
-            if (drop[j]) continue;
-            std::vector<double> lane[kNumEcgCh];
-            for (int c = 0; c < kNumEcgCh; ++c) {
-                const std::vector<double>& b = (*in.beats[c])[j];
-                lane[c].assign(n, kNaN);
-                for (int i = 0; i < n; ++i) {
-                    const int col = in.r_col[c] + (i - pre);
-                    if (col >= 0 && col < static_cast<int>(b.size()))
-                        lane[c][i] = b[col];
-                }
-            }
-            const std::vector<const std::vector<double>*> lanes{ &lane[0], &lane[1], &lane[2] };
-            const vcg::VcgResult r = vcg::reconstructVCG(lanes, mat);
-            if (!r.valid) continue;
-            Loop L; L.pts = r.samples; L.firstOffset = -pre;
-            out.push_back(std::move(L));
-        }
-        return out;
-    }
-
-    /// Column-wise NaN-skipping median of the per-beat loops -- the same
-    /// aggregation create_ecg_templates uses for one lead, applied to X, Y and
-    /// Z independently.
-    inline Loop medianLoop(const std::vector<Loop>& loops) {
-        Loop out;
-        if (loops.empty()) return out;
-        const std::size_t n = loops[0].pts.size();
-        out.firstOffset = loops[0].firstOffset;
-        out.pts.assign(n, vcg::VCGSample{ kNaN, kNaN, kNaN });
-
-        std::vector<double> col;
-        col.reserve(loops.size());
-        auto med = [&col](void) -> double {
-            if (col.empty()) return kNaN;
-            std::sort(col.begin(), col.end());
-            const std::size_t m = col.size();
-            return (m % 2 == 0) ? 0.5 * (col[m / 2 - 1] + col[m / 2]) : col[m / 2];
-            };
-
-        for (std::size_t i = 0; i < n; ++i) {
-            for (int axis = 0; axis < 3; ++axis) {
-                col.clear();
-                for (const Loop& L : loops) {
-                    if (i >= L.pts.size()) continue;
-                    const vcg::VCGSample& s = L.pts[i];
-                    const double v = (axis == 0) ? s.x : (axis == 1) ? s.y : s.z;
-                    if (!std::isnan(v)) col.push_back(v);
-                }
-                const double m = med();
-                if (axis == 0) out.pts[i].x = m;
-                else if (axis == 1) out.pts[i].y = m;
-                else               out.pts[i].z = m;
-            }
-        }
-        return out;
-    }
 
     // -----------------------------------------------------------------------
     // Features
@@ -408,7 +263,13 @@ namespace vcg_avg {
     struct BinFeatures {
         int    binIndex = -1;
         int    nBeats = 0;         ///< beats that produced a loop (post-exclusion)
-        int    nEctopicExcluded = 0;  ///< beats dropped as PVC / voted PVC
+        // ALWAYS 0 NOW, and the CSV column with it. It was written only by
+        // the per-beat path (perBeatLoops excluded ectopics as it built the
+        // loops); analyzeBinFromTemplates works from the per-lead templates,
+        // which the ectopic mask has already been applied to upstream, so
+        // there is nothing for this to count. Kept so the CSV layout does not
+        // move.
+        int    nEctopicExcluded = 0;  ///< always 0: see above
         double qrstAngle_deg = kNaN;
         double qrsArea_xy = kNaN, qrsArea_xz = kNaN, qrsArea_yz = kNaN;
         double tArea_xy = kNaN, tArea_xz = kNaN, tArea_yz = kNaN;
@@ -424,86 +285,6 @@ namespace vcg_avg {
         bool   valid = false;
         std::string note;          ///< why not, when !valid
     };
-
-    /**
-     * @brief Everything for one bin.
-     *
-     * @param g    Global intervals for this bin: supplies the QRS window and,
-     *             via qtInterval, the T end. All R-relative, so they index the
-     *             loops directly.
-     * @param fs   ECG sample rate, for velocity and the ms columns.
-     */
-    inline BinFeatures analyzeBin(int binIndex, const BinBeats& in,
-        const global_intervals::GlobalIntervals& g,
-        double fs, int marginSamples = 10,
-        const vcg::VcgMatrix& mat = vcg::kIdentity) {
-        BinFeatures f;
-        f.binIndex = binIndex;
-
-        if (!g.valid) { f.note = "global intervals not established"; return f; }
-
-        // Window: the QRS plus the T wave, both R-relative. tEnd comes from the
-        // QT interval, which is measured from the global QRS onset.
-        const double onset = g.qrsOnset, offset = g.qrsOffset;
-        double tEndOff = kNaN;
-        if (!std::isnan(g.qtInterval_ms) && fs > 0.0)
-            tEndOff = onset + g.qtInterval_ms * fs / 1000.0;
-
-        const int pre = static_cast<int>(std::ceil(-onset)) + marginSamples;
-        const int post = static_cast<int>(std::ceil(std::isnan(tEndOff) ? offset : tEndOff))
-            + marginSamples;
-
-        int nEctopic = 0;
-        const std::vector<Loop> loops = perBeatLoops(in, pre, post, mat, &nEctopic);
-        f.nEctopicExcluded = nEctopic;
-        if (loops.empty()) {
-            // Distinguish "the beats were all ectopic" from "there were no
-            // beats": the first is a rhythm finding about this bin, the second
-            // is a plumbing fault, and they need different follow-up.
-            f.note = (nEctopic > 0)
-                ? ("all " + std::to_string(nEctopic) + " beats excluded as ectopic")
-                : "no usable beats (channel missing or beat counts differ)";
-            return f;
-        }
-        const Loop avg = medianLoop(loops);
-        f.nBeats = static_cast<int>(loops.size());
-
-        const int qLo = avg.indexForOffset(onset);
-        const int qHi = avg.indexForOffset(offset);
-        if (qLo < 0 || qHi <= qLo) { f.note = "QRS window outside the loop"; return f; }
-
-        f.qrsArea_xy = shoelaceArea(avg, qLo, qHi, Plane::XY);
-        f.qrsArea_xz = shoelaceArea(avg, qLo, qHi, Plane::XZ);
-        f.qrsArea_yz = shoelaceArea(avg, qLo, qHi, Plane::YZ);
-
-        const LoopSpread sp = loopSpread(avg, qLo, qHi);
-        if (sp.valid) {
-            f.qrsLambda1 = sp.lambda[0]; f.qrsLambda2 = sp.lambda[1]; f.qrsLambda3 = sp.lambda[2];
-            const double tot = sp.lambda[0] + sp.lambda[1] + sp.lambda[2];
-            if (tot > 0.0) f.planarity = sp.lambda[2] / tot;
-            if (sp.lambda[0] > 0.0) f.planarity_l2_l1 = sp.lambda[1] / sp.lambda[0];
-        }
-
-        f.peakSpatialVelocity = peakSpatialVelocity(avg, qLo, qHi, fs);
-        f.loopVariability = loopVariability(loops, avg, qLo, qHi);
-        if (fs > 0.0) f.qrsDuration_ms = (offset - onset) * 1000.0 / fs;
-
-        // T loop and the QRS-T angle need the T window. Left NaN rather than
-        // guessed when QT was not measured -- a T loop over an assumed window
-        // is not a T loop.
-        if (!std::isnan(tEndOff)) {
-            const int tHi = avg.indexForOffset(tEndOff);
-            if (tHi > qHi) {
-                f.tArea_xy = shoelaceArea(avg, qHi, tHi, Plane::XY);
-                f.tArea_xz = shoelaceArea(avg, qHi, tHi, Plane::XZ);
-                f.tArea_yz = shoelaceArea(avg, qHi, tHi, Plane::YZ);
-                f.qrstAngle_deg = vcg::spatialQRSTAngle(avg.pts, qLo, qHi, tHi);
-            }
-        }
-
-        f.valid = true;
-        return f;
-    }
 
 
     // -----------------------------------------------------------------------
