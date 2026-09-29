@@ -18,19 +18,20 @@
 #include "peak_finding/peakfinding_io.hpp"
 #include "peak_finding/make_beats.hpp" 
 
-#include "template_generation/template_io.hpp"
+#include "template_generation/template_structs.hpp"
 #include "template_generation/build_bins.hpp"
 #include "template_generation/premark_beats.hpp"
-#include "template_morphology_grouping/bank_reload.hpp"
-#include "fiducial_marker_finding/ppg_derivative.hpp"
+#include "template_generation/bank_reload.hpp"
+#include "template_generation/template_io.hpp"
+#include "template_generation/envelope_report.hpp"
+#include "template_generation/beat_substitute.hpp"
 
 #include "annealing/anneal_handler.hpp"
 #include "config_file_handling/config.hpp"
 #include "fiducial_marker_finding/alignment.hpp"
+#include "fiducial_marker_finding/ppg_derivative.hpp"
+
 #include "logging/sqi_ecg.hpp"
-#include "template_morphology_grouping/morphology_csv.hpp"
-#include "template_morphology_grouping/envelope_report.hpp"
-#include "template_morphology_grouping/beat_substitute.hpp"
 
 
 namespace analysis_job {
@@ -51,11 +52,11 @@ namespace analysis_job {
         std::string fileID;
         double samplingRate = 0.0;
         SignalRates rates;           // full per-channel rate set for template pipeline
-        std::filesystem::path rPeakPath, binsPath;
+        std::filesystem::path rPeakPath;
         std::filesystem::path annealedPath;
         std::vector<output_binfile_data> peakResults;
-        template_io::TemplateFile tmpl;
-        template_io::BeatsFile beats;
+        template_structs::TemplateFile tmpl;
+        template_structs::BeatsFile beats;
         // Per-bin TemplateInfo, carried from the fast build so finalize's
         // mergeTemplatesSlow can pack the squared/absval blocks into tmpl.
         // Non-const by reference there, so it has to live somewhere that
@@ -66,7 +67,7 @@ namespace analysis_job {
         bool ecg2_inverted = false;
         bool ecg3_inverted = false;
         std::string error;                          // set by finalize on failure
-        template_io::TemplateFile r_aligned_template;      //  R-pass template to be reused by re-alignment
+        template_structs::TemplateFile r_aligned_template;      //  R-pass template to be reused by re-alignment
     };
 
 
@@ -79,7 +80,6 @@ namespace analysis_job {
         const std::filesystem::path noise_bin_path = std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
         const std::filesystem::path annealedPath = std::filesystem::path(cfg.annealed_data_path) / (stem + "_annealed.bin");
         const std::filesystem::path rPeakPath = std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
-        const std::filesystem::path binsPath = std::filesystem::path(cfg.template_path) / (stem + "_bins.bin");
 
         const double highpassHz = highpass_enabled ? cfg.waveform_highpass_hz : 0.0;
         std::cerr << "  [highpass] cutoff " << highpassHz
@@ -90,23 +90,15 @@ namespace analysis_job {
         job.stem = stem;
         job.fileID = stem;
         job.samplingRate = cfg.ecg_upsample_rate;
-        //rate of 0 means absent channel
-        job.rates = SignalRates{
-            cfg.ecg_upsample_rate,
-            cfg.ppg_upsample_rate,
-            cfg.abp_upsample_rate,
-            cfg.art_upsample_rate,
-            cfg.art_pulm_upsample_rate,
-            cfg.region_around_Rpeak_for_morphology_split,
-            cfg.region_around_PPGPeak_for_morphology_split
-        };
+        // Rate of 0 means absent channel. Built by name in
+        // config_entry::signalRates(), not by a positional brace here.
+        job.rates = cfg.signalRates();
 
         job.cfg = cfg;
         job.ecg1_inverted = ecg1_inverted;
         job.ecg2_inverted = ecg2_inverted;
         job.ecg3_inverted = ecg3_inverted;
         job.rPeakPath = rPeakPath;
-        job.binsPath = binsPath;
         job.annealedPath = annealedPath;
 
         AnnealedData annealedData = read_input_binfile(annealedPath.string());
@@ -286,7 +278,7 @@ namespace analysis_job {
         // it to the base, but its PER-SLOT averages are not a no-op and R is
         // what the grid draws on Automatic.
         for (AnchorType a : anchor_view::anchor_array) {
-            template_io::TemplateFile atmpl = job.r_aligned_template;
+            template_structs::TemplateFile atmpl = job.r_aligned_template;
             alignTemplatesFromCache(atmpl, job.beats, job.rates, a);
 
             const int tag = static_cast<int>(a);
@@ -366,19 +358,37 @@ namespace analysis_job {
             job.tmpl.bins[i].ecg_bank = banks[i].ecg_bank;
             job.tmpl.bins[i].ppg_bank = banks[i].ppg_bank;
         }
-        try {
-            template_io::write_template_binfile(job.binsPath.string(), job.tmpl);
-            std::cerr << "  [templates] wrote " << job.binsPath.string()
-                << " with the operator's confirmations\n";
-            return true;
+        // ---- WHERE THE VERDICT GOES NOW ------------------------------
+        //
+        // <stem>_templates.bin, rewritten in place. It was <stem>_bins.bin,
+        // whose Sections 3-5 carried the banks via tbank_ser -- the only place
+        // confirmed_by_operator ever reached disk. That file also carried the
+        // bin-wide averages, a cache of what _beats.bin can rebuild, so it is
+        // retired and the sub-templates keep the archive named for them.
+        //
+        // POINTERS INTO job.tmpl, TAKEN AFTER THE FOLD ABOVE. The loop just
+        // above is what puts the operator's banks into job.tmpl.bins, so a view
+        // built before it would rewrite the archive with the generated
+        // partition and report success.
+        std::vector<morphology_csv::BinBanks> view(job.tmpl.bins.size());
+        for (size_t i = 0; i < job.tmpl.bins.size(); ++i) {
+            for (int c = 0; c < 3; ++c)
+                view[i].chan[c] = &job.tmpl.bins[i].ecg_bank[c];
+            view[i].chan[3] = &job.tmpl.bins[i].ppg_bank;
         }
-        catch (const std::exception& e) {
-            job.error = e.what();
-            std::cerr << "  [templates] ERROR: could not write "
-                << job.binsPath.string() << ": " << e.what()
-                << " -- this record has no templates file\n";
-            return false;
-        }
+
+        const std::filesystem::path splitPath =
+            std::filesystem::path(job.cfg.template_path) / (job.stem + "_templates.bin");
+        const morphology_csv::ConfirmPatchReport rep =
+            morphology_csv::applyOperatorConfirmations(splitPath.string(), view);
+        morphology_csv::printConfirmPatchReport(rep);
+
+        // A MISSING ARCHIVE IS NOT A FAILED COMMIT. A record whose build
+        // produced no templates has nothing to patch; only a file that exists
+        // and could not be rewritten is worth failing on, because that is the
+        // case where the verdict was lost.
+        if (!rep.error.empty()) job.error = rep.error;
+        return rep.written || !rep.present;
     }
 
 }  // namespace analysis_job

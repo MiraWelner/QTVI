@@ -18,19 +18,18 @@
 #include <cmath>
 #include <vector>
 #include "fiducial_marker_finding/alignment.hpp"
-#include "template_structs.hpp"
 #include "template_generation/normalize_template_amplitude.hpp"
 
 struct PPGTemplatesResult {
-    vector<vector<double>> templates;   // [bin][sample]
-    vector<vector<double>> iqrs;        // [bin][sample], same shape as templates
-    vector<vector<vector<double>>> kept; // [bin][beat][sample] retained snips
-    vector<int> peakCol;                // [bin] systolic peak column (R1..R2)
-    vector<int> footCol;                // [bin] foot column (R1..peak)
+    std::vector<std::vector<double>> templates;   // [bin][sample]
+    std::vector<std::vector<double>> iqrs;        // [bin][sample], same shape as templates
+    std::vector<std::vector<std::vector<double>>> kept; // [bin][beat][sample] retained snips
+    std::vector<int> peakCol;                // [bin] systolic peak column (R1..R2)
+    std::vector<int> footCol;                // [bin] foot column (R1..peak)
     // [bin] the template's MEASURED R column, -1 where unmeasurable. The
     // pulse has no R-relative time axis without it; see
     // alignment::PpgBeatSet::r_cols for why it is not a constant.
-    vector<int> rCol;
+    std::vector<int> rCol;
 
     // R-PAIR ORDINAL of each retained snip: keptSlices[bin][beat] is the index
     // of the R-pair that snip was sliced from, parallel to kept[bin].
@@ -40,7 +39,7 @@ struct PPGTemplatesResult {
     // NOT R-pair k, and without the ordinal there is no way to say a PPG beat
     // and an ECG beat are the same heartbeat. Any consumer treating the two
     // channels as views of one beat needs it.
-    vector<vector<uint32_t>> keptSlices;
+    std::vector<std::vector<uint32_t>> keptSlices;
 };
 
 /**
@@ -540,7 +539,7 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
  * the argument, so removing it is source-compatible.
  */
 inline PPGTemplatesResult CreatePulseTemplates(
-    const vector<output_binfile_data>& bins,
+    const std::vector<output_binfile_data>& bins,
     std::vector<double> output_binfile_data::* sigMember,
     double ecgRate,
     double channelRate)

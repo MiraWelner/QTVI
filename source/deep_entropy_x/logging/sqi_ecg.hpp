@@ -36,7 +36,7 @@
 #include <vector>
 
 #include "config_file_handling/config.hpp"
-#include "template_generation/template_io.hpp"
+#include "template_generation/template_structs.hpp"
 #include "fiducial_marker_finding/feature_marks.hpp"   // FeatureMarks, LeadPolarity
 
  // P/QRS/ST sample ranges for one beat, in the beat's own sample coordinates
@@ -247,8 +247,8 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
 // ---------------------------------------------------------------------
 inline void writeEcgSQICsv(const config_entry& cfg,
     const std::string& stem,
-    const template_io::TemplateFile& tmpl,
-    const template_io::BeatsFile& beats,
+    const template_structs::TemplateFile& tmpl,
+    const template_structs::BeatsFile& beats,
     double ecgFs,
     const LeadPolarity& pol) {
     const std::string outPath = cfg.quality_metric + "/" + stem + "_quality.csv";
@@ -268,13 +268,13 @@ inline void writeEcgSQICsv(const config_entry& cfg,
     struct ChannelSpec {
         const char* key;
         int lead;   // index into LeadPolarity; must match key
-        template_io::ChannelMethodTemplate template_io::BinTemplates::* raw;
-        template_io::ChannelMethodTemplate template_io::BinTemplates::* absval;
+        template_structs::ChannelMethodTemplate template_structs::BinTemplates::* raw;
+        template_structs::ChannelMethodTemplate template_structs::BinTemplates::* absval;
     };
     const ChannelSpec channels[] = {
-        { "CH1", 0, &template_io::BinTemplates::ch1_raw, &template_io::BinTemplates::ch1_absval },
-        { "CH2", 1, &template_io::BinTemplates::ch2_raw, &template_io::BinTemplates::ch2_absval },
-        { "CH3", 2, &template_io::BinTemplates::ch3_raw, &template_io::BinTemplates::ch3_absval },
+        { "CH1", 0, &template_structs::BinTemplates::ch1_raw, &template_structs::BinTemplates::ch1_absval },
+        { "CH2", 1, &template_structs::BinTemplates::ch2_raw, &template_structs::BinTemplates::ch2_absval },
+        { "CH3", 2, &template_structs::BinTemplates::ch3_raw, &template_structs::BinTemplates::ch3_absval },
     };
     static const char* const included_levels[] = { "INCLUDE", "SUBSTITUTE", "EXCLUDE" };
 

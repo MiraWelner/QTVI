@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-#include "template_generation\template_io.hpp"
-#include "template_morphology_grouping/morphology_csv.hpp"
+#include "template_generation/template_structs.hpp"
+#include "template_generation/template_io.hpp"
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -141,8 +141,10 @@ namespace bank_reload {
         if (!rep.prior_present) return out;
 
         if (!morphology_csv::readTemplatesBin(priorPath, out.blocks)) {
-            rep.error = "readTemplatesBin failed (wrong magic, newer version,"
-                " or truncated)";
+            // NO MAGIC TO BE WRONG. This file has never had one -- see the
+            // "NO MAGIC" note in morphology_csv.hpp -- so the only header
+            // check is the version, and the rest is a short read.
+            rep.error = "readTemplatesBin failed (stale version or truncated)";
             return out;
         }
         rep.prior_read = true;
@@ -188,7 +190,7 @@ namespace bank_reload {
 
     // Call AFTER the build, with what readSplit returned.
     inline SplitReport applySplit(SplitArchive& arch,
-        template_io::TemplateFile& fresh)
+        template_structs::TemplateFile& fresh)
     {
         SplitReport rep = arch.rep;
         if (!arch.usable()) return rep;

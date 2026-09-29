@@ -20,7 +20,7 @@
 #include <atomic>
 #include <string> 
 
-#include "template_io.hpp"
+#include "template_structs.hpp"
 #include "template_generation/make_averaged_templates.hpp"
 #include "template_structs.hpp"
 #include "template_generation/create_arterial_templates.hpp"
@@ -34,7 +34,7 @@ namespace template_generation_detail {
     // The non-raw methods pass an empty tmpl_iqr and the on-disk std
     // field stays sz=0 (no payload). Both writer and reader handle that
     // uniformly, so there's only ever one code path.
-    inline void copyMethod(template_io::ChannelMethodTemplate& dst, const std::vector<double>& tmpl, const std::vector<double>& tmpl_iqr, int rCol)                                  // line 40: was `double alignment, int rCol`
+    inline void copyMethod(template_structs::ChannelMethodTemplate& dst, const std::vector<double>& tmpl, const std::vector<double>& tmpl_iqr, int rCol)                                  // line 40: was `double alignment, int rCol`
     {
         dst.ecgTemplate = tmpl;
         dst.ecg_template_std = tmpl_iqr;
@@ -46,7 +46,7 @@ namespace template_generation_detail {
     // ("CH1"/"CH2"/"CH3"); a channel absent from the map leaves an empty bank,
     // which reads downstream as "no bank for this channel" -- the same thing a
     // pre-v3 file produces, so nothing needs to distinguish the two cases.
-    inline void copyBanks(template_io::BinTemplates& bt, const TemplateInfo& info)
+    inline void copyBanks(template_structs::BinTemplates& bt, const TemplateInfo& info)
     {
         static const char* kKeys[3] = { "CH1", "CH2", "CH3" };
         for (int c = 0; c < 3; ++c) {
@@ -64,7 +64,7 @@ namespace template_generation_detail {
             bt.ppg_bank = pit->second.bank;
     }
 
-    inline void packBin(template_io::BinTemplates& bt,
+    inline void packBin(template_structs::BinTemplates& bt,
         const TemplateInfo& info, bool bad_segment)
     {
         bt.bad_segment = bad_segment;
@@ -115,7 +115,7 @@ namespace template_generation_detail {
 
     // FAST pack: raw + unfiltered ECG blocks + PPG. Leaves the squared and
     // absval blocks default-empty for packBinSlow.
-    inline void packBinFast(template_io::BinTemplates& bt,
+    inline void packBinFast(template_structs::BinTemplates& bt,
         const TemplateInfo& info, bool bad_segment)
     {
         bt.bad_segment = bad_segment;
@@ -155,7 +155,7 @@ namespace template_generation_detail {
     }
 
     // SLOW pack: squared + absval blocks onto an already fast-packed bin.
-    inline void packBinSlow(template_io::BinTemplates& bt,
+    inline void packBinSlow(template_structs::BinTemplates& bt,
         const TemplateInfo& info)
     {
         if (bt.bad_segment) return;
@@ -172,8 +172,8 @@ namespace template_generation_detail {
 
 // Carries the in-memory state from the fast build to the slow merge.
 struct FastTemplateBuild {
-    template_io::TemplateFile tmpl;   // raw/unfiltered/ppg blocks + their SAECG
-    template_io::BeatsFile beats;     // ch1 raw kept beats (final)
+    template_structs::TemplateFile tmpl;   // raw/unfiltered/ppg blocks + their SAECG
+    template_structs::BeatsFile beats;     // ch1 raw kept beats (final)
     std::vector<TemplateInfo> info;   // retained so mergeTemplatesSlow can pack squared/absval
 };
 
@@ -298,7 +298,7 @@ inline const char* anchorName_bt(AnchorType a) {
     return "?";
 }
 
-inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io::BeatsFile& beats, const SignalRates& rates, AnchorType anchor, bool forScoring = false)
+inline void alignTemplatesFromCache(template_structs::TemplateFile& tmpl, template_structs::BeatsFile& beats, const SignalRates& rates, AnchorType anchor, bool forScoring = false)
 {
     /* Re-align reuse PPG/arterial as-is; Re-align the R-pass beats.
     Because the alignment anchor is the median snippet, the median snippet doesn't move,
@@ -306,15 +306,15 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
     const double fs = rates.ecg;
 
     using MethodPtr =
-        template_io::ChannelMethodTemplate template_io::BinTemplates::*;
+        template_structs::ChannelMethodTemplate template_structs::BinTemplates::*;
     // chIdx addresses raw_anchors[tag][bin][chIdx]. absPtr is the matching
     // absval scalar block, used in scoring mode to store the co-framed
     // aligned absval template ( = column-median of |aligned raw beats| ).
     struct Chan { const char* key; MethodPtr ptr; MethodPtr absPtr; int chIdx; };
     const Chan channels[] = {
-        { "CH1", &template_io::BinTemplates::ch1_raw, &template_io::BinTemplates::ch1_absval, 0 },
-        { "CH2", &template_io::BinTemplates::ch2_raw, &template_io::BinTemplates::ch2_absval, 1 },
-        { "CH3", &template_io::BinTemplates::ch3_raw, &template_io::BinTemplates::ch3_absval, 2 },
+        { "CH1", &template_structs::BinTemplates::ch1_raw, &template_structs::BinTemplates::ch1_absval, 0 },
+        { "CH2", &template_structs::BinTemplates::ch2_raw, &template_structs::BinTemplates::ch2_absval, 1 },
+        { "CH3", &template_structs::BinTemplates::ch3_raw, &template_structs::BinTemplates::ch3_absval, 2 },
     };
 
     // This anchor's per-bin store. R_PEAK is the scalar base and is NOT put
@@ -322,7 +322,7 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
     // every (bin, channel) slot exists; unaligned slots stay default-empty
     // and readTemplateInfoBin falls back to the R base for them.
     const int anchorTag = static_cast<int>(anchor);
-    std::vector<std::array<template_io::ChannelMethodTemplate, 3>>& store =
+    std::vector<std::array<template_structs::ChannelMethodTemplate, 3>>& store =
         tmpl.raw_anchors[anchorTag];
     if (store.size() != tmpl.bins.size())
         store.assign(tmpl.bins.size(), {});
@@ -330,7 +330,7 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
     // The per-slot store for this anchor, sized the same way. Filled from the
     // SAME aligned beat matrix the whole-channel average comes from, so a slot
     // and its bin cannot disagree about what "this anchor" means.
-    std::vector<std::array<std::vector<template_io::TemplateFile::BankSlotTemplate>, 3>>& slotStore =
+    std::vector<std::array<std::vector<template_structs::TemplateFile::BankSlotTemplate>, 3>>& slotStore =
         tmpl.bank_anchors[anchorTag];
     if (slotStore.size() != tmpl.bins.size())
         slotStore.assign(tmpl.bins.size(), {});
@@ -356,13 +356,13 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
 #pragma omp parallel for schedule(dynamic) num_threads(std::min(8, std::max(1, nBins)))
 #endif
         for (int i = 0; i < nBins; ++i) {
-            template_io::BinTemplates& bin = tmpl.bins[i];
+            template_structs::BinTemplates& bin = tmpl.bins[i];
             if (bin.bad_segment) continue;
             if ((size_t)i >= perBin.size() || perBin[i].empty()) continue;
 
             // The R base (blk) is the reference every anchor aligns FROM; it
             // is read-only here and never overwritten.
-            const template_io::ChannelMethodTemplate& blk = bin.*(ch.ptr);
+            const template_structs::ChannelMethodTemplate& blk = bin.*(ch.ptr);
             if (blk.r_col < 0 || blk.ecgTemplate.empty()) continue;
 
             // Built here rather than after the reference selection, because
@@ -488,14 +488,14 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
 
             // Store the aligned result in the per-anchor slot, leaving the R
             // base untouched so the NEXT anchor step still aligns from R.
-            template_io::ChannelMethodTemplate& dst = store[i][ch.chIdx];
+            template_structs::ChannelMethodTemplate& dst = store[i][ch.chIdx];
             dst.r_col = alignedRcol;
 
             if (forScoring) {
                 // Project into the scalar ch*_raw (so writeEcgSQICsv reads the
                 // anchor template) and write the co-framed aligned beats back
                 // (so QC scores beats in the same frame). Caller owns copies.
-                template_io::ChannelMethodTemplate& scalar = bin.*(ch.ptr);
+                template_structs::ChannelMethodTemplate& scalar = bin.*(ch.ptr);
                 scalar.ecgTemplate = q.tmpl;          // copy: also stored below
                 scalar.ecg_template_std = q.iqr;
                 scalar.r_col = alignedRcol;
@@ -522,7 +522,7 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
                         absTmpl[c] = (col.size() % 2 == 0)
                             ? 0.5 * (col[m - 1] + col[m]) : col[m];
                     }
-                    template_io::ChannelMethodTemplate& absScalar = bin.*(ch.absPtr);
+                    template_structs::ChannelMethodTemplate& absScalar = bin.*(ch.absPtr);
                     absScalar.ecgTemplate = std::move(absTmpl);
                     absScalar.r_col = alignedRcol;
 
@@ -558,7 +558,7 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
                 const tbank::TemplateBank& bnk = bin.ecg_bank[ch.chIdx];
                 auto& outSlots = slotStore[i][ch.chIdx];
                 outSlots.assign(bnk.templates.size(),
-                    template_io::TemplateFile::BankSlotTemplate{});
+                    template_structs::TemplateFile::BankSlotTemplate{});
 
                 const size_t W = q.beats.front().size();
                 std::vector<double> col;
@@ -617,7 +617,7 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
 // peakResults must carry the squared/absval R-peaks + preprocessed signals
 // (run augment_ecg_ppg_pairs_sqabs first, or load them from wave_markings).
 inline void mergeTemplatesSlow(const std::vector<output_binfile_data>& peakResults,
-    template_io::TemplateFile& tmpl,
+    template_structs::TemplateFile& tmpl,
     std::vector<TemplateInfo>& info,
     const SignalRates& rates)
 {

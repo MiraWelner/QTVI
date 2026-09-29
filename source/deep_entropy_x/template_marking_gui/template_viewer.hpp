@@ -116,12 +116,9 @@ public:
     // absent. Same trap as set_vcg_output_dir, worse consequence.
     void setLeadPolarity(const LeadPolarity& pol) { m_polarity = pol; }
 
-    void loadSubject(const QString& templatePath, const QString& markingPath,const QString& subjectId, double sampleRateHz, double ppgRateHz = 0.0, double abpRateHz = 0.0,
-        double artRateHz = 0.0, double artPulmRateHz = 0.0, double notchFilterHz = 0.0);
+    void setBeats(const template_structs::BeatsFile* beats) { m_beatsInMemory = beats; }
 
-    void setBeats(const template_io::BeatsFile* beats) { m_beatsInMemory = beats; }
-
-    void loadSubject(const template_io::TemplateFile& tf,
+    void loadSubject(const template_structs::TemplateFile& tf,
         const QString& templateDir, const QString& markingPath,
         const QString& subjectId, double sampleRateHz,
         double ppgRateHz = 0.0, double abpRateHz = 0.0,
@@ -255,7 +252,7 @@ private:
     // relevelPulseAtPct.
     bool relevelPulseAtFoot(int binIdx, int templateIdx, double footCol, bool announce = true);
 
-    const template_io::BeatsFile* m_beatsInMemory = nullptr;
+    const template_structs::BeatsFile* m_beatsInMemory = nullptr;
     // KEYED ON (bin, channel), not bin alone: the ECG re-stack reads "CH1".."CH3"
     // out of the same BeatsFile the pulse path reads "PPG" from, and a cache
     // ignoring the channel would serve lead 0's rows for lead 2.

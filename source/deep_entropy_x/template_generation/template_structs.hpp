@@ -1,150 +1,96 @@
 /**
- * @file   TemplateTypes.hpp
- * @brief  Common types for the template generation pipeline.
- *
- *         std vectors: we only carry per-sample std for the ECG "raw"
- *         method (the one the viewer displays) and for PPG. The other
- *         three ECG methods (squared, absval, unfiltered) don't get
- *         std fields -- the viewer doesn't display them, so computing
- *         and storing std for them would just inflate disk usage.
- *
- * @author Mira Welner
- * @email  MEW386@pitt.edu
- * @date   2026-03-26
+ * @file   template_structs.hpp
+ * @brief  The in-memory template-generation structures: ChannelMethodTemplate,
+ *         BinTemplates, TemplateFile and BeatsFile.
  */
-#pragma once
-#include "peak_finding/stats_utils.hpp"
-#include "template_io.hpp"
-#include "template_morphology_grouping/joint_bank.hpp"
 
+#pragma once
+
+#include <cstdint>
+#include <string>
 #include <map>
 #include <array>
 #include <vector>
-#include <string>
-#include <cmath>
-#include <algorithm>
-#include <utility>
-#include <cstdint>
-#ifdef _OPENMP
-#include <omp.h>
-#endif
+#include "template_bank.hpp"
+namespace template_structs {
 
- // Per-channel sample rates (Hz), threaded through the template-generation
- // pipeline. Each channel is at its own rate; the slicer converts between
- // them via the ratio channelRate / ecgRate. A rate of 0 means the channel
- // is absent from this dataset (skip it).
-struct SignalRates {
-    double ecg = 0.0;
-    double ppg = 0.0;
-    double abp = 0.0;
-    double art = 0.0;
-    double artPulm = 0.0;
-    double morph_halfwin_ecg_pct_rr = 0.0;
-    double morph_halfwin_ppg_pct_rr = 0.0;
-};
+    struct ChannelMethodTemplate {
+        std::vector<double> ecgTemplate;
+        // Per-sample standard deviation across the beats that contributed
+        // to this template. Same length as ecgTemplate, OR empty when not
+        // computed (e.g. the squared/absval/unfiltered methods, which the
+        // viewer doesn't display).
+        std::vector<double> ecg_template_std;
+        int    r_col = -1;
+        int    median_rr_samples = -1;
+    };
 
-// Per-channel, per-method ECG template results
-struct ChannelTemplates {
-    vector<double> ecgTemplate_raw;
-    vector<double> ecg_template_raw_std;       // per-sample std of the beats
-    // contributing to ecgTemplate_raw.
-    // Same length as ecgTemplate_raw,
-    // or empty if not computed.
-    vector<double> ecgTemplate_squared;
-    vector<double> ecgTemplate_absval;
-    vector<double> ecgTemplate_unfiltered;
-    // True R column in the template (from alignment's r_aligned_col). This is
-    // the detected-R fiducial the template was built around -- used directly
-    // as the R marker, replacing the old avg_r_expand positioning constant.
-    int r_col_raw = -1;
-    int r_col_squared = -1;
-    int r_col_absval = -1;
-    int r_col_unfiltered = -1;
-    // Slice count fed to the raw-method median for this bin/channel.
-    // Only tracked for the raw method since that's what the viewer shows.
-    size_t n_beats_raw = 0;
-};
+    struct BinTemplates {
+        ChannelMethodTemplate ch1_raw, ch1_squared, ch1_absval, ch1_unfiltered;
+        ChannelMethodTemplate ch2_raw, ch2_squared, ch2_absval, ch2_unfiltered;
+        ChannelMethodTemplate ch3_raw, ch3_squared, ch3_absval, ch3_unfiltered;
+        std::vector<double>   ppgTemplate;
+        // Per-sample std for the PPG template, same length as ppgTemplate
+        // (or empty if no PPG / not computed).
+        std::vector<double>   ppg_template_std;
+        // Foot-anchored averaged arterial templates (ABP / ART / ART_PULM),
+        // shown as faint background-context traces in the viewer. Empty when
+        // the channel wasn't present in the dataset. No std (background only).
+        std::vector<double>   abpTemplate;
+        std::vector<double>   artTemplate;
+        std::vector<double>   artPulmTemplate;
+        // Per-sample std for each arterial template (same length when
+        // present, or empty). Written right after each template vector.
+        std::vector<double>   abp_template_std;
+        std::vector<double>   art_template_std;
+        std::vector<double>   artPulmTemplate_iqr;
+        // Per-channel slice counts (post drop-rules) fed to each raw-method
+        // median. Under Patch B they're driven by ch1.raw R-pairs, so they
+        // normally read equal, but any per-channel drop (short slice, bad
+        // signal) would diverge. 0 = unknown (channel absent or bad).
+        uint64_t              ch1_n_beats_raw = 0;
+        uint64_t              ch2_n_beats_raw = 0;
+        uint64_t              ch3_n_beats_raw = 0;
+        uint64_t              ppg_n_beats = 0;
+        int                   ppg_peak_col = -1;   // construction-time fiducials
+        int                   ppg_onset_col = -1;
+        int                   ppg_r_col = -1;
+        int                   abp_r_col = -1;
+        int                   art_r_col = -1;
+        int                   art_pulm_r_col = -1;
+        bool                  bad_segment = false;
 
-struct TemplateInfo {
-    ChannelTemplates ch1;
-    ChannelTemplates ch2;
-    ChannelTemplates ch3;
-    std::vector<double> ppgTemplate;
-    std::vector<double> ppg_template_std;      // per-sample std of the beats
-    // contributing to ppgTemplate
-    // (post AlignWaves shift).
-    // Slice count that fed the PPG median (post drop rules).
-    size_t ppg_n_beats = 0;
-    // Deterministic PPG fiducials computed at construction from the real
-    // R-pair interval: peak = max in [R1,R2], foot = min in [R1,peak].
-    // -1 when no PPG for this bin.
-    int ppg_peak_col = -1;
-    // The pulse template's measured R column (PulseTemplateBin::rCol). -1 =
-    // unmeasurable, and then the channel has no R-relative time axis.
-    int ppg_r_col = -1;
-    int ppg_onset_col = -1;
-    // Surviving beats from ch1 raw method (each entry is one beat's
-    // samples, all of equal length, possibly with NaN tails). Only
-    // populated when capture_beats was requested for ch1 in
-    // CreateEcgTemplates.
-    std::vector<std::vector<double>> kept_beats_ch1_raw;
-    std::map<std::string, int> ref_index_by_channel;   // channel -> ref beat idx
-    // Retained per-channel beats for the snips CSV. Key is the channel label
-    // ("CH1"/"CH2"/"CH3"/"PPG"); value is [beat][sample] for this bin.
-    std::map<std::string, std::vector<std::vector<double>>> kept_beats_by_channel;
-    // Rhythm verdict per kept beat, parallel to kept_beats_by_channel[ch]:
-    // 0 = NORMAL, 1 = PVC (premature), 2 = VOTED_PVC (5-of-8 vote).
-    // Assigned in alignment.hpp after the slice and before any pruning, and
-    // carried here because it cannot be recomputed downstream: the R-peak
-    // vector and the kept-beat matrix stop corresponding the moment the Tukey
-    // passes run.
-    std::map<std::string, std::vector<uint8_t>> kept_rhythm_by_channel;
-    std::map<std::string, tbank::ChannelOutput> bank_by_channel;
-    jbank::BinBankOutput joint;
-    bool joint_valid = false;
-};
 
-struct AlignWavesResult {
-    vector<vector<double>> alignedWaves;
-    vector<int> move_dist;
-};
+        std::array<tbank::TemplateBank, 3> ecg_bank;
+        tbank::TemplateBank ppg_bank;
+    };
 
-struct CombineResult {
-    vector<size_t> bin_numbers;
-    vector<vector<double>> bin_templates;
-    vector<size_t> foot_locations;
-};
+    struct AveragedTemplate {
+        std::vector<double> waveform;
+        uint64_t            n_contributing = 0;
+    };
 
-struct FootResult {
-    vector<double> val;
-    vector<size_t> idx;
-};
+    struct TemplateFile {
+        std::vector<BinTemplates> bins;
+        std::map<int, std::vector<std::array<ChannelMethodTemplate, 3>>> raw_anchors;
+        // Indexing: bank_anchors[anchorTag][bin][channel][slot].
+        struct BankSlotTemplate {
+            std::vector<double> tmpl;
+            std::vector<double> tmpl_std;
+            uint32_t n_members = 0;
+        };
+        std::map<int, std::vector<std::array<std::vector<BankSlotTemplate>, 3>>> bank_anchors;
+    };
 
-struct EcgChannelResult {
-    vector<vector<double>> ecgTemplates_raw;
-    vector<vector<double>> ecgTemplates_raw_std;   // parallel to ecgTemplates_raw
-    vector<vector<double>> ecgTemplates_squared;
-    vector<vector<double>> ecgTemplates_absval;
-    vector<vector<double>> ecgTemplates_unfiltered;
-    std::vector<int> ref_index_raw;
-
-    vector<int> r_col_raw;
-    vector<int> r_col_squared;
-    vector<int> r_col_absval;
-    vector<int> r_col_unfiltered;
-
-    vector<size_t> n_beats_raw;//the viewer displays the number of beats contributing to template for each channel
-
-    vector<vector<vector<double>>> kept_beats_raw;
-    vector<vector<uint8_t>> kept_rhythm_raw;
-    vector<uint8_t> seed_basis_raw;
-    vector<vector<double>> tp_shift_raw;
-    vector<vector<double>> pq_shift_raw;
-};
-
-struct EcgTemplateResult {
-    EcgChannelResult ch1;
-    EcgChannelResult ch2;
-    EcgChannelResult ch3;
-    std::array<std::vector<std::vector<size_t>>, 3> kept_index;
-};
+    struct BeatsFile {
+        std::vector<bool> bad_segment;
+        std::map<std::string, std::vector<std::vector<std::vector<double>>>> per_channel_beats;
+        std::map<std::string, std::vector<int>> per_channel_ref_index;
+        // Rhythm verdict per kept beat, [bin][beat], keyed like
+        // per_channel_beats: 0 = NORMAL, 1 = PVC, 2 = VOTED_PVC. Assigned in
+        // alignment.hpp after the slice and before the pruning, and carried
+        // here because it cannot be recomputed once the R-peak vector and the
+        // kept-beat matrix stop corresponding.
+        std::map<std::string, std::vector<std::vector<uint8_t>>> per_channel_rhythm;
+    };
+}  // namespace template_structs

@@ -66,7 +66,7 @@
  */
 
 #include "envelopes.hpp"
-#include "template_generation\template_io.hpp"
+#include "template_generation\template_structs.hpp"
 #include "fiducial_marker_finding\feature_marks.hpp"
 
 #include <cmath>
@@ -161,7 +161,7 @@ namespace envelope_report {
     // one channel's template block with no channel index, so only the caller
     // knows which lead it is.
     inline envelopes::SegmentSpans spansForChannel(
-        const template_io::ChannelMethodTemplate& chRaw, double fs, double sgn)
+        const template_structs::ChannelMethodTemplate& chRaw, double fs, double sgn)
     {
         envelopes::SegmentSpans sp;
         const std::vector<double>& ecg = chRaw.ecgTemplate;
@@ -215,7 +215,7 @@ namespace envelope_report {
         // checking whether an onset_event landed on a beat the pipeline already
         // considered premature, and a report that cannot be cross-checked
         // against the rest of the pipeline is a report nobody trusts.
-        inline uint8_t rhythmFor(const template_io::BeatsFile& beats,
+        inline uint8_t rhythmFor(const template_structs::BeatsFile& beats,
             const char* key, size_t bin, size_t beat)
         {
             const auto it = beats.per_channel_rhythm.find(key);
@@ -236,8 +236,8 @@ namespace envelope_report {
     // at each one would blind the long window to drift for its first 30 beats
     // of every bin -- which is most of what the long window exists to see.
     inline void buildChannel(std::vector<EnvelopeRecord>& out,
-        const std::vector<template_io::BinTemplates>& bins,
-        const template_io::BeatsFile& beats,
+        const std::vector<template_structs::BinTemplates>& bins,
+        const template_structs::BeatsFile& beats,
         int channel, double fs, const LeadPolarity& pol)
     {
         const char* key = kChannelKeys[channel];
@@ -249,10 +249,10 @@ namespace envelope_report {
         uint32_t beatSeq = 0;
 
         for (size_t b = 0; b < bins.size() && b < perBin.size(); ++b) {
-            const template_io::BinTemplates& bt = bins[b];
+            const template_structs::BinTemplates& bt = bins[b];
             if (bt.bad_segment) continue;
 
-            const template_io::ChannelMethodTemplate* chs[kNumEcgCh] = {
+            const template_structs::ChannelMethodTemplate* chs[kNumEcgCh] = {
                 &bt.ch1_raw, &bt.ch2_raw, &bt.ch3_raw };
             const envelopes::SegmentSpans sp = spansForChannel(*chs[channel], fs,
                 pol.sign(channel));
@@ -328,8 +328,8 @@ namespace envelope_report {
     // nondeterministically, making two runs of the same subject produce files
     // that differ only in row order. Reproducibility is worth one copy.
     inline std::vector<EnvelopeRecord> buildEnvelopeReport(
-        const std::vector<template_io::BinTemplates>& bins,
-        const template_io::BeatsFile& beats, double fs, const LeadPolarity& pol)
+        const std::vector<template_structs::BinTemplates>& bins,
+        const template_structs::BeatsFile& beats, double fs, const LeadPolarity& pol)
     {
         std::vector<std::vector<EnvelopeRecord>> per(kNumEcgCh);
 #ifdef _OPENMP
@@ -468,8 +468,8 @@ namespace envelope_report {
      * @return false if the file could not be written.
      */
     inline bool writeEnvelopeReport(const std::string& dir, const std::string& subjectId,
-        const std::vector<template_io::BinTemplates>& bins,
-        const template_io::BeatsFile& beats, double fs, const LeadPolarity& pol)
+        const std::vector<template_structs::BinTemplates>& bins,
+        const template_structs::BeatsFile& beats, double fs, const LeadPolarity& pol)
     {
         const std::vector<EnvelopeRecord> rows =
             buildEnvelopeReport(bins, beats, fs, pol);

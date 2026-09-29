@@ -21,7 +21,7 @@
 
 #include "fiducial_marker_finding/anchor_view.hpp"   // AnchorType
 #include "fiducial_marker_finding/curve_fit.hpp"
-#include "template_morphology_grouping/template_bank.hpp"
+#include "template_generation/template_bank.hpp"
 #include "subsample_refine.hpp"
 
 struct time_bin;   // forward-declare -- full definition in TemplateBinIO.hpp

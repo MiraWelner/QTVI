@@ -26,7 +26,7 @@
  */
 #pragma once
 
-#include "template_io.hpp"
+#include "template_structs.hpp"
 #include "template_generation/morphology_envelope.hpp"
 #include "template_generation/beat_classifier.hpp"
 #include "fiducial_marker_finding/feature_marks.hpp"
@@ -199,11 +199,11 @@ namespace premark {
     }
 
     // All bins of one channel.
-    inline std::vector<BinResult> runChannel(const template_io::BeatsFile& beats,
-        const template_io::TemplateFile& tmpl,
+    inline std::vector<BinResult> runChannel(const template_structs::BeatsFile& beats,
+        const template_structs::TemplateFile& tmpl,
         const std::string& channel,
-        template_io::ChannelMethodTemplate
-        template_io::BinTemplates::* methodPtr,
+        template_structs::ChannelMethodTemplate
+        template_structs::BinTemplates::* methodPtr,
         double fs, double sgn, BeatClassifier& classifier)
     {
         std::vector<BinResult> out;
@@ -235,7 +235,7 @@ namespace premark {
 #endif
         for (int i = 0; i < nBins; ++i) {
             if (i < (int)beats.bad_segment.size() && beats.bad_segment[i]) continue;
-            const template_io::ChannelMethodTemplate& blk = tmpl.bins[i].*methodPtr;
+            const template_structs::ChannelMethodTemplate& blk = tmpl.bins[i].*methodPtr;
             binResults[i] = runBin(perBin[i], blk.ecgTemplate, blk.r_col, fs, sgn,
                 classifier, i, channel);
         }
@@ -305,8 +305,8 @@ namespace premark {
     // ---------------------------------------------------------------------
     // One call for all three ECG channels.
     // ---------------------------------------------------------------------
-    inline void runAll(const template_io::BeatsFile& beats,
-        const template_io::TemplateFile& tmpl,
+    inline void runAll(const template_structs::BeatsFile& beats,
+        const template_structs::TemplateFile& tmpl,
         double ecgRate,
         const LeadPolarity& pol,
         const std::string& dirIn,
@@ -348,13 +348,13 @@ namespace premark {
         struct Chan {
             const char* key;
             int lead;                 // index into LeadPolarity; must match key
-            template_io::ChannelMethodTemplate
-                template_io::BinTemplates::* ptr;
+            template_structs::ChannelMethodTemplate
+                template_structs::BinTemplates::* ptr;
         };
         const Chan chans[] = {
-            { "CH1", 0, &template_io::BinTemplates::ch1_raw },
-            { "CH2", 1, &template_io::BinTemplates::ch2_raw },
-            { "CH3", 2, &template_io::BinTemplates::ch3_raw },
+            { "CH1", 0, &template_structs::BinTemplates::ch1_raw },
+            { "CH2", 1, &template_structs::BinTemplates::ch2_raw },
+            { "CH3", 2, &template_structs::BinTemplates::ch3_raw },
         };
         bool first = true;
         for (const Chan& c : chans) {
@@ -376,8 +376,8 @@ namespace premark {
     // Backward-compatible form using the globals set by premark::set().
     // Safe ONLY when called from a single thread. Prefer the explicit
     // destination overload from any worker thread.
-    inline void runAll(const template_io::BeatsFile& beats,
-        const template_io::TemplateFile& tmpl,
+    inline void runAll(const template_structs::BeatsFile& beats,
+        const template_structs::TemplateFile& tmpl,
         double ecgRate,
         const LeadPolarity& pol,
         const std::string& onnxModelPath = {})

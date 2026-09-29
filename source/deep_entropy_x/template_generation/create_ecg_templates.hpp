@@ -22,10 +22,9 @@
  */
 #pragma once
 
-#include "template_structs.hpp"
 #include "fiducial_marker_finding/alignment.hpp"
-#include "template_morphology_grouping/seed_pool.hpp"
-#include "template_morphology_grouping/morphology_csv.hpp"
+#include "template_generation/seed_pool.hpp"
+#include "template_generation/template_io.hpp"
 #include <chrono>
 #include <cstdio>
 #include <atomic>
@@ -37,9 +36,42 @@
 #include <omp.h>
 #endif
 
- // Beat-move log destination. Set once from main/post_process before the build
- // (read-only afterwards, and the writer runs single-threaded post-loop, so no
- // race). Empty dir/stem => no log.
+#include <array>
+#include <vector>
+#include <cstdint>
+
+
+struct EcgChannelResult {
+    std::vector<std::vector<double>> ecgTemplates_raw;
+    std::vector<std::vector<double>> ecgTemplates_raw_std;   // parallel to ecgTemplates_raw
+    std::vector<std::vector<double>> ecgTemplates_squared;
+    std::vector<std::vector<double>> ecgTemplates_absval;
+    std::vector<std::vector<double>> ecgTemplates_unfiltered;
+    std::vector<int> ref_index_raw;
+
+    std::vector<int> r_col_raw;
+    std::vector<int> r_col_squared;
+    std::vector<int> r_col_absval;
+    std::vector<int> r_col_unfiltered;
+
+    std::vector<size_t> n_beats_raw;//the viewer displays the number of beats contributing to template for each channel
+
+    std::vector<std::vector<std::vector<double>>> kept_beats_raw;
+    std::vector<std::vector<uint8_t>> kept_rhythm_raw;
+    std::vector<uint8_t> seed_basis_raw;
+    std::vector<std::vector<double>> tp_shift_raw;
+    std::vector<std::vector<double>> pq_shift_raw;
+};
+
+struct EcgTemplateResult {
+    EcgChannelResult ch1;
+    EcgChannelResult ch2;
+    EcgChannelResult ch3;
+    std::array<std::vector<std::vector<size_t>>, 3> kept_index;
+};
+// Beat-move log destination. Set once from main/post_process before the build
+// (read-only afterwards, and the writer runs single-threaded post-loop, so no
+// race). Empty dir/stem => no log.
 namespace ecg_move_log {
     inline std::string g_dir;
     inline std::string g_stem;

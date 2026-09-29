@@ -73,9 +73,9 @@
 #include <algorithm>
 #include <cstring>
 
-#include "template_generation\template_io.hpp"
+#include "template_generation\template_structs.hpp"
 #include "fiducial_marker_finding\feature_marks.hpp"
-#include "template_morphology_grouping\template_bank.hpp"
+#include "template_generation\template_bank.hpp"
 #include "fiducial_marker_finding\anchor_view.hpp"
 
 enum class MarkingsCsvSection { EcgOnly, PulseOnly, EcgAndPulse };
@@ -442,7 +442,7 @@ struct time_bin {
 // ---------------------------------------------------------------------------
 // Read: convert template_io::TemplateFile -> std::vector<TemplateBin>
 // ---------------------------------------------------------------------------
-inline std::vector<time_bin> binsFromTemplateFile(const template_io::TemplateFile& tf) {
+inline std::vector<time_bin> binsFromTemplateFile(const template_structs::TemplateFile& tf) {
     // EVERY ANCHOR, NOT ONE. This used to take an anchor and project that one
     // block into chN, which is what made a second alignment cost a template
     // regeneration and a window reload.
@@ -482,7 +482,7 @@ inline std::vector<time_bin> binsFromTemplateFile(const template_io::TemplateFil
 
         // chN is ALWAYS the R base: what the grid draws, and the frame every
         // other alignment's columns are translated into.
-        auto project = [](const template_io::ChannelMethodTemplate& c,
+        auto project = [](const template_structs::ChannelMethodTemplate& c,
             ChannelTemplateData& d) {
                 d.ecgTemplate_raw = c.ecgTemplate;
                 d.ecg_template_raw_iqr = c.ecg_template_std;
@@ -535,14 +535,11 @@ inline std::vector<time_bin> binsFromTemplateFile(const template_io::TemplateFil
     return bins;
 }
 
-// Path-taking wrapper, for callers that genuinely have a file: the standalone
-// template_marking tool, and a reload of a finished record. The anchor
-// parameter is vestigial -- nothing left to select -- and is kept only so
-// existing call sites compile.
-inline std::vector<time_bin> readTemplateInfoBin(const std::string& path,
-    AnchorType /*anchor*/ = AnchorType::R_PEAK) {
-    return binsFromTemplateFile(template_io::read_template_binfile(path));
-}
+// NO PATH-TAKING WRAPPER. readTemplateInfoBin read <stem>_bins.bin through
+// template_io::read_template_binfile and handed the result to
+// binsFromTemplateFile. That file is retired, so the only route to a
+// std::vector<time_bin> is binsFromTemplateFile on the TemplateFile the
+// pipeline already holds -- which is what loadSubject has always done.
 
 // ---------------------------------------------------------------------------
 // template_markings.bin layout -- BARS ONLY, POSITIONS AS FLOAT64:

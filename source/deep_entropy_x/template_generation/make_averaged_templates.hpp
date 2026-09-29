@@ -1,19 +1,16 @@
 /**
  * @file   make_averaged_templates.hpp
- * @brief  Orchestrate the full template generation pipeline.
- *         Port of GenerateTemplates.m
+ * @brief  Orchestrate the full temporal bin generation pipeline. Note: this is for temporally split bins rather than the morphologically split templates
  *
- *         Under Patch B, PPG (and arterial) templates are built by the
- *         same [R_i - pad, R_{i+1} + pad] slicer as the ECG templates,
+ *         PPG (and arterial) templates are built by the
+ *         same [R_i - pad, R_{i+1} + pad] slicer as the ECG bins,
  *         driven by ch1.raw R-peaks. They come out R-anchored by
  *         construction, so the old find_foot -> AlignWaves -> NaN-strip
  *         PPG alignment pipeline is gone; PPG per-sample std rides through
  *         directly.
  *
- *         Rates for every channel arrive via a SignalRates struct
- *         (defined in TemplateTypes.hpp). A rate of 0 means the channel is
- *         absent from this dataset -- the slicer silently produces empty
- *         templates for those.
+ *         A rate of 0 means the channel is absent from this dataset --
+ *         the slicer silently produces empty templates for those.
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -21,12 +18,12 @@
  */
 #pragma once
 
-#include "template_structs.hpp"
+#include "config_file_handling/config.hpp"
 #include "create_arterial_templates.hpp"
 #include "create_ecg_templates.hpp"
-#include "template_morphology_grouping/joint_bank.hpp"
-#include "template_morphology_grouping/morphology_csv.hpp"
-#include "template_morphology_grouping/nsvt_detect.hpp"
+#include "template_generation/joint_bank.hpp"
+#include "template_generation/template_io.hpp"
+#include "template_generation/nsvt_detect.hpp"
 #include "noise_marking_gui/annotation_types.hpp"
 
 #include "noise_marking_gui/user_annotation_handler.h"
@@ -40,6 +37,87 @@
 #include <memory>
 #include <string>
 #include <utility>
+
+
+ // ---------------------------------------------------------------------------
+ // THE PER-BIN ACCUMULATOR THIS FILE PRODUCES.
+ //
+ // ChannelTemplates and TemplateInfo were in template_structs.hpp. TemplateInfo
+ // is what GenerateTemplatesFast returns, one per bin; ChannelTemplates is a
+ // member of it and has no other user anywhere. Both now live beside the
+ // function that fills them.
+ //
+ // STRING-KEYED AND BEAT-BEARING, AND BOTH MATTER. kept_beats_by_channel,
+ // kept_rhythm_by_channel and bank_by_channel are std::map keyed on "CH1" /
+ // "CH2" / "CH3" / "PPG", and they carry the actual beat matrices -- so a
+ // TemplateInfo is large, and it DIES WITH THIS FILE'S FRAME. Everything that
+ // has to outlive the build goes through build_bins.hpp's packBin into
+ // template_io::BinTemplates, which is field-named and holds waveforms only.
+ // That boundary is the one morphology_csv::ChannelBlock's raw pointers cross,
+ // which is why the operator's confirmations need a separate read-modify-write
+ // pass rather than a second writeTemplatesBin call.
+ // ---------------------------------------------------------------------------
+
+ // Per-channel, per-method ECG template results
+struct ChannelTemplates {
+    std::vector<double> ecgTemplate_raw;
+    std::vector<double> ecg_template_raw_std;       // per-sample std of the beats
+    // contributing to ecgTemplate_raw.
+    // Same length as ecgTemplate_raw,
+    // or empty if not computed.
+    std::vector<double> ecgTemplate_squared;
+    std::vector<double> ecgTemplate_absval;
+    std::vector<double> ecgTemplate_unfiltered;
+    // True R column in the template (from alignment's r_aligned_col). This is
+    // the detected-R fiducial the template was built around -- used directly
+    // as the R marker, replacing the old avg_r_expand positioning constant.
+    int r_col_raw = -1;
+    int r_col_squared = -1;
+    int r_col_absval = -1;
+    int r_col_unfiltered = -1;
+    // Slice count fed to the raw-method median for this bin/channel.
+    // Only tracked for the raw method since that's what the viewer shows.
+    size_t n_beats_raw = 0;
+};
+
+struct TemplateInfo {
+    ChannelTemplates ch1;
+    ChannelTemplates ch2;
+    ChannelTemplates ch3;
+    std::vector<double> ppgTemplate;
+    std::vector<double> ppg_template_std;      // per-sample std of the beats
+    // contributing to ppgTemplate
+    // (post AlignWaves shift).
+    // Slice count that fed the PPG median (post drop rules).
+    size_t ppg_n_beats = 0;
+    // Deterministic PPG fiducials computed at construction from the real
+    // R-pair interval: peak = max in [R1,R2], foot = min in [R1,peak].
+    // -1 when no PPG for this bin.
+    int ppg_peak_col = -1;
+    // The pulse template's measured R column (PulseTemplateBin::rCol). -1 =
+    // unmeasurable, and then the channel has no R-relative time axis.
+    int ppg_r_col = -1;
+    int ppg_onset_col = -1;
+    // Surviving beats from ch1 raw method (each entry is one beat's
+    // samples, all of equal length, possibly with NaN tails). Only
+    // populated when capture_beats was requested for ch1 in
+    // CreateEcgTemplates.
+    std::vector<std::vector<double>> kept_beats_ch1_raw;
+    std::map<std::string, int> ref_index_by_channel;   // channel -> ref beat idx
+    // Retained per-channel beats for the snips CSV. Key is the channel label
+    // ("CH1"/"CH2"/"CH3"/"PPG"); value is [beat][sample] for this bin.
+    std::map<std::string, std::vector<std::vector<double>>> kept_beats_by_channel;
+    // Rhythm verdict per kept beat, parallel to kept_beats_by_channel[ch]:
+    // 0 = NORMAL, 1 = PVC (premature), 2 = VOTED_PVC (5-of-8 vote).
+    // Assigned in alignment.hpp after the slice and before any pruning, and
+    // carried here because it cannot be recomputed downstream: the R-peak
+    // vector and the kept-beat matrix stop corresponding the moment the Tukey
+    // passes run.
+    std::map<std::string, std::vector<uint8_t>> kept_rhythm_by_channel;
+    std::map<std::string, tbank::ChannelOutput> bank_by_channel;
+    jbank::BinBankOutput joint;
+    bool joint_valid = false;
+};
 
 
 namespace morphology_writer {

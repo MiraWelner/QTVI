@@ -44,7 +44,7 @@
 #include <string>
 #include <vector>
 
-#include "template_morphology_grouping/morphology_csv.hpp"
+#include "template_generation/template_io.hpp"
 #include "fiducial_marker_finding/feature_marks.hpp"
 #include "template_generation/normalize_template_amplitude.hpp"
 

@@ -324,9 +324,11 @@ const ppg_realign::BinBeats& TemplateViewerWindow::beatsForBin(int binIdx,
         }
     }
 
-    // FALLBACK: the file. Reachable from the path overload of loadSubject,
-    // which has no BeatsFile to be handed, and from a re-run where the archive
-    // from a previous pass is on disk.
+    // FALLBACK: the file. Reachable from a re-run where the archive from a
+    // previous pass is on disk. It also served the path overload of
+    // loadSubject, which had no BeatsFile to be handed; that overload went with
+    // <stem>_bins.bin, and this fallback did not, because a second pass over a
+    // finished record still finds <stem>_beats.bin where the first left it.
     const QString path = beatsBinPath();
     if (path.isEmpty()) return kNone;
 

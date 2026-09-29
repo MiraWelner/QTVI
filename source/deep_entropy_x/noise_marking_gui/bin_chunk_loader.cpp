@@ -46,7 +46,7 @@ namespace {
             return g;
         }
         if (rr.legacy)
-            std::fprintf(stderr, "[noise-markings] %s is old lecacy file\n", path.string().c_str());
+            std::fprintf(stderr, "[noise-markings] %s is old legacy file\n", path.string().c_str());
 
         for (std::size_t i = 0; i < rr.rows.size(); ++i) {
             const nm::Row& row = rr.rows[i];

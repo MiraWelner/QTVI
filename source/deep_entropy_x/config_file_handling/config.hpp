@@ -2,9 +2,36 @@
 /**
  * @file   config.hpp
  * @brief  config_entry is a struct containing all the rates, paths, lables, etc in the config.csv file.
+ *
+ *         SignalRates lives here too, because it is nothing but a projection of
+ *         config_entry: five upsample rates and the two morphology half-window
+ *         fractions, and no more than that. It was in template_structs.hpp,
+ *         which is a header of template-generation intermediates and has
+ *         nothing to do with either -- the generation stage was simply the only
+ *         consumer, so the type ended up filed under its consumer rather than
+ *         its source. config_entry::signalRates() is the one place it is built.
  */
 
 #include <string>
+
+ // Per-channel sample rates (Hz), threaded through the template-generation
+ // pipeline. Each channel is at its own rate; the slicer converts between them
+ // via the ratio channelRate / ecgRate. A rate of 0 means the channel is absent
+ // from this dataset (skip it).
+ //
+ // A PROJECTION, NOT A SUBSET OF THE CONFIG. The generation stage takes this
+ // rather than a config_entry on purpose: seven doubles it needs instead of a
+ // hundred fields it does not, so nothing down there can reach a path, a label
+ // or a filter cutoff.
+struct SignalRates {
+    double ecg = 0.0;
+    double ppg = 0.0;
+    double abp = 0.0;
+    double art = 0.0;
+    double artPulm = 0.0;
+    double morph_halfwin_ecg_pct_rr = 0.0;
+    double morph_halfwin_ppg_pct_rr = 0.0;
+};
 
 struct config_entry {
     //params set by the config.csv
@@ -125,4 +152,19 @@ struct config_entry {
     double height_cm = 0.0;
     double hr_rest = 0.0;
     double hr_max = 0.0;
+
+ 
+    SignalRates signalRates() const {
+        //the struct that carries all signal rates, as well as the regions around the peaks for which
+        //morphologies are split based on
+        SignalRates r;
+        r.ecg = ecg_upsample_rate;
+        r.ppg = ppg_upsample_rate;
+        r.abp = abp_upsample_rate;
+        r.art = art_upsample_rate;
+        r.artPulm = art_pulm_upsample_rate;
+        r.morph_halfwin_ecg_pct_rr = region_around_Rpeak_for_morphology_split;
+        r.morph_halfwin_ppg_pct_rr = region_around_PPGPeak_for_morphology_split;
+        return r;
+    }
 };

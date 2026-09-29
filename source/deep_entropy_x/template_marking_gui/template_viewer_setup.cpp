@@ -224,51 +224,11 @@ void TemplateViewerWindow::setTitleForSubject() {
 // Load subject
 // ========================================================================
 
-void TemplateViewerWindow::loadSubject(const QString& templatePath, const QString& markingPath,
-    const QString& subjectId, double sampleRateHz,
-    double ppgRateHz, double abpRateHz, double artRateHz, double artPulmRateHz,
-    double notchFilterHz) {
-
-    m_markingPath = markingPath;
-    m_templateDir = QFileInfo(templatePath).absolutePath();
-    m_subjectId = subjectId;
-    m_sampleRate = sampleRateHz;
-    m_ppgRateHz = ppgRateHz;
-    m_abpRateHz = abpRateHz;
-    m_artRateHz = artRateHz;
-    m_artPulmRateHz = artPulmRateHz;
-    m_notchFilterHz = notchFilterHz;
-    setTitleForSubject();
-    ui->subjectLabel->setText(subjectId);
-    // ONE PASS. The button used to read "Finish and Next" for three of four
-    // openings, each one regenerating templates and reloading the window on a
-    // different alignment.
-    ui->finishButton->setText("Finish");
-
-    try {
-        m_bins = readTemplateInfoBin(templatePath.toStdString());
-    }
-    catch (const std::exception& e) {
-        QMessageBox::critical(this, "Read error",
-            QString("Failed to read %1:\n\n%2").arg(templatePath, e.what()));
-        m_bins.clear();
-        emit finished();
-        return;
-    }
-
-    if (m_bins.empty()) {
-        QMessageBox::warning(this, "Error", "No bins loaded from " + templatePath);
-        emit finished();
-        return;
-    }
-
-    // ONE CALL, TWO ENTRY POINTS. Everything below used to be the back half
-    // of loadSubject, and it moved out when the in-memory overload arrived --
-    // rather than being copied into it, because the four-pass seeding loop is
-    // the ONE place all four alignments are detected and two copies of it
-    // would drift.
-    initAfterBinsLoaded();
-}
+// THE PATH OVERLOAD IS GONE. It existed to read <stem>_bins.bin through
+// readTemplateInfoBin, which is the only thing it did that the overload below
+// does not -- and that file is retired. Everything that was the back half of
+// both overloads already lives in initAfterBinsLoaded(), so nothing had to
+// move to delete this one.
 
 // ---------------------------------------------------------------------------
 // THE IN-MEMORY OVERLOAD
@@ -282,7 +242,7 @@ void TemplateViewerWindow::loadSubject(const QString& templatePath, const QStrin
 // and its remove+rename promote were papering over. templates.bin is now
 // written once, at the end of the anchor cycle, so its existence means
 // complete.
-void TemplateViewerWindow::loadSubject(const template_io::TemplateFile& tf,
+void TemplateViewerWindow::loadSubject(const template_structs::TemplateFile& tf,
     const QString& templateDir, const QString& markingPath,
     const QString& subjectId, double sampleRateHz,
     double ppgRateHz, double abpRateHz, double artRateHz, double artPulmRateHz,
