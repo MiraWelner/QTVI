@@ -243,7 +243,7 @@ namespace bank_reload {
                     : fresh.bins[rec.bin].ppg_bank;
                 const size_t sl = static_cast<size_t>(rec.template_id);
                 if (sl >= bank.templates.size()) continue;   // guarded by take[]
-                tbank::BankTemplate& tp = bank.templates[sl];
+                tbank::template_of_all_signals& tp = bank.templates[sl];
 
                 tp.members = blk.members[k];
                 tp.members_clean = blk.members_clean[k];

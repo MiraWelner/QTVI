@@ -172,7 +172,7 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis
 
     outBanks.clear();
     outBanks.reserve(viewer.bins().size());
-    for (const TemplateBin& b : viewer.bins()) {
+    for (const time_bin& b : viewer.bins()) {
         outBanks.push_back(analysis_job::BankSnapshot{ b.ecg_bank, b.ppg_bank });
     }
 }

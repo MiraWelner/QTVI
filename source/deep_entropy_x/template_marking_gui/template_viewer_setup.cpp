@@ -330,7 +330,7 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
     m_ppgBuilt.clear();
     m_ppgRealigned.clear();
 
-    for (TemplateBin& b : m_bins) b.polarity = m_polarity;
+    for (time_bin& b : m_bins) b.polarity = m_polarity;
 
     max_leads = 1;
     for (const auto& b : m_bins) {
@@ -341,7 +341,7 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
     buildPages();
     QGuiApplication::setOverrideCursor(Qt::WaitCursor);
     QtConcurrent::blockingMap(m_bins,
-        [this](TemplateBin& b) { seedOneBin(b); });
+        [this](time_bin& b) { seedOneBin(b); });
     QGuiApplication::restoreOverrideCursor();
     const QDir markingDir(m_markingPath);
     const QString canonical = markingDir.filePath(m_subjectId + "_template_markings.bin");
@@ -371,10 +371,10 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
     // bad_ppg == 1, unconditionally -- which is how slot 0's right-click
     // (the only one that could write bad_ppg) turned into an edit to every
     // other slot in the bin on the next load.
-    for (TemplateBin& b : m_bins) {
+    for (time_bin& b : m_bins) {
         for (int c = 0; c < 3; ++c) {
             if (!b.bad_r_ch[c]) continue;
-            for (tbank::BankTemplate& t : b.ecg_bank[c].templates) {
+            for (tbank::template_of_all_signals& t : b.ecg_bank[c].templates) {
                 // Already answered -- by the operator in this file (v4 carries
                 // the verdict per slot), or by a panel they reviewed and left
                 // Good. Either way not the seed's business.
@@ -385,7 +385,7 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
         }
         if (b.bad_ppg != 0) {
             const bool overridable = (b.bad_ppg == 1);
-            for (tbank::BankTemplate& t : b.ppg_bank.templates) {
+            for (tbank::template_of_all_signals& t : b.ppg_bank.templates) {
                 if (overridable && (t.confirmed() || t.badPulseMarked())) continue;
                 t.setBadPulse(true);
                 t.marked_invalid_template = true;
@@ -400,7 +400,7 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
 // happen in. Called concurrently, one bin per call, from initAfterBinsLoaded.
 // Reads this window's rates and fit modes and writes nothing but `b`, which is
 // what makes the concurrency safe -- see the note at the call site.
-void TemplateViewerWindow::seedOneBin(TemplateBin& b) const
+void TemplateViewerWindow::seedOneBin(time_bin& b) const
 {
     const std::array<ChannelTemplateData, 3> savedR = { b.ch1, b.ch2, b.ch3 };
 
@@ -430,7 +430,7 @@ void TemplateViewerWindow::seedOneBin(TemplateBin& b) const
     // so the slot-level *_auto columns exist whether or not a variant was ever
     // built. A variant that is built overwrites this with its own detection
     // (composePulseMarks). Before restoreMarkersFrom, so saved bars land on top.
-    for (tbank::BankTemplate& t : b.ppg_bank.templates) {
+    for (tbank::template_of_all_signals& t : b.ppg_bank.templates) {
         if (t.tmpl.empty()) continue;
         FeatureMarks::seed_pulse_bank_template(t.tmpl, m_ppgRateHz, t.pulse_marks);
     }
@@ -455,7 +455,7 @@ void TemplateViewerWindow::seedOneBin(TemplateBin& b) const
 bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bool ecg, bool pulse) {
     try {
         int savedAlignMode = 0, savedAlignPct = 0;
-        std::vector<TemplateBin> saved = readTemplateMarkingsBin(
+        std::vector<time_bin> saved = readTemplateMarkingsBin(
             markingsBinPath.toStdString(), &savedAlignMode, &savedAlignPct);
         if (saved.empty()) {
             fprintf(stderr, "[markers] NOT reloaded from %s -- file has 0 bins\n",
@@ -505,8 +505,8 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
             };
 
         for (size_t i = 0; i < n; ++i) {
-            TemplateBin& d = m_bins[i];
-            const TemplateBin& s = saved[i];
+            time_bin& d = m_bins[i];
+            const time_bin& s = saved[i];
             const size_t ppgLen = d.ppgTemplate.size();
             const size_t abpLen = d.abpTemplate.size();
             const size_t artLen = d.artTemplate.size();
@@ -620,8 +620,8 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                     const int nSaved = static_cast<int>(s.ppg_bank.templates.size());
                     const int nNow = static_cast<int>(d.ppg_bank.templates.size());
                     for (int slot = 0; slot < nSaved && slot < nNow; ++slot) {
-                        const tbank::BankTemplate& ss = s.ppg_bank.templates[slot];
-                        tbank::BankTemplate& ds = d.ppg_bank.templates[slot];
+                        const tbank::template_of_all_signals& ss = s.ppg_bank.templates[slot];
+                        tbank::template_of_all_signals& ds = d.ppg_bank.templates[slot];
 
                         // THIS SLOT'S OWN PULSE LENGTH. A saved column is only
                         // meaningful on the waveform it was placed on, and each

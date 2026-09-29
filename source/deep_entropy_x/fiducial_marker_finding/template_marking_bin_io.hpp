@@ -127,7 +127,7 @@ struct FinalBarKey {
     }
 };
 
-struct TemplateBin {
+struct time_bin {
     std::array<tbank::TemplateBank, 3> ecg_bank;
     tbank::TemplateBank ppg_bank;
 
@@ -442,11 +442,11 @@ struct TemplateBin {
 // ---------------------------------------------------------------------------
 // Read: convert template_io::TemplateFile -> std::vector<TemplateBin>
 // ---------------------------------------------------------------------------
-inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::TemplateFile& tf) {
+inline std::vector<time_bin> binsFromTemplateFile(const template_io::TemplateFile& tf) {
     // EVERY ANCHOR, NOT ONE. This used to take an anchor and project that one
     // block into chN, which is what made a second alignment cost a template
     // regeneration and a window reload.
-    std::vector<TemplateBin> bins(tf.bins.size());
+    std::vector<time_bin> bins(tf.bins.size());
     for (size_t i = 0; i < tf.bins.size(); ++i) {
         const auto& src = tf.bins[i];
         auto& dst = bins[i];
@@ -539,7 +539,7 @@ inline std::vector<TemplateBin> binsFromTemplateFile(const template_io::Template
 // template_marking tool, and a reload of a finished record. The anchor
 // parameter is vestigial -- nothing left to select -- and is kept only so
 // existing call sites compile.
-inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
+inline std::vector<time_bin> readTemplateInfoBin(const std::string& path,
     AnchorType /*anchor*/ = AnchorType::R_PEAK) {
     return binsFromTemplateFile(template_io::read_template_binfile(path));
 }
@@ -689,7 +689,7 @@ inline constexpr uint32_t kMarkVersion = 0u;
 // its three user fields blank, so an untouched landmark is never the detection
 // dressed up as a placement -- the reason bar seeding was removed from
 // applyBankTemplateToWidget in the first place.
-inline double userBar(const TemplateBin& b, int lead, int slot,
+inline double userBar(const time_bin& b, int lead, int slot,
     AnchorType anchor, int marker)
 {
     if (lead < 0 || lead > 2 || slot < 0) return -1.0;
@@ -829,8 +829,8 @@ inline bool pulseUserInVariant(const char* name, tbank::PulseAnchor v) {
 // idx is a POINTER TO DOUBLE now, matching the widened *_auto fields.
 struct PulseAutoGlyph {
     const char* name;
-    double TemplateBin::* idx;
-    bool TemplateBin::* found;
+    double time_bin::* idx;
+    bool time_bin::* found;
     const char* foundName;
 };
 // ---- LANDMARKS ON THE PULSE ITSELF ------------------------------------
@@ -840,10 +840,10 @@ struct PulseAutoGlyph {
 // the fourth -- the systolic apex -- is the auto half of a comparison the
 // operator makes by eye against the bars either side of it.
 inline constexpr PulseAutoGlyph ppg_and_artpulse_automated_markers[] = {
-    { "ppg_foot",          &TemplateBin::ppg_onset_auto,    nullptr,                                 nullptr },
-    { "ppg_systolic_peak", &TemplateBin::ppg_peak_auto,     nullptr,                                 nullptr },
-    { "ppg_dicr",          &TemplateBin::ppg_dicrotic_auto, &TemplateBin::ppg_dicrotic_found_auto,   "ppg_notch_found" },
-    { "ppg_end",           &TemplateBin::ppg_end_auto,      nullptr,                                 nullptr },
+    { "ppg_foot",          &time_bin::ppg_onset_auto,    nullptr,                                 nullptr },
+    { "ppg_systolic_peak", &time_bin::ppg_peak_auto,     nullptr,                                 nullptr },
+    { "ppg_dicr",          &time_bin::ppg_dicrotic_auto, &time_bin::ppg_dicrotic_found_auto,   "ppg_notch_found" },
+    { "ppg_end",           &time_bin::ppg_end_auto,      nullptr,                                 nullptr },
 };
 
 // ---- LANDMARKS ON THE DERIVATIVES ------------------------------------
@@ -857,17 +857,17 @@ inline constexpr PulseAutoGlyph ppg_and_artpulse_automated_markers[] = {
 // columns whose entire purpose is the auto-versus-user pairing, which is a
 // different kind of measurement and a different consumer.
 inline constexpr PulseAutoGlyph ppg_derivative_automated_markers[] = {
-    { "vpg_u",             &TemplateBin::ppg_u_auto,        nullptr,                                 nullptr },
-    { "vpg_v",             &TemplateBin::ppg_v_auto,        nullptr,                                 nullptr },
-    { "vpg_w",             &TemplateBin::ppg_w_auto,        nullptr,                                 nullptr },
-    { "apg_a",             &TemplateBin::ppg_a_auto,        nullptr,                                 nullptr },
-    { "apg_b",             &TemplateBin::ppg_b_auto,        nullptr,                                 nullptr },
-    { "apg_c",             &TemplateBin::ppg_c_auto,        nullptr,                                 nullptr },
-    { "apg_d",             &TemplateBin::ppg_d_auto,        nullptr,                                 nullptr },
-    { "apg_e",             &TemplateBin::ppg_e_auto,        nullptr,                                 nullptr },
-    { "apg_f",             &TemplateBin::ppg_f_auto,        nullptr,                                 nullptr },
-    { "jpg_p1",            &TemplateBin::ppg_p1_auto,       nullptr,                                 nullptr },
-    { "jpg_p2",            &TemplateBin::ppg_p2_auto,       nullptr,                                 nullptr },
+    { "vpg_u",             &time_bin::ppg_u_auto,        nullptr,                                 nullptr },
+    { "vpg_v",             &time_bin::ppg_v_auto,        nullptr,                                 nullptr },
+    { "vpg_w",             &time_bin::ppg_w_auto,        nullptr,                                 nullptr },
+    { "apg_a",             &time_bin::ppg_a_auto,        nullptr,                                 nullptr },
+    { "apg_b",             &time_bin::ppg_b_auto,        nullptr,                                 nullptr },
+    { "apg_c",             &time_bin::ppg_c_auto,        nullptr,                                 nullptr },
+    { "apg_d",             &time_bin::ppg_d_auto,        nullptr,                                 nullptr },
+    { "apg_e",             &time_bin::ppg_e_auto,        nullptr,                                 nullptr },
+    { "apg_f",             &time_bin::ppg_f_auto,        nullptr,                                 nullptr },
+    { "jpg_p1",            &time_bin::ppg_p1_auto,       nullptr,                                 nullptr },
+    { "jpg_p2",            &time_bin::ppg_p2_auto,       nullptr,                                 nullptr },
 };
 
 // ONE SOURCE FOR "DOES THIS TEMPLATE HAVE A PANEL ON SCREEN", shared by
@@ -881,7 +881,7 @@ inline constexpr PulseAutoGlyph ppg_derivative_automated_markers[] = {
 // miss, so a caller asking for P silently got R. Recomputing removes both the
 // staleness and the fallback. An absent alignment yields valid=false.
 inline FeatureMarks::TemplateLandmarks alignedLandmarks(
-    const TemplateBin& b, int lead, AnchorType a, double sampleRate,
+    const time_bin& b, int lead, AnchorType a, double sampleRate,
     curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
 {
@@ -976,7 +976,7 @@ struct SlotView {
     bool valid = false;
 };
 
-inline SlotView slotView(const TemplateBin& b, int lead, int slot, AnchorType a)
+inline SlotView slotView(const time_bin& b, int lead, int slot, AnchorType a)
 {
     SlotView v;
     if (lead < 0 || lead > 2 || slot < 0) return v;
@@ -1013,7 +1013,7 @@ inline SlotView slotView(const TemplateBin& b, int lead, int slot, AnchorType a)
 // An absent average returns a default TemplateLandmarks, i.e. valid == false,
 // which finalBarsFor reads as "no detection" and reports -1 for rather than a
 // position borrowed from another alignment.
-inline FeatureMarks::TemplateLandmarks detectBarsFor(const TemplateBin& b,
+inline FeatureMarks::TemplateLandmarks detectBarsFor(const time_bin& b,
     int lead, int slot, AnchorType a, double sampleRateHz,
     curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
@@ -1028,12 +1028,12 @@ inline FeatureMarks::TemplateLandmarks detectBarsFor(const TemplateBin& b,
 // Does this ECG channel exist: the raw per-channel template, the same test
 // leadsForBin uses for max_leads. NOT chFor(lead, anchor), which returns a
 // sized entry for all three channels under P/Q/J whether they hold data or not.
-inline bool ecgChannelPresent(const TemplateBin& b, int lead) {
+inline bool ecgChannelPresent(const time_bin& b, int lead) {
     if (lead < 0 || lead > 2) return false;
     return !b.chFor(lead, AnchorType::R_PEAK).ecgTemplate_raw.empty();
 }
 
-inline bool hasVisiblePanel(const TemplateBin& b, int lead, int slot,
+inline bool hasVisiblePanel(const time_bin& b, int lead, int slot,
     AnchorType gridAnchor)
 {
     // No fallbacks: a slot has a bank template with an average for this
@@ -1043,7 +1043,7 @@ inline bool hasVisiblePanel(const TemplateBin& b, int lead, int slot,
 
     const tbank::TemplateBank& bank = b.ecg_bank[lead];
     if (slot >= bank.size()) return false;
-    const tbank::BankTemplate& tp = bank.templates[slot];
+    const tbank::template_of_all_signals& tp = bank.templates[slot];
     if (tp.tmpl.empty()) return false;
     if (tp.tooFewBeats(/*is_ppg=*/false)) return false;
     // Every slot, including 0.
@@ -1056,7 +1056,7 @@ inline bool hasVisiblePanel(const TemplateBin& b, int lead, int slot,
     // few beats" would hide every ECG panel. tmpl.empty() tells an absent
     // channel from a thin one.
     if (slot < b.ppg_bank.size()) {
-        const tbank::BankTemplate& pp = b.ppg_bank.templates[slot];
+        const tbank::template_of_all_signals& pp = b.ppg_bank.templates[slot];
         if (!pp.tmpl.empty() && pp.tooFewBeats(/*is_ppg=*/true)) return false;
     }
 
@@ -1064,7 +1064,7 @@ inline bool hasVisiblePanel(const TemplateBin& b, int lead, int slot,
 }
 
 // The slots any channel draws, in slot order -- the column set for one bin.
-inline std::vector<int> visibleSlots(const TemplateBin& b, AnchorType gridAnchor)
+inline std::vector<int> visibleSlots(const time_bin& b, AnchorType gridAnchor)
 {
     std::vector<int> out;
     for (int slot = 0; slot < tbank::max_templates_per_bin * 4; ++slot)
@@ -1147,7 +1147,7 @@ inline EcgDetection ecgDetectOn(const std::vector<double>& tmpl, int r_col,
     return d;
 }
 
-inline EcgDetection ecgDetect(const TemplateBin& b, int lead, int slot,
+inline EcgDetection ecgDetect(const time_bin& b, int lead, int slot,
     AnchorType a, double sampleRate,
     curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
@@ -1186,7 +1186,7 @@ inline EcgDetection ecgDetect(const TemplateBin& b, int lead, int slot,
 // anchor)'s own detection -- the caller has it either way, because the _auto
 // columns are made of it -- so this function does no detecting and cannot
 // disagree with the auto half of the same row.
-inline tbank::BankMarkerSet finalBarsFor(const TemplateBin& b, int lead,
+inline tbank::BankMarkerSet finalBarsFor(const time_bin& b, int lead,
     int slot, AnchorType anchor,
     const FeatureMarks::TemplateLandmarks& detected)
 {
@@ -1223,7 +1223,7 @@ inline tbank::BankMarkerSet finalBarsFor(const TemplateBin& b, int lead,
 // dependency visible instead of letting the file silently describe a different
 // detector run from the CSV written beside it.
 inline void writeTemplateMarkingsBin(const std::string& path,
-    const std::vector<TemplateBin>& bins,
+    const std::vector<time_bin>& bins,
     double sampleRateHz,
     curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
@@ -1539,7 +1539,7 @@ inline EcgFiducials ecgFiducialsFrom(const EcgDetection& d, double sampleRate,
     return out;
 }
 
-inline EcgFiducials ecgFiducials(const TemplateBin& b, int lead, int slot,
+inline EcgFiducials ecgFiducials(const time_bin& b, int lead, int slot,
     AnchorType a, double sampleRate,
     curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
@@ -1554,7 +1554,7 @@ inline EcgFiducials ecgFiducials(const TemplateBin& b, int lead, int slot,
 // admissibility mask (it includes landmark_admissibility.hpp, which the viewer
 // cannot -- the graph would cycle), so the bars go through it; slotView still
 // supplies the trace and R column, so the inputs match ecgFiducials exactly.
-inline bool seedSlotBars(TemplateBin& b, int lead, int slot, AnchorType a,
+inline bool seedSlotBars(time_bin& b, int lead, int slot, AnchorType a,
     double sampleRate,
     curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
@@ -1592,7 +1592,7 @@ inline std::string bankSlotName(const tbank::TemplateBank& bank, int slot) {
 }
 
 inline void writeTemplateMarkingsCsv(std::ostream& f,
-    const std::vector<TemplateBin>& bins,
+    const std::vector<time_bin>& bins,
     const std::string& fileID,
     double sampleRateHz,
     AnchorType anchor,
@@ -1685,9 +1685,9 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     if (wantPulse) {
         // Pointer-to-member is double now; the foot/peak amplitudes are
         // interpolated rather than subscripted.
-        auto pulseRefAuto = [&](const std::vector<double> TemplateBin::* trace,
-            double TemplateBin::* footAuto,
-            double TemplateBin::* peakAuto,
+        auto pulseRefAuto = [&](const std::vector<double> time_bin::* trace,
+            double time_bin::* footAuto,
+            double time_bin::* peakAuto,
             bool checkPpgIssue) -> double
             {
                 std::vector<double> vals;
@@ -1706,10 +1706,10 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                 }
                 return medianFinite(std::move(vals));
             };
-        refPpg = pulseRefAuto(&TemplateBin::ppgTemplate, &TemplateBin::ppg_onset_auto, &TemplateBin::ppg_peak_auto, true);
-        refAbp = pulseRefAuto(&TemplateBin::abpTemplate, &TemplateBin::abp_onset_auto, &TemplateBin::abp_peak_auto, false);
-        refArt = pulseRefAuto(&TemplateBin::artTemplate, &TemplateBin::art_onset_auto, &TemplateBin::art_peak_auto, false);
-        refArtPulm = pulseRefAuto(&TemplateBin::artPulmTemplate, &TemplateBin::art_pulm_onset_auto, &TemplateBin::art_pulm_peak_auto, false);
+        refPpg = pulseRefAuto(&time_bin::ppgTemplate, &time_bin::ppg_onset_auto, &time_bin::ppg_peak_auto, true);
+        refAbp = pulseRefAuto(&time_bin::abpTemplate, &time_bin::abp_onset_auto, &time_bin::abp_peak_auto, false);
+        refArt = pulseRefAuto(&time_bin::artTemplate, &time_bin::art_onset_auto, &time_bin::art_peak_auto, false);
+        refArtPulm = pulseRefAuto(&time_bin::artPulmTemplate, &time_bin::art_pulm_onset_auto, &time_bin::art_pulm_peak_auto, false);
     }
 
     // ---- header ------------------------------------------------------------
@@ -2042,7 +2042,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             // lm below, so autoFor's value was never consulted -- it only
                             // supplied a struct, and with it the flat-field fallback that
                             // hands back R's positions for another alignment.
-                            TemplateBin::AnchorAuto aa{};
+                            time_bin::AnchorAuto aa{};
                             // HOISTED OUT OF THE if. finalBarsFor needs this
                             // block's detection as the fallback for an unmoved
                             // bar, and aa flattens it into six fields keyed by
@@ -2193,7 +2193,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                                 hasVisiblePanel(b, c, slot, anchor)
                                 ? b.bankSlotFor(c, slot, anchor) : nullptr;
                             const std::vector<double>& ecg = asl2 ? asl2->tmpl : kNoTrace;
-                            TemplateBin::AnchorAuto aa{};   // see the point block above
+                            time_bin::AnchorAuto aa{};   // see the point block above
                             if (asl2) {
                                 const int rSeed = static_cast<int>(
                                     std::lround(b.chFor(c, anchor).r_col_raw));
@@ -2355,7 +2355,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
 // ostream overload above is what the viewer uses, so a save can build each
 // alignment's part in memory instead of staging it through a temp file.
 inline void writeTemplateMarkingsCsv(const std::string& path,
-    const std::vector<TemplateBin>& bins,
+    const std::vector<time_bin>& bins,
     const std::string& fileID,
     double sampleRateHz,
     AnchorType anchor,
@@ -2388,7 +2388,7 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
 // The key stays at slot granularity so the join is one-to-one; a consumer
 // wanting one row per bin filters on its first slot.
 inline void writePpgDerivativeCsv(std::ostream& f,
-    const std::vector<TemplateBin>& bins,
+    const std::vector<time_bin>& bins,
     const std::string& fileID,
     double ppgRateHz)
 {
@@ -2406,7 +2406,7 @@ inline void writePpgDerivativeCsv(std::ostream& f,
     // pulse's. A derivative amplitude would need its own units column and its
     // own scaling to mean anything.
 
-    for (const TemplateBin& b : bins) {
+    for (const time_bin& b : bins) {
         for (int c = 0; c < 3; ++c) {
             static const char* kChan[3] = { "CH1", "CH2", "CH3" };
             for (int slot = 0; slot < tbank::max_templates_per_bin * 4; ++slot) {
@@ -2438,7 +2438,7 @@ inline void writePpgDerivativeCsv(std::ostream& f,
 
 // Path-taking wrapper, as the markings CSV has.
 inline void writePpgDerivativeCsv(const std::string& path,
-    const std::vector<TemplateBin>& bins,
+    const std::vector<time_bin>& bins,
     const std::string& fileID,
     double ppgRateHz)
 {
@@ -2450,7 +2450,7 @@ inline void writePpgDerivativeCsv(const std::string& path,
         throw std::runtime_error("failed writing " + path);
 }
 
-inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path,
+inline std::vector<time_bin> readTemplateMarkingsBin(const std::string& path,
     int* outAlignMode = nullptr, int* outAlignPercent = nullptr) {
     std::ifstream f(path, std::ios::binary);
     if (!f.is_open())
@@ -2490,7 +2490,7 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path,
     if (outAlignMode)    *outAlignMode = alignMode;
     if (outAlignPercent) *outAlignPercent = alignPct;
 
-    std::vector<TemplateBin> bins(n);
+    std::vector<time_bin> bins(n);
     for (uint64_t i = 0; i < n; ++i) {
         auto& b = bins[i];
         f.read(reinterpret_cast<char*>(&b.index), 8);

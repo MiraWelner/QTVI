@@ -344,7 +344,7 @@ namespace tbank {
         bool ok() const { return built && !tmpl.empty(); }
     };
 
-    struct BankTemplate {
+    struct template_of_all_signals {
         // Column-wise NaN-skipping median over members, on the bin's shared
         // axis. Recomputed whenever membership changes (design note 3).
         std::vector<double> tmpl;
@@ -556,7 +556,7 @@ namespace tbank {
     // ---------------------------------------------------------------------
 
     struct TemplateBank {
-        std::vector<BankTemplate> templates;
+        std::vector<template_of_all_signals> templates;
 
 
         int32_t configured_cap = max_templates_per_bin;
@@ -660,7 +660,7 @@ namespace tbank {
         auto label = [&](TemplateBank& bk, int32_t* which, int32_t* sub,
             int* relabeled) {
                 if (slot >= bk.size()) return;
-                BankTemplate& t = bk.templates[slot];
+                template_of_all_signals& t = bk.templates[slot];
                 // Subtype is issued once and then immutable: a re-confirmation,
                 // or a confirmation of another beat in an already-labeled
                 // template, must not mint a second index for one class.
@@ -696,7 +696,7 @@ namespace tbank {
         std::vector<uint8_t> letter(n, 0);
         int rank = 0;
         for (int i : order) {
-            const BankTemplate& t = bank.templates[i];
+            const template_of_all_signals& t = bank.templates[i];
             const int idx = (t.label_code != kUnlabeled && t.subtype > 0)
                 ? t.subtype - 1 : rank;
             letter[i] = static_cast<uint8_t>(idx % 26);
@@ -778,7 +778,7 @@ namespace tbank {
         }
     };
     inline BandResult bandMatch(const std::vector<double>& beat,
-        const BankTemplate& t)
+        const template_of_all_signals& t)
     {
         BandResult out;
         if (t.tmpl.empty()) return out;
@@ -800,7 +800,7 @@ namespace tbank {
         return out;
     }
 
-    inline void recomputeTemplate(BankTemplate& t,
+    inline void recomputeTemplate(template_of_all_signals& t,
         const std::vector<std::vector<double>>& beats,
         int width,
         const std::vector<double>* floor_corridor = nullptr)

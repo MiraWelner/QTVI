@@ -312,7 +312,7 @@ namespace vcg_avg {
 
     /// Build the loop from a bin's three channel templates, on the shared
     /// R-relative axis (each channel read at its OWN r_col + offset).
-    inline Loop loopFromTemplates(const TemplateBin& b, int pre, int post,
+    inline Loop loopFromTemplates(const time_bin& b, int pre, int post,
         const vcg::VcgMatrix& mat = vcg::kIdentity) {
         Loop out;
         out.firstOffset = -pre;
@@ -359,7 +359,7 @@ namespace vcg_avg {
      *                 rPeakSample argument. Optional.
      * @return Empty when a channel or an R column is missing.
      */
-    inline std::vector<double> derivedTraceOnChannelAxis(const TemplateBin& b,
+    inline std::vector<double> derivedTraceOnChannelAxis(const time_bin& b,
         int refCh, vcg::DerivedLead which,
         const vcg::VcgMatrix& mat = vcg::kIdentity,
         double* outRCol = nullptr) {
@@ -437,7 +437,7 @@ namespace vcg_avg {
 
     /// One call for the save path: template loop -> features. `marginSamples`
     /// widens the window past the measured QT so the T loop cannot be clipped.
-    inline BinFeatures analyzeBinFromTemplates(int binIndex, const TemplateBin& b,
+    inline BinFeatures analyzeBinFromTemplates(int binIndex, const time_bin& b,
         const global_intervals::GlobalIntervals& g,
         double fs, int marginSamples = 10,
         const vcg::VcgMatrix& mat = vcg::kIdentity) {

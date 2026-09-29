@@ -1055,7 +1055,7 @@ double FeatureMarks::detect_ppg_peak2(const std::vector<double>& v, int sysPeak,
     return steepest_slope_in(v, lo, hi);
 }
 
-void FeatureMarks::seed_all(TemplateBin& b, double sampleRate, double ppgRate, AnchorType anchor,
+void FeatureMarks::seed_all(time_bin& b, double sampleRate, double ppgRate, AnchorType anchor,
     const LeadPolarity& pol, double heightMeters,
     curve_fit::FitMode fitMode, curve_fit::PeakFitMode peakMode) {
     // Per-anchor ECG user markers are seeded into this anchor's set.

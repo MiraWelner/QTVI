@@ -75,7 +75,7 @@ std::vector<double> TemplateViewerWindow::maybeNotchTrace(
 // bin's ppg_onset: the waveform here is this slot's median, and the bin field
 // was measured on b.ppgTemplate -- a different pulse. The band is scaled about
 // the same foot, so trace and band cannot disagree about where the baseline is.
-bool TemplateViewerWindow::pulseTraceForSlot(tbank::BankTemplate& slot,
+bool TemplateViewerWindow::pulseTraceForSlot(tbank::template_of_all_signals& slot,
     std::vector<double>& outTrace,
     std::vector<double>& outIqr,
     double& outFootIdx)
@@ -134,7 +134,7 @@ bool TemplateViewerWindow::pulseTraceForSlot(tbank::BankTemplate& slot,
 // footY_i was read from: the spread there is zero by construction and SHOULD
 // be. The build has the same property at each beat's own foot; a shared column
 // simply puts it in one place, where it can be read.
-static void adoptPulsePair(tbank::BankTemplate& slot,
+static void adoptPulsePair(tbank::template_of_all_signals& slot,
     std::vector<double> tmpl, std::vector<double> iqr)
 {
     const std::size_t keep = slot.tmpl.size();
@@ -255,7 +255,7 @@ void TemplateViewerWindow::onMarkerReleasedOnTemplate(int binIdx, int leadIdx,
 
     QGuiApplication::setOverrideCursor(Qt::WaitCursor);
     for (const std::pair<int, int>& pc : alsoPulse) {
-        const TemplateBin& tb = m_bins[pc.first];
+        const time_bin& tb = m_bins[pc.first];
         if (pc.second >= (int)tb.ppg_bank.size()) continue;
         // THE PROPAGATED COLUMN'S OWN BAR, which movePpgMarker wrote during
         // the drag -- so each column re-levels on the column Move-Subsequent
@@ -364,7 +364,7 @@ const std::vector<double>& TemplateViewerWindow::ppgAsBuiltTmpl(
 {
     static const std::vector<double> kEmpty;
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return kEmpty;
-    const TemplateBin& b = m_bins[binIdx];
+    const time_bin& b = m_bins[binIdx];
     if (templateIdx < 0 || templateIdx >= (int)b.ppg_bank.size()) return kEmpty;
 
     // THE STASH WHEN THERE IS ONE. stashBuiltPulse keeps the FIRST overwrite
@@ -389,7 +389,7 @@ tbank::PulseAnchor TemplateViewerWindow::pulseVariantForMarker(int marker)
 // A variant that has not been built contributes nothing rather than -1, so a
 // half-built slot keeps whatever it already had on screen instead of losing
 // its bars.
-void TemplateViewerWindow::composePulseMarks(tbank::BankTemplate& slot)
+void TemplateViewerWindow::composePulseMarks(tbank::template_of_all_signals& slot)
 {
     const tbank::PulseVariant& F =
         slot.pulseVariant(tbank::PulseAnchor::Foot);
@@ -417,9 +417,9 @@ bool TemplateViewerWindow::buildPulseVariant(int binIdx, int templateIdx,
     tbank::PulseAnchor v, double pct, bool announce)
 {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return false;
-    TemplateBin& b = m_bins[binIdx];
+    time_bin& b = m_bins[binIdx];
     if (templateIdx < 0 || templateIdx >= (int)b.ppg_bank.size()) return false;
-    tbank::BankTemplate& slot = b.ppg_bank.templates[templateIdx];
+    tbank::template_of_all_signals& slot = b.ppg_bank.templates[templateIdx];
     if (slot.tmpl.empty()) return false;
 
     // members_clean when it exists -- the set the build averaged. Re-averaging
@@ -441,11 +441,19 @@ bool TemplateViewerWindow::buildPulseVariant(int binIdx, int templateIdx,
     //
     // Neither is slot.pulse_marks.onset. That field is re-detected per variant
     // and reading it here is what made the old path iterate on its own output.
-    // THE STORED BAR, for both variants. Re-detecting it each session landed
-    // it a sample out on the waveform bank_reload had restored, which moved
+    // FOOT TAKES THE STORED BAR. Re-detecting it each session landed it a
+    // sample out on the waveform bank_reload had restored, which moved
     // relevelAtOwnCrossing's search window, which moved out.baseline, which
     // offset every column of the result.
-    const double hint = slot.pulse_marks.onset;
+    //
+    // PEAK DOES NOT, and must not: pulse_marks.onset is written by
+    // composePulseMarks out of the Foot variant, so reading it here makes this
+    // variant depend on whether Foot was built first. ppgAsBuiltTmpl is a pure
+    // function of an array nothing mutates.
+    const double hint = (v == tbank::PulseAnchor::Foot)
+        ? slot.pulse_marks.onset
+        : static_cast<double>(FeatureMarks::detect_ppg_onset(
+            ppgAsBuiltTmpl(binIdx, templateIdx)));
     if (!(hint >= 0.0)) return false;
 
     // Peak is 100 by definition. Foot takes the height already resolved for
@@ -519,9 +527,9 @@ bool TemplateViewerWindow::showPulseVariant(int binIdx, int templateIdx,
     tbank::PulseAnchor v, bool announce)
 {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return false;
-    TemplateBin& b = m_bins[binIdx];
+    time_bin& b = m_bins[binIdx];
     if (templateIdx < 0 || templateIdx >= (int)b.ppg_bank.size()) return false;
-    tbank::BankTemplate& slot = b.ppg_bank.templates[templateIdx];
+    tbank::template_of_all_signals& slot = b.ppg_bank.templates[templateIdx];
 
     if (!slot.pulseVariant(v).built)
         buildPulseVariant(binIdx, templateIdx, v, percentage_for_aligning(), announce);
@@ -540,7 +548,7 @@ bool TemplateViewerWindow::showPulseVariant(int binIdx, int templateIdx,
 }
 
 void TemplateViewerWindow::stashBuiltPulse(int binIdx, int templateIdx,
-    const tbank::BankTemplate& slot)
+    const tbank::template_of_all_signals& slot)
 {
     const int key = slotKey(binIdx, templateIdx);
     if (m_ppgBuilt.count(key)) return;   // FIRST overwrite only
@@ -557,13 +565,13 @@ void TemplateViewerWindow::stashBuiltPulse(int binIdx, int templateIdx,
 bool TemplateViewerWindow::restorePulseAsBuilt(int binIdx, int templateIdx)
 {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return false;
-    TemplateBin& b = m_bins[binIdx];
+    time_bin& b = m_bins[binIdx];
     if (templateIdx < 0 || templateIdx >= (int)b.ppg_bank.size()) return false;
 
     const auto it = m_ppgBuilt.find(slotKey(binIdx, templateIdx));
     if (it == m_ppgBuilt.end()) return false;   // never re-stacked: nothing to undo
 
-    tbank::BankTemplate& slot = b.ppg_bank.templates[templateIdx];
+    tbank::template_of_all_signals& slot = b.ppg_bank.templates[templateIdx];
     slot.tmpl = it->second.first;
     slot.tmpl_std = it->second.second;
     // The corridor is dropped on the way out of a re-stack and is not part of
@@ -586,9 +594,9 @@ void TemplateViewerWindow::pushPulseToPanels(int binIdx, int templateIdx,
     bool alsoFocus)
 {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
-    TemplateBin& b = m_bins[binIdx];
+    time_bin& b = m_bins[binIdx];
     if (templateIdx < 0 || templateIdx >= (int)b.ppg_bank.size()) return;
-    tbank::BankTemplate& slot = b.ppg_bank.templates[templateIdx];
+    tbank::template_of_all_signals& slot = b.ppg_bank.templates[templateIdx];
 
     std::vector<double> trace, iqr;
     double footIdx = -1.0;
@@ -634,7 +642,7 @@ void TemplateViewerWindow::pushPulseToPanels(int binIdx, int templateIdx,
 }
 
 int TemplateViewerWindow::which_alignment_fiducial_marker_should_auto_use(int binIdx, int templateIdx,
-    const tbank::BankTemplate& slot, double footCol) const
+    const tbank::template_of_all_signals& slot, double footCol) const
 {
     const auto it = m_ppgBuilt.find(slotKey(binIdx, templateIdx));
     const std::vector<double>& iqr = (it != m_ppgBuilt.end())
@@ -692,9 +700,9 @@ void TemplateViewerWindow::realignAllVisiblePulses()
         const int slotIdx = m_pageTemplateIdx[li];
         if (gi < 0 || gi >= (int)m_bins.size() || slotIdx < 0) continue;
 
-        TemplateBin& b = m_bins[gi];
+        time_bin& b = m_bins[gi];
         if (slotIdx >= (int)b.ppg_bank.size()) continue;
-        tbank::BankTemplate& slot = b.ppg_bank.templates[slotIdx];
+        tbank::template_of_all_signals& slot = b.ppg_bank.templates[slotIdx];
         if (slot.tmpl.empty()) continue;
         // This column's own verdict: a column already called bad is left as it
         // is. The bin-level flag reaches these bits through the load seed.
@@ -774,7 +782,7 @@ bool TemplateViewerWindow::relevelPulseAtFoot(int binIdx, int templateIdx,
     double footCol, bool announce)
 {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return false;
-    TemplateBin& b = m_bins[binIdx];
+    time_bin& b = m_bins[binIdx];
     if (templateIdx < 0 || templateIdx >= (int)b.ppg_bank.size()) return false;
     if (b.ppg_bank.templates[templateIdx].tmpl.empty()) return false;
     if (!(footCol >= 0.0)) return false;

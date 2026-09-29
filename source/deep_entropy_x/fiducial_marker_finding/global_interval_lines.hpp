@@ -53,7 +53,7 @@ namespace global_interval_lines {
     inline QColor offsetColor() { return QColor(150, 90, 190); }
 
     /// That channel's own R column, sub-sample where available. -1 if absent.
-    inline double rColumnFor(const TemplateBin& b, int ch) {
+    inline double rColumnFor(const time_bin& b, int ch) {
         if (ch < 0 || ch >= 3) return -1.0;
         return (b.r_peak_auto_ch[ch] >= 0.0) ? b.r_peak_auto_ch[ch]
             : static_cast<double>(b.r_peak_ch[ch]);
@@ -67,7 +67,7 @@ namespace global_interval_lines {
      *         offset in this channel's columns, and a line drawn at the raw
      *         offset would land near sample 0 and look like a real boundary.
      */
-    inline std::vector<Line> forChannel(const TemplateBin& b,  const global_intervals::GlobalIntervals& g, int ch) {
+    inline std::vector<Line> forChannel(const time_bin& b,  const global_intervals::GlobalIntervals& g, int ch) {
         //creates the dotted line boundries representing the min onset and max offset of QRS for once plot box
         std::vector<Line> out;
         if (!g.valid) return out;

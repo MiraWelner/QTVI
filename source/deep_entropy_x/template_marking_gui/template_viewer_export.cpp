@@ -9,11 +9,6 @@
 
 
 void TemplateViewerWindow::compute_global_refs() {
-    /*compute the ecg global reference value for QRS complex height(abs(R) + abs(S))) and pulse global ref for
-    PPG / ART / ART_PULM(abs(peak) - abs(foot))*/
-    for (int c = 0; c < 3; ++c) {
-        m_ecgGlobalRef[c] = normalize_features::compute_ecg_global_ref(m_bins, c, m_sampleRate);
-    }
     for (int c = 0; c < 4; ++c) {
         m_pulseGlobalRef[c] = normalize_features::compute_pulse_global_ref(m_bins, c);
     }
@@ -68,8 +63,8 @@ void TemplateViewerWindow::writeNormalizationCsvs() {
                 "global_ref_A,global_ref_B,global_ref_C,cv_flag\n";
             for (int ch = 0; ch < 3; ++ch) {
                 const std::vector<double> qref = perBinQrsRef(ch);
-                const double grefA = normalize_features::compute_ecg_global_ref(m_bins, ch, m_sampleRate);
-                const double grefB = normalize_features::compute_ecg_global_ref_area(m_bins, ch, m_sampleRate);
+                const double grefA = normalize_features::compute_ecg_global_ref(m_bins, ch, 0, m_sampleRate);
+                const double grefB = normalize_features::compute_ecg_global_ref_area(m_bins, ch, 0, m_sampleRate);
                 const double grefC = normalize_features::compute_ecg_global_ref_spatial(m_bins);
                 const bool flag = normalize_features::cv_flag(qref, grefA);
                 for (size_t i = 0; i < qref.size(); ++i) {
@@ -132,9 +127,14 @@ void TemplateViewerWindow::writeNormalizationCsvs() {
     }
 }
 
-std::vector<double> TemplateViewerWindow::normalizeEcgTrace(const std::vector<double>& raw, int ch) const {
-    const double ref = (ch >= 0 && ch < 3) ? m_ecgGlobalRef[ch] : std::nan("");
-    return normalize_features::normalize_ecg_trace(raw, ref);
+double TemplateViewerWindow::ecgRefFor(const time_bin& b, int ch, int slot) const {
+    if (ch < 0 || ch >= 3) return std::nan("");
+    return normalize_features::slot_rs_peak(b, ch, slot, m_sampleRate);
+}
+
+std::vector<double> TemplateViewerWindow::normalizeEcgTrace(const std::vector<double>& raw,
+    const time_bin& b, int ch, int slot) const {
+    return normalize_features::normalize_ecg_trace(raw, ecgRefFor(b, ch, slot));
 }
 
 std::vector<double> TemplateViewerWindow::normalize_ppg_or_similar(const std::vector<double>& raw, double footIdx, int pulseChan) const {
@@ -281,7 +281,7 @@ void TemplateViewerWindow::primeExportLandmarks()
 
     const double fs = m_sampleRate;
     QtConcurrent::blockingMap(idx, [this, fs](std::size_t bi) {
-        const TemplateBin& bin = m_bins[bi];
+        const time_bin& bin = m_bins[bi];
         for (std::size_t s = 0; s < anchor_view::anchor_array.size(); ++s) {
             const AnchorType a = anchor_view::anchor_array[s];
             for (int c = 0; c < 3; ++c)
@@ -341,7 +341,7 @@ void TemplateViewerWindow::writeLandmarkFitsCsv(const std::string& dir) {
         };
 
     for (size_t bi = 0; bi < m_bins.size(); ++bi) {
-        const TemplateBin& b = m_bins[bi];
+        const time_bin& b = m_bins[bi];
         for (int c = 0; c < 3; ++c) {
             const std::vector<double>& ecg = b.chFor(c, AnchorType::R_PEAK).ecgTemplate_raw;
             if (ecg.empty()) continue;
@@ -522,7 +522,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
 
     // ---- Row loop ----------------------------------------------------------
     for (size_t bi = 0; bi < m_bins.size(); ++bi) {
-        const TemplateBin& b = m_bins[bi];
+        const time_bin& b = m_bins[bi];
 
         // One description per value column, in CHANS order. The seven channels
         // differ only in which normalizer they take and which global reference
@@ -535,7 +535,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             double ref;      ///< global reference for this channel's scaling
             int    idx;      ///< channel index handed to the normalizer
             bool   isEcg;    ///< selects the normalizer
-            // SUB-SAMPLE, matching TemplateBin's widened pulse fields and
+            // SUB-SAMPLE, matching time_bin's widened pulse fields and
             // normalize_ppg_or_similar's own `double footIdx` parameter. An
             // int here is a narrowing conversion in brace init, which is an
             // error, not a warning -- one per pulse row below.
@@ -546,9 +546,11 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // that alignment's own averages -- which is what makes the merged
             // <id>_template.csv four aligned views of the same subject rather
             // than four copies of one.
-            { &b.chFor(0, anchor).ecgTemplate_raw, &b.chFor(0, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[0],   0, true,  0.0 },
-            { &b.chFor(1, anchor).ecgTemplate_raw, &b.chFor(1, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[1],   1, true,  0.0 },
-            { &b.chFor(2, anchor).ecgTemplate_raw, &b.chFor(2, anchor).ecg_template_raw_iqr, m_ecgGlobalRef[2],   2, true,  0.0 },
+            // Slot 0's reference for the bin-level traces: chFor() is the
+            // whole bin's average and has no slot of its own.
+            { &b.chFor(0, anchor).ecgTemplate_raw, &b.chFor(0, anchor).ecg_template_raw_iqr, ecgRefFor(b, 0, 0),   0, true,  0.0 },
+            { &b.chFor(1, anchor).ecgTemplate_raw, &b.chFor(1, anchor).ecg_template_raw_iqr, ecgRefFor(b, 1, 0),   1, true,  0.0 },
+            { &b.chFor(2, anchor).ecgTemplate_raw, &b.chFor(2, anchor).ecg_template_raw_iqr, ecgRefFor(b, 2, 0),   2, true,  0.0 },
             { &b.ppgTemplate,         &b.ppg_template_std,         m_pulseGlobalRef[0], 0, false, b.ppg_onset },
             { &b.abpTemplate,         &b.abp_template_std,          m_pulseGlobalRef[1], 1, false, b.abp_onset },
             { &b.artTemplate,         &b.art_template_std,          m_pulseGlobalRef[2], 2, false, b.art_onset },
@@ -558,7 +560,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
         std::vector<double> norm[num_chans], normIqr[num_chans];
         for (int k = 0; k < num_chans; ++k) {
             norm[k] = src[k].isEcg
-                ? normalizeEcgTrace(*src[k].raw, src[k].idx)
+                ? normalizeEcgTrace(*src[k].raw, b, src[k].idx, 0)
                 : normalize_ppg_or_similar(*src[k].raw, src[k].onset, src[k].idx);
             normIqr[k] = normalize_features::scale_array_by_ref(*src[k].rawIqr, src[k].ref);
         }
@@ -697,7 +699,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             (double)b.ppg_dicrotic_auto, (double)b.ppg_peak2_auto, rxPpgAuto.t80,
             (double)b.ppg_end_auto };
         // ALL DOUBLE. The (double) casts on the pulse bars are gone with
-        // TemplateBin's int fields, and the arterial arrays were narrowing
+        // time_bin's int fields, and the arterial arrays were narrowing
         // fifteen sub-sample positions apiece.
         const double ppgUser[kNumPpgMarkers] = {
             b.ppg_onset, rxPpgUser.t50, b.ppg_peak,
@@ -815,7 +817,7 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
     // auto-detected position (glyph field) for a landmark on a lead. The
     // *_auto_ch fields are double (sub-sample); rounded here since this seeds
     // an integer segment window.
-    auto autoPosOf = [](const TemplateBin& tb, Landmark lm, int lead) -> int {
+    auto autoPosOf = [](const time_bin& tb, Landmark lm, int lead) -> int {
         switch (lm) {
         case Landmark::Q_ONSET:  return (int)std::lround(tb.q_onset_auto_ch[lead]);
         case Landmark::J_POINT:  return (int)std::lround(tb.s_end_auto_ch[lead]);   // J-point == S-end field
@@ -843,7 +845,7 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
     constexpr double kPreRFrac = alignment::percent_interval_preceeding_rpeak;
 
     for (int i = 0; i < (int)m_bins.size(); ++i) {
-        const TemplateBin& b = m_bins[i];
+        const time_bin& b = m_bins[i];
         const std::vector<double>* chs[3] = {
             &b.ch1.ecgTemplate_raw, &b.ch2.ecgTemplate_raw, &b.ch3.ecgTemplate_raw };
         const int rcol[3] = { b.ch1.r_col_raw, b.ch2.r_col_raw, b.ch3.r_col_raw };
@@ -1101,12 +1103,12 @@ void TemplateViewerWindow::save_bin_and_csv() {
             cf << "file_id,bin,channel,template,state,n_members\n";
             static const char* kChan[4] = { "CH1", "CH2", "CH3", "PPG" };
             for (size_t i = 0; i < m_bins.size(); ++i) {
-                const TemplateBin& b = m_bins[i];
+                const time_bin& b = m_bins[i];
                 for (int c = 0; c < 4; ++c) {
                     const tbank::TemplateBank& bk =
                         (c < 3) ? b.ecg_bank[c] : b.ppg_bank;
                     for (int t = 0; t < bk.size(); ++t) {
-                        const tbank::BankTemplate& tp = bk.templates[t];
+                        const tbank::template_of_all_signals& tp = bk.templates[t];
                         // CROSSED-OUT IS TESTED FIRST. You have to view a
                         // template to cross it out, so both flags are set
                         // and the rejection is the later and more specific

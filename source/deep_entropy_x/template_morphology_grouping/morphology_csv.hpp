@@ -65,7 +65,7 @@ namespace morphology_csv {
             return tbank::letterRanks(bank);
         }
 
-        inline std::string templateName(const tbank::BankTemplate& t,
+        inline std::string templateName(const tbank::template_of_all_signals& t,
             int letter_rank = -1) {
             std::string cls = "PQRST";
             int letterIdx = -1;
@@ -98,19 +98,19 @@ namespace morphology_csv {
             default:                          return "no";
             }
         }
-        inline std::string prematurePctAgg(const tbank::BankTemplate& t) {
+        inline std::string prematurePctAgg(const tbank::template_of_all_signals& t) {
             const uint32_t n = (uint32_t)t.members.size();
             if (n == 0) return "na";
             char b[16]; std::snprintf(b, sizeof b, "%.1f",
                 100.0 * double(t.n_premature_members) / double(n)); return b;
         }
-        inline std::string votedPctAgg(const tbank::BankTemplate& t) {
+        inline std::string votedPctAgg(const tbank::template_of_all_signals& t) {
             const uint32_t n = (uint32_t)t.members.size();
             if (n == 0) return "na";
             char b[16]; std::snprintf(b, sizeof b, "%.1f",
                 100.0 * double(t.n_voted_members) / double(n)); return b;
         }
-        inline std::string tukeyPctAgg(const tbank::BankTemplate& t) {
+        inline std::string tukeyPctAgg(const tbank::template_of_all_signals& t) {
             const int32_t n = (int32_t)t.members.size();
             const int32_t flagged = t.n_premature_members + t.n_voted_members;
             const int32_t elig = (n > flagged) ? (n - flagged) : 0;
@@ -118,7 +118,7 @@ namespace morphology_csv {
             char b[16]; std::snprintf(b, sizeof b, "%.1f",
                 100.0 * double(t.n_tukey_members) / double(elig)); return b;
         }
-        inline std::string blendPctAgg(const tbank::BankTemplate& t) {
+        inline std::string blendPctAgg(const tbank::template_of_all_signals& t) {
             const uint32_t n = (uint32_t)t.members.size();
             if (n == 0) return "na";
             char b[16]; std::snprintf(b, sizeof b, "%.1f",
@@ -126,7 +126,7 @@ namespace morphology_csv {
         }
 
         // Instantaneous rate implied by this template's member R-R intervals.
-        inline std::string bpmPerTemplate(const tbank::BankTemplate& t) {
+        inline std::string bpmPerTemplate(const tbank::template_of_all_signals& t) {
             if (t.mean_rr_ms <= 0.0) return "na";
             char b[16]; std::snprintf(b, sizeof b, "%.1f", 60000.0 / t.mean_rr_ms);
             return b;
@@ -425,7 +425,7 @@ namespace morphology_csv {
         // runs, and in perfect bigeminy exactly 4 of any 8 beats are ectopic so
         // the vote never reaches 5 at all. A template reading `vote` was
         // therefore found by a mechanism that cannot see alternating rhythms.
-        inline std::string prematureWordAgg(const tbank::BankTemplate& t) {
+        inline std::string prematureWordAgg(const tbank::template_of_all_signals& t) {
             const uint32_t n = static_cast<uint32_t>(t.members.size());
             if (n == 0) return "na";
             const uint32_t prem = t.n_premature_members;
@@ -452,7 +452,7 @@ namespace morphology_csv {
         // ELIGIBLE means "not premature": Tukey only ever ran on the beats
         // premature removal left behind, so a premature member has no Tukey
         // verdict to report and must not be counted as one that passed.
-        inline std::string tukeyWordAgg(const tbank::BankTemplate& t,
+        inline std::string tukeyWordAgg(const tbank::template_of_all_signals& t,
             const tbank::ChannelOutput&)
         {
             const int32_t n = static_cast<int32_t>(t.members.size());
@@ -492,7 +492,7 @@ namespace morphology_csv {
         // leave a bin's templates file describing a bin with no sinus template
         // -- which reads as "this bin had no normal beats" rather than "the seed
         // had a bad night".
-        inline bool belongsInTemplatesFile(const tbank::BankTemplate& tp,
+        inline bool belongsInTemplatesFile(const tbank::template_of_all_signals& tp,
             const tbank::ChannelOutput& out, const char** why)
         {
             if (tp.isSeed()) return true;
@@ -615,7 +615,7 @@ namespace morphology_csv {
                         cols.push_back(std::move(c));
                         continue;
                     }
-                    const tbank::BankTemplate& tp = op->bank.templates[t];
+                    const tbank::template_of_all_signals& tp = op->bank.templates[t];
                     if (tp.tmpl.empty()) {
                         // The case that used to make the whole PPG block
                         // disappear: a slot that exists with no waveform, which
@@ -1104,7 +1104,7 @@ namespace morphology_csv {
                         ? out.assignment[slice] : -1;
                     rec.template_id = t;
                     if (t >= 0 && t < out.bank.size()) {
-                        const tbank::BankTemplate& tp = out.bank.templates[t];
+                        const tbank::template_of_all_signals& tp = out.bank.templates[t];
                         rec.label_code = tp.label_code;
                         rec.letter = letters[t];
                         rec.confirmed = tp.confirmed() ? 1 : 0;
@@ -1166,7 +1166,7 @@ namespace morphology_csv {
                 if (!op) continue;
                 const tbank::ChannelOutput& out = *op;
                 for (int t = 0; t < out.bank.size(); ++t) {
-                    const tbank::BankTemplate& tp = out.bank.templates[t];
+                    const tbank::template_of_all_signals& tp = out.bank.templates[t];
                     if (tp.tmpl.empty()) continue;
                     if (!detail::belongsInTemplatesFile(tp, out, nullptr)) continue;
                     ++nCols;
@@ -1185,7 +1185,7 @@ namespace morphology_csv {
                 // templates. Computed once per bin, not per template.
                 const std::vector<uint8_t> letters = detail::letterRanks(out.bank);
                 for (int t = 0; t < out.bank.size(); ++t) {
-                    const tbank::BankTemplate& tp = out.bank.templates[t];
+                    const tbank::template_of_all_signals& tp = out.bank.templates[t];
                     if (tp.tmpl.empty()) continue;
                     if (!detail::belongsInTemplatesFile(tp, out, nullptr)) continue;
 

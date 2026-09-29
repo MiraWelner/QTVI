@@ -213,7 +213,7 @@ namespace nsvt {
                 gm.id[b][c].assign(bank.templates.size(), -1);
 
                 for (int t = 0; t < bank.size(); ++t) {
-                    const tbank::BankTemplate& lt = bank.templates[t];
+                    const tbank::template_of_all_signals& lt = bank.templates[t];
                     if (lt.tmpl.empty()) continue;
 
                     int    best = -1;

@@ -1,5 +1,13 @@
 #pragma once
 
+/*
+* template_viewer.hpp
+* @brief the TemplateViewer class is defined here. It contains:
+*
+*
+*
+*/
+
 #include <QMainWindow>
 #include <QEvent>
 #include <QPointer>
@@ -66,6 +74,7 @@ namespace global_intervals { struct GlobalIntervals; }
 class QVBoxLayout;
 class QRadioButton;
 
+
 namespace Ui { class TemplateViewerWindow; }
 
 class TemplateViewerWindow : public QMainWindow {
@@ -93,7 +102,7 @@ public:
     // afterwards. So the file's `confirmed` column could only ever read
     // "presumed", for every template in every record, however much marking
     // had been done.
-    const std::vector<TemplateBin>& bins() const { return m_bins; }
+    const std::vector<time_bin>& bins() const { return m_bins; }
 
     void set_vcg_output_dir(const QString& dir) { m_vcgOutputPath = dir; }
     void setNormOutputDir(const QString& dir) { m_normOutputPath = dir; } //write <id>_feature_norm.csv and <id>_cv_check.csv 
@@ -107,61 +116,9 @@ public:
     // absent. Same trap as set_vcg_output_dir, worse consequence.
     void setLeadPolarity(const LeadPolarity& pol) { m_polarity = pol; }
 
-    void loadSubject(const QString& templatePath, const QString& markingPath,
-        const QString& subjectId, double sampleRateHz,
-        // Per-pulse-channel upsample rates (Hz). Default 0.0 = unknown, in
-        // which case BinPlotWidget::rateRatio() falls back to 1.0 -- the
-        // historical behavior from when every channel shared one rate.
-        double ppgRateHz = 0.0, double abpRateHz = 0.0,
-        double artRateHz = 0.0, double artPulmRateHz = 0.0,
-        // Display-time notch frequency, already gated by the caller: > 0 means
-        // notch every template on the way to the screen. This window has no
-        // filter checkbox. The high pass has no parameter -- it was applied
-        // before these templates were built.
-        double notchFilterHz = 0.0);
+    void loadSubject(const QString& templatePath, const QString& markingPath,const QString& subjectId, double sampleRateHz, double ppgRateHz = 0.0, double abpRateHz = 0.0,
+        double artRateHz = 0.0, double artPulmRateHz = 0.0, double notchFilterHz = 0.0);
 
-    // ---- THE IN-MEMORY OVERLOAD ------------------------------------------
-    //
-    // Same as above but takes the TemplateFile directly instead of a path.
-    // The GUI uses this one: post_process already holds the TemplateFile in
-    // memory in the same process, so writing it to disk and reading it back
-    // was a round trip whose only product was a filename.
-    //
-    // AND THAT ROUND TRIP WAS THE REASON A HALF-POPULATED templates.bin HAD
-    // TO EXIST. prepareViewerJob wrote one before the squared/absval blocks
-    // were built, so the file on disk looked complete and was not -- which is
-    // what the _templates.partial.bin and its remove+rename promote were
-    // there to paper over. With this overload the file is written once, at
-    // the end, and its existence means complete.
-    //
-    // templateDir IS EXPLICIT. The path overload derives it from the
-    // filename; there is no filename here, and captureCurrentPage and the
-    // bins CSV both write into it.
-    // ---- THE PER-BEAT MATRIX, FROM MEMORY ------------------------------
-    //
-    // SET THIS BEFORE loadSubject. post_process already holds the BeatsFile in
-    // the same process -- job.beats, the very matrix the morphology pass built
-    // -- and the operator re-stack needs exactly that. Reading it back off
-    // <stem>_beats.bin instead was a round trip whose only product was a
-    // filename, and a broken one: that file is written by a DEFERRED task on
-    // the worker thread that finalize() runs concurrently with this window, so
-    // for the first minutes of a session -- and for the whole of a first run
-    // on a subject -- there was nothing on disk to read, every pulse gesture
-    // reported "No per-beat pulse data", and a gesture during the write would
-    // have re-averaged over a truncated file while reporting success.
-    //
-    // Same argument, and the same fix, as the in-memory loadSubject overload
-    // below.
-    //
-    // A BORROWED POINTER, NOT A COPY. One record's beats are hundreds of
-    // megabytes. Every consumer on the finalize thread (premark::runAll,
-    // writeEnvelopeReport, writeEcgSQICsv) takes the BeatsFile by const
-    // reference, so concurrent reads are safe -- but the object has to outlive
-    // this window, which it does: main.cpp holds the job in a shared_ptr
-    // across runTemplateMarking and joins the worker afterwards.
-    //
-    // Null (never set) falls back to the file, which is what the path overload
-    // of loadSubject has to do.
     void setBeats(const template_io::BeatsFile* beats) { m_beatsInMemory = beats; }
 
     void loadSubject(const template_io::TemplateFile& tf,
@@ -169,7 +126,6 @@ public:
         const QString& subjectId, double sampleRateHz,
         double ppgRateHz = 0.0, double abpRateHz = 0.0,
         double artRateHz = 0.0, double artPulmRateHz = 0.0,
-        // The same already-gated notch frequency as the overload above.
         double notchFilterHz = 0.0);
 
 signals:
@@ -194,7 +150,7 @@ private slots:
     void onMarkerDragStarted(int binIdx, int leadIdx, int marker);
     void onBadRToggled(int binIdx, int leadIdx, int templateIdx, bool bad);
     // Helpers for the two above; declared here so both can find them.
-    tbank::BankTemplate* slotFor(int binIdx, int leadIdx, int templateIdx);
+    tbank::template_of_all_signals* slotFor(int binIdx, int leadIdx, int templateIdx);
     // One panel's combined bad-ECG / bad-PPG state, from both flag sources.
     BinPlotWidget::State panelState(int binIdx, int leadIdx,
         int templateIdx) const;
@@ -214,91 +170,23 @@ private:
         int nMembers = 0;
     };
 
-    std::vector<Lead> leadsForBin(const TemplateBin& b) const;
-    std::vector<Lead> leadsForBinTemplate(const TemplateBin& b, int templateIdx) const;
-    std::vector<int> markingSlotsForBin(const TemplateBin& b) const;
+    std::vector<Lead> leadsForBin(const time_bin& b) const;
+    std::vector<Lead> leadsForBinTemplate(const time_bin& b, int templateIdx) const;
+    std::vector<int> markingSlotsForBin(const time_bin& b) const;
     std::vector<std::pair<int, int>> pageColumns(int start, int count) const;
     int pageGridRows(bool compact, const std::vector<std::pair<int, int>>& cols) const;
-    void addVcgPanel(int gi, int column, int gridRows, const TemplateBin& b, const std::vector<double>& vcgTrace, double vcgRCol, const global_intervals::GlobalIntervals& intervals, std::vector<BinPlotWidget*>& group, int& usedRows, int& usedCols);
-    bool unionEcgFrameSeconds(const TemplateBin& b, int lead, int templateIdx, double& tMinSec, double& tMaxSec) const;
-
-    // Section 4.6 class confirmation, from BinPlotWidget::classConfirmRequested.
-    // Turns one operator click into tbank::propagateLabel() across all three
-    // channels' banks, then rebuilds the page so the label, the subtype the
-    // bank issued, and the changed marking eligibility all become visible at
-    // once. This is the call site Section 4.6 bullets 3 and 4 were written for
-    // and which did not previously exist -- propagateLabel() was reachable from
-    // nowhere, so no template in any record had ever been confirmed.
+    void addVcgPanel(int gi, int column, int gridRows, const time_bin& b, const std::vector<double>& vcgTrace, double vcgRCol, const global_intervals::GlobalIntervals& intervals, std::vector<BinPlotWidget*>& group, int& usedRows, int& usedCols);
+    bool unionEcgFrameSeconds(const time_bin& b, int lead, int templateIdx, double& tMinSec, double& tMaxSec) const;
     void onClassConfirmRequested(int binIndex, int leadIndex, int templateIdx, int annotationCode);
-
-    // Bars for a bank-template column, from that template's own
-    // BankMarkerSet (seeded lazily from its own median). Sub-templates had no
-    // bars at all before this: applyBinToWidget draws the BIN's marker set,
-    // which describes sinus, so it was correctly applied to slot 0 only.
-    // ONE APPLY FOR EVERY COLUMN, slot 0 included. Was two functions with a
-    // templateIdx == 0 fork, which is what made slot 0 the column nobody
-    // seeded and the column whose pulse bars came from the bin.
-    void applyTemplateToWidget(BinPlotWidget* pw, TemplateBin& b, int channel,
-        int templateIdx);
-
-    // Everything both loadSubject overloads do once m_bins is populated:
-    // the four-pass seeding loop, the markings restore, computeGlobalRefs and
-    // the first showPage. Factored out rather than duplicated, because the
-    // seeding loop is the one place all four alignments are detected and two
-    // copies of it could drift.
+    void applyTemplateToWidget(BinPlotWidget* pw, time_bin& b, int channel, int templateIdx);
     void initAfterBinsLoaded();
 
-    void showPage();
-
     std::vector<double> maybeNotchTrace(const std::vector<double>& sig, double fs, double footIdx) const;
-
-    // The trace, its band and the foot they are both measured against, for one
-    // pulse-bank slot. Seeds the slot's pulse marks if they have never been
-    // seeded, which is why it is not const. False when the slot has no usable
-    // pulse.
-    bool pulseTraceForSlot(tbank::BankTemplate& slot,
-        std::vector<double>& outTrace,
-        std::vector<double>& outIqr,
-        double& outFootIdx);
-
-    // <stem>_beats.bin, where the per-beat pulse matrix lives. Built from the
-    // same directory and stem morphology_csv::set was given, rather than
-    // stored at load time, so it cannot go stale against m_subjectId.
+    bool pulseTraceForSlot(tbank::template_of_all_signals& slot, std::vector<double>& outTrace, std::vector<double>& out_std, double& outFootIdx);
+    void showPage();
     QString beatsBinPath() const;
-
-    // (bin, slot) pairs whose pulse the operator has re-stacked. VIEWER-ONLY
-    // and deliberately not serialized: the waveform on screen is no longer the
-    // one the build produced, and anything exporting it should be able to say
-    // so -- but inventing a file field for it here would put a claim in the
-    // archive that the pipeline never wrote.
     std::set<int> m_ppgRealigned;
-
-    // ---- THE BUILD'S OWN PULSE, KEPT SO "Auto" HAS SOMEWHERE TO GO ------
-    //
-    // (bin, slot) -> the (tmpl, tmpl_iqr) pair the pipeline produced, stashed
-    // at the moment the FIRST re-stack is about to overwrite it. A re-stack
-    // writes slot.tmpl in place -- that is what makes the panel update -- and
-    // that was fine while the only control was a drag, because there is no
-    // un-drag. "Auto" is a radio position the operator can come back to, and
-    // a control that returns to a state has to have kept the state.
-    //
-    // VIEWER-ONLY and not serialized, for the same reason m_ppgRealigned is
-    // not: it is a copy of what the archive already holds, kept so this
-    // window can put it back.
     std::map<int, std::pair<std::vector<double>, std::vector<double>>> m_ppgBuilt;
-
-
-    // ---- WHICH VARIANT THE PAGE IS SHOWING -------------------------------
-    //
-    // Page-wide, not per column: the operator reads a page as one picture and
-    // two columns drawn on different alignments cannot be compared by eye.
-    //
-    // In Auto it FOLLOWS THE SELECTED BAR -- Foot until a dicrotic or end bar
-    // is clicked, Peak from then on, back to Foot on an onset click -- which is
-    // the same rule m_autoGridAnchor follows on the ECG side, and for the same
-    // reason: the operator is looking at the landmark they clicked, so they
-    // should be shown the average it was measured on. Forced Foot / Percent /
-    // Peak override it.
     tbank::PulseAnchor m_ppgViewVariant = tbank::PulseAnchor::Foot;
 
     // Which variant a pulse landmark's value lives in. ONE DEFINITION, so the
@@ -328,7 +216,7 @@ private:
 
     // pulse_marks <- Foot's foot + Peak's notch/end/glyphs. The composed set is
     // what every existing reader sees; pulse_by_variant is the source.
-    static void composePulseMarks(tbank::BankTemplate& slot);
+    static void composePulseMarks(tbank::template_of_all_signals& slot);
 
     // The variant the page draws: the forced positions say it outright, Auto
     // defers to m_ppgViewVariant.
@@ -345,7 +233,7 @@ private:
     const std::vector<double>& ppgAsBuiltTmpl(int binIdx, int templateIdx) const;
 
     void stashBuiltPulse(int binIdx, int templateIdx,
-        const tbank::BankTemplate& slot);
+        const tbank::template_of_all_signals& slot);
     bool restorePulseAsBuilt(int binIdx, int templateIdx);
 
     // Normalize one slot's pulse through pulseTraceForSlot and push it into
@@ -365,31 +253,8 @@ private:
     //
     // Returns whether the waveform was replaced; `announce` as
     // relevelPulseAtPct.
-    bool relevelPulseAtFoot(int binIdx, int templateIdx, double footCol,
-        bool announce = true);
+    bool relevelPulseAtFoot(int binIdx, int templateIdx, double footCol, bool announce = true);
 
-    // ---- THE ALIGNMENT GROUP -------------------------------------------
-    //
-    // relevelPulseAtPct is gone. It re-levelled slot.tmpl in place, which made
-    // the alignment a destructive operation with no way back and, because
-    // adoptPulsePair re-detected the foot on its own output, an operation that
-    // did not reproduce. buildPulseVariant + showPulseVariant replace it: the
-    // two alignments are computed from fixed inputs and STORED, and choosing
-    // one selects rather than rebuilds.
-
-
-    // ---- ONE BIN'S BEAT MATRIX, CACHED ONE DEEP -------------------------
-    //
-    // Exactly the cache the old horizontal re-stack said to add if
-    // the read ever showed up as a delay: the LAST bin, not all of them. A
-    // percent change re-stacks every column on the page and several of those
-    // are usually sibling slots of one bin, so an uncached read walks the file
-    // once per column to return the same rows.
-    //
-    // Keyed on bin ALONE, so it must be dropped when the subject changes
-    // (clearBeatsCache, from initAfterBinsLoaded) -- bin 3 of the next record
-    // would otherwise be served bin 3 of this one. beatsBinPath() is derived
-    // per call for that same reason and the cache has to follow suit.
     const template_io::BeatsFile* m_beatsInMemory = nullptr;
     // KEYED ON (bin, channel), not bin alone: the ECG re-stack reads "CH1".."CH3"
     // out of the same BeatsFile the pulse path reads "PPG" from, and a cache
@@ -418,7 +283,7 @@ private:
         exportLandmarks(std::size_t bi, int lead, AnchorType a) const;
     void updatePageControls();
     static std::pair<int, int> compactGrid(int n);
-    void applyBinCommonToWidget(BinPlotWidget* pw, const TemplateBin& b);
+    void applyBinCommonToWidget(BinPlotWidget* pw, const time_bin& b);
     void refreshBinMarkers(int binIdx);
 
     // Bank-column counterpart of refreshBinMarkers. Repaints only the columns
@@ -454,7 +319,7 @@ private:
     static constexpr double region_around_foot_to_measure_std = 0.030;   // +-30 ms about the foot
 
     //right now either p or q
-    int which_alignment_fiducial_marker_should_auto_use(int binIdx, int templateIdx, const tbank::BankTemplate& slot, double footCol) const;
+    int which_alignment_fiducial_marker_should_auto_use(int binIdx, int templateIdx, const tbank::template_of_all_signals& slot, double footCol) const;
 
     //without this, the percentage box is never read
     double percentage_for_aligning() const {
@@ -511,15 +376,6 @@ private:
     AnchorType currentGridAnchor() const {
         return m_forceAlign ? m_forcedAlign : m_autoGridAnchor;
     }
-
-    // Re-anchor every panel on the current page to currentGridAnchor() IN
-    // PLACE -- updates each widget's ECG trace/band/glyphs via setEcgData
-    // rather than rebuilding the grid, so it is safe to call mid-click and a
-    // drag in progress is not disturbed. Used by Automatic alignment when a
-    // bar is clicked.
-    // onlyBin >= 0 restricts the pass to that one (bin, slot) column. The
-    // per-panel body re-detects glyphs, so a whole-page re-skin to show a
-    // change in one column is 36 detections to redraw one.
     void reskinGridForAnchor(int onlyBin = -1, int onlySlot = -1);
     void cycleAlignment(int step); //move to next alignement if user presses tab
     bool eventFilter(QObject* obj, QEvent* ev) override;
@@ -547,12 +403,12 @@ private:
 
     Ui::TemplateViewerWindow* ui;
 
-    std::vector<TemplateBin> m_bins;
+    std::vector<time_bin> m_bins;
     QString m_markingPath;
     QString m_templateDir;   // folder containing templates.bin/.csv (screenshot target)
     QString m_vcgOutputPath;   // cfg.vcg_output; <id>_vcg.csv lands here
     QString m_normOutputPath;  // feature_norm / cv_check CSVs land here
-    // Stamped onto every TemplateBin in loadSubject; the bins are what every
+    // Stamped onto every time_bin in loadSubject; the bins are what every
     // detector call reads, so this member is only the inbound copy.
     LeadPolarity m_polarity;
     QString m_subjectId;
@@ -595,7 +451,7 @@ private:
     double binSpanSeconds(int binIdx) const;
 
     void clearFocusPanels();
-    tbank::BankMarkerSet barsForPanel(const BinPlotWidget* pw, const TemplateBin& b, int lead, int slot) const;
+    tbank::BankMarkerSet barsForPanel(const BinPlotWidget* pw, const time_bin& b, int lead, int slot) const;
 
     struct SdMsModel {
         std::vector<double>  sdMs;        // per column, NaN where floored
@@ -644,9 +500,9 @@ private:
     // pw->detectedLandmarks() / pw->detectedPulse(), which is the answer the
     // X glyph is drawn at. Both accept nullptr (a re-fire that could not name
     // its panel) and leave the fiducial absent.
-    void focusEcg(BinPlotWidget* pw, TemplateBin& b, int binIdx, int leadIdx,
+    void focusEcg(BinPlotWidget* pw, time_bin& b, int binIdx, int leadIdx,
         int templateIdx, int marker, double col);
-    void focusPulse(BinPlotWidget* pw, TemplateBin& b, int templateIdx,
+    void focusPulse(BinPlotWidget* pw, time_bin& b, int templateIdx,
         int marker, double col);
 
     int max_leads = 1;
@@ -747,14 +603,13 @@ private:
     double m_notchFilterHz = 0.0;
 
     //Global references - earliest QRS onset, latest QRS offset, etc
-    double m_ecgGlobalRef[3] = { std::nan(""), std::nan(""), std::nan("") };
     double m_pulseGlobalRef[4] = { std::nan(""), std::nan(""), std::nan(""), std::nan("") };
     void compute_global_refs();
 
     // One bin's load-time landmark seeding. const because it is called
     // concurrently from initAfterBinsLoaded and must not touch this window's
     // state -- it reads the rates and fit modes and writes only into `b`.
-    void seedOneBin(TemplateBin& b) const;
+    void seedOneBin(time_bin& b) const;
 
 
     void writeNormalizationCsvs(); // Writes <id>_cv_check.csv and <id>_feature_norm.csv
@@ -764,9 +619,11 @@ private:
     // ECG: sample / globalRef.
     // Pulse: 100*(sample - footY) / footY / globalRef.
     // If globalRef or footY is not usable, returns raw unchanged.
-    std::vector<double> normalizeEcgTrace(const std::vector<double>& raw, int ch) const;
-    std::vector<double> normalize_ppg_or_similar(const std::vector<double>& raw,
-        double footIdx, int pulseChan) const;
+    // This time bin's own |R|+|S|, for this slot. Not a record-wide median:
+    // slot indices name the same morphology only within a bin.
+    double ecgRefFor(const time_bin& b, int ch, int slot) const;
+    std::vector<double> normalizeEcgTrace(const std::vector<double>& raw,
+        const time_bin& b, int ch, int slot) const;
 
     // Push m_showEcgMarkers / m_showPpgMarkers into every visible plot.
     void applyMarkerVisibility();

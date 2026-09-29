@@ -197,7 +197,7 @@ namespace jbank {
 
         // Per-channel waveform + corridor over `members`. Only the waveform
         // fields are meaningful; see the header note on identity fields.
-        std::array<tbank::BankTemplate, num_channels> ch;
+        std::array<tbank::template_of_all_signals, num_channels> ch;
 
         // ---- group identity: ONE class for ONE morphology ----------------
         uint8_t  label_code = tbank::kUnlabeled;
@@ -332,7 +332,7 @@ namespace jbank {
         const std::vector<double>* floor_corridor = nullptr)
     {
         const ChannelBeats& cb = chans[c];
-        tbank::BankTemplate& t = g.ch[c];
+        tbank::template_of_all_signals& t = g.ch[c];
         t.members.clear();
         if (!cb.present()) {
             t.tmpl.clear(); t.tmpl_std.clear();
@@ -377,7 +377,7 @@ namespace jbank {
         std::array<std::vector<double>, num_channels> seeds;
         if (bank.groups.empty()) return seeds;
         for (int c = 0; c < num_channels; ++c) {
-            const tbank::BankTemplate& s0 = bank.groups[0].ch[c];
+            const tbank::template_of_all_signals& s0 = bank.groups[0].ch[c];
             const size_t w = std::min(s0.band_lo.size(), s0.band_hi.size());
             seeds[c].assign(w, std::numeric_limits<double>::quiet_NaN());
             for (size_t k = 0; k < w; ++k)
@@ -663,7 +663,7 @@ namespace jbank {
     {
         PolymorphyVerdict v;
         for (const BeatGroup& g : bank.groups) {
-            const tbank::BankTemplate& t = g.ch[kCh1];
+            const tbank::template_of_all_signals& t = g.ch[kCh1];
             if (!t.confirmed()) {
                 if (g.memberCount() > 0) ++v.n_unconfirmed_groups;
                 continue;
@@ -878,7 +878,7 @@ namespace jbank {
                 const std::vector<double>& sd = (*phase1_spread)[c];
                 std::vector<double>& tm = bank.groups[0].ch[c].tmpl;
                 if (sd.empty() || tm.empty()) continue;
-                tbank::BankTemplate& t = bank.groups[0].ch[c];
+                tbank::template_of_all_signals& t = bank.groups[0].ch[c];
                 t.band_lo.assign(tm.size(),
                     std::numeric_limits<double>::quiet_NaN());
                 t.band_hi = t.band_lo;
@@ -1109,7 +1109,7 @@ namespace jbank {
             m.wave.assign(cand.size(), NaN);
 
             const ChannelBeats& cb = chans[c];
-            const tbank::BankTemplate& tp = g.ch[c];
+            const tbank::template_of_all_signals& tp = g.ch[c];
             if (!cb.present()) return m;
 
             for (size_t k = 0; k < cand.size(); ++k) {
@@ -1761,7 +1761,7 @@ namespace jbank {
         const ChannelBeats& cb = chans[channel];
         out.templates.reserve(bank.groups.size());
         for (const BeatGroup& g : bank.groups) {
-            tbank::BankTemplate t = g.ch[channel];   // waveform + corridor
+            tbank::template_of_all_signals t = g.ch[channel];   // waveform + corridor
             // BOTH LISTS ARE TRANSLATED. `members` is everything the partition
             // assigned, which is what the archive writes; `members_clean` is
             // what the waveform in t.tmpl was actually averaged over. Carrying

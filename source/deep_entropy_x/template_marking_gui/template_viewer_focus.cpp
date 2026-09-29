@@ -95,7 +95,7 @@ void TemplateViewerWindow::setFocusSplit(bool split) {
 // PPG rides its bank slot's own pulse average; the arterial channels have no
 // bank and ride the bin's. One panel, not two: pulse channels are foot-anchored
 // once, so there is no QRS/JT split and no alignment dimension.
-void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
+void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, time_bin& b,
     int templateIdx, int marker, double col)
 {
     const std::vector<double>* meanRaw = nullptr;
@@ -120,7 +120,7 @@ void TemplateViewerWindow::focusPulse(BinPlotWidget* pw, TemplateBin& b,
         // panels are cleared and the function returns -- because the bin's
         // waveform there would be a measurement attributed to beats that are
         // not in this template.
-        const tbank::BankTemplate* ps =
+        const tbank::template_of_all_signals* ps =
             (templateIdx >= 0 && templateIdx < b.ppg_bank.size())
             ? &b.ppg_bank.templates[templateIdx] : nullptr;
         if (!ps || ps->tmpl.empty() || ps->memberCount() <= 0) {
@@ -348,7 +348,7 @@ void TemplateViewerWindow::refreshFocus(BinPlotWidget* pw, int binIdx, int leadI
     m_focusBin = binIdx; m_focusLead = leadIdx; m_focusSlot = templateIdx;
     m_focusMarker = marker; m_focusCol = col;
 
-    TemplateBin& b = m_bins[binIdx];
+    time_bin& b = m_bins[binIdx];
     if (BinPlotWidget::markerIsEcg(marker))
         focusEcg(pw, b, binIdx, leadIdx, templateIdx, marker, col);
     else
@@ -366,7 +366,7 @@ void TemplateViewerWindow::refreshFocus(BinPlotWidget* pw, int binIdx, int leadI
 // channels share nothing but the panels they write to, and one function doing
 // both was 500 lines in which the pulse path could quietly inherit half the ECG
 // path's state.
-void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
+void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, time_bin& b,
     int binIdx, int leadIdx, int templateIdx, int marker, double col)
 {
     if (leadIdx < 0 || leadIdx > 2) return;
@@ -443,7 +443,7 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, TemplateBin& b,
     // already an SD, so it feeds the band directly -- no IQR->SD conversion,
     // unlike the pulse channels, whose bank spread is a true interquartile
     // range.
-    const double eref = m_ecgGlobalRef[leadIdx];
+    const double eref = ecgRefFor(b, leadIdx, templateIdx);
     const SlotView svF = slotView(b, leadIdx, templateIdx, focusAnchor);
     if (!svF.valid || !svF.tmpl) {
         clearFocusPanels();

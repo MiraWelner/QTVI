@@ -100,7 +100,7 @@ public:
     }
     double m_rPeakSample = 0.0;
     // Set by setAuto; null until then. See the note there.
-    const TemplateBin* m_bin = nullptr;
+    const time_bin* m_bin = nullptr;
     AnchorType m_frame = AnchorType::R_PEAK;   // R-peak sample index within the ECG template
     // (m_ppgDelay / m_ppgFootIdx retired in Patch C: every channel is
     // real-time-aligned by construction under Patch B slicing.)
@@ -276,7 +276,7 @@ public:
     // Call order does not matter: this captures nothing. It points the panel at
     // a waveform and drops the caches; the detections are taken on demand by
     // whoever draws or reads them.
-    void setAuto(const TemplateBin& b,
+    void setAuto(const time_bin& b,
         AnchorType frame = AnchorType::R_PEAK) {
         // A new bin or alignment is a new waveform. Covers the in-place
         // re-skin, which changes the frame without going through setData.
@@ -602,7 +602,7 @@ private:
     mutable std::array<upsample_for_fit::PeakCandidates, 5> m_peakCands{};
     mutable EcgDetection       m_det;
     mutable bool               m_detValid = false;
-    mutable const TemplateBin* m_detBin = nullptr;
+    mutable const time_bin* m_detBin = nullptr;
     mutable AnchorType         m_detFrame = AnchorType::R_PEAK;
     mutable int                m_detSlot = -1;
 
@@ -613,7 +613,7 @@ private:
     mutable bool               m_pdetValid = false;
     // Part of the pulse cache key: see detectedPulse().
     mutable curve_fit::PeakFitMode m_pdetPeakMode = curve_fit::PeakFitMode::Auto;
-    mutable const TemplateBin* m_pdetBin = nullptr;
+    mutable const time_bin* m_pdetBin = nullptr;
     mutable int                m_pdetSlot = -1;
 
     // ---- THE REACTIVE GLYPHS' OWN CACHE --------------------------------
@@ -627,7 +627,7 @@ private:
     struct ReactiveKey {
         double pBegin, qOnset, sEnd, tEnd;
         double ppgOnset, ppgPeak, ppgDicrotic, ppgEnd;
-        const TemplateBin* bin;
+        const time_bin* bin;
         AnchorType frame;
         int slot;
         bool detValid;

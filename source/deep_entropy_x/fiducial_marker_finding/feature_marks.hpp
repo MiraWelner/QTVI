@@ -24,7 +24,7 @@
 #include "template_morphology_grouping/template_bank.hpp"
 #include "subsample_refine.hpp"
 
-struct TemplateBin;   // forward-declare -- full definition in TemplateBinIO.hpp
+struct time_bin;   // forward-declare -- full definition in TemplateBinIO.hpp
 
 // Returns the landmark subsample index for one beat, or -1 if not found.
 using AnchorLocator = std::function<double(const std::vector<double>& beat)>;
@@ -207,7 +207,7 @@ public:
 
     // pol is indexed by channel inside, so the sign and the lead cannot get out
     // of step across the three-channel loop.
-    static void seed_all(TemplateBin& bin, double sampleRate, double ppgRate, AnchorType anchor,
+    static void seed_all(time_bin& bin, double sampleRate, double ppgRate, AnchorType anchor,
         const LeadPolarity& pol, double heightMeters = NAN,
         curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);

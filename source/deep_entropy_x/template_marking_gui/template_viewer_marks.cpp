@@ -16,36 +16,36 @@
 // so the two TUs name one object.
 namespace tv_detail {
 
-    struct PulseField { int marker; double TemplateBin::* field; };
+    struct PulseField { int marker; double time_bin::* field; };
 
     inline constexpr PulseField kPulseFields[] = {
-        { BinPlotWidget::PpgOnset,           &TemplateBin::ppg_onset },
-        { BinPlotWidget::PpgPeak,            &TemplateBin::ppg_peak },
-        { BinPlotWidget::PpgDicrotic,        &TemplateBin::ppg_dicrotic },
-        { BinPlotWidget::PpgPeak2,           &TemplateBin::ppg_peak2 },
-        { BinPlotWidget::PpgEnd,             &TemplateBin::ppg_end },
+        { BinPlotWidget::PpgOnset,           &time_bin::ppg_onset },
+        { BinPlotWidget::PpgPeak,            &time_bin::ppg_peak },
+        { BinPlotWidget::PpgDicrotic,        &time_bin::ppg_dicrotic },
+        { BinPlotWidget::PpgPeak2,           &time_bin::ppg_peak2 },
+        { BinPlotWidget::PpgEnd,             &time_bin::ppg_end },
         // T50/T80 are reactive glyphs: neither drawn from here nor draggable.
         // Pushed anyway so the enum entries never hold a stale position.
-        { BinPlotWidget::PpgT50,             &TemplateBin::ppg_t50 },
-        { BinPlotWidget::PpgT80,             &TemplateBin::ppg_t80 },
-        { BinPlotWidget::AbpOnset,           &TemplateBin::abp_onset },
-        { BinPlotWidget::AbpPeak,            &TemplateBin::abp_peak },
-        { BinPlotWidget::AbpDicrotic,        &TemplateBin::abp_dicrotic },
-        { BinPlotWidget::AbpPeak2,           &TemplateBin::abp_peak2 },
-        { BinPlotWidget::AbpEnd,             &TemplateBin::abp_end },
-        { BinPlotWidget::ArtOnset,           &TemplateBin::art_onset },
-        { BinPlotWidget::ArtPeak,            &TemplateBin::art_peak },
-        { BinPlotWidget::ArtDicrotic,        &TemplateBin::art_dicrotic },
-        { BinPlotWidget::ArtPeak2,           &TemplateBin::art_peak2 },
-        { BinPlotWidget::ArtEnd,             &TemplateBin::art_end },
-        { BinPlotWidget::ArtPulmOnset,       &TemplateBin::art_pulm_onset },
-        { BinPlotWidget::ArtPulmPeak,        &TemplateBin::art_pulm_peak },
-        { BinPlotWidget::ArtPulmDicrotic,    &TemplateBin::art_pulm_dicrotic },
-        { BinPlotWidget::ArtPulmPeak2,       &TemplateBin::art_pulm_peak2 },
-        { BinPlotWidget::ArtPulmEnd,         &TemplateBin::art_pulm_end },
+        { BinPlotWidget::PpgT50,             &time_bin::ppg_t50 },
+        { BinPlotWidget::PpgT80,             &time_bin::ppg_t80 },
+        { BinPlotWidget::AbpOnset,           &time_bin::abp_onset },
+        { BinPlotWidget::AbpPeak,            &time_bin::abp_peak },
+        { BinPlotWidget::AbpDicrotic,        &time_bin::abp_dicrotic },
+        { BinPlotWidget::AbpPeak2,           &time_bin::abp_peak2 },
+        { BinPlotWidget::AbpEnd,             &time_bin::abp_end },
+        { BinPlotWidget::ArtOnset,           &time_bin::art_onset },
+        { BinPlotWidget::ArtPeak,            &time_bin::art_peak },
+        { BinPlotWidget::ArtDicrotic,        &time_bin::art_dicrotic },
+        { BinPlotWidget::ArtPeak2,           &time_bin::art_peak2 },
+        { BinPlotWidget::ArtEnd,             &time_bin::art_end },
+        { BinPlotWidget::ArtPulmOnset,       &time_bin::art_pulm_onset },
+        { BinPlotWidget::ArtPulmPeak,        &time_bin::art_pulm_peak },
+        { BinPlotWidget::ArtPulmDicrotic,    &time_bin::art_pulm_dicrotic },
+        { BinPlotWidget::ArtPulmPeak2,       &time_bin::art_pulm_peak2 },
+        { BinPlotWidget::ArtPulmEnd,         &time_bin::art_pulm_end },
     };
 
-    inline double* pulseField(TemplateBin& tb, int marker) {
+    inline double* pulseField(time_bin& tb, int marker) {
         for (const PulseField& f : kPulseFields)
             if (f.marker == marker) return &(tb.*f.field);
         return nullptr;
@@ -62,7 +62,7 @@ using tv_detail::pulseField;
 // ========================================================================
 
 // Prevents PPG from going over the ECG window when dragged
-static int ecgClipLenFor(const TemplateBin& tb) {
+static int ecgClipLenFor(const time_bin& tb) {
     const ChannelTemplateData* chs[3] = { &tb.ch1, &tb.ch2, &tb.ch3 };
     int mn = -1;
     for (const auto* ch : chs) {
@@ -77,7 +77,7 @@ static int ecgClipLenFor(const TemplateBin& tb) {
 // ========================================================================
 
 // ============================================================================
-// The single seeding path from a TemplateBin into a plot widget.
+// The single seeding path from a time_bin into a plot widget.
 //
 // Every draggable bar and every frozen autodetect column is written here, from
 // one bin, in one pass. There is no second list anywhere: showPage() calls this
@@ -92,7 +92,7 @@ void TemplateViewerWindow::onClassConfirmRequested(int binIndex, int leadIndex,
     int templateIdx, int annotationCode)
 {
     if (binIndex < 0 || binIndex >= (int)m_bins.size()) return;
-    TemplateBin& b = m_bins[binIndex];
+    time_bin& b = m_bins[binIndex];
     if (leadIndex < 0 || leadIndex >= 3) return;
 
     // KEYED ON THE SLOT, because there is one partition now. These banks come
@@ -257,7 +257,7 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
     const tbank::PulseAnchor homeVariant = pulseVariantForMarker(marker);
 
     auto ppgGet = [&](int gi, int slot) -> double {
-        TemplateBin& tb = m_bins[gi];
+        time_bin& tb = m_bins[gi];
         if (slot >= 0 && slot < (int)tb.ppg_bank.size()) {
             const tbank::BankPulseMarkerSet& pm =
                 tb.ppg_bank.templates[slot].pulseVariant(homeVariant).marks;
@@ -270,9 +270,9 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         return -1.0;
         };
     auto ppgSet = [&](int gi, int slot, double v) {
-        TemplateBin& tb = m_bins[gi];
+        time_bin& tb = m_bins[gi];
         if (slot >= 0 && slot < (int)tb.ppg_bank.size()) {
-            tbank::BankTemplate& ps = tb.ppg_bank.templates[slot];
+            tbank::template_of_all_signals& ps = tb.ppg_bank.templates[slot];
             tbank::BankPulseMarkerSet& pm = ps.pulseVariant(homeVariant).marks;
             switch (marker) {
             case BinPlotWidget::PpgOnset:    pm.onset = v; break;
@@ -291,9 +291,9 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
     // there nothing at all to move.
     auto ppgSeed = [&](int gi, int slot) {
         if (slot < 0) return;
-        TemplateBin& tb = m_bins[gi];
+        time_bin& tb = m_bins[gi];
         if (slot >= (int)tb.ppg_bank.size()) return;
-        tbank::BankTemplate& ps = tb.ppg_bank.templates[slot];
+        tbank::template_of_all_signals& ps = tb.ppg_bank.templates[slot];
         if (ps.tmpl.empty()) return;
         // The variant still needs building: ppgSet writes the dragged bar into
         // pulseVariant(homeVariant).marks and composePulseMarks only copies out
@@ -316,11 +316,11 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
     // lastDrawn falls back to the finite extent by itself when tmpl_iqr is
     // empty or a different length, so a slot with no band behaves as before.
     auto ppgLen = [&](int gi, int slot) -> int {
-        TemplateBin& tb = m_bins[gi];
+        time_bin& tb = m_bins[gi];
         // This slot's own pulse, not the bin's -- it is the trace the column
         // draws and therefore the one its bars are columns of.
         if (slot < 0 || slot >= (int)tb.ppg_bank.size()) return 0;
-        const tbank::BankTemplate& ps = tb.ppg_bank.templates[slot];
+        const tbank::template_of_all_signals& ps = tb.ppg_bank.templates[slot];
         int len = (int)ps.tmpl.size();
         const int lastOk = sample_extent::lastDrawn(ps.tmpl, ps.tmpl_std);
         if (lastOk >= 0) len = std::min(len, lastOk + 1);
@@ -432,17 +432,12 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
     if (leadIdx < 0 || leadIdx > 2) return;
     if (templateIdx < 0) return;
 
-    TemplateBin& b = m_bins[binIdx];
+    time_bin& b = m_bins[binIdx];
 
     // R PEAK IS PER BIN, NOT PER SLOT: every template in the bank is aligned
-    // on it. Handled and returned here, because none of the bar machinery
-    // below applies -- no BankMarkerSet field, no frame conversion (R IS the
-    // frame), no propagation. markerAtX does not hand R out, so this is
-    // defensive rather than reachable.
-    if (marker == BinPlotWidget::EcgRPeak) {
-        if (templateIdx == 0) b.r_peak_ch[leadIdx] = newIdx;
-        return;
-    }
+    // on it, the panel's x origin IS b.r_peak_ch, and markerAtX does not hand
+    // R out -- isDraggableMarker excludes EcgRPeak -- so no drag can reach
+    // here with it. Nothing to handle.
     if (!anchor_view::isBar(marker)) return;   // glyphs are not draggable
 
     // WHICH CELL THIS DRAG EDITS: the bar's OWNER, always, forced or not.
@@ -464,7 +459,7 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
     if (!anchor_view::showsBar(owner, marker)) return;
 
     // ---- storage: one accessor pair, any (bin, slot) ----------------------
-    auto get = [&](TemplateBin& tb, int slot) -> double {
+    auto get = [&](time_bin& tb, int slot) -> double {
         const tbank::BankMarkerSet& m = tb.slotMarks(leadIdx, slot, owner);
         switch (marker) {
         case BinPlotWidget::EcgPBegin: return m.p_begin;
@@ -474,7 +469,7 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
         }
         return -1.0;
         };
-    auto set = [&](TemplateBin& tb, int slot, double v) {
+    auto set = [&](time_bin& tb, int slot, double v) {
         tbank::BankMarkerSet& m = tb.slotMarks(leadIdx, slot, owner);
         switch (marker) {
         case BinPlotWidget::EcgPBegin: m.p_begin = v; break;
@@ -546,12 +541,12 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
     // Move-Subsequent.
     //
     // Below this line, every column is a DRAWN-frame column.
-    auto getView = [&](TemplateBin& tb, int slot) -> double {
+    auto getView = [&](time_bin& tb, int slot) -> double {
         const double v = get(tb, slot);
         return (v < 0.0) ? -1.0
             : v - tb.frameShift(leadIdx, currentGridAnchor(), owner);
         };
-    auto setView = [&](TemplateBin& tb, int slot, double v) {
+    auto setView = [&](time_bin& tb, int slot, double v) {
         set(tb, slot, v + tb.frameShift(leadIdx, currentGridAnchor(), owner));
         };
 
@@ -668,7 +663,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
     int marker, int newIdx)
 {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
-    TemplateBin& b = m_bins[binIdx];
+    time_bin& b = m_bins[binIdx];
 
     // ECG AND PULSE FORWARD; ONLY THE ARTERIAL BODY LIVES HERE.
     //
@@ -698,7 +693,7 @@ void TemplateViewerWindow::onMarkerMoved(int binIdx, int leadIdx,
     if (BinPlotWidget::markerIsArterial(marker)) {
         // Field access is the shared table; only the trace and issue flag
         // still need a per-channel branch.
-        auto channelTrace = [&](TemplateBin& tb, int mk,
+        auto channelTrace = [&](time_bin& tb, int mk,
             const std::vector<double>*& tr, uint8_t*& iss) {
                 if (BinPlotWidget::markerIsAbp(mk)) { tr = &tb.abpTemplate; iss = &tb.abp_issue; }
                 else if (BinPlotWidget::markerIsArt(mk)) { tr = &tb.artTemplate; iss = &tb.art_issue; }
@@ -833,7 +828,7 @@ void TemplateViewerWindow::resetMarks() {
         const int slot = (i < m_pageTemplateIdx.size())
             ? m_pageTemplateIdx[i] : 0;
         if (gi < 0 || gi >= static_cast<int>(m_bins.size())) continue;
-        TemplateBin& b = m_bins[gi];
+        time_bin& b = m_bins[gi];
 
         for (int lead = 0; lead < 3; ++lead) {
             for (AnchorType a : anchor_view::anchor_array) {
@@ -884,7 +879,7 @@ void TemplateViewerWindow::resetMarks() {
 // page rebuild rather than at the moment of the click, which made it look like
 // the click had landed somewhere else entirely.
 //
-// WHY THE BIN-LEVEL FLAGS SURVIVE. TemplateBin::bad_r_ch and bad_ppg are
+// WHY THE BIN-LEVEL FLAGS SURVIVE. time_bin::bad_r_ch and bad_ppg are
 // consumed: NormalizeFeatures skips a bin's channel on bad_r_ch when building
 // the global reference, template_marking_bin_io serializes them and exports them
 // per bin, and feature_marks sets them automatically. They have to keep meaning
@@ -896,12 +891,12 @@ void TemplateViewerWindow::resetMarks() {
 // The bank slot behind a panel, for a given bin and lead. Null when the slot is
 // out of range, which is a real state -- a bin whose bank did not survive the
 // trip from generation has one panel and no templates.
-tbank::BankTemplate* TemplateViewerWindow::slotFor(int binIdx, int leadIdx,
+tbank::template_of_all_signals* TemplateViewerWindow::slotFor(int binIdx, int leadIdx,
     int templateIdx)
 {
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return nullptr;
     if (templateIdx < 0) return nullptr;
-    TemplateBin& b = m_bins[binIdx];
+    time_bin& b = m_bins[binIdx];
     tbank::TemplateBank& bk = (leadIdx >= 0 && leadIdx <= 2)
         ? b.ecg_bank[leadIdx] : b.ppg_bank;
     if (templateIdx >= bk.size()) return nullptr;
@@ -915,7 +910,7 @@ void TemplateViewerWindow::onBadRToggled(int binIdx, int leadIdx,
 
     // The verdict lives on this panel's own slot. No slot index is special and
     // nothing bin-level is written: b.bad_r_ch is the pipeline's.
-    if (tbank::BankTemplate* t = slotFor(binIdx, leadIdx, templateIdx)) {
+    if (tbank::template_of_all_signals* t = slotFor(binIdx, leadIdx, templateIdx)) {
         t->setBadEcg(bad);
         // Mirrored for the readers that test the bool: the confirmed CSV and
         // the pulse-realign skip.
@@ -935,7 +930,7 @@ void TemplateViewerWindow::onBadPPGToggled(int binIdx, int templateIdx,
     // This panel's own slot -- see onBadRToggled. b.bad_ppg is the pipeline's
     // statement about the bin (0 ok, 1 pulse failed, 2 none) and seeds the
     // slots at load; it is not written from here.
-    if (tbank::BankTemplate* t = slotFor(binIdx, -1, templateIdx)) {
+    if (tbank::template_of_all_signals* t = slotFor(binIdx, -1, templateIdx)) {
         t->setBadPulse(bad);
         t->marked_invalid_template = t->badPulseMarked();
     }

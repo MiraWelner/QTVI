@@ -436,7 +436,7 @@ inline void alignTemplatesFromCache(template_io::TemplateFile& tmpl, template_io
                 if (!bnk.templates.empty() && !perBin[i].empty()) {
                     exclRows.assign(perBin[i].size(), 1);
                     size_t nKept = 0;
-                    for (const tbank::BankTemplate& tp : bnk.templates)
+                    for (const tbank::template_of_all_signals& tp : bnk.templates)
                         for (const uint32_t m : tp.members_clean)
                             if (m < exclRows.size() && exclRows[m]) {
                                 exclRows[m] = 0; ++nKept;

@@ -60,7 +60,7 @@ namespace global_intervals {
      *                the reference lines drawn from them are drawn on the
      *                R-aligned panels.
      */
-    inline LeadMarkers leadMarkersFor(const TemplateBin& bin, int ch,
+    inline LeadMarkers leadMarkersFor(const time_bin& bin, int ch,
         AnchorType anchor, MarkerSource src) {
         LeadMarkers m;
         if (ch < 0 || ch >= kNumEcgCh) return m;
@@ -104,7 +104,7 @@ namespace global_intervals {
 
     /// All three channels at once. Channels with no R are still returned (so
     /// the caller can see they were considered) but contribute nothing.
-    inline std::map<int, LeadMarkers> allLeadMarkers(const TemplateBin& bin,
+    inline std::map<int, LeadMarkers> allLeadMarkers(const time_bin& bin,
         AnchorType anchor, MarkerSource src) {
         std::map<int, LeadMarkers> out;
         for (int c = 0; c < kNumEcgCh; ++c) out[c] = leadMarkersFor(bin, c, anchor, src);
@@ -211,7 +211,7 @@ namespace global_intervals {
     }
 
     /// Convenience overload: straight from a bin.
-    inline GlobalIntervals computeGlobalIntervals(const TemplateBin& bin,
+    inline GlobalIntervals computeGlobalIntervals(const time_bin& bin,
         AnchorType anchor, double rateHz, MarkerSource src = MarkerSource::USER) {
         return computeGlobalIntervals(allLeadMarkers(bin, anchor, src), rateHz);
     }

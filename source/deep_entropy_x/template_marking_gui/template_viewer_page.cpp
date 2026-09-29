@@ -15,34 +15,34 @@
 // so the two TUs name one object.
 namespace tv_detail {
 
-    struct PulseField { int marker; double TemplateBin::* field; };
+    struct PulseField { int marker; double time_bin::* field; };
 
     inline constexpr PulseField kPulseFields[] = {
-        { BinPlotWidget::PpgOnset,           &TemplateBin::ppg_onset },
-        { BinPlotWidget::PpgPeak,            &TemplateBin::ppg_peak },
-        { BinPlotWidget::PpgDicrotic,        &TemplateBin::ppg_dicrotic },
-        { BinPlotWidget::PpgPeak2,           &TemplateBin::ppg_peak2 },
-        { BinPlotWidget::PpgEnd,             &TemplateBin::ppg_end },
-        { BinPlotWidget::PpgT50,             &TemplateBin::ppg_t50 },
-        { BinPlotWidget::PpgT80,             &TemplateBin::ppg_t80 },
-        { BinPlotWidget::AbpOnset,           &TemplateBin::abp_onset },
-        { BinPlotWidget::AbpPeak,            &TemplateBin::abp_peak },
-        { BinPlotWidget::AbpDicrotic,        &TemplateBin::abp_dicrotic },
-        { BinPlotWidget::AbpPeak2,           &TemplateBin::abp_peak2 },
-        { BinPlotWidget::AbpEnd,             &TemplateBin::abp_end },
-        { BinPlotWidget::ArtOnset,           &TemplateBin::art_onset },
-        { BinPlotWidget::ArtPeak,            &TemplateBin::art_peak },
-        { BinPlotWidget::ArtDicrotic,        &TemplateBin::art_dicrotic },
-        { BinPlotWidget::ArtPeak2,           &TemplateBin::art_peak2 },
-        { BinPlotWidget::ArtEnd,             &TemplateBin::art_end },
-        { BinPlotWidget::ArtPulmOnset,       &TemplateBin::art_pulm_onset },
-        { BinPlotWidget::ArtPulmPeak,        &TemplateBin::art_pulm_peak },
-        { BinPlotWidget::ArtPulmDicrotic,    &TemplateBin::art_pulm_dicrotic },
-        { BinPlotWidget::ArtPulmPeak2,       &TemplateBin::art_pulm_peak2 },
-        { BinPlotWidget::ArtPulmEnd,         &TemplateBin::art_pulm_end },
+        { BinPlotWidget::PpgOnset,           &time_bin::ppg_onset },
+        { BinPlotWidget::PpgPeak,            &time_bin::ppg_peak },
+        { BinPlotWidget::PpgDicrotic,        &time_bin::ppg_dicrotic },
+        { BinPlotWidget::PpgPeak2,           &time_bin::ppg_peak2 },
+        { BinPlotWidget::PpgEnd,             &time_bin::ppg_end },
+        { BinPlotWidget::PpgT50,             &time_bin::ppg_t50 },
+        { BinPlotWidget::PpgT80,             &time_bin::ppg_t80 },
+        { BinPlotWidget::AbpOnset,           &time_bin::abp_onset },
+        { BinPlotWidget::AbpPeak,            &time_bin::abp_peak },
+        { BinPlotWidget::AbpDicrotic,        &time_bin::abp_dicrotic },
+        { BinPlotWidget::AbpPeak2,           &time_bin::abp_peak2 },
+        { BinPlotWidget::AbpEnd,             &time_bin::abp_end },
+        { BinPlotWidget::ArtOnset,           &time_bin::art_onset },
+        { BinPlotWidget::ArtPeak,            &time_bin::art_peak },
+        { BinPlotWidget::ArtDicrotic,        &time_bin::art_dicrotic },
+        { BinPlotWidget::ArtPeak2,           &time_bin::art_peak2 },
+        { BinPlotWidget::ArtEnd,             &time_bin::art_end },
+        { BinPlotWidget::ArtPulmOnset,       &time_bin::art_pulm_onset },
+        { BinPlotWidget::ArtPulmPeak,        &time_bin::art_pulm_peak },
+        { BinPlotWidget::ArtPulmDicrotic,    &time_bin::art_pulm_dicrotic },
+        { BinPlotWidget::ArtPulmPeak2,       &time_bin::art_pulm_peak2 },
+        { BinPlotWidget::ArtPulmEnd,         &time_bin::art_pulm_end },
     };
 
-    inline double* pulseField(TemplateBin& tb, int marker) {
+    inline double* pulseField(time_bin& tb, int marker) {
         for (const PulseField& f : kPulseFields)
             if (f.marker == marker) return &(tb.*f.field);
         return nullptr;
@@ -66,7 +66,7 @@ namespace {
 }
 
 std::vector<TemplateViewerWindow::Lead>
-TemplateViewerWindow::leadsForBin(const TemplateBin& b) const {
+TemplateViewerWindow::leadsForBin(const time_bin& b) const {
     std::vector<Lead> out;
     // Shared with the markings CSV, so it cannot report a channel this
     // function says does not exist.
@@ -80,7 +80,7 @@ TemplateViewerWindow::leadsForBin(const TemplateBin& b) const {
 }
 
 std::vector<TemplateViewerWindow::Lead>
-TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
+TemplateViewerWindow::leadsForBinTemplate(const time_bin& b,
     int templateIdx) const {
     std::vector<Lead> out;
     static const char* kNames[3] = { "Ch1", "Ch2", "Ch3" };
@@ -136,7 +136,7 @@ TemplateViewerWindow::leadsForBinTemplate(const TemplateBin& b,
             && !bank.templates[templateIdx].tooFewBeats(/*is_ppg=*/false)
             // wantsLandmarkMarking for every slot, _A included.
             && bank.templates[templateIdx].wantsLandmarkMarking()) {
-            const tbank::BankTemplate& t = bank.templates[templateIdx];
+            const tbank::template_of_all_signals& t = bank.templates[templateIdx];
 
             // ---- ONE SOURCE: THIS SLOT, THIS ALIGNMENT -------------------
             //
@@ -316,7 +316,7 @@ void TemplateViewerWindow::buildPages() {
     std::fflush(stderr);
 }
 
-bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
+bool TemplateViewerWindow::unionEcgFrameSeconds(const time_bin& b, int lead,
     int templateIdx, double& tMinSec, double& tMaxSec) const
 {
     if (!(m_sampleRate > 0.0)) return false;
@@ -362,7 +362,7 @@ bool TemplateViewerWindow::unionEcgFrameSeconds(const TemplateBin& b, int lead,
     return true;
 }
 
-std::vector<int> TemplateViewerWindow::markingSlotsForBin(const TemplateBin& b) const {
+std::vector<int> TemplateViewerWindow::markingSlotsForBin(const time_bin& b) const {
     // ONE SOURCE, shared with the markings CSV writer, so the file's row set
     // IS this column set. Also per ALIGNMENT, which the old local lambda was
     // not: a slot can have an average for R and none for P.
@@ -541,7 +541,7 @@ int TemplateViewerWindow::pageGridRows(bool compact,
 // marking it would create a fourth set of fiducials with no channel of its own
 // to store them in. That is also why it takes no template index.
 void TemplateViewerWindow::addVcgPanel(int gi, int column, int gridRows,
-    const TemplateBin& b,
+    const time_bin& b,
     const std::vector<double>& vcgTrace, double vcgRCol,
     const global_intervals::GlobalIntervals& intervals,
     std::vector<BinPlotWidget*>& group, int& usedRows, int& usedCols)
@@ -610,7 +610,7 @@ void TemplateViewerWindow::showPage() {
         m_pageGlobalIdx[i] = gi;
         m_pageTemplateIdx[i] = template_index;
 
-        const TemplateBin& b = m_bins[gi];
+        const time_bin& b = m_bins[gi];
         auto leads = leadsForBinTemplate(b, template_index);
 
         // Only shout when no bank arrived at all: an empty bank and a genuinely
@@ -649,7 +649,7 @@ void TemplateViewerWindow::showPage() {
         // tooFewBeats carries the PPG minimum from config.csv, so a cohort
         // below it is not drawn either -- a band fitted to two pulses is as
         // meaningless as a waveform built from two beats.
-        tbank::BankTemplate* ppgSlot =
+        tbank::template_of_all_signals* ppgSlot =
             (template_index >= 0 && template_index < b.ppg_bank.size())
             ? &m_bins[gi].ppg_bank.templates[template_index] : nullptr;
         const bool hasPPG = ppgSlot && !ppgSlot->tmpl.empty()
@@ -722,7 +722,7 @@ void TemplateViewerWindow::showPage() {
             static const std::vector<double> emptyIqr;
             const std::vector<double>& ecgIqrRaw =
                 leads[li].ecg_std ? *leads[li].ecg_std : emptyIqr;
-            const double ecgRef = (lead_index >= 0 && lead_index < 3) ? m_ecgGlobalRef[lead_index] : std::nan("");
+            const double ecgRef = ecgRefFor(b, lead_index, template_index);
             // Both ecgIqrRaw (Q3-Q1 of raw amplitude) and b.ppg_template_iqr
             // (Q3-Q1 of each beat's own local perfusion-index ratio, computed
             // at build time -- see CreatePPGTemplates.hpp) are pre-ref-division.
@@ -804,7 +804,8 @@ void TemplateViewerWindow::showPage() {
             const std::vector<double> artSrc = !b.artTemplate.empty() ? maybeNotch(b.artTemplate, m_artRateHz, b.art_onset) : b.artTemplate;
             const std::vector<double> artPSrc = !b.artPulmTemplate.empty() ? maybeNotch(b.artPulmTemplate, m_artPulmRateHz, b.art_pulm_onset) : b.artPulmTemplate;
 
-            const std::vector<double> ecgN = normalizeEcgTrace(ecgSrc, lead_index);
+            const std::vector<double> ecgN =
+                normalizeEcgTrace(ecgSrc, b, lead_index, template_index);
             // ppgN was filled by pulseTraceForSlot above, against ppgFootIdx --
             // the SLOT's foot, not b.ppg_onset, because the trace is
             // ppgSlot->tmpl and b.ppg_onset was measured on b.ppgTemplate. The
@@ -1002,7 +1003,7 @@ void TemplateViewerWindow::showPage() {
 // showsBar decides which bars an alignment carries, so P shows one, Q three,
 // R all four, J one -- unchanged.
 tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const BinPlotWidget* pw,
-    const TemplateBin& b, int lead, int slot) const
+    const time_bin& b, int lead, int slot) const
 {
     tbank::BankMarkerSet out;   // all -1
     if (!pw) return out;
@@ -1107,12 +1108,12 @@ void TemplateViewerWindow::applyMarkerVisibility() {
 // simply absent -- which is honest, and better than showing the bin's PPG bars
 // against an ECG-only column.
 void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
-    TemplateBin& b, int channel, int templateIdx)
+    time_bin& b, int channel, int templateIdx)
 {
     if (channel < 0 || channel > 2) return;
     tbank::TemplateBank& bank = b.ecg_bank[channel];
     if (templateIdx < 0 || templateIdx >= bank.size()) return;
-    tbank::BankTemplate& tp = bank.templates[templateIdx];
+    tbank::template_of_all_signals& tp = bank.templates[templateIdx];
     if (tp.tmpl.empty()) return;
 
     // ---- NO BAR SEEDING HERE. A CELL HOLDS OPERATOR EDITS AND NOTHING ELSE.
@@ -1186,7 +1187,7 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
 
     if (templateIdx >= 0 && templateIdx < b.ppg_bank.size()
         && !b.ppg_bank.templates[templateIdx].tmpl.empty()) {
-        tbank::BankTemplate& ps = b.ppg_bank.templates[templateIdx];
+        tbank::template_of_all_signals& ps = b.ppg_bank.templates[templateIdx];
         {
             // Seeded in seedOneBin; a built variant will have overwritten it.
             const tbank::BankPulseMarkerSet& pm = ps.pulse_marks;
@@ -1281,7 +1282,7 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
 // applyTemplateToWidget, which every column goes through.
 // ---------------------------------------------------------------------------
 void TemplateViewerWindow::applyBinCommonToWidget(BinPlotWidget* pw,
-    const TemplateBin& b) {
+    const time_bin& b) {
     // ARTERIAL ONLY out of the field table. The pulse entries are per slot now
     // and applyTemplateToWidget sets them from this column's own pulse_marks;
     // pushing the bin's values here first would put a bar from another
@@ -1328,7 +1329,7 @@ void TemplateViewerWindow::reskinGridForAnchor(int onlyBin, int onlySlot) {
         // them (every panel's frame moves), and it is the default.
         if (onlyBin >= 0 && (gi != onlyBin || templateIndex != onlySlot))
             continue;
-        const TemplateBin& b = m_bins[gi];
+        const time_bin& b = m_bins[gi];
 
         const auto leads = leadsForBinTemplate(b, templateIndex);
 
@@ -1358,8 +1359,9 @@ void TemplateViewerWindow::reskinGridForAnchor(int onlyBin, int onlySlot) {
                 ecgSrc = notch_filter(ecgSrc,
                     m_notchFilterHz, m_sampleRate);
 
-            const std::vector<double> ecgN = normalizeEcgTrace(ecgSrc, lead_index);
-            const double ecgRef = m_ecgGlobalRef[lead_index];
+            const std::vector<double> ecgN =
+                normalizeEcgTrace(ecgSrc, b, lead_index, templateIndex);
+            const double ecgRef = ecgRefFor(b, lead_index, templateIndex);
             const std::vector<double> ecgIqr =
                 normalize_features::scale_array_by_ref(ecgIqrRaw, ecgRef);
 
@@ -1396,7 +1398,7 @@ BinPlotWidget::State TemplateViewerWindow::panelState(int binIdx, int leadIdx,
 {
     if (binIdx < 0 || binIdx >= (int)m_bins.size())
         return BinPlotWidget::State::Good;
-    const TemplateBin& b = m_bins[binIdx];
+    const time_bin& b = m_bins[binIdx];
 
     // Per slot: operator_state's two bits, from the bank each is stored in
     // (ECG per lead, pulse shared across the panel's leads). The bin-level

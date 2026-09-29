@@ -117,7 +117,7 @@ namespace tbank_ser {
 
     namespace detail {
 
-        inline void writeTemplate(std::ofstream& f, const tbank::BankTemplate& t) {
+        inline void writeTemplate(std::ofstream& f, const tbank::template_of_all_signals& t) {
             wvecd(f, t.tmpl);
             wvecd(f, t.tmpl_std);
             w32(f, t.r_col);
@@ -139,8 +139,8 @@ namespace tbank_ser {
             // morphology: the waveform, its spread, its members, its class.
         }
 
-        inline tbank::BankTemplate readTemplate(std::ifstream& f) {
-            tbank::BankTemplate t;
+        inline tbank::template_of_all_signals readTemplate(std::ifstream& f) {
+            tbank::template_of_all_signals t;
             t.tmpl = rvecd(f);
             t.tmpl_std = rvecd(f);
             t.r_col = r32(f);
@@ -193,7 +193,7 @@ namespace tbank_ser {
         // Nothing derived is stored: these are decisions and observations, not
         // recomputable from the templates.
         inline void writeTemplateExtras(std::ofstream& f,
-            const tbank::BankTemplate& t) {
+            const tbank::template_of_all_signals& t) {
             w8(f, t.confirmed_by_operator ? 1u : 0u);
             wvecu32(f, t.members_clean);
             w32(f, t.n_premature_members);
@@ -205,7 +205,7 @@ namespace tbank_ser {
         }
 
         inline void readTemplateExtras(std::ifstream& f,
-            tbank::BankTemplate& t) {
+            tbank::template_of_all_signals& t) {
             t.confirmed_by_operator = (r8(f) != 0);
             t.members_clean = rvecu32(f);
             t.n_premature_members = r32(f);

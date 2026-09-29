@@ -82,84 +82,40 @@ namespace normalize_features {
         return std::isnan(lr) ? lr : lr / std::abs(ref);
     }
 
-    // ------------------------------------------------------------------
-    // ECG reference: EACH SLOT IS ITS OWN REFERENCE.
-    // ------------------------------------------------------------------
-    //
-    // A bank slot is one morphology, and its amplitude features are divided by
-    // THAT slot's own |R_peak| + |S_peak| -- measured on the slot's OWN
-    // template with the slot's OWN R-pass markers. Nothing is borrowed from
-    // slot 0 and nothing is read off the bin-level ecgTemplate_raw: the old
-    // code took the bin-level waveform and sampled it at slot 0's marker
-    // positions, which paired a waveform with landmarks placed on a different
-    // object, and then applied that one number to every slot.
-    //
-    // R-PASS MARKERS STILL, never the current anchor's: the reference must not
-    // move when the operator switches anchors.
-    //
-    // Consequence, stated so nobody is surprised by it: |R|+|S| of a slot's own
-    // template is 1 after its own normalization, so a PVC slot and a sinus slot
-    // no longer differ in QRS size in normalized units. Features describe each
-    // morphology against itself.
-
-    // The slot, or nullptr when this bin/channel has no such slot.
-    inline const tbank::BankTemplate* ecg_slot(const TemplateBin& b, int ch, int slot) {
+    
+    inline const tbank::template_of_all_signals* ecg_slot(const time_bin& b, int ch, int slot) {
+        //given a bin, lead, and template slot number, get pointer to template
         if (ch < 0 || ch >= 3 || slot < 0) return nullptr;
         const auto& t = b.ecg_bank[ch].templates;
         return (static_cast<size_t>(slot) < t.size()) ? &t[slot] : nullptr;
     }
 
-    // One slot's own |R| + |S|, in this bin. NaN when the slot is absent, empty,
-    // gated off, or R/S cannot be sampled on it.
-    inline double slot_rs_peak(const TemplateBin& b, int ch, int slot, double sampleRateHz)
+    inline double qrs_height_for_template(const time_bin& b, int ch, int slot, double sampleRateHz)
     {
+        //given a bin, lead, and template slot number, get qrs complex height (|R|+|S|)
         if (b.bad_segment || b.bad_r_ch[ch]) return std::nan("");
-        const tbank::BankTemplate* tp = ecg_slot(b, ch, slot);
+        const tbank::template_of_all_signals* tp = ecg_slot(b, ch, slot);
         if (!tp || tp->tmpl.empty()) return std::nan("");
         const std::vector<double>& ecg = tp->tmpl;
 
         const tbank::BankMarkerSet& rmk = b.slotMarks(ch, slot, AnchorType::R_PEAK);
-        // THIS slot's R: its detected R if the detector ran, else the column
-        // the slot template was built around.
         const double rIdx = (rmk.r_peak_auto >= 0.0)
             ? rmk.r_peak_auto : static_cast<double>(tp->r_col);
         if (rIdx < 0.0) return std::nan("");
-
-        // p_peak is no longer stored on BankMarkerSet: it is a reactive
-        // glyph, fully determined by the P-onset and Q-onset bars, so it is
-        // derived here from the same bars the screen and the CSV use.
-        const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
-            ecg, rmk.p_begin, rmk.q_onset, rmk.s_end, rmk.t_end, sampleRateHz);
-        EcgFeatures f = computeEcgFeatures(ecg,
-            rx.p_peak, rmk.q_onset, rIdx,
-            rmk.s_end, rmk.t_end, sampleRateHz, b.polarity.sign(ch));
+        const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(ecg, rmk.p_begin, rmk.q_onset, rmk.s_end, rmk.t_end, sampleRateHz);
+        EcgFeatures f = computeEcgFeatures(ecg,rx.p_peak, rmk.q_onset, rIdx, rmk.s_end, rmk.t_end, sampleRateHz, b.polarity.sign(ch));
         const double ry = sample_y(ecg, f.r_idx);
         const double sy = sample_y(ecg, f.s_idx);
         if (std::isnan(ry) || std::isnan(sy)) return std::nan("");
         return std::abs(ry) + std::abs(sy);
     }
 
-    // Median over bins of slot `slot`'s own |R|+|S|. Only meaningful where the
-    // slot index names the same morphology in every bin (slot 0 does). Where it
-    // does not, use slot_rs_peak on the one bin instead.
-    //
-    // An old three-argument call (bins, ch, rate) still compiles and means
-    // slot 0; see the overload below.
-    inline double compute_ecg_global_ref(const std::vector<TemplateBin>& bins, int ch, int slot,
-        double sampleRateHz)
-    {
+    inline double compute_ecg_global_ref(const std::vector<time_bin>& bins, int ch, int slot,double sampleRateHz){
+        //median of all QRS heights for a given lead - called global ref in scientific literature
         std::vector<double> vals;
         vals.reserve(bins.size());
-        for (const auto& b : bins) vals.push_back(slot_rs_peak(b, ch, slot, sampleRateHz));
+        for (const auto& b : bins) vals.push_back(qrs_height_for_template(b, ch, slot, sampleRateHz));
         return median_finite(std::move(vals));
-    }
-
-    // Old three-argument form: slot 0. Kept so existing callers
-    // (template_viewer_export.cpp) compile unchanged.
-    inline double compute_ecg_global_ref(const std::vector<TemplateBin>& bins, int ch,
-        double sampleRateHz)
-    {
-        return compute_ecg_global_ref(bins, ch, 0, sampleRateHz);
     }
 
     // ------------------------------------------------------------------
@@ -183,7 +139,7 @@ namespace normalize_features {
         double end_idx;
     };
 
-    inline PulseChannel pulseChan(const TemplateBin& b, int which) {
+    inline PulseChannel pulseChan(const time_bin& b, int which) {
         switch (which) {
         case 0: return { &b.ppgTemplate,     b.ppg_onset,    b.ppg_peak,    b.bad_ppg,
                          b.ppg_dicrotic,     b.ppg_peak2,    b.ppg_end };
@@ -198,7 +154,7 @@ namespace normalize_features {
 
     inline constexpr int kNumPulseCh = 4;
 
-    inline double compute_pulse_global_ref(const std::vector<TemplateBin>& bins, int which)
+    inline double compute_pulse_global_ref(const std::vector<time_bin>& bins, int which)
     {
         //PI(bin) = 100 * (peak_y - foot_y) / |foot_y|
         std::vector<double> vals;
@@ -546,10 +502,10 @@ namespace normalize_features {
     // Option A -- each slot is its own reference, measured on its own template
     // with its own R-pass markers -- swapping the |R|+|S| reduction for the
     // QRS's rectified area (Q-onset -> J-point / s_end).
-    inline double slot_qrs_area(const TemplateBin& b, int ch, int slot)
+    inline double slot_qrs_area(const time_bin& b, int ch, int slot)
     {
         if (b.bad_segment || b.bad_r_ch[ch]) return std::nan("");
-        const tbank::BankTemplate* tp = ecg_slot(b, ch, slot);
+        const tbank::template_of_all_signals* tp = ecg_slot(b, ch, slot);
         if (!tp || tp->tmpl.empty()) return std::nan("");
         const tbank::BankMarkerSet& rmk = b.slotMarks(ch, slot, AnchorType::R_PEAK);
         // STRAIGHT THROUGH AS DOUBLES. These are BankMarkerSet's
@@ -564,7 +520,7 @@ namespace normalize_features {
 
     // Median over bins of slot `slot`'s own QRS area. Same caveat and same
     // required-slot signature as compute_ecg_global_ref.
-    inline double compute_ecg_global_ref_area(const std::vector<TemplateBin>& bins, int ch, int slot,
+    inline double compute_ecg_global_ref_area(const std::vector<time_bin>& bins, int ch, int slot,
         double sampleRateHz)
     {
         (void)sampleRateHz;   // kept for signature parity with Option A
@@ -574,13 +530,6 @@ namespace normalize_features {
         return median_finite(std::move(vals));
     }
 
-    // Old three-argument form: slot 0. Kept so existing callers compile unchanged.
-    inline double compute_ecg_global_ref_area(const std::vector<TemplateBin>& bins, int ch,
-        double sampleRateHz)
-    {
-        return compute_ecg_global_ref_area(bins, ch, 0, sampleRateHz);
-    }
-
     // Option C: spatial vector-magnitude Global_Ref_person, fusing all three
     // ECG channels. Builds the R-relative 3-lead loop the SAME way
     // vcg_signal_average.hpp's save-time path does (each channel read at ITS
@@ -588,7 +537,7 @@ namespace normalize_features {
     // does not re-derive cross-channel alignment; it reuses the one already
     // proven for the VCG loop. Global_Ref_person is the median, across bins,
     // of each bin's peak spatial magnitude sqrt(x^2+y^2+z^2).
-    inline double compute_ecg_global_ref_spatial(const std::vector<TemplateBin>& bins,
+    inline double compute_ecg_global_ref_spatial(const std::vector<time_bin>& bins,
         int preSamples = 40, int postSamples = 60)
     {
         std::vector<double> peaks;
