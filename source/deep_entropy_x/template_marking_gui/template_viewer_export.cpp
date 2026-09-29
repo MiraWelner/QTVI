@@ -91,8 +91,7 @@ void TemplateViewerWindow::writeNormalizationCsvs() {
             f << "subject_id,channel,bin_index,ratio,feature_norm\n";
             for (int ch = 0; ch < 3; ++ch) {
                 const std::vector<double> qref = perBinQrsRef(ch);
-                const double grefA = normalize_features::compute_ecg_global_ref(m_bins, ch, m_sampleRate);
-
+                const double grefA = normalize_features::compute_ecg_global_ref(m_bins, ch, 0, m_sampleRate);
                 std::vector<double> ratios(qref.size(), std::numeric_limits<double>::quiet_NaN());
                 std::vector<double> finite;
                 for (size_t i = 0; i < qref.size(); ++i) {
@@ -129,7 +128,7 @@ void TemplateViewerWindow::writeNormalizationCsvs() {
 
 double TemplateViewerWindow::ecgRefFor(const time_bin& b, int ch, int slot) const {
     if (ch < 0 || ch >= 3) return std::nan("");
-    return normalize_features::slot_rs_peak(b, ch, slot, m_sampleRate);
+    return normalize_features::qrs_height_for_template(b, ch, slot, m_sampleRate);
 }
 
 std::vector<double> TemplateViewerWindow::normalizeEcgTrace(const std::vector<double>& raw,

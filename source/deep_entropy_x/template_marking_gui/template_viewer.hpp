@@ -622,8 +622,9 @@ private:
     // This time bin's own |R|+|S|, for this slot. Not a record-wide median:
     // slot indices name the same morphology only within a bin.
     double ecgRefFor(const time_bin& b, int ch, int slot) const;
-    std::vector<double> normalizeEcgTrace(const std::vector<double>& raw,
-        const time_bin& b, int ch, int slot) const;
+    std::vector<double> normalizeEcgTrace(const std::vector<double>& raw, const time_bin& b, int ch, int slot) const;
+
+    std::vector<double> normalize_ppg_or_similar(const std::vector<double>& raw, double footIdx, int pulseChan) const;
 
     // Push m_showEcgMarkers / m_showPpgMarkers into every visible plot.
     void applyMarkerVisibility();
