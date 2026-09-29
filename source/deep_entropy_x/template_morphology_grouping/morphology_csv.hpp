@@ -797,7 +797,9 @@ namespace morphology_csv {
     // so there are no old files to be compatible with. A field gets added and
     // every archive is regenerated. The number is kept only so a future release
     // has somewhere to start counting.
-    inline constexpr uint32_t bin_version = 1;
+    // One format, version 0; a stale archive is refused on this field rather
+    // than misread. See kMarkVersion.
+    inline constexpr uint32_t bin_version = 0;
 
     // One record per beat column. Fixed size, so a reader can stride over
     // descriptors without parsing them.
@@ -1302,7 +1304,7 @@ namespace morphology_csv {
         uint32_t ver = 0, nBlocks = 0;
         if (!detail::readRaw(f, &ver, 4) || !detail::readRaw(f, &nBlocks, 4))
             return false;
-        if (ver > bin_version) return false;   // newer than this build understands
+        if (ver != bin_version) return false;   // one format; anything else is stale
 
         out.clear();
         for (uint32_t bi = 0; bi < nBlocks; ++bi) {

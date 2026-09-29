@@ -53,7 +53,7 @@
 std::vector<double> TemplateViewerWindow::maybeNotchTrace(
     const std::vector<double>& sig, double fs, double footIdx) const
 {
-    if (!(m_notchFilterOn && m_notchFilterHz > 0.0)) return sig;
+    if (!(m_notchFilterHz > 0.0)) return sig;   // 0 = the operator left Notch off
     if (sig.empty() || fs <= 0.0) return sig;
 
     std::vector<double> out =
@@ -85,9 +85,7 @@ bool TemplateViewerWindow::pulseTraceForSlot(tbank::BankTemplate& slot,
     outFootIdx = -1.0;
     if (slot.tmpl.empty()) return false;
 
-    if (!slot.hasDetectedPulseMarks())
-        FeatureMarks::seed_pulse_bank_template(slot.tmpl, m_ppgRateHz,
-            slot.pulse_marks);
+    // Seeded for every slot in seedOneBin, so there is nothing to detect here.
     outFootIdx = slot.pulse_marks.onset;
 
     const std::vector<double> src =
@@ -359,9 +357,8 @@ void TemplateViewerWindow::clearBeatsCache()
 // what the pipeline already wrote, held so this window can put it back.
 // ---- THE AS-BUILT AVERAGE, AND THE ANCHOR MEASURED ON IT -----------------
 //
-// Every re-level reads its hint from here and never from the waveform a
-// previous re-level installed. See m_ppgFootAnchor for what that feedback loop
-// did.
+// Every re-level reads its hint from slot.pulse_marks.onset, which is stored;
+// this is kept for the spread band autoPctForSlot measures.
 const std::vector<double>& TemplateViewerWindow::ppgAsBuiltTmpl(
     int binIdx, int templateIdx) const
 {
@@ -376,22 +373,6 @@ const std::vector<double>& TemplateViewerWindow::ppgAsBuiltTmpl(
     const auto it = m_ppgBuilt.find(slotKey(binIdx, templateIdx));
     if (it != m_ppgBuilt.end()) return it->second.first;
     return b.ppg_bank.templates[templateIdx].tmpl;
-}
-
-double TemplateViewerWindow::ppgFootAnchor(int binIdx, int templateIdx)
-{
-    const int key = slotKey(binIdx, templateIdx);
-    const auto it = m_ppgFootAnchor.find(key);
-    if (it != m_ppgFootAnchor.end()) return it->second;
-
-    // SEEDED FROM THE AS-BUILT AVERAGE, not from pulse_marks: detect_ppg_onset
-    // is a pure function of the array, so this is the same number on every
-    // call and in every session, which is the whole point of keeping it here.
-    const std::vector<double>& built = ppgAsBuiltTmpl(binIdx, templateIdx);
-    if (built.empty()) return -1.0;
-    const double foot = static_cast<double>(FeatureMarks::detect_ppg_onset(built));
-    m_ppgFootAnchor[key] = foot;
-    return foot;
 }
 
 // ---- LANDMARK -> VARIANT, ONE DEFINITION ---------------------------------
@@ -460,18 +441,22 @@ bool TemplateViewerWindow::buildPulseVariant(int binIdx, int templateIdx,
     //
     // Neither is slot.pulse_marks.onset. That field is re-detected per variant
     // and reading it here is what made the old path iterate on its own output.
-    const double hint = (v == tbank::PulseAnchor::Foot)
-        ? ppgFootAnchor(binIdx, templateIdx)
-        : static_cast<double>(FeatureMarks::detect_ppg_onset(
-            ppgAsBuiltTmpl(binIdx, templateIdx)));
+    // THE STORED BAR, for both variants. Re-detecting it each session landed
+    // it a sample out on the waveform bank_reload had restored, which moved
+    // relevelAtOwnCrossing's search window, which moved out.baseline, which
+    // offset every column of the result.
+    const double hint = slot.pulse_marks.onset;
     if (!(hint >= 0.0)) return false;
 
-    // PEAK IS 100 BY DEFINITION and does not read the control. Foot takes the
-    // percentage the group is holding -- 0 at the foot, up to 100 -- which is
-    // what "the percentage defines _F" means.
-    const double usePct = (v == tbank::PulseAnchor::Peak)
-        ? 100.0
-        : std::clamp(pct, 0.0, 100.0);
+    // Peak is 100 by definition. Foot takes the height already resolved for
+    // this slot when there is one, so a rebuild repeats it rather than asking
+    // the threshold again; otherwise the caller's, kept for next time.
+    double usePct = 100.0;
+    if (v != tbank::PulseAnchor::Peak) {
+        usePct = (slot.pulse_marks.foot_pct >= 0.0)
+            ? slot.pulse_marks.foot_pct : std::clamp(pct, 0.0, 100.0);
+        slot.pulse_marks.foot_pct = usePct;
+    }
 
     if (beatsBinPath().isEmpty()) return false;
     const ppg_realign::BinBeats& beats = beatsForBin(binIdx);
@@ -711,10 +696,9 @@ void TemplateViewerWindow::realignAllVisiblePulses()
         if (slotIdx >= (int)b.ppg_bank.size()) continue;
         tbank::BankTemplate& slot = b.ppg_bank.templates[slotIdx];
         if (slot.tmpl.empty()) continue;
-        // A column the operator has already called bad is left as it is:
-        // aligning it would spend a beat-matrix read on a waveform that has
-        // been excluded.
-        if (b.bad_ppg == 1 || slot.marked_invalid_template) continue;
+        // This column's own verdict: a column already called bad is left as it
+        // is. The bin-level flag reaches these bits through the load seed.
+        if (slot.badPulseMarked() || slot.marked_invalid_template) continue;
 
         // ---- THE PERCENTAGE _F IS BUILT AT ----------------------------
         //
@@ -724,9 +708,12 @@ void TemplateViewerWindow::realignAllVisiblePulses()
         // pctForAlignMode. Either way it is _F's definition -- _P is 100 and
         // reads nothing.
         double pctF = percentage_for_aligning();
-        if (m_ppgAlignMode == PpgAlign::Auto) {
-            const double hint = ppgFootAnchor(gi, slotIdx);
-            pctF = static_cast<double>(which_alignment_fiducial_marker_should_auto_use(gi, slotIdx, slot, hint));
+        if (slot.pulse_marks.foot_pct >= 0.0) {
+            pctF = slot.pulse_marks.foot_pct;   // resolved once, then kept
+        }
+        else if (m_ppgAlignMode == PpgAlign::Auto) {
+            pctF = static_cast<double>(which_alignment_fiducial_marker_should_auto_use(
+                gi, slotIdx, slot, slot.pulse_marks.onset));
             if (pctF > 0.0) ++nAutoPct; else ++nAutoFoot;
         }
 
@@ -792,7 +779,14 @@ bool TemplateViewerWindow::relevelPulseAtFoot(int binIdx, int templateIdx,
     if (b.ppg_bank.templates[templateIdx].tmpl.empty()) return false;
     if (!(footCol >= 0.0)) return false;
 
-    m_ppgFootAnchor[slotKey(binIdx, templateIdx)] = footCol;
+    // No anchor memo: buildPulseVariant reads slot.pulse_marks.onset, which
+    // this drag has already written, so the bar IS the anchor.
+    // A NEW HEIGHT TOO -- the operator moved the foot, so the alignment that
+    // was resolved against the old one is stale.
+    if (binIdx >= 0 && binIdx < static_cast<int>(m_bins.size())
+        && templateIdx >= 0
+        && templateIdx < static_cast<int>(m_bins[binIdx].ppg_bank.size()))
+        m_bins[binIdx].ppg_bank.templates[templateIdx].pulse_marks.foot_pct = -1.0;
 
     // REBUILT, NOT PATCHED. The stored _F is a function of the anchor, so a
     // new anchor means a new _F -- computed from the as-built rows, never from

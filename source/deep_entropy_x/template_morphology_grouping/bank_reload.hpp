@@ -164,17 +164,21 @@ namespace bank_reload {
 
         // ---- ALL OF IT OR NONE OF IT ----------------------------------
         //
-        // The v5 trailer is what makes a reload exact. Without it there is no
-        // census, so presumedCategory() would read an ectopic template as
-        // REGULAR, and no subtype, so letters would come back from bank order.
-        // Applying the partition anyway produces a bank that disagrees with
-        // itself, which is worse than a clean repartition.
+        // THE PER-TEMPLATE TRAILER IS WHAT MAKES A RELOAD EXACT. Without it
+        // there is no census, so presumedCategory() would read an ectopic
+        // template as REGULAR, and no subtype, so letters would come back from
+        // bank order. Applying the partition anyway produces a bank that
+        // disagrees with itself, which is worse than a clean repartition.
+        //
+        // Not a version test: one format, always a trailer per record, so a
+        // mismatch means truncated or foreign.
         for (const auto& blk : out.blocks) {
             if (blk.records.empty()) continue;
             if (blk.trailers.size() != blk.records.size()) {
                 rep.too_old = true;
-                rep.error = "archive predates v5 (no per-template trailer), so"
-                    " a reload could not be exact";
+                rep.error = "one trailer per template record is missing, so the"
+                    " archive is truncated or foreign and a reload could not be"
+                    " exact";
                 out.blocks.clear();
                 return out;
             }

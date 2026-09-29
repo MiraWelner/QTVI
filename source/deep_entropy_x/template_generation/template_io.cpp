@@ -16,7 +16,8 @@
 
 namespace template_io {
     inline constexpr char     kTemplateFileMagic[8] = { 'P','T','M','P','L','\0','\0','\0' };
-    inline constexpr uint32_t template_file_version = 1;
+    // One format, version 0 -- see kMarkVersion.
+    inline constexpr uint32_t template_file_version = 0;
 
     namespace {
 
@@ -40,7 +41,7 @@ namespace template_io {
             v.resize(sz);
             if (sz > 0) f.read(reinterpret_cast<char*>(v.data()), sz * 8);
             return static_cast<bool>(f);
-        
+
         }
 
         bool readMethod(std::ifstream& f, ChannelMethodTemplate& m) {

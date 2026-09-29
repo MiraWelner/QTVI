@@ -286,6 +286,12 @@ namespace tbank {
         double peak2_auto = -1.0, end_auto = -1.0;
         bool notch_found = false;
 
+        // The height the Foot variant's rows were levelled at, 0 at the foot to
+        // 100 at the apex. PERSISTED, because Auto resolves it per column from
+        // a threshold and re-resolving it on reload rebuilds _F at a different
+        // height. -1 means not resolved yet: decide it, then keep it.
+        double foot_pct = -1.0;
+
         bool isUnset() const {
             return onset < 0 && dicrotic < 0 && end < 0;
         }
@@ -395,8 +401,31 @@ namespace tbank {
 
         // ---- THE OPERATOR'S QUALITY VERDICT ON THIS PANEL -----------------
         //
-        // 0 = good, 1 = bad R detection, 2 = bad pulse - determined by right click
-        uint8_t operator_state = 0;
+        // A BITFIELD, independent bits: the right-click cycle has a both-bad
+        // step and the markings CSV reports bad_ecg and bad_ppg as two columns.
+        //
+        // The ECG bit is per lead, so it lives on ecg_bank[lead].templates[slot];
+        // the pulse bit is shared across a panel's leads and lives on
+        // ppg_bank.templates[slot]. Both banks serialize this field.
+        //
+        // PER TEMPLATE, NO SPECIAL CASE FOR ANY SLOT INDEX. TemplateBin's
+        // bin-shaped bad_r_ch / bad_ppg are the pipeline's; they seed these
+        // bits once at load and are not read for display or export after.
+        static constexpr uint8_t kOperatorGood = 0u;
+        static constexpr uint8_t kOperatorBadEcg = 1u << 0;
+        static constexpr uint8_t kOperatorBadPulse = 1u << 1;
+        uint8_t operator_state = kOperatorGood;
+
+        bool badEcgMarked()   const { return (operator_state & kOperatorBadEcg) != 0; }
+        bool badPulseMarked() const { return (operator_state & kOperatorBadPulse) != 0; }
+        void setBadEcg(bool bad) {
+            if (bad) operator_state |= kOperatorBadEcg;
+            else     operator_state &= static_cast<uint8_t>(~kOperatorBadEcg);
+        }
+        void setBadPulse(bool bad) {
+            if (bad) operator_state |= kOperatorBadPulse;
+            else     operator_state &= static_cast<uint8_t>(~kOperatorBadPulse);
+        }
 
         std::vector<uint32_t> members;//the templates, including the ones excluded by the morphology split
         std::vector<uint32_t> members_clean;//the templates, excluded the ones excluded by the morphology split
@@ -429,7 +458,6 @@ namespace tbank {
         // written by composePulseMarks and is not itself a source of truth --
         // pulse_by_variant is.
         BankPulseMarkerSet pulse_marks;   // meaningful only on ppg_bank slots
-        bool hasDetectedPulseMarks() const { return !pulse_marks.isUnset(); }
 
         // ---- THE TWO VARIANTS, KEYED LIKE markers_by_anchor ---------------
         //

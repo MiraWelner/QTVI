@@ -2,10 +2,6 @@
  * @file   anneal_handler.cpp
  * @brief  Reads a data .bin file as well as the noise marking .bin file, and produces
  *         an annealed .bin file. The point is to remove noise, and split the file after noise is removed.
- * 
- * 
- * 
- * 
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -34,8 +30,9 @@ namespace {
     // ============================================================================
 
     struct RawData {
+        //The input record, whole and continuous, before anything is cut.
         std::vector<double> ppg, ecg1, ecg2, ecg3, sleepStages;
-        double ppgSR = 0, ecgSR = 0, scoringEpochSec = 0;
+        double ppg_sampling_rate = 0, ecg_sampling_rate = 0, scoringEpochSec = 0;
     };
 
     struct FinalSegment {
@@ -365,15 +362,15 @@ namespace {
     {
         using namespace anneal;
 
-        const bool hasPpg = data.ppg.size() > 1 && data.ppgSR > 0.0;
-        if (!(data.ecg1.size() > 1 && data.ecgSR > 0.0)) {
+        const bool hasPpg = data.ppg.size() > 1 && data.ppg_sampling_rate > 0.0;
+        if (!(data.ecg1.size() > 1 && data.ecg_sampling_rate > 0.0)) {
             std::cerr << "  AnnealSegments empty: no usable ECG1 (n="
-                << data.ecg1.size() << " sr=" << data.ecgSR << ")\n";
+                << data.ecg1.size() << " sr=" << data.ecg_sampling_rate << ")\n";
             return {};
         }
 
         const auto& primarySignal = data.ecg1;
-        const double primarySR = data.ecgSR;
+        const double primarySR = data.ecg_sampling_rate;
 
         const uint64_t bin_size = static_cast<uint64_t>(primarySR * 60.0 * targetLenMins);
         const double   min_mins = targetLenMins / 2.0;
@@ -490,8 +487,8 @@ namespace {
                     double t0 = (double)(seg.first - 1) / primarySR;
                     double t1 = (double)(seg.second - 1) / primarySR;
                     final_bins[i].secondary.push_back({
-                        closest_idx(t0, data.ppgSR),
-                        closest_idx(t1, data.ppgSR)
+                        closest_idx(t0, data.ppg_sampling_rate),
+                        closest_idx(t1, data.ppg_sampling_rate)
                         });
                 }
             }
@@ -531,8 +528,8 @@ namespace {
         std::vector<FinalSegment> results(final_bins.size());
         for (size_t i = 0; i < final_bins.size(); ++i) {
             auto& r = results[i];
-            r.ppgSampleRate = data.ppgSR;
-            r.ecgSampleRate = data.ecgSR;
+            r.ppgSampleRate = data.ppg_sampling_rate;
+            r.ecgSampleRate = data.ecg_sampling_rate;
             r.scoring_epoch_size_sec = data.scoringEpochSec;
 
             r.ecg_bin_indexs = final_bins[i].primary;
@@ -672,11 +669,11 @@ namespace {
         // Per-channel upsample rates: the anneal consumes the UPSAMPLED
         // blocks, so use up_rates (not native_rates). ECG1 = slot 1, PPG = slot 4.
         constexpr int SLOT_ECG1 = 1, SLOT_ECG2 = 2, SLOT_ECG3 = 3, SLOT_PPG = 4;
-        data.ecgSR = static_cast<double>(up_rates[SLOT_ECG1]);
-        data.ppgSR = static_cast<double>(up_rates[SLOT_PPG]);
+        data.ecg_sampling_rate = static_cast<double>(up_rates[SLOT_ECG1]);
+        data.ppg_sampling_rate = static_cast<double>(up_rates[SLOT_PPG]);
         data.scoringEpochSec = static_cast<double>(sleep_state_len);
 
-        if (data.ecgSR <= 0.0 && data.ppgSR <= 0.0)
+        if (data.ecg_sampling_rate <= 0.0 && data.ppg_sampling_rate <= 0.0)
             throw std::runtime_error("input .bin has zero ECG and PPG upsample rate: "
                 + path.string());
 
@@ -872,10 +869,10 @@ bool anneal_one_file(const std::filesystem::path& binPath, const std::filesystem
     Extras  extras;
     read_data_bin(binPath, raw, extras);
     if (highpassHz > 0.0) { //if the highpass is set in the config, run it on the ecg/ppg signals to remove baseline wander
-        raw.ecg1 = waveform_highpass(raw.ecg1, highpassHz, raw.ecgSR);
-        raw.ecg2 = waveform_highpass(raw.ecg2, highpassHz, raw.ecgSR);
-        raw.ecg3 = waveform_highpass(raw.ecg3, highpassHz, raw.ecgSR);
-        raw.ppg = waveform_highpass(raw.ppg, highpassHz, raw.ppgSR);
+        raw.ecg1 = waveform_highpass(raw.ecg1, highpassHz, raw.ecg_sampling_rate);
+        raw.ecg2 = waveform_highpass(raw.ecg2, highpassHz, raw.ecg_sampling_rate);
+        raw.ecg3 = waveform_highpass(raw.ecg3, highpassHz, raw.ecg_sampling_rate);
+        raw.ppg = waveform_highpass(raw.ppg, highpassHz, raw.ppg_sampling_rate);
     }
     NoiseMarkings noise;
     if (std::filesystem::exists(noisePath))

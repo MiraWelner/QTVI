@@ -70,7 +70,10 @@ namespace analysis_job {
     };
 
 
-    inline std::optional<AnalysisJob> prepare(const config_entry& cfg, const std::filesystem::path& binPath, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
+    // highpass_enabled is the operator's checkbox; cfg supplies the cutoff.
+    // Applied ahead of anneal_one_file, so ahead of the peak finding, the bins
+    // and the templates. Nothing downstream re-filters.
+    inline std::optional<AnalysisJob> prepare(const config_entry& cfg, const std::filesystem::path& binPath, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted, bool highpass_enabled)
     {
         const std::string stem = binPath.stem().string();
         const std::filesystem::path noise_bin_path = std::filesystem::path(cfg.noise_data_path) / (stem + "_noise_markings.bin");
@@ -78,7 +81,10 @@ namespace analysis_job {
         const std::filesystem::path rPeakPath = std::filesystem::path(cfg.r_peak_data_path) / (stem + "_peak_locations_all_beats.bin");
         const std::filesystem::path binsPath = std::filesystem::path(cfg.template_path) / (stem + "_bins.bin");
 
-        anneal_one_file(binPath, noise_bin_path, annealedPath, cfg.bin_size_minutes, cfg.waveform_highpass_hz, ecg1_inverted, ecg2_inverted, ecg3_inverted);
+        const double highpassHz = highpass_enabled ? cfg.waveform_highpass_hz : 0.0;
+        std::cerr << "  [highpass] cutoff " << highpassHz
+            << " Hz, ECG1/2/3 and PPG, before annealing\n";
+        anneal_one_file(binPath, noise_bin_path, annealedPath, cfg.bin_size_minutes, highpassHz, ecg1_inverted, ecg2_inverted, ecg3_inverted);
 
         AnalysisJob job;
         job.stem = stem;

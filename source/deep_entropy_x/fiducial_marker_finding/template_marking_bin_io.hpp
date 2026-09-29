@@ -549,8 +549,10 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
 //
 //   header:
 //     uint32  magic   = kMarkMagic ("TMRK")
-//     uint32  version = kMarkVersion (2; 1 also reads -- see below)
+//     uint32  version = kMarkVersion (0, the only accepted value)
 //     uint64  numBins
+//     uint8   ppg_align_mode     (0 Auto, 1 Foot, 2 Percent, 3 Peak)
+//     int32   ppg_align_percent  (0 at the foot to 100 at the apex)
 //
 //   per bin:
 //     uint64  index
@@ -568,7 +570,7 @@ inline std::vector<TemplateBin> readTemplateInfoBin(const std::string& path,
 //     -- PPG bars, PER SLOT (same shape as the ECG block above): --
 //     int32   slotCount
 //       per slot:
-//         float64 onset, dicrotic, end
+//         float64 onset, dicrotic, end, foot_pct
 //
 //     -- arterial, one block each for ABP, ART, ART_PULM: --
 //     uint8   <chan>_issue
@@ -637,9 +639,10 @@ inline constexpr uint32_t kMarkMagic = 0x4B524D54u;
 // not read from -- an end mark in _F, say, which nothing writes today but
 // which the storage allows.
 //
-// v3 appends both variants' full marker sets per pulse slot. v1 and v2 still
-// read; the variants are then rebuilt from the composed set on first paint.
-inline constexpr uint32_t kMarkVersion = 3u;
+// ONE FORMAT, VERSION 0: the reader accepts 0 and nothing else, and every
+// block below is unconditional. The field stays in the header so a stale file
+// is rejected rather than misparsed at a wrong offset.
+inline constexpr uint32_t kMarkVersion = 0u;
 
 // ---------------------------------------------------------------------------
 // ONE OPERATOR EDIT, READ BACK IN ANY ALIGNMENT'S COLUMNS
@@ -1223,7 +1226,13 @@ inline void writeTemplateMarkingsBin(const std::string& path,
     const std::vector<TemplateBin>& bins,
     double sampleRateHz,
     curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
-    curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto) {
+    curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
+    // The pulse alignment the session was holding. Same reason as the fit
+    // modes above: it is an operator input to a measurement, and the height
+    // the member beats were levelled at is what defines the _F averages. A
+    // reload that did not restore it would re-measure at Auto and report
+    // different amplitudes for bars that had not moved.
+    int ppgAlignMode = 0, int ppgAlignPercent = 0) {
     std::ofstream f(path, std::ios::binary);
     if (!f.is_open())
         throw std::runtime_error("cannot open for write: " + path);
@@ -1235,6 +1244,10 @@ inline void writeTemplateMarkingsBin(const std::string& path,
     f.write(reinterpret_cast<const char*>(&ver), 4);
     uint64_t n = bins.size();
     f.write(reinterpret_cast<const char*>(&n), 8);
+    const uint8_t alignMode = static_cast<uint8_t>(ppgAlignMode);
+    const int32_t alignPct = static_cast<int32_t>(ppgAlignPercent);
+    f.write(reinterpret_cast<const char*>(&alignMode), 1);
+    f.write(reinterpret_cast<const char*>(&alignPct), 4);
 
     auto w8 = [&](uint8_t v) { f.write(reinterpret_cast<const char*>(&v), 1); };
     auto w32 = [&](int v) { int32_t i = v; f.write(reinterpret_cast<const char*>(&i), 4); };
@@ -1244,6 +1257,8 @@ inline void writeTemplateMarkingsBin(const std::string& path,
         uint64_t idx = b.index;
         f.write(reinterpret_cast<const char*>(&idx), 8);
 
+        // The pipeline's flags, not the operator's: feature_marks sets these.
+        // The operator's verdict is one byte per slot in the blocks below.
         w8(b.bad_r_ch[0] ? 1 : 0);
         w8(b.bad_r_ch[1] ? 1 : 0);
         w8(b.bad_r_ch[2] ? 1 : 0);
@@ -1283,6 +1298,9 @@ inline void writeTemplateMarkingsBin(const std::string& path,
             const int nSlots = b.slotCount(lead);
             w32(nSlots);
             for (int slot = 0; slot < nSlots; ++slot) {
+                // This slot's bad-ECG verdict, ahead of its anchors so a slot
+                // with no landmarks still carries one.
+                w8(b.ecg_bank[lead].templates[slot].badEcgMarked() ? 1 : 0);
                 const auto& byAnchor =
                     b.ecg_bank[lead].templates[slot].markers_by_anchor;
                 w32(static_cast<int>(byAnchor.size()));
@@ -1308,11 +1326,14 @@ inline void writeTemplateMarkingsBin(const std::string& path,
             const int nPulse = static_cast<int>(b.ppg_bank.templates.size());
             w32(nPulse);
             for (int slot = 0; slot < nPulse; ++slot) {
+                // This slot's bad-pulse verdict, then its three bars.
+                w8(b.ppg_bank.templates[slot].badPulseMarked() ? 1 : 0);
                 const tbank::BankPulseMarkerSet& pm =
                     b.ppg_bank.templates[slot].pulse_marks;
                 w64d(pm.onset);
                 w64d(pm.dicrotic);
                 w64d(pm.end);
+                w64d(pm.foot_pct);   // the height _F was levelled at
             }
         }
 
@@ -1702,6 +1723,10 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     // panel marked both bad reads 1,1. They were bad_r and ppg_issue, which
     // named the mechanism rather than the verdict and read as alternatives.
     //
+    // PER ROW, WHICH IS PER PANEL: both come from that slot's own
+    // operator_state bits, so two templates in one bin can disagree. The
+    // pipeline's bin-wide flags are seeded into those bits at load.
+    //
     // bad_ppg is 1 when the pulse is absent as well as when it was marked bad:
     // the file says whether there is a usable pulse, not why there isn't.
     // rr_interval_ms is the template's OWN mean R-R, not the bin's: it is
@@ -1975,13 +2000,17 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                 // column count is unaffected -- which is why this is done by nulling
                 // the inputs rather than by counting commas.
                 static const std::vector<double> kNoTrace;
+                // This row's own verdict: the ECG bit on this lead's slot, the
+                // pulse bit on the pulse slot of the same index.
+                const bool rowBadEcg = haveBankTmpl
+                    && bank.templates[slot].badEcgMarked();
+                const bool rowBadPpg =
+                    (slot < b.ppg_bank.size())
+                    && b.ppg_bank.templates[slot].badPulseMarked();
                 f << fileID << ',' << b.index << ',' << kChan[c]
                     << ',' << bankSlotName(b.ecg_bank[c], slot)
-                    << ',' << (b.bad_r_ch[c] ? 1 : 0)
-                    // ANY NON-ZERO IS BAD. bad_ppg is 0 = ok, 1 = marked bad, 2 = no
-                    // pulse present -- and no pulse is the same verdict as marked bad for
-                    // a consumer of this file: there is no usable pulse either way.
-                    << ',' << ((b.bad_ppg != 0) ? 1 : 0)
+                    << ',' << (rowBadEcg ? 1 : 0)
+                    << ',' << (rowBadPpg ? 1 : 0)
                     << ',' << nMembers
                     << ',' << nClean;
                 f << ',';
@@ -2216,9 +2245,9 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                         (slot >= 0 && slot < static_cast<int>(b.ppg_bank.templates.size()))
                         ? b.ppg_bank.templates[slot].tmpl
                         : b.ppgTemplate;
-                    // pulseU / pmU are the FALLBACK ONLY, for a variant that
-                    // was never built; reactive_ppg is run per variant inside
-                    // the loop below, on that variant's own waveform and marks.
+                    // pulseU / pmU are the fallback for a variant that was
+                    // never built; seedOneBin seeds pulse_marks for every slot
+                    // at load, so the fallback carries the detector's answer.
                     // ---- ONCE PER VARIANT, IN HEADER ORDER ----------------
                     //
                     // Each variant supplies its OWN waveform, its own detected
@@ -2386,9 +2415,12 @@ inline void writePpgDerivativeCsv(std::ostream& f,
                     if (hasVisiblePanel(b, c, slot, a)) { anyVisible = true; break; }
                 if (!anyVisible) continue;
 
+                // Per row, like the markings CSV.
+                const bool rowBadPpg = (slot < b.ppg_bank.size())
+                    && b.ppg_bank.templates[slot].badPulseMarked();
                 f << fileID << ',' << b.index << ',' << kChan[c]
                     << ',' << bankSlotName(b.ecg_bank[c], slot)
-                    << ',' << ((b.bad_ppg != 0) ? 1 : 0);
+                    << ',' << (rowBadPpg ? 1 : 0);
 
                 for (const auto& gl : ppg_derivative_automated_markers) {
                     const double idx = b.*gl.idx;
@@ -2418,7 +2450,8 @@ inline void writePpgDerivativeCsv(const std::string& path,
         throw std::runtime_error("failed writing " + path);
 }
 
-inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path) {
+inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path,
+    int* outAlignMode = nullptr, int* outAlignPercent = nullptr) {
     std::ifstream f(path, std::ios::binary);
     if (!f.is_open())
         throw std::runtime_error("cannot open for read: " + path);
@@ -2444,20 +2477,18 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         throw std::runtime_error(
             "not a template-markings file (bad magic), or written before the "
             "version field existed -- re-mark: " + path);
-    // v1 AND v2 BOTH READ. Everything up to the arterial block is identical;
-    // v2 only appends. A v1 file therefore restores every operator mark and
-    // leaves the *_auto fields as seed_all computed them, which is precisely
-    // what v1 did. Anything else is rejected rather than guessed at.
-    if (ver != 1u && ver != 2u && ver != 3u)
+    if (ver != kMarkVersion)
         throw std::runtime_error(
             "template-markings version " + std::to_string(ver)
-            + " is not supported (this build reads versions 1 to "
-            + std::to_string(kMarkVersion) + "): " + path);
-    const bool haveAuto = (ver >= 2u);
-    const bool haveVariants = (ver >= 3u);
+            + " (this build writes and reads only "
+            + std::to_string(kMarkVersion) + ") -- re-mark: " + path);
 
     uint64_t n = 0;
     f.read(reinterpret_cast<char*>(&n), 8);
+    const int alignMode = r8();
+    const int alignPct = r32();
+    if (outAlignMode)    *outAlignMode = alignMode;
+    if (outAlignPercent) *outAlignPercent = alignPct;
 
     std::vector<TemplateBin> bins(n);
     for (uint64_t i = 0; i < n; ++i) {
@@ -2471,6 +2502,12 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         for (int lead = 0; lead < 3; ++lead) {
             const int nSlots = r32();
             for (int slot = 0; slot < nSlots; ++slot) {
+                const bool bad = (r8() != 0);
+                // Grown to hold it: a bin read out of this file has no bank
+                // yet, and the real one merges onto these slots later.
+                if (static_cast<int>(b.ecg_bank[lead].templates.size()) <= slot)
+                    b.ecg_bank[lead].templates.resize(static_cast<size_t>(slot) + 1);
+                b.ecg_bank[lead].templates[slot].setBadEcg(bad);
                 const int nAnchors = r32();
                 for (int a = 0; a < nAnchors; ++a) {
                     const int tag = r32();
@@ -2492,11 +2529,13 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
                 if (static_cast<int>(b.ppg_bank.templates.size()) < nPulse)
                     b.ppg_bank.templates.resize(static_cast<size_t>(nPulse));
                 for (int slot = 0; slot < nPulse; ++slot) {
+                    b.ppg_bank.templates[slot].setBadPulse(r8() != 0);
                     tbank::BankPulseMarkerSet& pm =
                         b.ppg_bank.templates[slot].pulse_marks;
                     pm.onset = r64d();
                     pm.dicrotic = r64d();
                     pm.end = r64d();
+                    pm.foot_pct = r64d();
                 }
             }
         }
@@ -2511,8 +2550,7 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
         b.art_pulm_onset = r64d(); b.art_pulm_peak = r64d(); b.art_pulm_dicrotic = r64d();
         b.art_pulm_peak2 = r64d(); b.art_pulm_end = r64d();
 
-        // ---- v2: EVERY AUTO DETECTION, in the writer's order ----------
-        if (!haveAuto) continue;
+        // ---- EVERY AUTO DETECTION, in the writer's order --------------
         for (int lead = 0; lead < 3; ++lead) {
             b.r_peak_ch[lead] = r64d();
             b.p_begin_auto_ch[lead] = r64d();
@@ -2568,8 +2606,8 @@ inline std::vector<TemplateBin> readTemplateMarkingsBin(const std::string& path)
             }
         }
 
-        // ---- v3: EACH PULSE VARIANT'S OWN MARKER SET ------------------
-        if (haveVariants) {
+        // ---- EACH PULSE VARIANT'S OWN MARKER SET ----------------------
+        {
             const int nPulseV = r32();
             const int nVar = r32();
             if (nPulseV > 0

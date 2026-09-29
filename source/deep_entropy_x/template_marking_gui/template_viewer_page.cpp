@@ -769,13 +769,15 @@ void TemplateViewerWindow::showPage() {
             // If the ref or foot is unusable, the helpers pass the raw
             // trace through unchanged.
             //
-            // Display-time notch filter toggle: when the `notch_filter`
-            // checkbox is on AND a valid notch frequency was passed in via
-            // loadSubject, push each channel's template through notch_filter
-            // at that channel's own rate BEFORE normalization. Purely a
-            // viewing convenience: templates on disk are untouched, and
-            // toggling off returns to the raw stored templates on the next
-            // showPage() (which the checkbox handler triggers).
+            // Display-time notch: when loadSubject was handed a non-zero
+            // notch frequency -- which means the operator ticked Notch in the
+            // noise-marking GUI and the config has a powerline frequency --
+            // push each channel's template through notch_filter at that
+            // channel's own rate BEFORE normalization. Purely a viewing
+            // convenience: templates on disk are untouched. There is no
+            // checkbox here to toggle it mid-session; the high pass, by
+            // contrast, is already baked into these templates because
+            // analysis_job::prepare applied it before the build.
             //
             // maybeNotch also REBASES: notch_filter (implemented as
             // x - narrow_bandpass(x)) leaves the waveform shape intact but
@@ -1186,9 +1188,7 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
         && !b.ppg_bank.templates[templateIdx].tmpl.empty()) {
         tbank::BankTemplate& ps = b.ppg_bank.templates[templateIdx];
         {
-            if (!ps.hasDetectedPulseMarks())
-                FeatureMarks::seed_pulse_bank_template(ps.tmpl, m_ppgRateHz,
-                    ps.pulse_marks);
+            // Seeded in seedOneBin; a built variant will have overwritten it.
             const tbank::BankPulseMarkerSet& pm = ps.pulse_marks;
             // THREE BARS, THE REST DERIVED. peak / peak2 / t50 / t80 left
             // BankPulseMarkerSet -- markerAtX hands none of them out, and all
@@ -1311,7 +1311,7 @@ void TemplateViewerWindow::applyBinCommonToWidget(BinPlotWidget* pw,
 // channels, the layout and the widgets themselves alone. That is what lets it
 // run mid-click without breaking a drag.
 void TemplateViewerWindow::reskinGridForAnchor(int onlyBin, int onlySlot) {
-    const bool notchActive = m_notchFilterOn && m_notchFilterHz > 0.0;
+    const bool notchActive = m_notchFilterHz > 0.0;
 
     for (int i = 0; i < (int)m_binPlots.size()
         && i < (int)m_pageGlobalIdx.size()
@@ -1398,20 +1398,16 @@ BinPlotWidget::State TemplateViewerWindow::panelState(int binIdx, int leadIdx,
         return BinPlotWidget::State::Good;
     const TemplateBin& b = m_bins[binIdx];
 
+    // Per slot: operator_state's two bits, from the bank each is stored in
+    // (ECG per lead, pulse shared across the panel's leads). The bin-level
+    // flags are not consulted -- initAfterBinsLoaded seeds them into these
+    // bits at load, and ORing them in again would relight a cleared panel.
     bool ecgBad = false, ppgBad = false;
-    if (leadIdx >= 0 && leadIdx <= 2 && templateIdx >= 0 && templateIdx < b.ecg_bank[leadIdx].size())
-        ecgBad = b.ecg_bank[leadIdx].templates[templateIdx].marked_invalid_template;
-    if (templateIdx >= 0 && templateIdx < b.ppg_bank.size()) {
-        ppgBad = b.ppg_bank.templates[templateIdx].marked_invalid_template;
-    }
-    // bad_r_ch IS PER BIN AND PER LEAD, so it applies to every slot of that
-    // lead. It was gated on templateIdx == 0, which turned _A red and left _B
-    // reading Good on a bin whose R detection the operator had condemned --
-    // the flag says the lead's R peaks are wrong, and _B is built from the
-    // same R peaks as _A.
-    if (leadIdx >= 0 && leadIdx <= 2 && b.bad_r_ch[leadIdx]) {
-        ecgBad = true;
-    }
+    if (leadIdx >= 0 && leadIdx <= 2 && templateIdx >= 0
+        && templateIdx < b.ecg_bank[leadIdx].size())
+        ecgBad = b.ecg_bank[leadIdx].templates[templateIdx].badEcgMarked();
+    if (templateIdx >= 0 && templateIdx < b.ppg_bank.size())
+        ppgBad = b.ppg_bank.templates[templateIdx].badPulseMarked();
     return (ecgBad && ppgBad) ? BinPlotWidget::State::BadBoth
         : ppgBad ? BinPlotWidget::State::BadPPG
         : ecgBad ? BinPlotWidget::State::BadR

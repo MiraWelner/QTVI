@@ -114,11 +114,10 @@ public:
         // historical behavior from when every channel shared one rate.
         double ppgRateHz = 0.0, double abpRateHz = 0.0,
         double artRateHz = 0.0, double artPulmRateHz = 0.0,
-        // Notch frequency for the viewer's display-time notch toggle
-        // (see the `notch_filter` checkbox). 0 disables the toggle entirely
-        // regardless of the checkbox state; typically comes from
-        // cfg.notch_filter_hz so the display filter matches whatever was
-        // (or would have been) applied at build time.
+        // Display-time notch frequency, already gated by the caller: > 0 means
+        // notch every template on the way to the screen. This window has no
+        // filter checkbox. The high pass has no parameter -- it was applied
+        // before these templates were built.
         double notchFilterHz = 0.0);
 
     // ---- THE IN-MEMORY OVERLOAD ------------------------------------------
@@ -170,6 +169,7 @@ public:
         const QString& subjectId, double sampleRateHz,
         double ppgRateHz = 0.0, double abpRateHz = 0.0,
         double artRateHz = 0.0, double artPulmRateHz = 0.0,
+        // The same already-gated notch frequency as the overload above.
         double notchFilterHz = 0.0);
 
 signals:
@@ -178,6 +178,9 @@ signals:
 public slots:
     // Wired in Designer via <connections>
     void save_bin_and_csv();
+    // Builds every pulse variant that the data allows, so the CSV's _F / _P
+    // blocks do not depend on which pages were paged through.
+    void buildAllPulseVariants();
     void onNextPage();
     void onPrevPage();
 
@@ -215,8 +218,8 @@ private:
     std::vector<Lead> leadsForBinTemplate(const TemplateBin& b, int templateIdx) const;
     std::vector<int> markingSlotsForBin(const TemplateBin& b) const;
     std::vector<std::pair<int, int>> pageColumns(int start, int count) const;
-    int pageGridRows(bool compact,  const std::vector<std::pair<int, int>>& cols) const;
-    void addVcgPanel(int gi, int column, int gridRows, const TemplateBin& b,  const std::vector<double>& vcgTrace, double vcgRCol,  const global_intervals::GlobalIntervals& intervals, std::vector<BinPlotWidget*>& group, int& usedRows, int& usedCols);
+    int pageGridRows(bool compact, const std::vector<std::pair<int, int>>& cols) const;
+    void addVcgPanel(int gi, int column, int gridRows, const TemplateBin& b, const std::vector<double>& vcgTrace, double vcgRCol, const global_intervals::GlobalIntervals& intervals, std::vector<BinPlotWidget*>& group, int& usedRows, int& usedCols);
     bool unionEcgFrameSeconds(const TemplateBin& b, int lead, int templateIdx, double& tMinSec, double& tMaxSec) const;
 
     // Section 4.6 class confirmation, from BinPlotWidget::classConfirmRequested.
@@ -247,7 +250,7 @@ private:
 
     void showPage();
 
-    std::vector<double> maybeNotchTrace(const std::vector<double>& sig,  double fs, double footIdx) const;
+    std::vector<double> maybeNotchTrace(const std::vector<double>& sig, double fs, double footIdx) const;
 
     // The trace, its band and the foot they are both measured against, for one
     // pulse-bank slot. Seeds the slot's pulse marks if they have never been
@@ -284,29 +287,6 @@ private:
     // window can put it back.
     std::map<int, std::pair<std::vector<double>, std::vector<double>>> m_ppgBuilt;
 
-    // ---- THE _F ANCHOR: THE COLUMN THAT DEFINES THE FOOT-ALIGNED STACK ---
-    //
-    // Per (bin, slot), and NOT slot.pulse_marks.onset, which is what made the
-    // re-stack unrepeatable. adoptPulsePair re-detects every pulse mark on the
-    // waveform it has just installed, so the foot BAR moves a little after
-    // each re-level; the old code then read that moved bar as the hint for the
-    // next one. Each run therefore started from the previous run's output:
-    //
-    //     run 1: hint f0  ->  tmpl_A, bar re-detected to f1
-    //     run 2: hint f1  ->  tmpl_B  (different median, same beats)
-    //     run 3: hint f2  ->  tmpl_C  ...
-    //
-    // It never settles. On a clean bin the shift is a fraction of a sample and
-    // trough_in lands on the same trough anyway, so nothing shows; on a messy
-    // one, rows with several local minima in the search window snap to
-    // different troughs and the median visibly moves.
-    //
-    // THE BAR STILL MOVES -- that is wanted, and ppg_onset_auto is meant to
-    // sit where the operator put it. What must not move is the DEFINITION, so
-    // it is kept here, written only by a foot drag, and seeded from the
-    // AS-BUILT average's own detected foot. Same anchor in, same stack out;
-    // drag the foot away and back and the original waveform returns exactly.
-    std::map<int, double> m_ppgFootAnchor;
 
     // ---- WHICH VARIANT THE PAGE IS SHOWING -------------------------------
     //
@@ -364,10 +344,6 @@ private:
     // output.
     const std::vector<double>& ppgAsBuiltTmpl(int binIdx, int templateIdx) const;
 
-    // The _F anchor for one slot, seeded on first call from
-    // ppgAsBuiltTmpl's own detected foot. -1 when the slot has no usable
-    // pulse.
-    double ppgFootAnchor(int binIdx, int templateIdx);
     void stashBuiltPulse(int binIdx, int templateIdx,
         const tbank::BankTemplate& slot);
     bool restorePulseAsBuilt(int binIdx, int templateIdx);
@@ -478,7 +454,7 @@ private:
     static constexpr double region_around_foot_to_measure_std = 0.030;   // +-30 ms about the foot
 
     //right now either p or q
-    int which_alignment_fiducial_marker_should_auto_use(int binIdx, int templateIdx,  const tbank::BankTemplate& slot, double footCol) const;
+    int which_alignment_fiducial_marker_should_auto_use(int binIdx, int templateIdx, const tbank::BankTemplate& slot, double footCol) const;
 
     //without this, the percentage box is never read
     double percentage_for_aligning() const {
@@ -561,8 +537,8 @@ private:
     boundary_training::BoundaryTrainingLog m_boundaryLog;
 
     std::map<long long, double> m_touchedMarks;
-    static long long touchKey(int binIdx, int leadIdx, int marker,  AnchorType a) {
-        return (((long long)binIdx * 100 + leadIdx) * 100 + marker) * 8  + static_cast<int>(a);
+    static long long touchKey(int binIdx, int leadIdx, int marker, AnchorType a) {
+        return (((long long)binIdx * 100 + leadIdx) * 100 + marker) * 8 + static_cast<int>(a);
     }
 
     // Log boundary training data for all landmarks at save (auto_detect from
@@ -619,7 +595,7 @@ private:
     double binSpanSeconds(int binIdx) const;
 
     void clearFocusPanels();
-    tbank::BankMarkerSet barsForPanel(const BinPlotWidget* pw,  const TemplateBin& b, int lead, int slot) const;
+    tbank::BankMarkerSet barsForPanel(const BinPlotWidget* pw, const TemplateBin& b, int lead, int slot) const;
 
     struct SdMsModel {
         std::vector<double>  sdMs;        // per column, NaN where floored
@@ -766,7 +742,8 @@ private:
     bool m_showArtPulmTrace = true;
     bool m_showPpgDerivMarkers = false;
 
-    bool m_notchFilterOn = false;
+    // From loadSubject: > 0 means on. No companion bool -- there is no
+    // checkbox here, so nothing to disagree with it.
     double m_notchFilterHz = 0.0;
 
     //Global references - earliest QRS onset, latest QRS offset, etc

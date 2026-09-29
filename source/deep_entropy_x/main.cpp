@@ -75,7 +75,7 @@ static std::vector<std::filesystem::path> load_binfiles(const config_entry& cfg)
     return binFiles;
 }
 
-static bool runNoiseMarking(const config_entry& cfg, const std::filesystem::path& binFs, QVector<AllFileMarkings>& outAll, std::filesystem::path& outCurrent, beat_log& beatLog, bool& out_ecg1_inv, bool& out_ecg2_inv, bool& outEcg3Inverted) {
+static bool runNoiseMarking(const config_entry& cfg, const std::filesystem::path& binFs, QVector<AllFileMarkings>& outAll, std::filesystem::path& outCurrent, beat_log& beatLog, bool& out_ecg1_inv, bool& out_ecg2_inv, bool& outEcg3Inverted, noise_marking_gui::FilterChoices& outFilters) {
     // Launch the GUI to do the noise marking. One important thing that takes place is that the gui object (a noise_marking_gui) has
     // an invertedForSignal attribute for each channel
     auto gui = std::make_unique<noise_marking_gui>();
@@ -99,6 +99,9 @@ static bool runNoiseMarking(const config_entry& cfg, const std::filesystem::path
     out_ecg1_inv = gui->invertedForSignal("ECG1");
     out_ecg2_inv = gui->invertedForSignal("ECG2");
     outEcg3Inverted = gui->invertedForSignal("ECG3");
+
+    // Asked once, here, like the inverted-lead answers above.
+    outFilters = gui->filterChoices();
 
     return true;
 }
@@ -133,7 +136,10 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
     nm.export_marking_binfile(base.string() + ".bin");
 }
 
-static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis_job::AnalysisJob> job, const QString& fileId, std::vector<analysis_job::BankSnapshot>& outBanks) {
+// notchEnabled is the noise-marking GUI's answer; the viewer has no filter
+// checkbox and notches iff loadSubject is handed a non-zero frequency. The high
+// pass needs no parameter -- prepare applied it before the templates existed.
+static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis_job::AnalysisJob> job, const QString& fileId, std::vector<analysis_job::BankSnapshot>& outBanks, bool notchEnabled) {
     //Launch the template marking GUI
     TemplateViewerWindow viewer;
     viewer.setBoundaryTrainingDir(QString::fromStdString(cfg.training_log));
@@ -161,7 +167,7 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis
         fileId, cfg.ecg_upsample_rate,
         cfg.ppg_upsample_rate, cfg.abp_upsample_rate,
         cfg.art_upsample_rate, cfg.art_pulm_upsample_rate,
-        cfg.notch_filter_hz);
+        notchEnabled ? cfg.notch_filter_hz : 0.0);
     loop.exec();
 
     outBanks.clear();
@@ -219,9 +225,10 @@ int main(int argc, char* argv[]) {
         QVector<AllFileMarkings> allMarkings;
         std::filesystem::path currentBinFile;
         bool ecg1Inverted = false, ecg2Inverted = false, ecg3Inverted = false;
+        noise_marking_gui::FilterChoices filters;
 
         if (!runNoiseMarking(cfg, binFs, allMarkings, currentBinFile, beatLog,
-            ecg1Inverted, ecg2Inverted, ecg3Inverted)) {
+            ecg1Inverted, ecg2Inverted, ecg3Inverted, filters)) {
             std::cout << "  skipped by user; not processing/templating.\n";
             continue;
         }
@@ -248,7 +255,9 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        auto jobOpt = analysis_job::prepare(cfg, effBin, ecg1Inverted, ecg2Inverted, ecg3Inverted);
+        // filters.high_pass before the templates: prepare hands it to
+        // anneal_one_file, so every bin, beat and template follows from it.
+        auto jobOpt = analysis_job::prepare(cfg, effBin, ecg1Inverted, ecg2Inverted, ecg3Inverted, filters.high_pass);
         if (!jobOpt) {
             std::cout << "  no bins produced; skipping " << effStem << "\n";
             continue;
@@ -260,7 +269,7 @@ int main(int argc, char* argv[]) {
             analysis_job::finalize(*job);
             });
         std::vector<analysis_job::BankSnapshot> operatorBanks;
-        runTemplateMarking(cfg, job, QString::fromStdString(job->stem), operatorBanks);
+        runTemplateMarking(cfg, job, QString::fromStdString(job->stem), operatorBanks, filters.notch);
         // THE JOIN IS A CORRECTNESS REQUIREMENT, NOT A PERFORMANCE CHOICE.
         // commit() writes job.tmpl and finalize() mutates it (mergeTemplatesSlow
         // packs the squared/absval blocks in), so running the two concurrently

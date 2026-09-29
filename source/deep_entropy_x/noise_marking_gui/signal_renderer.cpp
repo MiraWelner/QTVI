@@ -16,7 +16,7 @@
 #include "logging/user_mark_log.hpp"
 #include "theme/theme.h"
 #include "annotation_types.hpp"
-#include "peak_finding/FilterUtils.hpp"   // notch_filter, for the render-time window notch
+#include "peak_finding/FilterUtils.hpp"   // notch_filter / waveform_highpass, for the render-time window filters
 
 
 #include <QtCharts/QAreaSeries>
@@ -31,6 +31,7 @@
 #include <QSet>
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -130,28 +131,42 @@ namespace {
         return idx;
     }
 
-    //The notch is a zero-phase IIR, and an IIR has a transient
+    //Both render-time filters are zero-phase IIRs, and an IIR has a transient
     // at each edge of whatever buffer you hand it. If you filtered exactly the visible window, the first and last few seconds of the drawn trace
     // would be filter startup artifact rather than signal, so this bufferes
     constexpr double notch_filter_pad = 5.0;
 
+    // Pad for the slowest corner in play: 5 s is many cycles of a 50/60 Hz
+    // notch but not of a 0.5 Hz high pass, which would otherwise draw its own
+    // startup ramp as baseline wander. Ten cycles of the high-pass cutoff.
+    double filter_pad_seconds(double highPassHz) {
+        return (highPassHz > 0.0)
+            ? std::max(notch_filter_pad, 10.0 / highPassHz)
+            : notch_filter_pad;
+    }
+
     // Filter [from, to) of `src` and return exactly that many samples.
     // Returns empty if there is nothing to do, which callers read as "draw the
     // original".
-    std::vector<double> notchedSpan(const QVector<double>& src, int from, int to,
-        double sr, double notchHz)
+    //
+    // High pass then notch, the order the pipeline uses. Either cutoff <= 0
+    // skips that stage; both <= 0 returns empty.
+    std::vector<double> filteredSpan(const QVector<double>& src, int from, int to,
+        double sr, double highPassHz, double notchHz)
     {
-        const int pad = static_cast<int>(notch_filter_pad * sr);
+        if (highPassHz <= 0.0 && notchHz <= 0.0) return {};
+        const int pad = static_cast<int>(filter_pad_seconds(highPassHz) * sr);
         const int lo = std::max(0, from - pad);
         const int hi = std::min(static_cast<int>(src.size()), to + pad);
         if (hi - lo < 4) return {};
         std::vector<double> buf(static_cast<size_t>(hi - lo));
         for (int i = lo; i < hi; ++i) buf[static_cast<size_t>(i - lo)] = src[i];
-        // FilterUtils' notch_filter: (x, notch_hz, fs). It is NaN-aware, so
-        // gaps survive as gaps instead of poisoning the whole buffer, and it
-        // no-ops (returning the input unchanged) when the notch would land at
-        // or past Nyquist for this rate.
-        buf = notch_filter(buf, notchHz, sr);
+        // FilterUtils' notch_filter: (x, notch_hz, fs), and waveform_highpass:
+        // (x, cutoff_hz, fs). Both are NaN-aware, so gaps survive as gaps
+        // instead of poisoning the whole buffer, and both no-op (returning the
+        // input unchanged) on a cutoff that is unusable for this rate.
+        if (highPassHz > 0.0) buf = waveform_highpass(buf, highPassHz, sr);
+        if (notchHz > 0.0)    buf = notch_filter(buf, notchHz, sr);
         if (buf.size() != static_cast<size_t>(hi - lo)) return {};
         return std::vector<double>(buf.begin() + (from - lo),
             buf.begin() + (from - lo) + (to - from));
@@ -160,18 +175,27 @@ namespace {
     // Same, for a raw (t, v) block. Indices are into the point vector; the
     // y values are filtered at the block's own NATIVE rate. Returns the
     // filtered y values for [from, to), or empty to mean "draw the original".
-    std::vector<double> notchedSpanRaw(const QVector<QPointF>& src, int from, int to, double nativeSr, double notchHz)
+    std::vector<double> filteredSpanRaw(const QVector<QPointF>& src, int from, int to,
+        double nativeSr, double highPassHz, double notchHz)
     {
-        const int pad = static_cast<int>(notch_filter_pad * nativeSr);
+        if (highPassHz <= 0.0 && notchHz <= 0.0) return {};
+        const int pad = static_cast<int>(filter_pad_seconds(highPassHz) * nativeSr);
         const int lo = std::max(0, from - pad);
         const int hi = std::min(static_cast<int>(src.size()), to + pad);
         if (hi - lo < 4) return {};
         std::vector<double> buf(static_cast<size_t>(hi - lo));
         for (int i = lo; i < hi; ++i) buf[static_cast<size_t>(i - lo)] = src[i].y();
-        buf = notch_filter(buf, notchHz, nativeSr);
+        if (highPassHz > 0.0) buf = waveform_highpass(buf, highPassHz, nativeSr);
+        if (notchHz > 0.0)    buf = notch_filter(buf, notchHz, nativeSr);
         if (buf.size() != static_cast<size_t>(hi - lo)) return {};
         return std::vector<double>(buf.begin() + (from - lo),
             buf.begin() + (from - lo) + (to - from));
+    }
+
+    // The channels anneal_one_file high-passes.
+    bool highPassAppliesTo(const QString& label) {
+        return label == "ECG1" || label == "ECG2"
+            || label == "ECG3" || label == "PPG";
     }
 
     QCategoryAxis* make_time_labled_xaxis(double startLocal, double duration, double globalOffset, bool labelsVisible)
@@ -197,10 +221,11 @@ namespace {
 
     std::pair<double, double> renderWindowedChart(QChartView* view, const QList<markable_data_series>& serieses, QList<QLineSeries*>& persistentLines, QList<QScatterSeries*>& persistentRawScatter,
         double currentStartTime, double windowDuration, double globalOffset, double ecgSR, bool labelsVisible, bool useScatterMode, bool forceLineForUpsampled, double yScale = 1.0,
-        // Powerline notch, applied to the drawn window only. 0 = off, which is
-        // also the default, so plot_nonmarkable and any other caller that does
-        // not opt in is unchanged.
-        double notchHz = 0.0, double rawNativeSR = 0.0) {
+        // Powerline notch and baseline-wander high pass, applied to the drawn
+        // window only. 0 = off for either, which is also the default, so
+        // plot_nonmarkable and any other caller that does not opt in is
+        // unchanged.
+        double notchHz = 0.0, double rawNativeSR = 0.0, double highPassHz = 0.0) {
         if (!view || !view->chart()) return { 1e9, -1e9 };
         QChart* chart = view->chart();
         chart->legend()->hide();
@@ -234,7 +259,16 @@ namespace {
 
         double gMin = 1e9, gMax = -1e9;
 
-        struct PendingRaw { const QVector<QPointF>* rawData; QColor color; double center; };
+        // The filtered span travels with the block: computed in the loop below,
+        // which needs it for the y range, and reused by the overlay loop.
+        struct PendingRaw {
+            const QVector<QPointF>* rawData;
+            QColor color;
+            double center;
+            int firstIdx;
+            int lastIdx;
+            std::vector<double> filtered;
+        };
         QList<PendingRaw> rawsToAdd;
 
         for (int slot = 0; slot < serieses.size(); ++slot) {
@@ -276,22 +310,50 @@ namespace {
                 static_cast<int>((currentStartTime + windowDuration) * ecgSR) + 1,
                 0, static_cast<int>(d.data->size()));
 
+            // FILTER FIRST, THEN MEASURE: the median below is the center the
+            // gain scales about and gMin/gMax are the y range, so both have to
+            // see the samples that get drawn. A high pass moves the trace to
+            // zero, so measuring the unfiltered signal would put the axis
+            // around the raw baseline.
+            const std::vector<double> filtered =
+                filteredSpan(*d.data, startIdx, endIdx, ecgSR, highPassHz, notchHz);
+            const bool useFiltered = !filtered.empty();
+
+            // The raw block's visible span and filtered y values, hoisted out
+            // of the overlay loop so the range sees them. NOT STRIDED: the
+            // decimation there would hand the IIR 1/stride of its design rate.
+            const double winEnd = currentStartTime + windowDuration;
+            int firstIdx = 0, lastIdx = 0;
+            std::vector<double> rawFiltered;
+            if (hasRaw) {
+                firstIdx = firstRawAtOrAfter(*d.rawData, currentStartTime);
+                lastIdx = firstIdx;
+                while (lastIdx < d.rawData->size()
+                    && (*d.rawData)[lastIdx].x() <= winEnd)
+                    ++lastIdx;
+                rawFiltered = filteredSpanRaw(*d.rawData, firstIdx, lastIdx,
+                    rawNativeSR, highPassHz, notchHz);
+            }
+            const bool useRawFiltered = !rawFiltered.empty();
+
             //for scaling, use median as the center, so the scaling is robust to noise
             std::vector<double> winVals;
-            winVals.reserve(endIdx - startIdx);
+            winVals.reserve((endIdx - startIdx) + (lastIdx - firstIdx));
             for (int i = startIdx; i < endIdx; ++i) {
-                double v = (*d.data)[i];
+                const double v = useFiltered
+                    ? filtered[static_cast<size_t>(i - startIdx)]
+                    : (*d.data)[i];
                 if (std::isnan(v)) continue;
                 winVals.push_back(v);
             }
-            const double winEnd = currentStartTime + windowDuration;
-            for (int i = firstRawAtOrAfter(*d.rawData, currentStartTime);
-                i < d.rawData->size(); ++i) {
-                const QPointF& p = (*d.rawData)[i];
-                if (p.x() > winEnd) break;
-                winVals.push_back(p.y());
-                if (p.y() < gMin) gMin = p.y();
-                if (p.y() > gMax) gMax = p.y();
+            for (int i = firstIdx; i < lastIdx; ++i) {
+                const double y = useRawFiltered
+                    ? rawFiltered[static_cast<size_t>(i - firstIdx)]
+                    : (*d.rawData)[i].y();
+                if (std::isnan(y)) continue;
+                winVals.push_back(y);
+                if (y < gMin) gMin = y;
+                if (y > gMax) gMax = y;
             }
             double center = 0.0;
             if (!winVals.empty()) {
@@ -300,15 +362,11 @@ namespace {
                 center = *mid;
             }
 
-            // The drawn samples, notched if the toggle is on. 
-            const std::vector<double> notched = notchedSpan(*d.data, startIdx, endIdx, ecgSR, notchHz);
-            const bool useNotched = !notched.empty();
-
             QList<QPointF> pts;
             if (plotSeries) pts.reserve(endIdx - startIdx);
             for (int i = startIdx; i < endIdx; ++i) {
-                const double raw = useNotched
-                    ? notched[static_cast<size_t>(i - startIdx)]
+                const double raw = useFiltered
+                    ? filtered[static_cast<size_t>(i - startIdx)]
                     : (*d.data)[i];
                 if (std::isnan(raw)) continue;   // gap: don't feed NaN to the OpenGL line
                 if (raw < gMin) gMin = raw;
@@ -323,7 +381,9 @@ namespace {
                 plotSeries->attachAxis(xAxis);
                 plotSeries->attachAxis(yAxis);
             }
-            if (hasRaw) rawsToAdd.append({ d.rawData, d.color, center });
+            if (hasRaw)
+                rawsToAdd.append({ d.rawData, d.color, center,
+                                   firstIdx, lastIdx, std::move(rawFiltered) });
         }
 
         for (int ri = 0; ri < rawsToAdd.size(); ++ri) {
@@ -340,31 +400,23 @@ namespace {
             rawScatter->setColor(Qt::black);
 
             QList<QPointF> rawPts;
-            const int firstIdx = firstRawAtOrAfter(*r.rawData, currentStartTime);
-            const double winEnd = currentStartTime + windowDuration;
-
-            // Count what's in the window, then stride so we draw at most kMaxDots
-            // markers. Scatter markers are the dominant paint cost; past a few
-            // thousand they can't be visually resolved and just stall the GPU.
-            int lastIdx = firstIdx;
-            while (lastIdx < r.rawData->size() && (*r.rawData)[lastIdx].x() <= winEnd)
-                ++lastIdx;
+            // Both from the loop above, which needed them for the y range.
+            const int firstIdx = r.firstIdx;
+            const int lastIdx = r.lastIdx;
             const int inWindow = lastIdx - firstIdx;
+
+            // Stride so we draw at most kMaxDots markers: scatter markers are
+            // the dominant paint cost and past a few thousand can't be
+            // resolved. After the filter, which needs consecutive samples.
             constexpr int kMaxDots = 3000;
             const int stride = std::max(1, inWindow / kMaxDots);
-
-            // Notched BEFORE striding: the filter needs consecutive samples,
-            // and the stride below is a display decimation that would otherwise
-            // hand the IIR a signal at 1/stride of the rate it was designed for.
-            const std::vector<double> rawNotched =
-                notchedSpanRaw(*r.rawData, firstIdx, lastIdx, rawNativeSR, notchHz);
-            const bool useRawNotched = !rawNotched.empty();
+            const bool useRawFiltered = !r.filtered.empty();
 
             rawPts.reserve(std::min(inWindow, kMaxDots) + 1);
             for (int i = firstIdx; i < lastIdx; i += stride) {
                 const QPointF& p = (*r.rawData)[i];
-                const double y = useRawNotched
-                    ? rawNotched[static_cast<size_t>(i - firstIdx)]
+                const double y = useRawFiltered
+                    ? r.filtered[static_cast<size_t>(i - firstIdx)]
                     : p.y();
                 rawPts.append({ p.x(), (y - r.center) * yScale + r.center });
             }
@@ -444,6 +496,41 @@ noise_marking_gui::statsWindow(double detStart, double detEnd) const {
     return { detEnd, end };
 }
 
+// This channel's raw block, high-passed at its native rate. See the header.
+const QVector<QPointF>* noise_marking_gui::highPassedRawFor(const QString& label) const {
+    if (!m_highPassEnabled) return nullptr;
+    if (m_cfg.waveform_highpass_hz <= 0.0) return nullptr;
+    if (!highPassAppliesTo(label)) return nullptr;   // pipeline filters ECG1/2/3 and PPG only
+
+    auto hit = m_highPassedRaw.constFind(label);
+    if (hit != m_highPassedRaw.constEnd()) return hit.value().get();
+
+    const data_channel_features r = channelRefs(label);
+    if (!r.dataRaw || r.dataRaw->size() < 4) return nullptr;
+    const double fs = (r.nativeRate > 0.0) ? r.nativeRate : r.sampleRate;
+    if (fs <= 0.0) return nullptr;
+
+    // As an array, not a time series: a gap is filtered straight across, which
+    // is what anneal_one_file does to the same channels.
+    std::vector<double> y(static_cast<size_t>(r.dataRaw->size()));
+    for (int i = 0; i < r.dataRaw->size(); ++i)
+        y[static_cast<size_t>(i)] = (*r.dataRaw)[i].y();
+    y = waveform_highpass(y, m_cfg.waveform_highpass_hz, fs);
+    if (y.size() != static_cast<size_t>(r.dataRaw->size())) return nullptr;
+
+    QVector<QPointF> out;
+    out.reserve(r.dataRaw->size());
+    for (int i = 0; i < r.dataRaw->size(); ++i)
+        out.append({ (*r.dataRaw)[i].x(), y[static_cast<size_t>(i)] });
+
+    std::cerr << "  [highpass] cached " << out.size() << " high-passed samples for "
+        << label.toStdString() << " (chunk " << current_chunk_index
+        << ", " << m_cfg.waveform_highpass_hz << " Hz at " << fs << " Hz)\n";
+    auto held = std::make_shared<const QVector<QPointF>>(std::move(out));
+    m_highPassedRaw.insert(label, held);
+    return held.get();
+}
+
 // Core peak detection over an explicit [detStart, detEnd] window (chunk-local
 // seconds). All annotation-aware behaviour lives here -- exclusions, per-region
 // overrides, within-annotation reference, and the post-beat two-pass -- so any
@@ -452,6 +539,14 @@ noise_marking_gui::statsWindow(double detStart, double detEnd) const {
 QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
     double detStart, double detEnd, std::vector<int>* outPostTags) const {
     data_channel_features r = channelRefs(label);
+    if (!r.dataRaw) return {};   // nothing to detect on; every finder below reads it
+
+    // DETECT ON WHAT THE PIPELINE WILL SEE: with High Pass ticked the anneal
+    // filters the record, so the downstream finder gets filtered signal and so
+    // must this one. Baseline wander is what moves an R peak past a gate.
+    // The notch is excluded on purpose -- no pipeline stage applies it.
+    const QVector<QPointF>* hpRaw = highPassedRawFor(label);
+    const QVector<QPointF>& detectSrc = hpRaw ? *hpRaw : *r.dataRaw;
     const double globalOffset = current_chunk_index * seconds_in_memory_at_once;
     constexpr double kRefSec = gui_peak_finder::previous_seconds_to_train_on;
     std::vector<std::pair<double, double>> do_not_learn_from_region, no_peaks_in_region, withinSpans;
@@ -535,10 +630,10 @@ QVector<QPointF> noise_marking_gui::detectPeaks(const QString& label,
         // leads use the local-max detector (and thus the per-sample sign fn).
         if (label == "PPG" || label == "ABP" || label == "ART" || label == "ART_PULM")
             return gui_peak_finder::findPeaksDerivative(
-                *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
+                detectSrc, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
                 refPreceding, refEx, no_peaks_in_region, withinSpans);
         return gui_peak_finder::findPeaks(
-            *r.dataRaw, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
+            detectSrc, detStart, detEnd, refStart, refEnd, thrFn, blkFn,
             refPreceding, sgnFn, refEx, no_peaks_in_region, withinSpans);   // sgnFn, not scalar
         };
 
@@ -1055,7 +1150,11 @@ void noise_marking_gui::handle_data_plot() {
             // config having a powerline frequency, exactly as the old
             // whole-chunk block was.
             (m_notchFilterEnabled ? m_cfg.notch_filter_hz : 0.0),
-            nativeHz);
+            nativeHz,
+            // High pass, ECG1/2/3 and PPG only -- the channels the anneal
+            // filters, which this same checkbox decides.
+            (m_highPassEnabled && highPassAppliesTo(label)
+                ? m_cfg.waveform_highpass_hz : 0.0));
 
 
         if (label == "PPG") {
@@ -1162,8 +1261,12 @@ void noise_marking_gui::handle_data_plot() {
         scaledPeaks.reserve(peaks.size());
 
         if (std::abs(yScale - 1.0) > 1e-9) {
+            // Same source the peaks came from: peaks[].y() is a high-passed
+            // amplitude, and this center is what the gain scales it about.
+            const QVector<QPointF>* hpRaw = highPassedRawFor(label);
+            const QVector<QPointF>& centerSrc = hpRaw ? *hpRaw : rawData;
             std::vector<double> vals;
-            for (const QPointF& p : rawData) {
+            for (const QPointF& p : centerSrc) {
                 if (p.x() < current_start_time) continue;
                 if (p.x() > current_start_time + visible_window_size) break;
                 vals.push_back(p.y());

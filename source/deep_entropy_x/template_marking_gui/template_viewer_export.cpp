@@ -921,8 +921,31 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
         m_boundaryLog.dir.c_str(), written, failed);
 }
 
+// Both variants for every pulse slot, so the CSV measures each _F / _P block
+// on its own re-levelled average whether or not that column was ever on
+// screen. buildPulseVariant only fills pulse_by_variant -- it does not adopt a
+// waveform or recompose pulse_marks -- so nothing the operator sees moves, and
+// a slot the data refuses keeps the seeded detection as before.
+void TemplateViewerWindow::buildAllPulseVariants() {
+    const double pct = percentage_for_aligning();   // Peak forces 100 itself
+    for (int bi = 0; bi < static_cast<int>(m_bins.size()); ++bi) {
+        tbank::TemplateBank& bank = m_bins[bi].ppg_bank;
+        for (int slot = 0; slot < static_cast<int>(bank.size()); ++slot) {
+            if (bank.templates[slot].tmpl.empty()) continue;
+            for (tbank::PulseAnchor v : tbank::pulse_anchor_array)
+                if (!bank.templates[slot].pulseVariant(v).built)
+                    buildPulseVariant(bi, slot, v, pct, /*announce=*/false);
+        }
+    }
+}
+
 void TemplateViewerWindow::save_bin_and_csv() {
     captureCurrentPage();   // snapshot the page being left on Finish
+
+    // Before the writers read pulse_by_variant.
+    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+    buildAllPulseVariants();
+    QGuiApplication::restoreOverrideCursor();
 
     // NO RE-SEED BEFORE SAVE. The writers call alignedLandmarks /
     // detect_template_landmarks with m_onOffsetFitMode and m_peakFitMode
@@ -955,7 +978,8 @@ void TemplateViewerWindow::save_bin_and_csv() {
         // Same three arguments the CSV below is given, so the two files
         // describe one detector run.
         writeTemplateMarkingsBin(canonicalBin.toStdString(), m_bins,
-            m_sampleRate, m_onOffsetFitMode, m_peakFitMode);
+            m_sampleRate, m_onOffsetFitMode, m_peakFitMode,
+            static_cast<int>(m_ppgAlignMode), m_ppgAlignPercent);
         std::cout << "Saved: " << canonicalBin.toStdString() << "\n";
         logBoundaryTrainingAtSave();
 

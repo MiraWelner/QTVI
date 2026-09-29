@@ -43,7 +43,7 @@ struct Marking {
 };
 
 struct AllFileMarkings {
-    QString filePath; 
+    QString filePath;
     QVector<Marking> marks;
 
     void appendMarking(double start, double end, const std::string& channel,
@@ -84,12 +84,32 @@ public:
     enum class PlotMode { Line, Scatter };
     void setBeatLog(beat_log* log) { m_beatLog = log; }
     bool invertedForSignal(const QString& label) const;
+
+    // THE OPERATOR'S FILTER ANSWERS, read out by main.cpp once the dialog is
+    // accepted. These two boxes are the ONLY place either filter is switched
+    // on in the whole run. The high pass goes into the anneal, ahead of the
+    // template build, so the templates are made from filtered signal; the
+    // notch is handed to the template marking window so what it draws matches
+    // what was reviewed here. Neither is asked again downstream -- the
+    // template marking GUI has no filter checkboxes of its own.
+    struct FilterChoices {
+        bool high_pass = false;
+        bool notch = false;
+    };
+    FilterChoices filterChoices() const {
+        return FilterChoices{ m_highPassEnabled, m_notchFilterEnabled };
+    }
     void autoDetectLeadPolarity(); //right now the polarity is detected by the user 
     // immediate redraw (the checkbox handler) must call it afterward.
     void refreshVcgFromLeadFlags();
     void set_params_to_config_defaults(const config_entry& cfg) {
         m_cfg = cfg;        // Set the default values for the threshold and blanking period spinboxes based on the config entry.
         ui->notch_filter->setEnabled(m_cfg.notch_filter_hz != 0); //enable notch filter checkbox if the config entry has a non-zero notch filter frequency
+        // Same rule for the high pass. A box that could be ticked with
+        // waveform_highpass_hz = 0 would promise a filter the pipeline then
+        // does not apply -- and unlike the notch, that promise would be about
+        // the signal the templates get built from, not just the drawing.
+        ui->high_pass->setEnabled(m_cfg.waveform_highpass_hz != 0);
     }
 
 protected:
@@ -210,8 +230,24 @@ private:
     // --- Plot style (global, applies to all signal charts) ---
     PlotMode m_plotMode = PlotMode::Line;
 
-    // checked = per-window autoscale (drift hidden)
+    // The two filter boxes. Both filter what is DRAWN here (see filteredSpan
+    // in signal_renderer.cpp) and neither touches the chunk in memory. The
+    // high pass one is also the switch the anneal reads, via
+    // filterChoices() -> main.cpp -> analysis_job::prepare, so the preview on
+    // screen is a preview of what the templates will be built from.
     bool m_notchFilterEnabled = false;
+    bool m_highPassEnabled = false;
+
+    // Filled by highPassedRawFor, keyed by channel label, valid for the loaded
+    // chunk only. mutable because detection is const and this is a cache.
+    //
+    // HELD BY POINTER, NOT BY VALUE. highPassedRawFor hands out a raw pointer
+    // to the cached block and detectPeaks binds a reference to it for the
+    // length of a detection; Qt 6's QHash stores its values inline and MOVES
+    // them when it rehashes, so caching a bare QVector would leave that
+    // reference dangling the moment a second channel got cached. The vector on
+    // the heap does not move.
+    mutable QHash<QString, std::shared_ptr<const QVector<QPointF>>> m_highPassedRaw;
 
     // --- Drag state ---
     bool     m_isDragging = false;
@@ -281,6 +317,29 @@ private:
         double detStart, double detEnd,
         std::vector<int>* outPostTags = nullptr) const;
 
+    // THE HIGH-PASSED RAW BLOCK THAT detectPeaks RUNS ON, built lazily per
+    // channel and cached for the loaded chunk. Returns nullptr when there is
+    // nothing to apply -- box unticked, no cutoff in the config, or a channel
+    // the pipeline does not high-pass -- which callers read as "use the raw
+    // block as stored".
+    //
+    // WHOLE CHUNK, NOT THE VISIBLE WINDOW, and that is not an optimization
+    // oversight. The reference frame the finders gate each beat against walks
+    // BACKWARDS through the chunk over annotated spans (refStatsLocalMax in
+    // gui_peak_finder.hpp) with no bound on how far it goes, so a window-sized
+    // slice would silently truncate that walk and the beats found would depend
+    // on where the operator happened to be scrolled. It also matches what the
+    // pipeline does: anneal_one_file high-passes the continuous record, not a
+    // window of it.
+    //
+    // THE COST IS ONE filtfilt PER CHANNEL PER CHUNK, paid on the first detect
+    // after the box is ticked, plus a second copy of that channel's raw block
+    // in memory. The cache is kept across toggles (the filtered signal does not
+    // depend on the box, only on whether anyone asked for it) and dropped when
+    // a new chunk loads.
+    const QVector<QPointF>* highPassedRawFor(const QString& label) const;
+    void clearHighPassCache() { m_highPassedRaw.clear(); }
+
     QVector<QPointF> get_bpm(const QString& label, double& outDuration) const;
 
     // --- VCG (vectorcardiogram) ---
@@ -309,27 +368,6 @@ private:
 
     void resetUnpinnedGains();
 
-    // ---- DERIVED INDEX, NOT A STORE -------------------------------------
-    //
-    // These three vectors are a lookup structure rebuilt from m_genExc.marks
-    // by rebuildParamIndex(); they are never edited directly and nothing is
-    // ever recovered from them that is not already in m_genExc. m_genExc is
-    // the one store, for parameter edits exactly as for annotations.
-    //
-    // They USED TO BE a second store, written by applyParamOverrides and read
-    // back by getAllMarkings on save. Two stores for one fact, reconciled in
-    // three places that disagreed: save folded overrides into marks and
-    // stripped the mark copies, load rebuilt the overrides but left the mark
-    // copies in place (so a reloaded span drew twice and took two right-clicks
-    // to clear), and the per-file stash in loadSelectedFile did neither (so
-    // switching files and back lost every override). Deriving them removes all
-    // three failure modes rather than patching each conversion site.
-    //
-    // A marking whose threshold or blanking is NaN contributes no segment to
-    // that vector -- see rebuildParamIndex. That is what keeps a legacy row
-    // (no parameter columns at all, both NaN) from installing a NaN default
-    // into ParamIndex, which would make every gate comparison false and
-    // silently detect nothing in the span.
     QVector<ParamOverride> m_thresholdOverrides;
     QVector<ParamOverride> m_blankingOverrides;
     QVector<ParamOverride> m_invertOverrides;

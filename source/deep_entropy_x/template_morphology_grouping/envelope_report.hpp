@@ -144,7 +144,8 @@ namespace envelope_report {
         "EnvelopeRecord layout changed; bump kVersion and update any reader");
 
     inline constexpr char kMagic[9] = "DEXENVL1";
-    inline constexpr uint32_t kVersion = 1;
+    // One format, version 0; the static_asserts above guard the layouts.
+    inline constexpr uint32_t kVersion = 0;
 
     // ---------------------------------------------------------------------
     // Segment bounds from a bin's averaged template

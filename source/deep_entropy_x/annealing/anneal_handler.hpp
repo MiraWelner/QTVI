@@ -30,8 +30,9 @@
   *                       the actual checkbox value.
   * @param ecg2_inverted  Same, for CH2.
   * @param ecg3_inverted  Same, for CH3.
-  * @param highpassHz     Baseline-wander high-pass cutoff in Hz, 0 = disabled
-  *                       (config waveform_highpass_hz). Applied to the
+  * @param highpassHz     Baseline-wander high-pass cutoff in Hz, 0 = disabled.
+  *                       Already gated by the caller (analysis_job::prepare,
+  *                       from the operator's checkbox). Applied to the
   *                       continuous record before annealing splices it.
   */
 bool anneal_one_file(const std::filesystem::path& binPath,

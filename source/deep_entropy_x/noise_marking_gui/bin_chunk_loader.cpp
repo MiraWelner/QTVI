@@ -263,6 +263,8 @@ bool noise_marking_gui::loadChunkFromFile(uint64_t chunkIndex, bool resetScroll)
     QFile file(m_binFilePath);
     if (!file.open(QIODevice::ReadOnly)) return false;
     current_chunk_index = chunkIndex;
+    // The high-passed copies are indexed in this chunk's local seconds.
+    clearHighPassCache();
 
     uint64_t chanUpOffset[NUM_CHANNELS], chanRawOffset[NUM_CHANNELS];
     uint64_t running = 0;

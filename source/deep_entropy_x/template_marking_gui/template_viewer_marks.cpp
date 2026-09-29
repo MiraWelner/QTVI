@@ -295,16 +295,13 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         if (slot >= (int)tb.ppg_bank.size()) return;
         tbank::BankTemplate& ps = tb.ppg_bank.templates[slot];
         if (ps.tmpl.empty()) return;
+        // The variant still needs building: ppgSet writes the dragged bar into
+        // pulseVariant(homeVariant).marks and composePulseMarks only copies out
+        // of a built one.
         if (!ps.pulseVariant(homeVariant).built)
             buildPulseVariant(gi, slot, homeVariant,
                 (homeVariant == tbank::PulseAnchor::Peak)
                 ? 100.0 : percentage_for_aligning());
-        // STILL NOTHING? The variant was refused (no beat matrix, too few
-        // rows). Fall back to detecting on the displayed waveform so the bar
-        // is movable, which is what the old unconditional seed did.
-        if (!ps.pulseVariant(homeVariant).ok() && !ps.hasDetectedPulseMarks())
-            FeatureMarks::seed_pulse_bank_template(ps.tmpl, m_ppgRateHz,
-                ps.pulse_marks);
         };
     // Placeable length of this column's pulse: the DRAWN extent, not the array.
     //
@@ -382,7 +379,9 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
         const int gi = m_pageGlobalIdx[li];
         const int slot = m_pageTemplateIdx[li];
         if (gi < 0 || slot < 0) continue;
-        if (m_bins[gi].bad_ppg == 1) continue;
+        // Per slot: the propagation walks slots.
+        if (slot < m_bins[gi].ppg_bank.size()
+            && m_bins[gi].ppg_bank.templates[slot].badPulseMarked()) continue;
         ppgSeed(gi, slot);
         const double cur = ppgGet(gi, slot);
         if (cur < 0.0) continue;
@@ -605,7 +604,9 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
         const int slot = m_pageTemplateIdx[li];
         if (gi < 0 || gi >= (int)m_bins.size()) continue;
         if (slot < 0) continue;
-        if (m_bins[gi].bad_r_ch[leadIdx]) continue;
+        // Per slot, as above.
+        if (slot < m_bins[gi].ecg_bank[leadIdx].size()
+            && m_bins[gi].ecg_bank[leadIdx].templates[slot].badEcgMarked()) continue;
 
         const int wall = wallAt(li);
         if (wall <= 0) continue;
@@ -912,14 +913,14 @@ void TemplateViewerWindow::onBadRToggled(int binIdx, int leadIdx,
     if (binIdx < 0 || binIdx >= (int)m_bins.size()) return;
     if (leadIdx < 0 || leadIdx > 2) return;
 
-    if (tbank::BankTemplate* t = slotFor(binIdx, leadIdx, templateIdx))
-        // BOOL. The 1u/2u looked like a tag for which verdict this is, but the
-        // field is a bool -- which slot holds it IS the distinction: this one is
-        // the ECG lead's slot.
-        t->marked_invalid_template = bad;
-
-    // SLOT 0 ONLY writes the bin-level flag. See the header note above.
-    if (templateIdx == 0) m_bins[binIdx].bad_r_ch[leadIdx] = bad;
+    // The verdict lives on this panel's own slot. No slot index is special and
+    // nothing bin-level is written: b.bad_r_ch is the pipeline's.
+    if (tbank::BankTemplate* t = slotFor(binIdx, leadIdx, templateIdx)) {
+        t->setBadEcg(bad);
+        // Mirrored for the readers that test the bool: the confirmed CSV and
+        // the pulse-realign skip.
+        t->marked_invalid_template = t->badEcgMarked();
+    }
 
     repaintPanel(binIdx, leadIdx, templateIdx,
         panelState(binIdx, leadIdx, templateIdx));
@@ -931,16 +932,12 @@ void TemplateViewerWindow::onBadPPGToggled(int binIdx, int templateIdx,
 
     // The pulse verdict is recorded on the PULSE bank's slot, not on the ECG
     // lead's -- it is a statement about the pulse waveform in this panel.
-    if (tbank::BankTemplate* t = slotFor(binIdx, -1, templateIdx))
-        // BOOL -- see onBadRToggled. This is the PULSE slot, which is what
-        // makes it the pulse verdict.
-        t->marked_invalid_template = bad;
-
-    if (templateIdx == 0) {
-        m_bins[binIdx].bad_ppg = bad ? 1 : 0;
-        // NO LONGER CLEARS bad_r. The two were alternatives in the old
-        // three-step right-click cycle; the cycle now has a both-bad step, so
-        // marking the pulse must leave the ECG verdict alone.
+    // This panel's own slot -- see onBadRToggled. b.bad_ppg is the pipeline's
+    // statement about the bin (0 ok, 1 pulse failed, 2 none) and seeds the
+    // slots at load; it is not written from here.
+    if (tbank::BankTemplate* t = slotFor(binIdx, -1, templateIdx)) {
+        t->setBadPulse(bad);
+        t->marked_invalid_template = t->badPulseMarked();
     }
 
     // Every lead of THIS panel: a bad pulse is not a per-lead judgement, and the

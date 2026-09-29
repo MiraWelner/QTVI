@@ -522,10 +522,27 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         m_notchFilterEnabled = on;
         // NO loadChunkFromFile. The chunk in memory does not change when this
         // bool does -- the notch is applied at render time to the visible
-        // window (see notchedSpan in signal_renderer.cpp) -- and the reload
+        // window (see filteredSpan in signal_renderer.cpp) -- and the reload
         // that used to sit here re-read every channel and every raw block from
         // disk, then refiltered 8 hours of signal, for a redraw of one window.
         // That was the multi-second stall.
+        handle_data_plot();
+        updateAmpogramCursor();
+        });
+
+    // NOT ONLY A DISPLAY SETTING: main.cpp hands this to analysis_job::prepare,
+    // which decides whether the anneal high-passes the record before the peak
+    // finding, the bins and the templates. The redraw is the preview of that.
+    { QSignalBlocker block(ui->high_pass); ui->high_pass->setChecked(false); }
+    ui->high_pass->setFocusPolicy(Qt::NoFocus);
+    m_highPassEnabled = false;
+    connect(ui->high_pass, &QCheckBox::toggled, this, [this](bool on) {
+        m_highPassEnabled = on;
+        // Per window, like the notch, and ECG1/2/3 + PPG only -- the channels
+        // anneal_one_file filters (highPassAppliesTo in signal_renderer.cpp).
+        // THE PEAKS MOVE TOO: detectPeaks runs on the high-passed block, so
+        // this changes the beats, the BPM and the beat log. First redraw after
+        // ticking pays one filtfilt per detected channel, then it is cached.
         handle_data_plot();
         updateAmpogramCursor();
         });

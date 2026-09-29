@@ -6,6 +6,7 @@
 // ========================================================================
 
 #include "template_viewer.hpp"
+#include <algorithm>   // std::min, for the per-slot verdict merge
 
 
 
@@ -164,17 +165,9 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
         m_showArtPulmTrace = on; applyMarkerVisibility();
         });
 
-    // Optional display-time notch filter toggle. Wired defensively via
-    // findChild so this compiles/runs even if the .ui doesn't (yet) declare
-    // a checkbox named "notch_filter"; when the widget is present, ticking
-    // it re-runs showPage() with each template pushed through notch_filter
-    // before drawing. When absent, this block is silently a no-op.
-    if (auto* notchBox = findChild<QCheckBox*>("notch_filter")) {
-        connect(notchBox, &QCheckBox::toggled, this, [this](bool on) {
-            m_notchFilterOn = on;
-            showPage();   // full page redraw; templates re-filtered on the way in
-            });
-    }
+    // No filter checkboxes in this window. Both filters are chosen in the
+    // noise-marking GUI: the high pass before the anneal, the notch as
+    // m_notchFilterHz.
 
     // Focus mode: one panel in a right-side dock, showing the clicked
     // landmark's own alignment magnified around it (see refreshFocus).
@@ -361,10 +354,43 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
         }
     }
 
+    // ---- THE PIPELINE'S BIN-LEVEL FLAGS, SEEDED INTO THE SLOTS ----------
+    //
+    // AFTER restoreMarkersFrom, so this sees the flags the file carried, and
+    // ONCE: from here on the per-slot operator_state bits are what panelState
+    // and the markings CSV read, so a mark the operator clears stays cleared.
+    //
+    // A SLOT THE OPERATOR HAS ALREADY RULED ON IS LEFT ALONE. confirmed() is
+    // set as each panel is built, so it answers "this was on screen and not
+    // crossed out" -- seeding over it would re-condemn a column somebody
+    // deliberately cleared in an earlier session. bad_ppg == 2 is the
+    // exception: it means the bin has no pulse at all, which is not a judgement
+    // anyone can overrule.
+    //
+    // THIS USED TO SET marked_invalid_template ON EVERY PULSE SLOT whenever
+    // bad_ppg == 1, unconditionally -- which is how slot 0's right-click
+    // (the only one that could write bad_ppg) turned into an edit to every
+    // other slot in the bin on the next load.
     for (TemplateBin& b : m_bins) {
-        if (b.bad_ppg != 1) continue;
-        for (tbank::BankTemplate& t : b.ppg_bank.templates)
-            t.marked_invalid_template = true;
+        for (int c = 0; c < 3; ++c) {
+            if (!b.bad_r_ch[c]) continue;
+            for (tbank::BankTemplate& t : b.ecg_bank[c].templates) {
+                // Already answered -- by the operator in this file (v4 carries
+                // the verdict per slot), or by a panel they reviewed and left
+                // Good. Either way not the seed's business.
+                if (t.confirmed() || t.badEcgMarked()) continue;
+                t.setBadEcg(true);
+                t.marked_invalid_template = true;
+            }
+        }
+        if (b.bad_ppg != 0) {
+            const bool overridable = (b.bad_ppg == 1);
+            for (tbank::BankTemplate& t : b.ppg_bank.templates) {
+                if (overridable && (t.confirmed() || t.badPulseMarked())) continue;
+                t.setBadPulse(true);
+                t.marked_invalid_template = true;
+            }
+        }
     }
     compute_global_refs();
     showPage();
@@ -398,6 +424,17 @@ void TemplateViewerWindow::seedOneBin(TemplateBin& b) const
     b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
     FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK, b.polarity);
 
+    // ---- EVERY PULSE SLOT GETS ITS DETECTION HERE, ONCE ------------------
+    //
+    // Same detector as seed_all, per slot on that slot's own as-built average,
+    // so the slot-level *_auto columns exist whether or not a variant was ever
+    // built. A variant that is built overwrites this with its own detection
+    // (composePulseMarks). Before restoreMarkersFrom, so saved bars land on top.
+    for (tbank::BankTemplate& t : b.ppg_bank.templates) {
+        if (t.tmpl.empty()) continue;
+        FeatureMarks::seed_pulse_bank_template(t.tmpl, m_ppgRateHz, t.pulse_marks);
+    }
+
     // NO ECG GLYPH SYNC: p_peak is not stored any more, so there is nothing to
     // cache. The PPG reactive values ARE cached (t50 / t80 / t80_rise / pw80 /
     // peak2), so they are rederived here from the bars the seed just wrote
@@ -417,11 +454,22 @@ void TemplateViewerWindow::seedOneBin(TemplateBin& b) const
 
 bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bool ecg, bool pulse) {
     try {
-        std::vector<TemplateBin> saved = readTemplateMarkingsBin(markingsBinPath.toStdString());
+        int savedAlignMode = 0, savedAlignPct = 0;
+        std::vector<TemplateBin> saved = readTemplateMarkingsBin(
+            markingsBinPath.toStdString(), &savedAlignMode, &savedAlignPct);
         if (saved.empty()) {
             fprintf(stderr, "[markers] NOT reloaded from %s -- file has 0 bins\n",
                 markingsBinPath.toStdString().c_str());
             return false;
+        }
+        if (pulse && savedAlignMode >= 0 && savedAlignMode <= 3) {
+            // The alignment the file was written under, so the _F averages are
+            // re-levelled at the same height and bars that did not move report
+            // the same amplitudes. Controls only -- no re-stack from here;
+            // initAfterBinsLoaded paints after this.
+            m_ppgAlignMode = static_cast<PpgAlign>(savedAlignMode);
+            m_ppgAlignPercent = std::clamp(savedAlignPct, 0, 100);
+            syncPpgAlignControls();
         }
         if (saved.size() > m_bins.size()) {
             fprintf(stderr, "[markers] ERROR: %s has %zu bins but current subject has only %zu -- "
@@ -496,10 +544,23 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                         // slots that DO exist elsewhere in a bank come from
                         // slotMarks growing it to reach a write, which cannot
                         // happen from here.
-                        const size_t len =
-                            d.ecg_bank[c].templates[slot].tmpl.size();
                         for (const auto& kv :
                             s.ecg_bank[c].templates[slot].markers_by_anchor) {
+                            // PER ANCHOR, from that anchor's own average.
+                            // Every position in this set was placed on
+                            // bankSlotFor(c, slot, anchor)->tmpl, which is a
+                            // different array per anchor and a different
+                            // length; bounding them all by the R-aligned
+                            // templates[slot].tmpl rejected valid bars -- the
+                            // P_ONSET alignment moves the P onset toward the
+                            // far end, so it exceeded a length borrowed from a
+                            // shorter, differently-aligned template. Falls back
+                            // to that length only for an anchor with no slot
+                            // average, which is the gap bankSlotFor reports.
+                            const AnchoredBankSlot* as = d.bankSlotFor(
+                                c, slot, static_cast<AnchorType>(kv.first));
+                            const size_t len = as ? as->tmpl.size()
+                                : d.ecg_bank[c].templates[slot].tmpl.size();
                             const tbank::BankMarkerSet& sm = kv.second;
                             tbank::BankMarkerSet& dm =
                                 d.ecg_bank[c].templates[slot].marks(kv.first);
@@ -513,10 +574,26 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                     }
                 }
                 for (int c = 0; c < 3; ++c) d.bad_r_ch[c] = s.bad_r_ch[c];
+                // And the per-slot verdicts: the operator's, one byte per slot
+                // in the file. The bin-level line above is the pipeline's.
+                for (int c = 0; c < 3; ++c) {
+                    const size_t nS = std::min(s.ecg_bank[c].templates.size(),
+                        d.ecg_bank[c].templates.size());
+                    for (size_t t = 0; t < nS; ++t)
+                        d.ecg_bank[c].templates[t].setBadEcg(
+                            s.ecg_bank[c].templates[t].badEcgMarked());
+                }
             } // if (ecg)
 
             if (pulse) {
                 d.bad_ppg = s.bad_ppg;
+                {
+                    const size_t nS = std::min(s.ppg_bank.templates.size(),
+                        d.ppg_bank.templates.size());
+                    for (size_t t = 0; t < nS; ++t)
+                        d.ppg_bank.templates[t].setBadPulse(
+                            s.ppg_bank.templates[t].badPulseMarked());
+                }
                 // BARS ONLY. t50 / peak / peak2 / t80 are auto-only glyphs and
                 // are not in the record; the caller calls syncReactivePpg()
                 // once the merge is done. (ppg_t80_rise / ppg_pw80 were never
@@ -558,6 +635,10 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                             safeIdx(ss.pulse_marks.dicrotic, ds.pulse_marks.dicrotic, len);
                         ds.pulse_marks.end =
                             safeIdx(ss.pulse_marks.end, ds.pulse_marks.end, len);
+                        // The height _F was levelled at. Not an index, so no
+                        // safeIdx: 0..100, and < 0 means the file had none.
+                        if (ss.pulse_marks.foot_pct >= 0.0)
+                            ds.pulse_marks.foot_pct = ss.pulse_marks.foot_pct;
 
                         // BARS ONLY, in the variants too. The *_auto cells are
                         // the detector's answer on that variant's waveform,
