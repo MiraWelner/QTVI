@@ -24,8 +24,8 @@
 #include <fstream>
 #include <string>
 #include <vector>
-#include "peak_finding/stats_utils.hpp"
-#include "joint_bank.hpp"
+#include "stats_utils.hpp"
+#include "split_bins_to_templates.hpp"
 
 namespace templates_io {
 

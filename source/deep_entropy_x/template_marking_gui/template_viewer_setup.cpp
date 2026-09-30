@@ -310,7 +310,8 @@ void TemplateViewerWindow::initAfterBinsLoaded() {
     if (QFile::exists(canonical)) {
         markersReloaded = restoreMarkersFrom(canonical, /*ecg=*/true, /*pulse=*/true);
         if (markersReloaded) {
-            for (auto& b : m_bins) b.syncReactivePpg();
+            // (syncReactivePpg is gone: the reactive five are derived per
+            //  slot at apply/emit time rather than cached on the bin.)
         }
     }
 
@@ -377,12 +378,18 @@ void TemplateViewerWindow::seedOneBin(time_bin& b) const
         auto it = b.anchored.find(static_cast<int>(a));
         if (it == b.anchored.end()) continue;   // no block -> nothing to seed
         b.ch1 = it->second[0]; b.ch2 = it->second[1]; b.ch3 = it->second[2];
-        FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, a, b.polarity);
+        // EACH PULSE CHANNEL'S OWN RATE. The arterial channels were seeded at
+        // m_sampleRate, the ECG rate, which sized their detector windows to
+        // the wrong duration -- see the note on seed_all.
+        FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz,
+            m_abpRateHz, m_artRateHz, m_artPulmRateHz, a, b.polarity);
     }
 
     // R last so the flat state the grid reads is R's.
     b.ch1 = savedR[0]; b.ch2 = savedR[1]; b.ch3 = savedR[2];
-    FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz, AnchorType::R_PEAK, b.polarity);
+    FeatureMarks::seed_all(b, m_sampleRate, m_ppgRateHz,
+        m_abpRateHz, m_artRateHz, m_artPulmRateHz, AnchorType::R_PEAK,
+        b.polarity);
 
     // ---- EVERY PULSE SLOT GETS ITS DETECTION HERE, ONCE ------------------
     //
@@ -393,13 +400,42 @@ void TemplateViewerWindow::seedOneBin(time_bin& b) const
     for (tbank::template_of_all_signals& t : b.ppg_bank.templates) {
         if (t.tmpl.empty()) continue;
         FeatureMarks::seed_pulse_bank_template(t.tmpl, m_ppgRateHz, t.pulse_marks);
+
+        // ---- THE SAME GUARANTEE AT THIS ENTRY POINT ---------------------
+        //
+        // composePulseMarks enforces it too, but only once a variant has been
+        // built. A column the operator never visits is seeded here and nowhere
+        // else, so without this a slot whose detector missed a landmark would
+        // have no bar for it all session. Same four geometric defaults, same
+        // order -- see the note in composePulseMarks.
+        {
+            const int n = static_cast<int>(t.tmpl.size());
+            tbank::BankPulseMarkerSet& pm = t.pulse_marks;
+            if (pm.onset < 0.0) pm.onset = 0.0;
+            if (pm.end < 0.0)   pm.end = static_cast<double>(n - 1);
+            if (pm.peak_auto < 0.0) {
+                const int lo = std::max(0, static_cast<int>(pm.onset) + 1);
+                const int hi = std::min(n - 1, static_cast<int>(pm.end));
+                int best = -1; double bestV = 0.0;
+                for (int k = lo; k <= hi; ++k) {
+                    const double v = t.tmpl[k];
+                    if (std::isnan(v)) continue;
+                    if (best < 0 || v > bestV) { bestV = v; best = k; }
+                }
+                if (best >= 0) pm.peak_auto = static_cast<double>(best);
+            }
+            if (pm.dicrotic < 0.0 && pm.peak_auto >= 0.0 && m_ppgRateHz > 0.0)
+                pm.dicrotic = std::min(pm.peak_auto + 0.12 * m_ppgRateHz,
+                    static_cast<double>(n - 1));
+        }
     }
 
     // NO ECG GLYPH SYNC: p_peak is not stored any more, so there is nothing to
     // cache. The PPG reactive values ARE cached (t50 / t80 / t80_rise / pw80 /
     // peak2), so they are rederived here from the bars the seed just wrote
     // plus the auto-detected systolic peak.
-    b.syncReactivePpg();
+    // (no syncReactivePpg: the reactive pulse values are derived per slot,
+    //  on that slot's waveform.)
 
     // NO BAR SEEDING ANY MORE. barsForPanel falls back to the panel's own
     // detection for any bar the operator has not placed, so a cell holds
@@ -554,28 +590,6 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                         d.ppg_bank.templates[t].setBadPulse(
                             s.ppg_bank.templates[t].badPulseMarked());
                 }
-                // BARS ONLY. t50 / peak / peak2 / t80 are auto-only glyphs and
-                // are not in the record; the caller calls syncReactivePpg()
-                // once the merge is done. (ppg_t80_rise / ppg_pw80 were never
-                // merged here even when the file carried them.)
-                d.ppg_onset = safeIdx(s.ppg_onset, d.ppg_onset, ppgLen);
-                d.ppg_dicrotic = safeIdx(s.ppg_dicrotic, d.ppg_dicrotic, ppgLen);
-                d.ppg_end = safeIdx(s.ppg_end, d.ppg_end, ppgLen);
-
-                // ---- THE PER-SLOT PULSE BARS, AND EACH VARIANT'S ---------
-                //
-                // THE THREE FIELDS ABOVE ARE BIN-LEVEL and are not where the
-                // bars live. Every morphology column draws its own pulse
-                // (ppg_bank.templates[slot].tmpl) and carries its own
-                // BankPulseMarkerSet; the .bin has written them per slot since
-                // v1 and this merge never read them back, so a reload restored
-                // three bin-level numbers and left every column's actual bars
-                // at the auto seed. The operator's pulse marking did not
-                // survive a session.
-                //
-                // AND THE TWO VARIANTS (v3): the foot defines _F and the notch
-                // and end are measured on _P, so the composed set is not
-                // enough to reconstruct them -- see kMarkVersion.
                 {
                     const int nSaved = static_cast<int>(s.ppg_bank.templates.size());
                     const int nNow = static_cast<int>(d.ppg_bank.templates.size());

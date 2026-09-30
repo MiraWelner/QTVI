@@ -8,7 +8,7 @@
 
  */
 
-#include "config.hpp"
+#include "config_file_handling/config.hpp"
 
 #include <QFileDialog>
 
@@ -254,9 +254,9 @@ inline bool load_config(int dataType, config_entry& out) {
         out.blanking_period = stod_or_default(get_value_from_config("blanking_period"), 0.0);
         out.threshold = stod_or_default(get_value_from_config("threshold"), 0.0);
         out.bin_size_minutes = stod_or_default(get_value_from_config("bin_size_minutes"), 0.0);
-        out.ecg_match_floor = stod_or_default(get_value_from_config("ecg_match_floor"), 0.0);
-        out.ppg_match_floor = stod_or_default(get_value_from_config("ppg_match_floor"), 0.0);
-        out.ppg_fit_error_pct = stod_or_default(get_value_from_config("ppg_fit_error_pct"), 0.0);
+        out.morph_threshold_ecg = stod_or_default(get_value_from_config("morph_threshold_ecg"), 0.0);
+        out.morph_threshold_ppg = stod_or_default(get_value_from_config("morph_threshold_ppg"), 0.0);
+        out.pulse_qc_corr_floor = stod_or_default(get_value_from_config("pulse_qc_corr_floor"), 0.0);
         out.min_beats_template_ecg = stod_or_default(get_value_from_config("min_beats_template_ecg"), 0);
         out.min_beats_template_ppg = stod_or_default(get_value_from_config("min_beats_template_ppg"), 0);
         out.region_around_Rpeak_for_morphology_split = stod_or_default(get_value_from_config("region_around_Rpeak_for_morphology_split"), 0.0);

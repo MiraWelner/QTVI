@@ -13,12 +13,12 @@
 #include <limits>
 #include <map>
 #include <vector>
-#include "peak_finding/stats_utils.hpp"
-#include "template_bank.hpp"
+#include "stats_utils.hpp"
+#include "template_generation/bank_structs.hpp"
 #include "fiducial_marker_finding/alignment.hpp"
-#include "pvc_filter.hpp"
-#include "seed_pool.hpp"
-#include "beat_substitute.hpp"
+#include "template_generation/pvc_filter.hpp"
+#include "template_generation/seed_pool.hpp"
+#include "template_generation/beat_substitute.hpp"
 
  // ---------------------------------------------------------------------------
  // ONE CHANNEL'S VIEW OF ONE BIN'S PARTITION
@@ -77,8 +77,8 @@ namespace jbank {
     // honoured by everything except the conjunction that actually decides the
     // partition. A function cannot go stale that way.
     inline double floorFor(int channel) {
-        return (channel == kPpg) ? tbank::matchFloorPpg()
-            : tbank::matchFloorEcg();
+        return (channel == kPpg) ? tbank::morphThresholdPpg()
+            : tbank::morphThresholdEcg();
     }
 
 
@@ -96,10 +96,11 @@ namespace jbank {
         //
         // THE WHOLE DESIGN RESTS ON THIS VECTOR. Without it there is no way to
         // say that a PPG row and an ECG row are the same heartbeat, and the
-        // partition cannot be joint. create_arterial_templates.hpp does not
-        // currently produce one for PPG -- it discards the R-pair ordinal when
-        // it filters on fit error -- so that has to be retained before this
-        // file can be driven for real.
+        // partition cannot be joint. bin_pulse.hpp DOES produce one: its QC
+        // filter tracks survivors by row index rather than by copying
+        // waveforms, so the R-pair ordinal survives into
+        // PulseTemplateBin::keptSlices. It used to discard it, which is why
+        // this note said otherwise.
         std::vector<int32_t> local_of_slice;
 
         bool present() const { return beats && !beats->empty() && width > 0; }
@@ -201,6 +202,9 @@ namespace jbank {
 
         // ---- group identity: ONE class for ONE morphology ----------------
         uint8_t  label_code = tbank::kUnlabeled;
+        // Which operator input produced label_code -- see tbank::kLabelNone /
+        // kLabelFromPartition / kLabelFromOperator.
+        uint8_t  label_source = tbank::kLabelNone;
 
         // ---- THE PARTITION KEY (Section 4.6 v3.7) --------------------
         //
@@ -784,6 +788,32 @@ namespace jbank {
         // separate per-partition seeding step, because only the unlabeled
         // partition has a Phase 1 template to seed from.
         g.partition = slice_class;
+
+        // ---- AND ITS CLASS IS ITS LABEL, AT BUILD TIME -------------------
+        //
+        // The group is spawned by a slice whose class is slice_class, and
+        // cross-class assignment is structurally impossible, so EVERY beat
+        // this group will ever hold carries that class. Leaving label_code
+        // unlabeled here discarded a judgement the operator had already made
+        // at the noise-marking stage -- and since _templates.bin writes
+        // label_code and not partition, it never reached disk at all.
+        //
+        // NOT A GUESS THE ALGORITHM IS MAKING. slice_class comes from
+        // mark_code, which sliceMarkCodes reads out of the operator's noise
+        // .bin. What the old order got wrong was different: it clustered on
+        // morphology FIRST and then propagated whichever label landed in a
+        // group, which put PVC on 1200 sinus beats. Partitioning removed that
+        // possibility; the refusal to label outlived its reason.
+        //
+        // confirmed_by_operator STAYS FALSE. A noise-stage mark says the beat
+        // is ectopic, not that the bin holds two confirmed morphologies, and
+        // polymorphyVerdict gates on confirmed() precisely so the second claim
+        // remains the viewer's to make.
+        if (slice_class != tbank::kUnlabeled) {
+            g.label_code = slice_class;
+            g.label_source = tbank::kLabelFromPartition;
+        }
+
         g.members.push_back(slice);
         bank.groups.push_back(std::move(g));
         ++bank.assigned_beats;
@@ -1602,9 +1632,43 @@ namespace jbank {
         CleanCounts clean;
         pvc_filter::FilterResult pvc;
 
+        // ---- THE PULSE PARTITION, SEPARATE FROM THE ECG ONE --------------
+        //
+        // TWO PARTITIONS NOW, NOT ONE. `bank` above is the conjunction over
+        // CH1/CH2/CH3; these are the pulse channel's own. They are linked by
+        // SLICE INDEX and by nothing else: group_of_slice[s] and
+        // ppg_group_of_slice[s] describe the same heartbeat, so a consumer
+        // joins the two by s. That is the whole of the link -- there is no
+        // correspondence between group NUMBERS across the two banks, and
+        // reading ppg_bank.groups[i] as the pulse half of bank.groups[i] is
+        // the mistake this comment exists to prevent.
+        //
+        // WHY THEY WERE SPLIT. A four-channel conjunction let the pulse veto
+        // an ECG grouping: a beat whose QRS matched on all three leads at 0.97
+        // was refused because its pulse-ox trace did not, and the bin spawned a
+        // second ECG template that no ECG evidence supports. n_rejected_by
+        // existed to measure exactly that.
+        //
+        // WHAT EACH BANK OWNS. The per-slice verdicts that are properties of
+        // the BEAT rather than of a channel -- category, pvc, the census -- are
+        // computed once and shared. The verdicts that come out of a group's own
+        // fences are per bank: flags[].tukey and flags[].substituted are the
+        // ECG bank's, because BeatFlags has one of each and the ECG side is
+        // where they are read, and the pulse bank's equivalents live in
+        // ppg_excluded_reason / ppg_substitutions instead of overwriting them.
+        JointBank bank_ppg;
+        std::vector<int32_t> ppg_group_of_slice;
+        BankCounts ppg_counts;
+        std::vector<tbank::CapRaiseEvent> ppg_cap_raises;
+        std::vector<uint8_t> ppg_excluded_reason;
+        CleanCounts ppg_clean;
+
         // 4.6 substitutions: the blends, and what they cost. Stored, not
-        // applied -- see substituteBorderline.
+        // applied -- see substituteBorderline. Per bank: an ECG blend and a
+        // pulse blend are no longer the same event, because the two banks can
+        // put the same beat in groups with different populations.
         std::vector<Substitution> substitutions;
+        std::vector<Substitution> ppg_substitutions;
         SubstitutionCounts subs;
 
         // The per-slice RR series this bin was scored with, carried through so
@@ -1619,22 +1683,40 @@ namespace jbank {
     {
         BinBankOutput out;
 
-        ChannelSet chans;
+        // ---- TWO CHANNEL SETS, AND THAT IS THE WHOLE MECHANISM -----------
+        //
+        // NO CHANGE TO scoreAgainst. It already loops every channel and skips
+        // the ones where beatFor(slice) returns null -- "channel dropped this
+        // beat" -- so a set with the pulse slot left EMPTY yields a conjunction
+        // over CH1/CH2/CH3 and nothing else, and a set with only the pulse slot
+        // yields a conjunction over the pulse alone. The split is expressed by
+        // what each set contains, not by a flag threaded through the scorer.
+        //
+        // floorFor(c) still answers per channel, so the ECG set is judged at
+        // morphThresholdEcg() and the pulse set at morphThresholdPpg() without
+        // either having to know a partition changed.
+        ChannelSet ecgChans;
         for (int c = 0; c < kNumEcgCh; ++c) {
             if (!in.ecg_beats[c] || !in.ecg_forward[c]) continue;
-            setChannel(chans, c, *in.ecg_beats[c], *in.ecg_forward[c],
+            setChannel(ecgChans, c, *in.ecg_beats[c], *in.ecg_forward[c],
                 in.n_slices, in.ecg_r_col[c], in.ecg_corr_halfwin);
         }
+        ChannelSet ppgChans;
         if (in.ppg_beats && in.ppg_forward)
-            setChannel(chans, kPpg, *in.ppg_beats, *in.ppg_forward,
+            setChannel(ppgChans, kPpg, *in.ppg_beats, *in.ppg_forward,
                 in.n_slices, in.ppg_peak_col, in.ppg_corr_halfwin);
 
-        std::array<std::vector<double>, num_channels> phase1;
-        for (int c = 0; c < kNumEcgCh; ++c) phase1[c] = in.ecg_phase1[c];
-        phase1[kPpg] = in.ppg_phase1;
-        std::array<std::vector<double>, num_channels> spread;
-        for (int c = 0; c < kNumEcgCh; ++c) spread[c] = in.ecg_phase1_spread[c];
-        spread[kPpg] = in.ppg_phase1_spread;
+        // Phase 1 references and their spreads, split the same way. The unused
+        // slots stay empty, which seedBank already reads as "no reference for
+        // this channel".
+        std::array<std::vector<double>, num_channels> ecgPhase1, ecgSpread;
+        for (int c = 0; c < kNumEcgCh; ++c) {
+            ecgPhase1[c] = in.ecg_phase1[c];
+            ecgSpread[c] = in.ecg_phase1_spread[c];
+        }
+        std::array<std::vector<double>, num_channels> ppgPhase1, ppgSpread;
+        ppgPhase1[kPpg] = in.ppg_phase1;
+        ppgSpread[kPpg] = in.ppg_phase1_spread;
 
         // SEED MEMBERSHIP: the slices the seed can actually be scored against.
         // A slice present on at least one channel is eligible; a slice no
@@ -1645,14 +1727,24 @@ namespace jbank {
         // corridor comes from a contiguous stretch. runBank then walks every
         // slice including these, and recomputeAll replaces the seed corridor
         // with slot 0's measured one once members accumulate.
-        std::vector<uint32_t> seedSlices;
+        // ONE POOL PER PARTITION, because "present on at least one channel"
+        // now means a different set of slices on each side: a slice the pulse
+        // kept and every ECG lead dropped is eligible to seed the pulse bank
+        // and not the ECG one. Sharing a pool would seed one bank from slices
+        // it cannot score.
         const uint32_t kSeedTarget = 20;
-        for (uint32_t s = 0; s < in.n_slices && seedSlices.size() < kSeedTarget; ++s) {
-            bool any = false;
-            for (int c = 0; c < num_channels && !any; ++c)
-                if (chans[c].beatFor(s)) any = true;
-            if (any) seedSlices.push_back(s);
-        }
+        auto seedPoolFor = [&](const ChannelSet& cs) {
+            std::vector<uint32_t> pool;
+            for (uint32_t s = 0; s < in.n_slices && pool.size() < kSeedTarget; ++s) {
+                bool any = false;
+                for (int c = 0; c < num_channels && !any; ++c)
+                    if (cs[c].beatFor(s)) any = true;
+                if (any) pool.push_back(s);
+            }
+            return pool;
+            };
+        std::vector<uint32_t> seedSlices = seedPoolFor(ecgChans);
+        std::vector<uint32_t> ppgSeedSlices = seedPoolFor(ppgChans);
 
         // ---- THE PARTITION KEY, BEFORE ANY CLUSTERING -------------------
         //
@@ -1673,23 +1765,48 @@ namespace jbank {
         // held PVCs -- which would put marked beats in an unlabeled group and
         // make the partition a lie from the first line. This is the same
         // reasoning seed_pool.hpp already applies to the Phase 1 reference.
+        // BOTH POOLS, same rule. The partition key is a property of the beat,
+        // so a marked slice is as wrong in the pulse bank's slot 0 as in the
+        // ECG bank's.
         if (!pkeys.empty()) {
-            std::vector<uint32_t> clean;
-            clean.reserve(seedSlices.size());
-            for (uint32_t sl : seedSlices)
-                if (sl >= pkeys.size() || pkeys[sl] == tbank::kUnlabeled)
-                    clean.push_back(sl);
-            // Drop marked seed slices -- unless that would empty the pool (a
-            // bin that is ALL marked keeps its slices; an empty slot 0 is worse
-            // than an impure one).
-            if (!clean.empty() && clean.size() < seedSlices.size())
-                seedSlices = std::move(clean);
+            auto purgeMarked = [&](std::vector<uint32_t>& pool) {
+                std::vector<uint32_t> clean;
+                clean.reserve(pool.size());
+                for (uint32_t sl : pool)
+                    if (sl >= pkeys.size() || pkeys[sl] == tbank::kUnlabeled)
+                        clean.push_back(sl);
+                // Drop marked seed slices -- unless that would empty the pool
+                // (a bin that is ALL marked keeps its slices; an empty slot 0
+                // is worse than an impure one).
+                if (!clean.empty() && clean.size() < pool.size())
+                    pool = std::move(clean);
+                };
+            purgeMarked(seedSlices);
+            purgeMarked(ppgSeedSlices);
         }
 
-        seedBank(out.bank, chans, phase1, seedSlices, in.max_templates_per_bin,
-            &spread);
-        runBank(out.bank, chans, in.n_slices, out.group_of_slice, pkeys,
+        // ---- THE ECG PARTITION: CH1/CH2/CH3 ----------------------------
+        seedBank(out.bank, ecgChans, ecgPhase1, seedSlices,
+            in.max_templates_per_bin, &ecgSpread);
+        runBank(out.bank, ecgChans, in.n_slices, out.group_of_slice, pkeys,
             in.bin_index, &out.cap_raises, &out.counts);
+
+        // ---- THE PULSE PARTITION: ITS OWN BANK, ITS OWN CAP ------------
+        //
+        // SAME CAP AS THE ECG BANK, NOT A SHARE OF IT: max_templates_per_bin
+        // applies per bank, so a bin can now hold up to twice as many
+        // templates as before -- six ECG morphologies and six pulse ones.
+        // Deliberate. The cap exists to stop a bank filling with noise
+        // singletons, and that is a per-bank failure; halving each side to
+        // preserve the old total would make the pulse channel's cap depend on
+        // how finely the ECG split, which is the coupling this change removes.
+        //
+        // The same pkeys go in, so the operator's class still partitions both
+        // banks and a PVC-marked beat cannot join an unlabeled pulse group.
+        seedBank(out.bank_ppg, ppgChans, ppgPhase1, ppgSeedSlices,
+            in.max_templates_per_bin, &ppgSpread);
+        runBank(out.bank_ppg, ppgChans, in.n_slices, out.ppg_group_of_slice,
+            pkeys, in.bin_index, &out.ppg_cap_raises, &out.ppg_counts);
 
         // ---- PER-SLICE FLAGS --------------------------------------------
         //
@@ -1718,11 +1835,17 @@ namespace jbank {
         for (uint32_t s = 0; s < in.n_slices; ++s) {
             out.flags[s].category = (s < cats.size())
                 ? cats[s] : tbank::Category::REGULAR;
+            // TWO IDS, FROM TWO BANKS. BeatFlags already carried
+            // template_id_ecg[3] and template_id_ppg separately; under one
+            // partition both were the same number, and the separation was
+            // vestigial. It is load-bearing now: the two index different
+            // banks, and they are equal only by coincidence.
             const int32_t g = (s < out.group_of_slice.size())
                 ? out.group_of_slice[s] : tbank::kNoMatch;
             for (int c = 0; c < kNumEcgCh; ++c)
                 out.flags[s].template_id_ecg[c] = g;
-            out.flags[s].template_id_ppg = g;
+            out.flags[s].template_id_ppg = (s < out.ppg_group_of_slice.size())
+                ? out.ppg_group_of_slice[s] : tbank::kNoMatch;
         }
         if (!in.rr_after_ms.empty()) {
             out.pvc = pvc_filter::runFilter(in.rr_after_ms);
@@ -1741,11 +1864,34 @@ namespace jbank {
             }
         }
 
-        cleanGroups(out.bank, chans, out.flags, out.excluded_reason, &out.clean,
-            &in.rr_after_ms);
-
-        substitute_premature(out.bank, chans, out.excluded_reason, out.flags,
+        // ---- FENCES AND BLENDS, ONCE PER BANK ---------------------------
+        //
+        // ECG FIRST, AND IT OWNS THE SHARED FIELDS. cleanGroups writes
+        // flags[].tukey and substitute_premature writes flags[].substituted,
+        // and BeatFlags has one of each -- a beat cannot be both inside and
+        // outside its group's fences at the same time as far as that struct is
+        // concerned. The ECG side is where both are read (template_io's
+        // BeatRecord::tukey, the trailer's n_blended_members), so it writes
+        // them.
+        cleanGroups(out.bank, ecgChans, out.flags, out.excluded_reason,
+            &out.clean, &in.rr_after_ms);
+        substitute_premature(out.bank, ecgChans, out.excluded_reason, out.flags,
             out.substitutions, &out.subs);
+
+        // PULSE SECOND, INTO ITS OWN EXCLUSION VECTOR. flagsPpg is a scratch
+        // copy so the pulse bank's Tukey verdicts cannot overwrite the ECG
+        // ones; what survives is ppg_excluded_reason, which carries the pulse
+        // fences' outcome per slice in its own right. A reader wanting "was
+        // this beat in its pulse group's average" asks that vector, not
+        // flags[].tukey.
+        {
+            std::vector<tbank::BeatFlags> flagsPpg = out.flags;
+            cleanGroups(out.bank_ppg, ppgChans, flagsPpg,
+                out.ppg_excluded_reason, &out.ppg_clean, &in.rr_after_ms);
+            substitute_premature(out.bank_ppg, ppgChans,
+                out.ppg_excluded_reason, flagsPpg, out.ppg_substitutions,
+                nullptr);
+        }
         out.rr_after_ms = in.rr_after_ms;
         return out;
     }
@@ -1784,6 +1930,7 @@ namespace jbank {
             // a whole BankTemplate; only the group's are authoritative, and
             // this is the one place they are written onto it.
             t.label_code = g.label_code;
+            t.label_source = g.label_source;
             t.confirmed_by_operator = g.confirmed_by_operator;
             t.subtype = g.subtype;
             t.spawn_seq = g.spawn_seq;

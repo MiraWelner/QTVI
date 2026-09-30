@@ -391,27 +391,51 @@ tbank::PulseAnchor TemplateViewerWindow::pulseVariantForMarker(int marker)
 // A variant that has not been built contributes nothing rather than -1, so a
 // half-built slot keeps whatever it already had on screen instead of losing
 // its bars.
-void TemplateViewerWindow::composePulseMarks(tbank::template_of_all_signals& slot)
+void TemplateViewerWindow::composePulseMarks(tbank::template_of_all_signals& slot, double ppgRateHz)
 {
-    const tbank::PulseVariant& F =
-        slot.pulseVariant(tbank::PulseAnchor::Foot);
-    const tbank::PulseVariant& P =
-        slot.pulseVariant(tbank::PulseAnchor::Peak);
+    const tbank::PulseVariant& F = slot.pulseVariant(tbank::PulseAnchor::Foot);
+    const tbank::PulseVariant& P = slot.pulseVariant(tbank::PulseAnchor::Peak);
+
+    auto take = [](double& dst, double src) { if (src >= 0.0) dst = src; };
 
     if (F.ok()) {
-        slot.pulse_marks.onset = F.marks.onset;
-        slot.pulse_marks.onset_auto = F.marks.onset_auto;
+        take(slot.pulse_marks.onset, F.marks.onset);
+        take(slot.pulse_marks.onset_auto, F.marks.onset_auto);
     }
     if (P.ok()) {
-        slot.pulse_marks.dicrotic = P.marks.dicrotic;
-        slot.pulse_marks.end = P.marks.end;
-        slot.pulse_marks.dicrotic_auto = P.marks.dicrotic_auto;
-        slot.pulse_marks.end_auto = P.marks.end_auto;
+        take(slot.pulse_marks.dicrotic, P.marks.dicrotic);
+        take(slot.pulse_marks.end, P.marks.end);
+        take(slot.pulse_marks.dicrotic_auto, P.marks.dicrotic_auto);
+        take(slot.pulse_marks.end_auto, P.marks.end_auto);
         // THE PEAK AND ITS DERIVATIVES COME FROM Peak, which is the alignment
         // that sharpens them: the apex is what its rows were levelled on.
-        slot.pulse_marks.peak_auto = P.marks.peak_auto;
-        slot.pulse_marks.peak2_auto = P.marks.peak2_auto;
+        take(slot.pulse_marks.peak_auto, P.marks.peak_auto);
+        take(slot.pulse_marks.peak2_auto, P.marks.peak2_auto);
+        // A FLAG, NOT A POSITION, so false is a real verdict and is copied
+        // unconditionally -- there is no "missing" value to protect.
         slot.pulse_marks.notch_found = P.marks.notch_found;
+    }
+    //ensure that there are always dicrotic notch and peak and foot set
+    if (!slot.tmpl.empty()) {
+        const int n = static_cast<int>(slot.tmpl.size());
+        if (slot.pulse_marks.onset < 0.0) slot.pulse_marks.onset = 0.0;
+        if (slot.pulse_marks.end < 0.0)   slot.pulse_marks.end = static_cast<double>(n - 1);
+        if (slot.pulse_marks.peak_auto < 0.0) {
+            const int lo = std::max(0, static_cast<int>(slot.pulse_marks.onset) + 1);
+            const int hi = std::min(n - 1, static_cast<int>(slot.pulse_marks.end));
+            int best = -1; double bestV = 0.0;
+            for (int k = lo; k <= hi; ++k) {
+                const double v = slot.tmpl[k];
+                if (std::isnan(v)) continue;
+                if (best < 0 || v > bestV) { bestV = v; best = k; }
+            }
+            if (best >= 0) slot.pulse_marks.peak_auto = static_cast<double>(best);
+        }
+        if (slot.pulse_marks.dicrotic < 0.0 && slot.pulse_marks.peak_auto >= 0.0
+            && ppgRateHz > 0.0) {
+            const double d = slot.pulse_marks.peak_auto + 0.12 * ppgRateHz;
+            slot.pulse_marks.dicrotic = std::min(d, static_cast<double>(n - 1));
+        }
     }
 }
 
@@ -543,7 +567,7 @@ bool TemplateViewerWindow::showPulseVariant(int binIdx, int templateIdx,
     stashBuiltPulse(binIdx, templateIdx, slot);
 
     adoptPulsePair(slot, pv.tmpl, pv.tmpl_iqr);
-    composePulseMarks(slot);
+    composePulseMarks(slot, m_ppgRateHz);
     m_ppgRealigned.insert(slotKey(binIdx, templateIdx));
     pushPulseToPanels(binIdx, templateIdx);
     return true;

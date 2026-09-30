@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 #include <functional>
-#include "feature_marks.hpp"
+#include "fiducial_marker_finding/feature_marks.hpp"
 
 
 namespace alignment {
@@ -681,7 +681,7 @@ namespace alignment {
         int R_anchor, double fs, bool compute_iqr,
         const std::vector<double>& ref_beat_of_median_length,
         const std::function<double(const std::vector<double>&)>& locate,
-        // The per-beat correlation floor, tbank::matchFloorEcg() from
+        // The per-beat correlation floor, tbank::morphThresholdEcg() from
         // config.csv. PASSED IN, not read here, so this header does not depend
         // on template_bank.hpp. No default -- a silent 0.0 would disable the
         // guard and let every beat through however badly it correlated.
@@ -744,7 +744,7 @@ namespace alignment {
             // contain the transition being aligned and nothing else -- a window
             // holding two transitions locks onto the larger one.
             //
-            // FLOOR: tbank::matchFloorEcg(), the config.csv correlation floor
+            // FLOOR: tbank::morphThresholdEcg(), the config.csv split threshold
             // the bank already uses to decide whether a beat belongs to a
             // morphology. Below it there is NO estimate and the beat is
             // skipped, exactly as a locator returning -1 was skipped.

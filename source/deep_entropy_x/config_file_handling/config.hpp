@@ -76,9 +76,10 @@ struct config_entry {
     double blanking_period = 0.0;
     double threshold = 0.0;
     double bin_size_minutes = 0.0;
-    double ecg_match_floor = 0.0;
-    double ppg_match_floor = 0.0;
-    double ppg_fit_error_pct = 0.0;
+
+    double morph_threshold_ecg = 0.0;
+    double morph_threshold_ppg = 0.0;
+    double pulse_qc_corr_floor = 0.0;
     int min_beats_template_ecg = 0;
     int min_beats_template_ppg = 0;
 
@@ -153,7 +154,7 @@ struct config_entry {
     double hr_rest = 0.0;
     double hr_max = 0.0;
 
- 
+
     SignalRates signalRates() const {
         //the struct that carries all signal rates, as well as the regions around the peaks for which
         //morphologies are split based on

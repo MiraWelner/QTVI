@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "template_bank.hpp"   // tbank::PvcFilter
+#include "template_generation/bank_structs.hpp"   // tbank::PvcFilter
 
 namespace pvc_filter {
 

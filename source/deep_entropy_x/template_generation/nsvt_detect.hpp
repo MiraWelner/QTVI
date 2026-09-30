@@ -39,7 +39,7 @@
 #include <limits>
 #include <vector>
 
-#include "template_bank.hpp"
+#include "template_generation/bank_structs.hpp"
 
 namespace nsvt {
 
@@ -59,7 +59,7 @@ namespace nsvt {
     // so two templates that correlate at the floor are the same morphology
     // across bins. A separate constant here would let the record-level and
     // bin-level notions of "same shape" drift apart the moment either moved.
-    inline double globalMatchFloor() { return tbank::matchFloorEcg(); }
+    inline double globalMatchFloor() { return tbank::morphThresholdEcg(); }
 
     // ---------------------------------------------------------------------
     // Cross-bin template identity
@@ -68,6 +68,10 @@ namespace nsvt {
     struct GlobalTemplate {
         std::vector<double> tmpl;        // the exemplar that defined this id
         uint8_t  label_code = tbank::kUnlabeled;
+        // Carried so a consumer can tell a viewer-confirmed morphology from
+        // one labelled by its noise-stage partition. Both are eligible for
+        // NSVT; only the first is polymorphy evidence.
+        uint8_t  label_source = tbank::kLabelNone;
         int32_t  subtype = -1;
         uint32_t first_bin = 0;
         uint32_t n_bins_seen = 0;
@@ -111,7 +115,23 @@ namespace nsvt {
         uint8_t  label_code = tbank::kUnlabeled;
         int32_t  subtype = -1;
         bool     confirmed = false;
+        // tbank::kLabelNone / kLabelFromPartition / kLabelFromOperator.
+        // `confirmed` is the VIEWER's verdict and stays the gate for
+        // polymorphy; this says whether a label exists at all and where it
+        // came from, which is the question NSVT is actually asking.
+        uint8_t  label_source = tbank::kLabelNone;
         uint32_t n_members = 0;
+
+        // EITHER PROVENANCE IS AN OPERATOR JUDGEMENT. A group labelled from
+        // its partition was built only from beats a human marked as that class
+        // at the noise-marking stage; a confirmed one was agreed in the
+        // viewer. NSVT asks "is this morphology ventricular", and both answer
+        // it. What neither licenses is NSVT inventing a label of its own,
+        // which is what kLabelNone still refuses.
+        bool labelled() const {
+            return label_code != tbank::kUnlabeled
+                && label_source != tbank::kLabelNone;
+        }
     };
 
     struct JointGlobalMap {
@@ -157,16 +177,27 @@ namespace nsvt {
                     // global id does not. NEVER overwrite: two different
                     // confirmed labels on one global id is a finding for the
                     // operator, not something to resolve silently.
-                    if (g.label_code == tbank::kUnlabeled && lt.confirmed) {
+                    // labelled(), NOT confirmed. The confirmed-only test
+                    // meant a PVC group built entirely from operator-marked
+                    // beats could never label its global id, so NSVT saw an
+                    // unlabeled morphology and refused to report a run --
+                    // even though the operator had already said every beat in
+                    // it was ectopic. NEVER OVERWRITE still holds: two
+                    // different labels on one global id is a finding for the
+                    // operator, not something to resolve silently.
+                    if (g.label_code == tbank::kUnlabeled && lt.labelled()) {
                         g.label_code = lt.label_code;
                         g.subtype = lt.subtype;
+                        g.label_source = lt.label_source;
                     }
                 }
                 else {
                     GlobalTemplate g;
                     g.tmpl = lt.tmpl;
-                    g.label_code = lt.confirmed ? lt.label_code : tbank::kUnlabeled;
-                    g.subtype = lt.confirmed ? lt.subtype : -1;
+                    g.label_code = lt.labelled() ? lt.label_code : tbank::kUnlabeled;
+                    g.subtype = lt.labelled() ? lt.subtype : -1;
+                    g.label_source = lt.labelled() ? lt.label_source
+                        : tbank::kLabelNone;
                     g.first_bin = static_cast<uint32_t>(b);
                     g.n_bins_seen = 1;
                     g.n_beats_total = lt.n_members;
@@ -236,9 +267,15 @@ namespace nsvt {
                         // different confirmed labels on one global id is a
                         // finding for the operator, not something to silently
                         // resolve.
-                        if (g.label_code == tbank::kUnlabeled && lt.confirmed()) {
+                        // EITHER PROVENANCE, same reasoning as the joint path
+                        // above: a template labelled from its partition was
+                        // built only from operator-marked beats.
+                        if (g.label_code == tbank::kUnlabeled
+                            && lt.label_code != tbank::kUnlabeled
+                            && lt.label_source != tbank::kLabelNone) {
                             g.label_code = lt.label_code;
                             g.subtype = lt.subtype;
+                            g.label_source = lt.label_source;
                         }
                     }
                     else {

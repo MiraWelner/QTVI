@@ -19,9 +19,9 @@
 #include <cstdint>
 #include <limits>
 
-#include "fiducial_marker_finding/anchor_view.hpp"   // AnchorType
+#include "fiducial_marker_finding/anchor_view.hpp"
 #include "fiducial_marker_finding/curve_fit.hpp"
-#include "template_generation/template_bank.hpp"
+#include "template_generation/bank_structs.hpp"
 #include "subsample_refine.hpp"
 
 struct time_bin;   // forward-declare -- full definition in TemplateBinIO.hpp
@@ -207,7 +207,15 @@ public:
 
     // pol is indexed by channel inside, so the sign and the lead cannot get out
     // of step across the three-channel loop.
-    static void seed_all(time_bin& bin, double sampleRate, double ppgRate, AnchorType anchor,
+    // FOUR PULSE RATES, NOT ONE. The arterial channels used to be seeded at
+    // sampleRate -- the ECG rate -- so on a record with ECG at 1000 and the
+    // pulse channels at 500 every detector window was half as wide in real
+    // time as intended. Not a reporting error: the fit windows in
+    // upsample_for_fit::pulse_window are DURATIONS and the dicrotic seed is
+    // peak + 0.12 * rate, so the detector searched the wrong span and the
+    // positions it returned were wrong. 0 means the channel is absent.
+    static void seed_all(time_bin& bin, double sampleRate, double ppgRate,
+        double abpRate, double artRate, double artPulmRate, AnchorType anchor,
         const LeadPolarity& pol, double heightMeters = NAN,
         curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);

@@ -212,39 +212,51 @@ namespace analysis_job {
         templates_io::set(cfg.template_path, stem);
         tbank::setMinBeats(cfg.min_beats_template_ecg, cfg.min_beats_template_ppg);//min beats for displayed templates in the viewer loaded from config
 
-        // MORPHOLOGY SPLIT FLOORS. setMatchFloors takes both or neither: it
-        // returns false and sets NOTHING if either value is outside (0, 1],
-        // and a blank config cell arrives here as 0.0. So a refused pair
-        // leaves both floors at their defaults, which changes how every bin in
-        // the record is partitioned -- reported rather than silent.
-        if (!tbank::setMatchFloors(cfg.ecg_match_floor, cfg.ppg_match_floor)) {
-            std::cerr << "  [morphology] REFUSED match floors from config.csv (ecg="
-                << cfg.ecg_match_floor << ", ppg=" << cfg.ppg_match_floor
-                << ") -- both must be in (0, 1]. Keeping defaults ecg="
-                << tbank::matchFloorEcg() << ", ppg="
-                << tbank::matchFloorPpg() << "\n";
+        // MORPHOLOGY SPLIT THRESHOLDS, ONE SIDE AT A TIME. This was a single
+        // setMatchFloors(ecg, ppg) that refused BOTH values if either was out
+        // of range, so a config with a good ECG threshold and a blank PPG cell
+        // silently reverted both. Reported per side now, because a threshold
+        // that changes how every bin in the record is partitioned should not
+        // be able to revert quietly.
+        //
+        // A BLANK CELL IS 0.0 AND IS REFUSED, which is the intended outcome:
+        // 0.0 is not "no threshold", it is a threshold every beat clears, and
+        // accepting it would disable the split while looking configured.
+        if (!tbank::setMorphThresholdEcg(cfg.morph_threshold_ecg)) {
+            std::cerr << "  [morphology] morph_threshold_ecg="
+                << cfg.morph_threshold_ecg << " not usable (need (0, 1]); "
+                "keeping " << tbank::morphThresholdEcg() << "\n";
         }
+        if (!tbank::setMorphThresholdPpg(cfg.morph_threshold_ppg)) {
+            std::cerr << "  [morphology] morph_threshold_ppg="
+                << cfg.morph_threshold_ppg << " not usable (need (0, 1]); "
+                "keeping " << tbank::morphThresholdPpg() << "\n";
+        }
+        std::cerr << "  [morphology] split thresholds ecg="
+            << tbank::morphThresholdEcg() << ", ppg="
+            << tbank::morphThresholdPpg() << "\n";
 
         // Pulse QC threshold: unset keeps the default, unusable is refused
-        // rather than clamped. THE ONLY CALLER of setFitErrorPct -- there used
+        // rather than clamped. THE ONLY CALLER of setCorrFloor -- there used
         // to be an unconditional call above as well, which applied the value
         // before this block could refuse it, so "REFUSED ... Keeping X" could
         // print after X had already been replaced.
-        if (cfg.ppg_fit_error_pct == 0.0) {
-            std::cerr << "  [pulseqc] ppg_fit_error_pct absent from "
-                "config.csv; using default "
-                << 100.0 * pulse_qc::fitErrorFraction() << "%\n";
+        // A CORRELATION, NOT A PERCENT. Was ppg_fit_error_pct in (0, 100],
+        // printed as 100.0 * the stored fraction; now pulse_qc_corr_floor in
+        // (0, 1], printed as itself.
+        if (cfg.pulse_qc_corr_floor == 0.0) {
+            std::cerr << "  [pulseqc] pulse_qc_corr_floor absent from "
+                "config.csv; using default r >= "
+                << pulse_qc::corrFloor() << "\n";
         }
-        else if (!pulse_qc::setFitErrorPct(cfg.ppg_fit_error_pct)) {
-            std::cerr << "  [pulseqc] REFUSED ppg_fit_error_pct="
-                << cfg.ppg_fit_error_pct << " -- must be in (0, 100]. "
-                "Keeping " << 100.0 * pulse_qc::fitErrorFraction()
-                << "%\n";
+        else if (!pulse_qc::setCorrFloor(cfg.pulse_qc_corr_floor)) {
+            std::cerr << "  [pulseqc] REFUSED pulse_qc_corr_floor="
+                << cfg.pulse_qc_corr_floor << " -- must be in (0, 1]. "
+                "Keeping r >= " << pulse_qc::corrFloor() << "\n";
         }
         else {
-            std::cerr << "  [pulseqc] pulse fit error threshold "
-                << 100.0 * pulse_qc::fitErrorFraction()
-                << "% (config)\n";
+            std::cerr << "  [pulseqc] pulse correlation floor r >= "
+                << pulse_qc::corrFloor() << " (config)\n";
         }
 
         // THE PRIOR SPLIT IS READ BEFORE THE BUILD. <stem>_templates.bin is

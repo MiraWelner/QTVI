@@ -550,7 +550,12 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             { &b.chFor(0, anchor).ecgTemplate_raw, &b.chFor(0, anchor).ecg_template_raw_iqr, ecgRefFor(b, 0, 0),   0, true,  0.0 },
             { &b.chFor(1, anchor).ecgTemplate_raw, &b.chFor(1, anchor).ecg_template_raw_iqr, ecgRefFor(b, 1, 0),   1, true,  0.0 },
             { &b.chFor(2, anchor).ecgTemplate_raw, &b.chFor(2, anchor).ecg_template_raw_iqr, ecgRefFor(b, 2, 0),   2, true,  0.0 },
-            { &b.ppgTemplate,         &b.ppg_template_std,         m_pulseGlobalRef[0], 0, false, b.ppg_onset },
+            // BIN-WIDE TRACE, BIN-WIDE FOOT. b.ppg_onset is gone -- the bars
+            // are per slot -- and the right replacement here is NOT a slot bar:
+            // this row waveform IS b.ppgTemplate, the bin-wide average, so its
+            // perfusion baseline must be the foot detected on that waveform.
+            // ppg_onset_auto is exactly that, and seed_all fills it.
+            { &b.ppgTemplate,         &b.ppg_template_std,         m_pulseGlobalRef[0], 0, false, b.ppg_onset_auto },
             { &b.abpTemplate,         &b.abp_template_std,          m_pulseGlobalRef[1], 1, false, b.abp_onset },
             { &b.artTemplate,         &b.art_template_std,          m_pulseGlobalRef[2], 2, false, b.art_onset },
             { &b.artPulmTemplate,     &b.art_pulm_template_std,      m_pulseGlobalRef[3], 3, false, b.art_pulm_onset },
@@ -690,8 +695,26 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
         // the on-screen glyph uses -- so what is plotted is what is exported.
         const FeatureMarks::ReactivePpg rxPpgAuto = FeatureMarks::reactive_ppg(
             b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_dicrotic_auto, b.ppg_end_auto);
+        // ---- THE USER HALF NOW COMES FROM A SLOT ------------------------
+        //
+        // SLOT 0, matching what the ECG side of this same row already does
+        // (b.slotMarks(c, 0, anchor) above). This sidecar is one row per bin;
+        // the bin-level pulse bars it read no longer exist, and slot 0 keeps
+        // both halves of a row describing the same thing rather than one being
+        // bin-wide and the other a slot.
+        //
+        // MEASURED ON THE SLOT WAVEFORM, not b.ppgTemplate: the bars were
+        // found on ps.tmpl, so bracketing them against the bin-wide average
+        // would put t50 and t80 at crossings of a curve the bars never touched.
+        const tbank::BankPulseMarkerSet kNoPulseMarks{};
+        const bool havePpgSlot = (!b.ppg_bank.templates.empty()
+            && !b.ppg_bank.templates[0].tmpl.empty());
+        const tbank::BankPulseMarkerSet& pm0 = havePpgSlot
+            ? b.ppg_bank.templates[0].pulse_marks : kNoPulseMarks;
+        const std::vector<double>& ppgUserTrace = havePpgSlot
+            ? b.ppg_bank.templates[0].tmpl : b.ppgTemplate;
         const FeatureMarks::ReactivePpg rxPpgUser = FeatureMarks::reactive_ppg(
-            b.ppgTemplate, b.ppg_onset, b.ppg_peak, b.ppg_dicrotic, b.ppg_end);
+            ppgUserTrace, pm0.onset, pm0.peak_auto, pm0.dicrotic, pm0.end);
         // double, not int: t50/t80 are interpolated crossings and the stored
         // fields promote without loss. Rounding happens once, in emitLoc.
         const double ppgAuto[kNumPpgMarkers] = {
@@ -701,10 +724,13 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
         // ALL DOUBLE. The (double) casts on the pulse bars are gone with
         // time_bin's int fields, and the arterial arrays were narrowing
         // fifteen sub-sample positions apiece.
+        // peak and peak2 are AUTO-ONLY -- markerAtX hands out neither -- so
+        // their user column is the detector own position, as always. The three
+        // bars are slot 0.
         const double ppgUser[kNumPpgMarkers] = {
-            b.ppg_onset, rxPpgUser.t50, b.ppg_peak,
-            b.ppg_dicrotic, b.ppg_peak2, rxPpgUser.t80,
-            b.ppg_end };
+            pm0.onset, rxPpgUser.t50, pm0.peak_auto,
+            pm0.dicrotic, rxPpgUser.peak2, rxPpgUser.t80,
+            pm0.end };
         const double abpAuto[kNumArterialMarkers] = { b.abp_onset_auto, b.abp_peak_auto,
             b.abp_dicrotic_auto, b.abp_peak2_auto, b.abp_end_auto };
         const double abpUser[kNumArterialMarkers] = { b.abp_onset, b.abp_peak,
@@ -1046,8 +1072,13 @@ void TemplateViewerWindow::save_bin_and_csv() {
             // alignments and emits both halves of the row. The R_PEAK and
             // EcgAndPulse that used to be passed here existed only to satisfy
             // a signature whose other modes were unreachable.
+            // FOUR PULSE RATES ALONGSIDE THE ECG ONE. Every pulse millisecond
+            // column used to be scaled by m_sampleRate, so with a 1000 Hz ECG
+            // and 500 Hz pulse channels they all read half their true time.
+            // The members were already here; the writer never asked for them.
             writeTemplateMarkingsCsv(mf, m_bins,
                 m_subjectId.toStdString(), m_sampleRate,
+                m_ppgRateHz, m_abpRateHz, m_artRateHz, m_artPulmRateHz,
                 m_peakFitMode, m_onOffsetFitMode);
             if (!mf.good())
                 throw std::runtime_error("failed writing " + csvPath.toStdString());

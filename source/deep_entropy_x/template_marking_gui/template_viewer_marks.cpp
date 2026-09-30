@@ -19,15 +19,15 @@ namespace tv_detail {
     struct PulseField { int marker; double time_bin::* field; };
 
     inline constexpr PulseField kPulseFields[] = {
-        { BinPlotWidget::PpgOnset,           &time_bin::ppg_onset },
-        { BinPlotWidget::PpgPeak,            &time_bin::ppg_peak },
-        { BinPlotWidget::PpgDicrotic,        &time_bin::ppg_dicrotic },
-        { BinPlotWidget::PpgPeak2,           &time_bin::ppg_peak2 },
-        { BinPlotWidget::PpgEnd,             &time_bin::ppg_end },
+        // NO PPG ENTRIES. This table is pointer-to-member of time_bin, and the
+        // pulse bars are not on time_bin any more -- they are per slot, on
+        // ppg_bank.templates[slot].pulse_marks. applyTemplateToWidget sets the
+        // seven PPG markers from there and movePpgMarker writes them back
+        // there; neither went through this table even before the fields were
+        // removed. ARTERIAL STAYS: those channels have no bank and no slot, so
+        // bin-level is where their bars correctly live.
         // T50/T80 are reactive glyphs: neither drawn from here nor draggable.
         // Pushed anyway so the enum entries never hold a stale position.
-        { BinPlotWidget::PpgT50,             &time_bin::ppg_t50 },
-        { BinPlotWidget::PpgT80,             &time_bin::ppg_t80 },
         { BinPlotWidget::AbpOnset,           &time_bin::abp_onset },
         { BinPlotWidget::AbpPeak,            &time_bin::abp_peak },
         { BinPlotWidget::AbpDicrotic,        &time_bin::abp_dicrotic },
@@ -279,7 +279,7 @@ void TemplateViewerWindow::movePpgMarker(int binIdx, int leadIdx, int templateId
             case BinPlotWidget::PpgDicrotic: pm.dicrotic = v; break;
             case BinPlotWidget::PpgEnd:      pm.end = v; break;
             }
-            composePulseMarks(ps);
+            composePulseMarks(ps, m_ppgRateHz);
         }
         };
     // Every slot seeds its pulse marks lazily; seed before reading so a

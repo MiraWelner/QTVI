@@ -75,7 +75,7 @@
 
 #include "template_generation\template_structs.hpp"
 #include "fiducial_marker_finding\feature_marks.hpp"
-#include "template_generation\template_bank.hpp"
+#include "template_generation\bank_structs.hpp"
 #include "fiducial_marker_finding\anchor_view.hpp"
 
 // (MarkingsCsvSection deleted. It had three values and only EcgAndPulse was
@@ -312,29 +312,34 @@ struct time_bin {
     double p_begin_auto_ch[3] = { -1, -1, -1 };
     bool q_onset_found_auto_ch[3] = { false, false, false };
 
-    // ---- PPG -------------------------------------------------------------
+    // ---- NO BIN-LEVEL PULSE BARS ----------------------------------------
     //
-    // THE THREE BARS. Sub-sample positions into ppgTemplate, shared across
-    // channels. These are the only PPG values in template_markings.bin.
-    double ppg_onset = -1;
-    double ppg_dicrotic = -1;
-    double ppg_end = -1;
-
-    // REACTIVE, NOT PERSISTED. All five come back from
-    // FeatureMarks::reactive_ppg bracketed by the bars above plus the
-    // auto-detected systolic peak; ppg_peak itself is auto-only (markerAtX
-    // refuses to hand it out). They live here as a cache for consumers that
-    // want them without re-deriving, are rebuilt on every load, and appear in
-    // no binary format.
-    double ppg_peak = -1;
-    double ppg_peak2 = -1;
-    double ppg_t50 = -1;   // 50% up the upslope, foot -> systolic peak
-    double ppg_t80 = -1;   // 80% up the upslope, foot -> systolic peak
-    // T80_rise: upslope position at the SAME absolute amplitude as the 80%
-    // DOWNSLOPE crossing (not an 80%-of-onset->peak level). pw80 = t80 -
-    // t80_rise, the pulse width at that level. No glyph.
-    double ppg_t80_rise = -1.0;
-    double ppg_pw80 = -1.0;
+    // ppg_onset / ppg_dicrotic / ppg_end ARE GONE, and so is the reactive
+    // cache they fed -- ppg_peak, ppg_peak2, ppg_t50, ppg_t80, ppg_t80_rise,
+    // ppg_pw80 -- and syncReactivePpg() with them.
+    //
+    // EVERY PULSE BAR IS PER SLOT, on ppg_bank.templates[slot].pulse_marks.
+    // Every morphology column draws its OWN pulse (that slot's tmpl), so three
+    // bin-level values meant every column shared one set of bars measured
+    // against a different waveform each. The .bin has written them per slot
+    // for some time and applyTemplateToWidget has read them per slot for as
+    // long; these fields were a second source of truth that only some
+    // consumers still read -- which is how the panel and the CSV came to
+    // disagree.
+    //
+    // THE REACTIVE FIVE ARE NOT STORED ANYWHERE NOW. t50, t80, t80_rise, pw80
+    // and peak2 come back from FeatureMarks::reactive_ppg bracketed by the
+    // three bars plus the detected systolic peak, so they are a pure function
+    // of data already in hand. The panel computes them at apply time and the
+    // CSV at emit time, each on the slot's own waveform -- which is the
+    // property the cache could not have, since it was computed against
+    // ppgTemplate.
+    //
+    // ppgTemplate ITSELF STAYS: it is the bin-wide pulse average the build
+    // produces and the bin-wide trace is still drawn. So there is now a
+    // bin-level pulse WAVEFORM with no bin-level pulse BARS, which is
+    // coherent -- the waveform measures the bin, the bars measure a
+    // morphology.
 
     // (ppg_peak_construct / ppg_onset_construct deleted. Their comment said
     //  seed_all used them instead of re-detecting the peak on the multi-pulse
@@ -409,17 +414,10 @@ struct time_bin {
     // A TIER AND A CONFIDENCE, not positions -- tier stays int.
     int    ppg_dn_tier_auto = 3;          // 1=IEM, 2=Windkessel, 3=absent
     double ppg_dn_confidence_auto = 0.0;
-    void syncReactivePpg() {
-        ppg_peak = ppg_peak_auto;
-        if (ppgTemplate.empty()) return;
-        const FeatureMarks::ReactivePpg rx = FeatureMarks::reactive_ppg(
-            ppgTemplate, ppg_onset, ppg_peak, ppg_dicrotic, ppg_end);
-        ppg_t50 = rx.t50;
-        ppg_t80 = rx.t80;
-        ppg_peak2 = rx.peak2;
-        ppg_t80_rise = rx.t80_rise;
-        ppg_pw80 = rx.pw80;
-    }
+    // (syncReactivePpg() deleted with the fields it filled. A consumer that
+    //  wants t50 / t80 / t80_rise / pw80 / peak2 calls
+    //  FeatureMarks::reactive_ppg on the SLOT's waveform and that slot's three
+    //  bars -- which is what the panel and the CSV already do.)
 };
 
 
@@ -1578,10 +1576,26 @@ inline std::string bankSlotName(const tbank::TemplateBank& bank, int slot) {
 // the header lambdas mirror exactly, and flattening them by hand is a chance
 // to shift a column for no behavioural gain. The compiler drops them; the
 // unwrapping is a separate, mechanical edit.
+// FIVE RATES, ONE PER CHANNEL FAMILY. This took sampleRateHz alone -- the ECG
+// rate -- and multiplied EVERY millisecond column by it, pulse columns
+// included. With ECG at 1000 and the pulse channels at 500 every pulse
+// _x_ms value came out at half its true time, and ppg_pw80_ms_auto with it.
+// writePpgDerivativeCsv below always took ppgRateHz for exactly this reason;
+// this writer did not.
+//
+// FOUR PULSE RATES RATHER THAN ONE, because config.csv gives ppg, abp, art and
+// art_pulm their own upsample rates. They are equal on today's datasets and
+// nothing enforces that. 0 means the channel is absent, and a 0 rate yields a
+// toMs of 1.0 -- columns then read in SAMPLES, which is the pre-existing
+// behaviour for a missing rate and is why the guard is per rate.
 inline void writeTemplateMarkingsCsv(std::ostream& f,
     const std::vector<time_bin>& bins,
     const std::string& fileID,
     double sampleRateHz,
+    double ppgRateHz,
+    double abpRateHz,
+    double artRateHz,
+    double artPulmRateHz,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
     curve_fit::FitMode fitMode = curve_fit::FitMode::Auto)
 {
@@ -1836,7 +1850,15 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     f << '\n';
 
     // ---- row loop ----------------------------------------------------------
-    const double toMs = (sampleRateHz > 0.0) ? 1000.0 / sampleRateHz : 1.0;
+    // ONE PER CHANNEL FAMILY, and the ECG one is RENAMED so nothing can
+    // capture it by accident: every emitter below takes its toMs as an
+    // argument now, and a lambda that silently closed over the wrong one is
+    // the bug this is fixing.
+    const double ecgToMs = (sampleRateHz > 0.0) ? 1000.0 / sampleRateHz : 1.0;
+    const double ppgToMs = (ppgRateHz > 0.0) ? 1000.0 / ppgRateHz : 1.0;
+    const double abpToMs = (abpRateHz > 0.0) ? 1000.0 / abpRateHz : 1.0;
+    const double artToMs = (artRateHz > 0.0) ? 1000.0 / artRateHz : 1.0;
+    const double artPulmToMs = (artPulmRateHz > 0.0) ? 1000.0 / artPulmRateHz : 1.0;
     // Default 6 significant figures would drop the sub-sample fraction on
     // 4-digit millisecond values.
     f << std::setprecision(10);
@@ -1863,8 +1885,8 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
             if (userToo) { f << ','; if (std::isfinite(y_u) && refOk) f << (y_u / ref); }
             f << ',';   if (std::isfinite(y_a)) f << y_a;
             if (userToo) { f << ','; if (std::isfinite(y_u)) f << y_u; }
-            f << ',';   if (idx_auto >= 0.0) f << (idx_auto * toMs);
-            if (userToo) { f << ','; if (idx_user >= 0.0) f << (idx_user * toMs); }
+            f << ',';   if (idx_auto >= 0.0) f << (idx_auto * ecgToMs);
+            if (userToo) { f << ','; if (idx_user >= 0.0) f << (idx_user * ecgToMs); }
         };
 
     // Emit one pulse point group. TAKES ITS COLUMN NAME, so the user half is
@@ -1881,7 +1903,12 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     // small differences in exactly that interval.
     // userToo PASSED IN, matching emitPulsePointHeader: the PPG points answer
     // it per variant and the arterial ones by name.
-    auto emitPulsePoint = [&](bool userToo, const std::vector<double>& v,
+    // toMs IS A PARAMETER. It captured the ECG one, which is the whole of the
+    // halved-pulse-times bug: this emitter serves PPG, ABP, ART and ART_PULM,
+    // four channels with their own rates, and no single captured value can be
+    // right for all of them.
+    auto emitPulsePoint = [&](bool userToo, double toMs,
+        const std::vector<double>& v,
         double idx_auto, double idx_user,
         double foot_auto, double foot_user, double ref)
         {
@@ -1926,11 +1953,15 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     // Autodetected computed feature point (used by both ECG and PPG glyph
     // blocks -- defined once here so it's in scope for both).
     // Sub-sample position in, interpolated amplitude out.
-    auto emitAutoFeatPt = [&](const std::vector<double>& sig, double idx) {
-        f << ',';   if (idx >= 0.0) f << (idx * toMs);
-        const double y = (idx >= 0.0) ? FeatureMarks::sample_at(sig, idx)
-            : std::nan("");
-        f << ',';   if (std::isfinite(y)) f << y;
+    // toMs IS A PARAMETER HERE TOO, and this one is the subtle case: the same
+    // emitter is used by the ECG glyph block and by the pulse glyph block, so
+    // a captured rate is guaranteed wrong for one of them.
+    auto emitAutoFeatPt = [&](double toMs, const std::vector<double>& sig,
+        double idx) {
+            f << ',';   if (idx >= 0.0) f << (idx * toMs);
+            const double y = (idx >= 0.0) ? FeatureMarks::sample_at(sig, idx)
+                : std::nan("");
+            f << ',';   if (std::isfinite(y)) f << y;
         };
 
     for (const auto& b : bins) {
@@ -2190,10 +2221,10 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
                                 ecg, aa.p_begin[c], aa.q_onset[c],
                                 aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode);
-                            emitAutoFeatPt(ecg, rx.p_peak);
-                            emitAutoFeatPt(ecg, aa.q_onset[c]);
-                            emitAutoFeatPt(ecg, aa.r_peak[c]);
-                            emitAutoFeatPt(ecg, rx.t_peak);
+                            emitAutoFeatPt(ecgToMs, ecg, rx.p_peak);
+                            emitAutoFeatPt(ecgToMs, ecg, aa.q_onset[c]);
+                            emitAutoFeatPt(ecgToMs, ecg, aa.r_peak[c]);
+                            emitAutoFeatPt(ecgToMs, ecg, rx.t_peak);
                         }
                     }
                 // (bad_ecg and bad_ppg are row keys -- emitted once, above.)
@@ -2256,69 +2287,69 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                         // nobody), so its user argument is the detector's
                         // column and pulseUserInVariant answers false for it in
                         // both variants -- the value is never written.
-                        emitPulsePoint(pulseUserInVariant("ppg_onset", pvk), pw,
+                        emitPulsePoint(pulseUserInVariant("ppg_onset", pvk), ppgToMs, pw,
                             pm.onset_auto, pm.onset, pm.onset_auto, pm.onset, refPpg);
-                        emitPulsePoint(pulseUserInVariant("ppg_t50", pvk), pw,
+                        emitPulsePoint(pulseUserInVariant("ppg_t50", pvk), ppgToMs, pw,
                             rA.t50, rU.t50, pm.onset_auto, pm.onset, refPpg);
-                        emitPulsePoint(pulseUserInVariant("ppg_peak", pvk), pw,
+                        emitPulsePoint(pulseUserInVariant("ppg_peak", pvk), ppgToMs, pw,
                             pm.peak_auto, pm.peak_auto, pm.onset_auto, pm.onset, refPpg);
-                        emitPulsePoint(pulseUserInVariant("ppg_dicr", pvk), pw,
+                        emitPulsePoint(pulseUserInVariant("ppg_dicr", pvk), ppgToMs, pw,
                             pm.dicrotic_auto, pm.dicrotic, pm.onset_auto, pm.onset, refPpg);
-                        emitPulsePoint(pulseUserInVariant("ppg_peak2", pvk), pw,
+                        emitPulsePoint(pulseUserInVariant("ppg_peak2", pvk), ppgToMs, pw,
                             rA.peak2, rU.peak2, pm.onset_auto, pm.onset, refPpg);
-                        emitPulsePoint(pulseUserInVariant("ppg_t80", pvk), pw,
+                        emitPulsePoint(pulseUserInVariant("ppg_t80", pvk), ppgToMs, pw,
                             rA.t80, rU.t80, pm.onset_auto, pm.onset, refPpg);
                         // T80_rise: upslope point at t80's level (a position, like t80).
-                        emitPulsePoint(pulseUserInVariant("ppg_t80_rise", pvk), pw,
+                        emitPulsePoint(pulseUserInVariant("ppg_t80_rise", pvk), ppgToMs, pw,
                             rA.t80_rise, rU.t80_rise, pm.onset_auto, pm.onset, refPpg);
-                        emitPulsePoint(pulseUserInVariant("ppg_end", pvk), pw,
+                        emitPulsePoint(pulseUserInVariant("ppg_end", pvk), ppgToMs, pw,
                             pm.end_auto, pm.end, pm.onset_auto, pm.onset, refPpg);
 
                         // PW80 for THIS variant, from its own brackets.
-                        f << ',';   if (rA.pw80 >= 0.0) f << (rA.pw80 * toMs);
+                        f << ',';   if (rA.pw80 >= 0.0) f << (rA.pw80 * ppgToMs);
                     }
                     // ARTERIAL: all five are bars on every one of these channels, so
                     // pulseHasUserColumn returns true for all fifteen names and each
                     // group emits its full six columns.
                     f << ',' << static_cast<int>(b.abp_issue);
-                    emitPulsePoint(pulseHasUserColumn("abp_onset"), b.abpTemplate, b.abp_onset_auto, b.abp_onset,
+                    emitPulsePoint(pulseHasUserColumn("abp_onset"), abpToMs, b.abpTemplate, b.abp_onset_auto, b.abp_onset,
                         b.abp_onset_auto, b.abp_onset, refAbp);
-                    emitPulsePoint(pulseHasUserColumn("abp_peak"), b.abpTemplate, b.abp_peak_auto, b.abp_peak,
+                    emitPulsePoint(pulseHasUserColumn("abp_peak"), abpToMs, b.abpTemplate, b.abp_peak_auto, b.abp_peak,
                         b.abp_onset_auto, b.abp_onset, refAbp);
-                    emitPulsePoint(pulseHasUserColumn("abp_dicr"), b.abpTemplate, b.abp_dicrotic_auto, b.abp_dicrotic,
+                    emitPulsePoint(pulseHasUserColumn("abp_dicr"), abpToMs, b.abpTemplate, b.abp_dicrotic_auto, b.abp_dicrotic,
                         b.abp_onset_auto, b.abp_onset, refAbp);
-                    emitPulsePoint(pulseHasUserColumn("abp_peak2"), b.abpTemplate, b.abp_peak2_auto, b.abp_peak2,
+                    emitPulsePoint(pulseHasUserColumn("abp_peak2"), abpToMs, b.abpTemplate, b.abp_peak2_auto, b.abp_peak2,
                         b.abp_onset_auto, b.abp_onset, refAbp);
-                    emitPulsePoint(pulseHasUserColumn("abp_end"), b.abpTemplate, b.abp_end_auto, b.abp_end,
+                    emitPulsePoint(pulseHasUserColumn("abp_end"), abpToMs, b.abpTemplate, b.abp_end_auto, b.abp_end,
                         b.abp_onset_auto, b.abp_onset, refAbp);
 
                     f << ',' << static_cast<int>(b.art_issue);
-                    emitPulsePoint(pulseHasUserColumn("art_onset"), b.artTemplate, b.art_onset_auto, b.art_onset,
+                    emitPulsePoint(pulseHasUserColumn("art_onset"), artToMs, b.artTemplate, b.art_onset_auto, b.art_onset,
                         b.art_onset_auto, b.art_onset, refArt);
-                    emitPulsePoint(pulseHasUserColumn("art_peak"), b.artTemplate, b.art_peak_auto, b.art_peak,
+                    emitPulsePoint(pulseHasUserColumn("art_peak"), artToMs, b.artTemplate, b.art_peak_auto, b.art_peak,
                         b.art_onset_auto, b.art_onset, refArt);
-                    emitPulsePoint(pulseHasUserColumn("art_dicr"), b.artTemplate, b.art_dicrotic_auto, b.art_dicrotic,
+                    emitPulsePoint(pulseHasUserColumn("art_dicr"), artToMs, b.artTemplate, b.art_dicrotic_auto, b.art_dicrotic,
                         b.art_onset_auto, b.art_onset, refArt);
-                    emitPulsePoint(pulseHasUserColumn("art_peak2"), b.artTemplate, b.art_peak2_auto, b.art_peak2,
+                    emitPulsePoint(pulseHasUserColumn("art_peak2"), artToMs, b.artTemplate, b.art_peak2_auto, b.art_peak2,
                         b.art_onset_auto, b.art_onset, refArt);
-                    emitPulsePoint(pulseHasUserColumn("art_end"), b.artTemplate, b.art_end_auto, b.art_end,
+                    emitPulsePoint(pulseHasUserColumn("art_end"), artToMs, b.artTemplate, b.art_end_auto, b.art_end,
                         b.art_onset_auto, b.art_onset, refArt);
 
                     f << ',' << static_cast<int>(b.art_pulm_issue);
-                    emitPulsePoint(pulseHasUserColumn("art_pulm_onset"), b.artPulmTemplate, b.art_pulm_onset_auto, b.art_pulm_onset,
+                    emitPulsePoint(pulseHasUserColumn("art_pulm_onset"), artPulmToMs, b.artPulmTemplate, b.art_pulm_onset_auto, b.art_pulm_onset,
                         b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
-                    emitPulsePoint(pulseHasUserColumn("art_pulm_peak"), b.artPulmTemplate, b.art_pulm_peak_auto, b.art_pulm_peak,
+                    emitPulsePoint(pulseHasUserColumn("art_pulm_peak"), artPulmToMs, b.artPulmTemplate, b.art_pulm_peak_auto, b.art_pulm_peak,
                         b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
-                    emitPulsePoint(pulseHasUserColumn("art_pulm_dicr"), b.artPulmTemplate, b.art_pulm_dicrotic_auto, b.art_pulm_dicrotic,
+                    emitPulsePoint(pulseHasUserColumn("art_pulm_dicr"), artPulmToMs, b.artPulmTemplate, b.art_pulm_dicrotic_auto, b.art_pulm_dicrotic,
                         b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
-                    emitPulsePoint(pulseHasUserColumn("art_pulm_peak2"), b.artPulmTemplate, b.art_pulm_peak2_auto, b.art_pulm_peak2,
+                    emitPulsePoint(pulseHasUserColumn("art_pulm_peak2"), artPulmToMs, b.artPulmTemplate, b.art_pulm_peak2_auto, b.art_pulm_peak2,
                         b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
-                    emitPulsePoint(pulseHasUserColumn("art_pulm_end"), b.artPulmTemplate, b.art_pulm_end_auto, b.art_pulm_end,
+                    emitPulsePoint(pulseHasUserColumn("art_pulm_end"), artPulmToMs, b.artPulmTemplate, b.art_pulm_end_auto, b.art_pulm_end,
                         b.art_pulm_onset_auto, b.art_pulm_onset, refArtPulm);
                 } // end if (wantPulse) pulse point groups
                 if (wantPulse) {
                     for (const auto& gl : ppg_and_artpulse_automated_markers) {
-                        emitAutoFeatPt(b.ppgTemplate, b.*gl.idx);
+                        emitAutoFeatPt(ppgToMs, b.ppgTemplate, b.*gl.idx);
                         if (gl.found) f << ',' << (b.*gl.found ? 1 : 0);
                     }
                 }
@@ -2336,13 +2367,18 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     const std::vector<time_bin>& bins,
     const std::string& fileID,
     double sampleRateHz,
+    double ppgRateHz,
+    double abpRateHz,
+    double artRateHz,
+    double artPulmRateHz,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
     curve_fit::FitMode fitMode = curve_fit::FitMode::Auto)
 {
     std::ofstream f(path);
     if (!f.is_open())
         throw std::runtime_error("cannot open for write: " + path);
-    writeTemplateMarkingsCsv(f, bins, fileID, sampleRateHz, peakMode, fitMode);
+    writeTemplateMarkingsCsv(f, bins, fileID, sampleRateHz, ppgRateHz,
+        abpRateHz, artRateHz, artPulmRateHz, peakMode, fitMode);
 }
 
 // ===========================================================================

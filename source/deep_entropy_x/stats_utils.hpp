@@ -124,7 +124,7 @@ struct TukeyFences {
     double fence_hi = std::numeric_limits<double>::quiet_NaN();
 };
 
-inline vector<bool> keep_within_tukey( const vector<double>& values, double k, TukeyFences* fences = nullptr)
+inline vector<bool> keep_within_tukey(const vector<double>& values, double k, TukeyFences* fences = nullptr)
 {
     vector<bool> keep(values.size(), true);
     if (fences) *fences = TukeyFences{};
@@ -156,4 +156,38 @@ inline vector<bool> keep_within_tukey( const vector<double>& values, double k, T
     }
     if (fences) { fences->fence_lo = lo_b;  fences->fence_hi = hi_b; }
     return keep;
+}
+
+struct PearsonResult {
+    //NaN aware Pearson Correlation
+    double r = std::numeric_limits<double>::quiet_NaN();
+    int    n_overlap = 0;      // finite pairs actually used
+    bool   defined() const { return !std::isnan(r); }
+};
+
+inline PearsonResult pearson(const std::vector<double>& a,  const std::vector<double>& b, int lo = 0, int hi = -1)
+{
+    PearsonResult out;
+    const int n = static_cast<int>(std::min(a.size(), b.size()));
+    if (hi < 0 || hi > n) hi = n;
+    lo = std::max(0, lo);
+
+    double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
+    int cnt = 0;
+    for (int k = lo; k < hi; ++k) {
+        const double av = a[k], bv = b[k];
+        if (std::isnan(av) || std::isnan(bv)) continue;
+        sa += av; sb += bv; saa += av * av; sbb += bv * bv; sab += av * bv;
+        ++cnt;
+    }
+    out.n_overlap = cnt;
+    if (cnt < 2) return out;                  // r stays NaN
+
+    const double ma = sa / cnt, mb = sb / cnt;
+    const double cov = sab / cnt - ma * mb;
+    const double va = saa / cnt - ma * ma;
+    const double vb = sbb / cnt - mb * mb;
+    if (va <= 0.0 || vb <= 0.0) return out;   // flat on one side: r undefined
+    out.r = cov / std::sqrt(va * vb);
+    return out;
 }

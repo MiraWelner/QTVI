@@ -19,9 +19,9 @@
 #pragma once
 
 #include "config_file_handling/config.hpp"
-#include "create_arterial_templates.hpp"
-#include "create_ecg_templates.hpp"
-#include "template_generation/joint_bank.hpp"
+#include "template_generation/bin_pulse.hpp"
+#include "template_generation/bin_ecg.hpp"
+#include "template_generation/split_bins_to_templates.hpp"
 #include "template_generation/template_io.hpp"
 #include "template_generation/nsvt_detect.hpp"
 #include "noise_marking_gui/annotation_types.hpp"
@@ -444,41 +444,73 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 // partitions of the same beats is the state that must not
                 // exist, and this is what prevents it while the viewer and the
                 // serializer still read the per-channel type.
-                jbank::ChannelSet cs;
+                // TWO SETS, MATCHING THE TWO PARTITIONS buildBinBank built.
+                // A projection must be handed the same ChannelSet the bank was
+                // assigned with, or it walks members against beats the bank
+                // never scored: projecting the pulse channel out of the ECG
+                // bank would report the ECG bank's groups as pulse templates.
+                jbank::ChannelSet csEcg;
                 for (int c = 0; c < 3; ++c)
                     if (ji.ecg_beats[c] && ji.ecg_forward[c])
-                        jbank::setChannel(cs, c, *ji.ecg_beats[c],
+                        jbank::setChannel(csEcg, c, *ji.ecg_beats[c],
                             *ji.ecg_forward[c], ji.n_slices, ji.ecg_r_col[c]);
+                jbank::ChannelSet csPpg;
                 if (ji.ppg_beats && ji.ppg_forward)
-                    jbank::setChannel(cs, jbank::kPpg, *ji.ppg_beats,
+                    jbank::setChannel(csPpg, jbank::kPpg, *ji.ppg_beats,
                         *ji.ppg_forward, ji.n_slices, ji.ppg_peak_col);
 
                 for (int c = 0; c < 4; ++c) {
+                    const bool isPulse = (c == jbank::kPpg);
                     tbank::ChannelOutput co;
-                    co.bank = jbank::projectToChannel(info.joint.bank, cs, c,
-                        &info.joint.flags, &info.joint.rr_after_ms);
+                    co.bank = isPulse
+                        ? jbank::projectToChannel(info.joint.bank_ppg, csPpg, c,
+                            &info.joint.flags, &info.joint.rr_after_ms)
+                        : jbank::projectToChannel(info.joint.bank, csEcg, c,
+                            &info.joint.flags, &info.joint.rr_after_ms);
 
                     // BOTH IN SLICE SPACE, and the same length. flags and
                     // assignment used to be indexed by a channel's aligned row,
                     // which is why they could not be shared between channels;
                     // per slice they are one description of one set of
                     // heartbeats, and every block of the archive can key on it.
-                    co.assignment = info.joint.group_of_slice;
+                    // THE ASSIGNMENT COMES FROM THIS CHANNEL'S OWN BANK.
+                    // group_of_slice indexes bank.groups and
+                    // ppg_group_of_slice indexes bank_ppg.groups; the two are
+                    // linked by slice index and by nothing else, so a group
+                    // NUMBER from one is meaningless against the other.
+                    co.assignment = isPulse
+                        ? info.joint.ppg_group_of_slice
+                        : info.joint.group_of_slice;
                     co.flags = info.joint.flags;
                     co.pvc = info.joint.pvc;
                     co.counts.beats_detected = ji.n_slices;
-                    co.counts.n_spawns = info.joint.counts.n_spawns;
-                    co.counts.n_merges = info.joint.counts.n_merges;
-                    co.counts.n_cap_raises = info.joint.counts.n_cap_raises;
-                    co.counts.n_unscorable = info.joint.counts.n_unscorable;
+                    co.counts.n_spawns = isPulse
+                        ? info.joint.ppg_counts.n_spawns
+                        : info.joint.counts.n_spawns;
+                    co.counts.n_merges = isPulse
+                        ? info.joint.ppg_counts.n_merges
+                        : info.joint.counts.n_merges;
+                    co.counts.n_cap_raises = isPulse
+                        ? info.joint.ppg_counts.n_cap_raises
+                        : info.joint.counts.n_cap_raises;
+                    co.counts.n_unscorable = isPulse
+                        ? info.joint.ppg_counts.n_unscorable
+                        : info.joint.counts.n_unscorable;
                     info.bank_by_channel[kChanKeys[c]] = std::move(co);
 
                     // Copied out of the loop-local ChannelSet so the writers
                     // can still resolve slice -> row after this iteration ends.
-                    local_of_slice[i][c] = cs[c].local_of_slice;
+                    const jbank::ChannelSet& csHere = isPulse ? csPpg : csEcg;
+                    local_of_slice[i][c] = csHere[c].local_of_slice;
                     mblocks[c].local_of_slice[i] = &local_of_slice[i][c];
-                    mblocks[c].excluded_reason[i] = &info.joint.excluded_reason;
-                    mblocks[c].r_col[i] = cs[c].anchor_col;
+                    // THIS CHANNEL'S OWN FENCES. excluded_reason is per
+                    // partition: the ECG vector says why a beat left its ECG
+                    // group's average, and it has nothing to say about the
+                    // pulse group the same beat is in.
+                    mblocks[c].excluded_reason[i] = isPulse
+                        ? &info.joint.ppg_excluded_reason
+                        : &info.joint.excluded_reason;
+                    mblocks[c].r_col[i] = csHere[c].anchor_col;
                 }
 
                 // ---- the per-bin census row -----------------------------
@@ -489,6 +521,17 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                     row.n_regular = info.joint.counts.n_regular;
                     row.n_ectopic = info.joint.counts.n_ectopic;
                     row.n_noise = info.joint.counts.n_noise;
+                    // ---- THE ECG BANK OWNS THIS ROW -------------------
+                    //
+                    // One row per bin, and these are ECG-bank numbers: the
+                    // pulse bank has its own n_groups, spawns, merges and cap
+                    // raises in info.joint.ppg_counts, and they are NOT added
+                    // in. Summing the two would make n_groups a number that
+                    // describes no single partition, and the file header is
+                    // explicit that a bin row is "one answer per bin" -- which
+                    // is now one answer per bin PER PARTITION, and this row
+                    // reports the ECG one. Add ppg_* columns when a consumer
+                    // needs them rather than conflating these.
                     row.n_groups = static_cast<uint32_t>(info.joint.bank.size());
                     row.n_spawns = info.joint.counts.n_spawns;
                     row.n_merges = info.joint.counts.n_merges;
@@ -621,6 +664,11 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 gr.label_code = g.label_code;
                 gr.subtype = g.subtype;
                 gr.confirmed = g.confirmed();
+                // WITHOUT THIS the label is inert: GroupRef::labelled() tests
+                // the provenance, so a group labelled at spawn would reach
+                // globalizeGroups looking unlabeled and NSVT would refuse it
+                // exactly as before.
+                gr.label_source = g.label_source;
                 gr.n_members = static_cast<uint32_t>(g.memberCount());
                 perBin[i].push_back(std::move(gr));
             }

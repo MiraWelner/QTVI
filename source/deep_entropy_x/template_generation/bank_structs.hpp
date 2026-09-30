@@ -1,22 +1,14 @@
 #pragma once
 /**
- * @file   template_bank.hpp
- * @brief  Multi-template morphology segregation (Spec Section 4.6): the bank
- *         state, and the scoring primitives that operate on it.
- *
- *        This file handles the bank of templates which each new beat is compared to.
- *        If it resembles an existing template, it is assigned to that template.
- *        If it does not resemble any existing template, a new template is spawned.
- *
- *        The TYPES here are the pipeline's shared vocabulary -- the serializer,
- *        the morphology writers and the whole viewer read them. The CLUSTERING
- *        that makes the assignments is jbank::buildBinBank (joint_bank.hpp),
- *        which is generation-side only and stays out of this header.
+ * @file   bank_structs.hpp
+ * @brief  In order to split a temporal bin into a morpohologically split template, it is neccecary for there to be a 'bank'
+ *         of templates which each new split is compared to. This file controls the structure for this bank
  */
 
 #include <algorithm>
 #include <array>
 #include "noise_marking_gui/annotation_types.hpp"
+#include "stats_utils.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -26,12 +18,24 @@
 #include <vector>
 
 namespace tbank {
+    // ---- MORPHOLOGY SPLIT THRESHOLDS -------------------------------------
+    //
+    // The band-match score a beat must reach against a group's template to
+    // join it. Separate per side because the two channels are not comparable:
+    // an ECG lead is far more repeatable beat to beat than a pulse-ox trace,
+    // so one number that suits both suits neither.
+    //
+    // COMPILED DEFAULTS, NOT ZERO. These were 0.0 with the config expected to
+    // fill them, and 0.0 is not an inert value -- it is a threshold every beat
+    // clears, so a missing config cell put every beat in one group and no bin
+    // was ever split. The symptom was a partition that silently did nothing.
+    // 0.85 and 0.80 are the Section 4.6 values; a config cell overrides them.
     namespace correlation_floors {
-        inline double g_ecg = 0.0;   //these are set later by the config
-        inline double g_ppg = 0.0;
+        inline double g_ecg = 0.85;
+        inline double g_ppg = 0.80;
     }
 
-    inline double matchFloorEcg() { return correlation_floors::g_ecg; }
+    inline double morphThresholdEcg() { return correlation_floors::g_ecg; }
     // ---- BankTemplate::split_source encoding ------------------------------
     // Channel index PLUS ONE, so that zero stays free for "no split / not
     // recorded". Writing the raw channel index would make CH1 indistinguishable
@@ -54,7 +58,7 @@ namespace tbank {
         }
     }
 
-    inline double matchFloorPpg() { return correlation_floors::g_ppg; }
+    inline double morphThresholdPpg() { return correlation_floors::g_ppg; }
 
     namespace minimum_beats {
         inline int g_ecg = 0; //these are also set later by the config
@@ -72,11 +76,24 @@ namespace tbank {
         return true;
     }
 
-    inline bool setMatchFloors(double ecg, double ppg) {
-        if (!(ecg > 0.0 && ecg <= 1.0)) return false;
-        if (!(ppg > 0.0 && ppg <= 1.0)) return false;
-        correlation_floors::g_ecg = ecg;
-        correlation_floors::g_ppg = ppg;
+    // ---- SET INDEPENDENTLY, ONE SIDE AT A TIME ---------------------------
+    //
+    // WAS ONE setMatchFloors(ecg, ppg) TAKING BOTH OR NEITHER: it returned
+    // false and set NOTHING if either value was outside (0, 1], so a config
+    // with a good ECG threshold and a blank PPG cell lost both. That coupling
+    // made the two thresholds one setting with two numbers in it.
+    //
+    // Each returns false and changes nothing when its own value is outside
+    // (0, 1]; the other side is unaffected either way.
+    inline bool setMorphThresholdEcg(double r) {
+        if (!(r > 0.0 && r <= 1.0)) return false;
+        correlation_floors::g_ecg = r;
+        return true;
+    }
+
+    inline bool setMorphThresholdPpg(double r) {
+        if (!(r > 0.0 && r <= 1.0)) return false;
+        correlation_floors::g_ppg = r;
         return true;
     }
 
@@ -95,6 +112,30 @@ namespace tbank {
     inline constexpr int kNoMatch = -1;   // spawn required
 
     inline constexpr uint8_t kUnlabeled = 0;   // label_code sentinel
+
+    // ---- WHERE A TEMPLATE'S LABEL CAME FROM ------------------------------
+    //
+    // A label_code alone cannot say this, and two DIFFERENT operator inputs
+    // can produce one:
+    //
+    //   kLabelFromPartition -- the group was built only from beats the
+    //       operator marked in the NOISE-MARKING stage. The mark reaches here
+    //       as the partition key, so every member carries that class by
+    //       construction: cross-class assignment is structurally impossible.
+    //   kLabelFromOperator  -- the operator confirmed the morphology in the
+    //       TEMPLATE VIEWER, via propagateLabelBySlot.
+    //
+    // WHY THE DISTINCTION IS KEPT RATHER THAN COLLAPSED. Both are the
+    // operator's judgement, so both are legitimate grounds for a label -- but
+    // they are not the same claim. A noise-stage PVC mark says "this beat is
+    // ectopic"; a viewer confirmation says "this is a distinct morphology in
+    // this bin". polymorphyVerdict wants the second and only the second, and
+    // it reads confirmed_by_operator, which stays false for a partition label.
+    // nsvt_detect wants either, because it asks whether the template is
+    // ventricular, not whether the bin is polymorphic.
+    inline constexpr uint8_t kLabelNone = 0;
+    inline constexpr uint8_t kLabelFromPartition = 1;
+    inline constexpr uint8_t kLabelFromOperator = 2;
 
     inline constexpr uint8_t kCodeMinorNoise = annotation_types::code_for_label("2) Minor Noise");
     inline constexpr uint8_t kCodePvc = annotation_types::code_for_label("4) PVC");
@@ -357,6 +398,10 @@ namespace tbank {
         // behaviour).
         int                 corr_halfwin = -1;
         uint8_t label_code = kUnlabeled;
+        // kLabelNone / kLabelFromPartition / kLabelFromOperator. See the note
+        // beside those constants: label_code alone does not say which operator
+        // input produced it, and the two are different claims.
+        uint8_t label_source = kLabelNone;
         bool confirmed_by_operator = false;
         int32_t subtype = -1; //PVC_2, etc
 
@@ -652,6 +697,9 @@ namespace tbank {
         int     ppg_beats_relabeled = 0;
     };
 
+    // STAMPS kLabelFromOperator. This is the viewer-confirmation path, so it
+    // is the stronger of the two provenances and overwrites a partition label
+    // on the same group -- the operator looked at the waveform and agreed.
     inline PropagationResult propagateLabelBySlot(std::array<TemplateBank, 3>& ecg_banks, TemplateBank& ppg_bank, int slot, uint8_t label_code)
     {
         PropagationResult out;
@@ -732,30 +780,31 @@ namespace tbank {
         bool   scorable() const { return n_overlap >= kMinOverlapColumns && !std::isnan(r); }
     };
 
+    // A WRAPPER NOW. The five accumulators moved to stats_utils::pearson, the
+    // one implementation; what stays here is this bank's two conventions,
+    // which are the part that is actually tbank's business:
+    //
+    //   INCLUSIVE hi, converted to pearson's half-open [lo, hi+1). Callers
+    //   pass column indices, and nsvt_detect matches morphologies across bins
+    //   with them, so changing the convention would be a silent one-column
+    //   change at every call site.
+    //
+    //   kMinOverlapColumns, the point below which two templates are not
+    //   comparable at all. A short overlap leaves r at NaN and reports
+    //   n_overlap, so scorable() can tell "too little evidence" from "measured
+    //   and different" -- the distinction the partition's diagnostics rest on.
     inline CorrResult correlate(const std::vector<double>& a,
         const std::vector<double>& b, int lo = 0, int hi = std::numeric_limits<int>::max())
     {
         CorrResult out;
-        double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
-        int n = 0;
-        const size_t w = std::min(a.size(), b.size());
-        const size_t kLo = (lo > 0) ? static_cast<size_t>(lo) : 0;
-        const size_t kHi = (hi < 0) ? 0
-            : std::min(w, static_cast<size_t>(hi) + 1);
-        for (size_t k = kLo; k < kHi; ++k) {
-            if (std::isnan(a[k]) || std::isnan(b[k])) continue;
-            sa += a[k]; sb += b[k];
-            saa += a[k] * a[k]; sbb += b[k] * b[k]; sab += a[k] * b[k];
-            ++n;
-        }
-        out.n_overlap = n;
-        if (n < kMinOverlapColumns) return out;
+        const int w = static_cast<int>(std::min(a.size(), b.size()));
+        // hi is inclusive here; guard the +1 against the sentinel default.
+        const int hiOpen = (hi >= w) ? w : (hi < 0 ? 0 : hi + 1);
+        const PearsonResult pr = pearson(a, b, lo, hiOpen);
 
-        const double ma = sa / n, mb = sb / n;
-        const double cov = sab / n - ma * mb;
-        const double va = saa / n - ma * ma, vb = sbb / n - mb * mb;
-        if (va <= 0.0 || vb <= 0.0) return out;   // flat vector: r undefined
-        out.r = cov / std::sqrt(va * vb);
+        out.n_overlap = pr.n_overlap;
+        if (pr.n_overlap < kMinOverlapColumns) return out;   // r stays NaN
+        out.r = pr.r;                                        // NaN if undefined
         return out;
     }
 

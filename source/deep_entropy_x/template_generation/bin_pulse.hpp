@@ -1,5 +1,5 @@
 /**
- * @file   create_arterial_templates.hpp
+ * @file   bin_pulse.hpp
  * @brief  ONE pipeline: R-anchored pulse templates for every pulse channel.
  *
  *         PPG, ABP, ART and ART_PULM are all sliced on the same real-time
@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
+#include "stats_utils.hpp"   // pearson, the shared primitive
 #include "fiducial_marker_finding/alignment.hpp"
 #include "template_generation/normalize_template_amplitude.hpp"
 
@@ -62,48 +63,66 @@ struct PPGTemplatesResult {
  *         ART_PULM) via a member-pointer for the signal.
  */
  // ==========================================================================
- // PULSE QC: ONE ERROR THRESHOLD, FROM config.csv
+ // PULSE QC: ONE CORRELATION FLOOR, FROM config.csv
  // ==========================================================================
  //
- // A candidate pulse is kept when its normalized foot-to-foot fit error against
- // the bin's median reference is below this fraction:
+ // A candidate pulse is kept when its SHAPE correlates with the bin's median
+ // reference over the foot-to-foot window:
  //
- //     err = || beat - reference || / || reference ||   over the f2f window
+ //     r = pearson(beat, reference)   over [f2fLo, f2fHi)
  //
- // So 0.10 means "within 10% of the reference by RMS". Set from config.csv as a
- // PERCENT (ppg_fit_error_pct), converted once here.
+ // kept iff r >= corrFloor(). Set from config.csv as a CORRELATION
+ // (pulse_qc_corr_floor), not a percent.
  //
- // WHY IT IS A RUNTIME VALUE. It is the single number that decides how much of
- // the pulse channel survives, and it needs to differ by dataset: an arterial
- // line is far more repeatable than a sleep-study pulse-ox, and a threshold
- // tuned on one throws away most of the other. On a MESA record 10% retained
- // 7.5% of the channel.
+ // WAS A NORMALIZED RMS ERROR, ||beat - reference|| / ||reference||, kept
+ // below 10%. That metric was SCALE-SENSITIVE: a pulse of identical shape with
+ // 15% more amplitude scored 0.15 and was rejected at a 10% threshold -- and
+ // pulse amplitude modulates with respiration and vasomotion as a matter of
+ // course, so most of what the threshold controlled was tolerance to normal
+ // amplitude variation rather than to shape. Raising the percentage was a
+ // workaround for the metric, not a fix to it. Correlation judges shape alone,
+ // which is what the ECG side has always done -- and through the same
+ // stats_utils::pearson the bank's correlate() uses, so the two sides now
+ // measure similarity with one implementation.
  //
- // WORTH KNOWING WHAT THE METRIC IS BLIND TO. This error is SCALE-SENSITIVE: a
- // pulse of identical shape with 15% more amplitude scores 0.15 and is rejected
- // at a 10% threshold. Pulse amplitude modulates with respiration and vasomotion
- // as a matter of course, so part of what this threshold controls is tolerance
- // to normal amplitude variation rather than to shape. The ECG side judges shape
- // by correlation, which is immune to exactly that. Raising the percentage is a
- // workaround for the metric, not a fix to it.
+ // THE NEW BLIND SPOT IS THE MIRROR OF THE OLD ONE, and it is not small.
+ // Pearson is invariant to BOTH scale and offset, so a pulse of identical
+ // shape at twice the amplitude, or riding a large baseline offset, now
+ // passes. This gate no longer constrains amplitude at all. If amplitude needs
+ // constraining it needs its own bound; a lower r will not do it, because r is
+ // not measuring amplitude to begin with.
+ //
+ // EXPECT RETENTION TO MOVE, NOT DRIFT. r >= 0.95 is not the complement of
+ // err < 0.05 -- they are different criteria. At 10% error a MESA record
+ // retained 7.5% of the channel (2030 pulses of 26970). Correlation admits
+ // everything the error metric rejected on amplitude alone, so the figure
+ // should rise substantially, and wants re-checking per dataset rather than
+ // assuming.
+ //
+ // STILL ONE THRESHOLD FOR FOUR CHANNELS. CreatePulseTemplates is called per
+ // channel through a member pointer (PPG, ABP, ART, ART_PULM), and an arterial
+ // line is far more repeatable than a sleep-study pulse-ox. If the four
+ // diverge under correlation this wants to become per-channel, the way the
+ // morphology thresholds are.
 namespace pulse_qc {
 
-    inline constexpr double kDefaultFitErrorFraction = 0.10;   // 10%
+    inline constexpr double kDefaultCorrFloor = 0.95;
 
-    namespace detail { inline double g_fit_error = kDefaultFitErrorFraction; }
+    namespace detail { inline double g_corr = kDefaultCorrFloor; }
 
-    inline double fitErrorFraction() { return detail::g_fit_error; }
+    inline double corrFloor() { return detail::g_corr; }
 
-    // `pct` is a PERCENT: 10 means 10%. Returns false and changes nothing when
-    // it is outside (0, 100].
+    // `r` is a CORRELATION: 0.95 means 0.95. Returns false and changes nothing
+    // when it is outside (0, 1] -- note the range, which is NOT the (0, 100]
+    // that setFitErrorPct took.
     //
-    // A blank config cell parses to 0.0 through the loader, and a threshold of
-    // 0 admits no pulse at all -- every bin degenerate, no pulse template
-    // anywhere, and the only symptom a channel that quietly vanished. So an
-    // unusable value leaves the default in place.
-    inline bool setFitErrorPct(double pct) {
-        if (!(pct > 0.0 && pct <= 100.0)) return false;
-        detail::g_fit_error = pct / 100.0;
+    // A blank config cell parses to 0.0 through the loader, and a floor of 0
+    // admits every pulse whatever its shape -- the mirror of the old hazard,
+    // where a threshold of 0 admitted none. So an unusable value leaves the
+    // default in place.
+    inline bool setCorrFloor(double r) {
+        if (!(r > 0.0 && r <= 1.0)) return false;
+        detail::g_corr = r;
         return true;
     }
 
@@ -170,22 +189,26 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
     //   (a) build a REFERENCE template as the column-wise NaN-skipping
     //       median across ALL candidate beats. The median is robust to
     //       outliers without needing to pick a fixed "seed" count.
-    //   (b) score every candidate against the reference by normalized
-    //       error ||beat - ref|| / ||ref||; keep beats whose error is
-    //       below 5%.
+    //   (b) score every candidate against the reference by Pearson r over
+    //       the foot-to-foot window; keep beats with r >= corrFloor().
     // The final template below is then rebuilt from the survivors,
-    // giving the two-pass: median-of-all -> reject high-error ->
-    // re-median. Same wave-score pruning logic as ECG, adapted to PPG's
-    // normalized-error metric. Falls back to keeping everything if the
-    // filter would otherwise reject the whole set (degenerate reference).
+    // giving the two-pass: median-of-all -> reject low-correlation ->
+    // re-median. Same shape as the ECG side, and now the same metric --
+    // correlation, not the normalized error this used to use.
+    // A bin where nothing passes produces NO pulse template; see the
+    // zero-survivors note below for why it must not fall back to keeping
+    // everything.
     std::vector<std::vector<double>> filteredBeats;
     // Diagnostic accumulators, populated inside the QC block.
     int diag_ref_col_early = 0, diag_ref_col_mid = 0, diag_ref_col_late = 0;
     int diag_ref_defined_cols = 0;
     int diag_input_beats = 0, diag_survivors = 0;
-    double diag_err_min = std::numeric_limits<double>::infinity();
-    double diag_err_max = -std::numeric_limits<double>::infinity();
-    std::vector<double> diag_all_errs;
+    // CORRELATIONS NOW, so the WORST pulse is the MINIMUM, not the maximum.
+    // The initialisers are unchanged (+inf / -inf) because they are still
+    // seeded to lose their first comparison; only the reading of them flips.
+    double diag_corr_min = std::numeric_limits<double>::infinity();
+    double diag_corr_max = -std::numeric_limits<double>::infinity();
+    std::vector<double> diag_all_corrs;
     {
         const int w = static_cast<int>(aligned.beats.front().size());
         diag_input_beats = static_cast<int>(aligned.beats.size());
@@ -239,22 +262,26 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
             if (fl >= 0 && fr > fl) { f2fLo = fl; f2fHi = fr + 1; }   // incl. 2nd foot
         }
 
-        // Normalized error restricted to [f2fLo, f2fHi): ||beat - ref|| /
-        // ||ref|| over that column band, non-NaN overlap only. Same formula
-        // as ppg_deriv's deleted normalizedError was, just windowed to the
-        // foot-to-foot span.
-        auto footToFootError = [&](const std::vector<double>& bt) -> double {
-            double num = 0.0, den = 0.0; int overlap = 0;
+        // Pearson r restricted to [f2fLo, f2fHi), non-NaN overlap only.
+        // stats_utils::pearson carries NO policy -- no minimum overlap, no
+        // substitute value for failure -- so both decisions are made here.
+        //
+        // NaN, NOT 0.0, FOR UNDEFINED: fewer than kMinCorrOverlap finite pairs,
+        // or a flat window on either side. Zero is a legitimate correlation (an
+        // uncorrelated pulse), so returning it for "could not measure" merges
+        // two different rejections into one number and makes the diagnostic
+        // median meaningless. Both still fail the gate, since NaN >= floor is
+        // false. This is the opposite convention from pearsonSQI, which returns
+        // 0.0 on purpose because its score is summed and thresholded.
+        constexpr int kMinCorrOverlap = 8;
+        auto footToFootCorr = [&](const std::vector<double>& bt) -> double {
             const int hi = std::min<int>(f2fHi,
                 std::min<int>(static_cast<int>(bt.size()),
                     static_cast<int>(reference.size())));
-            for (int c = std::max(0, f2fLo); c < hi; ++c) {
-                if (std::isnan(bt[c]) || std::isnan(reference[c])) continue;
-                const double e = bt[c] - reference[c];
-                num += e * e; den += reference[c] * reference[c]; ++overlap;
-            }
-            if (overlap == 0 || den <= 0.0) return std::numeric_limits<double>::infinity();
-            return std::sqrt(num / den);
+            const PearsonResult pr =
+                pearson(bt, reference, std::max(0, f2fLo), hi);
+            if (pr.n_overlap < kMinCorrOverlap) return NaN;
+            return pr.r;   // already NaN when undefined
             };
 
         // (b) per-pulse accept/reject on the foot-to-foot error.
@@ -266,15 +293,16 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
         // not be built at all.
         std::vector<size_t> survivorRows;
         survivorRows.reserve(aligned.beats.size());
-        diag_all_errs.reserve(aligned.beats.size());
+        diag_all_corrs.reserve(aligned.beats.size());
         for (size_t k = 0; k < aligned.beats.size(); ++k) {
-            const double err = footToFootError(aligned.beats[k]);
-            diag_all_errs.push_back(err);
-            if (std::isfinite(err)) {
-                if (err < diag_err_min) diag_err_min = err;
-                if (err > diag_err_max) diag_err_max = err;
+            const double r = footToFootCorr(aligned.beats[k]);
+            diag_all_corrs.push_back(r);
+            if (std::isfinite(r)) {
+                if (r < diag_corr_min) diag_corr_min = r;
+                if (r > diag_corr_max) diag_corr_max = r;
             }
-            if (err < pulse_qc::fitErrorFraction()) survivorRows.push_back(k);
+            // >= NOT >: the floor is inclusive, and NaN fails either way.
+            if (r >= pulse_qc::corrFloor()) survivorRows.push_back(k);
         }
         // THE ESCALATION LADDER IS GONE. It ran 10% -> 20% -> 50%, taking the
         // first tier that reached a survivor floor, and it was the wrong shape
@@ -292,14 +320,14 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
         // populations selected by different standards, with nothing written down
         // to say which.
         //
-        // One threshold now, from config.csv (ppg_fit_error_pct), applied
+        // One threshold now, from config.csv (pulse_qc_corr_floor), applied
         // uniformly to every bin. A bin that keeps very few pulses keeps very
         // few, and says so on the line below rather than being rescued into
         // looking fine.
 
         // DEGENERATE REFERENCE -> KEEP ALL, the same fallback the arterial
         // twin has at the bottom of this file. All three tiers can come back
-        // empty when footToFootError() is non-finite for every candidate, which
+        // empty when footToFootCorr() is below the floor or NaN for every candidate, which
         // happens when the reference template is all-NaN or the pulse signal is
         // flat or dead. The original accumulation loop happened never to leave
         // filteredBeats empty, so the unguarded beatsForTemplate.front() below
@@ -326,13 +354,13 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
         // absent.
         if (survivorRows.empty()) {
             // Median computed here rather than reused: the shared
-            // diag_err_median is declared after this block, and returning
+            // diag_corr_median is declared after this block, and returning
             // early means it is never reached.
             double medHere = std::numeric_limits<double>::quiet_NaN();
             {
                 std::vector<double> fin;
-                fin.reserve(diag_all_errs.size());
-                for (const double e : diag_all_errs)
+                fin.reserve(diag_all_corrs.size());
+                for (const double e : diag_all_corrs)
                     if (std::isfinite(e)) fin.push_back(e);
                 if (!fin.empty()) {
                     std::sort(fin.begin(), fin.end());
@@ -408,15 +436,17 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
         std::sort(tmp.begin(), tmp.end());
         diag_peak_median = tmp[tmp.size() / 2];
     }
-    // Median normalized error (rank quality metric).
-    double diag_err_median = std::nan("");
-    if (!diag_all_errs.empty()) {
+    // Median correlation (rank quality metric). HIGHER IS BETTER NOW -- this
+    // was a median normalized error, where lower was. Anything ranking bins on
+    // it has to flip its comparison.
+    double diag_corr_median = std::nan("");
+    if (!diag_all_corrs.empty()) {
         std::vector<double> tmp;
-        tmp.reserve(diag_all_errs.size());
-        for (double e : diag_all_errs) if (std::isfinite(e)) tmp.push_back(e);
+        tmp.reserve(diag_all_corrs.size());
+        for (double e : diag_all_corrs) if (std::isfinite(e)) tmp.push_back(e);
         if (!tmp.empty()) {
             std::sort(tmp.begin(), tmp.end());
-            diag_err_median = tmp[tmp.size() / 2];
+            diag_corr_median = tmp[tmp.size() / 2];
         }
     }
 

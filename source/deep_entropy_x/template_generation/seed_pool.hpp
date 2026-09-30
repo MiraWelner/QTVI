@@ -46,7 +46,7 @@
 #include <string>
 #include <vector>
 
-#include "template_bank.hpp"   // tbank::Category
+#include "template_generation/bank_structs.hpp"   // tbank::Category
 
 namespace seed_pool {
 

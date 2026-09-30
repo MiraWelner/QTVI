@@ -20,10 +20,9 @@
 #include <atomic>
 #include <string> 
 
-#include "template_structs.hpp"
+#include "template_generation/template_structs.hpp"
 #include "template_generation/make_averaged_templates.hpp"
-#include "template_structs.hpp"
-#include "template_generation/create_arterial_templates.hpp"
+#include "template_generation/bin_pulse.hpp"
 #include "fiducial_marker_finding/alignment.hpp"
 #include "fiducial_marker_finding/feature_marks.hpp"
 #include "peak_finding/peakfinding_io.hpp"
@@ -455,7 +454,7 @@ inline void alignTemplatesFromCache(template_structs::TemplateFile& tmpl, templa
                 ref_beat_of_median_length, locate,
                 // Same floor the bank groups on -- one config value, one
                 // meaning: does this beat correlate with this template.
-                tbank::matchFloorEcg(),
+                tbank::morphThresholdEcg(),
                 exclRows.empty() ? nullptr : &exclRows);
             if (q.tmpl.empty()) continue;
 

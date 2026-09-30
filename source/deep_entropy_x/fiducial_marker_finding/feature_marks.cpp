@@ -608,6 +608,24 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     PpgFiducials g;
     const int N = static_cast<int>(v.size());
     if (N < 3) { fprintf(stderr, "[ppg] bail: N=%d\n", N); return g; }
+
+    // ---- A RATE IS REQUIRED, AND IT MUST BE THIS CHANNEL'S ---------------
+    //
+    // ppgRate is not a reporting unit here: it sizes the peak and foot fit
+    // windows (which take a rate because the windows are DURATIONS), places
+    // the dicrotic seed at peak + 0.12 * ppgRate, and is handed to
+    // ppg_deriv::buildDerivatives and computeIndices. A wrong rate does not
+    // mislabel a correct answer -- it searches the wrong span.
+    //
+    // NON-POSITIVE IS A BAIL, NOT A SUBSTITUTION. 0 means the channel is
+    // absent; peakHalfwidth(0) is a window of no samples and 0.12 * 0 puts the
+    // dicrotic seed on the peak, so every landmark would come back defined and
+    // wrong. An empty PpgFiducials is -1 throughout, which callers read as
+    // "not detected".
+    if (!(ppgRate > 0.0)) {
+        fprintf(stderr, "[ppg] bail: non-positive rate %g\n", ppgRate);
+        return g;
+    }
     const int Wc = std::clamp(W, 2, N);   // visible window; nothing is ever placed past Wc-1
     // Fractional clamp, and column floor/ceil for the helpers that still need
     // an integer search grid. Positions themselves stay fractional.
@@ -1055,7 +1073,8 @@ double FeatureMarks::detect_ppg_peak2(const std::vector<double>& v, int sysPeak,
     return steepest_slope_in(v, lo, hi);
 }
 
-void FeatureMarks::seed_all(time_bin& b, double sampleRate, double ppgRate, AnchorType anchor,
+void FeatureMarks::seed_all(time_bin& b, double sampleRate, double ppgRate,
+    double abpRate, double artRate, double artPulmRate, AnchorType anchor,
     const LeadPolarity& pol, double heightMeters,
     curve_fit::FitMode fitMode, curve_fit::PeakFitMode peakMode) {
     // Per-anchor ECG user markers are seeded into this anchor's set.
@@ -1066,8 +1085,9 @@ void FeatureMarks::seed_all(time_bin& b, double sampleRate, double ppgRate, Anch
     // ---- PPG ------------------------------------------------------------
     if (b.ppgTemplate.empty()) {
         b.bad_ppg = 2;
-        b.ppg_onset = b.ppg_t50 = b.ppg_t80 = b.ppg_peak = -1;
-        b.ppg_dicrotic = b.ppg_peak2 = b.ppg_end = -1;
+        // NO BIN-LEVEL BARS TO CLEAR. They are per slot now; a slot with no
+        // pulse gets its -1s from applyTemplateToWidget's else branch and from
+        // seed_pulse_bank_template declining to run.
         b.ppg_onset_auto = b.ppg_t50_auto = b.ppg_t80_auto = b.ppg_peak_auto = -1;
         b.ppg_dicrotic_auto = b.ppg_peak2_auto = b.ppg_end_auto = -1;
         b.ppg_u_auto = b.ppg_v_auto = b.ppg_w_auto = -1;
@@ -1081,9 +1101,11 @@ void FeatureMarks::seed_all(time_bin& b, double sampleRate, double ppgRate, Anch
         b.ppg_dn_tier_auto = 3;  b.ppg_dn_confidence_auto = 0.0;
     }
     else if (b.bad_ppg == 1) {
-        b.ppg_onset = b.ppg_t50 = b.ppg_t80 = b.ppg_peak = -1;
-        b.ppg_dicrotic = b.ppg_peak2 = b.ppg_end = -1;
-        // Leave *_auto alone -- they're the original auto positions.
+        // OPERATOR-BAD PULSE: nothing to clear at bin level any more, and the
+        // *_auto positions are deliberately left alone -- they are the
+        // original detections and the verdict does not unmake them. The bars
+        // this used to blank are per slot; badPulseMarked() on the slot is
+        // what suppresses them.
     }
     else {
         const std::vector<double>& v = b.ppgTemplate;
@@ -1135,19 +1157,22 @@ void FeatureMarks::seed_all(time_bin& b, double sampleRate, double ppgRate, Anch
             b.ppg_dn_tier_auto = pf.dn_tier;  b.ppg_dn_confidence_auto = pf.dn_confidence;
             // Derived doubles (no glyph, not movable): the upslope point at
             // the 80%-downslope level and the width between them.
-            b.ppg_t80_rise = pf.t80_rise;
-            b.ppg_pw80 = pf.pw80;
+            // (t80_rise / pw80 were cached on the bin here. Both are pure
+            //  functions of the three bars plus the peak, so the panel and the
+            //  CSV derive them per slot through reactive_ppg instead.)
         }
 
-        // ---- seed the movable bars once (only when unset) ------------------
-        if (b.ppg_onset < 0) b.ppg_onset = b.ppg_onset_auto;
-        if (b.ppg_dicrotic < 0) b.ppg_dicrotic = b.ppg_dicrotic_auto;
-        if (b.ppg_peak2 < 0) b.ppg_peak2 = b.ppg_peak2_auto;
-        if (b.ppg_t80 < 0) b.ppg_t80 = b.ppg_t80_auto;
-        if (b.ppg_end < 0) b.ppg_end = b.ppg_end_auto;
-        // Auto-only bars: always refreshed.
-        b.ppg_peak = b.ppg_peak_auto;
-        b.ppg_t50 = b.ppg_t50_auto;
+        // ---- NO BAR SEEDING HERE ANY MORE ---------------------------------
+        //
+        // This seeded the bin-level bars from the bin-level autos. The bars are
+        // per slot, and seedOneBin -> seed_pulse_bank_template seeds each slot
+        // from that slot's OWN detection on that slot's OWN waveform -- which
+        // is the reason the bars moved. Seeding a bin-wide position into a
+        // slot's bar was the defect, not the mechanism.
+        //
+        // The *_auto fields above are still filled: they are the bin-wide
+        // detection, still in the markings CSV's auto-feature columns and
+        // still written to the .bin.
     }
 
     // ---- ECG (per channel) ---------------------------------------------
@@ -1197,11 +1222,18 @@ void FeatureMarks::seed_all(time_bin& b, double sampleRate, double ppgRate, Anch
 
     // ---- Arterial (ABP / ART / ART_PULM) --------------------------------
     // No polarity dimension: a pressure waveform has a physical sign.
-    auto seedArterial = [&](const std::vector<double>& trace, uint8_t& issue,
+    // THE RATE IS A PARAMETER, not the captured sampleRate. It used to be the
+    // latter, which is the bug: sampleRate is the ECG rate and these are
+    // arterial channels with their own.
+    auto seedArterial = [&](const std::vector<double>& trace, double rate,
+        uint8_t& issue,
         double& onset, double& peak, double& dicrotic, double& peak2, double& end,
         double& onset_auto, double& peak_auto, double& dic_auto, double& p2_auto, double& end_auto)
         {
-            if (trace.empty()) {
+            // AN ABSENT RATE IS AN ABSENT CHANNEL, reported the way an empty
+            // trace is -- which gets issue = 2 right, as the bail alone would
+            // not.
+            if (trace.empty() || !(rate > 0.0)) {
                 issue = 2;
                 onset = peak = dicrotic = peak2 = end = -1;
                 onset_auto = peak_auto = dic_auto = p2_auto = end_auto = -1;
@@ -1211,7 +1243,8 @@ void FeatureMarks::seed_all(time_bin& b, double sampleRate, double ppgRate, Anch
                 onset = peak = dicrotic = peak2 = end = -1;
                 return;
             }
-            const FeatureMarks::PpgFiducials pf = FeatureMarks::detect_ppg_fiducials(trace, static_cast<int>(trace.size()), sampleRate, NAN, peakMode);
+            const FeatureMarks::PpgFiducials pf = FeatureMarks::detect_ppg_fiducials(
+                trace, static_cast<int>(trace.size()), rate, NAN, peakMode);
             onset_auto = pf.onset; peak_auto = pf.peak; dic_auto = pf.dicrotic;
             p2_auto = pf.peak2; end_auto = pf.end;
             if (onset < 0) onset = pf.onset;
@@ -1221,15 +1254,15 @@ void FeatureMarks::seed_all(time_bin& b, double sampleRate, double ppgRate, Anch
             if (end < 0) end = pf.end;
         };
 
-    seedArterial(b.abpTemplate, b.abp_issue,
+    seedArterial(b.abpTemplate, abpRate, b.abp_issue,
         b.abp_onset, b.abp_peak, b.abp_dicrotic, b.abp_peak2, b.abp_end,
         b.abp_onset_auto, b.abp_peak_auto, b.abp_dicrotic_auto,
         b.abp_peak2_auto, b.abp_end_auto);
-    seedArterial(b.artTemplate, b.art_issue,
+    seedArterial(b.artTemplate, artRate, b.art_issue,
         b.art_onset, b.art_peak, b.art_dicrotic, b.art_peak2, b.art_end,
         b.art_onset_auto, b.art_peak_auto, b.art_dicrotic_auto,
         b.art_peak2_auto, b.art_end_auto);
-    seedArterial(b.artPulmTemplate, b.art_pulm_issue,
+    seedArterial(b.artPulmTemplate, artPulmRate, b.art_pulm_issue,
         b.art_pulm_onset, b.art_pulm_peak, b.art_pulm_dicrotic,
         b.art_pulm_peak2, b.art_pulm_end,
         b.art_pulm_onset_auto, b.art_pulm_peak_auto, b.art_pulm_dicrotic_auto,

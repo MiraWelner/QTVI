@@ -141,10 +141,51 @@ namespace normalize_features {
         double end_idx;
     };
 
+    // ---- THE PPG SLOT THIS BIN IS REPRESENTED BY -------------------------
+    //
+    // The pulse bars are per slot, so a bin-level perfusion index needs a slot
+    // chosen. THE DOMINANT MORPHOLOGY: most surviving members, skipping
+    // empties and thin cohorts. PI is a physiological amplitude feeding a
+    // subject-wide median, so the representative pulse is wanted -- and slot
+    // indices are not ordered by population, so taking slot 0 could let a rare
+    // ectopic column set the reference.
+    //
+    // -1 when the bin has no usable pulse slot, which compute_pulse_global_ref
+    // skips exactly as it skipped an empty trace.
+    inline int dominantPpgSlot(const time_bin& b) {
+        int best = -1; int bestN = 0;
+        for (int t = 0; t < b.ppg_bank.size(); ++t) {
+            const tbank::template_of_all_signals& ps = b.ppg_bank.templates[t];
+            if (ps.tmpl.empty()) continue;
+            if (ps.tooFewBeats(/*is_ppg=*/true)) continue;
+            const int n = ps.cleanCount();
+            if (n > bestN) { bestN = n; best = t; }
+        }
+        return best;
+    }
+
     inline PulseChannel pulseChan(const time_bin& b, int which) {
         switch (which) {
-        case 0: return { &b.ppgTemplate,     b.ppg_onset,    b.ppg_peak,    b.bad_ppg,
-                         b.ppg_dicrotic,     b.ppg_peak2,    b.ppg_end };
+        case 0: {
+            // THE SLOT'S OWN WAVEFORM WITH THE SLOT'S OWN BARS. Pairing a
+            // per-slot bar with b.ppgTemplate -- the bin-wide average -- would
+            // measure a foot found on one waveform against a different one,
+            // which is the error the bars moved per slot to prevent.
+            //
+            // peak2 is DERIVED: BankPulseMarkerSet carries the three bars and
+            // the five detector columns, and peak2 comes back from
+            // reactive_ppg bracketed by them.
+            const int t = dominantPpgSlot(b);
+            if (t < 0)
+                return { &b.ppgTemplate, -1.0, -1.0, uint8_t(2), -1.0, -1.0, -1.0 };
+            const tbank::template_of_all_signals& ps = b.ppg_bank.templates[t];
+            const tbank::BankPulseMarkerSet& pm = ps.pulse_marks;
+            const FeatureMarks::ReactivePpg rp = FeatureMarks::reactive_ppg(
+                ps.tmpl, pm.onset, pm.peak_auto, pm.dicrotic, pm.end);
+            const uint8_t issue = ps.badPulseMarked() ? uint8_t(1) : b.bad_ppg;
+            return { &ps.tmpl, pm.onset, pm.peak_auto, issue,
+                     pm.dicrotic, rp.peak2, pm.end };
+        }
         case 1: return { &b.abpTemplate,     b.abp_onset,    b.abp_peak,    b.abp_issue,
                          b.abp_dicrotic,     b.abp_peak2,    b.abp_end };
         case 2: return { &b.artTemplate,     b.art_onset,    b.art_peak,    b.art_issue,

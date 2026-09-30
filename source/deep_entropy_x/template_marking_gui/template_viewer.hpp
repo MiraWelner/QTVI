@@ -213,7 +213,12 @@ private:
 
     // pulse_marks <- Foot's foot + Peak's notch/end/glyphs. The composed set is
     // what every existing reader sees; pulse_by_variant is the source.
-    static void composePulseMarks(tbank::template_of_all_signals& slot);
+    // ppgRateHz IS A PARAMETER because this is static: the geometric
+    // fallbacks at the end of it need a rate (dicrotic sits 0.12 s past the
+    // peak) and a static member has no m_ppgRateHz to read. Both call sites
+    // are member functions and pass it.
+    static void composePulseMarks(tbank::template_of_all_signals& slot,
+        double ppgRateHz);
 
     // The variant the page draws: the forced positions say it outright, Auto
     // defers to m_ppgViewVariant.

@@ -9,9 +9,10 @@
  */
 
 #include "anneal_handler.hpp"
-#include "../noise_marking_gui/user_annotation_handler.h"
-#include "../peak_finding/FilterUtils.hpp"
-#include "../peak_finding/peakfinding_structs.hpp"
+#include "noise_marking_gui/user_annotation_handler.h"
+#include "peak_finding/FilterUtils.hpp"
+#include "peak_finding/peakfinding_structs.hpp"
+#include "noise_marking_gui/annotation_types.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -577,24 +578,10 @@ namespace {
         uint32_t signal_rate = 0, boolean_rate = 0, pacemaker_rate = 0, sleep_rate = 0;
     };
 
-    // Noise reader -- ADAPTER over noise_markings::loadRows(), which is the
-    // only function that knows this file's byte layout (see the comment on
-    // loadRows in user_annotation_handler.h).
-    //
-    // This projection is the narrowest of the three: second-pairs bucketed per
-    // channel, because the exclusion rule is per channel -- ECG noise only
-    // excludes where all three leads overlap, PPG excludes independently.
-    // The marking type is deliberately dropped, and so are kThreshold and
-    // kBlankingMs: the anneal excises noisy regions, while a threshold
-    // override is an instruction to the peak detector and means nothing here.
-    //
-    // ONE PARSER, SO ONE ANSWER. This function used to do its own magic check
-    // and its own row loop, and it refused files the marking GUI accepted --
-    // markings visible on screen as applied while nothing was excluded from
-    // the anneal. It now goes through noise_markings::loadRows, which is the
-    // only function that knows the byte layout, so "is this file readable" has
-    // a single answer across the GUI, the annealer and template generation.
     NoiseMarkings read_noise_bin(const std::filesystem::path& path) {
+        /*read the bin that was made by the previous noise / annotation marker.If edited, it will be
+        overwritten by the new one, both in version and in continents*/
+        
         NoiseMarkings m;
 
         const noise_markings::RowsResult rr =
@@ -609,6 +596,10 @@ namespace {
             std::cerr << "  noise markings " << path << ": " << rr.error << "\n";
 
         for (const noise_markings::Row& row : rr.rows) {
+            if (!annotation_types::code_suppresses_detection(
+                static_cast<int>(row.annotation_code))) continue;
+
+
             const std::pair<double, double> iv = { row.start_sec, row.end_sec };
             switch (static_cast<int>(row.channel_code)) {
             case 1: m.ppg.push_back(iv);      break;
@@ -726,12 +717,6 @@ namespace {
         // run_find_r_peaks.hpp's read_input_binfile.
         char write_buf[1 << 16];
         out.rdbuf()->pubsetbuf(write_buf, sizeof(write_buf));
-
-        // HEADER FIRST, AND THE CONSTANTS ARE NOT DEFINED HERE. kAnnealedMagic
-        // lives in peakfinding_structs.hpp, which read_input_binfile -- the
-        // only reader of this file -- also includes, so the writer and the
-        // reader cannot disagree about the eight bytes. That disagreement is
-        // the one failure a magic is supposed to make impossible.
         out.write(annealed_magic, sizeof(annealed_magic));
         out.write(reinterpret_cast<const char*>(&annealed_version), 4);
 

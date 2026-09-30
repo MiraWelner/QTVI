@@ -1,20 +1,7 @@
 /**
- * @file   CreateEcgTemplates.hpp
- * @brief  Create ECG templates for each bin using EnsembleTemplate.
- *         Builds templates from 3 channels x 4 preprocessing methods
- *         (raw, squared, absval, unfiltered).
- *
- *         The "unfiltered" method uses the original ECG signal (ecgSignal,
- *         ecgSignal2, ecgSignal3) with the raw R-peaks to build a template
- *         from the signal before any preprocessing or filtering.
- *
- *         For the "raw" method we also capture two extra outputs:
- *           - The surviving aligned beats that contributed to the template
- *             (ch1 only -- downstream code writes these out for QC).
- *           - The per-sample std across those beats (all channels), which
- *             the viewer draws as a gray band around the displayed
- *             template. The other three methods (squared/absval/unfiltered)
- *             don't get std computed since the viewer never displays them.
+ * @file   bin_ecg.hpp
+ * @brief  Create the temporally defined bins from the median of the ecg beats over a temporal range.
+ *         The bins are not split based on morpohlogy, that comes later in the templating
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -151,7 +138,7 @@ struct SingleMethodResult {
 };
 
 static inline SingleMethodResult build_ecg_template_for_method(const vector<double>& ecgSignal, const vector<size_t>& rpeaks,
-    double ecgRate, vector<vector<double>>* out_kept_beats = nullptr, bool compute_iqr = false) {
+    double ecgRate, vector<vector<double>>* out_kept_beats = nullptr, bool compute_std = false) {
     SingleMethodResult res;
     res.ecgTemplate = {};
     res.ecg_template_std = {};
@@ -298,39 +285,11 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
     // bin where ectopy is the majority still gets a reference, and
     // SeedSelection::basis says it is not a clean one.
     res.ecgTemplate = medianOver(reference.empty() ? usable : reference);
-
-    // ---- NO PER-CHANNEL BANK IS BUILT HERE ----------------------------
-    //
-    // build_ecg_template_for_method used to run a per-channel partition over
-    // aligned.beats and hand the result out as SingleMethodResult::bank_out,
-    // which became EcgChannelResult::bank_out_raw. That was a partition of ONE
-    // channel's beats, and Section 4.6 has exactly one partition, shared by the
-    // three ECG leads and the pulse: jbank::buildBinBank, driven per bin from
-    // make_averaged_templates.hpp.
-    //
-    // Its last consumer was the morphology archive, and that archive now reads
-    // the joint projection. Keeping it would leave a second grouping of the same
-    // beats in memory with nothing marking it as the stale one -- which is how
-    // the screen and the files came to describe different partitions.
-    //
-    // THE REQUIRED ORDER IS: partition first, then remove premature, then
-    // Tukey on what is left. Nothing here may filter by the Tukey verdict
-    // before the partition runs, or prematurity and Tukey steer the grouping.
-
-    // ---- capture the beats handed downstream, with their rhythm verdicts --
     if (out_kept_beats) {
         out_kept_beats->clear();
         out_kept_beats->reserve(usable.size());
         for (const auto* sl : usable) out_kept_beats->push_back(*sl);
     }
-    // Composed HERE, the one place aligned.slice_index and usableIdx are both
-    // in scope: slot -> aligned row -> R-pair slice. usableIdx stays local,
-    // because the aligned row is only needed to index aligned.* inside this
-    // function (kept_rhythm below does exactly that).
-    //
-    // Falls back to the aligned row when alignment supplied no slice map at all
-    // -- an input predating the map -- which keeps the old behaviour rather than
-    // emitting zeros that would read as "every beat is slice 0".
     res.kept_idx.resize(usableIdx.size());
     for (size_t k = 0; k < usableIdx.size(); ++k) {
         const size_t ai = usableIdx[k];
@@ -353,23 +312,8 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
 
     res.n_beats = usable.size();
 
-    // Per-sample robust spread over the same aligned-beat matrix: per-sample
-    // STD (ddof=1) -- changed from IQR per spec step 7. Used to draw the
-    // gray band under the raw template.
-    // NOTE: field/param names say "iqr" but this now computes the
-    // per-sample STD (ddof=1), not the interquartile range -- changed
-    // per spec step 7. Renaming ecg_template_iqr/compute_iqr throughout
-    // the codebase (TemplateTypes.hpp, BinPlotWidget, TemplateBinIO,
-    // template_io, ...) is a separate, larger follow-up; left as-is here
-    // to keep this change to the computation only.
-    if (compute_iqr) {
-        // OVER THE MASKED REFERENCE POOL, the same set the median above used.
-        // Computed over `usable` it described the spread of sinus AND ectopy
-        // while the median described sinus alone, so the band drawn under the
-        // template was the wrong width for the line it was drawn under -- and in
-        // bigeminy it was roughly the distance between the two morphologies.
-        const std::vector<const std::vector<double>*>& spreadSet =
-            reference.empty() ? usable : reference;
+    if (compute_std) {//compute std is only defined for the raw templates which are displayed
+        const std::vector<const std::vector<double>*>& spreadSet = reference.empty() ? usable : reference;
         res.ecg_template_std.assign(maxLen, 0.0);
         std::vector<double> col;
         col.reserve(spreadSet.size());
@@ -387,8 +331,6 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
             res.ecg_template_std[c] = std::sqrt(sumsq / static_cast<double>(nc - 1));   // ddof = 1
         }
     }
-
-
     return res;
 }
 

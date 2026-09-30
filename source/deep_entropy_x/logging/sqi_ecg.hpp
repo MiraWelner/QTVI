@@ -38,6 +38,7 @@
 #include "config_file_handling/config.hpp"
 #include "template_generation/template_structs.hpp"
 #include "fiducial_marker_finding/feature_marks.hpp"   // FeatureMarks, LeadPolarity
+#include "stats_utils.hpp"   // pearson, PearsonResult
 
  // P/QRS/ST sample ranges for one beat, in the beat's own sample coordinates
  // (the R-aligned template / kept-beat coordinate system).
@@ -127,32 +128,22 @@ struct BeatSQI {
     enum Handling { INCLUDE, SUBSTITUTE, EXCLUDE } handling = EXCLUDE;
 };
 
-// NaN-aware Pearson correlation (same convention as alignment.hpp's local
-// pearson() lambda, factored out here so sqi_ecg.hpp has no dependency on it).
-// pearsonSQI signature: lo/hi bounds default to the whole array, so any other
-// caller is unaffected.
+// A WRAPPER over stats_utils::pearson, which is now the one implementation --
+// this held a copy of the same five accumulators, and its own comment recorded
+// that it was already a copy of alignment.hpp's local lambda.
+//
+// WHAT THIS KEEPS IS SQI'S POLICY, not the arithmetic: a 4-pair minimum, and
+// 0.0 rather than NaN when the correlation is undefined. The zero is
+// deliberate here and wrong elsewhere -- BeatSQI feeds a score that is summed
+// and thresholded, so an unmeasurable correlation has to contribute a number,
+// and "no evidence of a match" is the honest one to contribute. tbank's
+// correlate() leaves it NaN for the opposite reason: there, a missing
+// measurement must not read as a measured mismatch.
 inline double pearsonSQI(const std::vector<double>& a, const std::vector<double>& b,
     int lo = 0, int hi = -1) {
-    const int n = static_cast<int>(std::min(a.size(), b.size()));
-    if (hi < 0 || hi > n) hi = n;
-    lo = std::max(0, lo);
-    if (hi - lo < 4) return 0.0;
-
-    double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
-    int cnt = 0;
-    for (int k = lo; k < hi; ++k) {
-        const double av = a[k], bv = b[k];
-        if (std::isnan(av) || std::isnan(bv)) continue;
-        sa += av; sb += bv; saa += av * av; sbb += bv * bv; sab += av * bv;
-        ++cnt;
-    }
-    if (cnt < 4) return 0.0;
-    const double ma = sa / cnt, mb = sb / cnt;
-    const double cov = sab / cnt - ma * mb;
-    const double va = saa / cnt - ma * ma;
-    const double vb = sbb / cnt - mb * mb;
-    if (va <= 0.0 || vb <= 0.0) return 0.0;
-    return cov / std::sqrt(va * vb);
+    const PearsonResult pr = pearson(a, b, lo, hi);
+    if (pr.n_overlap < 4 || !pr.defined()) return 0.0;
+    return pr.r;
 }
 
 inline double stddevSQI(const std::vector<double>& v, int lo, int hi) {

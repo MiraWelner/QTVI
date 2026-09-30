@@ -11,7 +11,7 @@
 #include <map>
 #include <array>
 #include <vector>
-#include "template_bank.hpp"
+#include "bank_structs.hpp"
 namespace template_structs {
 
     struct ChannelMethodTemplate {

@@ -18,13 +18,13 @@ namespace tv_detail {
     struct PulseField { int marker; double time_bin::* field; };
 
     inline constexpr PulseField kPulseFields[] = {
-        { BinPlotWidget::PpgOnset,           &time_bin::ppg_onset },
-        { BinPlotWidget::PpgPeak,            &time_bin::ppg_peak },
-        { BinPlotWidget::PpgDicrotic,        &time_bin::ppg_dicrotic },
-        { BinPlotWidget::PpgPeak2,           &time_bin::ppg_peak2 },
-        { BinPlotWidget::PpgEnd,             &time_bin::ppg_end },
-        { BinPlotWidget::PpgT50,             &time_bin::ppg_t50 },
-        { BinPlotWidget::PpgT80,             &time_bin::ppg_t80 },
+        // NO PPG ENTRIES. This table is pointer-to-member of time_bin, and the
+        // pulse bars are not on time_bin any more -- they are per slot, on
+        // ppg_bank.templates[slot].pulse_marks. applyTemplateToWidget sets the
+        // seven PPG markers from there and movePpgMarker writes them back
+        // there; neither went through this table even before the fields were
+        // removed. ARTERIAL STAYS: those channels have no bank and no slot, so
+        // bin-level is where their bars correctly live.
         { BinPlotWidget::AbpOnset,           &time_bin::abp_onset },
         { BinPlotWidget::AbpPeak,            &time_bin::abp_peak },
         { BinPlotWidget::AbpDicrotic,        &time_bin::abp_dicrotic },
@@ -1283,14 +1283,13 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
 // ---------------------------------------------------------------------------
 void TemplateViewerWindow::applyBinCommonToWidget(BinPlotWidget* pw,
     const time_bin& b) {
-    // ARTERIAL ONLY out of the field table. The pulse entries are per slot now
-    // and applyTemplateToWidget sets them from this column's own pulse_marks;
-    // pushing the bin's values here first would put a bar from another
-    // waveform on screen for however long it took to be overwritten.
-    for (const PulseField& f : kPulseFields) {
-        if (BinPlotWidget::markerIsPpg(f.marker)) continue;
+    // ARTERIAL ONLY, and the table now contains nothing else -- the
+    // markerIsPpg skip that used to be here is gone with the PPG entries.
+    // applyTemplateToWidget sets the pulse bars from this column's own
+    // pulse_marks; pushing a bin-level value here first would have put a bar
+    // from another waveform on screen for however long it took to overwrite.
+    for (const PulseField& f : kPulseFields)
         pw->setMarker(static_cast<BinPlotWidget::Marker>(f.marker), b.*f.field);
-    }
     // BADGE FOR R AND J ONLY: dotted, one colour, labelled (the `overlay`
     // branch in paintEvent). Those two alignments carry their own bars, so the
     // different style says something true -- the operator is editing this
