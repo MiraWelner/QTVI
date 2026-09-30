@@ -82,7 +82,7 @@ namespace normalize_features {
         return std::isnan(lr) ? lr : lr / std::abs(ref);
     }
 
-    
+
     inline const tbank::template_of_all_signals* ecg_slot(const time_bin& b, int ch, int slot) {
         //given a bin, lead, and template slot number, get pointer to template
         if (ch < 0 || ch >= 3 || slot < 0) return nullptr;
@@ -102,15 +102,17 @@ namespace normalize_features {
         const double rIdx = (rmk.r_peak_auto >= 0.0)
             ? rmk.r_peak_auto : static_cast<double>(tp->r_col);
         if (rIdx < 0.0) return std::nan("");
-        const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(ecg, rmk.p_begin, rmk.q_onset, rmk.s_end, rmk.t_end, sampleRateHz);
-        EcgFeatures f = computeEcgFeatures(ecg,rx.p_peak, rmk.q_onset, rIdx, rmk.s_end, rmk.t_end, sampleRateHz, b.polarity.sign(ch));
+        // (reactive_ecg removed: it existed to supply computeEcgFeatures' old
+        //  p_peak parameter, which the body never read. |R|+|S| is all this
+        //  function wants from f.)
+        EcgFeatures f = computeEcgFeatures(ecg, rmk.q_onset, rIdx, rmk.s_end, rmk.t_end, sampleRateHz, b.polarity.sign(ch));
         const double ry = sample_y(ecg, f.r_idx);
         const double sy = sample_y(ecg, f.s_idx);
         if (std::isnan(ry) || std::isnan(sy)) return std::nan("");
         return std::abs(ry) + std::abs(sy);
     }
 
-    inline double compute_ecg_global_ref(const std::vector<time_bin>& bins, int ch, int slot,double sampleRateHz){
+    inline double compute_ecg_global_ref(const std::vector<time_bin>& bins, int ch, int slot, double sampleRateHz) {
         //median of all QRS heights for a given lead - called global ref in scientific literature
         std::vector<double> vals;
         vals.reserve(bins.size());

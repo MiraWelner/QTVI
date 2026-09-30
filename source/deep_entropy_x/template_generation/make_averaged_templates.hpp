@@ -294,7 +294,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // largest thing in memory and duplicating them per channel to write a file
     // is what made the old beats writer look like a hang.
     static const char* kChanKeys[4] = { "CH1", "CH2", "CH3", "PPG" };
-    std::array<morphology_csv::ChannelBlock, 4> mblocks;
+    std::array<templates_io::ChannelBlock, 4> mblocks;
     for (int c = 0; c < 4; ++c) {
         mblocks[c].channel = kChanKeys[c];
         mblocks[c].per_bin.assign(n, nullptr);
@@ -334,7 +334,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 
     // One row per bin for <stem>_bins.csv: the 4.5 category census, the
     // partition's shape, and why beats left their group's average.
-    std::vector<morphology_csv::BinRow> binRows;
+    std::vector<templates_io::BinRow> binRows;
     binRows.reserve(n);
 
     for (size_t i = 0; i < n; ++i) {
@@ -483,7 +483,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 
                 // ---- the per-bin census row -----------------------------
                 {
-                    morphology_csv::BinRow row;
+                    templates_io::BinRow row;
                     row.bin = static_cast<uint32_t>(i);
                     row.n_slices = ji.n_slices;
                     row.n_regular = info.joint.counts.n_regular;
@@ -591,7 +591,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 mblocks[c].beats[i] = &kit->second;
         }
     }
-    const std::vector<morphology_csv::ChannelBlock> blocks(mblocks.begin(), mblocks.end());
+    const std::vector<templates_io::ChannelBlock> blocks(mblocks.begin(), mblocks.end());
 
 
     // =====================================================================
@@ -605,7 +605,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // 7 and index 2 in bin 8 are unrelated morphologies) and misses the real
     // ones. Cross-bin global identity is the fix and it needs every bin's
     // groups in hand at once.
-    std::vector<morphology_csv::NsvtRow> nsvtRows;
+    std::vector<templates_io::NsvtRow> nsvtRows;
     uint32_t polyCandidates = 0;
     {
         // Per bin, the CH1 face of each group. Matching across bins is decided
@@ -657,7 +657,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 
         nsvtRows.reserve(runs.size());
         for (const nsvt::NsvtRun& r : runs) {
-            morphology_csv::NsvtRow row;
+            templates_io::NsvtRow row;
             row.start_beat = r.start_beat;
             row.length = r.length;
             row.global_template = r.global_template;
@@ -679,9 +679,9 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         std::fflush(stderr);
     }
 
-    morphology_csv::writeBins(binRows);
-    morphology_csv::writeNsvt(nsvtRows, polyCandidates);
-    morphology_csv::writeTemplates(blocks);
+    templates_io::writeBins(binRows);
+    templates_io::writeNsvt(nsvtRows, polyCandidates);
+    templates_io::writeTemplates(blocks);
 
     // DEFERRED, NOT WRITTEN. The ~3.8 s this used to cost lands on the
     // squared/absval pass instead -- see AugmentTemplatesSlow, which drains it.
@@ -695,10 +695,10 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // freed beats. local_of_slice_owned is a shared_ptr for exactly this
     // reason; the map interiors have no equivalent guard, only this contract.
     morphology_writer::pending() = [blocks, local_of_slice_owned] {
-        morphology_csv::writeBeatsBin(blocks);
+        templates_io::writeBeatsBin(blocks);
         };
 
-    morphology_csv::writeTemplatesBin(blocks);
+    templates_io::writeTemplatesBin(blocks);
 
     return result;
 }

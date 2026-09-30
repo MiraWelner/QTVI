@@ -33,54 +33,28 @@
 #include <vector>
 
 namespace curve_fit {
-
-    // =========================================================================
-    // Tuning constants
-    // =========================================================================
-
-    // Raw RSS threshold for escalating to the fractional polynomial. If the
-    // best of the cheap models (piecewise-linear, sigmoid, cubic spline) has RSS
-    // above POOR_FIT_FACTOR * n, the fractional polynomial is tried. Tune from
-    // clean-template residuals.
-    inline constexpr double POOR_FIT_FACTOR = 0.05;
-
-    // Sigmoid fitter iteration budget. 50 iterations is generous for a
-    // 4-parameter fit over a 30-100 sample window; early-exit on convergence
-    // means most calls finish in 10-20.
+    
+    //constants
+    inline constexpr double POOR_FIT_FACTOR = 0.05; //how bad does it have to be for fractional polynomial (which is slow) to be tried
     inline constexpr int    SIGMOID_MAX_ITER = 50;
     inline constexpr double SIGMOID_CONV_TOL = 1e-8;
 
-    // =========================================================================
-    // FitResult
-    // =========================================================================
+    //the five potential curve types to fit
+    enum class FitType { LINEAR, SIGMOID, FRACTIONAL, CUBIC_SPLINE, CUBIC };
 
-    // Which candidate model a FitResult came from. Recorded so downstream
-    // consumers (e.g. the boundary training log) can label each fit.
-    enum class FitType { LINEAR, SIGMOID, FRACTIONAL, CUBIC_SPLINE, CUBIC, FLAT };
-
-    // Forced model selection, driven by the on/offset radio group. Auto = the
-    // BIC contest across all candidates (the previous behaviour); any other
-    // value returns exactly that model so the anchor is placed from it.
+    //what the user requested - it is identical to fit type with the addition of 'auto' which means chose what is best
     enum class FitMode { Auto, Linear, CubicSpline, Cubic, Sigmoid, FracPoly };
-    // Peak radio group (Fit Peaks): Auto = BIC quad-vs-cubic; else forced.
+
+    //What the user requested for fitting the peaks
     enum class PeakFitMode { Auto, Cubic, Parabola, FivePoint };
 
     struct FitResult {
         double rss = std::numeric_limits<double>::infinity();
         int    nparams = 0;
-        FitType type = FitType::FLAT;
-        std::function<double(double)> f;   // evaluator: f(sample_index) -> fitted value
-        // Raw fitted parameters, exposed for serialization. Meaning by type:
-        //   LINEAR     : {m1, c1, m2, c2, breakpoint}
-        //   SIGMOID    : {a, k, t0, c}          (a/(1+exp(-k(t-t0)))+c)
-        //   FRACTIONAL : {c0, c1, c2, p1, p2, lo}
-        //   FLAT       : {mean}
+        FitType type = FitType::CUBIC;
+        std::function<double(double)> f;
         std::vector<double> params;
     };
-
-    // =========================================================================
-    // BIC
-    // =========================================================================
 
     // Gaussian-error BIC: n * ln(RSS/n) + k * ln(n). Lower is better.
     inline double bic(double rss, int n, int k) {
@@ -444,38 +418,17 @@ namespace curve_fit {
         return best;
     }
 
-    // =========================================================================
-    // Model selection (tiered, per spec Section 4.2 Step 2)
-    // =========================================================================
-
-    // =========================================================================
-    // Model 4: natural cubic spline through 3 EVENLY-SPACED knots
-    // =========================================================================
-    // Knots at the window start / middle / end (x0, x0+h, x0+2h). A natural
-    // cubic spline (second derivative 0 at both ends) through those three knots
-    // is fully determined by the three knot VALUES v0,v1,v2, which are fit by
-    // least squares over the window (cardinal-basis regression: basis j is the
-    // spline that is 1 at knot j and 0 at the others). 3 parameters.
     inline FitResult fitCubicSpline(const std::vector<double>& y, int lo, int hi) {
+        /* Knots at the window start / middle / end (x0, x0+h, x0+2h). A natural
+        cubic spline (second derivative 0 at both ends) through those three knots
+        is fully determined by the three knot VALUES v0,v1,v2, which are fit by
+        least squares over the window (cardinal-basis regression: basis j is the 
+        spline that is 1 at knot j and 0 at the others). 3 parameters. */
         FitResult r;
         r.type = FitType::CUBIC_SPLINE;
         r.nparams = 3;
         const double x0 = static_cast<double>(lo);
         const double h = (hi - lo) / 2.0;
-
-        auto flat = [&]() {
-            double mean = 0.0; int cnt = 0;
-            for (int i = lo; i <= hi; ++i) if (!std::isnan(y[i])) { mean += y[i]; ++cnt; }
-            if (cnt > 0) mean /= cnt;
-            r.type = FitType::FLAT; r.nparams = 1; r.rss = 0.0; r.params = { mean };
-            r.f = [=](double) { return mean; };
-            return r;
-            };
-        if (h <= 0.0) return flat();
-
-        // Natural cubic spline value at x for knot values (v0,v1,v2). With the
-        // natural end conditions M0 = M2 = 0, the only interior second
-        // derivative is M1 = (3/2h^2)(v0 - 2v1 + v2).
         auto spline3 = [x0, h](double x, double v0, double v1, double v2) -> double {
             const double x1 = x0 + h, x2 = x0 + 2.0 * h;
             const double M1 = (3.0 / (2.0 * h * h)) * (v0 - 2.0 * v1 + v2);
@@ -491,9 +444,14 @@ namespace curve_fit {
             };
 
         std::vector<double> c; double rss = 0.0;
-        if (!detail::linear_ls(y, lo, hi, 3, basis, c, rss) || c.size() < 3)
-            return flat();
-
+        if (!detail::linear_ls(y, lo, hi, 3, basis, c, rss) || c.size() < 3) {
+            //in case of failure return rss of infinity
+            r.rss = std::numeric_limits<double>::infinity();
+            r.nparams = 0;
+            r.params.clear();
+            r.f = [](double) { return 0.0; };
+            return r;
+        }
         r.rss = rss;
         r.params = { c[0], c[1], c[2] };   // the three knot values
         const double v0 = c[0], v1 = c[1], v2 = c[2];
@@ -501,12 +459,10 @@ namespace curve_fit {
         return r;
     }
 
-    // =========================================================================
-    // Model 5: single cubic polynomial  c0 + c1*x + c2*x^2 + c3*x^3  (x = t-lo)
-    // =========================================================================
-    // A plain cubic over the whole window (4 parameters) -- distinct from the
-    // 3-knot natural spline above: one segment, no interior knot.
     inline FitResult fitCubic(const std::vector<double>& y, int lo, int hi) {
+        /* single cubic polynomial  c0 + c1 * x + c2 * x ^ 2 + c3 * x ^ 3  (x = t - lo) - 4 params
+        * Deep says this is most likely going to be the best one the most often. It is used
+        * for both on/offsets and peaks*/
         FitResult r;
         r.type = FitType::CUBIC;
         r.nparams = 4;
@@ -522,11 +478,11 @@ namespace curve_fit {
             };
         std::vector<double> c; double rss = 0.0;
         if (!detail::linear_ls(y, lo, hi, 4, basis, c, rss) || c.size() < 4) {
-            double mean = 0.0; int cnt = 0;
-            for (int i = lo; i <= hi; ++i) if (!std::isnan(y[i])) { mean += y[i]; ++cnt; }
-            if (cnt > 0) mean /= cnt;
-            r.type = FitType::FLAT; r.nparams = 1; r.rss = 0.0; r.params = { mean };
-            r.f = [=](double) { return mean; };
+            //returns infinity on failure
+            r.rss = std::numeric_limits<double>::infinity();
+            r.nparams = 0;
+            r.params.clear();
+            r.f = [](double) { return 0.0; };
             return r;
         }
         r.rss = rss;
@@ -542,18 +498,12 @@ namespace curve_fit {
     inline FitResult selectBestFit(const std::vector<double>& y, int lo, int hi,
         FitMode mode = FitMode::Auto) {
         const int n = hi - lo + 1;
-        if (n < 5) {
-            // Too few samples for any meaningful fit; return a flat line.
+        if (n < 3) {
+            // Too few samples for any meaningful fit; return 0 with an rss of infinity
             FitResult fallback;
-            fallback.rss = 0.0;
-            fallback.nparams = 1;
-            fallback.type = FitType::FLAT;
-            double mean = 0.0; int cnt = 0;
-            for (int i = lo; i <= hi; ++i)
-                if (!std::isnan(y[i])) { mean += y[i]; ++cnt; }
-            if (cnt > 0) mean /= cnt;
-            fallback.params = { mean };
-            fallback.f = [=](double) { return mean; };
+            fallback.rss = std::numeric_limits<double>::infinity();
+            fallback.nparams = 0;
+            fallback.f = [](double) { return 0.0; };
             return fallback;
         }
 

@@ -90,8 +90,8 @@ void annotation_handler::export_marking_binfile(const std::string& filename) con
     }
 
     const uint64_t count = rows.size();
-    file.write(nm::kMagic, sizeof(nm::kMagic));
-    file.write(reinterpret_cast<const char*>(&nm::kVersion), sizeof(nm::kVersion));
+    file.write(nm::noise_marking_magic, sizeof(nm::noise_marking_magic));
+    file.write(reinterpret_cast<const char*>(&nm::noise_marking_version), sizeof(nm::noise_marking_version));
     file.write(reinterpret_cast<const char*>(&count), sizeof(count));
     for (const auto& row : rows)
         file.write(reinterpret_cast<const char*>(row.data()), sizeof(double) * nm::columns);

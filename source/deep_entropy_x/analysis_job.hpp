@@ -209,7 +209,7 @@ namespace analysis_job {
 
         std::cerr << "  Processing Raw Templates (fast stage): " << stem << "\n";
         ecg_move_log::set(cfg.quality_metric, stem);   // per-beat vertical move log
-        morphology_csv::set(cfg.template_path, stem);
+        templates_io::set(cfg.template_path, stem);
         tbank::setMinBeats(cfg.min_beats_template_ecg, cfg.min_beats_template_ppg);//min beats for displayed templates in the viewer loaded from config
 
         // MORPHOLOGY SPLIT FLOORS. setMatchFloors takes both or neither: it
@@ -370,7 +370,7 @@ namespace analysis_job {
         // above is what puts the operator's banks into job.tmpl.bins, so a view
         // built before it would rewrite the archive with the generated
         // partition and report success.
-        std::vector<morphology_csv::BinBanks> view(job.tmpl.bins.size());
+        std::vector<templates_io::BinBanks> view(job.tmpl.bins.size());
         for (size_t i = 0; i < job.tmpl.bins.size(); ++i) {
             for (int c = 0; c < 3; ++c)
                 view[i].chan[c] = &job.tmpl.bins[i].ecg_bank[c];
@@ -379,9 +379,9 @@ namespace analysis_job {
 
         const std::filesystem::path splitPath =
             std::filesystem::path(job.cfg.template_path) / (job.stem + "_templates.bin");
-        const morphology_csv::ConfirmPatchReport rep =
-            morphology_csv::applyOperatorConfirmations(splitPath.string(), view);
-        morphology_csv::printConfirmPatchReport(rep);
+        const templates_io::ConfirmPatchReport rep =
+            templates_io::applyOperatorConfirmations(splitPath.string(), view);
+        templates_io::printConfirmPatchReport(rep);
 
         // A MISSING ARCHIVE IS NOT A FAILED COMMIT. A record whose build
         // produced no templates has nothing to patch; only a file that exists

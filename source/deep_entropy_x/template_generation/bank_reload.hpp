@@ -123,7 +123,7 @@ namespace bank_reload {
     // already holds.
     struct SplitArchive {
         SplitReport rep;
-        std::vector<morphology_csv::BinBlock<morphology_csv::TemplateRecord>> blocks;
+        std::vector<templates_io::BinBlock<templates_io::TemplateRecord>> blocks;
 
         // True when there is something to apply. A first run has no archive and
         // this is false, which is the normal case and not an error.
@@ -140,7 +140,7 @@ namespace bank_reload {
         rep.prior_present = std::filesystem::exists(priorPath, ec) && !ec;
         if (!rep.prior_present) return out;
 
-        if (!morphology_csv::readTemplatesBin(priorPath, out.blocks)) {
+        if (!templates_io::readTemplatesBin(priorPath, out.blocks)) {
             // NO MAGIC TO BE WRONG. This file has never had one -- see the
             // "NO MAGIC" note in morphology_csv.hpp -- so the only header
             // check is the version, and the rest is a short read.

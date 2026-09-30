@@ -130,10 +130,10 @@ namespace ppg_realign {
 
         uint32_t ver = 0, nBlocks = 0;
         if (!rd(&ver, 4) || !rd(&nBlocks, 4)) return out;
-        if (ver > morphology_csv::bin_version) return out;   // newer than this build
+        if (ver > templates_io::bin_version) return out;   // newer than this build
 
         const std::streamsize recSize =
-            static_cast<std::streamsize>(sizeof(morphology_csv::BeatRecord));
+            static_cast<std::streamsize>(sizeof(templates_io::BeatRecord));
 
         for (uint32_t bi = 0; bi < nBlocks; ++bi) {
             uint32_t len = 0;
@@ -159,7 +159,7 @@ namespace ppg_realign {
 
             out.width = static_cast<int>(width);
             for (uint64_t k = 0; k < nCols; ++k) {
-                morphology_csv::BeatRecord rec;
+                templates_io::BeatRecord rec;
                 if (!rd(&rec, recSize)) { out.owned.clear(); return out; }
                 const bool want = (rec.bin == bin) && (rec.became_beat != 0);
                 if (!want || width == 0) {

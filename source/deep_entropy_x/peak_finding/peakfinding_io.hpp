@@ -1,30 +1,6 @@
 /**
  * @file   peakfinding_io.hpp
- * @brief  ALL binary and CSV I/O for the R-peak / PPG-pairing stage, in one
- *         place. No detection code: the algorithm is make_beats.hpp.
- *
- *           read_input_binfile     annealed .bin            -> AnnealedData
- *           write_output_binfile   results -> <stem>_peak_locations_all_beats.bin
- *           write_output_csvfile   results -> the matching .csv
- *           read_output_binfile    the .bin back, one-arg and a two-arg
- *                                  overload that re-hydrates the raw
- *                                  signals from the annealed file
- *
- *         Was run_find_r_peaks.hpp, a name that promised detection and
- *         delivered three serializers. It also carried a dead
- *         #include of the detection header -- nothing here used a single
- *         symbol from it. The two read_output_binfile overloads have been
- *         moved in from the old peakfinding_io.hpp (now
- *         peakfinding_structs.hpp), which removes the forward declaration
- *         of read_input_binfile that used to break the cycle between the
- *         two files.
- *
- *         NEITHER read_output_binfile OVERLOAD HAS A CALLER. They are kept
- *         as the documented route for rebuilding templates from disk, but
- *         nothing in the pipeline exercises that path, so it is untested by
- *         construction -- and the squared/absval blocks it reads are always
- *         empty on disk, because analysis_job::finalize writes this file
- *         BEFORE augment_ecg_ppg_pairs_sqabs computes them.
+ * @brief  the io for the peak locations binfile and csv
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
@@ -45,40 +21,71 @@
 #include <cstdio>
 
 #include "peakfinding_structs.hpp"
- /**
-  * @brief  Read an annealed-segments .bin file produced by the upstream
-  *         preparation step.
-  *
-  * On-disk layout (all values little-endian, native widths):
-  *
-  *   Header:
-  *     uint64   numBins                        // segment count
-  *     double   filePpgSR                      // PPG sample rate (consumed, not retained)
-  *     double   fileEcgSR                      // ECG sample rate (consumed, not retained)
-  *     double   scoringEpoch                   // (consumed, not retained)
-  *     uint32   nChannels                      // pass-through channel count
-  *     uint32   nativeSR[nChannels]            // per-channel native rate (skipped)
-  *     uint8    ecg1_inverted                  // "Inverted Lead?" checkbox, CH1 (0/1)
-  *     uint8    ecg2_inverted                  // same, CH2
-  *     uint8    ecg3_inverted                  // same, CH3
-  *
-  *   Per bin (numBins of these):
-  *     uint64   nPpgPairs
-  *     (uint64,uint64) ppg_bin_indexs[nPpgPairs]
-  *     uint64   nEcgPairs
-  *     (uint64,uint64) ecg_bin_indexs[nEcgPairs]
-  *     For each of {ppg_signal, ecg_signal_1, ecg_signal_2, ecg_signal_3, sleep_state_signal}:
-  *       uint64   N;  double samples[N]
-  *     For each of nChannels pass-through slots:
-  *       uint64   nUp;     double upsampled[nUp]
-  *       uint64   nPairs;  double raw_tv_interleaved[2 * nPairs]   // (t,v,t,v,...)
-  *
-  *  The pass-through channels are not consumed by the peak-detection
-  *  pipeline. They were previously routed through to the wave_markings
-  *  file unchanged; that copy has been dropped, but the read path here
-  *  still loads them so the re-hydrating reader in peakfinding_io.hpp
-  *  can populate any field a downstream consumer needs.
-  */
+
+inline constexpr char     annealed_data_magic[8] = { 'A','N','N','L','S','E','G','S' };
+inline constexpr uint32_t annealed_data_version = 0;
+
+
+inline constexpr char     peak_data_magic[8] = { 'R','P','E','A','K','L','O','C' };
+inline constexpr uint32_t peak_data_version = 0;
+
+// Shared by the three readers below: consume an 8-byte magic and a uint32
+// version, or throw naming the file. ONE PLACE, so a reader cannot check the
+// magic and forget the version.
+inline void read_and_check_header(std::ifstream& f, const std::string& path, const char(&magic)[8], uint32_t expectVersion, const char* what)
+{
+    char header[8] = {};
+    uint32_t version = 0;
+    if (!f.read(header, sizeof(header))
+        || !f.read(reinterpret_cast<char*>(&version), 4))
+        throw std::runtime_error(std::string("truncated ") + what
+            + " header: " + path);
+    for (std::size_t i = 0; i < sizeof(header); ++i)
+        if (header[i] != magic[i])
+            throw std::runtime_error(std::string("not a ") + what
+                + " file (bad magic), or written before the format had one: "
+                + path);
+    if (version != expectVersion)
+        throw std::runtime_error(std::string(what) + " version "
+            + std::to_string(version) + " != "
+            + std::to_string(expectVersion) + " -- regenerate: " + path);
+}
+/**
+ * @brief  Read an annealed-segments .bin file produced by the upstream
+ *         preparation step.
+ *
+ * On-disk layout (all values little-endian, native widths):
+ *
+ *   Header:
+ *     char[8]  magic = kAnnealedMagic ("ANNLSEGS")
+ *     uint32   version = kAnnealedVersion (0, the only accepted value)
+ *     uint64   numBins                        // segment count
+ *     double   filePpgSR                      // PPG sample rate (consumed, not retained)
+ *     double   fileEcgSR                      // ECG sample rate (consumed, not retained)
+ *     double   scoringEpoch                   // (consumed, not retained)
+ *     uint32   nChannels                      // pass-through channel count
+ *     uint32   nativeSR[nChannels]            // per-channel native rate (skipped)
+ *     uint8    ecg1_inverted                  // "Inverted Lead?" checkbox, CH1 (0/1)
+ *     uint8    ecg2_inverted                  // same, CH2
+ *     uint8    ecg3_inverted                  // same, CH3
+ *
+ *   Per bin (numBins of these):
+ *     uint64   nPpgPairs
+ *     (uint64,uint64) ppg_bin_indexs[nPpgPairs]
+ *     uint64   nEcgPairs
+ *     (uint64,uint64) ecg_bin_indexs[nEcgPairs]
+ *     For each of {ppg_signal, ecg_signal_1, ecg_signal_2, ecg_signal_3, sleep_state_signal}:
+ *       uint64   N;  double samples[N]
+ *     For each of nChannels pass-through slots:
+ *       uint64   nUp;     double upsampled[nUp]
+ *       uint64   nPairs;  double raw_tv_interleaved[2 * nPairs]   // (t,v,t,v,...)
+ *
+ *  The pass-through channels are not consumed by the peak-detection
+ *  pipeline. They were previously routed through to the wave_markings
+ *  file unchanged; that copy has been dropped, but the read path here
+ *  still loads them so the re-hydrating reader in peakfinding_io.hpp
+ *  can populate any field a downstream consumer needs.
+ */
 inline AnnealedData read_input_binfile(const std::string& path) {
     AnnealedData data;
     std::ifstream file(path, std::ios::binary);
@@ -87,6 +94,9 @@ inline AnnealedData read_input_binfile(const std::string& path) {
     // Buffered I/O for throughput.
     char read_buf[1 << 16];
     file.rdbuf()->pubsetbuf(read_buf, sizeof(read_buf));
+
+    read_and_check_header(file, path, annealed_data_magic, annealed_data_version,
+        "annealed-segments");
 
     uint64_t numBins = 0;
     file.read(reinterpret_cast<char*>(&numBins), 8);
@@ -218,6 +228,9 @@ inline void write_output_binfile(const std::string& path, const std::vector<outp
 
     char write_buf[1 << 16];
     file.rdbuf()->pubsetbuf(write_buf, sizeof(write_buf));
+
+    file.write(peak_data_magic, sizeof(peak_data_magic));
+    file.write(reinterpret_cast<const char*>(&peak_data_version), 4);
 
     uint64_t numBins = results.size();
     file.write(reinterpret_cast<const char*>(&numBins), 8);
@@ -465,6 +478,8 @@ inline void write_output_csvfile(const std::string& path, const std::vector<outp
  *         On-disk layout (see write_output_binfile above in this file
  *         for the authoritative spec):
  *
+ *           char[8] magic = kPeaksMagic ("RPEAKLOC")
+ *           uint32  version = kPeaksVersion (0)
  *           uint64 numBins
  *           For each bin:
  *             9 index arrays (ch1/2/3 x raw/squared/absval), each
@@ -485,6 +500,8 @@ inline std::vector<output_binfile_data> read_output_binfile(const std::string& p
 
     char rbuf[1 << 16];
     f.rdbuf()->pubsetbuf(rbuf, sizeof(rbuf));
+
+    read_and_check_header(f, path, peak_data_magic, peak_data_version, "R-peak");
 
     uint64_t numBins = 0;
     f.read(reinterpret_cast<char*>(&numBins), 8);

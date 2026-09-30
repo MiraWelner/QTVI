@@ -39,9 +39,9 @@ void TemplateViewerWindow::writeNormalizationCsvs() {
             // slotMarks selects the lead, so the per-lead subscripts below
             const tbank::BankMarkerSet& rmk =
                 b.slotMarks(ch, 0, AnchorType::R_PEAK);
-            const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
-                ecg, rmk.p_begin, rmk.q_onset, rmk.s_end, rmk.t_end, m_sampleRate);
-            EcgFeatures f = computeEcgFeatures(ecg, rx.p_peak, rmk.q_onset,
+            // (the reactive_ecg that stood here computed a p_peak for
+            //  computeEcgFeatures' old p_peak parameter and nothing else.)
+            EcgFeatures f = computeEcgFeatures(ecg, rmk.q_onset,
                 b.r_peak_ch[ch], rmk.s_end, rmk.t_end, m_sampleRate,
                 b.polarity.sign(ch));
             const double ry = normalize_features::sample_y(ecg, f.r_idx);
@@ -587,7 +587,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // NO ROUNDING: computeEcgFeatures takes doubles, AnchorAuto is
             // double, and the qrs/qt milliseconds this feeds are sub-sample.
             ftAuto[c] = computeEcgFeatures(ecg,
-                aaF.p_peak, aaF.q_onset, aaF.r_peak,
+                aaF.q_onset, aaF.r_peak,
                 aaF.s_end, aaF.t_end, m_sampleRate, b.polarity.sign(c));
             // Per lead, because slotMarks selects the lead -- the old bin-wide
             // MarkerSet held all three leads in one object and was fetched once
@@ -613,13 +613,14 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             tbank::BankMarkerSet umk = anchor_view::hasOwnBars(anchor)
                 ? b.slotMarks(c, 0, anchor)
                 : b.userMarks(c, 0, anchor);
-            // userMarks returns BARS ONLY, and BankMarkerSet no longer has a
-            // p_peak field at all: P peak is a glyph. It is recomputed from the
-            // two bars that bracket it, on this alignment's own waveform.
-            const FeatureMarks::ReactiveEcg rxF = FeatureMarks::reactive_ecg(
-                ecg, umk.p_begin, umk.q_onset, umk.s_end, umk.t_end, m_sampleRate);
+            // userMarks returns BARS ONLY, and BankMarkerSet has no p_peak
+            // field: P peak is a glyph, recomputed from the two bars that
+            // bracket it. The reactive_ecg that did that here fed
+            // computeEcgFeatures' old p_peak parameter and nothing else, so it
+            // went with it -- the P peak this row reports comes from the glyph
+            // block, on this alignment's own waveform.
             ftUser[c] = computeEcgFeatures(ecg,
-                rxF.p_peak, umk.q_onset, b.r_peak_ch[c],
+                umk.q_onset, b.r_peak_ch[c],
                 umk.s_end, umk.t_end, m_sampleRate, b.polarity.sign(c));
         }
 
@@ -810,7 +811,7 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
         { Landmark::Q_ONSET  },
         { Landmark::J_POINT  },
         { Landmark::P_ONSET  },
-        { Landmark::T_OFFSET },   // T-end
+        { Landmark::T_OFFSET },
     };
 
     // auto-detected position (glyph field) for a landmark on a lead. The
@@ -1041,11 +1042,12 @@ void TemplateViewerWindow::save_bin_and_csv() {
             std::ofstream mf(csvPath.toStdString(), std::ios::trunc);
             if (!mf)
                 throw std::runtime_error("cannot open for write: " + csvPath.toStdString());
-            // `anchor` is unused for EcgAndPulse: the writer walks
-            // kAllAnchors itself. R_PEAK only satisfies the signature.
+            // No anchor and no section argument: the writer walks all four
+            // alignments and emits both halves of the row. The R_PEAK and
+            // EcgAndPulse that used to be passed here existed only to satisfy
+            // a signature whose other modes were unreachable.
             writeTemplateMarkingsCsv(mf, m_bins,
                 m_subjectId.toStdString(), m_sampleRate,
-                AnchorType::R_PEAK, MarkingsCsvSection::EcgAndPulse,
                 m_peakFitMode, m_onOffsetFitMode);
             if (!mf.good())
                 throw std::runtime_error("failed writing " + csvPath.toStdString());

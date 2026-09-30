@@ -14,6 +14,9 @@
 #include <cstddef>
 #include <cstdint>
 
+inline constexpr char     annealed_magic[8] = { 'A','N','N','L','S','E','G','S' };
+inline constexpr uint32_t annealed_version = 0;
+
 struct AnnealedSegment {
     std::vector<double> ppg_signal;
     std::vector<double> ecg_signal_1;

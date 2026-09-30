@@ -11,6 +11,7 @@
 #include "anneal_handler.hpp"
 #include "../noise_marking_gui/user_annotation_handler.h"
 #include "../peak_finding/FilterUtils.hpp"
+#include "../peak_finding/peakfinding_structs.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -67,7 +68,7 @@ namespace {
         int bin_count = 0;
     };
 
-   
+
     double matlab_round(double x) {
         // In order to ensure identical results to original matlab code, matlab rounding is used.
         double r = std::round(x);
@@ -207,7 +208,7 @@ namespace {
             return out;
         }
 
-        void splitOverlappingBins( std::vector<Exclusion>& ex, const std::vector<uint64_t>& breaks)
+        void splitOverlappingBins(std::vector<Exclusion>& ex, const std::vector<uint64_t>& breaks)
         {
             // Split any exclusion spanning multiple bins so each piece sits in one bin.
             size_t orig = ex.size();
@@ -587,13 +588,12 @@ namespace {
     // kBlankingMs: the anneal excises noisy regions, while a threshold
     // override is an instruction to the peak detector and means nothing here.
     //
-    // LEGACY FILES NOW READ. This function used to refuse anything without the
-    // magic and anneal with no exclusions at all, while the marking GUI showed
-    // those same markings on screen as applied -- markings visible in the GUI
-    // but silently not excluded from processing, which is the exact bug that
-    // was already fixed once in loadSpans. Going through loadRows makes legacy
-    // support a property of the format rather than of whichever reader
-    // remembered it.
+    // ONE PARSER, SO ONE ANSWER. This function used to do its own magic check
+    // and its own row loop, and it refused files the marking GUI accepted --
+    // markings visible on screen as applied while nothing was excluded from
+    // the anneal. It now goes through noise_markings::loadRows, which is the
+    // only function that knows the byte layout, so "is this file readable" has
+    // a single answer across the GUI, the annealer and template generation.
     NoiseMarkings read_noise_bin(const std::filesystem::path& path) {
         NoiseMarkings m;
 
@@ -605,9 +605,6 @@ namespace {
                 << " -- annealing with no exclusions\n";
             return m;
         }
-        if (rr.legacy)
-            std::cerr << "  noise markings " << path << " is a pre-versioned "
-            "(legacy) file; read " << rr.rows.size() << " row(s)\n";
         if (!rr.error.empty())   // partial read: kept what parsed
             std::cerr << "  noise markings " << path << ": " << rr.error << "\n";
 
@@ -707,7 +704,7 @@ namespace {
 
     void write_output_bin(const std::filesystem::path& path, const std::vector<FinalSegment>& segs, const Extras& extras, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
     {
-        /*183 byte header followed by: 
+        /*183 byte header followed by:
         Slot	Channel
             0	timestamp
             1	ECG1
@@ -729,6 +726,14 @@ namespace {
         // run_find_r_peaks.hpp's read_input_binfile.
         char write_buf[1 << 16];
         out.rdbuf()->pubsetbuf(write_buf, sizeof(write_buf));
+
+        // HEADER FIRST, AND THE CONSTANTS ARE NOT DEFINED HERE. kAnnealedMagic
+        // lives in peakfinding_structs.hpp, which read_input_binfile -- the
+        // only reader of this file -- also includes, so the writer and the
+        // reader cannot disagree about the eight bytes. That disagreement is
+        // the one failure a magic is supposed to make impossible.
+        out.write(annealed_magic, sizeof(annealed_magic));
+        out.write(reinterpret_cast<const char*>(&annealed_version), 4);
 
         uint64_t n = segs.size();
         out.write(reinterpret_cast<char*>(&n), 8);
@@ -862,7 +867,7 @@ namespace {
 
 }   // anonymous namespace
 
-bool anneal_one_file(const std::filesystem::path& binPath, const std::filesystem::path& noisePath,  const std::filesystem::path& outPath, double binLengthMin, double highpassHz,  bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
+bool anneal_one_file(const std::filesystem::path& binPath, const std::filesystem::path& noisePath, const std::filesystem::path& outPath, double binLengthMin, double highpassHz, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
 {
     //anneals the file - includes noise if noise file exists, otherwise anneals with no noise
     RawData raw;

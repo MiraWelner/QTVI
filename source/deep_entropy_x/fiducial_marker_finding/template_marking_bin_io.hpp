@@ -78,7 +78,11 @@
 #include "template_generation\template_bank.hpp"
 #include "fiducial_marker_finding\anchor_view.hpp"
 
-enum class MarkingsCsvSection { EcgOnly, PulseOnly, EcgAndPulse };
+// (MarkingsCsvSection deleted. It had three values and only EcgAndPulse was
+//  ever passed -- see the note at the top of writeTemplateMarkingsCsv. With
+//  the section gone the `anchor` parameter went too: it selected the single
+//  alignment for the two modes that no longer exist, and EcgAndPulse walks
+//  anchor_array.)
 
 
 // ---------------------------------------------------------------------------
@@ -86,12 +90,15 @@ enum class MarkingsCsvSection { EcgOnly, PulseOnly, EcgAndPulse };
 // ---------------------------------------------------------------------------
 
 struct ChannelTemplateData {
+    // ONLY WHAT project() FILLS. The squared and absval traces and their two
+    // r_col fields were here and were never written -- binsFromTemplateFile's
+    // project() copies the raw trace, its spread, r_col and the RR, and always
+    // did -- and never read. The same-named fields on ChannelTemplates in
+    // make_averaged_templates.hpp are a different struct and are live; these
+    // were four structurally blank members.
     std::vector<double> ecgTemplate_raw;
     std::vector<double> ecg_template_raw_iqr;
-    std::vector<double> ecgTemplate_squared, ecgTemplate_absval;
     int r_col_raw = -1;
-    int r_col_squared = -1;
-    int r_col_absval = -1;
     int median_rr_samples = -1;
 };
 
@@ -112,20 +119,8 @@ struct AnchoredBankSlot {
     uint32_t n_members = 0;
 };
 
-// Key for TemplateBin::final_bars: (lead, slot, anchor tag). A plain struct
-// with an ordering rather than a packed integer, because the three fields are
-// read back individually by anything inspecting the map and a packed key hides
-// which dimension collided.
-struct FinalBarKey {
-    int lead = -1;
-    int slot = -1;
-    int anchorTag = 0;
-    bool operator<(const FinalBarKey& o) const {
-        if (lead != o.lead) return lead < o.lead;
-        if (slot != o.slot) return slot < o.slot;
-        return anchorTag < o.anchorTag;
-    }
-};
+// (FinalBarKey deleted with time_bin::final_bars -- see the note in
+//  readTemplateMarkingsBin. The map was populated and never read.)
 
 struct time_bin {
     std::array<tbank::TemplateBank, 3> ecg_bank;
@@ -289,22 +284,14 @@ struct time_bin {
         return static_cast<int>(ecg_bank[lead].templates.size());
     }
 
-    // ---- WHERE EVERY BAR ENDED UP, AS READ BACK FROM A MARKING FILE ------
-    //
-    // Keyed (lead, slot, anchor tag). Populated ONLY by
-    // readTemplateMarkingsBin, and deliberately NOT by anything in the
-    // session: it is what a previous save recorded, not live state. The live
-    // answer is barsForPanel, which resolves the edit cells against the
-    // panel's own detection on every paint.
-    //
-    // SEPARATE FROM slotMarks FOR ONE REASON. A cell in markers_by_anchor
-    // means "the operator moved this bar here". Loading a detection into one
-    // would make every untouched bar read as placed -- suppressing the
-    // detection fallback, and reporting the detector as the operator in the
-    // next CSV written. That is the exact defect the seeding pass was removed
-    // to fix. So the recorded positions land here instead, where nothing that
-    // draws or writes marks will mistake them for edits.
-    std::map<FinalBarKey, tbank::BankMarkerSet> final_bars;
+    // (final_bars deleted. It held what a previous save recorded, keyed
+    //  (lead, slot, anchor), and NOTHING EVER READ IT -- the live answer is
+    //  barsForPanel, which resolves the edit cells against the panel's own
+    //  detection on every paint, and that is what every consumer used. The
+    //  final-bars BLOCK IN THE FILE STAYS: it is the record of where the bars
+    //  ended up in each alignment, which cannot be recomputed later, and
+    //  external readers use it. readTemplateMarkingsBin now steps over those
+    //  bytes instead of storing them.)
 
     // R peak column: auto-only, re-derived each pass from the template r_col;
     // NOT per-anchor and NOT persisted. Kept flat, and now DOUBLE like every
@@ -349,12 +336,11 @@ struct time_bin {
     double ppg_t80_rise = -1.0;
     double ppg_pw80 = -1.0;
 
-    // Construction-time PPG fiducials (peak = max in [R1,R2], foot = min in
-    // [R1,peak]), computed from the real R-pair interval at template build and
-    // carried through the template file. seed_all uses these directly instead
-    // of re-detecting the peak on the multi-pulse template. -1 if unavailable.
-    double ppg_peak_construct = -1;
-    double ppg_onset_construct = -1;
+    // (ppg_peak_construct / ppg_onset_construct deleted. Their comment said
+    //  seed_all used them instead of re-detecting the peak on the multi-pulse
+    //  template; nothing read them, here or anywhere in the tree. The four
+    //  *_r_construct fields below are NOT the same thing and are live --
+    //  template_viewer_page.cpp puts the pulses on the shared axis with them.)
 
     // ---- EACH PULSE CHANNEL'S R COLUMN, FROM THE TEMPLATE FILE -----------
     //
@@ -458,8 +444,6 @@ inline std::vector<time_bin> binsFromTemplateFile(const template_structs::Templa
         dst.ch3_n_beats_raw = src.ch3_n_beats_raw;
         dst.ppg_n_beats = src.ppg_n_beats;
         // template_io carries these as whole columns; widening is exact.
-        dst.ppg_peak_construct = src.ppg_peak_col;
-        dst.ppg_onset_construct = src.ppg_onset_col;
         dst.ppg_r_construct = src.ppg_r_col;
         dst.abp_r_construct = src.abp_r_col;
         dst.art_r_construct = src.art_r_col;
@@ -737,7 +721,15 @@ struct EcgFeatures {
 // Every position in and out is a sub-sample double. The two FeatureMarks
 // finders below still take an int R column, so the rounding happens HERE, at
 // the one call that needs it, instead of at every caller.
-inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, double p_peak, double q_onset, double r_peak, double s_end, double t_end,
+// p_peak REMOVED FROM THE SIGNATURE. It was never touched in the body: nothing
+// here is measured from the P peak, and every caller was computing one -- three
+// of them running reactive_ecg first -- purely to pass it in.
+//
+// sgn IS ALSO UNUSED, deliberately left in place: find_q_peak and find_s_peak
+// are called with a literal 1.0 because they are sign-invariant as used here,
+// and keeping the parameter leaves the door open without touching five call
+// sites.
+inline EcgFeatures computeEcgFeatures(const std::vector<double>& ecg, double q_onset, double r_peak, double s_end, double t_end,
     double rateHz, double sgn, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
 {
     EcgFeatures f;
@@ -1121,28 +1113,12 @@ struct EcgDetection {
     bool valid = false;
 };
 
-// TRACE GIVEN EXPLICITLY. A caller that already holds the waveform on screen --
-// BinPlotWidget does, in m_ecg, notch-filtered and amplitude-scaled -- must
-// detect on THAT array, or its glyphs describe a different signal from the one
-// under them. `tmpl` has to outlive the returned EcgDetection, which holds a
-// pointer to it for the reactive half.
-inline EcgDetection ecgDetectOn(const std::vector<double>& tmpl, int r_col,
-    double sampleRate, double sgn,
-    curve_fit::FitMode onOffsetMode = curve_fit::FitMode::Auto,
-    curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
-{
-    EcgDetection d;
-    if (tmpl.size() < 3 || r_col < 0) return d;
-
-    d.lm = FeatureMarks::detect_template_landmarks(tmpl, r_col, sampleRate, sgn,
-        onOffsetMode, peakMode);
-    if (!d.lm.valid) return d;
-
-    d.s_peak = FeatureMarks::find_s_peak(tmpl, r_col, sampleRate, sgn, peakMode);
-    d.tmpl = &tmpl;
-    d.valid = true;
-    return d;
-}
+// (ecgDetectOn deleted: no callers. It took an explicit trace so a caller
+//  holding its own array -- BinPlotWidget's m_ecg, notch-filtered and
+//  amplitude-scaled -- could detect on THAT rather than on the stored average.
+//  bin_plot_widget.cpp calls ecgDetect instead, i.e. it detects on the stored
+//  average. IF THAT IS WRONG the function was unwired rather than dead, and it
+//  is in version control; nothing in the tree referenced it.)
 
 inline EcgDetection ecgDetect(const time_bin& b, int lead, int slot,
     AnchorType a, double sampleRate,
@@ -1588,34 +1564,35 @@ inline std::string bankSlotName(const tbank::TemplateBank& bank, int slot) {
     return cls + "_" + std::string(1, static_cast<char>('A' + (letterIdx % 26)));
 }
 
+// ONE ROW, BOTH SECTIONS, ALL FOUR ALIGNMENTS -- there is no other mode.
+//
+// This took a MarkingsCsvSection and an AnchorType, and of the three sections
+// only EcgAndPulse was ever passed: the four suffixed EcgOnly parts stitched
+// together by the caller were replaced by this function emitting one row
+// itself, and EcgOnly and PulseOnly were left behind unreachable. `anchor`
+// went with them -- it named the single alignment the dead modes emitted, and
+// was already documented as unused for EcgAndPulse.
+//
+// wantEcg / wantPulse ARE KEPT AS constexpr true rather than having their
+// blocks unwrapped. The branches span several hundred lines of emit order that
+// the header lambdas mirror exactly, and flattening them by hand is a chance
+// to shift a column for no behavioural gain. The compiler drops them; the
+// unwrapping is a separate, mechanical edit.
 inline void writeTemplateMarkingsCsv(std::ostream& f,
     const std::vector<time_bin>& bins,
     const std::string& fileID,
     double sampleRateHz,
-    AnchorType anchor,
-    MarkingsCsvSection section,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
     curve_fit::FitMode fitMode = curve_fit::FitMode::Auto)
 {
-    const bool wantEcg = (section == MarkingsCsvSection::EcgOnly
-        || section == MarkingsCsvSection::EcgAndPulse);
-    const bool wantPulse = (section == MarkingsCsvSection::PulseOnly
-        || section == MarkingsCsvSection::EcgAndPulse);
+    constexpr bool wantEcg = true;
+    constexpr bool wantPulse = true;
 
-    // WHICH ALIGNMENTS THIS CALL EMITS. EcgAndPulse walks all four and
-    // suffixes each block itself; the single-alignment modes emit just the one
-    // asked for, unsuffixed, exactly as before. `anchor` is unused for
-    // EcgAndPulse.
-    std::vector<AnchorType> anchors;
-    if (section == MarkingsCsvSection::EcgAndPulse)
-        anchors.assign(anchor_view::anchor_array.begin(),
-            anchor_view::anchor_array.end());
-    else
-        anchors.push_back(anchor);
-    const bool suffixed = (section == MarkingsCsvSection::EcgAndPulse);
+    // All four alignments, each block suffixed with its own label.
+    std::vector<AnchorType> anchors(anchor_view::anchor_array.begin(),
+        anchor_view::anchor_array.end());
     auto sfxFor = [&](AnchorType a) {
-        return suffixed ? (std::string("_") + anchor_view::label(a))
-            : std::string();
+        return std::string("_") + anchor_view::label(a);
         };
 
     // AN INTERVAL'S USER HALF NEEDS BOTH ITS BARS IN THIS ALIGNMENT. qrs is
@@ -1662,7 +1639,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                     alignedLandmarks(b, c, AnchorType::R_PEAK, sampleRateHz,
                         fitMode, peakMode);
                 if (!aaR.valid) continue;
-                EcgFeatures ft = computeEcgFeatures(ecg, aaR.p_peak, aaR.q_onset, aaR.r_peak, aaR.s_end, aaR.t_end, sampleRateHz, b.polarity.sign(c), peakMode);
+                EcgFeatures ft = computeEcgFeatures(ecg, aaR.q_onset, aaR.r_peak, aaR.s_end, aaR.t_end, sampleRateHz, b.polarity.sign(c), peakMode);
                 if (ft.r_idx < 0.0 || ft.s_idx < 0.0) continue;
                 const double last = static_cast<double>(ecg.size()) - 1.0;
                 if (ft.r_idx > last || ft.s_idx > last) continue;
@@ -2100,12 +2077,16 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             // never reaches a canonical cell.
                             const tbank::BankMarkerSet whole = asl ? umk
                                 : tbank::BankMarkerSet{};
-                            const FeatureMarks::ReactiveEcg user_placed_s_and_t_bars_for_bracketing_tpeak = FeatureMarks::reactive_ecg(ecg, whole.p_begin, whole.q_onset, whole.s_end, whole.t_end, sampleRateHz, peakMode);
+                            // (the user-bracketed reactive_ecg here went with
+                            //  computeEcgFeatures' p_peak parameter: its only
+                            //  consumer was that argument, and the p_peak and
+                            //  t_peak COLUMNS are glyphs -- auto only -- so the
+                            //  user-bracketed pair was never printed.)
                             const FeatureMarks::ReactiveEcg auto_s_and_t_bars_for_bracketing_tpeak = FeatureMarks::reactive_ecg(ecg, aa.p_begin[c], aa.q_onset[c], aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode);
                             // Empty, not computed, with no trace: computeEcgFeatures on an
                             // empty vector still returns an s_idx.
                             EcgFeatures ftAuto = asl
-                                ? computeEcgFeatures(ecg, aa.p_peak[c], aa.q_onset[c], aa.r_peak[c], aa.s_end[c], aa.t_end[c], sampleRateHz, b.polarity.sign(c), peakMode)
+                                ? computeEcgFeatures(ecg, aa.q_onset[c], aa.r_peak[c], aa.s_end[c], aa.t_end[c], sampleRateHz, b.polarity.sign(c), peakMode)
                                 : EcgFeatures{};
                             // Derived from the assembled bars, not from `umk`: q_peak,
                             // s_peak and the QRS/QT intervals need a whole beat's
@@ -2121,7 +2102,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                                 // frame-shift away from the bars bracketing
                                 // them. The two intervals are differences and
                                 // were unaffected, which is why it survived.
-                                ? computeEcgFeatures(ecg, user_placed_s_and_t_bars_for_bracketing_tpeak.p_peak, whole.q_onset,
+                                ? computeEcgFeatures(ecg, whole.q_onset,
                                     (b.r_peak_ch[c] >= 0.0
                                         ? b.r_peak_ch[c] + b.frameShift(c, AnchorType::R_PEAK, anchor)
                                         : -1.0),
@@ -2355,16 +2336,13 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     const std::vector<time_bin>& bins,
     const std::string& fileID,
     double sampleRateHz,
-    AnchorType anchor,
-    MarkingsCsvSection section,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
     curve_fit::FitMode fitMode = curve_fit::FitMode::Auto)
 {
     std::ofstream f(path);
     if (!f.is_open())
         throw std::runtime_error("cannot open for write: " + path);
-    writeTemplateMarkingsCsv(f, bins, fileID, sampleRateHz, anchor, section,
-        peakMode, fitMode);
+    writeTemplateMarkingsCsv(f, bins, fileID, sampleRateHz, peakMode, fitMode);
 }
 
 // ===========================================================================
@@ -2646,22 +2624,35 @@ inline std::vector<time_bin> readTemplateMarkingsBin(const std::string& path,
 
         // ---- v2: WHERE EVERY BAR ENDED UP --------------------------------
         //
-        // INTO final_bars, NOT INTO slotMarks. The marker cells hold operator
-        // EDITS AND NOTHING ELSE -- that invariant is why bar seeding was
-        // removed from applyBankTemplateToWidget, and loading a detection into
-        // them would make every untouched bar read as placed, suppress the
-        // fallback in barsForPanel, and report the detector as the operator in
-        // the next CSV. This is a separate, read-only record of the session.
+        // CONSUMED AND DISCARDED, AND THE BLOCK MUST STILL BE WALKED.
+        //
+        // These bytes are where every bar ended up in each alignment, which is
+        // why the writer stores them: the per-(slot, alignment) detection
+        // behind an unmoved bar is not a stored quantity anywhere and depends
+        // on the fit modes and the detector build, so it cannot be recomputed
+        // later. External readers of the file use it.
+        //
+        // IN MEMORY IT WENT NOWHERE. It landed in time_bin::final_bars, which
+        // nothing ever read -- barsForPanel is the live answer and resolves the
+        // edit cells against the panel's own detection on every paint. So the
+        // map is gone and the bytes are stepped over. NOT SKIPPED BY SEEKING:
+        // the counts are per lead and per slot, so the length is only knowable
+        // by reading them, and this is the last block of a bin -- getting it
+        // wrong desynchronises the next bin, not just this one.
+        //
+        // These must NOT be loaded into slotMarks. Those cells hold operator
+        // EDITS AND NOTHING ELSE -- the invariant that got bar seeding removed
+        // from applyBankTemplateToWidget -- and a detection in one would make
+        // every untouched bar read as placed, suppress barsForPanel's fallback,
+        // and report the detector as the operator in the next CSV.
         for (int lead = 0; lead < 3; ++lead) {
             const int nSlots = r32();
             for (int slot = 0; slot < nSlots; ++slot) {
                 const int nAnchors = r32();
                 for (int k = 0; k < nAnchors; ++k) {
-                    const int tag = r32();
-                    tbank::BankMarkerSet m;
-                    m.p_begin = r64d(); m.q_onset = r64d();
-                    m.s_end = r64d();   m.t_end = r64d();
-                    b.final_bars[FinalBarKey{ lead, slot, tag }] = m;
+                    (void)r32();                                  // anchor tag
+                    (void)r64d(); (void)r64d();                   // p_begin, q_onset
+                    (void)r64d(); (void)r64d();                   // s_end, t_end
                 }
             }
         }

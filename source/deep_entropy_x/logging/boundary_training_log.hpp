@@ -50,10 +50,11 @@ namespace boundary_training {
 
     inline const char* fittype_name(curve_fit::FitType t) {
         switch (t) {
-        case curve_fit::FitType::LINEAR:     return "LINEAR";
-        case curve_fit::FitType::SIGMOID:    return "SIGMOID";
-        case curve_fit::FitType::FRACTIONAL: return "FRACTIONAL";
-        case curve_fit::FitType::FLAT:       return "FLAT";
+        case curve_fit::FitType::LINEAR:       return "LINEAR";
+        case curve_fit::FitType::SIGMOID:      return "SIGMOID";
+        case curve_fit::FitType::FRACTIONAL:   return "FRACTIONAL";
+        case curve_fit::FitType::CUBIC_SPLINE: return "CUBIC_SPLINE";
+        case curve_fit::FitType::CUBIC:        return "CUBIC";
         }
         return "UNKNOWN";
     }

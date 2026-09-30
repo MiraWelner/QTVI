@@ -1,7 +1,7 @@
 #pragma once
 /**
- * @file   morphology_csv.hpp
- * @brief  The descriptions of the outputs, per tempalte and per bin. beats.csv was too large so its just beats.bin
+ * @file   template_io.hpp
+ * @brief  The descriptions of the outputs, per template and per bin. beats.csv was too large so its just beats.bin
  *
  *           <stem>_bins.csv       one row per BIN          (text)
  *           <stem>_nsvt.csv       one row per RUN          (text)
@@ -10,18 +10,7 @@
  *           <stem>_templates.bin  one column per TEMPLATE  (binary)
  *
  *         _templates.bin is the only one of these that is READ BACK, and now
- *         the only one REWRITTEN. It carries a morphology split forward, so a
- *         config or algorithm change does not repartition a record that has
- *         already been partitioned (see bank_reload.hpp) -- and since the
- *         operator's verdict cannot be known until after the marking session,
- *         applyOperatorConfirmations at the bottom of this file reads it back
- *         and rewrites it with that verdict folded in. Everything else is
- *         write-only.
- *
- *         THREE FUNCTIONS OWN THE TEMPLATES LAYOUT AND MOVE TOGETHER:
- *         writeTemplatesBin (the build), readBin (both archives) and
- *         detail::writeTemplateBlocks (the rewrite). A field added to fewer
- *         than all three desynchronises the stream mid-block.
+ *         the only one REWRITTEN. 
  */
 
 #include <algorithm>   // std::max, for the per-bin run length
@@ -38,7 +27,7 @@
 #include "peak_finding/stats_utils.hpp"
 #include "joint_bank.hpp"
 
-namespace morphology_csv {
+namespace templates_io {
 
     inline std::string g_dir;
     inline std::string g_stem;
@@ -144,15 +133,8 @@ namespace morphology_csv {
             return b;
         }
 
-
-        // Row 5. Tukey runs only on beats NOT flagged premature: a premature
-        // beat is already excluded from the reference set, so there is nothing
-        // for Tukey to decide about it. `not_eligible` is therefore a real and
-        // common state, distinct from "tested and kept" -- and the specific
-        // rejection reason is kept because a beat classified pqrst and rejected
-        // on RR LENGTH is very likely ectopy the classifier missed, which is the
-        // cheapest estimate of classifier recall available.
-        inline const char* tukeyWord(tbank::TukeyOutcome t) {
+        inline const char* why_tukey_removed(tbank::TukeyOutcome t) {
+            //lists if and why the tukey removal removed 
             switch (t) {
             case tbank::TukeyOutcome::KEPT:           return "kept";
             case tbank::TukeyOutcome::REJ_RR_LENGTH:  return "removed_rr";
@@ -797,20 +779,30 @@ namespace morphology_csv {
     // numeric column; binary has no such problem, and IEEE NaN survives a
     // read/write pair exactly.
 
-    // NO MAGIC. There was a kBeatsMagic / kTemplatesMagic pair, on the argument
-    // that a wrong-type file should fail immediately rather than be read as a
-    // plausible column count. The failure it was guarding against turned out to
-    // be a filename collision in another writer, fixed at the source -- and the
-    // two readers here take an explicit path and are named for their file, so
-    // feeding one the other's path is a typo, not a class of failure.
+    // ---- MAGIC, AND WHY THE TWO ARE DIFFERENT ---------------------------
     //
-    // ONE FORMAT VERSION, AND IT STAYS 1. There was a v1..v3 history here
+    // A kBeatsMagic / kTemplatesMagic pair was removed once, on the argument
+    // that the two readers take an explicit path and are named for their file,
+    // so feeding one the other's path is a typo rather than a class of
+    // failure. They are back, and DISTINCT, because a shared magic would not
+    // do the job either of them is here for: both files share readBin, share
+    // bin_version, and open with a block count, so without the magic a beats
+    // file handed to readTemplatesBin parses its first block header as a
+    // TemplateRecord and produces plausible garbage rather than an error. The
+    // eight bytes are what make "wrong file" answerable at all, and the answer
+    // has to distinguish the two formats, not merely identify the pair.
+    //
+    // readBin TAKES THE EXPECTED MAGIC rather than testing the record type:
+    // the two formats are told apart by which entry point was called and
+    // nothing else, which is the same reason hasExtras is a parameter.
+    inline constexpr char kBeatsMagic[8] = { 'M','R','P','H','B','E','A','T' };
+    inline constexpr char kTemplatesMagic[8] = { 'M','R','P','H','T','M','P','L' };
+
+    // ONE FORMAT VERSION, AND IT IS 0. There was a v1..v3 history here
     // describing migrations that never happened -- nothing has been released,
     // so there are no old files to be compatible with. A field gets added and
-    // every archive is regenerated. The number is kept only so a future release
-    // has somewhere to start counting.
-    // One format, version 0; a stale archive is refused on this field rather
-    // than misread. See kMarkVersion.
+    // every archive is regenerated; a stale archive is refused on this field
+    // rather than misread. See kMarkVersion.
     inline constexpr uint32_t bin_version = 0;
 
     // One record per beat column. Fixed size, so a reader can stride over
@@ -1055,6 +1047,7 @@ namespace morphology_csv {
         uint32_t nBlocks = 0;
         for (const auto& b : blocks) if (!b.empty()) ++nBlocks;
 
+        detail::writeRaw(f, kBeatsMagic, sizeof(kBeatsMagic));
         detail::writeRaw(f, &bin_version, 4);
         detail::writeRaw(f, &nBlocks, 4);
 
@@ -1157,6 +1150,7 @@ namespace morphology_csv {
         uint32_t nBlocks = 0;
         for (const auto& b : blocks) if (!b.empty()) ++nBlocks;
 
+        detail::writeRaw(f, kTemplatesMagic, sizeof(kTemplatesMagic));
         detail::writeRaw(f, &bin_version, 4);
         detail::writeRaw(f, &nBlocks, 4);
 
@@ -1303,16 +1297,26 @@ namespace morphology_csv {
         }
     };
 
+    // magic: kBeatsMagic or kTemplatesMagic, supplied by the entry point below.
     // hasExtras: this format appends the per-template member lists, trailer and
-    // spread after each column's waveform. True only for the templates file. A
-    // flag rather than a test on the record type, because the two are told
-    // apart by which entry point was called and nothing else.
+    // spread after each column's waveform. True only for the templates file.
+    // Both are parameters rather than tests on the record type, because the two
+    // formats are told apart by which entry point was called and nothing else.
+    //
+    // THE MAGIC IS CHECKED BEFORE THE VERSION, and both before a single block
+    // is parsed. A file that fails either is refused whole: there is no partial
+    // read to salvage, because every offset past this header depends on the
+    // layout the header names.
     template <class Rec>
-    inline bool readBin(const std::string& path,
+    inline bool readBin(const std::string& path, const char(&magic)[8],
         std::vector<BinBlock<Rec>>& out, bool hasExtras = false)
     {
         std::ifstream f(path, std::ios::binary);
         if (!f) return false;
+        char header[8] = {};
+        if (!detail::readRaw(f, header, sizeof(header))) return false;
+        for (std::size_t i = 0; i < sizeof(header); ++i)
+            if (header[i] != magic[i]) return false;   // wrong format, or pre-magic
         uint32_t ver = 0, nBlocks = 0;
         if (!detail::readRaw(f, &ver, 4) || !detail::readRaw(f, &nBlocks, 4))
             return false;
@@ -1356,13 +1360,14 @@ namespace morphology_csv {
 
     inline bool readBeatsBin(const std::string& path,
         std::vector<BinBlock<BeatRecord>>& out) {
-        return readBin<BeatRecord>(path, out);
+        return readBin<BeatRecord>(path, kBeatsMagic, out);
     }
     // MEMBER LISTS, TRAILER AND SPREAD INCLUDED. Returned in BinBlock::members
     // / ::members_clean / ::trailers / ::tmpl_iqr, parallel to ::records.
     inline bool readTemplatesBin(const std::string& path,
         std::vector<BinBlock<TemplateRecord>>& out) {
-        return readBin<TemplateRecord>(path, out, /*hasExtras=*/true);
+        return readBin<TemplateRecord>(path, kTemplatesMagic, out,
+            /*hasExtras=*/true);
     }
 
     // =====================================================================
@@ -1436,8 +1441,14 @@ namespace morphology_csv {
             std::ofstream f(path, std::ios::binary | std::ios::trunc);
             if (!f) return false;
 
+            // SAME HEADER writeTemplatesBin EMITS. Omitting the magic here
+            // would leave the confirmation rewrite producing a file
+            // readTemplatesBin refuses -- and the symptom would appear a run
+            // later, as bank_reload reporting no prior archive, which is
+            // indistinguishable from a first run.
             const uint32_t ver = bin_version;
             const uint32_t nBlocks = static_cast<uint32_t>(blocks.size());
+            writeRaw(f, kTemplatesMagic, sizeof(kTemplatesMagic));
             writeRaw(f, &ver, 4);
             writeRaw(f, &nBlocks, 4);
 
@@ -1646,4 +1657,4 @@ namespace morphology_csv {
                 " is in _template_confirmations.csv only\n", rep.new_templates);
     }
 
-}  // namespace morphology_csv
+}  // namespace template_io
